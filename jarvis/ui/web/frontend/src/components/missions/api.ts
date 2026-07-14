@@ -8,6 +8,8 @@ import type {
   EventEnvelope,
   MissionDetail,
   MissionSummary,
+  MissionToolApprovalDecision,
+  MissionToolApprovalsResponse,
   OpenClawWorkerSnapshot,
 } from "@/types/missions";
 
@@ -44,6 +46,43 @@ export async function fetchMissionDetail(id: string): Promise<MissionDetail> {
   return { mission: data.mission, events, verdicts, worker_snapshots };
 }
 
+export function missionToolApprovalsQueryKey(missionId: string | null) {
+  return ["missions", "tool-approvals", missionId] as const;
+}
+
+export async function fetchMissionToolApprovals(
+  missionId: string,
+): Promise<MissionToolApprovalsResponse> {
+  return requestJson(
+    `${API_BASE}/${encodeURIComponent(missionId)}/tool-approvals`,
+  );
+}
+
+export async function approveMissionToolCall(
+  missionId: string,
+  traceId: string,
+): Promise<MissionToolApprovalDecision> {
+  return requestJson(
+    `${API_BASE}/${encodeURIComponent(missionId)}/tool-approvals/${encodeURIComponent(traceId)}/approve`,
+    { method: "POST" },
+  );
+}
+
+export async function denyMissionToolCall(
+  missionId: string,
+  traceId: string,
+  reason = "user_denied",
+): Promise<MissionToolApprovalDecision> {
+  return requestJson(
+    `${API_BASE}/${encodeURIComponent(missionId)}/tool-approvals/${encodeURIComponent(traceId)}/deny`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason }),
+    },
+  );
+}
+
 export async function cancelMission(id: string): Promise<void> {
   const res = await fetch(`${API_BASE}/${encodeURIComponent(id)}/cancel`, {
     method: "POST",
@@ -65,4 +104,20 @@ export async function fetchAuthToken(): Promise<string | null> {
   } catch {
     return null;
   }
+}
+
+async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const res = await fetch(url, init);
+  const body = (await res.json().catch(() => null)) as
+    | { detail?: unknown }
+    | T
+    | null;
+  if (!res.ok) {
+    const detail =
+      body && typeof body === "object" && "detail" in body
+        ? body.detail
+        : null;
+    throw new Error(typeof detail === "string" ? detail : `HTTP ${res.status}`);
+  }
+  return body as T;
 }

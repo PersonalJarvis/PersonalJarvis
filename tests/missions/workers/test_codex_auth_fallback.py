@@ -407,6 +407,63 @@ async def test_codex_success_clears_quota_cooldown(
 
 
 @pytest.mark.asyncio
+async def test_codex_rejected_write_is_not_reported_as_success(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A completed model turn is not success when its only write was rejected."""
+    stdout = (
+        b'{"type":"item.completed","item":{"type":"agent_message",'
+        b'"text":"I could not create the requested file."}}\n'
+        b'{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}\n'
+    )
+    stderr = b"patch rejected: writing is blocked by read-only sandbox"
+
+    async def _fake_exec(*_a: Any, **_k: Any) -> _FakeProc:
+        return _FakeProc(stdout, returncode=0, stderr=stderr)
+
+    monkeypatch.setattr(cdw.asyncio, "create_subprocess_exec", _fake_exec)
+
+    events = await _drive(CodexDirectWorker(), tmp_path)
+
+    final = events[-1]
+    assert final.is_error is True
+    assert "sandbox rejected" in final.result.lower()
+
+
+@pytest.mark.asyncio
+async def test_codex_shell_write_recovers_from_failed_patch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A later successful shell write supersedes a failed Windows patch attempt."""
+    stdout = (
+        b'{"type":"item.completed","item":{"type":"file_change",'
+        b'"status":"failed","changes":[{"path":"hello.txt"}]}}\n'
+        b'{"type":"item.completed","item":{"type":"command_execution",'
+        b'"status":"completed","exit_code":0,"command":"write hello.txt"}}\n'
+        b'{"type":"item.completed","item":{"type":"agent_message",'
+        b'"text":"Created hello.txt."}}\n'
+        b'{"type":"turn.completed","usage":{"input_tokens":10,"output_tokens":5}}\n'
+    )
+    stderr = b"Failed to write file hello.txt"
+
+    async def _fake_exec(*_a: Any, **_k: Any) -> _FakeProc:
+        return _FakeProc(stdout, returncode=0, stderr=stderr)
+
+    monkeypatch.setattr(cdw.asyncio, "create_subprocess_exec", _fake_exec)
+
+    events = await _drive(CodexDirectWorker(), tmp_path)
+
+    final = events[-1]
+    assert final.is_error is False
+    assert any(
+        block.get("type") == "tool_use" and block.get("name") == "Bash"
+        for event in events
+        for block in (getattr(event, "message", {}) or {}).get("content", [])
+        if isinstance(block, dict)
+    )
+
+
+@pytest.mark.asyncio
 async def test_codex_hardcap_timeout_preserves_work_and_flags_timed_out(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -444,7 +501,7 @@ async def test_codex_hardcap_timeout_preserves_work_and_flags_timed_out(
             self.stderr = _FakeStream()
 
         async def communicate(self) -> tuple[bytes, bytes]:
-            raise asyncio.TimeoutError  # legacy path — not used by streaming
+            raise TimeoutError  # legacy path — not used by streaming
 
         async def wait(self) -> int:
             return -9

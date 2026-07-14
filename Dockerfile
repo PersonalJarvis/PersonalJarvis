@@ -10,6 +10,7 @@
 #
 #   docker build -t personal-jarvis .
 #   docker run --rm -p 127.0.0.1:8000:8000 \
+#       -v jarvis-data:/app/data \
 #       -e JARVIS_CONTROL_API_KEY=jctl_change_me \
 #       -e ANTHROPIC_API_KEY=sk-ant-... \
 #       personal-jarvis
@@ -39,12 +40,14 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1
 
 # build-essential/libffi: a few base deps build from sdist on slim.
+# git: Jarvis-Agent lean workspaces are real isolated repositories even when
+# the distribution image intentionally carries no host checkout history.
 # libportaudio2: backs sounddevice (a lazy-imported base dep) so any audio path
 # imports cleanly even though the container has no audio hardware.
 # curl: the HEALTHCHECK below.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends \
-        build-essential libffi-dev libportaudio2 curl \
+        build-essential libffi-dev libportaudio2 curl git \
  && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -61,7 +64,7 @@ RUN python -m pip install --upgrade pip \
 
 # Non-root. /app/data is the only writable location at runtime.
 RUN useradd --system --uid 1000 --shell /usr/sbin/nologin jarvis \
- && mkdir -p /app/data \
+ && mkdir -p /app/data/home \
  && chown -R jarvis:jarvis /app/data
 USER jarvis
 
@@ -70,8 +73,13 @@ EXPOSE 8000
 # JARVIS_BIND_HOST=0.0.0.0 makes the headless listener reachable through the
 # published port (the control key is the security boundary — see compose).
 # JARVIS_NONINTERACTIVE skips the first-run wizard; keys come from the env.
+# Config and runtime data both live in the sole writable, persisted directory;
+# the application tree remains read-only to the non-root runtime user.
 ENV JARVIS_BIND_HOST=0.0.0.0 \
-    JARVIS_NONINTERACTIVE=1
+    JARVIS_NONINTERACTIVE=1 \
+    JARVIS_CONFIG=/app/data/jarvis.toml \
+    JARVIS_DATA_DIR=/app/data \
+    HOME=/app/data/home
 
 # Generous start-period: first boot builds the brain in the background.
 HEALTHCHECK --interval=30s --timeout=5s --start-period=60s --retries=6 \

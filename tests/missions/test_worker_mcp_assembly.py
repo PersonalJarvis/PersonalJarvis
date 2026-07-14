@@ -13,10 +13,11 @@ wrong-MCP stall. The filter is reversible (``relevance_filter=False`` or the
 ``[brain.routing].worker_mcp_relevance_filter`` kill-switch) and ALWAYS degrades
 to exporting on a fault (never silently strips a mission's MCPs).
 """
+
 from __future__ import annotations
 
-from jarvis.missions.init import _assemble_worker_mcp_servers
 from jarvis.marketplace.token_store import InMemoryBackend, Tokens, TokenStore
+from jarvis.missions.init import _assemble_worker_mcp_servers
 
 
 def test_assembles_connected_plugins() -> None:
@@ -150,4 +151,27 @@ def test_relevance_fault_falls_back_to_export(monkeypatch) -> None:  # noqa: ANN
         relevance_filter=True,
         server_tools={"weather-mcp": []},
     )
+    assert "weather-mcp" in servers
+
+
+def test_live_registry_inspection_fault_falls_back_to_full_export(
+    monkeypatch,
+) -> None:  # noqa: ANN001
+    """A swallowed registry fault must not look like valid empty evidence."""
+    import jarvis.core.runtime_refs as runtime_refs
+
+    def _boom():
+        raise RuntimeError("live registry unavailable")
+
+    monkeypatch.setattr(runtime_refs, "get_mcp_registry", _boom)
+    ts = TokenStore(InMemoryBackend())
+    mcp_json = {"weather-mcp": {"command": "npx", "enabled": True}}
+
+    servers = _assemble_worker_mcp_servers(
+        token_store=ts,
+        mcp_json_servers=mcp_json,
+        task_text="refactor the authentication module",
+        relevance_filter=True,
+    )
+
     assert "weather-mcp" in servers

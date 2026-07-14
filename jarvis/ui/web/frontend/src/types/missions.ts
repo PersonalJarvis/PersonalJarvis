@@ -264,6 +264,32 @@ export interface MissionDetail {
   worker_snapshots: OpenClawWorkerSnapshot[];
 }
 
+/** Secret-free projection of one paused supervisor tool call. */
+export interface PendingMissionToolApproval {
+  trace_id: string;
+  mission_id: string;
+  worker_id: string | null;
+  tool_name: string;
+  risk_tier: "safe" | "monitor" | "ask" | "block";
+  reason: string;
+  args_preview: string;
+  requested_at_ns: number;
+  expires_at_ns: number;
+}
+
+export interface MissionToolApprovalsResponse {
+  mission_id: string;
+  approvals: PendingMissionToolApproval[];
+}
+
+export interface MissionToolApprovalDecision {
+  ok: boolean;
+  mission_id: string;
+  trace_id: string;
+  decision: "approved" | "denied";
+  tool_name: string;
+}
+
 export interface MissionStateBadgeMeta {
   /**
    * i18n key for the human-readable badge label. The label is resolved at

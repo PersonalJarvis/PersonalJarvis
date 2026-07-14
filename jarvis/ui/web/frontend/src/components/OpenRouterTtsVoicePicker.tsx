@@ -26,9 +26,11 @@ import { useT, useUiLanguage } from "@/i18n";
 export function OpenRouterTtsControls({
   providerId,
   recommendedModel,
+  healthActive = false,
 }: {
   providerId: string;
   recommendedModel?: string | null;
+  healthActive?: boolean;
 }) {
   // The currently selected TTS model — seeded from the catalog's current
   // selection and updated when the model picker below saves a new one, so the
@@ -62,8 +64,16 @@ export function OpenRouterTtsControls({
         providerId={providerId}
         recommendedModel={recommendedModel}
         onSave={handleModelSave}
+        healthSection="tts"
+        healthActive={healthActive}
       />
-      {model && <VoicePicker model={model} />}
+      {model && (
+        <VoicePicker
+          model={model}
+          providerId={providerId}
+          healthActive={healthActive}
+        />
+      )}
     </div>
   );
 }
@@ -105,7 +115,15 @@ function LanguageChip({ code }: { code: string }) {
  * model's voices (each with a language chip), persists a pick, and plays a short
  * spoken sample on demand — the sample language is switchable DE/EN.
  */
-function VoicePicker({ model }: { model: string }) {
+function VoicePicker({
+  model,
+  providerId,
+  healthActive,
+}: {
+  model: string;
+  providerId: string;
+  healthActive: boolean;
+}) {
   const t = useT();
   const uiLang = useUiLanguage();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -216,9 +234,23 @@ function VoicePicker({ model }: { model: string }) {
   async function save(voiceId: string) {
     setSaving(true);
     setOpen(false);
+    if (healthActive) {
+      window.dispatchEvent(
+        new CustomEvent("jarvis:provider-selection-pending", {
+          detail: { section: "tts", provider: providerId },
+        }),
+      );
+    }
     try {
       const res = await saveTtsVoice(voiceId);
       setPinned(voiceId);
+      if (healthActive) {
+        window.dispatchEvent(
+          new CustomEvent("jarvis:provider-config-changed", {
+            detail: { section: "tts", provider: providerId },
+          }),
+        );
+      }
       const note = res.restart_required
         ? ` ${t("apikeys_model.restart_note")}`
         : res.applied_live
@@ -226,6 +258,13 @@ function VoicePicker({ model }: { model: string }) {
           : "";
       pushToast("success", `${t("apikeys_voice.saved")}${note}`);
     } catch (e) {
+      if (healthActive) {
+        window.dispatchEvent(
+          new CustomEvent("jarvis:provider-switch-failed", {
+            detail: { section: "tts", provider: providerId },
+          }),
+        );
+      }
       pushToast("error", (e as Error).message);
     } finally {
       setSaving(false);

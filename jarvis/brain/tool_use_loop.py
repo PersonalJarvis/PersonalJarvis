@@ -584,6 +584,7 @@ class ToolUseLoop:
 
             # Execute tools
             suppress_output: str | None = None
+            unknown_tool_requested = False
             for tc in agg.tool_calls:
                 tool_name = tc.get("name", "")
                 tool_args = tc.get("input", {})
@@ -673,9 +674,7 @@ class ToolUseLoop:
                         tid,
                     )
                     tool_result_payload = {"error": f"Tool '{tool_name}' not available"}
-                    suppress_output = _anti_silence_phrase(
-                        user_utterance, reply_language
-                    )
+                    unknown_tool_requested = True
                 elif tool_name == "spawn_worker" and _is_meta_debug_intent(user_utterance):
                     log.info(
                         "tool_use_loop: spawn_worker blocked for a meta/debug utterance"
@@ -908,6 +907,20 @@ class ToolUseLoop:
                             content="(Tool screenshot — describe or use it as needed.)",
                             images=tuple(_img_blocks),
                         ))
+
+            # A missing tool is a full-turn refusal only when nothing else ran.
+            # In a multi-call round, one stale/model-invented name must never
+            # overwrite successful evidence from another call with the generic
+            # "missing tool" phrase. Feed both results back to the model so it
+            # can report the partial outcome honestly.
+            if (
+                unknown_tool_requested
+                and suppress_output is None
+                and not final_agg.executed_tool_names
+            ):
+                suppress_output = _anti_silence_phrase(
+                    user_utterance, reply_language
+                )
 
             # Budget check after execution
             if self._budget.exceeded():

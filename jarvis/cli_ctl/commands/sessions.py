@@ -21,6 +21,19 @@ def list_sessions(
     invoke.run("GET", "/api/chats", params={"days": days, "limit": limit})
 
 
+@app.command("latest-turn")
+def latest_turn(
+    session_id: str | None = typer.Option(
+        None,
+        "--session-id",
+        help="Restrict the lookup to one voice session.",
+    ),
+) -> None:
+    """Show the latest persisted user transcript and its complete turn."""
+    params = {"session_id": session_id} if session_id else None
+    invoke.run("GET", "/api/sessions/latest-turn", params=params)
+
+
 @app.command()
 def show(
     kind: str = typer.Argument(..., help="text | voice."),

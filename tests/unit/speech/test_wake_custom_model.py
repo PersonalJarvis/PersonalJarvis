@@ -48,13 +48,19 @@ def test_custom_onnx_uses_calibrated_higher_threshold(tmp_path) -> None:
     model.write_bytes(b"onnx")  # resolve only checks the path is a file
     plan = resolve_wake_plan(_cfg(str(model)), local_whisper_available=False)
     assert plan.engine == "custom_onnx"
-    # A calibrated custom model uses a HIGH threshold (~0.5 at mid sensitivity),
-    # NOT the 0.15 pretrained band that false-fires on breath/other words.
+    # A calibrated custom model uses a HIGH threshold (the balanced default,
+    # 0.50), NOT the 0.15 pretrained band that false-fires on breath/other
+    # words.
     assert plan.threshold >= 0.45, plan.threshold
 
 
-def test_custom_onnx_threshold_scales_strict_to_sensitive(tmp_path) -> None:
-    from jarvis.speech.wake_phrase import resolve_wake_plan
+def test_custom_onnx_threshold_is_pinned_regardless_of_legacy_sensitivity(
+    tmp_path,
+) -> None:
+    """Guard: the Sensitivity slider was removed 2026-07-10 — the custom_onnx
+    threshold is now the fixed CUSTOM_ONNX_THRESHOLD, no matter what a legacy
+    config carries in ``sensitivity`` (read-compat-only field)."""
+    from jarvis.speech.wake_phrase import CUSTOM_ONNX_THRESHOLD, resolve_wake_plan
 
     model = tmp_path / "m.onnx"
     model.write_bytes(b"onnx")
@@ -62,10 +68,8 @@ def test_custom_onnx_threshold_scales_strict_to_sensitive(tmp_path) -> None:
     def thr(s: float) -> float:
         return resolve_wake_plan(_cfg(str(model), s), local_whisper_available=False).threshold
 
-    strict, sensitive = thr(0.0), thr(1.0)
-    assert strict > sensitive, (strict, sensitive)   # 0.0 = least likely to fire
-    assert 0.60 <= strict <= 0.75
-    assert 0.25 <= sensitive <= 0.35
+    for s in (0.0, 0.3, 0.5, 0.7, 1.0):
+        assert thr(s) == pytest.approx(CUSTOM_ONNX_THRESHOLD), s
 
 
 # ---------------------------------------------------------------------------

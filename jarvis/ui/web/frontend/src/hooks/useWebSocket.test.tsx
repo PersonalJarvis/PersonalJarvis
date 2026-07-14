@@ -9,6 +9,7 @@ import { cleanup, render } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useWebSocket } from "@/hooks/useWebSocket";
+import { useI18nStore } from "@/i18n";
 import { useEventStore } from "@/store/events";
 
 /** Minimal mock for WebSocket (mirrors __tests__/ws.test.ts). */
@@ -74,7 +75,8 @@ describe("useWebSocket VoiceBootStatus handling", () => {
       protocol: "http:",
       host: "localhost:5173",
     };
-    useEventStore.setState({ voiceReady: false });
+    useEventStore.setState({ voiceReady: false, toasts: [] });
+    useI18nStore.getState().setUi("en", { push: false });
   });
 
   afterEach(() => {
@@ -101,6 +103,25 @@ describe("useWebSocket VoiceBootStatus handling", () => {
     MockWebSocket.last!.deliver(envelope("VoiceBootStatus", { ready: false, detail: "restart" }));
 
     expect(useEventStore.getState().voiceReady).toBe(false);
+  });
+
+  it("surfaces a mission tool approval request globally without arguments", async () => {
+    render(<Harness />);
+    await Promise.resolve();
+
+    MockWebSocket.last!.deliver(
+      envelope("ActionApprovalRequired", {
+        mission_id: "mission-42",
+        tool_name: "gmail/send_message",
+        args_preview: "private content must not enter the toast",
+      }),
+    );
+
+    const [toast] = useEventStore.getState().toasts;
+    expect(toast.kind).toBe("warning");
+    expect(toast.message).toContain("gmail/send_message");
+    expect(toast.message).toContain("mission-42");
+    expect(toast.message).not.toContain("private content");
   });
 });
 

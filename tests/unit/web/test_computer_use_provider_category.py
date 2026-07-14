@@ -136,6 +136,30 @@ def test_computer_use_switch_updates_existing_tier_in_memory(monkeypatch):
     assert app.state.config.brain.computer_use.provider == "gemini"
 
 
+def test_computer_use_switch_reactivates_shared_live_config(monkeypatch):
+    monkeypatch.setattr(cfg_mod, "get_secret", lambda *a, **kw: "sk-test")
+
+    app = _app()
+    reactivated: list[str] = []
+
+    class _Brain:
+        _config = app.state.config
+
+        @staticmethod
+        def reactivate_provider(provider: str) -> None:
+            reactivated.append(provider)
+
+    app.state.brain = _Brain()
+
+    resp = TestClient(app).post(
+        "/api/computer-use/switch",
+        json={"provider": "gemini", "persist": False},
+    )
+
+    assert resp.status_code == 200
+    assert reactivated == ["gemini"]
+
+
 def test_computer_use_switch_without_key_is_409(monkeypatch):
     monkeypatch.setattr(cfg_mod, "get_secret", lambda *a, **kw: None)
     client = TestClient(_app())

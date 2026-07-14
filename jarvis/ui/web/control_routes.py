@@ -233,7 +233,7 @@ def _apply_config_write(
     return _pending_envelope(pending)
 
 
-@router.put("/config", dependencies=[Depends(require_control_key)])
+@router.put("/config", dependencies=[Depends(require_control_key)], openapi_extra={"x-jarvis-dangerous": True})
 async def put_config(body: ConfigWriteBody, request: Request) -> dict[str, Any]:
     store = _pending_store(request)
     return _apply_config_write(store, body.path, body.value, body.reason)
@@ -346,7 +346,7 @@ async def list_secrets() -> dict[str, Any]:
     return {"secrets": items}
 
 
-@router.put("/secrets/{key}", dependencies=[Depends(require_control_key)])
+@router.put("/secrets/{key}", dependencies=[Depends(require_control_key)], openapi_extra={"x-jarvis-dangerous": True})
 async def set_secret_value(key: str, body: SecretBody, request: Request) -> dict[str, Any]:
     if key not in ALLOWED_SECRET_KEYS:
         raise HTTPException(status_code=404, detail=f"Unknown secret key: {key}")
@@ -384,7 +384,7 @@ async def get_api_key(request: Request) -> dict[str, Any]:
     return {"key": key, "masked": control_key.mask_control_key(key)}
 
 
-@router.post("/api-key/rotate", dependencies=[Depends(require_control_key_or_loopback)])
+@router.post("/api-key/rotate", dependencies=[Depends(require_control_key_or_loopback)], openapi_extra={"x-jarvis-dangerous": True})
 async def rotate_api_key(body: RotateBody) -> dict[str, Any]:
     if not body.confirm:
         raise HTTPException(

@@ -38,6 +38,19 @@ class _SlowTTS:
             yield AudioChunk(pcm=b"\x01\x00" * 240, sample_rate=24_000, timestamp_ns=0, channels=1)
 
 
+class _EmptyTTS:
+    async def synthesize(self, text, language_code="en-US", voice=None):
+        if False:
+            yield text, language_code, voice
+
+
+class _FailingTTS:
+    async def synthesize(self, text, language_code="en-US", voice=None):
+        if False:
+            yield text, language_code, voice
+        raise RuntimeError("server TTS is unavailable")
+
+
 def _pcm16_frame(amp: int, ms: int = 20, rate: int = STT_SAMPLE_RATE, freq: int = 300) -> bytes:
     """One raw int16 mono PCM frame at `rate` (what the browser AudioWorklet sends)."""
     n = rate * ms // 1000
@@ -69,7 +82,10 @@ def _make_session(sink, *, stt=None, brain=None, tts=None, rate=STT_SAMPLE_RATE,
         session_id="bv1",
         send_binary=sink.send_binary,
         send_json=sink.send_json,
-        stt=stt or FakeSTT(["Wie spät ist es?"]),  # i18n-allow: simulated German STT transcript under test
+        stt=stt
+        or FakeSTT(
+            ["Wie spät ist es?"]  # i18n-allow: simulated German STT transcript
+        ),
         brain=brain or FakeBrain("Es ist vierzehn Uhr."),
         tts=tts or FakeTTS(ms_per_char=2),
         browser_sample_rate=rate,
@@ -203,3 +219,65 @@ async def test_end_cancels_tasks():
     await asyncio.sleep(0)
     task = session._tts_task
     assert task is None or task.cancelled() or task.done()
+
+
+async def _complete_browser_tts_fallback(session, sink, text="Portable answer"):
+    task = asyncio.create_task(session._speak(text))
+    for _ in range(100):
+        await asyncio.sleep(0)
+        messages = sink.json_of("tts_browser_fallback")
+        if messages:
+            break
+    assert messages
+    await session.handle_control(
+        {"type": "tts_browser_done", "id": messages[0]["id"], "outcome": "ended"}
+    )
+    assert await task == 0
+    return messages[0]
+
+
+async def test_empty_server_tts_uses_acknowledged_browser_voice_fallback():
+    sink = _Sink()
+    session = _make_session(sink, tts=_EmptyTTS(), language_code="es-ES")
+
+    fallback = await _complete_browser_tts_fallback(session, sink)
+
+    assert fallback["text"] == "Portable answer"
+    assert fallback["language"] == "es-ES"
+    assert fallback["volume"] == 1.0
+    assert sink.binary == []
+    assert sink.json_of("tts_start") == []
+    assert sink.json_of("tts_end")[-1]["fallback"] == "browser"
+
+
+async def test_server_tts_failure_before_audio_uses_browser_voice_fallback():
+    sink = _Sink()
+    session = _make_session(sink, tts=_FailingTTS())
+
+    await _complete_browser_tts_fallback(session, sink)
+
+    assert sink.binary == []
+    assert sink.json_of("tts_browser_fallback")
+
+
+async def test_browser_voice_fallback_ack_is_scoped_to_current_id():
+    sink = _Sink()
+    session = _make_session(sink, tts=_EmptyTTS())
+    task = asyncio.create_task(session._speak("Scoped answer"))
+    for _ in range(100):
+        await asyncio.sleep(0)
+        messages = sink.json_of("tts_browser_fallback")
+        if messages:
+            break
+    assert messages
+
+    await session.handle_control(
+        {"type": "tts_browser_done", "id": "stale-turn", "outcome": "ended"}
+    )
+    await asyncio.sleep(0)
+    assert not task.done()
+
+    await session.handle_control(
+        {"type": "tts_browser_done", "id": messages[0]["id"], "outcome": "ended"}
+    )
+    assert await task == 0

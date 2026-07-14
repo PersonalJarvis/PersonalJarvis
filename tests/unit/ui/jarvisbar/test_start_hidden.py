@@ -1,35 +1,85 @@
-"""The ``start_hidden`` capability of the JarvisBar overlay.
-
-A persistent bar normally maps its Tk window the moment the mainloop runs (no
-``withdraw``); ``start_hidden=True`` lets a caller opt it into starting
-withdrawn instead. NOTE: the boot wiring no longer uses ``start_hidden`` for the
-persistent bar — the bar is visible immediately at boot, decoupled from the
-voice/wake path (see ``tests/unit/ui/jarvisbar/test_boot_visibility.py``). These
-tests pin the overlay's own start-withdrawn decision so the boot path stays
-headless-testable (no real Tk window needed).
-"""
+"""Jarvis Bar startup-visibility gate contract."""
 from __future__ import annotations
 
-from jarvis.ui.jarvisbar.overlay import JarvisBarOverlay
+from collections.abc import Callable
+
+from jarvis.ui.jarvisbar.overlay import JarvisBarOverlay, _create_hidden_tk_root
 
 
-def test_persistent_bar_with_start_hidden_starts_withdrawn() -> None:
-    bar = JarvisBarOverlay(persistent=True, start_hidden=True)
-    assert bar._start_hidden is True
-    assert bar._should_start_withdrawn() is True
+class _FakeRoot:
+    def __init__(self) -> None:
+        self.calls: list[str] = []
+
+    def withdraw(self) -> None:
+        self.calls.append("withdraw")
 
 
-def test_persistent_bar_default_does_not_start_withdrawn() -> None:
-    # Backward compatibility: without start_hidden a persistent bar is mapped
-    # immediately, exactly as before (e.g. the live swap / set_bar_persistent
-    # paths that explicitly show it after construction).
+class _FakeTk:
+    def __init__(self, root: _FakeRoot) -> None:
+        self.root = root
+
+    def Tk(self) -> _FakeRoot:  # noqa: N802 - mirrors tkinter's public name
+        return self.root
+
+
+def _capture_ui_calls(bar: JarvisBarOverlay) -> list[str]:
+    queued: list[str] = []
+
+    def _capture(fn: Callable[[], None]) -> None:
+        queued.append(fn.__name__)
+
+    bar._root = object()  # noqa: SLF001 - a non-None headless root sentinel
+    bar._enqueue_ui = _capture  # type: ignore[method-assign]
+    return queued
+
+
+def test_persistent_bar_maps_immediately_without_startup_gate() -> None:
     bar = JarvisBarOverlay(persistent=True)
-    assert bar._start_hidden is False
+
     assert bar._should_start_withdrawn() is False
 
 
-def test_non_persistent_bar_starts_withdrawn_regardless() -> None:
-    # The non-persistent bar already starts hidden (pops on a session); the new
-    # flag must not change that.
-    bar = JarvisBarOverlay(persistent=False)
+def test_startup_gated_persistent_bar_starts_withdrawn() -> None:
+    bar = JarvisBarOverlay(persistent=True, startup_gated=True)
+
     assert bar._should_start_withdrawn() is True
+
+
+def test_non_persistent_bar_starts_withdrawn() -> None:
+    bar = JarvisBarOverlay(persistent=False)
+
+    assert bar._should_start_withdrawn() is True
+
+
+def test_early_show_updates_mode_without_bypassing_startup_gate() -> None:
+    bar = JarvisBarOverlay(persistent=True, startup_gated=True)
+    queued = _capture_ui_calls(bar)
+
+    bar.show("listen")
+    bar.reassert_z_order()
+
+    assert bar._mode == "listen"
+    assert queued == []
+
+    assert bar.release_startup_gate() is True
+    assert queued == ["_do_show"]
+    assert bar.release_startup_gate() is False
+    assert queued == ["_do_show"]
+
+
+def test_non_persistent_release_stays_hidden_until_real_session() -> None:
+    bar = JarvisBarOverlay(persistent=False, startup_gated=True)
+    queued = _capture_ui_calls(bar)
+
+    assert bar.release_startup_gate() is True
+    assert queued == []
+
+    bar.show("listen")
+    assert queued == ["_do_show"]
+
+
+def test_new_tk_root_is_withdrawn_before_configuration() -> None:
+    root = _FakeRoot()
+
+    assert _create_hidden_tk_root(_FakeTk(root)) is root
+    assert root.calls == ["withdraw"]

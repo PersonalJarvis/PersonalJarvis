@@ -1,16 +1,14 @@
-"""wiki: search and read the knowledge wiki (/api/wiki).
-
-Note: deterministic save-fact (wiki-ingest) is a brain-tool, not a REST
-endpoint, so it has no curated command here — use the running assistant for
-ingestion. Search and read are exposed.
-"""
+"""wiki: search, read, and explicitly update the knowledge wiki (/api/wiki)."""
 from __future__ import annotations
 
 import typer
 
-from jarvis.cli_ctl import invoke
+from jarvis.cli_ctl import invoke, options
 
-app = typer.Typer(no_args_is_help=True, help="Knowledge wiki: recall, page, tree.")
+app = typer.Typer(
+    no_args_is_help=True,
+    help="Knowledge wiki: recall, pages, health, and search-index repair.",
+)
 
 
 @app.command()
@@ -41,3 +39,39 @@ def vaults() -> None:
 def health() -> None:
     """Show wiki subsystem health: bootstrap, last write, chain failures, backlog (spec A5)."""
     invoke.run("GET", "/api/wiki/health")
+
+
+@app.command()
+def ingest(
+    text: str = typer.Argument(..., help="Self-contained fact or summary to store."),
+    source: str = typer.Option(
+        "cli:wiki-ingest",
+        "--source",
+        help="Short audit label for the content source.",
+    ),
+    dry_run: bool = options.dry_opt(),
+) -> None:
+    """Store a fact through the guarded Wiki curator."""
+    invoke.run(
+        "POST",
+        "/api/wiki/ingest",
+        body={"text": text, "source": source},
+        dry_run=dry_run,
+        dangerous=False,
+    )
+
+
+@app.command()
+def reindex(
+    preview: bool = typer.Option(
+        False,
+        "--preview",
+        help="Inspect current and expected counts without rebuilding the index.",
+    ),
+) -> None:
+    """Rebuild the wiki search index from the active vault."""
+    invoke.run(
+        "POST",
+        "/api/wiki/reindex",
+        params={"dry_run": str(preview).lower()},
+    )

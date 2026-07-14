@@ -1,17 +1,13 @@
-"""Speech-Pipeline mit Call/Hangup-State-Machine + Parallel-Wake-Detection.
+"""Speech pipeline with call/hangup state and parallel wake detection.
 
-Wake-Detection läuft im IDLE-State über ZWEI parallele Pfade auf demselben
-Mic-Stream (Fanout):
-  1. openWakeWord — schnell (15-30 ms Latenz), fragil bei deutscher Aussprache
-  2. Whisper-Wake — robust (800-1200 ms Latenz), versteht Deutsch nativ
+Wake detection runs in IDLE through two paths sharing one microphone fanout:
 
-Acknowledgment-Feedback:
-  - Sofort beim Wake/Call: kurzer Chime (180 ms, in-memory generiert)
-  - Dann pre-renderter "Ja?"-Ton (beim Startup einmal via Gemini-TTS)
-  - Dann ACTIVE-State
+1. openWakeWord -- fast (15-30 ms), but less robust across pronunciations.
+2. Whisper wake -- robust (800-1200 ms) and natively multilingual.
 
-Hotkeys (call / hangup) sind parallel zum Wake IMMER aktiv — global-hotkeys
-registriert Windows-weite Low-Level-Hooks.
+Activation feedback is visual while capture is live, avoiding both an input
+dead zone and speaker echo in the recorded utterance. Global call/hangup
+hotkeys remain active alongside wake detection.
 """
 from __future__ import annotations
 
@@ -22,9 +18,11 @@ import logging
 import os
 import random
 import re
+import threading
 import time
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
@@ -50,11 +48,12 @@ from jarvis.core.events import (
     AudioOutFirst,
     BrainTTFT,
     DictationTranscript,
-    LatencyTurnComplete,
-    ListeningStarted,
-    ObservationCaptured,
     JarvisAgentAnnouncement,
     JarvisAgentBackgroundCompleted,
+    LatencyTurnComplete,
+    ListeningStarted,
+    MessageSent,
+    ObservationCaptured,
     SpeechSpoken,
     TranscriptFinal,
     TranscriptionUpdate,
@@ -76,7 +75,6 @@ from jarvis.core.turn_language import (
 from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
 from jarvis.plugins.tts.gemini_flash_tts import GEMINI_TTS_SAMPLE_RATE, GeminiFlashTTS
 from jarvis.plugins.wake.openwakeword_provider import (
-    PRODUCTION_WAKE_THRESHOLD,
     OpenWakeWordProvider,
 )
 from jarvis.sessions.constants import (
@@ -135,6 +133,48 @@ if TYPE_CHECKING:
 
 
 log = logging.getLogger("jarvis.speech.pipeline")
+
+
+async def _run_voice_critical_thread(fn: Callable[[], Any]) -> Any:
+    """Run blocking voice startup work outside the shared default executor.
+
+    Wake and local-STT implementations legitimately use ``asyncio.to_thread``
+    for native inference. A slow or un-cancellable inference can occupy every
+    default-pool worker, so queueing realtime session assembly there creates a
+    false LISTENING state: the microphone is buffered, but the provider cannot
+    begin accepting that audio until a worker becomes free. A fresh daemon
+    thread keeps this voice-critical control path independent and cannot hold
+    process shutdown open if a platform credential backend itself wedges.
+    """
+    loop = asyncio.get_running_loop()
+    future: asyncio.Future[Any] = loop.create_future()
+
+    def _resolve(setter: Callable[[Any], None], value: Any) -> None:
+        if not future.done():
+            setter(value)
+
+    def _runner() -> None:
+        try:
+            result = fn()
+        except BaseException as exc:  # noqa: BLE001 - relay to async caller
+            callback = future.set_exception
+            value: Any = exc
+        else:
+            callback = future.set_result
+            value = result
+        try:
+            loop.call_soon_threadsafe(_resolve, callback, value)
+        except RuntimeError:
+            # The owning loop may close while an un-cancellable native call is
+            # still unwinding. The daemon thread can then finish silently.
+            pass
+
+    threading.Thread(
+        target=_runner,
+        name="jarvis-voice-critical",
+        daemon=True,
+    ).start()
+    return await future
 
 
 async def _gather_timed(
@@ -324,6 +364,25 @@ _STT_UNAVAILABLE_PHRASE: dict[str, str] = {
     "de": "Entschuldige, ich habe dich akustisch gerade nicht verstanden. Sag es bitte noch einmal.",
     "en": "Sorry, I didn't catch that just now. Could you say it again?",
     "es": "Perdona, no te he entendido bien ahora mismo. ¿Puedes repetirlo, por favor?",
+}
+
+# Honest cross-family fallback when a requested duplex provider cannot open a
+# session. The classic pipeline remains available for this voice call so a
+# missing key, exhausted balance, unsupported model, or network outage never
+# turns the Realtime switch into a silent dead end (AP-22/AP-23).
+_REALTIME_UNAVAILABLE_PHRASE: dict[str, str] = {
+    "de": (
+        "Die Realtime-Verbindung ist gerade nicht verfügbar. "
+        "Ich wechsle für diese Sitzung zur klassischen Sprachverarbeitung."
+    ),
+    "en": (
+        "The realtime connection is unavailable right now. "
+        "I am switching this session to the classic voice pipeline."
+    ),
+    "es": (
+        "La conexión en tiempo real no está disponible ahora mismo. "
+        "Cambiaré esta sesión al sistema de voz clásico."
+    ),
 }
 
 # AD-OE6 zero-silent-drop fallback for a brain TURN that times out. Live bug
@@ -538,6 +597,160 @@ def _stt_retry_delay(exc: BaseException | None, attempt: int) -> float:
             except (TypeError, ValueError):
                 pass
     return min(_STT_RETRY_CAP_S, _STT_RETRY_BASE_S * (2 ** attempt))
+
+
+_SESSION_START_BUFFER_MAX_BYTES = 16_000 * 2 * 30  # 30 s of mono PCM16
+
+
+def _feed_live_mic_level(chunk: AudioChunk) -> None:
+    """Publish one captured frame's RMS to the native overlay level channel."""
+    if not mic_level.has_subscribers():
+        return
+    samples = pcm_bytes_to_np(chunk.pcm)
+    if samples.size:
+        mic_level.feed(float(np.sqrt(np.mean(np.square(samples)))))
+
+
+class _SessionInputBuffer:
+    """Replayable bounded handoff for one continuously captured mic stream.
+
+    Capture begins before ``VoiceSessionStarted`` is published, so the Jarvis
+    Bar never advertises LISTENING ahead of the microphone. Frames arriving
+    while start subscribers, realtime session assembly, or a provider handshake
+    run are retained in order. Each new consumer starts
+    at sequence zero, allowing classic STT to replay the opening if a realtime
+    provider fails before accepting it. The byte cap is time-format based; if a
+    consumer ever falls behind it, the stream fails explicitly instead of
+    silently dropping the beginning of the user's command.
+    """
+
+    def __init__(
+        self,
+        *,
+        initial: tuple[AudioChunk, ...] = (),
+        max_buffer_bytes: int = _SESSION_START_BUFFER_MAX_BYTES,
+    ) -> None:
+        self._chunks: deque[tuple[int, AudioChunk]] = deque()
+        self._max_buffer_bytes = max(1, int(max_buffer_bytes))
+        self._retained_bytes = 0
+        self._next_seq = 0
+        self._updated = asyncio.Event()
+        self._pump_task: asyncio.Task[None] | None = None
+        self._error: BaseException | None = None
+        self._source_done = False
+        self._closed = False
+        self._active_consumers = 0
+        self.released = asyncio.Event()
+        for chunk in initial:
+            self._append(chunk, publish_level=False)
+
+    def start(self, source: AsyncIterator[AudioChunk]) -> None:
+        if self._pump_task is not None:
+            return
+        self._pump_task = asyncio.create_task(
+            self._pump(source), name="voice-session-mic-buffer"
+        )
+
+    def put(self, chunk: AudioChunk) -> None:
+        if not self._closed:
+            # While no voice engine consumes the stream, this buffer is the
+            # only place that can animate the visible startup bar. An active
+            # classic/realtime consumer owns level feeding; switching back here
+            # between consumers keeps fallback teardown from flattening the bar.
+            self._append(chunk, publish_level=self._active_consumers == 0)
+
+    def _append(self, chunk: AudioChunk, *, publish_level: bool) -> None:
+        chunk_bytes = len(chunk.pcm)
+        while (
+            self._chunks
+            and self._retained_bytes + chunk_bytes > self._max_buffer_bytes
+        ):
+            _seq, dropped = self._chunks.popleft()
+            self._retained_bytes = max(0, self._retained_bytes - len(dropped.pcm))
+        self._chunks.append((self._next_seq, chunk))
+        self._retained_bytes += chunk_bytes
+        self._next_seq += 1
+        if publish_level:
+            _feed_live_mic_level(chunk)
+        self._updated.set()
+
+    async def _pump(self, source: AsyncIterator[AudioChunk]) -> None:
+        try:
+            async for chunk in source:
+                self.put(chunk)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001 - replay on the consumer
+            self.finish(error=exc)
+        finally:
+            self.finish()
+
+    def finish(self, *, error: BaseException | None = None) -> None:
+        """Mark a manually fed source as terminal and wake its consumers."""
+        if error is not None and self._error is None:
+            self._error = error
+        self._source_done = True
+        self._updated.set()
+
+    async def stream(self) -> AsyncIterator[AudioChunk]:
+        self._active_consumers += 1
+        cursor = 0
+        try:
+            while True:
+                if self._chunks:
+                    earliest = self._chunks[0][0]
+                    if cursor < earliest:
+                        raise RuntimeError(
+                            "Voice input exceeded the 30-second replay window; "
+                            "refusing to drop the command prefix."
+                        )
+                    offset = cursor - earliest
+                    if 0 <= offset < len(self._chunks):
+                        _seq, chunk = self._chunks[offset]
+                        cursor += 1
+                        yield chunk
+                        continue
+                if self._closed or self._source_done:
+                    if self._error is not None:
+                        raise self._error
+                    return
+                self._updated.clear()
+                if self._chunks and cursor < self._next_seq:
+                    continue
+                await self._updated.wait()
+        finally:
+            self._active_consumers = max(0, self._active_consumers - 1)
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._updated.set()
+        self.released.set()
+        task = self._pump_task
+        self._pump_task = None
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+
+
+@asynccontextmanager
+async def _wake_capture_with_release(
+    capture: MicrophoneCapture,
+    released: asyncio.Event,
+) -> AsyncIterator[MicrophoneCapture]:
+    """Signal only after the wake microphone has fully closed."""
+    released.clear()
+    try:
+        async with capture as mic:
+            yield mic
+    finally:
+        released.set()
 
 
 class PipelineState(enum.Enum):
@@ -866,10 +1079,10 @@ def _looks_like_complete_smalltalk(text: str) -> bool:
 
 
 async def _queue_iter(q: asyncio.Queue) -> AsyncIterator[AudioChunk]:
-    """Hilfs-Adapter: Queue → AsyncIterator (für die Wake-Detektoren)."""
+    """Adapt a queue into an async iterator for wake detectors."""
     while True:
         chunk = await q.get()
-        if chunk is None:  # Poison-Pill
+        if chunk is None:  # Sentinel
             return
         yield chunk
 
@@ -1090,6 +1303,19 @@ class SpeechPipeline:
         except Exception as exc:  # noqa: BLE001 — corrections must never break voice boot
             log.warning("STT dictionary wrapper unavailable: %s", exc)
         self._tts = tts or _default_tts_for_pipeline(config)
+        # Keep the user's activation preference separate from the detector
+        # selected by the current wake plan. A phrase/model can change while
+        # always-on listening is disabled; that must update the prepared plan
+        # without silently opening the microphone. Older/duck-typed callers
+        # without a TriggerConfig keep the legacy behaviour where a later
+        # set_wake_plan() arms the resolved detector.
+        trigger_cfg = getattr(config, "trigger", None)
+        configured_wake_enabled = getattr(trigger_cfg, "wake_word_enabled", None)
+        self._wake_word_enabled: bool | None = (
+            bool(configured_wake_enabled)
+            if configured_wake_enabled is not None
+            else None
+        )
         self._openwakeword_enabled = enable_openwakeword
         # Custom-wake-word plan (jarvis.speech.wake_phrase.WakeWordPlan) or None.
         # When None, the wake path is byte-identical to the legacy "Hey Jarvis"
@@ -1120,7 +1346,9 @@ class SpeechPipeline:
             self._wake = VoskKwsProvider(
                 phrase=wake_plan.phrase,
                 model_path=wake_plan.vosk_model_path or "",
+                model_paths=getattr(wake_plan, "vosk_model_paths", ()),
                 keyword=wake_plan.oww_keyword,
+                early_candidate_listener=self._vosk_early_candidate_listener,
             )
         elif wake_plan is not None:
             self._wake = OpenWakeWordProvider(
@@ -1418,12 +1646,50 @@ class SpeechPipeline:
         self._state = PipelineState.IDLE
         self._call_event = asyncio.Event()
         self._hangup_event = asyncio.Event()
-        # Optionale Event-Bus-Integration — wenn None, sind alle
-        # _transition/_emit-Calls no-ops (Rueckwaertskompatibilitaet)
+        # Wake and session capture use the same physical input device. A wake
+        # stream must close before the session stream opens, while frames heard
+        # after the visible wake candidate are retained for the session.
+        self._wake_capture_released = asyncio.Event()
+        self._wake_capture_released.set()
+        self._wake_stop_event = asyncio.Event()
+        self._wake_cancel_event = asyncio.Event()
+        self._wake_handoff_ready = asyncio.Event()
+        self._wake_handoff_buffer: _SessionInputBuffer | None = None
+        self._wake_preroll_active = False
+        self._wake_preroll_confirmed = False
+        # Candidate verification is bounded; retain its short post-reveal
+        # window in full so the first spoken word can never fall off a
+        # chunk-count deque before the live handoff is accepted.
+        self._pending_session_preroll: deque[AudioChunk] = deque()
+        # ``request_hangup`` is also called by the JarvisBar's dedicated Tk
+        # thread. asyncio primitives are not thread-safe, so ``run()`` records
+        # their owning loop and external callers marshal the hangup onto it.
+        self._runtime_loop: asyncio.AbstractEventLoop | None = None
+        # A thread-safe edge latch keeps repeated X clicks from queueing the
+        # expensive hard-stop path more than once during the same teardown.
+        self._external_hangup_pending = threading.Event()
+        # Distinguish a close that arrived after a wake stream was offered from
+        # an older no-op hangup while truly idle. Both otherwise share the same
+        # asyncio hangup event when the state loop begins.
+        self._wake_handoff_hangup_pending = threading.Event()
+        self._current_voice_session_id: str | None = None
+        # Configured voice mode and effective in-flight engine are deliberately
+        # separate. A settings write can happen while a call is already open;
+        # without this runtime state the UI used to report "Realtime" while the
+        # existing call continued through classic STT -> Brain -> TTS.
+        self._active_voice_mode: str | None = None
+        self._active_realtime_provider: str = ""
+        self._active_realtime_model: str = ""
+        self._active_realtime_handle: Any | None = None
+        self._voice_engine_transitioning: bool = False
+        self._reopen_after_engine_change: bool = False
+        self._engine_change_reason: str = ""
+        # Optional event-bus integration. With no bus, transition and emit
+        # calls are backward-compatible no-ops.
         self._bus = bus
         self._supervisor = supervisor
-        # Permanent-Vision (Wave-2 B7): optional injected. Bei None sind alle
-        # Vision-Hooks no-ops — Pipeline laeuft unveraendert wie vorher.
+        # Permanent Vision (Wave 2 B7) is optional. Without an injected
+        # provider, every vision hook is a no-op.
         self._config = config
         self._vision_provider = vision_provider
         self._activation_gate = activation_gate or (lambda: True)
@@ -1472,7 +1738,7 @@ class SpeechPipeline:
         # mid-utterance. Preambles are dropped, not parked — they are stale by
         # the time the user finishes. See ``_on_announcement`` + ``_set_turn_state``.
         self._deferred_announcements: list[AnnouncementRequested] = []
-        # Pre-rendered ACK ("Ja?") als PCM-Bytes — beim Warm-up gefüllt
+        # Optional pre-rendered acknowledgement PCM, populated during warmup.
         self._ack_pcm: bytes = b""
         # Pre-rendered Task-Ack-Phrasen ("Sofort.", "Right away." …) als PCM-Cache.
         # Key: (lang, phrase_text) → PCM-Bytes. Abspielrate siehe GeminiFlashTTS (24 kHz).
@@ -1715,20 +1981,13 @@ class SpeechPipeline:
                 reload_event.set()
 
     def _wake_poll_interval(self) -> float:
-        """The stt_match wake poll interval, derived from the user's Sensitivity
-        slider (``[trigger.wake_word].sensitivity``). Higher sensitivity polls
-        more often, so a spoken wake is picked up sooner. Defensive: any missing
-        field falls back to the balanced default. This is what makes the slider
-        actually DO something on the local-Whisper transcript path (it never
-        scored against the openWakeWord threshold the slider used to feed)."""
-        from jarvis.speech.wake_phrase import sensitivity_to_poll_interval
+        """The stt_match wake poll interval — always the fastest calibrated
+        value (the user-facing Sensitivity slider was removed 2026-07-10;
+        "always spawn at maximum speed on every OS" is now unconditional, not
+        a slider-derived choice)."""
+        from jarvis.speech.wake_phrase import WAKE_POLL_INTERVAL_S
 
-        ww = getattr(getattr(self, "_config", None), "trigger", None)
-        ww = getattr(ww, "wake_word", None)
-        try:
-            return sensitivity_to_poll_interval(getattr(ww, "sensitivity", 0.5))
-        except (TypeError, ValueError):
-            return sensitivity_to_poll_interval(0.5)
+        return WAKE_POLL_INTERVAL_S
 
     def set_wake_plan(self, plan: Any) -> None:
         """Live-apply a resolved WakeWordPlan — no app/pipeline restart.
@@ -1750,16 +2009,32 @@ class SpeechPipeline:
         live-switch contract. Safe to call from the FastAPI handler thread — it
         shares the pipeline's event loop.
         """
+        wake_preference = getattr(self, "_wake_word_enabled", None)
+        wake_enabled = True if wake_preference is None else bool(wake_preference)
         prev = getattr(self._wake_plan, "oww_keyword", None)
         self._wake_plan = plan
         self._wake_matcher = getattr(plan, "matcher", None)
         self._wake_phrase_label = getattr(plan, "phrase", None) or "the wake word"
         engine = getattr(plan, "engine", "openwakeword")
 
+        # A Faster-Whisper wake provider reads its phrase bias on every call.
+        # Update it through a capability method so switching between arbitrary
+        # stt_match phrases cannot keep transcribing with the old wake word.
+        # Clear the bias on non-stt plans because the same provider can also
+        # serve the live transcript preview.
+        set_initial_prompt = getattr(self._stt, "set_initial_prompt", None)
+        if callable(set_initial_prompt):
+            prompt = getattr(plan, "phrase", None) if engine == "stt_match" else None
+            set_initial_prompt(prompt)
+
         # Build a local Whisper engine on demand for the stt_match path. The
         # provider __init__ is light (the model loads lazily on first
         # transcription), so this does not block the caller.
-        if getattr(plan, "needs_local_whisper", False) and self._stt is None:
+        if (
+            wake_enabled
+            and getattr(plan, "needs_local_whisper", False)
+            and self._stt is None
+        ):
             try:
                 from jarvis.plugins.stt import build_wake_whisper
 
@@ -1825,9 +2100,11 @@ class SpeechPipeline:
             self._wake = VoskKwsProvider(
                 phrase=plan.phrase,
                 model_path=getattr(plan, "vosk_model_path", None) or "",
+                model_paths=getattr(plan, "vosk_model_paths", ()),
                 keyword=plan.oww_keyword,
+                early_candidate_listener=self._vosk_early_candidate_listener,
             )
-            self._openwakeword_enabled = True
+            self._openwakeword_enabled = wake_enabled
             if self._whisper_wake is not None and self._wake_matcher is not None:
                 self._whisper_wake._pattern = self._wake_matcher  # noqa: SLF001
             self._whisper_wake_enabled = False
@@ -1840,7 +2117,7 @@ class SpeechPipeline:
                 # quiet breath to full scale and false-fires (see the ctor site).
                 gain_normalization=engine != "custom_onnx",
             )
-            self._openwakeword_enabled = True
+            self._openwakeword_enabled = wake_enabled
             # OWW stands alone for a live switch (lightweight default). The heavy
             # RollingWhisperWake backstop is a boot-time opt-in (heavy_local_whisper),
             # not part of a live wake-word change — turn it off here so switching
@@ -1850,7 +2127,10 @@ class SpeechPipeline:
                 self._whisper_wake._pattern = self._wake_matcher  # noqa: SLF001
             self._whisper_wake_enabled = False
         else:  # stt_match — arbitrary phrase via local-Whisper transcript match
-            if self._stt is not None:
+            if not wake_enabled:
+                self._openwakeword_enabled = False
+                self._whisper_wake_enabled = False
+            elif self._stt is not None:
                 self._openwakeword_enabled = False
                 self._whisper_wake = RollingWhisperWake(
                     self._stt,
@@ -1886,6 +2166,24 @@ class SpeechPipeline:
             self._whisper_wake_enabled,
         )
         # Re-arm the running wake loop with the new detectors.
+        self._wake_reload_event.set()
+
+    def set_wake_activation(self, enabled: bool) -> None:
+        """Enable or park always-on wake listening without restarting.
+
+        The configured plan stays resident while disabled so hotkeys and the
+        rest of the audio pipeline remain untouched. Enabling re-applies that
+        plan, lazily preparing any detector it needs, and both transitions wake
+        the parked/running wake loop through the existing reload event.
+        """
+        self._wake_word_enabled = bool(enabled)
+        plan = getattr(self, "_wake_plan", None)
+        if self._wake_word_enabled and plan is not None:
+            self.set_wake_plan(plan)
+            return
+
+        self._openwakeword_enabled = False
+        self._whisper_wake_enabled = False
         self._wake_reload_event.set()
 
     def set_keybinds(
@@ -2673,6 +2971,25 @@ class SpeechPipeline:
         exponiert. Der stumme ``AttributeError`` machte Sub-Agent-Announcements
         unhoerbar (Silent-Failure, entdeckt 2026-04-23).
         """
+        event_kind = getattr(event, "kind", None)
+        is_readback = event_kind in _READBACK_KINDS
+        if is_readback:
+            # Muting controls audio, not conversational memory. A mission that
+            # finishes while muted must still be available to the next follow-up.
+            session = getattr(self, "_active_realtime_handle", None)
+            remember = getattr(session, "remember_announcement_context", None)
+            if callable(remember):
+                try:
+                    remember(
+                        text=event.text,
+                        spoken_kind=event_kind,
+                        detail=getattr(event, "detail", None),
+                    )
+                except Exception:  # noqa: BLE001 -- memory mirror is best-effort
+                    log.debug(
+                        "Realtime announcement context mirror failed",
+                        exc_info=True,
+                    )
         if getattr(self, "_muted", False):
             log.debug("Announcement suppressed — voice muted: %r", event.text)
             return
@@ -2688,7 +3005,6 @@ class SpeechPipeline:
         # preamble / untagged late announcement stays dropped. Live bug
         # 2026-06-14: a heavy research mission's result was silently dropped
         # because the user hung up 13 s after the optimistic ACK.
-        is_readback = getattr(event, "kind", None) in _READBACK_KINDS
         if hangup is not None and hangup.is_set() and not is_readback:
             log.info(
                 "Announcement nach Hangup unterdrückt: %r", event.text[:80]
@@ -2720,7 +3036,6 @@ class SpeechPipeline:
                 event.text,
             )
             return
-        event_kind = getattr(event, "kind", None)
         is_preamble = event_kind == "preamble"
         is_progress = event_kind == "progress"
         # 2026-05-26 cross-surface voice incoherence guard. After an
@@ -2928,6 +3243,55 @@ class SpeechPipeline:
                     return
             self._last_preamble_spoken = (spoken_text, now_monotonic)
             spoken_times.append(now_monotonic)
+        if await self._deliver_announcement_via_realtime(
+            event,
+            text=scrubbed.cleaned,
+            language=ann_lang,
+        ):
+            # The live session publishes SpeechSpoken with the wording it
+            # actually generated. Emitting or synthesizing here would create a
+            # second, classic-pipeline voice and duplicate the readback.
+            self._last_announcement_spoken_monotonic = time.monotonic()
+            return
+        if self._realtime_session_owns_voice():
+            # The live call rejected the delivery only because it is BUSY
+            # (its delegate turn is thinking). The classic TTS voice must
+            # never speak into a healthy realtime call — the user hears a
+            # sudden second voice/engine (forensic 2026-07-13 17:39, the
+            # wiki preamble). Ephemeral lines are stale by the time the
+            # live model could speak them → drop; owed readbacks are parked
+            # and replayed at the next turn boundary, where the idle live
+            # model accepts them (or the call has ended and classic TTS is
+            # the honest remaining surface).
+            if is_preamble or is_progress:
+                log.info(
+                    "Announcement dropped — a live realtime call owns the "
+                    "voice: %r",
+                    event.text[:80],
+                )
+                return
+            self._deferred_announcements.append(event)
+            log.info(
+                "Announcement deferred — a live realtime call owns the "
+                "voice: %r",
+                event.text[:80],
+            )
+            return
+        # Re-check the hangup gate at the moment of SPEAKING, not only at
+        # arrival: the user can hang up during the seconds between the two
+        # (scrub, dedup, the realtime-delivery probe), and the entry check
+        # has already passed by then. A stale ephemeral line then plays into
+        # or right after the ended call as a phantom second voice (forensic
+        # 2026-07-13 18:37: hotkey hang-up landed 1.2 s after the preamble
+        # entered this handler). Owed readbacks still punch through, exactly
+        # like at the entry gate (AD-OE5/OE6).
+        if hangup is not None and hangup.is_set() and not is_readback:
+            log.info(
+                "Announcement dropped — session hung up while it was being "
+                "prepared: %r",
+                event.text[:80],
+            )
+            return
         # We are now committed to actually speaking this announcement (past every
         # suppression / defer / empty guard). Record it as voice activity so the
         # idle-timeout branch in ``_active_session`` re-arms a fresh window: an
@@ -2997,6 +3361,59 @@ class SpeechPipeline:
             if animate:
                 hungup = hangup is not None and hangup.is_set()
                 await self._transition("IDLE" if hungup else "LISTENING")
+
+    def _realtime_session_owns_voice(self) -> bool:
+        """True while an accepted realtime call is the only valid voice.
+
+        Provider health is deliberately irrelevant here. The handle is cleared
+        only after the realtime lifecycle unwinds; until then, classic TTS must
+        stay silent rather than becoming a second voice inside the same call.
+        """
+        if getattr(self, "_active_voice_mode", None) != "realtime":
+            return False
+        session = getattr(self, "_active_realtime_handle", None)
+        return session is not None
+
+    async def _deliver_announcement_via_realtime(
+        self,
+        event: AnnouncementRequested,
+        *,
+        text: str,
+        language: str,
+    ) -> bool:
+        """Offer a standardized readback to the active duplex model.
+
+        The live wrapper rejects busy, failed, or unsupported sessions. While
+        the accepted realtime handle still exists, ``_on_announcement`` drops
+        or defers that output; only a fully unwound call may use classic TTS.
+        """
+        if getattr(self, "_active_voice_mode", None) != "realtime":
+            return False
+        session = getattr(self, "_active_realtime_handle", None)
+        deliver = getattr(session, "deliver_announcement", None)
+        if not callable(deliver):
+            return False
+        try:
+            accepted = bool(
+                await deliver(
+                    text=text,
+                    language=language,
+                    spoken_kind=_announcement_spoken_kind(
+                        getattr(event, "kind", None)
+                    ),
+                    detail=getattr(event, "detail", None),
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 -- classic path is load-bearing
+            log.warning("Realtime announcement handoff failed: %s", exc)
+            return False
+        if accepted:
+            log.info(
+                "Announcement handed to active realtime provider %s: %r",
+                getattr(self, "_active_realtime_provider", "") or "unknown",
+                text[:80],
+            )
+        return accepted
 
     async def _await_ack_turn_commit(self, grace_ms: int) -> bool:
         """Poll the turn-state for up to ``grace_ms``; True only if it stays
@@ -3500,6 +3917,10 @@ class SpeechPipeline:
     # ------------------------------------------------------------------
 
     async def run(self) -> None:
+        # Capture the loop that owns ``_call_event`` / ``_hangup_event`` before
+        # warm-up. UI controls can become clickable while warm-up is still in
+        # progress, so recording it later would leave a small unsafe window.
+        self._runtime_loop = asyncio.get_running_loop()
         await self._warmup()
         # Permanent-Vision: Background-Refresh-Loop hier im Pipeline-Event-Loop
         # starten. Ohne das kriegt `VisionContextProvider.current()` nie einen
@@ -3529,7 +3950,7 @@ class SpeechPipeline:
             hotkey_bindings["ptt"] = list(self._ptt_hotkeys)
             ptt_events.add("ptt")
         log.info(
-            "Pipeline bereit. CALL=[%s] PTT=[%s] HANGUP=[%s] OWW=%s WAKE=%s (threshold=%.2f) "
+            "Pipeline ready. CALL=[%s] PTT=[%s] HANGUP=[%s] OWW=%s WAKE=%s (threshold=%.2f) "
             "WHISPER-WAKE=%s TURN-MODE=%s",
             ", ".join(self._call_hotkeys),
             ", ".join(self._ptt_hotkeys) or "off",
@@ -3579,7 +4000,9 @@ class SpeechPipeline:
             if wake_task is not None:
                 wake_task.add_done_callback(_log_task_exit)
             else:
-                log.info("Wake-Listener deaktiviert; Mikrofon bleibt bis zum Hotkey-Call geschlossen.")
+                log.info(
+                    "Wake listener disabled; microphone stays closed until a hotkey call."
+                )
             main_task = asyncio.create_task(self._state_loop(), name="state")
             main_task.add_done_callback(_log_task_exit)
 
@@ -4020,7 +4443,7 @@ class SpeechPipeline:
         log.info("🎙 PTT DOWN — recording (hold to talk, release to send)")
         self._ptt_mode = True
         self._ptt_release_event.clear()
-        self._call_event.set()
+        self._arm_call_event()
 
     def _on_ptt_release(self) -> None:
         """Push-to-talk UP edge — stop recording and submit what was held.
@@ -4042,10 +4465,11 @@ class SpeechPipeline:
         {cid}/speak``) calls this to start a session that already remembers a
         past conversation — functionally "Hey Jarvis", but with seeded context.
 
-        Same-loop, in-process: uvicorn and the pipeline share the orchestrator
-        event loop (see ``server.py`` / ``desktop_app.py``), so this runs on
-        the pipeline's own loop and may set ``_call_event`` directly — exactly
-        as the wake/PTT arming paths do.
+        Web routes run on the pipeline loop, while the native Jarvis Bar calls
+        this from its dedicated Tk thread. The final arming edge is therefore
+        marshalled through the owner loop when necessary; setting an
+        ``asyncio.Event`` directly from Tk can leave the selector asleep until
+        unrelated I/O happens to wake it.
 
         Returns ``False`` (no-op) when a session is already active or arming,
         or when the desktop app is not visible (``_activation_allowed``). The
@@ -4073,10 +4497,115 @@ class SpeechPipeline:
         self._ptt_mode = False  # wake-style, not raw PTT recording
         self._last_wake_keyword = "chat_resume"
         log.info(
-            "📞 request_voice_session — arming wake-style session (seeded=%d turns)",
+            "Voice session requested (wake-style, seeded=%d turns).",
             len(seed_messages or []),
         )
+        return self._arm_call_event()
+
+    def _arm_call_event(self) -> bool:
+        """Set the call edge on its owning asyncio loop.
+
+        Native overlay callbacks run on a Tk thread. ``asyncio.Event.set`` may
+        flip the flag from that thread without waking the loop's selector, so
+        the state task resumes only after an unrelated timer or socket event.
+        ``call_soon_threadsafe`` provides both the wakeup and the memory edge.
+        Same-loop callers retain the direct, allocation-free path.
+        """
+        owner = getattr(self, "_runtime_loop", None)
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:
+            current = None
+        if owner is not None and owner.is_running() and current is not owner:
+            try:
+                owner.call_soon_threadsafe(self._call_event.set)
+                return True
+            except RuntimeError:
+                log.warning("Voice session request failed: owner loop is closed.")
+                return False
         self._call_event.set()
+        return True
+
+    def _configured_voice_mode(self) -> str:
+        """Return the normalized configured engine for the next session."""
+        mode = str(
+            getattr(
+                getattr(getattr(self, "_config", None), "voice", None),
+                "mode",
+                "pipeline",
+            )
+            or "pipeline"
+        ).strip().lower()
+        return "realtime" if mode == "realtime" else "pipeline"
+
+    def voice_engine_status(self) -> dict[str, Any]:
+        """Snapshot configured and effective voice-engine state for the UI.
+
+        ``configured_mode`` is the user's selection for new calls.
+        ``active_session_mode`` is what the currently open call actually uses.
+        They may differ while a controlled reconnect is in progress or when
+        every realtime provider failed and classic fallback was entered.
+        """
+        active_mode = getattr(self, "_active_voice_mode", None)
+        session_id = getattr(self, "_current_voice_session_id", None)
+        return {
+            "configured_mode": self._configured_voice_mode(),
+            "session_active": bool(session_id),
+            "session_id": str(session_id or ""),
+            "active_session_mode": active_mode,
+            "active_session_provider": (
+                getattr(self, "_active_realtime_provider", "")
+                if active_mode == "realtime"
+                else ""
+            ),
+            "active_session_model": (
+                getattr(self, "_active_realtime_model", "")
+                if active_mode == "realtime"
+                else ""
+            ),
+            "transitioning": bool(
+                getattr(self, "_voice_engine_transitioning", False)
+                or getattr(self, "_reopen_after_engine_change", False)
+            ),
+        }
+
+    def apply_voice_mode(self, mode: str) -> bool:
+        """Apply a mode selection and reconnect an incompatible active call.
+
+        Returns ``True`` when the current session was scheduled for a controlled
+        close-and-reopen. An idle pipeline simply uses the new value on its next
+        activation.
+        """
+        normalized = str(mode or "").strip().lower()
+        if normalized not in {"pipeline", "realtime"}:
+            raise ValueError(f"Unsupported voice mode: {mode!r}")
+        voice = getattr(getattr(self, "_config", None), "voice", None)
+        if voice is not None:
+            voice.mode = normalized
+        active_mode = getattr(self, "_active_voice_mode", None)
+        if self._state != PipelineState.IDLE and active_mode != normalized:
+            return self._schedule_engine_reopen(f"mode:{normalized}")
+        return False
+
+    def reconnect_realtime_session(self, *, reason: str) -> bool:
+        """Reconnect an active realtime call after provider/model changes."""
+        if self._configured_voice_mode() != "realtime":
+            return False
+        if self._state == PipelineState.IDLE:
+            return False
+        return self._schedule_engine_reopen(reason)
+
+    def _schedule_engine_reopen(self, reason: str) -> bool:
+        if self._state == PipelineState.IDLE:
+            return False
+        self._reopen_after_engine_change = True
+        self._engine_change_reason = str(reason or "configuration_change")
+        self._voice_engine_transitioning = True
+        log.info(
+            "Voice engine changed during an active session; reconnecting (%s).",
+            self._engine_change_reason,
+        )
+        self._trigger_voice_hangup()
         return True
 
     def _post_hangup_lock_seconds(self) -> float:
@@ -4097,14 +4626,88 @@ class SpeechPipeline:
         """End the live voice session from outside the audio path.
 
         The jarvis-bar's hover-to-close cross calls this (and any future UI
-        close affordance). Thread-safe like ``request_voice_session``: it routes
-        through the single hangup chokepoint, whose primitives (``Event.set``,
-        player stop, CU-cancel) are safe to invoke from the Tk thread. A no-op
-        in practice when no session is active — the never-consumed event is
-        cleared at the next session start.
+        close affordance). The bar runs on a dedicated Tk thread, while the
+        hangup event and its waiters belong to the pipeline's asyncio loop.
+        Marshal the complete hard-stop chokepoint onto that owning loop; calling
+        ``asyncio.Event.set()`` directly from Tk is unsupported and can fail to
+        wake the waiter until unrelated I/O arrives. Repeated clicks during one
+        teardown are idempotent. A no-op request while idle is cleared when the
+        next session starts.
         """
+        pending = getattr(self, "_external_hangup_pending", None)
+        handoff_close = getattr(self, "_wake_handoff_hangup_pending", None)
+        handoff_ready = bool(
+            getattr(self, "_state", PipelineState.IDLE) is PipelineState.IDLE
+            and getattr(self, "_wake_handoff_ready", None)
+            and self._wake_handoff_ready.is_set()
+        )
+        candidate_active = bool(
+            getattr(self, "_state", PipelineState.IDLE) is PipelineState.IDLE
+            and getattr(self, "_wake_preroll_active", False)
+        )
+        if handoff_ready and handoff_close is not None:
+            # Set synchronously on the caller thread. The owner-loop callback
+            # can otherwise lose a race with the already-armed state task.
+            handoff_close.set()
+        if (
+            pending is not None
+            and pending.is_set()
+            and not handoff_ready
+            and not candidate_active
+        ):
+            log.debug("request_hangup ignored: external hangup already pending")
+            return
+        if pending is not None:
+            pending.set()
         log.info("📵 request_hangup — closing the voice session")
-        self._trigger_voice_hangup()
+
+        def _dispatch() -> None:
+            try:
+                if (
+                    getattr(self, "_state", PipelineState.IDLE)
+                    is PipelineState.IDLE
+                    and getattr(self, "_wake_handoff_ready", None)
+                    and self._wake_handoff_ready.is_set()
+                    and handoff_close is not None
+                ):
+                    handoff_close.set()
+                if (
+                    getattr(self, "_state", PipelineState.IDLE)
+                    is PipelineState.IDLE
+                    and getattr(self, "_wake_preroll_active", False)
+                ):
+                    # The bar can be visible during wake verification before a
+                    # real session exists. Its X cancels that candidate; it
+                    # must not be reinterpreted as a new voice-session click.
+                    cancel_event = getattr(self, "_wake_cancel_event", None)
+                    if cancel_event is not None:
+                        cancel_event.set()
+                    if pending is not None:
+                        pending.clear()
+                    return
+                self._trigger_voice_hangup()
+            except Exception:
+                # A failed dispatch must be retryable; successful requests stay
+                # latched until the authoritative session teardown reaches IDLE.
+                if pending is not None:
+                    pending.clear()
+                raise
+
+        owner = getattr(self, "_runtime_loop", None)
+        try:
+            current = asyncio.get_running_loop()
+        except RuntimeError:
+            current = None
+        if owner is not None and owner.is_running() and current is not owner:
+            try:
+                owner.call_soon_threadsafe(_dispatch)
+                return
+            except RuntimeError:
+                # The loop closed between is_running() and scheduling. The
+                # synchronous fallback still stops audio/CU and is harmless
+                # when no asyncio waiter remains alive.
+                log.debug("request_hangup: owner loop closed during dispatch")
+        _dispatch()
 
     def request_ptt_toggle(self) -> None:
         """Toggle endpoint-free dictation — the jarvis-bar's square button.
@@ -4130,12 +4733,29 @@ class SpeechPipeline:
         active "listen" look when a wake popped it but the post-hangup wake-lock
         cooldown rejected the session — no ``VoiceSessionStarted`` is published
         and no ``IDLE`` state follows, so nothing resets the bar (freeze
-        forensic 2026-06-28). The turn-state is the authoritative signal: it is
-        ``IDLE`` iff no ``_active_session`` loop is running.
+        forensic 2026-06-28).
+
+        ``_state`` becomes ACTIVE before ``VoiceSessionStarted`` is published,
+        while ``_turn_state`` does not leave IDLE until every start subscriber
+        returns. A slow subscriber therefore creates a real session-start window
+        where checking only the turn-state misclassifies the visible X as an
+        idle-body click and calls ``request_voice_session()`` instead of hanging
+        up. Treat either lifecycle signal as active so the close control remains
+        valid throughout startup, the live turn, and teardown. A visible wake
+        candidate also counts as active for this control only: its close action
+        routes to ``request_hangup()``, which retracts the pending candidate
+        instead of accidentally starting a session.
         """
         return (
+            getattr(self, "_state", PipelineState.IDLE) is not PipelineState.IDLE
+            or
             getattr(self, "_turn_state", TurnTakingState.IDLE)
             is not TurnTakingState.IDLE
+            or bool(getattr(self, "_wake_preroll_active", False))
+            or bool(
+                getattr(self, "_wake_handoff_ready", None)
+                and self._wake_handoff_ready.is_set()
+            )
         )
 
     def _trigger_voice_hangup(self, *, stop_player: bool = True) -> None:
@@ -4155,7 +4775,7 @@ class SpeechPipeline:
             try:
                 self._player.stop()
             except Exception as exc:  # noqa: BLE001
-                log.warning("Player-Stop bei Hangup fehlgeschlagen: %s", exc)
+                log.warning("Stopping the player during hangup failed: %s", exc)
             # Player stopped => no TTS tail => the next session end uses the
             # SHORT wake-lock so the user can re-wake immediately. A farewell
             # hangup (stop_player=False) keeps the full speaker-tail guard.
@@ -4199,20 +4819,172 @@ class SpeechPipeline:
             log.debug("ContinuationBuffer.discard() failed (non-fatal)", exc_info=True)
 
     # ------------------------------------------------------------------
-    # Wake-Loop mit Parallel-Detection
+    # Wake loop and capture handoff
     # ------------------------------------------------------------------
+
+    def _begin_wake_preroll(
+        self, recent: tuple[AudioChunk, ...] = ()
+    ) -> None:
+        """Retain audio from the first truthful wake visual onward."""
+        if self._wake_preroll_active:
+            return
+        self._pending_session_preroll.clear()
+        self._pending_session_preroll.extend(recent)
+        self._wake_preroll_active = True
+        self._wake_preroll_confirmed = False
+
+    def _discard_wake_preroll(self) -> None:
+        self._wake_preroll_active = False
+        self._wake_preroll_confirmed = False
+        self._pending_session_preroll.clear()
+
+    def _take_wake_preroll(self) -> tuple[AudioChunk, ...]:
+        chunks = (
+            tuple(self._pending_session_preroll)
+            if self._wake_preroll_confirmed
+            else ()
+        )
+        self._discard_wake_preroll()
+        return chunks
+
+    async def _claim_wake_capture_for_session(
+        self,
+    ) -> _SessionInputBuffer | None:
+        """Transfer the live wake mic to the session without closing it."""
+        if self._wake_handoff_ready.is_set():
+            buffer = self._wake_handoff_buffer
+            self._wake_handoff_buffer = None
+            self._wake_handoff_ready.clear()
+            if buffer is None:
+                raise RuntimeError("Wake microphone offered an empty handoff.")
+            return buffer
+        if self._wake_capture_released.is_set():
+            # The wake task may already have passed its IDLE check and be one
+            # scheduling turn away from entering the capture context. Give it
+            # that turn before deciding no wake microphone exists; otherwise a
+            # hotkey can open a second native stream during the pre-open race.
+            await asyncio.sleep(0)
+            if self._wake_capture_released.is_set():
+                return None
+        self._wake_stop_event.set()
+        handoff_wait = asyncio.create_task(
+            self._wake_handoff_ready.wait(), name="wake-handoff-ready"
+        )
+        release_wait = asyncio.create_task(
+            self._wake_capture_released.wait(), name="wake-capture-release"
+        )
+        try:
+            await asyncio.wait(
+                {handoff_wait, release_wait},
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            for task in (handoff_wait, release_wait):
+                if not task.done():
+                    task.cancel()
+            for task in (handoff_wait, release_wait):
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+            self._wake_stop_event.clear()
+        # Prefer a concrete handoff if readiness and physical release raced in
+        # the same loop tick. Otherwise the old wake stream is authoritatively
+        # closed and the caller may safely open one fallback capture.
+        if not self._wake_handoff_ready.is_set():
+            if self._wake_capture_released.is_set():
+                return None
+            raise RuntimeError("Wake microphone ownership ended ambiguously.")
+        buffer = self._wake_handoff_buffer
+        self._wake_handoff_buffer = None
+        self._wake_handoff_ready.clear()
+        if buffer is None:
+            raise RuntimeError("Wake microphone handoff produced no input buffer.")
+        return buffer
+
+    async def _abort_pending_wake_handoff(self) -> None:
+        """Release an offered wake stream when the state loop rejects the call."""
+        wake_capture_was_open = not self._wake_capture_released.is_set()
+        preview_was_visible = bool(
+            self._wake_preroll_active or self._wake_handoff_ready.is_set()
+        )
+        self._discard_wake_preroll()
+        try:
+            buffer = await self._claim_wake_capture_for_session()
+        except Exception as exc:  # noqa: BLE001 - rejection must not kill state loop
+            log.warning("Pending wake handoff could not be released: %s", exc)
+            self._wake_cancel_event.set()
+            self._wake_handoff_hangup_pending.clear()
+            self._external_hangup_pending.clear()
+            self._hangup_event.clear()
+            self._explicit_hard_hangup = False
+            return
+        if buffer is not None:
+            await buffer.close()
+            await self._wake_capture_released.wait()
+        try:
+            if preview_was_visible or wake_capture_was_open or buffer is not None:
+                # WakeWordDetected may already have put the bar into LISTENING
+                # even though no VoiceSessionStarted will follow. Explicitly
+                # retract that preview so UI state matches the mic lease.
+                await self._publish_event(
+                    WakeCandidateDetected(source_layer="speech", active=False)
+                )
+        finally:
+            self._wake_handoff_hangup_pending.clear()
+            self._external_hangup_pending.clear()
+            self._hangup_event.clear()
+            self._explicit_hard_hangup = False
+
+    @asynccontextmanager
+    async def _capture_first_session_input(
+        self,
+    ) -> AsyncIterator[_SessionInputBuffer]:
+        """Borrow the wake mic or open exactly one fallback session mic."""
+        buffer = await self._claim_wake_capture_for_session()
+        if buffer is not None:
+            try:
+                yield buffer
+            finally:
+                await buffer.close()
+                # ``buffer.released`` lets the wake owner begin teardown. Wait
+                # for the stronger signal too so no disconnect sound or engine
+                # re-arm can race the still-open native microphone.
+                await self._wake_capture_released.wait()
+            return
+
+        async with MicrophoneCapture(
+            device=self._input_device,
+            max_queue_chunks=REALTIME_QUEUE_CHUNKS,
+            device_priority=self._input_priority,
+        ) as mic:
+            buffer = _SessionInputBuffer()
+
+            async def _unmuted_capture() -> AsyncIterator[AudioChunk]:
+                async for chunk in mic.stream():
+                    # Filter at capture time, not only at the eventual consumer:
+                    # a realtime fallback may replay retained frames after the
+                    # user unmutes and must never resurrect muted audio.
+                    if not getattr(self, "_muted", False):
+                        yield chunk
+
+            buffer.start(_unmuted_capture())
+            try:
+                yield buffer
+            finally:
+                await buffer.close()
 
     def _wake_listening_enabled(self) -> bool:
         return self._openwakeword_enabled or self._whisper_wake_enabled
 
     async def _wake_loop(self) -> None:
-        """Lauscht im IDLE-State auf Wake-Word über ZWEI parallele Pfade.
+        """Listen for a wake phrase through two parallel paths while idle.
 
-        Ein Mic-Stream wird per Fanout in zwei Queues gesplittet:
-        (1) openWakeWord-Queue   → schneller Primary-Detector
-        (2) Whisper-Wake-Queue   → robuster Fallback
+        One microphone stream fans out into two queues:
+        (1) openWakeWord queue -> fast primary detector.
+        (2) Whisper wake queue -> robust fallback.
 
-        Wer zuerst triggert, feuert `call_event` und beide Tasks werden gecancelt.
+        The first detector hit arms ``call_event`` and cancels both detectors.
         """
         log.info(
             "Wake-Loop gestartet (oww=%s, whisper=%s, gate=%s).",
@@ -4270,7 +5042,7 @@ class SpeechPipeline:
                 )
                 await self._run_parallel_wake()
             except Exception as exc:  # noqa: BLE001
-                log.exception("Wake-Loop Fehler: %s", exc)
+                log.exception("Wake loop failed: %s", exc)
                 await asyncio.sleep(0.5)
 
     def _should_show_optimistic_candidate(self) -> bool:
@@ -4278,16 +5050,40 @@ class SpeechPipeline:
 
         The optimistic reveal exists so a genuine "Hey Jarvis" feels instant on
         the precise pretrained model, where false candidates are rare and a
-        reject costs one brief bar flash. A user-trained custom_onnx model
-        fires on breath/ambient speech many times a minute (user GIF
-        2026-07-02: the bar popped open/closed on auto-repeat), so for that
-        engine the bar appears only AFTER the STT verify confirms the wake —
-        a ~1 s later reveal instead of a constant flicker.
+        reject costs one brief bar flash. Custom ONNX and Vosk grammar stage-one
+        candidates both match ordinary speech frequently, so those engines wait
+        for the authoritative ``WakeWordDetected`` event after full verification.
+        (vosk_kws additionally gets the PROVIDER-gated early candidate below —
+        that one is mini-verified, not raw, and does not pass through here.)
         """
         if self._state != PipelineState.IDLE:
             return False
         plan = getattr(self, "_wake_plan", None)
-        return not (plan is not None and getattr(plan, "engine", "") == "custom_onnx")
+        if plan is None:
+            return True
+        return getattr(plan, "engine", "") == "openwakeword"
+
+    async def _vosk_early_candidate_listener(self, active: bool) -> None:
+        """Visual-only bar signal from the vosk provider's mini-verify.
+
+        Deliberately NOT routed through ``_should_show_optimistic_candidate``:
+        that helper gates the RAW pre-verify reveal (openwakeword-only, see
+        revert 5fe5c4d2). The vosk provider only calls this after its
+        mini-verify passed — re-score confidence + span RMS + localized sound
+        confirm on the truncated ring — measured at 0/2500 room-speech windows
+        shown for "hey jarvis" (calibration 2026-07-11), so the flicker class
+        that forced the revert cannot recur. Retracts (active=False) always
+        pass through so a shown bar can never stay stuck.
+        """
+        if active and self._state != PipelineState.IDLE:
+            return  # a session is already running; nothing to reveal
+        if active:
+            self._begin_wake_preroll()
+        else:
+            self._discard_wake_preroll()
+        await self._publish_event(
+            WakeCandidateDetected(source_layer="speech", active=active)
+        )
 
     async def _verify_oww_hit(self, pcm_snapshot: bytes) -> bool:
         """Second-stage gate: ask the utterance STT whether the few seconds
@@ -4443,7 +5239,7 @@ class SpeechPipeline:
         return False
 
     async def _run_parallel_wake(self) -> None:
-        """Öffnet ein Mic, fannt zu 2 Detector-Queues, wartet auf ersten Hit."""
+        """Fan one wake microphone into all detectors until the first hit."""
         oww_queue: asyncio.Queue = asyncio.Queue(maxsize=50)
         whisper_queue: asyncio.Queue = asyncio.Queue(maxsize=100)
         detector_queues = [oww_queue] if self._openwakeword_enabled else []
@@ -4461,29 +5257,70 @@ class SpeechPipeline:
         # needs to re-arm fanout.
         ring_bytes = bytearray()
         RING_MAX = 16_000 * 2 * 3  # ~3 s
+        recent_chunks: deque[AudioChunk] = deque(maxlen=2)  # ~200 ms overlap
+        wake_confirmed = False
+        handoff_buffer: _SessionInputBuffer | None = None
 
         async def _fanout(mic: MicrophoneCapture) -> None:
-            async for chunk in mic.stream():
-                # Input mute (Jarvis-scoped): if the user mutes while a wake
-                # session is already mid-wait, stop feeding the detectors so
-                # Jarvis goes deaf immediately — without touching the OS mic.
-                # (A fresh mute while IDLE is already handled by _wake_loop's
-                # _activation_allowed() gate, which never opens the mic.)
-                if getattr(self, "_muted", False):
-                    continue
-                ring_bytes.extend(chunk.pcm)
-                if len(ring_bytes) > RING_MAX:
-                    del ring_bytes[: len(ring_bytes) - RING_MAX]
-                for q in detector_queues:
-                    try:
-                        q.put_nowait(chunk)
-                    except asyncio.QueueFull:
-                        # Detector ist hinten dran — ältesten Chunk droppen
+            source_error: BaseException | None = None
+            try:
+                async for chunk in mic.stream():
+                    # Input mute (Jarvis-scoped): if the user mutes while a wake
+                    # session is already mid-wait, stop feeding the detectors so
+                    # Jarvis goes deaf immediately — without touching the OS mic.
+                    # (A fresh mute while IDLE is already handled by _wake_loop's
+                    # _activation_allowed() gate, which never opens the mic.)
+                    if getattr(self, "_muted", False):
+                        continue
+                    if handoff_buffer is not None:
+                        handoff_buffer.put(chunk)
+                        continue
+                    ring_bytes.extend(chunk.pcm)
+                    if len(ring_bytes) > RING_MAX:
+                        del ring_bytes[: len(ring_bytes) - RING_MAX]
+                    recent_chunks.append(chunk)
+                    if self._wake_preroll_active:
+                        self._pending_session_preroll.append(chunk)
+                        _feed_live_mic_level(chunk)
+                    for q in detector_queues:
                         try:
-                            q.get_nowait()
                             q.put_nowait(chunk)
-                        except asyncio.QueueEmpty:
-                            pass
+                        except asyncio.QueueFull:
+                            # Keep detector latency bounded by dropping its oldest frame.
+                            try:
+                                q.get_nowait()
+                                q.put_nowait(chunk)
+                            except asyncio.QueueEmpty:
+                                pass
+            except asyncio.CancelledError:
+                raise
+            except BaseException as exc:  # noqa: BLE001 - surface to consumers
+                source_error = exc
+                raise
+            finally:
+                if handoff_buffer is not None:
+                    handoff_buffer.finish(error=source_error)
+
+        def _activate_handoff(*, confirmed: bool) -> _SessionInputBuffer:
+            nonlocal handoff_buffer
+            if handoff_buffer is not None:
+                return handoff_buffer
+            if confirmed:
+                initial = self._take_wake_preroll()
+            else:
+                # An explicit click/hotkey may arrive while a wake candidate is
+                # still being verified. Preserve that already-visible interval;
+                # otherwise keep only one block around the explicit edge.
+                initial = (
+                    tuple(self._pending_session_preroll)
+                    if self._wake_preroll_active
+                    else tuple(recent_chunks)[-1:]
+                )
+                self._discard_wake_preroll()
+            handoff_buffer = _SessionInputBuffer(initial=initial)
+            self._wake_handoff_buffer = handoff_buffer
+            self._wake_handoff_ready.set()
+            return handoff_buffer
 
         async def _run_oww() -> str:
             async for kw in self._wake.detect(_queue_iter(oww_queue)):
@@ -4492,7 +5329,7 @@ class SpeechPipeline:
 
         async def _run_whisper() -> str:
             if self._whisper_wake is None:
-                await asyncio.Event().wait()  # nie
+                await asyncio.Event().wait()  # never completes
                 return ""
             async for kw in self._whisper_wake.detect(_queue_iter(whisper_queue)):
                 return f"whisper:{kw}"
@@ -4507,8 +5344,11 @@ class SpeechPipeline:
         # which belong to the wake layer; this change deliberately does not touch
         # them. The drop-OLDEST overflow policy (capture ``_safe_put``) still
         # applies and is safe here.
-        async with MicrophoneCapture(
-            device=self._input_device, device_priority=self._input_priority
+        async with _wake_capture_with_release(
+            MicrophoneCapture(
+                device=self._input_device, device_priority=self._input_priority
+            ),
+            self._wake_capture_released,
         ) as mic:
             fanout_task = asyncio.create_task(_fanout(mic), name="fanout")
             oww_task = (
@@ -4526,10 +5366,10 @@ class SpeechPipeline:
                 whisper_task = None  # type: ignore[assignment]
 
             async def _detector_heartbeat() -> None:
-                """Alle 10s: loggen dass die Detector-Tasks noch leben.
+                """Log every ten seconds while all detector tasks remain alive.
 
-                Wenn hier nichts mehr kommt obwohl der Watchdog läuft, ist
-                ein Task silent gestorben (Queue-Deadlock, Exception-Swallow).
+                Missing output while the watchdog is running exposes a silently
+                failed task, such as a queue deadlock or swallowed exception.
                 """
                 while True:
                     await asyncio.sleep(10.0)
@@ -4544,7 +5384,7 @@ class SpeechPipeline:
                         oww_queue.qsize(),
                         whisper_queue.qsize(),
                     )
-                    # Wenn ein Detector-Task mit Exception gestorben ist, sichtbar machen
+                    # Surface a detector task that exited with an exception.
                     for t in (oww_task, whisper_task):
                         if t is None or not t.done():
                             continue
@@ -4553,7 +5393,7 @@ class SpeechPipeline:
                         except asyncio.CancelledError:
                             pass
                         except Exception as exc:  # noqa: BLE001
-                            log.error("Detector-Task %s gestorben: %s", t.get_name(), exc)
+                            log.error("Detector task %s failed: %s", t.get_name(), exc)
 
             heartbeat_task = asyncio.create_task(_detector_heartbeat(), name="wake-heartbeat")
 
@@ -4564,13 +5404,41 @@ class SpeechPipeline:
                 self._wake_reload_event.wait(), name="wake-reload"
             )
             tasks.append(reload_task)
+            handoff_task = asyncio.create_task(
+                self._wake_stop_event.wait(), name="wake-session-handoff"
+            )
+            tasks.append(handoff_task)
+            cancel_task = asyncio.create_task(
+                self._wake_cancel_event.wait(), name="wake-candidate-cancel"
+            )
+            tasks.append(cancel_task)
+
+            async def _cancel_candidate() -> None:
+                self._wake_cancel_event.clear()
+                if self._wake_preroll_active:
+                    await self._publish_event(
+                        WakeCandidateDetected(source_layer="speech", active=False)
+                    )
+                self._discard_wake_preroll()
 
             try:
-                # Warten bis EIN Detector etwas yielded — oder ein Live-Reload.
-                detector_tasks = [t for t in tasks if t is not fanout_task]
+                # Wait for one detector, a live reload, or a session handoff.
                 done, _pending = await asyncio.wait(
-                    detector_tasks, return_when=asyncio.FIRST_COMPLETED
+                    tasks, return_when=asyncio.FIRST_COMPLETED
                 )
+                if cancel_task in done:
+                    await _cancel_candidate()
+                    return
+                if fanout_task in done:
+                    if not fanout_task.cancelled():
+                        exc = fanout_task.exception()
+                        if exc is not None:
+                            log.warning("Wake microphone fanout ended: %s", exc)
+                    return
+                if handoff_task in done:
+                    buffer = _activate_handoff(confirmed=False)
+                    await buffer.released.wait()
+                    return
                 if reload_task in done:
                     self._wake_reload_event.clear()
                     log.info(
@@ -4578,12 +5446,16 @@ class SpeechPipeline:
                     )
                     return  # finally cancels detectors + closes mic; loop re-enters
                 for t in done:
-                    if t is reload_task:
+                    if t in {reload_task, handoff_task, cancel_task}:
                         continue
                     result = t.result()
                     if result:
-                        log.info("🎙 WAKE-Kandidat über %s", result)
-                        # Prefix-Verifier: an OWW hit is only a *candidate*
+                        # The detector hit marks the earliest truthful visual
+                        # edge. Do not seed pre-hit audio: it contains the wake
+                        # phrase itself and could become a phantom user turn.
+                        self._begin_wake_preroll()
+                        log.info("🎙 Wake candidate from %s", result)
+                        # Prefix verifier: an OWW hit is only a *candidate*
                         # until the cloud STT confirms "hey/hi/hallo + jarv"
                         # in the few seconds before the trigger. Whisper-wake
                         # already enforces the same pattern, so its hits skip
@@ -4604,7 +5476,53 @@ class SpeechPipeline:
                                         source_layer="speech", active=True
                                     )
                                 )
-                            verified = await self._verify_oww_hit(bytes(ring_bytes))
+                            verify_task = asyncio.create_task(
+                                self._verify_oww_hit(bytes(ring_bytes)),
+                                name="wake-prefix-verify",
+                            )
+                            verify_done, _ = await asyncio.wait(
+                                {
+                                    verify_task,
+                                    handoff_task,
+                                    cancel_task,
+                                    fanout_task,
+                                },
+                                return_when=asyncio.FIRST_COMPLETED,
+                            )
+                            if cancel_task in verify_done:
+                                verify_task.cancel()
+                                try:
+                                    await verify_task
+                                except asyncio.CancelledError:
+                                    pass
+                                await _cancel_candidate()
+                                return
+                            if fanout_task in verify_done:
+                                verify_task.cancel()
+                                try:
+                                    await verify_task
+                                except asyncio.CancelledError:
+                                    pass
+                                await _cancel_candidate()
+                                if not fanout_task.cancelled():
+                                    exc = fanout_task.exception()
+                                    if exc is not None:
+                                        log.warning(
+                                            "Wake microphone fanout ended during "
+                                            "candidate verification: %s",
+                                            exc,
+                                        )
+                                return
+                            if handoff_task in verify_done:
+                                verify_task.cancel()
+                                try:
+                                    await verify_task
+                                except asyncio.CancelledError:
+                                    pass
+                                buffer = _activate_handoff(confirmed=False)
+                                await buffer.released.wait()
+                                return
+                            verified = verify_task.result()
                             if not verified:
                                 if show_candidate:
                                     await self._publish_event(
@@ -4613,8 +5531,8 @@ class SpeechPipeline:
                                         )
                                     )
                                 log.info(
-                                    "🚫 WAKE verworfen — kein 'Hey'-Prefix im "
-                                    "Transkript der letzten ~3 s"
+                                    "🚫 Wake rejected: no greeting prefix in the "
+                                    "last three seconds of transcript."
                                 )
                                 # Clear the detector's debounce cooldown: this
                                 # candidate was a false positive, so a genuine
@@ -4626,7 +5544,7 @@ class SpeechPipeline:
                                 if callable(note_rejected):
                                     note_rejected()
                                 break
-                        log.info("🎙 WAKE bestätigt über %s", result)
+                        log.info("🎙 Wake confirmed by %s", result)
                         if self._state == PipelineState.IDLE:
                             # The state-loop SILENTLY drops a wake that arrives
                             # inside the post-hangup echo lock (or when the app
@@ -4640,8 +5558,15 @@ class SpeechPipeline:
                             # retract the optimistic candidate instead of lying.
                             now = time.time()
                             locked = now < self._wake_lock_until
+                            # The vosk provider may have shown a mini-verified
+                            # early candidate for THIS wake — consume the flag
+                            # either way; retract below if the wake is dropped.
+                            consume = getattr(
+                                self._wake, "consume_early_candidate", None
+                            )
+                            early_shown = consume() if callable(consume) else False
                             if locked or not self._activation_allowed():
-                                if locals().get("show_candidate"):
+                                if locals().get("show_candidate") or early_shown:
                                     await self._publish_event(
                                         WakeCandidateDetected(
                                             source_layer="speech", active=False
@@ -4649,27 +5574,31 @@ class SpeechPipeline:
                                     )
                                 if locked:
                                     log.info(
-                                        "🔒 Wake-Lock aktiv — Emit verworfen "
-                                        "(noch %.1fs)",
+                                        "🔒 Wake lock active; discarding detection "
+                                        "for another %.1fs.",
                                         max(0.0, self._wake_lock_until - now),
                                     )
                                 else:
                                     log.info(
-                                        "Wake-Emit verworfen — App nicht "
-                                        "aktivierbar."
+                                        "Wake detection discarded: desktop "
+                                        "activation is unavailable."
                                     )
                                 break
-                            # Event-Bus: WakeWordDetected + Supervisor-State
-                            # werden fuer UI-Feedback gebraucht (Orb einblenden).
+                            # The UI consumes WakeWordDetected plus supervisor
+                            # state to reveal its listening surface.
                             keyword = result.split(":", 1)[-1] if ":" in result else result
+                            self._wake_preroll_confirmed = True
+                            wake_confirmed = True
+                            buffer = _activate_handoff(confirmed=True)
                             await self._emit_wake(keyword)
-                            self._call_event.set()
+                            self._arm_call_event()
+                            await buffer.released.wait()
                         break
             finally:
                 heartbeat_task.cancel()
                 try:
                     await heartbeat_task
-                except (asyncio.CancelledError, Exception):
+                except (asyncio.CancelledError, Exception):  # noqa: S110 - teardown
                     pass
                 for t in tasks:
                     if not t.done():
@@ -4677,8 +5606,22 @@ class SpeechPipeline:
                 for t in tasks:
                     try:
                         await t
-                    except (asyncio.CancelledError, Exception):
+                    except (asyncio.CancelledError, Exception):  # noqa: S110 - teardown
                         pass
+                # An exception/cancellation between offering the buffer and the
+                # state loop claiming it must not leave a ready latch pointing
+                # at stale audio for the next activation.
+                if (
+                    handoff_buffer is not None
+                    and self._wake_handoff_buffer is handoff_buffer
+                ):
+                    self._wake_handoff_buffer = None
+                    self._wake_handoff_ready.clear()
+                    await handoff_buffer.close()
+                self._wake_cancel_event.clear()
+                self._wake_stop_event.clear()
+                if not wake_confirmed:
+                    self._discard_wake_preroll()
 
     # ------------------------------------------------------------------
     # State-Loop
@@ -4688,31 +5631,56 @@ class SpeechPipeline:
         while True:
             await self._call_event.wait()
             self._call_event.clear()
-            # Wake-Cooldown-Check: ignoriere Wake-Events die während
-            # der Lock-Zeit kommen (Speaker-Echo nach Hangup).
+            # Ignore activation edges that arrive inside the speaker-echo lock.
             now = time.time()
             if not self._activation_allowed():
-                log.info("Voice-Call ignoriert: Desktop-App ist nicht sichtbar.")
+                log.info("Voice call ignored: desktop activation is unavailable.")
                 # A discarded call consumes any PTT arming with it — otherwise a
                 # stale ``_ptt_mode`` would reroute the NEXT (wake-word) call
                 # into the raw-recording path that has no key to release.
                 self._ptt_mode = False
+                await self._abort_pending_wake_handoff()
                 continue
             if now < self._wake_lock_until:
                 remaining = self._wake_lock_until - now
-                log.info("🔒 Wake-Lock aktiv — ignoriere (noch %.1fs)", remaining)
+                log.info("Wake lock active; ignoring call for %.1fs.", remaining)
                 self._ptt_mode = False
+                await self._abort_pending_wake_handoff()
                 continue
-            self._hangup_event.clear()
-            # Fresh session: forget any hard-hangup flag left by a no-op hangup
-            # while idle, so ONLY this session's own ending decides its lock.
-            self._explicit_hard_hangup = False
+            # Preserve a close accepted after the confirmed wake offered its
+            # microphone but before this loop entered ACTIVE. Clearing it here
+            # would reopen the visibly closed bar and submit the buffered words.
+            handoff_offered = bool(
+                self._wake_handoff_buffer is not None
+                or self._wake_handoff_ready.is_set()
+            )
+            handoff_close_latch = getattr(
+                self, "_wake_handoff_hangup_pending", None
+            )
+            preserve_handoff_close = bool(
+                handoff_offered
+                and handoff_close_latch is not None
+                and handoff_close_latch.is_set()
+            )
+            if handoff_close_latch is not None:
+                handoff_close_latch.clear()
+            if not preserve_handoff_close:
+                self._external_hangup_pending.clear()
+                self._hangup_event.clear()
+                # Forget a hard-hangup flag left by a no-op while truly idle.
+                # A close after handoff is real and retains the short wake lock.
+                self._explicit_hard_hangup = False
             self._state = PipelineState.ACTIVE
             # Reset per-session completeness signal state: a new session
             # starts "fresh" so the first INCOMPLETE gets an earcon, not a
             # spoken cue. (The spoken-cue path is for mid-conversation use.)
             self._session_has_assistant_spoken = False
             session_id = str(uuid4())
+            self._current_voice_session_id = session_id
+            self._active_voice_mode = self._configured_voice_mode()
+            self._active_realtime_provider = ""
+            self._active_realtime_model = ""
+            self._voice_engine_transitioning = self._active_voice_mode == "realtime"
             session_started_at = time.time()
             wake_keyword = (
                 "push_to_talk"
@@ -4720,24 +5688,61 @@ class SpeechPipeline:
                 else (self._last_wake_keyword or "hotkey")
             )
             self._last_wake_keyword = ""
-            await self._publish_event(
-                VoiceSessionStarted(
-                    source_layer="speech.pipeline",
-                    session_id=session_id,
-                    wake_keyword=wake_keyword,
-                    language="de",
-                )
-            )
             hangup_reason = HANGUP_ERROR
-            log.info("📞 ANRUF angenommen")
-            # Orb einblenden & Mic-Pulsieren aktivieren
-            await self._set_turn_state(TurnTakingState.LISTENING)
             try:
-                await self._play_ack(ptt=self._ptt_mode)
-                hangup_reason = await self._active_session()
+                # Reuse the already-open wake microphone when available. The
+                # handoff never owns two native streams at once and retains all
+                # frames heard after the visible wake candidate.
+                async with self._capture_first_session_input() as input_buffer:
+                    # This event is the UI's authoritative "being listened to
+                    # now" signal. Capture is already armed before any
+                    # subscriber can reveal the listening bar.
+                    await self._publish_event(
+                        VoiceSessionStarted(
+                            source_layer="speech.pipeline",
+                            session_id=session_id,
+                            wake_keyword=wake_keyword,
+                            language="de",
+                        )
+                    )
+                    # A close accepted while a slow start subscriber runs must
+                    # release the borrowed capture without entering a provider.
+                    if (
+                        self._hangup_event.is_set()
+                        or self._external_hangup_pending.is_set()
+                    ):
+                        hangup_reason = HANGUP_HOTKEY
+                        log.info("Voice session cancelled during startup.")
+                    else:
+                        log.info(
+                            "Voice session accepted (configured engine=%s).",
+                            self._active_voice_mode,
+                        )
+                        await self._set_turn_state(TurnTakingState.LISTENING)
+                        # Activation feedback is now visual-only. Playing a
+                        # chime or spoken ACK while a portable desktop mic is
+                        # live forces an impossible choice: discard simultaneous
+                        # user speech or feed speaker echo into STT. The visible
+                        # bar is the truthful zero-loss acknowledgement.
+                        hangup_reason = await self._active_session(
+                            input_buffer=input_buffer
+                        )
             except Exception as exc:  # noqa: BLE001
-                log.exception("Session-Fehler: %s", exc)
+                log.exception("Voice session failed: %s", exc)
             finally:
+                reopen_after_engine_change = bool(
+                    getattr(self, "_reopen_after_engine_change", False)
+                )
+                engine_change_reason = str(
+                    getattr(self, "_engine_change_reason", "")
+                )
+                self._reopen_after_engine_change = False
+                self._engine_change_reason = ""
+                self._current_voice_session_id = None
+                self._active_voice_mode = None
+                self._active_realtime_provider = ""
+                self._active_realtime_model = ""
+                self._voice_engine_transitioning = False
                 # PTT is one-shot per hold — disarm before the next session so a
                 # stale flag can never reroute a later wake-word session into
                 # the raw-recording path.
@@ -4764,15 +5769,30 @@ class SpeechPipeline:
                     )
                 )
                 self._state = PipelineState.IDLE
-                # Supervisor zurueck auf IDLE — Orb verschwindet
+                # Return the supervisor to IDLE and hide the active surface.
                 await self._set_turn_state(TurnTakingState.IDLE)
-                # Disconnect-Sound als hörbares Hangup-Signal (earcon — gated
-                # by the global "Sound effects" switch).
-                await self._play_earcon(DISCONNECT_PCM)
-                # Cooldown setzen damit Speaker-Echo nicht sofort re-triggert.
-                lock_s = self._post_hangup_lock_seconds()
-                self._wake_lock_until = time.time() + lock_s
-                log.info("📵 AUFGELEGT — zurück zu IDLE (Wake-Lock %.1fs).", lock_s)
+                self._external_hangup_pending.clear()
+                if reopen_after_engine_change and self._activation_allowed():
+                    # An internal engine reconnect has no response tail to
+                    # protect against. Re-arm immediately with the latest
+                    # config; a disconnect earcon would leak into the new mic.
+                    self._explicit_hard_hangup = False
+                    self._wake_lock_until = 0.0
+                    self._last_wake_keyword = "engine_switch"
+                    self._call_event.set()
+                    log.info(
+                        "Voice session re-armed after engine change (%s).",
+                        engine_change_reason or "configuration_change",
+                    )
+                else:
+                    # Normal disconnect earcon followed by speaker-echo lock.
+                    await self._play_earcon(DISCONNECT_PCM)
+                    lock_s = self._post_hangup_lock_seconds()
+                    self._wake_lock_until = time.time() + lock_s
+                    log.info(
+                        "Voice session ended; returning to idle (wake lock %.1fs).",
+                        lock_s,
+                    )
 
     def _earcons_enabled(self) -> bool:
         """Whether synthesized UI earcons may play.
@@ -4799,10 +5819,10 @@ class SpeechPipeline:
             log.debug("Earcon playback skipped (%s).", exc)
 
     async def _play_ack(self, *, ptt: bool = False) -> None:
-        """Chime + pre-rendertes 'Ja?' — Gesamtdauer ~400-600 ms.
+        """Play the legacy chime and optional pre-rendered acknowledgement.
 
         Push-to-talk plays ONLY the chime: the user is already holding the key
-        and talking, so a spoken "Ja?" would talk over their opening words. The
+        and talking, so a spoken acknowledgement would cover their opening words. The
         chime is immediate feedback that recording is live; speech is not.
         """
         try:
@@ -4818,14 +5838,30 @@ class SpeechPipeline:
                 return
             if self._ack_pcm:
                 await self._player.play_pcm(self._ack_pcm, sample_rate=24_000)
-            # Kurze Echo-Suppression: bei Open-Back-Kopfhoerern leakt der
-            # pre-renderte ACK ins Mic und triggert VAD auf dem TTS-Echo.
-            # 400ms Dead-Zone nach ACK verhindert Self-Retrigger-Loops.
+            # Brief echo suppression keeps a pre-rendered acknowledgement from
+            # leaking through open-back headphones and retriggering VAD.
             await asyncio.sleep(0.4)
         except Exception as exc:  # noqa: BLE001
-            log.warning("ACK-Playback fehlgeschlagen: %s", exc)
+            log.warning("Acknowledgement playback failed: %s", exc)
 
-    async def _active_session(self) -> str:
+    @asynccontextmanager
+    async def _session_input_source(
+        self, input_buffer: _SessionInputBuffer | None
+    ) -> AsyncIterator[AsyncIterator[AudioChunk]]:
+        """Yield a pre-opened session stream or own a fallback capture."""
+        if input_buffer is not None:
+            yield input_buffer.stream()
+            return
+        async with MicrophoneCapture(
+            device=self._input_device,
+            max_queue_chunks=REALTIME_QUEUE_CHUNKS,
+            device_priority=self._input_priority,
+        ) as mic:
+            yield mic.stream()
+
+    async def _active_session(
+        self, *, input_buffer: _SessionInputBuffer | None = None
+    ) -> str:
         # Fresh session → never inherit a half-accumulated dictation from a
         # previous session that ended mid-carry (hangup / idle-timeout).
         self._carry_pcm = bytearray()
@@ -4835,14 +5871,60 @@ class SpeechPipeline:
         self._last_announcement_spoken_monotonic = None
         self._last_answer_floor_monotonic = None
         if self._ptt_mode:
-            return await self._ptt_session()
-        async with MicrophoneCapture(
-            device=self._input_device,
-            max_queue_chunks=REALTIME_QUEUE_CHUNKS,
-            device_priority=self._input_priority,
-        ) as mic:
+            # Push-to-talk is deliberately a discrete classic turn: the key-up
+            # edge is its endpoint and the duplex protocols do not expose one
+            # provider-neutral commit primitive. Normal wake/hotkey sessions
+            # use Realtime when selected.
+            self._active_voice_mode = "pipeline"
+            self._active_realtime_provider = ""
+            self._active_realtime_model = ""
+            self._voice_engine_transitioning = False
+            return await self._ptt_session(input_buffer=input_buffer)
+        requested_mode = self._configured_voice_mode()
+        self._active_voice_mode = requested_mode
+        self._voice_engine_transitioning = requested_mode == "realtime"
+        if requested_mode == "realtime":
+            realtime_reason = await self._active_realtime_session(
+                input_buffer=input_buffer
+            )
+            if realtime_reason is not None:
+                return realtime_reason
+            # Speak the "realtime unavailable" notice only when the user
+            # EXPLICITLY picked realtime ([voice].mode present in the TOML).
+            # Since "realtime" became the product default, a fresh keyless
+            # install lands here on every call and must degrade silently
+            # instead of nagging before each pipeline session.
+            voice_cfg = getattr(self._config, "voice", None)
+            explicitly_chosen = "mode" in (
+                getattr(voice_cfg, "model_fields_set", None) or ()
+            )
+            if explicitly_chosen:
+                if input_buffer is None:
+                    await self._speak_realtime_unavailable()
+                else:
+                    # Capture-first sessions cannot play a fallback notice into
+                    # their own live microphone without either recording the
+                    # speaker echo or discarding simultaneous user speech.
+                    lang = _phrase_lang(self._output_language(None, ""))
+                    await self._publish_event(
+                        MessageSent(
+                            source_layer="speech.pipeline",
+                            thread_id="voice",
+                            role="system",
+                            text=_REALTIME_UNAVAILABLE_PHRASE[lang],
+                        )
+                    )
+                    log.warning(
+                        "Realtime unavailable; continuing with classic voice "
+                        "with a visual status notice."
+                    )
+        self._active_voice_mode = "pipeline"
+        self._active_realtime_provider = ""
+        self._active_realtime_model = ""
+        self._voice_engine_transitioning = False
+        async with self._session_input_source(input_buffer) as input_chunks:
             vad_iter = self._vad.utterances(
-                self._session_input_stream(mic.stream())
+                self._session_input_stream(input_chunks)
             ).__aiter__()
             # The VAD ``__anext__`` task PERSISTS across idle windows. Cancelling
             # it kills the underlying async generator (the next ``__anext__``
@@ -4953,7 +6035,7 @@ class SpeechPipeline:
                         next_task = None
                         return HANGUP_SHUTDOWN
                     except Exception as exc:  # noqa: BLE001
-                        log.exception("VAD-Fehler: %s", exc)
+                        log.exception("VAD failed: %s", exc)
                         next_task = None
                         continue
                     next_task = None
@@ -4968,7 +6050,357 @@ class SpeechPipeline:
                     next_task.cancel()
         return HANGUP_HOTKEY
 
-    async def _ptt_session(self) -> str:
+    async def _active_realtime_session(
+        self, *, input_buffer: _SessionInputBuffer | None = None
+    ) -> str | None:
+        """Run one desktop duplex session, or request classic fallback.
+
+        Imports stay lazy so the optional realtime stack never enters the boot
+        critical path. The session owns provider-family fallback and resampling;
+        this adapter owns only the local microphone, speaker, and lifecycle.
+        Desktop starts half-duplex because PortAudio has no portable acoustic
+        echo cancellation. The browser surface provides full duplex with Web
+        Audio echo cancellation.
+        """
+        try:
+            from jarvis.realtime.desktop import (
+                DesktopRealtimeBargeInDetector,
+                DesktopRealtimePlayback,
+            )
+            from jarvis.realtime.factory import build_realtime_session
+        except ImportError as exc:
+            log.warning("Realtime desktop stack is unavailable: %s", exc)
+            return None
+
+        session_id = getattr(self, "_current_voice_session_id", None) or str(uuid4())
+        playback = DesktopRealtimePlayback(self._player)
+        barge_detector = DesktopRealtimeBargeInDetector()
+        turn_complete = asyncio.Event()
+        speaking = False
+        semantic_turn_committed = False
+
+        async def _warm_barge_detector() -> None:
+            try:
+                await _run_voice_critical_thread(barge_detector.warmup)
+            except Exception as exc:  # noqa: BLE001 -- voice still works without local VAD
+                log.warning(
+                    "Realtime desktop barge-in detector unavailable; "
+                    "continuing half-duplex: %s",
+                    exc,
+                )
+
+        barge_warm_task = asyncio.create_task(
+            _warm_barge_detector(), name=f"rt-barge-warm-{session_id}"
+        )
+
+        async def _send_binary(pcm: bytes) -> None:
+            nonlocal semantic_turn_committed, speaking
+            semantic_turn_committed = True
+            if not speaking:
+                speaking = True
+                barge_detector.start_output()
+                await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
+            await playback.send_binary(pcm)
+
+        async def _send_json(message: dict[str, Any]) -> None:
+            nonlocal semantic_turn_committed, speaking
+            kind = str(message.get("type", ""))
+            if kind == "audio_ready":
+                playback.set_sample_rate(
+                    int(message.get("output_sample_rate", 24_000) or 24_000)
+                )
+                self._active_voice_mode = "realtime"
+                self._active_realtime_provider = str(
+                    message.get("provider", "") or ""
+                )
+                self._active_realtime_model = str(message.get("model", "") or "")
+                self._voice_engine_transitioning = False
+                log.info(
+                    "Realtime desktop session ready: provider=%s model=%s input=%sHz output=%sHz",
+                    message.get("provider", "unknown"),
+                    message.get("model", "unknown"),
+                    message.get("input_sample_rate", "unknown"),
+                    message.get("output_sample_rate", "unknown"),
+                )
+            elif kind == "transcript":
+                role = str(message.get("role", ""))
+                if role == "user" and bool(message.get("is_final", False)):
+                    # A final user transcript can already have triggered a tool
+                    # inside RealtimeVoiceSession. Replaying its raw audio through
+                    # classic STT after a later provider failure could execute the
+                    # same side effect twice.
+                    semantic_turn_committed = True
+                    await self._set_turn_state(TurnTakingState.PROCESSING)
+                elif role == "assistant":
+                    semantic_turn_committed = True
+            elif kind == "thinking":
+                # A short Realtime bridge sentence has finished, while the
+                # delegated action continues. Drain that exact audio segment
+                # before returning the taskbar/orb to THINKING. The next audio
+                # delta starts a fresh SPEAKING segment through _send_binary.
+                semantic_turn_committed = True
+                await playback.finish_turn()
+                speaking = False
+                barge_detector.stop_output()
+                await self._set_turn_state(TurnTakingState.PROCESSING)
+            elif kind == "tts_cancel":
+                speaking = False
+                barge_detector.stop_output()
+                await playback.cancel()
+                await self._set_turn_state(TurnTakingState.LISTENING)
+            elif kind == "hangup":
+                semantic_turn_committed = True
+                speaking = False
+                barge_detector.stop_output()
+                await playback.cancel()
+            elif kind == "turn_complete":
+                semantic_turn_committed = True
+                await playback.finish_turn()
+                interrupted_during_drain = not speaking
+                speaking = False
+                barge_detector.stop_output()
+                await self._set_turn_state(TurnTakingState.LISTENING)
+                if (
+                    not self._continue_listening_after_response
+                    and not interrupted_during_drain
+                ):
+                    turn_complete.set()
+            elif kind in {"provider_error", "error_spoken"}:
+                if kind == "error_spoken":
+                    semantic_turn_committed = True
+                log.warning("Realtime desktop status: %s", message)
+
+        # Open the microphone BEFORE building the realtime session AND before
+        # the provider handshake, buffering locally until the session accepts
+        # audio. Both stages used to gate the mic open — measured live
+        # 2026-07-11: ~0.6s build_realtime_session (delegate-tool assembly) +
+        # 1.6-2.9s provider handshake — and the user's first words after
+        # "Hey Jarvis" fell into that hole ("bar spawns instantly but speech
+        # only counts ~0.5s+ later"). Now capture starts ~150ms after the
+        # wake (resolve cache makes the open itself ~10ms) and the buffered
+        # frames are flushed the moment the handshake completes — nothing is
+        # lost, the first reply is at worst handshake-delayed. The pump
+        # closure late-binds ``session``: the provider_ready gate only opens
+        # after the session object exists.
+        provider_ready = asyncio.Event()
+        preroll: deque[bytes] = deque()
+        preroll_bytes = 0
+        wait_tasks: set[asyncio.Task[Any]] = set()
+        reason = "desktop_fallback"
+        session: Any | None = None
+        microphone_task: asyncio.Task[Any] | None = None
+        try:
+            async with self._session_input_source(input_buffer) as input_chunks:
+                async def _send_microphone() -> None:
+                    nonlocal preroll_bytes
+                    async for chunk in self._session_input_stream(input_chunks):
+                        if not provider_ready.is_set():
+                            if (
+                                preroll_bytes + len(chunk.pcm)
+                                > _SESSION_START_BUFFER_MAX_BYTES
+                            ):
+                                raise RuntimeError(
+                                    "Realtime startup exceeded the 30-second "
+                                    "audio buffer; command prefix preserved, "
+                                    "session aborted."
+                                )
+                            preroll.append(chunk.pcm)
+                            preroll_bytes += len(chunk.pcm)
+                            continue
+                        while preroll:
+                            buffered = preroll.popleft()
+                            preroll_bytes = max(0, preroll_bytes - len(buffered))
+                            await session.handle_audio_frame(buffered)
+                        if speaking:
+                            interrupted_pcm = barge_detector.feed(chunk.pcm)
+                            if interrupted_pcm is None:
+                                # Provider half-duplex remains intact: speaker
+                                # echo is inspected locally but never uploaded.
+                                continue
+                            log.info(
+                                "Realtime desktop barge-in confirmed by local CPU VAD"
+                            )
+                            await session.handle_control({"type": "barge_in"})
+                            await session.handle_audio_frame(interrupted_pcm)
+                            continue
+                        await session.handle_audio_frame(chunk.pcm)
+
+                # A shared capture buffer already owns and meters production
+                # input, so leave it unread until the provider accepts audio.
+                # The legacy direct-call path has no such producer and starts
+                # its local pump immediately.
+                if input_buffer is None:
+                    microphone_task = asyncio.create_task(
+                        _send_microphone(), name=f"rt-mic-{session_id}"
+                    )
+
+                hangup_task = asyncio.create_task(
+                    self._hangup_event.wait(), name=f"rt-hangup-{session_id}"
+                )
+                wait_tasks.add(hangup_task)
+                build_started_at = time.monotonic()
+                build_task = asyncio.create_task(
+                    _run_voice_critical_thread(
+                        lambda: build_realtime_session(
+                            cfg=self._config,
+                            bus=self._bus,
+                            session_id=session_id,
+                            send_binary=_send_binary,
+                            send_json=_send_json,
+                            half_duplex=True,
+                            surface="desktop",
+                            brain=getattr(self, "_brain", None),
+                        )
+                    ),
+                    name=f"rt-build-{session_id}",
+                )
+                wait_tasks.add(build_task)
+                done, _pending = await asyncio.wait(
+                    {build_task, hangup_task}, return_when=asyncio.FIRST_COMPLETED
+                )
+                if hangup_task in done and self._hangup_event.is_set():
+                    reason = HANGUP_HOTKEY
+                    build_task.cancel()
+                    return HANGUP_HOTKEY
+                session = build_task.result()
+                build_ms = (time.monotonic() - build_started_at) * 1000.0
+                log.info("Realtime desktop session assembled in %.0f ms.", build_ms)
+                if session is None:
+                    return None
+                handshake_started_at = time.monotonic()
+                handshake_task = asyncio.create_task(
+                    session.handle_control(
+                        {"type": "audio_start", "sample_rate": 16_000}
+                    ),
+                    name=f"rt-handshake-{session_id}",
+                )
+                wait_tasks.add(handshake_task)
+                done, _pending = await asyncio.wait(
+                    {handshake_task, hangup_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                if hangup_task in done and self._hangup_event.is_set():
+                    reason = HANGUP_HOTKEY
+                    handshake_task.cancel()
+                    return HANGUP_HOTKEY
+                handshake_task.result()
+                self._active_realtime_handle = session
+                log.info(
+                    "Realtime desktop provider handshake completed in %.0f ms "
+                    "(%.0f ms total startup).",
+                    (time.monotonic() - handshake_started_at) * 1000.0,
+                    (time.monotonic() - build_started_at) * 1000.0,
+                )
+                # Completed startup tasks must not remain in the live-session
+                # FIRST_COMPLETED set; either would make a healthy realtime
+                # session unwind into classic voice immediately.
+                wait_tasks.discard(build_task)
+                wait_tasks.discard(handshake_task)
+                provider_ready.set()
+                if microphone_task is None:
+                    microphone_task = asyncio.create_task(
+                        _send_microphone(), name=f"rt-mic-{session_id}"
+                    )
+                await self._set_turn_state(TurnTakingState.LISTENING)
+                provider_task = asyncio.create_task(
+                    session.wait_finished(), name=f"rt-provider-{session_id}"
+                )
+                wait_tasks.update({microphone_task, provider_task, hangup_task})
+                if not self._continue_listening_after_response:
+                    wait_tasks.add(
+                        asyncio.create_task(
+                            turn_complete.wait(), name=f"rt-turn-{session_id}"
+                        )
+                    )
+                done, _pending = await asyncio.wait(
+                    wait_tasks, return_when=asyncio.FIRST_COMPLETED
+                )
+                if hangup_task in done and self._hangup_event.is_set():
+                    reason = HANGUP_HOTKEY
+                    return HANGUP_HOTKEY
+                # Voice hang-up ("auflegen" / end_call): the session ends its
+                # own pump and reports the reason — end the call for real
+                # instead of unwinding into the classic pipeline. Checked
+                # before turn_complete: in single-turn mode both fire, and
+                # voice_pattern is the more specific cause.
+                session_hangup = str(getattr(session, "hangup_reason", "") or "")
+                if session_hangup:
+                    reason = session_hangup
+                    return session_hangup
+                if turn_complete.is_set():
+                    reason = HANGUP_TURN_COMPLETE
+                    return HANGUP_TURN_COMPLETE
+                for task in done:
+                    if task.cancelled():
+                        continue
+                    exc = task.exception()
+                    if exc is not None:
+                        log.warning(
+                            "Realtime desktop task ended with %s: %s",
+                            type(exc).__name__,
+                            exc,
+                        )
+                if semantic_turn_committed:
+                    # Once a final transcript/output exists, replaying from the
+                    # capture buffer's beginning can duplicate an already-run
+                    # tool or feed Jarvis's own output back into classic STT.
+                    # End honestly; the next activation starts with a clean mic.
+                    reason = HANGUP_ERROR
+                    log.warning(
+                        "Realtime session ended after a committed turn; refusing "
+                        "unsafe audio replay through classic voice."
+                    )
+                    return HANGUP_ERROR
+                # A startup/early provider failure has committed no semantic
+                # user turn, so classic may safely replay the retained opening.
+                return None
+        except asyncio.CancelledError:
+            reason = "shutdown"
+            raise
+        except Exception as exc:  # noqa: BLE001 — classic fallback is load-bearing
+            log.warning("Realtime desktop session failed; using pipeline: %s", exc)
+            if semantic_turn_committed:
+                reason = HANGUP_ERROR
+                log.warning(
+                    "Realtime failure followed a committed turn; refusing unsafe "
+                    "audio replay through classic voice."
+                )
+                return HANGUP_ERROR
+            return None
+        finally:
+            if getattr(self, "_active_realtime_handle", None) is session:
+                self._active_realtime_handle = None
+            barge_detector.stop_output()
+            if not barge_warm_task.done():
+                barge_warm_task.cancel()
+            try:
+                await barge_warm_task
+            except asyncio.CancelledError:
+                pass
+            # The mic pump may not be in wait_tasks yet when the session
+            # build/handshake failed — cancel it explicitly either way.
+            if microphone_task is not None and not microphone_task.done():
+                microphone_task.cancel()
+            for task in wait_tasks:
+                if not task.done():
+                    task.cancel()
+            for task in wait_tasks:
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):  # noqa: S110 - teardown
+                    pass
+            if microphone_task is not None:
+                try:
+                    await microphone_task
+                except (asyncio.CancelledError, Exception):  # noqa: S110 - teardown
+                    pass
+            if session is not None:
+                await session.end(reason=reason)
+            await playback.close()
+
+    async def _ptt_session(
+        self, *, input_buffer: _SessionInputBuffer | None = None
+    ) -> str:
         """Push-to-talk turn: record raw mic audio until the key is released,
         then submit the whole capture as ONE prompt (one-shot).
 
@@ -4981,9 +6413,7 @@ class SpeechPipeline:
         """
         buffer = bytearray()
         hung_up = False
-        async with MicrophoneCapture(
-            device=self._input_device, device_priority=self._input_priority
-        ) as mic:
+        async with self._session_input_source(input_buffer) as input_chunks:
             mic_open_at = time.monotonic()
             await self._set_turn_state(TurnTakingState.LISTENING)
             await self._publish_event(ListeningStarted(source_layer="speech"))
@@ -4992,7 +6422,7 @@ class SpeechPipeline:
                 # Raw capture — no _session_input_stream TTS-echo filter: PTT
                 # plays only a short chime (no spoken ACK), and the user is
                 # holding the key with deliberate intent to record now.
-                async for chunk in mic.stream():
+                async for chunk in input_chunks:
                     buffer.extend(chunk.pcm)
                     # PTT bypasses the VAD, where mic_level.feed normally lives,
                     # so feed the live loudness here too — otherwise the overlay
@@ -5305,7 +6735,7 @@ class SpeechPipeline:
     async def _session_input_stream(
         self, chunks: AsyncIterator[AudioChunk]
     ) -> AsyncIterator[AudioChunk]:
-        """Filtert Mic-Frames, die waehrend/nach Jarvis-TTS aufgenommen wurden."""
+        """Filter mic frames captured during/after Jarvis TTS output."""
         dropped = 0
         async for chunk in chunks:
             # Input mute (Jarvis-scoped): while muted, drop the user's audio at
@@ -5320,8 +6750,16 @@ class SpeechPipeline:
                 dropped += 1
                 continue
             if dropped:
-                log.info("TTS-Echo-Sperre: %d Mic-Chunk(s) verworfen.", dropped)
+                log.info("TTS echo guard: dropped %d mic chunk(s).", dropped)
                 dropped = 0
+            # Realtime sessions bypass the VAD, where mic_level.feed normally
+            # lives, so feed the live loudness here — after the mute and echo
+            # filters, so suppressed audio honestly shows dark bars. Same
+            # normalized RMS as the VAD/PTT sites; zero-cost without overlay.
+            if mic_level.has_subscribers():
+                samples = pcm_bytes_to_np(chunk.pcm)
+                if samples.size:
+                    mic_level.feed(float(np.sqrt(np.mean(np.square(samples)))))
             yield chunk
 
     def _should_drop_session_input(self, chunk: AudioChunk) -> bool:
@@ -7282,6 +8720,20 @@ class SpeechPipeline:
             await self._speak(phrase, language=picker_lang, kind=SPOKEN_KIND_STT_UNAVAILABLE)
         except Exception as exc:  # noqa: BLE001
             log.warning("STT-unavailable fallback speak failed: %s", exc)
+
+    async def _speak_realtime_unavailable(self) -> None:
+        """Explain a duplex failure before continuing on the classic path."""
+        lang = _phrase_lang(self._output_language(None, ""))
+        phrase = _REALTIME_UNAVAILABLE_PHRASE[lang]
+        try:
+            await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
+            await self._speak(
+                phrase,
+                language=lang,
+                kind=SPOKEN_KIND_UNAVAILABLE,
+            )
+        except Exception as exc:  # noqa: BLE001 — fallback must never block recovery
+            log.warning("Realtime-unavailable fallback speak failed: %s", exc)
 
     def _mark_brain_progress(self) -> None:
         """Record that the in-flight brain turn just made progress.

@@ -15,9 +15,13 @@ class _FakePipeline:
 
     def __init__(self) -> None:
         self.applied = None
+        self.activation: bool | None = None
 
     def set_wake_plan(self, plan: object) -> None:
         self.applied = plan
+
+    def set_wake_activation(self, enabled: bool) -> None:
+        self.activation = enabled
 
 
 def _client(
@@ -41,6 +45,9 @@ def test_get_returns_current_and_options() -> None:
     assert "auto" in body["engines"] and "stt_match" in body["engines"]
     assert "Hey Jarvis" not in body["instant_phrases"]  # instant quick-picks are empty
     assert isinstance(body["local_whisper_available"], bool)
+    # The Sensitivity slider was removed 2026-07-10 — the GET payload no
+    # longer surfaces a sensitivity value.
+    assert "sensitivity" not in body
 
 
 def test_put_brand_phrase_never_resolves_to_a_pretrained_model() -> None:
@@ -83,6 +90,36 @@ def test_put_without_pipeline_reports_restart_required() -> None:
     assert body["restart_required"] is True
 
 
+def test_activation_live_applies_without_restart(monkeypatch) -> None:
+    from jarvis.core import config_writer
+
+    monkeypatch.setattr(config_writer, "set_wake_word_enabled", lambda _enabled: None)
+    pipe = _FakePipeline()
+    response = _client(pipeline=pipe).post(
+        "/api/settings/wake-word/activation", json={"enabled": True}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["applied_live"] is True
+    assert response.json()["restart_required"] is False
+    assert pipe.activation is True
+
+
+def test_activation_without_voice_pipeline_is_persisted_for_next_start(monkeypatch) -> None:
+    from jarvis.core import config_writer
+
+    persisted: list[bool] = []
+    monkeypatch.setattr(config_writer, "set_wake_word_enabled", persisted.append)
+    response = _client().post(
+        "/api/settings/wake-word/activation", json={"enabled": False}
+    )
+
+    assert response.status_code == 200
+    assert response.json()["applied_live"] is False
+    assert response.json()["restart_required"] is True
+    assert persisted == [False]
+
+
 def test_put_rejects_unknown_engine() -> None:
     resp = _client().put(
         "/api/settings/wake-word",
@@ -113,22 +150,22 @@ def test_omitted_tuning_fields_default_to_none() -> None:
 
 
 def test_put_omits_tuning_fields_so_persist_does_not_clobber(monkeypatch) -> None:
-    # When the client omits fuzzy_match_ratio/sensitivity, the persist call must
-    # receive None for them (set_wake_word then skips writing → preserves the
-    # existing toml value). This is the exact bug the reviewer caught.
+    # When the client omits fuzzy_match_ratio, the persist call must receive
+    # None for it (set_wake_word then skips writing → preserves the existing
+    # toml value). This is the exact bug the reviewer caught. sensitivity is
+    # no longer part of the set_wake_word signature at all (removed 2026-07-10).
     from jarvis.core import config_writer
 
     captured: dict = {}
 
     def _fake_set_wake_word(
         phrase, *, engine=None, custom_model_path=None,
-        sensitivity=None, fuzzy_match_ratio=None, path=None,
+        fuzzy_match_ratio=None, path=None,
     ):
         captured.update(
             phrase=phrase,
             engine=engine,
             custom_model_path=custom_model_path,
-            sensitivity=sensitivity,
             fuzzy_match_ratio=fuzzy_match_ratio,
         )
 
@@ -142,4 +179,21 @@ def test_put_omits_tuning_fields_so_persist_does_not_clobber(monkeypatch) -> Non
     assert resp.json()["persisted"] is True
     assert captured["phrase"] == "Computer"
     assert captured["fuzzy_match_ratio"] is None  # NOT 0.5 — would clobber 0.8
-    assert captured["sensitivity"] is None
+    assert "sensitivity" not in captured
+
+
+def test_put_with_legacy_sensitivity_is_accepted_but_ignored() -> None:
+    # Back-compat guard (2026-07-10): an old client/CLI body carrying
+    # 'sensitivity' must not 422, and the value must not surface anywhere in
+    # the response — it is simply dropped.
+    resp = _client().put(
+        "/api/settings/wake-word",
+        json={
+            "phrase": "Computer",
+            "engine": "auto",
+            "sensitivity": 0.9,
+            "persist": False,
+        },
+    )
+    assert resp.status_code == 200
+    assert "sensitivity" not in resp.json()

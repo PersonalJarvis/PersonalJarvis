@@ -14,12 +14,12 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.setup import obsidian as mod
 from jarvis.setup.obsidian import (
     ObsidianDetection,
     ObsidianVaultsState,
     VaultEntry,
     detect_obsidian,
+    find_registered_vault,
     is_vault_registered,
     read_obsidian_vaults,
 )
@@ -106,7 +106,7 @@ def test_detect_obsidian_finds_default_install(monkeypatch: pytest.MonkeyPatch) 
     local_path = r"C:\Users\TestUser\AppData\Local\Programs\Obsidian\Obsidian.exe"
     _patch_exists(monkeypatch, {local_path})
 
-    result = detect_obsidian()
+    result = detect_obsidian(platform="win32")
 
     assert isinstance(result, ObsidianDetection)
     assert result.installed is True
@@ -127,7 +127,7 @@ def test_detect_obsidian_finds_system_wide_install(monkeypatch: pytest.MonkeyPat
     pf_path = r"C:\Program Files\Obsidian\Obsidian.exe"
     _patch_exists(monkeypatch, {pf_path})
 
-    result = detect_obsidian()
+    result = detect_obsidian(platform="win32")
 
     assert result.installed is True
     assert result.exe_path is not None
@@ -141,7 +141,7 @@ def test_detect_obsidian_no_install(monkeypatch: pytest.MonkeyPatch) -> None:
     _kill_win32api(monkeypatch)
     _patch_exists(monkeypatch, set())
 
-    result = detect_obsidian()
+    result = detect_obsidian(platform="win32")
 
     assert result.installed is False
     assert result.exe_path is None
@@ -161,7 +161,7 @@ def test_detect_obsidian_version_extraction_fails_gracefully(
     pf_path = r"C:\Program Files\Obsidian\Obsidian.exe"
     _patch_exists(monkeypatch, {pf_path})
 
-    result = detect_obsidian()
+    result = detect_obsidian(platform="win32")
 
     assert result.installed is True
     assert result.exe_path is not None
@@ -179,10 +179,37 @@ def test_detect_obsidian_extracts_version_when_available(
     pf_path = r"C:\Program Files\Obsidian\Obsidian.exe"
     _patch_exists(monkeypatch, {pf_path})
 
-    result = detect_obsidian()
+    result = detect_obsidian(platform="win32")
 
     assert result.installed is True
     assert result.version == "1.5.12.0"
+
+
+def test_detect_obsidian_linux_uses_path_lookup(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Linux installs exposed on PATH are detected without Windows APIs."""
+    monkeypatch.setattr(
+        "jarvis.setup.obsidian.shutil.which",
+        lambda _name: "/usr/bin/obsidian",
+    )
+
+    result = detect_obsidian(platform="linux")
+
+    assert result.installed is True
+    assert result.exe_path == Path("/usr/bin/obsidian")
+    assert result.version is None
+
+
+def test_detect_obsidian_macos_app_bundle(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The standard macOS app bundle is detected when no CLI is on PATH."""
+    monkeypatch.setattr("jarvis.setup.obsidian.shutil.which", lambda _name: None)
+    app_binary = "/Applications/Obsidian.app/Contents/MacOS/Obsidian"
+    _patch_exists(monkeypatch, {str(Path(app_binary))})
+
+    result = detect_obsidian(platform="darwin")
+
+    assert result.installed is True
+    assert result.exe_path == Path(app_binary)
+    assert result.version is None
 
 
 # ---------------------------------------------------------------------------
@@ -315,6 +342,30 @@ def test_is_vault_registered_trailing_slash_robust() -> None:
 def test_is_vault_registered_empty_vault_list() -> None:
     """An empty registry is trivially a no-match."""
     assert is_vault_registered([], Path(r"C:\anything")) is False
+
+
+def test_is_vault_registered_for_subdirectory_of_registered_vault(
+    tmp_path: Path,
+) -> None:
+    """Existing-vault mode keeps Jarvis in a reachable child directory."""
+    parent = tmp_path / "Notes"
+    expected = parent / "Jarvis"
+    vaults = [VaultEntry(id="parent", path=parent)]
+
+    assert is_vault_registered(vaults, expected) is True
+    assert find_registered_vault(vaults, expected) == vaults[0]
+
+
+def test_find_registered_vault_prefers_most_specific_container(tmp_path: Path) -> None:
+    root = tmp_path / "Notes"
+    nested = root / "Team"
+    expected = nested / "Jarvis"
+    vaults = [
+        VaultEntry(id="root", path=root),
+        VaultEntry(id="nested", path=nested),
+    ]
+
+    assert find_registered_vault(vaults, expected) == vaults[1]
 
 
 # ---------------------------------------------------------------------------

@@ -30,6 +30,7 @@ activating both simultaneously results in a double announcement.
 """
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING, Literal
 
@@ -56,6 +57,7 @@ logger = logging.getLogger(__name__)
 
 
 _Lang = Literal["de", "en"]
+MISSION_ANNOUNCEMENT_SOURCE_LAYER = "missions.voice.announcer"
 
 
 class MissionAnnouncer:
@@ -173,6 +175,7 @@ class MissionAnnouncer:
 
         await self._speech_bus.publish(
             AnnouncementRequested(
+                source_layer=MISSION_ANNOUNCEMENT_SOURCE_LAYER,
                 text=text,
                 priority=priority,
                 language=lang,
@@ -185,8 +188,25 @@ class MissionAnnouncer:
                 # was silently dropped), and renders on the attributed
                 # "Jarvis Sub-Agent / Output" transcript track.
                 kind="subagent",
+                # Keep the mission identity and artifact location out of speech
+                # while making them available to the next model turn.
+                detail=self._context_detail(env),
             )
         )
+
+    @staticmethod
+    def _context_detail(env: EventEnvelope) -> str:
+        """Serialize safe terminal metadata for follow-up context."""
+        payload = env.payload
+        detail: dict[str, str] = {
+            "mission_id": env.mission_id,
+            "event_type": payload.event_type,
+        }
+        if isinstance(payload, MissionApproved):
+            detail["result_uri"] = payload.result_uri
+        elif isinstance(payload, (MissionFailed, MissionCancelled)):
+            detail["reason"] = payload.reason
+        return json.dumps(detail, ensure_ascii=True, separators=(",", ":"))
 
     @staticmethod
     def _situation(payload: object) -> tuple[str, bool]:
@@ -327,4 +347,4 @@ class MissionAnnouncer:
         return (is_voice, lang)
 
 
-__all__ = ["MissionAnnouncer"]
+__all__ = ["MISSION_ANNOUNCEMENT_SOURCE_LAYER", "MissionAnnouncer"]

@@ -28,14 +28,15 @@ import re
 import shutil
 import subprocess
 import time
+from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, Awaitable, Callable, Final, Literal
+from typing import Any, Final, Literal
 
 from ...core.process_utils import NO_WINDOW_CREATIONFLAGS
 from ..budget import BudgetExceeded, BudgetTracker
-from ..critic.reflections import ReflectionMemory
 from ..critic.escalation import FRONTIER_MODEL
+from ..critic.reflections import ReflectionMemory
 from ..critic.runner import MAX_CRITIC_LOOPS, CriticRunner
 from ..critic.verdict import (
     CriticSchemaInvalid,
@@ -57,9 +58,21 @@ from ..events import (
     WorkerSpawned,
     now_ms,
 )
-from ..isolation.worktree import WorktreeManager, read_worktree_base_sha
-from ..worker_runtime.workspace import materialize_worker_contract
+from ..isolation.worktree import (
+    SourceCheckoutUnavailableError,
+    WorktreeManager,
+    read_worktree_base_sha,
+)
 from ..manager import MissionManager
+from ..safety import (
+    extract_worker_authored_text,
+    filter_diff_paths,
+    has_high_severity,
+)
+from ..safety import (
+    scan as injection_scan,
+)
+from ..state_machine import IllegalStateTransition, MissionState
 from ..stream_evidence import (
     extract_verified_commands,
     extract_verified_desktop_actions,
@@ -67,6 +80,9 @@ from ..stream_evidence import (
     readonly_answer,
     summarize_answers,
 )
+from ..worker_runtime.workspace import materialize_worker_contract
+from ..workers.base import WorkerProtocol
+from .decomposer import MissionDecomposer, MissionPlan, Step
 from .deliverable import (
     build_deliverable_summary,
     build_delivered_summary,
@@ -74,15 +90,6 @@ from .deliverable import (
     materialize_answer_document,
 )
 from .deliverable_paths import find_generator_scripts, is_deliverable_path
-from ..safety import (
-    extract_worker_authored_text,
-    filter_diff_paths,
-    has_high_severity,
-    scan as injection_scan,
-)
-from ..state_machine import IllegalStateTransition, MissionState
-from ..workers.base import WorkerProtocol
-from .decomposer import MissionDecomposer, MissionPlan, Step
 from .worker_prompt import compose_worker_prompt
 
 logger = logging.getLogger(__name__)
@@ -257,9 +264,11 @@ def _classify_worktree_setup_failure(exc: BaseException) -> str:
 
     - ``git_missing``: no git executable on PATH at all
       (``FileNotFoundError``/``OSError`` from the subprocess spawn itself).
-    - ``git_not_a_repository``: git IS present but ``repo_root`` has no
-      ``.git`` (the "Download ZIP" install facet) — ``git worktree add``
-      exits 128 with a "not a git repository" stderr.
+    - ``source_checkout_unavailable``: the installed application tree has no
+      usable Git history. This is expected for copied/frozen/container
+      distributions and blocks only source-dependent tasks.
+    - ``git_not_a_repository``: backwards-compatible classification for an
+      older ``git worktree add`` failure carrying "not a git repository".
     - ``worktree_setup_failed``: the pre-existing generic fallback for
       everything else (200-char path-length cap ``ValueError``, an
       index-lock ``CalledProcessError``, etc.) — unchanged behaviour.
@@ -268,6 +277,8 @@ def _classify_worktree_setup_failure(exc: BaseException) -> str:
     above falls through to the generic fallback so this is always safe to
     call from an except clause.
     """
+    if isinstance(exc, SourceCheckoutUnavailableError):
+        return "source_checkout_unavailable"
     if isinstance(exc, FileNotFoundError):
         return "git_missing"
     if isinstance(exc, subprocess.CalledProcessError):
@@ -810,9 +821,9 @@ class Kontrollierer:
         # `_run_task_with_critic_loop` when `WorktreeManager.create()` raises,
         # consumed once (popped) by the `SETUP_FAILED` aggregation branch in
         # `run_mission` so the terminal reason names the real cause
-        # ("git_missing" / "git_not_a_repository") instead of the generic
-        # "worktree_setup_failed" fallback. Last write wins, same convention
-        # as `_mission_failure_context`.
+        # ("git_missing" / "source_checkout_unavailable") instead of the
+        # generic "worktree_setup_failed" fallback. Last write wins, same
+        # convention as `_mission_failure_context`.
         self._setup_failure_reason: dict[str, str] = {}
         # Per-mission worker answers for read-only/informational tasks (empty
         # diff + tool evidence). Surfaced as MissionApproved.summary_de so the
@@ -1065,9 +1076,9 @@ class Kontrollierer:
             # Worktree-create failure (path cap / git index lock / missing git
             # binary / no .git repo) — surface an actionable cause instead of
             # the generic "worker aborted" (#8). AP-23 wave-2 finding 1: the
-            # classified reason (git_missing / git_not_a_repository) set by
-            # `_run_task_with_critic_loop`'s except clause takes priority over
-            # the pre-existing generic fallback.
+            # classified reason (git_missing / source_checkout_unavailable)
+            # set by `_run_task_with_critic_loop`'s except clause takes
+            # priority over the pre-existing generic fallback.
             setup_reason = self._setup_failure_reason.pop(
                 mission_id, "worktree_setup_failed"
             )
@@ -1129,7 +1140,12 @@ class Kontrollierer:
                     task_id=step.task_id,
                     needs_repo=step.needs_repo,
                 )
-            except (subprocess.CalledProcessError, ValueError, OSError) as exc:
+            except (
+                SourceCheckoutUnavailableError,
+                subprocess.CalledProcessError,
+                ValueError,
+                OSError,
+            ) as exc:
                 # OSError added (AP-23 wave-2 finding 1): a missing git binary
                 # raises FileNotFoundError (an OSError subclass), which used
                 # to escape uncaught here and crash every mission — even a
@@ -1375,6 +1391,35 @@ class Kontrollierer:
             # "budget", everything else → "user") and log the verbatim
             # message at ERROR level so it shows up in jarvis_desktop.log
             # immediately above the failure announcement.
+            if spawn_result.supervisor_tool_failed:
+                error_detail = (
+                    spawn_result.supervisor_tool_error
+                    or "Supervisor tool execution did not complete successfully."
+                )[:300]
+                self._mission_failure_context[mission_id] = {
+                    "error_class": "supervisor_tool_failed",
+                    "error_detail": error_detail,
+                    "failed_provider": (
+                        getattr(worker, "provider", None)
+                        or getattr(worker, "cli", None)
+                    ),
+                }
+                logger.error(
+                    "Task %s iter %d: refusing critic review after an unclean "
+                    "supervisor tool grant: %s",
+                    step.task_id,
+                    iteration,
+                    error_detail,
+                )
+                await self._publish_worker_killed(
+                    mission_id=mission_id,
+                    worker_id=spawn_result.worker_id,
+                    reason="worker_error",
+                    error_class="supervisor_tool_failed",
+                    error_detail=error_detail,
+                )
+                return TaskOutcome.ERROR
+
             if spawn_result.worker_error:
                 err_lower = spawn_result.worker_error.lower()
                 # Structured flag first (robust), result-text "timeout" as a
@@ -1707,6 +1752,8 @@ class Kontrollierer:
             session_id: str | None,
             worker_error: str | None = None,
             worker_timed_out: bool = False,
+            supervisor_tool_failed: bool = False,
+            supervisor_tool_error: str | None = None,
         ) -> None:
             self.worker_id = worker_id
             self.cost_usd = cost_usd
@@ -1725,6 +1772,8 @@ class Kontrollierer:
             # no credentials). Used by the calling loop to fail-fast
             # instead of grinding through MAX_CRITIC_LOOPS retries.
             self.worker_error = worker_error
+            self.supervisor_tool_failed = supervisor_tool_failed
+            self.supervisor_tool_error = supervisor_tool_error
 
     async def _spawn_worker_collect(
         self,
@@ -1755,6 +1804,33 @@ class Kontrollierer:
         worker_error: str | None = None
         worker_timed_out = False
         last_progress_at: float | None = None
+        worker_timeout_s = (
+            _ITER0_WORKER_TIMEOUT_S
+            if iteration == 0
+            else _CORRECTION_WORKER_TIMEOUT_S
+        )
+        from jarvis.missions.workers.worker_tool_broker import (
+            EmptyWorkerToolBrokerBinding,
+        )
+
+        broker_binding: Any = EmptyWorkerToolBrokerBinding()
+        inventory = getattr(worker, "capability_inventory", None)
+        bind_broker = getattr(inventory, "bind_broker", None)
+        if callable(bind_broker):
+            try:
+                issued_binding = bind_broker(
+                    ttl_s=worker_timeout_s + 60.0,
+                    mission_id=mission_id,
+                    worker_id=worker_id,
+                )
+                if issued_binding is not None:
+                    broker_binding = issued_binding
+            except Exception:  # noqa: BLE001 - unavailable tools degrade honestly
+                logger.exception(
+                    "Mission %s worker %s: supervisor tool grant unavailable",
+                    mission_id,
+                    worker_id,
+                )
 
         async with job:
             hb_stop = asyncio.Event()
@@ -1782,16 +1858,14 @@ class Kontrollierer:
                 kwargs: dict[str, Any] = {
                     "model": step.model,
                     "allowed_tools": step.allowed_tools,
+                    "mission_id": mission_id,
+                    "_broker_binding": broker_binding,
                     # Degressive per-iteration budget (2026-06-10 mandate):
                     # the main build gets the large slice, corrections the
                     # short one — they refine an existing workspace. Workers
                     # preserve + grade partial work on timeout, so an overrun
                     # costs the cap, never the deliverable.
-                    "timeout_s": (
-                        _ITER0_WORKER_TIMEOUT_S
-                        if iteration == 0
-                        else _CORRECTION_WORKER_TIMEOUT_S
-                    ),
+                    "timeout_s": worker_timeout_s,
                 }
                 if resume_session_id:
                     kwargs["resume_session_id"] = resume_session_id
@@ -1896,6 +1970,9 @@ class Kontrollierer:
             finally:
                 hb_stop.set()
                 await hb_task
+                await broker_binding.aclose()
+
+        broker_summary = broker_binding.execution_summary
 
         return Kontrollierer._SpawnResult(
             worker_id=worker_id,
@@ -1904,6 +1981,8 @@ class Kontrollierer:
             session_id=session_id,
             worker_error=worker_error,
             worker_timed_out=worker_timed_out,
+            supervisor_tool_failed=not broker_summary.clean,
+            supervisor_tool_error=broker_summary.failure_summary,
         )
 
     # --- Phase-5 Safety -----------------------------------------------------
@@ -2592,14 +2671,15 @@ class Kontrollierer:
 
     async def _safe_transition(
         self, mission_id: str, to_state: MissionState, reason: str
-    ) -> None:
-        """State-machine transition with lock + idempotency tolerance."""
+    ) -> bool:
+        """Transition under the mission lock and report whether it committed."""
         lock = self._state_locks.setdefault(mission_id, asyncio.Lock())
         async with lock:
             try:
                 await self._manager.transition_state(
                     mission_id, to_state, reason=reason, source_actor="kontrollierer"
                 )
+                return True
             except IllegalStateTransition:
                 # already at the target state or further — not a crash
                 logger.debug(
@@ -2607,6 +2687,7 @@ class Kontrollierer:
                     mission_id,
                     to_state.value,
                 )
+                return False
 
     async def _approve_mission(
         self, mission_id: str, plan: MissionPlan, *, prompt: str = ""
@@ -2614,7 +2695,13 @@ class Kontrollierer:
         # Hygiene: a retried-then-approved mission must not leak a stale
         # worker-failure context into a later run (mirror of _fail_mission).
         self._mission_failure_context.pop(mission_id, None)
-        await self._safe_transition(mission_id, MissionState.APPROVED, "all_tasks_approved")
+        transitioned = await self._safe_transition(
+            mission_id,
+            MissionState.APPROVED,
+            "all_tasks_approved",
+        )
+        if not transitioned:
+            return
         # Point `result_uri` at the real mission directory so the Outputs
         # view and any voice-readback consumer can resolve it to actual
         # files (diff.patch + untracked file copies persisted by
@@ -2747,7 +2834,8 @@ class Kontrollierer:
             MissionState.TIMED_OUT,
         ):
             return
-        await self._safe_transition(mission_id, MissionState.FAILED, reason)
+        if not await self._safe_transition(mission_id, MissionState.FAILED, reason):
+            return
         env = EventEnvelope(
             mission_id=mission_id,
             source_actor="kontrollierer",

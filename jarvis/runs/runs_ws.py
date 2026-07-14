@@ -38,6 +38,7 @@ _LIVE_KINDS: frozenset[str] = frozenset({
     "VoiceSessionEnded",
     "VoiceTurnStarted",
     "VoiceTurnCompleted",
+    "RealtimeSessionReady",
     "WakeWordDetected",
     "ListeningStarted",
     "TranscriptFinal",

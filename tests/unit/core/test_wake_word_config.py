@@ -1,8 +1,14 @@
 """WakeWordConfig — the user-editable [trigger.wake_word] schema.
 
 Pins the custom-wake-word config contract: a ``phrase`` source of truth, an
-``engine`` validated against the SoT (boot-resilient coercion, AP-16), and
-sensitivity/fuzzy knobs. Legacy porcupine-era keys must still load.
+``engine`` validated against the SoT (boot-resilient coercion, AP-16), and a
+fuzzy-match knob. Legacy porcupine-era keys must still load.
+
+``sensitivity`` is READ-COMPAT ONLY since 2026-07-10 (the user-facing
+Sensitivity slider was removed — every wake path now always runs at its
+calibrated-reliable maximum-speed value). The field stays on the model so an
+existing jarvis.toml with a hand-set value still parses and boots; it is no
+longer read by ``resolve_wake_plan``.
 """
 from __future__ import annotations
 
@@ -71,3 +77,18 @@ def test_sensitivity_valid_range_round_trips() -> None:
     assert WakeWordConfig(sensitivity=0.75).sensitivity == 0.75
     assert WakeWordConfig(sensitivity=1.0).sensitivity == 1.0
     assert WakeWordConfig(sensitivity=2.0).sensitivity == 1.0  # ceiling clamp
+
+
+def test_sensitivity_parses_but_no_longer_drives_the_resolved_wake_plan() -> None:
+    # Guard for the 2026-07-10 removal: a legacy sensitivity value still loads
+    # cleanly on the config model (back-compat), but resolve_wake_plan() no
+    # longer varies its threshold with it — every path runs its pinned,
+    # calibrated-reliable value regardless.
+    from jarvis.plugins.wake.openwakeword_provider import PRODUCTION_WAKE_THRESHOLD
+    from jarvis.speech.wake_phrase import resolve_wake_plan
+
+    low = WakeWordConfig(phrase="Computer", sensitivity=0.5)
+    high = WakeWordConfig(phrase="Computer", sensitivity=1.0)
+    plan_low = resolve_wake_plan(low, local_whisper_available=True)
+    plan_high = resolve_wake_plan(high, local_whisper_available=True)
+    assert plan_low.threshold == plan_high.threshold == PRODUCTION_WAKE_THRESHOLD

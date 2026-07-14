@@ -4,8 +4,9 @@ Personal Jarvis talks to Anthropic's ``claude`` (Claude Code) CLI in two roles:
 
 * **Subagent** (heavy-task worker) via the ``claude`` binary using the **Claude
   Max subscription** (``claude`` stores an OAuth bearer in
-  ``~/.claude/.credentials.json``; no per-call billing — it runs against the
-  plan's included usage).
+  ``<config dir>/.credentials.json``, resolved across all candidate config
+  dirs by :mod:`jarvis.claude_credentials`; no per-call billing — it runs
+  against the plan's included usage).
 * **Brain provider** via the Anthropic Messages API using an **Anthropic API key**
   (separate, billed per token on the Anthropic account).
 
@@ -15,11 +16,13 @@ the UI can render "Connected as <email>" exactly like the Codex / Antigravity
 subscription cards. It is the Anthropic sibling of :mod:`jarvis.codex_auth` and
 :mod:`jarvis.google_cli.auth_service`.
 
-Email source: ``claude`` keeps the access bearer (no identity) in
-``~/.claude/.credentials.json``, but the signed-in account identity lives in a
-SEPARATE file, ``~/.claude.json`` under ``oauthAccount`` (``emailAddress``,
-``displayName``, ``organizationName``). The subscription tier (``max`` / ``pro``)
-is in the credentials file under ``claudeAiOauth.subscriptionType``.
+Email source: ``claude`` keeps the access bearer (no identity) in the
+credentials file, but the signed-in account identity lives in a SEPARATE
+file, ``.claude.json`` under ``oauthAccount`` (``emailAddress``,
+``displayName``, ``organizationName``) — the sibling ``~/.claude.json`` for
+the default config dir, or inside a custom ``CLAUDE_CONFIG_DIR``. The
+subscription tier (``max`` / ``pro``) is in the credentials file under
+``claudeAiOauth.subscriptionType``.
 
 Cross-platform (CLOUD.md Rule #1): pure stdlib, ``pathlib``-only, degrades to a
 clean "not installed" / "not connected" snapshot on any host where the ``claude``
@@ -39,12 +42,11 @@ import logging
 import os
 import subprocess
 import sys
-import time
-from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from jarvis.claude_credentials import ClaudeOAuthSnapshot, freshest_claude_oauth
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
 log = logging.getLogger(__name__)
@@ -92,46 +94,6 @@ def _read_json(path: Path) -> dict[str, Any] | None:
     except (ValueError, json.JSONDecodeError):
         return None
     return data if isinstance(data, dict) else None
-
-
-def _oauth_from_credentials(
-    creds: dict[str, Any] | None, *, now_fn: Callable[[], float] = time.time
-) -> tuple[bool, str | None, bool]:
-    """Return ``(connected, subscription_type, expired)`` from a credentials dict.
-
-    ``claude`` writes ``{"claudeAiOauth": {"accessToken": "sk-ant-oat...",
-    "subscriptionType": "max", "expiresAt": <epoch ms>, ...}}``. A present
-    ``sk-ant-oat`` bearer whose ``expiresAt`` has NOT passed means the Claude
-    Max / Pro subscription login is live; the tier comes from
-    ``subscriptionType``. Tolerant by design — any shape it does not recognize
-    degrades to ``(False, None, False)`` rather than raising.
-
-    EXPIRY-aware since 2026-07-06: presence-only reporting said
-    "connected=True mode=subscription" for a token that had been dead since
-    02:53, so the UI showed green while every subagent spawn died with
-    "401 Invalid authentication credentials". A present-but-expired bearer now
-    reports ``connected=False, expired=True`` so ``status()`` can tell the user
-    to run ``claude /login``. A missing ``expiresAt`` stays fail-open (older
-    credential shapes keep reporting connected).
-    """
-    if not isinstance(creds, dict):
-        return False, None, False
-    oauth = creds.get("claudeAiOauth")
-    if not isinstance(oauth, dict):
-        return False, None, False
-    token = oauth.get("accessToken")
-    present = isinstance(token, str) and token.startswith("sk-ant-oat")
-    sub_type = oauth.get("subscriptionType")
-    sub_type = sub_type if isinstance(sub_type, str) and sub_type else None
-    if not present:
-        return False, None, False
-    expires_at = oauth.get("expiresAt")
-    expired = False
-    if isinstance(expires_at, (int, float)) and expires_at > 0:
-        # `claude` writes epoch milliseconds; tolerate seconds defensively.
-        expires_s = expires_at / 1000.0 if expires_at > 1e12 else float(expires_at)
-        expired = expires_s <= now_fn()
-    return (not expired), sub_type, expired
 
 
 def _account_from_claude_json(
@@ -271,6 +233,35 @@ class ClaudeAuthService:
     def _claude_json_path(self) -> Path:
         return Path(os.path.expanduser("~/.claude.json"))
 
+    def _oauth_snapshot(self) -> ClaudeOAuthSnapshot:
+        """The freshest OAuth login across all known config dirs (test seam).
+
+        Multi-config-dir aware since 2026-07-10: reading only ``~/.claude``
+        reported "subscription login expired" on a host whose interactive
+        sessions pin ``CLAUDE_CONFIG_DIR`` to a profile-manager dir — the
+        live, freshly-refreshed login next door was never considered.
+        """
+        return freshest_claude_oauth()
+
+    def _identity_path(self, config_dir: Path | None) -> Path:
+        """The ``.claude.json`` identity file that belongs to *config_dir*.
+
+        With the default ``~/.claude`` config dir the CLI keeps the identity
+        as the SIBLING ``~/.claude.json``; with a custom ``CLAUDE_CONFIG_DIR``
+        it lives INSIDE that dir. Falls back to the default-location seam so
+        the card still shows an email when the custom dir has no identity file.
+        """
+        if config_dir is not None and config_dir != Path(
+            os.path.expanduser("~/.claude")
+        ):
+            candidate = config_dir / ".claude.json"
+            try:
+                if candidate.is_file():
+                    return candidate
+            except OSError:
+                pass
+        return self._claude_json_path()
+
     # -- public API ------------------------------------------------------
 
     def status(self) -> ClaudeAuthStatus:
@@ -290,12 +281,13 @@ class ClaudeAuthService:
             )
 
         version = self._probe_version(binary)
-        creds = _read_json(self._credentials_path())
-        oauth_connected, sub_type, oauth_expired = _oauth_from_credentials(creds)
+        snapshot = self._oauth_snapshot()
+        sub_type = snapshot.subscription_type
+        oauth_expired = snapshot.status == "expired"
 
-        if oauth_connected:
+        if snapshot.status == "valid":
             email, _name = _account_from_claude_json(
-                _read_json(self._claude_json_path())
+                _read_json(self._identity_path(snapshot.config_dir))
             )
             label = _subscription_label(sub_type)
             message = f"Connected via {label} ({email})." if email else (
@@ -397,7 +389,11 @@ class ClaudeAuthService:
         Returns ``(ok, error)``. Removes ONLY ``~/.claude/.credentials.json`` (the
         bearer file) — never ``~/.claude.json``, which holds the user's whole
         Claude Code config + project history. A missing file counts as success
-        (already logged out).
+        (already logged out). Deliberately DEFAULT-DIR only: a login owned by
+        an external profile manager (custom ``CLAUDE_CONFIG_DIR``) also feeds
+        that manager's own live sessions — deleting it here would log those
+        out behind the user's back, so the card may keep reporting connected
+        after a disconnect on such a host.
         """
         creds = self._credentials_path()
         try:

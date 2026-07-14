@@ -7,6 +7,8 @@ Whisper, and a missing vosk package or model falls through gracefully.
 """
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,6 +16,18 @@ import pytest
 
 from jarvis.speech.wake_constants import resolve_vosk_model_path
 from jarvis.speech.wake_phrase import resolve_wake_plan
+
+
+@dataclass
+class _FakeTTS:
+    name: str = "fake-tts"
+    supports_streaming: bool = True
+
+    async def synthesize(
+        self, text: str, voice: str | None = None, language_code: str | None = None
+    ) -> AsyncIterator:
+        if False:  # pragma: no cover
+            yield
 
 
 def _cfg(phrase: str = "Hey Nova", engine: str = "auto", custom: str = "") -> SimpleNamespace:
@@ -133,27 +147,60 @@ def test_no_vosk_no_whisper_is_honest_wake_off(vosk_model_dir) -> None:
 # --------------------------------------------------------------------------
 
 
+def test_set_wake_plan_vosk_keeps_unverified_candidates_internal(
+    vosk_model_dir,
+) -> None:
+    """Live-apply must not expose noisy grammar hits to the visible overlay."""
+    from jarvis.core.bus import EventBus
+    from jarvis.plugins.wake.vosk_kws_provider import VoskKwsProvider
+    from jarvis.speech.pipeline import SpeechPipeline
+
+    pipe = SpeechPipeline(
+        tts=_FakeTTS(), bus=EventBus(),
+        enable_openwakeword=False, enable_whisper_wake=False,
+        enable_local_whisper=False, config=None,
+    )
+    plan = resolve_wake_plan(
+        _cfg(), local_whisper_available=False, language="de", vosk_available=True
+    )
+    assert plan.engine == "vosk_kws"
+    pipe.set_wake_plan(plan)
+
+    assert isinstance(pipe._wake, VoskKwsProvider)
+    assert not hasattr(pipe._wake, "_on_candidate")
+
+
+def test_constructor_wake_plan_keeps_unverified_candidates_internal(
+    vosk_model_dir,
+) -> None:
+    """The initial construction path has the same confirmed-wake boundary."""
+    from jarvis.core.bus import EventBus
+    from jarvis.plugins.wake.vosk_kws_provider import VoskKwsProvider
+    from jarvis.speech.pipeline import SpeechPipeline
+
+    plan = resolve_wake_plan(
+        _cfg(), local_whisper_available=False, language="de", vosk_available=True
+    )
+    assert plan.engine == "vosk_kws"
+
+    pipe = SpeechPipeline(
+        tts=_FakeTTS(), bus=EventBus(),
+        enable_openwakeword=False, enable_whisper_wake=False,
+        enable_local_whisper=False, config=None,
+        wake_plan=plan,
+    )
+
+    assert isinstance(pipe._wake, VoskKwsProvider)
+    assert not hasattr(pipe._wake, "_on_candidate")
+
+
 def test_set_wake_plan_vosk_arms_the_provider(vosk_model_dir) -> None:
     # Regression guard for the 2026-07-06 live finding: the plan resolved to
     # vosk_kws but the detector flag stayed off (OWW=off in the ready log), so
     # the wake was silently dead. The vosk provider rides the OWW slot/loop —
     # arming it must flip the flag on.
-    from collections.abc import AsyncIterator
-    from dataclasses import dataclass
-
     from jarvis.plugins.wake.vosk_kws_provider import VoskKwsProvider
     from jarvis.speech.pipeline import SpeechPipeline
-
-    @dataclass
-    class _FakeTTS:
-        name: str = "fake-tts"
-        supports_streaming: bool = True
-
-        async def synthesize(
-            self, text: str, voice: str | None = None, language_code: str | None = None
-        ) -> AsyncIterator:
-            if False:  # pragma: no cover
-                yield
 
     pipe = SpeechPipeline(
         tts=_FakeTTS(), bus=None,

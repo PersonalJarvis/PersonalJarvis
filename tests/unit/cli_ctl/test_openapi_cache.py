@@ -75,6 +75,29 @@ def test_no_cache_and_unreachable_returns_none(tmp_path, monkeypatch):
     assert oc.load_spec(_client(handler)) is None
 
 
+def test_future_fetched_at_is_treated_as_stale(tmp_path, monkeypatch):
+    """Backward clock skew (VM restore) must not pin the cache 'fresh' forever."""
+    import time
+
+    monkeypatch.setenv("JARVISCTL_CACHE_HOME", str(tmp_path))
+    (tmp_path / "openapi.json").write_text(
+        json.dumps({"openapi": "3.1.0", "info": {"version": "old"}, "paths": {}}),
+        encoding="utf-8",
+    )
+    (tmp_path / "openapi.meta.json").write_text(
+        json.dumps({"fetched_at": time.time() + 10 * 24 * 3600}), encoding="utf-8"
+    )
+    calls = {"n": 0}
+
+    def handler(req):
+        calls["n"] += 1
+        return httpx.Response(200, json=SPEC)  # info.version == "1"
+
+    spec = oc.load_spec(_client(handler))  # default TTL; age is negative
+    assert spec["info"]["version"] == "1"
+    assert calls["n"] == 1
+
+
 def test_refresh_clears_cache(tmp_path, monkeypatch):
     monkeypatch.setenv("JARVISCTL_CACHE_HOME", str(tmp_path))
     (tmp_path / "openapi.json").write_text("{}", encoding="utf-8")

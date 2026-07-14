@@ -318,6 +318,96 @@ async def test_dead_provider_skipped_on_subsequent_turns():
     )
 
 
+class _PaymentRequiredBrain:
+    """Brain stub that fails like a real provider hitting a bare billing
+    rejection (HTTP 402) — classified as `account_blocked` by
+    `_classify_provider_error`, the SAME kind the depleted-credits forensic
+    (tests/unit/brain/test_depleted_credits_classification.py) covers.
+    """
+    name = "payment-required-brain"
+    context_window = 8192
+    supports_tools = True
+    supports_vision = False
+
+    def __init__(self) -> None:
+        self.call_count = 0
+
+    async def complete(self, req):  # type: ignore[no-untyped-def]
+        self.call_count += 1
+        raise RuntimeError("Error code: 402 - Payment Required")
+        yield  # pragma: no cover
+
+    def estimate_cost(self, req) -> float:  # type: ignore[no-untyped-def]
+        return 0.0
+
+
+@pytest.mark.asyncio
+async def test_402_dead_lists_only_the_model_when_a_sibling_model_remains():
+    """A billing rejection (402) on ONE model of a provider must not dead-list
+    the WHOLE provider while a different, untried model of the SAME provider
+    is still later in this turn's chain (e.g. a capped paid model with a
+    funded free model behind it) — the model-scoped twin of the existing
+    provider-level dead-list (AP-22).
+    """
+    bus = EventBus()
+    config = JarvisConfig()
+    manager = BrainManager(config=config, bus=bus, tools={})
+    manager._registry._loaded = True
+
+    dead_paid = _PaymentRequiredBrain()
+    working_free = FakeBrain(text_response="Antwort vom Free-Modell")
+
+    manager._brain_cache[("openrouter", "paid-model")] = dead_paid
+    manager._brain_cache[("openrouter", "free-model")] = working_free
+    manager._build_fallback_chain = lambda level: [
+        ("openrouter", "paid-model"),
+        ("openrouter", "free-model"),
+    ]
+
+    result = await manager.generate("hi", use_history=False)
+
+    assert "Free-Modell" in result
+    assert dead_paid.call_count == 1
+    assert ("openrouter", "paid-model") in manager._dead_provider_models
+    assert "openrouter" not in manager._dead_providers, (
+        "the whole provider must stay alive while a sibling model is untried"
+    )
+
+
+@pytest.mark.asyncio
+async def test_402_dead_lists_whole_provider_when_no_sibling_model_remains():
+    """When EVERY model of a provider hits a 402 this turn (no untried
+    sibling model left in the chain), the provider itself falls back to the
+    existing provider-level dead-list so the chain crosses to another family
+    — the exact behavior the depleted-credits forensic protects.
+    """
+    bus = EventBus()
+    config = JarvisConfig()
+    manager = BrainManager(config=config, bus=bus, tools={})
+    manager._registry._loaded = True
+
+    dead_paid = _PaymentRequiredBrain()
+    dead_free = _PaymentRequiredBrain()
+    working_other_family = FakeBrain(text_response="Antwort von Gemini")
+
+    manager._brain_cache[("openrouter", "paid-model")] = dead_paid
+    manager._brain_cache[("openrouter", "free-model")] = dead_free
+    manager._brain_cache[("gemini", "gemini-flash")] = working_other_family
+    manager._build_fallback_chain = lambda level: [
+        ("openrouter", "paid-model"),
+        ("openrouter", "free-model"),
+        ("gemini", "gemini-flash"),
+    ]
+
+    result = await manager.generate("hi", use_history=False)
+
+    assert "Gemini" in result
+    assert "openrouter" in manager._dead_providers, (
+        "with no untried sibling model left, the provider must still "
+        "dead-list so the chain crosses family"
+    )
+
+
 @pytest.mark.asyncio
 async def test_dead_providers_reset_on_switch():
     """A provider switch (user sets a key, says 'switch to gemini') resets

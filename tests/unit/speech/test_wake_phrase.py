@@ -18,9 +18,9 @@ import pytest
 from jarvis.speech import wake_constants as wc
 from jarvis.speech import wake_phrase as wp
 from jarvis.speech.wake_phrase import (
+    CUSTOM_ONNX_THRESHOLD,
     compile_wake_matcher,
     resolve_wake_plan,
-    sensitivity_to_threshold,
 )
 
 
@@ -195,25 +195,47 @@ def test_long_phrase_keeps_strict_ratio_for_short_name_relaxation() -> None:
 
 
 # --------------------------------------------------------------------------
-# sensitivity -> OWW threshold mapping (anchored on PRODUCTION_WAKE_THRESHOLD)
+# Wake thresholds are pinned constants (the Sensitivity slider was removed
+# 2026-07-10 — every wake path always runs its calibrated-reliable value).
 # --------------------------------------------------------------------------
 
-def test_default_sensitivity_maps_to_production_threshold() -> None:
+def test_pretrained_threshold_is_pinned_to_production_wake_threshold() -> None:
     from jarvis.plugins.wake.openwakeword_provider import PRODUCTION_WAKE_THRESHOLD
 
-    assert sensitivity_to_threshold(0.5) == pytest.approx(PRODUCTION_WAKE_THRESHOLD)
+    assert wp.PRODUCTION_WAKE_THRESHOLD == PRODUCTION_WAKE_THRESHOLD
 
 
-def test_sensitivity_mapping_is_monotonic_decreasing() -> None:
-    # Higher sensitivity -> lower threshold -> easier to trigger.
-    assert sensitivity_to_threshold(0.0) > sensitivity_to_threshold(0.5)
-    assert sensitivity_to_threshold(0.5) > sensitivity_to_threshold(1.0)
-    assert sensitivity_to_threshold(0.0) == pytest.approx(0.30)
+def test_custom_onnx_threshold_is_the_balanced_default() -> None:
+    assert CUSTOM_ONNX_THRESHOLD == pytest.approx(0.50)
 
 
-def test_sensitivity_clamped_to_unit_interval() -> None:
-    assert sensitivity_to_threshold(-1.0) == sensitivity_to_threshold(0.0)
-    assert sensitivity_to_threshold(2.0) == sensitivity_to_threshold(1.0)
+@pytest.mark.parametrize("sensitivity", [0.0, 0.3, 0.5, 0.7, 1.0])
+def test_resolved_thresholds_ignore_any_legacy_sensitivity_value(
+    sensitivity: float, tmp_path: object
+) -> None:
+    """Guard: resolve_wake_plan() always yields the pinned thresholds, no
+    matter what a legacy config carries in ``sensitivity`` (read-compat-only
+    field since 2026-07-10)."""
+    from jarvis.plugins.wake.openwakeword_provider import PRODUCTION_WAKE_THRESHOLD
+
+    plan = resolve_wake_plan(
+        _cfg(phrase="Computer", sensitivity=sensitivity),
+        local_whisper_available=True,
+    )
+    assert plan.threshold == pytest.approx(PRODUCTION_WAKE_THRESHOLD)
+
+    model = tmp_path / "my_wake.onnx"  # type: ignore[operator]
+    model.write_bytes(b"\x00")
+    custom_plan = resolve_wake_plan(
+        _cfg(
+            phrase="Friday",
+            engine="custom_onnx",
+            custom_model_path=str(model),
+            sensitivity=sensitivity,
+        ),
+        local_whisper_available=False,
+    )
+    assert custom_plan.threshold == pytest.approx(CUSTOM_ONNX_THRESHOLD)
 
 
 # --------------------------------------------------------------------------
@@ -372,17 +394,8 @@ def test_just_jarvis_stays_typeable_through_the_generic_chain() -> None:
     assert plan.degraded is True
 
 
-def test_sensitivity_to_poll_interval_makes_the_slider_control_speed() -> None:
-    # The Sensitivity slider was a no-op on the stt_match (local-Whisper) path:
-    # it only fed the openWakeWord threshold, which that path never scores
-    # against. It now drives the poll interval, so moving it changes how fast a
-    # spoken wake is picked up. Higher sensitivity => shorter interval => snappier.
-    # Both ends are fast ("always as low as possible"); the slider only trims.
-    assert wp.sensitivity_to_poll_interval(0.0) == pytest.approx(0.12)
-    assert wp.sensitivity_to_poll_interval(1.0) == pytest.approx(0.08)
-    assert wp.sensitivity_to_poll_interval(0.5) == pytest.approx(0.10)
-    # strictly monotonic decreasing
-    assert wp.sensitivity_to_poll_interval(0.2) > wp.sensitivity_to_poll_interval(0.8)
-    # clamps out-of-range input instead of producing absurd intervals
-    assert wp.sensitivity_to_poll_interval(-5) == wp.sensitivity_to_poll_interval(0.0)
-    assert wp.sensitivity_to_poll_interval(9) == wp.sensitivity_to_poll_interval(1.0)
+def test_wake_poll_interval_is_pinned_to_the_fastest_calibrated_value() -> None:
+    # The Sensitivity slider was removed (2026-07-10 mandate: "always spawn at
+    # maximum speed on every OS"). The stt_match poll interval is now a fixed
+    # constant — what used to be the sensitivity=1.0 (snappiest) end.
+    assert wp.WAKE_POLL_INTERVAL_S == pytest.approx(0.08)

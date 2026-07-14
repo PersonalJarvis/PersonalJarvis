@@ -185,7 +185,7 @@ describe("CliTestHubView — run flow (success)", () => {
     // Empty instruction → button disabled.
     expect(runBtn.disabled).toBe(true);
 
-    const textarea = screen.getByLabelText("Instruction for Jarvis");
+    const textarea = screen.getByLabelText("Instruction for Assistant");
     fireEvent.change(textarea, { target: { value: "list my projects" } });
     expect(runBtn.disabled).toBe(false);
 
@@ -236,7 +236,7 @@ describe("CliTestHubView — run flow (success)", () => {
 
     renderWithClient(<CliTestHubView />);
 
-    fireEvent.change(screen.getByLabelText("Instruction for Jarvis"), {
+    fireEvent.change(screen.getByLabelText("Instruction for Assistant"), {
       target: { value: "delete everything" },
     });
     fireEvent.click(await screen.findByLabelText("Run instruction"));
@@ -272,7 +272,7 @@ describe("CliTestHubView — run flow (success)", () => {
 
     renderWithClient(<CliTestHubView />);
 
-    fireEvent.change(screen.getByLabelText("Instruction for Jarvis"), {
+    fireEvent.change(screen.getByLabelText("Instruction for Assistant"), {
       target: { value: "two steps" },
     });
     fireEvent.click(await screen.findByLabelText("Run instruction"));
@@ -293,7 +293,7 @@ describe("CliTestHubView — run flow (success)", () => {
 
     renderWithClient(<CliTestHubView />);
 
-    fireEvent.change(screen.getByLabelText("Instruction for Jarvis"), {
+    fireEvent.change(screen.getByLabelText("Instruction for Assistant"), {
       target: { value: "one step" },
     });
     fireEvent.click(await screen.findByLabelText("Run instruction"));
@@ -314,7 +314,7 @@ describe("CliTestHubView — request error", () => {
 
     renderWithClient(<CliTestHubView />);
 
-    fireEvent.change(screen.getByLabelText("Instruction for Jarvis"), {
+    fireEvent.change(screen.getByLabelText("Instruction for Assistant"), {
       target: { value: "do something" },
     });
     fireEvent.click(await screen.findByLabelText("Run instruction"));
@@ -333,7 +333,7 @@ describe("CliTestHubView — request error", () => {
 
     renderWithClient(<CliTestHubView />);
 
-    fireEvent.change(screen.getByLabelText("Instruction for Jarvis"), {
+    fireEvent.change(screen.getByLabelText("Instruction for Assistant"), {
       target: { value: "do something" },
     });
     fireEvent.click(await screen.findByLabelText("Run instruction"));

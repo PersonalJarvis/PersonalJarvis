@@ -43,6 +43,18 @@ def test_labelled_secret_keeps_label_drops_value() -> None:
     assert "<redacted:labelled_secret>" in out
 
 
+def test_labelled_secret_masks_python_and_json_mapping_previews() -> None:
+    value = "supersecretvalue123"
+
+    python_preview = safe_preview({"api_key": value})
+    json_preview = safe_preview('{"access_token": "supersecretvalue123"}')
+
+    assert value not in python_preview
+    assert value not in json_preview
+    assert "<redacted:labelled_secret>" in python_preview
+    assert "<redacted:labelled_secret>" in json_preview
+
+
 def test_git_sha1_is_not_treated_as_a_secret() -> None:
     # A 40-char hex is a git commit SHA — legitimate, must NOT be masked.
     sha = "a" * 40
@@ -74,3 +86,19 @@ def test_redact_secrets_is_pure_and_idempotent() -> None:
     twice = redact_secrets(once)
     assert once == twice
     assert "<redacted:jwt>" in once
+
+
+def test_redacts_credentials_embedded_in_http_request_urls() -> None:
+    google_key = "AQ." + "a" * 40
+    telegram_token = "123456789:" + "B" * 35
+    text = (
+        f"GET https://example.test/models?key={google_key}&page=1 "
+        f"POST https://api.telegram.org/bot{telegram_token}/getUpdates"
+    )
+
+    redacted = redact_secrets(text)
+
+    assert google_key not in redacted
+    assert telegram_token not in redacted
+    assert "?key=<redacted:query_secret>&page=1" in redacted
+    assert "bot<redacted:telegram_bot_token>/getUpdates" in redacted

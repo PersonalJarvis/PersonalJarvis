@@ -71,6 +71,34 @@ def test_live_session_close_x_still_hangs_up(monkeypatch):
 
     assert fake.hangup_calls == 1   # a genuine session is still hang-up-able
     assert fake.session_calls == 0
+    assert bar._mode == "idle"      # immediate visual acknowledgement
+
+
+def test_repeated_close_click_does_not_reopen_session(monkeypatch):
+    """A rapid second click lands where the X used to be after the optimistic
+    collapse; it must not be reinterpreted as an idle-body session start."""
+    now = [100.0]
+    monkeypatch.setattr(
+        "jarvis.ui.jarvisbar.overlay.time.monotonic", lambda: now[0]
+    )
+    bar = JarvisBarOverlay()
+    bar._mode = "listen"
+    fake = _FakePipeline(session_active=True)
+    _patch_pipeline(monkeypatch, fake)
+
+    bar._on_click(_x_glyph(), hovered=True)
+    now[0] += 0.2
+    bar._on_click(_x_glyph(), hovered=True)
+
+    assert fake.hangup_calls == 1
+    assert fake.session_calls == 0
+
+    # The guard is bounded: after the backend has reached idle, the same area
+    # behaves like the normal idle body and can deliberately start a new call.
+    fake._session_active = False
+    now[0] += 1.0
+    bar._on_click(_x_glyph(), hovered=True)
+    assert fake.session_calls == 1
 
 
 def test_missing_accessor_preserves_legacy_hangup(monkeypatch):

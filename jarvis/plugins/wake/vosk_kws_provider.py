@@ -20,27 +20,48 @@ Two-stage detection, AP-27-safe:
    confidence. The grammar forces every utterance onto the nearest phrase, so
    stage 1 alone false-accepts on ambient speech (34 % measured) and must
    never fire unconfirmed.
-2. **Permissive free-decode sound confirm** — ONE unconstrained pass over the
-   ring-buffered candidate audio. The folded free transcript must merely be
-   SOUND-CLOSE to the phrase (SequenceMatcher on sound-folded tokens): a
-   genuine "Hey Alex" free-decodes to "hey alex"/"hey room"/"herum" (all
-   close), ambient "vielen dank" does not. NEVER require the free pass to
-   spell the word (AP-27: that kills recall for hard names); infrastructure
-   errors fail OPEN so a broken confirm cannot eat a real wake.
+2. **Structured free-decode sound confirm** — ONE unconstrained pass over the
+   ring-buffered candidate audio. For a prefixed phrase, the free transcript
+   must contain a real wake prefix immediately followed by a sound-close core.
+   This keeps ASR spelling/splitting tolerance (for example, "joe avis" for
+   "Jarvis") without letting a high-confidence grammar hallucination turn
+   unrelated room speech into a wake. Infrastructure errors fail OPEN so a
+   broken confirm cannot eat a real wake.
 
 A raw-energy gate (word-agnostic RMS at the match site, AP-27) rejects
 near-silent candidates before the confirm. The detector never emits
 transcript text — its only output is the fired keyword (design criterion:
 user speech must never double-enter the pipeline through the wake path).
+
+**Candidate-prefix verify + early visual.** A PARTIAL hit waits
+``confirm_tail_s`` before the fallback verify, so the bar used to react
+~0.85-1.0 s after the phrase. The early check runs the SAME three verify
+checks immediately over the audio heard so far (truncated ring) in a worker
+thread. A positive result is authoritative for that candidate and also tells
+``early_candidate_listener`` to show the bar — typically ~0.1-0.25 s after
+the partial, i.e. around phrase end. Later audio is session speech and cannot
+revoke that already-verified prefix. If the truncated check rejects, the
+normal full-window verify still runs after the tail, so early truncation never
+eats a wake.
+Calibrated 2026-07-11 on real captured windows (400 pos / 2500 neg per
+phrase): a conf gate alone leaks 0.84-12 % of room-speech windows (the
+flicker that got the plain candidate reveal reverted, 5fe5c4d2); the full
+mini-verify leaks 0/2500 ("hey jarvis") and 1-2/2500 (worst-case single
+word) while early-confirming ~a third of eventual fires. Infrastructure errors
+fail CLOSED in the prefix check — the opposite polarity of the fallback
+full-window confirm, which fails open so it can never eat a real wake.
 """
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import logging
+import threading
 import time
 from collections import deque
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from difflib import SequenceMatcher
 from typing import Any
 
@@ -48,6 +69,7 @@ import numpy as np
 
 from jarvis.core.protocols import AudioChunk
 from jarvis.speech.wake_constants import (
+    WAKE_PREFIXES,
     normalize_phrase_for_match,
     phrase_core_for_match,
     sound_fold,
@@ -60,21 +82,113 @@ log = logging.getLogger("jarvis.wake.vosk")
 # fired on plain room speech): genuine wakes re-score at ~1.0 (spike
 # distribution p25..max = 1.0), room speech pulled onto the phrase re-scores
 # lower. Calibrated on 6 min of judged continuous room speech vs the
-# hardest common-sound phrase: conf>=0.9 + the permissive 0.55 sound ratio =
-# 0 false fires at Alex 20/24 / Luca 8/8 recall; conf 0.5 leaked
-# 0.84 fires/min. Raising the sound ratio instead costs recall (AP-27) —
-# keep the ratio permissive and let the REAL confidence carry precision.
+# hardest common-sound phrase. Later production audio exposed a second class:
+# unrelated speech could still re-score at 1.0, so confidence remains necessary
+# but is now paired with the structured prefix/core confirm below.
 _MIN_FINAL_CONF = 0.9
 
-# Sound-similarity floor for the free-decode confirm. Spike sweep: 0.55 keeps
-# 79-100 % recall at 1/0/0 % false accepts; 0.45 lifts recall ~8 points but
-# false accepts rise to ~5 % — the wrong trade for an always-on listener.
+# Legacy whole-phrase sound-similarity floor. The structured confirm below
+# treats this as the caller's minimum, then applies stronger prefix/core floors
+# that close the live false-wake class where unrelated speech such as
+# "hi servers sichern" scored above 0.55 against "Hey Jarvis".
 _CONFIRM_RATIO = 0.55
+
+# A configured wake prefix is a strong independent anchor. Once it is present,
+# the following core may stay tolerant enough for an ASR token split
+# ("Jarvis" -> "joe avis"), but unrelated words must not be subsidised by the
+# matching prefix. A phrase with no prefix has no independent anchor and needs
+# the stricter bare-core floor.
+_PREFIXED_CORE_RATIO = 2.0 / 3.0
+_UNPREFIXED_CORE_RATIO = 0.80
+
+# A free decoder often preserves the wake core while garbling the short
+# prefix completely (production examples for "Hey Jarvis": "age avis",
+# "a jarvis", "page avis", "pay jarvis").  Requiring the prefix to be one of
+# WAKE_PREFIXES therefore makes the detector deaf even though the grammar
+# pass re-heard the full phrase at high confidence.  The rescue remains
+# narrow: the localised transcript must contain exactly one prefix-shaped
+# token plus the core, and the core itself must clear this stronger floor.
+# This does not revive the old whole-window fuzzy match that accepted
+# unrelated multi-word speech.
+_GARBLED_PREFIX_CORE_RATIO = 0.80
+_GARBLED_PREFIX_PHRASE_RATIO = 0.62
+
+# Some free decoders merge the complete prefixed phrase into one word. Real
+# captures include "Hey Alex" -> "herum" / "erhoben"; treating those as a
+# missing prefix would either reject genuine calls or accidentally accept the
+# bare core. The rescue therefore requires independent similarity to the
+# prefix, core, and complete merged phrase, plus a bounded length ratio. A
+# 100-positive / 500-negative real-window calibration on 2026-07-13 lifted
+# recall without adding a negative acceptance. These rules are derived from
+# the configured tokens and apply equally to every supported phrase.
+_MERGED_PREFIX_RATIO = 0.40
+_MERGED_CORE_RATIO = 0.40
+_MERGED_PHRASE_RATIO = 0.53
+_MERGED_MIN_LENGTH_RATIO = 0.55
+_MERGED_MAX_LENGTH_RATIO = 1.20
 
 # Word-agnostic energy floor for a candidate window (mirrors the stt_match
 # path's RollingWhisperWake._match_min_rms — AP-27: silence is gated on raw
 # energy, never on transcript content).
 _MATCH_MIN_RMS = 0.006
+
+# --- word-agnostic candidate shape (AP-27, forensic 2026-07-13) -------------
+# Everything above asks the free decoder to SPELL the wake word. An offline
+# small model has no arbitrary proper noun in its lexicon, so it CANNOT.
+# Replaying 159 real captured "Hey Alex" calls (data/wake_debug) through this
+# detector: the free decoder spelled the phrase in only 28 % of genuine calls
+# and otherwise produced sound-alike garbage — "herum", "erhoben", "hey room",
+# "hey oben", "heroes". Rejecting on that garbage ate 38 % of all real wakes
+# (end-to-end recall 32 %; the user had to repeat the phrase four or five
+# times) while false accepts sat at 0/400. And no spelling threshold can close
+# it: the free transcript "herr oben" was produced BOTH by a genuine call and
+# by room chatter. Spelling cannot discriminate an out-of-vocabulary word — and
+# EVERY wake word is out-of-vocabulary for some installed language model. That
+# is precisely AP-27, reappearing in the Vosk path.
+#
+# What DOES discriminate, without ever asking how the wake word is written, is
+# the SHAPE of what the free ear heard AT the candidate span:
+#   * a wake call is short and stands alone    (measured: 0.72 s, 2 words)
+#   * room speech is a longer word stream the  (measured: 1.29 s, 5 words,
+#     decoder confidently recognises            top word confidence ~1.0)
+# Both bounds are derived from the CONFIGURED phrase, never from its spelling,
+# so they hold for any phrase in any supported language. ``sound_confirm``
+# remains a BONUS path that may only ACCEPT (a free ear that did spell the
+# phrase still fires instantly), so this can never make the detector deaf.
+#
+# Calibrated on 250 positive / 1650 negative real captured windows: verify
+# pass-rate on genuine calls 55 % -> 74 %, at 3 false accepts (two of which are
+# genuine calls the corpus labels negative: "ey alex", "hei alex").
+_SHAPE_MAX_VOICED_S_PER_TOKEN = 0.65
+_SHAPE_MAX_OTHER_WORD_CONF = 0.98
+
+# The shape bounds above describe a SHORT, ISOLATED utterance — which a bare
+# interjection also is. Live false wake (2026-07-13 11:05, first hour after the
+# shape gate shipped): "hey ho" confirmed for "Hey Alex". The free ear had
+# heard the prefix plus a 0.12 s grunt: the NAME was never spoken and the
+# grammar had stretched a bare "hey" onto the phrase.
+#
+# Neither spelling nor sound-similarity can catch that — measured on the real
+# captures, room speech scores HIGHER against "alex" (`den genie ring` 0.50,
+# `simple frage brauchen` 0.62) than genuine calls do (`hey room` 0.25,
+# `hey ho` 0.25). Any similarity floor that rejects the false wake also rejects
+# real ones. <!-- the AP-27 trap, one level down -->
+#
+# The word-agnostic question that DOES separate them: was anything NAME-SIZED
+# uttered where the name belongs? Strip the known wake prefixes from what the
+# free ear heard and measure the voiced duration of what REMAINS — the core
+# body. It never asks how the name is spelled, only that a name was spoken.
+# Real captures: genuine calls carry a 0.48 s median core body (p10 0.30 s);
+# 9/159 carry none at all — that is exactly the false-wake class. A 0.20 s floor
+# (a single syllable) drops those 9 and costs 1.2 points of recall.
+_SHAPE_MIN_CORE_BODY_S = 0.20
+# No slack: the free ear may not hear MORE words at the span than the phrase
+# itself has. Allowing one extra token to absorb an ASR split ("Jarvis" ->
+# "joe avis") measurably let compact room speech through (5 vs 3 false accepts
+# on 1650 real negative windows) — and it is not needed: a split core is
+# exactly what ``sound_confirm``'s core_sizes tolerance already accepts, so the
+# split case is covered by the spelling path and must not be paid for twice.
+_SHAPE_TOKEN_SLACK = 0
 
 # Ring buffer length for the confirm pass — long enough to hold the full
 # spoken phrase plus lead-in at the moment the partial trigger fires.
@@ -82,6 +196,17 @@ _RING_SECONDS = 3.0
 
 # Refractory period after a fired wake.
 _COOLDOWN_S = 5.0
+
+# A rejected stage-one candidate is expected occasionally because grammar mode
+# deliberately favours recall.  It must not immediately launch another pair of
+# full-window decoders: production forensics on 2026-07-13 captured 99 verify
+# passes in 140 seconds, enough to starve the WebView, overlay, microphone, and
+# local HTTP listener in the shared desktop process.  A short reject-only
+# backoff bounds that work on every OS while leaving the first candidate (and
+# therefore the normal quiet-room wake path) at full speed.  Stage one keeps
+# listening during this window and latches one retry; otherwise a user's
+# immediate second call would land in a two-second deaf period.
+_REJECTED_CANDIDATE_BACKOFF_S = 2.0
 
 # How much audio to let land in the ring AFTER a PARTIAL candidate before the
 # confirm pass runs. A partial fires DURING the phrase (that is its virtue),
@@ -92,31 +217,192 @@ _COOLDOWN_S = 5.0
 # passed).
 _CONFIRM_TAIL_S = 0.6
 
-
 def _folded(text: str) -> str:
     return " ".join(sound_fold(t) for t in normalize_phrase_for_match(text))
 
 
 def sound_confirm(free_text: str, phrase: str, *, ratio: float = _CONFIRM_RATIO) -> bool:
-    """True when the free transcript is SOUND-CLOSE to ``phrase`` (permissive).
+    """Return whether the free transcript supports the configured phrase.
 
-    Empty free text means the unconstrained ear heard nothing at all — the
-    grammar hit was noise pulled onto the phrase, reject. Otherwise slide a
-    phrase-sized window over the folded free tokens and accept the best
-    SequenceMatcher ratio >= ``ratio``.
+    The old implementation compared one flattened phrase-sized string at a
+    permissive 0.55 threshold. That let ordinary speech confirm forced grammar
+    hits: production examples including ``"hi servers sichern"`` and
+    ``"ein jahr bis"`` both matched ``"Hey Jarvis"`` and fired. Prefix and
+    core are now independent evidence. A prefixed wake needs a real known
+    prefix at the candidate position plus a sound-close core; an unprefixed
+    wake needs a stricter core match because it has no second anchor.
+
+    Core candidates may use one extra/fewer token so ASR splits and merges do
+    not require exact spelling or tokenisation. Empty text always rejects.
     """
     if not free_text:
         return False
-    target = _folded(phrase)
-    if not target:
+    phrase_tokens = normalize_phrase_for_match(phrase)
+    core_tokens = phrase_core_for_match(phrase)
+    if not phrase_tokens or not core_tokens:
         return False
-    words = _folded(free_text).split()
-    n = max(1, len(target.split()))
-    best = 0.0
-    for i in range(max(1, len(words) - n + 1)):
-        window = " ".join(words[i : i + n])
-        best = max(best, SequenceMatcher(None, target, window).ratio())
-    return best >= ratio
+
+    words = [sound_fold(t) for t in normalize_phrase_for_match(free_text)]
+    target_core = "".join(sound_fold(t) for t in core_tokens)
+    if not words or not target_core:
+        return False
+
+    prefix_count = len(phrase_tokens) - len(core_tokens)
+    has_prefix = prefix_count > 0
+    known_prefixes = {sound_fold(token) for token in WAKE_PREFIXES}
+    core_token_count = max(1, len(core_tokens))
+    core_sizes = range(max(1, core_token_count - 1), core_token_count + 2)
+    core_floor = max(
+        float(ratio),
+        _PREFIXED_CORE_RATIO if has_prefix else _UNPREFIXED_CORE_RATIO,
+    )
+
+    for start in range(len(words)):
+        if has_prefix:
+            heard_prefix = words[start]
+            if heard_prefix not in known_prefixes:
+                continue
+            core_start = start + 1
+        else:
+            core_start = start
+
+        for size in core_sizes:
+            core_end = core_start + size
+            if core_end > len(words):
+                continue
+            heard_core = "".join(words[core_start:core_end])
+            core_score = SequenceMatcher(None, target_core, heard_core).ratio()
+            if core_score >= core_floor:
+                return True
+
+    # Recall rescue for an ASR-garbled prefix.  Do not slide this over longer
+    # speech: exact local token coverage is what keeps a mention of the core
+    # inside an ordinary sentence from becoming a wake.  Split/merged core
+    # spellings still work through ``core_sizes``.
+    if has_prefix:
+        target_phrase = " ".join(sound_fold(token) for token in phrase_tokens)
+        for size in core_sizes:
+            if len(words) != 1 + size:
+                continue
+            heard_core = "".join(words[1:])
+            core_score = SequenceMatcher(None, target_core, heard_core).ratio()
+            heard_phrase = " ".join(words)
+            phrase_score = SequenceMatcher(
+                None, target_phrase, heard_phrase
+            ).ratio()
+            if (
+                core_score >= max(float(ratio), _GARBLED_PREFIX_CORE_RATIO)
+                and phrase_score >= _GARBLED_PREFIX_PHRASE_RATIO
+            ):
+                return True
+
+        # The unconstrained decoder may merge the complete spoken phrase into
+        # one token. Require that one token to carry separate prefix AND core
+        # evidence; this keeps a bare core from satisfying a configured full
+        # phrase while recovering generic ASR merges.
+        if len(words) == 1:
+            heard = words[0]
+            target_prefix = "".join(
+                sound_fold(token) for token in phrase_tokens[:prefix_count]
+            )
+            target_merged = "".join(sound_fold(token) for token in phrase_tokens)
+            length_ratio = len(heard) / max(1, len(target_merged))
+            if (
+                _MERGED_MIN_LENGTH_RATIO
+                <= length_ratio
+                <= _MERGED_MAX_LENGTH_RATIO
+                and SequenceMatcher(None, target_prefix, heard).ratio()
+                >= _MERGED_PREFIX_RATIO
+                and SequenceMatcher(None, target_core, heard).ratio()
+                >= _MERGED_CORE_RATIO
+                and SequenceMatcher(None, target_merged, heard).ratio()
+                >= _MERGED_PHRASE_RATIO
+            ):
+                return True
+    return False
+
+
+def candidate_shape_ok(
+    local_words: Sequence[dict],
+    phrase: str,
+    *,
+    max_voiced_s_per_token: float = _SHAPE_MAX_VOICED_S_PER_TOKEN,
+    max_other_word_conf: float = _SHAPE_MAX_OTHER_WORD_CONF,
+    min_core_body_s: float = _SHAPE_MIN_CORE_BODY_S,
+) -> bool:
+    """Does the free ear's output AT the candidate span look like a wake call?
+
+    Word-agnostic by construction (AP-27): it reads only how much was said at
+    the span and how sure the free decoder was — never how the wake word is
+    spelled. ``local_words`` are the free decode's word dicts (``word``,
+    ``start``, ``end``, ``conf``) already localised to the phrase span.
+
+    Four word-agnostic questions, all scaled by the configured phrase:
+
+    1. **Not more words than the phrase has.** A wake call is the phrase; a
+       forced grammar hit on conversation carries the surrounding words too.
+       (A free decoder that SPLITS the name into two tokens — "Jarvis" ->
+       "joe avis" — is already accepted by ``sound_confirm``'s core_sizes
+       tolerance, so this gate does not need to pay for that case with the
+       extra false accepts a token slack costs.)
+    2. **Not spoken for longer than the phrase could be.** The grammar happily
+       stretches the phrase across flowing speech; a real call cannot last
+       longer than its own tokens do.
+    3. **The free ear is not SURE it heard another core word.** This is the
+       positive signal an out-of-vocabulary wake word leaves behind: the free
+       decoder does not know the core, so it guesses and its confidence drops.
+       Ordinary speech ("engineering", "google") it recognises outright. A
+       known wake prefix is deliberately excluded from this confidence check.
+    4. **A name was actually spoken.** Strip the known wake prefixes and the
+       REMAINING voiced duration — the core body — must be at least a syllable.
+       Without this, the three bounds above describe a bare interjection just
+       as well as a wake call, and "hey ho" fires (live 2026-07-13). Note this
+       still never reads the name's SPELLING: it only asks whether a
+       name-sized sound exists where the name belongs.
+
+    Empty input rejects: the grammar claimed the phrase where the free ear
+    heard no speech at all.
+    """
+    if not local_words:
+        return False
+    n_tokens = max(1, len(normalize_phrase_for_match(phrase)))
+    if len(local_words) > n_tokens + _SHAPE_TOKEN_SLACK:
+        return False
+    voiced_s = sum(
+        max(0.0, float(w.get("end", 0.0)) - float(w.get("start", 0.0)))
+        for w in local_words
+    )
+    if voiced_s > max_voiced_s_per_token * n_tokens:
+        return False
+    # A confidently recognised wake prefix is expected evidence, not proof the
+    # decoder heard some OTHER word. Apply the confidence discriminator only
+    # to the unknown core body. Otherwise a perfect ``hey`` confidence rejects
+    # a genuine arbitrary name that the free decoder necessarily guesses.
+    known_prefixes = {sound_fold(p) for p in WAKE_PREFIXES}
+    phrase_tokens = normalize_phrase_for_match(phrase)
+    phrase_is_all_prefix = all(
+        sound_fold(t) in known_prefixes for t in phrase_tokens
+    )
+    core_words = [
+        w
+        for w in local_words
+        if sound_fold(str(w.get("word", ""))) not in known_prefixes
+    ]
+    confidence_words = local_words if phrase_is_all_prefix else core_words
+    if not confidence_words:
+        return False
+    top_conf = max(float(w.get("conf", 0.0)) for w in confidence_words)
+    if top_conf > max_other_word_conf:
+        return False
+    # A phrase that IS nothing but prefixes ("Hey", "Hallo") has no core to
+    # demand, so it must not be gated on a core duration.
+    if phrase_is_all_prefix:
+        return True
+    core_body_s = sum(
+        max(0.0, float(w.get("end", 0.0)) - float(w.get("start", 0.0)))
+        for w in core_words
+    )
+    return core_body_s >= min_core_body_s
 
 
 class VoskKwsProvider:
@@ -134,89 +420,253 @@ class VoskKwsProvider:
         phrase: str,
         model_path: str,
         *,
+        # ALL model dirs to listen on (primary first). None/empty = just
+        # model_path. A phrase and the speaker language routinely diverge
+        # ("Hey Jarvis": English name, German speaker — live forensic
+        # 2026-07-11: the de model re-heard 'hey [unk]' and ate real wakes),
+        # so every installed language model streams its own grammar and the
+        # candidate is verified against the model that heard it.
+        model_paths: Sequence[str] | None = None,
         keyword: str | None = None,
         sample_rate: int = 16_000,
         min_final_conf: float = _MIN_FINAL_CONF,
         confirm_ratio: float = _CONFIRM_RATIO,
         match_min_rms: float = _MATCH_MIN_RMS,
         cooldown_s: float = _COOLDOWN_S,
+        rejected_candidate_backoff_s: float = _REJECTED_CANDIDATE_BACKOFF_S,
         confirm_tail_s: float = _CONFIRM_TAIL_S,
         # Production poll-loop parity: peak-normalize the confirm window to
         # -3 dBFS (gain capped at 40 dB) exactly like the other wake paths.
         target_peak: float = 0.7079,
         max_gain: float = 100.0,
+        # Early visual side effect for the candidate-prefix verify: awaited
+        # with True when the strict check passes at PARTIAL time, False when a
+        # shown candidate is retracted by lifecycle teardown. Never carries
+        # transcript text; never exposes an unverified hit. None = no visual.
+        early_candidate_listener: Callable[[bool], Awaitable[None]] | None = None,
     ) -> None:
         self._phrase = phrase.strip()
         self._keyword = keyword or "_".join(normalize_phrase_for_match(phrase)) or "wake"
         self._model_path = model_path
+        paths = [p for p in (model_paths or ()) if p]
+        if model_path and model_path not in paths:
+            paths.insert(0, model_path)
+        self._model_paths: list[str] = paths or [model_path]
         self._sample_rate = sample_rate
         self._min_final_conf = float(min_final_conf)
-        self._confirm_ratio = float(confirm_ratio)
+        phrase_tokens = normalize_phrase_for_match(self._phrase)
+        core_tokens = phrase_core_for_match(self._phrase)
+        has_prefix = len(core_tokens) < len(phrase_tokens)
+        structural_floor = (
+            _PREFIXED_CORE_RATIO if has_prefix else _UNPREFIXED_CORE_RATIO
+        )
+        self._confirm_ratio = max(float(confirm_ratio), structural_floor)
         self._match_min_rms = float(match_min_rms)
         self._cooldown_s = float(cooldown_s)
+        self._rejected_candidate_backoff_s = max(
+            0.0, float(rejected_candidate_backoff_s)
+        )
         self._confirm_tail_bytes = int(float(confirm_tail_s) * sample_rate) * 2
-        # Short-core hardening (calibrated 2026-07-06): phrases whose longest
-        # sound-folded token is very short ("Karl", "Anton") are cheap for
-        # room speech to imitate — the 10-word x 3-min matrix leaked only on
-        # the shortest cores. Tightening the RE-SCORE confidence instead
-        # deafened short words (synthetic recall dropped), so the localised
-        # sound confirm carries the extra strictness: a short core must match
-        # its span at 0.62 instead of the permissive 0.55.
-        tokens = normalize_phrase_for_match(self._phrase)
-        longest = max((len(sound_fold(t)) for t in tokens), default=0)
-        if longest < 6:
-            self._confirm_ratio = max(self._confirm_ratio, 0.62)
         self._target_peak = float(target_peak)
         self._max_gain = float(max_gain)
-        self._model: Any = None
+        self._models: dict[str, Any] = {}
+        # Pre-warmed ONE-SHOT verify recognizers, keyed (model_path, kind).
+        # Why: a fresh KaldiRecognizer's FIRST decode pays ~400ms lazy init
+        # on top of ~100ms construction (measured 2026-07-11: fresh verify
+        # p50 523ms vs 104ms warm). REUSING recognizers is not an option —
+        # Kaldi adaptation survives Reset() and flipped 2/600 real decisions
+        # (conf drift up to 0.55). A silence decode + Reset() however leaves
+        # every decision unchanged (0/200 mismatches, conf jitter <=0.09),
+        # so a background factory pre-pays the init and each verify consumes
+        # a prewarmed recognizer EXCLUSIVELY, once (AP-24: never shared).
+        # Empty stock (candidate burst) falls back to a cold fresh build —
+        # exactly today's behaviour, just slower.
+        self._rec_stock: dict[tuple[str, str], list[Any]] = {}
+        self._stock_lock = threading.Lock()
+        self._stock_target = 2
+        self._replenish_task: asyncio.Task[None] | None = None
         self._grammar_words = [w for w in self._phrase.lower().split() if w]
         # Duck-typing parity with OpenWakeWordProvider: the pipeline's ready
         # log reads ``_keywords`` and ``_threshold`` off whatever detector is
         # armed. The confirm ratio is the closest analogue of a threshold.
         self._keywords = (self._keyword,)
-        self._threshold = float(confirm_ratio)
+        self._threshold = self._confirm_ratio
         # Ring buffer of raw int16 PCM bytes for the confirm pass.
         self._ring: deque[bytes] = deque()
         self._ring_len = 0
         self._ring_max = int(_RING_SECONDS * sample_rate) * 2  # bytes
+        # Candidate-prefix state: the listener, whether a candidate is shown,
+        # the in-flight strict verify task, and a generation counter so a LATE
+        # completion can never show a candidate another lifecycle edge already
+        # resolved.
+        self._early_listener = early_candidate_listener
+        self._early_active = False
+        self._early_task: asyncio.Task[bool] | None = None
+        self._pending_gen = 0
+        # Instance-local clock hook keeps reject/backpressure state-machine
+        # tests deterministic without replacing Python's process-global
+        # monotonic clock (which asyncio itself also consumes).
+        self._monotonic = time.monotonic
         # Session stats (parity with OpenWakeWordProvider.stats()).
         self._stat_chunks = 0
         self._stat_candidates = 0
         self._stat_gated_rms = 0
         self._stat_suppressed_confirm = 0
         self._stat_suppressed_cooldown = 0
+        self._stat_backpressure_windows = 0
+        self._stat_backpressure_chunks = 0
         self._stat_fired = 0
+        self._stat_early_shown = 0
+        self._stat_early_retracted = 0
 
     # -- lifecycle -----------------------------------------------------------
 
-    def _ensure_model(self) -> Any:
-        if self._model is None:
+    def _ensure_model(self, path: str | None = None) -> Any:
+        key = path or self._model_path
+        model = self._models.get(key)
+        if model is None:
             from vosk import Model, SetLogLevel  # lazy: keep base import light
 
             SetLogLevel(-1)
             t0 = time.perf_counter()
-            self._model = Model(self._model_path)
+            model = Model(key)
+            self._models[key] = model
             log.info(
                 "vosk-kws: model loaded in %.1f s (%s)",
                 time.perf_counter() - t0,
-                self._model_path,
+                key,
             )
-        return self._model
+        return model
 
-    def _new_grammar_rec(self) -> Any:
+    def _new_grammar_rec(self, path: str | None = None) -> Any:
         from vosk import KaldiRecognizer
 
         grammar = json.dumps([self._phrase.lower(), "[unk]"])
-        rec = KaldiRecognizer(self._ensure_model(), self._sample_rate, grammar)
+        rec = KaldiRecognizer(self._ensure_model(path), self._sample_rate, grammar)
         rec.SetWords(True)
         return rec
 
+    def _build_verify_rec(self, path: str | None, kind: str, *, prewarm: bool) -> Any:
+        """A fresh one-shot verify recognizer; optionally silence-prewarmed.
+
+        The prewarm decodes 0.3s of silence and Resets — it pre-pays Kaldi's
+        lazy first-decode init without touching decisions (parity-measured).
+        A prewarm error degrades to the cold recognizer, never fails a verify.
+        """
+        from vosk import KaldiRecognizer
+
+        if kind == "grammar":
+            rec = self._new_grammar_rec(path)
+        else:
+            rec = KaldiRecognizer(self._ensure_model(path), self._sample_rate)
+            rec.SetWords(True)
+        if prewarm:
+            try:
+                silence = np.zeros(
+                    int(0.3 * self._sample_rate), dtype=np.int16
+                ).tobytes()
+                rec.AcceptWaveform(silence)
+                rec.FinalResult()
+                rec.Reset()
+            except Exception as exc:  # noqa: BLE001 — cold rec still works
+                log.debug("vosk-kws: prewarm skipped (%s/%s): %s", path, kind, exc)
+        return rec
+
+    def _take_verify_rec(self, path: str | None, kind: str) -> Any:
+        """Pop a prewarmed one-shot recognizer, or build cold on empty stock.
+
+        The taker owns the recognizer exclusively and discards it after ONE
+        use (AP-24: no sharing, no reuse — reuse drifts decisions).
+        """
+        key = (path or self._model_path, kind)
+        with self._stock_lock:
+            stack = self._rec_stock.get(key)
+            if stack:
+                return stack.pop()
+        return self._build_verify_rec(path, kind, prewarm=False)
+
+    def _replenish_stock(self) -> None:
+        """Top the prewarmed stock back up to target (worker thread only)."""
+        for path in self._model_paths:
+            for kind in ("grammar", "free"):
+                key = (path, kind)
+                while True:
+                    with self._stock_lock:
+                        if len(self._rec_stock.setdefault(key, [])) >= self._stock_target:
+                            break
+                    try:
+                        rec = self._build_verify_rec(path, kind, prewarm=True)
+                    except Exception as exc:  # noqa: BLE001 — broken model:
+                        # takers fall back to cold builds which fail the same
+                        # way and are handled at the verify layer.
+                        log.debug(
+                            "vosk-kws: stock replenish failed (%s/%s): %s",
+                            path, kind, exc,
+                        )
+                        break
+                    with self._stock_lock:
+                        self._rec_stock[key].append(rec)
+
+    def _kick_replenish(self) -> None:
+        """Fire-and-forget stock top-up off the hot path (needs a loop)."""
+        if self._replenish_task is not None and not self._replenish_task.done():
+            return
+        with contextlib.suppress(RuntimeError):  # no running loop (sync tests)
+            asyncio.get_running_loop()
+            self._replenish_task = asyncio.create_task(
+                asyncio.to_thread(self._replenish_stock)
+            )
+
+    def _fresh_recs(self) -> dict[str, Any]:
+        """One streaming grammar recognizer per LOADABLE model path.
+
+        Taken from the prewarmed stock when available: a rebuilt streaming
+        recognizer otherwise pays Kaldi's ~400ms lazy first-decode init
+        INLINE in the detect loop (it decodes chunks on the event loop) —
+        after every candidate reset, per model. A corrupt/missing model dir
+        must never brick the working ones — it is skipped with a warning and
+        detection continues on the rest.
+        """
+        recs: dict[str, Any] = {}
+        for path in self._model_paths:
+            try:
+                recs[path] = self._take_verify_rec(path, "grammar")
+            except Exception as exc:  # noqa: BLE001 — isolate a broken model
+                log.warning("vosk-kws: model %s unusable (%s) — skipped.", path, exc)
+        self._kick_replenish()
+        return recs
+
     async def start(self) -> None:
-        """Pre-load the model off the event loop (never on the boot path)."""
-        await asyncio.to_thread(self._ensure_model)
+        """Pre-load every model and FILL the prewarmed recognizer stock.
+
+        Replaces the former throwaway warm-up decode: the stock recognizers
+        ARE the warm-up now (their silence decode pre-pays Kaldi's lazy
+        first-decode init), and unlike the throwaways they are kept and
+        consumed by the first real detect/verify. Fail-closed: errors must
+        never break boot — takers fall back to cold builds.
+        """
+        for path in self._model_paths:
+            try:
+                await asyncio.to_thread(self._ensure_model, path)
+            except Exception as exc:  # noqa: BLE001 — a broken model must not
+                # brick the working ones; _fresh_recs skips it too.
+                log.warning("vosk-kws: model %s failed to load (%s).", path, exc)
+        await asyncio.to_thread(self._replenish_stock)
 
     async def stop(self) -> None:
-        self._model = None
+        # Invalidate any in-flight early check and retract a shown candidate
+        # so a detector swap can never leave the bar stuck "candidate".
+        self._pending_gen += 1
+        if self._early_task is not None:
+            self._early_task.cancel()
+            self._early_task = None
+        await self._notify_early(False)
+        if self._replenish_task is not None:
+            self._replenish_task.cancel()
+            self._replenish_task = None
+        with self._stock_lock:
+            self._rec_stock.clear()
+        self._models.clear()
         self._ring.clear()
         self._ring_len = 0
 
@@ -227,8 +677,72 @@ class VoskKwsProvider:
             "gated_rms": self._stat_gated_rms,
             "suppressed_confirm": self._stat_suppressed_confirm,
             "suppressed_cooldown": self._stat_suppressed_cooldown,
+            "backpressure_windows": self._stat_backpressure_windows,
+            "backpressure_chunks": self._stat_backpressure_chunks,
             "fired": self._stat_fired,
+            "early_shown": self._stat_early_shown,
+            "early_retracted": self._stat_early_retracted,
         }
+
+    # -- early candidate (visual-only) ----------------------------------------
+
+    def set_early_candidate_listener(
+        self, listener: Callable[[bool], Awaitable[None]] | None
+    ) -> None:
+        """Wire/unwire the visual candidate listener after construction."""
+        self._early_listener = listener
+
+    @property
+    def early_candidate_active(self) -> bool:
+        """Whether a shown early candidate is currently outstanding."""
+        return self._early_active
+
+    def consume_early_candidate(self) -> bool:
+        """Hand the shown-candidate state to the pipeline (reset, no event).
+
+        Called once per yielded keyword: the pipeline needs to know whether
+        the bar is already visible so a silently DROPPED wake (post-hangup
+        echo lock, app not activatable) retracts it instead of leaving it
+        stuck "candidate" with no session behind it. Resetting here also
+        re-arms the show guard for the next candidate.
+        """
+        was_shown = self._early_active
+        self._early_active = False
+        return was_shown
+
+    async def _notify_early(self, active: bool) -> None:
+        if self._early_listener is None or active == self._early_active:
+            return
+        self._early_active = active
+        if active:
+            self._stat_early_shown += 1
+        else:
+            self._stat_early_retracted += 1
+        try:
+            await self._early_listener(active)
+        except Exception as exc:  # noqa: BLE001 — a UI listener error must
+            # never break wake detection.
+            log.debug("early-candidate listener failed: %s", exc)
+
+    async def _run_early_check(
+        self, window: np.ndarray, gen: int, model_path: str | None = None
+    ) -> bool:
+        """Strictly verify the candidate prefix and optionally show the bar.
+
+        ``True`` is an authoritative positive for this generation. The later
+        fallback window may contain the first words of the user's command, so
+        it must not overwrite a clean verdict over the candidate audio itself.
+        """
+        try:
+            ok = await asyncio.to_thread(self._early_check, window, model_path)
+        except Exception as exc:  # noqa: BLE001 — fallback verify remains
+            log.debug("early-candidate check errored: %s", exc)
+            return False
+        if not ok or gen != self._pending_gen:
+            return False
+        log.info("vosk-kws: candidate prefix verified for %r", self._phrase)
+        await self._notify_early(True)
+        return True
 
     # -- internals -----------------------------------------------------------
 
@@ -263,8 +777,39 @@ class VoskKwsProvider:
             return (False, 1.0)  # partials carry no conf; the confirm decides
         return None
 
-    def _verify_candidate(self, window: np.ndarray) -> bool:
-        """Three checks over the ring window; ALL must pass before a fire.
+    def _verify_candidate(
+        self, window: np.ndarray, model_path: str | None = None
+    ) -> bool:
+        """Authoritative confirm — fails OPEN (never eat a real wake).
+
+        ``model_path`` selects the model that HEARD the candidate; the verify
+        must use the same acoustics that produced the hit, never a sibling.
+        """
+        return self._verify_window(window, fail_open=True, model_path=model_path)
+
+    def _early_check(
+        self, window: np.ndarray, model_path: str | None = None
+    ) -> bool:
+        """Strict prefix verify on the truncated ring — fails CLOSED.
+
+        A positive may confirm the wake; a negative only defers to the later
+        fail-open full-window check and therefore cannot make the path deaf.
+        """
+        try:
+            return self._verify_window(
+                window, fail_open=False, model_path=model_path
+            )
+        except Exception:  # noqa: BLE001 — belt and braces for the UI path
+            return False
+
+    def _verify_window(
+        self,
+        window: np.ndarray,
+        *,
+        fail_open: bool,
+        model_path: str | None = None,
+    ) -> bool:
+        """Three checks over the given window; ALL must pass before a fire.
 
         Why this shape (live forensic 2026-07-06, "Hey Alex" fired on plain
         room speech every few minutes): the streaming PARTIAL that makes the
@@ -286,12 +831,29 @@ class VoskKwsProvider:
            judges what was said AT the candidate's position instead of
            fishing the best pair out of three seconds of conversation.
 
-        Fail-OPEN only on infrastructure errors (a broken confirm must never
-        eat a real wake); a clean "the phrase is not there" is a rejection.
+        On infrastructure errors the ``fail_open`` polarity decides: the
+        authoritative confirm accepts (a broken confirm must never eat a real
+        wake), the visual-only early check rejects. A clean "the phrase is
+        not there" is always a rejection.
+
+        Latency (spawn-latency mission, 2026-07-10): the grammar re-score and
+        the free decode are independent Kaldi passes over the SAME audio —
+        the free decode does not consume the re-score's output, only the
+        LATER span-filtering step does. Measured on the real German small
+        model (data/wake_models/vosk/de/vosk-model-small-de-0.15): the free
+        pass costs 3-5x the grammar pass (e.g. 235ms vs 70ms over a 3 s
+        window), so running them sequentially pays their SUM even though the
+        wall-clock floor is only their MAX. They run concurrently in two
+        worker threads against ONE shared, read-only ``Model`` — Vosk's
+        documented multi-client pattern (one Model, many independent
+        KaldiRecognizer sessions decoding concurrently), not the AP-24 hazard
+        (that guards a single recognizer's mutable per-call state shared
+        across concurrent callers; here each thread owns its own fresh
+        recognizer). This changes only wall-clock time, never the decision:
+        both passes decode the identical ``pcm`` and every downstream
+        threshold/comparison is untouched.
         """
         try:
-            from vosk import KaldiRecognizer
-
             peak = float(np.max(np.abs(window))) if len(window) else 0.0
             if peak > 1e-6:
                 window = np.clip(
@@ -299,20 +861,35 @@ class VoskKwsProvider:
                 )
             pcm = (window * 32767.0).astype(np.int16).tobytes()
 
-            # 1) grammar re-score: real confidence + time span for the phrase.
-            # One attempt over the full ring, deliberately: a second try over
-            # a shorter cut measurably HELPED room speech more than genuine
-            # calls (FA matrix 3 -> 7 with a last-1.8 s retry), because the
-            # grammar happily forces any short speech snippet onto the phrase.
-            g = self._new_grammar_rec()
-            g.AcceptWaveform(pcm)
-            gres = json.loads(g.FinalResult())
+            # 1) grammar re-score (real confidence + time span) and
+            # 3) free decode (unconstrained) run CONCURRENTLY — see the
+            # latency note above. One attempt each over the full ring,
+            # deliberately: a second grammar try over a shorter cut
+            # measurably HELPED room speech more than genuine calls (FA
+            # matrix 3 -> 7 with a last-1.8 s retry), because the grammar
+            # happily forces any short speech snippet onto the phrase.
+            def _grammar_pass() -> dict:
+                g = self._take_verify_rec(model_path, "grammar")
+                g.AcceptWaveform(pcm)
+                return json.loads(g.FinalResult())
+
+            def _free_pass() -> dict:
+                f = self._take_verify_rec(model_path, "free")
+                f.AcceptWaveform(pcm)
+                return json.loads(f.FinalResult())
+
+            with ThreadPoolExecutor(max_workers=2) as pool:
+                grammar_future = pool.submit(_grammar_pass)
+                free_future = pool.submit(_free_pass)
+                gres = grammar_future.result()
+                fres = free_future.result()
+
             gwords = [
                 w for w in gres.get("result", [])
                 if w.get("word") in self._grammar_words
             ]
             if self._phrase.lower() not in gres.get("text", "") or not gwords:
-                log.info(
+                log.debug(
                     "vosk-kws: verify SUPPRESSED — re-score did not re-hear "
                     "%r (heard %r)",
                     self._phrase, gres.get("text", "")[:60],
@@ -320,7 +897,7 @@ class VoskKwsProvider:
                 return False
             conf = min(w.get("conf", 0.0) for w in gwords)
             if conf < self._min_final_conf:
-                log.info(
+                log.debug(
                     "vosk-kws: verify SUPPRESSED — re-score conf %.2f < %.2f "
                     "for %r", conf, self._min_final_conf, self._phrase,
                 )
@@ -337,30 +914,44 @@ class VoskKwsProvider:
             rms = float(np.sqrt(np.mean(segment * segment) + 1e-12)) if len(segment) else 0.0
             if rms < self._match_min_rms:
                 self._stat_gated_rms += 1
-                log.info(
+                log.debug(
                     "vosk-kws: verify SUPPRESSED — span rms %.4f < %.4f "
                     "(silence can never fire)", rms, self._match_min_rms,
                 )
                 return False
 
-            # 3) free decode, localised to the phrase span
-            f = KaldiRecognizer(self._ensure_model(), self._sample_rate)
-            f.SetWords(True)
-            f.AcceptWaveform(pcm)
-            fres = json.loads(f.FinalResult())
-            local = [
-                w.get("word", "") for w in fres.get("result", [])
+            # localise the (already-decoded) free words to the phrase span
+            local_words = [
+                w for w in fres.get("result", [])
                 if w.get("end", 0.0) >= span_a and w.get("start", 0.0) <= span_b
             ]
-            free_local = " ".join(local)
-        except Exception as exc:  # noqa: BLE001 — fail-open, never eat a wake
-            log.warning("vosk-kws: verify failed (%s) — accepting.", exc)
-            return True
+            free_local = " ".join(w.get("word", "") for w in local_words)
+        except Exception as exc:  # noqa: BLE001 — polarity via fail_open
+            log.warning(
+                "vosk-kws: verify failed (%s) — %s.",
+                exc,
+                "accepting" if fail_open else "rejecting (visual-only)",
+            )
+            return fail_open
+        # Two INDEPENDENT ways to confirm, either of which is sufficient:
+        #   (a) the free ear spelled the phrase        -> sound_confirm
+        #   (b) it could not spell it (an offline model cannot spell an
+        #       arbitrary proper noun) but what it heard at the span has the
+        #       SHAPE of a wake call -> candidate_shape_ok (word-agnostic)
+        # (a) alone was the AP-27 recall trap: it ate 38 % of real wakes,
+        # because the wake word is out-of-vocabulary for the very decoder being
+        # asked to write it down. (b) can never depend on the phrase's
+        # spelling, so it holds for every wake word in every language.
         ok = sound_confirm(free_local, self._phrase, ratio=self._confirm_ratio)
-        log.info(
-            "vosk-kws: verify %s — free ear heard %r at the candidate span "
+        by_shape = False
+        if not ok:
+            ok = by_shape = candidate_shape_ok(local_words, self._phrase)
+        log_method = log.info if ok else log.debug
+        log_method(
+            "vosk-kws: verify %s (%s) — free ear heard %r at the candidate span "
             "(conf=%.2f) vs phrase %r",
             "OK" if ok else "SUPPRESSED",
+            ("shape" if by_shape else "spelled") if ok else "neither",
             free_local[:60],
             conf,
             self._phrase,
@@ -375,60 +966,197 @@ class VoskKwsProvider:
         The grammar recognizer streams chunk-by-chunk (measured ~0.02x
         realtime — a 100 ms chunk costs ~2 ms, safe inline). The confirm pass
         (~0.1-0.2 s) runs in a worker thread only on candidates.
+
+        The stage-one grammar is intentionally noisy (it forces speech onto
+        the configured phrase), so candidates remain private to this method.
+        Only the keyword yielded after the full verify pass may cross into the
+        pipeline or become visible in the overlay.
         """
-        await asyncio.to_thread(self._ensure_model)
-        rec = self._new_grammar_rec()
+        for path in self._model_paths:
+            try:
+                await asyncio.to_thread(self._ensure_model, path)
+            except Exception as exc:  # noqa: BLE001 — skip a broken model
+                log.warning("vosk-kws: model %s failed to load (%s).", path, exc)
+        # One streaming grammar per installed model — a phrase whose language
+        # differs from the speaker's still has a model that can spell it
+        # (union recall measured +38% on the fixture corpus, 2026-07-11).
+        recs = self._fresh_recs()
         last_fire_t = 0.0
+        verify_not_before = 0.0
         # Pending candidate: a PARTIAL hit waits for ``confirm_tail_s`` more
         # audio before the confirm pass so the free decoder sees the WHOLE
         # phrase, not a truncated one (E2E-measured recall trap). Finals skip
-        # the wait — their endpoint already passed.
-        pending: tuple[bool, float] | None = None
+        # the wait — their endpoint already passed. ``hit_path`` pins the
+        # model that heard the candidate: verify and early check must use the
+        # same acoustics, never a sibling model.
+        pending: tuple[bool, float, str] | None = None
         pending_tail = 0
         async for chunk in chunks:
             self._stat_chunks += 1
             pcm = chunk.pcm
             self._ring_push(pcm)
+            # Full verification remains rate-limited after a clean rejection,
+            # but the cheap streaming grammar must keep listening.  Completely
+            # pausing stage one made this a deaf period: a genuine immediate
+            # retry was discarded before it could ever reach the verifier.
+            # During the window we latch at most one candidate, stop stage-one
+            # work once latched, and verify it only when the same deadline
+            # expires.  This preserves the BUG-045 load bound without dropping
+            # a user's retry.
+            now_mono = self._monotonic()
+            backpressure_active = now_mono < verify_not_before
+            if backpressure_active:
+                self._stat_backpressure_chunks += 1
+            if not recs:
+                recs = self._fresh_recs()
             if pending is not None:
                 pending_tail += len(pcm)
+                if backpressure_active:
+                    # The retry is already latched.  Advancing the ring is
+                    # enough; do not spend stage-one or verifier work yet.
+                    continue
+                # Keep every model's stream fed during the tail wait so their
+                # decode state stays aligned with the ring.
+                for r in recs.values():
+                    self._grammar_hit(r, pcm)
                 if pending_tail < self._confirm_tail_bytes:
                     continue
-                is_final, conf = pending
+                is_final, conf, hit_path = pending
                 pending = None
             else:
-                hit = self._grammar_hit(rec, pcm)
+                # Feed EVERY model; first hit wins the candidate slot.
+                hit: tuple[bool, float] | None = None
+                hit_path = ""
+                for path, r in recs.items():
+                    h = self._grammar_hit(r, pcm)
+                    if h is not None and hit is None:
+                        hit, hit_path = h, path
                 if hit is None:
                     continue
                 is_final, conf = hit
                 now = time.time()
                 if now - last_fire_t < self._cooldown_s:
                     self._stat_suppressed_cooldown += 1
-                    rec = self._new_grammar_rec()
+                    recs = self._fresh_recs()
                     continue
                 self._stat_candidates += 1
+                if backpressure_active:
+                    # One user retry (or one more room-speech candidate) is
+                    # retained without launching any expensive decode.  A
+                    # final already includes its endpoint; a partial keeps
+                    # accumulating the normal confirmation tail in the ring.
+                    pending = (is_final, conf, hit_path)
+                    pending_tail = self._confirm_tail_bytes if is_final else 0
+                    continue
                 if is_final and conf < self._min_final_conf:
-                    rec = self._new_grammar_rec()
+                    self._stat_backpressure_windows += 1
+                    verify_not_before = (
+                        self._monotonic() + self._rejected_candidate_backoff_s
+                    )
+                    recs = self._fresh_recs()
                     continue
                 if not is_final and self._confirm_tail_bytes > 0:
-                    pending = (is_final, conf)
+                    pending = (is_final, conf, hit_path)
                     pending_tail = 0
+                    # Strictly verify the audio heard SO FAR in a worker thread
+                    # while the confirm tail keeps accumulating. A positive is
+                    # enough to confirm this candidate and may reveal the bar;
+                    # a negative still falls through to the later full window.
+                    self._pending_gen += 1
+                    self._early_task = asyncio.create_task(
+                        self._run_early_check(
+                            self._ring_window(), self._pending_gen, hit_path
+                        )
+                    )
                     continue
+            # The candidate-prefix check and fallback decision must not fan out
+            # two decoder pairs at once on a weak CPU. The 0.6 s tail normally
+            # lets the prefix check finish already, so this is a no-cost
+            # ordering guard in the common path. Most importantly, a positive
+            # prefix verdict is monotonic: the newly captured tail belongs to
+            # the user's command and cannot turn a verified wake back off.
+            early_confirmed = False
+            if self._early_task is not None:
+                try:
+                    early_confirmed = bool(await self._early_task)
+                except Exception as exc:  # noqa: BLE001 — fallback verify remains
+                    log.debug(
+                        "candidate-prefix task failed; using full-window fallback: %s",
+                        exc,
+                    )
+                finally:
+                    self._early_task = None
             now = time.time()
             window = self._ring_window()
-            confirmed = await asyncio.to_thread(self._verify_candidate, window)
+            fired_path = hit_path
+            if early_confirmed:
+                confirmed = True
+                log.info(
+                    "vosk-kws: retaining verified candidate prefix for %r; "
+                    "following audio belongs to the voice session",
+                    self._phrase,
+                )
+            else:
+                confirmed = await asyncio.to_thread(
+                    self._verify_candidate, window, hit_path
+                )
+            if not confirmed:
+                # Sibling rescue: the model that HEARD the candidate could not
+                # verify it, but the ring still holds the phrase — let every
+                # other model try (union recall, measured +38%: 'Hey Jarvis'
+                # de-spoken garbles on the de model yet verifies on en).
+                # Fail-CLOSED via _early_check: an opportunistic rescue must
+                # never fire off a broken sibling (the fail-open contract
+                # protects only the primary confirm).
+                for other in self._model_paths:
+                    if other == hit_path or other not in recs:
+                        continue
+                    if await asyncio.to_thread(self._early_check, window, other):
+                        confirmed = True
+                        fired_path = other
+                        break
             if not confirmed:
                 self._stat_suppressed_confirm += 1
-                rec = self._new_grammar_rec()
+                # Invalidate this generation and defensively retract any stale
+                # visual state. A positive prefix task cannot reach this branch;
+                # it was consumed as the monotonic verdict above.
+                self._pending_gen += 1
+                await self._notify_early(False)
+                self._stat_backpressure_windows += 1
+                verify_not_before = (
+                    self._monotonic() + self._rejected_candidate_backoff_s
+                )
+                if (
+                    self._stat_backpressure_windows == 1
+                    or self._stat_backpressure_windows % 25 == 0
+                ):
+                    log.warning(
+                        "vosk-kws: rejected-candidate backpressure active "
+                        "(pause %.1fs, windows=%d, skipped_chunks=%d) — "
+                        "protecting desktop responsiveness.",
+                        self._rejected_candidate_backoff_s,
+                        self._stat_backpressure_windows,
+                        self._stat_backpressure_chunks,
+                    )
+                # Re-arm one cheap streaming recognizer set now.  It may latch
+                # one retry during backpressure, but no second full verify can
+                # run before the deadline above.
+                recs = self._fresh_recs()
                 continue
+            # The shown flag stays set for the pipeline to CONSUME: it must know
+            # the bar is visible when it silently drops this wake (echo lock)
+            # and retract it.
+            self._pending_gen += 1
             self._stat_fired += 1
             last_fire_t = now
             log.info(
-                "vosk-kws: WAKE fired for %r (%s candidate)",
+                "vosk-kws: WAKE fired for %r (%s candidate, model %s)",
                 self._phrase,
                 "final" if is_final else "partial",
+                fired_path,
             )
             yield self._keyword
-            rec = self._new_grammar_rec()
+            recs = self._fresh_recs()
 
 
 def vosk_model_supports_phrase(model_path: str, phrase: str) -> bool:
@@ -476,4 +1204,9 @@ def vosk_model_supports_phrase(model_path: str, phrase: str) -> bool:
     return "missing in vocabulary" not in tmp.read().lower()
 
 
-__all__ = ["VoskKwsProvider", "sound_confirm", "vosk_model_supports_phrase"]
+__all__ = [
+    "VoskKwsProvider",
+    "candidate_shape_ok",
+    "sound_confirm",
+    "vosk_model_supports_phrase",
+]

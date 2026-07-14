@@ -29,6 +29,7 @@ import { usePluginAttention } from "@/hooks/usePluginAttention";
 import { cn } from "@/lib/utils";
 import { useMemo } from "react";
 import { useT } from "@/i18n";
+import { BrowserRealtimeControl } from "@/components/voice/BrowserRealtimeControl";
 
 interface NavItem {
   id: SectionId;
@@ -156,8 +157,15 @@ export function Sidebar() {
   );
   // A connected marketplace plugin whose token was revoked/expired (needs_reauth)
   // — surfaced as an amber dot on the row that fronts Plugins ("Skills & Tools"),
-  // so a dead connection is visible app-wide, not only on the Plugins page.
-  const pluginsNeedReconnect = usePluginAttention();
+  // so a dead connection is visible app-wide, not only on the Plugins page. The
+  // names let the tooltip say WHICH plugin, not just "something is off".
+  const pluginAttention = usePluginAttention();
+  const pluginsNeedReconnect = pluginAttention.count > 0;
+  // Name the culprit(s) in the hover text so the dot stops being cryptic; the
+  // full plain-language banner + jump button live in the Plugins view itself.
+  const pluginWarnTitle = pluginAttention.names.length
+    ? `${t("sidebar.plugins_reconnect_alert")}: ${pluginAttention.names.join(", ")}`
+    : t("sidebar.plugins_reconnect_alert");
   const agentsCount = useEventStore((s) =>
     s.events.filter((e) => e.name === "AgentStateChange").length > 0 ? undefined : 0,
   );
@@ -234,6 +242,7 @@ export function Sidebar() {
             <span className="text-muted-foreground/50">{t("sidebar.wake_hint")}</span>
           )}
         </div>
+        <BrowserRealtimeControl />
       </div>
 
       <nav className="flex-1 overflow-y-auto scrollbar-jarvis p-2">
@@ -256,8 +265,15 @@ export function Sidebar() {
                 alert={item.id === "apikeys" ? apikeysHasError : false}
                 alertTitle={t("sidebar.apikeys_alert")}
                 warn={item.id === "skills" ? pluginsNeedReconnect : false}
-                warnTitle={t("sidebar.plugins_reconnect_alert")}
-                onClick={() => setActive(item.id)}
+                warnTitle={pluginWarnTitle}
+                // A plugin problem sends the "Skills & Tools" row straight into
+                // the Plugins tab (where the banner + jump button are), so one
+                // click lands on the fix instead of the default Skills tab.
+                onClick={() =>
+                  setActive(
+                    item.id === "skills" && pluginsNeedReconnect ? "plugins" : item.id,
+                  )
+                }
               />
             ))}
           </ul>

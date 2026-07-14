@@ -471,15 +471,26 @@ async def connect_start(plugin_id: str, background: BackgroundTasks) -> dict[str
             return
         async with slot.completion_lock:
             try:
-                slot.result = await handler.await_completion(session)
+                result = await handler.await_completion(session)
             except Exception as exc:  # noqa: BLE001
                 log.warning("plugin %s connect/await failed: %s", plugin_id, exc)
                 slot.result = FlowResult(tokens=None, error=str(exc))
-            else:
-                if slot.result.tokens is not None:
-                    TokenStore().save(plugin_id, slot.result.tokens)
-                    _refresh_plugin_in_live_registry(plugin_id)
-                    log.info("plugin %s connected via DCR", plugin_id)
+                return
+            if result.tokens is not None:
+                # Persist BEFORE publishing the result: connect_poll reads
+                # `slot.result` to decide "connected" vs "pending", so setting
+                # it before the save actually lands let a poll (or a crash
+                # right after) report success for a token that was never
+                # written to the store.
+                try:
+                    TokenStore().save(plugin_id, result.tokens)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("plugin %s token save failed: %s", plugin_id, exc)
+                    slot.result = FlowResult(tokens=None, error=f"token save failed: {exc}")
+                    return
+                _refresh_plugin_in_live_registry(plugin_id)
+                log.info("plugin %s connected via DCR", plugin_id)
+            slot.result = result
 
     asyncio.create_task(_drive(), name=f"oauth-drive:{plugin_id}:{session.flow_id}")
 

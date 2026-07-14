@@ -122,6 +122,8 @@ def _install_desktop_log_sink(log_path: Path) -> None:
     # watchdog run has its own handlers via _setup_logging).
     import logging as _logging
 
+    from jarvis.core.redact import safe_preview as _safe_preview
+
     class _InterceptHandler(_logging.Handler):
         def emit(self, record: _logging.LogRecord) -> None:
             try:
@@ -132,9 +134,8 @@ def _install_desktop_log_sink(log_path: Path) -> None:
             while frame and frame.f_code.co_filename == _logging.__file__:
                 frame = frame.f_back
                 depth += 1
-            logger.opt(depth=depth, exception=record.exc_info).log(
-                level, record.getMessage()
-            )
+            message = _safe_preview(record.getMessage(), max_chars=16_384)
+            logger.opt(depth=depth, exception=record.exc_info).log(level, message)
 
     root = _logging.getLogger()
     # Only add it if there isn't already an InterceptHandler present.
@@ -753,7 +754,7 @@ class DesktopApp:
         # WebServer → fastapi + every route schema, etc.) are DELIBERATELY NOT
         # done here. They hold the GIL in long C-level blocks, which would
         # starve the bootstrap loop and delay the UI shell. They are imported
-        # AFTER ``wait_shell_served`` below — i.e. once the window has painted —
+        # AFTER ``wait_shell_painted`` below — i.e. once the window has painted —
         # so the visible boot is never blocked by the import storm.
         if prebound is not None:
             # Fast-boot launcher path: the loop already exists and the bootstrap
@@ -826,50 +827,6 @@ class DesktopApp:
             self._bootstrap = bootstrap
             _db_boot_ready()  # /api/health is servable now → window can appear
 
-        # Fire the heavy OpenWakeWord/onnxruntime import NOW, in a daemon thread,
-        # BEFORE the WebServer + brain build + subsystem boot storm grab the
-        # Python import lock. The wake-critical Phase-A warm-up gates
-        # VoiceBootStatus(ready=True) — the UI's "VOICE STARTING…" → listening
-        # flip — on the OWW model load, whose dominant cost is this ~3 s import
-        # (not the ~0.1 s parse). Inside the serve-first boot storm it otherwise
-        # starves on the import lock to 7-24 s. Prefetching it here means Phase A
-        # finds openwakeword already in sys.modules. No-op on a headless VPS /
-        # JARVIS_VOICE=0; never slower than today (worst case Phase A waits on
-        # the same import it would have triggered itself).
-        from jarvis.speech.warmup_prefetch import (
-            start_tts_import_prefetch,
-            start_wake_import_prefetch,
-        )
-        start_wake_import_prefetch()
-        # Same idea for the default TTS SDK (google-genai): the deferred warm-up
-        # loader gates honest readiness on the TTS client, and its dominant cost
-        # is the ``from google import genai`` import (~4-11 s when starved in the
-        # boot storm). Prefetch it now in a daemon thread (disjoint from the wake
-        # import — no torch/shield interaction) so ``_ensure_client`` later hits
-        # a warm sys.modules. No-op for non-Gemini TTS / JARVIS_VOICE=0.
-        start_tts_import_prefetch()
-
-        # Same idea for the audio-device settle: the BUG-014 guard
-        # (wait_for_stable_audio_devices) is a blocking ~1.5 s poll that gates
-        # the voice Phase-A warm-up. Start it NOW in a daemon thread so it
-        # settles concurrently with the brain build + server.start(); Phase A
-        # then reuses the result instead of re-paying the wait. No-op on a
-        # headless host without sounddevice.
-        from jarvis.audio.device_init import start_audio_device_prefetch
-        start_audio_device_prefetch()
-
-        # Wake-MODEL prefetch (TTU iteration 10): the instrumented timeline
-        # showed the ~3.1 s fast-first wake-model load running strictly AFTER
-        # the import mountain + WebServer ctor. Start it NOW in a daemon
-        # thread so it overlaps them; the deferred warm-up later ADOPTS the
-        # loaded engine (FasterWhisperProvider._ensure_model) instead of
-        # loading again. No-op on JARVIS_VOICE=0 / any failure.
-        try:
-            from jarvis.plugins.stt import start_wake_model_prefetch
-            start_wake_model_prefetch(self.cfg.stt)
-        except Exception:  # noqa: BLE001 — a prefetch must never break boot
-            pass
-
         def _log_unhandled_async(loop_: asyncio.AbstractEventLoop, context: dict) -> None:
             exc = context.get("exception")
             msg = context.get("message", "<no message>")
@@ -881,15 +838,62 @@ class DesktopApp:
 
         loop.set_exception_handler(_log_unhandled_async)
 
-        # Let the window OPEN and PAINT (fetch /api/health, then index.html +
-        # the entry JS bundle from the bootstrap) BEFORE the GIL-heavy build
-        # starts. The WebServer ctor + its C-extension imports (fastapi, the
-        # route schemas) hold the GIL in long blocks; if they run first they
-        # starve the loop and the user stares at a blank window. Serving the
-        # shell first means the rendered UI is up before the warm-up storm.
-        # Bounded (2 s) so a headless run with no window never stalls the build.
+        # Let the window OPEN and genuinely PAINT before any GIL-heavy import or
+        # model-prefetch thread starts. The previous two-second wait ended when
+        # the entry JS bytes were served, which was not a browser-readiness
+        # signal: on a cold or busy machine it expired before WebView painted,
+        # then the import storm left a blank native window until the CPU freed.
+        # The boot page now acknowledges after two animation frames. Twelve
+        # seconds is only a failure backstop; the normal path releases as soon
+        # as the visible shell paints, while a broken GUI can never deadlock the
+        # backend forever.
         if self._bootstrap is not None:
-            loop.run_until_complete(self._bootstrap.wait_shell_served(timeout=2.0))
+            shell_painted = loop.run_until_complete(
+                self._bootstrap.wait_shell_painted(timeout=12.0)
+            )
+            from loguru import logger as _boot_logger
+
+            if shell_painted:
+                _boot_logger.info(
+                    "Desktop boot shell painted; heavy initialization released."
+                )
+            else:
+                _boot_logger.warning(
+                    "Desktop boot shell paint was not acknowledged within 12s; "
+                    "releasing heavy initialization through the bounded fallback."
+                )
+
+        # Fire the heavy OpenWakeWord/onnxruntime import now, in a daemon thread,
+        # before the WebServer + brain build + subsystem boot storm grab the
+        # Python import lock, but only after the user has a visible boot shell.
+        # The wake-critical Phase-A warm-up gates VoiceBootStatus(ready=True) on
+        # this import; prefetching still overlaps all subsequent backend work.
+        from jarvis.speech.warmup_prefetch import (
+            start_tts_import_prefetch,
+            start_wake_import_prefetch,
+        )
+
+        start_wake_import_prefetch()
+        # Same idea for the default TTS SDK (google-genai). This is disjoint
+        # from the wake import and remains a logged no-op for another provider
+        # or a headless host without the optional dependency.
+        start_tts_import_prefetch()
+
+        # Start the audio-device settle after the shell paint too. Phase A then
+        # reuses the result instead of re-paying the blocking stability poll.
+        from jarvis.audio.device_init import start_audio_device_prefetch
+
+        start_audio_device_prefetch()
+
+        # Wake-model prefetch overlaps the heavy backend build and is adopted by
+        # the later provider warm-up. It is a no-op when voice is disabled and
+        # must never make the visible desktop startup load-bearing.
+        try:
+            from jarvis.plugins.stt import start_wake_model_prefetch
+
+            start_wake_model_prefetch(self.cfg.stt)
+        except Exception:  # noqa: BLE001, S110 — prefetch never blocks boot
+            pass
 
         # Heavy imports — done NOW (after the shell has painted) so their
         # GIL-holding C-level work no longer starves the bootstrap loop while
@@ -905,7 +909,7 @@ class DesktopApp:
         from jarvis.mcp.registry import MCPRegistry
         from jarvis.state.chat_store import ChatStore, default_chats_db_path
         from jarvis.state.supervisor import Supervisor
-        from jarvis.ui.web.server import WebServer  # lazy, vermeidet Circular
+        from jarvis.ui.web.server import WebServer  # lazy to avoid a circular import
 
         _db_mark("pre_webserver")
         # Build the FastAPI app + all routes (~1 s, CPU-bound) in a worker thread
@@ -1133,6 +1137,18 @@ class DesktopApp:
             def conversation_language(self) -> str:
                 brain = brain_holder["brain"]
                 return str(getattr(brain, "conversation_language", "")) if brain else ""
+
+            # Realtime direct mode builds its tool bridge from these two
+            # attributes at session construction; delegate through to the
+            # real brain so a session opened after boot sees the full tool
+            # set (None during early boot → bridge cleanly degrades).
+            @property
+            def _tools(self) -> Any:
+                return getattr(brain_holder["brain"], "_tools", None)
+
+            @property
+            def _tool_executor_ref(self) -> Any:
+                return getattr(brain_holder["brain"], "_tool_executor_ref", None)
 
             def _brain_unavailable_message(self) -> str:
                 detail = brain_holder["error"] or "BrainManager not initialized"
@@ -1886,7 +1902,9 @@ class DesktopApp:
             logger.opt(exception=exc).warning("Virtual mouse overlay not startable")
             self._virtual_cursor = None
 
-    def _build_overlay_surface(self, style: str, *, start_hidden: bool = False):
+    def _build_overlay_surface(
+        self, style: str, *, gate_until_voice_ready: bool = False
+    ):
         """Construct (and start) the overlay surface for a display style.
 
         Returns a ``NullOverlay`` for ``"none"`` (no Tk window, no-op surface),
@@ -1894,12 +1912,11 @@ class DesktopApp:
         mascot ``OrbOverlay`` for anything else. Shared by boot wiring and the
         live ``swap_overlay`` path so the two never drift.
 
-        A persistent ``JarvisBarOverlay`` maps its window immediately, so the
-        bar is visible as soon as it is constructed — at boot AND on a live
-        ``swap_overlay``. Its boot visibility is deliberately decoupled from the
-        voice warm-up / wake path (the sidebar "Voice starting…" badge carries
-        readiness instead). A non-persistent bar / the mascot still starts
-        withdrawn and pops on a real session.
+        ``gate_until_voice_ready=True`` is reserved for the desktop boot path.
+        It lets the Jarvis Bar initialize and paint off-screen, but suppresses
+        every reveal until ``OrbBusBridge`` receives the honest voice-usable
+        signal. Runtime surfaces keep their immediate behavior. A non-persistent
+        bar / the mascot still starts withdrawn and pops on a real session.
         """
         if style == "none":
             from jarvis.ui.jarvisbar import NullOverlay
@@ -1908,22 +1925,12 @@ class DesktopApp:
         if style == "jarvis_bar":
             from jarvis.ui.jarvisbar import JarvisBarOverlay
 
-            # Synchronized appearance (2026-06-29): when ``start_hidden`` is set,
-            # the persistent bar starts WITHDRAWN and is revealed only on the
-            # honest ``VoiceBootStatus(ready=True)`` (via
-            # ``reveal_bar_when_voice_ready``), so the bar appears AT THE SAME
-            # MOMENT the voice stack is genuinely ready — no more "bar shows at
-            # boot, then 'ready' a few seconds later" desync. An earlier attempt
-            # at this left the bar hidden until the first wake word because
-            # ready=True fired unreliably/too early on the fast-boot path; that
-            # root cause is fixed (ready now fires once, after the deferred
-            # loaders bring up wake+VAD+TTS), and a 30 s reveal timeout backstops
-            # it so the bar can never be stuck hidden. A non-persistent bar starts
-            # withdrawn regardless (it pops on a session).
+            # The startup gate is stronger than merely starting withdrawn: early
+            # state/wake events cannot reveal the bar while voice is warming.
             surface = JarvisBarOverlay(
                 persistent=self.cfg.ui.bar_persistent,
                 accent=self.cfg.ui.bar_accent,
-                start_hidden=start_hidden,
+                startup_gated=gate_until_voice_ready,
             )
         else:  # "mascot" (and any legacy style value)
             from ui.orb.overlay import OrbOverlay
@@ -2122,9 +2129,42 @@ class DesktopApp:
             target=_quit_soon, name="jarvis-restart-quit", daemon=True
         ).start()
         logger.info(
-            "Self-restart scheduled (relauncher spawned; quitting in ~0.3 s, "
-            "hard-exit fallback at ~2 s)."
+            "Self-restart scheduled (relauncher spawned; quitting in ~0.2 s, "
+            "independent hard-exit watchdog at ~0.9 s)."
         )
+        return True
+
+    def request_quit(self) -> bool:
+        """Cleanly quit the app WITHOUT relaunching (Terms declined).
+
+        Same quit sequence as ``request_restart`` — mark the quit, destroy the
+        window, hard-exit if shutdown stalls — but no relauncher is spawned,
+        so the process simply ends. Used by the onboarding Terms gate
+        (design 2026-07-09): declining the Terms must not leave a half-running
+        assistant behind. Returns ``True`` if the quit was scheduled,
+        ``False`` on a headless host (no window to close).
+        """
+        from loguru import logger
+
+        from jarvis.ui.relauncher import run_restart_quit_sequence
+
+        window = getattr(self, "_window", None)
+        if window is None:
+            return False
+
+        def _mark_quit() -> None:
+            self._user_requested_quit = True
+
+        def _quit_soon() -> None:
+            run_restart_quit_sequence(
+                set_quit=_mark_quit,
+                destroy_window=window.destroy,
+            )
+
+        threading.Thread(
+            target=_quit_soon, name="jarvis-decline-quit", daemon=True
+        ).start()
+        logger.info("Quit scheduled (Terms declined; hard-exit fallback armed).")
         return True
 
     async def _start_speech_and_orb(
@@ -2179,12 +2219,13 @@ class DesktopApp:
                 from ui.orb.bus_bridge import OrbBusBridge
 
                 # NullOverlay for "none" still gets a bridge, so a live switch to
-                # bar/mascot works without a restart. Synchronized appearance:
-                # the persistent bar starts WITHDRAWN (start_hidden=True) and is
-                # revealed only on the honest VoiceBootStatus(ready=True), so it
-                # appears exactly when the voice stack is genuinely ready — no
-                # "bar at boot, ready a few seconds later" desync.
-                surface = self._build_overlay_surface(orb_style, start_hidden=True)
+                # bar/mascot works without a restart. The boot-created Jarvis Bar
+                # initializes withdrawn; the bridge releases its visibility gate
+                # only on the genuine voice-usable signal.
+                surface = self._build_overlay_surface(
+                    orb_style,
+                    gate_until_voice_ready=(orb_style == "jarvis_bar"),
+                )
                 hide_on_idle = (
                     (not self.cfg.ui.bar_persistent)
                     if orb_style == "jarvis_bar"
@@ -2192,16 +2233,6 @@ class DesktopApp:
                 )
                 bridge = OrbBusBridge(bus=bus, orb=surface, hide_on_idle=hide_on_idle)
                 bridge.attach()
-                # Visibility gate: the persistent bar started withdrawn (above),
-                # so this task is what actually SHOWS it — it waits for
-                # VoiceBootStatus(ready=True) (full stack: wake+VAD+TTS) and then
-                # maps + lifts the idle pill. Bounded by a 30 s timeout fallback
-                # so the bar can never be stuck hidden. A non-persistent bar / the
-                # mascot is left untouched (it pops on a real session).
-                loop.create_task(
-                    bridge.reveal_bar_when_voice_ready(),
-                    name="overlay-boot-reveal",
-                )
                 self._orb = surface
                 self._bridge = bridge
                 # Cache the boot surface so a later swap back to it reuses the
@@ -2569,6 +2600,37 @@ class DesktopApp:
                 # phrase matcher for the verifier + rolling-whisper.
                 wake_plan=wake_plan,
             )
+            # Onboarding is usable while the voice stack warms in the
+            # background. A user can therefore save a new phrase after the
+            # initial plan was resolved above but before this constructor
+            # finishes. Re-resolve once at the handoff boundary and apply only
+            # when the effective plan changed, closing that startup race without
+            # adding work to the normal boot path.
+            latest_wake_plan = resolve_wake_plan(
+                self.cfg.trigger.wake_word,
+                local_whisper_available=(
+                    _ilu.find_spec("faster_whisper") is not None
+                ),
+                language=resolve_wake_language(self.cfg),
+            )
+            plan_signature = (
+                wake_plan.phrase,
+                wake_plan.engine,
+                wake_plan.oww_model_path,
+                wake_plan.vosk_model_path,
+            )
+            latest_plan_signature = (
+                latest_wake_plan.phrase,
+                latest_wake_plan.engine,
+                latest_wake_plan.oww_model_path,
+                latest_wake_plan.vosk_model_path,
+            )
+            if latest_plan_signature != plan_signature:
+                pipeline.set_wake_plan(latest_wake_plan)
+                wake_plan = latest_wake_plan
+            latest_wake_enabled = bool(self.cfg.trigger.wake_word_enabled)
+            if pipeline._wake_word_enabled != latest_wake_enabled:  # noqa: SLF001
+                pipeline.set_wake_activation(latest_wake_enabled)
             _t_ctor = time.perf_counter()
             # Targeted boot-timing breakdown so the log shows exactly which voice
             # build step costs what (the wake-Whisper CUDA probe was the hidden
@@ -2651,7 +2713,7 @@ class DesktopApp:
                 _usable_printed = [False]
 
                 async def _print_voice_usable(evt: _VBS) -> None:
-                    if getattr(evt, "ready", False) and not _usable_printed[0]:
+                    if evt.voice_usable and not _usable_printed[0]:
                         _usable_printed[0] = True
                         print(
                             "VOICE_USABLE_MS="
@@ -3011,13 +3073,23 @@ class DesktopApp:
         debug = os.environ.get("JARVIS_WEBVIEW_DEBUG") == "1"
 
         # Linux: pin the window's WM_CLASS to match the .desktop's StartupWMClass
-        # BEFORE the GTK window is created, so the taskbar/dock shows the Jarvis
-        # icon instead of the generic python3 interpreter icon. No-op elsewhere.
+        # BEFORE the GTK window is created, and install the applications-menu
+        # .desktop entry that carries the icon those two bind to — together they
+        # make the taskbar/dock show the Jarvis icon instead of the generic
+        # python3 interpreter icon. macOS: set the Dock icon on the shared
+        # NSApplication (a bare interpreter run otherwise shows the Python
+        # rocket). Each is a no-op on the other platforms.
         try:
-            from jarvis.ui.icon_utils import pin_linux_wm_class
+            from jarvis.ui.icon_utils import (
+                apply_macos_dock_icon,
+                ensure_linux_desktop_entry,
+                pin_linux_wm_class,
+            )
 
             pin_linux_wm_class()
-        except Exception:  # noqa: BLE001 — the WM-class pin is never load-bearing
+            ensure_linux_desktop_entry()
+            apply_macos_dock_icon()
+        except Exception:  # noqa: BLE001 — icon/identity pins are never load-bearing
             pass
 
         # Native file drag-out: dragging a saved-download toast drops the REAL
@@ -3486,7 +3558,7 @@ class DesktopApp:
                 asyncio.run_coroutine_threadsafe(_pty_cleanup(), loop).result(timeout=2.0)
             except Exception:  # noqa: BLE001
                 pass
-            # Phase 9.8: Overlay-Subprocess stoppen BEVOR server.stop().
+            # Phase 9.8: stop the overlay subprocess BEFORE server.stop().
             try:
                 from jarvis.overlay.integration import stop_overlay
                 asyncio.run_coroutine_threadsafe(stop_overlay(), loop).result(timeout=2.0)
@@ -3505,7 +3577,7 @@ class DesktopApp:
                 try:
                     fut.result(timeout=3.0)
                 except Exception:  # noqa: BLE001
-                    # Server-stop darf haengen — wir stoppen den Loop hart.
+                    # Server shutdown may hang; the event loop still stops forcibly.
                     pass
             except Exception:  # noqa: BLE001
                 pass

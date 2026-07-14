@@ -33,6 +33,7 @@ services:
     volumes:
       # Persist runtime state (config, dbs, flight recorder) across restarts,
       # isolated from the host — never touches the maintainer's data/ folder.
+      # The image points both JARVIS_CONFIG and JARVIS_DATA_DIR at this mount.
       - jarvis-data:/app/data
 
 volumes:

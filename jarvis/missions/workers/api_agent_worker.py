@@ -14,12 +14,19 @@ selects the Brain class via a capability-style map; nothing branches on a model
 id. A missing API key degrades to a clean error result so the orchestrator's
 fallback chain takes over instead of crashing.
 
-Isolation note: unlike the subprocess workers this runs IN the app event loop —
-there is no child PID to hand the Job Object, so ``job`` is accepted but unused;
-the only spawned processes are short-lived ``Bash`` tool subprocesses (run off
-the loop via ``run_in_executor`` so the voice pipeline never blocks). Cancel is
-honored cooperatively at each turn boundary.
+Isolation note: unlike the CLI workers the provider loop runs IN the app event
+loop. Its local ``RunCommand`` tool uses structured argv and an asynchronous
+subprocess, assigns that PID to process-tree containment, reduces the child
+environment, and reaps the whole tree on completion, timeout, or cancellation.
+Fixed POSIX and Windows gate launchers ensure no model-selected target starts
+before process-group/Job assignment; argv remains positional data, never shell
+source. File tools are dispatched off the event loop. Cancellation is honored
+while a command is active as well as at turn boundaries. This containment is
+not a filesystem or code-execution sandbox: workspace scripts retain the
+Jarvis user's OS rights and intentionally detached POSIX code can escape a
+userspace process group.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -34,7 +41,8 @@ from typing import Any, Literal
 
 from jarvis.core.protocols import BrainMessage, BrainRequest
 
-from .api_agent_tools import WORKER_TOOL_SPECS, execute_worker_tool
+from .api_agent_tools import WORKER_TOOL_SPECS, execute_worker_tool_async
+from .capabilities import WorkerCapabilityInventory
 from .stream_consumer import (
     ClaudeAssistantMessage,
     ClaudeResult,
@@ -83,6 +91,9 @@ def _error_means_family_unusable(text: str) -> bool:
 _BRAIN_BY_PROVIDER: dict[str, tuple[str, str]] = {
     "openai": ("jarvis.plugins.brain.openai", "OpenAIBrain"),
     "openrouter": ("jarvis.plugins.brain.openrouter", "OpenRouterBrain"),
+    # GroqCloud speaks the same OpenAI-compatible streaming/tool-call protocol
+    # and needs no vendor SDK or external worker CLI.
+    "groq": ("jarvis.plugins.brain.groq", "GroqBrain"),
     # NVIDIA NIM is OpenAI-compatible with no vendor CLI — same in-process
     # tool-loop path as openai/openrouter, running on the user's nvapi- key.
     "nvidia": ("jarvis.plugins.brain.nvidia", "NvidiaBrain"),
@@ -106,6 +117,7 @@ _OPENROUTER_FREE_DEFAULT = "nvidia/nemotron-3-ultra-550b-a55b:free"
 _DEFAULT_MODEL: dict[str, str] = {
     "openai": "gpt-5.5",
     "openrouter": _OPENROUTER_FREE_DEFAULT,
+    "groq": "openai/gpt-oss-120b",
     "claude-api": "claude-opus-4-8",
     "gemini": "gemini-3.1-pro-preview",
     # NVIDIA's own reasoning flagship for heavy subagent work.
@@ -145,9 +157,10 @@ def _resolve_worker_model(provider: str, explicit: str) -> str:
         picked = (getattr(pc, "model", "") or "").strip()
         if picked:
             return picked
-    except Exception:  # noqa: BLE001 — config read must never crash the worker
+    except Exception:  # noqa: BLE001, S110 — config read must never crash the worker
         pass
     return _DEFAULT_MODEL.get(prov, "")
+
 
 _WORKER_TIMEOUT_S: float = 1200.0  # 20 min hard cap, mirrors the other workers
 _MAX_TURNS: int = 25
@@ -156,7 +169,9 @@ _MAX_TOKENS: int = 8192
 _SYSTEM_PROMPT = (
     "You are an autonomous software worker running inside an isolated git "
     "workspace. Your ONLY way to deliver work is to call the provided tools — "
-    "Write, Edit, Read, Bash, Ls — with paths relative to the workspace root. "
+    "Write, Edit, Read, RunCommand, Ls, plus any mission-scoped connected tools — "
+    "with file paths relative to the workspace root. Connected tools are "
+    "executed by the supervisor and may honestly require human approval. "
     "Actually CREATE and EDIT the files the task needs; never just describe what "
     "you would do (a text description is not a deliverable and will be rejected). "
     "Work autonomously without asking questions: if a detail is unspecified, pick "
@@ -179,7 +194,7 @@ def _build_brain(provider: str, model: str) -> Any:
 def _tool_incapable_message(model: str, provider: str, *, detail: str = "") -> str:
     """Shared honest-failure text for a worker model that cannot call tools.
 
-    Missions deliver ALL work through tool calls (Write/Edit/Bash/...); a
+    Missions deliver ALL work through tool calls (Write/Edit/RunCommand/...); a
     text-only reply produces an empty diff and the mission dies 3 critic
     loops later with an inscrutable ``critic_loop_exhausted`` (forensics
     Bug 10). Fail fast and actionably instead.
@@ -205,30 +220,86 @@ class ApiAgentWorker:
 
     cli: Literal["claude"] = "claude"
 
-    def __init__(self, provider: str) -> None:
+    def __init__(
+        self,
+        provider: str,
+        *,
+        capability_inventory: WorkerCapabilityInventory | None = None,
+    ) -> None:
         self.provider = (provider or "").strip().lower()
         self.last_pid: int | None = None
         self.last_session_id: str | None = None
+        self.capability_inventory = capability_inventory or WorkerCapabilityInventory.build()
 
     async def spawn(
         self,
         prompt: str,
         *,
         worktree: Path,
-        env: dict[str, str],  # noqa: ARG002 — in-process brain reads creds via cfg
-        job: Any,  # noqa: ARG002 — no child PID to assign (in-process)
+        env: dict[str, str],
+        job: Any,
         worker_id: str,
         log_dir: Path,
         model: str = "",
         max_turns: int = _MAX_TURNS,
+        _broker_binding: Any | None = None,
+        **_unused: Any,
+    ) -> AsyncIterator[Any]:
+        broker_binding = _broker_binding
+        issued_here = broker_binding is None
+        if issued_here:
+            broker_binding = self.capability_inventory.bind_broker(
+                ttl_s=_WORKER_TIMEOUT_S + 60.0,
+                mission_id=_unused.get("mission_id"),
+                worker_id=worker_id,
+            )
+        try:
+            async for event in self._spawn_bound(
+                prompt,
+                worktree=worktree,
+                env=env,
+                job=job,
+                worker_id=worker_id,
+                log_dir=log_dir,
+                model=model,
+                max_turns=max_turns,
+                broker_binding=broker_binding,
+                **_unused,
+            ):
+                yield event
+        finally:
+            if issued_here and broker_binding is not None:
+                try:
+                    broker_binding.close()
+                except Exception:  # noqa: BLE001 - cleanup must not mask cancellation
+                    logger.exception("ApiAgentWorker: broker binding cleanup failed")
+
+    async def _spawn_bound(
+        self,
+        prompt: str,
+        *,
+        worktree: Path,
+        env: dict[str, str],
+        job: Any,
+        worker_id: str,
+        log_dir: Path,
+        model: str = "",
+        max_turns: int = _MAX_TURNS,
+        broker_binding: Any | None,
         **_unused: Any,
     ) -> AsyncIterator[Any]:
         session_id = str(uuid.uuid4())
+        self.last_pid = None
         self.last_session_id = session_id
         resolved_model = _resolve_worker_model(self.provider, model)
         log_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240 — trivial sync mkdir (mirrors sibling workers)
         stream_path = log_dir / "stream.jsonl"
         written: list[str] = []
+        broker_specs = broker_binding.tool_specs if broker_binding is not None else ()
+        local_names = {str(spec["name"]) for spec in WORKER_TOOL_SPECS}
+        all_tool_specs = WORKER_TOOL_SPECS + tuple(
+            spec for spec in broker_specs if str(spec.get("name") or "") not in local_names
+        )
 
         def _emit_line(event: Any) -> None:
             with suppress(OSError):
@@ -238,8 +309,11 @@ class ApiAgentWorker:
         init = ClaudeSystemInit(
             session_id=session_id,
             model=f"{self.provider}/{resolved_model}",
-            tools=[t["name"] for t in WORKER_TOOL_SPECS],
+            tools=[t["name"] for t in all_tool_specs],
             cwd=str(worktree),
+            external_capabilities=self.capability_inventory.report_for(
+                f"api:{self.provider}", binding=broker_binding
+            ),
         )
         _emit_line(init)
         yield init
@@ -252,8 +326,11 @@ class ApiAgentWorker:
             brain = _build_brain(self.provider, resolved_model)
         except Exception as exc:  # noqa: BLE001
             res = ClaudeResult(
-                subtype="error_during_execution", is_error=True, session_id=session_id,
-                duration_ms=0, result=f"ApiAgentWorker init failed: {exc}",
+                subtype="error_during_execution",
+                is_error=True,
+                session_id=session_id,
+                duration_ms=0,
+                result=f"ApiAgentWorker init failed: {exc}",
             )
             _emit_line(res)
             yield res
@@ -270,7 +347,9 @@ class ApiAgentWorker:
             can_call_tools = True
         if not can_call_tools:
             res = ClaudeResult(
-                subtype="error_during_execution", is_error=True, session_id=session_id,
+                subtype="error_during_execution",
+                is_error=True,
+                session_id=session_id,
                 duration_ms=0,
                 result=_tool_incapable_message(resolved_model, self.provider),
             )
@@ -280,11 +359,13 @@ class ApiAgentWorker:
 
         logger.info(
             "ApiAgentWorker[%s] spawn in-process: provider=%s model=%s cwd=%s",
-            worker_id, self.provider, resolved_model, worktree,
+            worker_id,
+            self.provider,
+            resolved_model,
+            worktree,
         )
 
         messages: list[BrainMessage] = [BrainMessage(role="user", content=prompt)]
-        loop = asyncio.get_running_loop()
         t0 = time.perf_counter()
         final_text = ""
         turns = 0
@@ -293,8 +374,10 @@ class ApiAgentWorker:
             for turn in range(max_turns):
                 if time.perf_counter() - t0 > _WORKER_TIMEOUT_S:
                     res = ClaudeResult(
-                        subtype="error_during_execution", is_error=True,
-                        session_id=session_id, timed_out=True,
+                        subtype="error_during_execution",
+                        is_error=True,
+                        session_id=session_id,
+                        timed_out=True,
                         duration_ms=int((time.perf_counter() - t0) * 1000),
                         result=f"{final_text}\n[timeout after {_WORKER_TIMEOUT_S:.0f}s]".strip(),
                     )
@@ -305,7 +388,7 @@ class ApiAgentWorker:
                 turns = turn + 1
                 req = BrainRequest(
                     messages=tuple(messages),
-                    tools=WORKER_TOOL_SPECS,
+                    tools=all_tool_specs,
                     system=_SYSTEM_PROMPT,
                     max_tokens=_MAX_TOKENS,
                     stream=True,
@@ -338,7 +421,8 @@ class ApiAgentWorker:
                     )
                     if turn == 0 and no_tool_endpoints:
                         res = ClaudeResult(
-                            subtype="error_during_execution", is_error=True,
+                            subtype="error_during_execution",
+                            is_error=True,
                             session_id=session_id,
                             duration_ms=int((time.perf_counter() - t0) * 1000),
                             result=_tool_incapable_message(
@@ -358,12 +442,14 @@ class ApiAgentWorker:
                 if assistant_text:
                     content_blocks.append({"type": "text", "text": assistant_text})
                 for tc in tool_calls:
-                    content_blocks.append({
-                        "type": "tool_use",
-                        "id": str(tc.get("id") or uuid.uuid4().hex),
-                        "name": str(tc.get("name") or ""),
-                        "input": tc.get("input") or {},
-                    })
+                    content_blocks.append(
+                        {
+                            "type": "tool_use",
+                            "id": str(tc.get("id") or uuid.uuid4().hex),
+                            "name": str(tc.get("name") or ""),
+                            "input": tc.get("input") or {},
+                        }
+                    )
                 assistant_event = ClaudeAssistantMessage(
                     message={"role": "assistant", "content": content_blocks},
                     session_id=session_id,
@@ -376,32 +462,54 @@ class ApiAgentWorker:
 
                 messages.append(BrainMessage(role="assistant", content=content_blocks))
 
-                # Execute each tool call off the event loop, emit tool_result.
+                # Execute each local tool through its async boundary. File I/O
+                # is sent to a thread; RunCommand remains cancellable and owns
+                # its whole subprocess tree through the mission job.
                 result_blocks: list[dict[str, Any]] = []
                 for block in content_blocks:
                     if block.get("type") != "tool_use":
                         continue
                     name = block["name"]
                     tool_input = block["input"] if isinstance(block["input"], dict) else {}
-                    result_text, is_error = await loop.run_in_executor(
-                        None,
-                        lambda n=name, i=tool_input: execute_worker_tool(
-                            n, i, worktree=worktree
-                        ),
-                    )
+                    if name in local_names:
+                        result_text, is_error = await execute_worker_tool_async(
+                            name,
+                            tool_input,
+                            worktree=worktree,
+                            env=env,
+                            job=job,
+                            runtime_dir=log_dir / "command-runtime",
+                            on_spawn=lambda pid: setattr(self, "last_pid", pid),
+                        )
+                    elif broker_binding is not None:
+                        broker_result = await broker_binding.execute(name, tool_input)
+                        result_text = json.dumps(
+                            broker_result, ensure_ascii=False, default=str
+                        )
+                        is_error = not bool(broker_result.get("success"))
+                    else:
+                        result_text = "Tool is not granted to this mission."
+                        is_error = True
                     if name in ("Write", "Edit") and not is_error:
                         fp = str(tool_input.get("file_path", ""))
                         if fp:
                             written.append(fp)
-                    result_blocks.append({
-                        "type": "tool_result",
-                        "tool_use_id": block["id"],
-                        "content": result_text,
-                        "is_error": is_error,
-                    })
-                    messages.append(BrainMessage(
-                        role="tool", content=result_text, tool_call_id=block["id"], name=name,
-                    ))
+                    result_blocks.append(
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": block["id"],
+                            "content": result_text,
+                            "is_error": is_error,
+                        }
+                    )
+                    messages.append(
+                        BrainMessage(
+                            role="tool",
+                            content=result_text,
+                            tool_call_id=block["id"],
+                            name=name,
+                        )
+                    )
 
                 user_event = ClaudeUserMessage(
                     message={"role": "user", "content": result_blocks},
@@ -413,11 +521,16 @@ class ApiAgentWorker:
             wall_ms = int((time.perf_counter() - t0) * 1000)
             summary = final_text or (
                 f"Completed {len(written)} file change(s): {', '.join(written[:10])}"
-                if written else "Worker finished with no output."
+                if written
+                else "Worker finished with no output."
             )
             res = ClaudeResult(
-                subtype="success", is_error=False, session_id=session_id,
-                num_turns=turns, duration_ms=wall_ms, result=summary[:4000],
+                subtype="success",
+                is_error=False,
+                session_id=session_id,
+                num_turns=turns,
+                duration_ms=wall_ms,
+                result=summary[:4000],
             )
             # This family's key works — lift any armed cooldown immediately.
             from jarvis.api_family_quota_state import clear_api_family_cooldown
@@ -450,11 +563,15 @@ class ApiAgentWorker:
                     "ApiAgentWorker[%s]: provider %r key is unusable (quota/auth) "
                     "— arming the family cooldown so the worker factory crosses "
                     "to the next reachable key family on the retry.",
-                    worker_id, self.provider,
+                    worker_id,
+                    self.provider,
                 )
             res = ClaudeResult(
-                subtype="error_during_execution", is_error=True, session_id=session_id,
-                num_turns=turns, duration_ms=wall_ms,
+                subtype="error_during_execution",
+                is_error=True,
+                session_id=session_id,
+                num_turns=turns,
+                duration_ms=wall_ms,
                 result=f"{final_text}\n[worker error: {exc}]".strip(),
             )
             _emit_line(res)

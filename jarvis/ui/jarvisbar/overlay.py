@@ -6,7 +6,8 @@ the bridge is reused unchanged. ``show(mode)`` selects the renderer state;
 the orb). Text/mouth methods are deliberate no-ops — the bar shows no text.
 
 Signals:
-- LISTENING: the bridge starts its own ``MicListener`` that calls ``set_level``.
+- LISTENING: the speech capture path publishes input RMS via ``mic_level``;
+  ``OrbBusBridge`` forwards it to this surface without opening a second mic.
 - SPEAKING: the audio player publishes its output RMS via ``level_tap``, which
   this surface subscribes to on ``start()``.
 - THINKING: the renderer generates a synthetic wave (no external signal).
@@ -17,9 +18,11 @@ drained on the Tk thread. ``set_level`` is the sole exception (atomic write).
 
 No ``SetWindowLong`` is ever called directly, but ``-topmost`` IS re-asserted
 on every reveal (``_do_show``), and Windows can silently drop the layered
-color-key/alpha on that kind of style mutation (BUG-030). ``_do_show``
-re-applies ``-transparentcolor``/``-alpha`` right after, so a dropped
-attribute self-heals on the next reveal instead of leaving a black flash.
+color-key/alpha on that kind of style mutation (BUG-030). A reveal therefore
+maps at zero opacity, composes the prepared canvas, and only then restores the
+configured opacity. This keeps Tk's opaque backing surface off-screen even
+when the bar spent long enough withdrawn for the idle renderer to stop
+repainting.
 """
 from __future__ import annotations
 
@@ -67,6 +70,65 @@ AUDIBLE_HOLD_S = 0.5
 WATCHDOG_INTERVAL_MS = 1000
 FRAME_STALL_THRESHOLD_NS = 2_000_000_000  # 2 s of silence ⇒ the loop is dead
 
+# Frame pacing (BUG: "JarvisBar stutters" forensic, 2026-07-10). A 41s GIF
+# capture frame-diffed to only ~5 visual updates/second on average, in a
+# burst-then-freeze pattern (freezes up to 1.25s). Measured root causes, on
+# this machine:
+#
+# 1. The bar's window style itself (frameless + ``-topmost`` + a color-key
+#    ``-transparentcolor`` + a translucent ``-alpha``) is a Windows *layered*
+#    window; every ``ImageTk.PhotoImage``/``itemconfig`` swap makes DWM
+#    recomposite it. A benchmark that swaps a CONSTANT-COLOR image on an
+#    identically-styled window (zero render work) still only reached ~31
+#    updates/s against an ``after(16)`` (60fps) schedule — a ~15ms fixed
+#    per-tick compositing tax, independent of what gets drawn. So the 60fps
+#    target was already unreachable on this window style even at zero cost.
+#    The idle pill draws NOTHING beyond its at-rest background (see
+#    ``renderer.render``'s idle branch), so idle-at-rest frames are paying
+#    that compositing tax for a BYTE-IDENTICAL image every single tick — pure
+#    waste. ``_IDLE_SETTLE_TICKS`` below skips the render/PhotoImage/
+#    itemconfig work once the resting pill has visibly settled.
+# 2. A background thread holding the GIL (simulating wake-poll/other Python
+#    work sharing this process) collapsed the SAME loop to ~4-5 renders/s
+#    with 250-360ms gaps — matching the GIF's freeze pattern. This is GIL/CPU
+#    contention from OTHER threads in the process; no delay-scheduling choice
+#    made here can prevent it (a Windows thread-priority raise for the Tk
+#    thread was benchmarked too and showed no measurable improvement against
+#    pure GIL contention, so it is deliberately NOT used). What this loop CAN
+#    do is shrink its own contribution to that contention — the idle-skip
+#    above is the main lever, and adaptive pacing (below) prevents an
+#    occasional slow render (measured up to ~30ms in "think"+hovered mode)
+#    from compounding into an even longer visible gap.
+#
+# Idle-static skip: EVERY branch renderer.render() can reach while the coarse
+# mode is "idle" is time-independent (the empty resting pill, the hovered
+# idle pill's static mic glyph, the muted idle pill's static mic glyph — the
+# equalizer bars and the close-X both require an active/listen/speak/think
+# mode, never reached while idle). So once the resting pill's eased size has
+# stopped changing (ease() with factor 0.5 converges to sub-pixel precision
+# within a handful of ticks; 30 is a generous margin) for a given
+# (hover, mute) combination, every further tick would repaint the exact same
+# pixels regardless of hover/mute. Skipped ticks still stamp the heartbeat
+# and re-arm the loop, so the watchdog/self-healing contract is untouched —
+# only the render()/PhotoImage()/itemconfig() work is skipped.
+_IDLE_SETTLE_TICKS = 30
+
+# Adaptive pacing: the nominal target stays 16ms (~60fps aspirational — the
+# real ceiling is lower, see above), but the actual next delay is derived
+# from how long THIS tick took, not a blind constant. In the common case
+# (render cost << 16ms) this is indistinguishable from the old fixed delay.
+# It only matters after an unusually slow tick, where it schedules the next
+# one sooner instead of adding a full 16ms on top of the overrun — this
+# bounds how much a single slow frame can widen the gap to the next one.
+TARGET_FRAME_MS = 16
+MIN_FRAME_DELAY_MS = 1
+
+# Once the close-X is accepted, suppress rapid follow-up clicks long enough for
+# the authoritative IDLE state to arrive. Without this guard a double-click can
+# hit the same screen position after the optimistic visual collapse and be
+# reinterpreted as an idle-body click that immediately starts a new session.
+HANGUP_CLICK_GUARD_S = 1.0
+
 
 def _primary_work_area() -> tuple[int, int, int, int] | None:
     """Primary-monitor work area (left, top, right, bottom) EXCLUDING the
@@ -91,23 +153,38 @@ def _primary_work_area() -> tuple[int, int, int, int] | None:
         return None
 
 
+def _create_hidden_tk_root(tk: Any) -> Any:
+    """Create a Tk root without mapping its platform-default backing window.
+
+    ``tk.Tk()`` starts with a default geometry (roughly 400x300 physical pixels
+    on a 150% Windows desktop). Configuring geometry and a color key afterwards
+    can leave that original DWM surface eligible for a flash during a later
+    layered-window style mutation. Withdraw synchronously so only the fully
+    configured Jarvis Bar can ever be mapped.
+    """
+    root = tk.Tk()
+    root.withdraw()
+    return root
+
+
 class JarvisBarOverlay:
     def __init__(
         self,
         persistent: bool = True,
         accent: str = "#e7c46e",
         opacity: float = BAR_ALPHA,
-        start_hidden: bool = False,
+        startup_gated: bool = False,
     ) -> None:
         self._persistent = persistent
         self._accent = accent
         self._opacity = max(0.2, min(1.0, float(opacity)))  # clamp to sane range
-        # Boot gate: when set, the bar starts WITHDRAWN even if persistent, so it
-        # does not appear before the speech pipeline is ready to listen (the
-        # "looks ready but isn't" boot confusion). The boot wiring reveals it via
-        # show("idle") once VoiceBootStatus(ready=True) arrives. Default False
-        # keeps every other caller (live swap / set_bar_persistent) unchanged.
-        self._start_hidden = bool(start_hidden)
+        # The desktop boot path constructs and paints the bar early, while it is
+        # still withdrawn, then releases this gate on the honest voice-usable
+        # signal. This is stronger than an initial ``withdraw``: every early
+        # IDLE/wake/session ``show()`` is suppressed too, so no event can make the
+        # bar advertise a voice stack that is still warming. Runtime-created
+        # surfaces leave the opt-in gate off and retain their immediate behavior.
+        self._startup_gated = bool(startup_gated)
         self._mode = "idle"
         self._ext_level = 0.0
         # perf_counter() of the last set_level() that carried real sound
@@ -118,6 +195,12 @@ class JarvisBarOverlay:
         # revival watchdog compares against this to tell a living loop from a
         # silently-dead one. 0 = "no frame has run yet" → the watchdog holds off.
         self._last_frame_ns = 0
+        # Idle-static skip bookkeeping (see _IDLE_SETTLE_TICKS docstring above
+        # _schedule_frame): tracks how many consecutive ticks have shared the
+        # same (effective_mode, hovered, muted) key, so a settled idle pill's
+        # repaint can be skipped once its eased size has stopped moving.
+        self._static_tick_key: tuple[str, bool, bool] | None = None
+        self._static_tick_count = 0
         self._root: Any = None
         self._canvas: Any = None
         self._renderer: renderer.JarvisBarRenderer | None = None
@@ -136,6 +219,7 @@ class JarvisBarOverlay:
         self._feedback_publisher: Callable[[str, dict], None] | None = None
         self._on_show_window: Callable[[], None] | None = None
         self._hovered = False  # mouse over the bar → reveal the close cross
+        self._hangup_click_block_until = 0.0
         # Local mirror of the global voice-mute state (mic muted FOR JARVIS only).
         # Flipped optimistically on a mic-button click and reconciled by the
         # authoritative VoiceMuteChanged via set_muted(). A bool write is atomic
@@ -151,6 +235,12 @@ class JarvisBarOverlay:
         self._mode = mode
         if self._root is None:
             return
+        # Keep accepting state updates while boot is warming so release can show
+        # the latest correct mode, but never map the native window before the
+        # voice-usable signal. This guard closes the historical bypass where a
+        # wake candidate revealed a merely start-withdrawn bar.
+        if getattr(self, "_startup_gated", False):
+            return
         if not self._persistent and mode == "idle":
             self._enqueue_ui(self._do_hide)
         else:
@@ -165,6 +255,38 @@ class JarvisBarOverlay:
         if self._root is None:
             return
         self._enqueue_ui(self._do_hide)
+
+    def reassert_z_order(self) -> None:
+        """Re-pin an already-visible bar without treating it as a reveal.
+
+        Wake/state updates call ``show`` repeatedly while a persistent bar is
+        already mapped. Those updates must not mutate the native layered-window
+        styles. The one deliberate post-boot repair uses this explicit method.
+        """
+        if self._root is None:
+            return
+        if getattr(self, "_startup_gated", False):
+            return
+        self._enqueue_ui(self._do_reassert_z_order)
+
+    def release_startup_gate(self) -> bool:
+        """Allow the boot-created bar to become visible exactly once.
+
+        Returns ``True`` only when this call released an active gate. The latest
+        mode has continued to track bus events while hidden, so a persistent bar
+        is revealed in that mode rather than being reset to idle. A
+        non-persistent bar remains withdrawn while idle and can pop normally on
+        its next real session.
+        """
+        if not getattr(self, "_startup_gated", False):
+            return False
+        self._startup_gated = False
+        if self._root is None:
+            return True
+        if not self._persistent and self._mode == "idle":
+            return True
+        self._enqueue_ui(self._do_show)
+        return True
 
     def set_level(self, level: float) -> None:
         # Direct atomic write (no enqueue) — matches OrbOverlay.set_level.
@@ -210,13 +332,13 @@ class JarvisBarOverlay:
     # Lifecycle                                                          #
     # ------------------------------------------------------------------ #
     def _should_start_withdrawn(self) -> bool:
-        """True when ``start()`` must withdraw the window instead of mapping it.
+        """True while boot-gated or for the non-persistent variant.
 
-        A non-persistent bar always starts hidden (it pops on a session). A
-        persistent bar normally maps immediately, but the boot gate
-        (``start_hidden=True``) keeps it hidden until voice is ready.
+        The boot-created persistent bar is fully configured and painted while
+        withdrawn, then mapped by ``release_startup_gate`` once voice is usable.
+        Other persistent bars keep their immediate-map behavior.
         """
-        return (not self._persistent) or self._start_hidden
+        return (not self._persistent) or getattr(self, "_startup_gated", False)
 
     def start_in_thread(self, timeout: float = 3.0) -> None:
         def _run() -> None:
@@ -271,7 +393,10 @@ class JarvisBarOverlay:
         self._tk_thread_id = threading.get_ident()
         self._renderer = renderer.JarvisBarRenderer(accent=self._accent)
 
-        root = tk.Tk()
+        # Some window managers map Tk's default-size root eagerly. Hide it
+        # before assigning ``self._root`` or applying any styles so that stale
+        # backing surface can never flash at the top-left on a later wake.
+        root = _create_hidden_tk_root(tk)
         self._root = root
         root.title("JarvisBar")
         # Give the bar the Jarvis mascot icon on every OS. Tk otherwise inherits
@@ -338,9 +463,6 @@ class JarvisBarOverlay:
             except Exception:  # noqa: BLE001 — drop is optional; never block bar boot.
                 log.debug("bar drop target registration skipped", exc_info=True)
 
-        if self._should_start_withdrawn():
-            root.withdraw()  # only-when-active variant / boot gate starts hidden
-
         try:
             from jarvis.audio import level_tap
 
@@ -350,10 +472,13 @@ class JarvisBarOverlay:
 
         self._running = True
         self._t0 = time.perf_counter()
-        self._started.set()
-        self._schedule_ui_queue()
+        # Paint a complete first frame while the root is still withdrawn.
         self._schedule_frame()
+        self._schedule_ui_queue()
         self._schedule_frame_watchdog()  # independent anti-freeze revival loop
+        if not self._should_start_withdrawn():
+            self._do_show()
+        self._started.set()
         root.mainloop()
 
     def stop(self) -> None:
@@ -410,10 +535,82 @@ class JarvisBarOverlay:
     def _do_show(self) -> None:
         if self._root is None:
             return
+        # A persistent bar is already mapped when wake/state events arrive.
+        # Re-running deiconify/topmost/transparentcolor is not a harmless no-op
+        # on Windows: it mutates a layered HWND and can resurrect Tk's original
+        # default-size opaque backing surface at the top-left. The renderer reads
+        # ``self._mode`` directly, so a mapped window needs no native operation.
+        try:
+            if bool(self._root.winfo_ismapped()):
+                # Keep the no-native-mutation contract for a persistent mapped
+                # bar, but still submit one fresh canvas frame. This is the
+                # cheapest self-heal if DWM discarded a layered surface during
+                # a display/power transition while the logical HWND stayed
+                # mapped.
+                self._invalidate_static_frame()
+                return
+        except Exception:  # noqa: BLE001
+            # Unusual Tk shims may not expose the query. Prefer an attempted
+            # reveal over leaving a genuinely hidden bar unavailable.
+            log.debug("jarvisbar mapped-state query failed", exc_info=True)
+
+        # Reveal transaction (BUG-030): the boot-created bar can remain
+        # withdrawn for many seconds while voice warms. Its idle renderer has
+        # settled by then and deliberately skips byte-identical repaints. If a
+        # withdrawn -> deiconified/topmost transition makes DWM discard the
+        # prepared layered surface, mapping at the configured opacity exposes
+        # Tk's true opaque backing rectangle indefinitely -- there is no idle
+        # repaint left to replace it. Keep the HWND fully invisible during the
+        # native style changes, compose the already-painted canvas once, then
+        # restore the requested opacity. Every call is best-effort so a cosmetic
+        # platform limitation can never block the app.
+        self._apply_layered_attributes(opacity=0.0)
         try:
             self._root.deiconify()
         except Exception:  # noqa: BLE001
             log.debug("jarvisbar deiconify failed", exc_info=True)
+        self._do_reassert_z_order(opacity=0.0)
+        self._refresh_prepared_frame()
+        try:
+            # Flush geometry/map/canvas work while the window is still fully
+            # transparent. The first visible DWM composition therefore already
+            # contains the magenta color-key frame instead of a black backing.
+            self._root.update_idletasks()
+        except Exception:  # noqa: BLE001
+            log.debug("jarvisbar reveal composition flush failed", exc_info=True)
+        finally:
+            self._apply_layered_attributes(opacity=self._opacity)
+
+    def _apply_layered_attributes(self, *, opacity: float) -> None:
+        """Best-effort color-key + opacity application on the Tk thread."""
+        if self._root is None:
+            return
+        try:
+            self._root.wm_attributes("-transparentcolor", COLOR_KEY_HEX)
+        except Exception:  # noqa: BLE001
+            log.debug("jarvisbar transparentcolor re-assert failed", exc_info=True)
+        try:
+            self._root.wm_attributes("-alpha", opacity)
+        except Exception:  # noqa: BLE001
+            log.debug("jarvisbar alpha re-assert failed", exc_info=True)
+
+    def _invalidate_static_frame(self) -> None:
+        """Force the next animation tick to repaint even when idle settled."""
+        self._static_tick_key = None
+        self._static_tick_count = 0
+
+    def _refresh_prepared_frame(self) -> None:
+        """Resubmit the hidden pre-render to Tk before reveal becomes visible."""
+        if self._canvas is None or self._image_id is None or self._photo is None:
+            return
+        try:
+            self._canvas.itemconfig(self._image_id, image=self._photo)
+        except Exception:  # noqa: BLE001
+            log.debug("jarvisbar prepared-frame refresh failed", exc_info=True)
+
+    def _do_reassert_z_order(self, *, opacity: float | None = None) -> None:
+        if self._root is None:
+            return
         # Re-assert topmost + lift after every reveal. A withdrawn→deiconified
         # ``overrideredirect`` window comes back on Windows WITHOUT its topmost
         # z-order (it is remapped as an ordinary window), so later-mapped windows
@@ -437,11 +634,13 @@ class JarvisBarOverlay:
         # exactly as set at creation so a dropped attribute self-heals on the
         # very next reveal instead of needing an app restart. Guarded
         # separately so a failure here can never undo the topmost re-assert.
-        try:
-            self._root.wm_attributes("-transparentcolor", COLOR_KEY_HEX)
-            self._root.wm_attributes("-alpha", self._opacity)
-        except Exception:  # noqa: BLE001
-            log.debug("jarvisbar transparentcolor/alpha re-assert failed", exc_info=True)
+        self._apply_layered_attributes(
+            opacity=self._opacity if opacity is None else opacity
+        )
+        # A long-withdrawn idle bar may already be in the static-frame fast
+        # path. Native style/map changes require one fresh canvas submission so
+        # DWM cannot keep a stale backing surface indefinitely.
+        self._invalidate_static_frame()
 
     def _do_hide(self) -> None:
         if self._root is None:
@@ -486,8 +685,9 @@ class JarvisBarOverlay:
         # ("JarvisBar stopped moving" forensic). The render body is now wrapped so
         # one bad frame is dropped, logged, and the next tick is still armed in
         # `finally`. The loop can no longer be killed by any one exception.
+        tick_started = time.perf_counter()
         try:
-            now = time.perf_counter()
+            now = tick_started
             t = now - self._t0
             # Sound-driven look: bars while audio is present (mic OR TTS), wave
             # while silent. The coarse self._mode only decides active-vs-idle; the
@@ -504,22 +704,52 @@ class JarvisBarOverlay:
                 hold_s=AUDIBLE_HOLD_S,
                 playback_active=playing,
             )
-            # The level is fed live per ~60 ms TTS sub-block (player._write_samples),
-            # so the equalizer reacts to Jarvis's actual loudness — thin and lively,
-            # exactly like it reacts to your mic. No synthetic floor (that made the
-            # bars look uniformly blocky).
-            img = self._renderer.render(
-                t, effective_mode, self._ext_level,
-                hovered=self._hovered, muted=self._muted,
-            )
-            # PhotoImage must be retained on self, else Tk GCs it before drawing.
-            self._photo = ImageTk.PhotoImage(img)
-            if self._image_id is None:
-                self._image_id = self._canvas.create_image(
-                    0, 0, anchor="nw", image=self._photo
-                )
+
+            # Idle-static skip (see _IDLE_SETTLE_TICKS docstring above): every
+            # branch renderer.render() can reach while ``effective_mode ==
+            # "idle"`` is time-INDEPENDENT — the empty resting pill, the
+            # hovered idle pill (only draws the static mic glyph; the close-X
+            # and equalizer bars require an active/listen/speak mode, never
+            # reached here), and the muted idle pill (same static mic glyph)
+            # all draw nothing that depends on ``t``. The only thing that
+            # still moves per tick is the eased pill size/color, which
+            # converges (ease() factor 0.5) well within _IDLE_SETTLE_TICKS
+            # ticks of any (hover, mute) combination changing. So once idle
+            # has been static for that long, EVERY further tick — hovered or
+            # muted or neither — would repaint byte-identical pixels; skip
+            # the render/PhotoImage/itemconfig work entirely. Any change in
+            # mode, hover, or mute resets the counter, so a real transition
+            # (including a hover/mute flip) always renders immediately.
+            tick_key = (effective_mode, self._hovered, self._muted)
+            if tick_key != self._static_tick_key:
+                self._static_tick_key = tick_key
+                self._static_tick_count = 0
             else:
-                self._canvas.itemconfig(self._image_id, image=self._photo)
+                self._static_tick_count += 1
+            is_settled_idle = (
+                effective_mode == "idle"
+                and self._static_tick_count >= _IDLE_SETTLE_TICKS
+            )
+
+            if not is_settled_idle:
+                # The level is fed live per ~60 ms TTS sub-block
+                # (player._write_samples), so the equalizer reacts to Jarvis's
+                # actual loudness — thin and lively, exactly like it reacts to
+                # your mic. No synthetic floor (that made the bars look
+                # uniformly blocky).
+                img = self._renderer.render(
+                    t, effective_mode, self._ext_level,
+                    hovered=self._hovered, muted=self._muted,
+                )
+                # PhotoImage must be retained on self, else Tk GCs it before
+                # drawing.
+                self._photo = ImageTk.PhotoImage(img)
+                if self._image_id is None:
+                    self._image_id = self._canvas.create_image(
+                        0, 0, anchor="nw", image=self._photo
+                    )
+                else:
+                    self._canvas.itemconfig(self._image_id, image=self._photo)
         except Exception:  # noqa: BLE001 — one bad frame must never freeze the bar
             log.exception("JarvisBar frame render failed — dropping one frame")
         finally:
@@ -527,12 +757,20 @@ class JarvisBarOverlay:
             # so we stamp even on the failure path. The watchdog reads this to
             # tell alive from silently-dead.
             self._last_frame_ns = time.monotonic_ns()
+            # Adaptive pacing: derive the next delay from how long THIS tick
+            # actually took instead of always adding a flat 16ms on top. In the
+            # common case (tick cost << target) this is indistinguishable from
+            # the old fixed delay; it only shortens the next wait after an
+            # unusually slow tick, so a single slow render can't compound into
+            # an even longer visible gap (see TARGET_FRAME_MS docstring above).
+            elapsed_ms = (time.perf_counter() - tick_started) * 1000.0
+            next_delay_ms = max(MIN_FRAME_DELAY_MS, round(TARGET_FRAME_MS - elapsed_ms))
             # Re-arm unconditionally so the loop is self-healing. Guard the after()
             # call itself: if the root was torn down mid-frame, swallow the
             # TclError and stop re-arming (the window is gone — correct to stop).
             if self._running and self._root is not None:
                 try:
-                    self._root.after(16, self._schedule_frame)  # ~60 FPS
+                    self._root.after(next_delay_ms, self._schedule_frame)
                 except Exception:  # noqa: BLE001
                     log.warning(
                         "JarvisBar frame re-arm skipped — watchdog will revive",
@@ -697,6 +935,11 @@ class JarvisBarOverlay:
         # session. All entries are thread-safe from the Tk thread.
         if click_x is None:
             click_x = renderer.WIN_W / 2
+        # The first accepted X click optimistically removes the active look.
+        # Ignore follow-up clicks during that short transition so they cannot be
+        # reclassified as idle-body clicks and accidentally reopen the session.
+        if time.monotonic() < self._hangup_click_block_until:
+            return
         try:
             from jarvis.core.runtime_refs import get_speech_pipeline
 
@@ -742,6 +985,14 @@ class JarvisBarOverlay:
                     hangup = getattr(pipeline, "request_hangup", None)
                     if callable(hangup):
                         hangup()
+                        # Give immediate, local feedback instead of waiting for
+                        # microphone/provider teardown plus the EventBus IDLE
+                        # round-trip. The authoritative bridge state will
+                        # reconcile the same value when teardown completes.
+                        self._mode = "idle"
+                        self._hangup_click_block_until = (
+                            time.monotonic() + HANGUP_CLICK_GUARD_S
+                        )
             elif action == "talk":
                 pipeline.request_voice_session()
             # "none" → nothing

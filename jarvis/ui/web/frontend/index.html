@@ -76,6 +76,25 @@
         }
       })();
     </script>
+    <script>
+      // Do not release the desktop's heavy backend warm-up merely because the
+      // HTML or entry bundle was sent. A cold WebView can receive those bytes
+      // before its browser main thread paints anything. Two animation frames
+      // prove that the user has seen this dependency-free boot shell first.
+      (function () {
+        var acknowledgePaint = function () {
+          fetch("/api/ui/shell-painted", {
+            method: "POST",
+            cache: "no-store",
+          }).catch(function () {
+            /* The full app may already own the route; startup remains bounded. */
+          });
+        };
+        requestAnimationFrame(function () {
+          requestAnimationFrame(acknowledgePaint);
+        });
+      })();
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

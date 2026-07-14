@@ -22,9 +22,11 @@ and the child PID is assigned to the per-mission Job Object via ``on_spawn`` so
 the kernel reaps the tree on cancel/timeout/crash (Windows). Google ToS: only the
 official binary is driven; the OAuth token is never read into our own client.
 """
+
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import os
 import shutil
@@ -45,6 +47,7 @@ from jarvis.google_cli.isolated_home import (
 from jarvis.google_cli.pty_runner import repair_agy_path, run_cli_over_pty
 from jarvis.google_cli.resolver import resolve_google_cli
 
+from .capabilities import WorkerCapabilityInventory
 from .gemini_worker import GeminiWorker
 from .stream_consumer import ClaudeResult, ClaudeSystemInit
 
@@ -61,6 +64,10 @@ _DROP_ENV: tuple[str, ...] = (
 
 # 20 min hard cap — mirrors GeminiWorker's 1200 s (user mandate 2026-06-09).
 _WORKER_TIMEOUT_S: float = 1200.0
+
+
+class BrokerMcpConfigurationError(RuntimeError):
+    """Raised when the isolated Google CLI cannot receive the broker config."""
 
 
 def _build_agy_worker_argv(exe: str, prompt: str, worktree: Path) -> list[str]:
@@ -89,14 +96,19 @@ def _build_agy_worker_argv(exe: str, prompt: str, worktree: Path) -> list[str]:
     safe_prompt = " ".join(prompt.split())
     return [
         exe,
-        "--print", safe_prompt,
-        "--add-dir", str(worktree),
-        "--print-timeout", f"{int(_WORKER_TIMEOUT_S)}s",
+        "--print",
+        safe_prompt,
+        "--add-dir",
+        str(worktree),
+        "--print-timeout",
+        f"{int(_WORKER_TIMEOUT_S)}s",
         "--dangerously-skip-permissions",
     ]
 
 
-def _build_agy_worker_env(base_env: dict[str, str]) -> dict[str, str]:
+def _build_agy_worker_env(
+    base_env: dict[str, str], *, mcp_servers: dict[str, Any] | None = None
+) -> dict[str, str]:
     """Worker child env for agy: drop API keys (OAuth wins), repair PATH for agy's
     internal cmd/npm spawns, and redirect HOME to the isolated hook/mcp-free home."""
     env = {k: v for k, v in base_env.items() if k not in _DROP_ENV}
@@ -109,6 +121,22 @@ def _build_agy_worker_env(base_env: dict[str, str]) -> dict[str, str]:
     )
     if iso:
         redirect_home_env(env, iso)
+    if mcp_servers:
+        if not iso:
+            raise BrokerMcpConfigurationError(
+                "the isolated Google CLI home is unavailable"
+            )
+        settings_path = Path(iso) / ".gemini" / "settings.json"
+        try:
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
+            if not isinstance(settings, dict):
+                raise TypeError("Google CLI settings must contain an object")
+            settings["mcpServers"] = dict(mcp_servers)
+            settings_path.write_text(json.dumps(settings), encoding="utf-8")
+        except (OSError, ValueError, TypeError) as exc:
+            raise BrokerMcpConfigurationError(
+                "broker MCP settings could not be written in the isolated Google CLI home"
+            ) from exc
     return env
 
 
@@ -122,10 +150,15 @@ class GoogleCliWorker:
 
     cli: Literal["claude"] = "claude"
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        capability_inventory: WorkerCapabilityInventory | None = None,
+    ) -> None:
         self.last_pid: int | None = None
         self.last_session_id: str | None = None
-        self._gemini_fallback = GeminiWorker()
+        self.capability_inventory = capability_inventory or WorkerCapabilityInventory.build()
+        self._gemini_fallback = GeminiWorker(capability_inventory=self.capability_inventory)
 
     async def spawn(
         self,
@@ -142,6 +175,59 @@ class GoogleCliWorker:
         max_turns: int = 20,
         resume_session_id: str | None = None,
         extra_args: tuple[str, ...] = (),
+        _broker_binding: Any | None = None,
+        **_unused: Any,
+    ) -> AsyncIterator[Any]:
+        """Run one Google worker lifecycle under one mission-scoped grant."""
+        broker_binding = _broker_binding
+        issued_here = broker_binding is None
+        if issued_here:
+            broker_binding = self.capability_inventory.bind_broker(
+                ttl_s=_WORKER_TIMEOUT_S + 60.0,
+                mission_id=_unused.get("mission_id"),
+                worker_id=worker_id,
+            )
+        try:
+            async for event in self._spawn_bound(
+                prompt,
+                worktree=worktree,
+                env=env,
+                job=job,
+                worker_id=worker_id,
+                log_dir=log_dir,
+                model=model,
+                allowed_tools=allowed_tools,
+                permission_mode=permission_mode,
+                max_turns=max_turns,
+                resume_session_id=resume_session_id,
+                extra_args=extra_args,
+                broker_binding=broker_binding,
+                **_unused,
+            ):
+                yield event
+        finally:
+            if issued_here and broker_binding is not None:
+                try:
+                    broker_binding.close()
+                except Exception:  # noqa: BLE001 - cleanup must not mask cancellation
+                    logger.exception("GoogleCliWorker: broker binding cleanup failed")
+
+    async def _spawn_bound(
+        self,
+        prompt: str,
+        *,
+        worktree: Path,
+        env: dict[str, str],
+        job: Any,
+        worker_id: str,
+        log_dir: Path,
+        model: str = "gemini-3.5-flash",
+        allowed_tools: str = "",  # parity, ignored by agy
+        permission_mode: str = "yolo",
+        max_turns: int = 20,
+        resume_session_id: str | None = None,
+        extra_args: tuple[str, ...] = (),
+        broker_binding: Any | None,
         **_unused: Any,
     ) -> AsyncIterator[Any]:
         cli = resolve_google_cli()
@@ -150,7 +236,11 @@ class GoogleCliWorker:
 
         if cli is None:
             yield ClaudeSystemInit(
-                session_id=session_id, model="antigravity/none", tools=[], cwd=str(worktree)
+                session_id=session_id,
+                model="antigravity/none",
+                tools=[],
+                cwd=str(worktree),
+                external_capabilities=self.capability_inventory.report_for("google-cli"),
             )
             yield ClaudeResult(
                 subtype="error_during_execution",
@@ -193,6 +283,7 @@ class GoogleCliWorker:
                 max_turns=max_turns,
                 resume_session_id=resume_session_id,
                 extra_args=extra_args,
+                _broker_binding=broker_binding,
                 **_unused,
             ):
                 yield ev
@@ -204,14 +295,51 @@ class GoogleCliWorker:
         exe = cli.argv_prefix[0]
         log_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240 — trivial sync mkdir (mirrors GeminiWorker)
         argv = _build_agy_worker_argv(exe, prompt, worktree)
-        agy_env = _build_agy_worker_env(env)
+        broker_servers = (
+            broker_binding.mcp_server_config() if broker_binding is not None else {}
+        )
+        agy_base_env = (
+            broker_binding.apply_environment(env)
+            if broker_binding is not None
+            else env
+        )
+        try:
+            agy_env = _build_agy_worker_env(agy_base_env, mcp_servers=broker_servers)
+        except BrokerMcpConfigurationError as exc:
+            logger.error("GoogleCliWorker[%s]: %s", worker_id, exc)
+            yield ClaudeSystemInit(
+                session_id=session_id,
+                model="antigravity/agy",
+                tools=[],
+                cwd=str(worktree),
+                external_capabilities=self.capability_inventory.report_for(
+                    "google-cli", binding=None
+                ),
+            )
+            yield ClaudeResult(
+                subtype="error_during_execution",
+                is_error=True,
+                cost_usd=None,
+                num_turns=None,
+                session_id=session_id,
+                duration_ms=0,
+                result=f"GoogleCliWorker broker MCP configuration failed: {exc}",
+            )
+            return
 
         yield ClaudeSystemInit(
-            session_id=session_id, model="antigravity/agy", tools=[], cwd=str(worktree)
+            session_id=session_id,
+            model="antigravity/agy",
+            tools=[],
+            cwd=str(worktree),
+            external_capabilities=self.capability_inventory.report_for(
+                "google-cli", binding=broker_binding
+            ),
         )
         logger.info(
             "GoogleCliWorker[%s] spawn agy over PTY: cwd=%s (Google subscription, OAuth)",
-            worker_id, worktree,
+            worker_id,
+            worktree,
         )
 
         loop = asyncio.get_running_loop()
@@ -222,7 +350,9 @@ class GoogleCliWorker:
                 job.assign(pid)
             except Exception:  # noqa: BLE001
                 logger.warning(
-                    "GoogleCliWorker[%s]: job.assign(pid=%s) failed", worker_id, pid,
+                    "GoogleCliWorker[%s]: job.assign(pid=%s) failed",
+                    worker_id,
+                    pid,
                     exc_info=True,
                 )
 
@@ -250,7 +380,10 @@ class GoogleCliWorker:
             text = f"{text}\n[timeout after {_WORKER_TIMEOUT_S:.0f}s]".strip()
         logger.info(
             "GoogleCliWorker[%s] agy done: error=%s %dms text=%d chars",
-            worker_id, is_error, wall_ms, len(result.text),
+            worker_id,
+            is_error,
+            wall_ms,
+            len(result.text),
         )
         yield ClaudeResult(
             subtype="success" if not is_error else "error_during_execution",

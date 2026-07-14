@@ -1,6 +1,7 @@
 """VerifyViaCurlTool — HTTP check for Jarvis-Agent worker verification."""
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from jarvis.core.protocols import ExecutionContext, ToolResult
@@ -34,14 +35,21 @@ class VerifyViaCurlTool:
     async def execute(self, args: dict[str, Any], ctx: ExecutionContext) -> ToolResult:
         url = (args.get("url") or "").strip()
         if not url:
-            return ToolResult(success=False, error="url is empty")
+            return ToolResult(success=False, output=None, error="url is empty")
         substring = (args.get("expected_substring") or "").strip()
-        timeout = float(args.get("timeout_s") or 5.0)
+        # Clamp the model-controlled timeout to a sane range: a 0/negative
+        # value would hang forever, an unbounded huge one lets a single call
+        # wedge the caller for arbitrarily long.
+        timeout = min(max(float(args.get("timeout_s") or 5.0), 0.5), 30.0)
 
         try:
             import httpx
 
-            r = httpx.get(url, timeout=timeout, follow_redirects=True)
+            # httpx.get is synchronous — run it off the event loop so a slow/
+            # unreachable host cannot block every other in-flight task.
+            r = await asyncio.to_thread(
+                httpx.get, url, timeout=timeout, follow_redirects=True
+            )
             if r.status_code != 200:
                 return ToolResult(
                     success=False,
@@ -57,4 +65,4 @@ class VerifyViaCurlTool:
                 output=f"HTTP 200 OK ({url})" + (f" — '{substring}' found" if substring else ""),
             )
         except Exception as exc:  # noqa: BLE001
-            return ToolResult(success=False, error=f"Request failed: {exc}")
+            return ToolResult(success=False, output=None, error=f"Request failed: {exc}")

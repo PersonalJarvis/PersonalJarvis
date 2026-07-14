@@ -152,9 +152,19 @@ async def refresh_due_tokens(
                 # "Reconnect" prompt. A connected plugin must never silently
                 # disappear; the only user-visible delete path is an explicit
                 # DELETE. (Previously this called store.delete(pid).)
-                store.save(pid, dataclasses.replace(tokens, needs_reauth=True))
-                outcomes[pid] = REVOKED
-                log.info("plugin %s refresh needs reauth — marked needs_reauth: %s", pid, exc)
+                try:
+                    store.save(pid, dataclasses.replace(tokens, needs_reauth=True))
+                    outcomes[pid] = REVOKED
+                    log.info(
+                        "plugin %s refresh needs reauth — marked needs_reauth: %s", pid, exc
+                    )
+                except Exception as save_exc:  # noqa: BLE001 — isolate one plugin's store failure
+                    outcomes[pid] = FAILED
+                    log.warning(
+                        "plugin %s needs_reauth save failed, will retry next cycle: %s",
+                        pid,
+                        save_exc,
+                    )
             else:
                 outcomes[pid] = FAILED
                 log.warning("plugin %s refresh failed (transient, will retry): %s", pid, exc)
@@ -167,11 +177,18 @@ async def refresh_due_tokens(
         # A healthy refresh clears any stale needs_reauth flag and stamps the
         # refresh time so the keep-alive sweep can skip it until the next window.
         merged_extra = {**new_tokens.extra, "last_refreshed": datetime.now(UTC).isoformat()}
-        store.save(
-            pid,
-            dataclasses.replace(new_tokens, extra=merged_extra, needs_reauth=False),
-        )
-        outcomes[pid] = REFRESHED
+        try:
+            store.save(
+                pid,
+                dataclasses.replace(new_tokens, extra=merged_extra, needs_reauth=False),
+            )
+            outcomes[pid] = REFRESHED
+        except Exception as exc:  # noqa: BLE001 — isolate one plugin's store failure
+            outcomes[pid] = FAILED
+            log.warning(
+                "plugin %s refreshed token save failed, will retry next cycle: %s", pid, exc
+            )
+            continue
 
         if on_refreshed is not None:
             try:

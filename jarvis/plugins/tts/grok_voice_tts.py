@@ -5,13 +5,9 @@ We request **raw PCM 24 kHz mono int16** — identical to the Gemini /
 ElevenLabs path, so the `sounddevice` playback needs no adjustment
 and no MP3 decoder is needed.
 
-Voice whitelist:
-  - leo  — authoritative, command-like (the default voice, counterpart
-           to ElevenLabs "Daniel" / Gemini "Charon")
-  - rex  — business-confident
-  - sal  — neutral, balanced
-  - ara  — warm, friendly
-  - eve  — energetic (xAI default)
+Voice roster:
+  The complete public built-in roster is kept in ``DEFAULT_VOICES``. ``leo``
+  remains Jarvis's authoritative default; xAI's own default is ``eve``.
 
 Streaming:
   Real WebSocket streaming exists at xAI (`wss://api.x.ai/v1/tts`), but for
@@ -51,8 +47,9 @@ _QUOTA_COOLDOWN_S = 900.0
 # anyway, so a single sentence practically never reaches the limit.
 _MAX_CHARS_PER_REQUEST = 15_000
 
-# 5 voices per the launch blog (April 2026). Default voice = "leo"
-# (authoritative, command-like — a calm, formal register).
+# Complete public built-in roster from the xAI TTS guide (verified 2026-07-10).
+# Default voice remains "leo" (authoritative, command-like — a calm, formal
+# register) so existing installations keep the same voice.
 GROK_VOICE_LEO = "leo"
 GROK_VOICE_REX = "rex"
 GROK_VOICE_SAL = "sal"
@@ -65,6 +62,27 @@ DEFAULT_VOICES: tuple[str, ...] = (
     GROK_VOICE_SAL,
     GROK_VOICE_ARA,
     GROK_VOICE_EVE,
+    "carina",
+    "zagan",
+    "helix",
+    "orion",
+    "luna",
+    "iris",
+    "altair",
+    "zenith",
+    "perseus",
+    "helios",
+    "lux",
+    "kepler",
+    "rigel",
+    "cosmo",
+    "celeste",
+    "ursa",
+    "sirius",
+    "lumen",
+    "castor",
+    "naksh",
+    "atlas",
 )
 
 # Sentence splitter: identical to GeminiFlashTTS — DE+EN capital lookahead.
@@ -267,7 +285,7 @@ class GrokVoiceTTS:
                 yield chunk
 
     def list_voices(self, language: str | None = None) -> list[str]:
-        """5 whitelisted voices, all multilingual (20+ languages)."""
+        """Return the current public built-in xAI voices."""
         return list(DEFAULT_VOICES)
 
     # ------------------------------------------------------------------

@@ -1,15 +1,15 @@
-# PyInstaller-Spec für Personal Jarvis Desktop-App (Phase 1a).
+# PyInstaller spec for the Personal Jarvis desktop app (Phase 1a).
 #
-# Strategie (siehe Plan §5.10 + Phase-1a-Plan §5):
-# - `onedir` statt `onefile`: spart 3-5s Startzeit (kein MEIPASS-Unzip) und
-#   erlaubt Code-Signing jeder einzelnen DLL individuell.
-# - ML-Modelle sind **nicht** im Bundle — First-Run-Wizard lädt sie bei Bedarf
-#   nach `%LOCALAPPDATA%\Jarvis\models\` herunter (User-Entscheidung 2026-04-20).
-# - torch/CUDA werden nur lazy geladen; wenn vorhanden hidden-import, sonst
-#   wird der Backend-Fallback aktiv (OpenAI-Whisper-API statt faster-whisper).
-# - GUI-Excludes: tkinter, PyQt5, PySide6, matplotlib ersparen ~500 MB.
+# Strategy (see plan section 5.10 and the Phase 1a plan section 5):
+# - `onedir` instead of `onefile` avoids 3-5 seconds of MEIPASS extraction and
+#   allows each DLL to be signed independently.
+# - Downloaded ML models are not bundled. The first-run wizard downloads them to
+#   the platform-specific Jarvis model directory when the user enables them.
+# - Optional native voice engines are loaded lazily and degrade to cloud paths
+#   when unavailable. No Jarvis install profile requires torch or a GPU.
+# - Excluding unused GUI frameworks saves roughly 500 MB.
 #
-# Aufruf: `build.bat` (oder direkt `pyinstaller jarvis.spec --noconfirm`)
+# Invoke with `build.bat` or `pyinstaller jarvis.spec --noconfirm`.
 
 # ruff: noqa
 
@@ -24,25 +24,25 @@ from PyInstaller.utils.hooks import (
 
 PROJECT_ROOT = Path(SPECPATH).resolve()  # noqa: F821  (SPECPATH is PyInstaller-injected)
 FRONTEND_DIST = PROJECT_ROOT / "jarvis" / "ui" / "web" / "dist"
+PACKAGE_ASSETS = PROJECT_ROOT / "jarvis" / "assets"
 
 
-# --- Data-Files -------------------------------------------------------------
+# --- Data files -------------------------------------------------------------
 
 datas = []
 
-# Frontend-Build (wenn vorhanden). PyInstaller kopiert die kompletten
-# Static-Assets so dass `sys._MEIPASS/jarvis/ui/web/dist/` existiert und der
-# FastAPI-StaticFiles-Mount sie ausliefert.
+# Include the frontend build when present. Preserve its package-relative layout
+# so the FastAPI static-files mount can serve it from a frozen application.
 if FRONTEND_DIST.exists():
     for entry in FRONTEND_DIST.rglob("*"):
         if entry.is_file():
             rel = entry.relative_to(FRONTEND_DIST).parent
             datas.append((str(entry), str(Path("jarvis/ui/web/dist") / rel)))
 
-# jarvis.toml + profiles/ damit load_config() einen Default findet
+# Include the default configuration loaded by a fresh desktop installation.
 datas.append((str(PROJECT_ROOT / "jarvis.toml"), "."))
 
-# Assets (Icons, Chimes) wenn vorhanden
+# Include build-time desktop assets such as icons and chimes when present.
 assets_dir = PROJECT_ROOT / "assets"
 if assets_dir.exists():
     for entry in assets_dir.rglob("*"):
@@ -50,31 +50,37 @@ if assets_dir.exists():
             rel = entry.relative_to(assets_dir).parent
             datas.append((str(entry), str(Path("assets") / rel)))
 
-# Dependency-Metadata (entry_points!) — ohne die findet importlib.metadata
-# die Jarvis-Plugins im gebundelten Layout nicht.
+# Package assets are runtime dependencies, not downloadable models. This
+# explicitly includes the bundled CPU ONNX VAD model, wake backbones, licenses,
+# and icons in the same paths that ``jarvis.assets`` resolves after freezing.
+if PACKAGE_ASSETS.exists():
+    for entry in PACKAGE_ASSETS.rglob("*"):
+        if entry.is_file() and "__pycache__" not in entry.parts:
+            rel = entry.relative_to(PACKAGE_ASSETS).parent
+            datas.append((str(entry), str(Path("jarvis/assets") / rel)))
+
+# Preserve distribution metadata so importlib.metadata can discover the Jarvis
+# entry-point plugins in the frozen layout.
 datas += copy_metadata("personal-jarvis")
 
-# chromadb, sentence_transformers haben interne Data-Files (Tokenizer, Model-
-# Index-Templates etc.). Die brauchen wir erst ab Phase 2/6, aber wenn die
-# Module da sind werden sie gleich mitgebundelt.
-for pkg in ("chromadb", "sentence_transformers", "silero_vad"):
+# Legacy optional data packages are collected only when installed.
+for pkg in ("chromadb", "sentence_transformers"):
     try:
         datas += collect_data_files(pkg)
     except Exception:
         pass
 
 
-# --- Hidden-Imports ---------------------------------------------------------
+# --- Hidden imports ---------------------------------------------------------
 
 hiddenimports: list[str] = []
 
-# Alle Jarvis-Plugin-Module — die werden via entry_points geladen, PyInstaller
-# sieht die statischen Imports nicht.
+# Entry-point-loaded Jarvis plugins and channels are invisible to static import
+# analysis and must be collected explicitly.
 hiddenimports += collect_submodules("jarvis.plugins")
 hiddenimports += collect_submodules("jarvis.channels")
 
-# Uvicorn/websockets/http-tools — uvicorn[standard] bringt versionsspezifische
-# Backends die via importlib geladen werden.
+# Uvicorn standard installs version-specific backends through dynamic imports.
 for pkg in (
     "uvicorn.lifespan.on",
     "uvicorn.lifespan.off",
@@ -94,7 +100,7 @@ for pkg in (
 ):
     hiddenimports.append(pkg)
 
-# ctranslate2 wird von faster-whisper dynamisch nachgeladen
+# faster-whisper loads ctranslate2 dynamically when local voice is installed.
 for pkg in ("faster_whisper", "ctranslate2"):
     try:
         hiddenimports += collect_submodules(pkg)
@@ -102,7 +108,7 @@ for pkg in ("faster_whisper", "ctranslate2"):
         pass
 
 
-# --- Excludes (Bundle-Size-Sparen) ------------------------------------------
+# --- Bundle-size exclusions -------------------------------------------------
 
 excludes = [
     "tkinter",
@@ -120,7 +126,7 @@ excludes = [
 ]
 
 
-# --- Analyse / EXE ----------------------------------------------------------
+# --- Analysis / executable --------------------------------------------------
 
 block_cipher = None
 
@@ -151,15 +157,15 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=False,             # UPX macht AV-Falschpositive; lieber unpacked.
-    console=False,         # pythonw-aequivalent — kein Console-Fenster
+    upx=False,             # UPX commonly triggers antivirus false positives.
+    console=False,         # Match pythonw behavior without a console window.
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon=str(PROJECT_ROOT / "assets" / "icons" / "jarvis.ico"),  # Gigi-Maskottchen (Schwarz/Gelb)
-    uac_admin=False,       # asInvoker — kein UAC-Prompt
+    icon=str(PROJECT_ROOT / "assets" / "icons" / "jarvis.ico"),  # Gigi mascot icon.
+    uac_admin=False,       # Run asInvoker; elevate only individual actions.
 )
 
 coll = COLLECT(

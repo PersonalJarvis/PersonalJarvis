@@ -146,7 +146,6 @@ def test_atomic_write_succeeds_on_read_only_target(sample_toml: Path) -> None:
     it afterwards. Without this the User sees WinError 5 in the UI toast
     and the provider switch is silently lost.
     """
-    import os
     import stat
 
     # Mark the file read-only (Windows: clear S_IWRITE) before the patch.
@@ -167,3 +166,34 @@ def test_atomic_write_succeeds_on_read_only_target(sample_toml: Path) -> None:
 
     # Restore writability so tmp_path cleanup can delete the file.
     sample_toml.chmod(sample_toml.stat().st_mode | stat.S_IWRITE)
+
+
+def test_atomic_write_retries_transient_replace_denial(
+    sample_toml: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A short Windows sharing lock must not lose an in-app provider switch."""
+    import os
+
+    real_replace = os.replace
+    attempted_sources: list[Path] = []
+
+    def flaky_replace(
+        source: str | bytes | Path, destination: str | bytes | Path
+    ) -> None:
+        attempted_sources.append(Path(source))
+        if len(attempted_sources) < 3:
+            raise PermissionError(5, "simulated transient sharing lock")
+        real_replace(source, destination)
+
+    monkeypatch.setattr(config_writer.os, "replace", flaky_replace)
+    monkeypatch.setattr(config_writer.time, "sleep", lambda _seconds: None)
+
+    config_writer.set_voice_mode("realtime", path=sample_toml)
+
+    text = sample_toml.read_text(encoding="utf-8")
+    assert "[voice]" in text
+    assert 'mode = "realtime"' in text
+    assert len(attempted_sources) == 3
+    assert len(set(attempted_sources)) == 1
+    assert attempted_sources[0].name.startswith(f".{sample_toml.name}.")
+    assert list(sample_toml.parent.glob("*.tmp")) == []

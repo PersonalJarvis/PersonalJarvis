@@ -11,6 +11,7 @@ the ASGI callable directly (no socket) to prove that behavior.
 from __future__ import annotations
 
 import asyncio
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -170,6 +171,30 @@ async def test_shell_served_event_fires_after_js_bundle(tmp_path) -> None:
     assert not await bs.wait_shell_served(timeout=0.05)
     await _drive(bs.app, _http("/assets/app.js"))  # entry bundle → now ready
     assert await bs.wait_shell_served(timeout=0.05)
+
+
+@pytest.mark.asyncio
+async def test_shell_paint_requires_browser_ack_not_just_js_bytes(tmp_path) -> None:
+    # Sending the bundle does not prove the browser painted it. The desktop
+    # backend must stay clear of heavy imports until the boot page confirms a
+    # visual frame through the dedicated warm-up endpoint.
+    bs = FastBootstrap(dist_dir=_seed_dist(tmp_path))
+    await _drive(bs.app, _http("/"))
+    await _drive(bs.app, _http("/assets/app.js"))
+    assert not await bs.wait_shell_painted(timeout=0.05)
+
+    sent = await _drive(bs.app, _http("/api/ui/shell-painted", method="POST"))
+
+    assert _status(sent) == 204
+    assert await bs.wait_shell_painted(timeout=0.05)
+
+
+def test_boot_page_acknowledges_after_two_frames() -> None:
+    repo_root = Path(__file__).resolve().parents[4]
+    page = repo_root / "jarvis/ui/web/frontend/index.html"
+    html = page.read_text(encoding="utf-8")
+    assert "/api/ui/shell-painted" in html
+    assert html.count("requestAnimationFrame") >= 2
 
 
 # --- listener self-healing (the lock-zombie root cause) ---------------------

@@ -67,7 +67,6 @@ def test_set_wake_word_updates_all_provided_fields(tmp_path: Path) -> None:
         "Friday",
         engine="custom_onnx",
         custom_model_path="/models/friday.onnx",
-        sensitivity=0.7,
         fuzzy_match_ratio=0.85,
         path=f,
     )
@@ -75,8 +74,24 @@ def test_set_wake_word_updates_all_provided_fields(tmp_path: Path) -> None:
     assert ww["phrase"] == "Friday"
     assert ww["engine"] == "custom_onnx"
     assert ww["custom_model_path"] == "/models/friday.onnx"
-    assert ww["sensitivity"] == 0.7
     assert ww["fuzzy_match_ratio"] == 0.85
+
+
+def test_set_wake_word_no_longer_accepts_sensitivity_kwarg(tmp_path: Path) -> None:
+    # Guard: the Sensitivity slider was removed 2026-07-10 — set_wake_word() has
+    # no sensitivity parameter any more (a legacy jarvis.toml value is left
+    # untouched by set_wake_word since it is simply never in the update set).
+    import inspect
+
+    assert "sensitivity" not in inspect.signature(config_writer.set_wake_word).parameters
+
+
+def test_set_wake_word_leaves_a_legacy_sensitivity_value_untouched(tmp_path: Path) -> None:
+    f = _write(tmp_path)  # fixture carries a legacy sensitivity = 0.5
+    config_writer.set_wake_word("Computer", engine="stt_match", path=f)
+    ww = _load(f)["trigger"]["wake_word"]
+    assert ww["phrase"] == "Computer"
+    assert ww["sensitivity"] == 0.5  # untouched legacy value, still present
 
 
 def test_set_wake_word_is_bom_safe(tmp_path: Path) -> None:

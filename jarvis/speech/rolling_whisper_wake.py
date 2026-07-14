@@ -129,6 +129,73 @@ _MATCH_MIN_SPEECH_RMS = 0.006
 # cheaply by the raw energy gate (``_MATCH_MIN_SPEECH_RMS``).
 _ECHO_CONFIRM_SKIP_RMS = 0.02
 
+# Session-relative noise-floor calibration (fresh-machine forensics Bug 17 /
+# AP-23 audit finding 9). The absolute gates above were measured on the
+# maintainer's mic (idle hiss ~0.0046 rms); a quieter laptop input path puts
+# REAL speech at 0.003-0.006 rms — below _MATCH_MIN_SPEECH_RMS and partly
+# below ``min_peak`` — so a genuine wake was dropped silently. Each energy
+# gate is therefore calibrated against the SESSION's own noise floor,
+# strictly LOWER-ONLY:
+#
+#     effective = min(configured_absolute, max(K * floor, absolute_minimum))
+#
+# On the maintainer's mic every effective gate equals the legacy absolute
+# (floor ~0.0046 puts K*floor above each cap), so all historical
+# measurements and pins above stay valid. On a quiet mic the gates scale
+# down with the floor — and the AP-27 discriminator survives BY
+# CONSTRUCTION: a bias-primed silence hallucination sits AT the noise floor
+# while the match gate sits at ``_MATCH_GATE_K`` x the floor, on ANY mic
+# gain. The absolute minimums keep a muted mic's digital silence
+# (rms ~1e-5) below every gate forever.
+_FLOOR_INIT = 0.004          # ~the maintainer hiss: gates START at legacy values
+_FLOOR_ABS_MIN = 0.0002      # digital-mute numeric noise never defines a floor
+_FLOOR_ALPHA = 0.05          # EMA weight per quiet polled window
+_FLOOR_QUIET_BAND = 1.5      # a window this close to the floor counts as quiet
+_MATCH_GATE_K = 1.4          # ghost ≈ 1.0x floor, quiet genuine wake ≥ ~2x floor
+_MATCH_GATE_ABS_MIN = 0.0015
+_RMS_GATE_K = 1.2
+_RMS_GATE_ABS_MIN = 0.001
+_PEAK_GATE_K = 2.5
+_PEAK_GATE_ABS_MIN = 0.002
+
+
+class SessionNoiseFloor:
+    """EMA estimate of the session's noise floor over per-window RMS values.
+
+    Only windows in the quiet band (below ``quiet_band`` x the current floor)
+    update the estimate, so speech never drags the floor up; the floor may
+    drift up slowly when the ROOM gets noisier (each step is bounded by the
+    band) and is clamped to ``abs_min`` so a muted mic cannot zero it.
+    """
+
+    def __init__(
+        self,
+        initial: float = _FLOOR_INIT,
+        abs_min: float = _FLOOR_ABS_MIN,
+        alpha: float = _FLOOR_ALPHA,
+        quiet_band: float = _FLOOR_QUIET_BAND,
+    ) -> None:
+        self._floor = float(initial)
+        self._abs_min = float(abs_min)
+        self._alpha = float(alpha)
+        self._quiet_band = float(quiet_band)
+
+    @property
+    def floor(self) -> float:
+        return self._floor
+
+    def update(self, rms: float) -> None:
+        if rms < self._floor * self._quiet_band:
+            floor = (1.0 - self._alpha) * self._floor + self._alpha * rms
+            self._floor = max(floor, self._abs_min)
+
+    def gate(self, configured: float, k: float, abs_min: float) -> float:
+        """Lower-only effective gate: never above ``configured``; a
+        ``configured <= 0`` keeps the caller's explicit opt-out."""
+        if configured <= 0.0:
+            return configured
+        return min(configured, max(k * self._floor, abs_min))
+
 
 def _save_wav(pcm_bytes: bytes, sample_rate: int, path: Path) -> None:
     """Writes int16 PCM as a valid WAV file."""
@@ -293,6 +360,8 @@ class RollingWhisperWake:
         self._max_no_speech_prob = max_no_speech_prob
         self._transcribe_timeout_s = float(transcribe_timeout_s)
         self._match_min_rms = float(match_min_rms)
+        # Session-relative gate calibration — see SessionNoiseFloor above.
+        self._noise_floor = SessionNoiseFloor()
         # Statistics for the heartbeat
         self._chunks_seen = 0
         self._total_bytes = 0
@@ -316,6 +385,17 @@ class RollingWhisperWake:
         self._stat_suppressed_cooldown = 0
         self._stat_suppressed_echo = 0
         self._stat_suppressed_silence = 0
+
+    def _effective_min_rms(self) -> float:
+        return self._noise_floor.gate(self._min_rms, _RMS_GATE_K, _RMS_GATE_ABS_MIN)
+
+    def _effective_min_peak(self) -> float:
+        return self._noise_floor.gate(self._min_peak, _PEAK_GATE_K, _PEAK_GATE_ABS_MIN)
+
+    def _effective_match_min_rms(self) -> float:
+        return self._noise_floor.gate(
+            self._match_min_rms, _MATCH_GATE_K, _MATCH_GATE_ABS_MIN
+        )
 
     def stats(self) -> dict[str, int]:
         """Snapshot of this listen session's wake-evaluation counters.
@@ -468,7 +548,7 @@ class RollingWhisperWake:
                             "max-rms=%.4f (%.1f dBFS) last-transcript=%r | "
                             "windows=%d gated[rms=%d peak=%d] transcribed=%d "
                             "rejected[unreliable=%d no_match=%d] matched=%d "
-                            "(conf_floor=%.2f peak_gate=%.3f)",
+                            "(conf_floor=%.2f peak_gate=%.3f noise_floor=%.4f)",
                             self._chunks_seen,
                             self._total_bytes // 1024,
                             self._max_rms,
@@ -482,7 +562,8 @@ class RollingWhisperWake:
                             self._stat_rejected_no_match,
                             self._stat_matched,
                             self._min_wake_confidence,
-                            self._min_peak,
+                            self._effective_min_peak(),
+                            self._noise_floor.floor,
                         )
                         self._chunks_seen = 0
                         self._total_bytes = 0
@@ -687,22 +768,27 @@ class RollingWhisperWake:
                 # evaluation attempt (the denominator for the gate counters).
                 self._stat_windows_polled += 1
 
-                # Volume check (RMS) — no Whisper call during silence
+                # Volume check (RMS) — no Whisper call during silence. Every
+                # polled window first feeds the session noise-floor estimate
+                # (quiet windows only — see SessionNoiseFloor), which scales
+                # the energy gates down on a quiet mic, lower-only.
                 rms = float(np.sqrt(np.mean(audio_np * audio_np) + 1e-12))
-                if rms < self._min_rms:
+                self._noise_floor.update(rms)
+                if rms < self._effective_min_rms():
                     self._stat_gated_rms += 1
                     continue
 
                 # Peak gate: don't bother Whisper at all on pure noise
                 peak = float(np.max(np.abs(audio_np)))
-                if peak < self._min_peak:
+                effective_min_peak = self._effective_min_peak()
+                if peak < effective_min_peak:
                     # No Whisper call — too quiet for speech. Log the measured
                     # peak so "wake stopped working" on a quiet mic is visible as
                     # "your audio peaks below the gate", not silent nothing.
                     self._stat_gated_peak += 1
                     log.debug(
                         "rolling-whisper: window gated (peak=%.4f < %.4f) — too quiet",
-                        peak, self._min_peak,
+                        peak, effective_min_peak,
                     )
                     continue
 
@@ -852,13 +938,14 @@ class RollingWhisperWake:
                     # exact-phrase echo confirm misses: a hallucination with
                     # extra invented words (which skips the confirm) or one the
                     # confirm accepts because its second pass errored.
-                    if self._match_min_rms > 0.0 and rms < self._match_min_rms:
+                    match_gate = self._effective_match_min_rms()
+                    if match_gate > 0.0 and rms < match_gate:
                         self._stat_suppressed_silence += 1
                         log.info(
                             "rolling-whisper: SUPPRESSED near-silent match %r in "
                             "%r (rms=%.4f < %.4f) — bias-prompt hallucination on "
                             "silence, not a spoken wake",
-                            m.group(0), joined, rms, self._match_min_rms,
+                            m.group(0), joined, rms, match_gate,
                         )
                         continue
                     # Bias-echo gate: a candidate whose transcript is EXACTLY

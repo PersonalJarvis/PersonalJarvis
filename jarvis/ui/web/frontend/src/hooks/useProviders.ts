@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export type AuthMode = "api_key" | "codex" | "antigravity" | "none";
 export type ProviderTier = "brain" | "tts" | "stt" | "realtime" | "computer-use";
@@ -168,6 +168,11 @@ export function useProviders() {
     setProviders((prev) =>
       prev.map((p) => (p.tier === tier ? { ...p, active: p.id === id } : p)),
     );
+    window.dispatchEvent(
+      new CustomEvent("jarvis:provider-selection-pending", {
+        detail: { section: tier, provider: id },
+      }),
+    );
   }, []);
 
   useEffect(() => {
@@ -212,6 +217,8 @@ export interface SectionHealth {
   reason: string;
   /** Plain-English one-liner for the hover tooltip. */
   detail: string;
+  /** Exact provider/integration checked by the backend. */
+  subject_id: string | null;
 }
 
 export interface SectionHealthResponse {
@@ -225,9 +232,13 @@ export interface SectionHealthResponse {
  * TTL cache — used right after a key save / provider switch so the dot reflects
  * the change immediately instead of a stale cached result.
  */
-export async function getSectionHealth(refresh = false): Promise<SectionHealthResponse> {
+export async function getSectionHealth(
+  refresh = false,
+  signal?: AbortSignal,
+): Promise<SectionHealthResponse> {
   const res = await fetch(
     `/api/providers/section-health${refresh ? "?refresh=true" : ""}`,
+    { signal, cache: "no-store" },
   );
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return (await res.json()) as SectionHealthResponse;
@@ -244,19 +255,72 @@ export async function getSectionHealth(refresh = false): Promise<SectionHealthRe
  */
 export function useSectionHealth() {
   const [health, setHealth] = useState<Record<string, SectionHealth>>({});
+  const requestVersion = useRef(0);
+  const requestController = useRef<AbortController | null>(null);
 
   const reload = useCallback(async (refresh = false) => {
+    const version = ++requestVersion.current;
+    requestController.current?.abort();
+    const controller = new AbortController();
+    requestController.current = controller;
     try {
-      const data = await getSectionHealth(refresh);
-      setHealth(data.sections ?? {});
-    } catch {
+      const data = await getSectionHealth(refresh, controller.signal);
+      if (version === requestVersion.current) {
+        setHealth(data.sections ?? {});
+      }
+    } catch (error) {
+      if ((error as Error).name === "AbortError") return;
       // best-effort — keep whatever we last had rather than clearing to nothing
+    } finally {
+      if (requestController.current === controller) {
+        requestController.current = null;
+      }
     }
   }, []);
 
   useEffect(() => {
     void reload(false);
-    const onChange = () => void reload(true);
+    // Debounced: one action can fire several of these events back-to-back
+    // (switch + refetch + test). Each refresh runs REAL connectivity tests
+    // server-side, so bursts are collapsed into a single trailing reload.
+    let timer: number | undefined;
+    const clearSection = (section?: string) => {
+      setHealth((previous) => {
+        if (!section) return {};
+        if (!(section in previous)) return previous;
+        const next = { ...previous };
+        delete next[section];
+        return next;
+      });
+    };
+    const onChange = (event: Event) => {
+      ++requestVersion.current;
+      requestController.current?.abort();
+
+      const detail = (event as CustomEvent<ProviderHealthEventDetail>).detail;
+      const section = detail?.section ?? SECTION_HEALTH_EVENT_SECTIONS[event.type];
+      const testResult = detail?.result;
+      if (
+        event.type === "jarvis:provider-tested" &&
+        detail?.active &&
+        testResult &&
+        section
+      ) {
+        setHealth((previous) => ({
+          ...previous,
+          [section]: sectionHealthFromProviderTest(
+            testResult,
+            detail.provider_label ?? testResult.provider,
+          ),
+        }));
+      } else if (event.type !== "jarvis:provider-tested") {
+        clearSection(section);
+      }
+
+      window.clearTimeout(timer);
+      if (event.type === "jarvis:provider-selection-pending") return;
+      timer = window.setTimeout(() => void reload(true), 400);
+    };
     const events = [
       "jarvis:secret-configured",
       "jarvis:brain-switched",
@@ -265,13 +329,66 @@ export function useSectionHealth() {
       "jarvis:realtime-switched",
       "jarvis:computer-use-switched",
       "jarvis:subagent-switched",
+      "jarvis:agent-switched",
       "jarvis:provider-tested",
+      "jarvis:provider-config-changed",
+      "jarvis:provider-selection-pending",
+      "jarvis:provider-switch-failed",
     ];
     events.forEach((e) => window.addEventListener(e, onChange));
-    return () => events.forEach((e) => window.removeEventListener(e, onChange));
+    return () => {
+      ++requestVersion.current;
+      requestController.current?.abort();
+      window.clearTimeout(timer);
+      events.forEach((e) => window.removeEventListener(e, onChange));
+    };
   }, [reload]);
 
   return { health, reload };
+}
+
+interface ProviderHealthEventDetail {
+  section?: string;
+  provider?: string;
+  provider_label?: string;
+  active?: boolean;
+  result?: ProviderTestResult;
+}
+
+const SECTION_HEALTH_EVENT_SECTIONS: Record<string, string> = {
+  "jarvis:brain-switched": "brain",
+  "jarvis:tts-switched": "tts",
+  "jarvis:stt-switched": "stt",
+  "jarvis:realtime-switched": "realtime",
+  "jarvis:computer-use-switched": "computer-use",
+  "jarvis:subagent-switched": "subagents",
+  "jarvis:agent-switched": "subagents",
+};
+
+export function sectionHealthForSubject(
+  health: SectionHealth | undefined,
+  subjectId: string | null | undefined,
+): SectionHealth | undefined {
+  if (!subjectId || health?.subject_id !== subjectId) return undefined;
+  return health;
+}
+
+export function sectionHealthFromProviderTest(
+  result: ProviderTestResult,
+  providerLabel: string,
+): SectionHealth {
+  const status: SectionHealthStatus =
+    result.status === "ok"
+      ? "ok"
+      : result.status === "not_configured"
+        ? "needs_setup"
+        : "error";
+  return {
+    status,
+    reason: result.status,
+    detail: `${providerLabel}: ${result.detail || result.status}`,
+    subject_id: result.provider,
+  };
 }
 
 export async function postSecret(key: string, value: string): Promise<void> {
@@ -565,20 +682,47 @@ export interface ProviderTestResult {
   integration_ok: boolean;
 }
 
+// The backend caps a test at 75 s (route-level wait_for); this client-side
+// ceiling sits above it so a wedged backend can never leave the "Testing…"
+// spinner running forever — the ONE state a test control must never reach.
+const PROVIDER_TEST_CLIENT_TIMEOUT_MS = 80_000;
+
 /**
  * Runs a REAL minimal call against the provider (1-token brain completion, a
  * tiny TTS synthesis, an STT transcription, or the Codex OAuth status) and
  * reports the honest outcome — not just whether a key string is stored.
+ *
+ * Never hangs: aborts client-side after `PROVIDER_TEST_CLIENT_TIMEOUT_MS` and
+ * resolves to an honest "unreachable" result instead of rejecting, so the UI
+ * always gets a renderable outcome.
  */
 export async function testProvider(providerId: string): Promise<ProviderTestResult> {
-  const res = await fetch(`/api/providers/${encodeURIComponent(providerId)}/test`, {
-    method: "POST",
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), PROVIDER_TEST_CLIENT_TIMEOUT_MS);
+  try {
+    const res = await fetch(`/api/providers/${encodeURIComponent(providerId)}/test`, {
+      method: "POST",
+      signal: controller.signal,
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(body.detail ?? `HTTP ${res.status}`);
+    }
+    return body as ProviderTestResult;
+  } catch (e) {
+    if ((e as Error).name === "AbortError") {
+      return {
+        provider: providerId,
+        status: "unreachable",
+        detail: "No answer from the app after 80s — the backend may be busy or stuck.",
+        latency_ms: PROVIDER_TEST_CLIENT_TIMEOUT_MS,
+        integration_ok: false,
+      };
+    }
+    throw e;
+  } finally {
+    window.clearTimeout(timer);
   }
-  return body as ProviderTestResult;
 }
 
 // ── Per-provider model picker ───────────────────────────────────────────────

@@ -8,7 +8,6 @@ export interface WakeWordConfig {
   phrase: string;
   engine: string;
   custom_model_path: string;
-  sensitivity: number;
   fuzzy_match_ratio: number;
   engines: string[];
   instant_phrases: string[];
@@ -26,7 +25,6 @@ export interface WakeWordPayload {
   phrase: string;
   engine: string;
   custom_model_path?: string;
-  sensitivity?: number;
   fuzzy_match_ratio?: number;
   persist?: boolean;
 }
@@ -47,6 +45,13 @@ export interface WakeWordSaveResult {
   wake_available: boolean;
   message: string;
   persisted: boolean;
+  restart_required: boolean;
+}
+
+export interface WakeActivationResult {
+  ok: boolean;
+  enabled: boolean;
+  applied_live: boolean;
   restart_required: boolean;
 }
 
@@ -114,11 +119,11 @@ export function useWakeWord() {
     [],
   );
 
-  // Turn the always-on wake word ON/OFF (the activation master switch). Persists
-  // to jarvis.toml; the change takes effect after a voice restart. Returns
-  // whether a restart is required (always true today).
+  // Turn the always-on wake word ON/OFF (the activation master switch). The
+  // backend applies it to a running voice pipeline and only requests a restart
+  // when no live desktop voice pipeline exists.
   const setWakeActivation = useCallback(
-    async (enabled: boolean): Promise<{ ok: boolean; enabled: boolean; restart_required: boolean }> => {
+    async (enabled: boolean): Promise<WakeActivationResult> => {
       const res = await fetch("/api/settings/wake-word/activation", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -129,7 +134,7 @@ export function useWakeWord() {
         throw new Error(body.detail ?? `HTTP ${res.status}`);
       }
       window.dispatchEvent(new CustomEvent("jarvis:wake-word-changed"));
-      return body as { ok: boolean; enabled: boolean; restart_required: boolean };
+      return body as WakeActivationResult;
     },
     [],
   );

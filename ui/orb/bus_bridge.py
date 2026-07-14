@@ -37,28 +37,26 @@ from typing import TYPE_CHECKING, Any
 
 from jarvis.core.events import (
     AudioOutFirst,
-    ListeningStarted,
     JarvisAgentBackgroundCompleted,
+    ListeningStarted,
     OrbResetRequested,
     ResponseGenerated,
     ShowWindowRequested,
     SystemStateChanged,
     TranscriptionUpdate,
     UserVisibleFeedback,
-    WakeCandidateDetected,
-    WakeWordDetected,
     VoiceBootStatus,
     VoiceMuteChanged,
     VoiceMuteToggleRequested,
     VoiceSessionEnded,
     VoiceSessionStarted,
+    WakeCandidateDetected,
+    WakeWordDetected,
 )
-
 from ui.orb.animations import IDLE_ANIMATION_POOL
 
 if TYPE_CHECKING:
     from jarvis.core.bus import EventBus
-
     from ui.orb.overlay import OrbOverlay
 
 
@@ -164,8 +162,8 @@ class OrbBusBridge:
 
     def __init__(
         self,
-        bus: "EventBus",
-        orb: "OrbOverlay",
+        bus: EventBus,
+        orb: OrbOverlay,
         idle_animations_enabled: bool = True,
         hide_on_idle: bool = True,
     ) -> None:
@@ -179,6 +177,13 @@ class OrbBusBridge:
         # actually producing sound" instead — whoever makes sound drives bars.
         self._last_tts_level_t = 0.0
         self._last_state: str = "IDLE"
+        self._voice_session_active = False
+        self._wake_preview_origin_state = "IDLE"
+        # A verified-enough wake candidate can reveal the listening bar before
+        # the authoritative session state arrives. The wake microphone is
+        # already capturing during that interval, so its live levels must be
+        # allowed through without mutating the state-machine edge.
+        self._wake_candidate_active = False
         self._idle_task: asyncio.Task | None = None
         self._idle_enabled = idle_animations_enabled
         self._hide_on_idle = hide_on_idle
@@ -210,17 +215,12 @@ class OrbBusBridge:
         # drives _on_state without publishing VoiceSession events (and the
         # very first session before any end-event) behaves exactly as before.
         self._suppress_show_until_session: bool = False
-        # Boot z-order re-lift latch. The persistent bar is now visible from
-        # boot (the overlay maps its window immediately — see
-        # DesktopApp._build_overlay_surface), so this is NO LONGER a visibility
-        # gate. Once voice is ready, ``reveal_bar_when_voice_ready`` re-asserts
-        # the bar's topmost (after the main window + tray have finished mapping).
-        # ``_boot_reveal_done`` makes the re-lift idempotent across the ready
-        # signal and the fallback timeout. asyncio.Event() is loop-agnostic at
-        # construction (Py3.10+ dropped the loop param; project minimum is
-        # 3.11), so it is safe to build off the running loop.
-        self._voice_ready_event = asyncio.Event()
-        self._boot_reveal_done: bool = False
+        # The boot-created Jarvis Bar is fully initialized but withdrawn. This
+        # latch is released directly by the first genuine VoiceBootStatus ready
+        # event; there is deliberately no timeout reveal because a visible bar is
+        # the product's promise that the user can speak now.
+        self._voice_usable: bool = False
+        self._boot_visibility_released: bool = False
         # Backend asyncio loop the bridge's bus handlers run on. The Tk gesture
         # callbacks (_publish_mute_toggle / _publish_show_window /
         # _publish_visible_feedback) fire on the overlay's *Tk thread*, which has
@@ -292,8 +292,8 @@ class OrbBusBridge:
             self._bus.subscribe(ResponseGenerated, self._on_response_generated)
             self._bus.subscribe(JarvisAgentBackgroundCompleted, self._on_background_completed)
             self._bus.subscribe(AudioOutFirst, self._on_audio_out_first)
-            # Boot z-order re-lift: once the speech pipeline signals voice is
-            # ready, re-assert the (already-visible) persistent bar's topmost.
+            # Boot visibility gate: a genuine voice-ready signal releases the
+            # hidden Jarvis Bar. Degraded UI-only ready signals do not.
             self._bus.subscribe(VoiceBootStatus, self._on_voice_boot_status)
             # Authoritative mute mirror: the pipeline owns the global voice-mute
             # flag and broadcasts VoiceMuteChanged whenever it flips (from this
@@ -452,17 +452,29 @@ class OrbBusBridge:
         Deliberately does NOT mutate ``_last_state`` on show: the authoritative
         ``_on_wake_word_detected`` that follows a confirmed wake must still see
         the IDLE→LISTENING edge so it plays the greet 'wave' and sets the state
-        cleanly. Until that fires the equalizer mic-feed stays gated off (<1 s).
+        cleanly. A separate candidate latch enables the equalizer during this
+        preview without forging an authoritative session state.
         """
         if event.active:
             # Incoming speech candidate — cancel any pending idle hide and pop
             # the bar. _last_state untouched (see docstring).
+            if not self._wake_candidate_active:
+                self._wake_preview_origin_state = self._last_state
+            self._wake_candidate_active = True
+            # A fresh input affordance supersedes stale output recency from the
+            # preceding turn. Startup no longer plays an ACK, so retaining the
+            # old 500 ms TTS ownership window would keep truthful mic bars dark.
+            self._last_tts_level_t = 0.0
             self._cancel_idle_scheduler()
             self._orb.show(mode="listen")
             return
-        # Retract a rejected candidate. A real session owns the bar → leave it.
-        if self._last_state in _ACTIVE_VOICE_STATES:
+        self._wake_candidate_active = False
+        # Retract a rejected or gate-dropped preview. Only an authoritative
+        # VoiceSessionStarted owns the bar; WakeWordDetected alone is still a
+        # pre-session preview and can legitimately be rolled back.
+        if self._voice_session_active:
             return
+        self._last_state = self._wake_preview_origin_state
         if self._hide_on_idle:
             self._orb.hide()
         else:
@@ -472,8 +484,12 @@ class OrbBusBridge:
         """Pop the orb on the earliest confirmed wake signal."""
         log.info("OrbBridge._on_wake_word_detected: keyword=%s", event.keyword)
         prev_state = self._last_state
+        if not self._wake_candidate_active:
+            self._wake_preview_origin_state = prev_state
         self._last_state_trace_id = str(event.trace_id)
         self._suppress_show_until_session = False
+        self._wake_candidate_active = False
+        self._last_tts_level_t = 0.0
         self._last_state = "LISTENING"
         self._orb.show(mode="listen")
         if prev_state in ("IDLE", "ERROR", "PAUSED"):
@@ -508,8 +524,11 @@ class OrbBusBridge:
         the very first word.
         """
         log.info("OrbBridge._on_session_started: session=%s", event.session_id)
+        self._voice_session_active = True
         prev_state = self._last_state
         self._suppress_show_until_session = False
+        self._wake_candidate_active = False
+        self._last_tts_level_t = 0.0
         self._last_state = "LISTENING"
         # Enter the listening look now — robust to a deduplicated LISTENING state.
         self._orb.show(mode="listen")
@@ -534,64 +553,57 @@ class OrbBusBridge:
         event (preserving the existing salute/grace animation); the latch only
         prevents the resurrection that follows.
         """
+        self._voice_session_active = False
+        self._wake_candidate_active = False
         log.info(
-            "OrbBridge._on_session_ended: session=%s reason=%s — orb stays hidden "
-            "until next wake.",
+            "OrbBridge._on_session_ended: session=%s reason=%s — late active "
+            "states suppressed until next wake.",
             event.session_id,
             event.hangup_reason,
         )
         self._suppress_show_until_session = True
 
     async def _on_voice_boot_status(self, event: VoiceBootStatus) -> None:
-        """Track the speech-pipeline boot readiness.
+        """Release the Jarvis Bar only when voice is genuinely usable.
 
-        ``ready=True`` (emitted once Phase A of warm-up is live — audio + VAD +
-        wake + STT + TTS client) releases the latch so the persistent bar's
-        topmost z-order is re-asserted (the bar is already visible from boot).
-        ``ready=False`` (warm-up start) is ignored.
+        The normal ``ready=True`` event is emitted after wake + VAD + TTS are
+        initialized. ``voice_unavailable`` and ``watchdog_timeout`` are degraded
+        web-UI escape hatches, not permission to advertise a working microphone.
+        ``ready=False`` (warm-up start) leaves the gate closed.
         """
-        if event.ready:
-            self._voice_ready_event.set()
-
-    async def reveal_bar_when_voice_ready(self, *, timeout_s: float = 30.0) -> None:
-        """Show the persistent bar once the voice stack is genuinely ready.
-
-        Synchronized appearance (2026-06-29): the persistent bar is now started
-        WITHDRAWN (``start_hidden=True`` — see DesktopApp._build_overlay_surface),
-        so THIS is the visibility gate. Scheduled once on the event loop at boot,
-        it waits for ``VoiceBootStatus(ready=True)`` (emitted after the deferred
-        loaders bring up wake+VAD+TTS) — or a bounded ``timeout_s`` fallback so
-        the bar can never be stuck hidden — and then shows the idle pill, which
-        maps + lifts the bar exactly when the user can actually talk. A
-        non-persistent bar / the mascot (``hide_on_idle``) is left untouched: it
-        pops on a real session, not at boot.
-        """
-        reason = "timeout-fallback"
-        try:
-            await asyncio.wait_for(self._voice_ready_event.wait(), timeout_s)
-            reason = "voice-ready"
-        except TimeoutError:
-            pass
-        self._reveal_persistent_bar(reason)
-
-    def _reveal_persistent_bar(self, reason: str) -> None:
-        """Show the persistent bar's idle pill exactly once (the boot reveal).
-
-        Idempotent (``_boot_reveal_done``). The bar starts withdrawn
-        (start_hidden), so ``show("idle")`` here maps + lifts it — this is the
-        moment the bar first becomes visible, synchronized with voice-ready.
-        """
-        if self._boot_reveal_done:
+        if not event.voice_usable:
             return
-        self._boot_reveal_done = True
-        if self._hide_on_idle:
-            # Non-persistent bar / mascot: stays hidden until a voice session.
+        self._voice_usable = True
+        self._release_bar_startup_gate(event.detail or "voice-ready")
+
+    def _release_bar_startup_gate(self, reason: str) -> None:
+        """Release a boot-gated bar and repair legacy visible surfaces once."""
+        if self._boot_visibility_released:
             return
         try:
-            self._orb.show("idle")
-            log.info("Persistent overlay revealed after boot (%s).", reason)
+            release = getattr(self._orb, "release_startup_gate", None)
+            was_gated = bool(release()) if callable(release) else False
+
+            # A non-persistent bar needs its gate released too, but remains
+            # withdrawn while idle. Mascot/Null surfaces expose no gate and stay
+            # untouched. An already-visible legacy bar gets the existing safe
+            # z-order repair instead.
+            if not self._hide_on_idle and not was_gated:
+                reassert = getattr(self._orb, "reassert_z_order", None)
+                if callable(reassert):
+                    reassert()
+                else:
+                    mode = str(getattr(self._orb, "_mode", "idle") or "idle")
+                    self._orb.show(mode)
+            self._boot_visibility_released = True
+            log.info(
+                "Overlay startup visibility released after voice became usable (%s).",
+                reason,
+            )
         except Exception:  # noqa: BLE001
-            log.debug("persistent bar boot reveal failed", exc_info=True)
+            # Leave the latch open to a later genuine readiness event instead of
+            # converting a transient surface error into a permanent hidden bar.
+            log.debug("overlay startup visibility release failed", exc_info=True)
 
     async def _on_state(self, event: SystemStateChanged) -> None:
         # Lazily pin the backend loop (idempotent) so Tk-thread gestures can
@@ -599,6 +611,17 @@ class OrbBusBridge:
         # orb is clickable, so the loop is always captured in time.
         self._remember_loop()
         state = event.new_state
+        if state == "LISTENING":
+            # An authoritative supervisor edge can arrive after a late bridge
+            # attach even if VoiceSessionStarted itself was missed.
+            self._voice_session_active = True
+        elif state in {"IDLE", "ERROR", "PAUSED"}:
+            self._voice_session_active = False
+        if state != "IDLE":
+            # Any authoritative non-idle state supersedes a visual-only wake
+            # preview. Keeping the latch beyond this edge could let a late mic
+            # sample overwrite THINKING/SPEAKING bars.
+            self._wake_candidate_active = False
         # ADR-0016: remember the trace_id so the next visibility snapshot
         # can correlate back to the state-transition that triggered it.
         self._last_state_trace_id = str(event.trace_id)
@@ -963,7 +986,11 @@ class OrbBusBridge:
         state is LISTENING. Works for whichever surface is current."""
         if time.monotonic() - self._last_tts_level_t < self._TTS_OWNS_BARS_S:
             return  # TTS is making sound → it drives the bars, not the silent mic
-        if self._last_state != "LISTENING":
+        candidate_listening = (
+            self._wake_candidate_active
+            and self._last_state in {"IDLE", "ERROR", "PAUSED"}
+        )
+        if self._last_state != "LISTENING" and not candidate_listening:
             return
         try:
             self._orb.set_level(level)
@@ -982,6 +1009,11 @@ class OrbBusBridge:
         The caller tears the old surface down afterwards.
         """
         self._orb = surface
+        # Visibility release is per surface, not merely per bridge. A user can
+        # switch to "none" during warm-up and back to the cached boot bar after
+        # ready; that original bar must then have its still-active gate released
+        # without waiting for another VoiceBootStatus event.
+        self._boot_visibility_released = False
         setter = getattr(surface, "set_on_mute_toggle", None)
         if callable(setter):
             setter(self._publish_mute_toggle)
@@ -991,4 +1023,6 @@ class OrbBusBridge:
         show_window_setter = getattr(surface, "set_on_show_window", None)
         if callable(show_window_setter):
             show_window_setter(self._publish_show_window)
+        if self._voice_usable:
+            self._release_bar_startup_gate("voice-ready surface swap")
         log.info("OrbBridge surface swapped (last_state=%s)", self._last_state)

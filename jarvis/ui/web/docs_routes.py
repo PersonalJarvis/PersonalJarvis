@@ -211,17 +211,16 @@ def get_doc(request: Request, slug: str) -> dict[str, Any]:
 def open_doc_in_editor(request: Request, slug: str) -> dict[str, Any]:
     """Opens the Markdown file in the OS default editor.
 
-    On Windows: ``os.startfile`` launches the file-type handler (typically
-    Notepad, VSCode, or a Markdown editor). We do NOT launch elevated —
-    that path is read+write for the user-owner already; the user
+    Cross-platform via ``jarvis.platform.open_path.open_file`` (Windows
+    ``os.startfile``, macOS ``open``, Linux ``xdg-open``). We do NOT launch
+    elevated — that path is read+write for the user-owner already; the user
     already has write access to the doc repo anyway.
 
     Caution: on some systems Notepad is configured with BOM-save
     behavior; re-saving can mangle the frontmatter. The
     ``jarvis-doc-author`` skill remains the preferred authoring path.
     """
-    import os
-    import subprocess
+    from jarvis.platform import open_path
 
     reg = _require_registry(request)
     doc = reg.get(slug)
@@ -232,19 +231,10 @@ def open_doc_in_editor(request: Request, slug: str) -> dict[str, Any]:
     if not target.is_file():
         raise HTTPException(status_code=404, detail="file no longer exists")
 
-    try:
-        if hasattr(os, "startfile"):
-            # Windows-specific — the file-type association decides which
-            # editor opens. Non-blocking.
-            os.startfile(str(target))  # noqa: S606
-        else:  # pragma: no cover (only relevant to Windows in this app)
-            subprocess.Popen(["xdg-open", str(target)])
-        return {"path": str(target), "opened": True}
-    except OSError as exc:
-        log.warning("open_doc_in_editor failed for %s: %s", slug, exc)
-        raise HTTPException(
-            status_code=500, detail=f"editor start failed: {exc}",
-        ) from exc
+    opened = open_path.open_file(target)
+    if not opened:
+        raise HTTPException(status_code=500, detail="editor start failed")
+    return {"path": str(target), "opened": True}
 
 
 # ----------------------------------------------------------------------

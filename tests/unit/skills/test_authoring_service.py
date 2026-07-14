@@ -92,6 +92,23 @@ async def test_create_skill_is_on_by_default(
 
 
 @pytest.mark.asyncio
+async def test_create_omits_state_field_from_frontmatter(
+    registry: SkillRegistry, skills_root: Path
+) -> None:
+    """Regression guard for AP-15's manual-path carve-out: the "New skill"
+    form must NOT stamp a ``state`` key at all (as opposed to the AI
+    creator's ``commit()``, which always writes ``state: draft``) — its
+    absence is what makes the loader default to VALIDATED ("on")."""
+    svc = _service(registry, skills_root)
+    await svc.create(
+        SkillCreateRequest(name="No State Field", body="## No State Field\n\nDo it.\n")
+    )
+    skill_md = skills_root / "no-state-field" / "SKILL.md"
+    fm = yaml.safe_load(skill_md.read_text(encoding="utf-8").split("---", 2)[1])
+    assert "state" not in fm
+
+
+@pytest.mark.asyncio
 async def test_create_persists_voice_trigger(
     registry: SkillRegistry, skills_root: Path
 ) -> None:

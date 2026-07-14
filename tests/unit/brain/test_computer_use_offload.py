@@ -393,3 +393,25 @@ async def test_manager_ignores_non_cu_tool_completion() -> None:
     ))
 
     assert mgr._history == []
+
+
+@pytest.mark.asyncio
+async def test_manager_retains_signed_mission_result_for_follow_up() -> None:
+    from jarvis.core.events import AnnouncementRequested
+
+    mgr = _make_manager(_SlowHarnessExecutor(), _FakeBus())
+    await mgr._on_cu_tool_completion(AnnouncementRequested(
+        text="The research report is ready.",
+        kind="subagent",
+        source_layer="missions.voice.announcer",
+        detail=(
+            '{"mission_id":"019f5ca2-e30f",'
+            '"result_uri":"mission://019f5ca2-e30f"}'
+        ),
+    ))
+
+    assert mgr._history
+    content = str(mgr._history[-1].content)
+    assert "Jarvis-Agent mission result" in content
+    assert "019f5ca2-e30f" in content
+    assert "result_uri" in content

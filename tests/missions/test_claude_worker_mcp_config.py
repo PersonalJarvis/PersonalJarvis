@@ -2,8 +2,10 @@
 
 The worker must turn an assembled ``mcpServers`` dict into a claude-cli
 ``--mcp-config <file>`` flag so the delegated worker can call the connected
-plugins. No servers -> no flag (zero behavioural change for plain missions).
+plugins. An empty explicit config still activates strict mode so project/global
+MCP settings cannot inject undeclared worker tools.
 """
+
 from __future__ import annotations
 
 import json
@@ -12,9 +14,12 @@ from pathlib import Path
 from jarvis.missions.workers.claude_direct_worker import _build_mcp_config_args
 
 
-def test_no_servers_produces_no_flag(tmp_path: Path) -> None:
-    assert _build_mcp_config_args(tmp_path, {}) == []
-    assert _build_mcp_config_args(tmp_path, None) == []
+def test_no_servers_still_produces_a_strict_empty_config(tmp_path: Path) -> None:
+    for servers in ({}, None):
+        args = _build_mcp_config_args(tmp_path, servers)
+        assert "--strict-mcp-config" in args
+        cfg_path = Path(args[args.index("--mcp-config") + 1])
+        assert json.loads(cfg_path.read_text(encoding="utf-8")) == {"mcpServers": {}}
 
 
 def test_servers_write_config_and_emit_flag(tmp_path: Path) -> None:

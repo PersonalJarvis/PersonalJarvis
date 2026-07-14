@@ -5,7 +5,9 @@ The tests run hermetically, without writing real credentials.
 """
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Iterator
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -15,7 +17,6 @@ from jarvis.core.bus import EventBus
 from jarvis.core.config import JarvisConfig
 from jarvis.core.events import SecretConfigured
 from jarvis.ui.web.server import WebServer
-
 
 # ----------------------------------------------------------------------
 # Fakes
@@ -165,12 +166,25 @@ def test_section_health_returns_all_tabs(
         assert resp.status_code == 200
         body = resp.json()
         assert set(body["sections"]) == {
-            "brain", "tts", "stt", "realtime", "subagents", "advanced",
+            "brain",
+            "computer-use",
+            "tts",
+            "stt",
+            "realtime",
+            "subagents",
+            "advanced",
         }
         valid = {"ok", "needs_setup", "error", "unknown"}
         for sec in body["sections"].values():
             assert sec["status"] in valid
         assert body["cached"] is False
+        assert body["sections"]["brain"]["subject_id"] == "openai"
+        computer_use_cfg = getattr(server_with_brain.cfg.brain, "computer_use", None)
+        expected_cu = (
+            getattr(computer_use_cfg, "provider", None)
+            or server_with_brain.cfg.brain.primary
+        )
+        assert body["sections"]["computer-use"]["subject_id"] == expected_cu
         # No telephony manager mounted → the optional Advanced tab stays silent.
         assert body["sections"]["advanced"]["status"] == "unknown"
 
@@ -203,6 +217,113 @@ def test_section_health_caches_then_refresh_bypasses(
             client.get("/api/providers/section-health?refresh=true").json()["cached"]
             is False
         )
+
+
+@pytest.mark.asyncio
+async def test_section_health_switch_cancels_old_provider_without_misattribution(
+    server_with_brain: WebServer,
+    secret_store: _InMemorySecretStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A slow NVIDIA result must never block or label the new OpenRouter card."""
+    from jarvis.brain import provider_test as provider_test_module
+    from jarvis.ui.web import provider_routes
+
+    secret_store.data.update(
+        {
+            "nvidia_api_key": "nvapi-test",
+            "openrouter_api_key": "sk-or-test",
+        }
+    )
+    server_with_brain.app.state.brain.active_provider = "nvidia"
+    nvidia_started = asyncio.Event()
+    nvidia_cancelled = asyncio.Event()
+
+    async def _probe(spec: Any, cfg: Any) -> _FakeTestResult:  # noqa: ANN401
+        if spec.id == "nvidia":
+            nvidia_started.set()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                nvidia_cancelled.set()
+                raise
+        return _FakeTestResult("ok", "")
+
+    monkeypatch.setattr(provider_test_module, "run_provider_test", _probe)
+    monkeypatch.setattr(
+        provider_routes,
+        "_jarvis_agent_section_health",
+        lambda cfg: provider_routes.SectionHealth(status="ok", subject_id="openai"),
+    )
+    request = SimpleNamespace(app=server_with_brain.app)
+
+    old_request = asyncio.create_task(provider_routes.section_health(request, refresh=True))
+    await asyncio.wait_for(nvidia_started.wait(), timeout=1.0)
+
+    server_with_brain.app.state.brain.active_provider = "openrouter"
+    new_response = await asyncio.wait_for(
+        provider_routes.section_health(request, refresh=True), timeout=1.0
+    )
+    old_response = await asyncio.wait_for(old_request, timeout=1.0)
+
+    assert nvidia_cancelled.is_set()
+    assert new_response.sections["brain"].subject_id == "openrouter"
+    assert new_response.sections["brain"].status == "ok"
+    assert old_response.sections["brain"].subject_id == "openrouter"
+    assert "NVIDIA" not in old_response.sections["brain"].detail
+
+
+@pytest.mark.asyncio
+async def test_section_health_model_switch_cancels_old_probe_for_same_provider(
+    server_with_brain: WebServer,
+    secret_store: _InMemorySecretStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A timeout from an old model must not label a new model on the same card."""
+    from jarvis.brain import provider_test as provider_test_module
+    from jarvis.core.config import BrainProviderConfig
+    from jarvis.ui.web import provider_routes
+
+    secret_store.data["openrouter_api_key"] = "sk-or-test"
+    server_with_brain.app.state.brain.active_provider = "openrouter"
+    server_with_brain.cfg.brain.providers["openrouter"] = BrainProviderConfig(
+        model="slow-model"
+    )
+    old_started = asyncio.Event()
+    old_cancelled = asyncio.Event()
+
+    async def _probe(spec: Any, cfg: Any) -> _FakeTestResult:  # noqa: ANN401
+        selected_model = cfg.brain.providers["openrouter"].model
+        if spec.id == "openrouter" and selected_model == "slow-model":
+            old_started.set()
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                old_cancelled.set()
+                raise
+        return _FakeTestResult("ok", "")
+
+    monkeypatch.setattr(provider_test_module, "run_provider_test", _probe)
+    monkeypatch.setattr(
+        provider_routes,
+        "_jarvis_agent_section_health",
+        lambda cfg: provider_routes.SectionHealth(status="ok", subject_id="openai"),
+    )
+    request = SimpleNamespace(app=server_with_brain.app)
+
+    old_request = asyncio.create_task(provider_routes.section_health(request, refresh=True))
+    await asyncio.wait_for(old_started.wait(), timeout=1.0)
+
+    server_with_brain.cfg.brain.providers["openrouter"].model = "working-model"
+    new_response = await asyncio.wait_for(
+        provider_routes.section_health(request, refresh=True), timeout=1.0
+    )
+    old_response = await asyncio.wait_for(old_request, timeout=1.0)
+
+    assert old_cancelled.is_set()
+    assert new_response.sections["brain"].subject_id == "openrouter"
+    assert new_response.sections["brain"].status == "ok"
+    assert old_response.sections["brain"].status == "ok"
 
 
 def test_list_providers_exposes_credential_help_and_billing(
@@ -390,7 +511,8 @@ def test_brain_switch_rejects_provider_without_key(
     with TestClient(server_with_brain.app) as client:
         resp = client.post("/api/brain/switch", json={"provider": "openrouter"})
         assert resp.status_code == 409
-        assert "API-Key" in resp.json()["detail"]
+        # Shared app_control wording (one implementation for UI + voice + CLI).
+        assert "API key" in resp.json()["detail"]
     # BrainManager.switch() must NOT have been called.
     assert fake.calls == []
 

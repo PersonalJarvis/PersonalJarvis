@@ -37,6 +37,15 @@ inferred from a closing intent."""
 HANGUP_HOTKEY: Final[str] = "hotkey"
 """User pressed the global hangup hotkey."""
 
+HANGUP_CLIENT_STOP: Final[str] = "client_stop"
+"""The browser client sent an explicit audio-stop control."""
+
+HANGUP_WS_CLOSED: Final[str] = "ws_closed"
+"""The browser voice WebSocket closed without a more specific reason."""
+
+HANGUP_REALTIME_FALLBACK: Final[str] = "realtime_fallback"
+"""The browser switched from realtime voice to the classic pipeline."""
+
 HANGUP_IDLE_TIMEOUT: Final[str] = "idle_timeout"
 """No further user speech within the idle window after the last turn."""
 
@@ -58,6 +67,9 @@ string only marks the session row."""
 HANGUP_REASONS: Final[tuple[str, ...]] = (
     HANGUP_VOICE_PATTERN,
     HANGUP_HOTKEY,
+    HANGUP_CLIENT_STOP,
+    HANGUP_WS_CLOSED,
+    HANGUP_REALTIME_FALLBACK,
     HANGUP_IDLE_TIMEOUT,
     HANGUP_TURN_COMPLETE,
     HANGUP_SHUTDOWN,
@@ -147,13 +159,16 @@ SPOKEN_KINDS: Final[tuple[str, ...]] = (
 
 
 __all__ = [
+    "HANGUP_CLIENT_STOP",
     "HANGUP_ERROR",
     "HANGUP_HOTKEY",
     "HANGUP_IDLE_TIMEOUT",
+    "HANGUP_REALTIME_FALLBACK",
     "HANGUP_REASONS",
     "HANGUP_SHUTDOWN",
     "HANGUP_TURN_COMPLETE",
     "HANGUP_VOICE_PATTERN",
+    "HANGUP_WS_CLOSED",
     "SPOKEN_KIND_ACTION_DONE",
     "SPOKEN_KIND_ANNOUNCEMENT",
     "SPOKEN_KIND_BACKCHANNEL",

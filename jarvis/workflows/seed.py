@@ -6,7 +6,7 @@ meaningful examples, be able to click "Run", and get a result right away.
 
 - *Morning Briefing* (cron 30 7 * * *) — brain_prompt → speak chain. Produces
   a mini standup announcement. No external service needed.
-- *Code Review* (manual) — harness_dispatch to OpenClaw.
+- *Code Review* (manual) — git diff capture followed by a brain review.
 - *URL Summary* (manual, input field ``url``) — brain_prompt with the
   template variable {{input.url}}. Demos input binding.
 """
@@ -82,32 +82,41 @@ def _code_review() -> WorkflowDef:
         id=_WF_CODE_REVIEW,
         name="Code Review",
         description=(
-            "Analyzes the open changes on the current git branch via the "
-            "OpenClaw harness."
+            "Captures the open changes on the current git branch and asks "
+            "the active brain for a concise review."
         ),
         trigger=ManualTrigger(),
         steps=(
-            HarnessDispatchStep(
-                label="OpenClaw dispatch",
-                harness="openclaw",
+            ShellCmdStep(
+                label="Capture pending diff",
+                command="git diff --no-ext-diff --",
+                timeout_s=30.0,
+                max_output_chars=30_000,
+            ),
+            BrainPromptStep(
+                label="Review pending diff",
                 prompt=(
-                    "Review all pending changes on the current git branch. "
-                    "Identify potential bugs, security issues, or style "
-                    "inconsistencies. Return a bullet-point summary in German."
+                    "Review the following pending git diff. Identify concrete "
+                    "bugs, security issues, regressions, and missing tests. "
+                    "Prioritize findings by severity, cite the affected file "
+                    "and line when possible, and return concise bullet points "
+                    "in the configured output language. If the diff is empty, "
+                    "say that no tracked changes are pending.\n\n"
+                    "{{prev.output}}"
                 ),
-                allow_computer_use=False,
+                max_output_chars=4_000,
             ),
             SpeakStep(
                 label="Announce review result",
-                text="Code-Review fertig. {{prev.output}}",  # i18n-allow
+                text="Code review complete. {{prev.output}}",
                 priority="normal",
-                language="de",
+                language="auto",
             ),
         ),
         enabled=True,
         created_at_ns=now_ns,
         created_by="seed",
-        tags=("demo", "harness", "git"),
+        tags=("demo", "brain", "git"),
     )
 
 
@@ -264,12 +273,32 @@ async def ensure_seed_workflows(store: WorkflowStore) -> int:
     updates to the seed code from overwriting user edits.
     """
     added = 0
+    migrated = 0
     for wf in SEED_WORKFLOWS:
         existing = await store.get_workflow(str(wf.id))
         if existing is not None:
+            if wf.id == _WF_CODE_REVIEW and _is_legacy_code_review(existing):
+                await store.upsert_workflow(wf)
+                migrated += 1
             continue
         await store.upsert_workflow(wf)
         added += 1
     if added:
         log.info("Seed workflows written: %d new", added)
+    if migrated:
+        log.info("Legacy unavailable seed workflows migrated: %d", migrated)
     return added
+
+
+def _is_legacy_code_review(row: dict[str, object]) -> bool:
+    """Identify only the shipped dead seed, never an arbitrary user workflow."""
+    if row.get("created_by") != "seed":
+        return False
+    try:
+        definition = WorkflowDef.model_validate_json(str(row.get("def_json") or ""))
+    except Exception:  # noqa: BLE001 - malformed legacy data stays user-owned
+        return False
+    return any(
+        isinstance(step, HarnessDispatchStep) and step.harness == "openclaw"
+        for step in definition.steps
+    )

@@ -142,6 +142,11 @@ def test_put_model_persists_applies_and_probes(
     assert ("gemini", "gemini-3.1-pro-preview") in writes
     brain: _FakeBrain = server.app.state.brain
     assert ("gemini", "gemini-3.1-pro-preview") in brain.applied
+    # Route-level config drives section health and must not retain the old model.
+    assert (
+        server.app.state.config.brain.providers["gemini"].model
+        == "gemini-3.1-pro-preview"
+    )
 
 
 def test_put_model_inactive_provider_not_live(

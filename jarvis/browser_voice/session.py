@@ -30,6 +30,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable
 from typing import Any
+from uuid import uuid4
 
 from jarvis.brain.output_filter import scrub_for_voice
 from jarvis.browser_voice.audio import (
@@ -38,11 +39,18 @@ from jarvis.browser_voice.audio import (
     EnergyEndpointer,
     Resampler,
 )
+from jarvis.sessions.constants import HANGUP_CLIENT_STOP
 
 log = logging.getLogger("jarvis.browser_voice")
 
 SendBinary = Callable[[bytes], Awaitable[None]]
 SendJson = Callable[[dict[str, Any]], Awaitable[None]]
+
+# Browser-native speech is the last-resort output path when a downloader has a
+# usable STT/Brain credential but no matching server-side TTS family. The
+# browser acknowledges completion so the session does not reopen the endpoint
+# detector while its own voice is still audible through the microphone.
+_BROWSER_TTS_ACK_TIMEOUT_S = 120.0
 
 
 class BrowserVoiceSession:
@@ -100,6 +108,8 @@ class BrowserVoiceSession:
         self._processing = False
         self._tts_task: asyncio.Task[None] | None = None
         self._turn_task: asyncio.Task[None] | None = None
+        self._browser_tts_done: asyncio.Event | None = None
+        self._browser_tts_id: str | None = None
         self._ended = False
 
     # -- public properties -------------------------------------------------
@@ -154,8 +164,20 @@ class BrowserVoiceSession:
             await self._send_json({"type": "audio_ready"})
         elif kind == "barge_in":
             await self._barge_in()
+        elif kind == "tts_browser_done":
+            fallback_id = str(msg.get("id") or "")
+            if fallback_id and fallback_id == self._browser_tts_id:
+                outcome = str(msg.get("outcome") or "ended")
+                if outcome != "ended":
+                    log.warning(
+                        "browser_voice[%s] browser TTS ended with outcome=%s",
+                        self.session_id,
+                        outcome,
+                    )
+                if self._browser_tts_done is not None:
+                    self._browser_tts_done.set()
         elif kind == "audio_stop":
-            await self.end(reason="client_stop")
+            await self.end(reason=HANGUP_CLIENT_STOP)
 
     def _on_turn_done(self, task: asyncio.Task[None]) -> None:
         """Surface a turn task that died outside _run_turn's own guard (a bare
@@ -231,21 +253,86 @@ class BrowserVoiceSession:
         self._speaking = True
         sent = 0
         try:
-            await self._send_json({"type": "tts_start", "sample_rate": TTS_SAMPLE_RATE})
-            async for chunk in self._tts.synthesize(text, language_code=self.language_code):
+            stream = self._tts.synthesize(text, language_code=self.language_code)
+            iterator = stream.__aiter__()
+            while True:
+                try:
+                    chunk = await anext(iterator)
+                except StopAsyncIteration:
+                    break
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001 - cross output family once
+                    if sent:
+                        log.warning(
+                            "browser_voice[%s] server TTS failed after audio started",
+                            self.session_id,
+                            exc_info=True,
+                        )
+                        await self._send_json({"type": "tts_end", "partial": True})
+                        raise
+                    log.warning(
+                        "browser_voice[%s] server TTS unavailable; using browser speech: %s",
+                        self.session_id,
+                        exc,
+                    )
+                    await self._speak_in_browser(text, volume=vol)
+                    return 0
+
                 pcm = getattr(chunk, "pcm", b"")
                 rate = int(getattr(chunk, "sample_rate", TTS_SAMPLE_RATE) or TTS_SAMPLE_RATE)
                 if not pcm:
                     continue
+                if sent == 0:
+                    await self._send_json(
+                        {"type": "tts_start", "sample_rate": TTS_SAMPLE_RATE}
+                    )
                 if rate != TTS_SAMPLE_RATE:
                     pcm = resample_pcm16(pcm, rate, TTS_SAMPLE_RATE)
                 pcm = apply_output_gain_pcm16(pcm, vol)
                 await self._send_binary(pcm)
                 sent += 1
+
+            if sent == 0:
+                log.warning(
+                    "browser_voice[%s] server TTS produced no audio; using browser speech",
+                    self.session_id,
+                )
+                await self._speak_in_browser(text, volume=vol)
+                return 0
             await self._send_json({"type": "tts_end"})
         finally:
             self._speaking = False
         return sent
+
+    async def _speak_in_browser(self, text: str, *, volume: float) -> None:
+        """Ask the connected browser to speak and wait for its completion ACK."""
+        fallback_id = str(uuid4())
+        done = asyncio.Event()
+        self._browser_tts_id = fallback_id
+        self._browser_tts_done = done
+        try:
+            await self._send_json(
+                {
+                    "type": "tts_browser_fallback",
+                    "id": fallback_id,
+                    "text": text,
+                    "language": self.language_code,
+                    "volume": max(0.0, min(1.0, float(volume))),
+                }
+            )
+            try:
+                await asyncio.wait_for(done.wait(), timeout=_BROWSER_TTS_ACK_TIMEOUT_S)
+            except TimeoutError:
+                log.warning(
+                    "browser_voice[%s] browser TTS acknowledgement timed out",
+                    self.session_id,
+                )
+            await self._send_json({"type": "tts_end", "fallback": "browser"})
+        finally:
+            if self._browser_tts_id == fallback_id:
+                self._browser_tts_id = None
+                self._browser_tts_done = None
 
     # -- barge-in / lifecycle ---------------------------------------------
 
@@ -259,6 +346,8 @@ class BrowserVoiceSession:
         """
         if self._tts_task is not None and not self._tts_task.done():
             self._tts_task.cancel()
+        if self._browser_tts_done is not None:
+            self._browser_tts_done.set()
         self._speaking = False
         try:
             await self._send_json({"type": "tts_cancel"})
@@ -272,6 +361,8 @@ class BrowserVoiceSession:
         self._ended = True
         if self._tts_task is not None and not self._tts_task.done():
             self._tts_task.cancel()
+        if self._browser_tts_done is not None:
+            self._browser_tts_done.set()
         if self._turn_task is not None and not self._turn_task.done():
             self._turn_task.cancel()
         log.info(

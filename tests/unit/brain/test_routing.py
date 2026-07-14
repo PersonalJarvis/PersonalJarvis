@@ -884,6 +884,79 @@ def test_factory_wires_navigate_into_router_set() -> None:
     assert tools["navigate"].risk_tier == "safe"
 
 
+def test_factory_wires_registry_command_tools_into_router_set() -> None:
+    """End-to-end wiring for the Command-Registry tools: entry-point +
+    ROUTER_TOOLS gate the `app-command` VIRTUAL LOADER, which expands into one
+    flat tool per registry command (forensic 2026-07-11: the earlier umbrella
+    tool failed live — the LLM called `provider-test` as a tool name). A
+    missing entry-point line or a failing registry import would silently drop
+    every command from the router schema."""
+    from jarvis.brain.factory import _load_tools_for_tier
+    from jarvis.commands.registry import get_registry
+
+    tools = _load_tools_for_tier(
+        "router",
+        bus=EventBus(),
+        executor=None,
+        harness_manager=None,
+        user_profile=None,
+        people=None,
+        config=JarvisConfig(),
+    )
+
+    # The loader itself never reaches the LLM tool set — only its expansion.
+    assert "app-command" not in tools
+    for cmd in get_registry():
+        assert cmd.id in tools, f"registry command {cmd.id} missing from router set"
+        assert tools[cmd.id].risk_tier == ("ask" if cmd.dangerous else "monitor")
+    # The exact live failure: `provider-test` must BE a callable tool now.
+    assert "provider-test" in tools
+
+
+def test_factory_native_tool_wins_registry_name_collision_in_any_entrypoint_order(
+    monkeypatch,
+) -> None:
+    """Native tools deterministically outrank same-named virtual commands."""
+    import importlib.metadata
+
+    from jarvis.brain.factory import _load_tools_for_tier
+    from jarvis.plugins.tool.app_command import AppCommandTool
+    from jarvis.plugins.tool.wiki_ingest import WikiIngestTool
+
+    class FakeEntryPoint:
+        def __init__(self, name, target):
+            self.name = name
+            self._target = target
+
+        def load(self):
+            return self._target
+
+    app_command = FakeEntryPoint("app-command", AppCommandTool)
+    wiki_ingest = FakeEntryPoint("wiki-ingest", WikiIngestTool)
+
+    for ordered in (
+        [app_command, wiki_ingest],
+        [wiki_ingest, app_command],
+    ):
+        monkeypatch.setattr(
+            importlib.metadata,
+            "entry_points",
+            lambda *, group, ordered=ordered: list(ordered),
+        )
+        tools = _load_tools_for_tier(
+            "router",
+            bus=EventBus(),
+            executor=None,
+            harness_manager=None,
+            user_profile=None,
+            people=None,
+            config=JarvisConfig(),
+        )
+
+        assert type(tools["wiki-ingest"]) is WikiIngestTool
+        assert "session-latest-turn" in tools
+
+
 def test_inspect_pointer_is_not_a_spawn_in_local_action_set() -> None:
     """The AI-Pointer tool is a router-tier read, never in the worker fast-path."""
     from jarvis.brain.factory import _load_local_action_tools
@@ -1011,6 +1084,20 @@ def test_spawn_worker_in_router_tools() -> None:
     from jarvis.brain.factory import ROUTER_TOOLS
 
     assert "spawn-worker" in ROUTER_TOOLS
+
+
+def test_multi_spawn_not_in_router_tools() -> None:
+    """The dead legacy fan-out tool must not compete with spawn-worker."""
+    from jarvis.brain.factory import ROUTER_TOOLS
+
+    assert "multi-spawn" not in ROUTER_TOOLS
+
+
+def test_dispatch_with_review_not_in_router_tools() -> None:
+    """Review belongs to the canonical Mission Manager lifecycle."""
+    from jarvis.brain.factory import ROUTER_TOOLS
+
+    assert "dispatch-with-review" not in ROUTER_TOOLS
 
 
 @pytest.mark.parametrize(
@@ -1440,6 +1527,26 @@ async def test_local_fast_path_publishes_response_generated() -> None:
 
 
 @pytest.mark.asyncio
+async def test_internal_realtime_reply_can_defer_response_event_to_session() -> None:
+    """Realtime delegation may suppress only its internal brain reply event."""
+    bus = EventBus()
+    seen: list[ResponseGenerated] = []
+
+    async def _capture(ev: ResponseGenerated) -> None:
+        seen.append(ev)
+
+    bus.subscribe(ResponseGenerated, _capture)
+    manager, _executor = _manager_with_local_actions_and_bus(bus)
+
+    internal_result = await manager.generate("Open Spotify", publish_response=False)
+    classic_result = await manager.generate("Open Calculator")
+
+    assert internal_result == "ok"
+    assert classic_result == "ok"
+    assert [event.text for event in seen] == ["ok"]
+
+
+@pytest.mark.asyncio
 async def test_local_visual_click_fast_path_dispatches_computer_use() -> None:
     """Visual target commands offload to the computer-use harness (Wave-4).
 
@@ -1529,51 +1636,14 @@ async def test_heavy_build_still_can_force_spawn() -> None:
 
 
 def test_router_tools_is_pure_dispatcher_set() -> None:
-    """ROUTER_TOOLS deckt sich mit Mandat-Phase-3 + Phase-7/8/Awareness +
-    Welle-4-OpenClaw-Migration.
+    """ROUTER_TOOLS matches the exact model-visible surface in ADR-0011.
 
-    Mandat-Phase-3 / Master-Plan §22 Z. 1617 (Baseline 2026-04-22):
-      vier Tools — run-shell, screen-snapshot, multi-spawn, spawn-worker.
-
-    Welle-4-Migration: ``spawn-worker`` umbenannt auf ``spawn-worker``
-    (siehe docs/openclaw-bridge.md §11). Heavy-Worker laeuft als externer
-    Subprocess via Mission-Manager.
-
-    Phase-5-Endstand (ADR-0011, 2026-04-25) hat ``dispatch-to-harness``
-    re-introduziert: Hauptjarvis braucht den direkten Harness-Pfad, weil
-    sonst jeder Screen-Observe-+-Sofort-Dispatch-Use-Case einen Spawn
-    forcieren wuerde (Latenz-Killer).
-
-    Phase 8.4 (Plan §6.4 Quality-Gate-Pipeline, 2026-04-26) hat
-    ``dispatch-with-review`` ergaenzt: Hauptjarvis ruft die Review-Pipeline
-    direkt auf.
-
-    Phase 7.3 (Self-Mod, 2026-04-25) registriert drei zusaetzliche Tools
-    direkt im Loader (NICHT via entry_points, NICHT in dieser Frozenset),
-    die ausschliesslich Hauptjarvis-Tier zugaenglich sind (Plan §AD-2).
-
-    Awareness-Plan §5 fuegt ``awareness-snapshot`` hinzu: synchroner
-    State-Read im Critical-Path, kein Brain-/IO-Roundtrip.
-
-    Awareness-Plan §7 (Phase A3) adds ``awareness-recall``: read-only
-    BM25 search over the recent episode log. Originally planned as a
-    sub-tier tool; Welle 4 removed that tier so it lives here. Still
-    read-only, still safe, still no LLM/IO beyond a single SQLite query.
-
-    Skills-Brain-Integration fuegt ``run-skill`` hinzu: Brain-callable
-    executor for installed user skills. Available to BOTH tiers; D9-
-    recursion-protection is structural (SkillRunner is constructed without
-    a tool_registry that would expose run-skill recursively).
-
-    Phase B5 (recall-tool, 2026-05-12) adds ``wiki-recall``: read-only
-    keyword search over the long-term Obsidian wiki vault. Router-tier
-    only (AP-D9); no LLM call, no network, no mutation. The brain calls
-    this when the user asks "what do we know about X" or references a
-    past project, person, or decision by name.
-
-    Bei jeder weiteren Erweiterung: Begruendung in ADR-0011 (Sektion
-    "Subsequent Phase-7/8 Extensions") nachpflegen + diesen Test +
-    ``test_recursive_tools_only_in_router`` updaten.
+    Heavy work has one delegation action: ``spawn-worker``. The retired
+    ``dispatch-to-harness``, ``multi-spawn``, and ``dispatch-with-review``
+    paths must remain absent. Direct external-system actions are admitted only
+    through capability-gated flat loaders, and no worker receives a supervisor
+    spawn action. Every extension requires an ADR-0011 amendment plus updates
+    to this exact-set guard and ``test_recursive_tools_only_in_router``.
     """
     from jarvis.brain.factory import ROUTER_TOOLS
 
@@ -1582,7 +1652,6 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # Mandat-Phase-3 Baseline (Master-Plan §22)
             "run-shell",
             "screen-snapshot",
-            "multi-spawn",
             "spawn-worker",
             # NB: ``dispatch-to-harness`` was REMOVED from the LLM-visible router
             # set on 2026-06-28 (ADR-0011 amendment "dispatch-to-harness removal").
@@ -1592,8 +1661,6 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # spawn-worker, desktop → computer-use. It must NOT reappear here;
             # the negative guard ``test_dispatch_to_harness_not_in_router_tools``
             # pins that.
-            # Phase 8.4 (Quality-Gate, Recursion-geschuetzt analog spawn-worker)
-            "dispatch-with-review",
             # AI Pointer (pull path): resolve the element under the mouse cursor
             # via the OS accessibility tree. Read-only safe-tier, direct action,
             # never a spawn (AP-5/AP-14). See docs/plans/ai-pointer/DESIGN.md.
@@ -1602,6 +1669,11 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # voice/chat. Pure UI action (risk safe), publishes NavigateSidebar,
             # never a spawn (AP-5/AP-14). See ADR-0011 amendment "Navigate tool".
             "navigate",
+            # Command Registry executor (2026-07-09): one curated app command
+            # through the same REST endpoint the UI uses (in-process ASGI).
+            # Enum-constrained + schema-validated; dangerous -> risk "ask".
+            # Never a spawn (AP-5/AP-14). ADR-0011 amendment "app-command tool".
+            "app-command",
             "awareness-snapshot",
             # Awareness Phase A3 (BM25 search over recent episode log).
             "awareness-recall",

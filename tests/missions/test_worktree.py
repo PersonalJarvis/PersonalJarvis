@@ -15,7 +15,10 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.missions.isolation.worktree import WorktreeManager
+from jarvis.missions.isolation.worktree import (
+    SourceCheckoutUnavailableError,
+    WorktreeManager,
+)
 
 # Skip marker for everything if git is missing (CI cases).
 _GIT_AVAILABLE = shutil.which("git") is not None
@@ -62,7 +65,7 @@ def tmp_git_repo(tmp_path: Path) -> Path:
 
 @pytest.fixture
 def manager(tmp_git_repo: Path, tmp_path: Path) -> WorktreeManager:
-    """WorktreeManager der seine Outputs in tmp_path/outputs ablegt."""
+    """A WorktreeManager that stores its outputs under tmp_path/outputs."""
     return WorktreeManager(
         repo_root=tmp_git_repo,
         outputs_root=tmp_path / "outputs",
@@ -275,7 +278,7 @@ def test_lean_create_respects_path_length_cap(
     workspaces too (files written inside must still fit under MAX_PATH)."""
     very_deep = tmp_path / ("x" * 220)
     mgr = WorktreeManager(repo_root=tmp_git_repo, outputs_root=very_deep)
-    with pytest.raises(ValueError, match="zu lang"):
+    with pytest.raises(ValueError, match="too long"):
         mgr.create(mission_slug="m", task_id="01", needs_repo=False)
 
 
@@ -289,8 +292,72 @@ def test_full_create_still_default_when_needs_repo_omitted(
     assert (workspace / ".git").is_file()  # worktree link FILE, not a dir
 
 
+def test_lean_create_works_from_sourceless_application_tree(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Copied/container installs have application files but no ``.git``.
+
+    A repository-independent task must initialize its standalone repository
+    under the writable data volume without invoking Git against the read-only
+    application root.
+    """
+    app_root = tmp_path / "read-only-app"
+    app_root.mkdir()
+    (app_root / "pyproject.toml").write_text("[project]\n", encoding="utf-8")
+    # Keep the writable root above pytest's long per-test directory so the
+    # production 200-character Windows workspace cap is not what this test is
+    # exercising.
+    data_root = tmp_path.parent / "d-lean"
+    monkeypatch.delenv("JARVIS_ISOLATION_ROOT", raising=False)
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(data_root))
+    manager = WorktreeManager(repo_root=app_root)
+
+    def reject_host_git(_cmd: list[str]) -> subprocess.CompletedProcess[str]:
+        raise AssertionError("lean creation must not invoke Git in app_root")
+
+    monkeypatch.setattr(manager, "_run_git", reject_host_git)
+
+    workspace = manager.create(
+        mission_slug="standalone-report",
+        task_id="01-write-report",
+        needs_repo=False,
+    )
+
+    assert workspace.is_relative_to(
+        data_root.resolve() / "jarvis-agent-outputs"
+    )
+    assert (workspace / ".git").is_dir()
+    assert not (workspace / "pyproject.toml").exists()
+    assert _git_out(["rev-parse", "HEAD"], workspace).returncode == 0
+
+
+def test_source_task_fails_before_scaffolding_without_checkout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Source work must never fall through to a copied application tree."""
+    app_root = tmp_path / "read-only-app"
+    app_root.mkdir()
+    (app_root / "jarvis").mkdir()
+    data_root = tmp_path.parent / "d-source"
+    monkeypatch.delenv("JARVIS_ISOLATION_ROOT", raising=False)
+    monkeypatch.setenv("JARVIS_DATA_DIR", str(data_root))
+    manager = WorktreeManager(repo_root=app_root)
+
+    with pytest.raises(
+        SourceCheckoutUnavailableError,
+        match="requires the Personal Jarvis source checkout",
+    ):
+        manager.create(
+            mission_slug="source-change",
+            task_id="01-fix-router",
+            needs_repo=True,
+        )
+
+    assert not (data_root / "jarvis-agent-outputs").exists()
+
+
 def test_create_path_layout_matches_spec(manager: WorktreeManager, tmp_path: Path) -> None:
-    """Pfad-Pattern: outputs/<run-dir>/tasks/<NN>__<task-slug>/workspace/."""
+    """Path pattern: outputs/<run-dir>/tasks/<NN>__<task-slug>/workspace/."""
     workspace = manager.create(mission_slug="hello", task_id="01-router")
     # workspace.parent == .../tasks/<NN>__<slug>
     # workspace.parent.parent == .../tasks
@@ -298,16 +365,16 @@ def test_create_path_layout_matches_spec(manager: WorktreeManager, tmp_path: Pat
     assert workspace.parent.parent.name == "tasks"
     run_dir = workspace.parent.parent.parent
     assert run_dir.parent == (tmp_path / "outputs").resolve()
-    # run-dir-Name enthaelt die Mission-Slug
+    # The run-directory name includes the mission slug.
     assert "hello" in run_dir.name
 
 
 def test_create_raises_when_path_too_long(tmp_git_repo: Path, tmp_path: Path) -> None:
-    """Pfad-Length-Cap: wirft ValueError wenn Worktree-Wurzel >200 Chars."""
+    """The path-length cap raises ValueError above 200 characters."""
     # Very deep outputs_root to exceed the cap
     very_deep = tmp_path / ("x" * 220)
     mgr = WorktreeManager(repo_root=tmp_git_repo, outputs_root=very_deep)
-    with pytest.raises(ValueError, match="zu lang"):
+    with pytest.raises(ValueError, match="too long"):
         mgr.create(mission_slug="m", task_id="01")
 
 

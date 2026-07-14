@@ -19,6 +19,48 @@ def test_show(capture_api):
     assert capture_api["calls"][-1]["path"] == "/api/missions/m1"
 
 
+def test_result(capture_api):
+    runner.invoke(app, ["missions", "result", "m1"])
+    call = capture_api["calls"][-1]
+    assert call["method"] == "GET"
+    assert call["path"] == "/api/missions/m1/result"
+
+
+def test_tool_approvals(capture_api):
+    runner.invoke(app, ["missions", "tool-approvals", "m1"])
+    call = capture_api["calls"][-1]
+    assert call["method"] == "GET"
+    assert call["path"] == "/api/missions/m1/tool-approvals"
+
+
+def test_approve_tool_requires_yes(capture_api):
+    result = runner.invoke(app, ["missions", "approve-tool", "m1", "t1"])
+    assert result.exit_code == 1
+    assert capture_api["calls"] == []
+
+
+def test_approve_tool_with_yes(capture_api):
+    result = runner.invoke(
+        app,
+        ["missions", "approve-tool", "m1", "t1", "--yes"],
+    )
+    assert result.exit_code == 0
+    call = capture_api["calls"][-1]
+    assert call["method"] == "POST"
+    assert call["path"] == "/api/missions/m1/tool-approvals/t1/approve"
+
+
+def test_deny_tool_sends_audit_reason(capture_api):
+    result = runner.invoke(
+        app,
+        ["missions", "deny-tool", "m1", "t1", "--reason", "not-now"],
+    )
+    assert result.exit_code == 0
+    call = capture_api["calls"][-1]
+    assert call["path"] == "/api/missions/m1/tool-approvals/t1/deny"
+    assert call["body"] == {"reason": "not-now"}
+
+
 def test_dispatch_requires_yes(capture_api):
     res = runner.invoke(app, ["missions", "dispatch", "do a thing"])
     assert res.exit_code == 1

@@ -4,16 +4,16 @@
 #   irm https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.ps1 | iex
 #
 # This bootstrap is intentionally small. It:
-#   1. Verifies Python 3.11+ is available.
-#   2. Verifies git is available.
-#   3. Verifies Node.js 18+ is available (skipped on --headless).
+#   1. Verifies Python 3.11+ and git are available.
+#   2. Offers to install either missing prerequisite, then re-checks in place.
+#   3. Checks for Node.js 18+ (optional - a missing Node never blocks the install).
 #   4. Clones (or updates) personal-jarvis into ~\.personal-jarvis.
 #   5. Creates a Python venv, installs `rich` + `packaging`.
 #   6. Hands control to install/installer.py (the Stage 2 orchestrator).
 #
 # All heavy logic lives in installer.py so it can be unit-tested and
-# kept cross-platform. This file is meant to be read top-to-bottom in
-# under 60 seconds before you paste it into a terminal.
+# kept cross-platform. The shell-native prerequisite block is delimited so it
+# can be tested directly even on machines where Python is not installed yet.
 #
 # SOURCE-ENCODING RULE: this file is served BOM-less (a BOM breaks
 # `irm | iex`), and Windows PowerShell then reads it as cp1252. So the
@@ -31,116 +31,371 @@ $PSDefaultParameterValues['Out-File:Encoding'] = 'utf8'
 # modern PowerShell hosts.
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
 
-# 24-bit brand palette (Charcoal + Gold). Embedded as ANSI escapes so the
-# whole line is one gold sweep. NB: brace the var -- "$e[..." would parse as
-# an array index.
-$e     = [char]27
-$Gold  = "${e}[38;2;231;196;110m"
-$Green = "${e}[38;2;122;200;140m"
-$Dim   = "${e}[38;2;140;140;140m"
-$Red   = "${e}[38;2;224;122;110m"
-$Bold  = "${e}[1m"
-$Rst   = "${e}[0m"
+# 24-bit brand palette (docs/BRAND.md): Signal Yellow on matte black, with the
+# forged-gold wordmark gradient #FFE552 -> #FFD60A -> #B8960A. Embedded as ANSI
+# escapes so the whole line is one gold sweep. NB: brace the var -- "$e[..."
+# would parse as an array index.
+$e        = [char]27
+$GoldHi   = "${e}[38;2;255;229;82m"
+$Gold     = "${e}[38;2;255;214;10m"
+$GoldDeep = "${e}[38;2;184;150;10m"
+$Green    = "${e}[38;2;122;200;140m"
+$Dim      = "${e}[38;2;143;143;143m"
+$Red      = "${e}[38;2;224;122;110m"
+$Bold     = "${e}[1m"
+$Rst      = "${e}[0m"
 
 # Status glyphs from code points (keeps the source ASCII; see encoding rule).
-$Dot = [char]0x25CF   # round bullet
 $Chk = [char]0x2713   # check mark
 $Crs = [char]0x2717   # cross mark
 
 # ----------------------------------------------------------------- helpers
-function Write-Banner([string]$Subtitle) {
+function Write-Banner {
     # Banner glyphs are machine-generated (figlet ANSI Shadow) and live inside
     # this here-string, where non-ASCII is syntactically inert. Do not
-    # hand-edit -- that is how the historical Harvis typo crept in.
+    # hand-edit -- that is how the historical Harvis typo crept in. Rows are
+    # colored as a vertical gradient (hi -> brand -> deep) to match the
+    # forged-gold wordmark.
     $art = @"
 
-$Gold   P  E  R  S  O  N  A  L$Rst
-$Gold     ██╗ █████╗ ██████╗ ██╗   ██╗██╗███████╗
-$Gold     ██║██╔══██╗██╔══██╗██║   ██║██║██╔════╝
-$Gold     ██║███████║██████╔╝██║   ██║██║███████╗
-$Gold██   ██║██╔══██║██╔══██╗╚██╗ ██╔╝██║╚════██║
-$Gold╚█████╔╝██║  ██║██║  ██║ ╚████╔╝ ██║███████║
-$Gold ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═╝  ╚═══╝  ╚═╝╚══════╝$Rst
+$GoldHi     ██╗ █████╗ ██████╗ ██╗   ██╗██╗███████╗$Rst
+$GoldHi     ██║██╔══██╗██╔══██╗██║   ██║██║██╔════╝$Rst
+$Gold     ██║███████║██████╔╝██║   ██║██║███████╗$Rst
+$Gold██   ██║██╔══██║██╔══██╗╚██╗ ██╔╝██║╚════██║$Rst
+$GoldDeep╚█████╔╝██║  ██║██║  ██║ ╚████╔╝ ██║███████║$Rst
+$GoldDeep ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═╝  ╚═══╝  ╚═╝╚══════╝$Rst
 
-$Gold  $Dot$Rst $Bold$Subtitle$Rst
+$Dim     P E R S O N A L  J A R V I S   ·   talk to your computer$Rst
+$Dim     Checks prerequisites · installs the full profile · launches when done$Rst
 "@
     Write-Host $art
 }
 
-function Write-Step([string]$Text)  { Write-Host ""; Write-Host "$Gold  $Dot$Rst $Bold$Text$Rst" }
+# One six-phase journey spans BOTH installer stages: this shell owns phases
+# 1-3, installer.py continues with 4-6 -- keep the numbering in sync there.
+function Write-Phase([string]$Num, [string]$Text) { Write-Host ""; Write-Host "$Gold  $Num$Rst $Bold$Text$Rst" }
 function Write-Ok([string]$Text)     { Write-Host "$Green    $Chk$Rst $Dim$Text$Rst" }
 function Write-Note([string]$Text)   { Write-Host "$Dim      $Text$Rst" }
 function Write-Err([string]$Text)    { Write-Host "$Red    $Crs $Text$Rst" }
 
-Write-Banner 'Quick install - Windows'
+Write-Banner
 
 # ----------------------------------------------------------------- config
 $RepoUrl    = if ($env:JARVIS_INSTALL_REPO) { $env:JARVIS_INSTALL_REPO } else { 'https://github.com/PersonalJarvis/PersonalJarvis.git' }
 $Branch     = if ($env:JARVIS_INSTALL_REF)  { $env:JARVIS_INSTALL_REF }  else { 'main' }
 $InstallDir = if ($env:JARVIS_INSTALL_DIR)  { $env:JARVIS_INSTALL_DIR }  else { Join-Path $env:USERPROFILE '.personal-jarvis' }
+$PrerequisiteMode = if ($env:JARVIS_INSTALL_PREREQS) { $env:JARVIS_INSTALL_PREREQS.ToLowerInvariant() } else { 'ask' }
+$InitialPath = $env:Path
 
 # Forward any extra args to installer.py (e.g. --no-launch, --dry-run, --with-voice-local)
 $ExtraArgs = $args
 
+# --- prerequisite-bootstrap begin ------------------------------------------
+# This block stays shell-native because Python may not exist yet. Tests extract
+# it directly and exercise the retry/continuation state machine with fakes.
 function Test-Tool {
-    param([string]$Name, [string]$VersionArg = '--version')
+    param([string]$Name, [string[]]$VersionArgs = @('--version'))
     try {
-        $out = & $Name $VersionArg 2>&1
-        return @{ Found = $true; Version = ($out | Select-Object -First 1) }
+        $out = & $Name @VersionArgs 2>&1
+        $code = $LASTEXITCODE
+        if ($null -eq $code) { $code = 0 }
+        return @{
+            Found = ($code -eq 0)
+            Version = [string]($out | Select-Object -First 1)
+        }
     } catch {
         return @{ Found = $false; Version = $null }
     }
 }
 
-function Test-PythonVersion {
+function Test-PythonCandidate {
     param([string]$Exe)
-    $check = Test-Tool $Exe
-    if (-not $check.Found) { return $false }
-    # Match X.Y where X >= 3 and Y >= 11
-    if ($check.Version -match 'Python\s+(\d+)\.(\d+)\.\d+') {
+    try {
+        # Keep the Python snippet quote-free. Windows PowerShell 5's legacy
+        # native-argument marshaller can strip nested quote characters even
+        # when the PowerShell string itself is correctly quoted.
+        $probe = 'import sys; print(sys.version_info.major, sys.version_info.minor,' +
+            'sys.version_info.micro, sep=chr(46))'
+        $out = & $Exe -c $probe 2>&1
+        if ($LASTEXITCODE -ne 0) { return $null }
+        $version = [string]($out | Select-Object -First 1)
+        if ($version -notmatch '^(\d+)\.(\d+)\.(\d+)$') { return $null }
         $major = [int]$Matches[1]
         $minor = [int]$Matches[2]
-        return ($major -gt 3) -or ($major -eq 3 -and $minor -ge 11)
+        return [pscustomobject]@{
+            Exe = $Exe
+            Version = $version
+            Compatible = (($major -gt 3) -or ($major -eq 3 -and $minor -ge 11))
+        }
+    } catch {
+        return $null
     }
-    return $false
 }
+
+function Find-CompatiblePython {
+    $candidates = @()
+    if ($env:JARVIS_PYTHON) {
+        # An explicit pin is authoritative: never silently substitute another
+        # interpreter for the one the user selected.
+        $candidates += $env:JARVIS_PYTHON
+    } else {
+        $candidates += @('python', 'python3', 'py')
+        $patterns = @()
+        if ($env:LOCALAPPDATA) {
+            $patterns += Join-Path $env:LOCALAPPDATA 'Programs\Python\Python*\python.exe'
+        }
+        if ($env:ProgramFiles) {
+            $patterns += Join-Path $env:ProgramFiles 'Python*\python.exe'
+        }
+        foreach ($pattern in $patterns) {
+            $candidates += @(Get-ChildItem -Path $pattern -File -ErrorAction SilentlyContinue |
+                Sort-Object FullName -Descending | Select-Object -ExpandProperty FullName)
+        }
+    }
+
+    $closest = $null
+    $seen = @{}
+    foreach ($candidate in $candidates) {
+        if (-not $candidate) { continue }
+        $key = $candidate.ToLowerInvariant()
+        if ($seen[$key]) { continue }
+        $seen[$key] = $true
+        $probe = Test-PythonCandidate $candidate
+        if ($null -eq $probe) { continue }
+        if ($probe.Compatible) {
+            return [pscustomobject]@{
+                Found = $true
+                Exe = $probe.Exe
+                Version = $probe.Version
+                Closest = $closest
+            }
+        }
+        if ($null -eq $closest) { $closest = $probe }
+    }
+    return [pscustomobject]@{
+        Found = $false
+        Exe = $null
+        Version = $null
+        Closest = $closest
+    }
+}
+
+function Get-PrerequisiteState {
+    $python = Find-CompatiblePython
+    $gitCheck = Test-Tool 'git'
+    return [pscustomobject]@{
+        Python = $python
+        GitFound = $gitCheck.Found
+        GitVersion = $gitCheck.Version
+        Ready = ($python.Found -and $gitCheck.Found)
+    }
+}
+
+function Write-PrerequisiteState {
+    param($State, [switch]$ShowMissing)
+    if ($State.Python.Found) {
+        Write-Ok "Python $($State.Python.Version) ($($State.Python.Exe))"
+    } elseif ($ShowMissing) {
+        Write-Err 'Python 3.11+ not found.'
+        if ($null -ne $State.Python.Closest) {
+            Write-Note "Closest match: Python $($State.Python.Closest.Version) via '$($State.Python.Closest.Exe)' - too old."
+            Write-Note 'Python versions count 3.8 < 3.9 < 3.10 < 3.11.'
+        }
+    }
+    if ($State.GitFound) {
+        Write-Ok $State.GitVersion
+    } elseif ($ShowMissing) {
+        Write-Err 'git not found.'
+    }
+}
+
+function Get-MissingPrerequisiteLabels {
+    param($State)
+    $missing = @()
+    if (-not $State.Python.Found) { $missing += 'Python 3.12 (satisfies 3.11+)' }
+    if (-not $State.GitFound) { $missing += 'Git' }
+    return $missing
+}
+
+function Test-InstallPromptAvailable {
+    if (-not [Environment]::UserInteractive) { return $false }
+    try {
+        # `irm ... | iex` is a PowerShell object pipeline, not redirected
+        # console input, so it remains prompt-capable. CI/stdin pipelines do
+        # not, and must opt in explicitly with JARVIS_INSTALL_PREREQS=auto.
+        return (-not [Console]::IsInputRedirected)
+    } catch {
+        # Hosts such as PowerShell ISE have no console but provide Read-Host.
+        return $true
+    }
+}
+
+function Request-PrerequisiteConsent {
+    param([string[]]$Missing)
+    switch ($PrerequisiteMode) {
+        'auto' {
+            Write-Note 'Automatic prerequisite installation was enabled by JARVIS_INSTALL_PREREQS=auto.'
+            return $true
+        }
+        'never' { return $false }
+        'ask' { }
+        default {
+            Write-Err "Invalid JARVIS_INSTALL_PREREQS value '$PrerequisiteMode'. Use ask, auto, or never."
+            return $false
+        }
+    }
+
+    if (-not (Test-InstallPromptAvailable)) {
+        Write-Note 'This shell cannot ask for consent. Re-run interactively or set JARVIS_INSTALL_PREREQS=auto.'
+        return $false
+    }
+    Write-Note "Missing required software: $($Missing -join ', ')."
+    Write-Note 'Jarvis can install it with WinGet, wait for completion, and continue this same run.'
+    Write-Note 'Continuing also accepts the package and WinGet source agreements for these packages.'
+    try {
+        $answer = Read-Host '  Install the missing prerequisites now? [Y/n]'
+    } catch {
+        return $false
+    }
+    return ([string]::IsNullOrWhiteSpace($answer) -or $answer -match '^(?i:y|yes)$')
+}
+
+function Refresh-ProcessPath {
+    $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $commonGitPaths = @()
+    if ($env:ProgramFiles) {
+        $commonGitPaths += Join-Path $env:ProgramFiles 'Git\cmd'
+    }
+    if ($env:LOCALAPPDATA) {
+        $commonGitPaths += Join-Path $env:LOCALAPPDATA 'Programs\Git\cmd'
+    }
+    $commonGitPaths = @($commonGitPaths | Where-Object { Test-Path $_ })
+    $env:Path = ((@($InitialPath, $userPath, $machinePath) + $commonGitPaths |
+        Where-Object { $_ }) -join ';')
+}
+
+function Invoke-PrerequisitePackage {
+    param([string]$PackageId, [string]$Label)
+    Write-Note "installing $Label (this may open one Windows approval prompt)"
+    $output = & winget install --id $PackageId --exact --source winget --silent `
+        --disable-interactivity --accept-source-agreements --accept-package-agreements 2>&1
+    $code = $LASTEXITCODE
+    if ($code -ne 0) {
+        Write-Err "$Label installation did not complete (WinGet exit $code)."
+        @($output | Select-Object -Last 8) | ForEach-Object { Write-Note ([string]$_) }
+        return $false
+    }
+    Write-Ok "$Label installer completed"
+    return $true
+}
+
+function Invoke-MissingPrerequisiteInstall {
+    param($State)
+    $wingetCheck = Test-Tool 'winget'
+    if (-not $wingetCheck.Found) {
+        Write-Err 'WinGet is not available, so Jarvis cannot install the prerequisites automatically.'
+        return $false
+    }
+    $installOk = $true
+    if (-not $State.Python.Found) {
+        if (-not (Invoke-PrerequisitePackage 'Python.Python.3.12' 'Python 3.12')) {
+            $installOk = $false
+        }
+    }
+    if (-not $State.GitFound) {
+        if (-not (Invoke-PrerequisitePackage 'Git.Git' 'Git')) {
+            $installOk = $false
+        }
+    }
+    return $installOk
+}
+
+function Wait-ForPrerequisites {
+    param([int]$Seconds = 10)
+    $attempts = [Math]::Max(1, [int][Math]::Ceiling($Seconds / 2.0))
+    $state = $null
+    for ($i = 0; $i -lt $attempts; $i++) {
+        Refresh-ProcessPath
+        $state = Get-PrerequisiteState
+        if ($state.Ready) { return $state }
+        if ($i -lt ($attempts - 1)) { Start-Sleep -Seconds 2 }
+    }
+    return $state
+}
+
+function Write-ManualPrerequisiteHelp {
+    param($State)
+    if (-not $State.Python.Found) {
+        Write-Note 'Python: https://www.python.org/downloads/windows/'
+    }
+    if (-not $State.GitFound) {
+        Write-Note 'Git:    https://git-scm.com/download/win'
+    }
+}
+
+function Ensure-Prerequisites {
+    Refresh-ProcessPath
+    $state = Get-PrerequisiteState
+    Write-PrerequisiteState $state -ShowMissing
+    if ($state.Ready) { return $state }
+    if ($env:JARVIS_PYTHON -and -not $state.Python.Found) {
+        Write-Note "JARVIS_PYTHON is pinned to '$($env:JARVIS_PYTHON)' and is not a compatible interpreter."
+        Write-Note 'Update or unset that pin before prerequisite installation.'
+        return $null
+    }
+
+    $missing = @(Get-MissingPrerequisiteLabels $state)
+    if (-not (Request-PrerequisiteConsent $missing)) {
+        Write-ManualPrerequisiteHelp $state
+        Write-Note 'Nothing was installed. Run this command again after adding the prerequisites.'
+        return $null
+    }
+
+    [void](Invoke-MissingPrerequisiteInstall $state)
+    $state = Wait-ForPrerequisites
+
+    while (-not $state.Ready) {
+        Write-Err 'The required commands are still unavailable in this terminal.'
+        Write-ManualPrerequisiteHelp $state
+        if ($PrerequisiteMode -eq 'auto' -or -not (Test-InstallPromptAvailable)) {
+            return $null
+        }
+        try {
+            $answer = Read-Host '  Finish any manual installer, then press Enter to re-check; R retries WinGet, Q stops'
+        } catch {
+            return $null
+        }
+        if ($answer -match '^(?i:q|quit)$') { return $null }
+        if ($answer -match '^(?i:r|retry)$') {
+            [void](Invoke-MissingPrerequisiteInstall $state)
+        }
+        $state = Wait-ForPrerequisites
+    }
+
+    Write-PrerequisiteState $state
+    return $state
+}
+# --- prerequisite-bootstrap end --------------------------------------------
 
 # ----------------------------------------------------------------- preflight
-Write-Step 'Checking prerequisites'
+Write-Phase '1/6' 'Prerequisites'
 
-# Python: try `python` first, then `py -3.11`, then `py -3`.
-$pythonExe = $null
-$pythonVer = $null
-foreach ($candidate in @('python', 'py')) {
-    if (Test-PythonVersion $candidate) {
-        $pythonExe = $candidate
-        $info = Test-Tool $candidate
-        if ($info.Version -match '(Python\s+\d+\.\d+\.\d+)') { $pythonVer = $Matches[1] } else { $pythonVer = $candidate }
-        break
-    }
-}
-if (-not $pythonExe) {
-    Write-Err 'Python 3.11+ not found.'
-    Write-Note 'Install it from https://www.python.org/downloads/ then re-run this command.'
-    Write-Note '(After install, open a NEW PowerShell window so PATH refreshes.)'
+$prerequisites = Ensure-Prerequisites
+if ($null -eq $prerequisites) {
+    Write-Err 'Prerequisite setup was not completed.'
     exit 1
 }
-Write-Ok "$pythonVer"
+$pythonExe = $prerequisites.Python.Exe
+$pythonVer = "Python $($prerequisites.Python.Version)"
 
-# Git
-$gitCheck = Test-Tool 'git'
-if (-not $gitCheck.Found) {
-    Write-Err 'git not found.'
-    Write-Note 'Install from https://git-scm.com/download/win then re-run this command.'
-    exit 1
-}
-Write-Ok 'git'
-
-# Node.js 18+ — required for the Jarvis-Agent worker CLIs (Claude Code / Codex)
-# the worker delegates heavy missions to, plus the Node-based marketplace
-# integrations. Skipped on the headless / tiny-VPS path (--headless): a
-# cloud-only base install that never spawns a local CLI worker, so Node adds no
-# capability there.
+# Node.js 18+ -- powers only the OPTIONAL Jarvis-Agent worker CLIs (Claude
+# Code / Codex) that heavy missions delegate to, plus the Node-based
+# marketplace integrations. Everything else in Jarvis runs without it, so a
+# missing Node must NEVER turn a new user away at the door: we note it and
+# continue -- the worker CLI can be added later in-app once Node is installed.
+# Skipped entirely on the headless / tiny-VPS path (--headless): a cloud-only
+# base install that never spawns a local CLI worker.
 if ($ExtraArgs -contains '--headless') {
     Write-Note 'Node.js check skipped (--headless): the cloud-only base install does not use it.'
 } else {
@@ -149,17 +404,18 @@ if ($ExtraArgs -contains '--headless') {
     if ($nodeCheck.Found -and $nodeCheck.Version -match 'v?(\d+)\.\d+\.\d+') {
         $nodeOk = ([int]$Matches[1] -ge 18)
     }
-    if (-not $nodeOk) {
-        Write-Err 'Node.js 18+ not found.'
-        Write-Note 'Install the LTS build from https://nodejs.org/ then re-run this command.'
-        Write-Note '(After install, open a NEW PowerShell window so PATH refreshes.)'
-        exit 1
+    if ($nodeOk) {
+        Write-Ok "Node.js $($nodeCheck.Version)"
+    } else {
+        Write-Note 'Node.js 18+ not found - continuing, Jarvis runs fine without it.'
+        Write-Note 'It only powers the optional coding-agent worker (Claude Code / Codex).'
+        Write-Note 'Install the LTS build any time from https://nodejs.org/ and add the'
+        Write-Note 'worker later in-app.'
     }
-    Write-Ok "Node.js $($nodeCheck.Version)"
 }
 
 # ----------------------------------------------------------------- clone / update
-Write-Step 'Fetching Personal Jarvis'
+Write-Phase '2/6' 'Fetching Personal Jarvis'
 Write-Note $InstallDir
 
 if (Test-Path (Join-Path $InstallDir '.git')) {
@@ -227,8 +483,8 @@ if ($env:JARVIS_PAYLOAD_COMMIT) {
     }
 }
 
-# ----------------------------------------------------------------- venv
-Write-Step 'Creating Python environment'
+# ----------------------------------------------------------------- venv + bootstrap deps
+Write-Phase '3/6' 'Python environment'
 
 $VenvPath = Join-Path $InstallDir '.venv'
 $VenvPython = Join-Path $VenvPath 'Scripts\python.exe'
@@ -239,13 +495,11 @@ if (-not (Test-Path $VenvPython)) {
 }
 Write-Ok 'virtual environment ready'
 
-# ----------------------------------------------------------------- bootstrap deps
-Write-Step 'Installing bootstrap dependencies'
-Write-Note 'rich, packaging'
+Write-Note 'installing bootstrap dependencies (rich, packaging)'
 & $VenvPython -m pip install --quiet --upgrade pip
 & $VenvPython -m pip install --quiet rich packaging
 if ($LASTEXITCODE -ne 0) { Write-Err 'bootstrap pip install failed.'; exit 1 }
-Write-Ok 'done'
+Write-Ok 'bootstrap dependencies ready'
 
 # ----------------------------------------------------------------- hand off
 $InstallerPy = Join-Path $InstallDir 'install\installer.py'
@@ -255,7 +509,7 @@ if (-not (Test-Path $InstallerPy)) {
     exit 1
 }
 
-Write-Step 'Launching the guided installer'
+Write-Note 'handing over to the Python installer (phases 4-6)'
 
 Push-Location $InstallDir
 try {

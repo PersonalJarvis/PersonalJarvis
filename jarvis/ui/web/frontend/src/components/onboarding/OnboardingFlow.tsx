@@ -48,6 +48,7 @@ export function OnboardingFlow({
     () => REGISTRY[steps[idx]] ?? ((_: StepProps) => <div>{steps[idx]}</div>),
     [steps, idx],
   );
+  const isApiKeysGuide = steps[idx] === "api-keys";
 
   const advance = (next: number, nextSkipped = skipped) => {
     if (next >= steps.length) {
@@ -69,12 +70,24 @@ export function OnboardingFlow({
   };
 
   return (
-    <div className="flex w-full max-w-lg flex-col gap-6 rounded-2xl border border-border bg-card p-8 shadow-2xl">
+    <div
+      className={`flex max-h-[calc(100vh-2rem)] w-full flex-col gap-6 overflow-y-auto overscroll-contain rounded-2xl border border-border bg-card p-8 shadow-2xl scrollbar-jarvis ${
+        isApiKeysGuide ? "max-w-4xl" : "max-w-lg"
+      }`}
+    >
       <div className="flex items-center justify-between">
-        <div className="flex gap-1.5">
+        <div
+          className="flex gap-1.5"
+          role="progressbar"
+          aria-label={t("onboarding.progress_label")}
+          aria-valuemin={1}
+          aria-valuemax={steps.length}
+          aria-valuenow={idx + 1}
+        >
           {steps.map((s, i) => (
             <span
               key={s}
+              aria-hidden="true"
               className={`h-1.5 w-6 rounded-full ${i <= idx ? "bg-primary" : "bg-muted"}`}
             />
           ))}
@@ -84,7 +97,8 @@ export function OnboardingFlow({
       <StepComp {...props} />
       {!props.isFirst && (
         <button
-          className="self-start text-xs text-muted-foreground underline"
+          type="button"
+          className="self-start touch-manipulation text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onClick={props.goBack}
         >
           {t("onboarding.nav.back")}

@@ -328,6 +328,7 @@ class WikiCuratorLLM:
         self._schema_path = schema_path
         self._log_path = log_path
         self._registry = registry or BrainProviderRegistry()
+        self._credential_filter = registry is None
         self._brain: Brain | None = None
         self._resolved_provider: str | None = None
         self._resolved_model: str | None = None
@@ -401,15 +402,43 @@ class WikiCuratorLLM:
         from jarvis.memory.wiki.provider_chain import (
             build_wiki_provider_chain,
             complete_with_fallback,
+            credential_ready_wiki_providers,
         )
 
         # Key-aware fallback (AP-22/23): cross to a reachable family instead of
         # dying on one dead / throttled provider (live 2026-06-30 silent brick).
+        available = set(self._registry.available())
         chain = build_wiki_provider_chain(
             primary=(self._cfg.provider.strip() or self._config.brain.primary),
             model_override=self._cfg.model,
-            available=set(self._registry.available()),
+            available=available,
+            credential_ready=(
+                credential_ready_wiki_providers(
+                    available=available,
+                    config=self._config,
+                )
+                if self._credential_filter
+                else available
+            ),
         )
+        rejection_reasons: list[str] = []
+
+        def _validate_response(agg: Any) -> str | None:
+            if is_length_truncated(agg.finish_reason, agg.text):
+                reason = (
+                    f"truncated structured output ({len(agg.text or '')} chars, "
+                    f"finish_reason={agg.finish_reason!r})"
+                )
+                rejection_reasons.append(reason)
+                return reason
+            try:
+                _parse_updates(agg.text)
+            except (ValueError, json.JSONDecodeError) as exc:
+                reason = f"malformed update JSON: {exc}"
+                rejection_reasons.append(reason)
+                return reason
+            return None
+
         result = await complete_with_fallback(
             registry=self._registry,
             chain=chain,
@@ -417,8 +446,15 @@ class WikiCuratorLLM:
             timeout_s=self._cfg.timeout_s,
             label="WikiCuratorLLM",
             aggregate=aggregate,
+            validate=_validate_response,
         )
         if result is None:
+            if any(reason.startswith("truncated") for reason in rejection_reasons):
+                logger.warning(
+                    "WikiCuratorLLM: every provider hit the output-token cap "
+                    "or failed after a truncated response; no updates were persisted"
+                )
+                telemetry.inc("wiki_writes_blocked_truncated")
             return []
         agg, self._resolved_provider = result
 

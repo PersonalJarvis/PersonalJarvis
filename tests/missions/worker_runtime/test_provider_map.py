@@ -35,6 +35,7 @@ from jarvis.missions.worker_runtime.provider_map import (
         ("claude-api", "claude-cli"),
         ("openai", "openai"),
         ("openrouter", "openrouter"),
+        ("groq", "groq"),
     ],
 )
 def test_to_worker_slug_known_providers(jarvis_slug: str, worker_slug: str) -> None:
@@ -86,10 +87,14 @@ def test_to_jarvis_from_worker_slug_round_trip(worker_slug: str, jarvis_slug: st
     assert to_jarvis_from_worker_slug(worker_slug) == jarvis_slug
 
 
+def test_to_jarvis_from_worker_slug_groq_round_trip() -> None:
+    assert to_jarvis_from_worker_slug("groq") == "groq"
+
+
 def test_to_jarvis_from_worker_slug_unknown_raises() -> None:
     with pytest.raises(NoJarvisFromWorkerSlugError) as exc_info:
-        to_jarvis_from_worker_slug("groq")  # worker may know this, Jarvis does not
-    assert "groq" in str(exc_info.value)
+        to_jarvis_from_worker_slug("unknown-worker")
+    assert "unknown-worker" in str(exc_info.value)
 
 
 def test_round_trip_jarvis_worker_jarvis() -> None:
@@ -107,6 +112,7 @@ def test_round_trip_jarvis_worker_jarvis() -> None:
         ("claude-api", ("ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY")),
         ("openai", ("OPENAI_API_KEY",)),
         ("openrouter", ("OPENROUTER_API_KEY",)),
+        ("groq", ("GROQ_API_KEY",)),
     ],
 )
 def test_env_vars_for_known_providers(
@@ -131,7 +137,7 @@ def test_env_vars_primary_always_first() -> None:
 
 
 def test_validate_configured_providers_all_mapped_returns_empty() -> None:
-    configured = ["gemini", "claude-api", "openai", "openrouter"]
+    configured = ["gemini", "claude-api", "openai", "openrouter", "groq"]
     assert validate_configured_providers(configured) == []
 
 
@@ -195,7 +201,14 @@ def test_ad6_table_is_complete() -> None:
     OpenAI-compatible API brain that, like ``openai``/``openrouter``, runs on the
     in-process ApiAgentWorker (not the OpenClaw CLI harness); its row exists so it
     is a selectable subagent in the API-Keys "Subagents" tab."""
-    expected_jarvis_slugs = {"gemini", "claude-api", "openai", "openrouter", "nvidia"}
+    expected_jarvis_slugs = {
+        "gemini",
+        "claude-api",
+        "openai",
+        "openrouter",
+        "groq",
+        "nvidia",
+    }
     actual = {m.jarvis for m in MAPPINGS}
     assert actual == expected_jarvis_slugs, (
         "AD-6 Amendment table drifted — please keep docs/openclaw-bridge.md "

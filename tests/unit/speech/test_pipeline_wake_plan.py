@@ -1,7 +1,7 @@
 """SpeechPipeline honours a resolved WakeWordPlan.
 
 When a wake_plan is threaded in, the OpenWakeWord detector is built from the
-plan (model path, canonical keyword, sensitivity-derived threshold) and the
+plan (model path, canonical keyword, calibrated activation threshold) and the
 prefix verifier + rolling-whisper use the plan's phrase matcher. When no plan
 is given, the legacy default path builds a provider with no model.
 """

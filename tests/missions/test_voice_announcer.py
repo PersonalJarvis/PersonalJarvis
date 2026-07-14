@@ -8,6 +8,7 @@ same MissionBus, but this one publishes to the global
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -144,6 +145,12 @@ async def test_approved_emits_announcement(store_and_bus) -> None:
     assert "Sir" not in ann.text
     assert ann.language == "de"
     assert ann.priority == "normal"
+    assert ann.source_layer == "missions.voice.announcer"
+    assert json.loads(ann.detail or "{}") == {
+        "mission_id": mid,
+        "event_type": "MissionApproved",
+        "result_uri": f"mission://{mid}",
+    }
 
 
 @pytest.mark.asyncio

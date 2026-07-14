@@ -259,10 +259,9 @@ describe("ObsidianSetupDialog", () => {
       );
       fireEvent.click(screen.getByTestId("obsidian-setup-launch"));
       expect(lastHref).not.toBeNull();
-      expect(lastHref!.startsWith("obsidian://open?vault=")).toBe(true);
-      // The vault path ends in "obsidian-vault" — that final segment must
-      // appear (URL-encoded) in the href.
-      expect(lastHref!).toContain(encodeURIComponent("obsidian-vault"));
+      expect(lastHref!).toBe(
+        `obsidian://open?path=${encodeURIComponent(STATUS_OK.vault_path)}`,
+      );
     } finally {
       Object.defineProperty(window, "location", {
         configurable: true,
@@ -465,8 +464,9 @@ describe("ObsidianSetupDialog", () => {
         });
         fireEvent.click(screen.getByTestId("obsidian-setup-launch"));
         expect(lastHref).not.toBeNull();
-        expect(lastHref!).toContain(encodeURIComponent(VAULTS[1].name));
-        expect(lastHref!).not.toContain(encodeURIComponent("obsidian-vault"));
+        expect(lastHref!).toBe(
+          `obsidian://open?path=${encodeURIComponent("<USER_HOME>/Work/Jarvis")}`,
+        );
       } finally {
         Object.defineProperty(window, "location", {
           configurable: true,

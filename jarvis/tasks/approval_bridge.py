@@ -12,7 +12,7 @@ Design (Option B from the integration analysis):
   - The runner ``arm()``s the bridge with the turn's ``trace_id`` and the
     set of pre-authorized plugin ids before running the turn, then
     ``disarm()``s in a finally.
-  - The bridge listens for ``ActionProposed``. On a match (same trace_id +
+  - The bridge listens for ``ActionApprovalRequired``. On a match (same trace_id +
     the proposed tool belongs to a granted plugin) it publishes
     ``ActionApproved`` straight onto the bus, which resolves the executor's
     ``wait()``. The full audit trail (Proposed -> Approved -> Executed) is
@@ -21,7 +21,7 @@ Design (Option B from the integration analysis):
     tools) is left to block and deny on timeout. Nothing is auto-approved
     by default.
 
-Concurrency-safe: a persistent ``ActionProposed`` subscriber plus a
+Concurrency-safe: a persistent ``ActionApprovalRequired`` subscriber plus a
 ``trace_id -> grant`` map, so several tasks can run at once without a
 per-turn subscribe/unsubscribe race.
 """
@@ -31,7 +31,7 @@ from collections.abc import Iterable
 from uuid import UUID
 
 from jarvis.core.bus import EventBus
-from jarvis.core.events import ActionApproved, ActionProposed
+from jarvis.core.events import ActionApprovalRequired, ActionApproved
 
 
 class TaskAutoApprover:
@@ -41,7 +41,7 @@ class TaskAutoApprover:
         self._bus = bus
         # trace_id -> (granted plugin ids, audit label)
         self._active: dict[UUID, tuple[frozenset[str], str]] = {}
-        bus.subscribe(ActionProposed, self._on_proposed)
+        bus.subscribe(ActionApprovalRequired, self._on_approval_required)
 
     def arm(self, trace_id: UUID, plugin_ids: Iterable[str], *, approved_by: str) -> None:
         """Pre-authorize ``plugin_ids`` for the turn identified by ``trace_id``.
@@ -55,7 +55,7 @@ class TaskAutoApprover:
     def disarm(self, trace_id: UUID) -> None:
         self._active.pop(trace_id, None)
 
-    async def _on_proposed(self, event: ActionProposed) -> None:
+    async def _on_approval_required(self, event: ActionApprovalRequired) -> None:
         ctx = self._active.get(event.trace_id)
         if ctx is None:
             return

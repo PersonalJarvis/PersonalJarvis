@@ -1,12 +1,14 @@
 """FTS5 index builder and maintenance for the wiki vault.
 
-Exposes four public callables that implement the shared contract
-agreed by the sqlite-architect and python-integrator sub-agents:
+Exposes the mutation callables used by full reconciliation and incremental
+writers:
 
     ensure_schema(conn)          -- idempotent DDL (create wiki_fts if absent)
     index_vault(vault_root, conn) -- full walk; returns count of indexed pages
     upsert_page(conn, vault_root, abs_path) -- single-page reindex (delete+insert)
     remove_page(conn, vault_root, abs_path) -- remove a single page by path
+
+Read-only metadata and vault-scan helpers support the Wiki health endpoint.
 
 All path values stored in the DB are vault-root-relative POSIX strings
 (forward slashes, no leading slash).
@@ -43,6 +45,7 @@ import logging
 import os
 import re
 import sqlite3
+import time
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +66,15 @@ CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(
 );
 """
 
+_CREATE_WIKI_INDEX_META = """
+CREATE TABLE IF NOT EXISTS wiki_index_meta (
+    singleton       INTEGER PRIMARY KEY CHECK (singleton = 1),
+    last_indexed_at REAL NOT NULL,
+    operation       TEXT NOT NULL,
+    path            TEXT
+);
+"""
+
 # ---------------------------------------------------------------------------
 # Regex helpers (reused from original search.py internals — single source)
 # ---------------------------------------------------------------------------
@@ -70,6 +82,12 @@ CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(
 _FRONTMATTER_RE = re.compile(r"^---\s*\n(.*?)\n---\s*\n?", re.DOTALL)
 _H1_RE = re.compile(r"^\s{0,3}#\s+(.+)", re.MULTILINE)
 _YAML_KV_RE = re.compile(r"^(\w[\w\s\-]*):\s*(.+)$", re.MULTILINE)
+
+# Non-content directories that are intentionally absent from search. Archived
+# pages are removed by AtomicWriter and must not reappear after reconciliation.
+SKIP_INDEX_DIRS: frozenset[str] = frozenset(
+    {"_archive", "attachments", "99-templates"}
+)
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +107,7 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         Open, writable ``sqlite3.Connection``.
     """
     _verify_fts5(conn)
-    conn.executescript(_CREATE_WIKI_FTS)
+    conn.executescript(_CREATE_WIKI_FTS + _CREATE_WIKI_INDEX_META)
     conn.commit()
 
 
@@ -113,10 +131,8 @@ def index_vault(vault_root: Path, conn: sqlite3.Connection) -> int:
         Number of pages indexed (each upserted page counts as 1).
     """
     ensure_schema(conn)
-    count = 0
-    for abs_path in _walk_vault(vault_root):
-        _upsert_one(conn, vault_root, abs_path)
-        count += 1
+    count = _index_all_pages(vault_root, conn)
+    _record_index_metadata(conn, operation="index_vault")
     conn.commit()
     log.info("fts_index: indexed %d pages in %s", count, vault_root)
     return count
@@ -142,8 +158,11 @@ def rebuild_index(vault_root: Path, conn: sqlite3.Connection) -> int:
     """
     ensure_schema(conn)
     conn.execute("DELETE FROM wiki_fts")
+    count = _index_all_pages(vault_root, conn)
+    _record_index_metadata(conn, operation="rebuild")
     conn.commit()
-    return index_vault(vault_root, conn)
+    log.info("fts_index: rebuilt %d pages in %s", count, vault_root)
+    return count
 
 
 def upsert_page(
@@ -166,7 +185,12 @@ def upsert_page(
     abs_path:
         Absolute path of the page that was just written.
     """
-    _upsert_one(conn, vault_root, abs_path)
+    if _upsert_one(conn, vault_root, abs_path):
+        _record_index_metadata(
+            conn,
+            operation="upsert",
+            path=_relative_posix(vault_root, abs_path),
+        )
     conn.commit()
 
 
@@ -188,8 +212,63 @@ def remove_page(
     """
     rel = _relative_posix(vault_root, abs_path)
     conn.execute("DELETE FROM wiki_fts WHERE path = ?", (rel,))
+    _record_index_metadata(conn, operation="remove", path=rel)
     conn.commit()
     log.debug("fts_index: removed %s", rel)
+
+
+def read_index_metadata(conn: sqlite3.Connection) -> dict[str, Any] | None:
+    """Return the latest successful index mutation recorded in ``conn``.
+
+    Older databases may contain ``wiki_fts`` without the metadata table. In
+    that case this read-only helper returns ``None`` rather than mutating the
+    database from a health-check path.
+    """
+    try:
+        row = conn.execute(
+            "SELECT last_indexed_at, operation, path "
+            "FROM wiki_index_meta WHERE singleton = 1"
+        ).fetchone()
+    except sqlite3.OperationalError:
+        return None
+    if row is None:
+        return None
+    return {
+        "last_indexed_at": float(row[0]),
+        "operation": str(row[1]),
+        "path": str(row[2]) if row[2] is not None else None,
+    }
+
+
+def vault_page_mtimes(vault_root: Path) -> dict[str, float]:
+    """Return indexable vault paths and their current modification times."""
+    pages: dict[str, float] = {}
+    for abs_path in _walk_vault(vault_root):
+        try:
+            pages[_relative_posix(vault_root, abs_path)] = abs_path.stat().st_mtime
+        except OSError:
+            # A concurrent editor may replace or delete a file during the walk.
+            # The watcher will process that change; omit the transient path from
+            # this snapshot instead of reporting fabricated metadata.
+            continue
+    return pages
+
+
+def is_indexable_path(vault_root: Path, abs_path: Path) -> bool:
+    """Return whether ``abs_path`` belongs in a full or incremental index."""
+    if abs_path.suffix.lower() != ".md":
+        return False
+    try:
+        rel = abs_path.resolve().relative_to(vault_root.resolve())
+    except (OSError, ValueError):
+        return False
+    if not rel.parts:
+        return False
+    directories = rel.parts[:-1]
+    return not any(
+        part.startswith(".") or part in SKIP_INDEX_DIRS
+        for part in directories
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -215,8 +294,34 @@ def _verify_fts5(conn: sqlite3.Connection) -> None:
         )
 
 
+def _index_all_pages(vault_root: Path, conn: sqlite3.Connection) -> int:
+    """Index every visible Markdown page without committing."""
+    count = 0
+    for abs_path in _walk_vault(vault_root):
+        if _upsert_one(conn, vault_root, abs_path):
+            count += 1
+    return count
+
+
+def _record_index_metadata(
+    conn: sqlite3.Connection,
+    *,
+    operation: str,
+    path: str | None = None,
+) -> None:
+    """Record one successful derived-index mutation in the current transaction."""
+    conn.execute(
+        "INSERT INTO wiki_index_meta(singleton, last_indexed_at, operation, path) "
+        "VALUES (1, ?, ?, ?) "
+        "ON CONFLICT(singleton) DO UPDATE SET "
+        "last_indexed_at = excluded.last_indexed_at, "
+        "operation = excluded.operation, path = excluded.path",
+        (time.time(), operation, path),
+    )
+
+
 def _walk_vault(vault_root: Path) -> list[Path]:
-    """Recursively collect ``*.md`` files, skipping hidden directories.
+    """Recursively collect indexable Markdown files.
 
     Mirrors the walk logic from the original ``search.py`` so behaviour
     is consistent between a full reindex and a live search.
@@ -224,14 +329,19 @@ def _walk_vault(vault_root: Path) -> list[Path]:
     results: list[Path] = []
     if not vault_root.exists():
         return results
-    for item in vault_root.rglob("*.md"):
-        # Skip anything inside a hidden directory (e.g. ``.obsidian``).
-        if any(
-            part.startswith(".")
-            for part in item.relative_to(vault_root).parts[:-1]
-        ):
-            continue
-        results.append(item)
+    for current_root, dirnames, filenames in os.walk(vault_root):
+        # Prune large non-content trees before descent rather than walking
+        # every attachment on each health poll.
+        dirnames[:] = sorted(
+            dirname
+            for dirname in dirnames
+            if not dirname.startswith(".") and dirname not in SKIP_INDEX_DIRS
+        )
+        root = Path(current_root)
+        for filename in sorted(filenames):
+            item = root / filename
+            if item.is_file() and is_indexable_path(vault_root, item):
+                results.append(item)
     return results
 
 
@@ -309,14 +419,14 @@ def _upsert_one(
     conn: sqlite3.Connection,
     vault_root: Path,
     abs_path: Path,
-) -> None:
+) -> bool:
     """Delete existing row for *abs_path* then insert a fresh one.
 
     Does NOT commit — callers batch commits for efficiency.
     """
     parsed = _parse_page_data(abs_path, vault_root)
     if parsed is None:
-        return
+        return False
     rel_path, title, frontmatter_flat, body, mtime_str = parsed
 
     # Delete-then-insert is the canonical FTS5 upsert pattern.
@@ -327,6 +437,7 @@ def _upsert_one(
         (rel_path, title, frontmatter_flat, body, mtime_str),
     )
     log.debug("fts_index: upserted %s", rel_path)
+    return True
 
 
 __all__ = [
@@ -335,4 +446,8 @@ __all__ = [
     "rebuild_index",
     "upsert_page",
     "remove_page",
+    "read_index_metadata",
+    "vault_page_mtimes",
+    "is_indexable_path",
+    "SKIP_INDEX_DIRS",
 ]

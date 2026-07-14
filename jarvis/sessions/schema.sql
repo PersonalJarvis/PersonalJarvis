@@ -1,24 +1,24 @@
--- Voice-Session-Recorder-Schema (Transcription-View Feature).
--- Idempotent (CREATE IF NOT EXISTS). Lebt unter data/sessions.db,
--- separater Lifecycle vs. data/jarvis.db (Memory) und data/missions.db
--- (Phase-6 Worker-Critic).
+-- Voice session recorder schema (Transcription view feature).
+-- Idempotent (CREATE IF NOT EXISTS). Stored in data/sessions.db with a
+-- separate lifecycle from data/jarvis.db (memory) and data/missions.db
+-- (Phase 6 worker/critic).
 --
--- Drei-Tabellen-Layout:
---   voice_sessions  : Header-Row pro Session (Wake -> Hangup).
---   voice_turns     : Aggregat pro Turn (User-Utterance + Jarvis-Antwort).
---   voice_events    : Roh-Event-Stream fuer Detail-Replay (jedes relevante
---                     Bus-Event waehrend einer Session als JSON-Payload).
+-- Three-table layout:
+--   voice_sessions  : Header row per session (wake -> hangup).
+--   voice_turns     : Aggregate per turn (user utterance + Jarvis answer).
+--   voice_events    : Raw event stream for detail replay (every relevant bus
+--                     event during a session as a JSON payload).
 
 CREATE TABLE IF NOT EXISTS voice_sessions (
-    id                 TEXT PRIMARY KEY,         -- session_id (UUIDv4-String)
-    started_ms         INTEGER NOT NULL,         -- Wake-Zeitpunkt
-    ended_ms           INTEGER,                  -- NULL solange Session laeuft
-    hangup_reason      TEXT,                     -- voice_pattern|hotkey|idle_timeout|turn_complete|shutdown|error
+    id                 TEXT PRIMARY KEY,         -- session_id (UUIDv4 string)
+    started_ms         INTEGER NOT NULL,         -- wake timestamp
+    ended_ms           INTEGER,                  -- NULL while the session is active
+    hangup_reason      TEXT,                     -- voice_pattern|hotkey|client_stop|ws_closed|realtime_fallback|idle_timeout|turn_complete|shutdown|error
     turn_count         INTEGER NOT NULL DEFAULT 0,
     total_cost_usd     REAL NOT NULL DEFAULT 0.0,
     total_tokens_in    INTEGER NOT NULL DEFAULT 0,
     total_tokens_out   INTEGER NOT NULL DEFAULT 0,
-    providers_used     TEXT NOT NULL DEFAULT '[]',  -- JSON-Array distinct provider names
+    providers_used     TEXT NOT NULL DEFAULT '[]',  -- JSON array of distinct provider names
     language           TEXT NOT NULL DEFAULT 'de',
     wake_keyword       TEXT NOT NULL DEFAULT ''
 );
@@ -28,27 +28,27 @@ CREATE INDEX IF NOT EXISTS idx_sessions_open ON voice_sessions(ended_ms) WHERE e
 
 
 CREATE TABLE IF NOT EXISTS voice_turns (
-    id                 TEXT PRIMARY KEY,         -- turn_id (UUIDv4-String)
+    id                 TEXT PRIMARY KEY,         -- turn_id (UUIDv4 string)
     session_id         TEXT NOT NULL REFERENCES voice_sessions(id) ON DELETE CASCADE,
-    idx                INTEGER NOT NULL,         -- 0-basierte Turn-Position innerhalb Session
-    started_ms         INTEGER NOT NULL,         -- TurnStart (User beginnt zu sprechen)
-    ended_ms           INTEGER,                  -- AudioOutFirst (Jarvis fertig)
+    idx                INTEGER NOT NULL,         -- zero-based turn position in session
+    started_ms         INTEGER NOT NULL,         -- turn start (user starts speaking)
+    ended_ms           INTEGER,                  -- AudioOutFirst (Jarvis finished)
     user_text          TEXT NOT NULL DEFAULT '',
     user_lang          TEXT NOT NULL DEFAULT 'de',
     jarvis_text        TEXT NOT NULL DEFAULT '',
     jarvis_lang        TEXT NOT NULL DEFAULT 'de',
-    tier               TEXT NOT NULL DEFAULT '', -- router|openclaw|sub_jarvis|trivial|fast|deep|code|''
+    tier               TEXT NOT NULL DEFAULT '', -- router|openclaw|sub_jarvis|trivial|fast|deep|code|realtime|''
     provider           TEXT NOT NULL DEFAULT '',
     model              TEXT NOT NULL DEFAULT '',
     tokens_in          INTEGER NOT NULL DEFAULT 0,
     tokens_out         INTEGER NOT NULL DEFAULT 0,
     cost_usd           REAL NOT NULL DEFAULT 0.0,
     latency_total_ms   INTEGER NOT NULL DEFAULT 0,
-    -- Aufgeschluesselte Latenzen (vom Recorder via SystemStateChanged-Boundaries):
+    -- Latency breakdown (from recorder SystemStateChanged boundaries):
     --   think_ms : TranscriptFinal -> SystemStateChanged(SPEAKING)
-    --              = wie lang Jarvis "nachgedacht" hat (User-Done bis Jarvis-spricht-Start)
+    --              = Jarvis think time (user done until Jarvis starts speaking)
     --   speak_ms : SystemStateChanged(SPEAKING) -> SystemStateChanged(LISTENING)
-    --              = wie lang Jarvis gesprochen hat (TTS-Playback-Dauer)
+    --              = Jarvis speaking time (TTS playback duration)
     think_ms           INTEGER NOT NULL DEFAULT 0,
     speak_ms           INTEGER NOT NULL DEFAULT 0,
     -- 1 when the turn ended on a two-turn voice/chat confirmation
@@ -56,7 +56,7 @@ CREATE TABLE IF NOT EXISTS voice_turns (
     -- question, not a settled answer. Also added via _apply_migrations for
     -- pre-existing DBs (the idempotent PRAGMA-guard makes both paths safe).
     awaiting_confirmation INTEGER NOT NULL DEFAULT 0,
-    tool_calls_json    TEXT NOT NULL DEFAULT '[]'  -- JSON-Array of tool-name strings
+    tool_calls_json    TEXT NOT NULL DEFAULT '[]'  -- JSON array of tool-name strings
 );
 
 CREATE INDEX IF NOT EXISTS idx_turns_session ON voice_turns(session_id, idx);
@@ -78,8 +78,8 @@ CREATE TABLE IF NOT EXISTS voice_events (
     session_id         TEXT NOT NULL REFERENCES voice_sessions(id) ON DELETE CASCADE,
     turn_id            TEXT REFERENCES voice_turns(id) ON DELETE SET NULL,
     ts_ms              INTEGER NOT NULL,
-    kind               TEXT NOT NULL,            -- Event-Typ (z.B. WakeWordDetected, TranscriptFinal, ToolCallCompleted)
-    payload_json       TEXT NOT NULL DEFAULT '{}'  -- selektierte Felder als JSON
+    kind               TEXT NOT NULL,            -- event type (e.g. WakeWordDetected, TranscriptFinal, ToolCallCompleted)
+    payload_json       TEXT NOT NULL DEFAULT '{}'  -- selected fields as JSON
 );
 
 CREATE INDEX IF NOT EXISTS idx_events_session ON voice_events(session_id, seq);

@@ -109,17 +109,31 @@ _OUTCOME: dict[str, dict[str, str]] = {
 }
 
 
+_FAILED_DETAIL_MAX_CHARS = 160
+
+
 def format_confirm_outcome(
-    kind: str, tool_name: str, *, language: str = "de"
+    kind: str, tool_name: str, *, language: str = "de", detail: str | None = None
 ) -> str:
     """Render the outcome phrase after the user answered a confirmation.
 
     ``kind`` ∈ {"done", "vetoed", "timeout", "failed", "unclear"}. ``tool_name``
     is accepted for future tool-specific wording; the current phrasing is generic
     but always non-empty (AD-OE6) and covers de/en/es.
+
+    ``detail`` is appended only on ``kind="failed"``: a confirmed action that
+    fails with a bare "that didn't work" gives the user nothing to correct
+    with (forensic 2026-07-13 18:33 — the actionable "no MCP server named
+    'github'" reason was swallowed). The detail is DATA (like a filename),
+    not re-localized phrasing; it is whitespace-collapsed and bounded.
     """
     lang = _phrase_lang(language)
     table = _OUTCOME.get(kind)
     if table is None:  # unknown kind — honest, never empty
         table = _OUTCOME["failed"]
-    return table.get(lang, table[DEFAULT_LOCALE])
+    phrase = table.get(lang, table[DEFAULT_LOCALE])
+    if kind == "failed" and detail:
+        cleaned = " ".join(str(detail).split())[:_FAILED_DETAIL_MAX_CHARS].strip()
+        if cleaned:
+            phrase = f"{phrase} {cleaned}"
+    return phrase

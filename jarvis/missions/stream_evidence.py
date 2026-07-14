@@ -146,14 +146,21 @@ def _codex_item_to_claude_lines(
     if itype in ("mcp_tool_call", "web_search"):
         counter += 1
         tid = f"codex_{itype}_{counter}"
-        name = "web_search" if itype == "web_search" else str(
-            item.get("tool") or item.get("server") or "mcp_tool_call"
-        )
+        if itype == "web_search":
+            name = "web_search"
+        else:
+            server = str(item.get("server") or "mcp").strip()
+            tool = str(item.get("tool") or "tool").strip()
+            name = f"mcp__{server}__{tool}"
         excerpt = str(
             item.get("result") or item.get("query") or item.get("output") or ""
         )[:_CODEX_OUTPUT_CAP]
         lines.append(_tool_use(name, {}, tid))
-        lines.append(_tool_result(tid, excerpt or "(tool completed)", is_error=False))
+        status = str(item.get("status") or "completed").strip().lower()
+        is_error = status in {"failed", "error", "cancelled", "canceled"}
+        lines.append(
+            _tool_result(tid, excerpt or "(tool completed)", is_error=is_error)
+        )
         return lines, counter
 
     return lines, counter
@@ -389,11 +396,53 @@ def extract_write_targets(stream_text: str) -> tuple[str, ...]:
 # OpenClaw / codex / generic variants). Matched case-sensitively against
 # `tool_use.name`.
 _SHELL_TOOL_NAMES: frozenset[str] = frozenset({
-    "Bash", "shell", "run_command", "exec", "execute", "run_shell_command",
+    "Bash",
+    "RunCommand",
+    "shell",
+    "run_command",
+    "exec",
+    "execute",
+    "run_shell_command",
 })
 
 # Keys under `tool_use.input` that carry the shell command string.
 _COMMAND_INPUT_KEYS: tuple[str, ...] = ("command", "cmd", "script", "shell")
+
+
+def _structured_command_argv(tool_input: dict) -> tuple[str, tuple[str, ...]] | None:
+    """Return a strictly typed ``RunCommand`` argv, or ``None`` when malformed."""
+    program = tool_input.get("program")
+    args = tool_input.get("args", [])
+    if not isinstance(program, str) or not program.strip():
+        return None
+    if not isinstance(args, list) or not all(isinstance(arg, str) for arg in args):
+        return None
+    return program.strip(), tuple(args)
+
+
+def _command_from_tool_input(tool_name: str, tool_input: dict) -> str:
+    """Normalize legacy shell strings or structured ``RunCommand`` argv.
+
+    The returned text is evidence for pattern matching and display only; it is
+    never executed. Keeping the structured path here preserves the Critic's
+    correlated command-result contract after API workers stopped using shells.
+    """
+    if tool_name == "RunCommand":
+        structured = _structured_command_argv(tool_input)
+        if structured is None:
+            return ""
+        program, args = structured
+        return " ".join((program, *(arg.strip() for arg in args))).strip()
+
+    legacy = next(
+        (
+            str(tool_input[key]).strip()
+            for key in _COMMAND_INPUT_KEYS
+            if isinstance(tool_input.get(key), str) and tool_input[key].strip()
+        ),
+        "",
+    )
+    return legacy
 
 # State-CHANGING git / GitHub-CLI operations. A successful one of these is a
 # real deliverable for a "commit and push" / "open a PR" task that leaves NO
@@ -415,6 +464,27 @@ _MUTATING_CMD_RE = re.compile(
     r"(?:create|merge|close|edit|comment|review|delete|reopen)\b",
     re.IGNORECASE,
 )
+
+
+def _is_mutating_command(tool_name: str, tool_input: dict, command: str) -> bool:
+    """Match command evidence without mistaking an argument for an executable.
+
+    Legacy shell tools carry one evaluated command string, so their established
+    regex remains appropriate. ``RunCommand`` is a direct argv boundary: only
+    an actual git/GitHub CLI executable may earn state-changing evidence. This
+    prevents successful commands such as ``echo git push`` from being credited.
+    """
+    if tool_name != "RunCommand":
+        return bool(_MUTATING_CMD_RE.search(command))
+    structured = _structured_command_argv(tool_input)
+    if structured is None:
+        return False
+    program, args = structured
+    if program.casefold() not in {"git", "git.exe", "gh", "gh.exe"}:
+        return False
+    normalized_program = program.casefold().removesuffix(".exe")
+    probe = " ".join((normalized_program, *(arg.strip() for arg in args))).strip()
+    return bool(_MUTATING_CMD_RE.match(probe))
 
 
 def extract_verified_commands(
@@ -465,20 +535,19 @@ def extract_verified_commands(
             for blk in (obj.get("message", {}) or {}).get("content", []) or []:
                 if not isinstance(blk, dict) or blk.get("type") != "tool_use":
                     continue
-                if str(blk.get("name", "")).strip() not in _SHELL_TOOL_NAMES:
+                tool_name = str(blk.get("name", "")).strip()
+                if tool_name not in _SHELL_TOOL_NAMES:
                     continue
                 tool_input = blk.get("input") or {}
                 if not isinstance(tool_input, dict):
                     continue
-                command = next(
-                    (str(tool_input[k]).strip() for k in _COMMAND_INPUT_KEYS
-                     if isinstance(tool_input.get(k), str) and tool_input[k].strip()),
-                    "",
-                )
+                command = _command_from_tool_input(tool_name, tool_input)
                 tid = str(blk.get("id", "")).strip()
                 # An id is required to correlate the result; a mutating command
                 # with no confirmable result is not credited (anti-hearsay).
-                if command and tid and _MUTATING_CMD_RE.search(command):
+                if command and tid and _is_mutating_command(
+                    tool_name, tool_input, command
+                ):
                     pending[tid] = command
         elif otype == "user":
             for blk in (obj.get("message", {}) or {}).get("content", []) or []:
@@ -496,6 +565,61 @@ def extract_verified_commands(
 
     # Commands left in `pending` had no matching result (truncated stream) —
     # intentionally NOT credited.
+    return tuple(credited)
+
+
+def extract_verified_external_actions(
+    stream_text: str, *, max_result_chars: int = 800
+) -> tuple[tuple[str, str], ...]:
+    """Successful MCP actions with a correlated, non-errored result frame.
+
+    A remote action can legitimately leave no filesystem diff. It is credited
+    only when the worker stream contains both a namespaced MCP ``tool_use`` and
+    its matching successful ``tool_result``. A bare tool call, prose claim, or
+    truncated stream is never evidence. Codex ``mcp_tool_call`` items are first
+    normalised into the same paired representation as Claude workers.
+    """
+    stream_text = _normalize_worker_stream(stream_text)
+    pending: dict[str, str] = {}
+    credited: list[tuple[str, str]] = []
+    seen: set[tuple[str, str]] = set()
+
+    for raw in stream_text.splitlines():
+        line = raw.strip()
+        if not line:
+            continue
+        try:
+            obj = json.loads(line)
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if not isinstance(obj, dict):
+            continue
+        otype = obj.get("type")
+        if otype == "assistant":
+            for blk in (obj.get("message", {}) or {}).get("content", []) or []:
+                if not isinstance(blk, dict) or blk.get("type") != "tool_use":
+                    continue
+                name = str(blk.get("name", "")).strip()
+                tid = str(blk.get("id", "")).strip()
+                is_mcp = name.startswith("mcp__") or "/" in name
+                if is_mcp and tid:
+                    pending[tid] = name
+        elif otype == "user":
+            for blk in (obj.get("message", {}) or {}).get("content", []) or []:
+                if not isinstance(blk, dict) or blk.get("type") != "tool_result":
+                    continue
+                tid = str(blk.get("tool_use_id", "")).strip()
+                name = pending.pop(tid, None)
+                if name is None or _result_is_error(blk):
+                    continue
+                result = _result_text(blk.get("content", "")).strip()
+                if not result:
+                    result = "(tool completed successfully; no output captured)"
+                evidence = (name, result[:max_result_chars])
+                if evidence not in seen:
+                    seen.add(evidence)
+                    credited.append(evidence)
+
     return tuple(credited)
 
 
@@ -520,6 +644,29 @@ _DESKTOP_ACTION_CMD_RE = re.compile(
     r"|\bopen\s+-[aAbnegtWR]"             # macOS: open -a AppName
     , re.IGNORECASE,
 )
+
+
+def _is_desktop_action_command(
+    tool_name: str, tool_input: dict, command: str
+) -> bool:
+    """Recognize a real launcher executable at the structured argv boundary."""
+    if tool_name != "RunCommand":
+        return bool(_DESKTOP_ACTION_CMD_RE.search(command))
+    structured = _structured_command_argv(tool_input)
+    if structured is None:
+        return False
+    program, args = structured
+    executable = program.casefold()
+    if executable in {"explorer", "explorer.exe", "xdg-open"}:
+        return bool(args)
+    if executable == "gio":
+        return bool(args) and args[0].casefold() == "open"
+    if executable == "open":
+        return any(
+            arg.startswith("-") and len(arg) > 1 and arg[1] in "aAbnegtWR"
+            for arg in args
+        )
+    return False
 
 
 def extract_verified_desktop_actions(
@@ -575,20 +722,19 @@ def extract_verified_desktop_actions(
             for blk in (obj.get("message", {}) or {}).get("content", []) or []:
                 if not isinstance(blk, dict) or blk.get("type") != "tool_use":
                     continue
-                if str(blk.get("name", "")).strip() not in _SHELL_TOOL_NAMES:
+                tool_name = str(blk.get("name", "")).strip()
+                if tool_name not in _SHELL_TOOL_NAMES:
                     continue
                 tool_input = blk.get("input") or {}
                 if not isinstance(tool_input, dict):
                     continue
-                command = next(
-                    (str(tool_input[k]).strip() for k in _COMMAND_INPUT_KEYS
-                     if isinstance(tool_input.get(k), str) and tool_input[k].strip()),
-                    "",
-                )
+                command = _command_from_tool_input(tool_name, tool_input)
                 tid = str(blk.get("id", "")).strip()
                 # An id is required to correlate the result; a launch command
                 # with no confirmable result is not credited (anti-hearsay).
-                if command and tid and _DESKTOP_ACTION_CMD_RE.search(command):
+                if command and tid and _is_desktop_action_command(
+                    tool_name, tool_input, command
+                ):
                     pending[tid] = command
         elif otype == "user":
             for blk in (obj.get("message", {}) or {}).get("content", []) or []:
@@ -639,6 +785,7 @@ _DIFF_ACTION_PREFIXES: tuple[str, ...] = (
     "diff --external-target",
     "diff --command-evidence",
     "diff --desktop-action-evidence",
+    "diff --external-action-evidence",
 )
 
 
@@ -783,6 +930,20 @@ _SPAWN_META_RE = re.compile(
     rf"(?:a|an|the|ein|eine|einen|der|die|das)?\s*{_ROUTING_NOUN}\b",
     re.IGNORECASE,
 )
+# Removing a routing phrase can strand the polite request prefix and its
+# article when a polite request wraps a topic-only spawn instruction.
+# The worker then receives an ungrammatical topic fragment and asks
+# what noun is missing instead of doing the task. This cleanup runs only after
+# a spawn phrase was actually removed, so ordinary user requests are untouched.
+_ORPHANED_SPAWN_REQUEST_PREFIX_RE = re.compile(
+    r"^\s*(?:"
+    r"(?:can|could|would)\s+you(?:\s+please)?(?:\s+(?:me|us))?|"
+    r"(?:kannst|koenntest|wuerdest)\s+du(?:\s+mir)?(?:\s+bitte)?|"  # i18n-allow
+    r"bitte|"
+    r"(?:puedes|podrias)\s+(?:por\s+favor\s+)?(?:hacerme|hacernos)?"  # i18n-allow
+    r")\s+(?:(?:a|an|the|ein|eine|einen|einem|einer|un|una)\s+)?",  # i18n-allow
+    re.IGNORECASE,
+)
 _MAKE_RESEARCH_IDIOM_RE = re.compile(
     r"\bmake\s+(?:me|us)\s+(?:(?:a|an)\s+)?"
     r"(?:(?:deep|detailed|comprehensive|thorough|full)\s+){0,3}"
@@ -794,7 +955,10 @@ _MAKE_RESEARCH_IDIOM_RE = re.compile(
 
 def _strip_spawn_meta(text: str) -> str:
     """Remove spawn/routing meta-clauses so the classifier sees the real task."""
-    return _SPAWN_META_RE.sub(" ", text)
+    stripped, replacements = _SPAWN_META_RE.subn(" ", text)
+    if replacements:
+        stripped = _ORPHANED_SPAWN_REQUEST_PREFIX_RE.sub("", stripped, count=1)
+    return stripped
 
 
 def strip_spawn_meta(text: str) -> str:
@@ -878,6 +1042,42 @@ def is_informational_request(prompt: str) -> bool:
     return bool(_INFO_TRIGGER_RE.search(body))
 
 
+# A worker clarification is not a completed informational deliverable. Match
+# only an explicit clarification lead near the beginning; substantive answers
+# that merely end with "let me know" remain valid. German and Spanish entries
+# are literal runtime-output classifiers (the multilingual product surface).
+_CLARIFICATION_LEAD_RE = re.compile(
+    r"\b(?:"
+    r"(?:quick|brief|short)\s+(?:clarifying\s+)?question|"
+    r"before\s+i\s+(?:start|continue|proceed).{0,80}\b(?:need|clarify|which|what)|"
+    r"could\s+you\s+(?:please\s+)?clarify|what\s+exactly\s+(?:do\s+you|should\s+i)|"
+    r"kurze\s+r(?:ue|ü)ckfrage|"  # i18n-allow: German runtime-output classifier
+    r"bevor\s+ich\s+(?:anfange|starte|weitermache)"  # i18n-allow
+    r".{0,80}\b(?:brauche|welch|was)|"  # i18n-allow
+    r"was\s+genau\s+(?:soll|moechtest|möchtest|willst)\s+du|"  # i18n-allow
+    r"(?:pregunta|duda)\s+(?:rápida|breve)\s+de\s+aclaraci[oó]n|"  # i18n-allow
+    r"antes\s+de\s+(?:empezar|continuar).{0,80}\b(?:necesito|aclarar|cu[aá]l|qu[eé])"
+    r")\b",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def is_clarification_only_answer(text: str) -> bool:
+    """Return True when the worker answered with a request for missing input.
+
+    Markdown workers often repeat the task as a heading before the actual
+    answer. Inspect only the first few meaningful lines so an incidental
+    clarification note after a substantive deliverable cannot invalidate it.
+    """
+    meaningful = [
+        re.sub(r"^\s*(?:#{1,6}|[-*+])\s*", "", line).strip()
+        for line in str(text or "").splitlines()
+        if line.strip()
+    ]
+    probe = " ".join(meaningful[:5])[:1_000]
+    return bool(probe and _CLARIFICATION_LEAD_RE.search(probe))
+
+
 def readonly_answer(
     diff_text: str, stream_text: str, *, prompt: str | None = None
 ) -> str | None:
@@ -911,6 +1111,8 @@ def readonly_answer(
         return None
     answer = ev.final_answer.strip()
     if len(answer) < 3:
+        return None
+    if is_clarification_only_answer(answer):
         return None
     return answer
 
@@ -993,7 +1195,11 @@ def informational_file_answer(diff_text: str, *, prompt: str) -> str | None:
     if not _is_prose_only_diff(diff_text):
         return None
     content = _added_document_text(diff_text)
-    if len(content) < _MIN_PROSE_CHARS or _looks_like_stub_document(content):
+    if (
+        len(content) < _MIN_PROSE_CHARS
+        or _looks_like_stub_document(content)
+        or is_clarification_only_answer(content)
+    ):
         return None
     return content
 
@@ -1104,8 +1310,10 @@ __all__ = [
     "extract_stream_evidence",
     "extract_verified_commands",
     "extract_verified_desktop_actions",
+    "extract_verified_external_actions",
     "extract_write_targets",
     "informational_file_answer",
+    "is_clarification_only_answer",
     "is_informational_request",
     "readonly_answer",
     "strip_spawn_meta",

@@ -330,6 +330,8 @@ function SubagentModelCard({
         <BrainModelSelector
           providerId={catalogProvider}
           currentModel={status.sub_model_override ?? ""}
+          healthSection="subagents"
+          healthActive
           onSave={async (model) => {
             const r = await saveSubagentModel(model);
             window.dispatchEvent(new Event("jarvis:agent-switched"));
@@ -1128,6 +1130,11 @@ function useSubagentActivate(
       return;
     }
     setActivating(true);
+    window.dispatchEvent(
+      new CustomEvent("jarvis:provider-selection-pending", {
+        detail: { section: "subagents", provider: row.jarvis },
+      }),
+    );
     try {
       const result = await switchSubagentProvider(row.jarvis);
       const note = result.restart_required ? " (active from next restart)" : "";
@@ -1135,6 +1142,11 @@ function useSubagentActivate(
       window.dispatchEvent(new CustomEvent("jarvis:agent-switched"));
       await onSwitched();
     } catch (e) {
+      window.dispatchEvent(
+        new CustomEvent("jarvis:provider-switch-failed", {
+          detail: { section: "subagents", provider: row.jarvis },
+        }),
+      );
       pushToast("error", (e as Error).message);
     } finally {
       setActivating(false);

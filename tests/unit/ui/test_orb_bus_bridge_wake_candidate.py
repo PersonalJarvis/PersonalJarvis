@@ -33,7 +33,11 @@ except ModuleNotFoundError:  # pragma: no cover
         allow_module_level=True,
     )
 
-from jarvis.core.events import WakeCandidateDetected, WakeWordDetected
+from jarvis.core.events import (  # noqa: E402
+    VoiceSessionStarted,
+    WakeCandidateDetected,
+    WakeWordDetected,
+)
 
 
 class _FakeBus:
@@ -118,3 +122,73 @@ async def test_candidate_does_not_suppress_real_wake_greet() -> None:
 
     assert ("show", "listen") in orb.calls
     assert ("play_animation", "wave") in orb.calls
+
+
+async def test_confirmed_preview_retracts_when_no_session_starts() -> None:
+    """A gate drop after WakeWordDetected must restore the pre-wake state."""
+    orb = _FakeOrb()
+    bridge = _bridge(orb, hide_on_idle=True)
+
+    await bridge._on_wake_candidate(WakeCandidateDetected(active=True))  # noqa: SLF001
+    await bridge._on_wake_word_detected(WakeWordDetected(keyword="jarvis"))  # noqa: SLF001
+    orb.calls.clear()
+    await bridge._on_wake_candidate(WakeCandidateDetected(active=False))  # noqa: SLF001
+
+    assert ("hide", None) in orb.calls
+    assert bridge._last_state == "IDLE"  # noqa: SLF001
+
+
+async def test_retraction_does_not_hide_an_authoritative_session() -> None:
+    orb = _FakeOrb()
+    bridge = _bridge(orb, hide_on_idle=True)
+
+    await bridge._on_wake_candidate(WakeCandidateDetected(active=True))  # noqa: SLF001
+    await bridge._on_session_started(  # noqa: SLF001
+        VoiceSessionStarted(session_id="live")
+    )
+    orb.calls.clear()
+    await bridge._on_wake_candidate(WakeCandidateDetected(active=False))  # noqa: SLF001
+
+    assert ("hide", None) not in orb.calls
+    assert bridge._last_state == "LISTENING"  # noqa: SLF001
+
+
+async def test_candidate_forwards_wake_mic_level_before_session_state() -> None:
+    """A visible candidate bar must react to the mic that revealed it."""
+    orb = _FakeOrb()
+    bridge = _bridge(orb, hide_on_idle=True)
+    # A prior TTS/earcon level must not keep ownership of a newly visible
+    # input affordance for the old 500 ms recency window.
+    bridge._last_tts_level_t = float("inf")  # noqa: SLF001
+
+    await bridge._on_wake_candidate(WakeCandidateDetected(active=True))  # noqa: SLF001
+    orb.calls.clear()
+    bridge._on_mic_level(0.5)  # noqa: SLF001
+
+    assert ("set_level", 0.5) in orb.calls
+
+
+async def test_rejected_candidate_stops_forwarding_wake_mic_level() -> None:
+    orb = _FakeOrb()
+    bridge = _bridge(orb, hide_on_idle=True)
+
+    await bridge._on_wake_candidate(WakeCandidateDetected(active=True))  # noqa: SLF001
+    await bridge._on_wake_candidate(WakeCandidateDetected(active=False))  # noqa: SLF001
+    orb.calls.clear()
+    bridge._on_mic_level(0.5)  # noqa: SLF001
+
+    assert ("set_level", 0.5) not in orb.calls
+
+
+@pytest.mark.parametrize("state", ["THINKING", "SPEAKING"])
+async def test_stale_candidate_never_overrides_active_output_bars(state: str) -> None:
+    """A defensive stale latch must not clobber thinking or TTS animation."""
+    orb = _FakeOrb()
+    bridge = _bridge(orb, hide_on_idle=True)
+    bridge._wake_candidate_active = True  # noqa: SLF001
+    bridge._last_state = state  # noqa: SLF001
+    bridge._last_tts_level_t = 0.0  # noqa: SLF001
+
+    bridge._on_mic_level(0.5)  # noqa: SLF001
+
+    assert ("set_level", 0.5) not in orb.calls

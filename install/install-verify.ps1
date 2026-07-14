@@ -204,19 +204,23 @@ function Get-PubkeyFingerprint([string]$PemText) {
 # historical Harvis typo crept in. (Source stays ASCII outside the banner:
 # this file is served BOM-less and Windows PowerShell reads it as cp1252.)
 try { [Console]::OutputEncoding = [System.Text.Encoding]::UTF8 } catch {}
-${_g} = "$([char]27)[38;2;231;196;110m"
-${_d} = "$([char]27)[38;2;140;140;140m"
+# Brand palette (docs/BRAND.md): forged-gold gradient, matching install.ps1.
+${_gh} = "$([char]27)[38;2;255;229;82m"
+${_g} = "$([char]27)[38;2;255;214;10m"
+${_gd} = "$([char]27)[38;2;184;150;10m"
+${_d} = "$([char]27)[38;2;143;143;143m"
 ${_b} = "$([char]27)[1m"
 ${_r} = "$([char]27)[0m"
 $banner = @"
 
-${_g}   P  E  R  S  O  N  A  L
-     ██╗ █████╗ ██████╗ ██╗   ██╗██╗███████╗
-     ██║██╔══██╗██╔══██╗██║   ██║██║██╔════╝
-     ██║███████║██████╔╝██║   ██║██║███████╗
-██   ██║██╔══██║██╔══██╗╚██╗ ██╔╝██║╚════██║
-╚█████╔╝██║  ██║██║  ██║ ╚████╔╝ ██║███████║
- ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═╝  ╚═══╝  ╚═╝╚══════╝${_r}
+${_gh}     ██╗ █████╗ ██████╗ ██╗   ██╗██╗███████╗${_r}
+${_gh}     ██║██╔══██╗██╔══██╗██║   ██║██║██╔════╝${_r}
+${_g}     ██║███████║██████╔╝██║   ██║██║███████╗${_r}
+${_g}██   ██║██╔══██║██╔══██╗╚██╗ ██╔╝██║╚════██║${_r}
+${_gd}╚█████╔╝██║  ██║██║  ██║ ╚████╔╝ ██║███████║${_r}
+${_gd} ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═╝  ╚═══╝  ╚═╝╚══════╝${_r}
+
+${_d}     P E R S O N A L  J A R V I S   ·   talk to your computer${_r}
 
 ${_g}  ●${_r} ${_b}Verifying installer · Windows${_r}
 ${_d}  Sigstore + offline ceremony + SLSA L3 + ML-DSA-65 (Wave 3)${_r}
@@ -257,14 +261,24 @@ try {
     # --------------------------------------------------------------- platform
     Write-Host ''
     Write-Host '[1/13] Detecting platform...' -ForegroundColor Yellow
-    # Windows-only verifier; we still log architecture for diagnostics and to
-    # make a future arm64 bump explicit.
-    $arch = $env:PROCESSOR_ARCHITECTURE
-    if ($arch -ne 'AMD64') {
-        Write-Host "  unsupported platform: Windows/$arch (this verifier targets Windows/AMD64)" -ForegroundColor Red
+    # --- verifier-architecture begin
+    # Windows 11 on Arm runs unmodified x64 user-mode applications through its
+    # built-in emulation. ARM64 therefore uses the exact same SHA-pinned x64
+    # verifier binaries as AMD64; no alternate download or trust pin is
+    # accepted. Every other architecture remains fail-closed.
+    $arch = ([string]$env:PROCESSOR_ARCHITECTURE).Trim().ToUpperInvariant()
+    $supportedArchitectures = @('AMD64', 'ARM64')
+    if ($arch -notin $supportedArchitectures) {
+        $reportedArch = if ($arch) { $arch } else { '<unknown>' }
+        Write-Host "  unsupported platform: Windows/$reportedArch (expected AMD64 or ARM64)" -ForegroundColor Red
         exit 1
     }
-    Write-Host "      Platform: Windows/$arch -> cosign-windows-amd64.exe + slsa-verifier-windows-amd64.exe" -ForegroundColor Green
+    if ($arch -eq 'ARM64') {
+        Write-Host '      Platform: Windows/ARM64 -> SHA-pinned cosign-windows-amd64.exe + slsa-verifier-windows-amd64.exe via built-in Windows 11 x64 emulation' -ForegroundColor Green
+    } else {
+        Write-Host '      Platform: Windows/AMD64 -> SHA-pinned cosign-windows-amd64.exe + slsa-verifier-windows-amd64.exe' -ForegroundColor Green
+    }
+    # --- verifier-architecture end
 
     # --------------------------------------------------------------- cosign
     Write-Host ''

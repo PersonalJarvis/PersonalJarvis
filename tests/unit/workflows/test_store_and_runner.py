@@ -25,7 +25,9 @@ from jarvis.workflows import (
 from jarvis.workflows.schema import (
     BrainPromptStep,
     CronTrigger,
+    HarnessDispatchStep,
     ManualTrigger,
+    ShellCmdStep,
     SpeakStep,
     WorkflowDef,
 )
@@ -105,6 +107,39 @@ async def test_seed_is_idempotent(store: WorkflowStore) -> None:
     assert first == len(SEED_WORKFLOWS)
     second = await ensure_seed_workflows(store)
     assert second == 0
+
+
+async def test_code_review_seed_has_no_phantom_harness(store: WorkflowStore) -> None:
+    from jarvis.workflows.seed import SEED_WORKFLOWS
+
+    code_review = next(wf for wf in SEED_WORKFLOWS if wf.name == "Code Review")
+
+    assert isinstance(code_review.steps[0], ShellCmdStep)
+    assert not any(isinstance(step, HarnessDispatchStep) for step in code_review.steps)
+
+
+async def test_legacy_openclaw_seed_is_migrated(store: WorkflowStore) -> None:
+    from jarvis.workflows.seed import SEED_WORKFLOWS
+
+    replacement = next(wf for wf in SEED_WORKFLOWS if wf.name == "Code Review")
+    legacy = replacement.model_copy(update={
+        "steps": (
+            HarnessDispatchStep(
+                label="Legacy dispatch",
+                harness="openclaw",
+                prompt="Review the pending changes in this repository.",
+            ),
+        ),
+        "tags": ("demo", "harness", "git"),
+    })
+    await store.upsert_workflow(legacy)
+
+    added = await ensure_seed_workflows(store)
+    migrated = await store.get_def(str(replacement.id))
+
+    assert added == len(SEED_WORKFLOWS) - 1
+    assert migrated is not None
+    assert isinstance(migrated.steps[0], ShellCmdStep)
 
 
 async def test_runs_crud(store: WorkflowStore) -> None:

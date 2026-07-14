@@ -14,7 +14,9 @@ router = APIRouter(prefix="/api/tools", tags=["tools"])
 
 def _tool_to_dict(name: str, tool: Any) -> dict[str, Any]:
     source = "native"
-    if "/" in name:
+    if name.startswith("cli_"):
+        source = "cli"
+    elif "/" in name or name.startswith("mcp__"):
         # MCPToolAdapter.name = "<server>/<tool>"
         source = "mcp"
 
@@ -35,12 +37,24 @@ def _tool_to_dict(name: str, tool: Any) -> dict[str, Any]:
 
 @router.get("")
 async def list_tools(request: Request) -> dict[str, Any]:
-    registry = getattr(request.app.state, "tool_registry", None)
+    # ``tool_registry`` is only the user-added MCP registry. The effective
+    # BrainManager registry also contains native, Marketplace, and connected CLI
+    # tools and is replaced atomically on live refresh. Prefer that authoritative
+    # per-turn surface so this endpoint can answer "which tools are available?"
+    # honestly; retain the MCP registry as an early-boot fallback.
+    brain = getattr(request.app.state, "brain", None)
+    registry = getattr(brain, "_tools", None)
     if registry is None or not hasattr(registry, "items"):
-        return {"tools": [], "total": 0, "by_source": {"mcp": 0, "native": 0}}
+        registry = getattr(request.app.state, "tool_registry", None)
+    if registry is None or not hasattr(registry, "items"):
+        return {
+            "tools": [],
+            "total": 0,
+            "by_source": {"mcp": 0, "cli": 0, "native": 0},
+        }
 
     tools = [_tool_to_dict(name, tool) for name, tool in registry.items()]
-    by_source: dict[str, int] = {"mcp": 0, "native": 0}
+    by_source: dict[str, int] = {"mcp": 0, "cli": 0, "native": 0}
     for t in tools:
         by_source[t["source"]] = by_source.get(t["source"], 0) + 1
 

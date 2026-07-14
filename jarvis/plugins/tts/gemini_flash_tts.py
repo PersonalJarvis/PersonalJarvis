@@ -67,19 +67,41 @@ def _parse_quota_cap(error_msg: str) -> str | None:
 SAPI5_SAMPLE_RATE = 22_050
 _SAPI5_FORMAT_22K_16MONO = 22  # SPSF_22kHz16BitMono
 
-# 30 prebuilt voices per the launch blog — we whitelist a curated handful.
-# Voices are language-agnostic; `language_code` or inline text determines the language.
-# Default mode: deep, formal, male voices preferred.
+# Complete 30-voice prebuilt roster from the Gemini speech-generation guide
+# (verified 2026-07-10). Voices are language-agnostic; ``language_code`` or the
+# inline text determines the language. Charon remains first/default to preserve
+# the established calm, formal Jarvis voice.
 DEFAULT_VOICES: tuple[str, ...] = (
     "Charon",     # default — informative, calm, formal tone
-    "Orus",       # firm, authoritative — alternative 1
-    "Iapetus",    # clear, precise — alternative 2
-    "Rasalgethi", # informative, warmer
-    "Algenib",    # gravelly, deeper
-    "Algieba",    # neutral, previous default
-    "Kore",       # warm, female
-    "Fenrir",     # deep, male (excitable)
-    "Aoede",      # lyrical, female
+    "Kore",
+    "Orus",
+    "Iapetus",
+    "Rasalgethi",
+    "Algenib",
+    "Algieba",
+    "Fenrir",
+    "Aoede",
+    "Zephyr",
+    "Puck",
+    "Leda",
+    "Callirrhoe",
+    "Autonoe",
+    "Enceladus",
+    "Umbriel",
+    "Despina",
+    "Erinome",
+    "Laomedeia",
+    "Achernar",
+    "Alnilam",
+    "Schedar",
+    "Gacrux",
+    "Pulcherrima",
+    "Achird",
+    "Zubenelgenubi",
+    "Vindemiatrix",
+    "Sadachbia",
+    "Sadaltager",
+    "Sulafat",
 )
 
 # Sentence splitter: hooks onto .!?… — with a lookbehind so abbreviations
@@ -631,7 +653,7 @@ class GeminiFlashTTS:
         return part.inline_data.data
 
     def list_voices(self, language: str | None = None) -> list[str]:
-        """30 prebuilt voices are language-agnostic — we return our whitelist."""
+        """Return all 30 language-agnostic prebuilt Gemini voices."""
         return list(DEFAULT_VOICES)
 
 

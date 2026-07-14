@@ -122,6 +122,9 @@ class WebServer:
         # unchanged. See docs/superpowers/specs/2026-05-11-pre-thinking-ack-
         # flash-brain-design.md §4.
         self.bus.subscribe(AnnouncementRequested, self._forward_preamble_to_chat)
+        from jarvis.missions.tool_approvals import MissionToolApprovalCoordinator
+
+        self._mission_tool_approvals = MissionToolApprovalCoordinator(self.bus)
         self.app: FastAPI = self._build_app()
 
     async def _forward_preamble_to_chat(self, event: AnnouncementRequested) -> None:
@@ -219,6 +222,7 @@ class WebServer:
         from jarvis.runs.routes import router as runs_router
         from jarvis.runs.runs_ws import router as runs_ws_router
 
+        from .antigravity_routes import router as antigravity_router
         from .board_routes import (
             board_router as board_meta_router,
         )
@@ -226,13 +230,18 @@ class WebServer:
             router as board_router,
         )
         from .chats_routes import router as chats_router
+        from .claude_routes import router as claude_router
         from .cli_routes import router as cli_router
-        from .drop_routes import router as drop_router
+        from .commands_routes import router as commands_router
         from .contacts_routes import router as contacts_router
         from .control_routes import router as control_router
+        from .diagnostics_routes import router as diagnostics_router
         from .dictionary_routes import router as dictionary_router
         from .docs_routes import router as docs_router
+        from .downloads_routes import router as downloads_router
+        from .drop_routes import router as drop_router
         from .federation_proxy_routes import router as federation_proxy_router
+        from .feedback_routes import router as feedback_router
         from .friends_routes import router as friends_router
         from .frontier_routes import router as frontier_router
         from .marketplace_routes import router as marketplace_router
@@ -246,11 +255,9 @@ class WebServer:
         from .missions_ws_routes import (
             router as missions_ws_router,
         )
-        from .downloads_routes import router as downloads_router
+        from .onboarding_routes import router as onboarding_router
         from .outputs_routes import router as outputs_router
         from .preview_routes import router as preview_router
-        from .antigravity_routes import router as antigravity_router
-        from .claude_routes import router as claude_router
         from .profile_routes import router as profile_router
         from .provider_routes import router as provider_router
         from .review_routes import router as review_router
@@ -258,13 +265,12 @@ class WebServer:
         from .sessions_routes import router as sessions_router
         from .settings_routes import router as settings_router
         from .setup_routes import router as setup_router
-        from .onboarding_routes import router as onboarding_router
         from .skills_routes import router as skills_router
-        from .feedback_routes import router as feedback_router
         from .socials_routes import router as socials_router
         from .sub_agents_routes import router as sub_agents_router
         from .tasks_routes import router as tasks_router
         from .telephony_routes import router as telephony_router
+        from .tool_model_routes import router as tool_model_router
         from .tools_routes import router as tools_router
         from .update_routes import router as update_router
         from .wiki_routes import router as wiki_router
@@ -281,6 +287,10 @@ class WebServer:
             conductor_router = None
         app.include_router(mcp_router)
         app.include_router(tools_router)
+        app.include_router(tool_model_router)
+        # Event-loop diagnostics (read-only) — names the owner of an AP-20
+        # cancellation busy-loop from inside the loop; see diagnostics_routes.
+        app.include_router(diagnostics_router)
         app.include_router(provider_router)
         app.include_router(antigravity_router)
         app.include_router(claude_router)
@@ -300,6 +310,9 @@ class WebServer:
         app.include_router(skills_router)
         app.include_router(docs_router)
         app.include_router(cli_router)
+        # Command Registry — the one machine-readable catalog of app commands
+        # (consumed by the app-command brain tool, the UI, CLI, and docs gen).
+        app.include_router(commands_router)
         app.include_router(friends_router)
         app.include_router(marketplace_router)
         app.state.friend_registry = None
@@ -388,6 +401,7 @@ class WebServer:
         # so the REST routes return 503 instead of crashing.
         app.state.mission_manager = None
         app.state.kontrollierer = None
+        app.state.mission_tool_approvals = self._mission_tool_approvals
 
         # Board aggregator (personal-mastery dashboard) — the aggregator is
         # run as a background task in start(); the store is read-only and
@@ -436,6 +450,13 @@ class WebServer:
         self.bus.subscribe(VoiceBootStatus, _track_voice_ready)
 
         self._register_static_or_spa(app)
+
+        # Publish the live app for in-process consumers: the app-command brain
+        # tool executes Command-Registry commands through it via ASGI transport
+        # (same routes + validation as the UI, no TCP).
+        from jarvis.core import runtime_refs
+
+        runtime_refs.set_web_app(app)
 
         return app
 
@@ -1737,11 +1758,10 @@ class WebServer:
                 logger.debug("wiki health.record_bootstrap(False) failed", exc_info=True)
         _boot_mark("wiki_integration")
 
-        # Build the FTS5 search index once if it is empty so a pre-existing
-        # or restored vault returns search hits immediately (idempotent,
-        # guarded — never blocks boot).
+        # Reconcile the derived FTS5 index after readiness. This repairs stale
+        # rows after a vault switch without extending the startup critical path.
         try:
-            self._init_wiki_boot_index()
+            self._init_wiki_boot_index(background=True)
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning(
                 "WikiBootIndex-Init failed — vault search may return no hits "
@@ -2239,25 +2259,18 @@ class WebServer:
         except Exception:  # noqa: BLE001 — health recording must never break boot
             logger.debug("wiki health.record_bootstrap(True) failed", exc_info=True)
 
-    def _init_wiki_boot_index(self) -> None:
-        """One-shot FTS5 index build at boot for a pre-existing/restored vault.
+    def _init_wiki_boot_index(self, *, background: bool = False) -> None:
+        """Rebuild the derived FTS view against the active vault.
 
-        ``wiki_fts`` is only populated incrementally by
-        ``AtomicWriter.upsert_page`` (on write) and the manual ``reindex``
-        CLI. A vault that already has pages on disk at first boot — a fresh
-        clone, a restored backup, or a hand-edited Obsidian vault — therefore
-        returns zero search hits until something happens to rewrite a page.
-
-        This runs ``index_vault`` exactly once when the FTS table is empty, so
-        ``wiki-recall`` / ``WikiContextInjector`` return hits immediately. It
-        is fully idempotent (``index_vault`` upserts by path) and guarded so a
-        failure can never block boot. It is **not** on the voice critical path
-        (AP-9): it runs synchronously during ``start()`` before the speech
-        pipeline accepts a turn.
+        Production uses a daemon thread after app readiness (AP-26). Tests and
+        explicit callers may keep the synchronous default for deterministic
+        verification.
         """
         import sqlite3
+        import threading
 
-        from jarvis.memory.wiki.fts_index import ensure_schema, index_vault
+        from jarvis.memory.wiki.db_path import resolve_wiki_db_path
+        from jarvis.memory.wiki.fts_index import rebuild_index
 
         wiki_cfg = self.cfg.wiki_integration
         if not wiki_cfg.enabled:
@@ -2270,28 +2283,44 @@ class WebServer:
             logger.info("wiki_boot_index: vault missing — skipping ({})", vault_root)
             return
 
-        data_dir = Path(self.cfg.memory.data_dir)
-        db_path = data_dir / "jarvis.db"
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path = resolve_wiki_db_path(self.cfg.memory.data_dir)
 
-        conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        try:
-            ensure_schema(conn)
-            row_count = conn.execute("SELECT COUNT(*) FROM wiki_fts").fetchone()[0]
-            if row_count:
+        def _reconcile() -> None:
+            db_path.parent.mkdir(parents=True, exist_ok=True)
+            conn = sqlite3.connect(str(db_path), check_same_thread=False)
+            try:
+                indexed = rebuild_index(vault_root, conn)
                 logger.info(
-                    "wiki_boot_index: FTS index already populated ({} rows) — skipping",
-                    row_count,
+                    "wiki_boot_index: reconciled {} page(s) from {} into {}",
+                    indexed,
+                    vault_root,
+                    db_path,
                 )
-                return
-            indexed = index_vault(vault_root, conn)
-            logger.info(
-                "wiki_boot_index: built FTS index for {} page(s) from {}",
-                indexed,
-                vault_root,
+            except Exception as exc:  # noqa: BLE001
+                logger.opt(exception=exc).warning(
+                    "wiki_boot_index: background reconciliation failed"
+                )
+                try:
+                    from jarvis.memory.wiki.health import health as _wiki_health
+
+                    _wiki_health.record_chain_failure(
+                        f"wiki index reconciliation failed: {exc}"
+                    )
+                except Exception:  # noqa: BLE001
+                    logger.debug("wiki index health recording failed", exc_info=True)
+            finally:
+                conn.close()
+
+        if background:
+            thread = threading.Thread(
+                target=_reconcile,
+                name="jarvis-wiki-index-reconcile",
+                daemon=True,
             )
-        finally:
-            conn.close()
+            thread.start()
+            self._wiki_index_thread = thread
+            return
+        _reconcile()
 
     def _init_wiki_watcher(self) -> None:
         """Phase B3 — start the WikiWatcher for desktop live-reload.
@@ -2301,6 +2330,7 @@ class WebServer:
         the desktop app must boot when the vault is empty or watchdog
         cannot start an observer.
         """
+        from jarvis.memory.wiki.db_path import resolve_wiki_db_path
         from jarvis.memory.wiki.vault_root import resolve_vault_root
         from jarvis.memory.wiki.watcher import WikiWatcher
 
@@ -2310,8 +2340,13 @@ class WebServer:
             return
 
         vault_root = resolve_vault_root(wiki_cfg.vault_root).path
+        db_path = resolve_wiki_db_path(self.cfg.memory.data_dir)
 
-        watcher = WikiWatcher(vault_root=vault_root, bus=self.bus)
+        watcher = WikiWatcher(
+            vault_root=vault_root,
+            bus=self.bus,
+            db_path=db_path,
+        )
         try:
             started = watcher.start()
         except FileNotFoundError as exc:
@@ -2699,6 +2734,13 @@ class WebServer:
                 logger.opt(exception=exc).warning(
                     "In-flight mission finalize on shutdown failed"
                 )
+
+        try:
+            await self._mission_tool_approvals.deny_all(reason="app_shutdown")
+        except Exception as exc:  # noqa: BLE001 - shutdown remains best-effort
+            logger.opt(exception=exc).warning(
+                "Pending mission tool approval cleanup failed"
+            )
 
         mission_manager = getattr(self.app.state, "mission_manager", None)
         if mission_manager is not None:

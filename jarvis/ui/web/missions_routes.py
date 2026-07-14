@@ -3,6 +3,7 @@
 Endpoints:
 - ``GET    /api/missions``                 → list of all missions (filterable).
 - ``GET    /api/missions/{id}``            → mission detail + events + verdicts.
+- ``GET    /api/missions/{id}/result``     → signed summary + deliverable contents.
 - ``POST   /api/missions/dispatch``        → create a new mission + start the run.
 - ``POST   /api/missions/{id}/cancel``     → best-effort state transition.
 - ``POST   /api/missions/kill/{worker}``   → worker stub (full Job Object logic
@@ -17,18 +18,31 @@ Pattern like ``tasks_routes.py``:
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any, Literal
+from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel
 
-from jarvis.missions.events import EventEnvelope, MissionCancelled, now_ms
+from jarvis.missions.events import (
+    EventEnvelope,
+    MissionApproved,
+    MissionCancelled,
+    MissionFailed,
+    MissionTimedOut,
+    now_ms,
+)
+from jarvis.missions.isolation.worktree import resolve_outputs_root
 from jarvis.missions.manager import MissionManager
+from jarvis.missions.result_reader import read_mission_artifacts
 from jarvis.missions.state_machine import (
     IllegalStateTransition,
     MissionState,
     is_terminal,
 )
+from jarvis.missions.stream_evidence import clean_request_body
+from jarvis.missions.tool_approvals import MissionToolApprovalCoordinator
 from jarvis.ui.web.missions_worker import extract_worker_missions
 
 logger = logging.getLogger(__name__)
@@ -61,6 +75,33 @@ def _optional_kontrollierer(request: Request) -> Any | None:
     return getattr(request.app.state, "kontrollierer", None)
 
 
+def _require_tool_approvals(request: Request) -> MissionToolApprovalCoordinator:
+    coordinator = getattr(request.app.state, "mission_tool_approvals", None)
+    if coordinator is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Mission tool approvals are not available",
+        )
+    return coordinator
+
+
+def _mission_outputs_root(request: Request) -> Path:
+    """Return the configured persistent Jarvis-Agent output directory."""
+    configured = getattr(request.app.state, "outputs_root", None)
+    if configured is not None:
+        return Path(configured)
+    repo_root = Path(__file__).resolve().parent.parent.parent.parent
+    return resolve_outputs_root(repo_root)
+
+
+def _prompt_preview(prompt: str, *, max_chars: int = 1_000) -> str:
+    """Strip the worker quality directive and bound list-response payloads."""
+    cleaned = clean_request_body(prompt or "").strip()
+    if len(cleaned) <= max_chars:
+        return cleaned
+    return f"{cleaned[:max_chars].rstrip()} …"
+
+
 # ---------------------------------------------------------------------------
 # Body-Models
 # ---------------------------------------------------------------------------
@@ -82,6 +123,12 @@ class RerunBody(BaseModel):
     """
 
     confirmed: bool = False
+
+
+class DenyToolApprovalBody(BaseModel):
+    """Optional audit reason for denying one paused supervisor tool call."""
+
+    reason: str = "user_denied"
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +189,7 @@ async def list_missions(
     missions = [
         {
             "id": r[0],
-            "prompt": r[1],
+            "prompt": _prompt_preview(r[1]),
             "state": r[2],
             "language": r[3],
             "created_ms": int(r[4]),
@@ -211,12 +258,136 @@ async def get_mission(mission_id: str, request: Request) -> dict[str, Any]:
     }
 
 
+@router.get("/{mission_id}/result")
+async def get_mission_result(
+    mission_id: str,
+    request: Request,
+) -> dict[str, Any]:
+    """Return one mission's signed outcome and bounded deliverable contents."""
+    mgr = _require_manager(request)
+    view = await mgr.store.get_mission_view(mission_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="Mission not found")
+    prompt, state, language, _iteration, _cost_usd = view
+    envelopes = await mgr.store.events_for_mission(mission_id)
+
+    terminal: MissionApproved | MissionFailed | MissionCancelled | MissionTimedOut | None = None
+    for envelope in reversed(envelopes):
+        if isinstance(
+            envelope.payload,
+            (MissionApproved, MissionFailed, MissionCancelled, MissionTimedOut),
+        ):
+            terminal = envelope.payload
+            break
+
+    summary: str | None = None
+    result_uri: str | None = None
+    reason: str | None = None
+    if isinstance(terminal, MissionApproved):
+        summary = terminal.summary_de if language == "de" else terminal.summary_en
+        result_uri = terminal.result_uri
+    elif isinstance(terminal, (MissionFailed, MissionCancelled)):
+        reason = terminal.reason
+    elif isinstance(terminal, MissionTimedOut):
+        reason = "mission_timed_out"
+
+    artifacts, truncated = read_mission_artifacts(
+        _mission_outputs_root(request), mission_id
+    )
+    return {
+        "mission_id": mission_id,
+        "state": state,
+        "language": language,
+        "prompt": _prompt_preview(prompt, max_chars=4_000),
+        "terminal_event": terminal.event_type if terminal is not None else None,
+        "summary": summary,
+        "result_uri": result_uri,
+        "reason": reason,
+        "artifacts": artifacts,
+        "artifact_count": len(artifacts),
+        "truncated": truncated,
+    }
+
+
+@router.get("/{mission_id}/tool-approvals")
+async def list_mission_tool_approvals(
+    mission_id: str,
+    request: Request,
+) -> dict[str, Any]:
+    """List secret-free supervisor tool calls awaiting a user decision."""
+    mgr = _require_manager(request)
+    if await mgr.mission(mission_id) is None:
+        raise HTTPException(status_code=404, detail="Mission not found")
+    pending = await _require_tool_approvals(request).list_pending(mission_id)
+    return {
+        "mission_id": mission_id,
+        "approvals": [item.to_dict() for item in pending],
+    }
+
+
+@router.post(
+    "/{mission_id}/tool-approvals/{trace_id}/approve",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def approve_mission_tool_call(
+    mission_id: str,
+    trace_id: UUID,
+    request: Request,
+) -> dict[str, Any]:
+    """Approve and resume exactly one paused mission tool call."""
+    pending = await _require_tool_approvals(request).approve(
+        mission_id,
+        trace_id,
+        approved_by="user",
+    )
+    if pending is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Pending mission tool approval not found or expired",
+        )
+    return {
+        "ok": True,
+        "mission_id": mission_id,
+        "trace_id": str(trace_id),
+        "decision": "approved",
+        "tool_name": pending.tool_name,
+    }
+
+
+@router.post("/{mission_id}/tool-approvals/{trace_id}/deny")
+async def deny_mission_tool_call(
+    mission_id: str,
+    trace_id: UUID,
+    body: DenyToolApprovalBody,
+    request: Request,
+) -> dict[str, Any]:
+    """Deny exactly one paused mission tool call without running it."""
+    reason = body.reason.strip() or "user_denied"
+    pending = await _require_tool_approvals(request).deny(
+        mission_id,
+        trace_id,
+        reason=reason[:200],
+    )
+    if pending is None:
+        raise HTTPException(
+            status_code=404,
+            detail="Pending mission tool approval not found or expired",
+        )
+    return {
+        "ok": True,
+        "mission_id": mission_id,
+        "trace_id": str(trace_id),
+        "decision": "denied",
+        "tool_name": pending.tool_name,
+    }
+
+
 # ---------------------------------------------------------------------------
 # Dispatch + Cancel + Kill
 # ---------------------------------------------------------------------------
 
 
-@router.post("/dispatch", status_code=201)
+@router.post("/dispatch", status_code=201, openapi_extra={"x-jarvis-dangerous": True})
 async def dispatch_mission(
     body: DispatchBody,
     request: Request,
@@ -234,6 +405,7 @@ async def dispatch_mission(
     and re-POSTs with ``confirmed: true``.
     """
     from fastapi.responses import JSONResponse
+
     from jarvis.missions.safety.destructive_confirm import is_destructive
 
     # Phase-5 destructive_confirm gate (UI path; the voice path isn't active yet)
@@ -273,7 +445,7 @@ async def dispatch_mission(
     return {"mission_id": mission_id, "started": str(started).lower()}
 
 
-@router.post("/{mission_id}/cancel")
+@router.post("/{mission_id}/cancel", openapi_extra={"x-jarvis-dangerous": True})
 async def cancel_mission(mission_id: str, request: Request) -> dict[str, Any]:
     """Cancel a mission: terminal state transition + kill the in-flight run.
 
@@ -359,7 +531,7 @@ _TERMINAL_STATE_VALUES: frozenset[str] = frozenset(
 )
 
 
-@router.post("/{mission_id}/rerun")
+@router.post("/{mission_id}/rerun", openapi_extra={"x-jarvis-dangerous": True})
 async def rerun_mission(
     mission_id: str,
     body: RerunBody,
@@ -512,7 +684,7 @@ async def rerun_mission(
     }
 
 
-@router.post("/kill/{worker_id}")
+@router.post("/kill/{worker_id}", openapi_extra={"x-jarvis-dangerous": True})
 async def kill_worker(worker_id: str, request: Request) -> dict[str, Any]:
     """Best-effort worker kill (stub for the Phase-4 MVP).
 

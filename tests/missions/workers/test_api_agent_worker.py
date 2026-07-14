@@ -53,16 +53,17 @@ def _reset_family_cooldowns() -> None:
     """The per-family cooldown is a process global — reset around every test."""
     from jarvis.api_family_quota_state import clear_api_family_cooldown
 
-    for prov in ("openai", "openrouter", "gemini", "claude-api"):
+    for prov in ("openai", "openrouter", "gemini", "claude-api", "groq"):
         clear_api_family_cooldown(prov)
     yield
-    for prov in ("openai", "openrouter", "gemini", "claude-api"):
+    for prov in ("openai", "openrouter", "gemini", "claude-api", "groq"):
         clear_api_family_cooldown(prov)
 
 
 def test_supports_api_agent_worker() -> None:
     assert supports_api_agent_worker("openai")
     assert supports_api_agent_worker("openrouter")
+    assert supports_api_agent_worker("groq")
     # grok was removed as a brain/worker provider — no longer an api-agent slug.
     assert not supports_api_agent_worker("grok")
     # claude-api and gemini are now in-process api-agent workers (B3/B4, 2026-06-29)
@@ -102,7 +103,7 @@ async def test_worker_writes_file_and_emits_critic_readable_stream(
     assert kinds[-1] == "ClaudeResult"
     assert "ClaudeAssistantMessage" in kinds and "ClaudeUserMessage" in kinds
     # the worker forwarded the worker tool specs to the brain
-    assert "Write" in fake.seen_tools and "Bash" in fake.seen_tools
+    assert "Write" in fake.seen_tools and "RunCommand" in fake.seen_tools
     # GROUND TRUTH: the file is really on disk
     assert (tmp_path / "out.txt").read_text(encoding="utf-8") == "RESULT"
     # terminal result is success
@@ -111,6 +112,59 @@ async def test_worker_writes_file_and_emits_critic_readable_stream(
     # stream.jsonl is Critic-readable: the write is credited
     stream_text = (log_dir / "stream.jsonl").read_text(encoding="utf-8")
     assert "out.txt" in extract_write_targets(stream_text)
+
+
+@pytest.mark.asyncio
+async def test_worker_run_command_is_async_and_mission_contained(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The provider loop uses direct argv and assigns the process to its job."""
+    (tmp_path / "build.py").write_text("print('build-ok')\n", encoding="utf-8")
+    turns = [
+        [
+            BrainDelta(
+                tool_call={
+                    "id": "run-1",
+                    "name": "RunCommand",
+                    "input": {"program": "python", "args": ["build.py"]},
+                }
+            ),
+            BrainDelta(finish_reason="tool_use"),
+        ],
+        [BrainDelta(content="Build complete."), BrainDelta(finish_reason="end_turn")],
+    ]
+    fake = FakeBrain(turns)
+    _patch_brain(monkeypatch, fake)
+
+    class _Job:
+        def __init__(self) -> None:
+            self.assigned: list[int] = []
+
+        def assign(self, pid: int) -> None:
+            self.assigned.append(pid)
+
+    job = _Job()
+    events = await _drain(
+        ApiAgentWorker("openai"),
+        prompt="run the build",
+        worktree=tmp_path,
+        env={},
+        job=job,
+        worker_id="m::0",
+        log_dir=tmp_path / "_logs",
+        model="gpt-5.5",
+    )
+
+    tool_results = [
+        block
+        for event in events
+        if type(event).__name__ == "ClaudeUserMessage"
+        for block in event.message["content"]
+    ]
+    assert tool_results[0]["content"] == "build-ok"
+    assert tool_results[0]["is_error"] is False
+    assert len(job.assigned) == 1
+    assert events[-1].is_error is False
 
 
 class _RaisingBrain:
@@ -278,6 +332,41 @@ async def test_unknown_provider_returns_clean_error(tmp_path: Path) -> None:
         worker_id="m::0", log_dir=tmp_path / "_logs",
     )
     assert events[-1].is_error is True
+
+
+@pytest.mark.asyncio
+async def test_init_failure_revokes_worker_tool_grant(tmp_path: Path) -> None:
+    """An early provider failure must not leave a live bearer grant behind."""
+
+    class _Binding:
+        tool_specs: tuple[dict[str, object], ...] = ()
+        closed = False
+
+        def close(self) -> None:
+            self.closed = True
+
+    class _Inventory:
+        def __init__(self, binding: _Binding) -> None:
+            self.binding = binding
+
+        def bind_broker(self, **_kwargs):  # noqa: ANN003, ANN201
+            return self.binding
+
+        def report_for(self, _backend: str, **_kwargs):  # noqa: ANN003, ANN201
+            return {}
+
+    binding = _Binding()
+    worker = ApiAgentWorker(
+        "definitely-not-a-provider",
+        capability_inventory=_Inventory(binding),  # type: ignore[arg-type]
+    )
+
+    await _drain(
+        worker, prompt="x", worktree=tmp_path, env={}, job=None,
+        worker_id="m::0", log_dir=tmp_path / "_logs",
+    )
+
+    assert binding.closed is True
 
 
 @pytest.mark.asyncio

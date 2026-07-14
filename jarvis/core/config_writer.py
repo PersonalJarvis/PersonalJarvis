@@ -21,7 +21,9 @@ import logging
 import os
 import stat
 import sys
+import tempfile
 import threading
+import time
 from pathlib import Path
 
 import tomlkit
@@ -32,6 +34,7 @@ from .config import DEFAULT_CONFIG_FILE, PROJECT_ROOT
 log = logging.getLogger(__name__)
 
 _WRITE_LOCK = threading.Lock()
+_ATOMIC_REPLACE_RETRY_DELAYS_S = (0.0, 0.025, 0.05, 0.1, 0.2, 0.4)
 _BOM = "﻿"
 
 # Canonical User-scope ENV var that overrides ``[brain] primary`` at boot
@@ -56,6 +59,9 @@ _SUB_JARVIS_MODEL_ENV = _WORKER_MODEL_ENV        # back-compat alias (pre-rename
 # at boot — the dedicated GLOBAL Computer-Use planner provider, decoupled
 # from ``[brain] primary``. Same shape as ``_WORKER_PROVIDER_ENV``.
 _CU_PROVIDER_ENV = "JARVIS__BRAIN__COMPUTER_USE__PROVIDER"
+# Canonical Tool Model selection. The legacy Computer-Use variable above is
+# still read for old installations, but new Tool Model saves use this key.
+_TOOL_MODEL_PROVIDER_ENV = "JARVIS__BRAIN__TOOL_MODEL__PROVIDER"
 
 # Canonical User-scope ENV vars that override ``[tts] provider`` / ``[stt]
 # provider`` at boot. Both section + key are single words, so
@@ -164,6 +170,82 @@ def set_computer_use_provider(name: str, *, path: Path = DEFAULT_CONFIG_FILE) ->
     _patch_computer_use_provider_toml(path, name)
     # Layers 2 + 3 — best-effort, never raise.
     _sync_computer_use_provider_drift_soll(name)  # i18n-allow
+
+
+def set_tool_model_selection(
+    provider: str,
+    *,
+    model: str | None = None,
+    path: Path = DEFAULT_CONFIG_FILE,
+) -> None:
+    """Persist the canonical global Tool Model selection atomically.
+
+    ``provider="auto"`` enables capability-aware automatic selection. ``model``
+    is a per-provider override; ``None`` leaves the existing override unchanged,
+    while ``""`` explicitly returns to the provider's main model. Legacy
+    ``[brain.computer_use]`` and ``cu_model`` keys are deliberately left intact
+    so old installations remain readable without making them authoritative.
+    """
+    provider = provider.strip()
+    if not provider:
+        raise ValueError("Tool Model provider must not be empty.")
+    if provider == "auto" and model not in (None, ""):
+        raise ValueError("An automatic Tool Model selection cannot pin a model.")
+
+    path = _ensure_writable_config_path(path)
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM) :]
+        doc: TOMLDocument = tomlkit.parse(raw)
+
+        brain = doc.get("brain")
+        if brain is None:
+            brain = tomlkit.table()
+            doc["brain"] = brain
+        tier = brain.get("tool_model")
+        if tier is None:
+            tier = tomlkit.table()
+            brain["tool_model"] = tier
+        tier["provider"] = provider
+
+        if model is not None and provider != "auto":
+            providers = brain.get("providers")
+            if providers is None:
+                providers = tomlkit.table(True)
+                brain["providers"] = providers
+            block = providers.get(provider)
+            if block is None:
+                block = tomlkit.table()
+                providers[provider] = block
+            block["tool_model"] = model
+
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
+
+    # The TOML write is authoritative. The drift-guard and User environment
+    # mirrors are best-effort so headless hosts never lose the successful save.
+    try:
+        _update_config_soll_section("brain.tool_model", {"provider": provider})  # i18n-allow
+        if model is not None and provider != "auto":
+            _update_config_soll_section(  # i18n-allow
+                f"brain.providers.{provider}", {"tool_model": model}
+            )
+    except Exception as exc:  # noqa: BLE001
+        log.warning(  # i18n-allow
+            "Could not sync Tool Model selection to config-soll.json: %s", exc  # i18n-allow: filename false positive
+        )
+    try:
+        _set_user_env_var(_TOOL_MODEL_PROVIDER_ENV, provider)
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "Could not sync %s to the User environment: %s",
+            _TOOL_MODEL_PROVIDER_ENV,
+            exc,
+        )
 
 
 def set_worker_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
@@ -465,7 +547,6 @@ def set_wake_word(
     *,
     engine: str | None = None,
     custom_model_path: str | None = None,
-    sensitivity: float | None = None,
     fuzzy_match_ratio: float | None = None,
     path: Path = DEFAULT_CONFIG_FILE,
 ) -> None:
@@ -495,8 +576,6 @@ def set_wake_word(
         values["engine"] = engine
     if custom_model_path is not None:
         values["custom_model_path"] = custom_model_path
-    if sensitivity is not None:
-        values["sensitivity"] = float(sensitivity)
     if fuzzy_match_ratio is not None:
         values["fuzzy_match_ratio"] = float(fuzzy_match_ratio)
     _patch_wake_word_toml(path, values)
@@ -690,7 +769,12 @@ def _ensure_writable_config_path(path: Path) -> Path:
     ``resolve_config_path()``; then create the file (+ parent) if absent so an
     in-app save/connect persists on EVERY OS instead of raising FileNotFoundError.
     """
-    from jarvis.core.config import DEFAULT_CONFIG_FILE as _DEFAULT, resolve_config_path
+    from jarvis.core.config import (
+        DEFAULT_CONFIG_FILE as _DEFAULT,
+    )
+    from jarvis.core.config import (
+        resolve_config_path,
+    )
 
     if path == _DEFAULT:
         path = resolve_config_path()
@@ -1133,20 +1217,20 @@ def set_brain_provider_model(
     *,
     model: str | None = None,
     deep_model: str | None = None,
+    tool_model: str | None = None,
     cu_model: str | None = None,
     voice: str | None = None,
     path: Path = DEFAULT_CONFIG_FILE,
 ) -> None:
-    """Patch ``[brain.providers.<provider>]`` ``model`` / ``deep_model`` /
-    ``voice`` in the TOML file.
+    """Patch model selections under ``[brain.providers.<provider>]``.
 
     Used by the per-provider model picker (``PUT /api/providers/{id}/model``),
     the frontier auto-switch (Phase F.3), and the Realtime model+voice picker
     (``PUT /api/providers/{id}/realtime-options``) so a change is persisted in
     jarvis.toml — otherwise it is lost on the next ``cfg.load_config()``.
 
-    Three-layer persist (like ``set_brain_primary`` / ``set_sub_jarvis_provider``):
-    ``brain.providers.<p>.model`` / ``deep_model`` / ``voice`` are pinned in
+    Three-layer persist (like ``set_brain_primary`` / ``set_worker_provider``):
+    ``model`` / ``deep_model`` / ``tool_model`` / ``voice`` are pinned in
     ``config-soll.json``, so a TOML-only write would be reverted by the  # i18n-allow
     drift-guard within 5 minutes (BUG-010 class) — exactly the "I picked a model
     and it flipped back" symptom. We therefore sync config-soll.json too. No ENV  # i18n-allow
@@ -1161,7 +1245,13 @@ def set_brain_provider_model(
     nothing.
     """
     path = _ensure_writable_config_path(path)
-    if model is None and deep_model is None and cu_model is None and voice is None:
+    if (
+        model is None
+        and deep_model is None
+        and tool_model is None
+        and cu_model is None
+        and voice is None
+    ):
         return
 
     with _WRITE_LOCK:
@@ -1189,6 +1279,8 @@ def set_brain_provider_model(
             block["model"] = model
         if deep_model is not None:
             block["deep_model"] = deep_model
+        if tool_model is not None:
+            block["tool_model"] = tool_model
         if cu_model is not None:
             # "" is a meaningful value (UI "use my main model") distinct from
             # None ("leave unchanged"), so write whatever non-None was given.
@@ -1207,7 +1299,12 @@ def set_brain_provider_model(
     # TOML write). Only the keys actually written are synced so the guard sees
     # zero drift across the block.
     _sync_brain_provider_model_drift_soll(  # i18n-allow
-        provider, model=model, deep_model=deep_model, cu_model=cu_model, voice=voice
+        provider,
+        model=model,
+        deep_model=deep_model,
+        tool_model=tool_model,
+        cu_model=cu_model,
+        voice=voice,
     )
 
 
@@ -1494,8 +1591,7 @@ def _atomic_write(path: Path, content: str) -> None:
     verweigert``. We restore the flag in ``finally`` so the defense holds
     even if the write itself raises.
     """
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
+    tmp = _write_unique_temp(path, content)
 
     was_read_only = False
     if path.exists():
@@ -1505,11 +1601,63 @@ def _atomic_write(path: Path, content: str) -> None:
             os.chmod(path, mode | stat.S_IWRITE)
 
     try:
-        tmp.replace(path)
+        _replace_with_retry(tmp, path, ensure_target_writable=True)
     finally:
+        tmp.unlink(missing_ok=True)
         if was_read_only and path.exists():
             current_mode = path.stat().st_mode
             os.chmod(path, current_mode & ~stat.S_IWRITE)
+
+
+def _write_unique_temp(path: Path, content: str) -> Path:
+    """Write and flush a unique sibling tempfile for an atomic replacement.
+
+    A fixed ``jarvis.toml.tmp`` name is unsafe across processes: the desktop,
+    drift guard, and another CLI can overwrite or replace the same tempfile.
+    A unique file in the target directory preserves same-filesystem atomicity.
+    """
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        newline="",
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        dir=path.parent,
+        delete=False,
+    ) as handle:
+        handle.write(content)
+        handle.flush()
+        os.fsync(handle.fileno())
+        return Path(handle.name)
+
+
+def _replace_with_retry(
+    tmp: Path,
+    path: Path,
+    *,
+    ensure_target_writable: bool,
+) -> None:
+    """Replace ``path`` atomically, tolerating short-lived sharing locks.
+
+    Windows antivirus, indexers, and concurrent config readers can hold the
+    destination briefly and surface ``PermissionError``/WinError 5 or 32. The
+    bounded retry is also safe on POSIX; other error classes still fail fast.
+    """
+    last_error: PermissionError | None = None
+    for delay_s in _ATOMIC_REPLACE_RETRY_DELAYS_S:
+        if delay_s:
+            time.sleep(delay_s)
+        if ensure_target_writable and path.exists():
+            current_mode = path.stat().st_mode
+            if not current_mode & stat.S_IWRITE:
+                os.chmod(path, current_mode | stat.S_IWRITE)
+        try:
+            os.replace(tmp, path)
+            return
+        except PermissionError as exc:
+            last_error = exc
+    if last_error is not None:
+        raise last_error
 
 
 # ----------------------------------------------------------------------
@@ -1585,7 +1733,7 @@ def _sync_computer_use_provider_drift_soll(name: str) -> None:  # i18n-allow
     ENV.
 
     NEVER raises and NEVER breaks the (already-completed) TOML write. Same
-    two-step shape as :func:`_sync_worker_provider_drift_soll`.  # i18n-allow: internal config-soll identifier ref
+    two-step shape as :func:`_sync_worker_provider_drift_soll`.  # i18n-allow: internal identifier
     """
     try:
         _update_config_soll_computer_use_provider(name)  # i18n-allow
@@ -1671,6 +1819,7 @@ def _sync_brain_provider_model_drift_soll(  # i18n-allow
     *,
     model: str | None,
     deep_model: str | None,
+    tool_model: str | None = None,
     cu_model: str | None = None,
     voice: str | None = None,
 ) -> None:
@@ -1688,6 +1837,8 @@ def _sync_brain_provider_model_drift_soll(  # i18n-allow
         values["model"] = model
     if deep_model is not None:
         values["deep_model"] = deep_model
+    if tool_model is not None:
+        values["tool_model"] = tool_model
     if cu_model is not None:
         values["cu_model"] = cu_model
     if voice is not None:
@@ -1718,7 +1869,10 @@ def _update_config_soll_section(top: str, values: dict[str, object]) -> None:  #
     """
     soll_path = _config_soll_path()  # i18n-allow
     if not soll_path.exists():  # i18n-allow
-        log.debug("config-soll.json absent (%s) — skipping drift-soll sync", soll_path)  # i18n-allow
+        log.debug(
+            "config-soll.json absent (%s) — skipping drift-soll sync",  # i18n-allow
+            soll_path,  # i18n-allow: internal config-soll identifier
+        )
         return
 
     with _WRITE_LOCK:
@@ -1745,7 +1899,10 @@ def _update_config_soll_brain_primary(name: str) -> None:  # i18n-allow
     """
     soll_path = _config_soll_path()  # i18n-allow
     if not soll_path.exists():  # i18n-allow
-        log.debug("config-soll.json absent (%s) — skipping drift-soll sync", soll_path)  # i18n-allow
+        log.debug(
+            "config-soll.json absent (%s) — skipping drift-soll sync",  # i18n-allow
+            soll_path,  # i18n-allow: internal config-soll identifier
+        )
         return
 
     with _WRITE_LOCK:
@@ -1777,7 +1934,10 @@ def _update_config_soll_worker_provider(name: str) -> None:  # i18n-allow
     """
     soll_path = _config_soll_path()  # i18n-allow
     if not soll_path.exists():  # i18n-allow
-        log.debug("config-soll.json absent (%s) — skipping drift-soll sync", soll_path)  # i18n-allow
+        log.debug(
+            "config-soll.json absent (%s) — skipping drift-soll sync",  # i18n-allow
+            soll_path,  # i18n-allow: internal config-soll identifier
+        )
         return
 
     with _WRITE_LOCK:
@@ -1800,8 +1960,9 @@ def _update_config_soll_computer_use_provider(name: str) -> None:  # i18n-allow
     config-soll.json.  # i18n-allow
 
     Note the FLAT dotted key ``"brain.computer_use"`` — same layout as
-    ``"brain.worker"`` (see :func:`_update_config_soll_worker_provider`), NOT  # i18n-allow: internal config-soll identifier ref
-    a nested ``data["brain"]["computer_use"]``. Preserves all other keys.
+    ``"brain.worker"`` (see :func:`_update_config_soll_worker_provider`),  # i18n-allow
+    not a nested table.  # i18n-allow: internal config-soll identifier reference
+    Preserves all other keys.
     Graceful no-op when the file is absent.
     """
     soll_path = _config_soll_path()  # i18n-allow
@@ -1836,7 +1997,10 @@ def _update_config_soll_worker_key(key: str, value: str) -> None:  # i18n-allow
     """
     soll_path = _config_soll_path()  # i18n-allow
     if not soll_path.exists():  # i18n-allow
-        log.debug("config-soll.json absent (%s) — skipping drift-soll sync", soll_path)  # i18n-allow
+        log.debug(
+            "config-soll.json absent (%s) — skipping drift-soll sync",  # i18n-allow
+            soll_path,  # i18n-allow: internal config-soll identifier
+        )
         return
 
     with _WRITE_LOCK:
@@ -1860,9 +2024,11 @@ def _atomic_write_text(path: Path, content: str) -> None:
     Used for config-soll.json, which — unlike jarvis.toml — does not carry the  # i18n-allow
     BUG-010 read-only defense flag.
     """
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text(content, encoding="utf-8")
-    tmp.replace(path)
+    tmp = _write_unique_temp(path, content)
+    try:
+        _replace_with_retry(tmp, path, ensure_target_writable=False)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def _set_user_env_var(name: str, value: str) -> None:

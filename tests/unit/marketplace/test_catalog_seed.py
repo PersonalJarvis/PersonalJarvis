@@ -21,6 +21,27 @@ def test_package_seed_exists_and_is_valid() -> None:
     assert {"github", "notion", "linear"} <= ids
 
 
+def test_developer_connectors_use_hosted_mcp_without_local_runtimes() -> None:
+    catalog = _seed()
+    github = catalog.by_id("github")
+    supabase = catalog.by_id("supabase")
+
+    assert github is not None and github.mcp_server == {
+        "transport": "http",
+        "url": "https://api.githubcopilot.com/mcp/",
+        "auth_header_template": (
+            "Authorization: Bearer $plugin_github_access_token"
+        ),
+    }
+    assert supabase is not None and supabase.mcp_server == {
+        "transport": "http",
+        "url": "https://mcp.supabase.com/mcp?read_only=true",
+        "auth_header_template": (
+            "Authorization: Bearer $plugin_supabase_access_token"
+        ),
+    }
+
+
 def test_falls_back_to_seed_when_no_data_override(monkeypatch, tmp_path) -> None:
     clear_cache()
     monkeypatch.setattr(catalog_data, "_DEFAULT_CATALOG_PATH", tmp_path / "absent.json")
@@ -41,6 +62,52 @@ def test_data_override_wins_when_present(monkeypatch, tmp_path) -> None:
     cat = load_catalog()
     assert cat.version == 9
     assert cat.plugins == []
+    clear_cache()
+
+
+def test_default_override_migrates_only_exact_obsolete_mcp_launchers(
+    monkeypatch,
+    tmp_path,
+) -> None:
+    clear_cache()
+    override = tmp_path / "plugin_catalog.json"
+    seed = json.loads(catalog_data._PACKAGE_SEED_PATH.read_text(encoding="utf-8"))
+    github = next(item for item in seed["plugins"] if item["id"] == "github")
+    supabase = next(item for item in seed["plugins"] if item["id"] == "supabase")
+    github["mcp_server"] = {
+        "transport": "stdio",
+        "install": [
+            "docker",
+            "run",
+            "-i",
+            "--rm",
+            "-e",
+            "GITHUB_PERSONAL_ACCESS_TOKEN",
+            "ghcr.io/github/github-mcp-server",
+        ],
+        "env_template": {
+            "GITHUB_PERSONAL_ACCESS_TOKEN": "$plugin_github_access_token"
+        },
+    }
+    supabase["mcp_server"] = {
+        "transport": "stdio",
+        "install": [
+            "npx",
+            "-y",
+            "@supabase/mcp-server-supabase@latest",
+            "--read-only",
+            "--access-token",
+            "$plugin_supabase_access_token",
+        ],
+        "env_template": {},
+    }
+    override.write_text(json.dumps(seed), encoding="utf-8")
+    monkeypatch.setattr(catalog_data, "_DEFAULT_CATALOG_PATH", override)
+
+    catalog = load_catalog()
+
+    assert catalog.by_id("github").mcp_server["transport"] == "http"
+    assert catalog.by_id("supabase").mcp_server["transport"] == "http"
     clear_cache()
 
 

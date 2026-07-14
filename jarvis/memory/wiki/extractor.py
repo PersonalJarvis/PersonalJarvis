@@ -94,6 +94,7 @@ class ConversationFactExtractor:
         self._curator_cfg = config.memory.wiki.curator
         self._journal = journal
         self._registry = registry if registry is not None else BrainProviderRegistry()
+        self._credential_filter = registry is None
         self._brain: Any = None
         self._resolved_provider: str | None = None
         self._resolved_model: str | None = None
@@ -213,16 +214,44 @@ class ConversationFactExtractor:
         from jarvis.memory.wiki.provider_chain import (
             build_wiki_provider_chain,
             complete_with_fallback,
+            credential_ready_wiki_providers,
         )
 
         # Key-aware fallback (AP-22/23): try the configured provider, then cross
         # to whatever family is reachable, instead of silently dropping the turn
         # when one provider is throttled / keyless (live 2026-06-30).
+        available = set(self._registry.available())
         chain = build_wiki_provider_chain(
             primary=(self._curator_cfg.provider.strip() or self._root_cfg.brain.primary),
             model_override=self._curator_cfg.model,
-            available=set(self._registry.available()),
+            available=available,
+            credential_ready=(
+                credential_ready_wiki_providers(
+                    available=available,
+                    config=self._root_cfg,
+                )
+                if self._credential_filter
+                else available
+            ),
         )
+        rejection_reasons: list[str] = []
+
+        def _validate_response(agg: Any) -> str | None:
+            if is_length_truncated(agg.finish_reason, agg.text):
+                reason = (
+                    f"truncated structured output ({len(agg.text or '')} chars, "
+                    f"finish_reason={agg.finish_reason!r})"
+                )
+                rejection_reasons.append(reason)
+                return reason
+            try:
+                _extract_json_array(agg.text)
+            except ValueError as exc:
+                reason = f"malformed JSON array: {exc}"
+                rejection_reasons.append(reason)
+                return reason
+            return None
+
         result = await complete_with_fallback(
             registry=self._registry,
             chain=chain,
@@ -230,8 +259,15 @@ class ConversationFactExtractor:
             timeout_s=float(self._cfg.timeout_s),
             label="ConversationFactExtractor",
             aggregate=aggregate,
+            validate=_validate_response,
         )
         if result is None:
+            if any(reason.startswith("truncated") for reason in rejection_reasons):
+                log.warning(
+                    "ConversationFactExtractor: every provider hit the output-token "
+                    "cap or failed after a truncated response; no candidates were saved"
+                )
+                telemetry.inc("wiki_writes_blocked_truncated")
             return []
         agg, self._resolved_provider = result
 

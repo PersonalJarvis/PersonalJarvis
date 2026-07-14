@@ -98,6 +98,12 @@ class OpenRouterTTS:
         self._language = language or "auto"
         self._speed = speed
         self._client: Any = None  # httpx.AsyncClient, lazy
+        # Credential/base URL used by the internally-created client. ``None``
+        # while a test or embedding injects its own client, which remains fully
+        # caller-owned and is never replaced here.
+        self._resolved_credential: str | None = None
+        self._resolved_base_url: str | None = None
+        self._resolved_secret_revision = -1
         # Overridden by _ensure_client with the resolved endpoint; a default here
         # lets a directly-injected client (tests / warm reuse) synthesise without
         # re-resolving the key.
@@ -107,13 +113,24 @@ class OpenRouterTTS:
     # Auth + client
     # ------------------------------------------------------------------
 
-    def _ensure_client(self) -> None:
-        """Build the shared httpx client, resolving the ONE OpenRouter key.
+    async def _ensure_client(self) -> None:
+        """Build or refresh the client from the ONE shared OpenRouter key.
 
         Raises :class:`OpenRouterTTSError` when no credential is configured — the
-        same clear, fail-closed signal the factory / FallbackTTS expects.
+        same clear, fail-closed signal the factory / FallbackTTS expects. The
+        endpoint is resolved on every synthesis boundary so replacing the shared
+        brain/TTS/STT credential takes effect without rebuilding the speech
+        pipeline. An unchanged credential reuses the existing keep-alive pool.
         """
-        if self._client is not None:
+        # A directly injected client (tests / embedding) has no resolved
+        # credential marker and stays caller-owned.
+        if self._client is not None and self._resolved_credential is None:
+            return
+        current_revision = cfg.secret_revision("openrouter_api_key")
+        if (
+            self._client is not None
+            and self._resolved_secret_revision == current_revision
+        ):
             return
         ep = cfg.resolve_provider_endpoint(
             "openrouter", vendor_default_base_url=BASE_URL
@@ -126,7 +143,17 @@ class OpenRouterTTS:
             )
         import httpx
 
-        self._base_url = (ep.base_url or BASE_URL).rstrip("/")
+        resolved_base_url = (ep.base_url or BASE_URL).rstrip("/")
+        if (
+            self._client is not None
+            and self._resolved_credential == ep.credential
+            and self._resolved_base_url == resolved_base_url
+        ):
+            self._resolved_secret_revision = current_revision
+            return
+
+        old_client = self._client
+        self._base_url = resolved_base_url
         self._client = httpx.AsyncClient(
             timeout=_HTTP_TIMEOUT_S,
             headers={
@@ -137,6 +164,14 @@ class OpenRouterTTS:
                 "X-Title": "Personal Jarvis",
             },
         )
+        self._resolved_credential = ep.credential
+        self._resolved_base_url = resolved_base_url
+        self._resolved_secret_revision = current_revision
+        if old_client is not None:
+            try:
+                await old_client.aclose()
+            except Exception as exc:  # noqa: BLE001 -- replacement already succeeded
+                log.debug("Closing the superseded OpenRouter TTS client failed: %s", exc)
 
     async def aclose(self) -> None:
         """Close the HTTP client. Idempotent."""
@@ -145,6 +180,9 @@ class OpenRouterTTS:
                 await self._client.aclose()
             finally:
                 self._client = None
+                self._resolved_credential = None
+                self._resolved_base_url = None
+                self._resolved_secret_revision = -1
 
     # ------------------------------------------------------------------
     # Voice resolution
@@ -229,7 +267,7 @@ class OpenRouterTTS:
             return
 
         # No key / build failure → raise before any chunk (FallbackTTS crosses).
-        self._ensure_client()
+        await self._ensure_client()
 
         resolved_voice = self._resolve_voice(voice, language_code)
         payload: dict[str, Any] = {

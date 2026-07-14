@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import sys
 from pathlib import Path
 
@@ -16,7 +15,7 @@ sys.modules.pop("ui", None)
 # `ui` lives as a top-level directory in the repo root (not under `jarvis/`).
 # Some pytest setups don't recognize this path via the discovery loader; in that
 # case the tests are skipped instead of blowing up test collection.
-try:  # noqa: SIM105 — bewusster Try-Import wegen Discovery-Quirk
+try:  # noqa: SIM105 — intentional try-import for the discovery quirk
     from ui.orb.bus_bridge import (  # type: ignore[import-not-found]
         THINKING_BUBBLE_TEXT,
         OrbBusBridge,
@@ -59,8 +58,10 @@ class _RecordingBus:
 class _FakeOrb:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str | None]] = []
+        self._mode = "idle"
 
     def show(self, mode: str = "listen") -> None:
+        self._mode = mode
         self.calls.append(("show", mode))
 
     def set_level(self, level: float) -> None:
@@ -92,6 +93,24 @@ class _FakeOrb:
     def set_on_mute_toggle(self, callback) -> None:
         self.calls.append(("set_on_mute_toggle", callback))
         self.mute_callback = callback
+
+
+class _FakeBarWithExplicitReassert(_FakeOrb):
+    def reassert_z_order(self) -> None:
+        self.calls.append(("reassert_z_order", None))
+
+
+class _FakeStartupGatedBar(_FakeBarWithExplicitReassert):
+    def __init__(self) -> None:
+        super().__init__()
+        self.startup_gated = True
+
+    def release_startup_gate(self) -> bool:
+        self.calls.append(("release_startup_gate", None))
+        if not self.startup_gated:
+            return False
+        self.startup_gated = False
+        return True
 
 
 async def test_orb_is_shown_again_for_thinking_after_external_hide() -> None:
@@ -578,85 +597,129 @@ async def test_reply_is_reset_between_turns() -> None:
     assert ("show_listening_transcript", "Antwort aus Turn 1.") not in orb.calls
 
 
-# --- Boot readiness gate: the persistent bar stays hidden until voice is ready.
-# The persistent JarvisBar used to map its window the instant its mainloop ran,
-# i.e. during backend boot — seconds before the speech pipeline could actually
-# hear "Hey Jarvis". The user saw the bar and assumed Jarvis was listening when
-# it was not. The bridge now reveals the persistent bar only on the existing
-# VoiceBootStatus(ready=True) signal (with a bounded fallback so a voice-offline
-# host still gets its bar).
+# --- Boot visibility: the Jarvis Bar is the "you can speak now" affordance.
+# It stays gated through warm-up and degraded UI-only releases, then maps once
+# the genuine VoiceBootStatus arrives. Existing ungated surfaces retain their
+# z-order repair for compatibility.
 
 
-async def test_persistent_bar_waits_for_voice_ready_then_reveals_once() -> None:
-    orb = _FakeOrb()
+async def test_startup_gated_bar_releases_once_when_voice_is_usable() -> None:
+    orb = _FakeStartupGatedBar()
     bridge = OrbBusBridge(  # type: ignore[arg-type]
         bus=_FakeBus(), orb=orb, idle_animations_enabled=False, hide_on_idle=False
     )
 
-    task = asyncio.create_task(bridge.reveal_bar_when_voice_ready(timeout_s=5.0))
-    await asyncio.sleep(0.05)
-    # No ready signal yet → the persistent bar must NOT be shown.
-    assert ("show", "idle") not in orb.calls
+    await bridge._on_voice_boot_status(  # noqa: SLF001
+        VoiceBootStatus(ready=True, detail="listening")
+    )
+    await bridge._on_voice_boot_status(  # noqa: SLF001
+        VoiceBootStatus(ready=True, detail="listening")
+    )
 
-    await bridge._on_voice_boot_status(VoiceBootStatus(ready=True))  # noqa: SLF001
-    await asyncio.wait_for(task, timeout=1.0)
-
-    # Revealed exactly once.
-    assert orb.calls.count(("show", "idle")) == 1
+    assert orb.calls.count(("release_startup_gate", None)) == 1
+    assert not any(call[0] in {"show", "reassert_z_order"} for call in orb.calls)
+    assert bridge._boot_visibility_released is True  # noqa: SLF001
 
 
-async def test_voice_boot_status_not_ready_does_not_reveal_bar() -> None:
-    orb = _FakeOrb()
+@pytest.mark.parametrize(
+    "event",
+    [
+        VoiceBootStatus(ready=False, detail="warmup_start"),
+        VoiceBootStatus(ready=True, detail="voice_unavailable"),
+        VoiceBootStatus(ready=True, detail="watchdog_timeout"),
+    ],
+)
+async def test_non_usable_boot_status_does_not_release_bar(
+    event: VoiceBootStatus,
+) -> None:
+    orb = _FakeStartupGatedBar()
     bridge = OrbBusBridge(  # type: ignore[arg-type]
         bus=_FakeBus(), orb=orb, idle_animations_enabled=False, hide_on_idle=False
     )
 
-    # ready=False is emitted at warm-up start — it must not reveal the bar.
-    await bridge._on_voice_boot_status(VoiceBootStatus(ready=False))  # noqa: SLF001
-    assert ("show", "idle") not in orb.calls
+    await bridge._on_voice_boot_status(event)  # noqa: SLF001
+
+    assert ("release_startup_gate", None) not in orb.calls
+    assert bridge._boot_visibility_released is False  # noqa: SLF001
 
 
-async def test_persistent_bar_revealed_by_timeout_when_ready_never_comes() -> None:
-    """A voice-offline host (pipeline crashed at startup, no mic) never emits
-    ready=True. The bar must still appear after a bounded fallback so the user
-    is not left with no bar at all — just a few seconds late instead of never."""
-    orb = _FakeOrb()
+async def test_genuine_ready_can_release_after_degraded_ui_ready() -> None:
+    orb = _FakeStartupGatedBar()
     bridge = OrbBusBridge(  # type: ignore[arg-type]
         bus=_FakeBus(), orb=orb, idle_animations_enabled=False, hide_on_idle=False
     )
 
-    await bridge.reveal_bar_when_voice_ready(timeout_s=0.05)
+    await bridge._on_voice_boot_status(  # noqa: SLF001
+        VoiceBootStatus(ready=True, detail="watchdog_timeout")
+    )
+    await bridge._on_voice_boot_status(  # noqa: SLF001
+        VoiceBootStatus(ready=True, detail="listening")
+    )
 
-    assert ("show", "idle") in orb.calls
+    assert orb.calls.count(("release_startup_gate", None)) == 1
 
 
-async def test_non_persistent_surface_not_revealed_on_voice_ready() -> None:
-    """A non-persistent bar / the mascot (hide_on_idle=True) is hidden at idle
-    by design — it pops on a real session. The boot-ready reveal must leave it
-    untouched."""
-    orb = _FakeOrb()
+async def test_cached_boot_bar_releases_when_reselected_after_ready() -> None:
+    bar = _FakeStartupGatedBar()
+    bridge = OrbBusBridge(  # type: ignore[arg-type]
+        bus=_FakeBus(), orb=bar, idle_animations_enabled=False, hide_on_idle=False
+    )
+    other_surface = _FakeOrb()
+
+    # The user hides the bar during warm-up. Ready therefore lands while another
+    # surface is current and cannot release the cached boot bar yet.
+    bridge.set_surface(other_surface)
+    await bridge._on_voice_boot_status(  # noqa: SLF001
+        VoiceBootStatus(ready=True, detail="listening")
+    )
+    assert bar.startup_gated is True
+
+    bridge.set_surface(bar)
+
+    assert bar.startup_gated is False
+    assert bar.calls.count(("release_startup_gate", None)) == 1
+
+
+async def test_non_persistent_bar_gate_releases_without_idle_show() -> None:
+    orb = _FakeStartupGatedBar()
     bridge = OrbBusBridge(  # type: ignore[arg-type]
         bus=_FakeBus(), orb=orb, idle_animations_enabled=False, hide_on_idle=True
     )
 
-    await bridge._on_voice_boot_status(VoiceBootStatus(ready=True))  # noqa: SLF001
-    await bridge.reveal_bar_when_voice_ready(timeout_s=0.05)
+    await bridge._on_voice_boot_status(  # noqa: SLF001
+        VoiceBootStatus(ready=True, detail="listening")
+    )
 
-    assert ("show", "idle") not in orb.calls
+    assert ("release_startup_gate", None) in orb.calls
+    assert not any(call[0] in {"show", "reassert_z_order"} for call in orb.calls)
 
 
-async def test_boot_reveal_is_idempotent_across_ready_and_timeout() -> None:
-    orb = _FakeOrb()
+async def test_ungated_persistent_bar_uses_explicit_z_order_reassert() -> None:
+    orb = _FakeBarWithExplicitReassert()
     bridge = OrbBusBridge(  # type: ignore[arg-type]
         bus=_FakeBus(), orb=orb, idle_animations_enabled=False, hide_on_idle=False
     )
 
-    await bridge._on_voice_boot_status(VoiceBootStatus(ready=True))  # noqa: SLF001
-    await bridge.reveal_bar_when_voice_ready(timeout_s=1.0)
-    # A second invocation (e.g. a stray late call) must not show the bar twice.
-    await bridge.reveal_bar_when_voice_ready(timeout_s=0.05)
+    await bridge._on_voice_boot_status(  # noqa: SLF001
+        VoiceBootStatus(ready=True, detail="listening")
+    )
 
-    assert orb.calls.count(("show", "idle")) == 1
+    assert orb.calls.count(("reassert_z_order", None)) == 1
+    assert not any(call[0] == "show" for call in orb.calls)
+
+
+async def test_plain_legacy_persistent_surface_reasserts_current_mode() -> None:
+    orb = _FakeOrb()
+    orb._mode = "listen"
+    bridge = OrbBusBridge(  # type: ignore[arg-type]
+        bus=_FakeBus(), orb=orb, idle_animations_enabled=False, hide_on_idle=False
+    )
+
+    await bridge._on_voice_boot_status(  # noqa: SLF001
+        VoiceBootStatus(ready=True, detail="listening")
+    )
+
+    assert orb.calls.count(("show", "listen")) == 1
 
 
 @pytest.mark.parametrize("state", ["ERROR", "PAUSED"])

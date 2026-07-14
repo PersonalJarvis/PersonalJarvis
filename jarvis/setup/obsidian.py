@@ -94,14 +94,27 @@ class ObsidianVaultsState(BaseModel):
 # ---------------------------------------------------------------------------
 # Detection — Obsidian.exe install
 # ---------------------------------------------------------------------------
-def _candidate_install_paths() -> list[Path]:
-    """Return the ordered Obsidian.exe candidate paths.
+def _candidate_install_paths(platform: str | None = None) -> list[Path]:
+    """Return ordered platform-specific Obsidian install candidates.
 
     Order matters: per-user installs win over machine-wide installs only
     because the per-user path is the official installer default. Order is
     documented in the public docstring of ``detect_obsidian``.
     """
+    plat = platform if platform is not None else sys.platform
     candidates: list[Path] = []
+
+    if plat == "darwin":
+        return [
+            Path.home() / "Applications" / "Obsidian.app" / "Contents" / "MacOS" / "Obsidian",
+            Path("/Applications/Obsidian.app/Contents/MacOS/Obsidian"),
+        ]
+    if plat != "win32":
+        return [
+            Path("/usr/bin/obsidian"),
+            Path("/usr/local/bin/obsidian"),
+            Path("/opt/Obsidian/obsidian"),
+        ]
 
     local_appdata = os.environ.get("LOCALAPPDATA")
     if local_appdata:
@@ -170,8 +183,8 @@ def _read_version_best_effort(exe_path: Path) -> str | None:
         return None
 
 
-def detect_obsidian() -> ObsidianDetection:
-    """Locate Obsidian.exe on this machine and return install status.
+def detect_obsidian(platform: str | None = None) -> ObsidianDetection:
+    """Locate Obsidian on this machine and return install status.
 
     Probe order:
         1. ``%LOCALAPPDATA%\\Programs\\Obsidian\\Obsidian.exe`` (per-user)
@@ -185,15 +198,21 @@ def detect_obsidian() -> ObsidianDetection:
     ``ObsidianDetection(installed=False, exe_path=None, version=None)``.
     This function NEVER raises and NEVER runs a subprocess.
     """
-    for candidate in _candidate_install_paths():
+    plat = platform if platform is not None else sys.platform
+    if plat != "win32":
+        path_hit = shutil.which("obsidian")
+        if path_hit:
+            return ObsidianDetection(installed=True, exe_path=Path(path_hit))
+
+    for candidate in _candidate_install_paths(platform=plat):
         if candidate.exists():
             return ObsidianDetection(
                 installed=True,
                 exe_path=candidate,
-                version=_read_version_best_effort(candidate),
+                version=_read_version_best_effort(candidate) if plat == "win32" else None,
             )
 
-    registry_hit = _probe_uninstall_registry()
+    registry_hit = _probe_uninstall_registry() if plat == "win32" else None
     if registry_hit is not None:
         return ObsidianDetection(
             installed=True,
@@ -294,8 +313,8 @@ def read_obsidian_vaults(config_path: Path | None = None) -> ObsidianVaultsState
 # ---------------------------------------------------------------------------
 # Membership check — is our Jarvis vault already registered?
 # ---------------------------------------------------------------------------
-def _normalize_for_compare(path: Path) -> str:
-    """Normalise a path for case-insensitive Windows comparison.
+def _normalize_for_compare(path: Path, platform: str | None = None) -> str:
+    """Normalise a path using the host platform's case semantics.
 
     * ``Path.resolve()`` to absolutize and collapse ``..`` segments. We
       call ``resolve(strict=False)`` so non-existent paths still
@@ -305,6 +324,11 @@ def _normalize_for_compare(path: Path) -> str:
     * Lowercase the whole string (Windows file system is case-insensitive
       and this is a pure Windows feature).
     """
+    plat = platform if platform is not None else sys.platform
+    raw = str(path)
+    windows_style = plat == "win32" or (
+        len(raw) >= 3 and raw[1] == ":" and raw[2] in ("\\", "/")
+    )
     try:
         resolved = path.resolve(strict=False)
     except OSError:
@@ -313,21 +337,47 @@ def _normalize_for_compare(path: Path) -> str:
     s = str(resolved)
     while s.endswith(("\\", "/")):
         s = s[:-1]
-    return s.lower()
+    return s.lower() if windows_style else s
 
 
 def is_vault_registered(vaults: list[VaultEntry], expected_vault_path: Path) -> bool:
-    """Return True iff ``expected_vault_path`` is among the registered vaults.
+    """Return True when Obsidian can reach ``expected_vault_path``.
 
-    Comparison is case-insensitive (Windows) and trailing-separator
-    tolerant. Both sides are passed through ``Path.resolve()`` so
-    relative-vs-absolute inputs match correctly.
+    An exact match is reachable, but so is a Jarvis-owned subdirectory inside
+    an already-registered user vault. The latter is the shape created by the
+    setup wizard's ``mode="existing"`` flow: Obsidian registers
+    ``<user-vault>`` while Jarvis writes under ``<user-vault>/Jarvis``.
+    """
+    return find_registered_vault(vaults, expected_vault_path) is not None
+
+
+def find_registered_vault(
+    vaults: list[VaultEntry], expected_vault_path: Path,
+) -> VaultEntry | None:
+    """Return the most specific registered vault containing ``expected``.
+
+    This mirrors Obsidian's URI ``path`` resolution rule and keeps status
+    detection aligned with deep links when nested vault candidates exist.
     """
     expected_norm = _normalize_for_compare(expected_vault_path)
+    matches: list[tuple[int, VaultEntry]] = []
     for entry in vaults:
-        if _normalize_for_compare(entry.path) == expected_norm:
-            return True
-    return False
+        registered_norm = _normalize_for_compare(entry.path)
+        try:
+            contains = (
+                registered_norm == expected_norm
+                or os.path.commonpath((registered_norm, expected_norm)) == registered_norm
+            )
+        except ValueError:
+            # Different Windows drives (or otherwise incompatible roots) cannot
+            # contain one another.
+            contains = False
+        if contains:
+            matches.append((len(registered_norm), entry))
+    if not matches:
+        return None
+    matches.sort(key=lambda item: item[0], reverse=True)
+    return matches[0][1]
 
 
 # ---------------------------------------------------------------------------

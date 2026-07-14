@@ -8,6 +8,7 @@
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-e7c46e?style=for-the-badge&labelColor=242424" /></a>
   <a href="https://discord.gg/UPu6pFWrJ"><img alt="Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white&labelColor=242424" /></a>
   <a href="https://x.com/PersonalJarvis"><img alt="Follow @PersonalJarvis on X" src="https://img.shields.io/badge/Follow-%40PersonalJarvis-e7c46e?style=for-the-badge&logo=x&logoColor=white&labelColor=242424" /></a>
+  <a href="https://personaljarvis.ai/"><img alt="Personal Jarvis website" src="https://img.shields.io/badge/Website-personaljarvis.ai-e7c46e?style=for-the-badge&labelColor=242424" /></a>
   <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-e7c46e?style=for-the-badge&logo=python&logoColor=e7c46e&labelColor=242424" />
   <img alt="Platforms: Linux, macOS, Windows" src="https://img.shields.io/badge/Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-242424?style=for-the-badge&labelColor=242424&color=242424" />
 </p>
@@ -75,14 +76,13 @@ it. A few things it can do today:
 
 ## Requirements
 
-You need exactly **three** things on your machine before you install. The installer checks for
-all three up front and stops with a download link if any is missing — nothing else is mandatory.
+You need exactly **two** things on your machine before you install. The installer checks for
+both up front and stops with a download link if either is missing — nothing else is mandatory.
 
 | Required | Version | Why it's needed |
 |---|---|---|
 | **Python** | 3.11 or newer | The application runs on Python. |
 | **Git** | any recent release | Fetches the project and runs background missions in isolated worktrees. |
-| **Node.js** | 18 or newer | Runs the agent CLIs the worker delegates heavy missions to (Claude Code, Codex) and a few Node-based integrations. *(Not needed on the `--headless` cloud-only server path.)* |
 
 Everything below is **optional** — each item only unlocks a specific feature, and Personal
 Jarvis runs without it:
@@ -90,6 +90,7 @@ Jarvis runs without it:
 | Optional | Unlocks |
 |---|---|
 | A provider **API key or subscription login** — Gemini, Claude, OpenAI, or OpenRouter | Actually talking to a brain. Bring your own; nothing is bundled. The app's one-time setup guide stores it in your OS credential manager. |
+| **Node.js 18+** | The coding-agent worker CLIs that heavy missions delegate to (Claude Code, Codex) and a few Node-based integrations. The installer continues without it — install Node any time and add the worker later in-app. |
 | **libportaudio** *(Linux only)* | Local microphone and speakers (`apt install libportaudio2`). Not needed for the headless / browser-audio path. |
 | A **GPU** | Faster fully-offline speech. The local voice models install by default and run on CPU everywhere; a GPU only speeds them up. Cloud speech needs none of this. |
 
@@ -175,6 +176,11 @@ Then open **http://localhost:47821** — the full Router-Brain → Worker-Critic
 Mission-Manager experience lives in the browser, including voice through the browser's
 microphone. On a headless deployment the same one-time setup guide runs in the browser; you
 can also set a provider key (e.g. `GEMINI_API_KEY`) in the environment or a `.env` file.
+
+Browser microphone access requires a secure context. `http://localhost:47821` works on the
+server itself; when opening a remote VPS from another device, terminate TLS with an HTTPS
+reverse proxy (for example Caddy or Nginx) and use its `https://` URL. A plain
+`http://server-ip:47821` connection remains usable for text, but browsers will block voice.
 
 <p align="center">
   <img src="assets/screenshots/app-home.png" alt="The Personal Jarvis desktop app" width="820" />

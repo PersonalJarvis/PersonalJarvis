@@ -13,6 +13,7 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from jarvis.setup.obsidian import ObsidianDetection
 from jarvis.ui.web import setup_routes
 
 
@@ -44,6 +45,41 @@ def test_vault_list_returns_registered_vaults(tmp_path):
     body = resp.json()
     assert body["ok"] is True
     assert body["vaults"][0]["path"] == str(user_vault)
+
+
+def test_status_accepts_jarvis_subdirectory_inside_registered_vault(
+    tmp_path, monkeypatch,
+):
+    user_vault = tmp_path / "MyVault"
+    user_vault.mkdir()
+    app = _app(tmp_path, {"vaults": {"abc123": {"path": str(user_vault)}}})
+    app.state.config.wiki_integration.vault_root = user_vault / "Jarvis"
+    monkeypatch.setattr(
+        setup_routes,
+        "detect_obsidian",
+        lambda: ObsidianDetection(installed=True, version="1.0"),
+    )
+
+    body = TestClient(app).get("/api/setup/obsidian/status").json()
+
+    assert body["vault_registered"] is True
+    assert body["recommended_action"] == "ok"
+
+
+def test_separate_register_uses_injected_obsidian_config(tmp_path, monkeypatch):
+    app = _app(tmp_path, {"vaults": {}})
+    monkeypatch.setattr(
+        setup_routes,
+        "detect_obsidian",
+        lambda: ObsidianDetection(installed=True, version="1.0"),
+    )
+
+    response = TestClient(app).post("/api/setup/obsidian/register")
+
+    assert response.status_code == 200
+    state = json.loads(app.state.obsidian_config_path.read_text(encoding="utf-8"))
+    registered_paths = {entry["path"] for entry in state["vaults"].values()}
+    assert str((tmp_path / "jarvis-vault").resolve()) in registered_paths
 
 
 def test_register_existing_mode_points_vault_root_into_jarvis_subfolder(

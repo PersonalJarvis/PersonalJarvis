@@ -49,3 +49,27 @@ def test_same_provider_critic_keeps_primary_model(
     prov, model = runner._resolve_api_critic_provider("openrouter", _FREE)
     assert prov == "openrouter"
     assert model == _FREE
+
+
+def test_nvidia_only_funded_family_is_picked_by_critic(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """AP-22 twin: nvidia is a registered worker family (init.py:560,634) but
+    was previously missing from ``_API_CRITIC_PROVIDERS`` — when it is the
+    ONLY funded API family, the in-process critic must still be able to pick
+    it instead of falling through to the legacy claude-direct critic.
+    """
+    config = JarvisConfig()
+    config.brain.providers["nvidia"] = BrainProviderConfig(
+        model="nvidia/nemotron-nano-9b-v2:free"
+    )
+    monkeypatch.setattr("jarvis.core.config.load_config", lambda: config)
+    monkeypatch.setattr(
+        "jarvis.core.config.get_provider_secret",
+        lambda p: "nvapi-test" if p == "nvidia" else None,
+    )
+
+    prov, model = runner._resolve_api_critic_provider("antigravity", None)
+
+    assert prov == "nvidia"
+    assert model == "nvidia/nemotron-nano-9b-v2:free"

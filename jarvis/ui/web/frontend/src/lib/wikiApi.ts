@@ -125,6 +125,16 @@ export interface WikiHealthSnapshot {
   last_write: WikiHealthLastWrite | null;
   last_chain_failure: WikiHealthLastChainFailure | null;
   journal_backlog: number;
+  indexed_pages: number;
+  vault_pages: number;
+  index_state: "ok" | "stale";
+}
+
+export interface WikiReindexResponse {
+  ok: boolean;
+  indexed_pages?: number;
+  vault_pages?: number;
+  error?: string;
 }
 
 async function getJson<T>(url: string): Promise<T> {
@@ -183,4 +193,12 @@ export async function fetchWikiHealth(): Promise<WikiHealthSnapshot | null> {
   } catch {
     return null;
   }
+}
+
+export async function rebuildWikiIndex(): Promise<WikiReindexResponse> {
+  const res = await fetch("/api/wiki/reindex", { method: "POST" });
+  if (!res.ok) {
+    throw new Error(`HTTP ${res.status} ${res.statusText}`);
+  }
+  return (await res.json()) as WikiReindexResponse;
 }

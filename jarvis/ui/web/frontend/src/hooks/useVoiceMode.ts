@@ -1,10 +1,22 @@
-import { useEffect } from "react";
+import { useEffect, useMemo } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
-type VoiceModeResp = { mode: string; realtime_available: boolean; active_provider: string | null };
+import { useEventStore } from "@/store/events";
+
+type VoiceModeResp = {
+  mode: string;
+  realtime_available: boolean;
+  active_provider: string | null;
+  session_active: boolean;
+  active_session_mode: "pipeline" | "realtime" | null;
+  active_session_provider: string;
+  active_session_model: string;
+  transitioning: boolean;
+};
 
 export function useVoiceMode() {
   const qc = useQueryClient();
+  const events = useEventStore((state) => state.events);
   const q = useQuery<VoiceModeResp>({
     queryKey: ["voice-mode"],
     queryFn: async () => (await fetch("/api/settings/voice-mode")).json(),
@@ -19,7 +31,21 @@ export function useVoiceMode() {
       if (!r.ok) throw new Error(await r.text());
       return r.json();
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["voice-mode"] }),
+    // Optimistic: flip the cached mode BEFORE the PUT resolves, so the
+    // Pipeline|Realtime segment's filled "live" state follows the click
+    // instantly (the persist can take seconds on a busy backend, and the UI
+    // used to only update after PUT + a full refetch — the switch felt dead).
+    // A failed PUT rolls back to the previous server truth.
+    onMutate: async (mode: string) => {
+      await qc.cancelQueries({ queryKey: ["voice-mode"] });
+      const prev = qc.getQueryData<VoiceModeResp>(["voice-mode"]);
+      if (prev) qc.setQueryData<VoiceModeResp>(["voice-mode"], { ...prev, mode });
+      return { prev };
+    },
+    onError: (_err, _mode, ctx) => {
+      if (ctx?.prev) qc.setQueryData(["voice-mode"], ctx.prev);
+    },
+    onSettled: () => qc.invalidateQueries({ queryKey: ["voice-mode"] }),
   });
 
   // Activating a realtime provider CARD (ApiKeysView's ProviderCategory, the
@@ -36,9 +62,32 @@ export function useVoiceMode() {
     return () => window.removeEventListener("jarvis:realtime-switched", onRealtimeSwitched);
   }, [qc]);
 
+  // Configured mode and effective in-flight mode are distinct. Refresh the
+  // runtime snapshot on voice boundaries and on the accepted realtime
+  // handshake so the switch never labels an old classic call as Realtime.
+  const lastRuntimeEvent = useMemo(
+    () =>
+      events.find((event) =>
+        ["VoiceSessionStarted", "RealtimeSessionReady", "VoiceSessionEnded"].includes(
+          event.name,
+        ),
+      ) ?? null,
+    [events],
+  );
+  useEffect(() => {
+    if (lastRuntimeEvent !== null) {
+      qc.invalidateQueries({ queryKey: ["voice-mode"] });
+    }
+  }, [lastRuntimeEvent, qc]);
+
   return {
     mode: q.data?.mode ?? "pipeline",
     realtimeAvailable: q.data?.realtime_available ?? false,
+    sessionActive: q.data?.session_active ?? false,
+    activeSessionMode: q.data?.active_session_mode ?? null,
+    activeSessionProvider: q.data?.active_session_provider ?? "",
+    activeSessionModel: q.data?.active_session_model ?? "",
+    transitioning: q.data?.transitioning ?? false,
     setMode: m.mutate,
     isLoading: q.isLoading,
     isSaving: m.isPending,

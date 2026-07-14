@@ -39,6 +39,7 @@ from pydantic import BaseModel
 from jarvis.memory.wiki.vault_root import resolve_vault_root
 from jarvis.setup.obsidian import (
     detect_obsidian,
+    find_registered_vault,
     is_vault_registered,
     read_obsidian_vaults,
     register_vault,
@@ -155,6 +156,14 @@ def _resolve_vault_path(request: Request) -> Path:
     return resolve_vault_root(raw).path
 
 
+def _read_vaults_for_request(request: Request):
+    """Read the request-scoped Obsidian index without touching real test state."""
+    override = getattr(request.app.state, "obsidian_config_path", None)
+    if override is None:
+        return read_obsidian_vaults()
+    return read_obsidian_vaults(Path(override))
+
+
 def _write_vault_root_config(values: dict) -> None:
     """Persist ``[wiki_integration].vault_root`` atomically (AP-7).
 
@@ -189,8 +198,10 @@ def _reindex_vault_fts(request: Request, jarvis_root: Path) -> None:
 
     try:
         config = getattr(request.app.state, "config", None)
-        data_dir = Path(getattr(getattr(config, "memory", None), "data_dir", "./data"))
-        db_path = data_dir / "jarvis.db"
+        from jarvis.memory.wiki.db_path import resolve_wiki_db_path
+
+        data_dir = getattr(getattr(config, "memory", None), "data_dir", "./data")
+        db_path = resolve_wiki_db_path(data_dir)
         db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = sqlite3.connect(str(db_path), check_same_thread=False)
         try:
@@ -228,7 +239,7 @@ def obsidian_status(request: Request) -> ObsidianStatusResponse:
 
     try:
         detection = detect_obsidian()
-        vaults_state = read_obsidian_vaults()
+        vaults_state = _read_vaults_for_request(request)
         registered = is_vault_registered(vaults_state.vaults, vault_path)
     except Exception as exc:  # noqa: BLE001 — UI must keep working
         log.warning("setup_route_status_failed: %s", exc, exc_info=True)
@@ -332,6 +343,23 @@ def obsidian_register(
                 active_vault_root=str(_resolve_vault_path(request)),
                 restart_required=False,
             )
+        try:
+            vaults_state = _read_vaults_for_request(request)
+            registered_parent = find_registered_vault(vaults_state.vaults, target_vault)
+        except ValueError as exc:
+            return ObsidianRegisterResponse(
+                status="config_missing",
+                error=str(exc),
+                active_vault_root=str(_resolve_vault_path(request)),
+                restart_required=False,
+            )
+        if registered_parent is None:
+            return ObsidianRegisterResponse(
+                status="config_missing",
+                error="existing vault is not registered in Obsidian",
+                active_vault_root=str(_resolve_vault_path(request)),
+                restart_required=False,
+            )
         jarvis_root = target_vault / "Jarvis"
         # ``dry_run`` previews the would-be vault root without touching disk
         # or config — same contract the ``separate`` branch gives the flag.
@@ -353,7 +381,15 @@ def obsidian_register(
     vault_path = _resolve_vault_path(request)
 
     try:
-        result = register_vault(vault_path, dry_run=dry_run)
+        override = getattr(request.app.state, "obsidian_config_path", None)
+        if override is None:
+            result = register_vault(vault_path, dry_run=dry_run)
+        else:
+            result = register_vault(
+                vault_path,
+                config_path=Path(override),
+                dry_run=dry_run,
+            )
     except Exception as exc:  # noqa: BLE001 — translate to 500 with envelope
         log.warning("setup_route_register_failed: %s", exc, exc_info=True)
         raise HTTPException(

@@ -23,6 +23,37 @@ from jarvis.core.bus import EventBus
 from jarvis.core.events import ActionApproved, ActionDenied
 
 
+class ApprovalTicket:
+    """One armed approval decision that cannot lose an early bus response."""
+
+    def __init__(
+        self,
+        workflow: ApprovalWorkflow,
+        trace_id: UUID,
+        future: asyncio.Future[tuple[bool, str]],
+    ) -> None:
+        self._workflow = workflow
+        self.trace_id = trace_id
+        self._future = future
+        self._closed = False
+
+    async def wait(self, timeout_s: float) -> tuple[bool, str]:
+        """Wait for the first decision, defaulting safely to deny on timeout."""
+        try:
+            return await asyncio.wait_for(self._future, timeout=timeout_s)
+        except TimeoutError:
+            return (False, "timeout")
+        finally:
+            self.close()
+
+    def close(self) -> None:
+        """Remove an unresolved ticket so cancellation cannot leak state."""
+        if self._closed:
+            return
+        self._closed = True
+        self._workflow._discard(self.trace_id, self._future)
+
+
 class ApprovalWorkflow:
     """Holds one future per `trace_id` that waits for approve/deny."""
 
@@ -34,9 +65,34 @@ class ApprovalWorkflow:
         bus.subscribe(ActionDenied, self._on_denied)
 
     def _resolve(self, trace_id: UUID, approved: bool, who_or_reason: str) -> None:
-        fut = self._pending.pop(trace_id, None)
+        fut = self._pending.get(trace_id)
         if fut is not None and not fut.done():
             fut.set_result((approved, who_or_reason))
+
+    def arm(self, trace_id: UUID) -> ApprovalTicket:
+        """Register the decision future before an approval request is published.
+
+        An approval received before this call is deliberately ignored. A trace
+        may have only one active ticket, which keeps first-wins semantics and
+        prevents unrelated events from pre-authorizing a future action.
+        """
+        if trace_id in self._pending:
+            raise RuntimeError(f"approval trace {trace_id} is already armed")
+        future: asyncio.Future[tuple[bool, str]] = (
+            asyncio.get_running_loop().create_future()
+        )
+        self._pending[trace_id] = future
+        return ApprovalTicket(self, trace_id, future)
+
+    def _discard(
+        self,
+        trace_id: UUID,
+        future: asyncio.Future[tuple[bool, str]],
+    ) -> None:
+        if self._pending.get(trace_id) is future:
+            self._pending.pop(trace_id, None)
+        if not future.done():
+            future.cancel()
 
     async def _on_approved(self, event: ActionApproved) -> None:
         self._resolve(event.trace_id, True, event.approved_by or "user")
@@ -51,14 +107,13 @@ class ApprovalWorkflow:
             (approved: bool, who_or_reason: str)
         """
         timeout = timeout_s if timeout_s is not None else self._timeout_s
-        loop = asyncio.get_running_loop()
-        fut: asyncio.Future[tuple[bool, str]] = loop.create_future()
-        self._pending[trace_id] = fut
-        try:
-            return await asyncio.wait_for(fut, timeout=timeout)
-        except TimeoutError:
-            self._pending.pop(trace_id, None)
-            return (False, "timeout")
+        future = self._pending.get(trace_id)
+        ticket = (
+            ApprovalTicket(self, trace_id, future)
+            if future is not None
+            else self.arm(trace_id)
+        )
+        return await ticket.wait(timeout)
 
     # ------------------------------------------------------------------
     # Convenience: synthetic approve/deny for tests & the CLI launcher

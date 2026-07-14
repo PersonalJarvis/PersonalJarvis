@@ -7,10 +7,13 @@ we only pin the rules so the tab indicator can never silently change meaning.
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from jarvis.brain import provider_test
 from jarvis.brain import section_health as sh
+from jarvis.ui.web.provider_spec import PROVIDERS
 
 
 class TestSectionStatusForTest:
@@ -72,6 +75,76 @@ def test_vocabulary_is_exactly_four() -> None:
     assert len(sh.SECTION_HEALTH_STATUSES) == 4
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("spec", PROVIDERS, ids=lambda spec: spec.id)
+async def test_every_catalog_provider_health_is_bound_to_its_exact_id(
+    spec, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The generic guard covers every Brain, TTS, STT, and Realtime card."""
+    from jarvis.ui.web import provider_routes
+
+    monkeypatch.setattr(provider_routes, "_is_credential_present", lambda *args: True)
+
+    async def _probe(selected, cfg):
+        return SimpleNamespace(status="ok", detail="")
+
+    monkeypatch.setattr(provider_test, "run_provider_test", _probe)
+
+    result = await provider_routes._tier_section_health(SimpleNamespace(), spec)
+
+    assert result.status == sh.OK
+    assert result.subject_id == spec.id
+
+
+def test_health_fingerprint_covers_every_model_selection_surface() -> None:
+    """Every model-bearing API surface supersedes an older health snapshot."""
+    from jarvis.ui.web import provider_routes as pr
+
+    openrouter = SimpleNamespace(model="brain-a", cu_model="cu-a")
+    realtime = SimpleNamespace(model="realtime-a", voice="voice-a")
+    cfg = SimpleNamespace(
+        brain=SimpleNamespace(
+            providers={"openrouter": openrouter, "openai-realtime": realtime},
+            worker=SimpleNamespace(model="worker-a"),
+        ),
+        tts=SimpleNamespace(model="tts-a", voice_de="de-a", voice_en="en-a"),
+        stt=SimpleNamespace(model="stt-a"),
+    )
+    request = SimpleNamespace(
+        app=SimpleNamespace(state=SimpleNamespace(telephony_manager=None))
+    )
+    subjects = {
+        "brain": "openrouter",
+        "computer-use": "openrouter",
+        "tts": "openrouter-tts",
+        "stt": "openrouter-stt",
+        "realtime": "openai-realtime",
+        "subagents": "openrouter",
+        "advanced": None,
+    }
+    baseline = pr._section_health_fingerprint(request, cfg, subjects)
+
+    mutations = (
+        (openrouter, "model"),
+        (openrouter, "cu_model"),
+        (cfg.tts, "model"),
+        (cfg.tts, "voice_de"),
+        (cfg.tts, "voice_en"),
+        (cfg.stt, "model"),
+        (realtime, "model"),
+        (realtime, "voice"),
+        (cfg.brain.worker, "model"),
+    )
+    for owner, field in mutations:
+        original = getattr(owner, field)
+        setattr(owner, field, f"{original}-changed")
+        assert pr._section_health_fingerprint(request, cfg, subjects) != baseline
+        setattr(owner, field, original)
+
+    cfg.tts.model_extra = {"cartesia": {"model_id": "sonic-new"}}
+    assert pr._section_health_fingerprint(request, cfg, subjects) != baseline
+
+
 class TestSubagentSectionHealth:
     """Live-honest Sub-Agents tab health (2026-07-06 incident: the tab stayed
     green while every worker spawn 401'd on an expired OAuth token)."""
@@ -99,6 +172,7 @@ class TestSubagentSectionHealth:
         monkeypatch.setattr(pr, "_worker_flagged_dead", lambda p: False)
         health = pr._jarvis_agent_section_health(self._cfg())
         assert health.status == sh.OK
+        assert health.subject_id == "claude-api"
 
     def test_selected_dead_with_fallback_is_needs_setup(self, monkeypatch) -> None:
         from jarvis.ui.web import provider_routes as pr
@@ -144,3 +218,56 @@ class TestSubagentSectionHealth:
         health = pr._jarvis_agent_section_health(self._cfg())
         assert health.status == sh.ERROR
         assert health.reason == "no_provider"
+        assert health.subject_id == "claude-api"
+
+    def test_degraded_label_says_subscription_for_oauth_user(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        """2026-07-10 report: the banner blamed 'Claude (API-Key)' although the
+        user runs the worker on the Claude subscription login — the degraded
+        message must name the auth mode actually in play."""
+        import json
+
+        from jarvis import claude_credentials
+        from jarvis.ui.web import provider_routes as pr
+
+        (tmp_path / ".credentials.json").write_text(
+            json.dumps(
+                {
+                    "claudeAiOauth": {
+                        "accessToken": "sk-ant-oat01-x",
+                        "expiresAt": 1.0,  # expired-in-place — still an OAuth user
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(
+            claude_credentials, "claude_config_dirs", lambda: [tmp_path]
+        )
+        monkeypatch.setattr(pr, "_worker_usable", lambda p: False)
+        monkeypatch.setattr(pr, "_worker_flagged_dead", lambda p: True)
+        monkeypatch.setattr(
+            "jarvis.missions.init.reachable_worker_families", lambda: ["codex"]
+        )
+        health = pr._jarvis_agent_section_health(self._cfg())
+        assert "Claude (subscription)" in health.detail
+        assert "API-Key" not in health.detail
+
+    def test_degraded_label_keeps_api_key_for_keyed_user(
+        self, monkeypatch, tmp_path
+    ) -> None:
+        from jarvis import claude_credentials
+        from jarvis.ui.web import provider_routes as pr
+
+        # No OAuth bearer anywhere → the user really is on the API-key path.
+        monkeypatch.setattr(
+            claude_credentials, "claude_config_dirs", lambda: [tmp_path]
+        )
+        monkeypatch.setattr(pr, "_worker_usable", lambda p: False)
+        monkeypatch.setattr(pr, "_worker_flagged_dead", lambda p: True)
+        monkeypatch.setattr(
+            "jarvis.missions.init.reachable_worker_families", lambda: ["codex"]
+        )
+        health = pr._jarvis_agent_section_health(self._cfg())
+        assert "Claude (API-Key)" in health.detail

@@ -12,6 +12,7 @@ import json
 from jarvis.missions.stream_evidence import (
     extract_stream_evidence,
     extract_verified_commands,
+    extract_verified_external_actions,
 )
 
 
@@ -41,6 +42,48 @@ def test_credits_successful_git_push() -> None:
     assert len(cmds) == 1
     assert "git push" in cmds[0][0]
     assert "main -> main" in cmds[0][1]
+
+
+def test_credits_successful_structured_run_command() -> None:
+    """API workers provide direct argv rather than a shell command string."""
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "RunCommand",
+             "input": {"program": "git", "args": ["push", "origin", "main"]}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1",
+             "content": "abc..def  main -> main"}]}},
+    ])
+    commands = extract_verified_commands(stream)
+    assert len(commands) == 1
+    assert commands[0][0] == "git push origin main"
+
+
+def test_structured_run_command_does_not_credit_mutating_words_in_echo_args() -> None:
+    """A successful non-git executable cannot forge state-changing evidence."""
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "RunCommand",
+             "input": {"program": "echo", "args": ["git", "push"]}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1",
+             "content": "git push"}]}},
+    ])
+    assert extract_verified_commands(stream) == ()
+
+
+def test_structured_run_command_ignores_legacy_command_field() -> None:
+    """Unused shell-string fields cannot override the argv that really ran."""
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "t1", "name": "RunCommand",
+             "input": {"program": "echo", "args": [],
+                       "command": "git push origin main"}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "t1",
+             "content": "ok"}]}},
+    ])
+    assert extract_verified_commands(stream) == ()
 
 
 def test_credits_gh_pr_create() -> None:
@@ -209,6 +252,51 @@ def test_no_tools_no_answer_is_empty() -> None:
     assert not ev.has_tool_evidence
 
 
+def test_verified_external_action_requires_correlated_success_result() -> None:
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "m1", "name": "mcp__gmail__send_message", "input": {}}
+        ]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "m1", "content": "message id 42"}
+        ]}},
+    ])
+
+    assert extract_verified_external_actions(stream) == (
+        ("mcp__gmail__send_message", "message id 42"),
+    )
+
+
+def test_verified_external_action_rejects_error_and_missing_result() -> None:
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "m1", "name": "mcp__gmail__send_message", "input": {}},
+            {"type": "tool_use", "id": "m2", "name": "mcp__linear__create_issue", "input": {}},
+        ]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "m1", "content": "denied", "is_error": True}
+        ]}},
+    ])
+
+    assert extract_verified_external_actions(stream) == ()
+
+
+def test_codex_mcp_completion_normalizes_to_verified_external_action() -> None:
+    stream = _stream([
+        {"type": "item.completed", "item": {
+            "type": "mcp_tool_call",
+            "server": "gmail",
+            "tool": "send_message",
+            "status": "completed",
+            "result": "message id 84",
+        }}
+    ])
+
+    assert extract_verified_external_actions(stream) == (
+        ("mcp__gmail__send_message", "message id 84"),
+    )
+
+
 # --- readonly_answer: the read-only success signal -------------------------
 from jarvis.missions.stream_evidence import readonly_answer, summarize_answers  # noqa: E402
 
@@ -290,6 +378,7 @@ def test_summarize_answers_word_boundary_without_punctuation() -> None:
 # do-task that produced nothing.
 from jarvis.missions.stream_evidence import (  # noqa: E402
     informational_file_answer,
+    is_clarification_only_answer,
     is_informational_request,
 )
 
@@ -503,6 +592,28 @@ def test_readonly_answer_rejects_no_tool_answer_for_do_task_prompt() -> None:
     assert readonly_answer("", convo, prompt=prompt) is None
 
 
+def test_readonly_answer_rejects_worker_clarification_as_a_result() -> None:
+    """Exact 2026-07-13 failure: a long format question was auto-approved as
+    the completed research answer merely because the request was informational."""
+    clarification = (
+        "# Drugs in schools\n\n"
+        "Kurze Rückfrage, weil aus deiner Nachricht "  # i18n-allow: fixture
+        "ein Wort fehlt — einen was genau? "  # i18n-allow: fixture
+        "Soll ich einen Vortrag, einen Aufsatz, "  # i18n-allow: fixture
+        "eine Präsentation oder ein Infoblatt erstellen?"  # i18n-allow: fixture
+    )
+    convo = _stream([
+        {"type": "result", "result": clarification, "subtype": "success"},
+    ])
+
+    assert is_clarification_only_answer(clarification)
+    assert readonly_answer(
+        "",
+        convo,
+        prompt="Research and analyze drugs in schools.",
+    ) is None
+
+
 # --- informational_file_answer: research request answered in a prose document --
 #
 # Root cause of mission_019ecb56 (2026-06-15): "recherchiere AI-News" is an
@@ -561,6 +672,22 @@ def test_informational_file_answer_none_for_stub_document() -> None:
     # a near-empty / stub prose file is not a real answer — let the critic see it.
     stub = _prose("# KI-News\n\nInhalt folgt.\n")
     assert informational_file_answer(stub, prompt=_RESEARCH_PROMPT) is None
+
+
+def test_informational_file_answer_none_for_long_clarification() -> None:
+    clarification = (
+        "# Requested research\n\n"
+        "Quick clarifying question: which format should I use? "
+        "I can prepare a presentation, essay, handout, or detailed report. "
+        "Each option can include an introduction, a structured main section, "
+        "conclusions, prevention guidance, and references. Please choose the "
+        "format and audience before I begin so that I can tailor the result."
+    )
+
+    assert len(clarification) >= 300
+    assert informational_file_answer(
+        _prose(clarification), prompt=_RESEARCH_PROMPT
+    ) is None
 
 
 def test_informational_file_answer_none_when_code_mixed_in() -> None:
@@ -783,6 +910,30 @@ def test_extract_verified_desktop_actions_linux_xdg_open() -> None:
     assert len(actions) == 1
     assert "xdg-open" in actions[0][0]
     assert actions[0][1] == "(command succeeded; no output captured)"
+
+
+def test_structured_run_command_credits_real_xdg_open_program() -> None:
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "x2", "name": "RunCommand",
+             "input": {"program": "xdg-open", "args": ["artifact.pdf"]}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "x2", "content": ""}]}},
+    ])
+    actions = extract_verified_desktop_actions(stream)
+    assert len(actions) == 1
+    assert actions[0][0] == "xdg-open artifact.pdf"
+
+
+def test_structured_run_command_does_not_credit_launcher_words_in_echo_args() -> None:
+    stream = _stream([
+        {"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "id": "x3", "name": "RunCommand",
+             "input": {"program": "echo", "args": ["xdg-open", "artifact.pdf"]}}]}},
+        {"type": "user", "message": {"content": [
+            {"type": "tool_result", "tool_use_id": "x3", "content": "ok"}]}},
+    ])
+    assert extract_verified_desktop_actions(stream) == ()
 
 
 def test_extract_verified_desktop_actions_macos_open() -> None:

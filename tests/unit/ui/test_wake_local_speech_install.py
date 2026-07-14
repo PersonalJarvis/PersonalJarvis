@@ -8,6 +8,8 @@ The install itself (pip) is mocked; these lock the endpoint's state machine:
 """
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -105,3 +107,39 @@ def test_status_reports_available_when_present(monkeypatch) -> None:
 
     assert status["available"] is True
     assert status["state"] == "done"
+
+
+def test_available_pack_reapplies_current_wake_plan_live(monkeypatch) -> None:
+    from jarvis.core.config import WakeWordConfig
+
+    _reset_state()
+    monkeypatch.setattr(sr, "_local_whisper_available", lambda: True)
+
+    class _Pipeline:
+        plan = None
+
+        def set_wake_plan(self, plan) -> None:  # noqa: ANN001
+            self.plan = plan
+
+    app = FastAPI()
+    app.include_router(sr.router)
+    pipeline = _Pipeline()
+    app.state.speech_pipeline = pipeline
+    app.state.config = SimpleNamespace(
+        trigger=SimpleNamespace(
+            wake_word=WakeWordConfig(phrase="Hey Fable", engine="auto")
+        ),
+        stt=SimpleNamespace(language="en"),
+        ui=SimpleNamespace(language="en"),
+    )
+
+    body = TestClient(app).get(
+        "/api/settings/wake-word/enable-local-speech/status"
+    ).json()
+
+    assert body["available"] is True
+    assert body["applied_live"] is True
+    assert body["restart_required"] is False
+    assert pipeline.plan is not None
+    assert pipeline.plan.phrase == "Hey Fable"
+    assert pipeline.plan.wake_available is True

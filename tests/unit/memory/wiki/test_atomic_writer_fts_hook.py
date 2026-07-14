@@ -13,7 +13,6 @@ from __future__ import annotations
 import asyncio
 import sqlite3
 from pathlib import Path
-from unittest import mock
 
 import pytest
 
@@ -50,6 +49,7 @@ def writer(tmp_path: Path, db_conn: sqlite3.Connection) -> AtomicWriter:
         backup_dir=tmp_path / "backups",
         max_backups=5,
         concurrent_edit_lock_seconds=0.0,   # bypass 30-second guard in tests
+        db_path=tmp_path / "jarvis.db",
     )
     # Inject the in-memory test connection so we don't touch data/jarvis.db.
     w._fts_conn = db_conn

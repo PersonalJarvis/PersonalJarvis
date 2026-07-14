@@ -139,14 +139,36 @@ def check_harness_config(config: Any) -> list[DoctorFinding]:
         return [DoctorFinding("harness-config", "fail",
                               f"harness registry unreadable: {exc}")]
 
-    oc = getattr(getattr(config, "harness", None), "openclaw", None)
-    if oc is not None and getattr(oc, "enabled", False) and "openclaw" not in registered:
+    harness_config = getattr(config, "harness", None)
+    configured_enabled = {
+        str(name)
+        for name in (getattr(harness_config, "enabled", ()) or ())
+    }
+    inert_enabled = sorted(configured_enabled - registered)
+    if inert_enabled:
         findings.append(DoctorFinding(
             "harness-config", "warn",
-            "[harness.openclaw].enabled = true, but 'openclaw' is not a "
-            "registered harness — the block is inert",
-            hint=("Set [harness.openclaw].enabled = false. Heavy sub-agent work "
-                  "runs through spawn_worker regardless."),
+            "configured harnesses are not registered: " + ", ".join(inert_enabled),
+            hint=("Remove the stale names from [harness].enabled. Heavy work "
+                  "uses spawn_worker; MCP integrations expose capability-gated "
+                  "tools instead of harness names."),
+        ))
+
+    worker_harness = getattr(harness_config, "jarvis_agent", None)
+    if worker_harness is None:
+        worker_harness = getattr(harness_config, "openclaw", None)
+    worker_registered = bool({"jarvis_agent", "openclaw"} & registered)
+    if (
+        worker_harness is not None
+        and getattr(worker_harness, "enabled", False)
+        and not worker_registered
+    ):
+        findings.append(DoctorFinding(
+            "harness-config", "warn",
+            "[harness.jarvis_agent].enabled = true, but no Jarvis-Agent "
+            "worker harness is registered - the block is inert",
+            hint=("Set [harness.jarvis_agent].enabled = false. Heavy Jarvis-Agent "
+                  "work runs through spawn_worker regardless."),
         ))
 
     findings.append(DoctorFinding(

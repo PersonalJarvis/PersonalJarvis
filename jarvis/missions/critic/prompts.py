@@ -167,6 +167,13 @@ believed the log and approved with confidence=0.9):
   "(command succeeded; no output captured)" for a silent detached spawn). Judge
   whether the launched command satisfies the user's goal. A diff containing at
   least one such block is NOT empty — do NOT veto it under the empty-diff rule.
+- EXCEPTION — verified MCP/external action: a
+  `diff --external-action-evidence` block, marked `# verified-external-action`,
+  is ALSO ground truth and is NOT an empty diff. The runtime emits this block
+  only after correlating a namespaced MCP `tool_use` with its non-errored
+  `tool_result`; a bare call or worker prose cannot create it. Judge the tool and
+  returned result against the requested external action. A block containing this
+  marker is NOT empty — do not veto it under the empty-diff rule.
 - A log entry like `toolSummary: write tool was called` is NOT evidence
   that any file was actually created — it is the worker's self-report.
   Evidence strings that only cite `log_line:N` without a corresponding

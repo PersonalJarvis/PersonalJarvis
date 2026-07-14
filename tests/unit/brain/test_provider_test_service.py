@@ -170,3 +170,54 @@ def test_tts_synthesis_bytes_is_ok() -> None:
         )
     )
     assert res.status == "ok"
+
+
+def test_realtime_test_opens_the_exact_duplex_provider() -> None:
+    probed: list[str] = []
+
+    async def probe(spec, _cfg):
+        probed.append(spec.id)
+        return 42.0
+
+    res = _run(
+        run_provider_test(
+            get_spec("openai-realtime"),
+            _cfg(),
+            present=True,
+            realtime_probe=probe,
+        )
+    )
+    assert res.status == "ok"
+    assert probed == ["openai-realtime"]
+    assert res.latency_ms == pytest.approx(42.0)
+    assert "handshake accepted" in res.detail.lower()
+
+
+def test_realtime_bad_key_is_classified_from_duplex_handshake() -> None:
+    async def probe(_spec, _cfg):
+        raise RuntimeError("ClientError: Error code: 401 - API key not valid")
+
+    res = _run(
+        run_provider_test(
+            get_spec("gemini-live"),
+            _cfg(),
+            present=True,
+            realtime_probe=probe,
+        )
+    )
+    assert res.status == "bad_key"
+
+
+def test_realtime_depleted_credits_are_an_account_error() -> None:
+    async def probe(_spec, _cfg):
+        raise RuntimeError("Your prepayment credits are depleted")
+
+    res = _run(
+        run_provider_test(
+            get_spec("gemini-live"),
+            _cfg(),
+            present=True,
+            realtime_probe=probe,
+        )
+    )
+    assert res.status == "no_credits"

@@ -19,7 +19,6 @@ import subprocess
 import sys
 
 import numpy as np
-import pytest
 
 from jarvis.audio.vad import SileroEndpointer
 
@@ -31,24 +30,6 @@ def _bare_endpointer() -> SileroEndpointer:
     ep._vad_state = None
     ep._vad_context = None
     return ep
-
-
-def _silero_onnx_available() -> bool:
-    import importlib.util
-
-    spec = importlib.util.find_spec("silero_vad")
-    if spec is None or spec.origin is None:
-        return False
-    import os
-
-    return os.path.exists(
-        os.path.join(os.path.dirname(spec.origin), "data", "silero_vad.onnx")
-    )
-
-
-pytestmark = pytest.mark.skipif(
-    not _silero_onnx_available(), reason="silero_vad ONNX model not installed"
-)
 
 
 def test_prob_is_well_formed_and_silence_reads_low() -> None:

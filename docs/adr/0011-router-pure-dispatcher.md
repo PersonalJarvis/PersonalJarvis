@@ -4,14 +4,14 @@ slug: adr-0011-router-pure-dispatcher
 diataxis: adr
 status: active
 owner: sam
-last_reviewed: 2026-04-29
+last_reviewed: 2026-07-13
 phase: 5
 audience: developer
 ---
 
 # ADR-0011 — Main Jarvis is a Pure Dispatcher with EXACTLY four tools
 
-**Status:** Accepted (2026-04-25)
+**Status:** Amended 2026-07-13
 **Phase:** Persona refactor §3 — routing fix
 
 ## Context
@@ -759,3 +759,182 @@ present (`warn_if_phantom_openclaw`).
 - `tests/unit/core/test_capabilities.py::test_dispatch_to_harness_capability_removed`
   / `::test_no_capability_advertises_openclaw` / `::test_harness_adapters_present`
 - `tests/integration/test_dispatch_to_harness.py::test_unknown_harness_returns_neutral_error_no_inventory_leak`
+
+## Amendment — `app-command` tool (Command Registry executor, 2026-07-09)
+
+**Context.** Voice-driven app control had three uneven paths: the deterministic
+pre-LLM gates (fast, but only for a hand-picked set), the self-mod
+`set_config_value` tools, and free-form `cli_jarvisctl` strings composed by the
+LLM — the least-validated route and the primary source of "the command did
+something else" failures. Meanwhile the app's command surface lived in four
+independent, hand-maintained registries (UI nav, CLI, brain tools, mirrored
+constants — the AP-4 drift class).
+
+**Decision.** `ROUTER_TOOLS` gains **`app-command`**
+(`jarvis/plugins/tool/app_command.py`): a single structured executor over the
+new Command Registry (`jarvis/commands/registry.py`). Constraints:
+
+- `command_id` is **enum-constrained** to the curated registry — the LLM cannot
+  invent a target; arguments are validated against the command's JSON schema
+  BEFORE anything is sent.
+- Execution goes through the SAME mounted REST endpoint the desktop UI uses,
+  in-process via httpx `ASGITransport` (`runtime_refs.get_web_app()`) — one
+  validation chain for voice, UI, and CLI.
+- Registry commands flagged `dangerous` escalate to risk tier `ask` via
+  `risk_tier_for_args` (ToolExecutor two-turn voice confirm); the rest run at
+  `monitor`.
+- The readback is composed from the SERVER RESPONSE (echo-verify), never from
+  the model's intent.
+- **No spawn path:** mission dispatch is deliberately NOT a registry command
+  (spawning stays with `spawn-worker`); `app-command` is a direct gated action
+  and must never enter a worker tool set (AP-5/AP-14).
+
+The deterministic pre-LLM gates stay untouched — they remain the zero-latency
+first line; `app-command` covers the validated long tail. `cli_jarvisctl`
+remains as fallback for actions outside the registry.
+
+### Regression guards
+
+- `tests/unit/brain/test_routing.py::test_router_tools_is_pure_dispatcher_set`
+  (exact-match set updated to include `app-command`)
+- `tests/unit/brain/test_routing.py::test_factory_wires_app_command_into_router_set`
+- `tests/unit/plugins/tool/test_app_command.py` — schema/enum validation,
+  ASGI execution against a fake app, dangerous→ask escalation, server-response
+  readback, honest no-server error.
+- `tests/unit/commands/test_registry_parity.py` — registry↔OpenAPI/UI parity.
+
+### Addendum (2026-07-11) — umbrella interface replaced by flat expansion
+
+The original `app-command` design (ONE tool, nested `command_id` + `args`)
+failed its first live test: the router LLM read the command list in the
+tool description and called `provider-test` AS A TOOL NAME — "tool
+'provider-test' not in the router tool set", spoken error. Flash-class
+routers flatten nested dispatch interfaces; the repo's own CLI/MCP loaders
+already solved this shape. `app-command` is therefore now a **virtual
+loader** (the `cli-tools` pattern): the ROUTER_TOOLS entry gates the loader,
+`expand()` registers one flat tool per registry command (`brain-switch`,
+`provider-test`, `wake-word-set`, …), each carrying the command's own params
+schema and risk tier (`ask` when dangerous, else `monitor`). Validation,
+ASGI execution, and echo-verify readback are unchanged. Guards:
+`test_factory_wires_registry_command_tools_into_router_set`,
+`tests/unit/plugins/tool/test_app_command.py` (loader expansion + flat
+schemas + the provider-test regression).
+
+## Amendment 2026-07-12 - retire `multi-spawn` from the router
+
+### Context
+
+The live harness inventory no longer contains the historical OpenClaw/Codex
+vehicles advertised by `multi-spawn`. The tool therefore competed with the
+working `spawn-worker` mission path while offering backend names that could not
+run. This is the same phantom-capability failure class that previously required
+removing `dispatch-to-harness` from the LLM-visible router.
+
+### Decision
+
+`multi-spawn` is removed from `ROUTER_TOOLS` and from the seeded capability
+registry. `spawn-worker` is the sole LLM-visible heavy-work delegation path; its
+Mission Manager may still decompose a mission into parallel supervised steps.
+The legacy implementation and entry point may remain for internal compatibility,
+but model-facing schemas and prompts must not advertise it.
+
+### Consequences
+
+- Heavy work has one observable mission id and one critic/review lifecycle.
+- The router can no longer select unregistered harness names through the legacy
+  fan-out schema.
+- Parallelism remains an internal Mission Manager decision rather than a second
+  public spawn surface.
+
+### Alternatives considered
+
+- Re-register the historical harness names: rejected because those backends were
+  removed after empirical reliability failures.
+- Rewrite `multi-spawn` as an alias for `spawn-worker`: rejected because two
+  model-visible tools for one operation recreate nondeterministic tool choice.
+
+### Follow-up items
+
+- Keep exact router-set and capability-registry negative tests.
+- Keep recursive spawn tools out of every worker capability inventory.
+
+## Amendment 2026-07-13 - retire `dispatch-with-review` from the router
+
+### Context
+
+`dispatch-with-review` still exposed the retired Phase-8 review pipeline as a
+second model-visible heavy-work path. Its worker spawner can only select the
+unregistered `jarvis_agent` or `openclaw` harness names, while the production
+Mission Manager already applies `CriticRunner` to every supervised mission.
+Keeping both tools made an otherwise valid Realtime action nondeterministically
+choose a path that cannot execute on any supported installation.
+
+### Decision
+
+Remove `dispatch-with-review` from `ROUTER_TOOLS` and from the seeded capability
+registry. `spawn-worker` is the sole model-visible heavy-work entry point, and
+its Mission Manager owns worker execution, critic retries, and Kontrollierer
+sign-off. The legacy review entry point may remain temporarily for internal
+compatibility, but routing, capability discovery, and prompts must not advertise
+it.
+
+### Consequences
+
+- Realtime, chat, and voice all enter the same supervised mission lifecycle.
+- Every model-selected heavy task receives the live worker fallback chain and
+  the production Critic instead of an unavailable harness error.
+- Existing direct callers of the legacy review tool continue to receive its
+  compatibility behavior until the implementation is removed or migrated.
+- Two model-visible tools can no longer compete for the same reviewed mission.
+
+### Alternatives considered
+
+- Re-register the retired harnesses: rejected because the OpenClaw subprocess
+  path was removed after repeated reliability failures.
+- Rewrite `dispatch-with-review` as a second alias for `spawn-worker`: rejected
+  because duplicate schemas recreate nondeterministic model selection and split
+  telemetry across two names.
+- Keep both tools and improve the prompt: rejected because prompt guidance
+  cannot make an unregistered execution backend available.
+
+### Follow-up items
+
+- Keep negative router and capability-registry tests for
+  `dispatch-with-review`.
+- Preserve the Mission Manager Critic-loop smoke test as the review guarantee.
+- Remove the legacy review implementation once non-router compatibility callers
+  have migrated.
+
+## Amendment 2026-07-13 - advertise only operational harness adapters
+
+### Context
+
+The package still registered `mcp-remote` and `open-interpreter` as harnesses.
+The former implemented an obsolete MCP client API and bootstrapped with an empty
+registry; the latter was an explicit stub that always returned failure. Their
+presence in entry-point discovery and the default `[harness].enabled` list made
+unavailable functionality look ready on a fresh installation.
+
+### Decision
+
+The operational harness inventory contains only `python-script` and the
+capability-gated `screenshot` Computer Use adapter. MCP servers contribute flat,
+safety-gated tools through the live MCP loader; they are not worker harnesses.
+Any mission-scoped worker grants must reuse that tool surface rather than revive
+the obsolete harness adapter. Heavy work continues through `spawn-worker` and
+the Mission Manager. Stale configured harness names are reported by the doctor.
+
+### Consequences
+
+- Discovery no longer claims that a stub or obsolete protocol adapter can run.
+- The universal Python harness remains available on a headless base install.
+- Computer Use remains registered but reports unhealthy until its desktop
+  context and dependencies are ready.
+- MCP actions retain the normal ToolExecutor policy instead of bypassing it
+  through the obsolete harness adapter.
+
+### Regression guards
+
+- `tests/contract/test_harness_protocol.py`
+- `tests/unit/diagnostics/test_doctor_diagnostics.py`
+- `tests/unit/core/test_capabilities.py`

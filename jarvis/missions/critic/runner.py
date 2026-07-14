@@ -26,15 +26,17 @@ import logging
 import re
 import sys
 import time
+from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
 
 from pydantic import ValidationError
 
 from ..stream_evidence import (
     capability_refusal_answer,
     diff_has_action_evidence,
+    extract_verified_external_actions,
     informational_file_answer,
     is_informational_request,
     readonly_answer,
@@ -57,6 +59,22 @@ from .verdict import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _render_external_action_evidence(worker_log: str) -> str:
+    """Render correlated successful MCP results as a critic evidence block."""
+    actions = extract_verified_external_actions(worker_log)
+    if not actions:
+        return ""
+    lines = [
+        "diff --external-action-evidence",
+        "# verified-external-action",
+    ]
+    for name, result in actions:
+        compact = " ".join(result.split())
+        lines.append(f"+tool: {name}")
+        lines.append(f"+result: {compact}")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -116,6 +134,136 @@ _RE_CODEX_ACTION_ITEM = re.compile(
     r'"type"\s*:\s*"(command_execution|file_change|mcp_tool_call|web_search)"'
 )
 
+_ACTION_ITEM_TYPES: Final[frozenset[str]] = frozenset(
+    {"command_execution", "file_change", "mcp_tool_call", "web_search"}
+)
+_FAILED_RESULT_STATUSES: Final[frozenset[str]] = frozenset(
+    {
+        "approval_denied",
+        "blocked",
+        "cancelled",
+        "canceled",
+        "denied",
+        "error",
+        "expired",
+        "failed",
+        "outcome_unknown",
+        "rejected",
+        "timed_out",
+        "timeout",
+        "unavailable",
+    }
+)
+_RE_DENIED_RESULT = re.compile(
+    r"^(?:approval[ _-]?denied|permission[ _-]?denied|denied|blocked|rejected|"
+    r"cancelled|canceled|timed[ _-]?out|timeout|expired|outcome[ _-]?unknown)"
+    r"(?:\b|[ _:-])",
+    re.IGNORECASE,
+)
+
+
+def _result_signals_failure(value: Any) -> bool:
+    """Return whether a provider result explicitly reports non-execution.
+
+    The mission tool broker returns structured ``success``/``status`` fields,
+    while Claude-style streams commonly use ``is_error`` and some adapters
+    serialize that mapping into the result's text content. All three shapes
+    must override the preceding call frame: an attempted action is not proof
+    that the action completed.
+    """
+    if isinstance(value, dict):
+        is_error = value.get("is_error", value.get("isError"))
+        if is_error is True or (
+            isinstance(is_error, str) and is_error.strip().lower() == "true"
+        ):
+            return True
+        for key in ("success", "ok"):
+            flag = value.get(key)
+            if flag is False or (
+                isinstance(flag, str) and flag.strip().lower() == "false"
+            ):
+                return True
+        for key in ("exit_code", "return_code"):
+            code = value.get(key)
+            if code is not None and str(code).strip() not in {"", "0"}:
+                return True
+        status = str(value.get("status", "")).strip().lower().replace("-", "_")
+        if status in _FAILED_RESULT_STATUSES:
+            return True
+        error = value.get("error")
+        if error not in (None, "", False, [], {}):
+            return True
+        return any(
+            _result_signals_failure(value[key])
+            for key in (
+                "content",
+                "result",
+                "structuredContent",
+                "structured_content",
+                "text",
+            )
+            if key in value
+        )
+    if isinstance(value, list):
+        return any(_result_signals_failure(item) for item in value)
+    if not isinstance(value, str):
+        return False
+
+    text = value.strip()
+    if not text:
+        return False
+    if "<tool_use_error>" in text.lower():
+        return True
+    if text[0] in "[{":
+        try:
+            decoded = json.loads(text)
+        except (json.JSONDecodeError, ValueError):
+            pass
+        else:
+            return _result_signals_failure(decoded)
+    return _RE_DENIED_RESULT.match(text) is not None
+
+
+def _json_stream_records(worker_output: str) -> tuple[dict[str, Any], ...]:
+    """Best-effort JSON/NDJSON records without interpreting quoted prose."""
+    stripped = worker_output.strip()
+    if not stripped:
+        return ()
+    try:
+        decoded = json.loads(stripped)
+    except (json.JSONDecodeError, ValueError):
+        decoded = None
+    if isinstance(decoded, dict):
+        return (decoded,)
+    if isinstance(decoded, list):
+        return tuple(item for item in decoded if isinstance(item, dict))
+
+    records: list[dict[str, Any]] = []
+    for raw in worker_output.splitlines():
+        try:
+            decoded = json.loads(raw.strip())
+        except (json.JSONDecodeError, ValueError):
+            continue
+        if isinstance(decoded, dict):
+            records.append(decoded)
+        elif isinstance(decoded, list):
+            records.extend(item for item in decoded if isinstance(item, dict))
+    return tuple(records)
+
+
+def _message_blocks(record: dict[str, Any]) -> tuple[dict[str, Any], ...]:
+    """Return tool blocks from canonical and flattened provider frames."""
+    if record.get("type") in {"tool_use", "tool_result"}:
+        return (record,)
+    message = record.get("message")
+    container = message if isinstance(message, dict) else record
+    content = container.get("content")
+    if isinstance(content, dict):
+        return (content,)
+    if isinstance(content, list):
+        return tuple(item for item in content if isinstance(item, dict))
+    return ()
+
 
 def _extract_tool_call_evidence(worker_output: str) -> tuple[str, ...]:
     """Parse tool-call evidence from worker output in a defensive, format-agnostic way.
@@ -128,6 +276,12 @@ def _extract_tool_call_evidence(worker_output: str) -> tuple[str, ...]:
       mcp_tool_call / web_search) — the matched item type doubles as the
       evidence name.
 
+    A correlated failure result removes its call from the evidence set. This
+    prevents a denied, blocked, cancelled, or otherwise failed attempt from
+    satisfying a side-effecting capability merely because ``tool_use`` was
+    emitted first. Uncorrelated call frames retain their historical treatment
+    for compatibility with streaming providers that do not persist results.
+
     If the output format is unrecognised or the text is empty, returns an
     empty tuple — the caller (``enforce_capability_honesty``) treats this as
     conservative failure for ``requires_evidence=True`` capabilities.
@@ -135,11 +289,75 @@ def _extract_tool_call_evidence(worker_output: str) -> tuple[str, ...]:
     if not worker_output:
         return ()
 
-    names: list[str] = []
-    names.extend(_RE_TOOL_USE_NAME.findall(worker_output))
+    calls: list[tuple[str | None, str]] = []
+    outcomes: dict[str, bool] = {}
+    saw_structured_call = False
+
+    for record in _json_stream_records(worker_output):
+        record_type = str(record.get("type", "")).strip()
+        if record_type in {"item.started", "item.completed"}:
+            item = record.get("item")
+            if not isinstance(item, dict):
+                continue
+            item_type = str(item.get("type", "")).strip()
+            if item_type not in _ACTION_ITEM_TYPES:
+                continue
+            saw_structured_call = True
+            item_id = str(item.get("id", "")).strip()
+            key = f"codex:{item_id}" if item_id else f"codex-anonymous:{len(calls)}"
+            calls.append((key, item_type))
+            if record_type == "item.completed":
+                outcomes[key] = outcomes.get(key, False) or _result_signals_failure(item)
+            continue
+
+        if record_type == "dispatch-result":
+            name = str(record.get("tool", "")).strip()
+            if name:
+                saw_structured_call = True
+                key = f"dispatch:{len(calls)}"
+                calls.append((key, name))
+                outcomes[key] = _result_signals_failure(record)
+            continue
+
+        for block in _message_blocks(record):
+            block_type = str(block.get("type", "")).strip()
+            if block_type == "tool_use":
+                name = str(block.get("name", "")).strip()
+                if not name:
+                    continue
+                saw_structured_call = True
+                tool_id = str(block.get("id", "")).strip()
+                calls.append((f"tool:{tool_id}" if tool_id else None, name))
+            elif block_type == "tool_result":
+                tool_id = str(
+                    block.get("tool_use_id")
+                    or block.get("tool_call_id")
+                    or block.get("call_id")
+                    or block.get("toolUseId")
+                    or block.get("toolCallId")
+                    or block.get("callId")
+                    or ""
+                ).strip()
+                if tool_id:
+                    key = f"tool:{tool_id}"
+                    outcomes[key] = outcomes.get(key, False) or _result_signals_failure(
+                        block
+                    )
+
+    names = [
+        name
+        for key, name in calls
+        if key is None or outcomes.get(key) is not True
+    ]
+
+    # Preserve compatibility with old, non-JSON logs. Once structured calls
+    # were parsed, their correlated outcomes are authoritative and a regex
+    # fallback must not accidentally re-add a failed call.
+    if not saw_structured_call:
+        names.extend(_RE_TOOL_USE_NAME.findall(worker_output))
+        names.extend(_RE_DISPATCH_RESULT.findall(worker_output))
+        names.extend(_RE_CODEX_ACTION_ITEM.findall(worker_output))
     names.extend(_RE_TOOL_USE_MARKER.findall(worker_output))
-    names.extend(_RE_DISPATCH_RESULT.findall(worker_output))
-    names.extend(_RE_CODEX_ACTION_ITEM.findall(worker_output))
 
     # Deduplicate while preserving first-seen order.
     seen: set[str] = set()
@@ -495,9 +713,31 @@ class CriticRunner:
         *,
         timeout_seconds: float = DEFAULT_TIMEOUT_SECONDS,
         log_triage: TriageFn | None = None,
+        job_factory: Callable[[], Any] | None = None,
     ) -> None:
         self._timeout = timeout_seconds
         self._log_triage = log_triage
+        # Per-mission process-containment job (Windows Job Object / POSIX
+        # process-group reaper, see jarvis.missions.isolation.job_object).
+        # None keeps the pre-fix behaviour exactly (graceful no-op) for
+        # callers/tests that construct CriticRunner without one — the
+        # bootstrap path (jarvis.missions.init.bootstrap_missions) passes the
+        # SAME factory the orchestrator's Kontrollierer uses for workers.
+        self._job_factory = job_factory
+
+    @staticmethod
+    def _assign_job(job: Any, pid: int, *, label: str) -> None:
+        """Best-effort: place `pid` in the containment job.
+
+        Mirrors ``ClaudeDirectWorker.spawn``'s ``job.assign(proc.pid)`` — a
+        failure here must never abort the critic run, only log (AP-10).
+        """
+        if job is None:
+            return
+        try:
+            job.assign(pid)
+        except Exception:  # noqa: BLE001
+            logger.warning("%s: job.assign(pid=%d) failed", label, pid, exc_info=True)
 
     async def run(
         self,
@@ -593,6 +833,15 @@ class CriticRunner:
         # record — the "claims success without invoking any tool"
         # hallucination (BUG-LIVE-02, mission_019e2c18): there is nothing on
         # disk for the LLM to grade, so log text alone cannot earn an approve.
+        # Correlated, non-errored MCP results are observable external-action
+        # evidence even though they leave no worktree file. Surface them through
+        # the same diff-like channel used for verified command/desktop actions.
+        # A bare tool call or prose claim never renders this block.
+        if not worker_diff.strip():
+            external_action_diff = _render_external_action_evidence(worker_log)
+            if external_action_diff:
+                worker_diff = external_action_diff
+
         _defer_empty_diff_to_llm = bool(_extract_tool_call_evidence(worker_log))
 
         if not worker_diff.strip() and is_informational_request(mission_prompt):
@@ -1169,9 +1418,11 @@ class CriticRunner:
         # onto disk via the cross-family walk) was thrown away. A non-viable
         # Claude falls through to the codex / in-process API critic below.
         claude_cli_viable = _claude_cli_critic_viable()
+        claude_cli_attempted = False
         if primary_provider == "claude-api":
             if claude_cli_viable:
-                return await self._invoke_via_claude_direct(
+                claude_cli_attempted = True
+                claude_verdict = await self._invoke_via_claude_direct(
                     prompt=prompt_for_subprocess,
                     worktree=worktree,
                     env=env,
@@ -1179,12 +1430,19 @@ class CriticRunner:
                     iteration=iteration,
                     adversarial_reframe=adversarial_reframe,
                 )
-            logger.warning(
-                "CriticRunner: the `claude` CLI critic is not auth-viable "
-                "(dead/expired login, no classic Anthropic key) — crossing to "
-                "the codex / API-key critic families. Run `claude /login` to "
-                "restore the Claude critic."
-            )
+                if claude_verdict is not None:
+                    return claude_verdict
+                logger.warning(
+                    "CriticRunner: claude critic produced no schema-valid "
+                    "verdict; crossing to the other viable critic families."
+                )
+            else:
+                logger.warning(
+                    "CriticRunner: the `claude` CLI critic is not auth-viable "
+                    "(dead/expired login, no classic Anthropic key) — crossing "
+                    "to the codex / API-key critic families. Run `claude "
+                    "/login` to restore the Claude critic."
+                )
         # Welle 6 (2026-05-18): ChatGPT subscription path via codex exec.
         # Same JSON-verdict contract -- codex exec --json runs the model
         # non-interactively, the prompt enforces strict JSON output, the
@@ -1234,7 +1492,8 @@ class CriticRunner:
                     "restore the codex critic.",
                     model,
                 )
-                return await self._invoke_via_claude_direct(
+                claude_cli_attempted = True
+                claude_verdict = await self._invoke_via_claude_direct(
                     prompt=prompt_for_subprocess,
                     worktree=worktree,
                     env=env,
@@ -1242,11 +1501,19 @@ class CriticRunner:
                     iteration=iteration,
                     adversarial_reframe=adversarial_reframe,
                 )
-            logger.warning(
-                "CriticRunner: codex critic produced no verdict and the claude "
-                "critic is not auth-viable — crossing to the in-process API "
-                "critic families."
-            )
+                if claude_verdict is not None:
+                    return claude_verdict
+                logger.warning(
+                    "CriticRunner: both codex and claude produced no "
+                    "schema-valid verdict; crossing to the API critic "
+                    "families."
+                )
+            if not claude_cli_viable:
+                logger.warning(
+                    "CriticRunner: codex critic produced no verdict and the "
+                    "claude critic is not auth-viable; crossing to the "
+                    "in-process API critic families."
+                )
 
         # Any other provider (grok / gemini / openrouter / unset) falls back to
         # the direct claude critic. The OpenClaw subprocess critic path was
@@ -1265,8 +1532,16 @@ class CriticRunner:
         # legacy claude-CLI critic, so openrouter/openai/gemini/antigravity/unset
         # missions are reviewed with the user's OWN key instead of the absent
         # `claude` binary. Falls through to claude-direct only when NO API key exists.
-        api_provider, api_model = _resolve_api_critic_provider(primary_provider, primary_model)
-        if api_provider:
+        attempted_api_providers: set[str] = set()
+        while True:
+            api_provider, api_model = _resolve_api_critic_provider(
+                primary_provider,
+                primary_model,
+                excluded_providers=attempted_api_providers,
+            )
+            if not api_provider or api_provider in attempted_api_providers:
+                break
+            attempted_api_providers.add(api_provider)
             logger.info(
                 "CriticRunner: grading in-process via the %r API brain "
                 "(worker provider=%r).", api_provider, primary_provider,
@@ -1281,23 +1556,29 @@ class CriticRunner:
             if api_verdict is not None:
                 return api_verdict
             logger.warning(
-                "CriticRunner: in-process API critic (%r) produced no verdict — "
-                "falling back to the claude-direct critic.", api_provider,
+                "CriticRunner: in-process API critic (%r) produced no "
+                "schema-valid verdict; trying the next viable family.",
+                api_provider,
             )
-        if primary_provider:
+        if claude_cli_viable and not claude_cli_attempted:
             logger.info(
-                "CriticRunner: sub_jarvis provider %r has no direct critic — "
-                "grading on the claude critic model %r (Claude Max OAuth).",
-                primary_provider, model,
+                "CriticRunner: API critic families are exhausted; grading "
+                "the Jarvis-Agent output with the claude critic model %r.",
+                model,
             )
-        return await self._invoke_via_claude_direct(
-            prompt=prompt_for_subprocess,
-            worktree=worktree,
-            env=env,
-            model=model,
-            iteration=iteration,
-            adversarial_reframe=adversarial_reframe,
+            return await self._invoke_via_claude_direct(
+                prompt=prompt_for_subprocess,
+                worktree=worktree,
+                env=env,
+                model=model,
+                iteration=iteration,
+                adversarial_reframe=adversarial_reframe,
+            )
+        logger.error(
+            "CriticRunner: every viable critic family failed to return a "
+            "schema-valid verdict."
         )
+        return None
 
     # --- Internal: direct claude --print path (CRIT-1, 2026-05-17) ---
 
@@ -1362,51 +1643,67 @@ class CriticRunner:
         )
 
         t0 = time.perf_counter()
+        # Per-mission process containment (AP-10): mirrors ClaudeDirectWorker,
+        # whose orchestrator wraps the whole spawn in ``async with job:``. A
+        # missing/None factory keeps the pre-fix behaviour exactly (graceful
+        # no-op) — see ``self._job_factory``.
+        job = self._job_factory() if self._job_factory is not None else None
+        if job is not None:
+            await job.__aenter__()
         try:
-            # create_worker_subprocess sources the Windows flags and degrades
-            # CREATE_BREAKAWAY_FROM_JOB gracefully (WinError 5) — same fix as
-            # the worker (live mission 019ec61b, 2026-06-14: the critic spawn
-            # died on breakaway in the app's restrictive job).
-            proc = await create_worker_subprocess(
-                cmd,
-                cwd=str(worktree),
-                env=env,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-        except FileNotFoundError as exc:
-            logger.warning(
-                "CriticRunner: claude binary not found: %s — cmd=%r",
-                exc, cmd,
-            )
-            return None
+            try:
+                # create_worker_subprocess sources the Windows flags and degrades
+                # CREATE_BREAKAWAY_FROM_JOB gracefully (WinError 5) — same fix as
+                # the worker (live mission 019ec61b, 2026-06-14: the critic spawn
+                # died on breakaway in the app's restrictive job).
+                proc = await create_worker_subprocess(
+                    cmd,
+                    cwd=str(worktree),
+                    env=env,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            except FileNotFoundError as exc:
+                logger.warning(
+                    "CriticRunner: claude binary not found: %s — cmd=%r",
+                    exc, cmd,
+                )
+                return None
 
-        # Write the prompt to stdin then close to signal EOF.
-        try:
-            assert proc.stdin is not None  # noqa: S101 - PIPE always present
-            proc.stdin.write(prompt.encode("utf-8"))
-            await proc.stdin.drain()
-            proc.stdin.close()
-        except (BrokenPipeError, ConnectionResetError) as exc:
-            logger.warning(
-                "CriticRunner: claude stdin write failed: %s", exc
-            )
+            self._assign_job(job, proc.pid, label="CriticRunner (claude-direct)")
 
-        try:
-            stdout_b, stderr_b = await asyncio.wait_for(
-                proc.communicate(), timeout=self._timeout
-            )
-        except TimeoutError as exc:
-            with _suppress(ProcessLookupError):
-                proc.kill()
-            # Audit-2 H3 -- always wait() after kill() so the transport
-            # is torn down and we don't leak a zombie + open pipes.
-            with _suppress(Exception):
-                await asyncio.wait_for(proc.wait(), timeout=5.0)
-            raise CriticTimeout(
-                f"Critic (claude-direct) exceeded {self._timeout}s — killed."
-            ) from exc
+            # Write the prompt to stdin then close to signal EOF.
+            try:
+                assert proc.stdin is not None  # noqa: S101 - PIPE always present
+                proc.stdin.write(prompt.encode("utf-8"))
+                await proc.stdin.drain()
+                proc.stdin.close()
+            except (BrokenPipeError, ConnectionResetError) as exc:
+                logger.warning(
+                    "CriticRunner: claude stdin write failed: %s", exc
+                )
+
+            try:
+                stdout_b, stderr_b = await asyncio.wait_for(
+                    proc.communicate(), timeout=self._timeout
+                )
+            except TimeoutError as exc:
+                with _suppress(ProcessLookupError):
+                    proc.kill()
+                # Audit-2 H3 -- always wait() after kill() so the transport
+                # is torn down and we don't leak a zombie + open pipes. The
+                # job (when present) is closed in the outer finally below,
+                # reaping any grandchild the CLI spawned (e.g. MCP servers)
+                # that a bare proc.kill() would leave orphaned.
+                with _suppress(Exception):
+                    await asyncio.wait_for(proc.wait(), timeout=5.0)
+                raise CriticTimeout(
+                    f"Critic (claude-direct) exceeded {self._timeout}s — killed."
+                ) from exc
+        finally:
+            if job is not None:
+                await job.__aexit__(None, None, None)
 
         wall_ms = int((time.perf_counter() - t0) * 1000)
         if proc.returncode != 0:
@@ -1599,50 +1896,62 @@ class CriticRunner:
         )
 
         t0 = time.perf_counter()
+        # Per-mission process containment (AP-10): mirrors ClaudeDirectWorker /
+        # _invoke_via_claude_direct above. A missing/None factory keeps the
+        # pre-fix behaviour exactly (graceful no-op) — see self._job_factory.
+        job = self._job_factory() if self._job_factory is not None else None
+        if job is not None:
+            await job.__aenter__()
         try:
-            # create_worker_subprocess: breakaway-flag degradation (WinError 5).
-            proc = await create_worker_subprocess(
-                cmd,
-                cwd=str(worktree),
-                env=env_for_codex,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-        except FileNotFoundError as exc:
-            logger.warning(
-                "CriticRunner: codex binary not found: %s -- cmd=%r",
-                exc, cmd,
-            )
-            return None
+            try:
+                # create_worker_subprocess: breakaway-flag degradation (WinError 5).
+                proc = await create_worker_subprocess(
+                    cmd,
+                    cwd=str(worktree),
+                    env=env_for_codex,
+                    stdin=asyncio.subprocess.PIPE,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                )
+            except FileNotFoundError as exc:
+                logger.warning(
+                    "CriticRunner: codex binary not found: %s -- cmd=%r",
+                    exc, cmd,
+                )
+                return None
 
-        try:
-            assert proc.stdin is not None  # noqa: S101 -- PIPE always present
-            proc.stdin.write(prompt.encode("utf-8"))
-            await proc.stdin.drain()
-            proc.stdin.close()
-        except (BrokenPipeError, ConnectionResetError) as exc:
-            logger.warning(
-                "CriticRunner: codex stdin write failed: %s", exc,
-            )
+            self._assign_job(job, proc.pid, label="CriticRunner (codex-direct)")
 
-        try:
-            stdout_b, stderr_b = await asyncio.wait_for(
-                proc.communicate(), timeout=self._timeout
-            )
-        except TimeoutError as exc:
-            with _suppress(ProcessLookupError):
-                proc.kill()
-            with _suppress(Exception):
-                await asyncio.wait_for(proc.wait(), timeout=5.0)
-            with _suppress(OSError):
-                __import__("os").unlink(schema_path)
-            raise CriticTimeout(
-                f"Critic (codex-direct) exceeded {self._timeout}s -- killed."
-            ) from exc
+            try:
+                assert proc.stdin is not None  # noqa: S101 -- PIPE always present
+                proc.stdin.write(prompt.encode("utf-8"))
+                await proc.stdin.drain()
+                proc.stdin.close()
+            except (BrokenPipeError, ConnectionResetError) as exc:
+                logger.warning(
+                    "CriticRunner: codex stdin write failed: %s", exc,
+                )
+
+            try:
+                stdout_b, stderr_b = await asyncio.wait_for(
+                    proc.communicate(), timeout=self._timeout
+                )
+            except TimeoutError as exc:
+                with _suppress(ProcessLookupError):
+                    proc.kill()
+                with _suppress(Exception):
+                    await asyncio.wait_for(proc.wait(), timeout=5.0)
+                with _suppress(OSError):
+                    __import__("os").unlink(schema_path)
+                raise CriticTimeout(
+                    f"Critic (codex-direct) exceeded {self._timeout}s -- killed."
+                ) from exc
+            finally:
+                with _suppress(OSError):
+                    __import__("os").unlink(schema_path)
         finally:
-            with _suppress(OSError):
-                __import__("os").unlink(schema_path)
+            if job is not None:
+                await job.__aexit__(None, None, None)
 
         wall_ms = int((time.perf_counter() - t0) * 1000)
 
@@ -1762,7 +2071,14 @@ def _resolve_critic_provider_model() -> tuple[str | None, str | None]:
 
 # API-key brain providers that can grade IN-PROCESS via their own BrainProvider
 # (no external CLI). Order = the cross-family fallback preference.
-_API_CRITIC_PROVIDERS: tuple[str, ...] = ("openrouter", "openai", "gemini", "claude-api")
+_API_CRITIC_PROVIDERS: tuple[str, ...] = (
+    "openrouter",
+    "openai",
+    "gemini",
+    "claude-api",
+    "groq",
+    "nvidia",
+)
 
 
 def _provider_picked_model(provider: str) -> str | None:
@@ -1784,7 +2100,10 @@ def _provider_picked_model(provider: str) -> str | None:
 
 
 def _resolve_api_critic_provider(
-    primary_provider: str | None, primary_model: str | None
+    primary_provider: str | None,
+    primary_model: str | None,
+    *,
+    excluded_providers: Collection[str] = (),
 ) -> tuple[str | None, str | None]:
     """Pick a keyed API brain provider to grade the mission IN-PROCESS (B2, AP-22).
 
@@ -1792,8 +2111,9 @@ def _resolve_api_critic_provider(
     otherwise the first API provider that actually has a usable key at runtime. So
     a mission whose worker ran on antigravity/openrouter/gemini is still reviewed
     with the user's OWN key instead of the absent `claude` CLI binary. Returns
-    ``(None, None)`` when no API key is available → the caller keeps the legacy
-    claude-direct critic as the last resort.
+    ``excluded_providers`` contains families already attempted during this
+    review turn. Returns ``(None, None)`` when no untried API family is viable,
+    allowing the caller to continue to a separately authenticated CLI family.
     """
     # Viability-gated, not existence-gated (BUG-042 defect 3, critic edition):
     # a stale sk-ant-oat claude-api credential or a family a worker just
@@ -1804,7 +2124,10 @@ def _resolve_api_critic_provider(
     if primary_provider in _API_CRITIC_PROVIDERS:
         order.append(primary_provider)  # type: ignore[arg-type]
     order += [p for p in _API_CRITIC_PROVIDERS if p not in order]
+    excluded = set(excluded_providers)
     for prov in order:
+        if prov in excluded:
+            continue
         try:
             if _api_key_family_viable(prov):
                 # Same provider as the worker → reuse its model. Cross-family →
@@ -1817,7 +2140,7 @@ def _resolve_api_critic_provider(
                     else _provider_picked_model(prov)
                 )
                 return prov, model
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001, S112 -- skip an unreadable family probe
             continue
     return None, None
 

@@ -8,10 +8,16 @@ import { useT } from "@/i18n";
  * first run). Frontend-only: it gates the flow via local state and never mutates
  * onboarding/completed state, so it cannot reintroduce the "onboarding reappears
  * every restart" bug. The user must tick the checkbox before continuing.
+ *
+ * Declining is a real, equal-weight choice (design 2026-07-09): it asks the
+ * backend to quit the whole app and renders a terminal goodbye state for the
+ * browser surface (the desktop window disappears with the process). Nothing is
+ * persisted on decline — the next start shows this gate again.
  */
 export function RiskGate({ onAccept }: { onAccept: () => void }) {
   const t = useT();
   const [accepted, setAccepted] = useState(false);
+  const [declined, setDeclined] = useState(false);
   // Full Terms text, fetched lazily on first expand — proceeding through this
   // gate records the acceptance (see OnboardingGate), so the text must be
   // reachable right here.
@@ -30,6 +36,31 @@ export function RiskGate({ onAccept }: { onAccept: () => void }) {
       }
     }
   };
+
+  const decline = async () => {
+    // Show the goodbye state first — the backend kills the process moments
+    // after answering, so this screen is the last thing the browser renders.
+    setDeclined(true);
+    try {
+      await fetch("/api/onboarding/decline-terms", { method: "POST" });
+    } catch {
+      // Best-effort: a warming/erroring backend cannot block the goodbye
+      // screen; the user closes the window either way.
+    }
+  };
+
+  if (declined) {
+    return (
+      <div className="flex w-full max-w-lg flex-col gap-4 rounded-2xl border border-border bg-card p-8 shadow-2xl">
+        <h1 className="font-display text-xl font-semibold">
+          {t("onboarding.risk.declined_title")}
+        </h1>
+        <p className="text-sm leading-relaxed text-muted-foreground">
+          {t("onboarding.risk.declined_body")}
+        </p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex w-full max-w-lg flex-col gap-5 rounded-2xl border border-primary/40 bg-card p-8 shadow-2xl">
@@ -63,9 +94,14 @@ export function RiskGate({ onAccept }: { onAccept: () => void }) {
         />
         <span>{t("onboarding.risk.accept_label")}</span>
       </label>
-      <Button className="w-full" disabled={!accepted} onClick={() => accepted && onAccept()}>
-        {t("onboarding.risk.proceed")}
-      </Button>
+      <div className="flex gap-3">
+        <Button variant="outline" className="flex-1" onClick={() => void decline()}>
+          {t("onboarding.risk.decline")}
+        </Button>
+        <Button className="flex-1" disabled={!accepted} onClick={() => accepted && onAccept()}>
+          {t("onboarding.risk.proceed")}
+        </Button>
+      </div>
     </div>
   );
 }

@@ -4,9 +4,7 @@ Covers:
   - The ROUTER_TOOLS from ``jarvis/brain/factory.py``
   - 5 local-action-gate patterns (open_app, type_text, hotkey,
     reset_orb_position, terminal_count)
-  - 4 harness adapters (mcp-remote, computer-use, python-script,
-    open-interpreter) — OpenClaw is intentionally NOT seeded (not a
-    registered harness; see the HARNESS ADAPTERS block below)
+  - 2 operational harness adapters (computer-use and python-script)
 
 Action verbs mirror ``BrainRoutingConfig.spawn_verbs`` so that
 ``CapabilityRegistry.has_action_intent`` and the manager's
@@ -61,8 +59,9 @@ _SCREEN_OBJECTS: tuple[str, ...] = (
 )
 
 _WIKI_OBJECTS: tuple[str, ...] = (
-    "wiki", "notiz", "note", "wissen", "knowledge", "seite", "page",
-    "eintrag", "entry", "fact", "fakt",  # i18n-allow
+    "wiki", "wiki-system", "wiki system", "wikisystem",
+    "notiz", "note", "wissen", "knowledge", "seite", "page",
+    "fact", "fakt",  # i18n-allow
 )
 
 _AWARENESS_OBJECTS: tuple[str, ...] = (
@@ -77,7 +76,7 @@ _AWARENESS_OBJECTS: tuple[str, ...] = (
 
 _SEED_CAPABILITIES: list[Capability] = [
     # ------------------------------------------------------------------ #
-    # ROUTER_TOOLS (11)
+    # LLM-visible router capabilities
     # ------------------------------------------------------------------ #
     Capability(
         id="tool.run-shell",
@@ -102,15 +101,6 @@ _SEED_CAPABILITIES: list[Capability] = [
     # Desktop-control intent is carried by ``harness.computer-use`` + the shared
     # _ACTION_VERBS; heavy sub-agent intent by ``tool.spawn-worker``.
     Capability(
-        id="tool.multi-spawn",
-        source="router_tool",
-        verbs=("spawn", "spawne", "spawnen", "starte", "start", "launch", "delegier"),
-        objects=("agent", "agenten", "agents", "worker", "workers", "aufgaben", "tasks"),
-        description="Spawn multiple parallel worker agents for a complex task.",
-        risk_tier="ask",
-        requires_evidence=True,
-    ),
-    Capability(
         id="tool.spawn-worker",
         source="router_tool",
         verbs=(
@@ -122,18 +112,6 @@ _SEED_CAPABILITIES: list[Capability] = [
             "worker", "code", "datei", "file", "repo", "repository",
         ),
         description="Spawn a background worker sub-agent for heavy code or file tasks.",
-        risk_tier="ask",
-        requires_evidence=True,
-    ),
-    Capability(
-        id="tool.dispatch-with-review",
-        source="router_tool",
-        verbs=_ACTION_VERBS + ("review", "check", "pruefe", "prüfe"),  # i18n-allow
-        objects=(
-            "review", "quality", "qualitaet", "qualität", "critic",  # i18n-allow
-            "kritik", "check", "pruefung", "prüfung",  # i18n-allow
-        ),
-        description="Dispatch a task through the Quality-Gate (Worker + Critic) pipeline.",
         risk_tier="ask",
         requires_evidence=True,
     ),
@@ -187,7 +165,9 @@ _SEED_CAPABILITIES: list[Capability] = [
         source="router_tool",
         verbs=(
             "speicher", "save", "merk", "merke", "notier", "notiere",
-            "ingest", "store", "schreib", "write",
+            "ingest", "store", "schreib", "write", "record", "add", "put",
+            "eintrag", "eintrage", "eintragen",  # i18n-allow
+            "anota", "apunta", "agrega", "guarda",  # i18n-allow: input vocabulary
         ),
         objects=_WIKI_OBJECTS,
         description="Store a fact / note deterministically into the wiki vault.",
@@ -274,24 +254,11 @@ _SEED_CAPABILITIES: list[Capability] = [
         requires_evidence=True,
     ),
     # ------------------------------------------------------------------ #
-    # HARNESS ADAPTERS (4)
+    # OPERATIONAL HARNESS ADAPTERS (2)
     # ------------------------------------------------------------------ #
     # NB: ``harness.openclaw`` deliberately removed (2026-06-28). OpenClaw is
-    # not a registered harness (Welle-4 removal; pyproject.toml registers only
-    # open-interpreter / mcp-remote / python-script / screenshot). Advertising a
-    # phantom harness in the capability surface mis-routed "start a subagent"
-    # turns toward a vehicle that cannot run — heavy work is ``tool.spawn-worker``.
-    Capability(
-        id="harness.mcp-remote",
-        source="harness",
-        verbs=_ACTION_VERBS,
-        objects=(
-            "mcp", "server", "remote", "service", "dienst", "integration",
-        ),
-        description="Generic MCP-remote harness adapter for registered MCP servers.",
-        risk_tier="monitor",
-        requires_evidence=True,
-    ),
+    # not a registered harness. Advertising phantom adapters mis-routes actions
+    # away from ``tool.spawn-worker`` and the live MCP capability broker.
     Capability(
         id="harness.computer-use",
         source="harness",
@@ -318,18 +285,6 @@ _SEED_CAPABILITIES: list[Capability] = [
             "python", "script", "skript", "py", "datei", "file",
         ),
         description="Run a Python script in a sandboxed subprocess.",
-        risk_tier="ask",
-        requires_evidence=True,
-    ),
-    Capability(
-        id="harness.open-interpreter",
-        source="harness",
-        verbs=_ACTION_VERBS,
-        objects=(
-            "interpreter", "open-interpreter", "openinterpreter",
-            "code", "programm",
-        ),
-        description="Open Interpreter harness for multi-language code execution.",
         risk_tier="ask",
         requires_evidence=True,
     ),
@@ -360,7 +315,10 @@ _SEED_CAPABILITIES: list[Capability] = [
             "mail", "email", "e-mail", "nummer", "number", "telefonnummer",
             "telefon", "phone", "adresse", "address",
         ),
-        description="Resolve a saved contact by name/alias to their e-mail, phone and address (read-only).",
+        description=(
+            "Resolve a saved contact by name/alias to their e-mail, phone and "
+            "address (read-only)."
+        ),
         risk_tier="safe",
         requires_evidence=False,
     ),

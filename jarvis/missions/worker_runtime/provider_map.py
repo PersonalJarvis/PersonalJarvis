@@ -110,6 +110,9 @@ MAPPINGS: Final[tuple[ProviderMapping, ...]] = (
     ),
     ProviderMapping("openai", "openai", "OPENAI_API_KEY"),
     ProviderMapping("openrouter", "openrouter", "OPENROUTER_API_KEY"),
+    # Groq runs through the in-process ApiAgentWorker.  The worker slug is a
+    # stable display/reverse-mapping identity; no external Groq CLI is spawned.
+    ProviderMapping("groq", "groq", "GROQ_API_KEY"),
     # NVIDIA NIM: an OpenAI-compatible API provider. Like openai/openrouter it
     # runs through the in-process ApiAgentWorker (not the OpenClaw CLI harness),
     # so ``worker_slug`` is only a placeholder — this row exists so nvidia is a

@@ -38,6 +38,11 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis clis usage <name>` — Show a CLI's recent usage history.
 - `jarvis clis usage-stats <name>` — Show a CLI's aggregated usage stats (success rate, avg duration, top commands).
 
+## commands
+
+- `jarvis commands list` — List every registry command (id, endpoint, params, danger, UI section).
+- `jarvis commands show <command_id>` — Show one command's full definition (params schema, voice aliases).
+
 ## conductor
 
 - `jarvis conductor add --def --yes --dry-run` — Add a job from a Job JSON document.
@@ -104,12 +109,16 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 
 ## missions
 
+- `jarvis missions approve-tool <mission_id> <trace_id> --yes --dry-run` — Approve one paused mission tool call and resume it.
 - `jarvis missions cancel <mission_id> --yes --dry-run` — Cancel a running mission (kills its worker).
+- `jarvis missions deny-tool <mission_id> <trace_id> --reason --dry-run` — Deny one paused mission tool call without executing it.
 - `jarvis missions dispatch <prompt> --language --confirmed --yes --dry-run` — Dispatch a new self-healing mission — spawns a worker (destructive: --yes).
 - `jarvis missions kill <worker_id> --yes --dry-run` — Hard-kill a worker process by id.
 - `jarvis missions list --state --limit` — List missions (optionally filtered by state).
 - `jarvis missions rerun <mission_id> --confirmed --yes --dry-run` — Re-dispatch a terminal mission's prompt as a new linked mission.
+- `jarvis missions result <mission_id>` — Read a mission's signed outcome and actual deliverable contents.
 - `jarvis missions show <mission_id>` — Show one mission with its events + verdicts.
+- `jarvis missions tool-approvals <mission_id>` — List supervisor tool calls waiting for approval in a mission.
 
 ## outputs
 
@@ -127,6 +136,7 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 ## sessions
 
 - `jarvis sessions delete <session_id> --yes --dry-run` — Delete a text conversation thread.
+- `jarvis sessions latest-turn --session-id` — Show the latest persisted user transcript and its complete turn.
 - `jarvis sessions list --days --limit` — List text + voice sessions, newest first.
 - `jarvis sessions resume <kind> <session_id> --yes --dry-run` — Seed the brain from a past conversation to continue it in text.
 - `jarvis sessions show <kind> <session_id>` — Show one conversation with its messages.
@@ -178,8 +188,10 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 ## wiki
 
 - `jarvis wiki health` — Show wiki subsystem health: bootstrap, last write, chain failures, backlog (spec A5).
+- `jarvis wiki ingest <text> --source --dry-run` — Store a fact through the guarded Wiki curator.
 - `jarvis wiki page <slug>` — Read a wiki page by vault path / slug.
 - `jarvis wiki recall <query>` — Full-text search the wiki.
+- `jarvis wiki reindex --preview` — Rebuild the wiki search index from the active vault.
 - `jarvis wiki tree` — Show the vault folder tree + stats.
 - `jarvis wiki vaults` — List the user's registered Obsidian vaults (connect picker, spec A6).
 

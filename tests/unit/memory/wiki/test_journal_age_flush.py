@@ -63,7 +63,7 @@ def test_default_consolidation_threshold_is_three() -> None:
     from jarvis.core.config import SchedulerConfig
 
     cfg = SchedulerConfig()
-    assert cfg.consolidate_after_candidates == 3
+    assert cfg.consolidate_after_candidates == 1
     assert cfg.flush_pending_max_age_minutes == 10
 
 

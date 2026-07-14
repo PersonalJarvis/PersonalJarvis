@@ -6,6 +6,7 @@ so they are tested without spawning real processes or actually exiting.
 """
 from __future__ import annotations
 
+import threading
 from types import SimpleNamespace
 
 from jarvis.ui import relauncher
@@ -141,14 +142,20 @@ def test_new_instance_settled_false_when_it_dies():
 
 def test_restart_quit_sequence_marks_quit_destroys_then_hard_exits():
     order: list[object] = []
+
+    def arm_watchdog(delay, exit_fn):
+        order.append(("armed", delay))
+        exit_fn(0)
+
     relauncher.run_restart_quit_sequence(
         set_quit=lambda: order.append("quit"),
         destroy_window=lambda: order.append("destroy"),
         _sleep=lambda _s: order.append(("sleep", _s)),
         _exit=lambda code: order.append(("exit", code)),
+        _arm_watchdog=arm_watchdog,
     )
     assert ("exit", 0) in order
-    assert order.index("quit") < order.index("destroy") < order.index(("exit", 0))
+    assert order.index("quit") < order.index(("armed", 0.7)) < order.index("destroy")
 
 
 def test_restart_quit_sequence_hard_exits_even_if_destroy_raises():
@@ -162,5 +169,36 @@ def test_restart_quit_sequence_hard_exits_even_if_destroy_raises():
         destroy_window=boom,
         _sleep=lambda _s: None,
         _exit=lambda code: exited.append(code),
+        _arm_watchdog=lambda _delay, exit_fn: exit_fn(0),
     )
     assert exited == [0]
+
+
+def test_restart_watchdog_exits_while_destroy_window_is_blocked():
+    destroy_entered = threading.Event()
+    release_destroy = threading.Event()
+    exited = threading.Event()
+
+    def blocked_destroy():
+        destroy_entered.set()
+        release_destroy.wait(timeout=1.0)
+
+    worker = threading.Thread(
+        target=relauncher.run_restart_quit_sequence,
+        kwargs={
+            "set_quit": lambda: None,
+            "destroy_window": blocked_destroy,
+            "pre_delay": 0.0,
+            "hard_exit_after": 0.02,
+            "_exit": lambda _code: exited.set(),
+        },
+        daemon=True,
+    )
+    worker.start()
+
+    assert destroy_entered.wait(timeout=0.5)
+    assert exited.wait(timeout=0.5)
+
+    release_destroy.set()
+    worker.join(timeout=0.5)
+    assert not worker.is_alive()

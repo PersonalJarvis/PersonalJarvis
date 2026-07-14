@@ -15,6 +15,10 @@ import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 // Mock the data hooks so the view renders deterministically, without a
 // network round-trip.
 vi.mock("@/hooks/useProviders", () => ({
+  sectionHealthForSubject: (
+    health: { subject_id?: string } | undefined,
+    subjectId?: string,
+  ) => (subjectId && health?.subject_id === subjectId ? health : undefined),
   useProviders: () => ({
     providers: [],
     loading: false,
@@ -32,11 +36,20 @@ vi.mock("@/hooks/useProviders", () => ({
 // `vi.mock` call, matching this file's existing hoisting pattern) so the
 // "realtime unavailable" describe block below can flip it.
 let mockRealtimeAvailable = true;
+let mockVoiceMode = "pipeline";
+let mockSessionActive = false;
+let mockActiveSessionMode: "pipeline" | "realtime" | null = null;
+let mockTransitioning = false;
 const putVoiceMode = vi.fn();
 vi.mock("@/hooks/useVoiceMode", () => ({
   useVoiceMode: () => ({
-    mode: "pipeline",
+    mode: mockVoiceMode,
     realtimeAvailable: mockRealtimeAvailable,
+    sessionActive: mockSessionActive,
+    activeSessionMode: mockActiveSessionMode,
+    activeSessionProvider: "",
+    activeSessionModel: "",
+    transitioning: mockTransitioning,
     setMode: putVoiceMode,
     isLoading: false,
     isSaving: false,
@@ -49,6 +62,10 @@ afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   mockRealtimeAvailable = true;
+  mockVoiceMode = "pipeline";
+  mockSessionActive = false;
+  mockActiveSessionMode = null;
+  mockTransitioning = false;
 });
 
 describe("ApiKeysView two-mode", () => {
@@ -65,7 +82,7 @@ describe("ApiKeysView two-mode", () => {
   it("shows the segmented Pipeline|Realtime switch with an Active badge on the live mode", () => {
     render(<ApiKeysView />);
     const pipelineSegment = screen.getByRole("button", { name: /pipeline/i });
-    const realtimeSegment = screen.getByRole("button", { name: /^realtime$/i });
+    const realtimeSegment = screen.getByRole("button", { name: /^realtime/i });
     expect(pipelineSegment).toBeTruthy();
     expect(realtimeSegment).toBeTruthy();
     // The live [voice].mode from the mocked useVoiceMode is "pipeline", so
@@ -74,9 +91,36 @@ describe("ApiKeysView two-mode", () => {
     expect(realtimeSegment.textContent).not.toMatch(/active/i);
   });
 
+  it("marks Realtime as recommended and Pipeline as not recommended", () => {
+    render(<ApiKeysView />);
+    const pipelineSegment = screen.getByRole("button", { name: /pipeline/i });
+    const realtimeSegment = screen.getByRole("button", { name: /^realtime/i });
+    expect(pipelineSegment.textContent).toMatch(/not recommended/i);
+    expect(realtimeSegment.textContent).toMatch(/recommended/i);
+    expect(realtimeSegment.textContent).not.toMatch(/not recommended/i);
+  });
+
+  it("shows a research-preview disclaimer when Realtime is selected", () => {
+    render(<ApiKeysView />);
+    fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
+    expect(screen.getByText(/research preview/i)).toBeTruthy();
+  });
+
+  it("shows when the selected Realtime mode is still served by Pipeline", () => {
+    mockVoiceMode = "realtime";
+    mockSessionActive = true;
+    mockActiveSessionMode = "pipeline";
+
+    render(<ApiKeysView />);
+
+    expect(screen.getByTestId("voice-engine-runtime-status").textContent).toMatch(
+      /fell back to Pipeline/i,
+    );
+  });
+
   it("switching to Realtime mode shows only Realtime/Subagents/Advanced and persists voice-mode (available)", () => {
     render(<ApiKeysView />);
-    fireEvent.click(screen.getByRole("button", { name: /^realtime$/i })); // the segment
+    fireEvent.click(screen.getByRole("button", { name: /^realtime/i })); // the segment
 
     expect(screen.getByRole("tab", { name: /realtime/i })).toBeTruthy();
     expect(screen.getByRole("tab", { name: /jarvis-agents/i })).toBeTruthy();
@@ -92,7 +136,7 @@ describe("ApiKeysView two-mode", () => {
 
   it("switching back to Pipeline restores the five pipeline tabs and always persists voice-mode", () => {
     render(<ApiKeysView />);
-    fireEvent.click(screen.getByRole("button", { name: /^realtime$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
     putVoiceMode.mockClear();
     fireEvent.click(screen.getByRole("button", { name: /pipeline/i }));
 
@@ -104,10 +148,20 @@ describe("ApiKeysView two-mode", () => {
 });
 
 describe("ApiKeysView two-mode — realtime unavailable (no key in any family)", () => {
+  it("does not paint an unavailable configured Realtime mode as active", () => {
+    mockVoiceMode = "realtime";
+    mockRealtimeAvailable = false;
+    render(<ApiKeysView />);
+
+    const realtimeSegment = screen.getByRole("button", { name: /^realtime/i });
+    expect(realtimeSegment.textContent).not.toMatch(/active/i);
+    expect(screen.queryByTestId("voice-engine-live-thumb")).toBeNull();
+  });
+
   it("switching to Realtime still switches the view, but does NOT persist voice-mode", () => {
     mockRealtimeAvailable = false;
     render(<ApiKeysView />);
-    fireEvent.click(screen.getByRole("button", { name: /^realtime$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
 
     // The view still switches, so the user can add a key from the Realtime tab.
     expect(screen.getByRole("tab", { name: /realtime/i })).toBeTruthy();
@@ -118,7 +172,7 @@ describe("ApiKeysView two-mode — realtime unavailable (no key in any family)",
   it("switching back to Pipeline still persists voice-mode even when realtime is unavailable", () => {
     mockRealtimeAvailable = false;
     render(<ApiKeysView />);
-    fireEvent.click(screen.getByRole("button", { name: /^realtime$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
     putVoiceMode.mockClear();
     fireEvent.click(screen.getByRole("button", { name: /pipeline/i }));
 

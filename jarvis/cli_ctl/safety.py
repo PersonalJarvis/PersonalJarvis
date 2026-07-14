@@ -18,9 +18,12 @@ surface, so the CLI adds defense in depth on the client side:
 be sent (method, path, body, whether auth is attached) and sends nothing. This is
 the safe introspection path for an agent.
 
-The model is method-based plus a small path denylist — predictable and
-independent of per-route risk metadata, which REST routes do not carry (risk
-tiers live at the brain-tool layer the routes sit behind).
+Three signals mark a request destructive, strictest wins: every ``DELETE``
+(method alone), the small path denylist below (legacy floor), and the
+server-declared ``x-jarvis-dangerous`` OpenAPI flag that the dynamic layer
+reads per operation and passes in as ``dangerous=True`` (authoritative for
+new routes; enforced repo-wide by ``scripts/ci/check_danger_metadata.py``).
+A flag can only ADD strictness — nothing downgrades the denylist.
 """
 from __future__ import annotations
 

@@ -34,6 +34,9 @@ KNOWN_HANGUP_REASONS: frozenset[str] = frozenset(
         "",  # session still running (DB default while ``ended_ms IS NULL``)
         "voice_pattern",  # user voice hangup ("bye Jarvis")
         "hotkey",  # user hotkey hangup
+        "client_stop",  # browser client explicitly stopped microphone audio
+        "ws_closed",  # browser voice WebSocket closed
+        "realtime_fallback",  # browser switched to the classic voice pipeline
         "idle_timeout",  # auto-hangup after inactivity
         "shutdown",  # app shutdown ends the running session
         "error",  # pipeline crash
@@ -54,11 +57,12 @@ KNOWN_VOICE_TIERS: frozenset[str] = frozenset(
         "",  # no tier hint (e.g. smalltalk fallback without BrainTurnStarted)
         "router",
         "openclaw",
-        "sub_jarvis",  # legacy, kept until the Welle-4 removal
+        "sub_jarvis",  # legacy, kept until the Wave 4 removal
         "trivial",
         "fast",
         "deep",
         "code",
+        "realtime",
     }
 )
 """Routing tier as in CLAUDE.md `Brain-Routing` and `Router-Discipline`."""

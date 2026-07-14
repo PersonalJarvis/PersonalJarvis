@@ -171,6 +171,78 @@ def test_credentials_rejects_bad_sid(app, secret_store):
     assert r.status_code == 422
 
 
+def test_config_post_updates_live_shared_config_without_reload(
+    app, secret_store, fake_cfg, monkeypatch
+):
+    """Bug: POST /config wrote to disk but request.app.state.config (the SAME
+    object WebServer holds) was never updated, so the live webhook/media
+    socket kept serving stale values until a restart."""
+
+    def fake_writer(values, **kw):
+        for k, v in values.items():
+            setattr(fake_cfg.integrations.twilio, k, v)
+
+    monkeypatch.setattr("jarvis.core.config_writer.set_telephony_config", fake_writer)
+    monkeypatch.setattr(routes.cfg_mod, "load_config", lambda *a, **k: fake_cfg)
+
+    live_twilio_before = app.state.config.integrations.twilio
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/telephony/config",
+            json={"greeting": "Servus!", "max_call_seconds": 120},
+        )
+    assert r.status_code == 200
+    # The SAME object app.state.config points at must reflect the update —
+    # no reassignment, no reload needed.
+    assert app.state.config.integrations.twilio is live_twilio_before
+    assert app.state.config.integrations.twilio.greeting == "Servus!"
+    assert app.state.config.integrations.twilio.max_call_seconds == 120
+
+
+def test_credentials_post_updates_live_shared_config_sid(
+    app, secret_store, fake_cfg, monkeypatch
+):
+    monkeypatch.setattr(
+        "jarvis.core.config_writer.set_telephony_config",
+        lambda values, **kw: setattr(
+            fake_cfg.integrations.twilio, "account_sid", values["account_sid"]
+        ),
+    )
+    monkeypatch.setattr(routes.cfg_mod, "load_config", lambda *a, **k: fake_cfg)
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/telephony/credentials",
+            json={"account_sid": "AC" + "e" * 32},
+        )
+    assert r.status_code == 200
+    assert app.state.config.integrations.twilio.account_sid == "AC" + "e" * 32
+
+
+def test_credentials_reports_partial_commit_when_sid_write_fails(
+    app, secret_store, fake_cfg, monkeypatch
+):
+    """Token save succeeds, SID write fails: the response must say so
+    honestly (token_saved=True) instead of an opaque bare 409."""
+
+    def _boom(values, **kw):
+        raise RuntimeError("disk full (simulated)")
+
+    monkeypatch.setattr("jarvis.core.config_writer.set_telephony_config", _boom)
+
+    with TestClient(app) as client:
+        r = client.post(
+            "/api/telephony/credentials",
+            json={"account_sid": "AC" + "d" * 32, "auth_token": "freshtoken"},
+        )
+    assert r.status_code == 409
+    body = r.json()
+    assert body["token_saved"] is True
+    assert body["sid_saved"] is False
+    # The token really did land in the credential store despite the SID error.
+    assert secret_store["twilio_auth_token"] == "freshtoken"
+
+
 def test_calls_endpoint_returns_ring_buffer(app, secret_store):
     from jarvis.telephony.status import CallRecord
 
@@ -355,3 +427,34 @@ def test_voice_webhook_outbound_branch_returns_opening(app, secret_store, fake_c
     assert "wss://jarvis.example.com/api/telephony/media" in r.text
     # A per-call secret was minted and registered for the outbound call too.
     assert app.state.telephony_manager.peek_pending("CAOUT9") is not None
+
+
+class _RecordingBus:
+    """Records every published event. ``publish`` is async, mirroring
+    jarvis.core.bus.EventBus — a bare un-awaited call would silently drop
+    the event."""
+
+    def __init__(self) -> None:
+        self.events: list[object] = []
+
+    async def publish(self, event: object) -> None:
+        self.events.append(event)
+
+
+async def test_publish_start_delivers_event_via_async_bus() -> None:
+    import asyncio
+
+    from jarvis.telephony.events import TelephonyCallStarted
+
+    bus = _RecordingBus()
+    routes._publish_start(bus, "CA1", "+491", "+492", "MZ1")
+
+    pending = list(routes._PENDING_PUBLISH_TASKS)
+    if pending:
+        await asyncio.gather(*pending)
+
+    assert len(bus.events) == 1
+    event = bus.events[0]
+    assert isinstance(event, TelephonyCallStarted)
+    assert event.call_sid == "CA1"
+    assert event.stream_sid == "MZ1"

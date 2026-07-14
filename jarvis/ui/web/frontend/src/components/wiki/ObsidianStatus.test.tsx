@@ -64,7 +64,7 @@ const NOTE_STATUS: ObsidianStatusType = {
   vault_registered: true,
   vault_path: "C:/vault",
   recommended_action: "ok",
-  note: "Obsidian-Config-Datei nicht lesbar.", // i18n-allow: asserts the real "de" locale default rendered by ObsidianStatus (product i18n surface)
+  note: "Obsidian config file is not readable.",
 };
 
 describe("ObsidianStatus", () => {
@@ -79,7 +79,7 @@ describe("ObsidianStatus", () => {
     expect(screen.getByTestId("obsidian-status-spinner")).toBeDefined();
   });
 
-  it("renders 'verbunden' when status is ok", async () => { // i18n-allow: quotes the real "de" locale default text (product i18n surface)
+  it("renders 'connected' when status is ok", async () => {
     const fetchImpl = vi.fn(
       async () => jsonResponse(OK_STATUS),
     ) as unknown as typeof fetch;
@@ -91,7 +91,7 @@ describe("ObsidianStatus", () => {
       expect(pill.getAttribute("data-visual")).toBe("ok");
     });
     const pill = screen.getByTestId("obsidian-status-pill");
-    expect(pill.textContent).toContain("verbunden"); // i18n-allow: asserts the real "de" locale default rendered by ObsidianStatus (product i18n surface)
+    expect(pill.textContent).toContain("connected");
     // Tooltip surfaces vault_path + version.
     expect(pill.getAttribute("title")).toContain("C:/vault");
     expect(pill.getAttribute("title")).toContain("1.7.4");
@@ -101,7 +101,7 @@ describe("ObsidianStatus", () => {
     expect(pill.className).toContain("#5bd4a4");
   });
 
-  it("renders 'nicht installiert' when installed=false", async () => { // i18n-allow: quotes the real "de" locale default text (product i18n surface)
+  it("renders 'not installed' when installed=false", async () => {
     const fetchImpl = vi.fn(
       async () => jsonResponse(INSTALL_STATUS),
     ) as unknown as typeof fetch;
@@ -113,12 +113,12 @@ describe("ObsidianStatus", () => {
       expect(pill.getAttribute("data-visual")).toBe("install");
     });
     const pill = screen.getByTestId("obsidian-status-pill");
-    expect(pill.textContent).toContain("nicht installiert"); // i18n-allow: asserts the real "de" locale default rendered by ObsidianStatus (product i18n surface)
+    expect(pill.textContent).toContain("not installed");
     expect(pill.className).toContain("#facc15");
     expect((pill as HTMLButtonElement).disabled).toBe(false);
   });
 
-  it("renders 'nicht registriert' when vault_registered=false", async () => { // i18n-allow: quotes the real "de" locale default text (product i18n surface)
+  it("renders 'not registered' when vault_registered=false", async () => {
     const fetchImpl = vi.fn(
       async () => jsonResponse(REGISTER_STATUS),
     ) as unknown as typeof fetch;
@@ -130,11 +130,11 @@ describe("ObsidianStatus", () => {
       expect(pill.getAttribute("data-visual")).toBe("register");
     });
     const pill = screen.getByTestId("obsidian-status-pill");
-    expect(pill.textContent).toContain("nicht registriert"); // i18n-allow: asserts the real "de" locale default rendered by ObsidianStatus (product i18n surface)
+    expect(pill.textContent).toContain("not registered");
     expect(pill.className).toContain("#ffb84d");
   });
 
-  it("renders 'Status unklar' on fetch failure", async () => { // i18n-allow: quotes the real "de" locale default text (product i18n surface)
+  it("renders 'status unclear' on fetch failure", async () => {
     const fetchImpl = vi.fn(async () => {
       throw new Error("network down");
     }) as unknown as typeof fetch;
@@ -146,11 +146,11 @@ describe("ObsidianStatus", () => {
       expect(pill.getAttribute("data-visual")).toBe("unclear");
     });
     const pill = screen.getByTestId("obsidian-status-pill");
-    expect(pill.textContent).toContain("Status unklar"); // i18n-allow: asserts the real "de" locale default rendered by ObsidianStatus (product i18n surface)
+    expect(pill.textContent).toContain("status unclear");
     expect(pill.className).toContain("#8d94a8");
   });
 
-  it("renders 'Status unklar' when note is set", async () => { // i18n-allow: quotes the real "de" locale default text (product i18n surface)
+  it("renders 'status unclear' when note is set", async () => {
     const fetchImpl = vi.fn(
       async () => jsonResponse(NOTE_STATUS),
     ) as unknown as typeof fetch;
@@ -162,8 +162,8 @@ describe("ObsidianStatus", () => {
       expect(pill.getAttribute("data-visual")).toBe("unclear");
     });
     const pill = screen.getByTestId("obsidian-status-pill");
-    expect(pill.textContent).toContain("Status unklar"); // i18n-allow: asserts the real "de" locale default rendered by ObsidianStatus (product i18n surface)
-    expect(pill.getAttribute("title")).toContain("nicht lesbar"); // i18n-allow: asserts the real "de" locale default rendered by ObsidianStatus (product i18n surface)
+    expect(pill.textContent).toContain("status unclear");
+    expect(pill.getAttribute("title")).toContain("not readable");
   });
 
   it("clicking a non-ok pill calls onOpenSetup with the status", async () => {

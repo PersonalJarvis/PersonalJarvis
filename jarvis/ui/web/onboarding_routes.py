@@ -9,9 +9,11 @@ not on blocking.
 from __future__ import annotations
 
 import logging
+import os
+import threading
 from pathlib import Path
 
-from fastapi import APIRouter, Response
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from jarvis.setup import state as st
@@ -66,6 +68,42 @@ async def post_step(body: StepBody) -> dict:
 async def post_accept_terms() -> dict:
     st.accept_terms(CURRENT_TERMS_VERSION, path=_path())
     return {"ok": True, "version": CURRENT_TERMS_VERSION}
+
+
+def _schedule_app_shutdown(request: Request) -> None:
+    """Quit the whole app shortly after the decline response flushes.
+
+    Desktop hosts get the clean ``DesktopApp.request_quit()`` sequence (mark
+    quit → destroy window → hard-exit backstop, same as the restart path but
+    without a relauncher). Headless hosts have no window to destroy, so a
+    short-delayed hard exit is the honest equivalent — the HTTP 200 reaches
+    the browser first, then the server is gone.
+    """
+    desktop = getattr(request.app.state, "desktop_app", None)
+    fn = getattr(desktop, "request_quit", None)
+    if callable(fn):
+        try:
+            if fn():
+                return
+        except Exception:  # noqa: BLE001 — a decline must still end the process
+            log.warning("desktop quit failed; falling back to hard exit", exc_info=True)
+    threading.Timer(0.8, os._exit, args=(0,)).start()
+
+
+@router.post("/decline-terms")
+async def post_decline_terms(request: Request) -> dict:
+    """Declining the Terms quits the app (design 2026-07-09).
+
+    The install one-liner never asks anything, so the Terms gate on first
+    launch is the ONE consent moment — declining it must not leave a
+    half-running assistant behind. Nothing is persisted on decline: the next
+    start shows the gate again. 409 once the Terms are accepted — the gate no
+    longer exists then, and this endpoint must not double as a kill switch.
+    """
+    if _safe_state_payload()["terms"]["accepted"]:
+        raise HTTPException(status_code=409, detail="terms already accepted")
+    _schedule_app_shutdown(request)
+    return {"ok": True, "quitting": True}
 
 
 @router.post("/acknowledge-wake-word")

@@ -42,6 +42,7 @@ import os
 import sqlite3
 import tempfile
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -112,12 +113,14 @@ class AtomicWriter:
         max_backups: int = DEFAULT_MAX_BACKUPS,
         backup_manager: BackupManager | None = None,
         concurrent_edit_lock_seconds: float = CONCURRENT_EDIT_LOCK_SECONDS,
-        clock: "callable[[], float] | None" = None,
+        clock: Callable[[], float] | None = None,
+        db_path: Path | None = None,
     ) -> None:
         self._vault_root = Path(vault_root).resolve()
         self._backup_dir = Path(backup_dir).resolve()
         self._lock_seconds = float(concurrent_edit_lock_seconds)
         self._clock = clock or time.time
+        self._db_path = Path(db_path).resolve(strict=False) if db_path else None
         if backup_manager is None:
             self._backups = BackupManager(
                 vault_root=self._vault_root,
@@ -596,16 +599,15 @@ class AtomicWriter:
             log.debug("atomic_writer: fts_index not available — skipping FTS upsert")
             return None
 
+        if self._db_path is None:
+            # Tests and standalone writers must opt into an index explicitly;
+            # production injects the canonical configured DB path.
+            return None
         if self._fts_conn is None:
-            # Derive DB path the same way search.py does: data/jarvis.db
-            # relative to the project root (4 levels above this file).
-            db_path = (
-                Path(__file__).resolve().parent.parent.parent.parent
-                / "data"
-                / "jarvis.db"
+            self._db_path.parent.mkdir(parents=True, exist_ok=True)
+            self._fts_conn = sqlite3.connect(
+                str(self._db_path), check_same_thread=False,
             )
-            db_path.parent.mkdir(parents=True, exist_ok=True)
-            self._fts_conn = sqlite3.connect(str(db_path), check_same_thread=False)
             _fts.ensure_schema(self._fts_conn)
         return self._fts_conn
 

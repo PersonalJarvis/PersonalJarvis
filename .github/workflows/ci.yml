@@ -14,10 +14,8 @@
 #   * import-cleanliness gate    -> BLOCKING. Proves `import jarvis` is clean on
 #     Linux/macOS (no module-scope pywin32/winreg/global_hotkeys) - the €5-VPS
 #     contract. A regression here breaks Mac/Linux outright.
-#   * min-passed floor           -> BLOCKING. Catches a mass-skip / broken-
-#     collection regression that would otherwise sail through as green.
-#   * pytest failures            -> reported (the floor script warns; pass
-#     --strict once the suite is fully green to make them blocking).
+#   * pytest + min-passed floor  -> BLOCKING. Any behavioral failure,
+#     collection error, or mass-skip regression fails the relevant OS leg.
 #
 # Cost policy (added 2026-06-23): macOS runners bill at ~10x the Linux rate, so
 # the macOS leg is OFF for ordinary push/PR runs and ON only for a manual
@@ -145,11 +143,11 @@ jobs:
           python -m pytest tests/ -q -p no:cacheprovider \
             -m "not skip_ci and not slow and not openclaw_live and not voice_latency and not eval" \
             --continue-on-collection-errors \
-            --junitxml=report.xml || echo "pytest exited non-zero (pre-existing failures/collection-errors are reported by the floor gate)"
+            --junitxml=report.xml
 
       - name: Minimum-passed floor (BLOCKING, Linux leg is authoritative)
         if: matrix.os == 'ubuntu-latest'
-        run: python scripts/ci/assert_min_passed.py report.xml
+        run: python scripts/ci/assert_min_passed.py --strict report.xml
 
   # jarvisctl control-CLI unit suite across the three supported desktops.
   # jarvisctl is a thin cross-platform HTTP client (paths via platformdirs,
@@ -208,10 +206,21 @@ jobs:
         # pre-push hook so a contributor without the hook can't bypass it.
         run: python scripts/ci/check_cli_coverage.py
 
+      - name: Danger-metadata gate (destructive routes declare x-jarvis-dangerous)
+        # Static + stdlib-only: a mutating route whose path matches a
+        # destructive marker must carry openapi_extra x-jarvis-dangerous so the
+        # CLI dynamic layer + Command Registry gate it. Mirrors pre-push.
+        run: python scripts/ci/check_danger_metadata.py
+
       - name: CLI reference drift gate (docs in sync with command tree)
         # Fails if a curated command was added/changed without regenerating
         # docs/jarvis-cli-reference.md. Mirrors the pre-push docgen gate.
         run: python scripts/ci/gen_cli_reference.py --check
+
+      - name: Commands reference drift gate (docs in sync with the registry)
+        # Fails if a Command-Registry entry was added/changed without
+        # regenerating docs/commands-reference.md. Mirrors the pre-push gate.
+        run: python scripts/ci/gen_commands_reference.py --check
 
       - name: Install base runtime deps for the test suite (robust; no hand-list)
         shell: bash
@@ -238,11 +247,11 @@ jobs:
   # bricking `pip install --require-hashes -r requirements.txt` for every
   # non-maintainer machine (nvidia-cufile is unresolvable on plain PyPI). This is
   # the guard for that shipped-broken-installer "works on my machine" bug (AP-23).
-  # Runs once (not across the OS matrix); stdlib + `packaging` only.
+  # Runs once: pinned uv resolves every advertised target from public PyPI.
   deps-sync:
-    name: deps-sync (requirements.in mirrors pyproject)
+    name: deps-sync + portable install matrix
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -254,9 +263,11 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install pinned dependency-gate tooling
+        run: python -m pip install --disable-pip-version-check packaging==25.0 uv==0.11.19
+
       - name: Requirements-sync gate (BLOCKING)
         run: |
-          python -m pip install --upgrade packaging
           python scripts/ci/check_requirements_sync.py
 
       # Companion gate: the compiled requirements.txt itself must stay
@@ -265,6 +276,15 @@ jobs:
       # installs (AP-23). Stdlib only — no extra install needed.
       - name: Lockfile universal + GPU-free gate (BLOCKING)
         run: python scripts/ci/check_lockfile_universal.py
+
+      # A universal solve can still hide an inactive marker branch, an sdist,
+      # or a wheel for a different interpreter/architecture. Compile one PEP
+      # 751 lock per CPython/OS/architecture cell, inspect only active packages,
+      # and dry-run the shipped hash lock plus the advertised [full] profile.
+      # The gate also runs `uv lock --check` and byte-compares a no-upgrade
+      # universal/hash recompile of requirements.in with requirements.txt.
+      - name: Target-resolved portable install matrix (BLOCKING)
+        run: python scripts/ci/check_portable_install_matrix.py --jobs 4
 
   # Output Language Policy enforcement (CLAUDE.md, HIGHEST PRIORITY): block any
   # NEWLY ADDED German text from reaching GitHub. Diff-based, so the in-flight

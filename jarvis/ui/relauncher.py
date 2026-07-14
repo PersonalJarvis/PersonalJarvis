@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import threading
 import time
 
 LAUNCHER_MODULE = "jarvis.ui.web.launcher"
@@ -95,6 +96,20 @@ def wait_for_pid_exit(
     return not _alive(pid)
 
 
+def _arm_hard_exit_watchdog(delay: float, exit_fn) -> None:
+    """Force-exit independently even when the GUI destroy call never returns."""
+
+    def _force_exit() -> None:
+        time.sleep(delay)
+        exit_fn(0)
+
+    threading.Thread(
+        target=_force_exit,
+        name="jarvis-restart-hard-exit",
+        daemon=True,
+    ).start()
+
+
 def run_restart_quit_sequence(
     *,
     set_quit,
@@ -103,6 +118,7 @@ def run_restart_quit_sequence(
     hard_exit_after: float = 0.7,
     _sleep=time.sleep,
     _exit=os._exit,
+    _arm_watchdog=_arm_hard_exit_watchdog,
 ) -> None:
     """Quit the DYING app for a restart, hard-exiting if shutdown stalls.
 
@@ -113,16 +129,14 @@ def run_restart_quit_sequence(
 
     The hard exit is the load-bearing part: the relauncher's fresh instance can
     only claim the single-instance mutex + TCP port once THIS process is gone.
-    A stalled shutdown — or a cross-thread ``window.destroy`` that fails to
-    unblock the GUI loop (the BUG-031 hazard) — would otherwise leave a
-    windowless process holding the lock, and the new instance would bounce off
-    it: the "shuts down but never comes back" bug. If the normal shutdown
-    finishes first, the main thread exits the process and this daemon thread
-    dies before reaching ``_exit`` — so the force-exit only fires when it must.
+    It is armed in an independent daemon thread *before* ``window.destroy``.
+    A cross-thread destroy can itself block forever (the BUG-031 hazard), so a
+    watchdog placed after that call is not a watchdog at all. If normal shutdown
+    finishes first, the process ends and takes the daemon thread with it.
 
     Speed note (2026-06-21): for a RESTART the dying app does not need a full,
     leisurely clean shutdown — the fresh instance re-initialises every subsystem
-    anyway. So the hard-exit cap is tight (2 s, was 10 s): a slow or hanging
+    anyway. So the hard-exit cap is tight (0.7 s, was 10 s): a slow or hanging
     teardown (MCP session close, the BUG-031 window-destroy hang) is force-exited
     fast, freeing the lock + port for the fresh, fast-booting instance. The only
     cost is some teardown skipped on restart (e.g. an MCP subprocess re-spawned
@@ -131,14 +145,13 @@ def run_restart_quit_sequence(
     _sleep(pre_delay)
     try:
         set_quit()
-    except Exception:  # noqa: BLE001 — never block the quit on a callback error
+    except Exception:  # noqa: BLE001, S110 — never block quit on callback error
         pass
+    _arm_watchdog(hard_exit_after, _exit)
     try:
         destroy_window()
-    except Exception:  # noqa: BLE001 — destroy may already be impossible; force-exit anyway
+    except Exception:  # noqa: BLE001, S110 — destroy may be impossible; watchdog exits
         pass
-    _sleep(hard_exit_after)
-    _exit(0)
 
 
 def _new_instance_settled(

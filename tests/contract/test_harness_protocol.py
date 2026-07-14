@@ -12,9 +12,8 @@ from jarvis.harness.manager import HarnessManager
 # Codex worker is a mission worker (CodexDirectWorker), so it is intentionally
 # absent here.
 HARNESSES = [
-    "open-interpreter",
-    "mcp-remote",
     "python-script",
+    "screenshot",
 ]
 
 
@@ -26,7 +25,13 @@ def manager():
 def test_all_harnesses_discovered(manager):
     avail = set(manager.available())
     missing = set(HARNESSES) - avail
-    assert not missing, f"Fehlende Harness-Plugins: {missing}"
+    assert not missing, f"Missing harness plugins: {missing}"
+    assert {"mcp-remote", "open-interpreter"}.isdisjoint(avail)
+
+
+@pytest.mark.asyncio
+async def test_python_script_is_healthy_on_the_universal_runtime(manager):
+    assert await manager.health("python-script") is True
 
 
 @pytest.mark.parametrize("name", HARNESSES)

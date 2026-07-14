@@ -3,19 +3,11 @@
  * scheme plus the setup-wizard API (`GET /api/setup/obsidian/vaults`,
  * `POST /api/setup/obsidian/register`).
  *
- * The `obsidian://open?vault=<vault>&file=<path>` URL handler is installed
- * by Obsidian on the user's machine and opens the named file inside the
- * matching vault. We cannot detect from the browser whether the handler
- * is registered — the per-page button in `ObsidianButton.tsx` shows a
- * fallback toast 800 ms after click as a defensive UX measure.
- *
- * The vault name is hard-coded to match the on-disk folder name
- * `wiki/obsidian-vault/`. If the user renames the vault inside Obsidian,
- * they must also rename the folder; we don't try to introspect.
+ * `obsidian://open?path=<absolute-path>` asks Obsidian to find the most
+ * specific registered vault containing the path. This works for both a
+ * separate Jarvis vault and a `Jarvis/` directory inside an existing vault.
  */
 
-/** Vault name in Obsidian — matches the on-disk folder `wiki/obsidian-vault/`. */
-export const VAULT_NAME = "obsidian-vault";
 
 /** One entry in the "use my existing vault" picker (spec A6). */
 export interface ObsidianVaultInfo {
@@ -90,20 +82,25 @@ export async function registerObsidianVault(
 }
 
 /**
- * Build an `obsidian://open` URL for a vault-relative file path.
+ * Build an `obsidian://open` URL for an absolute vault or page path.
  *
- * - When `vaultRelPath` is empty, the URL opens to the vault root.
- * - The vault name and the file path are both URI-component-encoded so
- *   spaces, German umlauts, and other special characters round-trip
- *   correctly through Obsidian's URL handler.
+ * - When `vaultRelPath` is empty, the URL targets the configured vault root.
+ * - Windows and POSIX separators stay consistent.
+ * - The absolute path is URI-component-encoded for a reliable round trip.
  *
+ * @param vaultRoot - Absolute configured Jarvis vault root.
  * @param vaultRelPath - Vault-relative POSIX path such as
  *   `"entities/sam.md"`. May be the empty string to open the root.
  */
-export function buildObsidianUrl(vaultRelPath: string): string {
-  const base = `obsidian://open?vault=${encodeURIComponent(VAULT_NAME)}`;
-  if (!vaultRelPath) {
-    return base;
-  }
-  return `${base}&file=${encodeURIComponent(vaultRelPath)}`;
+export function buildObsidianUrl(
+  vaultRoot: string,
+  vaultRelPath = "",
+): string {
+  const root = vaultRoot.replace(/[\\/]+$/, "");
+  const separator = root.includes("\\") ? "\\" : "/";
+  const relative = vaultRelPath
+    .replace(/^[\\/]+/, "")
+    .replace(/[\\/]+/g, separator);
+  const absolutePath = relative ? `${root}${separator}${relative}` : root;
+  return `obsidian://open?path=${encodeURIComponent(absolutePath)}`;
 }

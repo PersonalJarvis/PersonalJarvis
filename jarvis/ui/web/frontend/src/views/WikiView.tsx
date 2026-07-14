@@ -14,7 +14,7 @@
  * Replaces the legacy `MemoryView` (`data/core_memory.json` flat memory).
  */
 import { Suspense, lazy, useCallback, useEffect, useState } from "react";
-import { Notebook, Network, FileText } from "lucide-react";
+import { FileText, Network, Notebook, RefreshCw } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 
 import { ViewHeader } from "@/views/ChatsView";
@@ -24,6 +24,7 @@ import { useEventStore } from "@/store/events";
 import {
   fetchWikiHealth,
   fetchWikiTree,
+  rebuildWikiIndex,
   type WikiHealthSnapshot,
 } from "@/lib/wikiApi";
 
@@ -60,6 +61,7 @@ export function WikiView(): JSX.Element {
   // the dialog so step-2-vs-step-3 starts from the most recent reality.
   const [setupHint, setSetupHint] = useState<ObsidianStatusType | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [isReindexing, setIsReindexing] = useState(false);
 
   // Tree query lives both here (for header stats + empty-state detection)
   // and inside TreeSidebar (for the list). React Query dedupes them.
@@ -139,6 +141,19 @@ export function WikiView(): JSX.Element {
     }, 3000);
   }, []);
 
+  const handleReindex = useCallback(async () => {
+    setIsReindexing(true);
+    try {
+      const result = await rebuildWikiIndex();
+      if (!result.ok) throw new Error(result.error ?? "index rebuild failed");
+      await Promise.all([healthQuery.refetch(), treeQuery.refetch()]);
+    } catch {
+      showToast(t("wiki_health.reindex_failed"));
+    } finally {
+      setIsReindexing(false);
+    }
+  }, [healthQuery, showToast, t, treeQuery]);
+
   // Build the known-slug set lazily here too, so we can validate a wikilink
   // click before changing the URL. Single source of truth: the tree response.
   const knownSlugs = collectSlugs(treeQuery.data?.folders ?? []);
@@ -182,7 +197,12 @@ export function WikiView(): JSX.Element {
         </div>
       </div>
 
-      <WikiHealthStrip health={healthQuery.data} isLoading={healthQuery.isLoading} />
+      <WikiHealthStrip
+        health={healthQuery.data}
+        isLoading={healthQuery.isLoading}
+        isReindexing={isReindexing}
+        onReindex={handleReindex}
+      />
 
       {dialogOpen && setupHint && (
         <ObsidianSetupDialog
@@ -317,7 +337,11 @@ function classifyWikiHealth(health: WikiHealthSnapshot): WikiHealthVisual {
   ) {
     return "red";
   }
-  if (health.journal_backlog > 0 || health.vault_legacy_conflict) {
+  if (
+    health.journal_backlog > 0 ||
+    health.vault_legacy_conflict ||
+    health.index_state === "stale"
+  ) {
     return "amber";
   }
   // At this point `last_write?.ok === false` and `last_chain_failure` are
@@ -356,6 +380,12 @@ function describeWikiWriteStatus(
     const page = health.last_write.pages.join(", ") || health.last_write.source;
     return t("wiki_health.last_write_ok").replace("{0}", page);
   }
+  if (health.journal_backlog > 0) {
+    return t("wiki_health.pending_writes").replace(
+      "{0}",
+      String(health.journal_backlog),
+    );
+  }
   return t("wiki_health.no_writes_yet");
 }
 
@@ -368,9 +398,13 @@ function describeWikiWriteStatus(
 function WikiHealthStrip({
   health,
   isLoading,
+  isReindexing,
+  onReindex,
 }: {
   health: WikiHealthSnapshot | null | undefined;
   isLoading: boolean;
+  isReindexing: boolean;
+  onReindex: () => void;
 }): JSX.Element {
   const t = useT();
 
@@ -445,6 +479,28 @@ function WikiHealthStrip({
             String(health.journal_backlog),
           )}
         </span>
+      )}
+      {health.index_state === "stale" && (
+        <>
+          <span
+            data-testid="wiki-health-index-stale"
+            className="rounded-full border border-[#ffb84d]/40 bg-[#ffb84d]/10 px-1.5 py-0.5 text-[#ffb84d]"
+          >
+            {t("wiki_health.index_stale")
+              .replace("{0}", String(health.indexed_pages))
+              .replace("{1}", String(health.vault_pages))}
+          </span>
+          <button
+            type="button"
+            onClick={onReindex}
+            disabled={isReindexing}
+            data-testid="wiki-health-reindex"
+            className="inline-flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-foreground hover:bg-muted disabled:opacity-50"
+          >
+            <RefreshCw className={cn("h-3 w-3", isReindexing && "animate-spin")} />
+            {t(isReindexing ? "wiki_health.reindexing" : "wiki_health.reindex")}
+          </button>
+        </>
       )}
       {health.vault_legacy_conflict && (
         <span

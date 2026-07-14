@@ -6,7 +6,7 @@ nothing actually ran. This gate parses the JUnit XML and asserts that the number
 of PASSED tests is at least ``FLOOR``. A drop below the floor fails the build
 even when pytest's own exit code is green.
 
-Usage: ``python scripts/ci/assert_min_passed.py report.xml``
+Usage: ``python scripts/ci/assert_min_passed.py [--strict] report.xml``
 
 FLOOR is seeded conservatively from the current green count on the branch. Bump
 it FORWARD as the suite grows — NEVER down (lowering it defeats the purpose).
@@ -39,17 +39,17 @@ def _aggregate(path: Path) -> tuple[int, int, int, int]:
 
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
-        print("usage: assert_min_passed.py <junit-report.xml>")
+    args = list(argv[1:])
+    strict = "--strict" in args
+    args = [arg for arg in args if arg != "--strict"]
+    if len(args) != 1:
+        print("usage: assert_min_passed.py [--strict] <junit-report.xml>")
         return 2
-    path = Path(argv[1])
+    path = Path(args[0])
     if not path.exists():
         print(f"FAIL JUnit report not found: {path}")
         return 2
 
-    strict = "--strict" in argv
-    if strict:
-        argv = [a for a in argv if a != "--strict"]
     tests, failures, errors, skipped = _aggregate(path)
     passed = tests - failures - errors - skipped
     print(

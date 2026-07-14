@@ -8,6 +8,7 @@ from jarvis.ui.jarvisbar.overlay import JarvisBarOverlay
 REQUIRED = [
     "show",
     "hide",
+    "release_startup_gate",
     "set_level",
     "set_muted",
     "play_animation",
@@ -67,6 +68,7 @@ def test_methods_safe_without_tk_window():
     assert bar._muted is False
 
     bar.hide()  # _root None → safe no-op
+    assert bar.release_startup_gate() is False
     bar.play_animation("wave", x=1)
     bar.stop_animation("think")
     bar.show_listening_transcript("hi", 10)

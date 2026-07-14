@@ -42,7 +42,9 @@ class TestProviderCatalog:
         assert spec is not None
         assert spec.tier == "brain"
         assert spec.selects == "model"
-        assert any("gpt-5.5" in m.id for m in spec.curated)
+        assert {"gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"} <= {
+            m.id for m in spec.curated
+        }
 
     def test_antigravity_is_curated_brain_provider(self) -> None:
         spec = catalog_spec("antigravity")
@@ -107,7 +109,14 @@ class TestProviderCatalog:
 
     def test_brain_catalog_providers_unchanged(self) -> None:
         # The brain-only CATALOG_PROVIDERS tuple: the live-fetchable API brains.
-        for p in ("claude-api", "openai", "gemini", "openrouter", "nvidia"):
+        for p in (
+            "claude-api",
+            "openai",
+            "gemini",
+            "openrouter",
+            "groq",
+            "nvidia",
+        ):
             assert p in CATALOG_PROVIDERS
         assert PROVIDER_CATALOG["claude-api"].tier == "brain"
 
@@ -357,6 +366,7 @@ class TestFilterBrainModels:
             ModelInfo(id="dall-e-3", label="dalle"),
             ModelInfo(id="whisper-1", label="whisper"),
             ModelInfo(id="tts-1-hd", label="tts"),
+            ModelInfo(id="gpt-realtime-2.1", label="realtime"),
             ModelInfo(id="text-embedding-3-large", label="embed"),
             ModelInfo(id="sora-2", label="sora"),
         ]
@@ -499,6 +509,28 @@ class TestListModels:
         assert [m.id for m in result.models] == ["gpt-5.5"]
 
     @pytest.mark.asyncio
+    async def test_openrouter_cache_is_capped_at_five_minutes(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        cat = ModelCatalog(cache_path=tmp_path / "c.json", ttl_hours=6)
+        cat._cache["openrouter"] = (
+            time.time() - 301,
+            [ModelInfo(id="openai/gpt-5.5", label="GPT-5.5")],
+        )
+        calls: list[str] = []
+
+        async def _fetch(provider: str) -> list[ModelInfo]:
+            calls.append(provider)
+            return [ModelInfo(id="openai/gpt-5.6-sol", label="GPT-5.6 Sol")]
+
+        monkeypatch.setattr(cat, "_fetch_raw", _fetch)
+        result = await cat.list_models("openrouter")
+
+        assert calls == ["openrouter"]
+        assert result.source == "live"
+        assert [m.id for m in result.models] == ["openai/gpt-5.6-sol"]
+
+    @pytest.mark.asyncio
     async def test_fetch_failure_falls_back_to_stale_cache(
         self, tmp_path: Path, monkeypatch
     ) -> None:
@@ -587,6 +619,7 @@ class TestListModels:
             "openai",
             "gemini",
             "openrouter",
+            "groq",
             "nvidia",
         }
 
@@ -683,13 +716,35 @@ class TestRealtimeCatalog:
         from jarvis.brain.model_catalog import REALTIME_VOICES
 
         ids = [v.id for v in REALTIME_VOICES["openai-realtime"]]
-        assert ids == ["alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse"]
+        assert ids == [
+            "alloy",
+            "ash",
+            "ballad",
+            "coral",
+            "echo",
+            "sage",
+            "shimmer",
+            "verse",
+            "marin",
+            "cedar",
+        ]
 
     def test_gemini_live_voices_match_the_prebuilt_voice_set(self) -> None:
         from jarvis.brain.model_catalog import REALTIME_VOICES
 
-        ids = set(v.id for v in REALTIME_VOICES["gemini-live"])
-        assert ids == {"Puck", "Charon", "Kore", "Fenrir", "Aoede", "Orus", "Leda", "Zephyr"}
+        ids = {v.id for v in REALTIME_VOICES["gemini-live"]}
+        assert len(ids) == 30
+        assert {
+            "Puck",
+            "Charon",
+            "Kore",
+            "Fenrir",
+            "Aoede",
+            "Orus",
+            "Leda",
+            "Zephyr",
+            "Sulafat",
+        } <= ids
 
     def test_realtime_catalogs_are_not_in_the_single_selection_catalog(self) -> None:
         # Realtime is served by its own endpoint (GET/PUT /realtime-options),

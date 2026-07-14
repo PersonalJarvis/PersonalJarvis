@@ -73,6 +73,12 @@ class SkillCreateRequest:
     source_url: str | None = None
     docs_url: str | None = None
     author: str = ""
+    # Optional lifecycle-state override (AP-15). ``None`` — the manual "New
+    # skill" form's default — omits the frontmatter key entirely, so the
+    # loader resolves the skill to VALIDATED ("on") as documented below. The
+    # AI creator (``creator_service.py``) passes ``state="draft"`` here so
+    # its LLM-generated skills land inactive until a human promotes them.
+    state: str | None = None
 
 
 def slugify(name: str) -> str:
@@ -98,8 +104,10 @@ def body_has_instructions(body: str) -> bool:
 def _build_frontmatter(req: SkillCreateRequest) -> dict[str, Any]:
     """Assemble the YAML frontmatter dict, omitting empty optional fields.
 
-    Deliberately omits ``state`` so the loader resolves the skill to VALIDATED
-    ("on") — an explicit user-authored skill is usable immediately.
+    Omits ``state`` when ``req.state`` is ``None`` (the manual form's
+    default) so the loader resolves the skill to VALIDATED ("on") — an
+    explicit user-authored skill is usable immediately. When ``req.state``
+    is set (the AI creator passes ``"draft"``, AP-15) it is written verbatim.
     """
     fm: dict[str, Any] = {
         "schema_version": "1",
@@ -108,6 +116,8 @@ def _build_frontmatter(req: SkillCreateRequest) -> dict[str, Any]:
         "description": req.description,
         "category": (req.category or "general").strip() or "general",
     }
+    if req.state:
+        fm["state"] = req.state
     if req.tags:
         fm["tags"] = list(req.tags)
     if req.author:

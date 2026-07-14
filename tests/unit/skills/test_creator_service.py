@@ -29,6 +29,7 @@ from jarvis.skills.creator_service import (
     validate_skill_md,
 )
 from jarvis.skills.registry import SkillRegistry
+from jarvis.skills.schema import SkillLifecycleState
 
 
 # ----------------------------------------------------------------------
@@ -147,6 +148,21 @@ def test_render_draft_produces_parseable_skill_md() -> None:
     assert validation["ok"] is True
 
 
+def test_render_draft_stamps_state_draft_in_frontmatter() -> None:
+    """AP-15: the AI creator's rendered preview must carry ``state: draft`` so
+    the loader never resolves LLM-generated content to VALIDATED/"on"."""
+    draft = {
+        "name": "Rendered Skill",
+        "description": "desc",
+        "category": "general",
+        "body": "## Rendered Skill\n\nHello.\n",
+    }
+    skill_md = render_skill_md(draft)
+    _, frontmatter = validate_skill_md(skill_md)
+    assert frontmatter is not None
+    assert frontmatter["state"] == "draft"
+
+
 # ----------------------------------------------------------------------
 # draft() — deterministic fallback + brain path
 # ----------------------------------------------------------------------
@@ -231,3 +247,11 @@ async def test_commit_persists_draft_to_registry(registry, skills_root) -> None:
     assert fetched.frontmatter is not None
     assert "run-shell" in fetched.frontmatter.requires_tools
     assert (skills_root / "committed-skill" / "SKILL.md").exists()
+
+    # AP-15: an AI-generated skill must land as DRAFT, never auto-active —
+    # both on the returned Skill object and in the persisted file the loader
+    # will re-parse on the next reload.
+    assert created.state == SkillLifecycleState.DRAFT
+    assert fetched.state == SkillLifecycleState.DRAFT
+    on_disk = (skills_root / "committed-skill" / "SKILL.md").read_text(encoding="utf-8")
+    assert "state: draft" in on_disk

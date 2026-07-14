@@ -1,6 +1,7 @@
 """VerifyLocalhostTool — HTTP check against localhost with an optional screenshot."""
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from jarvis.core.protocols import ExecutionContext, ToolResult
@@ -39,7 +40,7 @@ class VerifyLocalhostTool:
     async def execute(self, args: dict[str, Any], ctx: ExecutionContext) -> ToolResult:
         port = int(args.get("port") or 0)
         if not port:
-            return ToolResult(success=False, error="port is 0 or empty")
+            return ToolResult(success=False, output=None, error="port is 0 or empty")
         path = (args.get("path") or "/").strip()
         if not path.startswith("/"):
             path = "/" + path
@@ -52,7 +53,11 @@ class VerifyLocalhostTool:
         try:
             import httpx
 
-            r = httpx.get(url, timeout=5.0, follow_redirects=True)
+            # httpx.get is synchronous — run it off the event loop so a slow/
+            # hung localhost server cannot block every other in-flight task.
+            r = await asyncio.to_thread(
+                httpx.get, url, timeout=5.0, follow_redirects=True
+            )
             ok = r.status_code == 200
             if ok and substring and substring not in r.text:
                 ok = False
@@ -62,7 +67,9 @@ class VerifyLocalhostTool:
             else:
                 msg = f"HTTP 200 OK ({url})"
         except Exception as exc:  # noqa: BLE001
-            return ToolResult(success=False, error=f"Connection to {url} failed: {exc}")
+            return ToolResult(
+                success=False, output=None, error=f"Connection to {url} failed: {exc}"
+            )
 
         if take_screenshot:
             try:

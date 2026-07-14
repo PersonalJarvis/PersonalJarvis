@@ -38,22 +38,32 @@ describe("AgentInstructionsView", () => {
   it("PUTs the draft on save", async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => STATE })
+      .mockResolvedValueOnce({ ok: true, json: async () => EMPTY_STATE })
       .mockResolvedValueOnce({
         ok: true,
-        json: async () => ({ ...STATE, content: "New rules.", ok: true, restart_required: false }),
+        json: async () => ({
+          ...STATE,
+          content: EMPTY_STATE.template,
+          ok: true,
+          restart_required: false,
+        }),
       });
     vi.stubGlobal("fetch", fetchMock);
     render(<AgentInstructionsView />);
     const editor = await screen.findByTestId("agent-instructions-editor");
-    fireEvent.change(editor, { target: { value: "New rules." } });
-    fireEvent.click(screen.getByText("Save instructions"));
+    fireEvent.click(screen.getByText("Start from template"));
+    await waitFor(() =>
+      expect((editor as HTMLTextAreaElement).value).toBe(EMPTY_STATE.template),
+    );
+    const save = screen.getByText("Save instructions").closest("button") as HTMLButtonElement;
+    await waitFor(() => expect(save.disabled).toBe(false));
+    fireEvent.click(save);
     await waitFor(() => {
       const put = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT");
       expect(put).toBeTruthy();
       expect(put![0]).toBe("/api/settings/agent-instructions");
       expect(JSON.parse((put![1] as RequestInit).body as string)).toEqual({
-        content: "New rules.",
+        content: EMPTY_STATE.template,
       });
     });
   });

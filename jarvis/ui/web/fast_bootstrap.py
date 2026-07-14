@@ -60,11 +60,14 @@ class FastBootstrap:
         self._supervisor_task: asyncio.Task | None = None
         self._supervise_interval = 5.0
         # Set once the window's critical shell assets (index.html + the entry
-        # JS bundle) have been served. The backend build waits briefly on this
-        # so the heavy, GIL-holding imports don't starve the loop while the UI
-        # is still painting — i.e. the user sees the rendered UI, not a blank
-        # window, before the warm-up storm begins.
+        # JS bundle) have been served. This only proves that bytes left the
+        # server; it does not prove that the browser had a chance to paint.
         self._shell_served = asyncio.Event()
+        # Set by the boot page after two requestAnimationFrame callbacks. The
+        # desktop backend waits on this stronger signal before starting heavy,
+        # GIL-holding imports, so slow WebView initialization cannot regress to
+        # a blank native window while the browser main thread is still cold.
+        self._shell_painted = asyncio.Event()
 
     # ---- the ASGI callable -------------------------------------------------
 
@@ -95,6 +98,19 @@ class FastBootstrap:
             and scope.get("path") == "/api/health"
         ):
             await self._ok_health(send)
+            return
+
+        # The static boot page sends this only after the browser has completed
+        # at least one visual frame. Keep it dependency-free and available
+        # during warm-up; once the real app is registered, the delegation branch
+        # above owns all requests again.
+        if (
+            kind == "http"
+            and scope.get("method") == "POST"
+            and scope.get("path") == "/api/ui/shell-painted"
+        ):
+            self._shell_painted.set()
+            await self._no_content(send)
             return
 
         # First-run onboarding must render from the first second — the gate's
@@ -172,6 +188,17 @@ class FastBootstrap:
         await send({"type": "http.response.body", "body": body})
 
     @staticmethod
+    async def _no_content(send: Any) -> None:
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 204,
+                "headers": [(b"cache-control", b"no-store")],
+            }
+        )
+        await send({"type": "http.response.body", "body": b""})
+
+    @staticmethod
     async def _warming(scope: dict, send: Any, *, unavailable: bool = False) -> None:
         kind = scope["type"]
         if kind == "http":
@@ -219,26 +246,41 @@ class FastBootstrap:
         await send({"type": "http.response.start", "status": 200, "headers": headers})
         body = b"" if scope.get("method") == "HEAD" else data
         await send({"type": "http.response.body", "body": body})
-        # Mark the shell as served once the entry JS bundle has gone out (the
-        # SPA can render after that). index.html alone is a blank #root, so wait
-        # for a .js asset — the backend build holds off its GIL-heavy imports
-        # until this fires so the UI paints first.
+        # Mark the transport milestone once an entry JS bundle has gone out.
+        # This remains useful for diagnostics, but visible readiness uses the
+        # separate browser-originated paint acknowledgment below.
         if target.name.endswith(".js"):
             self._shell_served.set()
         return True
 
     async def wait_shell_served(self, timeout: float) -> bool:  # noqa: ASYNC109 — bounded readiness wait, conventional param
-        """Block until the window has fetched the shell's entry JS (so the UI
-        can paint), or *timeout* elapses. Returns True if the shell was served.
+        """Wait until the window has fetched the shell's entry JavaScript.
 
-        Lets the backend defer its GIL-heavy build until the visible UI is up.
-        A no-op-fast return when already set; bounded so a headless run (no
-        window, no JS request) never stalls the build.
+        This is a transport diagnostic only: callers that need visual
+        readiness must use :meth:`wait_shell_painted`. The wait remains bounded
+        so a client that never requests JavaScript cannot stall its caller.
         """
         if self._shell_served.is_set():
             return True
         try:
             await asyncio.wait_for(self._shell_served.wait(), timeout=timeout)
+            return True
+        except TimeoutError:
+            return False
+
+    async def wait_shell_painted(self, timeout: float) -> bool:  # noqa: ASYNC109 — bounded readiness wait, conventional param
+        """Wait until the browser confirms that the boot shell was painted.
+
+        Unlike :meth:`wait_shell_served`, this signal comes from the rendered
+        page after two animation frames. It therefore remains honest when a
+        cold WebView or a busy machine receives the JS bytes before its browser
+        main thread has displayed anything. The wait is bounded so a missing or
+        broken GUI never prevents the backend from eventually continuing.
+        """
+        if self._shell_painted.is_set():
+            return True
+        try:
+            await asyncio.wait_for(self._shell_painted.wait(), timeout=timeout)
             return True
         except TimeoutError:
             return False

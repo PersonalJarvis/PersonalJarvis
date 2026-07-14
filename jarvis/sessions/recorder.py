@@ -11,7 +11,8 @@ voice session):
    |  VoiceSessionStarted
    v
   ACTIVE  ---VoiceTurnStarted--->  TURN_OPEN
-                                       | TranscriptFinal -> user_text
+                                       | TranscriptFinal / final
+                                       | TranscriptionUpdate -> user_text
                                        | BrainTurnCompleted -> tier/provider/tokens/cost
                                        | ToolCallCompleted -> tool_calls.append
                                        | ResponseGenerated -> jarvis_text
@@ -32,7 +33,9 @@ replay.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -41,19 +44,19 @@ from jarvis.core.bus import EventBus
 from jarvis.core.events import (
     ActionExecuted,
     AudioOutFirst,
-    BrainTTFT,
     BrainTurnCompleted,
     BrainTurnStarted,
     Event,
-    ListeningStarted,
-    ResponseGenerated,
     JarvisAgentTaskCompleted,
     JarvisAgentTaskStarted,
+    ListeningStarted,
+    ResponseGenerated,
     SpeechSpoken,
     SystemStateChanged,
     ToolCallCompleted,
     ToolCallStarted,
     TranscriptFinal,
+    TranscriptionUpdate,
     VoiceSessionEnded,
     VoiceSessionStarted,
     VoiceTurnCompleted,
@@ -72,6 +75,7 @@ _RAW_EVENT_KINDS: frozenset[str] = frozenset(
         "WakeWordDetected",
         "ListeningStarted",
         "TranscriptFinal",
+        "TranscriptionUpdate",
         "BrainTurnStarted",
         "BrainTurnCompleted",
         "BrainTTFT",
@@ -87,6 +91,7 @@ _RAW_EVENT_KINDS: frozenset[str] = frozenset(
         "VoiceSessionEnded",
         "VoiceTurnStarted",
         "VoiceTurnCompleted",
+        "RealtimeSessionReady",
         # Every phrase Jarvis VOICES that is not the brain's normal reply —
         # timeout/unavailable apologies, clarifying questions, skill/mission
         # announcements, the "still working" progress nudge. Without this the
@@ -126,9 +131,10 @@ class _TurnState:
     cost_usd: float = 0.0
     latency_total_ms: int = 0
     tool_calls: list[str] = field(default_factory=list)
-    # Stage boundaries for think/speak latency calculation. Derived from
-    # TranscriptFinal + SystemStateChanged(SPEAKING/LISTENING),
-    # because this pipeline variant does not emit Phase-L.1 stage events.
+    # Stage boundaries for think/speak latency calculation. The first thinking
+    # segment begins at TranscriptFinal (classic) or final TranscriptionUpdate
+    # (Realtime); later THINKING transitions reuse transcript_final_ms as the
+    # open-segment anchor because the stored schema needs only aggregate totals.
     transcript_final_ms: int = 0
     speaking_started_ms: int = 0
     think_ms: int = 0
@@ -137,6 +143,10 @@ class _TurnState:
     # (BrainTurnCompleted.finish_reason == "voice_confirm_pending"): the reply
     # is a pending yes/no question, not a normal answer.
     awaiting_confirmation: bool = False
+    # Realtime emits an authoritative VoiceTurnStarted/VoiceTurnCompleted pair.
+    # Supervisor state changes may happen between those two events and must not
+    # close the row early under a recorder-generated boundary.
+    uses_explicit_lifecycle: bool = False
     finalized: bool = False
 
 
@@ -161,6 +171,16 @@ class SessionRecorder:
     def __init__(self, store: SessionStore) -> None:
         self._store = store
         self._state: _SessionState | None = None
+        # SQLite is synchronous and can briefly wait on another reader/writer.
+        # Keep those waits off the asyncio loop so microphone handoff, live
+        # level metering, and the native overlay remain responsive while a
+        # session event is persisted. The lock preserves event order and keeps
+        # this recorder's in-memory state machine single-threaded.
+        self._dispatch_lock = asyncio.Lock()
+        # ``to_thread`` work cannot be force-cancelled. If the EventBus timeout
+        # cancels an awaiting coroutine, this second lock keeps the still-live
+        # worker serialized with the next dispatch.
+        self._dispatch_thread_lock = threading.Lock()
         # Fallback when the pipeline forgets VoiceTurnStarted — we assign
         # our own turn_id at the first turn-relevant event.
         self._auto_turn_counter: int = 0
@@ -189,13 +209,18 @@ class SessionRecorder:
         but we definitely don't want error-log spam per voice turn.
         """
         try:
-            self._dispatch(event)
+            async with self._dispatch_lock:
+                await asyncio.to_thread(self._dispatch_serialized, event)
         except Exception as exc:  # noqa: BLE001
             log.warning(
                 "SessionRecorder dispatch failed",
                 exc_info=exc,
                 extra={"event_type": type(event).__name__},
             )
+
+    def _dispatch_serialized(self, event: Event) -> None:
+        with self._dispatch_thread_lock:
+            self._dispatch(event)
 
     def _dispatch(self, event: Event) -> None:
         kind = type(event).__name__
@@ -232,6 +257,8 @@ class SessionRecorder:
             self._ensure_turn_open(event.timestamp_ns // 1_000_000)
         elif isinstance(event, TranscriptFinal):
             self._on_transcript_final(event)
+        elif isinstance(event, TranscriptionUpdate):
+            self._on_transcription_update(event)
         elif isinstance(event, BrainTurnStarted):
             self._on_brain_started(event)
         elif isinstance(event, BrainTurnCompleted):
@@ -352,6 +379,7 @@ class SessionRecorder:
             turn_id=event.turn_id,
             idx=idx,
             started_ms=ts_ms,
+            uses_explicit_lifecycle=True,
         )
         self._store.upsert_turn(
             turn_id=event.turn_id,
@@ -424,11 +452,15 @@ class SessionRecorder:
         # Latency default: end - start, if not set via AudioOutFirst.
         if t.latency_total_ms == 0:
             t.latency_total_ms = max(0, end_ms - t.started_ms)
-        # Speak latency: if the pipeline was still SPEAKING at turn end,
-        # we compute up to end_ms; otherwise it was already set by the
-        # SystemStateChanged(LISTENING) transition.
-        if t.speak_ms == 0 and t.speaking_started_ms > 0:
-            t.speak_ms = max(0, end_ms - t.speaking_started_ms)
+        # Close any open phase. Realtime can alternate THINKING/SPEAKING more
+        # than once (short bridge, more work, final answer), so both values are
+        # accumulated instead of treated as one start/end pair.
+        if t.speaking_started_ms > 0:
+            t.speak_ms += max(0, end_ms - t.speaking_started_ms)
+            t.speaking_started_ms = 0
+        if t.transcript_final_ms > 0:
+            t.think_ms += max(0, end_ms - t.transcript_final_ms)
+            t.transcript_final_ms = 0
         self._store.finalize_turn(
             turn_id=t.turn_id,
             ended_ms=end_ms,
@@ -505,15 +537,26 @@ class SessionRecorder:
             # Stage anchor for think_ms = TranscriptFinal -> SPEAKING.
             self._state.current_turn.transcript_final_ms = ts_ms
 
+    def _on_transcription_update(self, event: TranscriptionUpdate) -> None:
+        """Use Realtime's final transcript as its thinking-phase anchor."""
+        if not event.is_final or self._state is None:
+            return
+        t = self._state.current_turn
+        if t is None or t.finalized or not t.uses_explicit_lifecycle:
+            return
+        t.user_text = event.text
+        t.transcript_final_ms = event.timestamp_ns // 1_000_000
+
     def _on_system_state(self, event: SystemStateChanged) -> None:
-        """Track SPEAKING/LISTENING boundaries for think_ms + speak_ms.
+        """Track THINKING/SPEAKING boundaries for think_ms + speak_ms.
 
         This pipeline variant does not emit Phase-L.1 stage events
         (AudioOutFirst, TTSFirstByte). Instead it marks the high-level
         state via ``_set_turn_state`` -> ``_transition``:
         IDLE | LISTENING | THINKING | SPEAKING. We take:
-          - SPEAKING start  = anchor for think_ms (user-done -> Jarvis speaks)
-          - LISTENING start after SPEAKING = anchor for speak_ms end AND
+          - SPEAKING start = close and accumulate the current thinking segment
+          - THINKING start after SPEAKING = close speech and open more thinking
+          - LISTENING start after SPEAKING = close speech AND
             **turn boundary** — the turn is done, the next TranscriptFinal
             opens a new turn via ``_ensure_turn_open``. Without this
             explicit finalization, turn 1 stays open in multi-turn sessions
@@ -527,19 +570,28 @@ class SessionRecorder:
         new = (event.new_state or "").upper()
         prev = (event.previous or "").upper()
         if new == "SPEAKING" and prev != "SPEAKING":
-            # Set anchor — speak_ms starts now.
+            # Close the current thinking segment and open a speaking segment.
+            if t.transcript_final_ms > 0:
+                t.think_ms += max(0, ts_ms - t.transcript_final_ms)
+                t.transcript_final_ms = 0
             t.speaking_started_ms = ts_ms
-            # think_ms = transcript_final_ms -> now
-            if t.transcript_final_ms > 0 and t.think_ms == 0:
-                t.think_ms = max(0, ts_ms - t.transcript_final_ms)
         elif prev == "SPEAKING" and new != "SPEAKING":
-            # Speaking phase is over — speak_ms = SPEAKING_start -> now.
-            if t.speaking_started_ms > 0 and t.speak_ms == 0:
-                t.speak_ms = max(0, ts_ms - t.speaking_started_ms)
+            # Close the current speaking segment. A Realtime bridge can return
+            # to THINKING before a later final-answer SPEAKING segment.
+            if t.speaking_started_ms > 0:
+                t.speak_ms += max(0, ts_ms - t.speaking_started_ms)
+                t.speaking_started_ms = 0
+            if new == "THINKING":
+                t.transcript_final_ms = ts_ms
             # Turn boundary: this turn is complete. Not finalizing here
             # would be wrong — otherwise values would accumulate across all
             # turns of a multi-turn session and only the last turn stays visible.
-            self._finalize_current_turn(end_ms=ts_ms)
+            # Classic turns infer their boundary from SPEAKING -> LISTENING.
+            # Realtime publishes its explicit completion just after the desktop
+            # callback makes this transition. Closing it here would make that
+            # completion miss its turn_id and create a response-only auto row.
+            if not t.uses_explicit_lifecycle:
+                self._finalize_current_turn(end_ms=ts_ms)
 
     def _on_brain_started(self, event: BrainTurnStarted) -> None:
         # Defensive: no hard assert — on race conditions between
@@ -567,7 +619,7 @@ class SessionRecorder:
     def _on_worker_task_started(self, event: JarvisAgentTaskStarted) -> None:
         """Jarvis-Agent task spawn — set tier + provider/model for telemetry.
 
-        Welle-4-Migration: formerly ``_on_sub_jarvis_started`` with
+        Wave 4 migration: formerly ``_on_sub_jarvis_started`` with
         ``SubJarvisStarted``-Event. Sub-Jarvis tier was replaced by the worker
         harness (see docs/openclaw-bridge.md §11). Schema preserved 1:1.
 
@@ -713,11 +765,20 @@ class SessionRecorder:
 
 
 # VoiceTurnRow.tier literal — keep in sync with jarvis/sessions/models.py.
-# Welle-4 migration: the ``sub_jarvis`` legacy value is still accepted for
+# Wave 4 migration: the ``sub_jarvis`` legacy value is still accepted for
 # backwards compatibility with old voice sessions in the DB; new turns
 # use ``openclaw``.
 _VALID_TIERS: frozenset[str] = frozenset(
-    {"router", "openclaw", "sub_jarvis", "trivial", "fast", "deep", "code"}
+    {
+        "router",
+        "openclaw",
+        "sub_jarvis",
+        "trivial",
+        "fast",
+        "deep",
+        "code",
+        "realtime",
+    }
 )
 
 
@@ -796,6 +857,9 @@ def _payload_for(event: Event) -> dict[str, Any]:
         "session_id",
         "turn_id",
         "turn_index",
+        "surface",
+        "input_sample_rate",
+        "output_sample_rate",
         "wake_keyword",
         "hangup_reason",
         "turn_count",

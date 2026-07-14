@@ -1,10 +1,21 @@
 """run_shell tool: runs shell commands (via subprocess).
 
-Risk tier: monitor — the safety layer decides via whitelist/blacklist whether confirmation is needed.
+Risk tier: monitor — the safety layer decides via whitelist/blacklist whether
+confirmation is needed. The whitelist/blacklist matching runs on the FULL
+command string inside ``ToolExecutor`` before this tool executes, so it is
+independent of how the string is executed below.
 
-The tool does NOT invoke `shell=True` mode. Commands are parsed through
-`shlex.split`. The user can move dangerous commands into the safe tier
-via `[safety.whitelist].commands` (`browser-use *`, `git *`).
+POSIX keeps the historical no-``shell=True`` contract: commands are parsed
+through ``shlex.split`` and exec'd directly.
+
+Windows hands the ORIGINAL string to ``cmd.exe`` instead. Tokenizing with
+``shlex.split(posix=False)`` KEPT the surrounding quotes inside the tokens,
+so ``powershell -Command "X"`` received a string LITERAL and echoed it back
+with exit 0 — the tool reported success with garbage output, which sent the
+delegated brain into a retry loop until its iteration budget died (forensic
+2026-07-13 18:15). cmd builtins (``dir``, ``type``, ``copy``) additionally
+failed with WinError 2 because they are not programs. ``cmd.exe`` parses its
+own quoting and provides the builtins.
 """
 from __future__ import annotations
 
@@ -41,19 +52,31 @@ class RunShellTool:
         if not command:
             return ToolResult(success=False, output=None, error="command is missing")
 
-        try:
-            parts = shlex.split(command, posix=(sys.platform != "win32"))
-        except ValueError as exc:
-            return ToolResult(success=False, output=None, error=f"Command parse error: {exc}")
+        if sys.platform != "win32":
+            try:
+                parts = shlex.split(command)
+            except ValueError as exc:
+                return ToolResult(
+                    success=False, output=None, error=f"Command parse error: {exc}"
+                )
 
         try:
-            proc = await asyncio.create_subprocess_exec(
-                *parts,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd=cwd,
-                creationflags=NO_WINDOW_CREATIONFLAGS,
-            )
+            if sys.platform == "win32":
+                proc = await asyncio.create_subprocess_shell(
+                    command,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=cwd,
+                    creationflags=NO_WINDOW_CREATIONFLAGS,
+                )
+            else:
+                proc = await asyncio.create_subprocess_exec(
+                    *parts,
+                    stdout=asyncio.subprocess.PIPE,
+                    stderr=asyncio.subprocess.PIPE,
+                    cwd=cwd,
+                    creationflags=NO_WINDOW_CREATIONFLAGS,
+                )
             try:
                 stdout_b, stderr_b = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
             except TimeoutError:

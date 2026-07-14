@@ -138,3 +138,19 @@ async def test_run_stream_empty_stream_falls_back_to_run() -> None:
     out = [s async for s in gen.run_stream("hallo", language="de")]
 
     assert out == ["Lass mich kurz schauen."]
+
+
+async def test_run_stream_suppresses_an_unbacked_action_promise() -> None:
+    provider = _StreamingFake([
+        "Ich schaue gleich in dein Wiki und melde mich."  # i18n-allow: runtime output
+    ])
+    generator = _gen(provider)
+
+    out = [
+        sentence
+        async for sentence in generator.run_stream(
+            "What is in my Wiki?", language="de",
+        )
+    ]
+
+    assert out == []

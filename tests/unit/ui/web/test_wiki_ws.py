@@ -139,6 +139,45 @@ def test_disconnect_unsubscribes_from_bus(client_bus):
     )
 
 
+def test_disconnect_without_any_event_still_unsubscribes(client_bus):
+    """FIX 3: an idle tab that closes before any wiki event ever fires must
+    still be unsubscribed promptly.
+
+    Before the two-task race (a reader awaiting ``ws.receive_text()``
+    racing the queue forward via ``asyncio.wait``), the forwarding loop
+    only ever woke up on ``queue.get()`` — so a tab closed with no further
+    wiki events left its subscriber (and task) leaked for the rest of the
+    server's lifetime.
+    """
+    client, bus = client_bus
+
+    def _count_subs() -> int:
+        return len(bus._subscribers.get(WikiPageChanged, []))  # noqa: SLF001
+
+    assert _count_subs() == 0
+
+    with client.websocket_connect("/api/wiki/live") as _ws:
+        # Poll for the subscription to become visible before closing, so we
+        # don't race the server coroutine's own startup.
+        deadline = 0
+        while _count_subs() == 0 and deadline < 50:
+            deadline += 1
+            import time as _t
+            _t.sleep(0.02)
+        assert _count_subs() == 1
+
+    # No WikiPageChanged was ever published — the only signal available to
+    # the endpoint is the client closing the socket.
+    deadline = 0
+    while _count_subs() != 0 and deadline < 50:
+        deadline += 1
+        import time as _t
+        _t.sleep(0.05)
+    assert _count_subs() == 0, (
+        "an idle WS with no wiki events must still unsubscribe on disconnect"
+    )
+
+
 def test_unrelated_event_does_not_appear(client_bus):
     """Events of a different type are not forwarded."""
     from jarvis.core.events import SystemStateChanged

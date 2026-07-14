@@ -13,7 +13,6 @@ from jarvis.core.capabilities import (
 )
 from jarvis.core.capabilities_seed import _SEED_CAPABILITIES, seed_registry
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -58,8 +57,8 @@ class TestNormalize:
         assert _normalize("ß") == "ss"  # i18n-allow: German umlaut input matched in logic
 
     def test_mixed(self) -> None:
-        assert _normalize("Öffne") == "oeffne"  # i18n-allow: German speech-input test vocabulary
-        assert _normalize("GrüßGott") == "gruessgott"  # i18n-allow: German speech-input test vocabulary
+        assert _normalize("Öffne") == "oeffne"  # i18n-allow
+        assert _normalize("GrüßGott") == "gruessgott"  # i18n-allow
 
 
 # ---------------------------------------------------------------------------
@@ -140,7 +139,9 @@ class TestRegistryResolveIntent:
         self.reg.register(self.wiki_cap)
 
     def test_verb_match_returns_cap(self) -> None:
-        result = self.reg.resolve_intent("fuehre ein Kommando aus")  # i18n-allow: German speech-input test vocabulary
+        result = self.reg.resolve_intent(
+            "fuehre ein Kommando aus"  # i18n-allow
+        )
         assert result is not None
         assert result.id == "tool.run-shell"
 
@@ -150,11 +151,13 @@ class TestRegistryResolveIntent:
         assert result.id == "tool.wiki-recall"
 
     def test_no_match_returns_none(self) -> None:
-        result = self.reg.resolve_intent("wie ist das Wetter?")  # i18n-allow: German speech-input test vocabulary
+        result = self.reg.resolve_intent(
+            "wie ist das Wetter?"  # i18n-allow
+        )
         assert result is None
 
     def test_umlaut_normalisation_in_utterance(self) -> None:
-        # "öffne" normalises to "oeffne" but the cap has "fuehre" — won't  # i18n-allow: German speech-input test vocabulary
+        # "öffne" normalises to "oeffne", but the cap has "fuehre".  # i18n-allow
         # match shell; register an open_app cap to prove normalisation works.
         open_cap = _make_cap(
             "local.open_app",
@@ -162,7 +165,9 @@ class TestRegistryResolveIntent:
             objects=("app", "browser"),
         )
         self.reg.register(open_cap)
-        result = self.reg.resolve_intent("Öffne den Browser")  # i18n-allow: German speech-input test vocabulary
+        result = self.reg.resolve_intent(
+            "Öffne den Browser"  # i18n-allow
+        )
         assert result is not None
         assert result.id == "local.open_app"
 
@@ -179,7 +184,7 @@ class TestRegistryResolveIntent:
         # "rerun" does NOT start/end on a word boundary for "run" → no match
         # (re uses \b which is between \w and \W; "rerun" has \b before 'r'
         # and after 'n' but not isolating the 'run' substring — correct)
-        result2 = self.reg.resolve_intent("rerunning")
+        self.reg.resolve_intent("rerunning")
         # "rerunning" has no isolated "run" word → depends on regex; key
         # invariant is that an exact word "run" in context matches.
         assert self.reg.resolve_intent("please run this") is not None
@@ -199,7 +204,9 @@ class TestRegistryHasActionIntent:
         assert self.reg.has_action_intent("run a shell command") is True
 
     def test_non_action_returns_false(self) -> None:
-        assert self.reg.has_action_intent("wie spät ist es?") is False  # i18n-allow: German speech-input test vocabulary
+        assert self.reg.has_action_intent(
+            "wie spät ist es?"  # i18n-allow
+        ) is False
 
     def test_empty_string(self) -> None:
         assert self.reg.has_action_intent("") is False
@@ -211,8 +218,8 @@ class TestRegistryHasActionIntent:
             objects=("app",),
         )
         self.reg.register(cap2)
-        # "Öffne" normalises to "oeffne" → match  # i18n-allow: German speech-input test vocabulary
-        assert self.reg.has_action_intent("Öffne Chrome") is True  # i18n-allow: German speech-input test vocabulary
+        # "Öffne" normalises to "oeffne".  # i18n-allow
+        assert self.reg.has_action_intent("Öffne Chrome") is True  # i18n-allow
 
     def test_filler_particle_halt_is_not_an_action(self) -> None:
         # The German discourse particle "halt" (a filler word, roughly
@@ -317,9 +324,7 @@ class TestSeedRegistry:
             "tool.screen-snapshot",
             # NB: tool.dispatch-to-harness removed 2026-06-28 (no longer an
             # LLM-visible router tool — phantom-openclaw routing fix).
-            "tool.multi-spawn",
             "tool.spawn-worker",
-            "tool.dispatch-with-review",
             "tool.awareness-snapshot",
             "tool.awareness-recall",
             "tool.run-skill",
@@ -329,10 +334,30 @@ class TestSeedRegistry:
         ):
             assert tool in ids, f"{tool!r} missing from seed"
 
+    def test_polite_wiki_system_write_resolves_to_ingest(self) -> None:
+        """Wiki destination wins even when the fact mentions travel."""
+        cap = self.reg.resolve_intent(
+            "Kannst du bitte mein Wiki-System eintragen, dass ich morgen nach "  # i18n-allow
+            "San Francisco reisen will?"  # i18n-allow: production transcript under test
+        )
+
+        assert cap is not None
+        assert cap.id == "tool.wiki-ingest"
+
     def test_dispatch_to_harness_capability_removed(self) -> None:
         """The dead dispatch-to-harness capability must not reappear (2026-06-28)."""
         ids = {c.id for c in self.reg.all()}
         assert "tool.dispatch-to-harness" not in ids
+
+    def test_multi_spawn_capability_removed(self) -> None:
+        """Parallel work is expressed through one supervised mission path."""
+        ids = {c.id for c in self.reg.all()}
+        assert "tool.multi-spawn" not in ids
+
+    def test_dispatch_with_review_capability_removed(self) -> None:
+        """Review is part of spawn-worker, never a competing router action."""
+        ids = {c.id for c in self.reg.all()}
+        assert "tool.dispatch-with-review" not in ids
 
     def test_local_actions_present(self) -> None:
         ids = {c.id for c in self.reg.all()}
@@ -345,18 +370,18 @@ class TestSeedRegistry:
         ):
             assert la in ids, f"{la!r} missing from seed"
 
-    def test_harness_adapters_present(self) -> None:
+    def test_only_operational_harness_adapters_are_present(self) -> None:
         ids = {c.id for c in self.reg.all()}
-        # NB: harness.openclaw removed 2026-06-28 — OpenClaw is not a registered
-        # harness (Welle-4 removal); seeding it advertised a phantom vehicle.
         for ha in (
-            "harness.mcp-remote",
             "harness.computer-use",
             "harness.python-script",
-            "harness.open-interpreter",
         ):
             assert ha in ids, f"{ha!r} missing from seed"
-        assert "harness.openclaw" not in ids
+        assert {
+            "harness.openclaw",
+            "harness.mcp-remote",
+            "harness.open-interpreter",
+        }.isdisjoint(ids)
 
     def test_no_capability_advertises_openclaw(self) -> None:
         """No seeded capability may advertise the phantom 'openclaw' vehicle.
@@ -379,9 +404,7 @@ class TestSeedRegistry:
         action_ids = {
             "tool.run-shell",
             "tool.screen-snapshot",
-            "tool.multi-spawn",
             "tool.spawn-worker",
-            "tool.dispatch-with-review",
             "tool.run-skill",
             "tool.wiki-ingest",
         }
@@ -411,7 +434,7 @@ class TestSeedRegistry:
         assert len(self.reg.all()) == before
 
     def test_open_app_matches_oeffne_chrome(self) -> None:
-        result = self.reg.resolve_intent("Öffne Chrome")  # i18n-allow: German speech-input test vocabulary
+        result = self.reg.resolve_intent("Öffne Chrome")  # i18n-allow
         assert result is not None
         assert result.id == "local.open_app"
 
@@ -422,14 +445,18 @@ class TestSeedRegistry:
         assert result.requires_evidence is False
 
     def test_run_shell_matches(self) -> None:
-        result = self.reg.resolve_intent("führe ein Shell-Kommando aus")  # i18n-allow: German speech-input test vocabulary
+        result = self.reg.resolve_intent(
+            "führe ein Shell-Kommando aus"  # i18n-allow
+        )
         assert result is not None
         assert result.id == "tool.run-shell"
 
     def test_smalltalk_no_match(self) -> None:
-        result = self.reg.resolve_intent("wie spät ist es?")  # i18n-allow: German speech-input test vocabulary
+        result = self.reg.resolve_intent("wie spät ist es?")  # i18n-allow
         assert result is None
 
     def test_has_action_intent_with_seed(self) -> None:
-        assert self.reg.has_action_intent("Öffne den Browser") is True  # i18n-allow: German speech-input test vocabulary
-        assert self.reg.has_action_intent("wie ist das Wetter?") is False  # i18n-allow: German speech-input test vocabulary
+        assert self.reg.has_action_intent("Öffne den Browser") is True  # i18n-allow
+        assert self.reg.has_action_intent(
+            "wie ist das Wetter?"  # i18n-allow
+        ) is False

@@ -132,7 +132,15 @@ def test_hangup_regex_matches_closing_phrases(phrase):
     assert HANGUP_RE.search(phrase)
 
 
-@pytest.mark.parametrize("phrase", ["wie geht es dir", "erzähl mir was", "danke schön"])  # i18n-allow
+@pytest.mark.parametrize(
+    "phrase",
+    [
+        "wie geht es dir",  # i18n-allow: German speech-input fixture
+        "erzähl mir was",  # i18n-allow: German speech-input fixture
+        "danke schön",  # i18n-allow: German speech-input fixture
+        "Antworte auf jetzt nur noch auf Englisch.",  # i18n-allow: bug transcript
+    ],
+)
 def test_hangup_regex_ignores_normal_speech(phrase):
     assert HANGUP_RE.search(phrase) is None
 
@@ -186,6 +194,49 @@ async def test_per_call_brain_history_is_isolated():
 def test_time_cap_detection():
     session = _make_session(_Sink(), max_call_seconds=0)
     assert session.check_time_cap() is True
+
+
+class _FakeBus:
+    """Records every published event. ``publish`` is async, mirroring
+    jarvis.core.bus.EventBus — a bare un-awaited call would silently drop
+    every telephony event."""
+
+    def __init__(self) -> None:
+        self.events: list[object] = []
+
+    async def publish(self, event: object) -> None:
+        self.events.append(event)
+
+
+async def _drain_pending_publishes(session: TelephonyCallSession) -> None:
+    """Fire-and-forget publish tasks run on the next loop iterations -- wait
+    for them so the test can assert on delivered events."""
+    import asyncio
+
+    pending = list(session._pending_publish_tasks)
+    if pending:
+        await asyncio.gather(*pending)
+
+
+async def test_turn_and_end_events_reach_the_bus():
+    from jarvis.telephony.events import TelephonyCallEnded, TelephonyCallTurn
+
+    sink = _Sink()
+    bus = _FakeBus()
+    session = _make_session(sink, bus=bus)
+
+    await _drive_one_utterance(session)
+    await _drain_pending_publishes(session)
+    await session.end(reason="test", status=CALL_COMPLETED)
+    await _drain_pending_publishes(session)
+
+    turn_events = [e for e in bus.events if isinstance(e, TelephonyCallTurn)]
+    end_events = [e for e in bus.events if isinstance(e, TelephonyCallEnded)]
+    assert len(turn_events) == 1
+    assert turn_events[0].call_sid == "CA1"
+    assert len(end_events) == 1
+    assert end_events[0].call_sid == "CA1"
+    assert end_events[0].reason == "test"
 
 
 async def test_brain_end_call_sentinel_ends_call_after_speaking():

@@ -96,6 +96,9 @@ class FakeRegistry:
     def instantiate(self, name: str, **kwargs: Any) -> Any:
         return self._brain
 
+    def available(self) -> set[str]:
+        return {"gemini"}
+
 
 def _config() -> JarvisConfig:
     return JarvisConfig(

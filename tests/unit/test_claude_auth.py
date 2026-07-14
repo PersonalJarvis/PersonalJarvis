@@ -12,11 +12,10 @@ from pathlib import Path
 
 import pytest
 
-from jarvis import claude_auth
+from jarvis import claude_auth, claude_credentials
 from jarvis.claude_auth import (
     ClaudeAuthService,
     _account_from_claude_json,
-    _oauth_from_credentials,
     _subscription_label,
 )
 
@@ -35,7 +34,12 @@ def _service(
     binary: str | None = "/usr/bin/claude",
     api_key_present: bool = False,
 ) -> ClaudeAuthService:
-    """Build a service whose seams point at temp files / a stubbed binary."""
+    """Build a service whose seams point at temp files / a stubbed binary.
+
+    ``tmp_path`` acts as the single candidate Claude config dir (pinned via
+    ``claude_credentials.claude_config_dirs``), so the OAuth snapshot reads
+    the temp credentials file — hermetic against the host's real logins.
+    """
     creds_path = tmp_path / ".credentials.json"
     claude_json_path = tmp_path / ".claude.json"
     if creds is not None:
@@ -44,6 +48,9 @@ def _service(
         claude_json_path.write_text(json.dumps(claude_json), encoding="utf-8")
 
     svc = ClaudeAuthService(api_key_present=api_key_present)
+    monkeypatch.setattr(
+        claude_credentials, "claude_config_dirs", lambda: [tmp_path]
+    )
     monkeypatch.setattr(svc, "_resolve_binary", lambda: binary)
     monkeypatch.setattr(svc, "_probe_version", lambda _b: "claude 1.2.3")
     monkeypatch.setattr(svc, "_credentials_path", lambda: creds_path)
@@ -52,65 +59,8 @@ def _service(
 
 
 # -- pure helpers -------------------------------------------------------
-
-
-def test_oauth_from_credentials_detects_subscription() -> None:
-    creds = {"claudeAiOauth": {"accessToken": "sk-ant-oat01-abc", "subscriptionType": "max"}}
-    connected, sub, expired = _oauth_from_credentials(creds)
-    assert connected is True
-    assert sub == "max"
-    assert expired is False
-
-
-def test_oauth_from_credentials_rejects_api_key_token() -> None:
-    # A classic API key in the bearer slot is NOT a subscription login.
-    creds = {"claudeAiOauth": {"accessToken": "sk-ant-api03-abc"}}
-    connected, sub, expired = _oauth_from_credentials(creds)
-    assert connected is False
-    assert sub is None
-    assert expired is False
-
-
-def test_oauth_from_credentials_flags_expired_token() -> None:
-    """2026-07-06 incident: the bearer is PRESENT but expiresAt has passed —
-    every API call 401s, so reporting connected=True is a lie that hid the
-    root cause of the all-subagents-fail incident. Uses the incident's real
-    epoch-ms shape: token expired 02:53, status probed 20:30 the same day."""
-    expired_at_ms = 1_783_299_232_815  # 2026-07-06T02:53:52 (epoch ms)
-    probed_at_s = 1_783_362_600.0  # 2026-07-06T20:30:00 (epoch s)
-    creds = {
-        "claudeAiOauth": {
-            "accessToken": "sk-ant-oat01-abc",
-            "subscriptionType": "max",
-            "expiresAt": expired_at_ms,
-        }
-    }
-    connected, sub, expired = _oauth_from_credentials(
-        creds, now_fn=lambda: probed_at_s
-    )
-    assert connected is False
-    assert expired is True
-    assert sub == "max"
-
-
-def test_oauth_from_credentials_future_expiry_is_connected() -> None:
-    now_s = 1_783_362_600.0
-    creds = {
-        "claudeAiOauth": {
-            "accessToken": "sk-ant-oat01-abc",
-            "expiresAt": (now_s + 4 * 3600.0) * 1000.0,  # epoch ms, hours ahead
-        }
-    }
-    connected, _sub, expired = _oauth_from_credentials(
-        creds, now_fn=lambda: now_s
-    )
-    assert connected is True
-    assert expired is False
-
-
-@pytest.mark.parametrize("bad", [None, {}, {"claudeAiOauth": "nope"}, {"claudeAiOauth": {}}])
-def test_oauth_from_credentials_tolerates_garbage(bad) -> None:
-    assert _oauth_from_credentials(bad) == (False, None, False)
+# (credential parsing/expiry/multi-dir selection is covered by
+# tests/unit/test_claude_credentials.py — the shared locator owns it now)
 
 
 def test_account_from_claude_json_reads_email() -> None:
@@ -233,6 +183,62 @@ def test_status_surfaces_api_key_present_even_under_subscription(
     st = svc.status()
     assert st.mode == "subscription"
     assert st.api_key_present is True
+
+
+def test_status_connected_via_fresh_profile_when_default_is_stale(
+    tmp_path, monkeypatch
+) -> None:
+    """2026-07-10 incident: ~/.claude held a login that expired in place while
+    the profile manager's config dir (where every interactive session actually
+    runs) held a freshly-refreshed one. The card said "subscription login has
+    expired" and the Jarvis-Agents banner diverted missions to codex although
+    a live login sat on disk. The freshest login must win — including reading
+    the account identity from the WINNING dir, not the stale default's."""
+    default_dir = tmp_path / "dot-claude"
+    profile_dir = tmp_path / "profile"
+    for d in (default_dir, profile_dir):
+        d.mkdir()
+    (default_dir / ".credentials.json").write_text(
+        json.dumps(
+            {
+                "claudeAiOauth": {
+                    "accessToken": "sk-ant-oat01-stale",
+                    "subscriptionType": "max",
+                    "expiresAt": 1.0,  # epoch ms, long past
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (profile_dir / ".credentials.json").write_text(
+        json.dumps(
+            {
+                "claudeAiOauth": {
+                    "accessToken": "sk-ant-oat01-fresh",
+                    "subscriptionType": "max",
+                    "expiresAt": 4_102_444_800_000.0,  # epoch ms, far future
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+    (profile_dir / ".claude.json").write_text(
+        json.dumps({"oauthAccount": {"emailAddress": "profile@example.com"}}),
+        encoding="utf-8",
+    )
+
+    svc = ClaudeAuthService()
+    monkeypatch.setattr(
+        claude_credentials,
+        "claude_config_dirs",
+        lambda: [default_dir, profile_dir],
+    )
+    monkeypatch.setattr(svc, "_resolve_binary", lambda: "/usr/bin/claude")
+    monkeypatch.setattr(svc, "_probe_version", lambda _b: "claude 1.2.3")
+    st = svc.status()
+    assert st.connected is True
+    assert st.mode == "subscription"
+    assert st.user_email == "profile@example.com"
 
 
 def test_status_api_key_present_when_not_installed(tmp_path, monkeypatch) -> None:

@@ -4,10 +4,20 @@ from jarvis.core import config as cfg_mod
 from jarvis.core import config_writer
 
 
-def test_voice_mode_defaults_to_pipeline():
+def test_voice_mode_defaults_to_realtime():
+    """Realtime is the recommended product default (2026-07-11); a keyless
+    install degrades silently to the pipeline at session time."""
     cfg = cfg_mod.JarvisConfig()
-    assert cfg.voice.mode == "pipeline"
+    assert cfg.voice.mode == "realtime"
     assert cfg.brain.realtime is None
+
+
+def test_default_voice_mode_is_not_marked_explicit():
+    """The silent keyless fallback keys off model_fields_set: the default must
+    NOT count as an explicit user pick, while a TOML-provided mode must."""
+    assert "mode" not in cfg_mod.JarvisConfig().voice.model_fields_set
+    explicit = cfg_mod.JarvisConfig.model_validate({"voice": {"mode": "realtime"}})
+    assert "mode" in explicit.voice.model_fields_set
 
 
 def test_dead_realtime_smalltalk_flag_is_removed():

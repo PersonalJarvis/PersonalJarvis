@@ -1,17 +1,17 @@
-﻿"""REST-API für Brain-/TTS-/STT-Provider und ihre Credentials.
+﻿"""REST API for Brain, TTS, STT, and Realtime providers and credentials.
 
 Endpoints:
-    GET    /api/providers                    → Liste mit configured/active Status
-    POST   /api/secrets/{key}                → Secret setzen (Whitelist gegen wizard.SECRETS)
-    DELETE /api/secrets/{key}                → Secret löschen
-    POST   /api/brain/switch                 → aktiven Brain-Provider wechseln (+ persist)
-    POST   /api/tts/switch                   → aktiven TTS-Provider wechseln (persist in jarvis.toml)
-    POST   /api/stt/switch                   → aktiven STT-Provider wechseln (persist in jarvis.toml)
-    POST   /api/realtime/switch              → aktiven Realtime-Provider wechseln (persist)
-    POST   /api/subagent/switch              → aktiven Subagent-Provider wechseln (3-layer persist)
+    GET    /api/providers                    → list configured and active status
+    POST   /api/secrets/{key}                → set an allowlisted wizard secret
+    DELETE /api/secrets/{key}                → delete a secret
+    POST   /api/brain/switch                 → switch the active Brain provider
+    POST   /api/tts/switch                   → switch the active TTS provider
+    POST   /api/stt/switch                   → switch the active STT provider
+    POST   /api/realtime/switch              → switch the active Realtime provider
+    POST   /api/jarvis-agent/switch          → switch the Jarvis-Agent provider
     POST   /api/computer-use/switch          → switch the Computer-Use provider (persist)
 
-Wird vom WebServer in `_build_app()` eingehängt:
+Mounted by the WebServer in ``_build_app()``:
     from .provider_routes import router as provider_router
     app.include_router(provider_router)
 """
@@ -46,18 +46,12 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["providers"])
 
 
-# Whitelist aller Keys die gesetzt/gelöscht werden dürfen — exakt die im
-# Setup-Wizard deklarierten Slots.
+# Exact allowlist of credential slots declared by the setup wizard.
 ALLOWED_SECRET_KEYS: frozenset[str] = frozenset(s.key for s in WIZARD_SECRETS)
 
-# Local providers allowed to stay active in the airgapped privacy profile.
-# Empty since v1.0.1: Ollama was removed 2026-04-21, and the local
-# "faster-whisper" STT dictation provider was removed from the user-selectable
-# catalog (see provider_spec.py). With no local brain/STT provider left, the
-# airgapped profile admits no provider switch — an honest state, not a
-# regression: airgapped means "local only", and there is currently no local
-# provider to switch TO. (Wake still runs its own local Whisper off this list.)
-LOCAL_PROVIDERS: frozenset[str] = frozenset()
+# The airgapped local-provider allowlist (LOCAL_PROVIDERS) moved to
+# jarvis.brain.app_control: the lock is enforced inside apply_provider_switch
+# so voice, REST, CLI, and brain tools all share it.
 
 # Codex subagent slugs (_CODEX_SUBAGENT_SLUGS / _CODEX_SUBAGENT_CANONICAL) are
 # imported from jarvis.missions.worker_runtime.provider_map — the single source
@@ -143,6 +137,10 @@ class BrainModelInfo(BaseModel):
     # modality data (unknown — treated as capable, no regression). The
     # Computer-Use model picker hides ONLY explicit ``False`` entries.
     vision: bool | None = None
+    # Tri-state tool-calling capability from provider model metadata. ``None``
+    # means the catalog does not expose it; runtime activation still performs
+    # the authoritative capability probe.
+    tools: bool | None = None
 
 
 class BrainModelsResponse(BaseModel):
@@ -230,6 +228,7 @@ class RealtimeOptionsSaveResponse(BaseModel):
     model: str
     voice: str
     restart_required: bool = False
+    session_restarted: bool = False
 
 
 # ----------------------------------------------------------------------
@@ -237,26 +236,8 @@ class RealtimeOptionsSaveResponse(BaseModel):
 # ----------------------------------------------------------------------
 
 
-def _persist_brain_primary_fallback(provider: str) -> bool:
-    """Persist ``brain.primary`` directly when the manager's switch signature
-    is too old to accept ``persist=`` (TypeError fallback path).
-
-    Returns ``True`` iff the disk write succeeded. This exists so the legacy
-    fallback never silently drops persistence: even when ``switch`` cannot
-    persist, we still attempt the write here and report the honest outcome.
-    """
-    try:
-        from jarvis.core import config_writer
-
-        config_writer.set_brain_primary(provider)
-        return True
-    except Exception as exc:  # noqa: BLE001
-        log.error("Fallback persist of brain.primary=%r failed: %s", provider, exc)
-        return False
-
-
 def _is_credential_present(spec: ProviderSpec, binary_path: str | None = None) -> bool:
-    """Heuristik je nach auth_mode.
+    """Apply the credential check for the provider's authentication mode.
 
     Delegates to the shared implementation in :mod:`jarvis.brain.app_control`
     (imported lazily) so the UI route and the brain's ``switch-provider`` tool
@@ -458,21 +439,24 @@ def _active_stt(request: Request) -> str | None:
 
 
 def _active_realtime(request: Request) -> str | None:
-    """The active realtime-voice provider.
+    """Return the configured or first credential-ready realtime provider.
 
-    Realtime is OpenAI-only today (a single spec in ``PROVIDERS``), so an unset
-    ``cfg.brain.realtime.provider`` still defaults to ``"openai-realtime"`` — the
-    sole card shows as active instead of a confusing "nothing selected" state.
-    Never raises: any resolver error falls back to the default id.
+    Resolution delegates to the plugin registry when no explicit selection
+    exists, so a fresh install with only one arbitrary supported key activates
+    that family without a provider-name default (AP-21/AP-22).
     """
     try:
         cfg = _resolve_cfg(request)
         realtime_cfg = getattr(getattr(cfg, "brain", None), "realtime", None)
         provider = (getattr(realtime_cfg, "provider", None) or "").strip()
-        return provider or "openai-realtime"
-    except Exception as exc:  # noqa: BLE001 — the health panel must never 500
-        log.debug("active-realtime resolution failed (%s); using default.", exc)
-        return "openai-realtime"
+        if provider:
+            return provider
+        from jarvis.realtime.factory import realtime_available_provider
+
+        return realtime_available_provider(cfg)
+    except Exception as exc:  # noqa: BLE001 -- the health panel must never 500
+        log.debug("active-realtime resolution failed (%s); using None.", exc)
+        return None
 
 
 def _active_computer_use(request: Request) -> str | None:
@@ -488,8 +472,12 @@ def _active_computer_use(request: Request) -> str | None:
     try:
         cfg = _resolve_cfg(request)
         brain_cfg = getattr(cfg, "brain", None)
-        cu_cfg = getattr(brain_cfg, "computer_use", None)
-        provider = (getattr(cu_cfg, "provider", None) or "").strip()
+        tier_cfg = getattr(brain_cfg, "tool_model", None) or getattr(
+            brain_cfg, "computer_use", None
+        )
+        provider = (getattr(tier_cfg, "provider", None) or "").strip()
+        if provider == "auto":
+            provider = ""
         if provider:
             return provider
         return (getattr(brain_cfg, "primary", None) or "").strip() or None
@@ -499,11 +487,11 @@ def _active_computer_use(request: Request) -> str | None:
 
 
 def _resolve_cfg(request: Request):
-    """Liefert die JarvisConfig.
+    """Return the active Jarvis configuration.
 
-    Server haengt sie als ``app.state.config`` (nicht ``cfg``!) — siehe
-    ``server.py::_build_app``. Fallback auf ``load_config()`` falls die App
-    headless gestartet wurde und kein Bootstrap stattfand.
+    The server stores it as ``app.state.config`` (not ``cfg``); see
+    ``server.py::_build_app``. Fall back to ``load_config()`` when a headless
+    app started without the normal bootstrap.
     """
     cfg_attr = getattr(request.app.state, "config", None) or getattr(
         request.app.state, "cfg", None
@@ -578,7 +566,7 @@ async def _emit(request: Request, event: Any) -> None:
     try:
         await bus.publish(event)
     except Exception as exc:  # noqa: BLE001
-        log.warning("Konnte Event nicht publishen: %s", exc)
+        log.warning("Could not publish event: %s", exc)
 
 
 def _bus_from_brain(request: Request):
@@ -595,25 +583,38 @@ def _bus_from_brain(request: Request):
 
 @router.get("/providers")
 async def list_providers(request: Request) -> dict[str, Any]:
-    """Liefert die komplette Provider-Liste mit aktuellem Status pro Provider."""
+    """Return every provider with its current configured and active status."""
     active_brain = _active_brain(request)
     active_tts = _active_tts(request)
     active_stt = _active_stt(request)
     active_realtime = _active_realtime(request)
     active_computer_use = _active_computer_use(request)
 
-    providers = [
-        _spec_to_payload(
-            spec,
-            active_brain=active_brain,
-            active_tts=active_tts,
-            active_stt=active_stt,
-            active_realtime=active_realtime,
-            active_computer_use=active_computer_use,
-        )
-        for spec in PROVIDERS
-    ]
-    return {"providers": providers}
+    # Off the event loop: building the payload reads every secret slot from the
+    # OS keyring and probes the Codex/Google CLI status — all synchronous. On the
+    # loop it stalled EVERY concurrent request for seconds each time the UI
+    # refetched after a key save / switch / test (the "whole screen feels stuck"
+    # complaint); in a worker thread the loop stays responsive.
+    def _build() -> list[dict[str, Any]]:
+        return [
+            _spec_to_payload(
+                spec,
+                active_brain=active_brain,
+                active_tts=active_tts,
+                active_stt=active_stt,
+                active_realtime=active_realtime,
+                active_computer_use=active_computer_use,
+            )
+            for spec in PROVIDERS
+        ]
+
+    return {"providers": await asyncio.to_thread(_build)}
+
+
+# Belt-and-suspenders ceiling for the whole /test call. run_provider_test's own
+# timeout_s (60 s, generous for NVIDIA NIM's 13-30 s cold-start TTFB) bounds the
+# individual probe; this outer bound guarantees the HTTP response itself.
+_PROVIDER_TEST_HARD_TIMEOUT_S = 75.0
 
 
 @router.post("/providers/{provider_id}/test")
@@ -631,15 +632,36 @@ async def test_provider_connection(
     """
     spec = get_spec(provider_id)
     if spec is None:
-        raise HTTPException(status_code=404, detail=f"Unbekannter Provider: {provider_id}")
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
 
     cfg = _resolve_cfg(request)
     if cfg is None:
         raise HTTPException(
-            status_code=503, detail="Konfiguration nicht verfügbar (Headless-Mode?)"
+            status_code=503, detail="Configuration is unavailable (headless mode?)"
         )
 
-    result = await _provider_test.run_provider_test(spec, cfg)
+    # Hard ceiling ABOVE run_provider_test's own per-call timeout (60 s): the
+    # route must always answer, else the UI's "Testing…" spinner never resolves.
+    # Any async path that slips past the inner bounds is cut here and reported
+    # as an honest "unreachable" instead of a hung HTTP request.
+    try:
+        result = await asyncio.wait_for(
+            _provider_test.run_provider_test(spec, cfg),
+            timeout=_PROVIDER_TEST_HARD_TIMEOUT_S,
+        )
+    except TimeoutError:
+        result = _provider_test.ProviderTestResult(
+            provider=spec.id,
+            status=_provider_test.UNREACHABLE,
+            detail=(
+                f"Test timed out after {_PROVIDER_TEST_HARD_TIMEOUT_S:.0f}s — "
+                "the provider did not answer."
+            ),
+            latency_ms=_PROVIDER_TEST_HARD_TIMEOUT_S * 1000.0,
+        )
+    # This exact result is newer than any overlapping section sweep. Cancel the
+    # older snapshot so the UI refresh cannot resurrect a pre-test status.
+    _invalidate_section_health_state(request)
     return ProviderTestResponse(
         provider=result.provider,
         status=result.status,
@@ -666,6 +688,15 @@ assert set(get_args(SectionHealthStatusLiteral)) == set(
 # re-run the REAL connectivity tests on every render. ``?refresh=true`` (used by
 # the UI after a key save / provider switch) bypasses it.
 _SECTION_HEALTH_TTL_S = 45.0
+_SECTION_HEALTH_KEYS = (
+    "brain",
+    "computer-use",
+    "tts",
+    "stt",
+    "realtime",
+    "subagents",
+    "advanced",
+)
 
 
 class SectionHealth(BaseModel):
@@ -679,6 +710,10 @@ class SectionHealth(BaseModel):
     reason: str = "unknown"
     # Plain-English one-liner for the hover tooltip (provider label + detail).
     detail: str = ""
+    # Exact provider/integration this result belongs to. The frontend must never
+    # attach a result to a different active card, even while a slow probe from the
+    # previous selection is still completing.
+    subject_id: str | None = None
 
 
 class SectionHealthResponse(BaseModel):
@@ -699,6 +734,7 @@ async def _tier_section_health(cfg: Any, spec: ProviderSpec | None) -> SectionHe
             status=_section_health.NEEDS_SETUP,
             reason="no_active",
             detail="No active provider selected",
+            subject_id=None,
         )
     # Local providers (faster-whisper, SAPI) have no key to be invalid; if one is
     # the active provider it is usable. Skip the real test — it could force a heavy
@@ -708,6 +744,7 @@ async def _tier_section_health(cfg: Any, spec: ProviderSpec | None) -> SectionHe
             status=_section_health.OK,
             reason="local",
             detail=f"{spec.label}: local, no key needed",
+            subject_id=spec.id,
         )
     try:
         configured = _is_credential_present(
@@ -720,19 +757,24 @@ async def _tier_section_health(cfg: Any, spec: ProviderSpec | None) -> SectionHe
             status=_section_health.NEEDS_SETUP,
             reason="not_configured",
             detail=f"{spec.label}: no key set",
+            subject_id=spec.id,
         )
     try:
         result = await _provider_test.run_provider_test(spec, cfg)
     except Exception as exc:  # noqa: BLE001
         log.warning("section-health test for %s failed: %s", spec.id, exc)
         return SectionHealth(
-            status=_section_health.UNKNOWN, reason="error", detail=f"{spec.label}: check failed"
+            status=_section_health.UNKNOWN,
+            reason="error",
+            detail=f"{spec.label}: check failed",
+            subject_id=spec.id,
         )
     status = _section_health.section_status_for_test(result.status, configured=True)
     return SectionHealth(
         status=status,
         reason=result.status,
         detail=f"{spec.label}: {result.detail or result.status}",
+        subject_id=spec.id,
     )
 
 
@@ -790,36 +832,64 @@ def _worker_flagged_dead(provider: str) -> bool:
     return False
 
 
+def _claude_worker_display_label(*, default: str) -> str:
+    """Honest display name for the Claude worker slot in health messages.
+
+    The ``claude-api`` spec label says "(API-Key)", but the SAME slot runs on
+    the Claude subscription OAuth login whenever one exists — a degraded
+    banner blaming the "API-Key" then reads as nonsense to a subscription
+    user (2026-07-10 report: "I selected the subscription, the key is
+    irrelevant"). Presence of ANY OAuth bearer, live or expired-in-place,
+    means the user is on the subscription path. Offline + cheap; any probe
+    failure keeps the spec label rather than breaking the health check.
+    """
+    try:
+        from jarvis.claude_credentials import freshest_claude_oauth
+
+        oauth_status = freshest_claude_oauth().status
+    except Exception:  # noqa: BLE001
+        oauth_status = "absent"
+    return "Claude (subscription)" if oauth_status != "absent" else default
+
+
+def _selected_jarvis_agent_provider(cfg: Any) -> str | None:
+    """Return the exact provider selected for Jarvis-Agent work."""
+    brain = getattr(cfg, "brain", None) if cfg is not None else None
+    if brain is None:
+        return None
+    worker = getattr(brain, "worker", None)
+    provider = (getattr(worker, "provider", None) if worker else None) or getattr(
+        brain, "primary", None
+    )
+    return (provider or "").strip() or None
+
+
 def _jarvis_agent_section_health(cfg: Any) -> SectionHealth:
-    """Subagents tab: reflects whether the SELECTED heavy-task worker is usable.
+    """Jarvis-Agents tab: report whether the selected worker is usable.
 
     A real "does it answer" call for a CLI worker is heavy, so v1 reports the
     connectedness signal — connected/keyed → ok, otherwise needs_setup. Since
     2026-07-07 it distinguishes degraded (fallback carries) from error
     (nothing reachable).
     """
-    brain = getattr(cfg, "brain", None) if cfg is not None else None
-    if brain is None:
+    provider = _selected_jarvis_agent_provider(cfg)
+    if provider is None:
         return SectionHealth(
             status=_section_health.NEEDS_SETUP,
             reason="no_active",
-            detail="No subagent worker selected",
-        )
-    sub = getattr(brain, "worker", None)
-    provider = (getattr(sub, "provider", None) if sub else None) or getattr(
-        brain, "primary", None
-    )
-    if not provider:
-        return SectionHealth(
-            status=_section_health.NEEDS_SETUP,
-            reason="no_active",
-            detail="No subagent worker selected",
+            detail="No Jarvis-Agent worker selected",
+            subject_id=None,
         )
     spec = get_spec(provider)
     label = spec.label if spec is not None else provider
+    if (provider or "").lower() in {"claude-api", "claude"}:
+        label = _claude_worker_display_label(default=label)
     if _worker_usable(provider) and not _worker_flagged_dead(provider):
         return SectionHealth(
-            status=_section_health.OK, reason="ok", detail=f"Subagent worker: {label}"
+            status=_section_health.OK,
+            reason="ok",
+            detail=f"Jarvis-Agent worker: {label}",
+            subject_id=provider,
         )
     # The selected worker cannot run right now. Distinguish "a fallback
     # family carries the missions" (amber) from "nothing is reachable —
@@ -835,46 +905,30 @@ def _jarvis_agent_section_health(cfg: Any) -> SectionHealth:
             status=_section_health.NEEDS_SETUP,
             reason="degraded",
             detail=(
-                f"Subagent worker '{label}' is unavailable — missions run on "
+                f"Jarvis-Agent worker '{label}' is unavailable — missions run on "
                 f"{families[0]} until it is reconnected"
             ),
+            subject_id=provider,
         )
     return SectionHealth(
         status=_section_health.ERROR,
         reason="no_provider",
         detail=(
-            f"No subagent provider is reachable — missions will fail. "
+            f"No Jarvis-Agent provider is reachable — missions will fail. "
             f"Reconnect '{label}' or add an API key."
         ),
+        subject_id=provider,
     )
 
 
-def _realtime_section_health(request: Request) -> SectionHealth:
-    """Realtime tab: credential-presence ONLY — there is no realtime
-    provider-test yet (the client is not wired in, Phase 2), so this never
-    calls ``run_provider_test``. Mirrors the shape of ``_tier_section_health``
-    without the live connectivity probe.
+async def _realtime_section_health(cfg: Any, spec: ProviderSpec | None) -> SectionHealth:
+    """Test the active provider's actual duplex handshake.
+
+    Credential presence alone previously painted a depleted or schema-broken
+    provider green. Reuse the standard tier health mapping so the Realtime tab
+    reports the same honest account/integration states as every other tier.
     """
-    spec = get_spec(_active_realtime(request) or "")
-    if spec is None:
-        return SectionHealth(
-            status=_section_health.NEEDS_SETUP,
-            reason="no_active",
-            detail="No active provider selected",
-        )
-    try:
-        configured = _is_credential_present(spec)
-    except Exception:  # noqa: BLE001 — a probe failure is "not set up", not a crash
-        configured = False
-    if configured:
-        return SectionHealth(
-            status=_section_health.OK, reason="ok", detail=f"{spec.label}: ready"
-        )
-    return SectionHealth(
-        status=_section_health.NEEDS_SETUP,
-        reason="not_configured",
-        detail=f"{spec.label}: no key set",
-    )
+    return await _tier_section_health(cfg, spec)
 
 
 def _advanced_section_health(request: Request) -> SectionHealth:
@@ -886,6 +940,7 @@ def _advanced_section_health(request: Request) -> SectionHealth:
     detail = ""
     reason = "unknown"
     tm = getattr(request.app.state, "telephony_manager", None)
+    subject_id = "telephony" if tm is not None else None
     if tm is not None and getattr(tm, "reachable", None) is False:
         err = getattr(tm, "reachable_error", None)
         if err:
@@ -893,69 +948,229 @@ def _advanced_section_health(request: Request) -> SectionHealth:
             detail = f"Telephony unreachable: {err}"
             reason = "telephony"
     return SectionHealth(
-        status=_section_health.aggregate(contributions), reason=reason, detail=detail
+        status=_section_health.aggregate(contributions),
+        reason=reason,
+        detail=detail,
+        subject_id=subject_id,
     )
+
+
+def _section_health_subjects(request: Request, cfg: Any) -> dict[str, str | None]:
+    """Capture the exact runtime selection behind every health section."""
+    telephony = getattr(request.app.state, "telephony_manager", None)
+    return {
+        "brain": _active_brain(request),
+        "computer-use": _active_computer_use(request),
+        "tts": _active_tts(request),
+        "stt": _active_stt(request),
+        "realtime": _active_realtime(request),
+        "subagents": _selected_jarvis_agent_provider(cfg),
+        "advanced": "telephony" if telephony is not None else None,
+    }
+
+
+def _section_health_fingerprint(
+    request: Request,
+    cfg: Any,
+    subjects: dict[str, str | None],
+) -> tuple[tuple[str, str], ...]:
+    """Return a secret-free cache key for the full health selection snapshot.
+
+    Provider identity alone is insufficient: changing a Brain, Computer-Use,
+    TTS, STT, or Realtime model while its provider stays selected must also
+    supersede the old probe. Otherwise an old model timeout can be cached and
+    displayed against the newly selected, working model.
+    """
+    telephony = getattr(request.app.state, "telephony_manager", None)
+    reachable = getattr(telephony, "reachable", None) if telephony is not None else None
+    brain = getattr(cfg, "brain", None) if cfg is not None else None
+    providers = getattr(brain, "providers", None)
+
+    def _provider_value(section: str, field: str) -> str:
+        provider_id = subjects.get(section) or ""
+        provider_cfg = providers.get(provider_id) if isinstance(providers, dict) else None
+        return str(getattr(provider_cfg, field, None) or "")
+
+    tts = getattr(cfg, "tts", None) if cfg is not None else None
+    stt = getattr(cfg, "stt", None) if cfg is not None else None
+    worker = getattr(brain, "worker", None) if brain is not None else None
+    tts_extra = getattr(tts, "model_extra", None)
+    cartesia = tts_extra.get("cartesia") if isinstance(tts_extra, dict) else None
+    cartesia_model = cartesia.get("model_id") if isinstance(cartesia, dict) else None
+    configuration = (
+        ("brain-model", _provider_value("brain", "model")),
+        ("computer-use-model", _provider_value("computer-use", "cu_model")),
+        ("tts-model", str(getattr(tts, "model", None) or "")),
+        ("tts-voice-de", str(getattr(tts, "voice_de", None) or "")),
+        ("tts-voice-en", str(getattr(tts, "voice_en", None) or "")),
+        ("tts-cartesia-model", str(cartesia_model or "")),
+        ("stt-model", str(getattr(stt, "model", None) or "")),
+        ("realtime-model", _provider_value("realtime", "model")),
+        ("realtime-voice", _provider_value("realtime", "voice")),
+        ("jarvis-agent-model", str(getattr(worker, "model", None) or "")),
+        ("advanced-reachable", repr(reachable)),
+    )
+    return (
+        tuple((key, subjects.get(key) or "") for key in _SECTION_HEALTH_KEYS)
+        + configuration
+    )
+
+
+def _invalidate_section_health_state(request: Request) -> None:
+    """Discard cached and in-flight health work after a configuration change."""
+    request.app.state._section_health_cache = None
+    tasks = getattr(request.app.state, "_section_health_tasks", None)
+    if not isinstance(tasks, dict):
+        return
+    for task in tuple(tasks.values()):
+        if isinstance(task, asyncio.Task) and not task.done():
+            task.cancel()
+    tasks.clear()
 
 
 @router.get("/providers/section-health")
 async def section_health(request: Request, refresh: bool = False) -> SectionHealthResponse:
     """Per-tab health for the API-Keys segmented tabs ("is this part working?").
 
-    The brain/tts/stt tiers get a REAL connectivity test of their active provider
-    (run in parallel), the Subagents tab reflects whether the selected worker is
-    connected, and the Advanced tab only flags a configured optional integration
-    that is actually failing. The result is cached for a few seconds so opening the
-    page / switching tabs does not re-run the real calls each render;
-    ``?refresh=true`` forces a fresh check after a key save or provider switch.
+    Every selectable provider surface is checked against one immutable selection
+    snapshot. Cache entries and in-flight tasks carry that snapshot fingerprint,
+    so a slow result from a previous provider can never be reused for the current
+    one. Checks for a superseded snapshot are cancelled without blocking the new
+    provider's check.
     """
-    cache = getattr(request.app.state, "_section_health_cache", None)
-    now = time.time()
-    if (
-        not refresh
-        and isinstance(cache, dict)
-        and now - cache.get("checked_at", 0.0) < _SECTION_HEALTH_TTL_S
-    ):
+    while True:
+        cfg = _resolve_cfg(request)
+        subjects = _section_health_subjects(request, cfg)
+        fingerprint = _section_health_fingerprint(request, cfg, subjects)
+        cache = getattr(request.app.state, "_section_health_cache", None)
+        now = time.time()
+        if (
+            not refresh
+            and isinstance(cache, dict)
+            and cache.get("fingerprint") == fingerprint
+            and now - cache.get("checked_at", 0.0) < _SECTION_HEALTH_TTL_S
+        ):
+            return SectionHealthResponse(
+                sections=cache["payload"],
+                checked_at=cache["checked_at"],
+                cached=True,
+            )
+
+        lock = getattr(request.app.state, "_section_health_task_lock", None)
+        if lock is None:
+            lock = asyncio.Lock()
+            request.app.state._section_health_task_lock = lock
+
+        async with lock:
+            tasks = getattr(request.app.state, "_section_health_tasks", None)
+            if not isinstance(tasks, dict):
+                tasks = {}
+                request.app.state._section_health_tasks = tasks
+
+            # A globally selected provider changed. Its previous task is obsolete
+            # and must not hold the new provider behind a 60-second timeout.
+            for old_fingerprint, old_task in tuple(tasks.items()):
+                if old_fingerprint == fingerprint:
+                    continue
+                if isinstance(old_task, asyncio.Task) and not old_task.done():
+                    old_task.cancel()
+                tasks.pop(old_fingerprint, None)
+
+            task = tasks.get(fingerprint)
+            if not isinstance(task, asyncio.Task) or task.done():
+                task = asyncio.create_task(
+                    _compute_section_health(request, cfg, subjects),
+                    name="section-health-snapshot",
+                )
+                tasks[fingerprint] = task
+
+        try:
+            sections = await asyncio.shield(task)
+        except asyncio.CancelledError:
+            # ``shield`` distinguishes an obsolete shared task from cancellation
+            # of this HTTP request. Retry only the former against the new snapshot.
+            if task.cancelled():
+                refresh = True
+                continue
+            raise
+
+        current_cfg = _resolve_cfg(request)
+        current_subjects = _section_health_subjects(request, current_cfg)
+        current_fingerprint = _section_health_fingerprint(
+            request, current_cfg, current_subjects
+        )
+        if current_fingerprint != fingerprint:
+            refresh = True
+            continue
+
+        checked_at = time.time()
+        request.app.state._section_health_cache = {
+            "checked_at": checked_at,
+            "fingerprint": fingerprint,
+            "payload": sections,
+        }
+        async with lock:
+            tasks = getattr(request.app.state, "_section_health_tasks", None)
+            if isinstance(tasks, dict) and tasks.get(fingerprint) is task:
+                tasks.pop(fingerprint, None)
         return SectionHealthResponse(
-            sections=cache["payload"], checked_at=cache["checked_at"], cached=True
+            sections=sections,
+            checked_at=checked_at,
+            cached=False,
         )
 
-    cfg = _resolve_cfg(request)
+
+async def _compute_section_health(
+    request: Request,
+    cfg: Any,
+    subjects: dict[str, str | None],
+) -> dict[str, SectionHealth]:
+    """Compute one immutable, provider-bound health snapshot."""
     sections: dict[str, SectionHealth] = {}
 
     if cfg is None:
-        for key in ("brain", "tts", "stt", "realtime", "subagents", "advanced"):
+        for key in _SECTION_HEALTH_KEYS:
             sections[key] = SectionHealth(
                 status=_section_health.UNKNOWN,
                 reason="unavailable",
                 detail="Configuration unavailable",
+                subject_id=subjects.get(key),
             )
-    else:
-        brain_spec = get_spec(_active_brain(request) or "")
-        tts_spec = get_spec(_active_tts(request) or "")
-        stt_spec = get_spec(_active_stt(request) or "")
-        sections["brain"], sections["tts"], sections["stt"] = await asyncio.gather(
-            _tier_section_health(cfg, brain_spec),
-            _tier_section_health(cfg, tts_spec),
-            _tier_section_health(cfg, stt_spec),
-        )
-        try:
-            sections["realtime"] = _realtime_section_health(request)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("section-health realtime check failed: %s", exc)
-            sections["realtime"] = SectionHealth()
-        try:
-            sections["subagents"] = _jarvis_agent_section_health(cfg)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("section-health subagent check failed: %s", exc)
-            sections["subagents"] = SectionHealth()
-        try:
-            sections["advanced"] = _advanced_section_health(request)
-        except Exception as exc:  # noqa: BLE001
-            log.warning("section-health advanced check failed: %s", exc)
-            sections["advanced"] = SectionHealth()
+        return sections
 
-    request.app.state._section_health_cache = {"checked_at": now, "payload": sections}
-    return SectionHealthResponse(sections=sections, checked_at=now, cached=False)
+    async def _safe_check(
+        section: str,
+        check: Any,
+    ) -> SectionHealth:
+        try:
+            return await check
+        except Exception as exc:  # noqa: BLE001
+            log.warning("section-health %s check failed: %s", section, exc)
+            return SectionHealth(
+                status=_section_health.UNKNOWN,
+                reason="error",
+                detail="Health check failed",
+                subject_id=subjects.get(section),
+            )
+
+    checks = {
+        "brain": _tier_section_health(cfg, get_spec(subjects["brain"] or "")),
+        "computer-use": _tier_section_health(
+            cfg, get_spec(subjects["computer-use"] or "")
+        ),
+        "tts": _tier_section_health(cfg, get_spec(subjects["tts"] or "")),
+        "stt": _tier_section_health(cfg, get_spec(subjects["stt"] or "")),
+        "realtime": _realtime_section_health(
+            cfg, get_spec(subjects["realtime"] or "")
+        ),
+        "subagents": asyncio.to_thread(_jarvis_agent_section_health, cfg),
+        "advanced": asyncio.to_thread(_advanced_section_health, request),
+    }
+    results = await asyncio.gather(
+        *(_safe_check(section, check) for section, check in checks.items())
+    )
+    sections.update(zip(checks, results, strict=True))
+    return sections
 
 
 # ----------------------------------------------------------------------
@@ -999,7 +1214,29 @@ def _provider_cu_model(cfg: Any, provider: str) -> str:
     """The pinned Computer-Use model for ``provider`` ("" when none is set)."""
     providers = getattr(getattr(cfg, "brain", None), "providers", None)
     pc = providers.get(provider) if isinstance(providers, dict) else None
-    return (getattr(pc, "cu_model", None) or "") if pc is not None else ""
+    if pc is None:
+        return ""
+    return getattr(pc, "tool_model", None) or getattr(pc, "cu_model", None) or ""
+
+
+def _set_brain_model_in_memory(cfg: Any, provider: str, value: str) -> None:
+    """Keep route-level config aligned with the live BrainManager selection.
+
+    The manager owns a separate config object. Without this mirror update,
+    section health can keep probing the previous model after the new model has
+    already been persisted and applied successfully.
+    """
+    try:
+        providers = cfg.brain.providers
+        pc = providers.get(provider)
+        if pc is None:
+            from jarvis.core.config import BrainProviderConfig
+
+            pc = BrainProviderConfig()
+            providers[provider] = pc
+        pc.model = value or None
+    except Exception as exc:  # noqa: BLE001 -- detached config is best-effort
+        log.debug("In-memory brain model update skipped for %s: %s", provider, exc)
 
 
 def _set_cu_model_in_memory(cfg: Any, provider: str, value: str) -> None:
@@ -1014,6 +1251,7 @@ def _set_cu_model_in_memory(cfg: Any, provider: str, value: str) -> None:
 
             pc = BrainProviderConfig()
             providers[provider] = pc
+        pc.tool_model = value
         pc.cu_model = value
     except Exception as exc:  # noqa: BLE001 — frozen/detached cfg is acceptable
         log.debug("In-memory cu_model update skipped for %s: %s", provider, exc)
@@ -1056,12 +1294,12 @@ def _require_catalog_provider(provider_id: str):
     """
     spec = get_spec(provider_id)
     if spec is None:
-        raise HTTPException(status_code=404, detail=f"Unbekannter Provider: {provider_id}")
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
     cat = catalog_spec(provider_id)
     if cat is None:
         raise HTTPException(
             status_code=400,
-            detail=f"'{provider_id}' bietet keine Modell-/Stimmen-Auswahl.",
+            detail=f"'{provider_id}' does not expose model or voice selection.",
         )
     return spec, cat
 
@@ -1121,6 +1359,11 @@ def _brain_model_info(m: ModelInfo) -> BrainModelInfo:
             if m.input_modalities is not None
             else None
         ),
+        tools=(
+            ("tools" in m.supported_parameters)
+            if m.supported_parameters is not None
+            else None
+        ),
     )
 
 
@@ -1170,8 +1413,11 @@ async def _apply_brain_model(
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
-                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+                status_code=500, detail=f"TOML write failed: {exc}"
             ) from exc
+
+    cfg = _resolve_cfg(request)
+    _set_brain_model_in_memory(cfg, provider_id, model)
 
     brain = getattr(request.app.state, "brain", None)
     applied_live = False
@@ -1185,7 +1431,6 @@ async def _apply_brain_model(
 
     probe_payload: BrainModelProbe | None = None
     if probe:
-        cfg = _resolve_cfg(request)
         probe_model = model or _current_brain_model(cfg, provider_id)
         result = await _probe_brain_model(provider_id, probe_model)
         probe_payload = BrainModelProbe(
@@ -1199,6 +1444,7 @@ async def _apply_brain_model(
         request,
         SecretConfigured(key=f"brain.providers.{provider_id}.model", action="set"),
     )
+    _invalidate_section_health_state(request)
     return BrainModelSaveResponse(
         ok=True, provider=provider_id, model=model, persisted=persisted,
         applied_live=applied_live, restart_required=restart_required, probe=probe_payload,
@@ -1230,7 +1476,7 @@ def _apply_tts_selection(
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
-                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+                status_code=500, detail=f"TOML write failed: {exc}"
             ) from exc
 
     cfg = _resolve_cfg(request)
@@ -1265,6 +1511,7 @@ def _apply_tts_selection(
         except Exception as exc:  # noqa: BLE001
             log.error("TTS live re-apply for %s failed: %s", provider_id, exc, exc_info=True)
 
+    _invalidate_section_health_state(request)
     return BrainModelSaveResponse(
         ok=True, provider=provider_id, model=value, persisted=persisted,
         applied_live=applied_live, restart_required=not applied_live, probe=None,
@@ -1286,7 +1533,7 @@ def _apply_stt_model(
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
-                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+                status_code=500, detail=f"TOML write failed: {exc}"
             ) from exc
 
     cfg = _resolve_cfg(request)
@@ -1296,6 +1543,7 @@ def _apply_stt_model(
         except Exception as exc:  # noqa: BLE001
             log.debug("In-memory stt model update skipped: %s", exc)
 
+    _invalidate_section_health_state(request)
     return BrainModelSaveResponse(
         ok=True, provider=provider_id, model=value, persisted=persisted,
         applied_live=False, restart_required=True, probe=None,
@@ -1360,9 +1608,9 @@ async def set_cu_model(
 ) -> CuModelResponse:
     """Pin (or clear with "") the per-provider Computer-Use model (Phase 3).
 
-    Persists to ``[brain.providers.<id>].cu_model`` (+ drift-soll) and updates the
-    in-memory config so the next CU mission uses it with no restart. No live brain
-    probe — the model is validated lazily the next time CU dispatches.
+    Persists the canonical ``tool_model`` and legacy ``cu_model`` keys, then
+    updates both live config objects so the next mission uses it without restart.
+    No live brain probe: dispatch validates the model lazily.
     """
     _spec, cat = _require_catalog_provider(provider_id)
     if cat.tier != "brain":
@@ -1377,22 +1625,29 @@ async def set_cu_model(
         try:
             from jarvis.core.config_writer import set_brain_provider_model
 
-            set_brain_provider_model(provider_id, cu_model=value)
+            set_brain_provider_model(
+                provider_id, tool_model=value, cu_model=value
+            )
             persisted = True
         except FileNotFoundError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
-                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+                status_code=500, detail=f"TOML write failed: {exc}"
             ) from exc
 
     cfg = _resolve_cfg(request)
     _set_cu_model_in_memory(cfg, provider_id, value)
+    live_brain = getattr(request.app.state, "brain", None)
+    manager_cfg = getattr(live_brain, "_config", None)
+    if manager_cfg is not None and manager_cfg is not cfg:
+        _set_cu_model_in_memory(manager_cfg, provider_id, value)
     await _emit(
         request,
         SecretConfigured(key=f"brain.providers.{provider_id}.cu_model", action="set"),
     )
     effective = value or _current_brain_model(cfg, provider_id)
+    _invalidate_section_health_state(request)
     return CuModelResponse(
         ok=True,
         provider=provider_id,
@@ -1414,11 +1669,11 @@ def _require_realtime_provider(provider_id: str) -> ProviderSpec:
     """404 unknown id; 400 a non-realtime-tier id (mirrors /realtime/switch)."""
     spec = get_spec(provider_id)
     if spec is None:
-        raise HTTPException(status_code=404, detail=f"Unbekannter Provider: {provider_id}")
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
     if spec.tier != "realtime":
         raise HTTPException(
             status_code=400,
-            detail=f"Provider '{provider_id}' ist kein Realtime-Provider (tier={spec.tier})",
+            detail=f"Provider '{provider_id}' is not a Realtime provider (tier={spec.tier})",
         )
     return spec
 
@@ -1431,6 +1686,28 @@ def _current_realtime_selection(cfg: Any, provider_id: str) -> tuple[str, str]:
     model = (getattr(pc, "model", None) or "") if pc is not None else ""
     voice = (getattr(pc, "voice", None) or "") if pc is not None else ""
     return model, voice
+
+
+def _validate_realtime_option(
+    *, provider_id: str, field: str, value: str | None, allowed: set[str]
+) -> None:
+    """Reject non-empty Realtime selections outside the curated catalog."""
+    if value is None or value == "":
+        return
+    if value in allowed:
+        return
+    allowed_values = sorted(allowed)
+    raise HTTPException(
+        status_code=422,
+        detail={
+            "code": f"unsupported_realtime_{field}",
+            "message": (
+                f"Unsupported Realtime {field} '{value}' for provider "
+                f"'{provider_id}'."
+            ),
+            "allowed_values": allowed_values,
+        },
+    )
 
 
 @router.get("/providers/{provider_id}/realtime-options")
@@ -1468,20 +1745,38 @@ async def set_realtime_options(
 ) -> RealtimeOptionsSaveResponse:
     """Pin the model and/or voice for a realtime provider.
 
-    Persists to ``[brain.providers.<id>].model`` / ``.voice`` (+ drift-soll)
-    and updates the in-memory config so the next realtime session picks it up
-    with no process restart (``session.py::_open`` reads it fresh per
-    session). Only the fields present in the body are written — an omitted
-    field leaves its current value untouched.
+    Persists to ``[brain.providers.<id>].model`` / ``.voice`` (+ drift-soll)  # i18n-allow: config-soll filename
+    and updates the in-memory config. If this provider owns the active realtime
+    call, that call is closed and reopened immediately; otherwise the selection
+    applies to the next session. No process restart is required. Only fields
+    present in the body are written — an omitted field leaves its current value
+    untouched.
     """
     spec = _require_realtime_provider(provider_id)
+    model = body.model.strip() if body.model is not None else None
+    voice = body.voice.strip() if body.voice is not None else None
+    from jarvis.brain.model_catalog import REALTIME_MODELS, REALTIME_VOICES
+
+    _validate_realtime_option(
+        provider_id=provider_id,
+        field="model",
+        value=model,
+        allowed={option.id for option in REALTIME_MODELS.get(provider_id, ())},
+    )
+    _validate_realtime_option(
+        provider_id=provider_id,
+        field="voice",
+        value=voice,
+        allowed={option.id for option in REALTIME_VOICES.get(provider_id, ())},
+    )
     if not _is_credential_present(spec):
         raise HTTPException(
             status_code=409,
-            detail=f"Provider '{provider_id}' hat keine Credentials — erst API-Key setzen.",
+            detail=(
+                f"Provider '{provider_id}' has no configured credentials. "
+                "Add its API key first."
+            ),
         )
-    model = body.model.strip() if body.model is not None else None
-    voice = body.voice.strip() if body.voice is not None else None
 
     if model is not None or voice is not None:
         try:
@@ -1492,7 +1787,7 @@ async def set_realtime_options(
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
-                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+                status_code=500, detail=f"TOML write failed: {exc}"
             ) from exc
 
     cfg = _resolve_cfg(request)
@@ -1519,12 +1814,25 @@ async def set_realtime_options(
         SecretConfigured(key=f"brain.providers.{provider_id}", action="set"),
     )
     current_model, current_voice = _current_realtime_selection(cfg, provider_id)
+    selected_provider = str(
+        getattr(getattr(getattr(cfg, "brain", None), "realtime", None), "provider", "")
+        or ""
+    )
+    session_restarted = False
+    if selected_provider == provider_id:
+        from jarvis.ui.web.voice_runtime import reconnect_realtime
+
+        session_restarted = reconnect_realtime(
+            request, reason=f"realtime_options:{provider_id}"
+        )
+    _invalidate_section_health_state(request)
     return RealtimeOptionsSaveResponse(
         ok=True,
         provider=provider_id,
         model=current_model,
         voice=current_voice,
         restart_required=False,
+        session_restarted=session_restarted,
     )
 
 
@@ -1543,14 +1851,14 @@ async def codex_set_binary_path(body: CodexBinaryPathBody, request: Request) -> 
     except FileNotFoundError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"TOML write failed: {exc}") from exc
 
     cfg = _resolve_cfg(request)
     if cfg is not None and getattr(cfg, "codex", None) is not None:
         try:
             cfg.codex.binary_path = value  # type: ignore[attr-defined]
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            log.debug("In-memory Codex path update skipped: %s", exc)
     return {"ok": True, "binary_path": value}
 
 
@@ -1562,7 +1870,7 @@ async def codex_login(request: Request) -> dict[str, Any]:
         raise HTTPException(
             status_code=409,
             detail={
-                "message": "Codex CLI ist nicht installiert",
+                "message": "Codex CLI is not installed",
                 "install_command": "npm i -g @openai/codex",
             },
         )
@@ -1573,9 +1881,9 @@ async def codex_login(request: Request) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(
             status_code=500,
-            detail=f"codex login konnte nicht gestartet werden: {type(exc).__name__}: {exc}",
+            detail=f"codex login could not be started: {type(exc).__name__}: {exc}",
         ) from exc
-    return {"ok": True, "pid": proc.pid, "message": "codex login wurde im Terminal gestartet"}
+    return {"ok": True, "pid": proc.pid, "message": "codex login was started in a terminal"}
 
 
 @router.post("/codex/logout")
@@ -1583,11 +1891,11 @@ async def codex_logout(request: Request) -> dict[str, Any]:
     service = CodexAuthService(_codex_binary_path(request))
     status = service.status()
     if not status.installed:
-        raise HTTPException(status_code=409, detail="Codex CLI ist nicht installiert")
+        raise HTTPException(status_code=409, detail="Codex CLI is not installed")
     ok, error = service.logout_blocking()
     if not ok:
-        raise HTTPException(status_code=500, detail=error or "codex logout fehlgeschlagen")
-    return {"ok": True, "message": "Codex wurde getrennt"}
+        raise HTTPException(status_code=500, detail=error or "Codex logout failed")
+    return {"ok": True, "message": "Codex was disconnected"}
 
 
 # M6: STT/TTS engines build ONCE at voice-pipeline bootstrap, so a key feeding them
@@ -1600,13 +1908,14 @@ _RESTART_REQUIRED_SECRET_KEYS: frozenset[str] = frozenset({
 })
 
 
-@router.post("/secrets/{key}")
+@router.post("/secrets/{key}", openapi_extra={"x-jarvis-dangerous": True})
 async def set_secret_value(key: str, body: SecretBody, request: Request) -> dict[str, Any]:
     if key not in ALLOWED_SECRET_KEYS:
-        raise HTTPException(status_code=404, detail=f"Unbekannter Secret-Key: {key}")
+        raise HTTPException(status_code=404, detail=f"Unknown secret key: {key}")
     if not cfg_mod.set_secret(key, body.value):
-        raise HTTPException(status_code=500, detail="Keyring-Write fehlgeschlagen")
+        raise HTTPException(status_code=500, detail="Keyring write failed")
     await _emit(request, SecretConfigured(key=key, action="set"))
+    _invalidate_section_health_state(request)
     return {
         "ok": True,
         "key": key,
@@ -1617,14 +1926,39 @@ async def set_secret_value(key: str, body: SecretBody, request: Request) -> dict
 @router.delete("/secrets/{key}")
 async def delete_secret_value(key: str, request: Request) -> dict[str, Any]:
     if key not in ALLOWED_SECRET_KEYS:
-        raise HTTPException(status_code=404, detail=f"Unbekannter Secret-Key: {key}")
-    cfg_mod.delete_secret(key)  # idempotent — wirft nicht wenn nicht vorhanden
+        raise HTTPException(status_code=404, detail=f"Unknown secret key: {key}")
+    cfg_mod.delete_secret(key)  # Idempotent when no value exists.
     await _emit(request, SecretConfigured(key=key, action="delete"))
+    _invalidate_section_health_state(request)
     return {"ok": True, "key": key}
+
+
+# Maps apply_provider_switch error kinds to HTTP statuses. Route-level concern:
+# the shared switch logic in jarvis.brain.app_control stays transport-agnostic.
+_SWITCH_ERROR_STATUS: dict[str, int] = {
+    "unknown_tier": 400,
+    "unknown_provider": 404,
+    "wrong_tier": 400,
+    "subagent_only": 409,
+    "missing_credential": 409,
+    "airgapped_locked": 403,
+    "switch_failed": 500,
+    "switch_not_applied": 500,
+}
 
 
 @router.post("/brain/switch")
 async def brain_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
+    """Switch the active main-brain provider.
+
+    Validation and the switch itself are delegated to the ONE shared
+    implementation (``app_control.apply_provider_switch``) that the voice
+    gate and the brain tools also use — the route only keeps checks that are
+    genuinely transport-specific (503 while the brain is still building, the
+    live plugin-registry 404, and the defensive Codex/Antigravity branches).
+    Previously the route carried its own parallel validation, which could
+    drift from the voice path's.
+    """
     brain = getattr(request.app.state, "brain", None)
     if brain is None or not hasattr(brain, "switch"):
         # The brain is built on a background task after boot, so a very early
@@ -1641,27 +1975,8 @@ async def brain_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             ),
         )
 
-    spec = get_spec(body.provider)
-    if spec is None:
-        raise HTTPException(status_code=404, detail=f"Unbekannter Provider: {body.provider}")
-    if spec.tier == "brain" and not spec.brain_switchable:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"{spec.label} is subagent-only in Jarvis. It cannot be used as "
-                "the main Brain provider because it cannot see Computer-Use "
-                "screenshots. Activate it in the Subagent section instead."
-            ),
-        )
-
-    cfg = _resolve_cfg(request)
-    profile_name = getattr(getattr(cfg, "profile", None), "name", "default")
-    if profile_name == "airgapped" and body.provider not in LOCAL_PROVIDERS:
-        raise HTTPException(
-            status_code=403,
-            detail="Privacy-Mode aktiv — nur lokale Provider erlaubt.",
-        )
-
+    # Fast, specific 404 while the live registry is at hand — the shared logic
+    # would only surface an unloadable provider later as switch_not_applied.
     available = []
     if hasattr(brain, "available_providers"):
         try:
@@ -1671,21 +1986,18 @@ async def brain_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     if available and body.provider not in available:
         raise HTTPException(
             status_code=404,
-            detail=f"Provider '{body.provider}' ist nicht im Plugin-Registry verfügbar",
+            detail=f"Provider '{body.provider}' is not available in the plugin registry",
         )
 
-    # Akzeptanzkriterium: Provider ohne gespeicherten Key duerfen nicht aktiviert
-    # werden. Analog zu tts_switch/stt_switch — der Switch wuerde sonst
-    # nominell gelingen, aber der erste Turn faellt mit "missing_key" und der
-    # Provider landet in _dead_providers. Sauberer 409 statt stiller Fehler.
-    # Reihenfolge: 404 (Provider unbekannt/nicht im Registry) kommt VOR
-    # 409 (Provider bekannt, aber Credentials fehlen) — Identifiability vor
-    # Konfiguration.
-    #
-    # Defensive legacy branch: Codex/Antigravity are rejected above as
-    # ``brain_switchable=False``. If that guard is ever relaxed, keep credential
-    # checks explicit instead of letting a switch succeed and fail on first turn.
-    if spec.id == "codex":
+    # Defensive legacy branches: Codex/Antigravity are ``brain_switchable=False``
+    # and rejected by the shared validation below (as "subagent-only", which
+    # must stay the primary message). These credential checks are DORMANT until
+    # that guard is ever relaxed — then they keep a switch from succeeding
+    # nominally and failing on the first turn. Hence the brain_switchable gate.
+    spec = get_spec(body.provider)
+    if spec is not None and not getattr(spec, "brain_switchable", True):
+        pass  # shared validation rejects with the canonical subagent-only 409
+    elif spec is not None and spec.id == "codex":
         if not _codex_brain_usable():
             raise HTTPException(
                 status_code=409,
@@ -1694,12 +2006,15 @@ async def brain_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                     "run 'codex login' (ChatGPT subscription, slower CLI path)."
                 ),
             )
-    elif spec.id == "antigravity":
+    elif spec is not None and spec.id == "antigravity":
         # OAuth-only: no API key. Gate on the Google CLI login being present,
         # mirroring the codex branch (the CLI bills the Google subscription).
         from jarvis.google_cli.auth_service import GoogleCliAuthService
 
-        if not GoogleCliAuthService().status().connected:
+        def _antigravity_connected() -> bool:
+            return GoogleCliAuthService().status().connected
+
+        if not await asyncio.to_thread(_antigravity_connected):
             raise HTTPException(
                 status_code=409,
                 detail=(
@@ -1707,101 +2022,63 @@ async def brain_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
                     "agy or the Gemini CLI and log in), then activate."
                 ),
             )
-    elif not _is_credential_present(spec):
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"{spec.label} hat keinen gespeicherten API-Key. "
-                "Erst Key in der Karte speichern, dann aktivieren."
-            ),
-        )
 
-    # ``persisted`` reflects the ACTUAL disk outcome, not the echoed request
-    # flag — a failed write must surface as persisted=false so the UI knows the
-    # choice will not survive a restart (anti-silent-drop, AD-OE6). We start
-    # pessimistic and only flip to True when the manager confirms the write.
-    persisted = False
-    try:
-        await brain.switch(body.provider, persist=body.persist)
-    except TypeError:
-        # Genuinely old switch signature without the persist kwarg. We must NOT
-        # silently drop persistence: attempt the disk write directly here, and
-        # if even that path is unavailable, report persisted=false so the UI is
-        # honest about the outcome.
-        await brain.switch(body.provider)
-        if body.persist:
-            persisted = _persist_brain_primary_fallback(body.provider)
-    except Exception as exc:  # noqa: BLE001
-        log.exception("Brain-Switch zu '%s' fehlgeschlagen", body.provider)
-        raise HTTPException(
-            status_code=500,
-            detail=f"Switch fehlgeschlagen: {type(exc).__name__}: {exc}",
-        ) from exc
-    else:
-        # Normal path: read the real persist outcome the manager recorded.
-        if body.persist:
-            persisted = bool(getattr(brain, "last_persist_ok", False))
+    from jarvis.brain.app_control import apply_provider_switch
 
-    # Switch-Validierung: BrainManager.switch() returnt silent bei einem
-    # KeyError im Plugin-Registry. Wir lesen den Live-State zurueck und
-    # propagieren einen Fehler, falls der Wechsel nicht angekommen ist —
-    # sonst sieht das Frontend "200 OK" trotz No-Op und der User wundert
-    # sich, warum die UI bei alt bleibt.
-    actual = getattr(brain, "active_provider", None)
-    if actual != body.provider:
-        log.warning(
-            "Brain-Switch silent failure: requested=%s, actual=%s",
-            body.provider, actual,
-        )
+    result = await apply_provider_switch(
+        "brain",
+        body.provider,
+        cfg=_resolve_cfg(request),
+        persist=body.persist,
+        manager=brain,
+    )
+    if not result.get("ok"):
         raise HTTPException(
-            status_code=500,
-            detail=(
-                f"Switch zu '{body.provider}' nicht angewendet "
-                f"(aktuell: {actual!r}). Provider eventuell nicht ladbar."
-            ),
+            status_code=_SWITCH_ERROR_STATUS.get(str(result.get("error_kind")), 500),
+            detail=result.get("error") or "Switch failed.",
         )
-    if body.persist and not persisted:
+    if body.persist and not result.get("persisted"):
         log.warning(
-            "Brain-Switch to '%s' applied live but persistence to disk FAILED — "
+            "Brain switch to '%s' applied live but persistence to disk FAILED — "
             "the choice will not survive a restart.",
             body.provider,
         )
-    return {"ok": True, "active": body.provider, "persisted": persisted}
+    _invalidate_section_health_state(request)
+    return {
+        "ok": True,
+        "active": result.get("new_provider", body.provider),
+        "persisted": bool(result.get("persisted")),
+        "old_provider": result.get("old_provider"),
+        "requires_restart": bool(result.get("requires_restart")),
+    }
 
 
 @router.post("/tts/switch")
 async def tts_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
-    """Wechselt den aktiven TTS-Provider live, ohne Pipeline-Restart.
+    """Switch the active TTS provider without restarting the pipeline.
 
-    Schritte:
-      1. TOML-Persist (ueberlebt Restart)
-      2. ``cfg.tts.provider`` in-memory updaten
-      3. Wenn die SpeechPipeline aktiv ist (``app.state.speech_pipeline``):
-         neuen TTS-Provider via ``build_tts_from_config`` bauen und in die
-         Pipeline injizieren. Der naechste ``_speak()``-Call nutzt die neue
-         Stimme. ``restart_required=false``.
-      4. Wenn keine Pipeline laeuft (Headless/Voice abgeschaltet): nur Persist,
-         ``restart_required=true`` als ehrliche Info an die UI.
-
-    Frueher (vor 2026-04-25) gab es Schritt 3 nicht — der Switch persistierte
-    nur in der TOML, die laufende Pipeline behielt aber ihren alten
-    TTS-Provider in ``self._tts``. User klickte "switch", UI sagte OK, aber
-    er hoerte trotzdem den alten Provider bis zum App-Neustart.
+    The route persists the selection, updates the live configuration, and
+    injects a newly built provider into an active SpeechPipeline. If no
+    pipeline is running (headless or voice disabled), the persisted selection
+    applies on the next start and ``restart_required`` remains true.
     """
     spec = get_spec(body.provider)
     if spec is None:
         raise HTTPException(
-            status_code=404, detail=f"Unbekannter Provider: {body.provider}"
+            status_code=404, detail=f"Unknown provider: {body.provider}"
         )
     if spec.tier != "tts":
         raise HTTPException(
             status_code=400,
-            detail=f"Provider '{body.provider}' ist kein TTS-Provider (tier={spec.tier})",
+            detail=f"Provider '{body.provider}' is not a TTS provider (tier={spec.tier})",
         )
     if not _is_credential_present(spec):
         raise HTTPException(
             status_code=409,
-            detail=f"Provider '{body.provider}' hat keine Credentials — erst API-Key setzen.",
+            detail=(
+                f"Provider '{body.provider}' has no configured credentials. "
+                "Add its API key first."
+            ),
         )
 
     if body.persist:
@@ -1813,21 +2090,20 @@ async def tts_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
-                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+                status_code=500, detail=f"TOML write failed: {exc}"
             ) from exc
 
-    # Best-effort In-Memory-Update: wenn cfg an app.state haengt und das
-    # Pydantic-Model nicht frozen ist, koennen Subscriber den Wert sofort lesen.
+    # Best-effort live update lets subscribers observe the value immediately
+    # when the app-state Pydantic model is mutable.
     cfg = _resolve_cfg(request)
     if cfg is not None and getattr(cfg, "tts", None) is not None:
         try:
             cfg.tts.provider = body.provider  # type: ignore[attr-defined]
-        except Exception:  # noqa: BLE001 — frozen models sind kein Fehler
-            pass
+        except Exception as exc:  # noqa: BLE001 — a frozen model is not an error
+            log.debug("In-memory TTS provider update skipped: %s", exc)
 
-    # Live-Switch in die laufende SpeechPipeline (Hauptzweck dieses Fixes).
-    # Wenn die Pipeline nicht laeuft (Headless / Voice abgeschaltet), faellt
-    # der Switch auf "restart_required=true" zurueck — ehrliche UI-Info.
+    # Inject into the active SpeechPipeline. Headless or voice-disabled boots
+    # retain the honest ``restart_required=true`` response.
     pipeline = getattr(request.app.state, "speech_pipeline", None)
     restart_required = True
     live_switched = False
@@ -1840,21 +2116,21 @@ async def tts_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             restart_required = False
             live_switched = True
             log.info(
-                "TTS-Live-Switch in laufende SpeechPipeline: provider=%s",
+                "TTS live switch applied to the active SpeechPipeline: provider=%s",
                 body.provider,
             )
         except Exception as exc:  # noqa: BLE001
-            # Live-Switch fehlgeschlagen — Persist hat aber geklappt, also
-            # waere ein Restart die zweite Option. Wir loggen den Root-Cause
-            # mit Stack, damit der User im Log sieht, was schief ging.
+            # Persistence succeeded, so restart remains an honest recovery.
+            # Keep the root cause and stack in the log for diagnosis.
             log.error(
-                "TTS-Live-Switch fehlgeschlagen — Restart noetig: %s: %s",
+                "TTS live switch failed; restart required: %s: %s",
                 type(exc).__name__, exc, exc_info=True,
             )
             restart_required = True
 
     await _emit(request, SecretConfigured(key="tts.provider", action="set"))
 
+    _invalidate_section_health_state(request)
     return {
         "ok": True,
         "active": body.provider,
@@ -1885,8 +2161,10 @@ _VOICE_PICKER_PROVIDER = "openrouter-tts"
 # table — AP-21 / runtime-language doctrine).
 _TTS_PREVIEW_SAMPLES: dict[str, str] = {
     "de": (
-        "Hallo! Ich bin dein persönlicher Assistent. "
-        "So klingt meine Stimme, wenn ich für dich spreche und dir zuhöre."
+        "Hallo! Ich bin dein "  # i18n-allow: German TTS preview output.
+        "persönlicher Assistent. "  # i18n-allow
+        "So klingt meine Stimme, "  # i18n-allow
+        "wenn ich für dich spreche und dir zuhöre."  # i18n-allow
     ),
     "en": (
         "Hi there! I am your personal assistant. "
@@ -2031,7 +2309,7 @@ async def set_tts_voice_selection(
     """Persist + live-apply the global TTS voice (``[tts] voice_de``/``voice_en``).
 
     A TTS model ships several voices; this pins the chosen one. Reuses the shared
-    ``_apply_tts_selection`` path (config-soll-synced write + a live rebuild of
+    ``_apply_tts_selection`` path (config-soll-synced write + a live rebuild of  # i18n-allow: config-soll filename
     the running SpeechPipeline's TTS) so the next spoken turn uses it without a
     restart when voice is active.
     """
@@ -2113,27 +2391,29 @@ async def tts_preview(body: TtsPreviewBody) -> Response:
 
 @router.post("/stt/switch")
 async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
-    """Wechselt den aktiven STT-Provider. Persistiert in jarvis.toml (tomlkit).
+    """Persist the active STT provider in ``jarvis.toml``.
 
-    Wie bei TTS gibt es keinen Live-Switch — der STT-Provider wird beim
-    SpeechPipeline-Bootstrap einmalig instanziiert (Whisper-Model laden ist
-    teuer). Der Switch greift daher erst nach dem naechsten Voice-Restart
-    bzw. App-Neustart. Response markiert das mit ``restart_required: true``.
+    The SpeechPipeline constructs STT once because loading a Whisper model is
+    expensive. The selection therefore applies after the next voice or app
+    restart and the response reports ``restart_required: true``.
     """
     spec = get_spec(body.provider)
     if spec is None:
         raise HTTPException(
-            status_code=404, detail=f"Unbekannter Provider: {body.provider}"
+            status_code=404, detail=f"Unknown provider: {body.provider}"
         )
     if spec.tier != "stt":
         raise HTTPException(
             status_code=400,
-            detail=f"Provider '{body.provider}' ist kein STT-Provider (tier={spec.tier})",
+            detail=f"Provider '{body.provider}' is not an STT provider (tier={spec.tier})",
         )
     if not _is_credential_present(spec):
         raise HTTPException(
             status_code=409,
-            detail=f"Provider '{body.provider}' hat keine Credentials — erst API-Key setzen.",
+            detail=(
+                f"Provider '{body.provider}' has no configured credentials. "
+                "Add its API key first."
+            ),
         )
 
     if body.persist:
@@ -2145,18 +2425,19 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
-                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+                status_code=500, detail=f"TOML write failed: {exc}"
             ) from exc
 
     cfg = _resolve_cfg(request)
     if cfg is not None and getattr(cfg, "stt", None) is not None:
         try:
             cfg.stt.provider = body.provider  # type: ignore[attr-defined]
-        except Exception:  # noqa: BLE001 — frozen models sind kein Fehler
-            pass
+        except Exception as exc:  # noqa: BLE001 — a frozen model is not an error
+            log.debug("In-memory STT provider update skipped: %s", exc)
 
     await _emit(request, SecretConfigured(key="stt.provider", action="set"))
 
+    _invalidate_section_health_state(request)
     return {
         "ok": True,
         "active": body.provider,
@@ -2167,13 +2448,12 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
 
 @router.post("/realtime/switch")
 async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
-    """Switches the active realtime-voice provider. Persists to jarvis.toml.
+    """Switch the active realtime provider.
 
-    Mirrors ``stt_switch``: no live audio switch — the realtime engine is
-    only selected once the browser realtime client is actually wired in
-    (Phase 2), so the choice always needs a restart to take effect. Realtime
-    is cross-family (OpenAI Realtime, Gemini Live, AP-22), so this only
-    rejects a non-realtime-tier provider id.
+    The desktop and browser runtimes resolve ``voice.mode`` plus the selected
+    provider whenever a voice session opens. An active desktop call is closed
+    and reopened against the new selection; no application restart is required.
+    Realtime is cross-family (AP-22), so validation is registry/tier based.
 
     Activating a realtime provider also makes Realtime the ACTIVE voice mode
     (``[voice].mode``) — the "Active" badge reads ``[voice].mode``, not
@@ -2183,19 +2463,26 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     spec = get_spec(body.provider)
     if spec is None:
         raise HTTPException(
-            status_code=404, detail=f"Unbekannter Provider: {body.provider}"
+            status_code=404, detail=f"Unknown provider: {body.provider}"
         )
     if spec.tier != "realtime":
         raise HTTPException(
             status_code=400,
-            detail=f"Provider '{body.provider}' ist kein Realtime-Provider (tier={spec.tier})",
+            detail=(
+                f"Provider '{body.provider}' is not a realtime provider "
+                f"(tier={spec.tier})"
+            ),
         )
     if not _is_credential_present(spec):
         raise HTTPException(
             status_code=409,
-            detail=f"Provider '{body.provider}' hat keine Credentials — erst API-Key setzen.",
+            detail=(
+                f"Provider '{body.provider}' has no configured credentials. "
+                "Add its API key first."
+            ),
         )
 
+    voice_mode_write_ok = True
     if body.persist:
         try:
             from jarvis.core.config_writer import set_realtime_provider
@@ -2205,13 +2492,14 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
-                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+                status_code=500, detail=f"TOML write failed: {exc}"
             ) from exc
         try:
             from jarvis.core.config_writer import set_voice_mode
 
             set_voice_mode("realtime")
         except Exception as exc:  # noqa: BLE001 — best-effort, mirrors set_realtime_provider above
+            voice_mode_write_ok = False
             log.warning("voice-mode persist failed after realtime switch: %s", exc)
 
     cfg = _resolve_cfg(request)
@@ -2235,11 +2523,25 @@ async def realtime_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     await _emit(request, SecretConfigured(key="brain.realtime.provider", action="set"))
     await _emit(request, SecretConfigured(key="voice.mode", action="set"))
 
+    from jarvis.ui.web.voice_runtime import reconnect_realtime
+
+    session_restarted = reconnect_realtime(
+        request, reason=f"realtime_provider:{body.provider}"
+    )
+
+    _invalidate_section_health_state(request)
     return {
         "ok": True,
         "active": body.provider,
-        "persisted": body.persist,
-        "restart_required": True,
+        # True only when persist was requested AND both writes (provider +
+        # voice mode) actually landed — previously this reported
+        # body.persist unconditionally even when the voice-mode write above
+        # failed and was only logged, so the UI showed "persisted" for a
+        # switch that silently left [voice].mode stale on disk.
+        "persisted": body.persist and voice_mode_write_ok,
+        "voice_mode_persisted": voice_mode_write_ok,
+        "restart_required": False,
+        "session_restarted": session_restarted,
     }
 
 
@@ -2300,20 +2602,39 @@ async def computer_use_switch(body: SwitchBody, request: Request) -> dict[str, A
     cfg = _resolve_cfg(request)
     if cfg is not None and getattr(cfg, "brain", None) is not None:
         try:
-            cu_cfg = getattr(cfg.brain, "computer_use", None)
-            if cu_cfg is None:
+            tier_cfg = getattr(cfg.brain, "tool_model", None) or getattr(
+                cfg.brain, "computer_use", None
+            )
+            if tier_cfg is None:
                 from jarvis.core.config import BrainTierConfig
 
-                cfg.brain.computer_use = BrainTierConfig(provider=body.provider)
+                tier_cfg = BrainTierConfig(provider=body.provider)
             else:
-                cu_cfg.provider = body.provider
+                tier_cfg.provider = body.provider
+            cfg.brain.tool_model = tier_cfg
+            cfg.brain.computer_use = tier_cfg
         except Exception as exc:  # noqa: BLE001 — frozen/detached cfg is not an error
             log.debug("In-memory computer_use.provider update skipped: %s", exc)
+
+    live_brain = getattr(request.app.state, "brain", None)
+    manager_cfg = getattr(live_brain, "_config", None)
+    if manager_cfg is not None and manager_cfg is not cfg:
+        try:
+            from jarvis.core.config import BrainTierConfig
+
+            manager_tier = BrainTierConfig(provider=body.provider)
+            manager_cfg.brain.tool_model = manager_tier
+            manager_cfg.brain.computer_use = manager_tier
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Live Tool Model provider update skipped: %s", exc)
+    if hasattr(live_brain, "reactivate_provider"):
+        live_brain.reactivate_provider(body.provider)
 
     await _emit(
         request, SecretConfigured(key="brain.computer_use.provider", action="set")
     )
 
+    _invalidate_section_health_state(request)
     return {
         "ok": True,
         "active": body.provider,
@@ -2324,29 +2645,14 @@ async def computer_use_switch(body: SwitchBody, request: Request) -> dict[str, A
 
 @router.post("/jarvis-agent/switch")
 async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
-    """Wechselt den aktiven SUBAGENT-Provider (``[brain.sub_jarvis].provider``).
+    """Switch the active Jarvis-Agent provider.
 
-    Das ist der Heavy-Task-Worker (lies Repo, baue Feature, reproduziere Bug) —
-    getrennt vom leichten Router-Brain (``[brain].primary``). Bisher war die
-    Subagent-Sektion read-only; dieser Endpoint gibt ihr — analog zu
-    ``stt_switch`` — den Schreibpfad fuer den "Als aktiv"-Wechsel.
-
-    Schritte:
-      1. Validierung gegen die subagent-faehigen Provider (provider_map MAPPINGS).
-      2. 409 wenn kein API-Key / OAuth-Token gespeichert (kein stiller No-Op —
-         analog zu brain/tts/stt-switch, sonst faellt der erste Mission-Step
-         mit ``missing_key``).
-      3. 3-Schichten-Persist via ``config_writer.set_sub_jarvis_provider``
-         (TOML + config-soll.json + ENV). Der config-soll-Pin ist
-         entscheidend: ohne ihn rollt der Drift-Guard den Switch in 5 Min
-         zurueck (gleiche Klasse wie der brain.primary-Persist-Bug).
-      4. In-Memory-Update fuer sofortiges UI-Feedback (``/openclaw/status``
-         liest ``cfg.brain.sub_jarvis.provider``).
-
-    Der Worker wird beim Mission-Bootstrap einmalig verdrahtet
-    (``jarvis.missions.init._worker_factory`` liest ``sub_jarvis_provider`` als
-    Closure-Variable), daher greift der Switch fuer laufende Missionen erst
-    nach Voice-/App-Restart: ``restart_required: true`` (wie bei STT).
+    Jarvis-Agents handle heavy tasks separately from the lightweight router
+    brain. The route validates worker-capable providers, requires an API key or
+    OAuth token, persists all drift-guard layers, and updates the live config
+    for immediate UI feedback. Legacy ``sub_jarvis`` identifiers below remain
+    read-time compatibility aliases. A running worker factory is wired once at
+    mission bootstrap, so existing missions require a voice or app restart.
     """
     from jarvis.missions.worker_runtime.provider_map import (
         JARVIS_TO_WORKER_SLUG,
@@ -2361,7 +2667,10 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
     # it is not in JARVIS_TO_WORKER_SLUG. Handle it explicitly: it can be backed by
     # the ChatGPT subscription (OAuth, ``codex login``) OR an OpenAI API key.
     if provider in _CODEX_SUBAGENT_SLUGS:
-        codex_connected = CodexAuthService(_codex_binary_path(request)).status().connected
+        def _codex_connected() -> bool:
+            return CodexAuthService(_codex_binary_path(request)).status().connected
+
+        codex_connected = await asyncio.to_thread(_codex_connected)
         has_key = bool(
             cfg_mod.get_secret("codex_openai_api_key")
             or cfg_mod.get_provider_secret("codex")
@@ -2385,10 +2694,11 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
             except Exception as exc:  # noqa: BLE001
                 raise HTTPException(
-                    status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+                    status_code=500, detail=f"TOML write failed: {exc}"
                 ) from exc
         _apply_worker_in_memory(request, _CODEX_SUBAGENT_CANONICAL)
         await _emit(request, SecretConfigured(key="brain.worker.provider", action="set"))
+        _invalidate_section_health_state(request)
         return {
             "ok": True,
             "active": _CODEX_SUBAGENT_CANONICAL,
@@ -2409,7 +2719,10 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
 
         # Dual billing (mirror of codex): the Google subscription OAuth login OR
         # a Gemini API key (per token). Either is enough to run the worker.
-        antigravity_connected = GoogleCliAuthService().status().connected
+        def _antigravity_connected() -> bool:
+            return GoogleCliAuthService().status().connected
+
+        antigravity_connected = await asyncio.to_thread(_antigravity_connected)
         antigravity_key = bool(
             cfg_mod.get_secret("gemini_api_key", env_fallback="GEMINI_API_KEY")
         )
@@ -2433,10 +2746,11 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
             except Exception as exc:  # noqa: BLE001
                 raise HTTPException(
-                    status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+                    status_code=500, detail=f"TOML write failed: {exc}"
                 ) from exc
         _apply_worker_in_memory(request, ANTIGRAVITY_SUBAGENT_CANONICAL)
         await _emit(request, SecretConfigured(key="brain.worker.provider", action="set"))
+        _invalidate_section_health_state(request)
         return {
             "ok": True,
             "active": ANTIGRAVITY_SUBAGENT_CANONICAL,
@@ -2449,8 +2763,8 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
         raise HTTPException(
             status_code=404,
             detail=(
-                f"'{body.provider}' ist kein Subagent-faehiger Provider. "
-                f"Verfuegbar: {known}."
+                f"'{body.provider}' is not a Jarvis-Agent-capable provider. "
+                f"Available: {known}."
             ),
         )
 
@@ -2471,8 +2785,8 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
         raise HTTPException(
             status_code=409,
             detail=(
-                f"{provider} hat keinen gespeicherten Key. "
-                "Erst Key beim Brain-Provider setzen, dann aktivieren."
+                f"{provider} has no stored credential. "
+                "Add the key on its Brain provider card before activating it."
             ),
         )
 
@@ -2488,7 +2802,7 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
-                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+                status_code=500, detail=f"TOML write failed: {exc}"
             ) from exc
 
     # Best-effort in-memory update so the next /jarvis-agent/status reflects the
@@ -2497,6 +2811,7 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
 
     await _emit(request, SecretConfigured(key="brain.worker.provider", action="set"))
 
+    _invalidate_section_health_state(request)
     return {
         "ok": True,
         "active": provider,
@@ -2551,10 +2866,10 @@ async def jarvis_agent_model(body: SubagentModelBody, request: Request) -> dict[
 
     await _emit(request, SecretConfigured(key="brain.worker.model", action="set"))
 
+    _invalidate_section_health_state(request)
     return {
         "ok": True,
         "model": model,
         "persisted": persisted,
         "restart_required": True,
     }
-

@@ -24,6 +24,7 @@ from typing import Literal
 _PROVIDER_ALIASES = (
     "claude-api",
     "openrouter",
+    "groq",
     "anthropic",
     "chatgpt",
     "ollama",
@@ -150,7 +151,7 @@ _SUBAGENT_QUALIFIER = re.compile(
 # Longer variants first so "openai-codex" wins over "openai".
 _SUBAGENT_PROVIDER_WORDS = (
     "openai-codex", "openrouter", "antigravity", "chatgpt", "anthropic",
-    "claude", "gemini", "openai", "codex", "gpt",
+    "claude", "gemini", "openai", "groq", "codex", "gpt",
 )
 _SUBAGENT_SWITCH_VERB = re.compile(
     r"\b(?:wechsel[n]?|wechsle|umstell\w*|umschalt\w*|stell\w*|set|switch|change|nimm|mach)\b",

@@ -16,9 +16,11 @@ import { useT } from "@/i18n";
 export function CuModelSelector({
   providerId,
   recommendedModel,
+  healthActive = false,
 }: {
   providerId: string;
   recommendedModel?: string | null;
+  healthActive?: boolean;
 }) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -47,12 +49,33 @@ export function CuModelSelector({
 
   async function clearToMain() {
     setClearing(true);
+    if (healthActive) {
+      window.dispatchEvent(
+        new CustomEvent("jarvis:provider-selection-pending", {
+          detail: { section: "computer-use", provider: providerId },
+        }),
+      );
+    }
     try {
       await saveCuModel(providerId, "");
       setCuModel("");
       setUsesMain(true);
+      if (healthActive) {
+        window.dispatchEvent(
+          new CustomEvent("jarvis:provider-config-changed", {
+            detail: { section: "computer-use", provider: providerId },
+          }),
+        );
+      }
       pushToast("success", t("apikeys_cu_model.cleared"));
     } catch (e) {
+      if (healthActive) {
+        window.dispatchEvent(
+          new CustomEvent("jarvis:provider-switch-failed", {
+            detail: { section: "computer-use", provider: providerId },
+          }),
+        );
+      }
       pushToast("error", (e as Error).message);
     } finally {
       setClearing(false);
@@ -67,6 +90,8 @@ export function CuModelSelector({
         controlled
         visionOnly
         recommendedModel={recommendedModel}
+        healthSection="computer-use"
+        healthActive={healthActive}
         headingLabel={t("apikeys_cu_model.heading")}
         placeholder={t("apikeys_cu_model.use_main")}
         onSave={async (model) => {

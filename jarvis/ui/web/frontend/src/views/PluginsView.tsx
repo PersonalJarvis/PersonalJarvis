@@ -394,6 +394,46 @@ export function PluginsView() {
     });
   }, [tab, query, filter, allPlugins, installed]);
 
+  // Every plugin that needs a reconnect (revoked/expired token) or errored —
+  // the ones the "needs attention" banner names and the "Jump to it" button
+  // scrolls to.
+  const attentionPlugins = useMemo(
+    () =>
+      allPlugins.filter(
+        (p) => p.status === "needs_reauth" || p.status === "error",
+      ),
+    [allPlugins],
+  );
+
+  // "Jump to it": clear any active search/filter so the target row is
+  // guaranteed rendered, then hand its id to the effect below, which scrolls to
+  // it once React has painted it. Two-step (state + effect) rather than an
+  // inline scroll because the row may not exist in the DOM until the filter
+  // reset re-renders the list.
+  const [scrollTarget, setScrollTarget] = useState<string | null>(null);
+  const jumpToFirstProblem = () => {
+    const target = attentionPlugins[0];
+    if (!target) return;
+    setQuery("");
+    setFilter("all");
+    setScrollTarget(target.id);
+  };
+
+  useEffect(() => {
+    if (!scrollTarget) return;
+    const el = document.getElementById(`plugin-row-${scrollTarget}`);
+    // Not painted yet — a later render (after the filter reset) re-runs this
+    // effect via the `visible` dependency and finds the row then.
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    // Brief amber flash so the eye lands on the right card.
+    const flash = ["ring-2", "ring-amber-500/70", "ring-offset-2", "ring-offset-background"];
+    el.classList.add(...flash);
+    const timer = window.setTimeout(() => el.classList.remove(...flash), 2000);
+    setScrollTarget(null);
+    return () => window.clearTimeout(timer);
+  }, [scrollTarget, visible]);
+
   return (
     <div className="flex h-full flex-col bg-background">
       <ViewHeader
@@ -440,6 +480,7 @@ export function PluginsView() {
 
       <ScrollArea className="flex-1">
         <div className="relative mx-auto max-w-3xl px-6 pb-20 pt-14">
+          <AttentionBanner plugins={attentionPlugins} onJump={jumpToFirstProblem} />
           {tab === "browse" ? (
             <BrowseLayout
               plugins={visible}
@@ -547,6 +588,51 @@ export function PluginsView() {
           }}
         />
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Attention banner — plain-language "what's wrong" + a one-click jump to it
+// ---------------------------------------------------------------------------
+
+// Shown at the top of the Plugins view whenever a connected plugin's token has
+// expired/been revoked (`needs_reauth`) or errored. The sidebar dot proves a
+// problem exists app-wide; this banner spells out WHICH plugin and jumps the
+// user straight to its card, so they never have to hunt for it.
+function AttentionBanner({
+  plugins,
+  onJump,
+}: {
+  plugins: Plugin[];
+  onJump: () => void;
+}) {
+  if (plugins.length === 0) return null;
+  const names = plugins.map((p) => p.name);
+  const one = plugins.length === 1;
+  const headline = one
+    ? `${names[0]} needs reconnecting`
+    : `${plugins.length} connections need reconnecting`;
+
+  return (
+    <div className="mb-8 flex items-center gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 px-4 py-3">
+      <AlertTriangle className="h-4 w-4 shrink-0 text-amber-500" />
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-sm font-medium text-foreground">{headline}</p>
+        <p className="truncate text-xs text-muted-foreground">
+          {one
+            ? "Its token expired or was revoked — reconnect to keep it working."
+            : `Reconnect to keep them working: ${names.join(", ")}`}
+        </p>
+      </div>
+      <button
+        type="button"
+        onClick={onJump}
+        className="inline-flex shrink-0 items-center gap-1.5 rounded-full border border-amber-500/50 bg-amber-500/10 px-3 py-1.5 text-xs font-semibold text-amber-500 transition-colors hover:bg-amber-500/20"
+      >
+        {one ? "Jump to it" : "Jump to first"}
+        <ArrowRight className="h-3.5 w-3.5" />
+      </button>
     </div>
   );
 }
@@ -972,8 +1058,12 @@ function PluginRow({
 
   return (
     <article
+      // Stable DOM id so the "Jump to it" affordance in AttentionBanner can
+      // scrollIntoView + flash this exact row. `scroll-mt-24` leaves headroom
+      // under the sticky tab bar so the scrolled-to row isn't hidden beneath it.
+      id={`plugin-row-${plugin.id}`}
       className={cn(
-        "group flex items-center gap-3 rounded-lg border bg-card/40 px-3 py-2.5 transition-colors",
+        "group flex items-center gap-3 rounded-lg border bg-card/40 px-3 py-2.5 transition-[colors,box-shadow] scroll-mt-24",
         isConnected && "border-primary/30",
         needsReauth && "border-amber-500/40",
         isError && "border-destructive/40",
@@ -993,28 +1083,33 @@ function PluginRow({
       </div>
 
       <div className="min-w-0 flex-1">
-        <div className="flex items-center gap-2">
-          <h3 className="truncate text-sm font-semibold tracking-tight text-foreground">
+        {/* `flex-wrap` + `shrink-0` badges: when a connected plugin's
+            "· Connected · Live" badges don't fit beside the name, they wrap to
+            the next line instead of squeezing the (truncating) name down to
+            "GitH…"/"Gm…". The name keeps priority and only truncates on a
+            genuinely long name. */}
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+          <h3 className="min-w-0 max-w-full truncate text-sm font-semibold tracking-tight text-foreground">
             {plugin.name}
           </h3>
           {isConnected && (
-            <span className="text-[9px] font-medium uppercase tracking-wider text-primary">
+            <span className="shrink-0 text-[9px] font-medium uppercase tracking-wider text-primary">
               · Connected
             </span>
           )}
           {isConnected && plugin.liveCallable && (
-            <span className="text-[9px] font-medium uppercase tracking-wider text-emerald-400">
+            <span className="shrink-0 text-[9px] font-medium uppercase tracking-wider text-emerald-400">
               · Live
             </span>
           )}
           {needsReauth && (
-            <span className="inline-flex items-center gap-1 text-[9px] font-medium uppercase tracking-wider text-amber-500">
+            <span className="inline-flex shrink-0 items-center gap-1 text-[9px] font-medium uppercase tracking-wider text-amber-500">
               <AlertTriangle className="h-2.5 w-2.5" />
               <span>Reconnect needed</span>
             </span>
           )}
           {isError && (
-            <span className="inline-flex items-center gap-1 text-[9px] font-medium uppercase tracking-wider text-destructive">
+            <span className="inline-flex shrink-0 items-center gap-1 text-[9px] font-medium uppercase tracking-wider text-destructive">
               <AlertTriangle className="h-2.5 w-2.5" />
               <span>Error</span>
             </span>

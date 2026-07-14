@@ -7,7 +7,7 @@ Endpoints:
     GET /api/settings/reply-language  → {"language": ..., "options": [...]}
     PUT /api/settings/reply-language  → switch the live BrainManager + persist
     GET /api/settings/wake-word       → {phrase, engine, custom_model_path,
-                                         sensitivity, fuzzy_match_ratio, engines,
+                                         fuzzy_match_ratio, engines,
                                          instant_phrases, local_whisper_available}
     PUT /api/settings/wake-word       → persist to jarvis.toml [trigger.wake_word]
                                          (+ resolved-plan preview); restart required
@@ -151,10 +151,20 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
     # session would actually build (Gemini-only users now get `true` too,
     # not just OpenAI — Feature A2).
     prov = _realtime_available_provider(cfg)
+    from jarvis.ui.web.voice_runtime import voice_engine_status
+
+    runtime = voice_engine_status(request)
     return {
         "mode": mode,
         "realtime_available": prov is not None,
         "active_provider": prov,
+        "session_active": bool(runtime.get("session_active", False)),
+        "active_session_mode": runtime.get("active_session_mode"),
+        "active_session_provider": str(
+            runtime.get("active_session_provider", "") or ""
+        ),
+        "active_session_model": str(runtime.get("active_session_model", "") or ""),
+        "transitioning": bool(runtime.get("transitioning", False)),
     }
 
 
@@ -176,6 +186,10 @@ async def put_voice_mode(body: VoiceModeBody, request: Request) -> dict[str, obj
         except Exception as exc:  # noqa: BLE001 — frozen model is not an error
             log.debug("in-memory cfg.voice.mode update skipped: %s", exc)
 
+    from jarvis.ui.web.voice_runtime import apply_voice_mode
+
+    session_restarted = apply_voice_mode(request, body.mode)
+
     persisted = False
     if body.persist:
         try:
@@ -186,7 +200,12 @@ async def put_voice_mode(body: VoiceModeBody, request: Request) -> dict[str, obj
         except Exception as exc:  # noqa: BLE001
             log.warning("voice-mode persist failed (live switch still applied): %s", exc)
 
-    return {"ok": True, "mode": body.mode, "persisted": persisted}
+    return {
+        "ok": True,
+        "mode": body.mode,
+        "persisted": persisted,
+        "session_restarted": session_restarted,
+    }
 
 
 # ----------------------------------------------------------------------
@@ -457,8 +476,8 @@ async def put_stt_language(body: SttLanguageBody, request: Request) -> dict[str,
 
 # ---------------------------------------------------------------------------
 # Wake word (custom-wake-word feature). GET current + options; PUT to switch.
-# Persisted to jarvis.toml [trigger.wake_word]; applies on the next voice
-# bootstrap (a Jarvis restart). See docs/local-wakeword/CUSTOM-WAKE-WORD-DESIGN.md.
+# Persisted to jarvis.toml [trigger.wake_word] and live-applied when the desktop
+# voice pipeline is running. See docs/local-wakeword/CUSTOM-WAKE-WORD-DESIGN.md.
 # ---------------------------------------------------------------------------
 
 
@@ -472,6 +491,12 @@ class WakeWordBody(BaseModel):
     phrase: str = Field(..., min_length=1, max_length=64)
     engine: str = Field(default="auto")
     custom_model_path: str | None = Field(default=None)
+    # READ-COMPAT ONLY, runtime-ignored since 2026-07-10: the user-facing
+    # Sensitivity slider was removed (every wake path now always runs at its
+    # calibrated-reliable maximum-speed value, identically on every OS). The
+    # field stays accepted so an old client / CLI body with a stray
+    # ``sensitivity`` value does not 422 — it is simply dropped, never
+    # persisted, never floored.
     sensitivity: float | None = Field(default=None, ge=0.0, le=1.0)
     fuzzy_match_ratio: float | None = Field(default=None, ge=0.5, le=1.0)
     persist: bool = Field(default=True, description="Persist to jarvis.toml")
@@ -557,7 +582,7 @@ async def enable_local_speech(request: Request) -> dict[str, object]:
 
 
 @router.get("/wake-word/enable-local-speech/status")
-async def enable_local_speech_status() -> dict[str, object]:
+async def enable_local_speech_status(request: Request) -> dict[str, object]:
     """Report the local-speech install progress + whether the pack is present."""
     available = _local_whisper_available()
     with _local_speech_install_lock:
@@ -567,7 +592,36 @@ async def enable_local_speech_status() -> dict[str, object]:
     # or a prior run before a restart) → report done so the UI is truthful.
     if available and state in ("idle", "running"):
         state = "done"
-    return {"state": state, "message": message, "available": available}
+    applied_live = False
+    if available:
+        try:
+            from jarvis.speech.wake_model_fetch import resolve_wake_language
+            from jarvis.speech.wake_phrase import resolve_wake_plan
+
+            cfg = _config(request)
+            pipeline = getattr(request.app.state, "speech_pipeline", None)
+            if (
+                cfg is not None
+                and getattr(getattr(cfg, "trigger", None), "wake_word", None) is not None
+                and pipeline is not None
+                and hasattr(pipeline, "set_wake_plan")
+            ):
+                plan = resolve_wake_plan(
+                    cfg.trigger.wake_word,
+                    local_whisper_available=True,
+                    language=resolve_wake_language(cfg),
+                )
+                pipeline.set_wake_plan(plan)
+                applied_live = True
+        except Exception as exc:  # noqa: BLE001 — install status must never 500
+            log.warning("local-speech wake live-apply skipped: %s", exc)
+    return {
+        "state": state,
+        "message": message,
+        "available": available,
+        "applied_live": applied_live,
+        "restart_required": available and not applied_live,
+    }
 
 
 @router.get("/wake-word")
@@ -587,7 +641,6 @@ async def get_wake_word(request: Request) -> dict[str, object]:
         "phrase": ww.phrase,
         "engine": ww.engine,
         "custom_model_path": ww.custom_model_path,
-        "sensitivity": ww.sensitivity,
         "fuzzy_match_ratio": ww.fuzzy_match_ratio,
         "engines": list(WAKE_ENGINES),
         "instant_phrases": list(INSTANT_WAKE_PHRASES),
@@ -612,12 +665,14 @@ async def put_wake_word(body: WakeWordBody, request: Request) -> dict[str, objec
             detail=f"Unknown wake engine '{body.engine}'. Allowed: {', '.join(WAKE_ENGINES)}.",
         )
 
-    # Sensitivity floor 0.5 (user mandate 2026-07-07): below the calibrated
-    # midpoint the wake word is effectively deaf. Lift instead of reject —
-    # mirrors WakeWordConfig._floor_sensitivity so every write path agrees.
-    sensitivity = (
-        None if body.sensitivity is None else min(1.0, max(0.5, body.sensitivity))
-    )
+    # Sensitivity is read-compat only (2026-07-10): accept it so an old
+    # client/CLI body does not 422, but never persist or floor it — every
+    # wake path always runs at its calibrated-reliable maximum-speed value.
+    if body.sensitivity is not None:
+        log.debug(
+            "wake-word PUT carried a legacy 'sensitivity' value (%s) — ignored.",
+            body.sensitivity,
+        )
 
     # Preview the resolved plan so the UI can tell the user immediately whether
     # the chosen phrase will work as-is or degrade (e.g. no local Whisper).
@@ -634,7 +689,6 @@ async def put_wake_word(body: WakeWordBody, request: Request) -> dict[str, objec
             phrase=body.phrase,
             engine=engine,
             custom_model_path=body.custom_model_path,
-            sensitivity=sensitivity,
             fuzzy_match_ratio=body.fuzzy_match_ratio,
         ),
         local_whisper_available=_local_whisper_available(),
@@ -650,8 +704,6 @@ async def put_wake_word(body: WakeWordBody, request: Request) -> dict[str, objec
         updates: dict[str, object] = {"phrase": body.phrase, "engine": engine}
         if body.custom_model_path is not None:
             updates["custom_model_path"] = body.custom_model_path
-        if sensitivity is not None:
-            updates["sensitivity"] = sensitivity
         if body.fuzzy_match_ratio is not None:
             updates["fuzzy_match_ratio"] = body.fuzzy_match_ratio
         for key, value in updates.items():
@@ -669,7 +721,6 @@ async def put_wake_word(body: WakeWordBody, request: Request) -> dict[str, objec
                 body.phrase,
                 engine=engine,
                 custom_model_path=body.custom_model_path,
-                sensitivity=sensitivity,
                 fuzzy_match_ratio=body.fuzzy_match_ratio,
             )
             persisted = True
@@ -722,9 +773,9 @@ async def set_wake_activation(body: WakeActivationBody, request: Request) -> dic
     only. This was previously settable only by hand-editing jarvis.toml (default
     False), so a fresh downloader could never enable their wake word in-app.
 
-    Persisted to ``[trigger] wake_word_enabled``; takes effect on the next voice
-    restart (the detector enable-flags are wired at pipeline construction), so
-    ``restart_required`` is always True.
+    Persisted to ``[trigger] wake_word_enabled`` and applied to the running voice
+    pipeline when available. Headless/voice-disabled processes keep the setting
+    for their next voice start.
     """
     try:
         from jarvis.core import config_writer
@@ -741,7 +792,20 @@ async def set_wake_activation(body: WakeActivationBody, request: Request) -> dic
             cfg.trigger.wake_word_enabled = bool(body.enabled)
         except Exception as exc:  # noqa: BLE001 — frozen model is not an error
             log.debug("in-memory wake_word_enabled update skipped: %s", exc)
-    return {"ok": True, "enabled": bool(body.enabled), "restart_required": True}
+    applied_live = False
+    pipeline = getattr(request.app.state, "speech_pipeline", None)
+    if pipeline is not None and hasattr(pipeline, "set_wake_activation"):
+        try:
+            pipeline.set_wake_activation(bool(body.enabled))
+            applied_live = True
+        except Exception as exc:  # noqa: BLE001 — persistence already succeeded
+            log.warning("wake activation live-apply failed: %s", exc)
+    return {
+        "ok": True,
+        "enabled": bool(body.enabled),
+        "applied_live": applied_live,
+        "restart_required": not applied_live,
+    }
 
 
 @router.post("/wake-word/download-model")
@@ -1509,7 +1573,7 @@ async def _run_off_pool(fn: Callable[[], object]) -> object:
     return await fut
 
 
-@router.post("/restart-app")
+@router.post("/restart-app", openapi_extra={"x-jarvis-dangerous": True})
 async def restart_app(request: Request, force: bool = False) -> dict[str, object]:
     """Cleanly self-restart the desktop app.
 

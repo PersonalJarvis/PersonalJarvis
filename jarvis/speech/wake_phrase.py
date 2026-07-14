@@ -36,56 +36,35 @@ from jarvis.speech.wake_constants import (
     phrase_core,
     phrase_core_for_match,
     resolve_vosk_model_path,
+    resolve_vosk_model_paths,
     sound_fold,
 )
 
 log = logging.getLogger("jarvis.wake.phrase")
 
-# Lower threshold floor (most sensitive) and upper ceiling (least sensitive)
-# for the sensitivity->threshold mapping. The midpoint (sensitivity 0.5) is
-# pinned to the data-driven PRODUCTION_WAKE_THRESHOLD so the default is
-# unchanged and the BUG-009 floor reasoning still holds at the default.
-_THRESHOLD_CEILING = 0.30  # sensitivity 0.0
-_THRESHOLD_FLOOR = 0.06    # sensitivity 1.0
+# The user-facing Sensitivity slider was removed (2026-07-10 mandate: "remove
+# the control; always spawn at maximum speed on every OS" — identically on
+# Windows/macOS/Linux, no per-user tuning). Every wake path now runs its
+# calibrated-reliable value unconditionally instead of a slider-derived one:
+#
+# - stt_match poll interval: pinned to the fast end that used to be
+#   sensitivity=1.0 — the "always as fast as possible" (2026-07-02) mandate
+#   made the slow end a formality anyway.
+WAKE_POLL_INTERVAL_S = 0.08
 
+# - openWakeWord pretrained-model threshold: pinned to the data-driven
+#   PRODUCTION_WAKE_THRESHOLD (imported above) directly, not the old
+#   slider-scaled midpoint. This is a recall/false-positive tradeoff, not a
+#   speed knob — the calibrated production value IS the fastest *reliable*
+#   trigger; pinning to the old sensitive extreme (0.06) would re-open the
+#   ghost-wake war (BUG-009/BUG-037/AP-27 history).
 
-def sensitivity_to_threshold(sensitivity: float) -> float:
-    """Map a 0..1 sensitivity onto an openWakeWord activation threshold.
-
-    Anchored piecewise-linear: 0.0 -> 0.30, 0.5 -> PRODUCTION_WAKE_THRESHOLD,
-    1.0 -> 0.06. Higher sensitivity => lower threshold => easier to trigger.
-    """
-    s = max(0.0, min(1.0, float(sensitivity)))
-    if s <= 0.5:
-        span = PRODUCTION_WAKE_THRESHOLD - _THRESHOLD_CEILING
-        return _THRESHOLD_CEILING + span * (s / 0.5)
-    span = _THRESHOLD_FLOOR - PRODUCTION_WAKE_THRESHOLD
-    return PRODUCTION_WAKE_THRESHOLD + span * ((s - 0.5) / 0.5)
-
-
-# stt_match responsiveness: the openWakeWord threshold above is meaningless for
-# the local-Whisper transcript path (it does not score against a threshold), so
-# a custom-phrase user moving the Sensitivity slider felt NOTHING. Map the same
-# 0..1 slider onto how OFTEN that path re-transcribes the rolling window: a
-# higher sensitivity polls more often, so a spoken wake is picked up sooner.
-# Both ends are deliberately FAST — the user's mandate is "always as low as
-# possible" (2026-07-02). The slider still trims a little, but even its lowest
-# position must not feel slow, so the slow end is 0.12 s, not a lazy 0.20 s.
-_POLL_INTERVAL_SLOW = 0.12   # sensitivity 0.0 — still snappy
-_POLL_INTERVAL_FAST = 0.08   # sensitivity 1.0 — snappiest reaction
-
-
-def sensitivity_to_poll_interval(sensitivity: float) -> float:
-    """Map a 0..1 sensitivity onto the stt_match wake poll interval (seconds).
-
-    Linear: 0.0 -> 0.12 s, 1.0 -> 0.08 s. Both ends are fast on purpose (the
-    "always as low as possible" mandate); higher sensitivity just trims a little
-    more. The dominant latency floor is the ~0.5 s transcription itself, so the
-    poll interval is a minor knob — the real win is skipping the second
-    confirming transcription on a clearly-loud wake (unconditional).
-    """
-    s = max(0.0, min(1.0, float(sensitivity)))
-    return _POLL_INTERVAL_SLOW + (_POLL_INTERVAL_FAST - _POLL_INTERVAL_SLOW) * s
+# - custom_onnx model threshold: pinned to the "balanced default" of the
+#   calibrated 0.70 (strict) / 0.50 (balanced) / 0.30 (sensitive) band. A
+#   TRAINED custom_onnx model outputs well-calibrated 0..1 scores; the
+#   sensitive extreme false-fires on breathing and random words (live
+#   2026-07-01 forensic — see resolve_wake_plan below).
+CUSTOM_ONNX_THRESHOLD = 0.50
 
 
 class _FuzzyMatch:
@@ -310,6 +289,13 @@ class WakeWordPlan:
     wake_available: bool = True
     # Extracted Vosk model directory for the vosk_kws engine (None otherwise).
     vosk_model_path: str | None = None
+    # ALL installed Vosk model dirs, primary language first (vosk_kws only).
+    # The provider streams a grammar per model and fires on whichever model's
+    # verify confirms — a phrase and the speaker language routinely diverge
+    # ("Hey Jarvis": English name, German speaker; live forensic 2026-07-11),
+    # and the single language-matched model eats genuine wakes it cannot
+    # spell. Empty tuple = fall back to the single vosk_model_path.
+    vosk_model_paths: tuple[str, ...] = ()
 
 
 def _read(cfg: Any, name: str, default: Any) -> Any:
@@ -327,7 +313,10 @@ def resolve_wake_plan(
     """Resolve a ``[trigger.wake_word]`` config into a :class:`WakeWordPlan`.
 
     ``cfg`` is duck-typed: any object exposing ``phrase``, ``engine``,
-    ``custom_model_path``, ``sensitivity``, ``fuzzy_match_ratio``.
+    ``custom_model_path``, ``fuzzy_match_ratio``. ``sensitivity`` is no longer
+    read (the user-facing slider was removed 2026-07-10 — every wake path now
+    runs its calibrated-reliable value unconditionally; a legacy config may
+    still carry the field, it is simply ignored here).
 
     ``language`` selects the per-language Vosk model for the ``vosk_kws``
     engine (falls back to the first installed model on ``auto``/None).
@@ -340,17 +329,10 @@ def resolve_wake_plan(
         log.warning("Unknown wake engine %r — coercing to 'auto'.", engine_pref)
         engine_pref = "auto"
     custom_path = str(_read(cfg, "custom_model_path", "")).strip()
-    sensitivity = float(_read(cfg, "sensitivity", 0.5))
     fuzzy = float(_read(cfg, "fuzzy_match_ratio", 0.8))
 
-    threshold = sensitivity_to_threshold(sensitivity)
-    # A TRAINED custom_onnx model outputs well-calibrated 0..1 scores — a genuine
-    # wake lands ~0.85-0.95 and breath/ambient/other-words well below — NOT the
-    # 0.15-0.23 band the pretrained-openWakeWord 0.06-0.30 sensitivity map was
-    # tuned for. Using that low band for a custom model false-fires on breathing
-    # and random words (live 2026-07-01). So a custom model uses a higher band:
-    # 0.0 -> 0.70 (strict), 0.5 -> 0.50 (balanced default), 1.0 -> 0.30 (sensitive).
-    custom_threshold = 0.70 - 0.40 * max(0.0, min(1.0, sensitivity))
+    threshold = PRODUCTION_WAKE_THRESHOLD
+    custom_threshold = CUSTOM_ONNX_THRESHOLD
     matcher = compile_wake_matcher(phrase, fuzzy_ratio=fuzzy)
     canonical = _canonical_keyword(phrase)
 
@@ -469,6 +451,15 @@ def resolve_wake_plan(
                 ),
                 verify_prefix=False,  # the provider's sound confirm is built in
                 vosk_model_path=vosk_model,
+                # Every installed model, primary first: the provider listens
+                # on all of them so a phrase whose language differs from the
+                # speaker's ("Hey Jarvis" de-spoken) still has a model that
+                # can spell it. Verified per model — precision gates intact.
+                vosk_model_paths=tuple(
+                    resolve_vosk_model_paths(
+                        lang_norm if lang_is_concrete else language
+                    )
+                ),
             )
 
     # 3. Arbitrary phrase via local-Whisper transcript match.
@@ -563,11 +554,11 @@ def resolve_wake_plan(
 
 
 __all__ = [
+    "CUSTOM_ONNX_THRESHOLD",
+    "WAKE_POLL_INTERVAL_S",
     "WakeMatcher",
     "WakeWordPlan",
     "compile_wake_matcher",
     "custom_model_matches_phrase",
     "resolve_wake_plan",
-    "sensitivity_to_poll_interval",
-    "sensitivity_to_threshold",
 ]

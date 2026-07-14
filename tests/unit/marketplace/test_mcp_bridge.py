@@ -22,22 +22,21 @@ def _store(**connected: str) -> TokenStore:
     return ts
 
 
-def test_stdio_plugin_resolves_env_token() -> None:
-    # github = stdio MCP; token rides in env_template GITHUB_PERSONAL_ACCESS_TOKEN
+def test_github_uses_portable_hosted_mcp() -> None:
     servers = assemble_claude_mcp_servers(load_catalog(), _store(github="ghp_SECRET"))
     gh = servers["github"]
-    assert gh["command"] == "docker"
-    assert gh["env"]["GITHUB_PERSONAL_ACCESS_TOKEN"] == "ghp_SECRET"
-    # placeholder must be fully resolved, never leak verbatim
+    assert gh["type"] == "http"
+    assert gh["url"] == "https://api.githubcopilot.com/mcp/"
+    assert gh["headers"]["Authorization"] == "Bearer ghp_SECRET"
     assert "$plugin_github_access_token" not in json.dumps(gh)
 
 
-def test_stdio_plugin_resolves_arg_placeholder() -> None:
-    # supabase = stdio MCP; token rides as an ``--access-token`` argv value
+def test_supabase_uses_portable_read_only_hosted_mcp() -> None:
     servers = assemble_claude_mcp_servers(load_catalog(), _store(supabase="sbp_SECRET"))
     sb = servers["supabase"]
-    assert sb["command"] == "npx"
-    assert "sbp_SECRET" in sb["args"]
+    assert sb["type"] == "http"
+    assert sb["url"] == "https://mcp.supabase.com/mcp?read_only=true"
+    assert sb["headers"]["Authorization"] == "Bearer sbp_SECRET"
     assert "$plugin_supabase_access_token" not in json.dumps(sb)
 
 
@@ -64,7 +63,12 @@ def test_unconnected_plugin_is_skipped() -> None:
 
 
 def test_extra_mcp_json_servers_are_merged() -> None:
-    extra = {"local-fs": {"command": "npx", "args": ["-y", "@modelcontextprotocol/server-filesystem"]}}
+    extra = {
+        "local-fs": {
+            "command": "npx",
+            "args": ["-y", "@modelcontextprotocol/server-filesystem"],
+        }
+    }
     servers = assemble_claude_mcp_servers(
         load_catalog(), _store(github="ghp_X"), extra_servers=extra
     )

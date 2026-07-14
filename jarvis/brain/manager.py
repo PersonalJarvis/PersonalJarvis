@@ -29,6 +29,7 @@ import logging
 import re
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID, uuid4
 
@@ -77,6 +78,8 @@ from jarvis.safety.tool_executor import ToolExecutor
 from jarvis.brain.provider_test import BILLING_LIMIT_MARKERS
 
 from .dispatcher import BrainDispatcher
+from .action_honesty import replace_unbacked_action_claim
+from .tool_surface import maybe_reconcile_tool_surface, stamp_tool_surface
 from .intent_router import RoutingDecision, classify
 from .local_action_gate import (
     HARNESS_NAME,
@@ -97,6 +100,7 @@ from .persona_loader import load_effective_persona_prompt
 from .provider_registry import BrainProviderRegistry
 from .rate_limit_tracker import RateLimitTracker
 from .streaming import aggregate
+from .turn_planner import plan_turn
 from .voice_command_gate import match_voice_command
 
 if TYPE_CHECKING:
@@ -106,6 +110,15 @@ if TYPE_CHECKING:
     from jarvis.voice.contextual_readback import ReadbackComposer
 
 log = logging.getLogger(__name__)
+
+_PUBLISH_RESPONSE_EVENT: ContextVar[bool] = ContextVar(
+    "jarvis.brain.manager.publish_response_event",
+    default=True,
+)
+_TURN_HISTORY_OVERRIDE: ContextVar[tuple[BrainMessage, ...] | None] = ContextVar(
+    "jarvis.brain.manager.turn_history_override",
+    default=None,
+)
 
 #: Hard bound on the per-turn vision capture (Wave-3 latency fix). ``vision.
 #: current()`` can stall (mss BitBlt hang, paused-state miss, slow disk); without
@@ -151,6 +164,7 @@ PROVIDER_ALIASES = {
     "flash": "gemini",
     "pro": "gemini",
     "openrouter": "openrouter",
+    "groq": "groq",
     "nvidia": "nvidia",
     "nim": "nvidia",
     "nemotron": "nvidia",
@@ -165,6 +179,8 @@ _MAIN_BRAIN_FALLBACK_PROVIDER_ORDER: tuple[str, ...] = (
     "claude-api",
     "openai",
     "openrouter",
+    "groq",
+    "nvidia",
 )
 
 # Human-readable display names for each brain provider id. Used to tell the
@@ -183,6 +199,7 @@ _PROVIDER_DISPLAY_NAMES: dict[str, str] = {
     "codex": "OpenAI Codex (GPT-5.5)",
     "openai-codex": "OpenAI Codex (GPT-5.5)",
     "openrouter": "OpenRouter",
+    "groq": "GroqCloud",
     "nvidia": "NVIDIA NIM",
     "gemini": "Google Gemini",
     "antigravity": "Google Antigravity (Gemini)",
@@ -236,6 +253,7 @@ _SECRET_KEY_TO_BRAIN: dict[str, str] = {
     "anthropic_api_key": "claude-api",
     "openai_api_key": "openai",
     "openrouter_api_key": "openrouter",
+    "groq_api_key": "groq",
     "nvidia_api_key": "nvidia",
 }
 
@@ -294,6 +312,8 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
         # general-purpose model degrades with a clean 404 if ever retired, instead
         # of silently billing the most expensive model in the catalog.
         "openrouter": "nvidia/nemotron-3-ultra-550b-a55b:free",
+        # Groq's current 131k-context production model with local tool use.
+        "groq": "openai/gpt-oss-120b",
         # NVIDIA NIM router pick: a widely-hosted, tool-capable, low-latency model
         # (the reasoning Nemotron flagships are the deep tier). The user's own pick
         # from the live catalog wins over this.
@@ -314,6 +334,7 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
         # Gateway: never a paid Anthropic default for a model-less OpenRouter
         # user (§3/AP-22) — see the router-tier note above.
         "openrouter": "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "groq": "openai/gpt-oss-120b",
         # NVIDIA NIM deep pick: NVIDIA's own reasoning flagship.
         "nvidia": "nvidia/llama-3.1-nemotron-ultra-253b-v1",
         "mistral": "mistral-large-3",
@@ -1515,12 +1536,14 @@ _SUBAGENT_VOICE_TO_CANONICAL: dict[str, str] = {
     "claude": "claude-api", "anthropic": "claude-api",
     "gemini": "gemini",
     "openrouter": "openrouter",
+    "groq": "groq",
     "nvidia": "nvidia", "nim": "nvidia", "nemotron": "nvidia",
     "antigravity": "antigravity",
 }
 _SUBAGENT_DISPLAY: dict[str, str] = {
     "openai": "OpenAI", "openai-codex": "Codex", "claude-api": "Claude",
-    "gemini": "Gemini", "openrouter": "OpenRouter", "nvidia": "NVIDIA NIM",
+    "gemini": "Gemini", "openrouter": "OpenRouter", "groq": "GroqCloud",
+    "nvidia": "NVIDIA NIM",
     "antigravity": "Antigravity",
 }
 _SUBAGENT_SWITCH_CONFIRM: dict[str, str] = {
@@ -1638,15 +1661,43 @@ _SELF_CONTROL_NOUN_RE = re.compile(
     r"|worker)\b",
     re.IGNORECASE,
 )
+# Always-on compact self-control truth (forensic 2026-07-10): the LONG
+# directive below is injected only when _SELF_CONTROL_PATTERN matches, but a
+# keyword-free phrasing ("ich will dich ab jetzt Edith  # i18n-allow: quoted utterance
+# rufen koennen") sails past the regex — the router LLM  # i18n-allow: quoted utterance
+# then answered in prose and CLAIMED the
+# change without any tool call. Broadening the keyword list would be
+# whack-a-mole (the AP-27 tightening class); instead this short line rides in
+# EVERY substantive prompt so the model always knows it has the power and
+# that claiming without calling is forbidden. The keyworded directive stays
+# as the detailed intensifier.
+_SELF_CONTROL_STANDING = (
+    "SELF-CONTROL (always in effect): When the user asks you to change or "
+    "check anything about Jarvis itself — wake phrase, voice, volume, "
+    "providers, languages, settings, restart, missions/tasks — you CAN do it "
+    "yourself with the registry command tools in your tool set (e.g. "
+    "`wake-word-set`, `brain-switch`, `provider-test`, `tts-volume-set`, "
+    "`app-restart`); `set_config_value` covers a plain config key, "
+    "`cli_jarvisctl` is the fallback for anything not covered. NEVER state "
+    "or imply that a change or action happened unless a tool call actually "
+    "returned success in THIS turn; without such a result, say honestly that "
+    "you have not done it yet."
+)
+
 _SELF_CONTROL_DIRECTIVE = (
     "SELF-CONTROL: The user is asking to change or control Jarvis's OWN settings, "
     "configuration, providers, voice, language, or behavior. You have full "
-    "control over this. Use the `cli_jarvisctl` tool — it performs ANY Jarvis "
-    "action via the local API (e.g. `jarvisctl brain switch <provider>`, "
-    "`jarvisctl config set <key> <value>`) — or `set_config_value` for a simple "
-    "setting. NEVER say you lack access or permission to change a Jarvis setting, "
-    "and never claim the change without actually calling the tool: call it and "
-    "confirm success only AFTER it returns."
+    "control over this. PREFER the registry command tools — `brain-switch`, "
+    "`tts-switch`, `provider-test`, `wake-word-set`, `reply-language-set`, "
+    "`tts-volume-set`, `app-restart`, `missions-list`, `task-cancel`, … — "
+    "each validates its arguments against the app's own endpoint, so it "
+    "cannot hit the wrong target. For a simple config key use "
+    "`set_config_value`; only for actions NOT covered by either, fall back "
+    "to the `cli_jarvisctl` tool (e.g. `jarvisctl config set <key> "
+    "<value>`). NEVER say you lack access or permission to change a Jarvis "
+    "setting, and never claim the change without actually calling the tool: "
+    "call it and confirm success only AFTER it returns, using the values the "
+    "tool actually reports."
 )
 
 
@@ -1928,6 +1979,14 @@ class BrainManager:
         # reset). Prevents each voice turn from running through 8 sequential
         # "no API key" failures.
         self._dead_providers: set[str] = set()
+        # Model-scoped twin of `_dead_providers`: a billing-style rejection
+        # (account_blocked, e.g. HTTP 402) on ONE model must not dead-list a
+        # provider that has other, untried models still in this turn's chain
+        # (e.g. a paid model capped out while a free model on the same
+        # provider is still funded). Populated/consulted only for
+        # account_blocked; missing_key/bad_key stay provider-wide since a
+        # dead credential blocks every model on that provider.
+        self._dead_provider_models: set[tuple[str, str | None]] = set()
         # Populated by from_tier_config(). Tier fallbacks are runtime
         # priorities, not just healthcheck metadata.
         self._configured_fallbacks: list[tuple[str, str | None]] = []
@@ -2233,39 +2292,251 @@ class BrainManager:
         )
 
     def _cu_model(self, name: str) -> str | None:
-        """Model the Computer-Use loop uses for ``name`` (Phase 3).
+        """Resolve the Tool Model for ``name``, including the legacy CU key."""
+        return self._tool_model_model(name)
 
-        Precedence: the pinned ``cu_model`` -> the provider's main ``model`` ->
-        the router-tier default. Provider-agnostic (AP-21): no provider name or
-        model id is special-cased. When nothing is pinned this equals the model
-        chat already uses, so CU behaviour is unchanged until a CU model is set.
-        """
+    def _tool_model_model(
+        self, name: str, fallback: str | None = None
+    ) -> str | None:
+        """Resolve an explicit Tool Model pin before a caller's model choice."""
         cfg = self._provider_cfg(name)
         if cfg is None:
-            return get_tier_default_model("router", name)
+            return fallback or get_tier_default_model("router", name)
         return (
-            getattr(cfg, "cu_model", None)
+            getattr(cfg, "tool_model", None)
+            or getattr(cfg, "cu_model", None)
+            or fallback
             or getattr(cfg, "model", None)
             or get_tier_default_model("router", name)
         )
 
-    def _cu_provider(self) -> str:
-        """The dedicated GLOBAL Computer-Use planner provider, or ``""``.
-
-        Reads ``[brain.computer_use].provider`` FRESH per call (like
-        ``_cu_model``), so an in-memory switch (``/api/computer-use/switch``)
-        takes effect on the very next CU dispatch. ``""`` means "not
-        configured" — the CU-only dispatch hoist in
-        ``jarvis.cu.brain_call.call_vision_brain`` then leaves the fallback
-        chain untouched (CU keeps running on ``brain.primary``, current
-        behavior). Never raises (getattr-chain safe): a config hiccup must
-        not break Computer-Use dispatch (AP-21/22).
-        """
+    def _tool_model_provider(self) -> str:
+        """Return the canonical Tool Model provider or its legacy fallback."""
         try:
-            cu_cfg = getattr(self._config.brain, "computer_use", None)
-            return (getattr(cu_cfg, "provider", None) or "").strip()
-        except Exception:  # noqa: BLE001 — config hiccup must not block dispatch
+            brain_cfg = self._config.brain
+            canonical = getattr(brain_cfg, "tool_model", None)
+            provider = (getattr(canonical, "provider", None) or "").strip()
+            if provider:
+                return provider
+            legacy = getattr(brain_cfg, "computer_use", None)
+            return (getattr(legacy, "provider", None) or "").strip()
+        except Exception:  # noqa: BLE001 -- config failure must not block dispatch
             return ""
+
+    def _tool_model_source(self) -> str:
+        """Identify whether the selection came from canonical or legacy config."""
+        try:
+            fields_set = getattr(self._config.brain, "model_fields_set", set())
+            if "tool_model" in fields_set:
+                return "tool_model"
+            if "computer_use" in fields_set:
+                return "computer_use"
+        except Exception:  # noqa: BLE001, S110 -- status must never raise
+            pass
+        return "auto" if self._tool_model_provider() in ("", "auto") else "tool_model"
+
+    @staticmethod
+    def _tool_model_family(provider: str) -> str:
+        """Credential/quota family used to avoid same-family fallback bricks."""
+        return {
+            "codex": "openai",
+            "openai-api": "openai",
+            "antigravity": "gemini",
+        }.get(provider, provider)
+
+    def _tool_model_credential_ready(self, provider: str) -> bool:
+        """Whether ``provider`` has a portable usable credential."""
+        try:
+            from jarvis.brain.app_control import get_spec, is_credential_present
+
+            spec = get_spec(provider)
+            if spec is not None:
+                return bool(is_credential_present(spec))
+            from jarvis.core import config as cfg_mod
+
+            return bool(cfg_mod.get_provider_secret(provider))
+        except Exception:  # noqa: BLE001 -- a failed probe is not readiness
+            return False
+
+    def tool_model_candidate_status(
+        self, provider: str, model: str | None = None
+    ) -> dict[str, Any]:
+        """Return a secret-free runtime capability verdict for one candidate."""
+        provider = (provider or "").strip()
+        model = model or self._cu_model(provider)
+        result: dict[str, Any] = {
+            "provider": provider,
+            "model": model,
+            "ready": False,
+            "reason": "unknown",
+            "tools": None,
+            "vision": None,
+        }
+        if not provider or provider == "auto":
+            result["reason"] = "automatic_selection"
+            return result
+        if provider not in set(self._registry.available()):
+            result["reason"] = "provider_unavailable"
+            return result
+        if provider in self._dead_providers:
+            result["reason"] = "provider_dead"
+            return result
+        if (provider, model) in self._dead_provider_models:
+            result["reason"] = "model_dead"
+            return result
+        if not self._rate_tracker.is_available(provider, model):
+            result["reason"] = "rate_limited"
+            return result
+        if not self._tool_model_credential_ready(provider):
+            result["reason"] = "missing_credential"
+            return result
+        try:
+            brain = self._get_brain(provider, model)
+        except Exception:  # noqa: BLE001 -- status must remain secret-free
+            result["reason"] = "provider_initialization_failed"
+            return result
+
+        result["vision"] = getattr(brain, "supports_vision", None)
+        try:
+            can_call = getattr(brain, "can_call_tools", None)
+            tools = (
+                bool(can_call())
+                if callable(can_call)
+                else bool(getattr(brain, "supports_tools", True))
+            )
+        except Exception:  # noqa: BLE001 -- fail closed for action routing
+            result["reason"] = "capability_probe_failed"
+            return result
+        result["tools"] = tools
+        if not tools:
+            result["reason"] = "tools_unsupported"
+            return result
+        result["ready"] = True
+        result["reason"] = "ready"
+        return result
+
+    def _tool_model_base_chain(self) -> list[tuple[str, str | None]]:
+        """Build the stable cross-provider chain used by automatic selection."""
+        brain_cfg = self._config.brain
+        names = [
+            getattr(brain_cfg, "primary", None),
+            getattr(brain_cfg, "deep_brain", None),
+            getattr(getattr(brain_cfg, "router", None), "provider", None),
+            "gemini",
+            "claude-api",
+            "openai",
+            "openrouter",
+            "groq",
+            "nvidia",
+            *self._registry.available(),
+        ]
+        seen: set[str] = set()
+        chain: list[tuple[str, str | None]] = []
+        for name in names:
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            chain.append((name, self._cu_model(name)))
+        return chain
+
+    def resolve_tool_model(
+        self, chain: list[tuple[str, str | None]] | None = None
+    ) -> dict[str, Any]:
+        """Resolve a key-ready, tool-capable provider across quota families."""
+        configured = self._tool_model_provider()
+        configured_model = (
+            self._cu_model(configured)
+            if configured and configured != "auto"
+            else None
+        )
+        candidates = list(chain) if chain is not None else self._tool_model_base_chain()
+        if configured and configured != "auto":
+            candidates.insert(0, (configured, configured_model))
+
+        seen_families: set[str] = set()
+        first_failure = "no_tool_capable_provider"
+        configured_failure: str | None = None
+        for index, (provider, model) in enumerate(candidates):
+            family = self._tool_model_family(provider)
+            if family in seen_families:
+                continue
+            seen_families.add(family)
+            verdict = self.tool_model_candidate_status(
+                provider, self._tool_model_model(provider, model)
+            )
+            if verdict["ready"]:
+                selected_configured = (
+                    configured not in ("", "auto") and provider == configured
+                )
+                return {
+                    "configured_provider": configured or "auto",
+                    "configured_model": configured_model,
+                    "effective_provider": provider,
+                    "effective_model": verdict["model"],
+                    "state": (
+                        "ready"
+                        if selected_configured or configured in ("", "auto")
+                        else "fallback"
+                    ),
+                    "reason": (
+                        "configured_selection"
+                        if selected_configured
+                        else (
+                            f"configured_{configured_failure}"
+                            if configured_failure is not None
+                            else "automatic_selection"
+                        )
+                    ),
+                    "source": self._tool_model_source(),
+                    "tools": verdict["tools"],
+                    "vision": verdict["vision"],
+                }
+            if index == 0:
+                first_failure = str(verdict["reason"])
+            if configured not in ("", "auto") and provider == configured:
+                configured_failure = str(verdict["reason"])
+
+        return {
+            "configured_provider": configured or "auto",
+            "configured_model": configured_model,
+            "effective_provider": None,
+            "effective_model": None,
+            "state": "blocked",
+            "reason": first_failure,
+            "source": self._tool_model_source(),
+            "tools": False,
+            "vision": None,
+        }
+
+    def _cu_provider(self) -> str:
+        """Compatibility accessor for the canonical global Tool Model provider."""
+        provider = self._tool_model_provider()
+        return "" if provider == "auto" else provider
+
+    def _hoist_tool_model(
+        self, chain: list[tuple[str, str | None]]
+    ) -> list[tuple[str, str | None]]:
+        """Filter a delegated turn to tool-capable cross-family candidates."""
+        configured = self._tool_model_provider()
+        candidates = list(chain)
+        if configured and configured != "auto":
+            candidates.insert(0, (configured, self._cu_model(configured)))
+
+        ready: list[tuple[str, str | None]] = []
+        seen_families: set[str] = set()
+        for provider, model in candidates:
+            family = self._tool_model_family(provider)
+            if family in seen_families:
+                continue
+            seen_families.add(family)
+            verdict = self.tool_model_candidate_status(
+                provider, self._tool_model_model(provider, model)
+            )
+            if verdict["ready"]:
+                ready.append((provider, verdict["model"]))
+        if not ready:
+            log.warning("No credential-ready, tool-capable Tool Model is available.")
+        return ready
 
     def _get_brain(self, name: str, model: str | None = None) -> Brain:
         """Retrieves a Brain instance from the cache, or builds a new one."""
@@ -2615,14 +2886,12 @@ class BrainManager:
     async def _provider_down_reply(self, trace_uuid: UUID) -> str:
         """Total-failure apology, ALSO surfaced to the transcript.
 
-        Returns the localized provider-down phrase AND publishes it as a
-        ``ResponseGenerated`` event so the SessionRecorder records it as the
-        turn's ``jarvis_text`` (``recorder.py::_on_response_generated``). Without
-        this the recorded turn keeps an empty reply and the voice transcript
-        shows the user line with no answer, even though the user heard the
-        apology aloud (live forensic 2026-06-20, session 09eef351). The apology
-        is deliberately NOT appended to the conversation history — an "I can't
-        reach my model" line must not pollute the LLM context for later turns.
+        Normal calls publish the phrase as ``ResponseGenerated`` so the
+        SessionRecorder records it as the turn's ``jarvis_text``. Internal
+        realtime delegates transfer that event ownership to their session,
+        which records what the user actually heard. The apology is deliberately
+        NOT appended to conversation history because a provider outage must not
+        pollute the LLM context for later turns.
         """
         phrase = self._next_provider_down_phrase()
         # _next_provider_down_phrase already localized the phrase via
@@ -2630,12 +2899,20 @@ class BrainManager:
         # detected-language inputs, the rotation index does not affect language)
         # and only tags the transcript's jarvis_lang — NEVER _looks_german, which
         # would mislabel a Spanish apology as English (Runtime Output Language).
-        await self._bus.publish(ResponseGenerated(
-            trace_id=trace_uuid,
-            text=phrase,
-            language=self._resolve_turn_lang(),
-        ))
+        await self._publish_response_generated(trace_id=trace_uuid, text=phrase)
         return phrase
+
+    async def _publish_response_generated(self, *, trace_id: UUID, text: str) -> None:
+        """Publish the public response event unless this call is an internal reply."""
+        if not _PUBLISH_RESPONSE_EVENT.get():
+            return
+        await self._bus.publish(
+            ResponseGenerated(
+                trace_id=trace_id,
+                text=text,
+                language=self._resolve_turn_lang(),
+            )
+        )
 
     def _mandatory_lang_directive(self, name: str) -> str:
         """The hard MANDATORY reply-language pin for a named language.
@@ -2982,6 +3259,11 @@ class BrainManager:
         )
         parts.append(base)
 
+        # Always-on self-control truth (see _SELF_CONTROL_STANDING rationale):
+        # keyword-free self-control phrasings must still find the tool path,
+        # and "claimed it, did nothing" is forbidden in every turn.
+        parts.append(_SELF_CONTROL_STANDING)
+
         # Tool selection rules — prevents the LLM from wildly firing
         # ``cli_supabase`` for "recherchiere zu Supabase" instead of using
         # ``search_web``. Intent → tool class → concrete tool.
@@ -3242,6 +3524,7 @@ class BrainManager:
     def _reset_provider_caches(self) -> None:
         """Clears session state that would block a freshly set key."""
         self._dead_providers.clear()
+        self._dead_provider_models.clear()
         self._brain_cache.clear()
         self._rate_tracker.clear()
 
@@ -3260,6 +3543,9 @@ class BrainManager:
         """
         was_dead = provider in self._dead_providers
         self._dead_providers.discard(provider)
+        self._dead_provider_models = {
+            k for k in self._dead_provider_models if k[0] != provider
+        }
         keys_to_drop = [k for k in self._brain_cache if k[0] == provider]
         for k in keys_to_drop:
             self._brain_cache.pop(k, None)
@@ -3332,6 +3618,9 @@ class BrainManager:
         for key in [k for k in self._brain_cache if k[0] == canonical]:
             self._brain_cache.pop(key, None)
         self._dead_providers.discard(canonical)
+        self._dead_provider_models = {
+            k for k in self._dead_provider_models if k[0] != canonical
+        }
         return canonical == self._active_name
 
     @staticmethod
@@ -5475,6 +5764,7 @@ class BrainManager:
         user_request: str,
         outcome_text: str,
         diagnostic: str | None,
+        context_label: str = "on-screen-action",
     ) -> None:
         """Ground a finished background Computer-Use outcome in the live history.
 
@@ -5506,7 +5796,7 @@ class BrainManager:
             # clearly as a non-spoken background detail so the model treats it as
             # context, not as something it already said aloud.
             note = (
-                f"{note}\n\n(Background on-screen-action detail, not spoken aloud "
+                f"{note}\n\n(Background {context_label} detail, not spoken aloud "
                 f"— for your context on a follow-up: {diag})"
             ).strip()
         history.append(BrainMessage(role="assistant", content=note))
@@ -5523,7 +5813,7 @@ class BrainManager:
         usable ingest source text; anything else is skipped, never raises.
         """
         try:
-            items = list(self._history)[-4:]
+            items = list(self._active_turn_history())[-4:]
         except Exception:  # noqa: BLE001 — history shape is provider-owned
             return None
         parts: list[str] = []
@@ -5533,6 +5823,56 @@ class BrainManager:
             if role in ("user", "assistant") and isinstance(text, str) and text.strip():
                 parts.append(f"{role}: {text.strip()}")
         return "\n".join(parts[-2:]) or None
+
+    def _active_turn_history(self) -> list[BrainMessage]:
+        """Return the context-local history when a caller supplied one."""
+        override = _TURN_HISTORY_OVERRIDE.get()
+        return list(override) if override is not None else self._history
+
+    async def _persisted_session_exchange_text(self) -> str | None:
+        """Return the latest persisted exchange from the active voice session.
+
+        Realtime deliberately owns a small context-local history instead of
+        sharing ``self._history``.  On its first delegated turn that history can
+        therefore be empty even though the session recorder already contains a
+        previous transcript.  Resolve the existing live runtime objects lazily
+        and require an active session id before reading: an unscoped "latest"
+        lookup could copy text from a different conversation into the Wiki.
+
+        The runtime objects are intentionally accessed through
+        :mod:`jarvis.core.runtime_refs`; the brain layer neither imports the web
+        server nor depends on the concrete ``SessionStore`` type.  Any partially
+        bootstrapped/headless runtime degrades to ``None``.
+        """
+        try:
+            from jarvis.core import runtime_refs
+
+            pipeline = runtime_refs.get_speech_pipeline()
+            status_fn = getattr(pipeline, "voice_engine_status", None)
+            status = status_fn() if callable(status_fn) else {}
+            session_id = str(status.get("session_id") or "").strip()
+            if not session_id:
+                return None
+
+            app = runtime_refs.get_web_app()
+            store = getattr(getattr(app, "state", None), "session_store", None)
+            get_latest = getattr(store, "get_latest_user_turn", None)
+            if not callable(get_latest):
+                return None
+
+            turn = await asyncio.to_thread(get_latest, session_id=session_id)
+        except Exception:  # noqa: BLE001 - persisted context is a soft fallback
+            log.debug("Persisted session-history lookup failed", exc_info=True)
+            return None
+
+        parts: list[str] = []
+        for role, value in (
+            ("user", getattr(turn, "user_text", None)),
+            ("assistant", getattr(turn, "jarvis_text", None)),
+        ):
+            if isinstance(value, str) and value.strip():
+                parts.append(f"{role}: {value.strip()}")
+        return "\n".join(parts) or None
 
     async def _run_wiki_ingest_fast_path(
         self,
@@ -5564,6 +5904,8 @@ class BrainManager:
         content = match.content
         if content is None:
             content = self._last_exchange_text()
+        if content is None:
+            content = await self._persisted_session_exchange_text()
         if not content or len(content.strip()) < 12:
             return await render_readback(
                 getattr(self, "_readback_composer", None),
@@ -5742,7 +6084,7 @@ class BrainManager:
             log.debug("wiki-ingest completion announce failed", exc_info=True)
 
     async def _on_cu_tool_completion(self, event: Any) -> None:
-        """Mirror a router-tier ``computer_use`` TOOL outcome into the history.
+        """Mirror trusted asynchronous outcomes into the live brain history.
 
         The voice fast-path grounds its CU outcome inline (``_run_computer_use_
         background`` → :meth:`_append_cu_outcome_to_history`). The router-tier
@@ -5750,23 +6092,36 @@ class BrainManager:
         so it tags its completion announcement with
         ``source_layer=CU_TOOL_OUTCOME_LAYER`` and we mirror it here — same
         grounding, so a text-chat / router-picked desktop action is in the
-        model's next-turn context too (no subsystem confusion). Only the tagged
-        CU-tool completion is mirrored; a mission / worker / other announcement is
-        ignored, so an unrelated background readback never pollutes the grounding.
+        model's next-turn context too. A ``kind="subagent"`` event is the signed
+        terminal Jarvis-Agent readback and is also retained, including its
+        mission id/result URI, so a later question can retrieve the real files.
+        Other background announcements remain ignored.
         Never raises — a bus subscriber that throws would break the pipeline
         (AP-18). The fast-path leaves ``source_layer`` empty, so its outcome is
         NOT double-recorded here.
         """
         try:
-            if getattr(event, "source_layer", "") != CU_TOOL_OUTCOME_LAYER:
+            source_layer = getattr(event, "source_layer", "")
+            kind = getattr(event, "kind", None)
+            if source_layer == CU_TOOL_OUTCOME_LAYER:
+                outcome_text = getattr(event, "text", "") or ""
+                context_label = "on-screen-action"
+            elif kind == "subagent":
+                outcome_text = (
+                    "Jarvis-Agent mission result: "
+                    f"{getattr(event, 'text', '') or ''}"
+                )
+                context_label = "Jarvis-Agent mission"
+            else:
                 return
             self._append_cu_outcome_to_history(
                 user_request="",
-                outcome_text=getattr(event, "text", "") or "",
+                outcome_text=outcome_text,
                 diagnostic=getattr(event, "detail", None),
+                context_label=context_label,
             )
         except Exception:  # noqa: BLE001
-            log.debug("CU-tool completion history mirror failed", exc_info=True)
+            log.debug("Background completion history mirror failed", exc_info=True)
 
     async def _record_response_side_effects(
         self,
@@ -5783,11 +6138,10 @@ class BrainManager:
             if len(self._history) > 40:
                 self._history = self._history[-40:]
 
-        await self._bus.publish(ResponseGenerated(
+        await self._publish_response_generated(
             trace_id=trace_id or uuid4(),
             text=response_text,
-            language=self._resolve_turn_lang(),
-        ))
+        )
 
         if self._curator is not None:
             try:
@@ -5866,7 +6220,14 @@ class BrainManager:
                     "failed", pending.tool_name, language=pending.lang
                 )
             kind = "done" if getattr(result, "success", False) else "failed"
-            return format_confirm_outcome(kind, pending.tool_name, language=pending.lang)
+            return format_confirm_outcome(
+                kind,
+                pending.tool_name,
+                language=pending.lang,
+                detail=(
+                    None if kind == "done" else getattr(result, "error", None)
+                ),
+            )
 
         if verdict == "veto":
             self._pending_voice_confirm = None
@@ -5912,7 +6273,12 @@ class BrainManager:
             return self._reply_language
         return "de" if _looks_german(user_text) else "en"
 
-    def _build_history_hints(self, *, max_turns: int = 3, max_chars_per_msg: int = 240) -> list[str]:
+    def _build_history_hints(
+        self,
+        *,
+        max_turns: int = 3,
+        max_chars_per_msg: int = 240,
+    ) -> list[str]:
         """Formats the last N turn pairs as compact ``context_hints``.
 
         Conversation memory bridge to the OpenClaw worker (bug fix 2026-04-30,
@@ -5921,14 +6287,14 @@ class BrainManager:
         explicitly refers to them ("erklaer mir das genauer",
         "was war der zweite Punkt?").
 
-        One hint per turn pair in the format:
-          ``Frueherer Turn — User: '...' | Du sagtest: '...'``
+        One hint is emitted per user/assistant turn pair.
         Truncated to ``max_chars_per_msg`` to prevent long replies from
         bloating the worker context.
         """
-        if not self._history:
+        history = self._active_turn_history()
+        if not history:
             return []
-        recent = self._history[-(2 * max_turns):]
+        recent = history[-(2 * max_turns):]
         hints: list[str] = []
         for i in range(0, len(recent) - 1, 2):
             u = recent[i]
@@ -5937,9 +6303,9 @@ class BrainManager:
                 continue
             u_text = str(u.content)[:max_chars_per_msg]
             a_text = str(a.content)[:max_chars_per_msg]
-            hints.append(f"Frueherer Turn — User: {u_text!r} | Du sagtest: {a_text!r}")
+            hints.append(f"Earlier turn — User: {u_text!r} | Assistant: {a_text!r}")
         if hints:
-            hints.insert(0, "Konversations-Kontext (letzte Turns, juengster zuletzt):")
+            hints.insert(0, "Conversation context (recent turns, newest last):")
         return hints
 
     async def _force_spawn_worker(
@@ -6273,16 +6639,28 @@ class BrainManager:
         db = self._config.brain.deep_brain
         if db:
             order.append(db)
-        order += ["gemini", "claude-api", "openai", "openrouter", "nvidia"]
+        order += ["gemini", "claude-api", "openai", "openrouter", "groq", "nvidia"]
         seen: set[str] = set()
         for name in order:
             if name in seen or name == self._active_name or name not in available:
                 continue
             seen.add(name)
+            # Skip providers dead-listed or rate-limited THIS session — the
+            # chain walk (see the dead_providers/rate_tracker checks at the
+            # top of the provider-chain loop below) already excludes them
+            # from actually answering, so picking one here as the "lead"
+            # left _router_lead_key pointing at an entry the chain would
+            # never reach: _is_router_lead misfired for the real lead and
+            # the toolless fall-through gate accepted a tool-incapable
+            # provider's answer as final.
+            if name in self._dead_providers:
+                continue
             model = (
                 self._deep_model(name) if level in ("deep", "code")
                 else self._fast_model(name)
             ) or self._fast_model(name)
+            if not self._rate_tracker.is_available(name, model):
+                continue
             if self._brain_can_call_tools(name, model):
                 return (name, model)
         return None
@@ -6414,6 +6792,7 @@ class BrainManager:
             "gemini",               # Google AI Studio
             "openrouter",           # universal gateway
             "openai",
+            "groq",                 # GroqCloud (shared key with Groq STT)
             "nvidia",               # NVIDIA NIM (free dev tier)
         ]
         for name in cross_order:
@@ -6451,10 +6830,53 @@ class BrainManager:
         *,
         use_history: bool = True,
         trace_id: UUID | None = None,
-        text_consumer: "Callable[[str], None] | None" = None,
+        text_consumer: Callable[[str], None] | None = None,
         on_progress: Callable[[], None] | None = None,
         source_layer: str | None = None,
         allow_voice_confirm: bool = False,
+        prefer_tool_model: bool = False,
+        publish_response: bool = True,
+        history_override: Iterable[BrainMessage] | None = None,
+    ) -> str:
+        """Generate a turn, optionally leaving its public response event to the caller.
+
+        ``publish_response=False`` suppresses only ``ResponseGenerated``. History,
+        curator work, tool execution, and every other turn side effect remain intact.
+        The context-local policy keeps concurrent classic and delegated calls isolated.
+        ``history_override`` supplies caller-owned context for this turn without
+        mutating the manager's shared conversation buffer; combine it with
+        ``use_history=False`` when the caller owns history persistence too.
+        """
+        token = _PUBLISH_RESPONSE_EVENT.set(bool(publish_response))
+        history_token = _TURN_HISTORY_OVERRIDE.set(
+            tuple(history_override) if history_override is not None else None
+        )
+        try:
+            return await self._generate(
+                user_text,
+                use_history=use_history,
+                trace_id=trace_id,
+                text_consumer=text_consumer,
+                on_progress=on_progress,
+                source_layer=source_layer,
+                allow_voice_confirm=allow_voice_confirm,
+                prefer_tool_model=prefer_tool_model,
+            )
+        finally:
+            _TURN_HISTORY_OVERRIDE.reset(history_token)
+            _PUBLISH_RESPONSE_EVENT.reset(token)
+
+    async def _generate(
+        self,
+        user_text: str,
+        *,
+        use_history: bool = True,
+        trace_id: UUID | None = None,
+        text_consumer: Callable[[str], None] | None = None,
+        on_progress: Callable[[], None] | None = None,
+        source_layer: str | None = None,
+        allow_voice_confirm: bool = False,
+        prefer_tool_model: bool = False,
     ) -> str:
         # 1. Intercept meta-commands (cancel, switch, depth override).
         # User request 2026-04-25: no standardised confirmation phrases
@@ -6472,6 +6894,14 @@ class BrainManager:
         # fallback loop (wiki-delta base) does not carry a stale provider name.
         self._active_turn_identity = None
         turn_trace_id = trace_id or uuid4()
+
+        # Tool-surface self-heal (live 2026-07-13): a source that connects
+        # AFTER the boot's last BrainToolsChanged — or whose event is lost to a
+        # wedged plugin bootstrap — otherwise stays invisible for the WHOLE
+        # session and the model refuses with "tool not available". Cheap
+        # names-only drift check against the live CLI/plugin/MCP caches; one
+        # refresh_tools() when they diverge. Never raises.
+        maybe_reconcile_tool_surface(self)
 
         # auto mode: resolve this turn's language so _reply_language_directive()
         # hard-pins it (a soft "mirror" drifts to German on tool-synthesis
@@ -6643,6 +7073,25 @@ class BrainManager:
                 getattr(self._skill_turn_match, "name", "?"),
             )
             self._skill_turn_match = None
+
+        # Wiki-write fast path (spec A1-A3): an explicit wiki target owns the
+        # turn before generic local-action, external-integration, or
+        # keyword-matched skill routing. The destination is authoritative;
+        # nouns inside the content (for example a trip to save as a fact) must
+        # never reinterpret the command as booking or dispatching that noun.
+        # Deterministic, model-independent, and confirm-after-write.
+        wiki_reply = await self._run_wiki_ingest_fast_path(
+            user_text, trace_id=turn_trace_id,
+        )
+        if wiki_reply is not None:
+            await self._record_response_side_effects(
+                user_text=user_text,
+                response_text=wiki_reply,
+                use_history=use_history,
+                trace_id=turn_trace_id,
+            )
+            return wiki_reply
+
         # Sibling of AD-S9: a plugin/marketplace skill that merely keyword-
         # matched an APP NAME ("Discord", "Spotify", "Slack") must NOT capture a
         # turn the deterministic desktop-control gate owns. Computer-Use is the
@@ -6706,25 +7155,6 @@ class BrainManager:
                     trace_id=turn_trace_id,
                 )
                 return local_action
-
-        # Wiki-write fast path (spec A1-A3): an explicit "write this to the
-        # wiki" command must not depend on the router LLM choosing the
-        # wiki-ingest tool (fresh-machine forensics Bug 12/18). Deterministic,
-        # model-independent, confirm-after-write — same shape as the
-        # local-action block above. Placed before navigation/capability gates
-        # so a skill match never shadows an explicit wiki command.
-        if self._skill_turn_match is None:
-            wiki_reply = await self._run_wiki_ingest_fast_path(
-                user_text, trace_id=turn_trace_id,
-            )
-            if wiki_reply is not None:
-                await self._record_response_side_effects(
-                    user_text=user_text,
-                    response_text=wiki_reply,
-                    use_history=use_history,
-                    trace_id=turn_trace_id,
-                )
-                return wiki_reply
 
         # Navigation fast-path: a clear "go to section X" command moves the UI
         # deterministically (a dumb action, AD-OE3). Placed BEFORE the capability
@@ -6934,6 +7364,11 @@ class BrainManager:
             user_text
         )
         chain = self._build_fallback_chain(decision.level)
+        if prefer_tool_model:
+            # Realtime delegation runs on the Tool Model pick; hoisted BEFORE
+            # the empty-chain check so an all-dead chain keeps the honest
+            # provider-down diagnostic below.
+            chain = self._hoist_tool_model(chain)
         if not chain:
             # Empty chain means either (a) no providers registered or
             # (b) all filtered out by _dead_providers (no key set).
@@ -6955,7 +7390,12 @@ class BrainManager:
                 log.warning("No brain providers available — spoken fallback used.")
             return await self._provider_down_reply(trace_uuid)
 
-        history = self._history if use_history else []
+        history_override = _TURN_HISTORY_OVERRIDE.get()
+        history = (
+            list(history_override)
+            if history_override is not None
+            else (self._history if use_history else [])
+        )
         _drop_in_hist = sum(
             1 for m in history
             if isinstance(getattr(m, "content", None), str)
@@ -7088,6 +7528,12 @@ class BrainManager:
             # still be in the chain but would fail for the same reason. Skip
             # saves an avoidable subprocess/network call.
             if prov_name in self._dead_providers:
+                continue
+            # Model-scoped dead-list: this exact (provider, model) took a
+            # billing rejection earlier THIS turn but the provider itself
+            # was kept alive because another model was still untried — see
+            # `_dead_provider_models`.
+            if (prov_name, model) in self._dead_provider_models:
                 continue
             # Circuit breaker: skip rate-limited providers during cooldown
             if not self._rate_tracker.is_available(prov_name, model):
@@ -7415,15 +7861,33 @@ class BrainManager:
                         (prov_name, model, "rate_limit", "HTTP 429"))
                 else:
                     log.warning("Brain %s(%s) fehlgeschlagen: %s", prov_name, model, exc)
-                    if (
-                        kind in _DEAD_LIST_KINDS
-                        and prov_name not in self._dead_providers
-                    ):
-                        self._dead_providers.add(prov_name)
-                        log.warning(
-                            "Provider %s fuer diese Session deaktiviert (%s) — die Kette "
-                            "weicht auf einen anderen verfuegbaren Anbieter aus. "
-                            "Setup: Sidebar -> API-Keys.", prov_name, kind)
+                    if kind in _DEAD_LIST_KINDS and prov_name not in self._dead_providers:
+                        # account_blocked (e.g. a bare 402) is model-scoped when
+                        # the SAME provider still has an untried model later in
+                        # this turn's chain (a capped paid model with a funded
+                        # free model behind it, tests/unit/brain/
+                        # test_depleted_credits_classification.py covers only the
+                        # classifier, not this chain policy). missing_key/bad_key
+                        # are credential problems and stay provider-wide — a dead
+                        # key blocks every model, not just this one.
+                        remaining_model = any(
+                            other_name == prov_name
+                            and other_model != model
+                            and (other_name, other_model) not in self._dead_provider_models
+                            for other_name, other_model in chain[idx + 1:]
+                        )
+                        if kind == "account_blocked" and remaining_model:
+                            self._dead_provider_models.add((prov_name, model))
+                            log.warning(
+                                "Model %s(%s) billing-blocked — anderes Modell "
+                                "desselben Anbieters bleibt in dieser Kette aktiv.",
+                                prov_name, model)
+                        else:
+                            self._dead_providers.add(prov_name)
+                            log.warning(
+                                "Provider %s fuer diese Session deaktiviert (%s) — die Kette "
+                                "weicht auf einen anderen verfuegbaren Anbieter aus. "
+                                "Setup: Sidebar -> API-Keys.", prov_name, kind)
                     provider_errors.append((prov_name, model, kind, msg[:200]))
                 # NOTE BUG-019 (2026-05-11): this generic ``continue`` does
                 # not touch the failing provider's *internal* state. For
@@ -7526,6 +7990,25 @@ class BrainManager:
                 )
                 response_text = _replacement
 
+        execution_evidence = set(_turn_executed)
+        if recovered is not None:
+            execution_evidence.add("recovered_tool_call")
+        honest_response = replace_unbacked_action_claim(
+            response_text,
+            executed_tools=execution_evidence,
+            language=resolve_output_language(
+                self._reply_language,
+                "unknown",
+                user_text,
+                default=DEFAULT_LOCALE,
+            ),
+        )
+        if honest_response != response_text:
+            log.warning(
+                "Blocked a model action promise with no execution evidence."
+            )
+            response_text = honest_response
+
         # 4. History + Events
         if use_history:
             self._history.append(BrainMessage(role="user", content=user_text))
@@ -7533,11 +8016,10 @@ class BrainManager:
             if len(self._history) > 40:
                 self._history = self._history[-40:]
 
-        await self._bus.publish(ResponseGenerated(
+        await self._publish_response_generated(
             trace_id=trace_uuid,
             text=response_text,
-            language=self._resolve_turn_lang(),
-        ))
+        )
 
         # Fire-and-forget: the curator extracts personal facts from the turn
         # and merges them into USER.md / people/*.md in a controlled manner.
@@ -7738,7 +8220,8 @@ class BrainManager:
         usual; pre-tool-use text is also streamed (the persona prompt forbids
         fillers, so this is uncritical). Evidence-gated turns are buffered
         until ``generate`` returns its authoritative final text, because the
-        post-call evidence enforcement may replace an unverified stream.
+        post-call evidence or action-honesty enforcement may replace an
+        unverified stream.
 
         ``on_progress`` (stall-timeout signal): forwarded to the tool-use loop,
         which pings it at every model-round + tool boundary. The speech pipeline
@@ -7760,6 +8243,15 @@ class BrainManager:
         # discarded this (BUG-028 pattern), so a leaked action-tool reached TTS
         # as raw JSON and the action was lost. We capture it here.
         holder: dict[str, str | None] = {"final": None}
+        context = tuple(
+            str(message.content or "")
+            for message in (
+                (getattr(self, "_history", ()) or ())[-8:]
+                if use_history
+                else ()
+            )
+        )
+        action_buffered = plan_turn(user_text, context=context).requires_orchestrator
 
         def _consumer(chunk: str) -> None:
             # ``put_nowait`` because the consumer is called on the sync
@@ -7807,6 +8299,8 @@ class BrainManager:
                 if getattr(self, "_evidence_required_tool", ""):
                     evidence_buffered = True
                     continue
+                if action_buffered:
+                    continue
                 yield chunk
                 yielded = True
             # Surface generate()'s authoritative final text whenever NOTHING was
@@ -7817,7 +8311,7 @@ class BrainManager:
             # silence on exactly those action turns — live repro 2026-05-25
             # "oeffne mir Chrome" returned empty while plain chat worked. The
             # old code only surfaced the final on the leaked-JSON path.
-            if leaked or not yielded or evidence_buffered:
+            if leaked or not yielded or evidence_buffered or action_buffered:
                 final = (holder.get("final") or "").strip()
                 if final and not _looks_like_tool_use_leak(final):
                     yield final
@@ -8061,6 +8555,10 @@ class BrainManager:
         old_count = len(self._tools)
         self._tools = new_tools
         self._local_action_tools = new_local_action_tools
+        # Record what the sources looked like at THIS load, so the per-turn
+        # reconcile (tool_surface.maybe_reconcile_tool_surface) only fires on
+        # genuine drift after a missed BrainToolsChanged.
+        stamp_tool_surface(self)
         log.info(
             "Tool-Registry refreshed: %d -> %d tools",
             old_count, len(new_tools),
@@ -8492,6 +8990,7 @@ _PROVIDER_SETUP_HINTS: dict[str, str] = {
     "claude-api": "ANTHROPIC_API_KEY setzen",
     "openai": "OPENAI_API_KEY setzen",
     "openrouter": "OPENROUTER_API_KEY setzen",
+    "groq": "Set GROQ_API_KEY (key from console.groq.com)",
     "nvidia": "Set NVIDIA_API_KEY (nvapi- key from build.nvidia.com)",
     "ollama-local": "Ollama-Server starten (localhost:11434)",
     "ollama-cloud": "Ollama-Cloud-Token setzen",

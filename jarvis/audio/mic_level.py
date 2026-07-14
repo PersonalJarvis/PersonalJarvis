@@ -27,8 +27,13 @@ _lock = threading.Lock()
 _subscribers: list[Callable[[float], None]] = []
 
 # Floors — prevent div-by-~0 and runaway gain on absolute silence (muted mic).
-_MIN_NOISE_FLOOR = 0.001
-_MIN_PEAK = 0.01
+# Sized for the QUIETEST real input path, not the maintainer's mic
+# (fresh-machine forensics Bug 17): a quiet laptop puts hiss at ~0.0005 and
+# real speech at ~0.002-0.006 rms — with the old floors (0.001 / 0.01) that
+# whole band rendered near-zero bars while STT/wake heard it fine. Digital
+# mute (~1e-5) still sits far below both floors, so a muted mic stays dark.
+_MIN_NOISE_FLOOR = 0.0002
+_MIN_PEAK = 0.004
 
 
 class LevelNormalizer:
@@ -39,7 +44,11 @@ class LevelNormalizer:
 
     def __init__(self) -> None:
         self._noise_floor = 0.005
-        self._peak = 0.05
+        # Start the auto-gain reference AT the floor: the attack path raises it
+        # to the true peak within one loud frame, while a high start (0.05)
+        # would take ~800 decay frames (~27 s) to reach a quiet mic's speech
+        # level — the bars would read near-dead for the whole first session.
+        self._peak = _MIN_PEAK
         self._smoothed = 0.0
 
     def push(self, rms: float) -> float:
@@ -66,7 +75,7 @@ class LevelNormalizer:
 
     def reset(self) -> None:
         self._noise_floor = 0.005
-        self._peak = 0.05
+        self._peak = _MIN_PEAK
         self._smoothed = 0.0
 
 

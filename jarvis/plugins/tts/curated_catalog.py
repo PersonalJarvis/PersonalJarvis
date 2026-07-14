@@ -104,8 +104,12 @@ _CATALOG: tuple[ModelEntry, ...] = (
         voices=tuple(
             VoiceEntry(v)
             for v in (
-                "Charon", "Kore", "Aoede", "Orus", "Iapetus",
-                "Rasalgethi", "Algenib", "Algieba", "Fenrir",
+                "Charon", "Kore", "Orus", "Iapetus", "Rasalgethi", "Algenib",
+                "Algieba", "Fenrir", "Aoede", "Zephyr", "Puck", "Leda",
+                "Callirrhoe", "Autonoe", "Enceladus", "Umbriel", "Despina",
+                "Erinome", "Laomedeia", "Achernar", "Alnilam", "Schedar",
+                "Gacrux", "Pulcherrima", "Achird", "Zubenelgenubi",
+                "Vindemiatrix", "Sadachbia", "Sadaltager", "Sulafat",
             )
         ),
     ),
@@ -131,7 +135,15 @@ _CATALOG: tuple[ModelEntry, ...] = (
         languages=("de", "en", "es"),
         latency_class="realtime",
         streaming=True,
-        voices=tuple(VoiceEntry(v) for v in ("leo", "rex", "sal", "ara", "eve")),
+        voices=tuple(
+            VoiceEntry(v)
+            for v in (
+                "leo", "rex", "sal", "ara", "eve", "carina", "zagan", "helix",
+                "orion", "luna", "iris", "altair", "zenith", "perseus",
+                "helios", "lux", "kepler", "rigel", "cosmo", "celeste", "ursa",
+                "sirius", "lumen", "castor", "naksh", "atlas",
+            )
+        ),
     ),
     # ---- OpenRouter (last-resort gateway) — only the four vetted KEEP ids ----
     ModelEntry(

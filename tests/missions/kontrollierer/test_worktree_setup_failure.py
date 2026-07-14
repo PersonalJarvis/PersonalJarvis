@@ -16,6 +16,7 @@ from pathlib import Path
 
 import pytest
 
+from jarvis.missions.isolation.worktree import SourceCheckoutUnavailableError
 from jarvis.missions.kontrollierer.decomposer import Step
 from jarvis.missions.kontrollierer.orchestrator import Kontrollierer, TaskOutcome
 
@@ -31,7 +32,7 @@ class _PathCapWorktrees:
     def create(
         self, *, mission_slug: str, task_id: str, needs_repo: bool = True
     ):  # noqa: ANN201
-        raise ValueError("Worktree-Pfad zu lang (250 > 200): ...")
+        raise ValueError("Worktree path is too long (250 > 200): ...")
 
 
 class _GitLockWorktrees:
@@ -69,6 +70,15 @@ class _NotAGitRepositoryWorktrees:
                 "directories): .git"
             ),
         )
+
+
+class _SourceCheckoutUnavailableWorktrees:
+    """Simulates a copied/container installation with no source history."""
+
+    def create(
+        self, *, mission_slug: str, task_id: str, needs_repo: bool = True
+    ):  # noqa: ANN201
+        raise SourceCheckoutUnavailableError(Path("/app"))
 
 
 @pytest.mark.asyncio
@@ -173,3 +183,31 @@ async def test_worktree_not_a_git_repository_yields_zip_install_reason(
 
     assert outcome == TaskOutcome.SETUP_FAILED
     assert k._setup_failure_reason["m-no-repo"] == "git_not_a_repository"
+
+
+@pytest.mark.asyncio
+async def test_source_checkout_capability_failure_is_distinct(
+    tmp_path: Path,
+) -> None:
+    """Copied application files are a supported runtime shape, not a broken
+    ZIP install. Source-dependent missions must surface their own capability
+    reason before a worker is started."""
+    k = object.__new__(Kontrollierer)
+    k._budget = _NoopBudget()
+    k._setup_failure_reason = {}
+    k._worktrees = _SourceCheckoutUnavailableWorktrees()
+
+    outcome = await k._run_task_with_critic_loop(
+        mission_id="m-source-unavailable",
+        mission_prompt="Fix the router source",
+        step=Step(slug="fix-router", prompt="Fix jarvis/brain/manager.py"),
+        mission_dir=tmp_path,
+        reflections=object(),
+        sem=asyncio.Semaphore(1),
+    )
+
+    assert outcome == TaskOutcome.SETUP_FAILED
+    assert (
+        k._setup_failure_reason["m-source-unavailable"]
+        == "source_checkout_unavailable"
+    )

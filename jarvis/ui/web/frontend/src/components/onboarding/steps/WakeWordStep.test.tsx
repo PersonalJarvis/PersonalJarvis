@@ -2,7 +2,12 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, expect, it, vi } from "vitest";
 vi.mock("@/i18n", () => ({ useT: () => (k: string) => k }));
 const saveWakeWord = vi.fn().mockResolvedValue({ ok: true, degraded: false });
-const setWakeActivation = vi.fn().mockResolvedValue({ ok: true, enabled: true, restart_required: true });
+const setWakeActivation = vi.fn().mockResolvedValue({
+  ok: true,
+  enabled: true,
+  applied_live: true,
+  restart_required: false,
+});
 vi.mock("@/hooks/useWakeWord", () => ({
   useWakeWord: () => ({ saveWakeWord, setWakeActivation }),
   useLocalSpeechInstall: () => ({

@@ -194,6 +194,24 @@ class ActionProposed(Event):
 
 
 @dataclass(frozen=True, slots=True)
+class ActionApprovalRequired(Event):
+    """A concrete tool call is paused until this trace receives a decision.
+
+    ``args_preview`` is redacted and length-capped before publication. Mission
+    identifiers are correlation metadata only; the mission itself remains in
+    its running state while this individual call waits.
+    """
+
+    tool_name: str = ""
+    risk_tier: RiskTier = "ask"
+    reason: str = "risk_tier"  # "risk_tier" | "plausibility"
+    args_preview: str = ""
+    expires_at_ns: int = 0
+    mission_id: str | None = None
+    worker_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class ActionApproved(Event):
     tool_name: str = ""
     approved_by: str = "auto"  # "auto" | "user" | "whitelist"
@@ -968,8 +986,15 @@ class LatencyPhase(StrEnum):
     # received (pre scrub-hold). AudioOutFirst still marks the first audible,
     # post-hold sample.
     REALTIME_INPUT_COMMITTED = "realtime_input_committed"
+    REALTIME_ROUTING_DECISION = "realtime_routing_decision"
     REALTIME_FIRST_TRANSCRIPT = "realtime_first_transcript"
     REALTIME_FIRST_AUDIO = "realtime_first_audio"
+    REALTIME_DELEGATE_STARTED = "realtime_delegate_started"
+    REALTIME_DELEGATE_COMPLETED = "realtime_delegate_completed"
+    REALTIME_TOOL_COMPLETED = "realtime_tool_completed"
+    REALTIME_SCRUB_CANCEL = "realtime_scrub_cancel"
+    REALTIME_CANCEL = "realtime_cancel"
+    REALTIME_TURN_COMPLETE = "realtime_turn_complete"
 
 
 _LATENCY_PHASE_VALUES: frozenset[str] = frozenset(p.value for p in LatencyPhase)
@@ -1023,11 +1048,22 @@ class VoiceBootStatus(Event):
     device, VAD, wake-word, TTS client) is live — *before* the background
     confirmation-audio pre-render finishes. The frontend listens for event_name
     ``VoiceBootStatus`` and reads ``GET /api/voice/status`` on a late mount
-    (WS events are not persistent). ``detail`` carries a short phase label for
-    logs/diagnostics only.
+    (WS events are not persistent).
+
+    Two degraded recovery paths also set ``ready=True`` solely to release the
+    web UI from a permanent loading screen. ``voice_usable`` is the stricter
+    product contract for affordances that promise the user can speak now.
     """
     ready: bool = False
     detail: str = ""
+
+    @property
+    def voice_usable(self) -> bool:
+        """Whether this event truthfully confirms a usable local voice path."""
+        return self.ready and self.detail not in {
+            "voice_unavailable",
+            "watchdog_timeout",
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -1036,6 +1072,18 @@ class VoiceSessionStarted(Event):
     session_id: str = ""
     wake_keyword: str = ""
     language: str = "de"
+
+
+@dataclass(frozen=True, slots=True)
+class RealtimeSessionReady(Event):
+    """A duplex provider accepted the effective session configuration."""
+
+    session_id: str = ""
+    provider: str = ""
+    model: str = ""
+    surface: str = ""
+    input_sample_rate: int = 0
+    output_sample_rate: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -1061,6 +1109,8 @@ class VoiceTurnCompleted(Event):
     tokens_in: int = 0
     tokens_out: int = 0
     cost_usd: float = 0.0
+    latency_total_ms: int = 0
+    tool_calls: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -1135,13 +1185,16 @@ class BioFeedbackRecorded(Event):
     """The user clicked a reaction button under the AI profile.
 
     Emitted by the ``POST /api/board/bio/feedback`` endpoint. Three kinds:
-    ``trifft`` (bio feels accurate), ``trifft_nicht`` (off the mark),  # i18n-allow: API/DB contract identifiers, matched in logic
-    ``haerter`` (make the next bio more pointed). The signal flows as a
+    ``trifft`` means the bio feels accurate.  # i18n-allow: API contract identifier
+    ``trifft_nicht`` means it is off the mark.  # i18n-allow: API contract identifier
+    ``haerter`` asks for a more pointed bio.  # i18n-allow: API contract identifier
+    The signal flows as a
     ``feedback_vector_block`` into the bio prompt for the next generation;
     no immediate regeneration.
     """
     bio_generated_at: str = ""
-    kind: str = ""        # "trifft" | "trifft_nicht" | "haerter"  # i18n-allow: API/DB contract identifiers, matched in logic
+    # API/DB identifiers matched in logic.  # i18n-allow
+    kind: str = ""  # "trifft" | "trifft_nicht" | "haerter"  # i18n-allow
 
 
 # ----------------------------------------------------------------------
@@ -1300,8 +1353,10 @@ class UserVisibleFeedback(Event):
 class OrbResetRequested(Event):
     """User asked to reset the orb to its default anchor (BUG-027 / L2).
 
-    Triggered by the local_action_gate when the user says "Orb zurück",  # i18n-allow: literal German voice-trigger phrase matched in logic
-    "wo bist du", or "reset orb". ``ui.orb.bus_bridge`` subscribes and
+    Triggered by the local action gate for these literal voice phrases:
+    "Orb zurück",  # i18n-allow: German voice-trigger phrase matched in logic
+    "wo bist du",  # i18n-allow: German voice-trigger phrase matched in logic
+    or "reset orb". ``ui.orb.bus_bridge`` subscribes and
     dispatches the actual reset onto the Tk thread. Decouples the voice
     trigger from the Tk-thread mutation — bus stays sync-friendly.
     """

@@ -22,6 +22,7 @@ from jarvis.cli_ctl.commands import auth as auth_cmd
 from jarvis.cli_ctl.commands import board as board_cmd
 from jarvis.cli_ctl.commands import brain as brain_cmd
 from jarvis.cli_ctl.commands import clis as clis_cmd
+from jarvis.cli_ctl.commands import commands as commands_cmd
 from jarvis.cli_ctl.commands import conductor as conductor_cmd
 from jarvis.cli_ctl.commands import config as config_cmd
 from jarvis.cli_ctl.commands import contacts as contacts_cmd
@@ -104,6 +105,7 @@ app.add_typer(auth_cmd.app, name="auth")
 app.add_typer(system_cmd.app, name="system")
 app.add_typer(tasks_cmd.app, name="tasks")
 app.add_typer(brain_cmd.app, name="brain")
+app.add_typer(commands_cmd.app, name="commands")
 app.add_typer(config_cmd.app, name="config")
 app.add_typer(missions_cmd.app, name="missions")
 app.add_typer(wiki_cmd.app, name="wiki")
@@ -135,20 +137,62 @@ def _dynamic_runner(method, path, params, body):
         return client.request(method, path, params=params, json=body)
 
 
-def build_root_command() -> click.Group:
-    """Return the Click root: the Typer app plus the grafted dynamic `api` group."""
+# Root options that consume the NEXT argv token as their value; skipped when
+# scanning for the invoked subcommand.
+_VALUE_OPTIONS = frozenset({"--url", "--key"})
+
+
+def _first_subcommand(argv: list[str]) -> str | None:
+    """Return the first non-option argv token (the invoked top-level command)."""
+    skip_next = False
+    for tok in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if tok in _VALUE_OPTIONS:
+            skip_next = True
+            continue
+        if tok.startswith("-"):
+            continue
+        return tok
+    return None
+
+
+def build_root_command(argv: list[str] | None = None) -> click.Group:
+    """Return the Click root: the Typer app plus the grafted dynamic `api` group.
+
+    The OpenAPI document is fetched over the network ONLY when the invocation
+    actually targets the dynamic ``api`` group. Every other command — including
+    ``--help`` and shell completion — grafts from the disk cache alone, so a
+    stale cache plus an unreachable server can never block e.g. ``jarvis
+    version`` on a connect timeout.
+    """
+    if argv is None:
+        argv = sys.argv[1:]
     root: click.Group = typer.main.get_command(app)
+    wants_api = not _in_completion() and _first_subcommand(argv) == "api"
     try:
-        if _in_completion():
-            # cache-only: ttl effectively infinite, no fetch attempt
-            spec, _ = openapi_cache._read_cache()
-        else:
+        if wants_api:
             with make_client() as client:
                 spec = openapi_cache.load_spec(client)
+        else:
+            # cache-only: ttl effectively infinite, no fetch attempt
+            spec, _ = openapi_cache._read_cache()
         if spec:
             from jarvis.cli_ctl.dynamic import build_api_group
 
             root.add_command(build_api_group(spec, _dynamic_runner))
+        elif wants_api:
+            # `jarvis api ...` would otherwise die with Click's bare
+            # "No such command 'api'" — say what actually went wrong, with
+            # the cause-specific unreachable diagnosis (not one canned line).
+            from jarvis.cli_ctl import doctor
+
+            click.echo(
+                "The dynamic `api` command group is unavailable (no cached "
+                "schema yet). " + doctor.unreachable_message(None),
+                err=True,
+            )
     except Exception as exc:  # noqa: S110 - static surface must work if dynamic build fails
         # The static surface must always work even if the dynamic build fails;
         # log at DEBUG so a missing `api` group stays diagnosable.
@@ -157,7 +201,7 @@ def build_root_command() -> click.Group:
 
 
 def main() -> None:
-    build_root_command()()
+    build_root_command(sys.argv[1:])()
 
 
 if __name__ == "__main__":

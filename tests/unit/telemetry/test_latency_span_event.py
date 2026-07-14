@@ -8,7 +8,7 @@ class from recurring on a new wire-format string.
 from __future__ import annotations
 
 import dataclasses
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 
@@ -47,7 +47,7 @@ def test_latency_span_rejects_unknown_phase() -> None:
 
 def test_latency_phase_is_a_string_enum_source_of_truth() -> None:
     # StrEnum members ARE strings (clean JSONL serialization in the recorder).
-    assert LatencyPhase.BRAIN_FIRST_TOKEN == "brain_first_token"
+    assert LatencyPhase.BRAIN_FIRST_TOKEN == "brain_first_token"  # noqa: S105
     expected = {
         "stt_finalize",
         "intent_decision",
@@ -66,8 +66,15 @@ def test_latency_phase_is_a_string_enum_source_of_truth() -> None:
         "tts_stream_done",
         # Realtime voice mode (OpenAI Realtime / Gemini Live) milestones.
         "realtime_input_committed",
+        "realtime_routing_decision",
         "realtime_first_transcript",
         "realtime_first_audio",
+        "realtime_delegate_started",
+        "realtime_delegate_completed",
+        "realtime_tool_completed",
+        "realtime_scrub_cancel",
+        "realtime_cancel",
+        "realtime_turn_complete",
     }
     assert {p.value for p in LatencyPhase} == expected
 

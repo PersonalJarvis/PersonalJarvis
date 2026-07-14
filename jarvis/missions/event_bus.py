@@ -21,6 +21,16 @@ from .events import EventEnvelope
 
 log = logging.getLogger(__name__)
 
+# Hard cap on how long a wildcard handler (registered via ``subscribe_all`` —
+# bridging to the global bus, telemetry/flight-recorder-style subscribers) may
+# take before ``publish`` abandons it for THIS dispatch. Mirrors
+# ``jarvis.core.bus.EventBus._WILDCARD_HANDLER_TIMEOUT_S`` (AP-18,
+# BUG-CU-STALL): a plain ``await handler(envelope)`` loop has no bound, so one
+# wedged wildcard handler (a stalled WebSocket forward, a dead channel API
+# call) freezes ``publish`` — and with it the publishing mission — forever,
+# because the caller's concurrency-limiting semaphore slot is never freed.
+_WILDCARD_HANDLER_TIMEOUT_S = 5.0
+
 
 @dataclass
 class Subscription:
@@ -52,8 +62,12 @@ class MissionBus:
         """Dispatch to all matching subscribers + wildcard handlers.
 
         Slow per-queue path: drops the oldest element, then put_nowait.
-        Wildcard errors are logged but never propagated (Phase-0-5 pattern
-        from `jarvis.core.bus.EventBus._safe_dispatch`).
+        Wildcard handlers are dispatched in PARALLEL (`asyncio.gather`), each
+        under a hard timeout, with errors logged but never propagated — true
+        parity with `jarvis.core.bus.EventBus._safe_dispatch` (AP-18,
+        BUG-CU-STALL): a single wedged wildcard handler (a stalled WebSocket
+        forward, a dead channel API call) can no longer block `publish` — and
+        with it the publishing mission — forever.
         """
         for sub in list(self._subscriptions):
             if sub.filter_fn is not None and not sub.filter_fn(envelope):
@@ -74,11 +88,30 @@ class MissionBus:
                     # Queue is still full (very tight) — event lost
                     sub.dropped += 1
 
-        for handler in list(self._wildcard_handlers):
-            try:
-                await handler(envelope)
-            except Exception:
-                log.exception("MissionBus: wildcard handler error discarded")
+        handlers = list(self._wildcard_handlers)
+        if handlers:
+            await asyncio.gather(
+                *(self._safe_dispatch(h, envelope) for h in handlers),
+                return_exceptions=True,
+            )
+
+    @staticmethod
+    async def _safe_dispatch(
+        handler: Callable[[EventEnvelope], Awaitable[None]], envelope: EventEnvelope
+    ) -> None:
+        try:
+            await asyncio.wait_for(
+                handler(envelope), timeout=_WILDCARD_HANDLER_TIMEOUT_S
+            )
+        except TimeoutError:
+            log.warning(
+                "MissionBus wildcard handler TIMED OUT (>%ss) and was abandoned "
+                "— handler=%s (AP-18: an observer must never block the bus)",
+                _WILDCARD_HANDLER_TIMEOUT_S,
+                getattr(handler, "__qualname__", repr(handler)),
+            )
+        except Exception:
+            log.exception("MissionBus: wildcard handler error discarded")
 
     @asynccontextmanager
     async def subscribe(

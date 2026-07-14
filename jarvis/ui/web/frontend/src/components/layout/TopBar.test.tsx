@@ -2,6 +2,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TopBar } from "./TopBar";
 
+vi.mock("@/hooks/useUpdate", () => ({
+  useUpdate: () => ({ status: { managed: false, update_available: false } }),
+}));
+
 afterEach(() => vi.restoreAllMocks());
 
 describe("TopBar restart button", () => {

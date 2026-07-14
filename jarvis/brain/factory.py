@@ -29,19 +29,21 @@ BrainCallback = Callable[[str], Awaitable[str]]
 # + Wave-4 amendment ``spawn-sub-jarvis`` -> ``spawn-worker``) and
 # Master-Plan §22 / Persona-Mandate Phase 3.
 #
-# Baseline (Mandate-Phase-3): run-shell, screen-snapshot, multi-spawn,
-# spawn-worker. Phase 8.4 (Plan §6.4 Quality-Gate) added dispatch-with-review,
-# which legitimately extends the set without breaking the pure-dispatcher
-# spirit.
+# Baseline after the 2026-07-13 cleanup: run-shell, screen-snapshot, and
+# spawn-worker. The legacy dispatch-to-harness, multi-spawn, and
+# dispatch-with-review paths are deliberately not model-visible because each
+# duplicated or bypassed the supervised Mission Manager lifecycle.
 #
 # REMOVED 2026-06-28 — ``dispatch-to-harness`` is intentionally NOT a
 # LLM-visible router tool. Its raw ``harness`` parameter let the brain request
 # a sub-agent vehicle by NAME (``harness="openclaw"``), but OpenClaw is not a
-# registered harness (Welle-4 removal, ~92% hang; pyproject.toml registers only
-# open-interpreter / mcp-remote / python-script / screenshot). A "start a
+# registered harness (Wave-4 removal, ~92% hang). The operational harness
+# inventory now contains only python-script and the capability-gated screenshot
+# adapter. A "start a
 # subagent" turn then dispatched to a phantom harness and surfaced the raw
-# "Harness 'openclaw' nicht verfügbar" KeyError to voice. Heavy sub-agent work  # i18n-allow: forensic quote of the actual historical German KeyError text
-# is ``spawn-worker`` (Mission-Manager → ClaudeDirectWorker); live desktop work
+# "Harness 'openclaw' nicht verfügbar" KeyError to voice.  # i18n-allow
+# Heavy Jarvis-Agent work is ``spawn-worker`` (Mission Manager → worker);
+# live desktop work
 # is ``computer-use``. The tool class itself still exists for the INTERNAL,
 # non-LLM local-action fast path (see ``_load_local_action_tools``, called
 # programmatically with harness="screenshot"); it is just not router-selectable.
@@ -62,11 +64,7 @@ ROUTER_TOOLS = frozenset({
     # NB: ``dispatch-to-harness`` deliberately absent (removed 2026-06-28) —
     # see the header comment above. Heavy work → spawn-worker; desktop →
     # computer-use. The tool remains for the internal local-action fast path.
-    "multi-spawn",
     "spawn-worker",
-    # Phase 8.4 (Plan §6.4) — Hauptjarvis calls the quality-gate pipeline
-    # explicitly. NEVER downstream in a recursive spawn (D9 recursion guard).
-    "dispatch-with-review",
     # AI Pointer (pull path): resolve the on-screen element under the mouse
     # cursor via the OS accessibility tree. Read-only, safe-tier; the brain
     # calls it on deictic questions ("what is this?"). A direct safe-gated read,
@@ -78,6 +76,13 @@ ROUTER_TOOLS = frozenset({
     # frontend listener moves the UI. Pure UI action, risk safe, NO spawn —
     # never in a worker set (AP-5/AP-14). See ADR-0011 amendment "Navigate tool".
     "navigate",
+    # Command Registry executor (2026-07-09): run ONE curated app command
+    # (jarvis/commands/registry.py) through the SAME REST endpoint the UI
+    # uses, in-process via ASGI transport. Enum-constrained command_id +
+    # schema-validated args; dangerous commands escalate to risk "ask"
+    # (two-turn voice confirm). Direct gated action, never a spawn — never in
+    # a worker set (AP-5/AP-14). See ADR-0011 amendment "app-command tool".
+    "app-command",
     # Phase A1: synchronous state read on the AwarenessManager (Plan §5).
     # NO brain call, NO IO — property read only.
     "awareness-snapshot",
@@ -149,7 +154,8 @@ ROUTER_TOOLS = frozenset({
     # any GUI). The router previously had no honest desktop path — spawn-worker
     # runs in an isolated worktree (cannot touch the desktop) and the
     # dispatch-to-harness indirection was never described as desktop control, so
-    # the model refused or hallucinated a tool for the German "öffne ein Terminal"  # i18n-allow: quoted German input example
+    # the model refused or hallucinated a tool for the German input
+    # "öffne ein Terminal".  # i18n-allow
     # ("open a terminal"). This tool delegates to the in-process
     # computer-use harness; it is a direct
     # safe-gated action (per-action risk gating inside the loop, ADR-0008),
@@ -322,7 +328,7 @@ def _load_tools_for_tier(
     the heavy worker runs as an external subprocess via the Mission-Manager.
 
     Encapsulates entry-point discovery + special cases (dispatch-to-harness,
-    spawn-worker, multi-spawn, whoami, awareness-snapshot).
+    spawn-worker, whoami, awareness-snapshot).
 
     Args:
         tier: currently only ``"router"``.
@@ -339,6 +345,46 @@ def _load_tools_for_tier(
 
     allow = ROUTER_TOOLS
     tools: dict[str, Any] = {}
+    # ``app-command`` and the other virtual loaders can expand to a name that
+    # is also provided by a purpose-built native entry point.  Entry-point
+    # iteration order is not a contract, so plain ``tools[name] = tool`` made
+    # the winner environment-dependent (notably Command Registry
+    # ``wiki-ingest`` versus the native lazy-curator WikiIngestTool).  Track
+    # provenance and make the precedence explicit: native > virtual; ties are
+    # resolved by stable source name.
+    tool_sources: dict[str, tuple[bool, str]] = {}
+
+    def register_tool(tool: Any, *, source: str, virtual: bool) -> None:
+        name = str(getattr(tool, "name", "") or "").strip()
+        if not name:
+            log.warning("Tool from %s has no name and was skipped", source)
+            return
+        candidate = (not virtual, source)
+        existing = tool_sources.get(name)
+        if existing is not None:
+            candidate_wins = candidate[0] and not existing[0]
+            if candidate[0] == existing[0]:
+                candidate_wins = candidate[1] < existing[1]
+            if not candidate_wins:
+                log.info(
+                    "Tool name collision for %r: keeping %s %r over %s %r",
+                    name,
+                    "native" if existing[0] else "virtual",
+                    existing[1],
+                    "native" if candidate[0] else "virtual",
+                    candidate[1],
+                )
+                return
+            log.info(
+                "Tool name collision for %r: replacing %s %r with %s %r",
+                name,
+                "native" if existing[0] else "virtual",
+                existing[1],
+                "native" if candidate[0] else "virtual",
+                candidate[1],
+            )
+        tools[name] = tool
+        tool_sources[name] = candidate
 
     for ep in entry_points(group="jarvis.tool"):
         if ep.name not in allow:
@@ -377,8 +423,6 @@ def _load_tools_for_tier(
                     manager=harness_manager,
                     max_output_chars=config.harness.max_output_chars,
                 )
-            elif ep.name == "multi-spawn":
-                inst = cls(bus=bus, manager=harness_manager)
             elif ep.name in ("verify-via-curl", "verify-localhost"):
                 inst = cls()
             elif ep.name == "start-preview-server":
@@ -459,9 +503,9 @@ def _load_tools_for_tier(
                     log.debug("virtual-loader '%s' expand() failed: %s", ep.name, exc)
                     continue
                 for tool in expanded:
-                    tools[tool.name] = tool
+                    register_tool(tool, source=ep.name, virtual=True)
             else:
-                tools[inst.name] = inst
+                register_tool(inst, source=ep.name, virtual=False)
         except Exception as exc:  # noqa: BLE001
             log.debug("Tool %s not loadable: %s", ep.name, exc)
 
@@ -516,7 +560,8 @@ def _load_local_action_tools(
             manager=harness_manager,
             max_output_chars=config.harness.max_output_chars,
         ),
-        # ADR-0016 L2: voice-driven orb recovery ("Orb zurück" /  # i18n-allow: quoted German voice-trigger phrase
+        # ADR-0016 L2: voice-driven orb recovery
+        # ("Orb zurück" /  # i18n-allow
         # "wo bist du" / "reset orb"). Publishes OrbResetRequested
         # on the bus; the orb-side bridge handles the Tk-thread dispatch.
         "reset_orb_position": ResetOrbPositionTool(bus=bus),
@@ -593,8 +638,8 @@ _KONTROLLIERER_REF: list[Any] = []
 # Sentinel that distinguishes "bootstrap not yet attempted" (default,
 # transient) from "bootstrap attempted and crashed" (permanent for this
 # process). spawn_worker checks this so the user gets an honest
-# "OpenClaw konnte nicht initialisiert werden" instead of the misleading  # i18n-allow: quoted German runtime voice-output phrase
-# "noch nicht bereit, bitte einen Moment warten" the in-progress path  # i18n-allow: quoted German runtime voice-output phrase
+# "OpenClaw konnte nicht initialisiert werden" instead of the misleading  # i18n-allow
+# "noch nicht bereit, bitte einen Moment warten" returned during boot.  # i18n-allow
 # returns when both the manager and kontrollierer singletons are None
 # but the server is still booting.
 _WORKER_BOOTSTRAP_FAILED: list[bool] = [False]
@@ -642,6 +687,18 @@ def set_worker_bootstrap_failed(flag: bool) -> None:
 def is_worker_bootstrap_failed() -> bool:
     """Returns True iff the Mission-Stack bootstrap raised at startup."""
     return bool(_WORKER_BOOTSTRAP_FAILED[0])
+
+
+def _register_runtime_manager(manager: Any) -> None:
+    """Publish one Brain Manager and its public tool gateway for all surfaces."""
+    try:
+        from jarvis.brain.tool_gateway import BrainSupervisorToolGateway
+        from jarvis.core import runtime_refs
+
+        runtime_refs.set_brain_manager(manager)
+        runtime_refs.set_supervisor_tool_gateway(BrainSupervisorToolGateway(manager))
+    except Exception as exc:  # noqa: BLE001 - registration never blocks boot
+        log.debug("Runtime supervisor gateway registration failed: %s", exc)
 
 
 def _phase2_full_brain(
@@ -704,7 +761,7 @@ def _phase2_full_brain(
     executor = ToolExecutor(bus, evaluator, approval)
 
     # HarnessManager for the internal harness fast path (computer-use /
-    # local-action) + multi-spawn. NB: dispatch-to-harness is no longer an
+    # local-action). NB: dispatch-to-harness is no longer an
     # LLM-visible router tool (removed 2026-06-28) — see the ROUTER_TOOLS header.
     from jarvis.harness.manager import HarnessManager
     harness_manager = HarnessManager(bus=bus)
@@ -919,12 +976,7 @@ def _phase2_full_brain(
     # ``switch-provider`` tool (and the ``describe-app-settings`` snapshot) can
     # reach it at execute-time for a live, no-restart provider switch. Mirrors
     # the MissionManager singleton pattern; a headless build registers itself too.
-    try:
-        from jarvis.core import runtime_refs
-
-        runtime_refs.set_brain_manager(manager)
-    except Exception as exc:  # noqa: BLE001 — must never block the brain build
-        log.debug("runtime_refs.set_brain_manager failed: %s", exc)
+    _register_runtime_manager(manager)
 
     # Wire live-reload on BrainToolsChanged (CLI connect/disconnect).
     try:
@@ -1032,8 +1084,8 @@ def _phase2_full_brain(
                 "read-visible-ui-state",
                 "switch-window",
                 # Primary action tools — without these every plan from the
-                # CU loop fails at execute-time with "Tool '<name>' nicht im  # i18n-allow: forensic quote of the actual German error text
-                # Computer-Use-Tool-Set verdrahtet". The ActionRegistry in
+                # CU loop otherwise fails with the historical error below:
+                # "Tool '<name>' nicht im Computer-Use-Tool-Set verdrahtet".  # i18n-allow
                 # action_registry.py:278-368 maps the corresponding action
                 # names (type_text, click, hotkey, move_mouse, open_app) to
                 # the tool.name attribute on these classes, so they must
@@ -1334,6 +1386,10 @@ def _legacy_full_brain(bus: Any | None = None) -> Any:
         people=people,
     )
 
+    # Keep the legacy/headless path on the same public supervisor-tool boundary
+    # as the primary router factory.
+    _register_runtime_manager(manager)
+
     manager._vision_provider = None
     router_tier = getattr(config.brain, "router", None)
     vision_cfg = getattr(router_tier, "vision", None) if router_tier is not None else None
@@ -1414,7 +1470,8 @@ def build_default_brain(
     # the single authoritative brain entry point, so EVERY runtime (voice, REST,
     # headless) has a populated registry before the first turn. Without this the
     # registry stays empty and BrainManager._check_unsupported_intent rejects
-    # every action utterance with "Das kann ich noch nicht ...", pre-empting the  # i18n-allow: quoted German runtime voice-output phrase
+    # every action utterance with the phrase below, pre-empting the provider:
+    # "Das kann ich noch nicht ..."  # i18n-allow
     # deterministic force-spawn path (live bug 2026-05-25 — "Kannst du einen
     # Subagent spawnen"). seed_registry is idempotent (re-registration replaces
     # by id), so repeated brain builds AND the dynamic MCP registration in
@@ -1630,9 +1687,11 @@ def _build_flash_provider(jcfg: Any, ack_cfg: Any) -> Any:
     "follow_brain" meta-value: resolve to whatever ``brain.primary``
     currently points at, so the user does not have to keep two provider
     settings in sync. If the main brain is on a provider the Flash-Brain
-    has no adapter for (openrouter, claude_api), fall back to "gemini" —
-    the historical default. Mutates ``ack_cfg.provider`` to the resolved
-    name so telemetry labels show the concrete provider.
+    has no adapter for (openrouter, claude_api), fall back to the first
+    REGISTRY family with a usable credential (AP-22 — a hardcoded literal
+    fallback would brick this tier for every downloader whose only key is
+    e.g. OpenAI). Mutates ``ack_cfg.provider`` to the resolved name so
+    telemetry labels show the concrete provider.
     """
     from jarvis.brain.ack_brain.providers import REGISTRY
 
@@ -1647,12 +1706,21 @@ def _build_flash_provider(jcfg: Any, ack_cfg: Any) -> Any:
             )
             provider_name = primary
         else:
+            fallback = _pick_keyed_flash_fallback(ack_cfg)
+            if fallback is None:
+                log.warning(
+                    "Flash-Brain: brain.primary=%r has no Flash adapter "
+                    "(REGISTRY=%s) and no REGISTRY provider has a usable "
+                    "credential; disabling Flash-Brain.",
+                    primary, sorted(REGISTRY.keys()),
+                )
+                return None
             log.warning(
                 "Flash-Brain: brain.primary=%r has no Flash adapter "
-                "(REGISTRY=%s); falling back to gemini.",
-                primary, sorted(REGISTRY.keys()),
+                "(REGISTRY=%s); falling back to keyed provider %r.",
+                primary, sorted(REGISTRY.keys()), fallback,
             )
-            provider_name = "gemini"
+            provider_name = fallback
         ack_cfg.provider = provider_name
     provider_cls = REGISTRY.get(provider_name)
     if provider_cls is None:
@@ -1664,6 +1732,29 @@ def _build_flash_provider(jcfg: Any, ack_cfg: Any) -> Any:
         return None
     provider_cfg = getattr(ack_cfg.providers, provider_name)
     return provider_cls(provider_cfg)
+
+
+def _pick_keyed_flash_fallback(ack_cfg: Any) -> str | None:
+    """First REGISTRY provider family with a usable credential, or ``None``.
+
+    AP-21/AP-22: never hardcode a literal provider name as the fallback — a
+    downloader whose only key is e.g. OpenAI must resolve to "openai", not a
+    keyless "gemini". Iterates ``REGISTRY`` in its declared order (gemini,
+    openai, ollama, ...) as the tie-break so an all-keyed setup keeps the
+    historical default. A provider config with no ``api_key_secret`` field
+    (local Ollama) needs no credential and is always considered usable.
+    """
+    from jarvis.brain.ack_brain.providers import REGISTRY
+    from jarvis.core.config import get_secret
+
+    for name in REGISTRY:
+        provider_cfg = getattr(ack_cfg.providers, name, None)
+        if provider_cfg is None:
+            continue
+        secret_name = getattr(provider_cfg, "api_key_secret", None)
+        if secret_name is None or get_secret(secret_name):
+            return name
+    return None
 
 
 def _build_ack_fallback(ack_cfg: Any, preferences_provider: Any = None) -> Any:

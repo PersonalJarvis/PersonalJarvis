@@ -41,6 +41,7 @@ in the user's profile. The env-builder copies the bearer to both
 ``ANTHROPIC_API_KEY`` and ``ANTHROPIC_OAUTH_TOKEN`` so the binary works
 regardless of which env var the CLI happens to check first.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -53,7 +54,9 @@ from contextlib import suppress
 from pathlib import Path
 from typing import Any, AsyncIterator, ClassVar, Literal
 
+from .capabilities import WorkerCapabilityInventory
 from .process_utils import create_worker_subprocess
+from .provider_chain import _resolve_provider_chain
 from .stream_consumer import (
     ClaudeAssistantMessage,
     ClaudeResult,
@@ -61,7 +64,6 @@ from .stream_consumer import (
     ClaudeSystemInit,
     ClaudeUserMessage,
 )
-from .provider_chain import _resolve_provider_chain
 
 logger = logging.getLogger(__name__)
 
@@ -195,10 +197,7 @@ def _resolve_claude_model(primary: Any) -> str:
         providers = getattr(cfg.brain, "providers", {}) or {}
         pcfg = providers.get("claude-api")
         if pcfg is not None:
-            resolved = (
-                getattr(pcfg, "deep_model", None)
-                or getattr(pcfg, "model", None)
-            )
+            resolved = getattr(pcfg, "deep_model", None) or getattr(pcfg, "model", None)
             if resolved:
                 return str(resolved)
     return _DEFAULT_CLAUDE_MODEL
@@ -250,9 +249,7 @@ def _resolve_claude_argv_prefix() -> list[str]:
     return [bare] if bare else ["claude"]
 
 
-def _build_mcp_config_args(
-    config_dir: Path, mcp_servers: dict[str, Any] | None
-) -> list[str]:
+def _build_mcp_config_args(config_dir: Path, mcp_servers: dict[str, Any] | None) -> list[str]:
     """Write the assembled MCP servers to ``config_dir`` and return claude-cli
     flags so the worker can call connected marketplace plugins / mcp.json
     servers.
@@ -262,18 +259,16 @@ def _build_mcp_config_args(
     would leak the token into ``_capture_diff`` (``git add -N`` + diff), the
     safety scan, and the archived ``diff.patch`` (AP-2 / AP-12).
 
-    Returns ``[]`` when there are no servers, so a plain mission is byte-for-byte
-    unchanged. ``--strict-mcp-config`` ensures only this config is honoured (a
-    stray project ``.mcp.json`` cannot inject extra servers into the worker).
+    An explicit config is written even when there are no servers.
+    ``--strict-mcp-config`` ensures only this inventory is honoured, so a stray
+    project or machine-global MCP config cannot inject extra worker tools.
     """
-    if not mcp_servers:
-        return []
     # NOTE: this file inlines resolved plugin secrets — spawn() deletes it the
     # moment the subprocess exits (see _MCP_CONFIG_FILENAME). Do not move it
     # into the worktree (AP-2 / AP-12) and do not keep it after the run.
     cfg_path = Path(config_dir) / _MCP_CONFIG_FILENAME
     cfg_path.write_text(
-        json.dumps({"mcpServers": mcp_servers}, ensure_ascii=False),
+        json.dumps({"mcpServers": mcp_servers or {}}, ensure_ascii=False),
         encoding="utf-8",
     )
     return ["--mcp-config", str(cfg_path), "--strict-mcp-config"]
@@ -290,12 +285,19 @@ class ClaudeDirectWorker:
 
     cli: ClassVar[Literal["claude", "codex", "python", "browser"]] = "claude"
 
-    def __init__(self, mcp_servers: dict[str, Any] | None = None) -> None:
+    def __init__(
+        self,
+        mcp_servers: dict[str, Any] | None = None,
+        *,
+        capability_inventory: WorkerCapabilityInventory | None = None,
+    ) -> None:
         self.last_pid: int | None = None
         self.last_session_id: str | None = None
-        # Assembled claude-cli ``mcpServers`` map (connected marketplace plugins
-        # + user mcp.json). Empty -> no MCP wiring. See jarvis.marketplace.mcp_bridge.
-        self._mcp_servers: dict[str, Any] = dict(mcp_servers or {})
+        # The legacy mcp_servers argument is folded into the same explicit
+        # inventory every backend receives.
+        self.capability_inventory = capability_inventory or WorkerCapabilityInventory.build(
+            mcp_servers=mcp_servers
+        )
 
     async def spawn(
         self,
@@ -317,6 +319,69 @@ class ClaudeDirectWorker:
         mission_id: str = "",
         allow_backend_fallback: bool = True,
         force_default_model: bool = False,
+        _broker_binding: Any | None = None,
+        **_unused: Any,
+    ) -> AsyncIterator[Any]:
+        """Run one Claude worker lifecycle under one mission-scoped grant."""
+        broker_binding = _broker_binding
+        issued_here = broker_binding is None
+        if issued_here:
+            broker_binding = self.capability_inventory.bind_broker(
+                ttl_s=timeout_s + _HARDCAP_GRACE_S + 60.0,
+                mission_id=mission_id or None,
+                worker_id=worker_id,
+            )
+        try:
+            async for event in self._spawn_bound(
+                prompt,
+                worktree=worktree,
+                env=env,
+                job=job,
+                worker_id=worker_id,
+                log_dir=log_dir,
+                model=model,
+                allowed_tools=allowed_tools,
+                permission_mode=permission_mode,
+                max_turns=max_turns,
+                resume_session_id=resume_session_id,
+                extra_args=extra_args,
+                timeout_s=timeout_s,
+                first_output_timeout_s=first_output_timeout_s,
+                mission_id=mission_id,
+                allow_backend_fallback=allow_backend_fallback,
+                force_default_model=force_default_model,
+                broker_binding=broker_binding,
+                **_unused,
+            ):
+                yield event
+        finally:
+            if issued_here and broker_binding is not None:
+                try:
+                    broker_binding.close()
+                except Exception:  # noqa: BLE001 - cleanup must not mask cancellation
+                    logger.exception("ClaudeDirectWorker: broker binding cleanup failed")
+
+    async def _spawn_bound(
+        self,
+        prompt: str,
+        *,
+        worktree: Path,
+        env: dict[str, str],
+        job: Any,
+        worker_id: str,
+        log_dir: Path,
+        model: str = "",
+        allowed_tools: str = "",
+        permission_mode: str = "bypassPermissions",
+        max_turns: int = 20,
+        resume_session_id: str | None = None,
+        extra_args: tuple[str, ...] = (),
+        timeout_s: float = _DEFAULT_TIMEOUT_S,
+        first_output_timeout_s: float = _DEFAULT_FIRST_OUTPUT_TIMEOUT_S,
+        mission_id: str = "",
+        allow_backend_fallback: bool = True,
+        force_default_model: bool = False,
+        broker_binding: Any | None,
         **_unused: Any,
     ) -> AsyncIterator[Any]:
         """Spawn ``claude --print --output-format=stream-json`` with the prompt on stdin.
@@ -362,11 +427,16 @@ class ClaudeDirectWorker:
                 "which has no direct worker (OpenClaw path removed in Welle 4) — "
                 "running heavy work on the Claude Max OAuth backend (model=%s) "
                 "instead of failing the mission.",
-                worker_id, primary.provider, claude_model,
+                worker_id,
+                primary.provider,
+                claude_model,
             )
 
         session_id = resume_session_id or str(uuid.uuid4())
         self.last_session_id = session_id
+        broker_servers = (
+            broker_binding.mcp_server_config() if broker_binding is not None else {}
+        )
 
         # 2. Build the claude argv. ``force_default_model`` omits ``--model``
         # entirely so the CLI picks its own accessible default — the recovery
@@ -377,19 +447,21 @@ class ClaudeDirectWorker:
         cmd: list[str] = [
             *argv_prefix,
             "--print",
-            "--output-format", "stream-json",
+            "--output-format",
+            "stream-json",
             "--verbose",  # required by --print + stream-json
-            "--permission-mode", permission_mode,
-            "--add-dir", str(worktree),
+            "--permission-mode",
+            permission_mode,
+            "--add-dir",
+            str(worktree),
         ]
         if not force_default_model:
             cmd.extend(["--model", claude_model])
         if allowed_tools:
             cmd.extend(["--allowedTools", allowed_tools])
-        # Connected marketplace plugins / mcp.json -> claude-cli MCP config so
-        # the delegated worker can actually call the plugins (AD-OE4). Written to
-        # log_dir (NOT the worktree) so the resolved token never lands in the diff.
-        cmd.extend(_build_mcp_config_args(log_dir, self._mcp_servers))
+        # The CLI sees only the local broker adapter. Connector credentials stay
+        # in the supervisor and never enter this config or the worker worktree.
+        cmd.extend(_build_mcp_config_args(log_dir, broker_servers))
         cmd.extend(extra_args)
 
         yield ClaudeSystemInit(
@@ -397,11 +469,16 @@ class ClaudeDirectWorker:
             model=f"claude-cli/{claude_model}",
             tools=[],
             cwd=str(worktree),
+            external_capabilities=self.capability_inventory.report_for(
+                "claude-cli", binding=broker_binding
+            ),
         )
 
         logger.info(
             "ClaudeDirectWorker[%s] spawn: cwd=%s model=%s",
-            worker_id, worktree, claude_model,
+            worker_id,
+            worktree,
+            claude_model,
         )
 
         # 3. Spawn the subprocess with the prompt on stdin. The helper sources
@@ -413,7 +490,11 @@ class ClaudeDirectWorker:
             proc = await create_worker_subprocess(
                 cmd,
                 cwd=str(worktree),
-                env=env,
+                env=(
+                    broker_binding.apply_environment(env)
+                    if broker_binding is not None
+                    else env
+                ),
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
@@ -439,7 +520,9 @@ class ClaudeDirectWorker:
         except Exception:  # noqa: BLE001
             logger.warning(
                 "ClaudeDirectWorker[%s]: job.assign(pid=%d) failed",
-                worker_id, proc.pid, exc_info=True,
+                worker_id,
+                proc.pid,
+                exc_info=True,
             )
 
         # Write the prompt then close stdin to signal EOF.
@@ -451,7 +534,8 @@ class ClaudeDirectWorker:
         except (BrokenPipeError, ConnectionResetError) as exc:
             logger.warning(
                 "ClaudeDirectWorker[%s]: prompt stdin write failed: %s",
-                worker_id, exc,
+                worker_id,
+                exc,
             )
 
         # 4. Drain stdout LINE-BY-LINE so progress is observable WHILE the
@@ -501,15 +585,9 @@ class ClaudeDirectWorker:
                     f"({timeout_s + _HARDCAP_GRACE_S:.0f}s) exceeded while streaming"
                 )
                 break
-            read_cap = (
-                remaining
-                if got_first_line
-                else min(first_output_timeout_s, remaining)
-            )
+            read_cap = remaining if got_first_line else min(first_output_timeout_s, remaining)
             try:
-                raw = await asyncio.wait_for(
-                    proc.stdout.readline(), timeout=read_cap
-                )
+                raw = await asyncio.wait_for(proc.stdout.readline(), timeout=read_cap)
             except TimeoutError:
                 if got_first_line:
                     # read_cap == remaining here, so the deadline check at the
@@ -549,9 +627,7 @@ class ClaudeDirectWorker:
                 with stdout_log.open("ab") as stream_fh:
                     stream_fh.write(raw)
             except OSError as exc:
-                logger.warning(
-                    "ClaudeDirectWorker: stream.jsonl append failed: %s", exc
-                )
+                logger.warning("ClaudeDirectWorker: stream.jsonl append failed: %s", exc)
             line = raw.decode("utf-8", errors="replace").strip()
             if not line:
                 continue
@@ -567,11 +643,8 @@ class ClaudeDirectWorker:
                     cost_usd=obj.get("total_cost_usd") or obj.get("cost_usd"),
                     num_turns=obj.get("num_turns"),
                     session_id=obj.get("session_id") or session_id,
-                    duration_ms=obj.get("duration_ms")
-                    or int((time.perf_counter() - t0) * 1000),
-                    result=obj.get("result")
-                    or obj.get("text")
-                    or "\n".join(text_acc),
+                    duration_ms=obj.get("duration_ms") or int((time.perf_counter() - t0) * 1000),
+                    result=obj.get("result") or obj.get("text") or "\n".join(text_acc),
                 )
                 continue
             if obj_type == "assistant":
@@ -586,14 +659,10 @@ class ClaudeDirectWorker:
                 yield ClaudeAssistantMessage(message=msg, session_id=session_id)
                 continue
             if obj_type == "user":
-                yield ClaudeUserMessage(
-                    message=obj.get("message", {}), session_id=session_id
-                )
+                yield ClaudeUserMessage(message=obj.get("message", {}), session_id=session_id)
                 continue
             if obj_type == "stream_event":
-                yield ClaudeStreamDelta(
-                    event=obj.get("event", {}), session_id=session_id
-                )
+                yield ClaudeStreamDelta(event=obj.get("event", {}), session_id=session_id)
                 continue
             # ignore "system" events — we already emitted our synthetic init.
 
@@ -662,8 +731,7 @@ class ClaudeDirectWorker:
             final_result = final_result.model_copy(update={"timed_out": True})
 
         logger.info(
-            "ClaudeDirectWorker[%s] done: exit=%s wall_ms=%s tool_use_seen=%s "
-            "session=%s",
+            "ClaudeDirectWorker[%s] done: exit=%s wall_ms=%s tool_use_seen=%s session=%s",
             worker_id,
             proc.returncode,
             int((time.perf_counter() - t0) * 1000),
@@ -693,23 +761,21 @@ class ClaudeDirectWorker:
         # rejection slips past and the mission fails instead of retrying on the
         # CLI default. (`not timed_out` above means stderr_bytes here is the
         # subprocess's real stderr, never the synthetic timeout message.)
-        stderr_text = (
-            stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
-        )
+        stderr_text = stderr_bytes.decode("utf-8", errors="replace") if stderr_bytes else ""
         if (
             final_result.is_error
             and not timed_out
             and not any_tool_use
             and not force_default_model
-            and _claude_error_is_model_unavailable(
-                (final_result.result or "") + "\n" + stderr_text
-            )
+            and _claude_error_is_model_unavailable((final_result.result or "") + "\n" + stderr_text)
         ):
             logger.warning(
                 "ClaudeDirectWorker[%s]: model %r rejected by the CLI (%r) — "
                 "retrying without --model so the CLI picks an accessible "
                 "default and the mission completes.",
-                worker_id, claude_model, (final_result.result or "")[:160],
+                worker_id,
+                claude_model,
+                (final_result.result or "")[:160],
             )
             async for ev in self.spawn(
                 prompt,
@@ -729,6 +795,7 @@ class ClaudeDirectWorker:
                 mission_id=mission_id,
                 allow_backend_fallback=allow_backend_fallback,
                 force_default_model=True,
+                _broker_binding=broker_binding,
             ):
                 yield ev
             return
@@ -751,9 +818,7 @@ class ClaudeDirectWorker:
             final_result.is_error
             and not timed_out
             and not any_tool_use
-            and _claude_error_is_auth_failure(
-                (final_result.result or "") + "\n" + stderr_text
-            )
+            and _claude_error_is_auth_failure((final_result.result or "") + "\n" + stderr_text)
         ):
             from jarvis.claude_auth_state import (
                 credential_fingerprint,
@@ -762,8 +827,7 @@ class ClaudeDirectWorker:
 
             mark_claude_auth_dead(
                 fingerprint=credential_fingerprint(
-                    env.get("CLAUDE_CODE_OAUTH_TOKEN")
-                    or env.get("ANTHROPIC_API_KEY")
+                    env.get("CLAUDE_CODE_OAUTH_TOKEN") or env.get("ANTHROPIC_API_KEY")
                 )
             )
             if allow_backend_fallback:
@@ -786,9 +850,12 @@ class ClaudeDirectWorker:
                         "(ChatGPT) worker so the mission completes. Run "
                         "`claude /login` (or save a fresh Anthropic key in the "
                         "API-Keys view) to use Claude again.",
-                        worker_id, (final_result.result or "")[:160],
+                        worker_id,
+                        (final_result.result or "")[:160],
                     )
-                    async for ev in CodexDirectWorker().spawn(
+                    async for ev in CodexDirectWorker(
+                        capability_inventory=self.capability_inventory
+                    ).spawn(
                         prompt,
                         worktree=worktree,
                         env=env,
@@ -801,6 +868,7 @@ class ClaudeDirectWorker:
                         timeout_s=timeout_s,
                         mission_id=mission_id,
                         allow_backend_fallback=False,
+                        _broker_binding=broker_binding,
                     ):
                         yield ev
                     return
@@ -809,7 +877,8 @@ class ClaudeDirectWorker:
                 "login is reachable — surfacing the auth error honestly; the "
                 "worker factory will cross to another provider family on the "
                 "retry. Run `claude /login` to restore Claude.",
-                worker_id, (final_result.result or "")[:160],
+                worker_id,
+                (final_result.result or "")[:160],
             )
 
         # Claude Max quota fallback (mirror of the codex->claude direction).
@@ -821,12 +890,7 @@ class ClaudeDirectWorker:
         # discarded, the orchestrator grades it instead), complete the
         # mission on the codex worker. `allow_backend_fallback=False` on the
         # nested spawn prevents claude->codex->claude ping-pong.
-        if (
-            allow_backend_fallback
-            and final_result.is_error
-            and not timed_out
-            and not any_tool_use
-        ):
+        if allow_backend_fallback and final_result.is_error and not timed_out and not any_tool_use:
             from jarvis.codex_auth_state import codex_needs_reauth
             from jarvis.codex_quota_state import codex_in_quota_cooldown
 
@@ -856,9 +920,12 @@ class ClaudeDirectWorker:
                     "with no work delivered — falling back to the codex "
                     "(ChatGPT) worker so the mission completes. claude "
                     "resumes automatically once its window resets.",
-                    worker_id, (final_result.result or "")[:160],
+                    worker_id,
+                    (final_result.result or "")[:160],
                 )
-                async for ev in CodexDirectWorker().spawn(
+                async for ev in CodexDirectWorker(
+                    capability_inventory=self.capability_inventory
+                ).spawn(
                     prompt,
                     worktree=worktree,
                     env=env,
@@ -871,6 +938,7 @@ class ClaudeDirectWorker:
                     timeout_s=timeout_s,
                     mission_id=mission_id,
                     allow_backend_fallback=False,
+                    _broker_binding=broker_binding,
                 ):
                     yield ev
                 return

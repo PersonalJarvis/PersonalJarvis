@@ -1,0 +1,375 @@
+{
+  "surface": "report",
+  "manifest": {
+    "version": 1,
+    "surface": "report",
+    "title": "Realtime Models and the Obsidian Wiki",
+    "description": "A technical deep dive into Personal Jarvis realtime knowledge retrieval, vault integrity, latency, and the recommended production architecture.",
+    "generatedAt": "2026-07-12T09:19:44Z",
+    "filters": [],
+    "cards": [],
+    "charts": [
+      {
+        "id": "candidate_outcomes_chart",
+        "title": "Wiki candidate outcomes",
+        "subtitle": "Processed candidate journal snapshot on July 12, 2026; write activity does not prove retrieval availability.",
+        "type": "bar",
+        "dataset": "candidate_outcomes",
+        "source": {
+          "query": {
+            "engine": "sqlite",
+            "sql": "SELECT status, COUNT(*) AS candidates FROM wiki_candidate_journal GROUP BY status ORDER BY candidates DESC",
+            "description": "Counts processed wiki candidates by outcome in the inspected local SQLite journal.",
+            "executed_at": "2026-07-12T09:19:44Z",
+            "language": "sql"
+          }
+        },
+        "valueFormat": "number",
+        "encodings": {
+          "x": {"field": "status", "type": "nominal", "label": "Outcome"},
+          "y": {"field": "candidates", "type": "quantitative", "label": "Candidates"},
+          "tooltip": [
+            {"field": "status", "type": "nominal", "label": "Outcome"},
+            {"field": "candidates", "type": "quantitative", "label": "Candidates"}
+          ]
+        }
+      }
+    ],
+    "tables": [],
+    "sources": [
+      {
+        "id": "repo_runtime",
+        "label": "Personal Jarvis repository, tests, logs, and read-only live CLI inspection",
+        "path": "jarvis/realtime/session.py",
+        "query": {
+          "engine": "powershell",
+          "sql": "$tree = py -3.11 -m jarvis --json wiki tree | ConvertFrom-Json\n$slug = $tree.folders.files | Select-Object -First 1 -ExpandProperty slug\npy -3.11 -m jarvis --json wiki page $slug\npy -3.11 -m jarvis --json wiki recall $slug\nrg -n -i 'wiki.*realtime|realtime.*wiki|wiki-recall|WikiContext' tests/unit/realtime tests/integration/realtime tests/unit/memory/wiki/test_voice_bridge_realtime.py\npy -3.11 -m pytest -q -p no:cacheprovider tests/unit/memory/wiki/test_voice_bridge_realtime.py tests/unit/brain/test_wiki_fast_path.py tests/integration/test_wiki_boot_index.py tests/unit/plugins/tool/test_wiki_tools.py tests/unit/realtime/test_openai_realtime.py",
+          "description": "Reproduces the reviewed live checks and focused test run.",
+          "executed_at": "2026-07-12T09:19:44Z",
+          "language": "powershell"
+        }
+      },
+      {
+        "id": "design_synthesis",
+        "label": "Repository design synthesis and approved wiki reliability specification",
+        "path": "docs/superpowers/specs/2026-07-07-wiki-reliability-and-premium-rag-design.md",
+        "query": {
+          "engine": "powershell",
+          "sql": "Get-Content -Raw docs/superpowers/specs/2026-07-07-wiki-reliability-and-premium-rag-design.md\nGet-Content -Raw jarvis/realtime/session.py\nGet-Content -Raw jarvis/brain/wiki_context.py\nGet-Content -Raw jarvis/memory/wiki/watcher.py\nGet-Content -Raw jarvis/memory/wiki/health.py",
+          "description": "Loads the design and implementation sources used for the architecture synthesis.",
+          "executed_at": "2026-07-12T09:19:44Z",
+          "language": "powershell"
+        }
+      },
+      {
+        "id": "openai_docs",
+        "label": "OpenAI Realtime and voice-agent documentation",
+        "url": "https://developers.openai.com/api/docs/guides/realtime-mcp"
+      },
+      {
+        "id": "google_docs",
+        "label": "Gemini Live tool-use documentation",
+        "url": "https://ai.google.dev/gemini-api/docs/live-api/tools"
+      },
+      {
+        "id": "obsidian_docs",
+        "label": "Obsidian vault documentation",
+        "url": "https://obsidian.md/help/vault"
+      },
+      {
+        "id": "sqlite_docs",
+        "label": "SQLite FTS5 documentation",
+        "url": "https://www.sqlite.org/fts5.html"
+      },
+      {
+        "id": "hybrid_search_docs",
+        "label": "Azure AI Search hybrid retrieval and RRF documentation",
+        "url": "https://learn.microsoft.com/en-us/azure/search/hybrid-search-overview"
+      }
+    ],
+    "blocks": [
+      {
+        "id": "title",
+        "type": "markdown",
+        "body": "# Realtime Models and the Obsidian Wiki"
+      },
+      {
+        "id": "technical_summary",
+        "type": "markdown",
+        "body": "## Technical summary\n\nPersonal Jarvis has a credible Markdown-first memory foundation, but the active native realtime path is not yet a reliable wiki reader. The classic Brain path performs an 80 ms-bounded FTS lookup and exposes `wiki-recall` plus `wiki-page-read`. The active realtime configuration uses delegate mode, whose prompt tells the native model to answer knowledge questions itself and to call Jarvis only for actions. That bypasses both the pre-turn injector and normal wiki retrieval for the questions where personal memory matters most.\n\nThe write side is further ahead: completed realtime turns feed the background fact journal, and explicit wiki writes can delegate to the router. The read side has no end-to-end regression test. During the live inspection the configured vault was healthy enough to list one Markdown page, while a search for that page's known title returned zero hits. The health endpoint still reported `bootstrap_ok=true`, demonstrating that current health is lifecycle health, not retrieval health.\n\nThe recommended design is a narrow, local `knowledge_lookup` function available beside `jarvis_action` in every realtime session. A deterministic memory-intent gate starts FTS prefetch as soon as the final transcript arrives; if the model requests the lookup, the result is normally already warm. Obsidian Markdown remains canonical, SQLite becomes a self-validating materialized index, semantic retrieval remains an optional deliberate-lookup layer, and no remote MCP server receives the whole vault."
+      },
+      {
+        "id": "retrieval_checks_heading",
+        "type": "markdown",
+        "body": "## The write pipeline is active, but that does not prove retrieval\n\nThe candidate journal contained 346 processed facts: 295 consolidated and 51 skipped. This is useful evidence that realtime and ambient capture can feed the write side. It does not prove that the native realtime answer path can retrieve those facts, or that the active Markdown vault and SQLite index are synchronized."
+      },
+      {"id": "candidate_outcomes_block", "type": "chart", "chartId": "candidate_outcomes_chart"},
+      {
+        "id": "current_path_heading",
+        "type": "markdown",
+        "body": "## The current system writes from realtime but does not reliably read from it\n\nThe capability split is architectural, not a single missing prompt line. Classic Brain generation owns per-turn wiki injection. Native realtime generation owns a long-lived provider session and currently has no provider-neutral pre-response knowledge hook. Direct tool mode can expose the router tools, but the active default is delegate mode and the delegate contract explicitly excludes ordinary knowledge questions.\n\n- **Classic Brain turn:** supports explicit ingest, ambient capture, bounded FTS injection, recall, and page reads. Its 80 ms injector currently uses the shared default executor.\n- **Realtime delegate mode (active default):** captures completed turns and can delegate explicit writes, but tells the native model to answer ordinary knowledge questions itself.\n- **Realtime direct-tool mode:** can expose the full router bridge, but is not the active default and has no end-to-end wiki-read proof.\n- **Manual Obsidian edit:** becomes visible to tree and page APIs, while the watcher does not update FTS; the canonical file and retrieval index can diverge."
+      },
+      {
+        "id": "index_integrity",
+        "type": "markdown",
+        "body": "## Vault and index can diverge without turning health red\n\nThe vault watcher publishes UI refresh events only; it does not upsert or remove FTS rows after manual Obsidian edits. Boot indexing runs only when the entire FTS table is empty, and the health singleton stores bootstrap, write, and provider-chain state only in process memory. It does not compare vault page count with index row count, record index generation, or test a known lookup.\n\nThis explains the observed contradiction: the tree and page APIs read Markdown directly, while recall reads SQLite. Both can be individually operational and still represent different knowledge states. A professional implementation needs an explicit index manifest (`vault_id`, schema version, generation, root fingerprint), incremental watcher-driven reconciliation, and a transactional repair path."
+      },
+      {
+        "id": "professional_pattern",
+        "type": "markdown",
+        "body": "## Professional voice agents treat retrieval as a tool and the index as a materialized view\n\nOpenAI documents that Realtime sessions can use application-owned function tools and can override tools or instructions for one response. Google documents the same client-executed function-call loop for Live sessions, with synchronous tool execution on the current Gemini 3.1 Live model. This makes a local function tool the portable common denominator; provider-specific per-response injection can be an optimization, not the correctness mechanism.\n\nObsidian's official model is intentionally simple: a vault is a local folder of Markdown files. SQLite FTS5 is therefore a suitable local lexical index, but it must be treated as rebuildable derived state. For semantic recall, established hybrid systems run lexical and vector retrieval in parallel and fuse ranked results with Reciprocal Rank Fusion. That pattern belongs on deliberate lookups, not on every voice turn, because a cloud query embedding adds network latency.\n\nReferences: [OpenAI Realtime tools](https://developers.openai.com/api/docs/guides/realtime-mcp), [OpenAI voice architectures](https://developers.openai.com/api/docs/guides/voice-agents), [Gemini Live tools](https://ai.google.dev/gemini-api/docs/live-api/tools), [Obsidian vaults](https://obsidian.md/help/vault), [SQLite FTS5](https://www.sqlite.org/fts5.html), and [hybrid search with RRF](https://learn.microsoft.com/en-us/azure/search/hybrid-search-overview)."
+      },
+      {
+        "id": "target_heading",
+        "type": "markdown",
+        "body": "## A narrow knowledge bridge preserves realtime latency\n\nThe native model should receive two distinct capabilities in delegate mode: `jarvis_action` for operations and `knowledge_lookup` for private, historical, or project-specific facts. The latter performs local retrieval and returns a compact evidence packet with title, vault-relative path, updated timestamp, and bounded section excerpts. The realtime model synthesizes the spoken answer; it never reads raw Markdown metadata or absolute paths aloud.\n\n1. **Turn knowledge gate:** classify private-history and wiki intent from the final transcript and start speculative lookup without delaying unrelated turns.\n2. **KnowledgeLookupService:** query a pre-opened FTS index, expand relevant sections, enforce size limits, and cache by normalized query plus index generation.\n3. **Realtime knowledge function:** expose one read-only tool across provider families; on failure the model states uncertainty instead of inventing a private fact.\n4. **VaultIndexService:** treat Markdown as canonical and SQLite as a materialized view; reconcile create, modify, delete, move, root switch, and startup generation.\n5. **Optional Premium retrieval:** run cloud query embedding in parallel with FTS for deliberate lookups, fuse ranks with RRF, and fall back visibly to Basic FTS."
+      },
+      {
+        "id": "latency_heading",
+        "type": "markdown",
+        "body": "## Retrieval should be speculative, bounded, and invisible on unrelated turns\n\nAt final transcript, a deterministic intent classifier should take less than a few milliseconds and start a local search concurrently with model response planning. Non-memory turns do not wait. Memory turns consume the prefetched result when the model calls `knowledge_lookup`. The existing `run_in_executor(None, ...)` path should be replaced with a pre-opened search service or a dedicated single-thread executor so unrelated default-pool saturation cannot turn an 80 ms budget into a 1.5 second miss, as already observed in logs.\n\nInitial engineering targets, not measured production percentiles:\n\n- Intent classification: p95 2 ms, hard deadline 5 ms.\n- Warm Basic FTS lookup: p95 20 ms, hard deadline 40 ms.\n- Evidence packing and section expansion: p95 10 ms, hard deadline 25 ms.\n- Basic retrieval service total: p95 30 ms, hard deadline 60 ms; provider tool-call overhead measured separately.\n- Premium semantic branch: p95 350 ms, soft deadline 600 ms; Basic FTS wins on deadline.\n\nThese targets require p50/p95/p99 validation on both desktop and headless low-end hardware before they become release gates."
+      },
+      {
+        "id": "privacy_and_safety",
+        "type": "markdown",
+        "body": "## Keep retrieval local and treat notes as untrusted data\n\nA remote MCP server is unnecessary for this vault and would widen the privacy boundary. The local application already owns the filesystem, risk tiers, and tool executor. Only the minimum relevant excerpts should cross to a cloud realtime provider. Retrieved text must be delimited as evidence, never as instructions; note content can contain prompt injection, raw URLs, secrets, or executable-looking text. Tool output stays size-bounded, vault paths remain relative, and logs record hit counts and latency rather than personal query content at INFO level."
+      },
+      {
+        "id": "scope_and_methods",
+        "type": "markdown",
+        "body": "## Scope, evidence, and method\n\nThe review covered the realtime protocol, OpenAI and Gemini adapters, the realtime session orchestrator, the tool bridge, Brain wiki injection, FTS index and watcher, wiki routes, health state, relevant ADRs/specifications, live CLI responses, SQLite row counts, application logs, and focused tests. The live snapshot used the active `realtime` voice mode and `openai-realtime` provider. `voice.realtime_tool_mode` was unset, which resolves to delegate mode in code.\n\nFifty focused component tests passed. They validate realtime event handling, background realtime-to-wiki capture, explicit wiki writes, FTS boot indexing, wiki tools, and OpenAI adapter behavior. Test discovery found no test that asks a native realtime model a personal-memory question and proves that wiki evidence was consulted before the answer."
+      },
+      {
+        "id": "limitations",
+        "type": "markdown",
+        "body": "## Limitations and robustness checks\n\nThe live index mismatch is descriptive evidence from one inspection, not proof that every clean installation permanently loses its index. A separate full test suite was running in the shared workspace, so concurrent test pollution may have contributed to the empty project FTS table. That uncertainty does not weaken the architectural finding: the product currently lacks vault/index parity checks, watcher-to-index synchronization, durable index health, and realtime read coverage.\n\nLatency SLOs in this report are proposed targets, not measured end-to-end distributions. Provider tool-call overhead varies by model, network, audio turn detection, and provider behavior. The recommended bridge therefore makes correctness provider-neutral and reserves provider-specific response injection for later optimization."
+      },
+      {
+        "id": "roadmap_heading",
+        "type": "markdown",
+        "body": "## Fix integrity first, then add the realtime knowledge bridge\n\nDo not begin with embeddings. If lexical recall is disconnected from the active vault, semantic retrieval only creates a second stale index. The implementation order should first make Basic retrieval correct and observable, then connect it to realtime, then measure, and only then add Premium hybrid search for paraphrase-heavy deliberate lookups.\n\n1. **Authoritative vault-index state:** add an index manifest, watcher-driven upsert/delete, generation checks, transactional rebuild, and durable health. Acceptance: a manual Obsidian edit becomes searchable after debounce and parity errors self-repair.\n2. **Realtime read path:** add `knowledge_lookup`, delegate-mode instructions, speculative prefetch, and bounded evidence packets. Acceptance: fake OpenAI and Gemini sessions consult evidence before answering a private-memory question.\n3. **Latency and failure release gates:** add per-stage spans, percentiles, hit rate, stale-turn guards, barge-in cancellation, and multilingual evaluation. Acceptance: unrelated turns incur no measurable retrieval delay and Basic meets its SLO on desktop and headless hardware.\n4. **Premium hybrid recall:** add a key-aware embedding capability chain, section vectors, background backfill, parallel queries, and RRF. Acceptance: recall@k improves on paraphrase evaluations and provider failure falls back to Basic."
+      },
+      {
+        "id": "further_questions",
+        "type": "markdown",
+        "body": "## Further questions\n\n- What percentage of real voice turns are private-memory questions, and how often does a deterministic gate identify them correctly?\n- What are Basic FTS execution p50/p95/p99 and total first-audio deltas on both the maintainer machine and a low-end headless host?\n- Does the user want wiki answers to name their source note when confidence is low, or only on request?\n- Which facts belong in a small session-opening working set, and which must remain on-demand for privacy and context-window control?\n- Should Premium semantic retrieval be available to realtime immediately after Basic reliability ships, or only after recall@k evaluation shows a lexical gap?"
+      }
+    ]
+  },
+  "snapshot": {
+    "version": 1,
+    "generatedAt": "2026-07-12T09:19:44Z",
+    "status": "ready",
+    "datasets": {
+      "runtime_snapshot": [
+        {
+          "vault_pages": 1,
+          "known_page_hits": 0,
+          "targeted_tests_passed": 50,
+          "realtime_read_tests": 0
+        }
+      ],
+      "candidate_outcomes": [
+        {"status": "consolidated", "candidates": 295},
+        {"status": "skipped", "candidates": 51}
+      ],
+      "current_capabilities": [
+        {
+          "priority_rank": 1,
+          "path": "Classic Brain turn",
+          "write_support": "Explicit wiki ingest and ambient capture",
+          "read_support": "Per-turn FTS injection plus wiki-recall and page-read tools",
+          "latency_behavior": "80 ms injector budget; currently uses the shared default executor",
+          "verdict": "Designed for read and write, subject to index integrity"
+        },
+        {
+          "priority_rank": 2,
+          "path": "Realtime delegate mode (active default)",
+          "write_support": "Background VoiceTurnCompleted feed; explicit writes can delegate",
+          "read_support": "No implicit wiki injection; knowledge questions are told to stay native",
+          "latency_behavior": "Fast on chat, but a delegated action adds a second model/tool cycle",
+          "verdict": "Write-capable, not a reliable wiki reader"
+        },
+        {
+          "priority_rank": 3,
+          "path": "Realtime direct-tool mode",
+          "write_support": "Full router tool bridge through ToolExecutor",
+          "read_support": "wiki-recall and page-read can be exposed if present in the Brain tool set",
+          "latency_behavior": "Tool-schema-heavy session; one or two tool round trips for recall and page read",
+          "verdict": "Possible but not the active default and not covered end to end"
+        },
+        {
+          "priority_rank": 4,
+          "path": "Manual Obsidian edit",
+          "write_support": "Markdown changes are visible to tree and page APIs",
+          "read_support": "Watcher refreshes the UI but does not update FTS",
+          "latency_behavior": "Immediate UI event after debounce; search can remain stale indefinitely",
+          "verdict": "Canonical files and retrieval index can diverge"
+        }
+      ],
+      "target_architecture": [
+        {
+          "stage": 1,
+          "component": "Turn knowledge gate",
+          "responsibility": "Classify private-history and wiki-intent from the final transcript; start speculative lookup without delaying unrelated turns.",
+          "failure_behavior": "No match means no retrieval; classifier errors degrade to the normal realtime answer path."
+        },
+        {
+          "stage": 2,
+          "component": "KnowledgeLookupService",
+          "responsibility": "Query a pre-opened local FTS index, expand the best sections, enforce size limits, and cache by normalized query plus index generation.",
+          "failure_behavior": "Deadline or index error returns an explicit unavailable result and increments retrieval health counters."
+        },
+        {
+          "stage": 3,
+          "component": "Realtime knowledge function",
+          "responsibility": "Expose one read-only knowledge_lookup tool beside jarvis_action across provider families and return the prefetched evidence packet.",
+          "failure_behavior": "The model must state uncertainty; it must not answer private facts from model memory."
+        },
+        {
+          "stage": 4,
+          "component": "VaultIndexService",
+          "responsibility": "Treat Markdown as canonical and SQLite as a materialized view; reconcile create, modify, delete, move, root switch, and startup generation.",
+          "failure_behavior": "Parity mismatch turns health red and schedules a transactional repair without blocking voice."
+        },
+        {
+          "stage": 5,
+          "component": "Optional Premium retrieval",
+          "responsibility": "Run cloud query embedding in parallel with FTS for deliberate lookups and fuse ranks with RRF; keep writes and backfill off the voice path.",
+          "failure_behavior": "Embedding failure falls back to Basic FTS and remains visible in health telemetry."
+        }
+      ],
+      "latency_budgets": [
+        {
+          "order": 1,
+          "stage": "Intent classification",
+          "p95_target_ms": 2,
+          "hard_deadline_ms": 5,
+          "notes": "Deterministic text logic only; never an LLM call."
+        },
+        {
+          "order": 2,
+          "stage": "Warm Basic FTS lookup",
+          "p95_target_ms": 20,
+          "hard_deadline_ms": 40,
+          "notes": "Pre-opened connection or dedicated executor; no shared-pool queueing."
+        },
+        {
+          "order": 3,
+          "stage": "Evidence packing and section expansion",
+          "p95_target_ms": 10,
+          "hard_deadline_ms": 25,
+          "notes": "Local reads only, content-hash cache, bounded excerpts."
+        },
+        {
+          "order": 4,
+          "stage": "Basic retrieval service total",
+          "p95_target_ms": 30,
+          "hard_deadline_ms": 60,
+          "notes": "Tool-call model overhead is measured separately."
+        },
+        {
+          "order": 5,
+          "stage": "Premium semantic branch",
+          "p95_target_ms": 350,
+          "hard_deadline_ms": 600,
+          "notes": "Soft branch running in parallel with FTS; FTS wins on deadline."
+        }
+      ],
+      "roadmap": [
+        {
+          "wave": 1,
+          "outcome": "One authoritative vault-index state",
+          "key_changes": "Index manifest, watcher-driven upsert/delete, root-generation checks, transactional rebuild, absolute data path, durable health.",
+          "acceptance": "A manual Obsidian edit becomes searchable after debounce; vault/index mismatch is detected and repaired."
+        },
+        {
+          "wave": 2,
+          "outcome": "Realtime models can read personal knowledge",
+          "key_changes": "knowledge_lookup service and function, delegate-mode prompt contract, speculative prefetch, bounded evidence packet.",
+          "acceptance": "OpenAI and Gemini fake sessions both answer a personal-memory question only after the lookup result."
+        },
+        {
+          "wave": 3,
+          "outcome": "Latency and failure behavior are release-gated",
+          "key_changes": "Per-stage spans, p50/p95/p99, lookup rate, recall hit rate, stale-result guards, barge-in cancellation, multilingual eval set.",
+          "acceptance": "Unrelated turns show no measurable retrieval delay; Basic retrieval meets the agreed SLO on desktop and headless hardware."
+        },
+        {
+          "wave": 4,
+          "outcome": "Premium hybrid recall where lexical search is insufficient",
+          "key_changes": "Cloud embedding capability chain, section-level vectors, background backfill, parallel FTS/vector queries, RRF fusion.",
+          "acceptance": "Recall@k improves on paraphrase evals; dead embedding providers fall back to Basic without breaking realtime."
+        }
+      ]
+    },
+    "accessIssues": []
+  },
+  "sources": [
+    {
+      "id": "repo_runtime",
+      "query": {
+        "engine": "filesystem-and-local-http",
+        "sql": "$tree = py -3.11 -m jarvis --json wiki tree | ConvertFrom-Json\n$slug = $tree.folders.files | Select-Object -First 1 -ExpandProperty slug\npy -3.11 -m jarvis --json wiki page $slug\npy -3.11 -m jarvis --json wiki recall $slug\nrg -n -i 'wiki.*realtime|realtime.*wiki|wiki-recall|WikiContext' tests/unit/realtime tests/integration/realtime tests/unit/memory/wiki/test_voice_bridge_realtime.py\npy -3.11 -m pytest -q -p no:cacheprovider tests/unit/memory/wiki/test_voice_bridge_realtime.py tests/unit/brain/test_wiki_fast_path.py tests/integration/test_wiki_boot_index.py tests/unit/plugins/tool/test_wiki_tools.py tests/unit/realtime/test_openai_realtime.py",
+        "description": "Read-only inspection of repository code, focused pytest results, current SQLite FTS state, application logs, and live Jarvis CLI responses.",
+        "executed_at": "2026-07-12T09:19:44Z",
+        "language": "powershell"
+      }
+    },
+    {
+      "id": "design_synthesis",
+      "query": {
+        "engine": "document-review",
+        "sql": "Get-Content -Raw docs/superpowers/specs/2026-07-07-wiki-reliability-and-premium-rag-design.md\nGet-Content -Raw jarvis/realtime/session.py\nGet-Content -Raw jarvis/brain/wiki_context.py\nGet-Content -Raw jarvis/memory/wiki/watcher.py\nGet-Content -Raw jarvis/memory/wiki/health.py",
+        "description": "Technical synthesis of the approved wiki reliability design, current implementation, and official provider documentation.",
+        "executed_at": "2026-07-12T09:19:44Z",
+        "language": "markdown"
+      }
+    },
+    {
+      "id": "openai_docs",
+      "query": {
+        "engine": "openai-developer-docs",
+        "description": "Official Realtime tool, response-level configuration, and voice architecture guidance.",
+        "url": "https://developers.openai.com/api/docs/guides/realtime-mcp",
+        "executed_at": "2026-07-12T09:19:44Z"
+      }
+    },
+    {
+      "id": "google_docs",
+      "query": {
+        "engine": "google-ai-developer-docs",
+        "description": "Official Gemini Live function-calling and tool scheduling guidance.",
+        "url": "https://ai.google.dev/gemini-api/docs/live-api/tools",
+        "executed_at": "2026-07-12T09:19:44Z"
+      }
+    },
+    {
+      "id": "obsidian_docs",
+      "query": {
+        "engine": "obsidian-help",
+        "description": "Official definition of an Obsidian vault as a local filesystem folder.",
+        "url": "https://obsidian.md/help/vault",
+        "executed_at": "2026-07-12T09:19:44Z"
+      }
+    },
+    {
+      "id": "sqlite_docs",
+      "query": {
+        "engine": "sqlite-documentation",
+        "description": "Official SQLite FTS5 reference.",
+        "url": "https://www.sqlite.org/fts5.html",
+        "executed_at": "2026-07-12T09:19:44Z"
+      }
+    },
+    {
+      "id": "hybrid_search_docs",
+      "query": {
+        "engine": "microsoft-learn",
+        "description": "Official hybrid search pattern using parallel lexical and vector retrieval with Reciprocal Rank Fusion.",
+        "url": "https://learn.microsoft.com/en-us/azure/search/hybrid-search-overview",
+        "executed_at": "2026-07-12T09:19:44Z"
+      }
+    }
+  ]
+}

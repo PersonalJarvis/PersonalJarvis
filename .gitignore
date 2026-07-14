@@ -142,9 +142,9 @@ Thumbs.db
 Desktop.ini
 *.swp
 
-# Runtime-Artefakte (Claude Code + Playwright-MCP)
+# Runtime artifacts (Claude Code + Playwright MCP)
 .claude/*
-# Subagents, Slash-Commands und Skills sind Team-Knowledge und werden versioniert
+# Subagents, slash commands and skills are team knowledge and are versioned
 !.claude/agents/
 !.claude/commands/
 !.claude/skills/
@@ -153,6 +153,15 @@ Desktop.ini
 # pushed to any GitHub repo. Its deterministic engine lives (versioned) under
 # scripts/ci/privacy_gate/, so CI and the pre-push hook keep working without it.
 .claude/skills/security-github/
+# .agents/ is the tool-neutral twin of .claude/ (synced by
+# scripts/ci/sync_agents_dir.py) — same include/exclude shape, so the private
+# security-github skill can never leak in via the mirror either.
+.agents/*
+!.agents/README.md
+!.agents/agents/
+!.agents/commands/
+!.agents/skills/
+.agents/skills/security-github/
 .playwright-mcp/
 
 # TypeScript incremental build cache (regenerated on every `tsc --build`)

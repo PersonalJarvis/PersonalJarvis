@@ -1,13 +1,7 @@
-"""Realtime provider tier — backend for the API-Keys & Providers "Realtime" tab.
+"""Realtime provider tier for the API-Keys & Providers Realtime tab.
 
-Mirrors the brain/tts/stt tier plumbing: the realtime ProviderSpecs
-(``openai-realtime`` and ``gemini-live`` — the Gemini Live adapter module
-itself lands in a later task, this only covers the declarative spec), the
-``active_realtime`` resolution in ``list_providers``, the credential-presence
-section-health check, and the ``POST /realtime/switch`` route. Style follows
-``tests/unit/web/test_voice_mode_route.py`` (a lightweight FastAPI app with
-just the router mounted, monkeypatched secrets) rather than the heavier
-``WebServer`` fixture in ``tests/integration/test_provider_routes.py``.
+Covers both provider families, registry-based active-provider resolution,
+credential health, switching, and per-provider model and voice selection.
 """
 from __future__ import annotations
 
@@ -27,6 +21,11 @@ def _only_openai_key(key: str, *_a, **_kw) -> str | None:
     """Fake ``cfg_mod.get_secret``: only ``openai_api_key`` looks configured."""
     return "sk-test" if key == "openai_api_key" else None
 
+
+def _only_gemini_key(key: str, *_a, **_kw) -> str | None:
+    """Fake ``cfg_mod.get_secret`` for a Gemini-only fresh install."""
+    return "AIza-test" if key == "gemini_api_key" else None
+
 # ---------------------------------------------------------------------------
 # ProviderSpec
 # ---------------------------------------------------------------------------
@@ -44,6 +43,7 @@ def test_gemini_live_spec_present():
     assert spec is not None
     assert spec.tier == "realtime"
     assert spec.secret_keys == ("gemini_api_key",)
+    assert spec.alt_credential is None
 
 
 # ---------------------------------------------------------------------------
@@ -73,6 +73,18 @@ def test_list_providers_includes_active_realtime_provider(monkeypatch):
     assert realtime["configured"] is True
 
 
+def test_list_providers_resolves_gemini_only_fresh_install(monkeypatch):
+    monkeypatch.setattr(cfg_mod, "get_secret", _only_gemini_key)
+    client = TestClient(_app())
+
+    resp = client.get("/api/providers")
+
+    assert resp.status_code == 200
+    by_id = {provider["id"]: provider for provider in resp.json()["providers"]}
+    assert by_id["gemini-live"]["active"] is True
+    assert by_id["openai-realtime"]["active"] is False
+
+
 # ---------------------------------------------------------------------------
 # POST /api/realtime/switch
 # ---------------------------------------------------------------------------
@@ -98,7 +110,7 @@ def test_realtime_switch_persists_with_key(monkeypatch):
     assert body["ok"] is True
     assert body["active"] == "openai-realtime"
     assert body["persisted"] is True
-    assert body["restart_required"] is True
+    assert body["restart_required"] is False
     assert writes == ["openai-realtime"]
     assert app.state.config.brain.realtime is not None
     assert app.state.config.brain.realtime.provider == "openai-realtime"
@@ -124,6 +136,55 @@ def test_realtime_switch_sets_voice_mode(monkeypatch):
     assert resp.status_code == 200
     assert voice_mode_writes == ["realtime"]
     assert app.state.config.voice.mode == "realtime"
+
+
+def test_realtime_switch_reconnects_the_active_voice_session(monkeypatch):
+    monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
+    monkeypatch.setattr(config_writer, "set_realtime_provider", lambda _name: None)
+    monkeypatch.setattr(config_writer, "set_voice_mode", lambda _mode: None)
+    reasons: list[str] = []
+
+    class LivePipeline:
+        def reconnect_realtime_session(self, *, reason: str) -> bool:
+            reasons.append(reason)
+            return True
+
+    app = _app()
+    app.state.speech_pipeline = LivePipeline()
+    client = TestClient(app)
+
+    response = client.post(
+        "/api/realtime/switch",
+        json={"provider": "openai-realtime", "persist": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["session_restarted"] is True
+    assert reasons == ["realtime_provider:openai-realtime"]
+
+
+def test_realtime_switch_reports_voice_mode_not_persisted_on_write_failure(monkeypatch):
+    """Bug: the [voice].mode write failure was only logged, but the response
+    still reported persisted=True unconditionally — the UI showed "saved"
+    for a switch that silently left [voice].mode stale on disk."""
+    monkeypatch.setattr(cfg_mod, "get_secret", _only_openai_key)
+    monkeypatch.setattr(config_writer, "set_realtime_provider", lambda name, **kw: None)
+
+    def _boom(mode, **kw):
+        raise RuntimeError("disk full (simulated)")
+
+    monkeypatch.setattr(config_writer, "set_voice_mode", _boom)
+
+    app = _app()
+    client = TestClient(app)
+    resp = client.post(
+        "/api/realtime/switch", json={"provider": "openai-realtime", "persist": True}
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["ok"] is True
+    assert body["persisted"] is False
+    assert body["voice_mode_persisted"] is False
 
 
 def test_realtime_switch_without_key_is_409(monkeypatch):
@@ -232,6 +293,7 @@ def test_get_realtime_options_returns_curated_models_and_voices(monkeypatch):
     voice_ids = {v["id"] for v in body["voices"]}
     assert voice_ids == {
         "alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse",
+        "marin", "cedar",
     }
     model_ids = [m["id"] for m in body["models"]]
     assert model_ids[0] == "gpt-realtime"  # the hardcoded default leads
@@ -248,6 +310,10 @@ def test_get_realtime_options_gemini_live_voices(monkeypatch):
     voice_ids = {v["id"] for v in body["voices"]}
     assert voice_ids == {
         "Puck", "Charon", "Kore", "Fenrir", "Aoede", "Orus", "Leda", "Zephyr",
+        "Callirrhoe", "Autonoe", "Enceladus", "Iapetus", "Umbriel", "Algieba",
+        "Despina", "Erinome", "Algenib", "Rasalgethi", "Laomedeia", "Achernar",
+        "Alnilam", "Schedar", "Gacrux", "Pulcherrima", "Achird", "Zubenelgenubi",
+        "Vindemiatrix", "Sadachbia", "Sadaltager", "Sulafat",
     }
     assert body["models"][0]["id"] == "gemini-3.1-flash-live-preview"
 

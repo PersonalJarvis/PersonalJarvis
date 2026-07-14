@@ -40,6 +40,62 @@ def test_inline_content_is_extracted(text, expected_fragment):
     assert expected_fragment in m.content.lower()
 
 
+@pytest.mark.parametrize(("text", "expected_fragment"), [
+    (
+        "Kannst du bitte mein Wiki-System eintragen, dass ich morgen nach "  # i18n-allow
+        "San Francisco reisen will?",  # i18n-allow: production transcript under test
+        "san francisco",
+    ),
+    (
+        "Kannst du bitte in mein Wikisystem eintragen, dass mein Zug um acht fährt?",  # i18n-allow
+        "zug",
+    ),
+    (
+        "Trag bitte ins Wiki ein, dass der Schlüssel heute rotiert wurde?",  # i18n-allow
+        "schluessel",
+    ),
+    (
+        "Could you please add to my wiki that the deploy key rotated today?",
+        "deploy key",
+    ),
+    (
+        "Can you please enter in my wiki that the train leaves at eight?",
+        "train",
+    ),
+    (
+        "¿Puedes anotar en mi wiki que el vuelo sale el viernes?",  # i18n-allow
+        "vuelo",
+    ),
+])
+def test_polite_question_commands_and_object_first_forms_match(
+    text: str,
+    expected_fragment: str,
+) -> None:
+    """Polite question grammar and terminal question marks remain writes."""
+    match = match_wiki_intent(text)
+
+    assert match is not None
+    assert match.content is not None
+    assert expected_fragment in match.content
+
+
+@pytest.mark.parametrize("text", [
+    "Schreib die letzte Transkription ins Wikisystem.",  # i18n-allow
+    "Kannst du bitte die letzte Transkription in mein Wiki eintragen?",  # i18n-allow
+    (
+        "Wenn du die letzte Transkription anschaust, kannst du bitte etwas "  # i18n-allow
+        "in dein Wikisystem eintragen?"  # i18n-allow: reported production wording
+    ),
+    "Please write the previous turn into my wiki.",
+    "Anota la ultima transcripcion en mi wiki.",  # i18n-allow
+])
+def test_latest_transcript_reference_is_anaphoric(text: str) -> None:
+    match = match_wiki_intent(text)
+
+    assert match is not None
+    assert match.content is None
+
+
 @pytest.mark.parametrize("text", [
     "Was steht im Wiki über Joy?",           # recall, not write  # i18n-allow
     "Wie funktioniert ein Wiki?",            # general question   # i18n-allow
@@ -55,6 +111,10 @@ def test_inline_content_is_extracted(text, expected_fragment):
     "Save me the trouble and tell me what's in the wiki about the server",
     "Schreib mir, wenn du fertig bist, damit ich es ins Wiki eintragen kann",  # i18n-allow
     "note down what the wiki says about the deploy key",
+    "Kannst du mir sagen, was ich in mein Wiki eintragen soll?",  # i18n-allow
+    "Could you tell me what I should write in my wiki?",
+    "¿Puedes decirme qué debo anotar en mi wiki?",  # i18n-allow
+    "What should I write in my wiki?",
 ])
 def test_non_write_utterances_do_not_match(text):
     assert match_wiki_intent(text) is None

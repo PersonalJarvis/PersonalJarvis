@@ -15,28 +15,34 @@ irm https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install
 curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/install/install.sh | bash
 ```
 
-The installer is fully **non-interactive** and installs the **full profile**
-(design 2026-07-07): everything in the repository — desktop app, telephony,
-chat channels, local voice models — skipping only what the OS cannot run. It
-explains each step and launches the app as its last action. All setup
-questions live in the app's one-time first-launch onboarding. Re-running the
-one-liner updates in place and never re-runs setup. `--headless` keeps the
-minimal torch-free base (the tiny-VPS / advanced path).
+When Python 3.11+ and Git are already present, the installer is fully
+**non-interactive**. If either is missing, Stage 1 lists both missing items and
+asks once before using the host's native package manager. It waits, refreshes
+the current process environment, re-checks both commands, and continues the
+same install run; no second one-liner is needed. All other setup questions
+remain in the app's one-time first-launch onboarding.
+
+The installer installs the **full profile** (design 2026-07-07): everything in
+the repository — desktop app, telephony, chat channels, local voice models —
+skipping only what the OS cannot run. It explains each step and launches the
+app as its last action. Re-running the one-liner updates in place and never
+re-runs setup. `--headless` keeps the minimal torch-free base (the tiny-VPS /
+advanced path).
 
 ## File layout
 
 | File              | Stage | Responsibility |
 |-------------------|-------|----------------|
-| `install.ps1`     | 1     | Windows bootstrap: Python+git preflight, clone, venv, install `rich`, exec `installer.py`. |
-| `install.sh`      | 1     | macOS/Linux bootstrap: same shape as `install.ps1`, POSIX bash. |
+| `install.ps1`     | 1     | Windows bootstrap: Python+Git detect/install/re-check, clone, venv, install `rich`, exec `installer.py`. |
+| `install.sh`      | 1     | macOS/Linux bootstrap: same flow through native package managers, POSIX bash. |
 | `installer.py`    | 2     | Python orchestrator: pip install, optional extras, model prefetch, worker CLI, launch (last). All cross-platform logic lives here. |
 | `README.md`       | docs  | This file. |
 
 ## Why two stages?
 
-Stage 1 is the smallest amount of shell we can get away with while still
-being trustworthy when piped into `iex` / `bash`. Each shell script is
-under 200 lines and reads top-to-bottom in under a minute.
+Stage 1 is shell-native because it must work before Python or Git exists. Its
+prerequisite state machine stays explicitly marked and is exercised directly
+by unit tests, while Stage 2 remains in testable Python.
 
 Everything that needs branching logic (platform detection, optional
 extras, error recovery, rich progress UI) lives in `installer.py`, where
@@ -78,6 +84,8 @@ python install/installer.py --dry-run
 | `JARVIS_INSTALL_REPO`     | Clone from a fork instead of the upstream repo. |
 | `JARVIS_INSTALL_REF`      | Use a branch/tag/SHA other than `main`. |
 | `JARVIS_INSTALL_DIR`      | Install to a directory other than `~/.personal-jarvis`. |
+| `JARVIS_INSTALL_PREREQS`  | `ask` (default), `auto` (explicit unattended consent), or `never`. |
+| `JARVIS_PYTHON`           | Use one explicit Python interpreter; the pin is authoritative. |
 | `JARVIS_INSTALL_NO_PIP`   | Skip the pip steps (re-run only prefetch / launch). |
 
 ## Local development of the installer

@@ -700,6 +700,39 @@ async def test_pure_question_no_files_is_approved_not_revised(
 
 
 @pytest.mark.asyncio
+async def test_format_clarification_is_revised_not_approved_as_the_answer(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """Exact 2026-07-13 regression: a worker question is not a deliverable."""
+    def _boom(*_a: Any, **_k: Any):
+        raise AssertionError("clarification veto must not spawn a subprocess")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _boom)
+    worker_log = json.dumps({
+        "type": "result",
+        "result": (
+            "Kurze Rückfrage: Was genau soll ich "  # i18n-allow: fixture
+            "erstellen — einen Vortrag, einen Aufsatz, "  # i18n-allow: fixture
+            "eine Präsentation oder ein Infoblatt?"  # i18n-allow: fixture
+        ),
+        "subtype": "success",
+    })
+
+    verdict = await CriticRunner().run(
+        mission_prompt="Research and analyze drugs in schools.",
+        worker_diff="",
+        worker_log=worker_log,
+        prior_reflections="",
+        iteration=0,
+        worktree=tmp_path,
+        env={},
+    )
+
+    assert verdict.verdict == "revise"
+
+
+@pytest.mark.asyncio
 async def test_advisory_trip_planning_no_files_is_approved(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:

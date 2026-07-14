@@ -37,9 +37,25 @@ _REDACTORS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "provider_key",
         re.compile(
             r"\b(?:AIza[0-9A-Za-z_-]{30,}"
+            r"|AQ\.[0-9A-Za-z_-]{30,}"
             r"|xai-[A-Za-z0-9]{20,}"
             r"|gsk_[A-Za-z0-9]{20,}"
             r"|gh[pousr]_[A-Za-z0-9]{30,})\b"
+        ),
+    ),
+    # Telegram bot credentials live in the request path, not a query/header.
+    (
+        "telegram_bot_token",
+        re.compile(r"(?<!\d)\d{6,12}:[A-Za-z0-9_-]{30,}\b"),
+    ),
+    # SDK request logs can include credentials in URLs. Keep the parameter name
+    # for diagnostics while removing its value. ``key`` is intentionally broad:
+    # over-redacting an opaque URL value is safer than persisting a new key shape.
+    (
+        "query_secret",
+        re.compile(
+            r"(?i)([?&](?:api[_-]?key|key|token|access[_-]?token|auth)=)"
+            r"[^&\s\"']{8,}"
         ),
     ),
     # Bearer / Authorization tokens.
@@ -53,7 +69,7 @@ _REDACTORS: tuple[tuple[str, re.Pattern[str]], ...] = (
         "labelled_secret",
         re.compile(
             r"(?i)(\b(?:api[_-]?key|secret(?:[_-]?key)?|password|passwd|pwd"
-            r"|access[_-]?token|auth[_-]?token|client[_-]?secret)\b\s*[:=]\s*)"
+            r"|access[_-]?token|auth[_-]?token|client[_-]?secret)\b['\"]?\s*[:=]\s*)"
             r"['\"]?[^\s'\"]{8,}"
         ),
     ),
@@ -69,7 +85,7 @@ _REDACTORS: tuple[tuple[str, re.Pattern[str]], ...] = (
 
 # The ``labelled_secret`` pattern keeps its label group (so "api_key=" stays
 # readable) and only masks the value; every other pattern masks the whole match.
-_KEEP_PREFIX = frozenset({"labelled_secret"})
+_KEEP_PREFIX = frozenset({"labelled_secret", "query_secret"})
 
 
 def redact_secrets(text: str) -> str:

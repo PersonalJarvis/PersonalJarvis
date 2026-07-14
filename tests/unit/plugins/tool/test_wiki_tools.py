@@ -14,14 +14,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import pytest
 
 from jarvis.brain.factory import ROUTER_TOOLS
 from jarvis.plugins.tool.wiki_ingest import WikiIngestTool
 from jarvis.plugins.tool.wiki_page_read import WikiPageReadTool
-
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -94,7 +92,8 @@ async def test_wiki_page_read_rejects_traversal(vault: Path) -> None:
     tool = WikiPageReadTool(vault_root=vault)
     result = await tool.execute({"path": "../etc/passwd"}, ctx=None)
     assert result.success is False
-    assert "vault-relative" in (result.error or "").lower() or "outside" in (result.error or "").lower()
+    error = (result.error or "").lower()
+    assert "vault-relative" in error or "outside" in error
 
 
 @pytest.mark.asyncio
@@ -131,6 +130,7 @@ class _FakeWriteResult:
     applied: list[Path] = field(default_factory=list)
     skipped_due_to_recent_edit: list[Path] = field(default_factory=list)
     failed_validation: list[Path] = field(default_factory=list)
+    blocked_pii: list[Path] = field(default_factory=list)
     backup_path: Path = field(default_factory=Path)
 
 
@@ -246,6 +246,40 @@ async def test_wiki_ingest_reports_not_salient_when_no_updates() -> None:
     )
     assert result.success is False
     assert "not" in (result.error or "").lower() and "stored" in (result.error or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_wiki_ingest_does_not_claim_success_for_recent_edit_only() -> None:
+    fake = _FakeCurator(
+        result=_FakeWriteResult(
+            skipped_due_to_recent_edit=[Path("people/joy.md")],
+        )
+    )
+    tool = WikiIngestTool(curator_resolver=lambda: fake)
+
+    result = await tool.execute(
+        {"text": "Joy's birthday is August 14th."}, ctx=None,
+    )
+
+    assert result.success is False
+    assert "recent user edit" in (result.error or "").lower()
+
+
+@pytest.mark.asyncio
+async def test_wiki_ingest_does_not_claim_success_for_sensitive_content_block() -> None:
+    fake = _FakeCurator(
+        result=_FakeWriteResult(
+            blocked_pii=[Path("people/joy.md")],
+        )
+    )
+    tool = WikiIngestTool(curator_resolver=lambda: fake)
+
+    result = await tool.execute(
+        {"text": "A complete statement containing protected data."}, ctx=None,
+    )
+
+    assert result.success is False
+    assert "sensitive content" in (result.error or "").lower()
 
 
 @pytest.mark.asyncio

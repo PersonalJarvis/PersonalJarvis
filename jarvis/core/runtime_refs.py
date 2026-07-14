@@ -32,6 +32,7 @@ from loguru import logger
 
 # Each ref is a 1-element list so the setter can rebind without ``global``.
 _BRAIN_MANAGER: list[Any] = []
+_SUPERVISOR_TOOL_GATEWAY: list[Any] = []
 _SPEECH_PIPELINE: list[Any] = []
 _MCP_REGISTRY: list[Any] = []
 
@@ -60,6 +61,16 @@ def get_brain_manager() -> Any | None:
     return _BRAIN_MANAGER[0] if _BRAIN_MANAGER else None
 
 
+def set_supervisor_tool_gateway(gateway: Any) -> None:
+    """Register the protocol-only gateway to supervisor-owned tools."""
+    _set(_SUPERVISOR_TOOL_GATEWAY, gateway)
+
+
+def get_supervisor_tool_gateway() -> Any | None:
+    """Return the live supervisor tool gateway, or ``None`` before brain wiring."""
+    return _SUPERVISOR_TOOL_GATEWAY[0] if _SUPERVISOR_TOOL_GATEWAY else None
+
+
 def set_speech_pipeline(pipeline: Any) -> None:
     """Register the live SpeechPipeline (called from the desktop-app bootstrap)."""
     _set(_SPEECH_PIPELINE, pipeline)
@@ -78,6 +89,23 @@ def set_mcp_registry(registry: Any) -> None:
 def get_mcp_registry() -> Any | None:
     """The live MCPRegistry, or ``None`` if MCP support is not wired."""
     return _MCP_REGISTRY[0] if _MCP_REGISTRY else None
+
+
+# The live FastAPI app (set by WebServer._build_app). The ``app-command`` tool
+# executes Command-Registry commands through it in-process (httpx ASGI
+# transport — full route validation, no TCP), so a voice command runs the
+# exact same code path as the UI button for the same action.
+_WEB_APP: list[Any] = []
+
+
+def set_web_app(app: Any) -> None:
+    """Register the live FastAPI app (called from the WebServer build)."""
+    _set(_WEB_APP, app)
+
+
+def get_web_app() -> Any | None:
+    """The live FastAPI app, or ``None`` before the server is built."""
+    return _WEB_APP[0] if _WEB_APP else None
 
 
 # Wake-model load coordination (boot speed). When a CUSTOM wake phrase boots,
@@ -183,8 +211,10 @@ def cancel_active_chat_turn() -> bool:
 def _reset_for_tests() -> None:
     """Clear all refs. Test-only helper (fixtures call this in teardown)."""
     _BRAIN_MANAGER.clear()
+    _SUPERVISOR_TOOL_GATEWAY.clear()
     _SPEECH_PIPELINE.clear()
     _MCP_REGISTRY.clear()
+    _WEB_APP.clear()
     _ACTIVE_CHAT_TURN.clear()
     _WAKE_MODEL_EXPECTED.clear()
     _WAKE_MODEL_READY.clear()

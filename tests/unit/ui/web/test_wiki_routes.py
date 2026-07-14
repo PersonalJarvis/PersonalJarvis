@@ -11,18 +11,25 @@ from __future__ import annotations
 
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from jarvis.ui.web import wiki_routes
 from jarvis.ui.web.wiki_routes import router as wiki_router
-
 
 # ----------------------------------------------------------------------
 # Fixtures
 # ----------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _isolate_wiki_health(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep process-wide Wiki health mutations local to each route test."""
+    from jarvis.memory.wiki.health import WikiHealth
+
+    monkeypatch.setattr("jarvis.memory.wiki.health.health", WikiHealth())
 
 
 def _make_app(vault_root: Path | None) -> FastAPI:
@@ -36,7 +43,11 @@ def _make_app(vault_root: Path | None) -> FastAPI:
         wiki_cfg = SimpleNamespace(vault_root=None)
     else:
         wiki_cfg = SimpleNamespace(vault_root=vault_root)
-    app.state.config = SimpleNamespace(wiki_integration=wiki_cfg)
+    data_dir = vault_root.parent / "data" if vault_root is not None else Path("data")
+    app.state.config = SimpleNamespace(
+        wiki_integration=wiki_cfg,
+        memory=SimpleNamespace(data_dir=data_dir),
+    )
     return app
 
 
@@ -78,7 +89,10 @@ def populated_vault(tmp_path: Path) -> Path:
         "entities",
         "sam",
         page_type="entity",
-        body="# Sam\n\n## Summary\nSam is a person born in 1976.\n\n## Facts\n- Born in 1976.\n",
+        body=(
+            "# Sam\n\n## Summary\nSam is a person born in 1976.\n\n"
+            "## Facts\n- Born in 1976.\n"
+        ),
     )
     _write_page(
         vault,
@@ -108,6 +122,16 @@ def empty_vault(tmp_path: Path) -> Path:
     for sub in ("entities", "concepts", "projects", "sessions"):
         (vault / sub).mkdir(parents=True, exist_ok=True)
     return vault
+
+
+class _FakeCurator:
+    def __init__(self, result: object) -> None:
+        self.result = result
+        self.calls: list[tuple[str, str]] = []
+
+    async def ingest(self, text: str, source: str) -> object:
+        self.calls.append((text, source))
+        return self.result
 
 
 # ----------------------------------------------------------------------
@@ -371,6 +395,151 @@ def test_search_k_parameter_caps_results(populated_vault: Path) -> None:
 
 
 # ----------------------------------------------------------------------
+# /ingest
+# ----------------------------------------------------------------------
+
+
+def test_ingest_writes_through_shared_curator_service(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    page = tmp_path / "vault" / "entities" / "traveler.md"
+    curator = _FakeCurator(
+        SimpleNamespace(
+            applied=[page],
+            skipped_due_to_recent_edit=[],
+            failed_validation=[],
+            blocked_pii=[],
+        )
+    )
+    monkeypatch.setattr(wiki_routes, "get_running_curator", lambda: curator)
+
+    with TestClient(_make_app(tmp_path / "vault")) as client:
+        response = client.post(
+            "/api/wiki/ingest",
+            json={
+                "text": "The user will travel to San Francisco tomorrow.",
+                "source": "test:explicit",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "ok": True,
+        "source": "test:explicit",
+        "applied": 1,
+        "skipped_due_to_recent_edit": 0,
+        "failed_validation": 0,
+        "blocked_sensitive_content": 0,
+        "pages_touched": ["traveler.md"],
+    }
+    assert curator.calls == [
+        ("The user will travel to San Francisco tomorrow.", "test:explicit")
+    ]
+
+
+def test_ingest_returns_non_success_when_curator_writes_nothing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    curator = _FakeCurator(
+        SimpleNamespace(
+            applied=[],
+            skipped_due_to_recent_edit=[],
+            failed_validation=[],
+            blocked_pii=[],
+        )
+    )
+    monkeypatch.setattr(wiki_routes, "get_running_curator", lambda: curator)
+
+    with TestClient(_make_app(tmp_path / "vault")) as client:
+        response = client.post(
+            "/api/wiki/ingest",
+            json={"text": "A complete but non-salient statement."},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["detail"]["code"] == "nothing-stored"
+
+
+def test_ingest_returns_503_without_live_curator(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(wiki_routes, "get_running_curator", lambda: None)
+
+    with TestClient(_make_app(tmp_path / "vault")) as client:
+        response = client.post(
+            "/api/wiki/ingest",
+            json={"text": "A complete statement for the knowledge Wiki."},
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"]["code"] == "not-bootstrapped"
+
+
+def test_ingest_openapi_declares_monitor_risk() -> None:
+    operation = _make_app(None).openapi()["paths"]["/api/wiki/ingest"]["post"]
+    assert operation["x-jarvis-risk-tier"] == "monitor"
+
+
+# ----------------------------------------------------------------------
+# /reindex
+# ----------------------------------------------------------------------
+
+
+def test_reindex_replaces_stale_rows_with_active_vault(
+    populated_vault: Path,
+) -> None:
+    import sqlite3
+
+    from jarvis.memory.wiki.db_path import resolve_wiki_db_path
+
+    app = _make_app(populated_vault)
+    db_path = resolve_wiki_db_path(app.state.config.memory.data_dir)
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            "CREATE VIRTUAL TABLE wiki_fts USING fts5("
+            "path UNINDEXED, title, frontmatter, body, mtime UNINDEXED)"
+        )
+        conn.execute(
+            "INSERT INTO wiki_fts VALUES (?, ?, ?, ?, ?)",
+            ("entities/stale.md", "Stale", "", "old", "0"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+    with TestClient(app) as client:
+        preview = client.post("/api/wiki/reindex", params={"dry_run": "true"}).json()
+        result = client.post("/api/wiki/reindex").json()
+        health = client.get("/api/wiki/health").json()["health"]
+
+    assert preview["indexed_before"] == 1
+    assert preview["indexed_pages"] == 1
+    assert result["ok"] is True
+    assert result["indexed_pages"] == 3
+    assert health["index_state"] == "ok"
+    assert health["indexed_pages"] == health["vault_pages"] == 3
+    assert health["missing_pages"] == 0
+    assert health["orphaned_pages"] == 0
+    assert health["outdated_pages"] == 0
+    assert health["last_index_at"] is not None
+    assert health["last_index_operation"] == "rebuild"
+    assert health["index_lag_seconds"] == 0.0
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        paths = {row[0] for row in conn.execute("SELECT path FROM wiki_fts")}
+    finally:
+        conn.close()
+    assert "entities/stale.md" not in paths
+    assert "entities/alex.md" in paths
+
+
+# ----------------------------------------------------------------------
 # Defensive: missing config
 # ----------------------------------------------------------------------
 
@@ -403,6 +572,7 @@ def test_page_without_config_returns_error_envelope() -> None:
 
 def test_health_returns_200_with_fresh_snapshot(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """A fresh ``WikiHealth`` singleton reports the all-unknown baseline shape.
 
@@ -416,6 +586,10 @@ def test_health_returns_200_with_fresh_snapshot(
 
     app = FastAPI()
     app.include_router(wiki_router)
+    app.state.config = SimpleNamespace(
+        wiki_integration=SimpleNamespace(vault_root=tmp_path / "vault"),
+        memory=SimpleNamespace(data_dir=tmp_path / "data"),
+    )
     with TestClient(app) as client:
         r = client.get("/api/wiki/health")
     body = r.json()
@@ -424,4 +598,51 @@ def test_health_returns_200_with_fresh_snapshot(
     assert body["health"]["journal_backlog"] == 0
     assert body["health"]["bootstrap_ok"] is None
     assert body["health"]["last_write"] is None
+    assert body["health"]["last_index"] is None
     assert body["health"]["last_chain_failure"] is None
+    assert body["health"]["index_available"] is False
+    assert body["health"]["index_state"] == "stale"
+    assert body["health"]["index_state_reason"] == "vault_unavailable"
+
+
+def test_health_restores_last_write_and_backlog_from_journal(tmp_path: Path) -> None:
+    from jarvis.memory.wiki.journal import CandidateFact, CandidateJournal
+
+    vault = tmp_path / "vault"
+    _write_page(
+        vault,
+        "entities",
+        "alex",
+        page_type="entity",
+        body="# Alex\n",
+    )
+    app = _make_app(vault)
+    db_path = app.state.config.memory.data_dir / "jarvis.db"
+    journal = CandidateJournal(db_path)
+    assert journal.append(
+        [CandidateFact(fact="A durable fact")],
+        source_label="test-source",
+        turn_hash="hash-1",
+    ) == 1
+    journal.mark(
+        [1],
+        status="consolidated",
+        decision="add",
+        target_path="entities/alex.md",
+    )
+    assert journal.append(
+        [CandidateFact(fact="A pending fact")],
+        source_label="test-source",
+        turn_hash="hash-2",
+    ) == 1
+
+    with TestClient(app) as client:
+        body = client.get("/api/wiki/health").json()
+
+    health = body["health"]
+    assert health["journal_backlog"] == 1
+    assert health["last_write"]["pages"] == ["entities/alex.md"]
+    assert health["vault_pages"] == 1
+    assert health["missing_pages"] == 1
+    assert health["orphaned_pages"] == 0
+    assert health["index_state"] == "stale"

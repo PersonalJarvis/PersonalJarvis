@@ -96,15 +96,15 @@ class SileroEndpointer:
         # a noisy room and the turn drags to the max_utterance hard cap.
         # See test_brief_speaker_bleed_spikes_do_not_reset_silence_timer.
         self._cancel_hysteresis_frames = max(1, cancel_hysteresis_ms // 32)
-        # Torch-free Silero VAD: the bundled ONNX model is run directly via
-        # onnxruntime (already warm from the wake model) with numpy-managed
-        # recurrent state, so the VAD load NEVER imports torch. The torch
-        # ``silero_vad`` package import was the dominant voice-boot cost
-        # (vad-load 6-16 s — torch starved in the boot storm); an onnxruntime
-        # session create is ~0.1-0.5 s. Lazy — created on first use.
+        # Torch-free Silero VAD: when ONNX Runtime is available, the bundled
+        # model runs on its CPU provider with numpy-managed recurrent state.
+        # Platforms without a compatible ONNX Runtime wheel keep working via
+        # portable RMS-based endpointing instead of losing the whole voice
+        # path. Lazy: the preferred model is created on first use.
         self._session = None
         self._vad_state = None  # np.ndarray [2,1,128] float32, carried per frame
         self._vad_context = None  # np.ndarray [1,64] float32, carried per frame
+        self._energy_only = False
 
         self._min_speech_rms = min_speech_rms
         self._relative_silence_rms_ratio = relative_silence_rms_ratio
@@ -194,77 +194,95 @@ class SileroEndpointer:
         return self._silence_frames + self._extra_silence_frames
 
     def _ensure_model(self) -> None:
-        if self._session is not None:
+        if self._session is not None or getattr(self, "_energy_only", False):
             return
-        import os
+        try:
+            import os
 
-        import onnxruntime  # already warm: the wake model imported it
+            import onnxruntime  # already warm when the wake model uses it
 
-        # Prefer the model bundled in-repo (jarvis/assets/vad/silero_vad.onnx):
-        # it ships in EVERY base install, so end-of-speech detection works out of
-        # the box without the opt-in ``silero-vad`` pip package (which drags torch,
-        # so it stays in the [local-voice] extra). Before this was bundled the
-        # voice loop could hear the wake word but never close the utterance on a
-        # fresh install — the wake fired, then this raised and the turn died.
-        # We still never IMPORT the silero_vad package (its __init__ -> model.py
-        # does ``import torch`` at module level, exactly the multi-second cost we
-        # avoid); the bundled ONNX is byte-identical and run torch-free here.
-        from jarvis.assets import bundled_silero_vad_model
+            # Prefer the model bundled in-repo (jarvis/assets/vad/silero_vad.onnx):
+            # it ships in every supported install without the torch-pulling
+            # ``silero-vad`` package. We never import that package; a partial
+            # source layout may only use its model path as a final fallback.
+            from jarvis.assets import bundled_silero_vad_model
 
-        bundled = bundled_silero_vad_model()
-        if bundled is not None:
-            model_path = str(bundled)
-        else:
-            # Fallback for a partial checkout / slim layout without the bundled
-            # asset: locate the model inside an installed silero_vad package.
-            # ``find_spec`` resolves the install path without executing it.
-            import importlib.util
+            bundled = bundled_silero_vad_model()
+            if bundled is not None:
+                model_path = str(bundled)
+            else:
+                import importlib.util
 
-            spec = importlib.util.find_spec("silero_vad")
-            if spec is None or spec.origin is None:
-                raise RuntimeError(
-                    "Silero VAD model unavailable: neither the bundled asset "
-                    "(jarvis/assets/vad/silero_vad.onnx) nor the silero_vad package "
-                    "was found"
+                spec = importlib.util.find_spec("silero_vad")
+                if spec is None or spec.origin is None:
+                    raise RuntimeError(
+                        "neither the bundled Silero model nor an installed model "
+                        "asset is available"
+                    )
+                model_path = os.path.join(
+                    os.path.dirname(spec.origin), "data", "silero_vad.onnx"
                 )
-            model_path = os.path.join(
-                os.path.dirname(spec.origin), "data", "silero_vad.onnx"
+            opts = onnxruntime.SessionOptions()
+            opts.inter_op_num_threads = 1
+            opts.intra_op_num_threads = 1
+            self._session = onnxruntime.InferenceSession(
+                model_path, providers=["CPUExecutionProvider"], sess_options=opts
             )
-        opts = onnxruntime.SessionOptions()
-        opts.inter_op_num_threads = 1
-        opts.intra_op_num_threads = 1
-        self._session = onnxruntime.InferenceSession(
-            model_path, providers=["CPUExecutionProvider"], sess_options=opts
+            # Recurrent state + 64-sample context, mirroring
+            # silero_vad.OnnxWrapper.
+            self._vad_state = np.zeros((2, 1, 128), dtype=np.float32)
+            self._vad_context = np.zeros((1, 64), dtype=np.float32)
+        except Exception as exc:
+            self._enable_energy_fallback(exc)
+
+    def _enable_energy_fallback(self, exc: Exception) -> None:
+        """Keep endpointing available when the optional native engine fails."""
+        self._session = None
+        self._vad_state = None
+        self._vad_context = None
+        self._energy_only = True
+        log.warning(
+            "Silero ONNX VAD is unavailable; using portable CPU energy "
+            "endpointing for this session (%s: %s)",
+            type(exc).__name__,
+            exc,
         )
-        # Recurrent state + 64-sample context, mirroring silero_vad.OnnxWrapper.
-        self._vad_state = np.zeros((2, 1, 128), dtype=np.float32)
-        self._vad_context = np.zeros((1, 64), dtype=np.float32)
+
+    def _energy_prob(self, frame: np.ndarray) -> float:
+        """Return a deterministic speech score for the portable VAD floor."""
+        rms = float(np.sqrt(np.mean(np.square(frame))))
+        minimum = float(getattr(self, "_min_speech_rms", 0.002))
+        return 1.0 if rms >= minimum else 0.0
 
     def _prob(self, frame: np.ndarray) -> float:
         """Per-frame speech probability (must be exactly 512 float32 samples).
 
-        Torch-free: runs the bundled Silero ONNX model via onnxruntime with
-        numpy-managed recurrent state + 64-sample context. This mirrors
-        ``silero_vad.OnnxWrapper.__call__`` exactly (concat context, run, keep
-        the last 64 samples as the next context, carry the returned state), so
-        the probabilities match the torch model bit-for-bit within float
-        tolerance while never importing torch on the voice-boot path.
+        Prefer the bundled Silero ONNX model on the CPU. If its optional native
+        runtime cannot load or execute on this platform, fall back to a portable
+        RMS score. The surrounding state machine still supplies relative-noise
+        calibration, hysteresis, silence timing, and the maximum-duration cap.
         """
         self._ensure_model()
-        assert self._session is not None
         x = np.ascontiguousarray(frame, dtype=np.float32).reshape(1, -1)  # [1,512]
-        x_full = np.concatenate([self._vad_context, x], axis=1)  # [1,576]
-        out, new_state = self._session.run(
-            None,
-            {
-                "input": x_full,
-                "state": self._vad_state,
-                "sr": np.array(VAD_SAMPLE_RATE, dtype=np.int64),
-            },
-        )
-        self._vad_state = new_state
-        self._vad_context = x_full[:, -64:]
-        return float(np.asarray(out).reshape(-1)[0])
+        if getattr(self, "_energy_only", False):
+            return self._energy_prob(x)
+        assert self._session is not None
+        try:
+            x_full = np.concatenate([self._vad_context, x], axis=1)  # [1,576]
+            out, new_state = self._session.run(
+                None,
+                {
+                    "input": x_full,
+                    "state": self._vad_state,
+                    "sr": np.array(VAD_SAMPLE_RATE, dtype=np.int64),
+                },
+            )
+            self._vad_state = new_state
+            self._vad_context = x_full[:, -64:]
+            return float(np.asarray(out).reshape(-1)[0])
+        except Exception as exc:
+            self._enable_energy_fallback(exc)
+            return self._energy_prob(x)
 
     async def utterances(
         self, chunks: AsyncIterator[AudioChunk]
@@ -424,7 +442,7 @@ class SileroEndpointer:
                             # A silence timer is running. Require *sustained*
                             # speech to cancel it — a single ambient / bleed
                             # spike must not wipe a near-complete silence
-                            # accumulation (the "Jarvis denkt, ich rede noch"
+                            # accumulation (the "Jarvis thinks I am still talking"
                             # bug, 2026-05-25). Brief blips below the
                             # hysteresis hold ``silent_run`` (neither reset
                             # nor grow); only a real resume cancels.

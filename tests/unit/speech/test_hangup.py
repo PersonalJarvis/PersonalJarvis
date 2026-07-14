@@ -68,6 +68,8 @@ def test_hangup_re_matches_explicit_commands(phrase: str) -> None:
         "aufflegen",
         "Aufflegen",
         "aufflegt",
+        "auf jetzt",
+        "Okay, auf jetzt.",
     ],
 )
 def test_hangup_re_matches_auflegen_mishearings(phrase: str) -> None:
@@ -100,6 +102,11 @@ def test_hangup_re_matches_auflegen_mishearings(phrase: str) -> None:
         "Let's get up!",
         "let us get up",
         "just get up",
+        # Live 2026-07-12: OpenAI Realtime transcribed a language-switch
+        # request with the words "auf jetzt". The former unanchored STT
+        # mishearing alias treated those words inside ordinary speech as the
+        # one-word closing command and killed the session before the brain ran.
+        "Antworte auf jetzt nur noch auf Englisch.",  # i18n-allow: bug transcript
     ],
 )
 def test_hangup_re_ignores_ambiguous_and_normal_speech(phrase: str) -> None:

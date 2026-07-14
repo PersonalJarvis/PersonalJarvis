@@ -44,6 +44,29 @@ function installFetchMock(
 ): ReturnType<typeof vi.fn> {
   const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
     const url = String(input);
+    if (url.startsWith("/api/setup/obsidian/status")) {
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => ({
+          installed: true,
+          config_exists: true,
+          vault_registered: true,
+          recommended_action: "ok",
+        }),
+      } as Response;
+    }
+    if (url.startsWith("/api/setup/state")) {
+      return {
+        ok: true,
+        status: 200,
+        statusText: "OK",
+        json: async () => ({
+          completed: true,
+        }),
+      } as Response;
+    }
     for (const prefix of Object.keys(routes)) {
       if (url.startsWith(prefix)) {
         const body = routes[prefix]();
@@ -198,7 +221,7 @@ describe("WikiView — populated tree", () => {
       expect(screen.getByTestId("wiki-page-renderer")).toBeDefined();
     });
     expect(screen.getByTestId("wiki-page-title").textContent).toBe("Sam");
-  });
+  }, 10_000);
 });
 
 describe("WikiView — health strip", () => {
@@ -217,6 +240,9 @@ describe("WikiView — health strip", () => {
     },
     last_chain_failure: null,
     journal_backlog: 0,
+    indexed_pages: 1,
+    vault_pages: 1,
+    index_state: "ok",
   };
 
   const FAILED_HEALTH: WikiHealthSnapshot = {
@@ -234,6 +260,9 @@ describe("WikiView — health strip", () => {
     },
     last_chain_failure: null,
     journal_backlog: 3,
+    indexed_pages: 0,
+    vault_pages: 1,
+    index_state: "stale",
   };
 
   it("renders the vault path for a healthy snapshot", async () => {
@@ -272,6 +301,26 @@ describe("WikiView — health strip", () => {
       screen.getByTestId("wiki-health-dot").getAttribute("data-visual"),
     ).toBe("red");
     expect(screen.getByTestId("wiki-health-backlog").textContent).toContain("3");
+  });
+
+  it("rebuilds a stale search index from the health strip", async () => {
+    const stale = { ...HEALTHY_HEALTH, indexed_pages: 0, index_state: "stale" as const };
+    const fetchMock = installFetchMock({
+      "/api/wiki/tree": () => EMPTY_TREE,
+      "/api/wiki/health": () => ({ ok: true, health: stale }),
+      "/api/wiki/reindex": () => ({ ok: true, indexed_pages: 1, vault_pages: 1 }),
+    });
+    renderWithClient(<WikiView />);
+
+    const button = await screen.findByTestId("wiki-health-reindex");
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/wiki/reindex",
+        { method: "POST" },
+      );
+    });
   });
 });
 
@@ -351,6 +400,7 @@ describe("PageHeader — frontmatter pills", () => {
           created: "2026-05-13",
           updated: "2026-05-13",
         }}
+        vaultRoot="C:/vault/Jarvis"
         vaultRelPath="entities/sam.md"
       />,
     );

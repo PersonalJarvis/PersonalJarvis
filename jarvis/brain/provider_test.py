@@ -202,6 +202,53 @@ def _resolve_brain_model(cfg: Any, provider: str) -> str:
         return ""
 
 
+def _resolve_provider_option(cfg: Any, provider: str, field: str) -> str:
+    """Read a per-provider model or voice override without assuming its family."""
+    try:
+        providers = getattr(getattr(cfg, "brain", None), "providers", None)
+        provider_config = providers.get(provider) if isinstance(providers, dict) else None
+        return str(getattr(provider_config, field, "") or "")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
+async def _default_realtime_probe(spec: Any, cfg: Any, *, timeout_s: float) -> float:
+    """Open and close the exact selected realtime provider.
+
+    A sibling text-model call cannot validate the duplex endpoint, model id,
+    session schema, audio formats, or SDK event contract. The provider adapter's
+    ``open_session`` returns only after its handshake is accepted, so this is a
+    small but authoritative connectivity check with no audio sent.
+    """
+    from jarvis.core.config import get_secret_any
+    from jarvis.core.registry import load
+    from jarvis.realtime.protocol import RealtimeProvider, RealtimeSessionConfig
+
+    provider_cls = load("jarvis.realtime", spec.id, protocol=RealtimeProvider)
+    credentials = tuple(getattr(provider_cls, "credential_candidates", ()) or ())
+    api_key = get_secret_any(credentials)
+    if not api_key:
+        raise RuntimeError("No API key configured for the realtime provider")
+    provider = provider_cls(api_key=api_key)
+    session_config = RealtimeSessionConfig(
+        instructions="Connection validation only. Do not respond until audio arrives.",
+        language="en",
+        model=_resolve_provider_option(cfg, spec.id, "model"),
+        voice=_resolve_provider_option(cfg, spec.id, "voice"),
+        input_sample_rate=int(getattr(provider, "input_sample_rate", 16_000)),
+        output_sample_rate=int(getattr(provider, "output_sample_rate", 24_000)),
+        modalities=("audio",),
+    )
+    started = perf_counter()
+    session = await asyncio.wait_for(
+        provider.open_session(session_config), timeout=timeout_s
+    )
+    try:
+        return (perf_counter() - started) * 1000.0
+    finally:
+        await session.close()
+
+
 def _default_make_tts(cfg: Any, provider: str) -> Any:
     from jarvis.plugins.tts import _build_provider
 
@@ -253,6 +300,7 @@ async def run_provider_test(
     brain_probe: Callable[[str, str], Awaitable[Any]] | None = None,
     make_tts: Callable[[Any, str], Any] | None = None,
     make_stt: Callable[[Any, str], Any] | None = None,
+    realtime_probe: Callable[[Any, Any], Awaitable[float]] | None = None,
     codex_status: Callable[[], Any] | None = None,
     antigravity_status: Callable[[], Any] | None = None,
     timeout_s: float = 60.0,
@@ -307,15 +355,51 @@ async def run_provider_test(
         if not is_present:
             return ProviderTestResult(provider, NOT_CONFIGURED, "No credential stored.")
 
+    # Default 1-token probe, shared by the brain tier AND the realtime tier below.
+    if brain_probe is None:
+        async def brain_probe(p: str, m: str) -> Any:  # type: ignore[misc]
+            from jarvis.brain.healthcheck import BrainHealthChecker
+            from jarvis.brain.provider_registry import BrainProviderRegistry
+
+            checker = BrainHealthChecker(BrainProviderRegistry())
+            return await checker.probe(p, m, timeout_s=timeout_s)
+
+    if spec.tier == "realtime":
+        started = perf_counter()
+        try:
+            if realtime_probe is None:
+                latency_ms = await _default_realtime_probe(
+                    spec, cfg, timeout_s=min(timeout_s, 20.0)
+                )
+            else:
+                latency_ms = await asyncio.wait_for(
+                    realtime_probe(spec, cfg), timeout=min(timeout_s, 20.0)
+                )
+            return ProviderTestResult(
+                provider,
+                OK,
+                "Realtime session handshake accepted.",
+                latency_ms,
+            )
+        except TimeoutError:
+            latency_ms = (perf_counter() - started) * 1000.0
+            return ProviderTestResult(
+                provider,
+                UNREACHABLE,
+                "Realtime session handshake timed out.",
+                latency_ms,
+            )
+        except Exception as exc:  # noqa: BLE001
+            latency_ms = (perf_counter() - started) * 1000.0
+            detail = f"{type(exc).__name__}: {exc}"
+            return ProviderTestResult(
+                provider,
+                classify_provider_error(detail),
+                detail,
+                latency_ms,
+            )
+
     if spec.tier == "brain":
-        if brain_probe is None:
-            async def brain_probe(p: str, m: str) -> Any:  # type: ignore[misc]
-                from jarvis.brain.healthcheck import BrainHealthChecker
-                from jarvis.brain.provider_registry import BrainProviderRegistry
-
-                checker = BrainHealthChecker(BrainProviderRegistry())
-                return await checker.probe(p, m, timeout_s=timeout_s)
-
         model = _resolve_brain_model(cfg, provider)
         hr = await brain_probe(provider, model)
         if getattr(hr, "ok", False):
@@ -332,17 +416,28 @@ async def run_provider_test(
         except Exception as exc:  # noqa: BLE001
             detail = f"{type(exc).__name__}: {exc}"
             return ProviderTestResult(provider, classify_provider_error(detail), str(exc))
-        start = perf_counter()
-        try:
+
+        async def _first_audio_bytes() -> int:
             total = 0
             async for chunk in inst.synthesize("Test."):
                 total += len(getattr(chunk, "pcm", b"") or b"")
                 if total > 0:
                     break
+            return total
+
+        start = perf_counter()
+        try:
+            # Bounded like the STT branch below: an unresponsive TTS stream must
+            # surface as an honest "unreachable" instead of hanging the request
+            # (and the UI's "Testing…" spinner) forever.
+            total = await asyncio.wait_for(_first_audio_bytes(), timeout=timeout_s)
             dur = (perf_counter() - start) * 1000.0
             if total > 0:
                 return ProviderTestResult(provider, OK, f"{total} audio bytes", dur)
             return ProviderTestResult(provider, ERROR, "synthesized 0 bytes", dur)
+        except TimeoutError:
+            dur = (perf_counter() - start) * 1000.0
+            return ProviderTestResult(provider, UNREACHABLE, f"timeout after {timeout_s:.0f}s", dur)
         except Exception as exc:  # noqa: BLE001
             dur = (perf_counter() - start) * 1000.0
             detail = f"{type(exc).__name__}: {exc}"
@@ -351,7 +446,10 @@ async def run_provider_test(
     # stt
     builder = make_stt or _default_make_stt
     try:
-        inst = builder(cfg, provider)
+        # Built off the event loop: the local faster-whisper build LOADS the model
+        # synchronously (seconds), which would otherwise freeze every other request
+        # (and the whole API-Keys screen) while a test/section-health check runs.
+        inst = await asyncio.to_thread(builder, cfg, provider)
     except (ImportError, ModuleNotFoundError):
         # M5: the local faster-whisper STT needs the [desktop] extra. On a headless
         # base install the import raises — that is "not installed", an actionable

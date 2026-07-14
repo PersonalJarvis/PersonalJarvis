@@ -7,6 +7,54 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
+## [1.0.6] - 2026-07-13
+
+### Added
+
+- Realtime voice engine (full-duplex speech-to-speech, OpenAI Realtime /
+  Gemini Live) ships publicly for the first time, including the delegate
+  tool mode: one action function runs a full router-brain turn, so every
+  Jarvis capability (wiki, MCP/plugin/CLI tools, missions, computer use)
+  is reachable from a live call.
+- Tool Model pick: a dedicated, configurable thinking model for delegated
+  realtime turns, with REST routes and a settings UI.
+- Groq brain provider; realtime credential aliases; browser realtime audio
+  worklet buffering.
+- Voice-session auditor (scripts/diag_voice_sessions.py) that flags known
+  failure classes straight from the flight recorder.
+
+### Fixed
+
+- Turn planner: German umlaut verbs never matched (normalization mismatch);
+  added missing everyday action verbs across de/en/es; contact-detail and
+  app-state lookups now route to the orchestrator.
+- Deterministic delivery of pending voice confirmations and short clarify
+  answers to the brain — prompt compliance is no longer a correctness
+  boundary.
+- One voice per call: classic TTS can no longer speak into a live realtime
+  session (including the hang-up race); interim lines are dropped, owed
+  results are re-delivered by the live voice.
+- run_shell on Windows executed quoted commands as literals (echoed back
+  with exit 0) and could not run cmd builtins; commands now run through
+  the command shell.
+- Failed confirmed actions now speak the actionable failure reason; the
+  MCP manager names configured servers on an unknown-name error.
+
+### Known
+
+- 3 tests in tests/unit/brain/test_tool_model_turn.py are red mid-rework
+  (fallback model pinning semantics still being finalized).
+
+## [Unreleased]
+
+### Changed
+
+- **A missing Node.js no longer blocks the one-line installer.** Node only
+  powers the optional coding-agent worker (Claude Code / Codex) and a few
+  Node-based integrations; the installer now notes its absence and continues,
+  pointing to the in-app path for adding the worker later — instead of turning
+  new users away at the door.
+
 ## [1.0.5] — 2026-07-09
 
 ### Fixed

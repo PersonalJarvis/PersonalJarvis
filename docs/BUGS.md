@@ -3240,3 +3240,499 @@ usage/rate cap needs a process-local, self-expiring cooldown its factory
 consults (mirror pair: `claude_quota_state` / `codex_quota_state`), and a
 cross-WORKER fallback must probe the target's viability before spawning it —
 never jump to a provider by name (AP-22).
+
+## BUG-043: Realtime bar appears but cannot accept speech while session assembly waits for the shared thread pool (HIGH, 2026-07-12)
+
+**Symptom.** Immediately after a confirmed wake, the desktop Jarvis Bar enters
+its listening state, but its microphone meter appears inert and the user gets
+no response when speaking naturally without a pause. Waiting several seconds
+before speaking can make the same session work. The delay varies with machine
+load and therefore looks provider-specific even though it affects every
+realtime provider.
+
+**Forensics.** In the live incident, wake confirmation and the listening bar
+arrived at 10:40:34. The voice session entered LISTENING at 10:40:35, but the
+first log line from `RealtimeVoiceSession` did not appear until 10:40:44. The
+user closed the still-unready session before any provider handshake began.
+The same session retained an open microphone throughout. A fresh-process
+benchmark assembled the wrapper in about 0.6 seconds, ruling out the provider
+handshake and normal credential resolution as the eight-to-nine-second gap.
+
+**Root cause.** `_active_realtime_session` queued the synchronous session
+wrapper build through `asyncio.to_thread`, which uses the process-wide default
+executor. Wake detectors and local STT also use that executor for native
+inference and recognizer replenishment. Under load, voice startup queued behind
+those workers. Capture-first buffering correctly preserved audio, but no
+realtime consumer could accept it until the unrelated shared-pool backlog
+cleared. This repeated the executor-starvation half of BUG-036 on a different
+voice-critical control path.
+
+**Fix.** `jarvis/speech/pipeline.py::_run_voice_critical_thread` runs realtime
+session assembly and desktop barge-in warmup on fresh daemon threads, outside
+the shared default executor. The existing ordering remains unchanged:
+microphone capture starts first, `VoiceSessionStarted` reveals the bar only
+after capture is armed, startup audio stays in `_SessionInputBuffer`, and the
+selected provider receives the preserved prefix as soon as its handshake
+completes. Provider selection and cross-family fallback remain capability- and
+credential-driven.
+
+**Guards.** `tests/unit/speech/test_realtime_mode.py` contains
+`test_realtime_builder_survives_exhausted_default_thread_pool`, which fills the
+default executor beyond its platform maximum and proves that realtime assembly
+still starts and completes. The existing
+`test_shared_input_keeps_meter_live_while_realtime_build_is_blocked` and
+`test_capture_precedes_listening_signal_and_preserves_startup_audio` retain the
+metering, ordering, and zero-loss guarantees.
+
+The classic pipeline does not have a session-builder step before VAD: it
+consumes the same capture-first buffer immediately. The companion
+`test_pipeline_mode_listens_with_default_thread_pool_exhausted` pins that this
+path still accepts the opening audio even when wake/local-STT work occupies
+every shared executor worker. Weak-CPU endpointing remains covered separately
+by `test_capture_overflow` and `test_vad_realtime_gap_credit`.
+
+**Class rule.** A voice-critical recovery or startup control path must never
+depend on the same executor used by un-cancellable native inference. Opening
+the microphone early is necessary but not sufficient: every prerequisite for
+the eventual audio consumer must also remain schedulable while the default
+pool is exhausted.
+
+## BUG-044: Desktop window is blank during a cold or busy startup (HIGH, 2026-07-12)
+
+**Symptom.** First observed as a regression again on 2026-07-12: after the PC
+starts and the desktop app opens, the entire client area is a featureless dark
+surface. No navigation, loading indicator, assistant name, or error message is
+visible. The normal React UI eventually appears after the machine finishes its
+startup work, but the delay looks like a crashed JavaScript app and is highly
+confusing for users. The screenshot captured at 12:04 shows WebView's native
+background rather than the product's existing HTML boot shell.
+
+**Root cause.** The serve-first backend waited for
+`FastBootstrap.wait_shell_served(timeout=2.0)` before starting its import and
+model-prefetch storm. That event fired when the entry JavaScript bytes left the
+local HTTP server, not when the browser painted them. On a cold WebView or a
+busy/weak CPU, two seconds could expire before the browser had produced its
+first frame. OpenWakeWord, TTS, audio, STT, FastAPI, and route imports then
+competed for the GIL/import lock while the window was already visible, leaving
+only the native background until that work released the browser/server path.
+The race was machine-load dependent, so a fast maintainer machine could miss
+it while another computer or operating system exposed it.
+
+**Fix.** The dependency-free boot page now sends `POST
+/api/ui/shell-painted` only after two `requestAnimationFrame` callbacks. The
+bootstrap records that browser-originated paint acknowledgment, and the desktop
+backend waits on it (with a bounded failure backstop) before launching any
+heavy prefetch or import. The original asset-served event remains available for
+transport diagnostics but no longer gates visible readiness. Both the source
+and packaged `dist/index.html` carry the same paint handshake, so installed and
+development builds behave identically on Windows, macOS, and Linux.
+
+**Guards.** `tests/unit/ui/web/test_fast_bootstrap.py` proves that serving the
+entry JavaScript alone cannot release the paint gate, that the warm-up endpoint
+does release it with HTTP 204, and that the build-source boot page acknowledges
+only after two animation frames. `tests/unit/ui/test_desktop_backend_start_order.py`
+keeps the desktop orchestration compatible with the stronger readiness signal.
+
+**Class rule.** Network delivery is not visual readiness. Any startup path that
+shows a WebView before heavy process initialization must wait for a signal from
+an actually rendered browser frame, never a server-side response, asset-read,
+or fixed sleep. The wait must remain bounded so a broken GUI cannot deadlock a
+headless or degraded backend.
+
+## BUG-045: Rejected Vosk wake candidates starve the desktop process (HIGH, 2026-07-13)
+
+**Symptom.** The desktop client became a featureless dark surface and Windows
+labelled the native window as not responding. Closing and reopening appeared to
+fix it, which made the failure look like a rare WebView startup race. The same
+failure mode can affect the GTK and Cocoa pywebview backends because the native
+window, local HTTP server, overlay, microphone, and wake detector share one
+Python process.
+
+**Forensic timeline.** The affected process started at 08:22:04 and served its
+health endpoint at 08:22:19. The screenshot was created at 08:29:32, so this was
+not the initial paint race from BUG-044. During the 140 seconds surrounding the
+capture, the log recorded 99 full Vosk verification-pass results. The later
+watchdogs independently reported a 2.5-second JarvisBar frame stall, 6.6 seconds
+without a microphone frame, and a local-listener recovery. Those simultaneous
+failures identify process-wide starvation rather than a React-only crash.
+
+**Root cause.** Vosk grammar mode intentionally favours recall and can map room
+speech onto the configured wake phrase. A clean rejection reset every streaming
+recognizer and immediately admitted another candidate. Each candidate could run
+an early visual verify, an authoritative grammar/free-decode pair, sibling-model
+rescue, and recognizer-stock replenishment. The existing five-second cooldown
+applied only after a successful wake, so a stream of rejected candidates had no
+load bound. Detailed rejection messages at INFO level amplified the burst.
+
+A follow-up regression exposed two recall losses in that otherwise necessary
+hardening. First, the backpressure window paused stage one as well as the costly
+verifier, so rapid human retries were discarded. Second, the structured sound
+confirm rejected real one-token merges and close core spellings produced by the
+free decoder even after a high-confidence grammar re-score.
+
+**Fix.** A rejected candidate opens a two-second, monotonic backpressure window.
+Full verification remains paused until re-arm, but stage one immediately gets
+one fresh recognizer set and may latch one retry. Once latched, stage one also
+pauses while audio continues advancing the ring; the retained candidate is
+verified when the existing deadline expires. This preserves the hard verifier
+and recognizer-rebuild bound without turning backpressure into a deaf period for
+a user's immediate second call. The first candidate after quiet remains
+immediate. The early visual verify completes before the authoritative pair
+starts, replenishment begins only after the decision, and rejection details are
+DEBUG-level. Session stats expose backpressure windows and bounded chunks. The
+mechanism uses only asyncio and monotonic time, so Windows, macOS, Linux desktops,
+and headless Linux share the same behaviour.
+
+The sound confirm also accepts a narrowly calibrated class of generic ASR
+variants: a known prefix followed by a two-thirds-similar core, or a one-token
+merge that independently resembles the configured prefix, core, and complete
+phrase. The merge path cannot accept the bare core. Calibration against 100
+real positive and 500 real negative speech windows improved recall without a
+new negative acceptance; the energy, grammar-confidence, localisation, and
+full-phrase requirements remain intact.
+
+The desktop startup path also logs whether the browser-originated shell-paint
+acknowledgment arrived or whether the bounded 12-second fallback released heavy
+initialization. A future screenshot can therefore distinguish paint failure
+from post-start process starvation without inference.
+
+**Guards.** `tests/unit/plugins/wake/test_vosk_kws_provider.py` proves that 200
+continuous noisy chunks trigger one verification and only one bounded retry
+recognizer set, not a candidate/rebuild storm. It also proves that immediate
+retries for one-word and multi-word arbitrary phrases are retained during the
+window. Sound-confirm guards cover close spellings, merged phrases, bare-core
+rejection, and the production false-wake transcripts. The existing wake recall,
+sibling rescue, early visual candidate, cooldown, and AP-24
+exclusive-recognizer tests remain green.
+`tests/unit/ui/web/test_fast_bootstrap.py` and
+`tests/unit/ui/test_desktop_backend_start_order.py` retain the cross-platform
+paint-before-heavy-start contract.
+
+**Class rule.** A recall-biased candidate source needs rejection backpressure,
+not only a post-success cooldown. The suppressed interval must stop both the
+expensive verifier and the candidate/recognizer producer; rate-limiting only the
+last stage leaves the same resource storm alive one layer earlier.
+
+## BUG-046: Desktop restart closes Jarvis but never brings it back (HIGH, 2026-07-13)
+
+**Symptom.** `POST /api/settings/restart-app` returned success and closed the
+desktop, but the detached relauncher could not reliably acquire the
+single-instance lock because the old process remained alive without a window.
+The restart appeared to be complete while Jarvis was no longer reachable.
+
+**Root cause.** `run_restart_quit_sequence` described its hard exit as a
+watchdog, but armed it only after the synchronous `window.destroy()` call
+returned. A cross-thread WebView destroy is one of the operations that can
+block during teardown. In that exact failure mode, execution never reached the
+hard exit, the old process retained its mutex and port, and fresh launchers
+bounced off the supposedly active instance.
+
+**Fix.** The hard exit is now armed in an independent daemon thread before the
+GUI destroy call. Normal teardown still wins when it completes quickly; a
+blocked Cocoa, GTK, or WebView2 destroy can no longer prevent the old process
+from releasing the cross-platform single-instance and port resources.
+
+**Guard.** `tests/unit/ui/test_relauncher.py` blocks `destroy_window` on an
+event and proves the independent watchdog still reaches the injected process
+exit before the destroy call returns.
+
+**Class rule.** A shutdown watchdog must run independently of every operation
+it is intended to bound. Code placed after a possibly blocking call is a
+fallback, not a watchdog.
+
+## BUG-047: Realtime promises an action, starts nothing, and never returns (HIGH, 2026-07-13)
+
+**Symptom.** This incident happened in an OpenAI Realtime voice session, not in
+the classic STT -> Brain -> TTS pipeline. Turn 4 was transcribed as
+`Was steht im Mainim drin?` <!-- i18n-allow: exact German forensic STT output -->
+after the prior turn had established the user's Wiki as the subject. Jarvis
+then spoke:
+`Das kann ich gerne für dich nachschauen. Einen Moment, ich werfe einen Blick in dein Wiki und sage dir gleich, was bei dir drinsteht.` <!-- i18n-allow: exact German forensic runtime output -->
+It never supplied the promised result.
+
+**Forensic proof.** The recorder identifies the tier as `realtime` and the
+provider as `openai-realtime`. The routing record for the failed turn is
+`REALTIME_ROUTING_DECISION path=native_realtime;reasons=none`. The terminal
+`VoiceTurnCompleted` record has `tool_calls=[]`. There is no later Wiki result,
+tool result, mission update, or completion announcement. The provider response
+ended normally, so there was no hidden asynchronous continuation waiting to
+finish. Jarvis said that it was about to act while the execution state proved
+that no action had started.
+
+**Root cause.** Three independent gaps aligned:
+
+1. The deterministic Realtime planner classified only the current transcript.
+   ASR had garbled the domain/ownership wording into `Mainim`; the surviving
+   word `drin` was an elliptical reference to the preceding Wiki turn. Without
+   bounded conversation context, the planner saw neither private data nor a
+   local capability and left the response on the native provider path.
+2. The former delegate-mode instruction said that the orchestrator handled Wiki
+   and private-memory turns automatically and told the provider not to call its
+   action function for them. That assumption was false on a planner miss: the
+   planner did not dispatch, while the provider had been told not to dispatch.
+3. Prompt rules were the only final protection. No runtime invariant compared a
+   model's future-action wording with the turn's actual tool/delegate state.
+   Once the provider violated the prompt, speculative speech could become the
+   terminal user-visible answer.
+
+**Fix.** The repair is deliberately layered because provider compliance alone
+cannot be a correctness boundary:
+
+- The shared `turn_planner` now accepts a bounded context window. An explicit
+  follow-up reference such as `drin`, `there`, or `what does it say` inherits a
+  prior local/private/connected/current evidence domain and routes through the
+  orchestrator. Generic unrelated questions, including `What time is it?`, do
+  not inherit old Wiki context.
+- Delegate-mode instructions now make `jarvis_action` the provider fallback for
+  the user's Wiki, private memory, apps, settings, files, connectors, and other
+  personal state. They prohibit ending on an action announcement without the
+  function call that starts it.
+- `RealtimeVoiceSession` maintains a per-turn output probe and per-turn execution
+  evidence. If a native provider emits a high-confidence deferred-action claim
+  with no tool call, delegate result, or trusted external event, its speculative
+  text/audio is drained before delivery. Delegate mode interrupts that response,
+  starts the real orchestrator turn, waits for the provider boundary, and injects
+  only the trusted result. Direct-tool mode, where no supervisor recovery exists,
+  fails closed with a localized statement that no action was started.
+- The classic `BrainManager` applies the same execution-state backstop after
+  leaked-tool recovery and mandated-evidence enforcement. Potential action turns
+  buffer provider chunks until the authoritative final response, preventing TTS
+  from speaking a promise that the final guard later replaces.
+- The packaged persona no longer asks for a pre-tool "let me check" line. It
+  requires the tool call first and treats only selected/running execution as a
+  valid basis for interim speech.
+- The opt-in speculative Flash-Brain preamble now drops deferred-action claims.
+  This is defense in depth: the preamble remains off by default after the earlier
+  forensic sample found that it was the only spoken output on 22 percent of its
+  turns.
+
+The detector is regex-only, runs off the voice hot path without another model
+call, and carries German, English, and Spanish runtime wording. Its fallback
+uses the already resolved turn language instead of re-detecting a de/en subset.
+
+**Related output audit.** Every user-facing surface that can plausibly say
+"working on it" or otherwise imply future work was checked against actual
+execution state:
+
+| Surface | Evidence behind an interim/action claim | Result |
+|---|---|---|
+| Native Realtime (delegate mode) | Provider function call, deterministic delegate task, or trusted injected result | Recovered at runtime if the provider promises without evidence |
+| Native Realtime (direct tools) | A recorded direct tool execution | Fails closed honestly when no execution exists |
+| Classic Brain/provider response | Per-turn executed-tool set or successfully recovered leaked tool call | Final response is replaced; streaming action turns are buffered |
+| Speculative Flash-Brain preamble | None by design | Off by default and now suppresses action promises when opted in |
+| Grounded tool acknowledgement | Emitted only after the router selected a concrete tool call | Kept; the subsequent call still runs through `ToolExecutor` |
+| Deterministic local actions | `ToolExecutor` result | Kept; success and failure both receive an immediate readback |
+| Computer Use | Background task is armed before progress speech | Kept; completion/failure publishes a terminal announcement |
+| Wiki background writes | Tracked ingest task exists before the saving acknowledgement | Kept; every terminal branch publishes success, failure, or timeout |
+| Jarvis-Agent missions | Mission task and signed mission state exist before spawn speech | Kept; live heartbeats and terminal mission events ground later updates |
+| `dispatch_with_review` | Inputs are validated and the review pipeline exists before its holding phrase | Kept; the phrase cannot be emitted for a rejected/no-op request |
+| Realtime out-of-band updates | Typed event from a running action/mission | Kept and explicitly excluded from model-promise detection |
+| Canned clarify/error/provider-down/timeout output | Reports current state; does not claim future execution | No action-promise path found |
+
+**Guards.** `tests/unit/brain/test_turn_planner.py` pins the exact garbled
+follow-up plus unrelated-question negatives. `tests/unit/realtime/test_session.py`
+pins deterministic contextual delegation, provider-promise recovery with no
+speculative audio leak, and the honest direct-mode fallback.
+`tests/unit/brain/test_action_honesty.py` covers multilingual detection,
+negative explanatory/result text, the generic Brain final guard, and the
+packaged persona contract. `tests/unit/brain/test_manager_streaming.py` proves
+that a contextual action turn cannot leak pre-final chunks, and
+`tests/unit/brain/test_ack_brain/test_run_stream.py` pins speculative-preamble
+suppression.
+
+**Class rule.** Future tense is not execution state. Any user-facing sentence
+that says Jarvis will check, open, save, start, research, or report back must be
+backed in the same turn by a tool call, a tracked background task, or a typed
+event from work that is already running. If no such evidence exists, Jarvis
+must start the real action or say immediately that it did not start one; it may
+never end the turn on a promise of an invisible continuation.
+
+## BUG-048: Realtime delegation misses turns the planner cannot see (HIGH, 2026-07-13)
+
+**Symptom.** In realtime delegate mode, three everyday turn shapes silently
+stayed on the native provider path, so whether the user's action ever reached
+the Jarvis action system (ToolExecutor, MCP/plugin/CLI tools, Wiki, missions)
+depended entirely on the realtime model voluntarily calling `jarvis_action` —
+prompt compliance as the correctness boundary, the exact BUG-047 class:
+
+1. **The answer to a pending two-turn voice confirmation.** A delegated
+   router-brain turn arms an ask-tier confirmation (an MCP/plugin write,
+   `call-contact`, a dangerous app command) and asks the user. The bare
+   "yes"/"no" answer matches no planner action vocabulary, so nothing forced
+   it back to the brain's `_resume_voice_confirm` — a confirmed action could
+   simply never execute.
+2. **Every German umlaut verb.** `turn_planner._normalize` stripped combining
+   marks (NFKD), yielding one ascii form, while the entire German vocabulary
+   is written in the transliterated digraph form ("loesch", "aender",
+   "fuehr", "pruef", "koennte", "kuerzlich", "faehigkeit"). The two forms
+   never meet: no German utterance containing an umlaut verb has ever matched
+   the action/lookup/instructional vocabularies.
+3. **The short answer to a delegated clarify question.** When the delegated
+   brain reply ended in a question ("Which file do you mean?"), the user's
+   elliptical answer ("the readme one") carried no planner-visible category
+   and stayed native.
+
+**Fix.** (a) `RealtimeVoiceSession` probes `brain.has_pending_voice_confirm()`
+during final-transcript handling and forces the deterministic delegate;
+(b) `_normalize` transliterates umlauts to their digraph form before the NFKD
+strip, and the action-verb fallback gained the missing everyday assistant
+verbs in all three languages (switch/turn/play/remember/remind/schedule;
+wechseln/schalten/stellen/spielen/merken/notieren/legen; recordar/anotar/
+poner/reproducir/apagar/agendar) with stem guards for frequent non-action
+words; (c) the session remembers a delegate reply that ended in a question
+and pulls the next short (<= 6 token) final transcript back to the
+orchestrator, while a longer follow-up stays native as a topic change.
+
+**Guards.** `tests/unit/realtime/test_session.py` (pending-confirm
+delegation, clarify-answer delegation, short/long negative cases),
+`tests/unit/brain/test_turn_planner.py` (umlaut verbs, new action verbs,
+guarded non-action words).
+
+**Class rule.** The deterministic planner is the correctness boundary for
+realtime delegation; the provider prompt is only an optimization. Whenever a
+multi-turn state machine (confirmation, clarify question) leaves the brain
+waiting for the user's next utterance, the session must route that utterance
+back deterministically — never rely on the model to do it. And every
+vocabulary that matches normalized text must be written in the SAME
+normalized form that `_normalize` actually produces; a mismatch is silent
+and total, not partial.
+
+## BUG-049: Classic TTS voice speaks into a live realtime call (HIGH, 2026-07-13)
+
+**Symptom.** In a realtime voice session (17:39, delegate mode), the user asked
+for a full listing of their Wiki. While the delegated router-brain turn was
+thinking (~31 s), Jarvis spoke the interim line "I am searching your wiki" in
+the CLASSIC pipeline TTS voice — a sudden second voice/engine inside the live
+call. The user read it as "Jarvis switched from realtime to the pipeline",
+although the final answer was in fact delivered by the realtime model.
+
+**Root cause.** The ack brain published `AnnouncementRequested(kind=preamble)`
+mid-turn. `RealtimeVoiceSession.deliver_announcement` correctly refuses a busy
+session (text input would interrupt the provider's response lifecycle), and
+`_on_announcement` treated every refusal as "use classic TTS" — it never
+distinguished a BUSY live call from a DEAD one.
+
+The 19:59 recurrence exposed a second state bug. OpenAI rejected a raced
+`response.create` with `conversation_already_has_active_response`; the receive
+pump continued and the realtime call remained usable, but the wrapper set its
+sticky `_failed` flag. `is_active` then returned false, so a later delegated
+`brain.router.ack` preamble crossed into classic TTS even though the accepted
+realtime socket was still carrying the conversation.
+
+**Fix.** Voice ownership now follows the accepted realtime handle, never a
+provider-health flag. Until that lifecycle fully unwinds, ephemeral
+preamble/progress lines are dropped and owed readbacks are parked; classic TTS
+cannot speak into the call. Provider events carry explicit recoverability, so
+the OpenAI active-response collision no longer poisons a usable session, while
+terminal events end the receive pump. The OpenAI adapter also serializes every
+local `response.create` against `response.done`, preventing the collision.
+Finally, realtime tool mode defaults to `direct`: the live model calls the
+supervisor safety gateway with its own realtime credential and does not invoke
+the classic Brain/TTS pipeline. Legacy `delegate` remains an explicit opt-in.
+
+**Guards.** `tests/unit/speech/test_realtime_announcement_bridge.py` and
+`test_announcement_bridge.py` cover voice ownership; realtime pipeline
+isolation, autonomous defaults, error recoverability, and OpenAI response
+serialization are covered under `tests/unit/realtime/`.
+
+**Class rule.** A voice surface has ONE voice at a time. Any fallback from
+the live realtime voice to classic TTS must be gated on the accepted call
+handle being GONE, never merely busy or unhealthy — those states mean wait,
+drop, or end the call, not switch voices mid-call.
+
+## BUG-050: run_shell on Windows echoes quoted commands instead of executing them (HIGH, 2026-07-13)
+
+**Symptom.** In a realtime session (18:15) the delegated brain turn burned all
+15 tool iterations trying to list the user's wiki files and died with
+`IterationBudget exhausted` — spoken outcome: a generic failure. The user
+experienced it as an endless thinking loop.
+
+**Root cause.** `run_shell` tokenized with `shlex.split(posix=False)` on
+Windows, which KEEPS surrounding quotes inside tokens. Three failure shapes,
+two of them silent:
+
+1. `powershell -Command "Get-ChildItem -Name"` → PowerShell received a string
+   LITERAL and echoed it back — **exit 0, stdout = the command itself**. The
+   tool reported success with garbage output, so the model saw no error to
+   correct and retried variations until the budget died.
+2. `cmd.exe /c "dir /s /b *.md"` → the kept quotes corrupted the payload
+   ("Der Befehl ist entweder falsch geschrieben...").  <!-- i18n-allow: quoted German OS error under test -->
+3. `dir /s /b` → WinError 2: cmd builtins are not programs and cannot be
+   exec'd directly.
+
+**Fix.** On Windows the ORIGINAL command string goes to `cmd.exe` via
+`create_subprocess_shell` — cmd parses its own quoting and provides the
+builtins. POSIX keeps the historical `shlex.split` + exec contract. The
+whitelist/blacklist safety matching runs on the full command string in
+`ToolExecutor` BEFORE execution and is unchanged.
+
+**Guards.** `tests/unit/plugins/tool/test_run_shell.py` — quoted PowerShell
+payload is executed (not echoed), cmd builtin `dir` works, quoted cmd payload
+works, POSIX path pinned.
+
+**Class rule.** A tool that reports success with an output that is merely its
+own input is worse than a failing tool: the model gets no error signal and
+loops. When wrapping OS process creation, verify on EVERY platform that a
+quoted argument arrives as an argument, not as a literal.
+
+## BUG-051: Realtime interim ack speaks only after the router has already decided (HIGH, 2026-07-13)
+
+**Symptom.** Realtime session 18:36 ("Wer ist aktueller Export-Weltmeister?"): <!-- i18n-allow: quoted German user utterance under analysis -->
+the user hears NOTHING for the whole wait and hangs up 17.8 s after finishing
+the question. The saved transcript shows an interim line ("Ich durchsuche
+gerade die aktuellen Daten …") — but its AUDIO only played ~2.7 s AFTER the <!-- i18n-allow: quoted German interim ack under analysis -->
+hang-up, via classic TTS into an ended session; live there was only dead air.
+A final answer never existed: the web search started ~1 s before the hang-up.
+
+**Timeline** (delegate dispatch 18:37:00.5 = t+0, `data/jarvis_desktop.log`):
+
+- t+0.0 — deterministic delegate dispatches the router-brain turn (OpenRouter).
+- t+3.1 — the realtime model tries to speak; correctly deferred (pending-action
+  honesty guard — it must not invent an outcome).
+- t+10.3 — OpenRouter response HEADERS arrive: ~10 s TTFB for the router hop.
+- t+15.9 — first model round fully streamed → tool calls visible →
+  `ack_emitter` fires → the readback LLM call starts.
+- t+16.6 — interim-ack TEXT ready (readback ~0.7 s); announcement published;
+  web search actually starts (Mojeek + DuckDuckGo).
+- t+17.8 — user hangs up (hotkey).
+- t+20.5 — the ack plays via classic TTS, after the session already ended
+  (consistent with the BUG-049 busy-gate: busy live call → no classic voice;
+  session gone → classic TTS speaks the parked line).
+
+**Root cause.** The interim ack is structurally serialized BEHIND the very
+decision it is meant to cover. `ToolUseLoop.run` awaits `ack_emitter` only on
+"the first iteration that has tool calls scheduled" — i.e. after the FULL
+first router model round has streamed to completion (~15.8 s here,
+`jarvis/brain/tool_use_loop.py`). The ack text is then ANOTHER LLM call
+(`ReadbackComposer.compose`, `jarvis/voice/contextual_readback.py`).
+Meanwhile the pending-action guard correctly mutes the realtime model, so
+nothing bridges the silence: three stacked latencies, and their sum is
+user-audible dead air.
+
+**Fix.** A dispatch-time dead-air bridge in the deterministic delegate path
+(`jarvis/realtime/session.py`). When the delegated action is still pending
+`_DELEGATE_BRIDGE_DELAY_S` (2 s) after dispatch, `_run_delegate_bridge`
+injects `_delegate_bridge_prompt` into the LIVE model — one voice per call
+(BUG-049) — ordering exactly one short interim sentence in the conversation
+language, with outcome claims, answer content, and function calls forbidden
+(the line is contextual, never a canned pool). The withhold gate opens only
+for this instruction-bounded response (`bridge_delivery_started`), and the
+held `turn_complete` path flushes the bridge audio tail instead of draining
+it. Necessity-gated: a result faster than the delay (`result_ready`) skips
+the bridge entirely. The bridge task is deliberately NOT a tracked delegate
+task, so a sleeping timer can never hold a turn open, defer a VAD edge, or
+refuse an announcement. Secondary lever (still open): the ~10 s OpenRouter
+TTFB on the router hop itself.
+
+**Guards.** `tests/unit/realtime/test_session.py` —
+`test_slow_deterministic_delegate_speaks_a_bridge_line` (bridge precedes the
+result, output flows, the turn survives the bridge's own turn_complete and
+the result is still delivered live, not as a late follow-up) and
+`test_fast_deterministic_delegate_needs_no_bridge_line` (fast results stay
+chatter-free).
+
+**Class rule.** An interim ack that waits for the completion of the decision
+it is meant to cover is not an ack. The bridge over dead air needs a latency
+budget bounded by user patience (~2–3 s), independent of any model round —
+and it must be a bystander: a helper task that merely waits must never feed
+the liveness signals (turn hold, endpoint protection) that real work feeds.

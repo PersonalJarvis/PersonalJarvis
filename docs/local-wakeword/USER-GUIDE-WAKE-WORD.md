@@ -55,9 +55,11 @@ ships no pre-trained brand models and never downloads one.
 
 ## Applying a change
 
-Saving a wake-word change from Settings applies it to a running voice
-pipeline immediately when possible; otherwise the app tells you a restart is
-needed and offers it.
+Saving a wake-word change or switching always-on wake listening on/off applies
+to a running desktop voice pipeline immediately. Hotkeys remain available and
+unchanged throughout the switch. In a headless or voice-disabled process there
+is no live microphone pipeline to update, so the setting is stored for the next
+voice start instead.
 
 ---
 

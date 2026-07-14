@@ -15,6 +15,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import tomllib
 from dataclasses import dataclass
 from pathlib import Path
@@ -54,6 +55,54 @@ PROFILES_DIR = PROJECT_ROOT / "profiles"
 DATA_DIR = PROJECT_ROOT / "data"
 ASSETS_DIR = PROJECT_ROOT / "assets"
 
+# Guards _resolve_writable_data_dir()'s lazy writability probe below. Named
+# separately from config_writer's _WRITE_LOCK — this protects the (rare,
+# once-per-process) directory-resolution probe, not a jarvis.toml write.
+_data_dir_lock = threading.Lock()
+_data_dir_cache: tuple[Path, Path] | None = None  # (DATA_DIR seen, resolved dir)
+
+
+def _resolve_writable_data_dir() -> Path:
+    """Return the directory to use for local credential-store persistence.
+
+    Honors ``JARVIS_DATA_DIR`` when set (headless hosts / read-only
+    site-packages installs where ``PROJECT_ROOT/data`` cannot be created).
+    Otherwise defaults to :data:`DATA_DIR`, falling back to the per-user
+    app-data directory when that path turns out not to be writable. The
+    writability probe is cheap but still touches the filesystem, so it runs
+    once — lazily, on first use, never at import time — and the result is
+    cached until ``DATA_DIR`` itself changes (tests monkeypatch it directly).
+
+    Scoped to the local-file credential fallback only; every other consumer
+    of :data:`DATA_DIR` in this codebase keeps reading that constant
+    directly and is unaffected.
+    """
+    global _data_dir_cache
+    env_dir = os.environ.get("JARVIS_DATA_DIR")
+    if env_dir and env_dir.strip():
+        return Path(env_dir.strip())
+    with _data_dir_lock:
+        if _data_dir_cache is not None and _data_dir_cache[0] == DATA_DIR:
+            return _data_dir_cache[1]
+        try:
+            DATA_DIR.mkdir(parents=True, exist_ok=True)
+            probe = DATA_DIR / f".write_probe_{os.getpid()}"
+            probe.write_text("", encoding="utf-8")
+            probe.unlink(missing_ok=True)
+            resolved = DATA_DIR
+        except OSError:
+            from jarvis.core.paths import user_data_dir
+
+            resolved = user_data_dir()
+            logging.getLogger(__name__).info(
+                "project data directory %s is not writable — using %s for "
+                "local credential storage instead",
+                DATA_DIR,
+                resolved,
+            )
+        _data_dir_cache = (DATA_DIR, resolved)
+        return resolved
+
 
 def resolve_config_path() -> Path:
     """Return the active ``jarvis.toml`` path, honouring ``JARVIS_CONFIG``.
@@ -84,6 +133,9 @@ PROVIDER_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
         ("openai_api_key", "OPENAI_API_KEY"),
     ),
     "openrouter": (("openrouter_api_key", "OPENROUTER_API_KEY"),),
+    # Shared with the existing ``groq-api`` STT provider.  The Brain provider
+    # uses the distinct ``groq`` slug while resolving the same portable secret.
+    "groq": (("groq_api_key", "GROQ_API_KEY"),),
     # NVIDIA NIM (OpenAI-compatible). Only the build.nvidia.com key (nvapi-),
     # not the legacy NGC key. One key, many NVIDIA-hosted models.
     "nvidia": (("nvidia_api_key", "NVIDIA_API_KEY"),),
@@ -145,16 +197,13 @@ class WakeWordConfig(BaseModel):
     engine: str = "auto"
     # Path to a user-supplied/trained .onnx wake model (engine="custom_onnx").
     custom_model_path: str = ""
-    # 0.5..1 wake responsiveness. openWakeWord path: mapped onto the activation
-    # threshold (0.5 == the data-driven PRODUCTION_WAKE_THRESHOLD, BUG-009 floor
-    # preserved). stt_match (local-Whisper) path: drives the poll interval
-    # (higher => polls more often => a spoken wake is picked up sooner), since
-    # that path never scores against the threshold.
-    # FLOOR 0.5 (user mandate 2026-07-07): below the calibrated midpoint the
-    # detector becomes so strict that normal-volume speech practically never
-    # fires it — a live config at 0.0 read as "the wake word is broken", not
-    # as "less sensitive". Values below the floor are LIFTED to 0.5 on load so
-    # an old/hand-edited jarvis.toml can never boot into a deaf wake word.
+    # READ-COMPAT ONLY, runtime-ignored since 2026-07-10: the user-facing
+    # Sensitivity slider was removed (mandate: always run every wake path at
+    # its calibrated-reliable maximum-speed value, identically on every OS —
+    # no per-user tuning). ``resolve_wake_plan`` no longer reads this field.
+    # Kept so an existing jarvis.toml with a hand-set ``sensitivity`` still
+    # parses and boots cleanly (open-source §3 / AP-16 back-compat); the
+    # floor validator stays only to keep any stored value well-formed.
     sensitivity: float = 0.5
     # STT transcript-match tolerance for transcription drift (engine="stt_match").
     fuzzy_match_ratio: float = 0.8
@@ -393,10 +442,16 @@ class TTSConfig(BaseModel):
 
 
 class BrainProviderConfig(BaseModel):
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
     model: str | None = None
     deep_model: str | None = None      # Optional: stronger reasoning model
-    cu_model: str | None = None        # Optional: model the Computer-Use loop uses
-                                       # (Phase 3). None -> use this provider's `model`.
+    # Canonical model for tool-bearing turns. ``cu_model`` remains a
+    # compatibility alias for installations predating the Tool Model rename.
+    tool_model: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("tool_model", "cu_model"),
+    )
     # Realtime voice pick (selectable Realtime model + voice). Only meaningful
     # for the two realtime-tier providers (openai-realtime / gemini-live); the
     # realtime model reuses `model` above. "" -> the adapter's own hardcoded
@@ -414,7 +469,14 @@ class BrainProviderConfig(BaseModel):
     # Currently only evaluated by ``GeminiBrain``; other providers ignore it.
     thinking_budget: int | None = None
 
-    model_config = {"extra": "allow"}  # allows unknown TOML keys
+    @property
+    def cu_model(self) -> str | None:
+        """Compatibility alias for callers that still use the old field name."""
+        return self.tool_model
+
+    @cu_model.setter
+    def cu_model(self, value: str | None) -> None:
+        self.tool_model = value
 
 
 class BrainPolicyConfig(BaseModel):
@@ -790,13 +852,12 @@ class BrainConfig(BaseModel):
     # None until the user opts into realtime voice. Reuses BrainTierConfig so the
     # fallback shape matches [brain.router]/[brain.worker].
     realtime: BrainTierConfig | None = None
-    # Dedicated GLOBAL Computer-Use planner provider — decoupled from
-    # ``primary`` (see docs plan "dedicated Computer-Use provider"). None
-    # until the user picks one; ``BrainManager._cu_provider`` then returns
-    # "" and Computer-Use keeps dispatching through the normal fallback
-    # chain (``primary`` first), so this is fully backward-compatible.
-    # Reuses BrainTierConfig, same shape as [brain.worker]/[brain.realtime].
-    computer_use: BrainTierConfig | None = None
+    # Canonical provider for tool-bearing turns in Pipeline and Realtime.
+    # ``computer_use`` below remains a compatibility alias for older configs.
+    tool_model: BrainTierConfig | None = Field(
+        default=None,
+        validation_alias=AliasChoices("tool_model", "computer_use"),
+    )
     # User-facing reply language pin (desktop "Languages" view → Reply Language).
     # "auto" mirrors the user's input language (DE/EN/ES); "de"/"en"/"es" force
     # that language as a hard rule for every Jarvis reply. Consumed by
@@ -830,6 +891,15 @@ class BrainConfig(BaseModel):
     # beheads with a misleading "took too long" phrase). Set False to fall back to
     # the UI-approval path.
     voice_confirm: bool = True
+
+    @property
+    def computer_use(self) -> BrainTierConfig | None:
+        """Compatibility alias for the old ``[brain.computer_use]`` tier."""
+        return self.tool_model
+
+    @computer_use.setter
+    def computer_use(self, value: BrainTierConfig | None) -> None:
+        self.tool_model = value
 
 
 class WikiCuratorConfig(BaseModel):
@@ -936,10 +1006,10 @@ class SchedulerConfig(BaseModel):
     periodic_interval_minutes: int = 30
     lock_path: Path = Path("data/wiki_curator.lock")
     lock_stale_after_seconds: int = 300
-    # Wave-2 journal pressure: once this many candidate facts sit pending
-    # in the Stage-1 journal, a JOURNAL trigger asks the consolidator to
-    # drain a batch (still subject to cooldown + lock).
-    consolidate_after_candidates: int = 3
+    # A durable candidate should become visible in the vault without waiting
+    # for unrelated future conversation. The background consolidator may still
+    # coalesce candidates that arrive concurrently.
+    consolidate_after_candidates: int = 1
     # Age-based flush (spec A4): even below the count threshold, pending
     # candidates older than this become a JOURNAL trigger so a quiet fresh
     # install still produces visible pages. 0 disables the age flush.
@@ -965,17 +1035,16 @@ class VoiceBridgeConfig(BaseModel):
     planned this but never activated it; this section turns it on by
     default.
 
-    Rate-limit: at most one aggressive ingest per
-    ``rate_limit_seconds`` window. Prevents an LLM call on every single
-    voice turn while staying responsive enough for normal conversation
-    pacing.
+    ``rate_limit_seconds`` is an opt-in cost control. The default reviews every
+    eligible completed turn so a second durable fact in the same realtime
+    conversation is not silently discarded.
     """
 
     model_config = ConfigDict(extra="allow")
 
     aggressive_mode: bool = True
     min_user_chars: int = 30
-    rate_limit_seconds: int = 60
+    rate_limit_seconds: int = 0
 
 
 class ExtractorConfig(BaseModel):
@@ -1143,7 +1212,7 @@ class HarnessConfig(BaseModel):
     model_config = ConfigDict(populate_by_name=True)
 
     enabled: list[str] = Field(
-        default_factory=lambda: ["python-script", "mcp-remote"]
+        default_factory=lambda: ["python-script"]
     )
     default_timeout_s: int = 600
     default_risk_tier: RiskTier = "monitor"
@@ -1879,11 +1948,20 @@ class VoiceConfig(BaseModel):
     # Master switch for the completion classifier + waiting state. When false
     # the pipeline behaves exactly as before this feature landed.
     completion_detection_enabled: bool = True
-    # Voice engine selector. "pipeline" = the classic STT->brain->TTS chain
-    # (default, unchanged). "realtime" = the full-duplex speech-to-speech engine
-    # (browser, OpenAI Realtime; opt-in). Read once per voice session; a live
-    # change lands on the next session.
-    mode: str = "pipeline"
+    # Voice engine selector. "realtime" (default) = the full-duplex
+    # speech-to-speech engine — the recommended mode. "pipeline" = the classic
+    # STT->brain->TTS chain. Read once per voice session; a live change lands
+    # on the next session. When no realtime-capable key exists, the session
+    # falls back to the pipeline; the spoken "realtime unavailable" notice is
+    # reserved for an EXPLICIT user pick (mode present in the TOML), so a
+    # fresh keyless install degrades silently instead of nagging every call.
+    mode: str = "realtime"
+    # Realtime tool exposure. "direct" (default) lets the realtime model call
+    # every available tool through the supervisor safety gateway without a
+    # classic Brain provider or TTS hop. "delegate" is a compatibility opt-in
+    # that hands one jarvis_action call to the classic router brain. Read once
+    # per session; unknown values fail closed to the autonomous direct mode.
+    realtime_tool_mode: str = "direct"
     # Per-gap budget after which a stale pending fragment is silently
     # discarded (user-mandated 2026-05-26 — was: flushed/spoken). NOT a total
     # budget — every continuation resets the timer. Bumped from 8 s to 15 s
@@ -2214,6 +2292,7 @@ def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]
 # cartesia reverting to gemini-flash-tts on every restart.
 _PERSISTED_PROVIDER_ENV_KEYS: tuple[str, ...] = (
     "JARVIS__BRAIN__PRIMARY",
+    "JARVIS__BRAIN__TOOL_MODEL__PROVIDER",
     # Post-rename name (2026-06-29 Jarvis-Agents rename): config_writer now
     # writes to this key; the drift-guard / boot-heal reads it going forward.
     "JARVIS__BRAIN__WORKER__PROVIDER",
@@ -2404,6 +2483,32 @@ def load_config(
 # installed ONLY when the current backend is the no-op fail.Keyring).
 _KEYRING_BACKEND_READY: bool = False
 _FILE_BACKEND_ACTIVE: bool = False
+_SECRET_REVISION_LOCK = threading.Lock()
+_SECRET_REVISIONS: dict[str, int] = {}
+
+
+def secret_revision(key: str) -> int:
+    """Return the in-process revision for one credential slot.
+
+    Provider instances use this cheap counter to refresh a replaced credential
+    without performing a keyring read on every request. External credential-store
+    edits still require a process restart; in-app writes increment the counter.
+    """
+    with _SECRET_REVISION_LOCK:
+        return _SECRET_REVISIONS.get(key, 0)
+
+
+def _mark_secret_changed(key: str) -> None:
+    with _SECRET_REVISION_LOCK:
+        _SECRET_REVISIONS[key] = _SECRET_REVISIONS.get(key, 0) + 1
+
+
+# Serializes _FileCredStore's load-mutate-save cycle so two in-process
+# writers (e.g. a plugin connect + a concurrent API-key save) cannot race and
+# silently drop one of the two updates. Matches the config_writer lock
+# pattern. Cross-PROCESS locking is a separate, deferred concern — this only
+# protects concurrent callers within one Jarvis process.
+_FILE_CRED_STORE_LOCK = threading.Lock()
 
 
 class _FileCredStore:
@@ -2413,7 +2518,11 @@ class _FileCredStore:
         self._explicit = path
 
     def _file(self) -> Path:
-        p = self._explicit if self._explicit is not None else (DATA_DIR / "credentials.json")
+        p = (
+            self._explicit
+            if self._explicit is not None
+            else (_resolve_writable_data_dir() / "credentials.json")
+        )
         p.parent.mkdir(parents=True, exist_ok=True)
         return p
 
@@ -2426,13 +2535,20 @@ class _FileCredStore:
 
     def _save(self, data: dict[str, str]) -> None:
         f = self._file()
-        tmp = f.with_suffix(".tmp")
-        tmp.write_text(json.dumps(data), encoding="utf-8")
+        # Per-process-unique temp name: two processes racing a write (no
+        # cross-process lock yet) must not clobber each other's in-flight tmp
+        # file before either reaches its atomic os.replace.
+        tmp = f.with_name(f"{f.name}.tmp.{os.getpid()}")
         try:
-            os.chmod(tmp, 0o600)
-        except Exception:  # noqa: BLE001 — chmod is a no-op on Windows
-            pass
-        os.replace(tmp, f)
+            tmp.write_text(json.dumps(data), encoding="utf-8")
+            try:
+                os.chmod(tmp, 0o600)
+            except Exception:  # noqa: BLE001 — chmod is a no-op on Windows
+                pass
+            os.replace(tmp, f)
+        except OSError as exc:
+            tmp.unlink(missing_ok=True)
+            raise RuntimeError(f"failed to write credential store {f}: {exc}") from exc
 
     @staticmethod
     def _k(service: str, username: str) -> str:
@@ -2442,14 +2558,16 @@ class _FileCredStore:
         return self._load().get(self._k(service, username))
 
     def set(self, service: str, username: str, password: str) -> None:
-        data = self._load()
-        data[self._k(service, username)] = password
-        self._save(data)
+        with _FILE_CRED_STORE_LOCK:
+            data = self._load()
+            data[self._k(service, username)] = password
+            self._save(data)
 
     def delete(self, service: str, username: str) -> None:
-        data = self._load()
-        data.pop(self._k(service, username), None)
-        self._save(data)
+        with _FILE_CRED_STORE_LOCK:
+            data = self._load()
+            data.pop(self._k(service, username), None)
+            self._save(data)
 
 
 def _install_file_cred_backend(reason: str) -> bool:
@@ -2522,8 +2640,61 @@ def _ensure_keyring_backend() -> None:
         pass
 
 
+def _try_restore_platform_keyring_backend() -> bool:
+    """Restore a recovered OS keyring before an explicit credential save.
+
+    A transient OS-keyring read/write failure switches this process to the
+    portable file backend.  Without a recovery attempt, every later in-app save
+    keeps writing only that file while an older OS-keyring value survives and
+    shadows it after the next restart.  Explicit user saves are the safe recovery
+    boundary: re-detect the platform backend, capability-probe it with a
+    non-existent slot, and retain the file backend when the platform store is
+    still unavailable (the normal headless-host path).
+
+    This never runs on boot or a normal read, so a locked Secret Service cannot
+    add startup latency or prompts.  Returns ``True`` when the platform backend
+    is active, including when no fallback swap had occurred.
+    """
+    global _FILE_BACKEND_ACTIVE
+    if not _FILE_BACKEND_ACTIVE:
+        return True
+
+    keyring_mod = None
+    previous_backend = None
+    try:
+        import keyring as keyring_mod
+        from keyring.core import init_backend
+
+        previous_backend = keyring_mod.get_keyring()
+        init_backend()
+        candidate = keyring_mod.get_keyring()
+        # Capability probe, never an isinstance check against third-party
+        # internals. A real backend returns None for this absent slot; fail or
+        # locked backends raise and are rejected below.
+        candidate.get_password(KEYRING_SERVICE, "__jarvis_backend_probe__")
+    except Exception:  # noqa: BLE001 -- unavailable OS keyring is expected headlessly
+        if keyring_mod is not None and previous_backend is not None:
+            try:
+                keyring_mod.set_keyring(previous_backend)
+            except Exception:  # noqa: BLE001, S110 -- keep best-effort fallback active
+                pass
+        return False
+
+    _FILE_BACKEND_ACTIVE = False
+    logging.getLogger(__name__).info(
+        "OS credential store recovered; future credential saves use the platform keyring."
+    )
+    return True
+
+
 def get_secret(key: str, env_fallback: str | None = None) -> str | None:
-    """Retrieve a secret value. Priority: keyring → ENV fallback → .env.
+    """Retrieve a secret value from every portable credential source.
+
+    Priority is OS keyring → ENV → ``.env`` → local-file fallback.
+    The final read-through is required even when a nominally working OS
+    keyring returns ``None``: a previous in-app save may have fallen back to
+    ``data/credentials.json`` while that keyring was temporarily unavailable.
+    Without the read-through the saved key becomes invisible after restart.
 
     Args:
         key: Secret name in the Credential Manager (e.g. "anthropic_api_key").
@@ -2563,7 +2734,7 @@ def get_secret(key: str, env_fallback: str | None = None) -> str | None:
     if env_fallback and (val := os.environ.get(env_fallback)):
         return val
 
-    # Last fallback: .env file (dev only)
+    # Development fallback: .env file.
     env_file = PROJECT_ROOT / ".env"
     if env_file.exists() and env_fallback:
         for line in env_file.read_text(encoding="utf-8").splitlines():
@@ -2573,6 +2744,16 @@ def get_secret(key: str, env_fallback: str | None = None) -> str | None:
             k, _, v = line.partition("=")
             if k.strip() == env_fallback:
                 return v.strip().strip('"').strip("'")
+
+    # Portable read-through. Do not replace a healthy OS backend merely because
+    # it returned no value: consult the file store directly so a key written
+    # during an earlier keyring outage remains recoverable after restart.
+    try:
+        val = _FileCredStore().get(KEYRING_SERVICE, key)
+        if val:
+            return val
+    except Exception:  # noqa: BLE001, S110 — unreadable fallback is absent
+        pass
 
     return None
 
@@ -2651,10 +2832,26 @@ def set_secret(key: str, value: str) -> bool:
     so the headless file fallback is what makes a fresh VPS user able to save a key.
     """
     _ensure_keyring_backend()
+    # A prior transient failure may have swapped this process to the file
+    # backend. Re-detect the OS backend on the user's explicit save so the new
+    # value cannot be shadowed by a stale platform entry after restart.
+    if _FILE_BACKEND_ACTIVE:
+        _try_restore_platform_keyring_backend()
     try:
         import keyring
 
         keyring.set_password(KEYRING_SERVICE, key, value)
+        # A successful OS-keyring write supersedes any stale file fallback.
+        # When the installed backend IS the file fallback, deleting here would
+        # erase the value that was just written.
+        if not _FILE_BACKEND_ACTIVE:
+            try:
+                store = _FileCredStore()
+                if store.get(KEYRING_SERVICE, key) is not None:
+                    store.delete(KEYRING_SERVICE, key)
+            except Exception:  # noqa: BLE001, S110 — secure write already succeeded
+                pass
+        _mark_secret_changed(key)
         return True
     except Exception as exc:  # noqa: BLE001
         # A reachable-but-unusable OS keyring (e.g. a locked Linux Secret Service)
@@ -2666,6 +2863,7 @@ def set_secret(key: str, value: str) -> bool:
                 import keyring
 
                 keyring.set_password(KEYRING_SERVICE, key, value)
+                _mark_secret_changed(key)
                 return True
             except Exception:  # noqa: BLE001
                 return False
@@ -2673,25 +2871,55 @@ def set_secret(key: str, value: str) -> bool:
 
 
 def delete_secret(key: str) -> bool:
-    """Remove a secret from the OS keyring (or the headless file fallback)."""
+    """Remove a secret from both the OS keyring and local-file fallback.
+
+    Success requires that NO backend still holds the value — deleting only
+    the currently active backend can resurrect a stale fallback value on the
+    next process start. The operation is intentionally idempotent: an
+    already-absent key counts as a successful deletion.
+
+    Unlike ``get_secret``/``set_secret``, a failed OS-keyring delete does NOT
+    swap the process-global keyring backend to the file store. That retry
+    used to let a transient/locked-keyring failure masquerade as a
+    successful delete: the file copy (if any) was removed and ``True`` came
+    back, while the real OS-keyring entry survived untouched and reappeared
+    on the next boot. The ENV layer is read-only here and is never touched.
+    """
     _ensure_keyring_backend()
+    keyring_ok = False
     try:
         import keyring
+        from keyring.errors import PasswordDeleteError
 
-        keyring.delete_password(KEYRING_SERVICE, key)
-        return True
+        try:
+            keyring.delete_password(KEYRING_SERVICE, key)
+            keyring_ok = True
+        except PasswordDeleteError:
+            # Every backend we rely on raises this specifically when the
+            # entry is already absent (e.g. the Windows Credential Manager
+            # backend; the file-fallback backend's delete is idempotent and
+            # never raises at all) — "nothing to delete" is itself a success.
+            keyring_ok = True
     except Exception:  # noqa: BLE001
-        # Locked/unusable OS keyring: degrade to the file store and retry, so a
-        # file-stored credential is actually removed rather than left stale.
-        if _install_file_cred_backend("keyring delete failed"):
-            try:
-                import keyring
+        # A genuine backend failure (locked Secret Service, transport
+        # error, ...). Deliberately do not retry via
+        # _install_file_cred_backend here: swapping the process-global
+        # keyring backend just because one delete failed would silently
+        # degrade every other credential read/write in this process while
+        # the real OS-keyring entry survives untouched.
+        keyring_ok = False
 
-                keyring.delete_password(KEYRING_SERVICE, key)
-                return True
-            except Exception:  # noqa: BLE001
-                return False
-        return False
+    file_ok = False
+    try:
+        store = _FileCredStore()
+        if store.get(KEYRING_SERVICE, key) is not None:
+            store.delete(KEYRING_SERVICE, key)
+        file_ok = True
+    except Exception:  # noqa: BLE001, S110
+        pass
+    if keyring_ok or file_ok:
+        _mark_secret_changed(key)
+    return keyring_ok and file_ok
 
 
 # ----------------------------------------------------------------------

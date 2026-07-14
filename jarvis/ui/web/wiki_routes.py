@@ -1,6 +1,6 @@
 """FastAPI routes that expose the on-disk Obsidian vault as JSON (Phase B3, Agent A).
 
-Five read-only endpoints power the Desktop App's new "Wiki" sidebar tab:
+The read endpoints power the Desktop App's "Wiki" sidebar tab:
 
 * ``GET /api/wiki/tree``            — folder structure with file metadata.
 * ``GET /api/wiki/page/{slug}``     — one page (frontmatter + body + wikilinks).
@@ -8,19 +8,20 @@ Five read-only endpoints power the Desktop App's new "Wiki" sidebar tab:
 * ``GET /api/wiki/backlinks/{slug}``— reverse-link list with body snippets.
 * ``GET /api/wiki/search``          — keyword search via ``VaultSearch`` (B5).
 
-Two later additions follow the same style: ``GET /api/wiki/telemetry`` (B8.7,
-in-memory counter snapshot) and ``GET /api/wiki/health`` (spec A5, bootstrap /
-write / chain-failure / journal-backlog status).
+Later additions expose telemetry, health, index repair, and one explicit write
+surface: ``POST /api/wiki/ingest``. The write route delegates to the same
+curator service as the native ``wiki-ingest`` brain tool.
 
-All endpoints follow the existing house style: HTTP 200 with the envelope
+Read endpoints follow the existing house style: HTTP 200 with the envelope
 ``{"ok": True, ...}`` on success and ``{"ok": False, "error": "..."}`` on
 logical errors. HTTP 404 stays reserved for unknown routes; HTTP 500 only
-fires on unhandled exceptions.
+fires on unhandled exceptions. The write endpoint uses non-2xx responses when
+nothing was stored so CLI and agent callers cannot mistake a no-op for success.
 
 The module reuses ``PageRepository`` (B1, ``jarvis/memory/wiki/page.py``),
 ``VaultIndex`` (B1, ``jarvis/memory/wiki/vault_index.py``) and
-``VaultSearch`` (B5, ``jarvis/memory/wiki/search.py``). It is a pure view
-layer — no writes, no brain, no event-bus side effects.
+``VaultSearch`` (B5, ``jarvis/memory/wiki/search.py``), and the guarded Wiki
+ingest service. It never writes Wiki files directly.
 
 The vault root is read from ``app.state.config.wiki_integration.vault_root``.
 Tests can override the path by setting that attribute directly before the
@@ -31,18 +32,29 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, Query, Request
+from fastapi import APIRouter, HTTPException, Query, Request
+from pydantic import BaseModel, Field
 
+from jarvis.memory.wiki.ingest_service import (
+    MAX_INGEST_CHARS,
+    MAX_SOURCE_CHARS,
+    MIN_INGEST_CHARS,
+    ingest_wiki_text,
+)
+from jarvis.memory.wiki.integration import get_running_curator
 from jarvis.memory.wiki.page import MarkdownPageRepository
 from jarvis.memory.wiki.protocols import WikiPage
 from jarvis.memory.wiki.search import VaultSearch
 from jarvis.memory.wiki.telemetry import telemetry as _telemetry
 from jarvis.memory.wiki.vault_index import VaultIndex
 from jarvis.memory.wiki.vault_root import resolve_vault_root
-from jarvis.memory.wiki.wikilink import _canonicalise as _canonicalise_link  # type: ignore[attr-defined]
+from jarvis.memory.wiki.wikilink import (
+    _canonicalise as _canonicalise_link,  # type: ignore[attr-defined]
+)
 
 log = logging.getLogger(__name__)
 
@@ -59,6 +71,30 @@ _PAGE_DIRS: tuple[tuple[str, str], ...] = (
 # Snippet window (chars) for backlink context extraction around the wikilink.
 _BACKLINK_SNIPPET_RADIUS = 80
 _BACKLINK_SNIPPET_MAX = 200
+
+
+class WikiIngestRequest(BaseModel):
+    """One explicit, self-contained fact or summary to store."""
+
+    text: str = Field(min_length=MIN_INGEST_CHARS, max_length=MAX_INGEST_CHARS)
+    source: str = Field(
+        default="api:wiki-ingest",
+        min_length=1,
+        max_length=MAX_SOURCE_CHARS,
+        pattern=r"^[A-Za-z0-9][A-Za-z0-9:._/-]*$",
+    )
+
+
+class WikiIngestResponse(BaseModel):
+    """Honest result returned only after at least one page was written."""
+
+    ok: bool = True
+    source: str
+    applied: int
+    skipped_due_to_recent_edit: int
+    failed_validation: int
+    blocked_sensitive_content: int
+    pages_touched: list[str]
 
 
 # ----------------------------------------------------------------------
@@ -458,6 +494,48 @@ async def get_search(
     return {"ok": True, "query": sanitised, "hits": rendered}
 
 
+@router.post(
+    "/ingest",
+    response_model=WikiIngestResponse,
+    openapi_extra={"x-jarvis-risk-tier": "monitor"},
+)
+async def ingest_wiki(payload: WikiIngestRequest) -> WikiIngestResponse:
+    """Store one fact or summary through the guarded live Wiki curator."""
+    outcome = await ingest_wiki_text(
+        curator=get_running_curator(),
+        text=payload.text,
+        source=payload.source,
+    )
+    if not outcome.success:
+        status_code = {
+            "not-bootstrapped": 503,
+            "curator-failed": 503,
+            "recent-edit-conflict": 409,
+        }.get(outcome.error_code or "", 422)
+        raise HTTPException(
+            status_code=status_code,
+            detail={
+                "code": outcome.error_code or "wiki-ingest-failed",
+                "message": outcome.error or "nothing was stored",
+                "source": outcome.source,
+                "skipped_due_to_recent_edit": len(
+                    outcome.skipped_due_to_recent_edit
+                ),
+                "failed_validation": len(outcome.failed_validation),
+                "blocked_sensitive_content": len(outcome.blocked_pii),
+            },
+        )
+
+    return WikiIngestResponse(
+        source=outcome.source,
+        applied=len(outcome.applied),
+        skipped_due_to_recent_edit=len(outcome.skipped_due_to_recent_edit),
+        failed_validation=len(outcome.failed_validation),
+        blocked_sensitive_content=len(outcome.blocked_pii),
+        pages_touched=outcome.page_names,
+    )
+
+
 # ----------------------------------------------------------------------
 # Internals
 # ----------------------------------------------------------------------
@@ -581,11 +659,11 @@ def _format_mtime(mtime: float | None) -> str | None:
     """Format a POSIX mtime as ISO-8601 (UTC) or return ``None`` when missing."""
     if mtime is None:
         return None
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     try:
         return (
-            datetime.fromtimestamp(mtime, tz=timezone.utc)
+            datetime.fromtimestamp(mtime, tz=UTC)
             .replace(microsecond=0)
             .isoformat()
             .replace("+00:00", "Z")
@@ -613,8 +691,65 @@ async def get_telemetry(_request: Request) -> dict[str, Any]:
     }
 
 
+def _visible_markdown_count(vault_root: Path) -> int:
+    """Count indexable Markdown pages, excluding hidden directories."""
+    return sum(
+        1
+        for path in vault_root.rglob("*.md")
+        if not any(
+            part.startswith(".")
+            for part in path.relative_to(vault_root).parts[:-1]
+        )
+    )
+
+
+@router.post("/reindex")
+async def reindex_wiki(
+    request: Request,
+    dry_run: bool = Query(default=False),
+) -> dict[str, Any]:
+    """Rebuild the derived wiki search index from the active vault."""
+    import sqlite3
+
+    from jarvis.memory.wiki.db_path import resolve_wiki_db_path
+    from jarvis.memory.wiki.fts_index import rebuild_index
+
+    vault_root = _resolve_vault_root(request)
+    if vault_root is None or not vault_root.is_dir():
+        return {"ok": False, "error": "vault unavailable"}
+
+    config = getattr(request.app.state, "config", None)
+    data_dir = getattr(getattr(config, "memory", None), "data_dir", "./data")
+    db_path = resolve_wiki_db_path(data_dir)
+    vault_pages = _visible_markdown_count(vault_root)
+
+    def _run() -> tuple[int, int]:
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        try:
+            try:
+                before = int(conn.execute("SELECT COUNT(*) FROM wiki_fts").fetchone()[0])
+            except sqlite3.OperationalError:
+                before = 0
+            if dry_run:
+                return before, before
+            return before, rebuild_index(vault_root, conn)
+        finally:
+            conn.close()
+
+    before, indexed = await asyncio.to_thread(_run)
+    return {
+        "ok": True,
+        "dry_run": dry_run,
+        "vault_root": str(vault_root),
+        "vault_pages": vault_pages,
+        "indexed_before": before,
+        "indexed_pages": indexed,
+    }
+
+
 @router.get("/health")
-async def wiki_health(_request: Request) -> dict[str, Any]:
+async def wiki_health(request: Request) -> dict[str, Any]:
     """Wiki subsystem health for the Wiki tab status panel (spec A5).
 
     The wiki subsystem is fire-and-forget by design (AP-9): failures never
@@ -623,9 +758,78 @@ async def wiki_health(_request: Request) -> dict[str, Any]:
     failures, write failures, chain exhaustion, and journal pressure become
     visible instead of only ever appearing in the logs.
     """
-    from jarvis.memory.wiki.health import health as _health
+    import sqlite3
 
-    return {"ok": True, "health": _health.snapshot()}
+    from jarvis.memory.wiki.db_path import resolve_wiki_db_path
+    from jarvis.memory.wiki.health import health as _health
+    from jarvis.memory.wiki.health import inspect_index_health
+
+    snapshot = _health.snapshot()
+    vault_root = _resolve_vault_root(request)
+    config = getattr(request.app.state, "config", None)
+    data_dir = getattr(getattr(config, "memory", None), "data_dir", "./data")
+    db_path = resolve_wiki_db_path(data_dir)
+
+    def _persistent_state() -> dict[str, Any]:
+        state: dict[str, Any] = {
+            "journal_backlog": 0,
+            "last_write": None,
+        }
+        if not db_path.exists():
+            return state
+        conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        try:
+            try:
+                state["journal_backlog"] = int(
+                    conn.execute(
+                        "SELECT COUNT(*) FROM wiki_candidate_journal "
+                        "WHERE status = 'pending'"
+                    ).fetchone()[0]
+                )
+                row = conn.execute(
+                    "SELECT consolidated_ms, target_path, source_label "
+                    "FROM wiki_candidate_journal "
+                    "WHERE status = 'consolidated' AND target_path IS NOT NULL "
+                    "ORDER BY consolidated_ms DESC LIMIT 1"
+                ).fetchone()
+                if row and row[0]:
+                    state["last_write"] = {
+                        "ts": float(row[0]) / 1000.0,
+                        "ok": True,
+                        "pages": [str(row[1])],
+                        "error": None,
+                        "source": str(row[2]),
+                    }
+            except sqlite3.OperationalError:
+                pass
+        finally:
+            conn.close()
+        return state
+
+    persistent, index_health = await asyncio.gather(
+        asyncio.to_thread(_persistent_state),
+        asyncio.to_thread(inspect_index_health, vault_root, db_path),
+    )
+    if snapshot["last_write"] is None and persistent["last_write"] is not None:
+        snapshot["last_write"] = persistent["last_write"]
+    snapshot["journal_backlog"] = persistent["journal_backlog"]
+    snapshot.update(index_health)
+
+    last_index = snapshot.get("last_index")
+    if (
+        isinstance(last_index, dict)
+        and last_index.get("ok") is False
+        and snapshot.get("index_state") != "ok"
+        and float(last_index.get("ts") or 0.0)
+        >= float(snapshot.get("last_index_at") or 0.0)
+    ):
+        reasons = list(snapshot.get("index_state_reasons") or [])
+        if "index_update_failed" not in reasons:
+            reasons.insert(0, "index_update_failed")
+        snapshot["index_state"] = "stale"
+        snapshot["index_state_reason"] = "index_update_failed"
+        snapshot["index_state_reasons"] = reasons
+    return {"ok": True, "health": snapshot}
 
 
 __all__ = ["router"]

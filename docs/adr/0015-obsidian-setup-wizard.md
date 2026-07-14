@@ -45,6 +45,27 @@ the whole onboarding flow.
 The B9 onboarding wizard is a small, narrowly-scoped feature governed
 by six contracts.
 
+### 2026-07-12 reliability amendment
+
+Vault registration is based on reachability, not string equality. A
+configured Jarvis directory is connected when it exactly matches a registered
+Obsidian vault or is contained by one. This is required by existing-vault mode,
+which stores Jarvis pages under `<registered-vault>/Jarvis`. When multiple
+registered ancestors exist, the most specific one wins.
+
+Deep links use `obsidian://open?path=<absolute-path>` so the same containment
+rule governs status and navigation. Installation detection is optional and
+platform-aware: Windows probes executable paths and the uninstall registry,
+macOS probes the app bundle, and Linux probes `PATH` plus common install paths.
+Missing desktop integration never prevents the Markdown wiki from operating on
+a headless host.
+
+The FTS database path is resolved once from `memory.data_dir` relative to the
+repository root. Boot reconciliation and `POST /api/wiki/reindex` rebuild the
+derived index from the configured vault, removing stale rows. Wiki health
+compares visible Markdown pages with indexed pages and reports a stale index
+without treating it as lost source data.
+
 - **Pure detector + write split.** `detect_obsidian()`,
   `read_obsidian_vaults()`, and `is_vault_registered()` are read-only
   and never mutate disk. `register_vault()` is the sole mutator. The

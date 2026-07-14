@@ -38,7 +38,7 @@ import asyncio
 import logging
 import time
 from dataclasses import dataclass
-from enum import Enum
+from enum import StrEnum
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -50,7 +50,7 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 
-class TriggerSource(str, Enum):
+class TriggerSource(StrEnum):
     """Source that fired a ``CuratorScheduler.trigger`` call."""
 
     SESSION_END = "session_end"
@@ -86,7 +86,12 @@ def fire_journal_trigger(
     ``RuntimeError`` guard for "no running event loop". Returns the created
     task so a caller may await or track it.
     """
-    task = asyncio.create_task(scheduler.trigger(TriggerSource.JOURNAL), name=name)
+    schedule = getattr(scheduler, "schedule_journal_trigger", None)
+    task = (
+        schedule(name=name)
+        if callable(schedule)
+        else asyncio.create_task(scheduler.trigger(TriggerSource.JOURNAL), name=name)
+    )
 
     def _log_outcome(t: asyncio.Task[Any]) -> None:
         # A lost trigger is retried on the next append/tick, so WARNING
@@ -97,7 +102,9 @@ def fire_journal_trigger(
         if exc is not None:
             log.warning("wiki journal trigger (%s) failed: %s", log_context, exc)
 
-    task.add_done_callback(_log_outcome)
+    if not getattr(task, "_jarvis_journal_outcome_callback", False):
+        task.add_done_callback(_log_outcome)
+        task._jarvis_journal_outcome_callback = True  # type: ignore[attr-defined]
     return task
 
 
@@ -130,8 +137,10 @@ class CuratorScheduler:
     Cooldown rules (in priority order):
 
     1. ``MANUAL`` triggers bypass cooldown but **not** the lock.
-    2. ``SESSION_END`` honours cooldown.
-    3. ``PERIODIC`` honours cooldown **and** is a no-op when
+    2. ``JOURNAL`` bypasses cooldown so each reviewed durable turn can become
+       visible without waiting for unrelated future conversation.
+    3. ``SESSION_END`` honours cooldown.
+    4. ``PERIODIC`` honours cooldown **and** is a no-op when
        ``config.enable_periodic`` is ``False``.
 
     The scheduler guarantees ``lock.release()`` runs in a ``try/finally``
@@ -145,9 +154,9 @@ class CuratorScheduler:
     def __init__(
         self,
         *,
-        curator: "WikiCurator",
-        lock: "VaultLock",
-        config: "SchedulerConfig",
+        curator: WikiCurator,
+        lock: VaultLock,
+        config: SchedulerConfig,
         consolidator: Any = None,
     ) -> None:
         self._curator = curator
@@ -157,6 +166,13 @@ class CuratorScheduler:
         # triggers drain the candidate journal through it instead of the
         # legacy curator.ingest path. Duck-typed: needs ``run_once()``.
         self._consolidator = consolidator
+        # All overlapping JOURNAL requests share one drain task. A request that
+        # arrives during a drain marks it dirty, causing exactly one additional
+        # pass after the active batch. This preserves newly appended candidates
+        # without creating an unbounded convoy of redundant empty runs.
+        self._journal_drain_task: asyncio.Task[SchedulerResult] | None = None
+        self._journal_fire_task: asyncio.Task[SchedulerResult] | None = None
+        self._journal_dirty = False
         # Monotonic timestamp of the last completed curator run.
         # ``None`` means "never ran" — the first trigger always passes the
         # cooldown gate. (A 0.0 sentinel is wrong: when the machine's
@@ -200,7 +216,24 @@ class CuratorScheduler:
             re-raised after the lock is released — callers must handle
             them).
         """
-        result = await self._do_trigger(source, episode_paths=episode_paths)
+        if source is TriggerSource.JOURNAL:
+            active = self._journal_drain_task
+            if active is not None and not active.done():
+                self._journal_dirty = True
+                result = await asyncio.shield(active)
+            else:
+                self._journal_dirty = False
+                active = asyncio.create_task(
+                    self._drain_journal(), name="wiki-journal-drain"
+                )
+                self._journal_drain_task = active
+                try:
+                    result = await asyncio.shield(active)
+                finally:
+                    if self._journal_drain_task is active and active.done():
+                        self._journal_drain_task = None
+        else:
+            result = await self._do_trigger(source, episode_paths=episode_paths)
         # Emit a single structured INFO line per call.
         log.info(
             "CuratorScheduler trigger: source=%s triggered=%s skip_reason=%r label=%r",
@@ -211,9 +244,44 @@ class CuratorScheduler:
         )
         return result
 
+    def schedule_journal_trigger(
+        self, *, name: str = "wiki-journal-trigger"
+    ) -> asyncio.Task[SchedulerResult]:
+        """Return one shared fire-and-forget task for journal pressure.
+
+        A request made while the task is actively draining marks the drain dirty
+        so one follow-up pass observes candidates appended during that run.
+        """
+        active = self._journal_fire_task
+        if active is not None and not active.done():
+            drain = self._journal_drain_task
+            if drain is not None and not drain.done():
+                self._journal_dirty = True
+            return active
+
+        active = asyncio.create_task(self.trigger(TriggerSource.JOURNAL), name=name)
+        self._journal_fire_task = active
+
+        def _clear(done: asyncio.Task[SchedulerResult]) -> None:
+            if self._journal_fire_task is done:
+                self._journal_fire_task = None
+
+        active.add_done_callback(_clear)
+        return active
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    async def _drain_journal(self) -> SchedulerResult:
+        """Drain one batch and at most one coalesced follow-up at a time."""
+        result = await self._do_trigger(TriggerSource.JOURNAL, episode_paths=None)
+        while self._journal_dirty:
+            self._journal_dirty = False
+            result = await self._do_trigger(
+                TriggerSource.JOURNAL, episode_paths=None
+            )
+        return result
 
     async def _do_trigger(
         self,
@@ -239,8 +307,11 @@ class CuratorScheduler:
                 curator_output_label="",
             )
 
-        # ----- gate 2: cooldown (MANUAL bypasses; first run always passes)
-        if source is not TriggerSource.MANUAL and self._last_run_ts is not None:
+        # ----- gate 2: cooldown (MANUAL/JOURNAL bypass; first run always passes)
+        if (
+            source not in {TriggerSource.MANUAL, TriggerSource.JOURNAL}
+            and self._last_run_ts is not None
+        ):
             elapsed = time.monotonic() - self._last_run_ts
             if elapsed < self._config.cooldown_seconds:
                 return SchedulerResult(

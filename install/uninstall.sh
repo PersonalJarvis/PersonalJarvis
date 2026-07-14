@@ -21,8 +21,8 @@ INSTALL_DIR="${JARVIS_INSTALL_DIR:-$HOME/.personal-jarvis}"
 VENV_PYTHON="$INSTALL_DIR/.venv/bin/python"
 
 if [ -t 1 ]; then
-    GOLD=$(printf '\033[38;2;231;196;110m'); GREEN=$(printf '\033[38;2;122;200;140m')
-    DIM=$(printf '\033[38;2;140;140;140m');  RED=$(printf '\033[38;2;224;122;110m')
+    GOLD=$(printf '\033[38;2;255;214;10m'); GREEN=$(printf '\033[38;2;122;200;140m')
+    DIM=$(printf '\033[38;2;143;143;143m');  RED=$(printf '\033[38;2;224;122;110m')
     BOLD=$(printf '\033[1m'); RST=$(printf '\033[0m')
 else
     GOLD=""; GREEN=""; DIM=""; RED=""; BOLD=""; RST=""
