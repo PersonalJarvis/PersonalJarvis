@@ -566,7 +566,7 @@ async def _emit(request: Request, event: Any) -> None:
     try:
         await bus.publish(event)
     except Exception as exc:  # noqa: BLE001
-        log.warning("Konnte Event nicht publishen: %s", exc)
+        log.warning("Could not publish event: %s", exc)
 
 
 def _bus_from_brain(request: Request):
@@ -1745,7 +1745,7 @@ async def set_realtime_options(
 ) -> RealtimeOptionsSaveResponse:
     """Pin the model and/or voice for a realtime provider.
 
-    Persists to ``[brain.providers.<id>].model`` / ``.voice`` (+ drift-soll)
+    Persists to ``[brain.providers.<id>].model`` / ``.voice`` (+ drift-soll)  # i18n-allow: config-soll filename
     and updates the in-memory config. If this provider owns the active realtime
     call, that call is closed and reopened immediately; otherwise the selection
     applies to the next session. No process restart is required. Only fields
@@ -1881,9 +1881,9 @@ async def codex_login(request: Request) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(
             status_code=500,
-            detail=f"codex login konnte nicht gestartet werden: {type(exc).__name__}: {exc}",
+            detail=f"codex login could not be started: {type(exc).__name__}: {exc}",
         ) from exc
-    return {"ok": True, "pid": proc.pid, "message": "codex login wurde im Terminal gestartet"}
+    return {"ok": True, "pid": proc.pid, "message": "codex login was started in a terminal"}
 
 
 @router.post("/codex/logout")
@@ -1895,7 +1895,7 @@ async def codex_logout(request: Request) -> dict[str, Any]:
     ok, error = service.logout_blocking()
     if not ok:
         raise HTTPException(status_code=500, detail=error or "Codex logout failed")
-    return {"ok": True, "message": "Codex wurde getrennt"}
+    return {"ok": True, "message": "Codex was disconnected"}
 
 
 # M6: STT/TTS engines build ONCE at voice-pipeline bootstrap, so a key feeding them
@@ -2309,7 +2309,7 @@ async def set_tts_voice_selection(
     """Persist + live-apply the global TTS voice (``[tts] voice_de``/``voice_en``).
 
     A TTS model ships several voices; this pins the chosen one. Reuses the shared
-    ``_apply_tts_selection`` path (config-soll-synced write + a live rebuild of
+    ``_apply_tts_selection`` path (config-soll-synced write + a live rebuild of  # i18n-allow: config-soll filename
     the running SpeechPipeline's TTS) so the next spoken turn uses it without a
     restart when voice is active.
     """
@@ -2764,7 +2764,7 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
             status_code=404,
             detail=(
                 f"'{body.provider}' is not a Jarvis-Agent-capable provider. "
-                f"Verfuegbar: {known}."
+                f"Available: {known}."
             ),
         )
 

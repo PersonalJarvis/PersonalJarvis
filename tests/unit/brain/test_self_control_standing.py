@@ -1,7 +1,7 @@
 """The always-on self-control line must reach EVERY system prompt.
 
 Forensic 2026-07-10: a keyword-free self-control utterance ("ich will dich
-ab jetzt Edith rufen koennen") missed _SELF_CONTROL_PATTERN, so the router
+ab jetzt Edith rufen koennen"; i18n-allow: quoted utterance) missed _SELF_CONTROL_PATTERN, so the router
 LLM got no self-control guidance, answered in prose, and CLAIMED the wake-
 word change without any tool call. The standing line closes that hole
 without keyword whack-a-mole; these tests pin it.
