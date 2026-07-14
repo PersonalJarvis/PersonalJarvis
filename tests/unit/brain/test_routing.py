@@ -625,6 +625,65 @@ def test_open_app_intent_does_not_force_spawn_with_seeded_registry(
         reg._caps.update(snapshot)  # noqa: SLF001
 
 
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # The exact live transcript (realtime voice turn 2026-07-14 09:05,
+        # trace c82aa1a6): force-spawned a heavy mission that then FAILED,
+        # while the realtime model hallucinated a notebook list.
+        "Kannst du mir bitte mal gucken, alle all meine Notebooks auflisten?",
+        "Liste bitte alle meine Notebooks auf.",
+        "Zeig mir alle meine Notebooks",
+        "Can you list all my notebooks?",
+    ],
+)
+def test_mcp_covered_request_does_not_force_spawn(utterance: str) -> None:
+    """A request an installed MCP tool covers stays INLINE in every supported
+    language — the router/tool model calls the MCP tool directly; a mission
+    spawn for a plain read-only lookup is the 2026-07-14 live bug. German
+    phrasings used to slip past ``resolve_intent`` because MCP capability
+    verbs were extracted from the English tool description only, while the
+    generic CLI verb "gucken" tripped ``has_action_intent`` — together the
+    exact ``_is_generic_subagent_work`` spawn predicate."""
+    from jarvis.core.capabilities import Capability, get_registry
+    from jarvis.mcp.adapter import _objects_from_tool_name, _verbs_from_description
+
+    reg = get_registry()
+    snapshot = dict(reg._caps)  # noqa: SLF001 — test fixture state restore
+    reg.register(
+        Capability(
+            id="cli.gcloud",
+            source="cli",
+            verbs=("zeig", "list", "guck", "gucke", "gucken"),  # i18n-allow: input vocabulary
+            objects=("gcp", "gcloud", "projekt", "projekte"),  # i18n-allow: input vocabulary
+            description="Google Cloud CLI.",
+            risk_tier="safe",
+            requires_evidence=False,
+        )
+    )
+    reg.register(
+        Capability(
+            id="mcp.notebooklm-mcp/notebook_list",
+            source="mcp",
+            verbs=_verbs_from_description(
+                "List all notebooks in the user's NotebookLM account."
+            ),
+            objects=_objects_from_tool_name("notebooklm-mcp/notebook_list"),
+            description="List all notebooks.",
+            risk_tier="monitor",
+            requires_evidence=True,
+        )
+    )
+    try:
+        manager, _executor = _manager_with_spawn(force_spawn_mode="strict")
+        assert manager._should_force_spawn(utterance) is False, (
+            f"MCP-covered request {utterance!r} wrongly force-spawned a worker"
+        )
+    finally:
+        reg._caps.clear()  # noqa: SLF001
+        reg._caps.update(snapshot)  # noqa: SLF001
+
+
 def test_cli_tools_in_router_tools() -> None:
     """``cli-tools`` (the virtual CLI loader) must live in ROUTER_TOOLS.
 
