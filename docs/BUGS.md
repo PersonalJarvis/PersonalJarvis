@@ -4287,3 +4287,33 @@ a source-build fallback is never satisfiable there, and every failure
 message must name the actual failing layer — "check your internet" as a
 catch-all turns a version gap into user gaslighting. "Newest Python
 first" is wrong while the native wheel ecosystem lags a fresh CPython.
+
+## BUG-060: Closed the macOS desktop app — no way to relaunch it like a normal app (MEDIUM, FIXED 2026-07-14)
+
+**Symptom.** After the first successful macOS run, closing the desktop app
+left no path back for a normal user: Spotlight ("Personal Jarvis") found
+nothing, Launchpad and /Applications showed nothing — relaunch required a
+terminal command. A pip-based install ships no ``.app`` bundle, and macOS
+only surfaces bundles.
+
+**Fix (2026-07-14).** New ``jarvis/setup/macos_app_bundle.py``:
+``ensure_macos_app_bundle`` writes a minimal per-user
+``~/Applications/Personal Jarvis.app`` (Info.plist + a two-line bash
+executable exec'ing the install venv's Python desktop launcher + a
+best-effort ``jarvis.icns`` via PIL/iconutil). Spotlight indexes
+``~/Applications``, so Cmd+Space finds it. Wired into the installer's
+finish step (``step_macos_app``), removed by the uninstaller, and the
+installer's "Start again" hint now names Spotlight on macOS (the old
+``python -m …`` hint did not even work without the venv on PATH). Bonus:
+a real bundle gives TCC an identity — the mic prompt names "Personal
+Jarvis" with an honest ``NSMicrophoneUsageDescription`` instead of being
+attributed to whichever terminal started the process.
+
+Guards: ``tests/unit/setup/test_macos_app_bundle.py`` (bundle layout,
+plist incl. mic usage string, venv-python launcher script, idempotency,
+off-darwin no-op, icon best-effort).
+
+**Class rule.** "Installed" is not "discoverable": every OS needs its
+native launch surface (Windows Start-Menu shortcut, macOS ``.app``
+bundle, Linux XDG ``.desktop``) or closing the app strands the user. The
+Linux ``.desktop`` entry is the remaining gap of this class.
