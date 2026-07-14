@@ -3995,3 +3995,45 @@ menus) must be created and driven on the main thread; a worker-thread
 violation is a native abort, not a catchable exception. "No platform
 marker in the code" does not mean cross-platform — threading contracts
 differ per OS, and only a real-device boot proves them.
+
+## BUG-057: Second macOS first-boot abort — JarvisBar/Orb Tk root created off the main thread (HIGH, FIXED 2026-07-14)
+
+**Symptom.** After the BUG-056 tray fix shipped, a fresh macOS install still
+died at first launch with the identical "Python quit unexpectedly" dialog.
+The dialog is the generic macOS crash reporter — same look, DIFFERENT crash
+site: with the tray gated off, boot now reached the on-screen overlay.
+
+**Root cause.** The desktop backend runs on the ``jarvis-backend`` worker
+thread; its boot task builds the default overlay surface via
+``DesktopApp._build_overlay_surface`` → ``JarvisBarOverlay.start_in_thread()``
+which creates the Tk root + mainloop on the daemon thread
+``jarvisbar-tk-mainloop``. Aqua-Tk is AppKit-backed and main-thread-only on
+macOS: a worker-thread Tk root aborts the whole process with a native,
+uncatchable assertion — exactly the BUG-056 class, one layer further into
+boot. Same defect in three siblings: the mascot ``OrbOverlay`` (thread
+``orb-tk-mainloop``), the opt-in ``TkVirtualCursor`` (thread
+``virtual-cursor``), and ``make_overlay_surface`` which handed darwin a
+``TkColorKeyOverlay``. A full boot-path audit confirmed the remaining AppKit
+touchpoints are safe (Dock icon + pywebview window run on the main thread).
+
+**Fix (2026-07-14).** darwin gates at every off-main-thread Tk creator, all
+degrading to logged English no-ops (AD-6/AD-11):
+``_build_overlay_surface`` returns the existing ``NullOverlay`` (bridge
+wiring stays intact), ``JarvisBarOverlay.start_in_thread`` /
+``OrbOverlay.start_in_thread`` / ``TkVirtualCursor.start`` no-op as
+backstops for any other caller, and ``make_overlay_surface`` sends darwin to
+the tray floor. macOS keeps the desktop window + Dock icon. Guards:
+``tests/unit/ui/test_macos_ui_main_thread_gates.py`` (incl. an AD-7
+windows-still-spawns test),
+``tests/overlay/test_overlay_surface.py::test_factory_selects_tray_floor_on_macos``.
+
+**Follow-up (needs real Mac hardware).** A visible macOS bar/orb needs a
+main-thread or own-process host — same follow-up as the BUG-056 menu-bar
+icon, tracked in the cross-platform FIX-TRACKER.
+
+**Class rule.** BUG-056 generalizes: on macOS EVERY UI toolkit in the
+process (AppKit, Aqua-Tk, pystray) is main-thread-only, and the "Python
+quit unexpectedly" dialog looks identical for every native abort — fixing
+one crash site just reveals the next one down the boot path. Audit the
+WHOLE boot path for off-main-thread UI creation at once (as done here),
+never one dialog at a time.

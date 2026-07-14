@@ -27,6 +27,7 @@ Cloud-first:
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 import time
 
@@ -159,6 +160,14 @@ class TkVirtualCursor:
 
     def start(self, *, timeout_s: float = 5.0) -> bool:
         """Start the Tk thread. Returns True once the window is up."""
+        if sys.platform == "darwin":
+            # Aqua-Tk is main-thread-only on macOS; a Tk root on this worker
+            # thread aborts the whole process natively (BUG-057 class).
+            logger.info(
+                "Virtual cursor overlay not started: macOS allows Tk windows "
+                "on the main thread only — no-op."
+            )
+            return False
         if self._thread is not None:
             return self._ready.is_set()
         self._thread = threading.Thread(

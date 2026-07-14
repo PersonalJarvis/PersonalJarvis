@@ -2184,12 +2184,23 @@ class OrbOverlay:
         UI mutations are queued via `root.after(0, fn)` — our
         show/hide/set_mode/set_level methods already do this.
 
+        On macOS this is a logged no-op: Aqua-Tk (like AppKit) is
+        main-thread-only, and a Tk root on a worker thread aborts the whole
+        process natively (BUG-057, same class as the BUG-056 tray).
+
         Blocks until the window actually exists (self._started event),
         so the caller can safely call show()/hide() afterward without
         running into a None root.
         """
         import logging
         _log = logging.getLogger("jarvis.orb")
+
+        if sys.platform == "darwin":
+            _log.info(
+                "Orb overlay not started: macOS allows Tk windows on the "
+                "main thread only — running without the on-screen orb."
+            )
+            return
 
         def _run():
             try:
