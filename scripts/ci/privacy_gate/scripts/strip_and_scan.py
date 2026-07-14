@@ -676,6 +676,15 @@ def cmd_set_version(args: argparse.Namespace) -> int:
             re.compile(r'^(__version__\s*=\s*")[^"]*(")', re.MULTILINE),
             rf'\g<1>{version}\g<2>',
         ),
+        # uv.lock records the project's OWN version; leaving it behind makes
+        # `uv lock --check` fail in the dist repo's CI (v1.0.6 forensic: the
+        # portable-install-matrix gate went red on the release commit).
+        tree / "uv.lock": (
+            re.compile(
+                r'(\[\[package\]\]\nname = "personal-jarvis"\nversion = ")[^"]*(")'
+            ),
+            rf'\g<1>{version}\g<2>',
+        ),
     }
     changed = []
     for path, (rx, repl) in targets.items():
