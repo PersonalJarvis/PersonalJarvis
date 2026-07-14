@@ -24,7 +24,19 @@ _INPUT_RATE = 24_000
 _OUTPUT_RATE = 24_000
 _HANDSHAKE_TIMEOUT_S = 12.0
 _RESPONSE_REQUEST_METADATA_KEY = "jarvis_request_id"
-_RECOVERABLE_ERROR_CODES = frozenset({"conversation_already_has_active_response"})
+# Benign response-lifecycle races (BUG-053/BUG-056): both sides of the same
+# boundary. ``conversation_already_has_active_response`` = our response.create
+# arrived while one was still running; ``response_cancel_not_active`` = our
+# response.cancel arrived after the response already finished — the outcome the
+# cancel wanted has already happened, so it is an idempotent no-op, never a
+# broken connection. Labeling either terminal ended healthy live calls with
+# hangup_reason=error (barge-in 09:04 and scrub-cancel 15:13, 2026-07-14).
+_RECOVERABLE_ERROR_CODES = frozenset(
+    {
+        "conversation_already_has_active_response",
+        "response_cancel_not_active",
+    }
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -368,6 +380,13 @@ class _OpenAIRealtimeSession:
         self._tool_response_done_seen = False
         self._pending_tool_call_ids.clear()
         self._last_item_id = ""
+        # BUG-053 correction 2: with no response lifecycle in flight there is
+        # nothing to cancel — skip the wire call that could only ever produce
+        # the benign ``response_cancel_not_active`` error. The recoverable
+        # classification above stays necessary regardless: the provider can
+        # still finish between this local check and the wire operation.
+        if self._response_idle.is_set():
+            return
         try:
             await self._conn.response.cancel()
         finally:

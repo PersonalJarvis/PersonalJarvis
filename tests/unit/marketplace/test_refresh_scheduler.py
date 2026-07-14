@@ -2,10 +2,12 @@
 
 OAuth access tokens expire (30 min HubSpot ... 24 h Linear). The scheduler
 refreshes tokens nearing expiry via each plugin's AuthHandler and writes them
-back; a `revoked` refresh drops the entry so the UI can prompt a reconnect.
+back; a revoked grant is retained and flagged so the UI can prompt a reconnect.
 """
+
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import UTC, datetime, timedelta
 
@@ -18,6 +20,7 @@ from jarvis.marketplace.refresh_scheduler import (
     SKIPPED,
     RefreshScheduler,
     refresh_due_tokens,
+    refresh_plugin_token,
 )
 from jarvis.marketplace.token_store import InMemoryBackend, Tokens, TokenStore
 
@@ -56,6 +59,23 @@ class _FakeHandler:
 
     def auth_header(self, tokens: Tokens) -> dict[str, str]:
         return {"Authorization": f"Bearer {tokens.access}"}
+
+
+class _InFlightHandler(_FakeHandler):
+    """Pause a provider refresh so a test can mutate the stored grant."""
+
+    def __init__(self, plugin_id: str, new_tokens=None, raise_exc=None) -> None:
+        super().__init__(plugin_id, new_tokens=new_tokens, raise_exc=raise_exc)
+        self.entered = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def refresh(self, current: Tokens) -> Tokens:
+        self.calls += 1
+        self.entered.set()
+        await self.release.wait()
+        if self._raise is not None:
+            raise self._raise
+        return self._new
 
 
 @pytest.mark.asyncio
@@ -120,17 +140,230 @@ async def test_revoked_refresh_marks_needs_reauth_and_keeps_token() -> None:
 
 
 @pytest.mark.asyncio
-async def test_successful_refresh_clears_stale_needs_reauth() -> None:
+async def test_needs_reauth_token_is_not_retried_every_cycle() -> None:
     store = _store()
-    store.save("notion", Tokens(access="a0", refresh="r0", needs_reauth=True,
-                                expires_at=datetime.now(UTC) + timedelta(seconds=60)))
+    store.save(
+        "notion",
+        Tokens(
+            access="a0",
+            refresh="r0",
+            needs_reauth=True,
+            expires_at=datetime.now(UTC) + timedelta(seconds=60),
+        ),
+    )
     handler = _FakeHandler("notion", new_tokens=Tokens(access="a1", refresh="r1"))
 
     outcomes = await refresh_due_tokens(["notion"], store, lambda pid: handler)
 
-    assert outcomes == {"notion": REFRESHED}
-    healed = store.load("notion")
-    assert healed.access == "a1" and healed.needs_reauth is False
+    assert outcomes == {"notion": SKIPPED}
+    kept = store.load("notion")
+    assert kept.access == "a0" and kept.needs_reauth is True
+    assert handler.calls == 0
+
+
+@pytest.mark.asyncio
+async def test_concurrent_forced_refresh_is_single_flight() -> None:
+    store = _store()
+    store.save("gmail", Tokens(access="a0", refresh="r0"))
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class _BlockingHandler(_FakeHandler):
+        async def refresh(self, current: Tokens) -> Tokens:
+            self.calls += 1
+            entered.set()
+            await release.wait()
+            return Tokens(access="a1", refresh="r1")
+
+    handler = _BlockingHandler("gmail")
+    observed = store.load("gmail").access
+    first = asyncio.create_task(
+        refresh_plugin_token(
+            "gmail",
+            store,
+            lambda _plugin_id: handler,
+            force=True,
+            observed_access_token=observed,
+        )
+    )
+    await entered.wait()
+    second = asyncio.create_task(
+        refresh_plugin_token(
+            "gmail",
+            store,
+            lambda _plugin_id: handler,
+            force=True,
+            observed_access_token=observed,
+        )
+    )
+    release.set()
+    attempts = await asyncio.gather(first, second)
+
+    assert handler.calls == 1
+    assert {attempt.outcome for attempt in attempts} == {REFRESHED, SKIPPED}
+    assert all(attempt.usable for attempt in attempts)
+    assert store.load("gmail").access == "a1"
+
+
+@pytest.mark.asyncio
+async def test_successful_refresh_does_not_overwrite_concurrent_reconnect() -> None:
+    store = _store()
+    store.save("gmail", Tokens(access="old-access", refresh="old-refresh"))
+    handler = _InFlightHandler(
+        "gmail",
+        new_tokens=Tokens(access="stale-refresh-access", refresh="rotated-refresh"),
+    )
+    task = asyncio.create_task(
+        refresh_plugin_token("gmail", store, lambda _plugin_id: handler, force=True)
+    )
+    await handler.entered.wait()
+
+    new_grant = Tokens(
+        access="new-grant-access",
+        refresh="new-grant-refresh",
+        extra={"grant": "replacement"},
+    )
+    store.save("gmail", new_grant)
+    handler.release.set()
+    attempt = await task
+
+    assert attempt.outcome == SKIPPED
+    assert attempt.usable is True
+    assert attempt.access_changed is True
+    assert store.load("gmail") == new_grant
+
+
+@pytest.mark.asyncio
+async def test_successful_refresh_does_not_restore_concurrent_disconnect() -> None:
+    store = _store()
+    store.save("gmail", Tokens(access="old-access", refresh="old-refresh"))
+    handler = _InFlightHandler(
+        "gmail",
+        new_tokens=Tokens(access="stale-refresh-access", refresh="rotated-refresh"),
+    )
+    task = asyncio.create_task(
+        refresh_plugin_token("gmail", store, lambda _plugin_id: handler, force=True)
+    )
+    await handler.entered.wait()
+
+    store.delete("gmail")
+    handler.release.set()
+    attempt = await task
+
+    assert attempt.outcome == SKIPPED
+    assert attempt.usable is False
+    assert store.load("gmail") is None
+
+
+@pytest.mark.asyncio
+async def test_terminal_refresh_error_does_not_poison_concurrent_reconnect() -> None:
+    store = _store()
+    store.save("gmail", Tokens(access="old-access", refresh="old-refresh"))
+    handler = _InFlightHandler("gmail", raise_exc=RuntimeError("invalid_grant"))
+    task = asyncio.create_task(
+        refresh_plugin_token("gmail", store, lambda _plugin_id: handler, force=True)
+    )
+    await handler.entered.wait()
+
+    new_grant = Tokens(access="new-grant-access", refresh="new-grant-refresh")
+    store.save("gmail", new_grant)
+    handler.release.set()
+    attempt = await task
+
+    assert attempt.outcome == SKIPPED
+    assert attempt.usable is True
+    assert attempt.access_changed is True
+    assert store.load("gmail") == new_grant
+
+
+@pytest.mark.asyncio
+async def test_terminal_refresh_error_does_not_restore_concurrent_disconnect() -> None:
+    store = _store()
+    store.save("gmail", Tokens(access="old-access", refresh="old-refresh"))
+    handler = _InFlightHandler("gmail", raise_exc=RuntimeError("invalid_grant"))
+    task = asyncio.create_task(
+        refresh_plugin_token("gmail", store, lambda _plugin_id: handler, force=True)
+    )
+    await handler.entered.wait()
+
+    store.delete("gmail")
+    handler.release.set()
+    attempt = await task
+
+    assert attempt.outcome == SKIPPED
+    assert attempt.usable is False
+    assert store.load("gmail") is None
+
+
+@pytest.mark.asyncio
+async def test_transient_refresh_error_reuses_concurrent_reconnect() -> None:
+    store = _store()
+    store.save("gmail", Tokens(access="old-access", refresh="old-refresh"))
+    handler = _InFlightHandler("gmail", raise_exc=RuntimeError("HTTP 503"))
+    task = asyncio.create_task(
+        refresh_plugin_token("gmail", store, lambda _plugin_id: handler, force=True)
+    )
+    await handler.entered.wait()
+
+    new_grant = Tokens(access="new-grant-access", refresh="new-grant-refresh")
+    store.save("gmail", new_grant)
+    handler.release.set()
+    attempt = await task
+
+    assert attempt.outcome == SKIPPED
+    assert attempt.usable is True
+    assert attempt.access_changed is True
+    assert store.load("gmail") == new_grant
+
+
+@pytest.mark.asyncio
+async def test_transient_refresh_error_observes_concurrent_disconnect() -> None:
+    store = _store()
+    store.save("gmail", Tokens(access="old-access", refresh="old-refresh"))
+    handler = _InFlightHandler("gmail", raise_exc=RuntimeError("HTTP 503"))
+    task = asyncio.create_task(
+        refresh_plugin_token("gmail", store, lambda _plugin_id: handler, force=True)
+    )
+    await handler.entered.wait()
+
+    store.delete("gmail")
+    handler.release.set()
+    attempt = await task
+
+    assert attempt.outcome == SKIPPED
+    assert attempt.usable is False
+    assert store.load("gmail") is None
+
+
+@pytest.mark.asyncio
+async def test_refresh_preserves_rotating_metadata_and_refresh_token() -> None:
+    store = _store()
+    store.save(
+        "linear",
+        Tokens(
+            access="a0",
+            refresh="r0",
+            extra={"client_id": "client-1", "shared": "old"},
+        ),
+    )
+    handler = _FakeHandler(
+        "linear",
+        new_tokens=Tokens(
+            access="a1",
+            refresh=None,
+            extra={"scope": "read", "shared": "new"},
+        ),
+    )
+
+    attempt = await refresh_plugin_token("linear", store, lambda _plugin_id: handler, force=True)
+
+    saved = store.load("linear")
+    assert attempt.outcome == REFRESHED
+    assert saved.refresh == "r0"
+    assert saved.extra["client_id"] == "client-1"
+    assert saved.extra["scope"] == "read"
+    assert saved.extra["shared"] == "new"
+    assert "last_refreshed" in saved.extra
 
 
 @pytest.mark.asyncio
@@ -142,7 +375,7 @@ async def test_transient_refresh_failure_keeps_entry() -> None:
     outcomes = await refresh_due_tokens(["gmail"], store, lambda pid: handler)
 
     assert outcomes == {"gmail": FAILED}
-    # Transient failure must NOT delete the token — only `revoked` does.
+    # A transient failure must not delete or poison the stored token.
     assert store.load("gmail") is not None
     # ...and a transient (server-side) error must NOT falsely flag reauth.
     assert store.load("gmail").needs_reauth is False
@@ -284,6 +517,94 @@ async def test_scheduler_run_once_delegates() -> None:
     assert outcomes == {"notion": REFRESHED}
 
 
+@pytest.mark.asyncio
+async def test_scheduler_stop_drains_rotating_refresh_before_return() -> None:
+    store = _store()
+    store.save("gmail", _tokens(60))
+    handler = _InFlightHandler(
+        "gmail", new_tokens=Tokens(access="new-access", refresh="new-refresh")
+    )
+    scheduler = RefreshScheduler(
+        plugin_ids_fn=lambda: ["gmail"],
+        store=store,
+        build_handler=lambda _plugin_id: handler,
+        interval_seconds=3600,
+        shutdown_drain_timeout_seconds=1.0,
+    )
+    scheduler.start()
+    await handler.entered.wait()
+
+    stopping = asyncio.create_task(scheduler.stop())
+    await asyncio.sleep(0)
+    assert stopping.done() is False
+
+    handler.release.set()
+    await asyncio.wait_for(stopping, timeout=1.0)
+
+    saved = store.load("gmail")
+    assert saved.access == "new-access"
+    assert saved.refresh == "new-refresh"
+    assert scheduler._task is None
+
+
+@pytest.mark.asyncio
+async def test_scheduler_stop_cancels_cycle_only_after_drain_timeout(caplog) -> None:  # noqa: ANN001
+    store = _store()
+    original = _tokens(60)
+    store.save("gmail", original)
+    cancelled = asyncio.Event()
+
+    class _CancellationAwareHandler(_InFlightHandler):
+        async def refresh(self, current: Tokens) -> Tokens:
+            try:
+                return await super().refresh(current)
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+    handler = _CancellationAwareHandler(
+        "gmail", new_tokens=Tokens(access="new-access", refresh="new-refresh")
+    )
+    scheduler = RefreshScheduler(
+        plugin_ids_fn=lambda: ["gmail"],
+        store=store,
+        build_handler=lambda _plugin_id: handler,
+        interval_seconds=3600,
+        shutdown_drain_timeout_seconds=0.01,
+    )
+    caplog.set_level(logging.WARNING)
+    scheduler.start()
+    await handler.entered.wait()
+
+    await asyncio.wait_for(scheduler.stop(), timeout=1.0)
+
+    assert cancelled.is_set()
+    assert store.load("gmail") == original
+    assert scheduler._task is None
+    assert "cancelling as a last resort" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_scheduler_start_is_idempotent_and_restart_safe() -> None:
+    scheduler = RefreshScheduler(
+        plugin_ids_fn=list,
+        store=_store(),
+        build_handler=lambda _plugin_id: None,
+        interval_seconds=3600,
+    )
+
+    scheduler.start()
+    first = scheduler._task
+    scheduler.start()
+    assert scheduler._task is first
+    await scheduler.stop()
+
+    scheduler.start()
+    second = scheduler._task
+    assert second is not None and second is not first
+    await scheduler.stop()
+
+
 def test_log_cycle_names_dead_plugins_at_warning(caplog) -> None:  # noqa: ANN001
     # A revoked connection must be named at WARNING so it doesn't rot unseen
     # behind an anonymous "revoked=1" count (live: linear sat dead 22 days
@@ -300,9 +621,7 @@ def test_log_cycle_lists_every_dead_plugin(caplog) -> None:  # noqa: ANN001
     caplog.set_level(logging.WARNING)
     RefreshScheduler._log_cycle({"gmail": REVOKED, "linear": REVOKED, "slack": SKIPPED})
 
-    msg = " ".join(
-        r.getMessage() for r in caplog.records if r.levelno == logging.WARNING
-    )
+    msg = " ".join(r.getMessage() for r in caplog.records if r.levelno == logging.WARNING)
     assert "gmail" in msg and "linear" in msg
 
 
@@ -390,9 +709,7 @@ async def test_one_plugins_save_failure_does_not_block_the_next() -> None:
         "notion": _FakeHandler("notion", new_tokens=Tokens(access="a2", refresh="r2")),
     }
 
-    outcomes = await refresh_due_tokens(
-        ["gmail", "notion"], store, lambda pid: handlers[pid]
-    )
+    outcomes = await refresh_due_tokens(["gmail", "notion"], store, lambda pid: handlers[pid])
 
     assert outcomes == {"gmail": FAILED, "notion": REFRESHED}
     assert inner.load("notion").access == "a2"

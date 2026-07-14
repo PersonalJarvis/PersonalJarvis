@@ -32,6 +32,7 @@ import type { VoiceSpokenLine, VoiceTurnRow } from "./types";
 // (parity: tests/unit/sessions/test_spoken_kind_parity.py). An unknown kind
 // falls back to the kind string itself so it still renders.
 export const SPOKEN_KIND_LABEL: Record<string, string> = {
+  reply: "Reply",
   clarify: "Clarifying question",
   timeout: "Timeout notice",
   unavailable: "Brain unavailable",
@@ -44,21 +45,29 @@ export const SPOKEN_KIND_LABEL: Record<string, string> = {
   announcement: "Announcement",
   preamble: "Preamble",
   progress: "Progress update",
+  withheld: "Answer withheld (safety)",
   other: "Spoken",
 };
 
 interface Props {
   turn: VoiceTurnRow;
+  displayNumber?: number;
   spoken?: VoiceSpokenLine[];
 }
 
-export function TurnCard({ turn, spoken = [] }: Props) {
+export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
   const assistantName = useEventStore((s) => s.assistantName);
   // Desktop shell → save to ~/Downloads via the backend; browser → blob download.
   const caps = useCapabilities();
   const native = caps.data?.native_file_actions ?? false;
+  const visibleTurnNumber = displayNumber ?? turn.idx + 1;
+  const confirmedReplies = spoken.filter((line) => line.spoken_kind === "reply");
+  const auxiliarySpoken = spoken.filter((line) => line.spoken_kind !== "reply");
+  const audibleReply = confirmedReplies.length
+    ? confirmedReplies.map((line) => line.text).join(" ")
+    : turn.jarvis_text;
   // The Jarvis-Agents brand label is fixed: it names the system, not the
   // configured assistant, so it does not follow the assistant name.
   const kindLabel: Record<string, string> = {
@@ -67,13 +76,13 @@ export function TurnCard({ turn, spoken = [] }: Props) {
   };
 
   const copyTurn = useCallback(async () => {
-    const text = formatTurnPlain(turn, spoken);
+    const text = formatTurnPlain(turn, spoken, visibleTurnNumber);
     const ok = await robustCopy(text);
     pushToast(
       ok ? "success" : "error",
-      ok ? `${t("turn_card.turn")} ${turn.idx + 1} ${t("turn_card.copied")}` : t("turn_card.copy_failed"),
+      ok ? `${t("turn_card.turn")} ${visibleTurnNumber} ${t("turn_card.copied")}` : t("turn_card.copy_failed"),
     );
-  }, [turn, spoken, pushToast, t]);
+  }, [turn, spoken, visibleTurnNumber, pushToast, t]);
 
   const downloadTurn = useCallback(async () => {
     const text = formatTurnPlain(turn, spoken);
@@ -109,7 +118,7 @@ export function TurnCard({ turn, spoken = [] }: Props) {
         {/* Header */}
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span className="font-mono">Turn {turn.idx + 1}</span>
+            <span className="font-mono">Turn {visibleTurnNumber}</span>
             <span>·</span>
             <span>{startedAt}</span>
             {turn.latency_total_ms > 0 && (
@@ -216,7 +225,7 @@ export function TurnCard({ turn, spoken = [] }: Props) {
         )}
 
         {/* Jarvis */}
-        {turn.jarvis_text && (
+        {audibleReply && (
           <div className="space-y-1">
             <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-primary">
               <Volume2 className="h-3 w-3" />
@@ -234,23 +243,22 @@ export function TurnCard({ turn, spoken = [] }: Props) {
               )}
             </div>
             <div className="min-w-0 whitespace-pre-wrap break-words rounded-md border border-primary/20 bg-primary/5 p-2 text-sm [overflow-wrap:anywhere]">
-              {turn.jarvis_text}
+              {audibleReply}
             </div>
           </div>
         )}
 
-        {/* Spoken output — every phrase Jarvis VOICED that is not the normal
-            reply (timeout/clarify/announcement/…). Without this the log only
-            shows the conversational reply and hides what the user actually
-            heard (user report 2026-06-15). */}
-        {spoken.length > 0 && (
+        {/* Supplemental spoken output. Playback-confirmed normal replies render
+            in the main assistant block above; status phrases and readbacks stay
+            distinct here while preserving their audible order. */}
+        {auxiliarySpoken.length > 0 && (
           <div className="space-y-1.5 border-t border-border/50 pt-2">
             <div className="flex items-center gap-1.5 text-[11px] uppercase tracking-wider text-sky-300">
               <MessageSquareWarning className="h-3 w-3" />
               Spoken output
             </div>
             <div className="space-y-1">
-              {spoken.map((s, i) => {
+              {auxiliarySpoken.map((s, i) => {
                 // A spawned sub-agent / mission result gets its own colour so it
                 // reads distinctly from a generic background completion and from
                 // a normal reply: violet ("agent") vs. the sky tint of the rest.
@@ -326,9 +334,10 @@ function formatMs(ms: number): string {
 export function formatTurnPlain(
   turn: VoiceTurnRow,
   spoken: VoiceSpokenLine[] = [],
+  displayNumber: number = turn.idx + 1,
 ): string {
   const lines: string[] = [];
-  lines.push(`--- Turn ${turn.idx + 1} ---`);
+  lines.push(`--- Turn ${displayNumber} ---`);
   if (turn.user_text) lines.push(`[USER]   ${turn.user_text}`);
   const meta: string[] = [];
   if (turn.tier) meta.push(`tier=${turn.tier}`);
@@ -348,7 +357,8 @@ export function formatTurnPlain(
     lines.push(`[TOOLS]  ${turn.tool_calls.join(", ")}`);
   }
   const jarvisLines: Array<{ ts_ms: number; lines: string[] }> = [];
-  if (turn.jarvis_text) {
+  const hasConfirmedReply = spoken.some((line) => line.spoken_kind === "reply");
+  if (turn.jarvis_text && !hasConfirmedReply) {
     const prefix = turn.awaiting_confirmation ? "(awaiting confirmation) " : "";
     jarvisLines.push({
       ts_ms: turn.ended_ms ?? Number.MAX_SAFE_INTEGER,
@@ -356,6 +366,10 @@ export function formatTurnPlain(
     });
   }
   for (const s of spoken) {
+    if (s.spoken_kind === "reply") {
+      jarvisLines.push({ ts_ms: s.ts_ms, lines: [`[JARVIS] ${s.text}`] });
+      continue;
+    }
     const label = (SPOKEN_KIND_LABEL[s.spoken_kind] ?? s.spoken_kind).toUpperCase();
     // The technical detail is deliberately excluded from the transcript copy —
     // it lives in the Run Inspector, not in what was said (user request 2026-06-22).

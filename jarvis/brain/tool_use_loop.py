@@ -15,6 +15,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 from uuid import UUID, uuid4
@@ -34,6 +35,15 @@ from .streaming import StreamingAggregate, aggregate, aggregate_with_consumer
 # out the answer (live bug 2026-07-01). The event-bus/DB preview cap
 # (``safe_preview``) is a separate path and never touched what the model saw.
 _MAX_TOOL_RESULT_CHARS = 8000
+
+# Directive appended for the deadline-forced final round (see ``deadline_s``).
+# English on purpose: it is model-facing prompt text, never spoken to the user.
+_DEADLINE_FINAL_DIRECTIVE = (
+    "[time budget exhausted] Answer the user NOW in one or two spoken "
+    "sentences using ONLY the tool evidence gathered above. If the evidence "
+    "is incomplete, say honestly what you could and could not verify. Do "
+    "not call any more tools."
+)
 
 
 def _cap_tool_result_json(serialized: str) -> str:
@@ -359,6 +369,7 @@ class ToolUseLoop:
         system_prompt: str | None = None,
         budget: IterationBudget | None = None,
         max_tokens: int = 8192,
+        deadline_s: float | None = None,
     ) -> None:
         self._brain = brain
         self._tools = tools
@@ -378,6 +389,14 @@ class ToolUseLoop:
         # Per-response output ceiling forwarded onto every BrainRequest this
         # loop issues. Safety ceiling, not a target (see BrainConfig.max_tokens).
         self._max_tokens = max_tokens
+        # Wall-clock bound for the WHOLE loop (voice turns; live incident
+        # 2026-07-14: 14 rounds / 66 s). The iteration budget counts rounds,
+        # not seconds — one slow provider round can eat a minute on its own.
+        # When exceeded after a tool round, the loop runs exactly ONE final
+        # round WITHOUT tools plus an answer-now directive, so the user
+        # always hears a grounded answer instead of more tool churn.
+        # ``None`` (default) = unbounded, previous behavior.
+        self._deadline_s = deadline_s
 
     def _resolve_tool(self, requested: str) -> tuple[Tool | None, str]:
         """Look up a model-requested tool name, tolerating separator/case drift.
@@ -486,6 +505,8 @@ class ToolUseLoop:
         tools_payload = self._tool_schemas()
         final_agg = StreamingAggregate()
         ack_attempted = False
+        loop_started = time.monotonic()
+        deadline_forced = False
 
         def _progress() -> None:
             # Stall-timeout heartbeat (see ``on_progress`` in the docstring).
@@ -536,6 +557,17 @@ class ToolUseLoop:
 
             # No tool calls → done
             if not agg.tool_calls:
+                break
+
+            # The deadline-forced round is the LAST round, period. With
+            # ``tools_payload = []`` a well-behaved provider cannot emit tool
+            # calls anymore; if one hallucinates a call anyway, stop here
+            # rather than looping on a dead deadline.
+            if deadline_forced:
+                log.warning(
+                    "tool_use_loop: provider emitted a tool call in the "
+                    "deadline-forced tool-less round — ending the turn"
+                )
                 break
 
             # Budget exhausted → abort
@@ -926,6 +958,25 @@ class ToolUseLoop:
             if self._budget.exceeded():
                 final_agg.finish_reason = "budget_exceeded"
                 break
+
+            # Wall-clock deadline check after execution: force ONE final
+            # tool-less answer round from the evidence gathered so far.
+            if (
+                self._deadline_s is not None
+                and time.monotonic() - loop_started >= self._deadline_s
+            ):
+                deadline_forced = True
+                elapsed = time.monotonic() - loop_started
+                log.warning(
+                    "tool_use_loop: %.1fs deadline reached after %.1fs / "
+                    "%d round(s) — forcing a final tool-less answer round",
+                    self._deadline_s, elapsed, self._budget.turns_used,
+                )
+                tools_payload = []
+                current_messages.append(BrainMessage(
+                    role="user",
+                    content=_DEADLINE_FINAL_DIRECTIVE,
+                ))
 
             # Fire-and-forget: if any tool has suppress_response=True,
             # skip the second brain iteration and return immediately.

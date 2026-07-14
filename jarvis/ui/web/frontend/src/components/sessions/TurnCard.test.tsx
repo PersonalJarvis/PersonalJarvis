@@ -1,8 +1,6 @@
 /**
- * The Transcription turn card must show the "Spoken output" track — every
- * phrase Jarvis VOICED that is not the normal reply (timeout / clarify /
- * announcement / …). User report 2026-06-15: those special phrases were
- * spoken but never appeared in the transcript.
+ * The Transcription turn card uses playback-confirmed replies as its primary
+ * assistant text and keeps status phrases/readbacks on a supplemental track.
  */
 import { afterEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
@@ -49,6 +47,13 @@ function spokenLine(over: Partial<VoiceSpokenLine> = {}): VoiceSpokenLine {
 }
 
 describe("TurnCard spoken track", () => {
+  it("uses the contiguous display number instead of a stale stored index", () => {
+    render(<TurnCard turn={turn({ idx: 1 })} displayNumber={1} />);
+
+    expect(screen.getByText("Turn 1")).toBeTruthy();
+    expect(screen.queryByText("Turn 2")).toBeNull();
+  });
+
   it("renders each voiced phrase with a human-readable kind label", () => {
     render(<TurnCard turn={turn()} spoken={[spokenLine()]} />);
     expect(screen.getByText("Spoken output")).toBeTruthy();
@@ -69,6 +74,24 @@ describe("TurnCard spoken track", () => {
 
   it("shows no Spoken-output section when there is nothing extra", () => {
     render(<TurnCard turn={turn({ jarvis_text: "Es ist drei Uhr." })} spoken={[]} />);
+    expect(screen.queryByText("Spoken output")).toBeNull();
+  });
+
+  it("uses the playback-confirmed reply instead of unplayed model text", () => {
+    render(
+      <TurnCard
+        turn={turn({ jarvis_text: "Generated text that never reached audio." })}
+        spoken={[
+          spokenLine({
+            spoken_kind: "reply",
+            text: "This sentence reached playback.",
+          }),
+        ]}
+      />,
+    );
+
+    expect(screen.getByText("This sentence reached playback.")).toBeTruthy();
+    expect(screen.queryByText("Generated text that never reached audio.")).toBeNull();
     expect(screen.queryByText("Spoken output")).toBeNull();
   });
 

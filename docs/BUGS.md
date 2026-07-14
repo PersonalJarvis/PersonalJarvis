@@ -3719,14 +3719,12 @@ user-audible dead air.
 
 **Fix.** A dispatch-time dead-air bridge in the deterministic delegate path
 (`jarvis/realtime/session.py`). When the delegated action is still pending
-`_DELEGATE_BRIDGE_DELAY_S` (2 s) after dispatch, `_run_delegate_bridge`
-injects `_delegate_bridge_prompt` into the LIVE model — one voice per call
-(BUG-049) — ordering exactly one short interim sentence in the conversation
-language, with outcome claims, answer content, and function calls forbidden
-(the line is contextual, never a canned pool). The withhold gate opens only
-for this instruction-bounded response (`bridge_delivery_started`), and the
-held `turn_complete` path flushes the bridge audio tail instead of draining
-it. Necessity-gated: a result faster than the delay (`result_ready`) skips
+`_DELEGATE_BRIDGE_DELAY_S` (now 6 s) after dispatch, `_run_delegate_bridge`
+asks the LIVE model to voice one fixed localized progress template — one voice
+per call (BUG-049). The complete bridge transcript and audio stay withheld
+until the transcript deterministically matches that exact template. A ready
+trusted result preempts an active bridge so it never waits behind interim
+speech. Necessity-gated: a result faster than the delay (`result_ready`) skips
 the bridge entirely. The bridge task is deliberately NOT a tracked delegate
 task, so a sleeping timer can never hold a turn open, defer a VAD edge, or
 refuse an announcement. Secondary lever (still open): the ~10 s OpenRouter
@@ -3740,10 +3738,10 @@ the result is still delivered live, not as a late follow-up) and
 chatter-free).
 
 **Class rule.** An interim ack that waits for the completion of the decision
-it is meant to cover is not an ack. The bridge over dead air needs a latency
-budget bounded by user patience (~2–3 s), independent of any model round —
-and it must be a bystander: a helper task that merely waits must never feed
-the liveness signals (turn hold, endpoint protection) that real work feeds.
+it is meant to cover is not an ack. A realtime bridge must be late enough not
+to serialize an ordinary result behind a second provider response, and it must
+be a bystander: a helper task that merely waits must never feed the liveness
+signals (turn hold, endpoint protection) that real work feeds.
 
 ## BUG-052: Realtime records an empty response as success and returns to listening (HIGH, 2026-07-14)
 
@@ -3803,7 +3801,14 @@ health, and a zero-error run row are never sufficient evidence by themselves.
 Never recover a silent tool turn by replaying the original request; recover
 from the retained result so a side effect can occur at most once.
 
-## BUG-053: A normal realtime barge-in ends the call when cancellation loses a response-boundary race (HIGH, OPEN, 2026-07-14)
+## BUG-053: A normal realtime barge-in ends the call when cancellation loses a response-boundary race (HIGH, LARGELY FIXED 2026-07-14 — correction 3 open)
+
+> **Status update (2026-07-14, afternoon).** Corrections 1 and 2 are
+> implemented (see BUG-056 below, which is the same defect fired through the
+> scrub-cancel path): `response_cancel_not_active` is now a recoverable
+> provider event, and `interrupt()` skips the wire cancel when no response
+> lifecycle is active. Correction 3 (preserve and forward the accepted
+> barge-in audio into the next turn) remains open.
 
 **Symptom.** During a healthy desktop realtime session, the user began a
 follow-up about NotebookLM and its MCP server while the preceding answer was
@@ -3876,7 +3881,7 @@ user lifecycle action, configured inactivity, shutdown, or a genuinely
 unrecoverable failure; recoverable control-plane races must never masquerade as
 hang-up.
 
-## BUG-054: The realtime dead-air bridge invents a connected-tool result before the tool runs (HIGH, OPEN, 2026-07-14)
+## BUG-054: The realtime dead-air bridge invents a connected-tool result before the tool runs (HIGH, FIXED 2026-07-14)
 
 **Symptom.** In the same 09:04 session as BUG-053, the user asked Jarvis to list
 their notebooks. Jarvis spoke five plausible-looking notebook names as though
@@ -3923,31 +3928,98 @@ prompt compliance became a correctness boundary again. Starting a real mission
 proves that work exists, but it does not prove any result that the interim model
 chooses to state.
 
-**Required correction.** This incident is diagnosed and recorded; the runtime
-repair has not yet been applied. The bridge must become structurally incapable
-of supplying answer content:
+**Fix.** The bridge is now structurally incapable of supplying answer content:
 
-1. Keep bridge audio withheld until the full bridge transcript passes a strict,
-   deterministic progress-only contract. The safest contract is an exact
-   localized status template (rendered in the already resolved turn language),
-   not an open-ended instruction to invent a sentence. A non-conforming bridge
-   is dropped without affecting the running action.
+1. Bridge audio stays withheld until the full transcript exactly matches a
+   fixed localized status template rendered in the resolved turn language. A
+   non-conforming bridge is dropped without affecting the running action.
 2. Never publish bridge text as `ResponseGenerated` or ordinary assistant turn
    content. It is `SpeechSpoken(progress)` only and must be excluded from fact
    extraction, personal-memory journaling, and answer history.
 3. Keep the real answer gate closed until the delegated result is complete and
    its trusted payload is being delivered. Mission-start evidence may authorize
    only a progress status, never a factual result.
-4. Add a hostile-provider regression test whose bridge ignores the prompt and
-   emits a plausible list. Assert zero leaked PCM, no authoritative response or
-   memory candidate, a still-live delegated action, and later delivery of only
-   the grounded tool outcome.
+4. A hostile-provider regression test makes the bridge ignore its prompt and
+   emit a plausible list. It asserts zero leaked PCM, no authoritative response,
+   a still-live delegated action, and later delivery of only the grounded tool
+   outcome. A separate regression proves that a ready result interrupts an
+   active bridge instead of queueing behind it.
+
+The bridge threshold moved from 2 s to 6 s for realtime only. The classic
+speech pipeline keeps its existing grounded tool acknowledgement; realtime
+delegate calls explicitly suppress that duplicate manager-level event.
 
 **Class rule.** "Work started" and "result known" are different evidence
 levels. An interim surface may report only the former, and its data must never
 enter an answer or memory channel. Any model-generated bridge that is allowed
 through solely because its prompt said "do not invent a result" is an
 untrusted answer generator, not a progress indicator.
+
+## BUG-055: Delegated wiki question answered from the schema contract + poisoned memory, 66 s deep (HIGH, FIXED 2026-07-14)
+
+**Symptom.** Voice session 2026-07-14 09:28: "Kannst du mir mal bitte dabei
+helfen, zu schauen, was genau alles in meinem Wiki-System steht?" <!-- i18n-allow: quoted German user utterance under forensic analysis -->
+took 66 seconds and answered that the wiki holds USER.md, SOUL.md, and a
+people folder with profiles for Sam, Joy, and the user's mother. The real
+vault holds none of those files (actual contents: the log/memory/schema
+core pages plus a few entity and project pages — none matching a single
+spoken name). Every named file in the spoken answer was invented.
+
+**Evidence (desktop log, 09:29:18–09:30:25).** The deterministic delegate
+dispatched a local-evidence turn at 09:29:18.5. The router brain then ran
+~14 sequential OpenRouter rounds; one round alone waited 32 s for its
+response (09:29:33 → 09:30:05). Tool trace: wiki-recall (3 hits) →
+wiki-page-read schema.md (served, 8945 bytes) → wiki-page-read index.md
+(NOT FOUND) → wiki-recall → … → wiki-page-read SOUL.md (NOT FOUND) → answer.
+Speech began 09:30:25 — 66 s after dispatch.
+
+**Root causes (four, compounding).**
+
+1. **No listing tool.** "What is in my wiki" is a LISTING question; the tool
+   surface offered only search (wiki-recall) and single-page read
+   (wiki-page-read), so no grounded answer was reachable. The model probed
+   blindly (each miss = one more LLM round) and then guessed.
+2. **The schema contract masqueraded as content.** schema.md (``type: meta``,
+   the vault's editing contract) documents an EXAMPLE layout. Served
+   verbatim by wiki-page-read, the model presented that example as the
+   actual vault — while holding two "not found" results contradicting it.
+3. **Poisoned memory closed the loop.** entities/alex.md already carried
+   consolidated facts asserting SOUL.md/USER.md/people-profiles exist —
+   journaled from EARLIER hallucinated answers (same class as BUG-054: the
+   09:05 session's five invented notebook names were consolidated as
+   candidate 381). Context injection fed the poison back, the new wrong
+   answer was journaled again at 09:31:18 (candidates 382/383, consolidated)
+   — a self-reinforcing hallucination loop across turns.
+4. **No wall-clock bound.** The tool-use loop's only bound was the 15-round
+   iteration budget; rounds are not seconds, and one slow provider round ate
+   32 s alone. A voice user is gone long before round 14.
+
+**Fix (2026-07-14).**
+
+- New router tool ``wiki-list`` (ADR-0011 amendment): deterministic ground-
+  truth listing (path, size, first heading) in ONE round; ``type: meta``
+  pages flagged as system files; overview questions no longer probe or guess.
+- ``wiki-page-read`` prepends a deterministic provenance warning to
+  ``type: meta`` pages ("contract, not content — use wiki-list").
+- ``ToolUseLoop`` gains ``deadline_s``: on expiry it forces exactly ONE
+  final tool-less round with an answer-now directive (never silence, never
+  more churn). Delegated realtime turns run with max_turns=6 +
+  deadline 20 s (``_DELEGATE_MAX_TURNS`` / ``_DELEGATE_DEADLINE_S``).
+- Data purge: the three poisoned fact lines removed from entities/alex.md
+  (invented notebooks, SOUL.md/USER.md, people profiles).
+
+**Still open (class rule, tracked).** The Stage-1 fact extractor journals
+ASSISTANT claims about tool results as facts about the user's world — that
+is how every hallucinated answer becomes durable memory. BUG-054's boundary
+rule applies here too: answer content may enter memory only when backed by
+executed-tool evidence. Guards:
+``tests/unit/plugins/tool/test_wiki_list.py``,
+``tests/unit/brain/test_tool_use_loop_deadline.py``.
+
+**Class rule.** A question about what EXISTS needs a deterministic
+enumeration tool; search + single-read cannot answer it groundedly, and a
+schema/contract page served without provenance becomes hallucination fuel.
+Voice-facing agentic loops need a TIME bound, not just a round bound.
 
 ## BUG-056: First macOS boot aborts natively — pystray NSStatusItem created off the main thread (HIGH, FIXED 2026-07-14)
 
@@ -3995,6 +4067,79 @@ menus) must be created and driven on the main thread; a worker-thread
 violation is a native abort, not a catchable exception. "No platform
 marker in the code" does not mean cross-platform — threading contracts
 differ per OS, and only a real-device boot proves them.
+
+## BUG-056: A scrub-gate abort's stale cancellation ends the session, and the transcript hides the abort (HIGH, FIXED 2026-07-14)
+
+**Symptom.** Voice session 2026-07-14 15:12: "Welche MCP-Server habe ich
+alle?" was answered by a healthy 5.4 s delegated turn <!-- i18n-allow: quoted German user utterance under forensic analysis -->
+(the BUG-055 latency fixes working as designed), but the spoken answer cut
+off mid-sentence at "Du hast zwei", the session ended with
+`hangup_reason=error`, and the exported transcript showed only the truncated
+reply — no trace of what failed or why the answer stopped.
+
+**Evidence (desktop log + sessions.db, session c3c1997f).**
+
+- 15:13:09.594 `realtime_delegate_completed` success=True after 5393 ms.
+- 15:13:12.468 `scrub gate cancelled output: unsafe output transcript` — the
+  ScrubHoldGate flagged a transcript delta as a hard leak while the answer
+  was being voiced; the honest fallback line was then spoken via classic TTS
+  (audible 15:13:18–15:13:20).
+- 15:13:20.536 `terminal provider error: response_cancel_not_active:
+  Cancellation failed: no active response found` — recorded with
+  `recoverable: false`; the pump set `_failed` and the session ended
+  `reason=error` at 15:13:23.918.
+- The recorded spoken track contains the progress bridge and the truncated
+  reply, but NOT the fallback line and NOT the abort reason.
+
+**Root causes (three).**
+
+1. **BUG-053's misclassification, second firing path.** The scrub cancel
+   calls the adapter's `interrupt()`; the provider's response lifecycle was
+   already over, so `response.cancel` answered with the benign
+   `response_cancel_not_active`. The adapter's recoverable set contained only
+   `conversation_already_has_active_response`, so this idempotent no-op race
+   was labeled terminal and killed an otherwise healthy session.
+2. **Transcript dishonesty.** `_cancel_unsafe_output` spoke a fallback line
+   through `error_spoken` but never published it as a `SpeechSpoken` event,
+   so the recorder — and therefore the exported transcript — had no trace of
+   the abort (the exact gap the maintainer reported).
+3. **Undiagnosable trigger.** Only the generic reason string "unsafe output
+   transcript" survived; the gate did not surface WHICH scrub detectors
+   tripped, so a possible false positive on a technical-but-harmless answer
+   (MCP server names) cannot be judged after the fact.
+
+**Fix (2026-07-14).**
+
+- `_RECOVERABLE_ERROR_CODES` gains `response_cancel_not_active` (BUG-053
+  correction 1): both sides of the response-boundary race are now benign.
+- `interrupt()` skips the wire cancel when `_response_idle` is set (BUG-053
+  correction 2); the recoverable classification stays as the backstop for
+  the remaining check-to-wire race window.
+- `_cancel_unsafe_output` publishes the spoken fallback as
+  `SpeechSpoken(spoken_kind="withheld", detail=<reason>)` — new vocabulary
+  entry wired through all four parity layers (constants.py, models.py,
+  types.ts, TurnCard.tsx) — so the transcript shows the abort, its fallback
+  line, and the detector names.
+- `ScrubHoldGate.hard_leak_actions()` exposes the tripped detector names
+  (safe metadata, never the flagged content) and the session embeds them in
+  the cancel reason.
+
+**Still open.** Whether the 15:13 hard leak itself was a false positive is
+not reconstructable (transcript deltas are not persisted); the detector-name
+diagnosis added here answers that question at the next occurrence. BUG-053
+correction 3 (forward accepted barge-in audio into the next turn) also
+remains open.
+
+**Class rule.** A cancellation that finds nothing to cancel has already
+succeeded — treat provider races idempotently on both boundaries (create and
+cancel). And every safety abort that changes what the user hears MUST leave
+an honest, user-visible trace in the recorded conversation; a silent abort
+reads as a broken answer and is undebuggable afterwards.
+
+Guards: `tests/unit/realtime/test_openai_realtime.py` (recoverable + skip),
+`tests/unit/realtime/test_scrub_gate.py` (detector diagnosis),
+`tests/unit/realtime/test_session.py` (withheld recording),
+`tests/unit/sessions/test_spoken_kind_parity.py`.
 
 ## BUG-057: Second macOS first-boot abort — JarvisBar/Orb Tk root created off the main thread (HIGH, FIXED 2026-07-14)
 

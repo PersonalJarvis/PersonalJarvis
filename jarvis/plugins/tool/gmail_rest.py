@@ -105,38 +105,26 @@ def _default_token_provider() -> str | None:
     return tokens.access if tokens is not None else None
 
 
-async def _default_refresher() -> bool:
+async def _default_refresher(observed_access_token: str | None = None) -> bool:
     """Refresh the stored Gmail token in place. Returns True on success.
 
     On an un-healable failure (revoked / invalid_client / placeholder client)
     it flags ``needs_reauth`` on the stored token so the Plugins view stops
     showing a green "connected" that lies and offers a Reconnect instead.
     Best-effort: any error returns False, never raises into the tool."""
-    import contextlib
-    import dataclasses
-
     from jarvis.marketplace.connect_helpers import build_handler_from_catalog
+    from jarvis.marketplace.refresh_scheduler import refresh_plugin_token
     from jarvis.marketplace.token_store import TokenStore
 
     store = TokenStore()
-    tokens = store.load("gmail")
-    if tokens is None or not tokens.refresh:
-        return False
-    handler = build_handler_from_catalog("gmail")
-    if handler is None:
-        return False
-    try:
-        new = await handler.refresh(tokens)
-    except Exception as exc:  # noqa: BLE001 — classify, never propagate
-        # A 401 followed by a failed refresh means the connection is dead;
-        # surface a Reconnect affordance instead of silently staying "green".
-        with contextlib.suppress(Exception):
-            store.save("gmail", dataclasses.replace(tokens, needs_reauth=True))
-        log.info("gmail token refresh failed, flagged needs_reauth: %s", exc)
-        return False
-    store.save("gmail", dataclasses.replace(new, needs_reauth=False))
-    return True
-
+    attempt = await refresh_plugin_token(
+        "gmail",
+        store,
+        build_handler_from_catalog,
+        force=True,
+        observed_access_token=observed_access_token,
+    )
+    return attempt.usable
 
 class GmailRestTool:
     name: str = "gmail"
@@ -176,7 +164,7 @@ class GmailRestTool:
 
         self._token_provider = access_token_provider or _default_token_provider
         self._transport = transport
-        self._refresher = token_refresher or _default_refresher
+        self._refresher = token_refresher
         # Keep-alive pool: reuse one client (one warm TLS connection to Gmail)
         # across list/get/send instead of a fresh handshake per request. The
         # tool is built once per BrainManager, so the connection stays warm for
@@ -211,8 +199,12 @@ class GmailRestTool:
             if exc.response.status_code != 401:
                 raise
         # 401 — token likely expired. Try exactly one refresh + retry.
+        observed_token = headers["Authorization"].removeprefix("Bearer ")
         try:
-            refreshed = bool(await self._refresher())
+            if self._refresher is None:
+                refreshed = bool(await _default_refresher(observed_token))
+            else:
+                refreshed = bool(await self._refresher())
         except Exception:  # noqa: BLE001 — refresher must never crash the tool
             refreshed = False
         if not refreshed:

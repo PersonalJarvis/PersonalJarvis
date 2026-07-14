@@ -14,6 +14,7 @@ CLI test run without ``jarvis.__main__``::
 from __future__ import annotations
 
 import asyncio
+import inspect
 import json
 import os
 import secrets
@@ -59,6 +60,45 @@ WINDOW_TITLE = "Personal Jarvis"
 #: so we detect a running process immediately and focus it instead of
 #: waiting silently.
 _LOCK_ACQUIRE_TIMEOUT = 0.0
+
+
+def _supported_call_kwargs(
+    function: Callable[..., Any],
+    kwargs: dict[str, Any],
+) -> dict[str, Any]:
+    """Filter optional call controls against the concrete live callable.
+
+    Desktop startup exposes a deferred brain proxy before ``BrainManager`` is
+    ready. The proxy necessarily accepts ``**kwargs``, but the concrete brain
+    behind it may be an older live object after a source hot reload. Inspecting
+    only the proxy therefore produces a false capability signal and can forward
+    a newly added control to an object that does not support it.
+
+    Filtering after the proxy resolves the concrete object avoids both the
+    signature mismatch and an unsafe retry after a turn may have started. An
+    opaque callable keeps the original arguments because there is no reliable
+    capability information to act on.
+    """
+    try:
+        signature = inspect.signature(function)
+    except (TypeError, ValueError):
+        return dict(kwargs)
+    parameters = tuple(signature.parameters.values())
+    if any(
+        parameter.kind is inspect.Parameter.VAR_KEYWORD
+        for parameter in parameters
+    ):
+        return dict(kwargs)
+    keyword_names = {
+        parameter.name
+        for parameter in parameters
+        if parameter.kind
+        in {
+            inspect.Parameter.POSITIONAL_OR_KEYWORD,
+            inspect.Parameter.KEYWORD_ONLY,
+        }
+    }
+    return {name: value for name, value in kwargs.items() if name in keyword_names}
 
 
 # ---------------------------------------------------------------------------
@@ -1190,7 +1230,11 @@ class DesktopApp:
                     return self._brain_unavailable_message()
                 generate = getattr(brain, "generate", None)
                 if callable(generate):
-                    return await generate(text, *args, **kwargs)
+                    return await generate(
+                        text,
+                        *args,
+                        **_supported_call_kwargs(generate, kwargs),
+                    )
                 return await brain(text)
 
             async def generate_stream(self, text: str, **kwargs: Any):

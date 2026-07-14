@@ -7,45 +7,43 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
-## [1.0.6] - 2026-07-13
-
-### Added
-
-- Realtime voice engine (full-duplex speech-to-speech, OpenAI Realtime /
-  Gemini Live) ships publicly for the first time, including the delegate
-  tool mode: one action function runs a full router-brain turn, so every
-  Jarvis capability (wiki, MCP/plugin/CLI tools, missions, computer use)
-  is reachable from a live call.
-- Tool Model pick: a dedicated, configurable thinking model for delegated
-  realtime turns, with REST routes and a settings UI.
-- Groq brain provider; realtime credential aliases; browser realtime audio
-  worklet buffering.
-- Voice-session auditor (scripts/diag_voice_sessions.py) that flags known
-  failure classes straight from the flight recorder.
+## [1.0.7] — 2026-07-14
 
 ### Fixed
 
-- Turn planner: German umlaut verbs never matched (normalization mismatch);
-  added missing everyday action verbs across de/en/es; contact-detail and
-  app-state lookups now route to the orchestrator.
-- Deterministic delivery of pending voice confirmations and short clarify
-  answers to the brain — prompt compliance is no longer a correctness
-  boundary.
-- One voice per call: classic TTS can no longer speak into a live realtime
-  session (including the hang-up race); interim lines are dropped, owed
-  results are re-delivered by the live voice.
-- run_shell on Windows executed quoted commands as literals (echoed back
-  with exit 0) and could not run cmd builtins; commands now run through
-  the command shell.
-- Failed confirmed actions now speak the actionable failure reason; the
-  MCP manager names configured servers on an unknown-name error.
+- **macOS first boot works.** Three native first-launch aborts ("Python quit
+  unexpectedly") fixed in one forensic series: the tray status item, the
+  Jarvis bar/orb Tk windows, and the virtual-cursor overlay were created off
+  the main thread (AppKit/Aqua-Tk abort natively, BUG-056/057); PortAudio
+  re-initialization is now serialized single-flight and the global-hotkey
+  event tap preflights the Accessibility grant instead of letting macOS kill
+  the process (BUG-058). macOS runs with the desktop window + Dock icon; the
+  menu-bar icon and on-screen bar return once main-thread hosting lands.
+- **Local speech pack install no longer blames your internet.** A missing
+  prebuilt wheel (e.g. Python 3.14 + av) is now diagnosed honestly, pip runs
+  wheel-only on end-user machines (never a source build), and the installer
+  prefers Python 3.13/3.12 until the native stack ships 3.14 wheels (BUG-059).
+- **Grounded wiki answers.** "What is in my wiki" is answered by a new
+  deterministic listing tool in one round instead of blind probing; contract
+  pages carry a provenance warning; delegated voice turns get a hard
+  wall-clock deadline with a forced final answer (BUG-055).
+- **Realtime stability.** A benign cancel race no longer ends the call, and
+  German (any-language) capability verbs reach connected tools directly
+  instead of always spawning an agent.
 
-### Known
+### Added
 
-- 3 tests in tests/unit/brain/test_tool_model_turn.py are red mid-rework
-  (fallback model pinning semantics still being finalized).
+- **OAuth token refresh lifecycle** for marketplace plugins (scheduler,
+  PKCE/token-store hardening, Gmail/Calendar REST updates).
+- **Sessions view rework**: richer session detail and turn cards.
 
-## [Unreleased]
+## [1.0.6] — 2026-07-13
+
+### Added
+
+- **Realtime voice engine — first public release** (previously withheld):
+  low-latency speech-to-speech conversations with tool delegation, plus the
+  tool-model pick and a broad reliability wave.
 
 ### Changed
 

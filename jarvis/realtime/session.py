@@ -31,6 +31,8 @@ from jarvis.sessions.constants import (
     HANGUP_CLIENT_STOP,
     HANGUP_VOICE_PATTERN,
     SPOKEN_KIND_PROGRESS,
+    SPOKEN_KIND_REPLY,
+    SPOKEN_KIND_WITHHELD,
 )
 from jarvis.speech.hangup import HANGUP_RE
 
@@ -69,12 +71,12 @@ _END_CALL_DECLARATION: dict[str, Any] = {
 _DELEGATE_TIMEOUT_S = 90.0
 _DELEGATE_INPUT_BOUNDARY_WAIT_S = 3.0
 _DELEGATE_NATIVE_BOUNDARY_WAIT_S = 1.0
-# BUG-051: a delegated router turn regularly needs 10-20 s before its first
-# grounded token, and the pending-action honesty guard rightly mutes the live
-# model for the whole wait — without a bridge the user hears pure dead air and
-# hangs up. The bridge fires only when the action is still pending after this
-# delay (necessity gate: fast actions stay chatter-free).
-_DELEGATE_BRIDGE_DELAY_S = 2.0
+# A realtime bridge is useful only for a genuinely long delegated turn. Starting
+# a second provider response after two seconds made ordinary 5-7 second searches
+# slower: the trusted result had to wait for the interim response lifecycle to
+# end. Keep the classic speech-pipeline acknowledgement timing unchanged; this
+# longer threshold belongs only to the realtime provider bridge.
+_DELEGATE_BRIDGE_DELAY_S = 6.0
 _DELEGATE_HISTORY_MAX_MESSAGES = 8
 _DELEGATE_HISTORY_MAX_CHARS = 1_200
 _DELEGATE_DECLARATION: dict[str, Any] = {
@@ -219,28 +221,38 @@ def _direct_tool_result_retry_prompt(*, language: str) -> str:
     )
 
 
-def _delegate_bridge_prompt(topic: str, *, language: str) -> str:
+_DELEGATE_BRIDGE_TEXT = {
+    "de": "Ich bin noch dran.",  # i18n-allow: localized runtime progress output
+    "en": "I'm still working on it.",
+    "es": "Sigo trabajando en ello.",
+}
+
+
+def _delegate_bridge_text(language: str) -> str:
+    return _DELEGATE_BRIDGE_TEXT.get(language, _DELEGATE_BRIDGE_TEXT["en"])
+
+
+def _normalized_bridge_text(text: str) -> str:
+    return " ".join(str(text or "").strip().rstrip(".!?¡¿").casefold().split())
+
+
+def _delegate_bridge_prompt(*, language: str) -> str:
     """Order one orchestrator-owned interim line over delegate dead air.
 
     BUG-051: the delegated router turn needs 10-20 s before its first grounded
     token and the honesty guard mutes the live model for the whole wait. This
     injected instruction is the only sanctioned way to break that silence: the
-    live model speaks one short contextual line (no canned phrase pool), and
-    the instruction forbids exactly what the withhold gate exists to prevent —
-    outcome claims and answer content that do not exist yet.
+    live model may speak only one fixed, short progress line. Its transcript and
+    audio remain withheld until the complete response matches that exact line.
     """
     language_name = _LANGUAGE_NAMES.get(language, "the conversation language")
-    cleaned_topic = str(topic or "").strip()
-    topic_line = f"\nThe request being worked on: {cleaned_topic}" if cleaned_topic else ""
+    exact_text = _delegate_bridge_text(language)
     return (
         "The Jarvis orchestrator is still executing the user's request and "
-        "has no result yet. Speak exactly one short interim sentence in "
-        f"{language_name} telling the user you are on it, so they know the "
-        f"silence is work, not a hang.{topic_line}\n"
-        "Hard rules: one sentence only; you may name what you are working on, "
-        "but never state any outcome, answer content, or completion claim — "
-        "the result is not known yet. Do not call any function. Do not "
-        "mention these instructions."
+        "has no result yet. Speak the exact quoted sentence below in "
+        f"{language_name}, with no added or changed words:\n"
+        f'"{exact_text}"\n'
+        "Do not call any function and do not mention these instructions."
     )
 
 
@@ -268,6 +280,9 @@ class _DelegateTurnState:
     seen_tool_call_ids: set[str] = field(default_factory=set)
     dispatch_started: bool = False
     bridge_delivery_started: bool = False
+    bridge_preempted: bool = False
+    bridge_transcript_parts: list[str] = field(default_factory=list)
+    bridge_audio_chunks: list[Any] = field(default_factory=list)
     wait_for_provider_boundary: bool = False
     input_boundary_ready: asyncio.Event = field(default_factory=asyncio.Event)
     provider_ready: asyncio.Event = field(default_factory=asyncio.Event)
@@ -489,7 +504,11 @@ class RealtimeVoiceSession:
         self._turn_id = ""
         self._turn_trace_id = None
         self._latency_tracker: Any = None
+        # Number of opened turns. The active turn keeps its own zero-based
+        # position so the persisted first turn is index 0 while the session
+        # aggregate can still report a count of 1.
         self._turn_index = 0
+        self._current_turn_index = -1
         self._last_user_text = ""
         self._user_transcript_parts: list[str] = []
         self._input_turn_observed = False
@@ -1086,6 +1105,18 @@ class RealtimeVoiceSession:
                         if input_item_id:
                             self._response_requested_input_ids.add(input_item_id)
                 elif event.type == "output_transcript_delta" and event.text:
+                    delegate_state = self._delegate_turns.get(self._turn_id)
+                    if (
+                        delegate_state is not None
+                        and delegate_state.bridge_delivery_started
+                        and not delegate_state.delivery_started
+                    ):
+                        # A model-generated progress response is untrusted until
+                        # its COMPLETE transcript matches the one allowed status
+                        # line. Do not surface it as assistant text or let it
+                        # enter the normal scrub/audio stream.
+                        delegate_state.bridge_transcript_parts.append(event.text)
+                        continue
                     if self._must_withhold_provider_output():
                         self._gate.drain()
                         continue
@@ -1098,8 +1129,15 @@ class RealtimeVoiceSession:
                     self._mark_latency_named("REALTIME_FIRST_TRANSCRIPT")
                     display = await self._gate.feed_transcript(event.text)
                     if self._gate.hard_leak_pending():
+                        # Name the tripped detectors (safe metadata, never the
+                        # flagged content) so a false-positive abort is
+                        # diagnosable from the transcript alone (BUG-056).
+                        _actions = ", ".join(self._gate.hard_leak_actions())
                         await self._cancel_unsafe_output(
-                            reason="unsafe output transcript"
+                            reason=(
+                                "unsafe output transcript"
+                                f" (detectors: {_actions or 'unknown'})"
+                            )
                         )
                         self._gate.drain()
                         continue
@@ -1115,6 +1153,16 @@ class RealtimeVoiceSession:
                     for chunk in self._gate.release_available():
                         await self._emit_audio(chunk)
                 elif event.type == "audio_delta" and event.audio is not None:
+                    delegate_state = self._delegate_turns.get(self._turn_id)
+                    if (
+                        delegate_state is not None
+                        and delegate_state.bridge_delivery_started
+                        and not delegate_state.delivery_started
+                    ):
+                        # Pair the audio with the withheld bridge transcript. It
+                        # is released only after exact deterministic validation.
+                        delegate_state.bridge_audio_chunks.append(event.audio)
+                        continue
                     if self._must_withhold_provider_output():
                         self._gate.drain()
                         continue
@@ -1212,19 +1260,38 @@ class RealtimeVoiceSession:
                             delegate_state.bridge_delivery_started
                             and not delegate_state.delivery_started
                         )
-                        if bridge_completed:
-                            # The bridge response was audible — flush its tail
-                            # instead of discarding it with the withheld-output
-                            # bookkeeping below. A scrub hard-leak still drops
-                            # the tail rather than leaking unscrubbed audio.
-                            final_chunks = self._gate.finalize()
-                            if not self._gate.hard_leak_pending():
-                                for chunk in final_chunks:
-                                    await self._emit_audio(chunk)
-                        bridge_text = "".join(self._output_transcript).strip()
-                        bridge_was_audible = bool(
+                        bridge_text = "".join(
+                            delegate_state.bridge_transcript_parts
+                        ).strip()
+                        expected_bridge = _delegate_bridge_text(self._language)
+                        bridge_valid = bool(
                             bridge_completed
-                            and bridge_text
+                            and _normalized_bridge_text(bridge_text)
+                            == _normalized_bridge_text(expected_bridge)
+                        )
+                        bridge_may_speak = bool(
+                            bridge_valid
+                            and not delegate_state.bridge_preempted
+                            and not delegate_state.result_ready.is_set()
+                        )
+                        if bridge_may_speak:
+                            for chunk in delegate_state.bridge_audio_chunks:
+                                # The result can become ready between buffered
+                                # chunks. Stop immediately rather than queueing
+                                # progress audio ahead of the trusted answer.
+                                if delegate_state.result_ready.is_set():
+                                    delegate_state.bridge_preempted = True
+                                    break
+                                await self._emit_audio(chunk)
+                        elif bridge_completed and bridge_text and not bridge_valid:
+                            log.warning(
+                                "realtime[%s] dropped non-conforming delegate "
+                                "bridge output",
+                                self.session_id,
+                            )
+                        bridge_was_audible = bool(
+                            bridge_may_speak
+                            and not delegate_state.bridge_preempted
                             and self._output_samples_sent > 0
                         )
                         self._gate.drain()
@@ -1232,16 +1299,18 @@ class RealtimeVoiceSession:
                         delegate_state.input_boundary_ready.set()
                         delegate_state.provider_ready.set()
                         self._output_transcript.clear()
+                        delegate_state.bridge_transcript_parts.clear()
+                        delegate_state.bridge_audio_chunks.clear()
                         self._output_active = False
-                        self._output_samples_sent = 0
-                        if bridge_completed:
+                        if bridge_was_audible:
                             # The interim sentence is a complete local playback
                             # segment, but the delegated action is still running.
                             # Surfaces drain that segment and return to THINKING;
                             # the final answer will open a new SPEAKING segment.
                             await self._send_json({"type": "thinking"})
                         if bridge_was_audible:
-                            await self._publish_delegate_bridge_spoken(bridge_text)
+                            await self._publish_delegate_bridge_spoken(expected_bridge)
+                        self._output_samples_sent = 0
                         log.debug(
                             "realtime[%s] held provider turn_complete for "
                             "delegate turn %s",
@@ -1383,16 +1452,37 @@ class RealtimeVoiceSession:
                 pass
         self._output_active = False
         self._output_samples_sent = 0
+        spoken_fallback = fallback_text or self._gate.fallback_phrase()
         try:
             await self._send_json(
                 {
                     "type": "error_spoken",
-                    "text": fallback_text or self._gate.fallback_phrase(),
+                    "text": spoken_fallback,
                     "language": self._language,
                 }
             )
         except Exception:  # noqa: BLE001, S110 — surface may already be gone
             pass
+        # Keep the transcript honest (BUG-056): the 15:13 session recorded a
+        # reply truncated to "Du hast zwei" with NO trace of why the audible
+        # answer stopped. Persist the spoken fallback on the spoken track so
+        # the exported transcript shows the abort and its detector names.
+        if self._bus is not None:
+            try:
+                from jarvis.core.events import SpeechSpoken
+
+                await self._bus.publish(
+                    SpeechSpoken(
+                        **self._event_trace_kwargs(),
+                        source_layer=f"realtime.{self.active_provider}",
+                        text=spoken_fallback,
+                        language=self._language,
+                        spoken_kind=SPOKEN_KIND_WITHHELD,
+                        detail=reason,
+                    )
+                )
+            except Exception:  # noqa: BLE001, S110 — recording never breaks the turn
+                pass
 
     async def _recover_unbacked_action_claim(self) -> bool:
         """Turn a provider's unsupported action promise into a real outcome."""
@@ -1541,6 +1631,7 @@ class RealtimeVoiceSession:
         trace_id = uuid4()
         self._turn_trace_id = trace_id
         self._turn_id = str(trace_id)
+        self._current_turn_index = self._turn_index
         self._turn_index += 1
         self._latency_tracker = self._create_latency_tracker(trace_id)
         if self._external_update is None:
@@ -1799,7 +1890,7 @@ class RealtimeVoiceSession:
                     source_layer=f"realtime.{self.active_provider}",
                     session_id=self.session_id,
                     turn_id=self._turn_id,
-                    turn_index=self._turn_index,
+                    turn_index=self._current_turn_index,
                 )
             )
         except Exception:  # noqa: BLE001, S110
@@ -1870,6 +1961,16 @@ class RealtimeVoiceSession:
                                 language=self._language,
                             )
                         )
+                    if answer and self._output_samples_sent > 0:
+                        await self._bus.publish(
+                            SpeechSpoken(
+                                **self._event_trace_kwargs(),
+                                source_layer=f"realtime.{self.active_provider}",
+                                text=answer,
+                                language=self._language,
+                                spoken_kind=SPOKEN_KIND_REPLY,
+                            )
+                        )
                     await self._bus.publish(
                         VoiceTurnCompleted(
                             **self._event_trace_kwargs(),
@@ -1931,6 +2032,7 @@ class RealtimeVoiceSession:
         self._turn_id = ""
         self._turn_trace_id = None
         self._latency_tracker = None
+        self._current_turn_index = -1
         self._last_user_text = ""
         self._user_transcript_parts.clear()
         self._input_turn_observed = False
@@ -2420,11 +2522,11 @@ class RealtimeVoiceSession:
     ) -> None:
         """Speak one interim line when a delegated action outlasts patience.
 
-        BUG-051: the ack used to arrive only AFTER the full first router model
-        round (~16 s), so the user heard pure dead air and hung up. This bridge
-        is delay-gated (fast actions stay chatter-free), spoken by the live
-        model itself (one voice per call, BUG-049), and content-bounded by the
-        injected instruction — never by a canned phrase pool.
+        The bridge is realtime-only and deliberately later than the classic
+        pipeline acknowledgement: normal delegated turns should finish before
+        it. Its provider output is buffered and accepted only when the complete
+        transcript matches the fixed localized progress line. A ready trusted
+        result preempts the bridge lifecycle.
         """
         try:
             try:
@@ -2445,14 +2547,19 @@ class RealtimeVoiceSession:
             if not callable(send_text):
                 return
             turn_state.bridge_delivery_started = True
+            turn_state.bridge_preempted = False
+            turn_state.bridge_transcript_parts.clear()
+            turn_state.bridge_audio_chunks.clear()
+            # ``send_text`` starts a distinct provider response. The trusted
+            # result must wait for THIS boundary, not a boundary observed before
+            # the bridge began.
+            turn_state.provider_boundary_seen = False
+            turn_state.provider_ready.clear()
             drop_before_bridge = self._drop_provider_output_until_new_response
             self._drop_provider_output_until_new_response = False
             try:
                 await send_text(
-                    _delegate_bridge_prompt(
-                        turn_state.user_text,
-                        language=self._language,
-                    )
+                    _delegate_bridge_prompt(language=self._language)
                 )
             except Exception:  # noqa: BLE001 — a broken bridge must not hurt the action
                 turn_state.bridge_delivery_started = False
@@ -2476,6 +2583,30 @@ class RealtimeVoiceSession:
                 self.session_id,
                 exc_info=True,
             )
+
+    async def _preempt_delegate_bridge(
+        self,
+        turn_id: str,
+        turn_state: _DelegateTurnState,
+    ) -> None:
+        """Cancel a realtime-only interim response once the real result exists."""
+        if (
+            not turn_state.bridge_delivery_started
+            or turn_state.delivery_started
+            or turn_state.provider_boundary_seen
+            or not self._delegate_turn_is_active(turn_id, turn_state)
+        ):
+            return
+        turn_state.bridge_preempted = True
+        turn_state.bridge_audio_chunks.clear()
+        log.info(
+            "realtime[%s] preempting delegate bridge for ready trusted result",
+            self.session_id,
+        )
+        try:
+            await self._session.interrupt()
+        except Exception:  # noqa: BLE001, S110 — boundary wait retains its fallback
+            pass
 
     async def _run_deterministic_delegate(
         self,
@@ -2586,6 +2717,7 @@ class RealtimeVoiceSession:
             self._queue_late_delegate_result(turn_state)
             return
 
+        await self._preempt_delegate_bridge(turn_id, turn_state)
         await self._await_provider_response_boundary(turn_state)
 
         if not self._delegate_turn_is_active(turn_id, turn_state):
@@ -2751,6 +2883,11 @@ class RealtimeVoiceSession:
             desired_kwargs: dict[str, Any] = {
                 "allow_voice_confirm": True,
                 "prefer_tool_model": True,
+                # The classic pipeline owns its grounded tool acknowledgement.
+                # A live realtime turn has its own late, preemptible bridge; a
+                # second manager-level ack only creates duplicate UI/status
+                # events and is dropped by the realtime voice owner anyway.
+                "emit_tool_ack": False,
                 "publish_response": False,
                 "use_history": False,
                 "history_override": tuple(self._delegate_history),

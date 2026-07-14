@@ -49,7 +49,7 @@ def _manager_with_recorder() -> tuple[BrainManager, _RecordingDispatcher]:
     recorder = _RecordingDispatcher()
     manager._build_fallback_chain = lambda _level: [("fake", "fake-model")]  # type: ignore[method-assign]
     manager._get_brain = lambda _name, _model: _FakeBrain()  # type: ignore[method-assign]
-    manager._build_dispatcher = lambda _brain, *, tools_override=None: recorder  # type: ignore[method-assign]
+    manager._build_dispatcher = lambda _brain, *, tools_override=None, **_kw: recorder  # type: ignore[method-assign]
     return manager, recorder
 
 

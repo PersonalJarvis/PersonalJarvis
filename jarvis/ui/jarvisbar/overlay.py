@@ -47,6 +47,30 @@ TASKBAR_GAP_PX = 8
 # out). Lower = more see-through. Tune this one number for the glass look.
 BAR_ALPHA = 0.6
 
+# A topmost *flag* is not enough on Windows.  A mapped Tk window can retain
+# WS_EX_TOPMOST while falling below ordinary windows in the real Z-order band
+# (observed after the desktop/main window mapped over the boot-gated bar).  The
+# guard repairs the native band regularly without activating, moving, or
+# resizing the bar.  On macOS and X11 the same loop refreshes Tk's documented
+# ``-topmost`` window-manager request.  Half a second keeps a newly mapped app
+# from covering the bar perceptibly while adding negligible work.
+Z_ORDER_GUARD_INTERVAL_MS = 500
+
+# SetWindowPos flags used by the Win32 repair.  Deliberately omit SWP_NOZORDER:
+# HWND_TOPMOST must be applied to the actual Z-order, not merely cached as a
+# style bit.  SWP_NOACTIVATE is the important UX contract: the bar never steals
+# keyboard focus from the app the user just opened.
+_SWP_NOSIZE = 0x0001
+_SWP_NOMOVE = 0x0002
+_SWP_NOACTIVATE = 0x0010
+_SWP_NOOWNERZORDER = 0x0200
+_GW_HWNDPREV = 3
+_GWL_EXSTYLE = -20
+_WS_EX_TOPMOST = 0x00000008
+_WIN32_TOPMOST_FLAGS = (
+    _SWP_NOSIZE | _SWP_NOMOVE | _SWP_NOACTIVATE | _SWP_NOOWNERZORDER
+)
+
 # Sound-driven look. The bar shows the speaking equalizer (bars) ONLY while real
 # audio is present — mic input while you speak, or TTS output while Jarvis speaks
 # — and the thinking wave during silence (brain thinking AND the silent
@@ -165,6 +189,111 @@ def _create_hidden_tk_root(tk: Any) -> Any:
     root = tk.Tk()
     root.withdraw()
     return root
+
+
+def _win32_force_topmost(root: Any, *, user32: Any | None = None) -> bool:
+    """Put a Tk toplevel in Win32's real topmost Z-order band.
+
+    Tk's ``winfo_id()`` is the inner ``TkChild`` HWND on Windows.  Window
+    manager operations must target its ``TkTopLevel`` parent, so resolve that
+    wrapper first and fall back to the supplied handle only when no parent is
+    present.  The optional ``user32`` seam keeps the native call unit-testable
+    on every host.  Returns ``False`` on unsupported hosts or any native error.
+    """
+    if user32 is None and sys.platform != "win32":
+        return False
+
+    hwnd_topmost: Any = -1
+    try:
+        if user32 is None:
+            import ctypes
+            from ctypes import wintypes
+
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            user32.GetParent.argtypes = [wintypes.HWND]
+            user32.GetParent.restype = wintypes.HWND
+            user32.SetWindowPos.argtypes = [
+                wintypes.HWND,
+                wintypes.HWND,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                ctypes.c_int,
+                wintypes.UINT,
+            ]
+            user32.SetWindowPos.restype = wintypes.BOOL
+            hwnd_topmost = wintypes.HWND(-1)
+
+        inner_hwnd = int(root.winfo_id())
+        outer_hwnd = int(user32.GetParent(inner_hwnd) or inner_hwnd)
+        return bool(
+            user32.SetWindowPos(
+                outer_hwnd,
+                hwnd_topmost,
+                0,
+                0,
+                0,
+                0,
+                _WIN32_TOPMOST_FLAGS,
+            )
+        )
+    except Exception:  # noqa: BLE001 - the overlay must degrade, never crash
+        return False
+
+
+def _win32_topmost_band_is_healthy(
+    root: Any, *, user32: Any | None = None
+) -> bool | None:
+    """Check whether any ordinary visible HWND sits above the Jarvis Bar.
+
+    ``WS_EX_TOPMOST`` on the bar itself cannot answer this: the reported bug
+    retained that bit while the real Z-order placed three non-topmost windows
+    above it.  Walking the windows above the bar detects the actual band.  A
+    ``None`` result means the native check was unavailable, so the caller may
+    conservatively attempt a repair.
+    """
+    if user32 is None and sys.platform != "win32":
+        return None
+
+    try:
+        get_window_long: Any
+        if user32 is None:
+            import ctypes
+            from ctypes import wintypes
+
+            user32 = ctypes.WinDLL("user32", use_last_error=True)
+            user32.GetParent.argtypes = [wintypes.HWND]
+            user32.GetParent.restype = wintypes.HWND
+            user32.GetWindow.argtypes = [wintypes.HWND, wintypes.UINT]
+            user32.GetWindow.restype = wintypes.HWND
+            user32.IsWindowVisible.argtypes = [wintypes.HWND]
+            user32.IsWindowVisible.restype = wintypes.BOOL
+            get_window_long = getattr(user32, "GetWindowLongPtrW", None)
+            if get_window_long is None:
+                get_window_long = user32.GetWindowLongW
+            get_window_long.argtypes = [wintypes.HWND, ctypes.c_int]
+            get_window_long.restype = ctypes.c_ssize_t
+        else:
+            get_window_long = getattr(user32, "GetWindowLongPtrW", None)
+            if get_window_long is None:
+                get_window_long = user32.GetWindowLongW
+
+        inner_hwnd = int(root.winfo_id())
+        outer_hwnd = int(user32.GetParent(inner_hwnd) or inner_hwnd)
+        above = int(user32.GetWindow(outer_hwnd, _GW_HWNDPREV) or 0)
+        visited: set[int] = set()
+        while above and above not in visited and len(visited) < 512:
+            visited.add(above)
+            if bool(user32.IsWindowVisible(above)):
+                ex_style = int(get_window_long(above, _GWL_EXSTYLE))
+                if not ex_style & _WS_EX_TOPMOST:
+                    return False
+            above = int(user32.GetWindow(above, _GW_HWNDPREV) or 0)
+        if above:
+            return None  # corrupt/cyclic chain or an implausibly large walk
+        return True
+    except Exception:  # noqa: BLE001 - health probing must never break the bar
+        return None
 
 
 class JarvisBarOverlay:
@@ -489,6 +618,7 @@ class JarvisBarOverlay:
         self._schedule_frame()
         self._schedule_ui_queue()
         self._schedule_frame_watchdog()  # independent anti-freeze revival loop
+        self._schedule_z_order_guard()
         if not self._should_start_withdrawn():
             self._do_show()
         self._started.set()
@@ -624,20 +754,13 @@ class JarvisBarOverlay:
     def _do_reassert_z_order(self, *, opacity: float | None = None) -> None:
         if self._root is None:
             return
-        # Re-assert topmost + lift after every reveal. A withdrawn→deiconified
-        # ``overrideredirect`` window comes back on Windows WITHOUT its topmost
-        # z-order (it is remapped as an ordinary window), so later-mapped windows
-        # (the desktop main window + tray on the fast-boot path) land ON TOP of
-        # the bar and hide it until the next wake-word incidentally re-shows it —
-        # the "bar does not appear, only after the wake-word" forensic. Lifting +
-        # re-pinning topmost here keeps the always-on bar reliably visible,
-        # matching the mascot orb. Guarded separately so a lift failure never
-        # undoes the deiconify. (Lost in the consolidate restore-trap; restored.)
-        try:
-            self._root.wm_attributes("-topmost", True)
-            self._root.lift()
-        except Exception:  # noqa: BLE001
-            log.debug("jarvisbar lift/topmost re-assert failed", exc_info=True)
+        # Re-assert topmost after every reveal. On Windows this must use
+        # SetWindowPos(HWND_TOPMOST): a live forensic found WS_EX_TOPMOST still
+        # set while the HWND sat *below* three ordinary windows in the actual
+        # Z-order. Repeating Tk's already-true attribute was a no-op and lift()
+        # only raised within the wrong band. Other desktop window managers use
+        # Tk's portable -topmost request + lift fallback.
+        self._do_pin_topmost()
         # BUG-030 guard: re-asserting ``-topmost`` is itself a Win32 style
         # mutation on this layered (color-key + alpha) window, and Windows can
         # silently drop the layered attributes on such a mutation — the bar
@@ -654,6 +777,25 @@ class JarvisBarOverlay:
         # path. Native style/map changes require one fresh canvas submission so
         # DWM cannot keep a stale backing surface indefinitely.
         self._invalidate_static_frame()
+
+    def _do_pin_topmost(self) -> str:
+        """Repair topmost ordering without moving or focusing the bar.
+
+        Returns the strategy used (``"native"``, ``"tk"``, or ``"failed"``)
+        so the periodic guard can heal layered attributes only when the Win32
+        native path was unavailable and Tk had to mutate the window style.
+        """
+        if self._root is None:
+            return "failed"
+        if sys.platform == "win32" and _win32_force_topmost(self._root):
+            return "native"
+        try:
+            self._root.wm_attributes("-topmost", True)
+            self._root.lift()
+            return "tk"
+        except Exception:  # noqa: BLE001
+            log.debug("jarvisbar lift/topmost re-assert failed", exc_info=True)
+            return "failed"
 
     def _do_hide(self) -> None:
         if self._root is None:
@@ -821,6 +963,44 @@ class JarvisBarOverlay:
                 except Exception:  # noqa: BLE001
                     log.warning(
                         "JarvisBar frame watchdog re-arm skipped", exc_info=True
+                    )
+
+    def _schedule_z_order_guard(self) -> None:
+        """Keep a mapped bar above apps that are opened after it.
+
+        This is intentionally independent of voice-state ``show()`` calls: a
+        persistent idle bar may remain mapped for hours without another reveal,
+        which is exactly when an external app can displace it. Hidden and
+        startup-gated surfaces are never mapped or raised by this guard.
+        """
+        if not self._running or self._root is None:
+            return
+        try:
+            mapped = bool(self._root.winfo_ismapped())
+            if mapped and not getattr(self, "_startup_gated", False):
+                strategy = "healthy"
+                if (
+                    sys.platform != "win32"
+                    or _win32_topmost_band_is_healthy(self._root) is not True
+                ):
+                    strategy = self._do_pin_topmost()
+                # The native Win32 path changes only Z-order. A rare Tk
+                # fallback can touch the layered style, so immediately restore
+                # color-key/alpha and request one fresh frame (BUG-030).
+                if sys.platform == "win32" and strategy == "tk":
+                    self._apply_layered_attributes(opacity=self._opacity)
+                    self._invalidate_static_frame()
+        except Exception:  # noqa: BLE001 - the guard must itself never die
+            log.debug("JarvisBar Z-order guard check failed", exc_info=True)
+        finally:
+            if self._running and self._root is not None:
+                try:
+                    self._root.after(
+                        Z_ORDER_GUARD_INTERVAL_MS, self._schedule_z_order_guard
+                    )
+                except Exception:  # noqa: BLE001
+                    log.warning(
+                        "JarvisBar Z-order guard re-arm skipped", exc_info=True
                     )
 
     # ------------------------------------------------------------------ #

@@ -1046,6 +1046,7 @@ async def test_latency_and_voice_events_share_one_fresh_trace_per_turn():
     spans = [event for event in bus.events if isinstance(event, LatencySpan)]
 
     assert len(started) == len(completed) == 2
+    assert [item.turn_index for item in started] == [0, 1]
     assert started[0].trace_id != started[1].trace_id
     assert [item.trace_id for item in completed] == [
         item.trace_id for item in started
@@ -1823,6 +1824,13 @@ async def test_local_evidence_turns_run_deterministic_jarvis_action(utterance):
         "What is the capital of France?",
         "What is SAP?",
         "How do I open a file in Python?",
+        (
+            "Ach, ich versuche gerade Suggestionen zu studieren. "  # i18n-allow
+            "Wie würdest du mir am besten dabei helfen, "  # i18n-allow
+            "Suggestionen anzuwenden und konkreter zu benutzen, "  # i18n-allow
+            "um meine Mitmenschen dazu zu bringen, "  # i18n-allow
+            "meine Interessen zu verfolgen?"  # i18n-allow
+        ),
         "I sent you an email yesterday.",
     ],
 )
@@ -2328,7 +2336,7 @@ class _SlowDelegateBridgeSession(FakeSession):
         await self._bridge_sent.wait()
         yield RealtimeEvent(
             type="output_transcript_delta",
-            text="I'm checking that now.",
+            text="I'm still working on it.",
         )
         yield RealtimeEvent(
             type="audio_delta",
@@ -2342,6 +2350,18 @@ class _SlowDelegateBridgeSession(FakeSession):
         # delegated result exists; the turn must survive this completion.
         yield RealtimeEvent(type="turn_complete")
         await self._result_delivered.wait()
+        yield RealtimeEvent(
+            type="output_transcript_delta",
+            text="Stored on your page: note.",
+        )
+        yield RealtimeEvent(
+            type="audio_delta",
+            audio=AudioChunk(
+                pcm=b"\x03\x04" * 8,
+                sample_rate=24_000,
+                timestamp_ns=0,
+            ),
+        )
         yield RealtimeEvent(type="turn_complete")
 
     async def send_text(self, text):
@@ -2403,8 +2423,8 @@ async def test_slow_deterministic_delegate_speaks_a_bridge_line(monkeypatch):
 
     bridge = provider.session.text_inputs[0]
     assert "<trusted_action_result>" not in bridge
-    assert "interim" in bridge
-    assert "Write this to my wiki." in bridge  # the line may name the topic
+    assert '"I\'m still working on it."' in bridge
+    assert "Write this to my wiki." not in bridge
     # While the bridge response is live, provider output must flow.
     assert sess._must_withhold_provider_output() is False
 
@@ -2421,9 +2441,10 @@ async def test_slow_deterministic_delegate_speaks_a_bridge_line(monkeypatch):
     assert "finished only now" not in result
     await sess.wait_finished()
     assert binaries
-    progress = [event for event in bus.events if isinstance(event, SpeechSpoken)]
-    assert [(event.text, event.spoken_kind) for event in progress] == [
-        ("I'm checking that now.", "progress")
+    spoken = [event for event in bus.events if isinstance(event, SpeechSpoken)]
+    assert [(event.text, event.spoken_kind) for event in spoken] == [
+        ("I'm still working on it.", "progress"),
+        ("Stored on your page: note.", "reply"),
     ]
     await sess.end(reason="test")
 
@@ -2466,6 +2487,188 @@ async def test_fast_deterministic_delegate_needs_no_bridge_line(monkeypatch):
     assert "<trusted_action_result>" in texts[0]
     await sess.wait_finished()
     await sess.end(reason="test")
+
+
+class _PreemptedDelegateBridgeSession(FakeSession):
+    """Hold the bridge response open until the trusted result preempts it."""
+
+    def __init__(self, *, bridge_sent, interrupted, result_delivered):
+        super().__init__([])
+        self._bridge_sent = bridge_sent
+        self._interrupted = interrupted
+        self._result_delivered = result_delivered
+
+    async def receive(self):
+        yield RealtimeEvent(
+            type="input_transcript",
+            text="Check the current figure.",
+            is_final=True,
+        )
+        await self._bridge_sent.wait()
+        yield RealtimeEvent(
+            type="output_transcript_delta",
+            text="I'm still working on it.",
+        )
+        yield RealtimeEvent(
+            type="audio_delta",
+            audio=AudioChunk(
+                pcm=b"\x01\x02" * 8,
+                sample_rate=24_000,
+                timestamp_ns=0,
+            ),
+        )
+        await self._interrupted.wait()
+        yield RealtimeEvent(type="turn_complete")
+        await self._result_delivered.wait()
+        yield RealtimeEvent(type="turn_complete")
+
+    async def send_text(self, text):
+        await super().send_text(text)
+        if "<trusted_action_result>" in text:
+            self._result_delivered.set()
+        else:
+            self._bridge_sent.set()
+
+    async def interrupt(self):
+        await super().interrupt()
+        self._interrupted.set()
+
+
+class _PreemptedDelegateBridgeProvider(FakeProvider):
+    def __init__(self, *, bridge_sent, interrupted, result_delivered):
+        super().__init__([])
+        self._bridge_sent = bridge_sent
+        self._interrupted = interrupted
+        self._result_delivered = result_delivered
+
+    async def open_session(self, cfg):
+        self.opened_with = cfg
+        self.session = _PreemptedDelegateBridgeSession(
+            bridge_sent=self._bridge_sent,
+            interrupted=self._interrupted,
+            result_delivered=self._result_delivered,
+        )
+        return self.session
+
+
+@pytest.mark.asyncio
+async def test_ready_result_preempts_active_realtime_bridge(monkeypatch):
+    """A finished result must not queue behind an in-flight interim response."""
+    monkeypatch.setattr("jarvis.realtime.session._DELEGATE_BRIDGE_DELAY_S", 0.01)
+    gate = asyncio.Event()
+    bridge_sent = asyncio.Event()
+    interrupted = asyncio.Event()
+    result_delivered = asyncio.Event()
+    bus = FakeBus()
+    binaries: list[bytes] = []
+    provider = _PreemptedDelegateBridgeProvider(
+        bridge_sent=bridge_sent,
+        interrupted=interrupted,
+        result_delivered=result_delivered,
+    )
+    brain = FakeBrain(replies=("The grounded figure is 42.",), gate=gate)
+    sess = _session(
+        provider,
+        brain=brain,
+        binaries=binaries,
+        bus=bus,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(bridge_sent.wait(), timeout=2)
+    gate.set()
+    await asyncio.wait_for(interrupted.wait(), timeout=2)
+    await asyncio.wait_for(result_delivered.wait(), timeout=2)
+
+    assert provider.session.interrupts >= 1
+    assert binaries == []
+    assert not any(isinstance(event, SpeechSpoken) for event in bus.events)
+    assert "<trusted_action_result>" in provider.session.text_inputs[-1]
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_nonconforming_realtime_bridge_audio_is_never_released(monkeypatch):
+    """A hostile bridge cannot turn an ungrounded claim into spoken output."""
+    monkeypatch.setattr("jarvis.realtime.session._DELEGATE_BRIDGE_DELAY_S", 0.01)
+    gate = asyncio.Event()
+    bridge_sent = asyncio.Event()
+    bridge_finished = asyncio.Event()
+    result_delivered = asyncio.Event()
+
+    class _HostileBridgeSession(FakeSession):
+        async def receive(self):
+            yield RealtimeEvent(
+                type="input_transcript",
+                text="List my private notebooks.",
+                is_final=True,
+            )
+            await bridge_sent.wait()
+            yield RealtimeEvent(
+                type="output_transcript_delta",
+                text="Your notebooks are Alpha, Beta, and Gamma.",
+            )
+            yield RealtimeEvent(
+                type="audio_delta",
+                audio=AudioChunk(
+                    pcm=b"\x01\x02" * 8,
+                    sample_rate=24_000,
+                    timestamp_ns=0,
+                ),
+            )
+            yield RealtimeEvent(type="turn_complete")
+            bridge_finished.set()
+            await result_delivered.wait()
+            yield RealtimeEvent(type="turn_complete")
+
+        async def send_text(self, text):
+            await super().send_text(text)
+            if "<trusted_action_result>" in text:
+                result_delivered.set()
+            else:
+                bridge_sent.set()
+
+    class _HostileBridgeProvider(FakeProvider):
+        async def open_session(self, cfg):
+            self.opened_with = cfg
+            self.session = _HostileBridgeSession([])
+            return self.session
+
+    bus = FakeBus()
+    binaries: list[bytes] = []
+    provider = _HostileBridgeProvider([])
+    brain = FakeBrain(replies=("Notebook access is unavailable.",), gate=gate)
+    sess = _session(
+        provider,
+        brain=brain,
+        binaries=binaries,
+        bus=bus,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(bridge_finished.wait(), timeout=2)
+    assert binaries == []
+    assert not any(isinstance(event, SpeechSpoken) for event in bus.events)
+
+    gate.set()
+    await asyncio.wait_for(result_delivered.wait(), timeout=2)
+    await sess.wait_finished()
+    assert all(
+        "Alpha, Beta, and Gamma" not in getattr(event, "text", "")
+        for event in bus.events
+    )
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_realtime_delegate_disables_classic_tool_ack() -> None:
+    """Classic pipeline acks stay enabled by default; realtime opts out per turn."""
+    brain = FakeBrain(replies=("done",))
+    sess = _session(FakeProvider([]), brain=brain)
+
+    assert await sess._dispatch_brain_turn("Check it.") == "done"
+    assert brain.calls[0][1]["emit_tool_ack"] is False
 
 
 @pytest.mark.asyncio
@@ -2980,6 +3183,7 @@ async def test_delegate_call_dispatches_raw_transcript_with_voice_confirm():
             {
                 "allow_voice_confirm": True,
                 "prefer_tool_model": True,
+                "emit_tool_ack": False,
                 "publish_response": False,
                 "use_history": False,
                 "history_override": (),
@@ -3630,3 +3834,33 @@ async def test_delegate_does_not_retry_an_internal_type_error():
     assert brain.calls == 1
     assert provider.session.tool_results[0][2]["success"] is False
     await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_scrub_cancel_records_spoken_fallback_on_the_spoken_track():
+    """BUG-056: the 15:13 session's transcript ended at a truncated reply with
+    no trace of the safety abort. The scrub cancel must persist its spoken
+    fallback as a SpeechSpoken(withheld) event carrying the detector names in
+    ``detail``, so the exported transcript shows what happened and why."""
+    provider = FakeProvider([])
+    bus = FakeBus()
+    sess = RealtimeVoiceSession(
+        session_id="scrub-cancel-record",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=bus,
+        surface="desktop",
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+
+    reason = "unsafe output transcript (detectors: replaced_stacktrace)"
+    await sess._cancel_unsafe_output(reason=reason)
+    await sess.end(reason="test")
+
+    spoken = [event for event in bus.events if isinstance(event, SpeechSpoken)]
+    assert len(spoken) == 1
+    assert spoken[0].spoken_kind == "withheld"
+    assert spoken[0].detail == reason
+    assert spoken[0].text == sess._gate.fallback_phrase()

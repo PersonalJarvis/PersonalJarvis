@@ -51,13 +51,14 @@ def _jarvis_outputs_for_turn(
 ) -> list[_JarvisOutput]:
     """Return every Jarvis output for a turn in the order it was produced.
 
-    ``SpeechSpoken`` covers preambles, timeouts, readbacks and other voiced
-    non-reply phrases. ``ResponseGenerated`` covers the normal reply persisted
-    as ``VoiceTurnRow.jarvis_text``. Rendering both by timestamp prevents the
-    plain transcript from showing a preamble *after* the final answer.
+    ``SpeechSpoken`` is authoritative for output accepted by the audible path.
+    ``ResponseGenerated`` remains a compatibility fallback for sessions recorded
+    before reply playback confirmation existed. Rendering by timestamp prevents
+    the plain transcript from showing a preamble after the final answer.
     """
     items: list[_JarvisOutput] = []
-    saw_reply_event = False
+    generated_replies: list[_JarvisOutput] = []
+    saw_confirmed_reply = False
     fallback_seq = 1_000_000_000
     for e in events or []:
         if e.kind == "SpeechSpoken":
@@ -66,13 +67,17 @@ def _jarvis_outputs_for_turn(
                 continue
             raw_detail = e.payload.get("detail")
             detail = str(raw_detail).strip() if raw_detail else None
+            spoken_kind = str(e.payload.get("spoken_kind", "other"))
+            is_reply = spoken_kind == "reply"
+            saw_confirmed_reply = saw_confirmed_reply or is_reply
             items.append(
                 _JarvisOutput(
                     ts_ms=e.ts_ms,
                     seq=e.seq or 0,
                     text=text,
-                    kind=str(e.payload.get("spoken_kind", "other")),
+                    kind=spoken_kind,
                     detail=detail,
+                    is_reply=is_reply,
                 )
             )
             continue
@@ -80,8 +85,7 @@ def _jarvis_outputs_for_turn(
             text = str(e.payload.get("text", "")).strip()
             if not text:
                 continue
-            saw_reply_event = True
-            items.append(
+            generated_replies.append(
                 _JarvisOutput(
                     ts_ms=e.ts_ms,
                     seq=e.seq or 0,
@@ -91,7 +95,10 @@ def _jarvis_outputs_for_turn(
                 )
             )
 
-    if turn.jarvis_text and not saw_reply_event:
+    if not saw_confirmed_reply:
+        items.extend(generated_replies)
+
+    if turn.jarvis_text and not generated_replies and not saw_confirmed_reply:
         items.append(
             _JarvisOutput(
                 ts_ms=turn.ended_ms or turn.started_ms,
@@ -144,8 +151,8 @@ def format_session_markdown(
         lines.append("_(keine Turns aufgezeichnet)_")
         return "\n".join(lines)
 
-    for t in turns_list:
-        lines.append(f"## Turn {t.idx + 1}  ·  {_fmt_dt(t.started_ms, time_only=True)}")
+    for display_index, t in enumerate(turns_list, start=1):
+        lines.append(f"## Turn {display_index}  ·  {_fmt_dt(t.started_ms, time_only=True)}")
         lines.append("")
 
         if t.user_text:

@@ -271,23 +271,22 @@ class ResponseGenerated(Event):
 
 @dataclass(frozen=True, slots=True)
 class SpeechSpoken(Event):
-    """A phrase was VOICED through TTS that is not the brain's normal reply.
+    """Text committed to the user-audible output path.
 
-    The normal brain reply is already captured in the voice-session transcript
-    via ``ResponseGenerated`` -> ``VoiceTurnRow.jarvis_text``. But every OTHER
-    thing Jarvis speaks aloud — timeout / unavailable apologies, clarifying
-    questions, privacy acks, skill / mission announcements, the "still working"
-    progress nudge, flash-brain preambles, error readbacks — went through a
-    different speak path that never emitted ``ResponseGenerated``, so it left
-    NO trace in the Transcription view even though the user heard it.
+    ``ResponseGenerated`` describes model output and can precede TTS, filtering,
+    staleness checks, or interruption. ``SpeechSpoken`` is the authoritative
+    transcript track. Producers emit it only after the corresponding audio was
+    accepted by the active playback surface. This includes normal replies,
+    timeout and unavailable notices, clarifying questions, privacy acknowledgments,
+    mission announcements, progress nudges, preambles, and error readbacks.
 
-    The pipeline publishes this event at every such speak site so the passive
+    The pipeline publishes this event at every audible-output site so the passive
     ``SessionRecorder`` can persist it into ``voice_events`` and the
     Transcription view can show the full spoken track. ``spoken_kind`` is a
     soft tag from ``jarvis.sessions.constants.SPOKEN_KINDS`` (timeout /
     announcement / clarify / …) used for the UI label.
 
-    Latency-neutral: published fire-and-forget; the recorder is a read-only
+    Published fire-and-forget; the recorder is a read-only
     wildcard subscriber and never touches the voice hot path (AP-9 / AD-OE2).
     """
     text: str = ""

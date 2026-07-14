@@ -83,6 +83,35 @@ async def test_list_messages_refreshes_on_401_then_retries():
 
 
 @pytest.mark.asyncio
+async def test_default_refresh_receives_failed_access_token(monkeypatch) -> None:  # noqa: ANN001
+    seen: list[str | None] = []
+    calls = 0
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return httpx.Response(401, json={"error": {"code": 401}})
+        return httpx.Response(200, json={"messages": []})
+
+    async def refresher(observed_access_token: str | None = None) -> bool:
+        seen.append(observed_access_token)
+        return True
+
+    monkeypatch.setattr(
+        "jarvis.plugins.tool.gmail_rest._default_refresher", refresher
+    )
+    tool = GmailRestTool(
+        access_token_provider=lambda: "failed-access",
+        transport=httpx.MockTransport(handler),
+    )
+
+    await tool.list_messages()
+
+    assert seen == ["failed-access"]
+
+
+@pytest.mark.asyncio
 async def test_returns_reconnect_error_when_refresh_fails():
     def handler(req: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"error": {"code": 401}})

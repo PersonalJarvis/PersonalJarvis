@@ -342,6 +342,16 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
 }
 
 
+# Hard loop bounds for DELEGATED realtime voice turns (prefer_tool_model).
+# A voice turn must stay conversational: 6 rounds cover plan → 2-3 tools →
+# answer, and 20 s wall clock is the worst acceptable wait before the loop
+# forces one final tool-less answer round (see ToolUseLoop.deadline_s).
+# Live incident 2026-07-14: an unbounded delegate ran 14 rounds / 66 s.
+# Classic chat turns keep the dispatcher defaults (15 rounds, no deadline).
+_DELEGATE_MAX_TURNS: int = 6
+_DELEGATE_DEADLINE_S: float = 20.0
+
+
 def _resolve_tier_model(
     tier: str,
     provider: str,
@@ -2622,6 +2632,8 @@ class BrainManager:
         brain: Brain,
         *,
         tools_override: dict[str, Tool] | None = None,
+        max_turns: int | None = None,
+        deadline_s: float | None = None,
     ) -> BrainDispatcher:
         """Builds the dispatcher with an optional tool override.
 
@@ -2629,6 +2641,10 @@ class BrainManager:
         clearly identified, ``tools_override={}`` is set — the LLM then has no
         tools in its toolbox and cannot be tempted to hallucinate
         ``spawn_worker``. ``None`` (default) = full tool visibility.
+
+        ``max_turns`` / ``deadline_s`` (2026-07-14): per-turn loop bounds for
+        delegated realtime voice turns — see ``_DELEGATE_MAX_TURNS`` /
+        ``_DELEGATE_DEADLINE_S``. ``None`` keeps the dispatcher defaults.
         """
         tools = tools_override if tools_override is not None else self._tools
         system_prompt = self._build_system_prompt()
@@ -2638,12 +2654,17 @@ class BrainManager:
         cards = self._plugin_usage_cards_block(tools)
         if cards:
             system_prompt = f"{system_prompt}\n\n{cards}"
+        kwargs: dict[str, Any] = {}
+        if max_turns is not None:
+            kwargs["max_turns"] = max_turns
         return BrainDispatcher(
             brain,
             tools=tools,
             executor=self._tool_executor,
             system_prompt=system_prompt,
             max_tokens=self._config.brain.max_tokens,
+            deadline_s=deadline_s,
+            **kwargs,
         )
 
     def _build_tool_ack_emitter(
@@ -6835,6 +6856,7 @@ class BrainManager:
         source_layer: str | None = None,
         allow_voice_confirm: bool = False,
         prefer_tool_model: bool = False,
+        emit_tool_ack: bool = True,
         publish_response: bool = True,
         history_override: Iterable[BrainMessage] | None = None,
     ) -> str:
@@ -6861,6 +6883,7 @@ class BrainManager:
                 source_layer=source_layer,
                 allow_voice_confirm=allow_voice_confirm,
                 prefer_tool_model=prefer_tool_model,
+                emit_tool_ack=emit_tool_ack,
             )
         finally:
             _TURN_HISTORY_OVERRIDE.reset(history_token)
@@ -6877,6 +6900,7 @@ class BrainManager:
         source_layer: str | None = None,
         allow_voice_confirm: bool = False,
         prefer_tool_model: bool = False,
+        emit_tool_ack: bool = True,
     ) -> str:
         # 1. Intercept meta-commands (cancel, switch, depth override).
         # User request 2026-04-25: no standardised confirmation phrases
@@ -7520,7 +7544,9 @@ class BrainManager:
         # provider-chain retry cannot double-announce. The loop fires it the
         # moment a tool is actually selected; None when the feature is off or
         # this is a Voice-Control utterance.
-        _tool_ack_emitter = self._build_tool_ack_emitter(user_text)
+        _tool_ack_emitter = (
+            self._build_tool_ack_emitter(user_text) if emit_tool_ack else None
+        )
 
         for idx, (prov_name, model) in enumerate(chain):
             # Skip providers already marked dead in THIS turn.
@@ -7656,7 +7682,23 @@ class BrainManager:
             # Set here — after dead/cooldown skips — so it always names the
             # provider that genuinely runs this attempt, including a fallback win.
             self._active_turn_identity = (prov_name, model)
-            disp = self._build_dispatcher(brain, tools_override=_turn_tools)
+            # Delegated realtime voice turns get hard loop bounds: a voice
+            # user is gone long before round 14 (live 2026-07-14: an
+            # unbounded delegate ran 14 rounds / 66 s on "what is in my
+            # wiki"). On deadline the loop forces ONE final tool-less round,
+            # so the user still hears a grounded answer. Classic turns call
+            # with the unchanged signature (kwargs only on delegation).
+            _disp_kwargs: dict[str, Any] = (
+                {
+                    "max_turns": _DELEGATE_MAX_TURNS,
+                    "deadline_s": _DELEGATE_DEADLINE_S,
+                }
+                if prefer_tool_model
+                else {}
+            )
+            disp = self._build_dispatcher(
+                brain, tools_override=_turn_tools, **_disp_kwargs
+            )
             # Intelligent router: the router LEAD must NOT stream its conversational
             # text to TTS. On the streaming path (generate_stream) text_consumer
             # speaks each chunk live DURING dispatch — so a no-tool router answer

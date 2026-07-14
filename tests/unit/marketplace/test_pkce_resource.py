@@ -123,10 +123,12 @@ async def test_exchange_includes_client_secret_when_configured(
     assert captured["data"]["client_secret"] == TEST_CLIENT_SECRET
     assert captured["data"]["code_verifier"] == "verifier"
     assert tokens.refresh == "refresh"
+    assert tokens.extra["client_id"] == "cid"
+    assert tokens.extra["client_secret"] == TEST_CLIENT_SECRET
 
 
 @pytest.mark.asyncio
-async def test_refresh_includes_client_secret_when_configured(
+async def test_refresh_legacy_token_uses_current_client_config(
     monkeypatch: pytest.MonkeyPatch,
 ):
     captured: dict = {}
@@ -163,3 +165,122 @@ async def test_refresh_includes_client_secret_when_configured(
     assert captured["data"]["client_secret"] == TEST_CLIENT_SECRET
     assert captured["data"]["refresh_token"] == OLD_REFRESH_TOKEN
     assert tokens.refresh == OLD_REFRESH_TOKEN
+    assert tokens.extra["client_id"] == "cid"
+    assert tokens.extra["client_secret"] == TEST_CLIENT_SECRET
+
+
+@pytest.mark.asyncio
+async def test_refresh_legacy_public_client_binds_client_id_without_secret(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict = {}
+
+    async def _fake_post(self, url, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        captured["data"] = kwargs["data"]
+        return httpx.Response(
+            200,
+            json={"access_token": "new-access", "expires_in": 3600},
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", _fake_post)
+
+    cfg = PkceLoopbackConfig(
+        plugin_id="google_drive",
+        authorization_url="https://accounts.google.com/o/oauth2/v2/auth",
+        token_url="https://oauth2.googleapis.com/token",  # noqa: S106
+        client_id="public-client",
+        callback_port=0,
+        scopes=["https://www.googleapis.com/auth/drive.file"],
+    )
+
+    tokens = await PkceLoopbackHandler(cfg).refresh(
+        Tokens(
+            access="old-access",
+            refresh=OLD_REFRESH_TOKEN,
+            extra={"provider_hint": "google"},
+        )
+    )
+
+    assert captured["data"]["client_id"] == "public-client"
+    assert "client_secret" not in captured["data"]
+    assert tokens.extra == {
+        "provider_hint": "google",
+        "client_id": "public-client",
+    }
+
+
+@pytest.mark.asyncio
+async def test_refresh_uses_issuing_client_after_config_drift_and_keyring_loss(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict = {}
+
+    async def _fake_post(self, url, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        captured["data"] = kwargs["data"]
+        return httpx.Response(
+            200,
+            json={"access_token": "new-access", "expires_in": 3600},
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", _fake_post)
+
+    cfg = PkceLoopbackConfig(
+        plugin_id="google_drive",
+        authorization_url="https://accounts.google.com/o/oauth2/v2/auth",
+        token_url="https://oauth2.googleapis.com/token",  # noqa: S106
+        client_id="replacement-client",
+        callback_port=0,
+        scopes=["https://www.googleapis.com/auth/drive.file"],
+    )
+    current = Tokens(
+        access="old-access",
+        refresh=OLD_REFRESH_TOKEN,
+        extra={
+            "client_id": "issuing-client",
+            "client_secret": TEST_CLIENT_SECRET,
+        },
+    )
+
+    tokens = await PkceLoopbackHandler(cfg).refresh(current)
+
+    assert captured["data"]["client_id"] == "issuing-client"
+    assert captured["data"]["client_secret"] == TEST_CLIENT_SECRET
+    assert tokens.refresh == OLD_REFRESH_TOKEN
+    assert tokens.extra["client_id"] == "issuing-client"
+    assert tokens.extra["client_secret"] == TEST_CLIENT_SECRET
+
+
+@pytest.mark.asyncio
+async def test_refresh_bound_public_client_ignores_later_configured_secret(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    captured: dict = {}
+
+    async def _fake_post(self, url, *args, **kwargs):  # noqa: ANN001, ANN002, ANN003
+        captured["data"] = kwargs["data"]
+        return httpx.Response(
+            200,
+            json={"access_token": "new-access", "expires_in": 3600},
+        )
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", _fake_post)
+
+    cfg = PkceLoopbackConfig(
+        plugin_id="google_drive",
+        authorization_url="https://accounts.google.com/o/oauth2/v2/auth",
+        token_url="https://oauth2.googleapis.com/token",  # noqa: S106
+        client_id="replacement-client",
+        client_secret="replacement-secret",  # noqa: S106
+        callback_port=0,
+        scopes=["https://www.googleapis.com/auth/drive.file"],
+    )
+    current = Tokens(
+        access="old-access",
+        refresh=OLD_REFRESH_TOKEN,
+        extra={"client_id": "issuing-public-client"},
+    )
+
+    await PkceLoopbackHandler(cfg).refresh(current)
+
+    assert captured["data"]["client_id"] == "issuing-public-client"
+    assert "client_secret" not in captured["data"]

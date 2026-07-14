@@ -1,17 +1,9 @@
-"""Token-refresh scheduler for connected marketplace plugins (Wave 2, #3).
+"""Coordinated refresh lifecycle for connected Marketplace plugins.
 
-OAuth access tokens expire — from ~30 min (HubSpot) to ~24 h (Linear). Without
-proactive refresh a long-lived backend silently starts getting 401s mid-session.
-This scheduler periodically refreshes tokens nearing expiry via each plugin's
-:class:`~jarvis.marketplace.auth.base.AuthHandler` and writes the new tokens
-back to the :class:`~jarvis.marketplace.token_store.TokenStore`. A ``revoked``
-refresh (auth server returns ``invalid_grant``) drops the entry so the UI can
-surface a "Reconnect" prompt rather than looping on a dead token.
-
-The pure core :func:`refresh_due_tokens` takes its dependencies as arguments
-(plugin ids, store, handler builder) so it is unit-testable without the real
-catalog, keyring, or network. :class:`RefreshScheduler` is the thin loop around
-it that the app starts at boot.
+OAuth access tokens are short-lived, while refresh tokens are longer-lived but
+can still expire or be revoked. This module keeps access tokens fresh and
+serializes all refresh paths for a plugin so scheduler, REST-tool, and registry
+retries cannot rotate the same refresh token concurrently.
 """
 
 from __future__ import annotations
@@ -19,33 +11,49 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
+import threading
+import weakref
 from collections.abc import Callable
 from contextlib import suppress
 from datetime import UTC, datetime
 
 from jarvis.marketplace.auth.base import AuthHandler
-from jarvis.marketplace.token_store import TokenStore
+from jarvis.marketplace.token_store import Tokens, TokenStore
 
 log = logging.getLogger(__name__)
 
 HandlerBuilder = Callable[[str], AuthHandler | None]
 PluginIdsFn = Callable[[], list[str]]
 
-# Per-plugin outcome labels (also the public vocabulary for telemetry/logs).
 REFRESHED = "refreshed"
 SKIPPED = "skipped"
 REVOKED = "revoked"
 FAILED = "failed"
 
-# Substrings in a refresh RuntimeError message that mean the connection is
-# un-healable without the user re-authenticating (or fixing the OAuth client) —
-# as opposed to a transient server/network error that should be retried next
-# cycle. Google reports OAuth errors via HTTP status + JSON body (not Slack's
-# `ok:false` shape), so the handler raises e.g.
-# ``RuntimeError("refresh HTTP 401: {...invalid_client...}")`` — the bare-string
-# "revoked" check missed every Google failure, leaving needs_reauth False while
-# the token rotted (live 2026-06-07 Gmail bug). Matching the canonical OAuth
-# error codes + descriptions catches Google, Slack, and generic providers.
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class RefreshAttempt:
+    """Secret-free result from one coordinated refresh attempt."""
+
+    outcome: str
+    usable: bool = False
+    access_changed: bool = False
+
+
+_REFRESH_LOCKS: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, dict[str, asyncio.Lock]] = (
+    weakref.WeakKeyDictionary()
+)
+_REFRESH_LOCKS_GUARD = threading.Lock()
+
+
+def _refresh_lock(plugin_id: str) -> asyncio.Lock:
+    """Return the per-plugin lock bound to the current event loop."""
+    loop = asyncio.get_running_loop()
+    with _REFRESH_LOCKS_GUARD:
+        loop_locks = _REFRESH_LOCKS.setdefault(loop, {})
+        return loop_locks.setdefault(plugin_id, asyncio.Lock())
+
+
 _REAUTH_ERROR_MARKERS: tuple[str, ...] = (
     "revoked",
     "invalid_grant",
@@ -53,45 +61,183 @@ _REAUTH_ERROR_MARKERS: tuple[str, ...] = (
     "unauthorized_client",
     "client was not found",
     "token has been expired",
-    # Legacy DCR token minted before client_id was persisted — un-refreshable,
-    # one reconnect heals it (live 2026-06-08 audit: linear).
     "reconnect required",
     "no stored client_id",
 )
 
 
 def _refresh_needs_reauth(message: str) -> bool:
-    """True iff a refresh-failure message indicates an un-healable auth error.
-
-    Conservative on purpose: a generic transient failure (5xx, timeout, network)
-    contains none of these markers and stays a retryable FAILED, so one flaky
-    cycle never falsely flags a healthy plugin as needing reconnect."""
-    m = message.lower()
-    return any(marker in m for marker in _REAUTH_ERROR_MARKERS)
+    """Return whether a refresh failure requires user authentication."""
+    lowered = message.lower()
+    return any(marker in lowered for marker in _REAUTH_ERROR_MARKERS)
 
 
 def _keep_alive_due(tokens: object, keep_alive_seconds: int | None) -> bool:
-    """True when a token should be proactively refreshed to stay warm.
-
-    Some providers expire a *refresh* token after a period of inactivity even
-    while the access token still looks valid (or never carries an expiry at
-    all). Exercising the refresh token on a fixed cadence keeps the connection
-    alive indefinitely — the heart of "log in once, stay connected forever".
-
-    Disabled (returns False) when keep_alive_seconds is None, so the plain
-    near-expiry contract of refresh_due_tokens is unchanged by default."""
+    """Return whether a refresh token should be exercised to stay warm."""
     if keep_alive_seconds is None or not getattr(tokens, "refresh", None):
         return False
-    lr = tokens.extra.get("last_refreshed")  # type: ignore[attr-defined]
-    if not lr:
-        return True  # never stamped → refresh once to warm it + record the time
+    last_refreshed = tokens.extra.get("last_refreshed")  # type: ignore[attr-defined]
+    if not last_refreshed:
+        return True
     try:
-        last = datetime.fromisoformat(lr)
-    except (ValueError, TypeError):
+        last = datetime.fromisoformat(last_refreshed)
+    except (TypeError, ValueError):
         return True
     if last.tzinfo is None:
         last = last.replace(tzinfo=UTC)
     return (datetime.now(UTC) - last).total_seconds() >= keep_alive_seconds
+
+
+def _reload_before_refresh_commit(
+    plugin_id: str,
+    store: TokenStore,
+    original_state: str,
+) -> tuple[Tokens | None, RefreshAttempt | None]:
+    """Reload the token and reject a stale provider result.
+
+    Disconnect and reconnect do not take the refresh single-flight lock. They
+    may therefore replace or delete the stored grant while the provider call
+    is awaiting I/O. A refresh result may only be committed when the complete
+    stored token state is still the one used to start that provider call.
+    """
+    try:
+        current = store.load(plugin_id)
+    except Exception as exc:  # noqa: BLE001 - isolate one plugin's storage
+        log.warning("plugin %s token reload failed after refresh: %s", plugin_id, exc)
+        return None, RefreshAttempt(FAILED)
+
+    if current is not None and current.to_json() == original_state:
+        return current, None
+
+    log.info(
+        "plugin %s token changed while refresh was in flight; discarded stale result",
+        plugin_id,
+    )
+    if current is None or current.needs_reauth:
+        return current, RefreshAttempt(SKIPPED)
+    return current, RefreshAttempt(
+        SKIPPED,
+        usable=True,
+        access_changed=current.access != Tokens.from_json(original_state).access,
+    )
+
+
+async def refresh_plugin_token(
+    plugin_id: str,
+    store: TokenStore,
+    build_handler: HandlerBuilder,
+    *,
+    force: bool = False,
+    observed_access_token: str | None = None,
+    threshold_seconds: int = 600,
+    keep_alive_seconds: int | None = None,
+) -> RefreshAttempt:
+    """Refresh one plugin under a process-local single-flight lock.
+
+    The token is reloaded after acquiring the lock. If another caller already
+    replaced the access token that triggered a 401, the waiting caller reuses
+    that token instead of rotating the refresh token a second time.
+    """
+    async with _refresh_lock(plugin_id):
+        try:
+            tokens = store.load(plugin_id)
+        except Exception as exc:  # noqa: BLE001 - isolate one plugin's storage
+            log.warning("plugin %s token load failed: %s", plugin_id, exc)
+            return RefreshAttempt(FAILED)
+
+        if tokens is None or tokens.needs_reauth:
+            return RefreshAttempt(SKIPPED)
+        if observed_access_token is not None and tokens.access != observed_access_token:
+            return RefreshAttempt(SKIPPED, usable=True, access_changed=True)
+        if not tokens.refresh:
+            return RefreshAttempt(SKIPPED, usable=not force)
+
+        if not force:
+            due = tokens.is_near_expiry(threshold_seconds) or _keep_alive_due(
+                tokens, keep_alive_seconds
+            )
+            if not due:
+                return RefreshAttempt(SKIPPED, usable=True)
+
+        original_state = tokens.to_json()
+
+        try:
+            handler = build_handler(plugin_id)
+        except Exception as exc:  # noqa: BLE001 - configuration must not break the loop
+            log.warning("plugin %s refresh handler failed to build: %s", plugin_id, exc)
+            return RefreshAttempt(FAILED)
+        if handler is None:
+            return RefreshAttempt(SKIPPED)
+
+        try:
+            refreshed = await handler.refresh(tokens)
+            if not refreshed.access:
+                raise RuntimeError("refresh returned an empty access token")
+        except Exception as exc:  # noqa: BLE001 - provider failures are isolated
+            if not _refresh_needs_reauth(str(exc)):
+                _current, superseded = _reload_before_refresh_commit(
+                    plugin_id, store, original_state
+                )
+                if superseded is not None:
+                    return superseded
+                log.warning(
+                    "plugin %s refresh failed (transient, will retry): %s",
+                    plugin_id,
+                    exc,
+                )
+                return RefreshAttempt(FAILED)
+
+            current, superseded = _reload_before_refresh_commit(plugin_id, store, original_state)
+            if superseded is not None:
+                return superseded
+            assert current is not None
+
+            try:
+                store.save(plugin_id, dataclasses.replace(current, needs_reauth=True))
+            except Exception as save_exc:  # noqa: BLE001 - isolate storage failure
+                log.warning(
+                    "plugin %s needs_reauth save failed, will retry: %s",
+                    plugin_id,
+                    save_exc,
+                )
+                return RefreshAttempt(FAILED)
+            log.info(
+                "plugin %s refresh needs reauth; marked needs_reauth: %s",
+                plugin_id,
+                exc,
+            )
+            return RefreshAttempt(REVOKED)
+
+        current, superseded = _reload_before_refresh_commit(plugin_id, store, original_state)
+        if superseded is not None:
+            return superseded
+        assert current is not None
+
+        merged_extra = {
+            **current.extra,
+            **refreshed.extra,
+            "last_refreshed": datetime.now(UTC).isoformat(),
+        }
+        saved = dataclasses.replace(
+            refreshed,
+            refresh=refreshed.refresh or current.refresh,
+            extra=merged_extra,
+            needs_reauth=False,
+        )
+        try:
+            store.save(plugin_id, saved)
+        except Exception as exc:  # noqa: BLE001 - isolate storage failure
+            log.warning(
+                "plugin %s refreshed token save failed, will retry: %s",
+                plugin_id,
+                exc,
+            )
+            return RefreshAttempt(FAILED)
+        return RefreshAttempt(
+            REFRESHED,
+            usable=True,
+            access_changed=saved.access != current.access,
+        )
 
 
 async def refresh_due_tokens(
@@ -103,98 +249,26 @@ async def refresh_due_tokens(
     keep_alive_seconds: int | None = None,
     on_refreshed: Callable[[str], None] | None = None,
 ) -> dict[str, str]:
-    """Refresh every connected plugin whose token is due.
-
-    A token is *due* when its access token is near expiry OR (when
-    ``keep_alive_seconds`` is set) it has not been refreshed within that window —
-    the keep-alive sweep that keeps refresh tokens warm so a connection survives
-    forever, even for providers whose access token is long-lived / never expires.
-
-    ``on_refreshed``, when given, fires once per plugin id right after its fresh
-    token is saved — the hook the live MCP session uses to pick up the new token
-    instead of continuing to 401 with the stale one. A callback failure is
-    swallowed and logged; a UI-refresh hiccup must never break the token save
-    that already succeeded, nor take down the rest of the cycle.
-
-    Returns a ``{plugin_id: outcome}`` map (outcomes from the module constants).
-    Never raises — a single plugin's failure is isolated so one dead connection
-    cannot stall the whole cycle.
-    """
+    """Refresh every due plugin without allowing one failure to stop the cycle."""
     outcomes: dict[str, str] = {}
-    for pid in plugin_ids:
-        try:
-            tokens = store.load(pid)
-        except RuntimeError:
-            # Corrupted blob — surface as FAILED, leave it for the UI to fix.
-            outcomes[pid] = FAILED
-            continue
-
-        if tokens is None or not tokens.refresh:
-            outcomes[pid] = SKIPPED
-            continue
-        due = tokens.is_near_expiry(threshold_seconds) or _keep_alive_due(
-            tokens, keep_alive_seconds
+    for plugin_id in plugin_ids:
+        attempt = await refresh_plugin_token(
+            plugin_id,
+            store,
+            build_handler,
+            threshold_seconds=threshold_seconds,
+            keep_alive_seconds=keep_alive_seconds,
         )
-        if not due:
-            outcomes[pid] = SKIPPED
-            continue
-
-        handler = build_handler(pid)
-        if handler is None:
-            outcomes[pid] = SKIPPED
-            continue
-
-        try:
-            new_tokens = await handler.refresh(tokens)
-        except RuntimeError as exc:
-            if _refresh_needs_reauth(str(exc)):
-                # Do NOT delete — keep the entry and flag it so the UI shows a
-                # "Reconnect" prompt. A connected plugin must never silently
-                # disappear; the only user-visible delete path is an explicit
-                # DELETE. (Previously this called store.delete(pid).)
-                try:
-                    store.save(pid, dataclasses.replace(tokens, needs_reauth=True))
-                    outcomes[pid] = REVOKED
-                    log.info(
-                        "plugin %s refresh needs reauth — marked needs_reauth: %s", pid, exc
-                    )
-                except Exception as save_exc:  # noqa: BLE001 — isolate one plugin's store failure
-                    outcomes[pid] = FAILED
-                    log.warning(
-                        "plugin %s needs_reauth save failed, will retry next cycle: %s",
-                        pid,
-                        save_exc,
-                    )
-            else:
-                outcomes[pid] = FAILED
-                log.warning("plugin %s refresh failed (transient, will retry): %s", pid, exc)
-            continue
-        except Exception as exc:  # noqa: BLE001
-            outcomes[pid] = FAILED
-            log.warning("plugin %s refresh errored: %s", pid, exc)
-            continue
-
-        # A healthy refresh clears any stale needs_reauth flag and stamps the
-        # refresh time so the keep-alive sweep can skip it until the next window.
-        merged_extra = {**new_tokens.extra, "last_refreshed": datetime.now(UTC).isoformat()}
-        try:
-            store.save(
-                pid,
-                dataclasses.replace(new_tokens, extra=merged_extra, needs_reauth=False),
-            )
-            outcomes[pid] = REFRESHED
-        except Exception as exc:  # noqa: BLE001 — isolate one plugin's store failure
-            outcomes[pid] = FAILED
-            log.warning(
-                "plugin %s refreshed token save failed, will retry next cycle: %s", pid, exc
-            )
-            continue
-
-        if on_refreshed is not None:
+        outcomes[plugin_id] = attempt.outcome
+        if attempt.outcome == REFRESHED and on_refreshed is not None:
             try:
-                on_refreshed(pid)
-            except Exception as exc:  # noqa: BLE001 — a UI-refresh hiccup must not kill the loop
-                log.warning("refresh: on_refreshed callback failed for %s: %s", pid, exc)
+                on_refreshed(plugin_id)
+            except Exception as exc:  # noqa: BLE001 - callback is best-effort
+                log.warning(
+                    "refresh: on_refreshed callback failed for %s: %s",
+                    plugin_id,
+                    exc,
+                )
     return outcomes
 
 
@@ -209,8 +283,9 @@ class RefreshScheduler:
         *,
         interval_seconds: float = 300.0,
         threshold_seconds: int = 600,
-        keep_alive_seconds: int | None = 43_200,  # 12h — keep refresh tokens warm
+        keep_alive_seconds: int | None = 43_200,
         on_refreshed: Callable[[str], None] | None = None,
+        shutdown_drain_timeout_seconds: float = 30.0,
     ) -> None:
         self._plugin_ids_fn = plugin_ids_fn
         self._store = store
@@ -219,7 +294,10 @@ class RefreshScheduler:
         self._threshold = threshold_seconds
         self._keep_alive_seconds = keep_alive_seconds
         self._on_refreshed = on_refreshed
+        self._shutdown_drain_timeout = shutdown_drain_timeout_seconds
         self._task: asyncio.Task[None] | None = None
+        self._cycle_task: asyncio.Task[dict[str, str]] | None = None
+        self._stopping = False
 
     async def run_once(self) -> dict[str, str]:
         return await refresh_due_tokens(
@@ -232,44 +310,88 @@ class RefreshScheduler:
         )
 
     async def _loop(self) -> None:
-        while True:
+        while not self._stopping:
+            cycle = asyncio.create_task(self.run_once(), name="marketplace-refresh-cycle")
+            self._cycle_task = cycle
             try:
-                outcomes = await self.run_once()
+                # A loop cancellation must not propagate into a provider call:
+                # rotating providers may already have consumed the old refresh
+                # token, and cancelling before the save would lose the new one.
+                outcomes = await asyncio.shield(cycle)
                 self._log_cycle(outcomes)
-            except Exception as exc:  # noqa: BLE001
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - keep the background loop alive
                 log.warning("refresh cycle failed: %s", exc)
+            finally:
+                if cycle.done() and self._cycle_task is cycle:
+                    self._cycle_task = None
+
+            if self._stopping:
+                break
             await asyncio.sleep(self._interval)
 
     @staticmethod
     def _log_cycle(outcomes: dict[str, str]) -> None:
-        """Per-cycle observability: a connection silently rotting forever was the
-        whole failure mode (live 2026-06-08 audit). Log a one-line summary so the
-        refresh loop is visibly alive — at INFO when anything changed, else DEBUG."""
         counts: dict[str, int] = {}
         for outcome in outcomes.values():
             counts[outcome] = counts.get(outcome, 0) + 1
-        summary = ", ".join(f"{k}={v}" for k, v in sorted(counts.items())) or "no plugins"
-        changed = any(counts.get(k) for k in (REFRESHED, REVOKED, FAILED))
+        summary = ", ".join(f"{key}={value}" for key, value in sorted(counts.items()))
+        summary = summary or "no plugins"
+        changed = any(counts.get(key) for key in (REFRESHED, REVOKED, FAILED))
         (log.info if changed else log.debug)("token refresh cycle: %s", summary)
 
-        # Name dead connections explicitly at WARNING. An anonymous "revoked=1"
-        # count let a revoked plugin rot unseen (live: linear sat dead ~22 days,
-        # gmail ~16 days, unnoticed until next use). Only a user reconnect heals
-        # a revoked refresh token, so surface exactly which plugin needs it.
-        dead = sorted(pid for pid, outcome in outcomes.items() if outcome == REVOKED)
-        if dead:
+        revoked = sorted(plugin_id for plugin_id, outcome in outcomes.items() if outcome == REVOKED)
+        if revoked:
             log.warning(
-                "marketplace plugin(s) need reconnect — refresh token revoked: %s",
-                ", ".join(dead),
+                "marketplace plugin(s) need reconnect; refresh token revoked: %s",
+                ", ".join(revoked),
             )
 
     def start(self) -> None:
-        if self._task is None or self._task.done():
-            self._task = asyncio.create_task(self._loop(), name="marketplace-refresh")
+        if self._task is not None and not self._task.done():
+            return
+        if self._cycle_task is not None and not self._cycle_task.done():
+            log.warning("marketplace refresh cannot restart while shutdown is draining")
+            return
+        self._cycle_task = None
+        self._stopping = False
+        self._task = asyncio.create_task(self._loop(), name="marketplace-refresh")
 
     async def stop(self) -> None:
-        if self._task is not None:
-            self._task.cancel()
+        self._stopping = True
+        cycle = self._cycle_task
+        if cycle is not None and not cycle.done():
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(cycle),
+                    timeout=self._shutdown_drain_timeout,
+                )
+            except TimeoutError:
+                log.warning(
+                    "marketplace refresh did not drain within %.1fs; cancelling as a last resort",
+                    self._shutdown_drain_timeout,
+                )
+                cycle.cancel()
+                # Give a cooperative provider one event-loop turn to observe
+                # cancellation without making shutdown unbounded again.
+                await asyncio.sleep(0)
+                if cycle.done():
+                    with suppress(asyncio.CancelledError, Exception):
+                        cycle.result()
+            except asyncio.CancelledError:
+                if not cycle.cancelled():
+                    raise
+            except Exception as exc:  # noqa: BLE001 - the loop reports cycle failures
+                log.warning("marketplace refresh ended while draining: %s", exc)
+
+        loop_task = self._task
+        if loop_task is not None and not loop_task.done():
+            # At this point the provider cycle is complete (or hit the bounded
+            # last-resort timeout), so cancellation only interrupts idle sleep.
+            loop_task.cancel()
             with suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
+                await loop_task
+        self._task = None
+        if cycle is not None and cycle.done() and self._cycle_task is cycle:
+            self._cycle_task = None

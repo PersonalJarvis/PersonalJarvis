@@ -769,8 +769,13 @@ class AudioPlayer:
         chunks: AsyncIterator[AudioChunk],
         *,
         should_play: Callable[[], bool] | None = None,
-    ) -> None:
-        """Stream TTS chunks into a persistent WASAPI OutputStream.
+    ) -> bool:
+        """Stream TTS chunks into a persistent output stream.
+
+        Return ``True`` only when at least one PCM frame was accepted by the
+        device stream. A producer that yields no audio, or a stale playback
+        rejected by ``should_play``, returns ``False``. Callers use this receipt
+        to keep the audible transcript free of text that never reached output.
 
         ``should_play`` is an optional staleness predicate evaluated ONCE right
         after the play lock is acquired (and before any audio is written). When
@@ -835,7 +840,7 @@ class AudioPlayer:
             try:
                 candidate = await chunk_aiter.__anext__()
             except StopAsyncIteration:
-                return  # producer yielded nothing — nothing to play
+                return False  # producer yielded nothing
             if candidate.pcm:
                 first_chunk = candidate
                 break
@@ -851,7 +856,7 @@ class AudioPlayer:
             # written. A preamble whose synthesis / lock-wait was overtaken by
             # the main answer is dropped here rather than queued behind it.
             if should_play is not None and not should_play():
-                return
+                return False
             def _ensure_stream(needed_rate: int) -> tuple[sd.OutputStream, int]:
                 # Reuse the persistent OutputStream across sentence-by-sentence
                 # play_chunks() calls — closing+reopening per sentence is what
@@ -927,6 +932,7 @@ class AudioPlayer:
                 pending.extend(chunk.pcm)
                 await _flush_pending()
             await _flush_pending(final=True)
+            return self.frames_written > 0
 
     def abort_active(self) -> None:
         """Force-abort the live OutputStream to unblock a wedged ``stream.write``.

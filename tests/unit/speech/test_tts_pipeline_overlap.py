@@ -24,6 +24,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from jarvis.core.bus import EventBus
+from jarvis.core.events import SpeechSpoken
 from jarvis.core.protocols import AudioChunk
 from jarvis.speech.pipeline import SpeechPipeline
 
@@ -110,8 +111,8 @@ def _make_pipeline(tts, player, brain) -> SpeechPipeline:
     return pipeline
 
 
-async def _wait_until(pred, timeout: float = 2.0) -> bool:
-    steps = max(1, int(timeout / 0.01))
+async def _wait_until(pred, timeout_s: float = 2.0) -> bool:
+    steps = max(1, int(timeout_s / 0.01))
     for _ in range(steps):
         if pred():
             return True
@@ -148,7 +149,7 @@ async def test_next_sentence_synthesizes_while_current_sentence_plays() -> None:
         player.release_play_1.set()
         try:
             await asyncio.wait_for(turn, timeout=2.0)
-        except (asyncio.TimeoutError, asyncio.CancelledError):
+        except (TimeoutError, asyncio.CancelledError):
             turn.cancel()
 
 
@@ -195,6 +196,12 @@ async def test_barge_in_stops_playback_and_skips_pending_sentences() -> None:
     player = _BargePlayer()
     brain = _ThreeSentenceBrain()
     pipeline = _make_pipeline(tts, player, brain)
+    confirmed: list[SpeechSpoken] = []
+
+    async def _capture(event: SpeechSpoken) -> None:
+        confirmed.append(event)
+
+    pipeline._bus.subscribe(SpeechSpoken, _capture)
 
     async def _barge_after_play_starts() -> bool:
         await player.play_started.wait()
@@ -210,6 +217,7 @@ async def test_barge_in_stops_playback_and_skips_pending_sentences() -> None:
     assert player.stop_calls >= 1
     # Only sentence 1 ever reached the player; the rest were cancelled.
     assert player.consumed == ["Erstes."]
+    assert confirmed == []
     # Full raw text is still returned for post-stream hangup/history logic.
     assert full_text == "Erstes. Zweites. Drittes."
 
@@ -222,12 +230,21 @@ async def test_sentences_play_in_order_and_full_text_returned() -> None:
     player = _GatingPlayer()
     brain = _ThreeSentenceBrain()
     pipeline = _make_pipeline(tts, player, brain)
+    confirmed: list[SpeechSpoken] = []
+
+    async def _capture(event: SpeechSpoken) -> None:
+        confirmed.append(event)
+
+    pipeline._bus.subscribe(SpeechSpoken, _capture)
 
     turn = asyncio.create_task(pipeline._brain_streaming("egal", "de"))
     await _wait_until(player.play_1_started.is_set)
     player.release_play_1.set()
     full_text, barged = await asyncio.wait_for(turn, timeout=2.0)
+    await asyncio.sleep(0.05)
 
     assert player.consumed == ["Erstes.", "Zweites.", "Drittes."]
     assert full_text == "Erstes. Zweites. Drittes."
     assert barged is False
+    assert [event.text for event in confirmed] == ["Erstes.", "Zweites.", "Drittes."]
+    assert {event.spoken_kind for event in confirmed} == {"reply"}

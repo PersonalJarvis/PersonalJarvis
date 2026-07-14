@@ -63,6 +63,7 @@ def _deregister_plugin_capability(cap_registry, plugin_id) -> None:
 # plugin's tools only reached the brain when their connect happened to beat
 # the last unrelated tool refresh (the intermittent "tool not available" bug).
 _CONNECT_TIMEOUT_S_DEFAULT = 15.0
+_CLIENT_STOP_TIMEOUT_S = 5.0
 
 
 def _connect_needs_reauth(message: str) -> bool:
@@ -83,6 +84,12 @@ def _connect_needs_reauth(message: str) -> bool:
     return "401" in m or "unauthorized" in m or "invalid_token" in m
 
 
+def _default_refresh_handler(plugin_id: str) -> Any | None:
+    from jarvis.marketplace.connect_helpers import build_handler_from_catalog
+
+    return build_handler_from_catalog(plugin_id)
+
+
 class PluginToolRegistry:
     def __init__(
         self,
@@ -93,6 +100,7 @@ class PluginToolRegistry:
         bus: Any = None,
         default_risk_tier: str = "monitor",
         connect_timeout_s: float = _CONNECT_TIMEOUT_S_DEFAULT,
+        refresh_handler_builder: Callable[[str], Any | None] | None = None,
     ) -> None:
         self._catalog = catalog or load_catalog()
         self._store = token_store or TokenStore()
@@ -100,6 +108,7 @@ class PluginToolRegistry:
         self._bus = bus
         self._risk_tier = default_risk_tier
         self._connect_timeout_s = float(connect_timeout_s)
+        self._build_refresh_handler = refresh_handler_builder or _default_refresh_handler
         self._clients: dict[str, Any] = {}
         self._tools: dict[str, MCPToolAdapter] = {}
         # Last swallowed connect/list_tools error per plugin (honest liveness
@@ -175,6 +184,64 @@ class PluginToolRegistry:
             for pid in list(self._clients):
                 await self._disconnect_plugin(pid)
 
+    async def _open_client(
+        self, server_spec: Any, env_overrides: dict[str, str]
+    ) -> tuple[Any, list[dict[str, Any]]]:
+        """Open one bounded client and clean up any failed attempt."""
+        client = self._client_factory(server_spec, env_overrides=env_overrides)
+        try:
+            tool_defs = await asyncio.wait_for(
+                self._start_and_list(client), timeout=self._connect_timeout_s
+            )
+        except BaseException:
+            await self._stop_client_bounded(client, "untracked-connect")
+            raise
+        return client, tool_defs
+
+    @staticmethod
+    async def _stop_client_bounded(client: Any, plugin_id: str) -> None:
+        """Stop a client within the cleanup budget without orphaning on cancel.
+
+        The stop runs in a shielded child task. Cancellation of the caller is
+        remembered and re-raised only after that bounded cleanup finishes, so
+        ownership is never dropped while a live client remains behind.
+        """
+
+        async def _stop() -> None:
+            await asyncio.wait_for(client.stop(), timeout=_CLIENT_STOP_TIMEOUT_S)
+
+        cleanup = asyncio.create_task(_stop(), name=f"plugin-stop:{plugin_id}")
+        pending_cancel: asyncio.CancelledError | None = None
+        while not cleanup.done():
+            try:
+                await asyncio.shield(cleanup)
+            except asyncio.CancelledError as exc:
+                current = asyncio.current_task()
+                if current is not None and current.cancelling():
+                    pending_cancel = exc
+                if cleanup.done():
+                    break
+
+        try:
+            cleanup.result()
+        except TimeoutError:
+            log.warning("plugin-registry: %s client stop timed out", plugin_id)
+        except asyncio.CancelledError:
+            log.debug("plugin-registry: %s client stop was cancelled", plugin_id)
+        except Exception as exc:  # noqa: BLE001 - cleanup stays best-effort
+            log.debug("plugin-registry: %s stop failed: %s", plugin_id, exc)
+
+        if pending_cancel is not None:
+            raise pending_cancel
+
+    def _connect_error_message(self, exc: Exception) -> str:
+        if isinstance(exc, asyncio.TimeoutError):
+            return (
+                f"connect timed out after {self._connect_timeout_s:.0f}s "
+                "(handshake never completed)"
+            )
+        return str(exc) or type(exc).__name__
+
     async def _connect_plugin(self, plugin: PluginSpec) -> None:
         if plugin.id in self._clients:
             # Already connected (e.g. a refresh_plugin ran before bootstrap
@@ -199,37 +266,66 @@ class PluginToolRegistry:
         if resolved is None:
             return
         server_spec, env_overrides = resolved
-        client: Any | None = None
         try:
-            client = self._client_factory(server_spec, env_overrides=env_overrides)
-            # Bounded connect: a handshake that never completes (dead host,
-            # 401-that-hangs) must not stall the caller — see
-            # _CONNECT_TIMEOUT_S_DEFAULT for the live forensic.
-            tool_defs = await asyncio.wait_for(
-                self._start_and_list(client), timeout=self._connect_timeout_s
-            )
-        except Exception as exc:  # noqa: BLE001 — graceful per-plugin degrade
-            if isinstance(exc, asyncio.TimeoutError):
-                msg = (
-                    f"connect timed out after {self._connect_timeout_s:.0f}s "
-                    "(handshake never completed)"
+            client, tool_defs = await self._open_client(server_spec, env_overrides)
+        except Exception as exc:  # noqa: BLE001 - graceful per-plugin degrade
+            message = self._connect_error_message(exc)
+            if not _connect_needs_reauth(message):
+                log.warning(
+                    "plugin-registry: %s connect failed: %s", plugin.id, message
                 )
-            else:
-                msg = str(exc) or type(exc).__name__
-            log.warning("plugin-registry: %s connect failed: %s", plugin.id, msg)
-            self._last_errors[plugin.id] = msg
-            self._maybe_mark_needs_reauth(plugin.id, tokens, msg)
-            if client is not None:
-                # Best-effort cleanup; a cancelled/hung transport may not
-                # close cleanly, so the stop itself is bounded too.
-                try:
-                    await asyncio.wait_for(client.stop(), timeout=5.0)
-                except Exception:  # noqa: BLE001 — cleanup must never raise
-                    log.debug(
-                        "plugin-registry: %s post-failure stop failed", plugin.id,
-                        exc_info=True,
+                self._last_errors[plugin.id] = message
+                return
+
+            from jarvis.marketplace.refresh_scheduler import SKIPPED, refresh_plugin_token
+
+            attempt = await refresh_plugin_token(
+                plugin.id,
+                self._store,
+                self._build_refresh_handler,
+                force=True,
+                observed_access_token=tokens.access,
+            )
+            if not attempt.usable:
+                log.warning(
+                    "plugin-registry: %s connect auth failed; refresh outcome=%s: %s",
+                    plugin.id,
+                    attempt.outcome,
+                    message,
+                )
+                self._last_errors[plugin.id] = message
+                if attempt.outcome == SKIPPED:
+                    self._maybe_mark_needs_reauth(plugin.id, message)
+                return
+
+            fresh_tokens: Any | None = None
+            try:
+                fresh_tokens = self._store.load(plugin.id)
+                fresh_resolved = (
+                    plugin_to_mcp_server_spec(plugin, fresh_tokens)
+                    if fresh_tokens is not None
+                    else None
+                )
+                if fresh_resolved is None:
+                    self._last_errors[plugin.id] = message
+                    return
+                server_spec, env_overrides = fresh_resolved
+                client, tool_defs = await self._open_client(server_spec, env_overrides)
+            except Exception as retry_exc:  # noqa: BLE001 - exactly one retry
+                retry_message = self._connect_error_message(retry_exc)
+                log.warning(
+                    "plugin-registry: %s connect retry after refresh failed: %s",
+                    plugin.id,
+                    retry_message,
+                )
+                self._last_errors[plugin.id] = retry_message
+                if _connect_needs_reauth(retry_message) and fresh_tokens is not None:
+                    self._maybe_mark_needs_reauth(
+                        plugin.id,
+                        retry_message,
+                        expected_tokens=fresh_tokens,
                     )
-            return
+                return
         self._clients[plugin.id] = client
         self._last_errors.pop(plugin.id, None)
         for tool_def in tool_defs:
@@ -253,7 +349,13 @@ class PluginToolRegistry:
         await client.start()
         return await client.list_tools()
 
-    def _maybe_mark_needs_reauth(self, plugin_id: str, tokens: Any, message: str) -> None:
+    def _maybe_mark_needs_reauth(
+        self,
+        plugin_id: str,
+        message: str,
+        *,
+        expected_tokens: Any | None = None,
+    ) -> None:
         """Flag the stored token after an auth-shaped connect failure.
 
         Mirrors the refresh scheduler's marking: later boots then skip the
@@ -261,6 +363,16 @@ class PluginToolRegistry:
         the Reconnect affordance instead of a silent per-boot failure."""
         try:
             if not _connect_needs_reauth(message):
+                return
+            tokens = self._store.load(plugin_id)
+            if tokens is None:
+                return
+            if expected_tokens is not None and tokens != expected_tokens:
+                log.info(
+                    "plugin-registry: %s re-auth mark skipped; token changed "
+                    "during connect retry",
+                    plugin_id,
+                )
                 return
             self._store.save(plugin_id, dataclasses.replace(tokens, needs_reauth=True))
             log.warning(
@@ -276,12 +388,12 @@ class PluginToolRegistry:
     async def _disconnect_plugin(self, plugin_id: str) -> None:
         for name in [n for n in self._tools if n.startswith(f"{plugin_id}/")]:
             self._tools.pop(name, None)
-        client = self._clients.pop(plugin_id, None)
+        client = self._clients.get(plugin_id)
         if client is not None:
             try:
-                await client.stop()
-            except Exception as exc:  # noqa: BLE001
-                log.debug("plugin-registry: %s stop failed: %s", plugin_id, exc)
+                await self._stop_client_bounded(client, plugin_id)
+            finally:
+                self._clients.pop(plugin_id, None)
         try:
             from jarvis.core.capabilities import get_registry as _get_cap_registry
 

@@ -36,6 +36,38 @@ class _SizeLimitedFakeBackend:
         self.store.pop(key, None)
 
 
+class _SilentDeleteBackend:
+    """Backend that reports no error but retains every deleted credential."""
+
+    def __init__(self) -> None:
+        self.store: dict[str, str] = {}
+        self.overflow_get_calls = 0
+
+    def get(self, key: str) -> str | None:
+        if key.rpartition("__")[2].isdigit():
+            self.overflow_get_calls += 1
+            return "retained-chunk"
+        return self.store.get(key)
+
+    def set(self, key: str, value: str) -> None:
+        self.store[key] = value
+
+    def delete(self, key: str) -> None:
+        return
+
+
+class _PartialOverflowDeleteBackend(_SizeLimitedFakeBackend):
+    """Silently retains one selected chunk until the test allows deletion."""
+
+    allow_blocked_chunk_delete = False
+    blocked_chunk_index = 1
+
+    def delete(self, key: str) -> None:
+        if key.endswith(f"__{self.blocked_chunk_index}") and not self.allow_blocked_chunk_delete:
+            return
+        super().delete(key)
+
+
 def test_chunked_backend_round_trips_value_larger_than_primitive_limit():
     # A long Google OAuth token blob exceeds the Credential Manager's hard
     # per-entry limit. The chunking backend must split it across several
@@ -80,6 +112,16 @@ def test_chunked_backend_resave_smaller_clears_stale_chunks():
     assert backend.get("plugin_gmail_tokens") == "small"
     # Only the primary key remains — overflow chunks were cleaned up.
     assert list(primitive.store) == ["plugin_gmail_tokens"]
+
+
+def test_chunked_backend_cleanup_stops_after_silent_delete_failure():
+    primitive = _SilentDeleteBackend()
+    backend = ChunkedBackend(primitive, chunk_size=20)
+
+    backend.set("plugin_gmail_tokens", "small")
+
+    assert backend.get("plugin_gmail_tokens") == "small"
+    assert primitive.overflow_get_calls == 2
 
 
 class _FailNthSetBackend:
@@ -182,3 +224,167 @@ def test_store_persists_needs_reauth():
     store.save("p", Tokens(access="a", needs_reauth=True))
     loaded = store.load("p")
     assert loaded is not None and loaded.needs_reauth is True
+
+
+def test_store_delete_raises_when_backend_silently_retains_token():
+    backend = _SilentDeleteBackend()
+    store = TokenStore(backend)
+    store.save("gmail", Tokens(access="access"))
+
+    with pytest.raises(RuntimeError, match="token deletion failed for plugin 'gmail'"):
+        store.delete("gmail")
+
+    assert store.load("gmail") is not None
+
+
+def test_store_delete_keeps_manifest_until_every_indexed_chunk_is_removed():
+    backend = _PartialOverflowDeleteBackend(limit=1000)
+    store = TokenStore(ChunkedBackend(backend, chunk_size=20))
+    store.save("gmail", Tokens(access="access" * 20))
+    primary_key = "plugin_gmail_tokens"
+    manifest = backend.store[primary_key]
+
+    with pytest.raises(
+        RuntimeError,
+        match="token deletion could not be verified for plugin 'gmail'",
+    ):
+        store.delete("gmail")
+
+    assert backend.store[primary_key] == manifest
+    assert f"{primary_key}__0" not in backend.store
+    assert backend.store[f"{primary_key}__1"]
+
+    # The retry must use the retained manifest, skip the already-missing zero
+    # index, and still detect chunk one instead of falsely reporting success.
+    with pytest.raises(RuntimeError):
+        store.delete("gmail")
+    assert backend.store[primary_key] == manifest
+    assert backend.store[f"{primary_key}__1"]
+
+    backend.allow_blocked_chunk_delete = True
+    store.delete("gmail")
+
+    assert backend.store == {}
+
+
+def test_shrink_persists_cleanup_extent_across_restart_until_delete_succeeds():
+    backend = _PartialOverflowDeleteBackend(limit=1000)
+    key = "plugin_gmail_tokens"
+    chunked = ChunkedBackend(backend, chunk_size=20)
+    chunked.set(key, "secret" * 20)
+
+    # Shrinking replaces the active chunk header with a plain value. Chunk zero
+    # is removed, chunk one silently remains, and later chunks are still tried.
+    chunked.set(key, "small")
+
+    assert chunked.get(key) == "small"
+    assert f"{key}__0" not in backend.store
+    assert backend.store[f"{key}__1"]
+    extent = backend.store[f"{key}__extent"]
+    assert int(extent) == 6
+
+    # Rebuild both wrappers to model an application restart. Explicit deletion
+    # must use the persisted extent rather than stop at the missing zero index.
+    restarted_backend = ChunkedBackend(backend, chunk_size=20)
+    assert restarted_backend.get(key) == "small"
+    restarted = TokenStore(restarted_backend)
+    with pytest.raises(RuntimeError):
+        restarted.delete("gmail")
+
+    assert backend.store[key] == "small"
+    assert backend.store[f"{key}__extent"] == extent
+    assert backend.store[f"{key}__1"]
+
+    backend.allow_blocked_chunk_delete = True
+    restarted.delete("gmail")
+
+    assert backend.store == {}
+
+
+def test_legacy_sparse_delete_finds_later_chunks_with_no_primary():
+    backend = _SizeLimitedFakeBackend(limit=1000)
+    key = "plugin_gmail_tokens"
+    backend.store[f"{key}__1"] = "legacy-fragment-one"
+    backend.store[f"{key}__4"] = "legacy-fragment-four"
+    store = TokenStore(ChunkedBackend(backend))
+
+    store.delete("gmail")
+
+    assert backend.store == {}
+
+
+def test_legacy_sparse_delete_finds_later_chunks_behind_plain_primary():
+    backend = _SizeLimitedFakeBackend(limit=1000)
+    key = "plugin_gmail_tokens"
+    backend.store[key] = Tokens(access="small").to_json()
+    backend.store[f"{key}__2"] = "legacy-fragment-two"
+    store = TokenStore(ChunkedBackend(backend))
+
+    store.delete("gmail")
+
+    assert backend.store == {}
+
+
+def test_legacy_sparse_delete_retains_primary_and_extent_after_noop():
+    backend = _PartialOverflowDeleteBackend(limit=1000)
+    key = "plugin_gmail_tokens"
+    primary = Tokens(access="small").to_json()
+    backend.store[key] = primary
+    backend.store[f"{key}__1"] = "legacy-fragment-one"
+    store = TokenStore(ChunkedBackend(backend))
+
+    with pytest.raises(RuntimeError):
+        store.delete("gmail")
+
+    assert backend.store[key] == primary
+    assert backend.store[f"{key}__1"] == "legacy-fragment-one"
+    assert backend.store[f"{key}__extent"] == "2"
+
+    backend.allow_blocked_chunk_delete = True
+    store.delete("gmail")
+
+    assert backend.store == {}
+
+
+def test_legacy_sparse_delete_scans_beyond_valid_smaller_manifest():
+    backend = _SizeLimitedFakeBackend(limit=1000)
+    key = "plugin_gmail_tokens"
+    chunked = ChunkedBackend(backend, chunk_size=20)
+    chunked.set(key, "a" * 30)  # valid two-chunk active manifest
+    backend.store[f"{key}__4"] = "legacy-tail-fragment"
+    assert f"{key}__extent" not in backend.store
+
+    TokenStore(chunked).delete("gmail")
+
+    assert backend.store == {}
+
+
+def test_legacy_tail_failure_preserves_manifest_and_retries_exact_extent():
+    backend = _PartialOverflowDeleteBackend(limit=1000)
+    backend.blocked_chunk_index = 4
+    key = "plugin_gmail_tokens"
+    chunked = ChunkedBackend(backend, chunk_size=20)
+    chunked.set(key, "a" * 30)  # valid two-chunk active manifest
+    legacy_manifest = backend.store[key]
+    backend.store[f"{key}__4"] = "legacy-tail-fragment"
+    store = TokenStore(chunked)
+
+    with pytest.raises(RuntimeError):
+        store.delete("gmail")
+
+    assert backend.store[key] == legacy_manifest
+    assert f"{key}__0" not in backend.store
+    assert f"{key}__1" not in backend.store
+    assert backend.store[f"{key}__4"] == "legacy-tail-fragment"
+    assert backend.store[f"{key}__extent"] == "5"
+
+    # The durable extent makes subsequent retries exact rather than heuristic.
+    with pytest.raises(RuntimeError):
+        store.delete("gmail")
+    assert backend.store[key] == legacy_manifest
+    assert backend.store[f"{key}__4"] == "legacy-tail-fragment"
+
+    backend.allow_blocked_chunk_delete = True
+    store.delete("gmail")
+
+    assert backend.store == {}

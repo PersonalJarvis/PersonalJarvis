@@ -241,6 +241,14 @@ class PkceLoopbackHandler:
         scope = payload.get("authed_user", {}).get("scope") or payload.get("scope")
         if scope:
             extra["scope"] = scope
+        # Bind the refresh token to the exact OAuth client that obtained it.
+        # A user can later replace/delete the family-level client secret (or a
+        # recovered keyring can expose an older value), but OAuth refresh tokens
+        # remain bound to their issuing client. Keeping the pair inside the same
+        # protected token blob makes refresh independent of that drift.
+        extra["client_id"] = pending.config.client_id
+        if pending.config.client_secret:
+            extra["client_secret"] = pending.config.client_secret
         return Tokens(
             access=access, refresh=refresh, expires_at=expires_at, extra=extra
         )
@@ -248,13 +256,25 @@ class PkceLoopbackHandler:
     async def refresh(self, current: Tokens) -> Tokens:
         if not current.refresh:
             raise RuntimeError("no refresh token stored")
+        # New grants persist their issuing client in ``extra``.  Once that
+        # marker exists, the whole pair is authoritative: a missing bound
+        # secret means the grant was issued to a public client and a newly
+        # configured secret must not be injected.  Legacy token blobs have no
+        # client_id marker and retain the old config-backed behavior.
+        bound_client_id = current.extra.get("client_id")
+        if bound_client_id:
+            client_id = bound_client_id
+            client_secret = current.extra.get("client_secret")
+        else:
+            client_id = self._config.client_id
+            client_secret = self._config.client_secret
         refresh_body = {
             "grant_type": "refresh_token",
             "refresh_token": current.refresh,
-            "client_id": self._config.client_id,
+            "client_id": client_id,
         }
-        if self._config.client_secret:
-            refresh_body["client_secret"] = self._config.client_secret
+        if client_secret:
+            refresh_body["client_secret"] = client_secret
         if self._config.resource:
             refresh_body["resource"] = self._config.resource
         timeout = httpx.Timeout(self._config.timeout_seconds)
@@ -294,11 +314,22 @@ class PkceLoopbackHandler:
             if expires_in is not None
             else None
         )
+        extra = dict(current.extra)
+        if not bound_client_id:
+            # A successful legacy refresh proves which currently configured
+            # client owns the grant. Persist that pair now so later config or
+            # keyring drift cannot break the next refresh. A client_id without
+            # a secret deliberately marks a public client.
+            extra["client_id"] = client_id
+            if client_secret:
+                extra["client_secret"] = client_secret
+            else:
+                extra.pop("client_secret", None)
         return Tokens(
             access=access,
             refresh=new_refresh,
             expires_at=expires_at,
-            extra=current.extra,
+            extra=extra,
         )
 
     @staticmethod
