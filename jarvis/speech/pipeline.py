@@ -3260,6 +3260,21 @@ class SpeechPipeline:
                 event.text[:80],
             )
             return
+        # Re-check the hangup gate at the moment of SPEAKING, not only at
+        # arrival: the user can hang up during the seconds between the two
+        # (scrub, dedup, the realtime-delivery probe), and the entry check
+        # has already passed by then. A stale ephemeral line then plays into
+        # or right after the ended call as a phantom second voice (forensic
+        # 2026-07-13 18:37: hotkey hang-up landed 1.2 s after the preamble
+        # entered this handler). Owed readbacks still punch through, exactly
+        # like at the entry gate (AD-OE5/OE6).
+        if hangup is not None and hangup.is_set() and not is_readback:
+            log.info(
+                "Announcement dropped — session hung up while it was being "
+                "prepared: %r",
+                event.text[:80],
+            )
+            return
         # We are now committed to actually speaking this announcement (past every
         # suppression / defer / empty guard). Record it as voice activity so the
         # idle-timeout branch in ``_active_session`` re-arms a fresh window: an

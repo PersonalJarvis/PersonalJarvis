@@ -150,6 +150,68 @@ async def test_busy_live_session_drops_ephemeral_preamble() -> None:
     assert pipeline._deferred_announcements == []
 
 
+class _HangupDuringDeliveryHandle(_FakeRealtimeHandle):
+    """Simulates the 18:37 race: the user hangs up mid-delivery probe.
+
+    The desktop loop's ``finally`` clears ``_active_realtime_handle`` the
+    moment the call unwinds, so by the time the announcement reaches the
+    speaking stage the entry hangup gate has long been passed.
+    """
+
+    def __init__(self, pipeline, hangup_event) -> None:
+        super().__init__(accepted=False)
+        self._pipeline = pipeline
+        self._hangup_event = hangup_event
+
+    async def deliver_announcement(self, **kwargs: object) -> bool:
+        self._hangup_event.set()
+        self._pipeline._active_realtime_handle = None
+        return await super().deliver_announcement(**kwargs)
+
+
+@pytest.mark.asyncio
+async def test_hangup_during_delivery_drops_the_stale_preamble() -> None:
+    """A preamble whose call ended mid-preparation must never be spoken."""
+    pipeline, tts, player, _realtime = _pipeline(accepted=False)
+    hangup = asyncio.Event()
+    pipeline._hangup_event = hangup
+    handle = _HangupDuringDeliveryHandle(pipeline, hangup)
+    pipeline._active_realtime_handle = handle
+
+    await pipeline._on_announcement(
+        AnnouncementRequested(
+            text="I am searching the current data right now.",
+            language="en",
+            kind="preamble",
+        )
+    )
+
+    assert len(handle.calls) == 1
+    assert tts.calls == []
+    assert player.plays == 0
+
+
+@pytest.mark.asyncio
+async def test_hangup_during_delivery_keeps_the_owed_readback() -> None:
+    """An owed completion still punches through, like at the entry gate."""
+    pipeline, tts, player, _realtime = _pipeline(accepted=False)
+    hangup = asyncio.Event()
+    pipeline._hangup_event = hangup
+    handle = _HangupDuringDeliveryHandle(pipeline, hangup)
+    pipeline._active_realtime_handle = handle
+
+    await pipeline._on_announcement(
+        AnnouncementRequested(
+            text="The research report is ready.",
+            language="en",
+            kind="completion",
+        )
+    )
+
+    assert tts.calls == [("The research report is ready.", "en-US")]
+    assert player.plays == 1
+
+
 @pytest.mark.asyncio
 async def test_deferred_readback_is_replayed_to_the_idle_live_model() -> None:
     """At the turn boundary the parked readback reaches the live voice."""
