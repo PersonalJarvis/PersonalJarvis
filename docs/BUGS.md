@@ -4037,3 +4037,59 @@ quit unexpectedly" dialog looks identical for every native abort — fixing
 one crash site just reveals the next one down the boot path. Audit the
 WHOLE boot path for off-main-thread UI creation at once (as done here),
 never one dialog at a time.
+
+## BUG-058: Third macOS first-boot abort at onboarding start — unserialized PortAudio re-init + ungated Quartz event tap (HIGH, HARDENED 2026-07-14, on-device confirmation pending)
+
+**Symptom.** With BUG-056+057 shipped, a fresh Mac boot now shows the
+desktop window and enters first-launch onboarding — then "Python quit
+unexpectedly" again, seconds in, before any meaningful interaction. No
+terminal log captured yet, so this entry hardens the audited candidates
+rather than a log-confirmed line.
+
+**Audit (full onboarding-window trace).** The onboarding routes themselves
+are pure state-file writes — zero native code. In the same time window two
+UNGATED native touches fire with NO user interaction:
+
+1. **Concurrent PortAudio teardown/re-init.** The boot prefetch
+   (``start_audio_device_prefetch``, daemon thread) and the voice pipeline's
+   Phase-A ``_stabilize_audio_devices`` both run the settle loop; when the
+   pipeline arrives while the prefetch is still polling (it runs up to
+   ~8 s), two threads interleave ``sd._terminate()``/``sd._initialize()``.
+   Windows WASAPI tolerates that; macOS CoreAudio's HAL can fault natively
+   on concurrent teardown/re-init. Timing matches the crash exactly.
+2. **pynput Quartz event tap without the Accessibility grant.** The hotkey
+   trigger arms unconditionally at ``pipeline.run()``; pynput's darwin
+   backend creates a CGEventTap on its own internal thread — Python-level
+   try/except around ``Listener.start()`` cannot catch a native abort
+   there, and on a fresh Mac the grant never exists.
+
+Known but interaction-gated (NOT hardened here, documented for the next
+log): the wake-word step's mic test / wake save opens a CoreAudio INPUT
+stream (``sd.InputStream``) — on a TCC-killed process that is a SIGABRT.
+Ruled out by audit: notifications, AppKit dialogs, prompting permission
+probes, Keychain, the LaunchAgent write (plist + subprocess only), and all
+BUG-056/057 gates (verified in place).
+
+**Hardening (2026-07-14).**
+
+- ``device_init._REINIT_LOCK`` serializes every terminate→initialize→query
+  sequence (hard safety, all platforms), and
+  ``wait_for_stable_audio_devices`` now JOINS an in-flight prefetch
+  (single-flight) instead of racing it with a second poll loop.
+- ``PynputBackend.start()`` preflights the non-prompting
+  ``AXIsProcessTrusted`` probe on darwin and fails CLOSED (None =
+  unverifiable → treated as not granted) with an honest English message
+  naming the System Settings path; hotkeys re-arm normally once granted.
+  Off-darwin behavior is byte-identical (guard test).
+
+Guards: ``tests/unit/audio/test_device_init_single_flight.py``,
+``tests/unit/trigger/test_hotkey_backends.py`` (4 new darwin-preflight
+tests).
+
+**Class rule.** Native init that "has always been fine" on Windows is not
+cross-platform evidence: CoreAudio punishes concurrent re-init, Quartz
+punishes ungranted event taps — both below Python. Any native engine
+init/teardown must be serialized behind a lock, and any macOS
+permission-gated native surface (mic, event tap, screen) must preflight a
+non-prompting probe and degrade honestly instead of letting the OS kill
+the process.

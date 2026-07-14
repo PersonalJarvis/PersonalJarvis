@@ -386,3 +386,89 @@ def test_pynput_backend_real_listener_lifecycle():
     backend.start()
     backend.stop()
     assert backend._listener is None
+
+
+# ----------------------------------------------------------------------
+# macOS Accessibility preflight (BUG-058) — pure logic, runs on every leg.
+# ----------------------------------------------------------------------
+
+
+def _install_fake_pynput(monkeypatch, built: list) -> None:
+    import types
+
+    class _FakeListener:
+        def __init__(self, **kwargs) -> None:
+            built.append(kwargs)
+
+        def start(self) -> None: ...
+
+        def stop(self) -> None: ...
+
+    fake_pynput = types.ModuleType("pynput")
+    fake_pynput.keyboard = types.SimpleNamespace(Listener=_FakeListener)
+    monkeypatch.setitem(sys.modules, "pynput", fake_pynput)
+
+
+def test_pynput_backend_darwin_without_ax_grant_degrades(monkeypatch, caplog):
+    # pynput's darwin backend creates a Quartz event tap on its own internal
+    # thread; without the Accessibility grant that native init can abort the
+    # whole process (uncatchable — BUG-058 class). The backend must preflight
+    # AXIsProcessTrusted and degrade instead of touching pynput at all.
+    import jarvis.platform.probes as probes
+    from jarvis.trigger.backends.pynput import PynputBackend
+
+    built: list = []
+    _install_fake_pynput(monkeypatch, built)
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.setattr(probes, "ax_permission_granted", lambda: False)
+    backend = PynputBackend()
+    with caplog.at_level(logging.WARNING):
+        backend.start()
+    assert built == []  # no Listener constructed under the missing grant
+    assert "accessibility" in caplog.text.lower()
+
+
+def test_pynput_backend_darwin_unverifiable_grant_degrades(monkeypatch, caplog):
+    # pyobjc absent -> probe returns None -> fail closed on darwin.
+    import jarvis.platform.probes as probes
+    from jarvis.trigger.backends.pynput import PynputBackend
+
+    built: list = []
+    _install_fake_pynput(monkeypatch, built)
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.setattr(probes, "ax_permission_granted", lambda: None)
+    backend = PynputBackend()
+    with caplog.at_level(logging.WARNING):
+        backend.start()
+    assert built == []
+
+
+def test_pynput_backend_darwin_with_grant_starts_listener(monkeypatch):
+    import jarvis.platform.probes as probes
+    from jarvis.trigger.backends.pynput import PynputBackend
+
+    built: list = []
+    _install_fake_pynput(monkeypatch, built)
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.setattr(probes, "ax_permission_granted", lambda: True)
+    backend = PynputBackend()
+    backend.start()
+    assert len(built) == 1  # grant present -> hotkeys arm normally
+
+
+def test_pynput_backend_off_darwin_needs_no_probe(monkeypatch):
+    # AD-7: the preflight is darwin-only; Linux/Windows never consult it.
+    import jarvis.platform.probes as probes
+    from jarvis.trigger.backends.pynput import PynputBackend
+
+    built: list = []
+    _install_fake_pynput(monkeypatch, built)
+    monkeypatch.setattr("sys.platform", "linux")
+
+    def _boom() -> None:
+        raise AssertionError("probe consulted off darwin")
+
+    monkeypatch.setattr(probes, "ax_permission_granted", _boom)
+    backend = PynputBackend()
+    backend.start()
+    assert len(built) == 1

@@ -161,6 +161,7 @@ def test_respects_max_wait_when_never_stable(monkeypatch) -> None:
 def _reset_prefetch() -> None:
     di._PREFETCH_EVENT.clear()
     di._PREFETCH_RESULT = None
+    di._PREFETCH_STARTED = False
 
 
 def test_prefetch_result_none_before_any_prefetch() -> None:
@@ -186,7 +187,9 @@ def test_prefetch_publishes_settled_result(monkeypatch) -> None:
     _reset_prefetch()
     sentinel = {"available": True, "device_count": 7, "stable": True}
     monkeypatch.setattr(di, "_get_sd", lambda: object())  # sounddevice "present"
-    monkeypatch.setattr(di, "wait_for_stable_audio_devices", lambda: sentinel)
+    # The prefetch thread calls the impl directly (the public function would
+    # join the prefetch's own in-flight event — BUG-058 single-flight).
+    monkeypatch.setattr(di, "_poll_until_stable", lambda: sentinel)
 
     thread = di.start_audio_device_prefetch()
     assert thread is not None
@@ -203,7 +206,7 @@ def test_prefetch_swallows_settle_failure(monkeypatch) -> None:
         raise RuntimeError("portaudio exploded mid-scan")
 
     monkeypatch.setattr(di, "_get_sd", lambda: object())
-    monkeypatch.setattr(di, "wait_for_stable_audio_devices", _boom)
+    monkeypatch.setattr(di, "_poll_until_stable", _boom)
 
     thread = di.start_audio_device_prefetch()
     assert thread is not None
