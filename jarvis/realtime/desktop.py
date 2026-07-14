@@ -31,6 +31,18 @@ class DesktopRealtimeBargeInDetector:
     responsible for desktop echo suppression.
     """
 
+    # Frames quieter than this (float RMS, 1.0 = full scale) skip the Silero
+    # inference entirely and count as non-speech. Two field problems on a
+    # speakers+mic laptop (old Intel MacBook, BUG-062) share this one gate:
+    # (a) per-frame ONNX on the audio-critical loop starved the 120 ms write
+    # batches -> constant playback stutter; (b) the assistant's own speaker
+    # echo fed the detector and false barge-ins truncated the answer. AP-27
+    # empirics anchor the value: silence ghosts sit <= 0.0043, quiet real
+    # speech reaches ~0.009 — 0.010 keeps deliberate interruptions (normal
+    # speaking volume) while dropping silence, hiss, and moderate echo.
+    # Trade-off (documented): whisper-quiet barge-in no longer triggers.
+    _DEFAULT_MIN_FRAME_RMS = 0.010
+
     def __init__(
         self,
         *,
@@ -38,12 +50,16 @@ class DesktopRealtimeBargeInDetector:
         speech_threshold: float = 0.97,
         consecutive_frames: int = 12,
         pre_speech_frames: int = 10,
+        min_frame_rms: float | None = None,
         model: Any = None,
     ) -> None:
         self._grace_s = max(0.0, float(grace_s))
         self._speech_threshold = min(1.0, max(0.0, float(speech_threshold)))
         self._consecutive_frames = max(1, int(consecutive_frames))
         self._pre_speech_frames = max(1, int(pre_speech_frames))
+        self._min_frame_rms = (
+            self._DEFAULT_MIN_FRAME_RMS if min_frame_rms is None else max(0.0, float(min_frame_rms))
+        )
         self._model = model or SileroEndpointer(
             speech_threshold=self._speech_threshold
         )
@@ -106,7 +122,14 @@ class DesktopRealtimeBargeInDetector:
 
         for index, frame in enumerate(frames):
             normalized = frame.astype(np.float32) / 32768.0
-            probability = float(self._model._prob(normalized))
+            # Energy pre-gate (BUG-062): quiet frames never reach the ONNX
+            # model — this is both the loop-load fix and the echo damper.
+            if self._min_frame_rms > 0.0 and float(
+                np.sqrt(np.mean(np.square(normalized)))
+            ) < self._min_frame_rms:
+                probability = 0.0
+            else:
+                probability = float(self._model._prob(normalized))
             if probability >= self._speech_threshold:
                 if self._speech_run == 0:
                     self._candidate_frames = [part.copy() for part in self._pre_buffer]

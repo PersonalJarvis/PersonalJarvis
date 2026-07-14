@@ -46,6 +46,7 @@ def _pcm_frames(*amplitudes: int) -> bytes:
 def test_cpu_barge_detector_returns_prespeech_and_confirmed_user_audio() -> None:
     model = FakeVadModel([0.1, 0.2, 0.99, 0.99, 0.99])
     detector = DesktopRealtimeBargeInDetector(
+        min_frame_rms=0.0,
         grace_s=0,
         consecutive_frames=3,
         pre_speech_frames=2,
@@ -64,6 +65,7 @@ def test_cpu_barge_detector_returns_prespeech_and_confirmed_user_audio() -> None
 def test_cpu_barge_detector_rejects_short_speaker_bleed() -> None:
     model = FakeVadModel([0.99, 0.1, 0.99, 0.99, 0.1])
     detector = DesktopRealtimeBargeInDetector(
+        min_frame_rms=0.0,
         grace_s=0,
         consecutive_frames=3,
         model=model,
@@ -188,3 +190,46 @@ async def test_handshake_sample_rate_is_used_for_the_next_turn():
     await playback.finish_turn()
 
     assert [chunk.sample_rate for chunk in player.chunks] == [16_000]
+
+
+def test_energy_pre_gate_skips_onnx_for_quiet_frames() -> None:
+    # BUG-062: quiet frames (silence / hiss / moderate speaker echo) must
+    # never reach the Silero model — that is both the loop-load fix (stutter
+    # on slow CPUs) and the self-barge-in damper on speakers+mic laptops.
+    calls: list[int] = []
+
+    class _CountingModel:
+        def _ensure_model(self) -> None: ...
+
+        def _prob(self, _frame) -> float:
+            calls.append(1)
+            return 1.0
+
+    detector = DesktopRealtimeBargeInDetector(
+        grace_s=0.0, consecutive_frames=1, model=_CountingModel()
+    )
+    detector.warmup()
+    detector.start_output()
+    # Amplitude 100/32768 ≈ 0.003 RMS — below the 0.010 floor.
+    assert detector.feed(_pcm_frames(100, 100, 100)) is None
+    assert calls == []  # ONNX never consulted
+
+
+def test_energy_pre_gate_passes_loud_speech_through() -> None:
+    calls: list[int] = []
+
+    class _CountingModel:
+        def _ensure_model(self) -> None: ...
+
+        def _prob(self, _frame) -> float:
+            calls.append(1)
+            return 1.0
+
+    detector = DesktopRealtimeBargeInDetector(
+        grace_s=0.0, consecutive_frames=1, model=_CountingModel()
+    )
+    detector.warmup()
+    detector.start_output()
+    # Amplitude 2000/32768 ≈ 0.061 RMS — normal speaking volume.
+    assert detector.feed(_pcm_frames(2000)) is not None
+    assert calls  # the model ran and confirmed
