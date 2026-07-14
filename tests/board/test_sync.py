@@ -15,6 +15,9 @@ from uuid import uuid4
 import httpx
 import pytest
 
+pytest.importorskip(
+    "board_backend", reason="board-backend module not on sys.path (public snapshot / plain checkout)"
+)
 from board_backend.config import Settings
 from board_backend.main import create_app
 from jarvis.board.aggregator import BoardAggregator

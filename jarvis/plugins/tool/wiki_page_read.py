@@ -43,6 +43,32 @@ log = logging.getLogger(__name__)
 # normal wiki page is a few KB; 64 KB is generous head-room.
 _MAX_PAGE_BYTES: int = 64 * 1024
 
+# Provenance warning prepended to meta/contract pages (``type: meta``
+# frontmatter, e.g. schema.md). Live incident 2026-07-14: the delegated
+# brain read schema.md and presented its EXAMPLE directory layout as the
+# actual vault contents — every file it named was invented. The warning
+# is deterministic (no LLM involved) so the model always sees it.
+_META_PAGE_WARNING: str = (
+    "[system file — this page is the vault's editing CONTRACT, not user "
+    "content. Any directory layout or file names below are EXAMPLES of the "
+    "intended structure, NOT a listing of what exists. Use wiki-list for "
+    "the real vault contents.]\n\n"
+)
+
+
+def _frontmatter_declares_meta(content: str) -> bool:
+    """True when a leading YAML frontmatter block declares ``type: meta``."""
+    lines = content.splitlines()
+    if not lines or lines[0].strip() != "---":
+        return False
+    for line in lines[1:32]:
+        if line.strip() == "---":
+            return False
+        key, _, value = line.partition(":")
+        if key.strip().lower() == "type" and value.strip().lower() == "meta":
+            return True
+    return False
+
 
 class WikiPageReadTool:
     """Router-tier full-page reader for the long-term Obsidian wiki vault."""
@@ -147,6 +173,8 @@ class WikiPageReadTool:
         # Prefix with the relative path so the brain has unambiguous
         # provenance in the prompt without having to remember the request.
         header = f"# {rel.as_posix()}\n\n"
+        if _frontmatter_declares_meta(content):
+            header = _META_PAGE_WARNING + header
         return ToolResult(success=True, output=header + content)
 
 

@@ -8,6 +8,7 @@ Side-effect on construction: each MCPToolAdapter also registers a
 ``Capability`` with the global CapabilityRegistry so that the voice path
 knows this MCP tool exists.
 """
+
 from __future__ import annotations
 
 import logging
@@ -24,22 +25,174 @@ from .registry import MCPRegistry
 log = logging.getLogger(__name__)
 
 
+# Speech-input verb forms per supported language for each detectable English
+# verb (matching DATA, not prose — umlauts pre-normalised like every registry
+# verb). MCP tool descriptions are English, so verbs extracted from them alone
+# could never match a German/Spanish phrasing: ``resolve_intent`` returned None
+# for "alle meine Notebooks auflisten", the registry reported "action intent,
+# no capability", and the deterministic force-spawn dispatched a heavy mission
+# for a plain read-only MCP lookup — before the LLM router ever saw the turn
+# (live realtime voice bug 2026-07-14, trace c82aa1a6). Expanding at
+# registration time keeps ``resolve_intent`` language-equal (de/en/es) per the
+# runtime-output-language contract: no supported language may route worse than
+# English.
+_VERB_SYNONYMS: dict[str, tuple[str, ...]] = {
+    "send": (
+        *("sende", "senden", "schicke", "schicken", "verschicke"),  # i18n-allow: input vocabulary
+        *("envia", "enviar", "manda", "mandar"),
+    ),
+    "create": (
+        *("erstelle", "erstellen", "anlege", "anlegen"),  # i18n-allow: input vocabulary
+        *("erzeuge", "erzeugen"),  # i18n-allow: input vocabulary
+        *("crea", "crear"),
+    ),
+    "delete": (
+        *("loesche", "loeschen", "entferne", "entfernen"),  # i18n-allow: input vocabulary
+        *("borra", "borrar", "elimina", "eliminar"),
+    ),
+    "update": (
+        *("aktualisiere", "aktualisieren"),  # i18n-allow: input vocabulary
+        *("actualiza", "actualizar"),
+    ),
+    "list": (
+        *("liste", "auflisten", "auflistung"),  # i18n-allow: input vocabulary
+        *("zeig", "zeige", "zeigt"),  # i18n-allow: input vocabulary (show-family)
+        *("lista", "listar", "muestra", "mostrar"),
+    ),
+    "get": (
+        *("hole", "holen", "abrufen", "gib"),  # i18n-allow: input vocabulary
+        *("zeig", "zeige", "zeigt"),  # i18n-allow: input vocabulary (show-family)
+        *("obten", "obtener", "muestra", "mostrar"),
+    ),
+    "fetch": (
+        *("hole", "holen", "abrufen"),  # i18n-allow: input vocabulary
+        *("recupera", "recuperar"),
+    ),
+    "read": (
+        *("lies", "lese", "lesen", "vorlesen"),  # i18n-allow: input vocabulary
+        *("lee",),
+    ),
+    "write": (
+        *("schreibe", "schreiben"),  # i18n-allow: input vocabulary
+        *("escribe", "escribir"),
+    ),
+    "search": (
+        *("suche", "suchen", "durchsuche"),  # i18n-allow: input vocabulary
+        *("busca", "buscar"),
+    ),
+    "query": (
+        *("abfrage", "abfragen"),  # i18n-allow: input vocabulary
+        *("consulta", "consultar"),
+    ),
+    "insert": (
+        *("einfuege", "einfuegen"),  # i18n-allow: input vocabulary
+        *("inserta", "insertar"),
+    ),
+    "execute": (
+        *("ausfuehren", "fuehre"),  # i18n-allow: input vocabulary
+        *("ejecuta", "ejecutar"),
+    ),
+    "run": (
+        *("starte", "starten", "ausfuehren"),  # i18n-allow: input vocabulary
+        *("inicia", "iniciar"),
+    ),
+    "upload": (
+        *("hochlade", "hochladen", "lade"),  # i18n-allow: input vocabulary
+        *("sube", "subir"),
+    ),
+    "download": (
+        *("herunterlade", "herunterladen"),  # i18n-allow: input vocabulary
+        *("runterlade", "runterladen", "lade"),  # i18n-allow: input vocabulary
+        *("descarga", "descargar"),
+    ),
+    "publish": (
+        *("veroeffentliche", "veroeffentlichen"),  # i18n-allow: input vocabulary
+        *("publica", "publicar"),
+    ),
+    "schedule": (
+        *("plane", "planen", "einplane", "einplanen"),  # i18n-allow: input vocabulary
+        *("programa", "programar"),
+    ),
+    "post": (
+        *("poste", "posten"),  # i18n-allow: input vocabulary
+        *("publica", "publicar"),
+    ),
+    "set": (
+        *("setze", "setzen"),  # i18n-allow: input vocabulary
+        *("configura", "configurar"),
+    ),
+    "add": (
+        *("fuege", "hinzufuege", "hinzufuegen"),  # i18n-allow: input vocabulary
+        *("agrega", "agregar"),
+    ),
+    "remove": (
+        *("entferne", "entfernen", "loesche", "loeschen"),  # i18n-allow: input vocabulary
+        *("quita", "quitar"),
+    ),
+    "edit": (
+        *("bearbeite", "bearbeiten"),  # i18n-allow: input vocabulary
+        *("edita", "editar"),
+    ),
+    "modify": (
+        *("aendere", "aendern"),  # i18n-allow: input vocabulary
+        *("modifica", "modificar"),
+    ),
+    "retrieve": (
+        *("hole", "holen", "abrufen"),  # i18n-allow: input vocabulary
+        *("recupera", "recuperar"),
+    ),
+    "find": (
+        *("finde", "finden", "suche", "suchen"),  # i18n-allow: input vocabulary
+        *("encuentra", "encontrar", "busca", "buscar"),
+    ),
+}
+
+
 def _verbs_from_description(description: str) -> tuple[str, ...]:
     """Best-effort extraction of action verbs from an MCP tool description.
 
     Scans the description for known English imperative verbs that indicate
-    the tool performs an action.  Returns a small tuple; never empty (falls
-    back to a generic "use" verb so resolve_intent can still match).
+    the tool performs an action, then expands every hit with its German and
+    Spanish speech-input forms (``_VERB_SYNONYMS``) so ``resolve_intent``
+    matches the same request in every supported language, not only English.
+    Returns a small de-duplicated tuple; never empty (falls back to a generic
+    "use" verb so resolve_intent can still match).
     """
     _KNOWN_VERBS = (
-        "send", "create", "delete", "update", "list", "get", "fetch",
-        "read", "write", "search", "query", "insert", "execute", "run",
-        "upload", "download", "publish", "schedule", "post", "set",
-        "add", "remove", "edit", "modify", "retrieve", "find",
+        "send",
+        "create",
+        "delete",
+        "update",
+        "list",
+        "get",
+        "fetch",
+        "read",
+        "write",
+        "search",
+        "query",
+        "insert",
+        "execute",
+        "run",
+        "upload",
+        "download",
+        "publish",
+        "schedule",
+        "post",
+        "set",
+        "add",
+        "remove",
+        "edit",
+        "modify",
+        "retrieve",
+        "find",
     )
     desc_lower = description.lower()
-    found = tuple(v for v in _KNOWN_VERBS if re.search(r"\b" + v + r"\b", desc_lower))
-    return found if found else ("use",)
+    found: list[str] = []
+    for verb in _KNOWN_VERBS:
+        if re.search(r"\b" + verb + r"\b", desc_lower):
+            found.append(verb)
+            found.extend(_VERB_SYNONYMS.get(verb, ()))
+    return tuple(dict.fromkeys(found)) if found else ("use",)
 
 
 def _objects_from_tool_name(namespaced_name: str) -> tuple[str, ...]:
@@ -104,9 +257,7 @@ class MCPToolAdapter:
         except Exception:  # noqa: BLE001
             log.debug("MCPToolAdapter: capability registration failed for %s", _cap_id)
 
-    async def execute(
-        self, args: dict[str, Any], ctx: ExecutionContext
-    ) -> ToolResult:
+    async def execute(self, args: dict[str, Any], ctx: ExecutionContext) -> ToolResult:
         """Call the MCP tool and map the result to a `ToolResult`.
 
         The supervisor/orchestrator is responsible for publishing
@@ -157,6 +308,7 @@ def _normalize_mcp_result(raw: Any) -> Any:
 # ----------------------------------------------------------------------
 # Registry-Helper
 # ----------------------------------------------------------------------
+
 
 async def register_mcp_tools_in_registry(
     mcp_registry: MCPRegistry,

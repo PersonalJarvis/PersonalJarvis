@@ -3802,3 +3802,149 @@ result that is rendered by a working fallback. `turn_complete`, provider
 health, and a zero-error run row are never sufficient evidence by themselves.
 Never recover a silent tool turn by replaying the original request; recover
 from the retained result so a side effect can occur at most once.
+
+## BUG-053: A normal realtime barge-in ends the call when cancellation loses a response-boundary race (HIGH, OPEN, 2026-07-14)
+
+**Symptom.** During a healthy desktop realtime session, the user began a
+follow-up about NotebookLM and its MCP server while the preceding answer was
+finishing. Local voice activity detection accepted the interruption, but the
+follow-up never became a recorded turn. The call returned to idle roughly 2.7
+seconds later. The exported transcript consequently ends after the preceding
+two turns and contains none of the follow-up. The user did not issue a hang-up
+command and did not press the overlay close control or the global hang-up
+hotkey.
+
+**Evidence.** The 09:04 session has a complete causal chain in the desktop log
+and `data/sessions.db`:
+
+- At 09:05:43.729, the desktop path logged `Realtime desktop barge-in confirmed
+  by local CPU VAD`.
+- At that same response boundary, the preceding turn was finalized with
+  `reason=barge_in`; no `request_hangup`, voice-pattern match, hotkey event, or
+  client-stop event occurred.
+- At 09:05:44.229, the provider emitted
+  `response_cancel_not_active: Cancellation failed: no active response found`.
+- The event was recorded as a non-recoverable `RealtimeProviderError`, and at
+  09:05:46.444 the session ended with `hangup_reason=error` and two saved turns.
+- There is no third `VoiceTurnStarted` or final `TranscriptionUpdate`. The exact
+  follow-up wording cannot be reconstructed from the session store because the
+  receive pump stopped before the provider delivered its final input
+  transcription.
+
+This rules out the hang-up phrase matcher and both user controls. It also rules
+out the 30-second idle timeout: speech was detected immediately, and the stored
+reason is `error`, not `idle_timeout`.
+
+**Root cause.** Barge-in and provider response completion run concurrently.
+The desktop microphone task saw local output as active and called
+`RealtimeVoiceSession._barge_in()`, which called the OpenAI adapter's
+`interrupt()`. The provider had already crossed its `response.done` boundary,
+so `response.cancel` correctly reported that there was no active response left
+to cancel. That is an idempotent no-op race, not a broken realtime connection.
+
+The adapter currently recognizes only
+`conversation_already_has_active_response` as a recoverable runtime error.
+It therefore labels `response_cancel_not_active` terminal. The session pump
+sets `_failed`, publishes `provider_error`, and exits. The desktop pipeline
+then correctly refuses to replay already committed audio through classic voice
+because doing so could duplicate a tool action; that safety boundary converts
+the upstream misclassification into `hangup_reason=error`. The unsafe-replay
+guard is not the defect. The cancellation error classification is.
+
+**Required correction.** This incident is diagnosed and recorded; the runtime
+repair has not yet been applied. The fix needs all of the following:
+
+1. Treat `response_cancel_not_active` as an expected benign cancellation race
+   (or at minimum a recoverable provider event), never as a terminal session
+   error.
+2. Avoid sending `response.cancel` when the adapter already knows that no
+   response lifecycle is active. The benign error handling remains necessary
+   because the provider can still finish between a local state check and the
+   wire operation.
+3. Preserve and forward the accepted barge-in audio so its final transcript
+   can start the next turn after the stale cancellation acknowledgement.
+4. Add an adapter test for the exact error code and an end-to-end realtime test
+   that interleaves `response.done`, local `barge_in`, the benign cancellation
+   error, and a second input transcript. The session must remain active and
+   persist the second turn without a `provider_error` message.
+
+**Class rule.** Interrupting an operation that completed concurrently is
+successful idempotence, not a fatal error. Every duplex provider can race a
+barge-in edge against its response-complete edge, so "nothing remained to
+cancel" must keep the call alive. A session should end only for an explicit
+user lifecycle action, configured inactivity, shutdown, or a genuinely
+unrecoverable failure; recoverable control-plane races must never masquerade as
+hang-up.
+
+## BUG-054: The realtime dead-air bridge invents a connected-tool result before the tool runs (HIGH, OPEN, 2026-07-14)
+
+**Symptom.** In the same 09:04 session as BUG-053, the user asked Jarvis to list
+their notebooks. Jarvis spoke five plausible-looking notebook names as though
+they came from the user's account. They did not. The background mission had not
+yet called the NotebookLM MCP server, and its eventual grounded outcome was
+that the NotebookLM login had expired and the notebooks could not be listed.
+
+The false list was not merely transient speech. It became the saved assistant
+text for turn two, appeared in the exported transcript, and was subsequently
+journaled as a candidate personal fact about the user. A progress sentence
+therefore crossed three authority boundaries: spoken answer, session history,
+and durable memory.
+
+**Evidence.** Desktop, session, mission, and Wiki-journal timestamps agree:
+
+- At 09:05:24, deterministic delegation dispatched the notebook-list request
+  to a background mission.
+- At 09:05:29.233, the realtime session logged that its delegate bridge had
+  requested an interim line because the action was still running.
+- The bridge response then spoke the five-name list and was finalized at
+  09:05:43.729. The worker's latest evidence at that moment was only a local
+  filename glob and repository text search.
+- The worker did not call the NotebookLM notebook-list tool until
+  09:06:05.216, more than 21 seconds after the invented list was finalized.
+  The call reported expired authentication. A refresh attempt and second list
+  call also failed.
+- The worker produced the honest blocked outcome at 09:06:26 and the mission
+  later ended failed. No successful MCP result ever supported the spoken list.
+- At 09:05:48.259, the memory candidate journal derived a fact asserting that
+  the user owned the five invented notebooks. That entry came from the
+  ungrounded bridge output, not connected-tool evidence.
+
+**Root cause.** `_delegate_bridge_prompt()` tells the live model to produce one
+short progress sentence and explicitly forbids outcomes or answer content.
+`_run_delegate_bridge()` then sets `bridge_delivery_started`, opens the output
+gate, and trusts whatever transcript/audio the model emits. There is no
+deterministic bridge-output validator. The general action-honesty guard detects
+unsupported future-tense promises, but a fabricated factual answer is not a
+promise, so it passes. The bridge test covers a compliant "still checking"
+sentence only; it never makes the provider violate the instruction.
+
+This is a direct recurrence of BUG-047's class rule in a newly exempted path:
+prompt compliance became a correctness boundary again. Starting a real mission
+proves that work exists, but it does not prove any result that the interim model
+chooses to state.
+
+**Required correction.** This incident is diagnosed and recorded; the runtime
+repair has not yet been applied. The bridge must become structurally incapable
+of supplying answer content:
+
+1. Keep bridge audio withheld until the full bridge transcript passes a strict,
+   deterministic progress-only contract. The safest contract is an exact
+   localized status template (rendered in the already resolved turn language),
+   not an open-ended instruction to invent a sentence. A non-conforming bridge
+   is dropped without affecting the running action.
+2. Never publish bridge text as `ResponseGenerated` or ordinary assistant turn
+   content. It is `SpeechSpoken(progress)` only and must be excluded from fact
+   extraction, personal-memory journaling, and answer history.
+3. Keep the real answer gate closed until the delegated result is complete and
+   its trusted payload is being delivered. Mission-start evidence may authorize
+   only a progress status, never a factual result.
+4. Add a hostile-provider regression test whose bridge ignores the prompt and
+   emits a plausible list. Assert zero leaked PCM, no authoritative response or
+   memory candidate, a still-live delegated action, and later delivery of only
+   the grounded tool outcome.
+
+**Class rule.** "Work started" and "result known" are different evidence
+levels. An interim surface may report only the former, and its data must never
+enter an answer or memory channel. Any model-generated bridge that is allowed
+through solely because its prompt said "do not invent a result" is an
+untrusted answer generator, not a progress indicator.

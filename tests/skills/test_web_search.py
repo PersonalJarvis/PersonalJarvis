@@ -10,6 +10,9 @@ import time
 
 import pytest
 
+pytest.importorskip(
+    "skills.web_search", reason="top-level skills package absent (public snapshot / plain checkout)"
+)
 from skills.web_search import (
     SKILL_NAME,
     SKILL_RISK_TIER,
