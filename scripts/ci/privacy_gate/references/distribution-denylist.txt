@@ -261,6 +261,10 @@ docs/realtime-voice/**
 # .codex/agents/*.toml mirror stays public (agent definitions are addressed to
 # every coding agent, like .claude/agents).
 .codex/hooks.json
+# .codex/visualizations/** carries rendered analyses of the maintainer's own
+# VOICE SESSIONS — literal private utterances (v1.0.7 gate catch, BUG class:
+# a parallel session tracked the folder). Session-derived, never product.
+.codex/visualizations/**
 # Root-level Codex dev-handoff task prompts are internal working notes, not
 # user-facing docs.
 codex-*.md
