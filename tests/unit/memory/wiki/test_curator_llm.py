@@ -699,10 +699,7 @@ def test_resolve_explicit_curator_model_wins() -> None:
 def test_resolve_explicit_provider_empty_model_uses_cheap_router_model() -> None:
     """Explicit provider + empty model => that provider's cheap router model.
 
-    grok was removed from the brain-provider catalog and from
-    TIER_DEFAULTS_BY_PROVIDER["router"], so _cheap_model_for("grok") returns
-    None — the resolver propagates that and lets the registry pick its own
-    default. This is the correct degradation path for unknown providers.
+    Grok uses its universal regional default when no curator model is pinned.
     """
 
     from jarvis.memory.wiki.curator_llm import _resolve_provider_and_model
@@ -715,9 +712,7 @@ def test_resolve_explicit_provider_empty_model_uses_cheap_router_model() -> None
     )
     provider, model = _resolve_provider_and_model(cfg.memory.wiki.curator, cfg)
     assert provider == "grok"
-    # grok is no longer in the router-tier defaults or _CHEAP_MODEL_FALLBACK;
-    # the resolver returns None so the registry picks its own default.
-    assert model is None
+    assert model == "grok-4.3"
 
 
 def test_resolve_unknown_provider_returns_none_model() -> None:

@@ -83,7 +83,7 @@ def _spawn_boot_cleanup(coro: Any, *, name: str) -> asyncio.Task[Any]:
 # legacy silent ClaudeDirectWorker fallback. Single source for the routing
 # decision so the UI "runs on Claude" badge can never drift from reality.
 _API_AGENT_SLUGS: frozenset[str] = frozenset(
-    {"openai", "openrouter", "groq", "nvidia"}
+    {"openai", "openrouter", "grok", "nvidia"}
 )
 
 
@@ -389,13 +389,12 @@ def _select_subagent_worker_kind(sub_jarvis_provider: str | None, step_model: st
     # stripped from the worker env (the OAuth login then bills the subscription).
     if sub_jarvis_provider in ANTIGRAVITY_SUBAGENT_SLUGS:
         return "antigravity"
-    # openai / openrouter / groq / nvidia run on their own provider via the in-process
+    # openai / openrouter / grok / nvidia run on their own provider via the in-process
     # ApiAgentWorker (OpenAI-compatible chat API + tool-use loop writing files
     # into the worktree). They used to fall through to "subjarvis" ->
     # ClaudeDirectWorker, so picking them silently ran the mission on Claude
     # (violates the "selected provider must run" mandate). A HARD LOCK like
-    # claude-api/antigravity: no per-step model can divert it. (xAI Grok was
-    # removed as a sub-agent provider 2026-06-22 — TTS-only now.)
+    # claude-api/antigravity: no per-step model can divert it.
     if sub_jarvis_provider in _API_AGENT_SLUGS:
         return "api_agent"
     # Explicitly selecting "gemini" routes to the direct GeminiWorker so the
@@ -598,7 +597,7 @@ def reachable_worker_families() -> list[str]:
         families.append("codex")
     from jarvis.missions.workers.api_agent_worker import supports_api_agent_worker
 
-    for prov in ("claude-api", "gemini", "openrouter", "openai", "groq", "nvidia"):
+    for prov in ("claude-api", "gemini", "openrouter", "openai", "grok", "nvidia"):
         if supports_api_agent_worker(prov) and _api_key_family_viable(prov):
             families.append(prov)
     return families
@@ -675,7 +674,7 @@ def _cross_family_last_resort_worker(
     #    Viability-gated (not existence-gated): see _api_key_family_viable.
     from jarvis.missions.workers.api_agent_worker import supports_api_agent_worker
 
-    for prov in ("claude-api", "gemini", "openrouter", "openai", "groq", "nvidia"):
+    for prov in ("claude-api", "gemini", "openrouter", "openai", "grok", "nvidia"):
         if supports_api_agent_worker(prov) and _api_key_family_viable(prov):
             logger.warning(
                 "Mission worker -> ApiAgentWorker(%r): no Claude CLI / Codex login "
@@ -695,7 +694,7 @@ def _resolve_api_agent_worker(
 ) -> Any:
     """Worker for an ``api_agent``-kind Jarvis-Agent provider.
 
-    OpenAI, OpenRouter, Groq, and NVIDIA run on their own provider through the
+    OpenAI, OpenRouter, Grok, and NVIDIA run on their own provider through the
     in-process :class:`ApiAgentWorker`.
 
     Viability-gated (not existence-gated, ``_api_key_family_viable``): a bare
@@ -1196,7 +1195,7 @@ async def bootstrap_missions(
             )
             return GoogleCliWorker(capability_inventory=capability_inventory)
         if kind == "api_agent":
-            # openai / openrouter / groq / nvidia: run on the selected
+            # openai / openrouter / grok / nvidia: run on the selected
             # provider via the in-process ApiAgentWorker — see
             # `_resolve_api_agent_worker` (viability-gated, cross-family
             # fallback, honest Claude last resort).

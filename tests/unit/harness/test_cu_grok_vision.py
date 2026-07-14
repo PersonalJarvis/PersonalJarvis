@@ -20,7 +20,7 @@ provider to the next vision-capable one, and — as a last resort —
 vision-capable provider IGNORING the transient dead/cooldown flags. The only
 gate anywhere is ``supports_vision`` — never a provider name.
 
-(Grok was the live example in the original forensic; it has since been removed
+(Grok was the live example in the original forensic; it remains
 as a brain provider. These tests therefore pin the generic mechanism across the
 remaining vision-capable providers, which is what AP-21 actually mandates.)
 """

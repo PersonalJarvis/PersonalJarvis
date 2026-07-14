@@ -35,7 +35,7 @@ from jarvis.missions.worker_runtime.provider_map import (
         ("claude-api", "claude-cli"),
         ("openai", "openai"),
         ("openrouter", "openrouter"),
-        ("groq", "groq"),
+        ("grok", "xai"),
     ],
 )
 def test_to_worker_slug_known_providers(jarvis_slug: str, worker_slug: str) -> None:
@@ -43,12 +43,10 @@ def test_to_worker_slug_known_providers(jarvis_slug: str, worker_slug: str) -> N
     assert to_worker_slug(jarvis_slug) == worker_slug
 
 
-def test_to_worker_slug_grok_removed_raises() -> None:
-    """Grok was removed as a brain/worker provider — its mapping is gone, so
-    the slug no longer resolves (only the grok-voice TTS + credential remain,
-    which never route through this provider map)."""
+def test_to_worker_slug_groq_brain_raises() -> None:
+    """Groq is STT-only and has no Brain or Jarvis-Agent mapping."""
     with pytest.raises(NoWorkerSlugMappingError):
-        to_worker_slug("grok")
+        to_worker_slug("groq")
 
 
 def test_to_worker_slug_unknown_raises() -> None:
@@ -81,14 +79,11 @@ def test_to_worker_slug_case_sensitive() -> None:
         ("claude-cli", "claude-api"),
         ("openai", "openai"),
         ("openrouter", "openrouter"),
+        ("xai", "grok"),
     ],
 )
 def test_to_jarvis_from_worker_slug_round_trip(worker_slug: str, jarvis_slug: str) -> None:
     assert to_jarvis_from_worker_slug(worker_slug) == jarvis_slug
-
-
-def test_to_jarvis_from_worker_slug_groq_round_trip() -> None:
-    assert to_jarvis_from_worker_slug("groq") == "groq"
 
 
 def test_to_jarvis_from_worker_slug_unknown_raises() -> None:
@@ -112,7 +107,7 @@ def test_round_trip_jarvis_worker_jarvis() -> None:
         ("claude-api", ("ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY")),
         ("openai", ("OPENAI_API_KEY",)),
         ("openrouter", ("OPENROUTER_API_KEY",)),
-        ("groq", ("GROQ_API_KEY",)),
+        ("grok", ("XAI_API_KEY", "GROK_API_KEY")),
     ],
 )
 def test_env_vars_for_known_providers(
@@ -137,7 +132,7 @@ def test_env_vars_primary_always_first() -> None:
 
 
 def test_validate_configured_providers_all_mapped_returns_empty() -> None:
-    configured = ["gemini", "claude-api", "openai", "openrouter", "groq"]
+    configured = ["gemini", "claude-api", "openai", "openrouter", "grok"]
     assert validate_configured_providers(configured) == []
 
 
@@ -195,18 +190,16 @@ def test_provider_mapping_is_frozen() -> None:
 def test_ad6_table_is_complete() -> None:
     """AD-6 table drift guard — the set of subagent-selectable brain providers.
 
-    Grok was removed as a brain/worker provider, so its ``grok->xai`` row is
-    gone from the table (only grok-voice TTS + the credential remain, neither of
-    which routes through this map). ``nvidia`` (NVIDIA NIM) was added: an
+    Grok uses the documented ``grok->xai`` row. ``nvidia`` (NVIDIA NIM) is an
     OpenAI-compatible API brain that, like ``openai``/``openrouter``, runs on the
     in-process ApiAgentWorker (not the OpenClaw CLI harness); its row exists so it
-    is a selectable subagent in the API-Keys "Subagents" tab."""
+    is a selectable Jarvis-Agent in the API-Keys view."""
     expected_jarvis_slugs = {
         "gemini",
         "claude-api",
         "openai",
         "openrouter",
-        "groq",
+        "grok",
         "nvidia",
     }
     actual = {m.jarvis for m in MAPPINGS}

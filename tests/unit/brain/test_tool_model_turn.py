@@ -42,26 +42,26 @@ def _stub_ready(mgr: BrainManager, ready: set[str]) -> None:
 
 _CHAIN: list[tuple[str, str | None]] = [
     ("openrouter", "fast-model"),
-    ("groq", None),
+    ("grok", "grok-4.3"),
     ("gemini", "gemini-3.5-flash"),
 ]
 
 
 def test_hoist_puts_tool_model_first_and_filters_exact_duplicate():
     mgr = _manager("gemini")
-    _stub_ready(mgr, {"gemini", "openrouter", "groq"})
+    _stub_ready(mgr, {"gemini", "openrouter", "grok"})
     mgr._config.brain.providers["gemini"].model = "gemini-3.5-flash"
     mgr._config.brain.providers["gemini"].tool_model = None
 
     hoisted = mgr._hoist_tool_model(list(_CHAIN))
 
     assert hoisted[0] == ("gemini", "gemini-3.5-flash")
-    assert hoisted[1:] == [("openrouter", "fast-model"), ("groq", None)]
+    assert hoisted[1:] == [("openrouter", "fast-model"), ("grok", "grok-4.3")]
 
 
 def test_hoist_deduplicates_same_provider_family():
     mgr = _manager("gemini")
-    _stub_ready(mgr, {"gemini", "openrouter", "groq"})
+    _stub_ready(mgr, {"gemini", "openrouter", "grok"})
     mgr._config.brain.providers["gemini"].tool_model = "gemini-3.1-pro-preview"
 
     hoisted = mgr._hoist_tool_model(list(_CHAIN))
@@ -72,13 +72,13 @@ def test_hoist_deduplicates_same_provider_family():
 
 def test_hoist_auto_selection_preserves_ready_cross_family_chain():
     mgr = _manager(None)
-    _stub_ready(mgr, {"gemini", "openrouter", "groq"})
+    _stub_ready(mgr, {"gemini", "openrouter", "grok"})
     assert mgr._hoist_tool_model(list(_CHAIN)) == _CHAIN
 
 
 def test_hoist_auto_selection_honors_a_per_provider_tool_model_pin():
     mgr = _manager(None)
-    _stub_ready(mgr, {"gemini", "openrouter", "groq"})
+    _stub_ready(mgr, {"gemini", "openrouter", "grok"})
     mgr._config.brain.providers["openrouter"].tool_model = "tool-pinned"
 
     assert mgr._hoist_tool_model(list(_CHAIN))[0] == (
@@ -89,22 +89,22 @@ def test_hoist_auto_selection_honors_a_per_provider_tool_model_pin():
 
 def test_hoist_skips_a_dead_tool_provider_and_crosses_family():
     mgr = _manager("gemini")
-    _stub_ready(mgr, {"gemini", "openrouter", "groq"})
+    _stub_ready(mgr, {"gemini", "openrouter", "grok"})
     mgr._dead_providers.add("gemini")
 
     assert mgr._hoist_tool_model(list(_CHAIN)) == [
         ("openrouter", "fast-model"),
-        ("groq", None),
+        ("grok", "grok-4.3"),
     ]
 
 
 def test_hoist_reads_the_canonical_pick_fresh_per_call():
     mgr = _manager("gemini")
-    _stub_ready(mgr, {"gemini", "openrouter", "groq"})
+    _stub_ready(mgr, {"gemini", "openrouter", "grok"})
     assert mgr._hoist_tool_model(list(_CHAIN))[0][0] == "gemini"
 
-    mgr._config.brain.tool_model = BrainTierConfig(provider="groq")
-    assert mgr._hoist_tool_model(list(_CHAIN))[0][0] == "groq"
+    mgr._config.brain.tool_model = BrainTierConfig(provider="grok")
+    assert mgr._hoist_tool_model(list(_CHAIN))[0][0] == "grok"
 
 
 def test_candidate_status_rejects_missing_credential(monkeypatch):

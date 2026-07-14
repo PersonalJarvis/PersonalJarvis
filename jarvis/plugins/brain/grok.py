@@ -1,11 +1,4 @@
-"""GroqCloud brain over its OpenAI-compatible Chat Completions API.
-
-The same ``groq_api_key`` credential already used by the ``groq-api`` STT
-provider can also power chat and Jarvis-Agent tool loops.  The brain keeps the
-short ``groq`` slug so it cannot be confused with the STT provider identity.
-No Groq-specific SDK is required: Groq documents the OpenAI client as a
-supported integration when pointed at its vendor base URL.
-"""
+"""xAI Grok brain over its OpenAI-compatible API."""
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
@@ -16,23 +9,17 @@ from jarvis.core.protocols import BrainDelta, BrainRequest
 
 from ._openai_base import CLIENT_TIMEOUT, stream_complete
 
-BASE_URL = "https://api.groq.com/openai/v1"
-
-# Groq recommends GPT-OSS 120B as a replacement for the retiring Llama 3.3 70B
-# alias.  It supports local function calling and a 131,072-token context, so the
-# same safe default works for chat and Jarvis-Agent missions.
-DEFAULT_MODEL = "openai/gpt-oss-120b"
+BASE_URL = "https://api.x.ai/v1"
+DEFAULT_MODEL = "grok-4.3"
 
 
-class GroqBrain:
-    """Fast hosted chat brain backed by the user's Groq API key."""
+class GrokBrain:
+    """Tool-capable Grok brain backed by the user's xAI API key."""
 
-    name: str = "groq"
-    context_window: int = 131_072
+    name: str = "grok"
+    context_window: int = 1_000_000
     supports_tools: bool = True
-    # The default model is text-only.  A future model-capability catalog can
-    # promote a selected vision model without pretending every Groq model can
-    # consume screenshots today.
+    # The OpenAI-compatible image path has not been verified end to end yet.
     supports_vision: bool = False
 
     def __init__(self, model: str | None = None) -> None:
@@ -40,17 +27,17 @@ class GroqBrain:
         self._client: Any = None
 
     def can_call_tools(self) -> bool:
-        """Groq-hosted chat models support local function calling."""
         return self.supports_tools
 
     def _ensure_client(self) -> Any:
         if self._client is None:
             ep = cfg.resolve_provider_endpoint(
-                "groq", vendor_default_base_url=BASE_URL
+                "grok", vendor_default_base_url=BASE_URL
             )
             if not ep.credential:
                 raise RuntimeError(
-                    "No Groq API key found (groq_api_key / GROQ_API_KEY)."
+                    "No xAI API key found "
+                    "(grok_api_key / xai_api_key / GROK_API_KEY / XAI_API_KEY)."
                 )
             from openai import AsyncOpenAI
 
@@ -72,6 +59,6 @@ class GroqBrain:
             yield delta
 
     def estimate_cost(self, req: BrainRequest) -> float:
-        """Return a conservative estimate; Groq pricing varies by model."""
+        """Estimate Grok 4.3 cost from xAI's published token pricing."""
         in_tokens = sum(len(str(m.content)) for m in req.messages) // 4
-        return (in_tokens * 1 + req.max_tokens * 1) / 1_000_000
+        return (in_tokens * 1.25 + req.max_tokens * 2.50) / 1_000_000

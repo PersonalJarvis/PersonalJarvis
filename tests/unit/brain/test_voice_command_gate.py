@@ -23,6 +23,7 @@ from jarvis.brain.voice_command_gate import match_voice_command
         ("nutze openai", "openai"),
         ("wechsle zu claude", "claude"),
         ("use openrouter", "openrouter"),
+        ("switch to grok", "grok"),
         # NEW: natural phrasings with a provider-noun filler
         ("switch the brain provider to gemini", "gemini"),
         ("wechsel den Brain-Provider auf gemini", "gemini"),  # i18n-allow: German speech-input test vocabulary
@@ -45,11 +46,6 @@ def test_provider_switch_matches(text: str, target: str) -> None:
         "ich gehe auf meinem Weg",
         "wie spät ist es",  # i18n-allow: German speech-input test vocabulary
         "erzähl mir was über gemini",  # a mention, not a switch command (i18n-allow)
-        # Grok was removed as a brain provider (only grok-voice TTS + the
-        # grok_api_key credential remain), so it is no longer a recognized
-        # brain/provider switch target — "switch to grok" must NOT match.
-        "switch to grok",
-        "wechsle den Anbieter zu grok",
     ],
 )
 def test_harmless_does_not_match_provider(text: str) -> None:

@@ -164,7 +164,7 @@ PROVIDER_ALIASES = {
     "flash": "gemini",
     "pro": "gemini",
     "openrouter": "openrouter",
-    "groq": "groq",
+    "grok": "grok",
     "nvidia": "nvidia",
     "nim": "nvidia",
     "nemotron": "nvidia",
@@ -179,7 +179,7 @@ _MAIN_BRAIN_FALLBACK_PROVIDER_ORDER: tuple[str, ...] = (
     "claude-api",
     "openai",
     "openrouter",
-    "groq",
+    "grok",
     "nvidia",
 )
 
@@ -199,7 +199,7 @@ _PROVIDER_DISPLAY_NAMES: dict[str, str] = {
     "codex": "OpenAI Codex (GPT-5.5)",
     "openai-codex": "OpenAI Codex (GPT-5.5)",
     "openrouter": "OpenRouter",
-    "groq": "GroqCloud",
+    "grok": "xAI Grok",
     "nvidia": "NVIDIA NIM",
     "gemini": "Google Gemini",
     "antigravity": "Google Antigravity (Gemini)",
@@ -253,7 +253,8 @@ _SECRET_KEY_TO_BRAIN: dict[str, str] = {
     "anthropic_api_key": "claude-api",
     "openai_api_key": "openai",
     "openrouter_api_key": "openrouter",
-    "groq_api_key": "groq",
+    "grok_api_key": "grok",
+    "xai_api_key": "grok",
     "nvidia_api_key": "nvidia",
 }
 
@@ -312,8 +313,8 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
         # general-purpose model degrades with a clean 404 if ever retired, instead
         # of silently billing the most expensive model in the catalog.
         "openrouter": "nvidia/nemotron-3-ultra-550b-a55b:free",
-        # Groq's current 131k-context production model with local tool use.
-        "groq": "openai/gpt-oss-120b",
+        # Grok 4.3 is available across regions and supports local tool use.
+        "grok": "grok-4.3",
         # NVIDIA NIM router pick: a widely-hosted, tool-capable, low-latency model
         # (the reasoning Nemotron flagships are the deep tier). The user's own pick
         # from the live catalog wins over this.
@@ -334,7 +335,7 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
         # Gateway: never a paid Anthropic default for a model-less OpenRouter
         # user (§3/AP-22) — see the router-tier note above.
         "openrouter": "nvidia/nemotron-3-ultra-550b-a55b:free",
-        "groq": "openai/gpt-oss-120b",
+        "grok": "grok-4.3",
         # NVIDIA NIM deep pick: NVIDIA's own reasoning flagship.
         "nvidia": "nvidia/llama-3.1-nemotron-ultra-253b-v1",
         "mistral": "mistral-large-3",
@@ -1546,13 +1547,13 @@ _SUBAGENT_VOICE_TO_CANONICAL: dict[str, str] = {
     "claude": "claude-api", "anthropic": "claude-api",
     "gemini": "gemini",
     "openrouter": "openrouter",
-    "groq": "groq",
+    "grok": "grok",
     "nvidia": "nvidia", "nim": "nvidia", "nemotron": "nvidia",
     "antigravity": "antigravity",
 }
 _SUBAGENT_DISPLAY: dict[str, str] = {
     "openai": "OpenAI", "openai-codex": "Codex", "claude-api": "Claude",
-    "gemini": "Gemini", "openrouter": "OpenRouter", "groq": "GroqCloud",
+    "gemini": "Gemini", "openrouter": "OpenRouter", "grok": "xAI Grok",
     "nvidia": "NVIDIA NIM",
     "antigravity": "Antigravity",
 }
@@ -2436,7 +2437,7 @@ class BrainManager:
             "claude-api",
             "openai",
             "openrouter",
-            "groq",
+            "grok",
             "nvidia",
             *self._registry.available(),
         ]
@@ -6660,7 +6661,7 @@ class BrainManager:
         db = self._config.brain.deep_brain
         if db:
             order.append(db)
-        order += ["gemini", "claude-api", "openai", "openrouter", "groq", "nvidia"]
+        order += ["gemini", "claude-api", "openai", "openrouter", "grok", "nvidia"]
         seen: set[str] = set()
         for name in order:
             if name in seen or name == self._active_name or name not in available:
@@ -6813,7 +6814,7 @@ class BrainManager:
             "gemini",               # Google AI Studio
             "openrouter",           # universal gateway
             "openai",
-            "groq",                 # GroqCloud (shared key with Groq STT)
+            "grok",                 # xAI Grok
             "nvidia",               # NVIDIA NIM (free dev tier)
         ]
         for name in cross_order:
@@ -9032,7 +9033,7 @@ _PROVIDER_SETUP_HINTS: dict[str, str] = {
     "claude-api": "ANTHROPIC_API_KEY setzen",
     "openai": "OPENAI_API_KEY setzen",
     "openrouter": "OPENROUTER_API_KEY setzen",
-    "groq": "Set GROQ_API_KEY (key from console.groq.com)",
+    "grok": "Set XAI_API_KEY (key from console.x.ai)",
     "nvidia": "Set NVIDIA_API_KEY (nvapi- key from build.nvidia.com)",
     "ollama-local": "Ollama-Server starten (localhost:11434)",
     "ollama-cloud": "Ollama-Cloud-Token setzen",
