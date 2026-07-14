@@ -91,6 +91,7 @@ AUTH_PROVIDER_ALIASES: dict[str, str] = {
     "gemini-live": "gemini",
     "grok": "grok",
     "grok-voice": "grok",
+    "grok-realtime": "grok",
     "openai-realtime": "openai",
 }
 

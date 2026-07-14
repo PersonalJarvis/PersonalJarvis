@@ -403,8 +403,8 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
     # a key-free local faster-whisper *fallback* (_build_local_fallback, AP-22)
     # as an invisible resilience floor for a user with no cloud STT key.
     # ── Realtime ──────────────────────────────────────────────────────────
-    # Realtime voice spans independently selectable OpenAI Realtime and Gemini
-    # Live plugins behind the provider-neutral RealtimeProvider contract.
+    # Realtime voice spans independently selectable OpenAI, Gemini, and xAI
+    # plugins behind the provider-neutral RealtimeProvider contract.
     ProviderSpec(
         id="openai-realtime",
         label="OpenAI Realtime",
@@ -430,6 +430,20 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "Google AI Studio key (AIza/AQ.), shared with the Gemini brain, to "
             "power Google's Live realtime voice in the browser and desktop runtime. "
             "This adapter currently uses API-key authentication."
+        ),
+    ),
+    ProviderSpec(
+        id="grok-realtime",
+        label="xAI Grok Realtime",
+        tier="realtime",
+        auth_mode="api_key",
+        secret_keys=("grok_api_key",),
+        dashboard_url="https://console.x.ai/",
+        signup_url="https://grok.com/",
+        credential_help=(
+            "Uses your xAI API key (starts with xai-), shared with the Grok "
+            "brain and xAI Text to Speech, to power Grok's full-duplex Voice "
+            "Agent API. API usage is billed separately through the xAI Console."
         ),
     ),
 )
