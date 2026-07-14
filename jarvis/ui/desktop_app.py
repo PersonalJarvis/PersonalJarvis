@@ -1918,6 +1918,24 @@ class DesktopApp:
         signal. Runtime surfaces keep their immediate behavior. A non-persistent
         bar / the mascot still starts withdrawn and pops on a real session.
         """
+        if sys.platform == "darwin":
+            # This runs on the jarvis-backend worker thread; Aqua-Tk (like
+            # AppKit) is main-thread-only on macOS, so a bar/mascot Tk root
+            # here aborts the WHOLE process natively — the second macOS
+            # first-boot crash (BUG-057; the first was the BUG-056 tray).
+            # NullOverlay keeps the bridge wiring intact; the desktop window
+            # + Dock icon remain the macOS surface until the overlay is
+            # hosted in its own process.
+            from loguru import logger
+
+            from jarvis.ui.jarvisbar import NullOverlay
+
+            logger.info(
+                "On-screen overlay disabled on macOS (style={}): Tk windows "
+                "are main-thread-only there — using the no-op surface.",
+                style,
+            )
+            return NullOverlay()
         if style == "none":
             from jarvis.ui.jarvisbar import NullOverlay
 

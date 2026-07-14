@@ -177,7 +177,9 @@ class TkColorKeyOverlay:
 def make_overlay_surface(*, capabilities: Any = None) -> OverlaySurface:
     """Select the orb surface for this host (AD-11). **Never raises** (AD-6).
 
-    * ``win32`` / ``darwin`` with ``capabilities.has_overlay`` → :class:`TkColorKeyOverlay`.
+    * ``win32`` with ``capabilities.has_overlay`` → :class:`TkColorKeyOverlay`.
+    * ``darwin`` → tray floor (Aqua-Tk is main-thread-only; a worker-thread
+      Tk root aborts the process natively — BUG-057).
     * ``linux`` with a display and not Wayland → :class:`LinuxBestEffortOverlay`
       (which itself degrades to the tray when the color-key probe fails).
     * everything else (``not has_overlay``, no display, Wayland, headless) →
@@ -197,7 +199,11 @@ def make_overlay_surface(*, capabilities: Any = None) -> OverlaySurface:
         # re-detect when the snapshot somehow lacks a platform field.
         plat = getattr(caps, "platform", None) or detect_platform()
 
-        if plat in ("win32", "darwin") and getattr(caps, "has_overlay", False):
+        # darwin deliberately falls through to the tray floor: this factory's
+        # surfaces run their Tk mainloop on a worker thread, and Aqua-Tk (like
+        # AppKit) is main-thread-only on macOS — a Tk root there aborts the
+        # process natively (BUG-057, same class as the BUG-056 tray).
+        if plat == "win32" and getattr(caps, "has_overlay", False):
             return TkColorKeyOverlay()
 
         if plat == "linux":

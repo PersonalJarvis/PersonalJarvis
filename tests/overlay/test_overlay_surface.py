@@ -129,9 +129,15 @@ def test_factory_selects_tk_on_windows():
     assert isinstance(surface, OverlaySurface)
 
 
-def test_factory_selects_tk_on_macos():
+def test_factory_selects_tray_floor_on_macos():
+    # NOT TkColorKeyOverlay: the factory's surfaces run Tk on a worker
+    # thread, and Aqua-Tk is main-thread-only on macOS — a Tk root there
+    # aborts the process natively (BUG-057). The tray floor is the degrade.
+    from jarvis.overlay.tray_surface import TrayOnlySurface
+
     surface = make_overlay_surface(capabilities=fake_macos_capabilities())
-    assert isinstance(surface, TkColorKeyOverlay)
+    assert isinstance(surface, TrayOnlySurface)
+    assert not isinstance(surface, TkColorKeyOverlay)
 
 
 def test_factory_selects_linux_best_effort_on_x11():

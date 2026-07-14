@@ -470,6 +470,19 @@ class JarvisBarOverlay:
         return (not self._persistent) or getattr(self, "_startup_gated", False)
 
     def start_in_thread(self, timeout: float = 3.0) -> None:
+        if sys.platform == "darwin":
+            # Aqua-Tk (like AppKit) is main-thread-only on macOS: creating the
+            # Tk root on this worker thread aborts the WHOLE process with a
+            # native, uncatchable assertion — the "Python quit unexpectedly"
+            # first-boot crash (BUG-057, same class as the BUG-056 tray). The
+            # desktop boot substitutes a NullOverlay before ever reaching
+            # this; the gate is the backstop for any other caller.
+            log.info(
+                "JarvisBar not started: macOS allows Tk windows on the main "
+                "thread only — running without the on-screen bar."
+            )
+            return
+
         def _run() -> None:
             try:
                 self.start()

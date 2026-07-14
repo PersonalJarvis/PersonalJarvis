@@ -3719,14 +3719,12 @@ user-audible dead air.
 
 **Fix.** A dispatch-time dead-air bridge in the deterministic delegate path
 (`jarvis/realtime/session.py`). When the delegated action is still pending
-`_DELEGATE_BRIDGE_DELAY_S` (2 s) after dispatch, `_run_delegate_bridge`
-injects `_delegate_bridge_prompt` into the LIVE model — one voice per call
-(BUG-049) — ordering exactly one short interim sentence in the conversation
-language, with outcome claims, answer content, and function calls forbidden
-(the line is contextual, never a canned pool). The withhold gate opens only
-for this instruction-bounded response (`bridge_delivery_started`), and the
-held `turn_complete` path flushes the bridge audio tail instead of draining
-it. Necessity-gated: a result faster than the delay (`result_ready`) skips
+`_DELEGATE_BRIDGE_DELAY_S` (now 6 s) after dispatch, `_run_delegate_bridge`
+asks the LIVE model to voice one fixed localized progress template — one voice
+per call (BUG-049). The complete bridge transcript and audio stay withheld
+until the transcript deterministically matches that exact template. A ready
+trusted result preempts an active bridge so it never waits behind interim
+speech. Necessity-gated: a result faster than the delay (`result_ready`) skips
 the bridge entirely. The bridge task is deliberately NOT a tracked delegate
 task, so a sleeping timer can never hold a turn open, defer a VAD edge, or
 refuse an announcement. Secondary lever (still open): the ~10 s OpenRouter
@@ -3740,10 +3738,10 @@ the result is still delivered live, not as a late follow-up) and
 chatter-free).
 
 **Class rule.** An interim ack that waits for the completion of the decision
-it is meant to cover is not an ack. The bridge over dead air needs a latency
-budget bounded by user patience (~2–3 s), independent of any model round —
-and it must be a bystander: a helper task that merely waits must never feed
-the liveness signals (turn hold, endpoint protection) that real work feeds.
+it is meant to cover is not an ack. A realtime bridge must be late enough not
+to serialize an ordinary result behind a second provider response, and it must
+be a bystander: a helper task that merely waits must never feed the liveness
+signals (turn hold, endpoint protection) that real work feeds.
 
 ## BUG-052: Realtime records an empty response as success and returns to listening (HIGH, 2026-07-14)
 
@@ -3883,7 +3881,7 @@ user lifecycle action, configured inactivity, shutdown, or a genuinely
 unrecoverable failure; recoverable control-plane races must never masquerade as
 hang-up.
 
-## BUG-054: The realtime dead-air bridge invents a connected-tool result before the tool runs (HIGH, OPEN, 2026-07-14)
+## BUG-054: The realtime dead-air bridge invents a connected-tool result before the tool runs (HIGH, FIXED 2026-07-14)
 
 **Symptom.** In the same 09:04 session as BUG-053, the user asked Jarvis to list
 their notebooks. Jarvis spoke five plausible-looking notebook names as though
@@ -3930,25 +3928,26 @@ prompt compliance became a correctness boundary again. Starting a real mission
 proves that work exists, but it does not prove any result that the interim model
 chooses to state.
 
-**Required correction.** This incident is diagnosed and recorded; the runtime
-repair has not yet been applied. The bridge must become structurally incapable
-of supplying answer content:
+**Fix.** The bridge is now structurally incapable of supplying answer content:
 
-1. Keep bridge audio withheld until the full bridge transcript passes a strict,
-   deterministic progress-only contract. The safest contract is an exact
-   localized status template (rendered in the already resolved turn language),
-   not an open-ended instruction to invent a sentence. A non-conforming bridge
-   is dropped without affecting the running action.
+1. Bridge audio stays withheld until the full transcript exactly matches a
+   fixed localized status template rendered in the resolved turn language. A
+   non-conforming bridge is dropped without affecting the running action.
 2. Never publish bridge text as `ResponseGenerated` or ordinary assistant turn
    content. It is `SpeechSpoken(progress)` only and must be excluded from fact
    extraction, personal-memory journaling, and answer history.
 3. Keep the real answer gate closed until the delegated result is complete and
    its trusted payload is being delivered. Mission-start evidence may authorize
    only a progress status, never a factual result.
-4. Add a hostile-provider regression test whose bridge ignores the prompt and
-   emits a plausible list. Assert zero leaked PCM, no authoritative response or
-   memory candidate, a still-live delegated action, and later delivery of only
-   the grounded tool outcome.
+4. A hostile-provider regression test makes the bridge ignore its prompt and
+   emit a plausible list. It asserts zero leaked PCM, no authoritative response,
+   a still-live delegated action, and later delivery of only the grounded tool
+   outcome. A separate regression proves that a ready result interrupts an
+   active bridge instead of queueing behind it.
+
+The bridge threshold moved from 2 s to 6 s for realtime only. The classic
+speech pipeline keeps its existing grounded tool acknowledgement; realtime
+delegate calls explicitly suppress that duplicate manager-level event.
 
 **Class rule.** "Work started" and "result known" are different evidence
 levels. An interim surface may report only the former, and its data must never
@@ -4142,3 +4141,45 @@ Guards: `tests/unit/realtime/test_openai_realtime.py` (recoverable + skip),
 `tests/unit/realtime/test_scrub_gate.py` (detector diagnosis),
 `tests/unit/realtime/test_session.py` (withheld recording),
 `tests/unit/sessions/test_spoken_kind_parity.py`.
+
+## BUG-057: Second macOS first-boot abort — JarvisBar/Orb Tk root created off the main thread (HIGH, FIXED 2026-07-14)
+
+**Symptom.** After the BUG-056 tray fix shipped, a fresh macOS install still
+died at first launch with the identical "Python quit unexpectedly" dialog.
+The dialog is the generic macOS crash reporter — same look, DIFFERENT crash
+site: with the tray gated off, boot now reached the on-screen overlay.
+
+**Root cause.** The desktop backend runs on the ``jarvis-backend`` worker
+thread; its boot task builds the default overlay surface via
+``DesktopApp._build_overlay_surface`` → ``JarvisBarOverlay.start_in_thread()``
+which creates the Tk root + mainloop on the daemon thread
+``jarvisbar-tk-mainloop``. Aqua-Tk is AppKit-backed and main-thread-only on
+macOS: a worker-thread Tk root aborts the whole process with a native,
+uncatchable assertion — exactly the BUG-056 class, one layer further into
+boot. Same defect in three siblings: the mascot ``OrbOverlay`` (thread
+``orb-tk-mainloop``), the opt-in ``TkVirtualCursor`` (thread
+``virtual-cursor``), and ``make_overlay_surface`` which handed darwin a
+``TkColorKeyOverlay``. A full boot-path audit confirmed the remaining AppKit
+touchpoints are safe (Dock icon + pywebview window run on the main thread).
+
+**Fix (2026-07-14).** darwin gates at every off-main-thread Tk creator, all
+degrading to logged English no-ops (AD-6/AD-11):
+``_build_overlay_surface`` returns the existing ``NullOverlay`` (bridge
+wiring stays intact), ``JarvisBarOverlay.start_in_thread`` /
+``OrbOverlay.start_in_thread`` / ``TkVirtualCursor.start`` no-op as
+backstops for any other caller, and ``make_overlay_surface`` sends darwin to
+the tray floor. macOS keeps the desktop window + Dock icon. Guards:
+``tests/unit/ui/test_macos_ui_main_thread_gates.py`` (incl. an AD-7
+windows-still-spawns test),
+``tests/overlay/test_overlay_surface.py::test_factory_selects_tray_floor_on_macos``.
+
+**Follow-up (needs real Mac hardware).** A visible macOS bar/orb needs a
+main-thread or own-process host — same follow-up as the BUG-056 menu-bar
+icon, tracked in the cross-platform FIX-TRACKER.
+
+**Class rule.** BUG-056 generalizes: on macOS EVERY UI toolkit in the
+process (AppKit, Aqua-Tk, pystray) is main-thread-only, and the "Python
+quit unexpectedly" dialog looks identical for every native abort — fixing
+one crash site just reveals the next one down the boot path. Audit the
+WHOLE boot path for off-main-thread UI creation at once (as done here),
+never one dialog at a time.
