@@ -73,3 +73,23 @@ and every fix here were proven at the seam level on a Windows host via platform
 fakes / forced `detect_platform`; none was run on real macOS/Linux hardware. Nothing
 is pushed (local `main` only). Out of scope for this loop: the B2 browser-audio
 bridge (a feature, not a fix) and the real-hardware sign-off.
+
+## POST-LOOP ADDENDUM (2026-07-14) — first real-Mac boot falsified M5's macOS assumption
+
+The first fresh-install boot on real Mac hardware (the live sign-off owed above)
+aborted natively: pystray's darwin backend creates an `NSStatusItem` in
+`Icon.__init__`, and AppKit is main-thread-only — from the `jarvis-tray` worker
+thread that is an uncatchable C-level abort ("Python quit unexpectedly"), not a
+Python exception, so M5's `_run` try/except never helps. M5's line
+"Windows/macOS `display_present()`=True, so the tray still starts normally" was
+wrong for macOS: the tray *started* and killed the whole app. Full forensics:
+`docs/BUGS.md` **BUG-056**.
+
+- **Fix (committed):** `JarvisTray.start()` now gates on `sys.platform ==
+  "darwin"` → logged English no-op (AD-6/AD-11); desktop window + Dock icon
+  remain the macOS surface. Guard:
+  `tests/unit/ui/test_tray.py::test_tray_start_is_noop_on_macos`.
+- [ ] **Follow-up (needs real Mac hardware):** real menu-bar icon via
+  main-thread hosting — construct the icon on the main thread and
+  `run_detached(darwin_nsapplication=<pywebview's NSApplication>)`; verify
+  against a live pywebview run loop before lifting the gate.

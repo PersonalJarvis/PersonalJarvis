@@ -26,8 +26,25 @@ def test_tray_start_is_noop_without_display(monkeypatch, caplog) -> None:
     assert "tray not started" in caplog.text.lower()
 
 
+def test_tray_start_is_noop_on_macos(monkeypatch, caplog) -> None:
+    # AppKit allows UI objects (the NSStatusItem behind pystray's darwin
+    # backend) on the main thread ONLY; created from the tray worker thread
+    # the process dies with a native, uncatchable AppKit assertion — the
+    # first real-Mac boot aborted exactly there ("Python quit unexpectedly").
+    # start() must degrade to a logged no-op instead of spawning the thread.
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.setattr(tray_mod, "display_present", lambda: True, raising=False)
+    monkeypatch.setattr(JarvisTray, "_run", lambda self: None)
+    t = JarvisTray()
+    with caplog.at_level(logging.INFO):
+        t.start()
+    assert t._thread is None  # gated: no tray thread spawned
+    assert "tray not started" in caplog.text.lower()
+
+
 def test_tray_start_spawns_thread_with_display(monkeypatch) -> None:
-    # AD-7: with a display present (Windows/macOS/Linux-X11) the tray still starts.
+    # AD-7: with a display present (Windows/Linux-X11) the tray still starts.
+    # (macOS is gated separately — see test_tray_start_is_noop_on_macos.)
     monkeypatch.setattr(tray_mod, "display_present", lambda: True, raising=False)
     ran: list[bool] = []
     monkeypatch.setattr(JarvisTray, "_run", lambda self: ran.append(True))
