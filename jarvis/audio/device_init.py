@@ -48,20 +48,28 @@ def _get_sd() -> Any | None:
     return sd
 
 
+# Serializes every PortAudio teardown/re-init sequence. Two threads
+# interleaving _terminate/_initialize (boot prefetch vs. the pipeline's
+# Phase-A stabilize) is a native fault on macOS CoreAudio's HAL — the
+# process dies below Python ("Python quit unexpectedly", BUG-058).
+_REINIT_LOCK = threading.Lock()
+
+
 def _refresh_device_count(sd: Any) -> int:
     """Force PortAudio to re-enumerate and return the count of real I/O
     devices. Re-init is the only way to escape a frozen partial table inside
     a single process; a bare ``query_devices`` returns the cached list."""
     # _terminate before the first _initialize is harmless; both can fail
     # benignly on odd PortAudio states — re-enumeration is best-effort.
-    with contextlib.suppress(Exception):
-        sd._terminate()
-    with contextlib.suppress(Exception):
-        sd._initialize()
-    try:
-        devices = sd.query_devices()
-    except Exception:  # noqa: BLE001 — PortAudio can throw mid-scan
-        return 0
+    with _REINIT_LOCK:
+        with contextlib.suppress(Exception):
+            sd._terminate()
+        with contextlib.suppress(Exception):
+            sd._initialize()
+        try:
+            devices = sd.query_devices()
+        except Exception:  # noqa: BLE001 — PortAudio can throw mid-scan
+            return 0
     return sum(
         1
         for d in devices
@@ -92,6 +100,33 @@ def wait_for_stable_audio_devices(
         Diagnostics dict: ``available`` (sounddevice present), ``device_count``,
         ``stable`` (settled vs. timed out), ``polls``, ``reinits``, ``waited_s``.
     """
+    # Single-flight (BUG-058): if the boot prefetch is still polling, JOIN it
+    # instead of racing it with a second concurrent poll loop — concurrent
+    # PortAudio re-init is a native CoreAudio fault on macOS. On a join
+    # timeout we fall through to our own poll; _REINIT_LOCK still serializes
+    # the dangerous sequence itself.
+    if _PREFETCH_STARTED and not _PREFETCH_EVENT.is_set():
+        joined = _PREFETCH_EVENT.wait(timeout=max_wait_s)
+        if joined and _PREFETCH_RESULT is not None:
+            return _PREFETCH_RESULT
+    return _poll_until_stable(
+        max_wait_s=max_wait_s,
+        stable_window_s=stable_window_s,
+        poll_interval_s=poll_interval_s,
+        monotonic=monotonic,
+        sleep=sleep,
+    )
+
+
+def _poll_until_stable(
+    *,
+    max_wait_s: float = 8.0,
+    stable_window_s: float = 1.5,
+    poll_interval_s: float = 0.5,
+    monotonic: Callable[[], float] = time.monotonic,
+    sleep: Callable[[float], None] = time.sleep,
+) -> dict[str, Any]:
+    """The actual settle loop — see :func:`wait_for_stable_audio_devices`."""
     sd = _get_sd()
     if sd is None:
         return {
@@ -138,23 +173,28 @@ def wait_for_stable_audio_devices(
 # settled and the warm-up reuses the result instead of paying the wait again.
 _PREFETCH_EVENT = threading.Event()
 _PREFETCH_RESULT: dict[str, Any] | None = None
+_PREFETCH_STARTED = False
 
 
 def start_audio_device_prefetch() -> threading.Thread | None:
-    """Run :func:`wait_for_stable_audio_devices` eagerly in a daemon thread.
+    """Run the settle loop eagerly in a daemon thread.
 
     Returns ``None`` when sounddevice is unavailable (headless VPS / no
     ``[desktop]`` extra) — nothing to settle. Never raises; audio robustness
     must not break boot. The result is published for
-    :func:`get_prefetched_audio_result`.
+    :func:`get_prefetched_audio_result`, and while it is in flight every
+    :func:`wait_for_stable_audio_devices` caller joins it (BUG-058).
     """
+    global _PREFETCH_STARTED
     if _get_sd() is None:
         return None
+    _PREFETCH_STARTED = True
 
     def _run() -> None:
         global _PREFETCH_RESULT
         try:
-            _PREFETCH_RESULT = wait_for_stable_audio_devices()
+            # The impl directly — the public function would join ourselves.
+            _PREFETCH_RESULT = _poll_until_stable()
         except Exception:  # noqa: BLE001 — never break boot
             _PREFETCH_RESULT = None
         finally:

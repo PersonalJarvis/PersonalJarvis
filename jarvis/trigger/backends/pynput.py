@@ -36,6 +36,7 @@ kill-switch) from spawning two OS listeners on the same process.
 from __future__ import annotations
 
 import logging
+import sys
 import threading
 
 log = logging.getLogger(__name__)
@@ -177,6 +178,32 @@ class PynputBackend:
             )
             self._listener = None
             return
+
+        if sys.platform == "darwin":
+            # pynput's darwin backend creates a Quartz event tap on its own
+            # internal thread; without the Accessibility grant that native
+            # init is useless at best and a process-level abort at worst
+            # (uncatchable, BUG-058 class). Preflight the non-prompting
+            # AXIsProcessTrusted probe and fail CLOSED (None = unverifiable
+            # -> treat as not granted) instead of touching pynput.
+            granted: bool | None = None
+            try:
+                from jarvis.platform.probes import ax_permission_granted
+
+                granted = ax_permission_granted()
+            except Exception:  # noqa: BLE001 — the probe must never crash the trigger
+                granted = None
+            if granted is not True:
+                log.warning(
+                    "Global hotkeys disabled on macOS: the Accessibility "
+                    "permission is %s. Grant it under System Settings > "
+                    "Privacy & Security > Accessibility for the app you "
+                    "launch Jarvis from, then restart Jarvis — voice still "
+                    "works via the wake word.",
+                    "not granted" if granted is False else "not verifiable",
+                )
+                self._listener = None
+                return
 
         try:
             listener = keyboard.Listener(
