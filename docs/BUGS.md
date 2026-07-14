@@ -4317,3 +4317,35 @@ off-darwin no-op, icon best-effort).
 native launch surface (Windows Start-Menu shortcut, macOS ``.app``
 bundle, Linux XDG ``.desktop``) or closing the app strands the user. The
 Linux ``.desktop`` entry is the remaining gap of this class.
+
+## BUG-061: Base install bricked on Intel Macs — pinned onnxruntime has no x86_64 macOS wheels (HIGH, FIXED 2026-07-14)
+
+**Symptom.** Fresh install on an Intel MacBook Pro (the Python-3.13
+bootstrap worked; wheels resolved as cp313/x86_64): the base
+``pip install -r requirements.txt`` aborts at
+``onnxruntime==1.23.2 … from versions: none`` — the WHOLE install dies,
+core included.
+
+**Root cause.** onnxruntime stopped shipping Intel-macOS wheels; the last
+x86_64 builds also require older Pythons. The darwin marker
+(``python_version < '3.14'``) still demanded it on every Mac, so a pinned
+version that cannot exist for x86_64+cp313 sat in the BASE lockfile —
+one dead optional-capability package bricked the entire product (§3 /
+AP-22 class, at the packaging layer).
+
+**Fix (2026-07-14).**
+- pyproject + requirements.in: darwin onnxruntime marker gains
+  ``platform_machine == 'arm64'``; lock regenerated with
+  ``uv pip compile --universal`` (sync + universal gates green). Intel
+  Macs skip onnxruntime; Silero VAD degrades to WebRTC VAD there
+  (existing degrade path — same one darwin+3.14 already exercised).
+- install.sh bootstrap is architecture-aware: Darwin x86_64 fetches
+  Python **3.12** (the native voice stack's last Intel wheels end at
+  cp312: ctranslate2/av), everything else 3.13; the full-support check
+  follows the same rule.
+
+**Class rule.** A pinned dependency whose wheel matrix has DROPPED a
+platform must never sit unconditionally in the base lock: gate it with
+platform markers and give the capability an honest degrade. Wheel
+matrices shrink over time — "it resolved when pinned" is not "it resolves
+everywhere forever".

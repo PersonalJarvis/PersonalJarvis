@@ -67,7 +67,9 @@ dependencies = [
     # CPython 3.14 artifact for the supported baseline. Keep 1.23 on macOS
     # 3.11-3.13; other operating systems use the current CPU line. The portable
     # energy VAD is the explicit macOS 3.14 fallback.
-    "onnxruntime>=1.17,<1.24; sys_platform == 'darwin' and python_version < '3.14'",
+    # arm64-only on macOS: no Intel-mac onnxruntime wheels anymore (BUG-061);
+    # Silero VAD degrades to WebRTC VAD on Intel Macs.
+    "onnxruntime>=1.17,<1.24; sys_platform == 'darwin' and python_version < '3.14' and platform_machine == 'arm64'",
     "onnxruntime>=1.17; sys_platform != 'darwin'",
     # Any-word wake keyword spotting (vosk_kws engine, design spec 2026-07-05):
     # Vosk is Apache-2.0, torch-free, ~7 MB wheel with bundled libvosk, official
@@ -350,7 +352,7 @@ openai = "jarvis.plugins.brain.openai:OpenAIBrain"
 gemini = "jarvis.plugins.brain.gemini:GeminiBrain"
 codex = "jarvis.plugins.brain.codex:CodexBrain"
 antigravity = "jarvis.plugins.brain.antigravity:AntigravityBrain"
-# xAI Grok removed as a brain provider 2026-06-22 (TTS-only — see grok-voice).
+grok = "jarvis.plugins.brain.grok:GrokBrain"
 # Ollama provider removed on 2026-04-21; the runtime uses the API provider chain.
 
 [project.entry-points."jarvis.harness"]
