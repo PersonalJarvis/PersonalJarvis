@@ -61,7 +61,7 @@ dependencies = [
     # supported manylinux_2_28 floor. macOS CPython 3.14 likewise lacks a usable
     # ONNX Runtime wheel. Vosk, browser voice, cloud STT, and energy endpointing
     # remain working fallbacks on the excluded cells.
-    "openwakeword>=0.6; sys_platform != 'linux' and (sys_platform != 'darwin' or python_version < '3.14')",
+    "openwakeword>=0.6; sys_platform != 'linux' and (sys_platform != 'darwin' or (python_version < '3.14' and platform_machine == 'arm64'))",
     "openwakeword>=0.6; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version < '3.12'",
     # ONNX Runtime 1.24+ raises the macOS deployment floor and has no usable
     # CPython 3.14 artifact for the supported baseline. Keep 1.23 on macOS

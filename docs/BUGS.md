@@ -4344,6 +4344,15 @@ AP-22 class, at the packaging layer).
   cp312: ctranslate2/av), everything else 3.13; the full-support check
   follows the same rule.
 
+**Follow-up (same day).** The direct marker alone was NOT enough: a
+platform-resolve probe (``uv pip compile --python-platform
+x86_64-apple-darwin``) showed ``openwakeword`` pulling onnxruntime back in
+as ITS dependency — the transitive route re-bricked Intel Macs. Its darwin
+marker now carries the same ``platform_machine == 'arm64'`` condition
+(wake degrades to vosk_kws there). Lesson: after gating a dependency,
+re-resolve for the affected platform — direct markers do not stop
+transitive pulls.
+
 **Class rule.** A pinned dependency whose wheel matrix has DROPPED a
 platform must never sit unconditionally in the base lock: gate it with
 platform markers and give the capability an honest degrade. Wheel

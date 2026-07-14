@@ -60,7 +60,7 @@ audioop-lts; python_version>='3.13'
 # machine incl. a headless CPU VPS. CPU onnxruntime is universal and NOT on the
 # lockfile forbidden list (only torch/ctranslate2/faster-whisper/onnxruntime-gpu
 # are). See pyproject.toml note.
-openwakeword>=0.6; sys_platform != 'linux' and (sys_platform != 'darwin' or python_version < '3.14')
+openwakeword>=0.6; sys_platform != 'linux' and (sys_platform != 'darwin' or (python_version < '3.14' and platform_machine == 'arm64'))
 openwakeword>=0.6; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version < '3.12'
 # macOS 3.11-3.13 uses the last branch compatible with the supported deployment
 # floor. macOS 3.14 uses Vosk/energy; other operating systems use current ONNX.
