@@ -3948,3 +3948,50 @@ levels. An interim surface may report only the former, and its data must never
 enter an answer or memory channel. Any model-generated bridge that is allowed
 through solely because its prompt said "do not invent a result" is an
 untrusted answer generator, not a progress indicator.
+
+## BUG-056: First macOS boot aborts natively — pystray NSStatusItem created off the main thread (HIGH, FIXED 2026-07-14)
+
+**Symptom.** Fresh install on a real Mac (install.sh → Python 3.14 venv →
+first launch): the app dies during boot with the macOS crash dialog
+"Python quit unexpectedly". Terminal shows
+``objc.error: NSInternalInconsistencyException — NSWindow drag regions
+should only be invalidated on the Main Thread!`` followed by a native
+AppKit assertion (``NSViewSetCurrentlyBuildingLayerTreeForDisplay``,
+NSView.m:13412) and a hard process abort. "Reopen"/"Ignore" do nothing —
+every relaunch dies at the same point. First-boot is bricked on EVERY Mac,
+deterministically; not machine-specific.
+
+**Root cause.** ``JarvisTray.start()`` spawns ``_run()`` on a worker thread
+(``jarvis-tray``); ``_run()`` constructs ``pystray.Icon`` whose darwin
+backend creates an ``NSStatusItem`` in ``Icon.__init__``
+(``pystray/_darwin.py:60``). AppKit is main-thread-only: the first objc
+exception IS raised into Python (and would be caught by ``_run``'s
+try/except), but the half-built status item then trips a **native C-level
+assertion inside AppKit — an ``abort()`` below Python that no try/except
+can catch**. Windows/Linux tolerate off-main-thread tray icons, so the bug
+was invisible on the maintainer's machine and in CI; the cross-platform
+plan had classified ``jarvis/ui/tray.py`` as "already cross-platform" and
+macOS was ``unverified-on-real-desktop`` (JARVIS-20 CP-13..15). The first
+real-Mac run found the gap. Python 3.14 is NOT the cause (install.sh's
+candidate order is correct); the crash is purely the thread violation.
+
+**Fix (2026-07-14).** ``JarvisTray.start()`` gates on
+``sys.platform == "darwin"`` and degrades to a logged English no-op
+(AD-6/AD-11: degrade, never crash) — the single choke point covering all
+four call sites (``__main__.py`` tray app, ``desktop_app.py``,
+``overlay/tray_surface.py``, ``ui/shell/shell.py``). The desktop window and
+Dock icon remain the macOS surface. Guard:
+``tests/unit/ui/test_tray.py::test_tray_start_is_noop_on_macos``.
+
+**Follow-up (needs real Mac hardware).** A real macOS menu-bar icon
+requires main-thread hosting: ``pystray.Icon(...,
+darwin_nsapplication=<pywebview's NSApplication>)`` + ``run_detached()``,
+with the icon constructed on the main thread (e.g. PyObjC
+``performSelectorOnMainThread``). Tracked in
+``docs/plans/cross-platform-mac-linux/FIX-TRACKER.md``.
+
+**Class rule.** ANY AppKit/UI object on macOS (status items, windows,
+menus) must be created and driven on the main thread; a worker-thread
+violation is a native abort, not a catchable exception. "No platform
+marker in the code" does not mean cross-platform — threading contracts
+differ per OS, and only a real-device boot proves them.

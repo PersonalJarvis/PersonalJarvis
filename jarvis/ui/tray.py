@@ -5,12 +5,15 @@ Higher-quality .ico files can later be placed under assets/icons/.
 
 Threading: pystray runs on its own thread (not asyncio-capable).
 It communicates with the event loop via a thread-safe queue.
+macOS: AppKit forbids that worker thread (main-thread-only UI), so start()
+is a logged no-op there until the icon is hosted on the main thread.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
 import queue
+import sys
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -153,6 +156,21 @@ class JarvisTray:
 
     def start(self) -> None:
         if self._thread is not None and self._thread.is_alive():
+            return
+        if sys.platform == "darwin":
+            # pystray's darwin backend builds an NSStatusItem in Icon.__init__;
+            # AppKit allows UI objects on the MAIN thread only. Created from
+            # this worker thread, the first real-Mac boot died with a native
+            # AppKit assertion (NSInternalInconsistencyException → process
+            # abort, "Python quit unexpectedly") that no try/except can catch.
+            # Degrade to a logged no-op (AD-6): the desktop window + Dock icon
+            # remain. A real menu-bar icon needs main-thread hosting
+            # (pystray run_detached + the pywebview NSApplication) — tracked
+            # in docs/plans/cross-platform-mac-linux/FIX-TRACKER.md.
+            log.info(
+                "Tray not started: macOS allows status items on the main "
+                "thread only — running without a menu-bar icon."
+            )
             return
         if not display_present():
             # Headless, or a Linux/Wayland session without an AppIndicator /
