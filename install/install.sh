@@ -182,9 +182,53 @@ git_available() {
     return 1
 }
 
+# --- full-support Python bootstrap (maintainer mandate 2026-07-14) -----------
+# The one-liner must leave NOTHING to install afterwards: when the host only
+# offers a Python the native local-voice wheels do not cover yet (3.14+),
+# fetch a self-contained CPython 3.13 via uv (per-user, no sudo) and use it
+# for the venv — the speech pack then installs during THIS run.
+_PY_BOOTSTRAP_TRIED=0
+
+_py_full_support() {
+    _mm=$("$1" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null) || return 1
+    case "$_mm" in
+        3.11|3.12|3.13) return 0 ;;
+    esac
+    return 1
+}
+
+bootstrap_full_support_python() {
+    [ -n "${JARVIS_NO_PYTHON_BOOTSTRAP:-}" ] && return 1
+    [ "$_PY_BOOTSTRAP_TRIED" -eq 1 ] && return 1
+    _PY_BOOTSTRAP_TRIED=1
+    _uv=$(command -v uv 2>/dev/null || true)
+    [ -z "$_uv" ] && [ -x "$HOME/.local/bin/uv" ] && _uv="$HOME/.local/bin/uv"
+    if [ -z "$_uv" ]; then
+        note 'downloading uv to fetch a self-contained Python 3.13 (per-user, no sudo)'
+        curl -LsSf https://astral.sh/uv/install.sh | env UV_NO_MODIFY_PATH=1 sh >/dev/null 2>&1 || return 1
+        _uv="$HOME/.local/bin/uv"
+        [ -x "$_uv" ] || return 1
+    fi
+    "$_uv" python install 3.13 >/dev/null 2>&1 || return 1
+    _bp=$("$_uv" python find 3.13 2>/dev/null) || return 1
+    [ -x "$_bp" ] || return 1
+    PYTHON_EXE="$_bp"
+    return 0
+}
+
 refresh_prerequisite_state() {
     PYTHON_EXE=""
     if find_python; then PYTHON_READY=1; else PYTHON_READY=0; fi
+    # An explicit JARVIS_PYTHON pin is authoritative — never substituted.
+    if [ "$PYTHON_READY" -eq 1 ] && [ -z "${JARVIS_PYTHON:-}" ] \
+        && ! _py_full_support "$PYTHON_EXE"; then
+        if bootstrap_full_support_python; then
+            ok 'fetched self-contained Python 3.13 (local voice fully supported)'
+        else
+            note 'no prebuilt local-voice packages for this Python yet - core works;'
+            note 'the speech pack needs Python 3.11-3.13.'
+        fi
+    fi
     if git_available; then GIT_READY=1; else GIT_READY=0; fi
     if [ "$PYTHON_READY" -eq 1 ] && [ "$GIT_READY" -eq 1 ]; then
         PREREQUISITES_READY=1
