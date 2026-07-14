@@ -52,6 +52,7 @@ export const KNOWN_SPOKEN_KINDS = [
   "announcement",
   "preamble",
   "progress",
+  "withheld",
   "other",
 ] as const;
 

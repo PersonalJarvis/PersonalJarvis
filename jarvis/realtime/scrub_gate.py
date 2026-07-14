@@ -41,9 +41,21 @@ class ScrubHoldGate:
         self._hard_leak = False
         self._transcript_seen = False
         self._transcript_tail = ""
+        self._hard_leak_actions: tuple[str, ...] = ()
 
     def hard_leak_pending(self) -> bool:
         return self._hard_leak
+
+    def hard_leak_actions(self) -> tuple[str, ...]:
+        """Scrub-action names behind the current hard leak (diagnosis only).
+
+        Safe metadata: detector names such as ``replaced_shell_command`` —
+        never the flagged content itself, so surfacing them in transcripts
+        and latency spans cannot re-leak what the gate withheld (BUG-056:
+        the 15:13 abort was undiagnosable because only the generic reason
+        string survived).
+        """
+        return self._hard_leak_actions
 
     def fallback_phrase(self) -> str:
         return FALLBACK_PHRASES.get(self._language, FALLBACK_PHRASES["en"])
@@ -67,6 +79,9 @@ class ScrubHoldGate:
         result_is_hard = _is_hard_scrub_result(result)
         if aggregate_is_hard or result_is_hard:
             self._hard_leak = True
+            self._hard_leak_actions = tuple(
+                sorted(set(aggregate.actions) | set(result.actions))
+            )
             self._cleared = False
             self._pending.clear()
             self._pending_audio_ms = 0.0
@@ -131,6 +146,7 @@ class ScrubHoldGate:
         self._pending_audio_ms = 0.0
         self._cleared = False
         self._hard_leak = True
+        self._hard_leak_actions = ("no_transcript",)
         return True
 
     def fail_if_pending_exceeds(self, max_pending_ms: int) -> bool:
@@ -145,6 +161,7 @@ class ScrubHoldGate:
         self._pending_audio_ms = 0.0
         self._cleared = False
         self._hard_leak = True
+        self._hard_leak_actions = ("transcript_stalled",)
         return True
 
     def finalize(self) -> list[AudioChunk]:
@@ -165,6 +182,7 @@ class ScrubHoldGate:
         self._hard_leak = False
         self._transcript_seen = False
         self._transcript_tail = ""
+        self._hard_leak_actions = ()
 
 
 def _restore_edge_whitespace(original: str, cleaned: str) -> str:

@@ -3803,7 +3803,14 @@ health, and a zero-error run row are never sufficient evidence by themselves.
 Never recover a silent tool turn by replaying the original request; recover
 from the retained result so a side effect can occur at most once.
 
-## BUG-053: A normal realtime barge-in ends the call when cancellation loses a response-boundary race (HIGH, OPEN, 2026-07-14)
+## BUG-053: A normal realtime barge-in ends the call when cancellation loses a response-boundary race (HIGH, LARGELY FIXED 2026-07-14 — correction 3 open)
+
+> **Status update (2026-07-14, afternoon).** Corrections 1 and 2 are
+> implemented (see BUG-056 below, which is the same defect fired through the
+> scrub-cancel path): `response_cancel_not_active` is now a recoverable
+> provider event, and `interrupt()` skips the wire cancel when no response
+> lifecycle is active. Correction 3 (preserve and forward the accepted
+> barge-in audio into the next turn) remains open.
 
 **Symptom.** During a healthy desktop realtime session, the user began a
 follow-up about NotebookLM and its MCP server while the preceding answer was
@@ -4062,3 +4069,76 @@ menus) must be created and driven on the main thread; a worker-thread
 violation is a native abort, not a catchable exception. "No platform
 marker in the code" does not mean cross-platform — threading contracts
 differ per OS, and only a real-device boot proves them.
+
+## BUG-056: A scrub-gate abort's stale cancellation ends the session, and the transcript hides the abort (HIGH, FIXED 2026-07-14)
+
+**Symptom.** Voice session 2026-07-14 15:12: "Welche MCP-Server habe ich
+alle?" was answered by a healthy 5.4 s delegated turn <!-- i18n-allow: quoted German user utterance under forensic analysis -->
+(the BUG-055 latency fixes working as designed), but the spoken answer cut
+off mid-sentence at "Du hast zwei", the session ended with
+`hangup_reason=error`, and the exported transcript showed only the truncated
+reply — no trace of what failed or why the answer stopped.
+
+**Evidence (desktop log + sessions.db, session c3c1997f).**
+
+- 15:13:09.594 `realtime_delegate_completed` success=True after 5393 ms.
+- 15:13:12.468 `scrub gate cancelled output: unsafe output transcript` — the
+  ScrubHoldGate flagged a transcript delta as a hard leak while the answer
+  was being voiced; the honest fallback line was then spoken via classic TTS
+  (audible 15:13:18–15:13:20).
+- 15:13:20.536 `terminal provider error: response_cancel_not_active:
+  Cancellation failed: no active response found` — recorded with
+  `recoverable: false`; the pump set `_failed` and the session ended
+  `reason=error` at 15:13:23.918.
+- The recorded spoken track contains the progress bridge and the truncated
+  reply, but NOT the fallback line and NOT the abort reason.
+
+**Root causes (three).**
+
+1. **BUG-053's misclassification, second firing path.** The scrub cancel
+   calls the adapter's `interrupt()`; the provider's response lifecycle was
+   already over, so `response.cancel` answered with the benign
+   `response_cancel_not_active`. The adapter's recoverable set contained only
+   `conversation_already_has_active_response`, so this idempotent no-op race
+   was labeled terminal and killed an otherwise healthy session.
+2. **Transcript dishonesty.** `_cancel_unsafe_output` spoke a fallback line
+   through `error_spoken` but never published it as a `SpeechSpoken` event,
+   so the recorder — and therefore the exported transcript — had no trace of
+   the abort (the exact gap the maintainer reported).
+3. **Undiagnosable trigger.** Only the generic reason string "unsafe output
+   transcript" survived; the gate did not surface WHICH scrub detectors
+   tripped, so a possible false positive on a technical-but-harmless answer
+   (MCP server names) cannot be judged after the fact.
+
+**Fix (2026-07-14).**
+
+- `_RECOVERABLE_ERROR_CODES` gains `response_cancel_not_active` (BUG-053
+  correction 1): both sides of the response-boundary race are now benign.
+- `interrupt()` skips the wire cancel when `_response_idle` is set (BUG-053
+  correction 2); the recoverable classification stays as the backstop for
+  the remaining check-to-wire race window.
+- `_cancel_unsafe_output` publishes the spoken fallback as
+  `SpeechSpoken(spoken_kind="withheld", detail=<reason>)` — new vocabulary
+  entry wired through all four parity layers (constants.py, models.py,
+  types.ts, TurnCard.tsx) — so the transcript shows the abort, its fallback
+  line, and the detector names.
+- `ScrubHoldGate.hard_leak_actions()` exposes the tripped detector names
+  (safe metadata, never the flagged content) and the session embeds them in
+  the cancel reason.
+
+**Still open.** Whether the 15:13 hard leak itself was a false positive is
+not reconstructable (transcript deltas are not persisted); the detector-name
+diagnosis added here answers that question at the next occurrence. BUG-053
+correction 3 (forward accepted barge-in audio into the next turn) also
+remains open.
+
+**Class rule.** A cancellation that finds nothing to cancel has already
+succeeded — treat provider races idempotently on both boundaries (create and
+cancel). And every safety abort that changes what the user hears MUST leave
+an honest, user-visible trace in the recorded conversation; a silent abort
+reads as a broken answer and is undebuggable afterwards.
+
+Guards: `tests/unit/realtime/test_openai_realtime.py` (recoverable + skip),
+`tests/unit/realtime/test_scrub_gate.py` (detector diagnosis),
+`tests/unit/realtime/test_session.py` (withheld recording),
+`tests/unit/sessions/test_spoken_kind_parity.py`.

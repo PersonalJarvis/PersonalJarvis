@@ -186,3 +186,29 @@ async def test_untranscribed_audio_buffer_is_bounded_by_audio_duration():
     assert gate.fail_if_pending_exceeds(50) is True
     assert gate.hard_leak_pending() is True
     assert gate.finalize() == []
+
+@pytest.mark.asyncio
+async def test_hard_leak_exposes_detector_actions_for_diagnosis():
+    """BUG-056: the 15:13 abort was undiagnosable — only the generic reason
+    string survived. The gate must name WHICH detectors tripped (safe
+    metadata, never the flagged content), and reset them on drain()."""
+    gate = ScrubHoldGate(language="en")
+    assert gate.hard_leak_actions() == ()
+    await gate.feed_transcript(
+        "Traceback (most recent call last):\n  File x\nValueError: y\n\n"
+    )
+    assert gate.hard_leak_pending() is True
+    actions = gate.hard_leak_actions()
+    assert actions, "a hard leak must carry at least one detector name"
+    # Detector names only — the flagged content itself must not appear.
+    assert all("Traceback" not in a and "ValueError" not in a for a in actions)
+    gate.drain()
+    assert gate.hard_leak_actions() == ()
+
+
+@pytest.mark.asyncio
+async def test_fail_closed_reports_missing_transcript_action():
+    gate = ScrubHoldGate(language="en")
+    await gate.push_audio(_chunk(4))
+    assert gate.fail_closed() is True
+    assert gate.hard_leak_actions() == ("no_transcript",)

@@ -31,6 +31,7 @@ from jarvis.sessions.constants import (
     HANGUP_CLIENT_STOP,
     HANGUP_VOICE_PATTERN,
     SPOKEN_KIND_PROGRESS,
+    SPOKEN_KIND_WITHHELD,
 )
 from jarvis.speech.hangup import HANGUP_RE
 
@@ -1098,8 +1099,15 @@ class RealtimeVoiceSession:
                     self._mark_latency_named("REALTIME_FIRST_TRANSCRIPT")
                     display = await self._gate.feed_transcript(event.text)
                     if self._gate.hard_leak_pending():
+                        # Name the tripped detectors (safe metadata, never the
+                        # flagged content) so a false-positive abort is
+                        # diagnosable from the transcript alone (BUG-056).
+                        _actions = ", ".join(self._gate.hard_leak_actions())
                         await self._cancel_unsafe_output(
-                            reason="unsafe output transcript"
+                            reason=(
+                                "unsafe output transcript"
+                                f" (detectors: {_actions or 'unknown'})"
+                            )
                         )
                         self._gate.drain()
                         continue
@@ -1383,16 +1391,37 @@ class RealtimeVoiceSession:
                 pass
         self._output_active = False
         self._output_samples_sent = 0
+        spoken_fallback = fallback_text or self._gate.fallback_phrase()
         try:
             await self._send_json(
                 {
                     "type": "error_spoken",
-                    "text": fallback_text or self._gate.fallback_phrase(),
+                    "text": spoken_fallback,
                     "language": self._language,
                 }
             )
         except Exception:  # noqa: BLE001, S110 — surface may already be gone
             pass
+        # Keep the transcript honest (BUG-056): the 15:13 session recorded a
+        # reply truncated to "Du hast zwei" with NO trace of why the audible
+        # answer stopped. Persist the spoken fallback on the spoken track so
+        # the exported transcript shows the abort and its detector names.
+        if self._bus is not None:
+            try:
+                from jarvis.core.events import SpeechSpoken
+
+                await self._bus.publish(
+                    SpeechSpoken(
+                        **self._event_trace_kwargs(),
+                        source_layer=f"realtime.{self.active_provider}",
+                        text=spoken_fallback,
+                        language=self._language,
+                        spoken_kind=SPOKEN_KIND_WITHHELD,
+                        detail=reason,
+                    )
+                )
+            except Exception:  # noqa: BLE001, S110 — recording never breaks the turn
+                pass
 
     async def _recover_unbacked_action_claim(self) -> bool:
         """Turn a provider's unsupported action promise into a real outcome."""

@@ -3630,3 +3630,33 @@ async def test_delegate_does_not_retry_an_internal_type_error():
     assert brain.calls == 1
     assert provider.session.tool_results[0][2]["success"] is False
     await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_scrub_cancel_records_spoken_fallback_on_the_spoken_track():
+    """BUG-056: the 15:13 session's transcript ended at a truncated reply with
+    no trace of the safety abort. The scrub cancel must persist its spoken
+    fallback as a SpeechSpoken(withheld) event carrying the detector names in
+    ``detail``, so the exported transcript shows what happened and why."""
+    provider = FakeProvider([])
+    bus = FakeBus()
+    sess = RealtimeVoiceSession(
+        session_id="scrub-cancel-record",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=bus,
+        surface="desktop",
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+
+    reason = "unsafe output transcript (detectors: replaced_stacktrace)"
+    await sess._cancel_unsafe_output(reason=reason)
+    await sess.end(reason="test")
+
+    spoken = [event for event in bus.events if isinstance(event, SpeechSpoken)]
+    assert len(spoken) == 1
+    assert spoken[0].spoken_kind == "withheld"
+    assert spoken[0].detail == reason
+    assert spoken[0].text == sess._gate.fallback_phrase()

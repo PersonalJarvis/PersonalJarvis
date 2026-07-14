@@ -44,6 +44,7 @@ export const SPOKEN_KIND_LABEL: Record<string, string> = {
   announcement: "Announcement",
   preamble: "Preamble",
   progress: "Progress update",
+  withheld: "Answer withheld (safety)",
   other: "Spoken",
 };
 
