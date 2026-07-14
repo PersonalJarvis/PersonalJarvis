@@ -189,8 +189,26 @@ git_available() {
 # for the venv — the speech pack then installs during THIS run.
 _PY_BOOTSTRAP_TRIED=0
 
+_bootstrap_target_version() {
+    # Intel Macs: the native voice stack's last x86_64 wheels end at cp312
+    # (ctranslate2/av; onnxruntime dropped Intel macOS entirely, BUG-061),
+    # so 3.12 is the newest FULLY supported Python there. Everywhere else
+    # 3.13 has complete wheel coverage.
+    if [ "$(uname -s 2>/dev/null)" = "Darwin" ] && [ "$(uname -m 2>/dev/null)" = "x86_64" ]; then
+        printf '3.12'
+    else
+        printf '3.13'
+    fi
+}
+
 _py_full_support() {
     _mm=$("$1" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null) || return 1
+    if [ "$(_bootstrap_target_version)" = "3.12" ]; then
+        case "$_mm" in
+            3.11|3.12) return 0 ;;
+        esac
+        return 1
+    fi
     case "$_mm" in
         3.11|3.12|3.13) return 0 ;;
     esac
@@ -204,13 +222,14 @@ bootstrap_full_support_python() {
     _uv=$(command -v uv 2>/dev/null || true)
     [ -z "$_uv" ] && [ -x "$HOME/.local/bin/uv" ] && _uv="$HOME/.local/bin/uv"
     if [ -z "$_uv" ]; then
-        note 'downloading uv to fetch a self-contained Python 3.13 (per-user, no sudo)'
+        note "downloading uv to fetch a self-contained Python $(_bootstrap_target_version) (per-user, no sudo)"
         curl -LsSf https://astral.sh/uv/install.sh | env UV_NO_MODIFY_PATH=1 sh >/dev/null 2>&1 || return 1
         _uv="$HOME/.local/bin/uv"
         [ -x "$_uv" ] || return 1
     fi
-    "$_uv" python install 3.13 >/dev/null 2>&1 || return 1
-    _bp=$("$_uv" python find 3.13 2>/dev/null) || return 1
+    _target=$(_bootstrap_target_version)
+    "$_uv" python install "$_target" >/dev/null 2>&1 || return 1
+    _bp=$("$_uv" python find "$_target" 2>/dev/null) || return 1
     [ -x "$_bp" ] || return 1
     PYTHON_EXE="$_bp"
     return 0
@@ -223,10 +242,10 @@ refresh_prerequisite_state() {
     if [ "$PYTHON_READY" -eq 1 ] && [ -z "${JARVIS_PYTHON:-}" ] \
         && ! _py_full_support "$PYTHON_EXE"; then
         if bootstrap_full_support_python; then
-            ok 'fetched self-contained Python 3.13 (local voice fully supported)'
+            ok "fetched self-contained Python $(_bootstrap_target_version) (local voice fully supported)"
         else
             note 'no prebuilt local-voice packages for this Python yet - core works;'
-            note 'the speech pack needs Python 3.11-3.13.'
+            note 'the speech pack needs Python 3.11-3.13 (3.12 on Intel Macs).'
         fi
     fi
     if git_available; then GIT_READY=1; else GIT_READY=0; fi

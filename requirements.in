@@ -64,7 +64,10 @@ openwakeword>=0.6; sys_platform != 'linux' and (sys_platform != 'darwin' or pyth
 openwakeword>=0.6; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version < '3.12'
 # macOS 3.11-3.13 uses the last branch compatible with the supported deployment
 # floor. macOS 3.14 uses Vosk/energy; other operating systems use current ONNX.
-onnxruntime>=1.17,<1.24; sys_platform == 'darwin' and python_version < '3.14'
+# arm64-only on macOS: onnxruntime stopped shipping Intel-mac wheels (the last
+# x86_64 builds also require older Pythons), so a pinned version bricked the
+# whole base install on Intel Macs. Silero VAD degrades to WebRTC VAD there.
+onnxruntime>=1.17,<1.24; sys_platform == 'darwin' and python_version < '3.14' and platform_machine == 'arm64'
 onnxruntime>=1.17; sys_platform != 'darwin'
 # Any-word wake keyword spotting (vosk_kws engine, 2026-07-05): torch-free,
 # Apache-2.0, CPU wheels on macOS/Linux and Windows x86/x64; per-language model
