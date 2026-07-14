@@ -33,6 +33,20 @@ class _FakePlayer:
         self.stopped += 1
 
 
+class _FakeTTS:
+    def __init__(self, pcm: bytes) -> None:
+        self.pcm = pcm
+        self.calls: list[tuple[str, str | None]] = []
+
+    def synthesize(self, text: str, *, language_code: str | None = None):
+        self.calls.append((text, language_code))
+
+        async def _chunks():
+            yield AudioChunk(pcm=self.pcm, sample_rate=24_000, timestamp_ns=0)
+
+        return _chunks()
+
+
 class _SilentMic:
     async def __aenter__(self):
         return self
@@ -281,6 +295,8 @@ async def test_unsafe_output_cancel_stops_playback_and_returns_to_listening(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     pipe = _pipe()
+    fallback_pcm = b"\x06\x00" * 32
+    pipe._tts = _FakeTTS(fallback_pcm)
     cancel_delivered = asyncio.Event()
     built: dict[str, object] = {}
 
@@ -313,6 +329,8 @@ async def test_unsafe_output_cancel_stops_playback_and_returns_to_listening(
     await asyncio.sleep(0)
 
     assert pipe._player.stopped >= 1
+    assert fallback_pcm in pipe._player.pcm
+    assert pipe._tts.calls == [("An error occurred.", "en-US")]
     assert pipe._test_states[-2:] == [
         pipeline_mod.TurnTakingState.JARVIS_SPEAKING,
         pipeline_mod.TurnTakingState.LISTENING,

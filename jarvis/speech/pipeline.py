@@ -6165,9 +6165,45 @@ class SpeechPipeline:
                     and not interrupted_during_drain
                 ):
                     turn_complete.set()
-            elif kind in {"provider_error", "error_spoken"}:
-                if kind == "error_spoken":
-                    semantic_turn_committed = True
+            elif kind == "error_spoken":
+                semantic_turn_committed = True
+                text = str(message.get("text", "") or "").strip()
+                language = _phrase_lang(
+                    str(message.get("language", "") or "")
+                    or self._output_language(None, text)
+                )
+                scrubbed = scrub_for_voice(text, language=language)
+                cleaned = scrubbed.cleaned.strip()
+                if cleaned and not getattr(self, "_muted", False):
+                    # Realtime has already failed to render this grounded text.
+                    # Use the configured classic TTS + the same AudioPlayer as
+                    # an independent last mile. The existing mic pump and local
+                    # barge detector remain active, so this does not open a
+                    # second microphone or replay the user's request.
+                    await playback.cancel()
+                    speaking = True
+                    barge_detector.start_output()
+                    await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
+                    try:
+                        lang_code = self._bcp47(language)
+                        try:
+                            chunks = self._tts.synthesize(
+                                cleaned,
+                                language_code=lang_code,
+                            )
+                        except TypeError:
+                            chunks = self._tts.synthesize(cleaned)
+                        await self._player.play_chunks(chunks)
+                    except Exception as exc:  # noqa: BLE001 -- final voice fallback
+                        log.warning(
+                            "Realtime surface TTS fallback failed: %s",
+                            exc,
+                        )
+                    finally:
+                        speaking = False
+                        barge_detector.stop_output()
+                        await self._set_turn_state(TurnTakingState.LISTENING)
+            elif kind == "provider_error":
                 log.warning("Realtime desktop status: %s", message)
 
         # Open the microphone BEFORE building the realtime session AND before

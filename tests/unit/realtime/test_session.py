@@ -2543,6 +2543,194 @@ async def test_direct_mode_recovers_provider_turn_that_has_no_output():
 
 
 @pytest.mark.asyncio
+async def test_text_only_provider_answer_uses_surface_tts_without_brain_retry():
+    """An audio-mode response with text but zero PCM is not treated as spoken."""
+    answer = "Here is something useful for you."
+    brain = FakeBrain()
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="Tell me something useful.",
+                is_final=True,
+            ),
+            RealtimeEvent(
+                type="output_transcript_delta",
+                text=answer,
+                is_final=True,
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    jsons: list[dict] = []
+    bus = FakeBus()
+    sess = _session(
+        provider,
+        brain=brain,
+        tool_mode="direct",
+        jsons=jsons,
+        bus=bus,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+
+    assert brain.calls == []
+    assert {"type": "error_spoken", "text": answer, "language": "en"} in jsons
+    completed = [event for event in bus.events if isinstance(event, VoiceTurnCompleted)]
+    assert len(completed) == 1
+    assert completed[0].jarvis_text == answer
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_empty_provider_turn_without_brain_speaks_local_error():
+    """A keyless fallback chain still closes the turn honestly, never silently."""
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="Tell me something useful.",
+                is_final=True,
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    jsons: list[dict] = []
+    bus = FakeBus()
+    sess = _session(
+        provider,
+        brain=None,
+        tool_mode="direct",
+        jsons=jsons,
+        bus=bus,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+
+    fallback = "An error occurred."
+    assert {"type": "error_spoken", "text": fallback, "language": "en"} in jsons
+    completed = [event for event in bus.events if isinstance(event, VoiceTurnCompleted)]
+    assert len(completed) == 1
+    assert completed[0].jarvis_text == fallback
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_empty_recovery_response_uses_surface_tts_without_rerunning_brain():
+    """A second provider failure speaks the grounded result through local TTS."""
+    user_text = "I am bored. What could we do?"
+    recovered_reply = "We could build a tiny game together."
+    brain = FakeBrain(replies=(recovered_reply,))
+    provider = AutomaticDelegateProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text=user_text,
+                is_final=True,
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ],
+        [RealtimeEvent(type="turn_complete")],
+    )
+    jsons: list[dict] = []
+    bus = FakeBus()
+    sess = _session(
+        provider,
+        brain=brain,
+        tool_mode="direct",
+        jsons=jsons,
+        bus=bus,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(sess.wait_finished(), timeout=2)
+
+    assert [call[0] for call in brain.calls] == [user_text]
+    assert {
+        "type": "error_spoken",
+        "text": recovered_reply,
+        "language": "en",
+    } in jsons
+    completed = [event for event in bus.events if isinstance(event, VoiceTurnCompleted)]
+    assert len(completed) == 1
+    assert completed[0].jarvis_text == recovered_reply
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_direct_tool_empty_response_reuses_result_without_repeating_action():
+    """A completed tool is rendered again; the user request is never replayed."""
+    spoken_audio = AudioChunk(
+        pcm=b"\x03\x04" * 8,
+        sample_rate=24_000,
+        timestamp_ns=0,
+    )
+    tool_result_sent = asyncio.Event()
+    retry_sent = asyncio.Event()
+
+    class _DirectToolRecoverySession(FakeSession):
+        async def receive(self):
+            yield RealtimeEvent(
+                type="input_transcript",
+                text="Open the calculator.",
+                is_final=True,
+            )
+            yield RealtimeEvent(
+                type="tool_call",
+                call_id="direct-empty-1",
+                tool_name="open_app",
+                tool_args={"app_name": "Calculator"},
+            )
+            await tool_result_sent.wait()
+            yield RealtimeEvent(type="turn_complete")
+            await retry_sent.wait()
+            yield RealtimeEvent(
+                type="output_transcript_delta",
+                text="The calculator is open.",
+            )
+            yield RealtimeEvent(type="audio_delta", audio=spoken_audio)
+            yield RealtimeEvent(type="turn_complete")
+
+        async def send_tool_result(self, call_id, name, result):
+            await super().send_tool_result(call_id, name, result)
+            tool_result_sent.set()
+
+        async def send_text(self, text):
+            await super().send_text(text)
+            retry_sent.set()
+
+    class _DirectToolRecoveryProvider(FakeProvider):
+        async def open_session(self, cfg):
+            self.opened_with = cfg
+            self.session = _DirectToolRecoverySession([])
+            return self.session
+
+    brain = FakeBrain()
+    tool_bridge = FakeToolBridge()
+    provider = _DirectToolRecoveryProvider([])
+    binaries: list[bytes] = []
+    sess = _session(
+        provider,
+        brain=brain,
+        tool_bridge=tool_bridge,
+        tool_mode="direct",
+        binaries=binaries,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(sess.wait_finished(), timeout=2)
+
+    assert tool_bridge.calls == [("open_app", {"app_name": "Calculator"})]
+    assert brain.calls == []
+    assert len(provider.session.text_inputs) == 1
+    assert "do not repeat the action" in provider.session.text_inputs[0]
+    assert binaries == [spoken_audio.pcm]
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
 async def test_direct_mode_pushes_live_brain_tool_replacements_to_provider(
     wire_supervisor_gateway,
 ):
@@ -2753,7 +2941,11 @@ async def test_direct_realtime_promise_without_tool_fails_closed_honestly():
     await sess.wait_finished()
 
     assert provider.session.interrupts == 1
-    assert {"type": "error_spoken", "text": action_not_started_phrase("en")} in jsons
+    assert {
+        "type": "error_spoken",
+        "text": action_not_started_phrase("en"),
+        "language": "en",
+    } in jsons
     await sess.end(reason="test")
 
 
@@ -3105,9 +3297,10 @@ async def test_delegate_timeout_cancels_brain_and_cannot_publish_late(monkeypatc
 
 
 @pytest.mark.asyncio
-async def test_delegate_empty_spoken_answer_uses_one_internal_reply_fallback():
+async def test_delegate_empty_spoken_answer_uses_surface_tts_fallback():
     bus = FakeBus()
     brain = FakeBrain(replies=("The action completed.",), bus=bus)
+    jsons: list[dict] = []
     provider = ToolResultGatedProvider(
         [
             RealtimeEvent(type="input_transcript", text="do it", is_final=True),
@@ -3120,7 +3313,7 @@ async def test_delegate_empty_spoken_answer_uses_one_internal_reply_fallback():
         ],
         [RealtimeEvent(type="turn_complete")],
     )
-    sess = _session(provider, brain=brain, bus=bus)
+    sess = _session(provider, brain=brain, bus=bus, jsons=jsons)
 
     await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
     await sess.wait_finished()
@@ -3128,7 +3321,12 @@ async def test_delegate_empty_spoken_answer_uses_one_internal_reply_fallback():
     responses = [event for event in bus.events if isinstance(event, ResponseGenerated)]
     completed = next(event for event in bus.events if isinstance(event, VoiceTurnCompleted))
     assert [event.text for event in responses] == ["The action completed."]
-    assert completed.jarvis_text == ""
+    assert completed.jarvis_text == "The action completed."
+    assert {
+        "type": "error_spoken",
+        "text": "The action completed.",
+        "language": "en",
+    } in jsons
     await sess.end(reason="test")
 
 

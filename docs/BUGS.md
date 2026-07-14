@@ -1158,7 +1158,7 @@ carrying the same `System.AppUserModel.ID`, then using that shortcut's **file
 name** + **icon**. There was no such shortcut under
 `%APPDATA%\…\Start Menu\Programs\` (only a Desktop shortcut — not scanned — and
 a `Startup\Disabled\` one tagged with a stale *personalised* AUMID
-`SamHerz.PersonalJarvis`). With no AUMID-matched shortcut, Explorer fell back
+(`<username>.PersonalJarvis`-shaped)). With no AUMID-matched shortcut, Explorer fell back
 to the process `FileDescription` → "Python".
 
 **Fix (`jarvis/ui/icon_utils.py`):** new `ensure_start_menu_shortcut()` creates
@@ -3626,19 +3626,27 @@ cannot speak into the call. Provider events carry explicit recoverability, so
 the OpenAI active-response collision no longer poisons a usable session, while
 terminal events end the receive pump. The OpenAI adapter also serializes every
 local `response.create` against `response.done`, preventing the collision.
-Finally, realtime tool mode defaults to `direct`: the live model calls the
-supervisor safety gateway with its own realtime credential and does not invoke
-the classic Brain/TTS pipeline. Legacy `delegate` remains an explicit opt-in.
+At the time of this fix, realtime tool mode defaulted to `direct`: the live
+model called the supervisor safety gateway with its own realtime credential
+and did not invoke the classic Brain/TTS pipeline. BUG-052 later restored the
+compact `delegate` default after measuring the full dynamic catalog at roughly
+26,000 input tokens per response; `direct` remains an explicit diagnostic
+opt-in.
 
 **Guards.** `tests/unit/speech/test_realtime_announcement_bridge.py` and
 `test_announcement_bridge.py` cover voice ownership; realtime pipeline
 isolation, autonomous defaults, error recoverability, and OpenAI response
 serialization are covered under `tests/unit/realtime/`.
 
-**Class rule.** A voice surface has ONE voice at a time. Any fallback from
+**Class rule.** A voice surface has ONE voice at a time. Ordinary fallback from
 the live realtime voice to classic TTS must be gated on the accepted call
 handle being GONE, never merely busy or unhealthy — those states mean wait,
-drop, or end the call, not switch voices mid-call.
+drop, or end the call, not switch voices mid-call. The narrow terminal-turn
+exception is BUG-052's `error_spoken` path: after the current provider response
+has completed or been cancelled, realtime playback is stopped, and a grounded
+or curated result still has zero audio, the surface may render that fixed text
+through classic TTS. It may not run another model/tool or overlap provider
+audio.
 
 ## BUG-050: run_shell on Windows echoes quoted commands instead of executing them (HIGH, 2026-07-13)
 
@@ -3736,3 +3744,61 @@ it is meant to cover is not an ack. The bridge over dead air needs a latency
 budget bounded by user patience (~2–3 s), independent of any model round —
 and it must be a bystander: a helper task that merely waits must never feed
 the liveness signals (turn hold, endpoint protection) that real work feeds.
+
+## BUG-052: Realtime records an empty response as success and returns to listening (HIGH, 2026-07-14)
+
+**Symptom.** A healthy realtime voice session accepted and transcribed five
+user turns, but three substantive turns returned to LISTENING after roughly
+half a second with no assistant transcript and no audio. The run inspector
+reported every turn and the whole session as successful. The silent turns had
+zero speak time, no tool calls, no error event, and no `AudioOutFirst` or
+`ResponseGenerated`; normal turns in the same call spoke through the same
+output device. This was response-generation silence, not microphone, TTS
+device, watchdog, or long-thinking latency.
+
+**Root cause.** `response.done` is a transport lifecycle boundary, not proof of
+a completed answer. The OpenAI Realtime API emits it for `completed`, `failed`,
+`incomplete`, and `cancelled` responses, but the adapter discarded
+`response.status` and `status_details` and always emitted `turn_complete`.
+`RealtimeVoiceSession` then persisted an empty `VoiceTurnCompleted` as success
+and returned the surface to LISTENING without checking for user-visible output.
+A nominally `completed` response can also contain no output, so adapter status
+checking alone cannot enforce the product contract. Direct tool mode made the
+gap much easier to hit because ordinary turns now use the native response path,
+but the missing invariant predated that default.
+
+**Fix.** The defense is layered and provider-neutral:
+
+1. The OpenAI adapter now reports failed/incomplete terminal statuses as a
+   recoverable provider error before preserving the `turn_complete` boundary.
+   Expected barge-in cancellation remains quiet.
+2. A content-bearing turn with no text, audio, or tool evidence cannot close.
+   It dispatches exactly once through the normal Brain chain, so configured
+   key-aware, cross-family fallback remains available.
+3. A direct-tool turn never replays the user's request. It retains the existing
+   tool result and asks the provider to render that result with tools disabled;
+   this prevents duplicate side effects.
+4. A transcript with zero PCM, a grounded recovery result with zero PCM, or an
+   exhausted Brain fallback is rendered through the surface's classic TTS path
+   after realtime playback stops. No model or tool is called again, and the
+   persisted turn contains the text the user actually heard.
+5. The default tool mode is again compact `delegate`: the realtime provider
+   sees only `jarvis_action` plus `end_call`, while the router Brain owns the
+   large dynamic catalog. A live reproduction showed 134 direct declarations,
+   about 26,000 requested input tokens per response, and a 40,000 TPM limit —
+   enough for roughly one turn before rate limiting. `direct` remains available
+   only as an explicit operator choice.
+
+**Guards.** `tests/unit/realtime/test_openai_realtime.py` covers failed
+`response.done` status propagation. `tests/unit/realtime/test_session.py`
+covers no-output conversation recovery, a second empty response, and direct
+tool-result recovery without repeating the action.
+`tests/unit/speech/test_realtime_mode.py` proves that `error_spoken` reaches
+real TTS audio and restores LISTENING only after playback.
+
+**Class rule.** A successful voice turn requires user-visible output evidence:
+spoken audio, an explicit lifecycle action such as hang-up, or a safely retained
+result that is rendered by a working fallback. `turn_complete`, provider
+health, and a zero-error run row are never sufficient evidence by themselves.
+Never recover a silent tool turn by replaying the original request; recover
+from the retained result so a side effect can occur at most once.

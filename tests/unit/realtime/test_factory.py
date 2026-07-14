@@ -121,8 +121,8 @@ def test_pipeline_mode_never_builds_realtime_session(monkeypatch):
     )
 
 
-def test_realtime_tool_mode_defaults_to_autonomous_direct_execution() -> None:
-    assert VoiceConfig().realtime_tool_mode == "direct"
+def test_realtime_tool_mode_defaults_to_compact_delegate_execution() -> None:
+    assert VoiceConfig().realtime_tool_mode == "delegate"
 
 
 def test_one_realtime_key_builds_without_a_classic_brain(monkeypatch) -> None:
@@ -139,7 +139,7 @@ def test_one_realtime_key_builds_without_a_classic_brain(monkeypatch) -> None:
 
     assert session is not None
     assert session._brain is None
-    assert session._tool_mode == "direct"
+    assert session._tool_mode == "delegate"
     assert session._delegate_enabled is False
     assert [provider.name for provider in session._providers] == ["gemini-live"]
 

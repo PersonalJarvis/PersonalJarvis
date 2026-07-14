@@ -226,12 +226,15 @@ describe("collectOpenQuestions", () => {
 describe("displayAddress", () => {
   it("prefers the preferred_address over the name", () => {
     const meta = { identity: { preferred_address: "Chef" } };
-    expect(displayAddress(meta, "Personal Jarvis Maintainer")).toBe("Chef"); // i18n-allow: intentional German address fixture
+    expect(displayAddress(meta, "Jürgen Müller")).toBe("Chef"); // i18n-allow: intentional German address fixture
   });
 
   it("falls back to the first name", () => {
-    expect(displayAddress(EMPTY_META, "Personal Jarvis Maintainer")).toBe("Alex"); // i18n-allow: German umlaut name fixture
-    expect(displayAddress(EMPTY_META, "  Alex  ")).toBe("Alex");
+    // Neutral umlaut fixture: a real name here gets rewritten by the release
+    // PII scrub and desynchronizes input and expectation (v1.0.6 forensic:
+    // the public frontend CI failed on exactly this test).
+    expect(displayAddress(EMPTY_META, "Jürgen Müller")).toBe("Jürgen"); // i18n-allow: umlaut name fixture
+    expect(displayAddress(EMPTY_META, "  Jürgen  ")).toBe("Jürgen"); // i18n-allow: umlaut name fixture
   });
 
   it("returns null when nothing is known", () => {
