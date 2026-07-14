@@ -7,7 +7,43 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
-## [Unreleased]
+## [1.0.7] — 2026-07-14
+
+### Fixed
+
+- **macOS first boot works.** Three native first-launch aborts ("Python quit
+  unexpectedly") fixed in one forensic series: the tray status item, the
+  Jarvis bar/orb Tk windows, and the virtual-cursor overlay were created off
+  the main thread (AppKit/Aqua-Tk abort natively, BUG-056/057); PortAudio
+  re-initialization is now serialized single-flight and the global-hotkey
+  event tap preflights the Accessibility grant instead of letting macOS kill
+  the process (BUG-058). macOS runs with the desktop window + Dock icon; the
+  menu-bar icon and on-screen bar return once main-thread hosting lands.
+- **Local speech pack install no longer blames your internet.** A missing
+  prebuilt wheel (e.g. Python 3.14 + av) is now diagnosed honestly, pip runs
+  wheel-only on end-user machines (never a source build), and the installer
+  prefers Python 3.13/3.12 until the native stack ships 3.14 wheels (BUG-059).
+- **Grounded wiki answers.** "What is in my wiki" is answered by a new
+  deterministic listing tool in one round instead of blind probing; contract
+  pages carry a provenance warning; delegated voice turns get a hard
+  wall-clock deadline with a forced final answer (BUG-055).
+- **Realtime stability.** A benign cancel race no longer ends the call, and
+  German (any-language) capability verbs reach connected tools directly
+  instead of always spawning an agent.
+
+### Added
+
+- **OAuth token refresh lifecycle** for marketplace plugins (scheduler,
+  PKCE/token-store hardening, Gmail/Calendar REST updates).
+- **Sessions view rework**: richer session detail and turn cards.
+
+## [1.0.6] — 2026-07-13
+
+### Added
+
+- **Realtime voice engine — first public release** (previously withheld):
+  low-latency speech-to-speech conversations with tool delegation, plus the
+  tool-model pick and a broad reliability wave.
 
 ### Changed
 
