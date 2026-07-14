@@ -25,6 +25,7 @@ from jarvis.ui.jarvisbar.overlay import (
     Z_ORDER_GUARD_INTERVAL_MS,
     JarvisBarOverlay,
     _win32_force_topmost,
+    _win32_topmost_band_is_healthy,
 )
 
 
@@ -83,6 +84,35 @@ class _FakeUser32:
     def SetWindowPos(self, *args: object) -> bool:  # noqa: N802 - native API seam
         self.calls.append(("SetWindowPos", *args))
         return self.succeeds
+
+
+class _FakeBandUser32:
+    def __init__(
+        self,
+        *,
+        chain: dict[int, int],
+        visible: set[int],
+        ex_styles: dict[int, int],
+        parent: int = 0x2222,
+    ) -> None:
+        self.parent = parent
+        self.chain = chain
+        self.visible = visible
+        self.ex_styles = ex_styles
+
+    def GetParent(self, _hwnd: int) -> int:  # noqa: N802 - native API seam
+        return self.parent
+
+    def GetWindow(self, hwnd: int, relation: int) -> int:  # noqa: N802
+        assert relation == 3  # GW_HWNDPREV
+        return self.chain.get(hwnd, 0)
+
+    def IsWindowVisible(self, hwnd: int) -> bool:  # noqa: N802
+        return hwnd in self.visible
+
+    def GetWindowLongPtrW(self, hwnd: int, index: int) -> int:  # noqa: N802
+        assert index == -20  # GWL_EXSTYLE
+        return self.ex_styles.get(hwnd, 0)
 
 
 class _GuardRoot(_FakeRoot):
@@ -176,6 +206,35 @@ def test_win32_native_pin_failure_is_nonfatal() -> None:
     )
 
 
+def test_win32_band_check_detects_visible_non_topmost_window_above_bar() -> None:
+    outer = 0x2222
+    normal = 0x3333
+    user32 = _FakeBandUser32(
+        chain={outer: normal, normal: 0},
+        visible={normal},
+        ex_styles={normal: 0},
+    )
+
+    assert _win32_topmost_band_is_healthy(
+        _FakeNativeRoot(), user32=user32
+    ) is False
+
+
+def test_win32_band_check_accepts_only_topmost_or_hidden_windows_above() -> None:
+    outer = 0x2222
+    topmost = 0x3333
+    hidden_normal = 0x4444
+    user32 = _FakeBandUser32(
+        chain={outer: topmost, topmost: hidden_normal, hidden_normal: 0},
+        visible={topmost},
+        ex_styles={topmost: 0x00000008, hidden_normal: 0},
+    )
+
+    assert _win32_topmost_band_is_healthy(
+        _FakeNativeRoot(), user32=user32
+    ) is True
+
+
 def test_win32_pin_skips_tk_lift_that_can_leave_the_wrong_z_order_band(
     monkeypatch,
 ) -> None:
@@ -204,6 +263,9 @@ def test_z_order_guard_repins_mapped_bar_and_rearms(monkeypatch) -> None:
     bar._root = root  # noqa: SLF001
     bar._running = True  # noqa: SLF001
     calls: list[bool] = []
+    monkeypatch.setattr(
+        overlay_module, "_win32_topmost_band_is_healthy", lambda _root: False
+    )
     monkeypatch.setattr(bar, "_do_pin_topmost", lambda: calls.append(True) or "native")
 
     bar._schedule_z_order_guard()  # noqa: SLF001
@@ -212,6 +274,26 @@ def test_z_order_guard_repins_mapped_bar_and_rearms(monkeypatch) -> None:
     assert root.after_calls == [
         (Z_ORDER_GUARD_INTERVAL_MS, bar._schedule_z_order_guard)  # noqa: SLF001
     ]
+
+
+def test_z_order_guard_leaves_healthy_win32_band_untouched(monkeypatch) -> None:
+    bar = JarvisBarOverlay(persistent=True)
+    root = _GuardRoot(mapped=True)
+    bar._root = root  # noqa: SLF001
+    bar._running = True  # noqa: SLF001
+    monkeypatch.setattr(overlay_module.sys, "platform", "win32")
+    monkeypatch.setattr(
+        overlay_module, "_win32_topmost_band_is_healthy", lambda _root: True
+    )
+    monkeypatch.setattr(
+        bar,
+        "_do_pin_topmost",
+        lambda: (_ for _ in ()).throw(AssertionError("healthy bar was raised")),
+    )
+
+    bar._schedule_z_order_guard()  # noqa: SLF001
+
+    assert root.after_calls
 
 
 def test_z_order_guard_never_maps_hidden_bar(monkeypatch) -> None:
