@@ -265,3 +265,18 @@ def test_update_run_stops_the_live_app_before_touching_the_venv() -> None:
     assert src.index("stopped the running Jarvis app") < src.index(
         "rebuilding the Python environment"
     )
+
+
+def test_welcome_gate_asks_before_touching_anything() -> None:
+    """Maintainer request 2026-07-14: the very first thing the one-liner shows
+    is a single choose-don't-type question. It must read keys from /dev/tty
+    (stdin carries the piped script), skip cleanly without a tty (CI opt-in
+    = running the command), honor JARVIS_INSTALL_YES=1, and exit 0 on No
+    having touched nothing."""
+    src = INSTALL_SH.read_text(encoding="utf-8")
+    assert "Would you like to install Personal Jarvis?" in src
+    assert "JARVIS_INSTALL_YES" in src
+    assert "< /dev/tty" in src
+    assert "nothing was installed" in src
+    # The gate runs BEFORE phase 1 (prerequisites) — nothing precedes consent.
+    assert src.index("ask_welcome") < src.index("phase '1/6'")

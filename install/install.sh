@@ -62,6 +62,46 @@ ${DIM}     P E R S O N A L  J A R V I S   ·   talk to your computer${RST}
 ${DIM}     Checks prerequisites · installs the full profile · launches when done${RST}
 EOF
 
+# -------------------------------------------------------------- welcome gate
+# One clear question before anything touches the machine. Arrow keys (or
+# y / n) choose, Enter confirms — nothing to type. `curl | bash` keeps stdin
+# on the pipe, so the keys are read from /dev/tty; without a tty (CI,
+# headless automation) the install proceeds — running the command was the
+# explicit opt-in there. JARVIS_INSTALL_YES=1 skips the question entirely.
+ask_welcome() {
+    [ -n "${JARVIS_INSTALL_YES:-}" ] && return 0
+    { [ -r /dev/tty ] && [ -w /dev/tty ]; } 2>/dev/null || return 0
+    _sel=0  # 0 = yes, 1 = no
+    while :; do
+        if [ "$_sel" -eq 0 ]; then
+            printf '\r  %sWould you like to install Personal Jarvis?%s   %s%s▸ Yes%s      No   ' \
+                "$BOLD" "$RST" "$BOLD" "$GOLD" "$RST" > /dev/tty
+        else
+            printf '\r  %sWould you like to install Personal Jarvis?%s     Yes   %s%s▸ No%s   ' \
+                "$BOLD" "$RST" "$BOLD" "$RED" "$RST" > /dev/tty
+        fi
+        IFS= read -rsn1 _key < /dev/tty || return 0
+        case "$_key" in
+            $'\x1b')
+                IFS= read -rsn2 -t 1 _rest < /dev/tty || _rest=''
+                case "$_rest" in
+                    '[C'|'[B') _sel=1 ;;
+                    '[D'|'[A') _sel=0 ;;
+                esac
+                ;;
+            y|Y) _sel=0; break ;;
+            n|N) _sel=1; break ;;
+            '') break ;;  # Enter confirms the highlighted choice
+        esac
+    done
+    printf '\n' > /dev/tty
+    if [ "$_sel" -eq 1 ]; then
+        note 'No problem - nothing was installed. Run the same command any time.'
+        exit 0
+    fi
+}
+ask_welcome
+
 # -------------------------------------------------------------- preflight
 phase '1/6' 'Prerequisites'
 
