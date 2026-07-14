@@ -417,12 +417,12 @@ class RealtimeVoiceSession:
         self._brain = brain
         mode = str(
             getattr(
-                getattr(self._config, "voice", None), "realtime_tool_mode", "direct"
+                getattr(self._config, "voice", None), "realtime_tool_mode", "delegate"
             )
-            or "direct"
+            or "delegate"
         ).strip().lower()
         if mode not in {"delegate", "direct"}:
-            mode = "direct"
+            mode = "delegate"
         self._tool_mode = mode
         # Delegate mode needs only a callable brain (the boot proxy and the
         # real BrainManager both qualify); an explicitly injected bridge

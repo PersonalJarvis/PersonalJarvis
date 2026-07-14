@@ -3626,9 +3626,12 @@ cannot speak into the call. Provider events carry explicit recoverability, so
 the OpenAI active-response collision no longer poisons a usable session, while
 terminal events end the receive pump. The OpenAI adapter also serializes every
 local `response.create` against `response.done`, preventing the collision.
-Finally, realtime tool mode defaults to `direct`: the live model calls the
-supervisor safety gateway with its own realtime credential and does not invoke
-the classic Brain/TTS pipeline. Legacy `delegate` remains an explicit opt-in.
+At the time of this fix, realtime tool mode defaulted to `direct`: the live
+model called the supervisor safety gateway with its own realtime credential
+and did not invoke the classic Brain/TTS pipeline. BUG-052 later restored the
+compact `delegate` default after measuring the full dynamic catalog at roughly
+26,000 input tokens per response; `direct` remains an explicit diagnostic
+opt-in.
 
 **Guards.** `tests/unit/speech/test_realtime_announcement_bridge.py` and
 `test_announcement_bridge.py` cover voice ownership; realtime pipeline
@@ -3779,6 +3782,12 @@ but the missing invariant predated that default.
    exhausted Brain fallback is rendered through the surface's classic TTS path
    after realtime playback stops. No model or tool is called again, and the
    persisted turn contains the text the user actually heard.
+5. The default tool mode is again compact `delegate`: the realtime provider
+   sees only `jarvis_action` plus `end_call`, while the router Brain owns the
+   large dynamic catalog. A live reproduction showed 134 direct declarations,
+   about 26,000 requested input tokens per response, and a 40,000 TPM limit —
+   enough for roughly one turn before rate limiting. `direct` remains available
+   only as an explicit operator choice.
 
 **Guards.** `tests/unit/realtime/test_openai_realtime.py` covers failed
 `response.done` status propagation. `tests/unit/realtime/test_session.py`
