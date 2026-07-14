@@ -379,6 +379,7 @@ class ToolUseLoop:
         # loop issues. Safety ceiling, not a target (see BrainConfig.max_tokens).
         self._max_tokens = max_tokens
 
+<<<<<<< Updated upstream
     def _resolve_tool(self, requested: str) -> tuple[Tool | None, str]:
         """Look up a model-requested tool name, tolerating separator/case drift.
 
@@ -420,6 +421,32 @@ class ToolUseLoop:
         except Exception:  # noqa: BLE001 — observability must never break the loop
             log.debug("guard-denied publish failed", exc_info=True)
 
+||||||| Stash base
+=======
+    def _resolve_tool(self, requested: str) -> tuple[Tool | None, str]:
+        """Look up a model-requested tool name, tolerating separator/case drift.
+
+        Exact match wins. Otherwise the canonical (hyphen/underscore/case-
+        insensitive) form resolves — but only when it maps to exactly ONE
+        registered tool. Returns ``(tool, registered_name)``; unknown names
+        return ``(None, requested)`` so the anti-silence fallback still fires.
+        """
+        tool = self._tools.get(requested)
+        if tool is not None or not requested:
+            return tool, requested
+        alias = self._alias_map.get(_canonical_tool_name(requested))
+        if alias is None:
+            return None, requested
+        tool = self._tools.get(alias)
+        if tool is None:
+            return None, requested
+        log.info(
+            "tool_use_loop: model called tool %r — resolved to registered "
+            "tool %r via separator-insensitive alias", requested, alias,
+        )
+        return tool, alias
+
+>>>>>>> Stashed changes
     def _tool_schemas(self) -> list[dict[str, Any]]:
         """Schemas in Anthropic-compatible format (providers normalise)."""
         return [

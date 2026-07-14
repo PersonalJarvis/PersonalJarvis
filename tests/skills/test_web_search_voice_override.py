@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import pytest
 
+pytest.importorskip(
+    "skills.web_search", reason="top-level skills package absent (public snapshot / plain checkout)"
+)
 from skills.web_search._voice_override import (
     SearchSettings,
     TEXT_LATENCY_BUDGET_MS,

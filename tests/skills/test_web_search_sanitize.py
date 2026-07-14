@@ -11,6 +11,9 @@ import string
 import pytest
 from hypothesis import HealthCheck, given, settings, strategies as st
 
+pytest.importorskip(
+    "skills.web_search", reason="top-level skills package absent (public snapshot / plain checkout)"
+)
 from skills.web_search._sanitize import (
     INJECTION_TOKENS,
     MAX_QUERY_LEN,

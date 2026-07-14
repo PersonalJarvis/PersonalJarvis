@@ -34,6 +34,7 @@ Design notes
 from __future__ import annotations
 
 import asyncio
+import sqlite3
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -59,6 +60,7 @@ from jarvis.memory.wiki.curator_llm import WikiCuratorLLM
 from jarvis.memory.wiki.log_writer import LogWriter
 from jarvis.memory.wiki.page import MarkdownPageRepository
 from jarvis.memory.wiki.protocols import PageUpdate
+from jarvis.memory.wiki.fts_index import rebuild_index
 from jarvis.memory.wiki.search import VaultSearch
 from jarvis.memory.wiki.session_rollup import SessionRollupWorker
 from jarvis.memory.wiki.telemetry import telemetry
@@ -264,8 +266,14 @@ async def stack(tmp_path: Path):
     rollup._cfg = rollup._cfg.model_copy(update={"wiki_write_enabled": True})  # noqa: SLF001
     await rollup.start()
 
-    # Context injector consumes the same on-disk vault.
-    search = VaultSearch(vault_root)
+    # Context injector consumes the same on-disk vault. VaultSearch reads
+    # the FTS index, which in production is fed by the boot reconcile
+    # (wiki_boot_index -> rebuild_index) and the live vault watcher; neither
+    # runs in this fixture, so tests re-run rebuild_index (the boot step)
+    # before every injector expectation.
+    fts_conn = sqlite3.connect(":memory:", check_same_thread=False)
+    rebuild_index(vault_root, fts_conn)
+    search = VaultSearch(vault_root, conn=fts_conn)
     injector = WikiContextInjector(
         search=search, max_chars=1500,
         latency_budget_ms=500,  # generous; tmpfs is fast
@@ -286,6 +294,7 @@ async def stack(tmp_path: Path):
         "clock_holder": clock_holder,
         "injector": injector,
         "search": search,
+        "fts_conn": fts_conn,
     }
 
     bridge.stop()
@@ -329,6 +338,7 @@ async def test_voice_fact_becomes_context_on_next_turn(stack) -> None:
     # Next turn: the injector finds the freshly-written page and
     # prepends it to the system prompt.
     base_prompt = "You are Personal Jarvis."
+    rebuild_index(s["vault_root"], s["fts_conn"])  # the boot/watcher index step
     augmented = await s["injector"].maybe_inject(
         user_text="Was war nochmal mein Lieblingsfilm?",
         system_prompt=base_prompt,
@@ -372,6 +382,7 @@ async def test_rollup_produces_session_page_visible_to_injector(stack) -> None:
 
     # The injector finds the session page (the rollup paragraph mentions
     # "wiki memory rebuild" via wikilinks).
+    rebuild_index(s["vault_root"], s["fts_conn"])  # the boot/watcher index step
     augmented = await s["injector"].maybe_inject(
         user_text="Was haben wir letzte Session am Wiki gemacht?",
         system_prompt="You are Personal Jarvis.",
@@ -718,7 +729,9 @@ async def test_fresh_triggers_recover_existing_vault_state(stack) -> None:
     s["bridge"].stop()
     await s["rollup"].stop()
 
-    fresh_search = VaultSearch(vault_root)
+    fresh_conn = sqlite3.connect(":memory:", check_same_thread=False)
+    rebuild_index(vault_root, fresh_conn)  # the boot's wiki_boot_index step
+    fresh_search = VaultSearch(vault_root, conn=fresh_conn)
     fresh_injector = WikiContextInjector(
         search=fresh_search, max_chars=1500,
         latency_budget_ms=500, min_keyword_length=4,

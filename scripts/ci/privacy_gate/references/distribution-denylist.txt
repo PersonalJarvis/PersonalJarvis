@@ -264,3 +264,10 @@ docs/realtime-voice/**
 # Root-level Codex dev-handoff task prompts are internal working notes, not
 # user-facing docs.
 codex-*.md
+
+# --- Tests for withheld maintainer tooling (2026-07-14, v1.0.6 CI forensic) ---
+# These test the privacy gate and the drift-guard config-soll pin — both of
+# which are themselves denylisted above, so the tests can only fail in the
+# public snapshot (FileNotFoundError on the withheld files).
+tests/unit/ci/test_privacy_pre_push.py
+tests/unit/scripts/test_drift_guard_brain_primary_contract.py
