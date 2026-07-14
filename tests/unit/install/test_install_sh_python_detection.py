@@ -251,3 +251,17 @@ def test_bootstraps_full_support_python_when_host_only_has_314() -> None:
     assert '[ -z "${JARVIS_PYTHON:-}" ]' in src
     # Honest degrade when the bootstrap fails.
     assert "the speech pack needs Python 3.11-3.13" in src
+
+
+def test_update_run_stops_the_live_app_before_touching_the_venv() -> None:
+    """Field report 2026-07-14: during an update, the previously installed
+    app (often revived by the login autostart) kept running with a stale,
+    half-rewritten venv underneath — 'the app is already open but nothing
+    works'. install.sh must stop instances of THIS install before phase 3."""
+    src = INSTALL_SH.read_text(encoding="utf-8")
+    assert 'pkill -f "$VENV_PATH"' in src
+    assert "stopped the running Jarvis app for the update" in src
+    # The stop must come BEFORE the venv rebuild block.
+    assert src.index("stopped the running Jarvis app") < src.index(
+        "rebuilding the Python environment"
+    )

@@ -597,6 +597,20 @@ phase '3/6' 'Python environment'
 VENV_PATH="$INSTALL_DIR/.venv"
 VENV_PYTHON="$VENV_PATH/bin/python"
 
+# Update runs: stop any Jarvis still running out of THIS install before we
+# touch its environment. A live app (often revived by the login autostart)
+# keeps serving stale, half-updated features while pip rewrites the venv
+# under it — the "app is already open but nothing works yet" field report
+# (2026-07-14). The installer relaunches a fresh instance as its last step.
+if [ -x "$VENV_PYTHON" ]; then
+    if pkill -f "$VENV_PATH" 2>/dev/null; then
+        note 'stopped the running Jarvis app for the update'
+    fi
+    if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
+        launchctl unload "$HOME/Library/LaunchAgents/com.personal-jarvis.autostart.plist" >/dev/null 2>&1 || true
+    fi
+fi
+
 # Rebuild the venv when the selected interpreter's major.minor changed
 # (BUG-059 follow-up): the 3.13-first preference is useless for an EXISTING
 # install whose venv is pinned to 3.14 — a stale venv keeps the local-voice
