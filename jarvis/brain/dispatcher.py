@@ -36,6 +36,7 @@ class BrainDispatcher:
         max_turns: int = 15,
         max_tokens_total: int = 50_000,
         max_tokens: int = 8192,
+        deadline_s: float | None = None,
     ) -> None:
         self._brain = brain
         self._tools = tools or {}
@@ -48,6 +49,9 @@ class BrainDispatcher:
         # tool-use turns; this is the cap on a single provider response so a
         # long reply is never read aloud truncated mid-sentence.
         self._max_tokens = max_tokens
+        # Optional wall-clock bound for the tool-use loop (voice turns).
+        # See ToolUseLoop.deadline_s; ``None`` = unbounded (default).
+        self._deadline_s = deadline_s
 
     @property
     def brain(self) -> Brain:
@@ -63,6 +67,7 @@ class BrainDispatcher:
             max_turns=self._max_turns,
             max_tokens_total=self._max_tokens_total,
             max_tokens=self._max_tokens,
+            deadline_s=self._deadline_s,
         )
 
     def set_tools(self, tools: dict[str, Tool]) -> None:
@@ -128,6 +133,7 @@ class BrainDispatcher:
                     max_tokens_total=self._max_tokens_total,
                 ),
                 max_tokens=self._max_tokens,
+                deadline_s=self._deadline_s,
             )
             return await loop.run(
                 messages,
