@@ -68,13 +68,21 @@ def test_virtual_cursor_start_returns_false_on_macos(monkeypatch, caplog) -> Non
     assert recorder.spawned == []
 
 
-def test_desktop_build_overlay_surface_returns_nulloverlay_on_macos(
-    monkeypatch,
-) -> None:
+def test_desktop_build_overlay_surface_on_macos(monkeypatch) -> None:
+    # The bar gets the own-process host (its Tk mainloop runs on the CHILD's
+    # main thread — legal on Aqua-Tk); the mascot has no host yet and stays
+    # the no-op surface. Neither path may create an in-process Tk root.
     from jarvis.ui.desktop_app import DesktopApp
     from jarvis.ui.jarvisbar.null_overlay import NullOverlay
+    from jarvis.ui.jarvisbar.subprocess_overlay import SubprocessBarOverlay
 
     monkeypatch.setattr("sys.platform", "darwin")
+    spawned: list[float] = []
+    monkeypatch.setattr(
+        SubprocessBarOverlay,
+        "start_in_thread",
+        lambda self, timeout=3.0: spawned.append(timeout),
+    )
     app = DesktopApp.__new__(DesktopApp)  # bypass heavy __init__
     app.cfg = SimpleNamespace(
         ui=SimpleNamespace(
@@ -84,9 +92,38 @@ def test_desktop_build_overlay_surface_returns_nulloverlay_on_macos(
             orb_mascot_path="",
         )
     )
-    for style in ("jarvis_bar", "mascot"):
-        surface = app._build_overlay_surface(style)
-        assert isinstance(surface, NullOverlay), style
+    surface = app._build_overlay_surface("jarvis_bar")
+    assert isinstance(surface, SubprocessBarOverlay)
+    assert surface._persistent is True
+    assert spawned  # the companion process spawn was requested
+    assert isinstance(app._build_overlay_surface("mascot"), NullOverlay)
+
+
+def test_desktop_build_overlay_surface_macos_bar_falls_back_to_null(
+    monkeypatch,
+) -> None:
+    # Fail-safe: a broken host spawn must never block the boot (BUG-057
+    # class) — the bar degrades to the no-op surface instead.
+    from jarvis.ui.desktop_app import DesktopApp
+    from jarvis.ui.jarvisbar.null_overlay import NullOverlay
+    from jarvis.ui.jarvisbar.subprocess_overlay import SubprocessBarOverlay
+
+    monkeypatch.setattr("sys.platform", "darwin")
+
+    def _boom(self, timeout=3.0):
+        raise RuntimeError("spawn failed")
+
+    monkeypatch.setattr(SubprocessBarOverlay, "start_in_thread", _boom)
+    app = DesktopApp.__new__(DesktopApp)
+    app.cfg = SimpleNamespace(
+        ui=SimpleNamespace(
+            orb_style="jarvis_bar",
+            bar_persistent=True,
+            bar_accent="#e7c46e",
+            orb_mascot_path="",
+        )
+    )
+    assert isinstance(app._build_overlay_surface("jarvis_bar"), NullOverlay)
 
 
 def test_overlay_factory_selects_tray_floor_on_macos() -> None:

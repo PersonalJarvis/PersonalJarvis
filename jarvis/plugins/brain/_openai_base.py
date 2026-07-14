@@ -259,6 +259,7 @@ async def stream_complete(
     # The same map must sanitize both declarations and reconstructed assistant
     # tool history. Otherwise an MCP name such as ``github/search`` succeeds in
     # the first round, then makes the provider reject the second-round history.
+    # (Token-limit param note: see _create_with_token_param_retry below.)
     name_map = _openai_tool_name_map(req.tools) if req.tools else {}
     messages = _to_openai_messages(
         req.messages,
@@ -293,7 +294,7 @@ async def stream_complete(
     tool_buffer: dict[int, dict[str, Any]] = {}
 
     try:
-        stream = await client.chat.completions.create(**kwargs)
+        stream = await _create_with_token_param_retry(client, kwargs)
     except TypeError as exc:
         # Belt-and-suspenders: if the detection above was wrong for whatever
         # reason (mocked tests, monkey-patched SDK, exotic forks), retry once
@@ -306,7 +307,7 @@ async def stream_complete(
             exc,
         )
         kwargs.pop("stream_options", None)
-        stream = await client.chat.completions.create(**kwargs)
+        stream = await _create_with_token_param_retry(client, kwargs)
     async for chunk in stream:
         # Text-Content
         choices = getattr(chunk, "choices", None) or []
@@ -355,3 +356,37 @@ async def stream_complete(
                 "input_tokens": int(getattr(usage, "prompt_tokens", 0) or 0),
                 "output_tokens": int(getattr(usage, "completion_tokens", 0) or 0),
             })
+
+
+async def _create_with_token_param_retry(client: Any, kwargs: dict[str, Any]) -> Any:
+    """``chat.completions.create`` with a one-shot token-parameter retry.
+
+    Newer OpenAI models reject the legacy ``max_tokens`` with a 400
+    ``unsupported_parameter`` error ("Use 'max_completion_tokens' instead"),
+    while many OpenAI-COMPATIBLE servers (local runtimes, gateways) still only
+    accept ``max_tokens``. Sending the legacy name first and switching only on
+    the server's EXPLICIT rejection keeps both families working without
+    pinning model names (AP-21). Field-found: a valid OpenAI key read as
+    "Not working" in the provider test because of this 400.
+    """
+    try:
+        return await client.chat.completions.create(**kwargs)
+    except TypeError:
+        # SDK-level kwarg problems belong to the caller's stream_options
+        # handling — never ours.
+        raise
+    except Exception as exc:  # noqa: BLE001 — inspect the API error, re-raise unrelated
+        message = str(exc)
+        rejected_max_tokens = "max_tokens" in kwargs and (
+            "max_completion_tokens" in message
+            or ("unsupported_parameter" in message and "'max_tokens'" in message)
+        )
+        if not rejected_max_tokens:
+            raise
+        log.info(
+            "provider rejected 'max_tokens' — retrying once with "
+            "'max_completion_tokens'."
+        )
+        retry_kwargs = dict(kwargs)
+        retry_kwargs["max_completion_tokens"] = retry_kwargs.pop("max_tokens")
+        return await client.chat.completions.create(**retry_kwargs)

@@ -22,7 +22,12 @@ _HARD_LEAK_ACTIONS = frozenset(
     }
 )
 _RESIDUE_ACTION = "replaced_with_fallback_residue"
-_STREAM_SAFE_RESIDUE_ACTIONS = frozenset({"removed_em_dash"})
+_STREAM_SAFE_RESIDUE_ACTIONS = frozenset(
+    {
+        "removed_em_dash",
+        "removed_engineering_jargon",
+    }
+)
 _TRANSCRIPT_TAIL_MAX_CHARS = 4_096
 
 
@@ -87,10 +92,11 @@ class ScrubHoldGate:
             self._pending_audio_ms = 0.0
             return self.fallback_phrase()
         if _is_stream_safe_residue(aggregate):
-            # A realtime provider may emit punctuation as its own transcript
-            # delta. The complete utterance is not available yet, so a benign
-            # dash-normalization residue neither authorizes buffered audio nor
-            # aborts the response. The next meaningful delta decides.
+            # A realtime provider may emit punctuation or the first half of a
+            # protected compound as its own transcript delta. The complete
+            # utterance is not available yet, so this benign residue neither
+            # authorizes buffered audio nor aborts the response. The next
+            # meaningful delta decides.
             return text
         self._cleared = True
         if _is_stream_safe_residue(result):
@@ -197,7 +203,7 @@ def _restore_edge_whitespace(original: str, cleaned: str) -> str:
 
 
 def _is_stream_safe_residue(result: ScrubResult) -> bool:
-    """Return whether a whole-utterance fallback came from benign punctuation."""
+    """Return whether fallback came from a benign incomplete stream fragment."""
     actions = set(result.actions)
     residue_sources = actions - {_RESIDUE_ACTION}
     return bool(

@@ -24,6 +24,23 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 COLOR_KEY_RGB = (255, 0, 255)
+
+
+def key_to_alpha(img: Image.Image) -> Image.Image:
+    """RGB frame → RGBA with the magenta color key mapped to full transparency.
+
+    Windows keys the magenta out natively (layered-window color key); macOS
+    has no color-key concept, so the Tk surface there shows RGBA frames on a
+    ``-transparent`` root instead. Exact-match keying mirrors the Windows
+    contract: only pure ``COLOR_KEY_RGB`` pixels vanish.
+    """
+    arr = np.asarray(img, dtype=np.uint8)
+    alpha = np.where(
+        (arr == COLOR_KEY_RGB).all(axis=-1), 0, 255
+    ).astype(np.uint8)
+    return Image.fromarray(np.dstack((arr, alpha)), "RGBA")
+
+
 PILL_BG = (14, 13, 12)
 # Bright gold rim: the only thing that reads when the pill is slim AND
 # semi-transparent (window -alpha). Dark fill + glowing gold edge = glass look.

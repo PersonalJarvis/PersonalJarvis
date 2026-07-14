@@ -46,6 +46,15 @@ def test_gemini_live_spec_present():
     assert spec.alt_credential is None
 
 
+def test_grok_realtime_spec_reuses_xai_key() -> None:
+    spec = get_spec("grok-realtime")
+    assert spec is not None
+    assert spec.label == "xAI Grok Realtime"
+    assert spec.tier == "realtime"
+    assert spec.secret_keys == ("grok_api_key",)
+    assert spec.dashboard_url == "https://console.x.ai/"
+
+
 # ---------------------------------------------------------------------------
 # GET /api/providers
 # ---------------------------------------------------------------------------
@@ -316,6 +325,22 @@ def test_get_realtime_options_gemini_live_voices(monkeypatch):
         "Vindemiatrix", "Sadachbia", "Sadaltager", "Sulafat",
     }
     assert body["models"][0]["id"] == "gemini-3.1-flash-live-preview"
+
+
+def test_get_realtime_options_grok_models_and_voices(monkeypatch) -> None:
+    monkeypatch.setattr(cfg_mod, "get_secret", lambda *a, **kw: "xai-test")
+    client = TestClient(_app())
+
+    resp = client.get("/api/providers/grok-realtime/realtime-options")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["models"][0]["id"] == "grok-voice-latest"
+    assert body["models"][1]["id"] == "grok-voice-think-fast-1.0"
+    assert body["voices"][0]["id"] == "eve"
+    assert {"ara", "leo", "rex", "sal"}.issubset(
+        {voice["id"] for voice in body["voices"]}
+    )
 
 
 def test_get_realtime_options_reflects_pinned_selection(monkeypatch):
