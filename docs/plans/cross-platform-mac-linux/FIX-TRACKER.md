@@ -93,3 +93,13 @@ wrong for macOS: the tray *started* and killed the whole app. Full forensics:
   main-thread hosting — construct the icon on the main thread and
   `run_detached(darwin_nsapplication=<pywebview's NSApplication>)`; verify
   against a live pywebview run loop before lifting the gate.
+
+**Second real-Mac boot (2026-07-14, later): BUG-057.** With the tray gated,
+the next boot died identically one layer further in: the default JarvisBar
+builds its Tk root on the `jarvis-backend` worker thread — Aqua-Tk is
+main-thread-only on macOS. Full boot-path audit gated ALL off-main-thread Tk
+creators on darwin (bar, mascot orb, virtual cursor, `make_overlay_surface`
+→ tray floor); Dock icon + pywebview window confirmed main-thread-safe.
+Commit `b82d821a`, shipped public same day. The follow-up above therefore
+grows: main-thread/own-process hosting is needed for the menu-bar icon AND
+the bar/orb before macOS gets any on-screen overlay.
