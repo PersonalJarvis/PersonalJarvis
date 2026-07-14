@@ -8,6 +8,7 @@ from jarvis.core.bus import EventBus
 from jarvis.core.events import (
     RealtimeSessionReady,
     ResponseGenerated,
+    SpeechSpoken,
     SystemStateChanged,
     TranscriptionUpdate,
     VoiceSessionEnded,
@@ -15,6 +16,7 @@ from jarvis.core.events import (
     VoiceTurnCompleted,
     VoiceTurnStarted,
 )
+from jarvis.sessions.formatter import format_session_plain
 from jarvis.sessions.recorder import SessionRecorder
 from jarvis.sessions.store import SessionStore
 
@@ -270,5 +272,111 @@ async def test_realtime_bridge_accumulates_thinking_and_speaking_segments(
         assert turns[0].user_text == "Check my calendar"
         assert turns[0].think_ms == 7_000
         assert turns[0].speak_ms == 3_000
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_realtime_progress_bridge_survives_into_plain_export(tmp_path) -> None:
+    """Every audible bridge line must precede the final reply in the export."""
+    store = SessionStore(tmp_path / "sessions.db")
+    store.open()
+    try:
+        bus = EventBus()
+        SessionRecorder(store).attach(bus)
+        await bus.publish(
+            VoiceSessionStarted(
+                timestamp_ns=1_000_000_000,
+                source_layer="speech.pipeline",
+                session_id="audible-bridge",
+                wake_keyword="hotkey",
+                language="en",
+            )
+        )
+        await bus.publish(
+            VoiceTurnStarted(
+                timestamp_ns=1_100_000_000,
+                source_layer="realtime.fake-live",
+                session_id="audible-bridge",
+                turn_id="bridge-turn",
+                turn_index=1,
+            )
+        )
+        await bus.publish(
+            TranscriptionUpdate(
+                timestamp_ns=1_200_000_000,
+                source_layer="realtime.fake-live",
+                text="Check the current figure.",
+                is_final=True,
+            )
+        )
+        await bus.publish(
+            SpeechSpoken(
+                timestamp_ns=2_000_000_000,
+                source_layer="realtime.fake-live",
+                text="I'm still working on it.",
+                language="en",
+                spoken_kind="progress",
+            )
+        )
+        await bus.publish(
+            ResponseGenerated(
+                timestamp_ns=3_000_000_000,
+                source_layer="realtime.fake-live",
+                text="The current figure is 42.",
+                language="en",
+            )
+        )
+        await bus.publish(
+            SpeechSpoken(
+                timestamp_ns=3_050_000_000,
+                source_layer="realtime.fake-live",
+                text="The current figure is 42.",
+                language="en",
+                spoken_kind="reply",
+            )
+        )
+        await bus.publish(
+            VoiceTurnCompleted(
+                timestamp_ns=3_100_000_000,
+                source_layer="realtime.fake-live",
+                session_id="audible-bridge",
+                turn_id="bridge-turn",
+                user_text="Check the current figure.",
+                user_lang="en",
+                jarvis_text="The current figure is 42.",
+                jarvis_lang="en",
+                tier="realtime",
+                provider="fake-live",
+                model="live-model",
+            )
+        )
+        await bus.publish(
+            VoiceSessionEnded(
+                timestamp_ns=3_200_000_000,
+                source_layer="speech.pipeline",
+                session_id="audible-bridge",
+                hangup_reason="turn_complete",
+                turn_count=1,
+            )
+        )
+
+        session = store.get_session("audible-bridge")
+        assert session is not None
+        events = store.get_events("audible-bridge")
+        spoken = [event for event in events if event.kind == "SpeechSpoken"]
+        assert [event.payload["text"] for event in spoken] == [
+            "I'm still working on it.",
+            "The current figure is 42.",
+        ]
+
+        exported = format_session_plain(
+            session,
+            store.get_turns("audible-bridge"),
+            events,
+        )
+        progress_at = exported.index("Jarvis: I'm still working on it.")
+        reply_at = exported.index("Jarvis: The current figure is 42.")
+        assert progress_at < reply_at
     finally:
         store.close()

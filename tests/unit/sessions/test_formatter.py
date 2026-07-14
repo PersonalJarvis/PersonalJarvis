@@ -115,6 +115,19 @@ def test_plain_has_no_emoji_anchors() -> None:
         assert emoji not in out, f"emoji {emoji!r} leaked into clean transcript"
 
 
+def test_markdown_renumbers_legacy_one_based_turn_indices() -> None:
+    turns = [
+        _turn(1, "First visible request.", "First answer."),
+        _turn(2, "Second visible request.", "Second answer."),
+    ]
+
+    out = format_session_markdown(_session(), turns)
+
+    assert "## Turn 1" in out
+    assert "## Turn 2" in out
+    assert "## Turn 3" not in out
+
+
 def test_plain_has_no_markdown_markers() -> None:
     out = format_session_plain(_session(), _example_turns())
     assert "# " not in out  # no headings
@@ -299,6 +312,19 @@ def test_plain_orders_preamble_before_final_response_by_timestamp() -> None:
     preamble_pos = out.index("Jarvis: Ich rufe deine heutigen Termine")
     final_pos = out.index("Jarvis: Ich konnte das gerade nicht abrufen.")
     assert preamble_pos < final_pos
+
+
+def test_plain_prefers_confirmed_reply_over_generated_model_text() -> None:
+    turns = [_turn(0, "Give me the result", "Generated text that was not played.")]
+    events = [
+        _response("turn-0", "Generated text that was not played.", ts_ms=1000),
+        _spoken("turn-0", "This sentence reached playback.", "reply", ts_ms=2000),
+    ]
+
+    out = format_session_plain(_session(), turns, events)
+
+    assert "Jarvis: This sentence reached playback." in out
+    assert "Generated text that was not played." not in out
 
 
 def test_plain_orders_late_readback_after_final_response() -> None:

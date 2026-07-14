@@ -40,6 +40,7 @@ export type VoiceTier = string;
 // test_spoken_kind_parity.py. Kept ``string`` (not a union) for the same
 // BUG-008 reason as the others — an unknown kind must degrade, not crash.
 export const KNOWN_SPOKEN_KINDS = [
+  "reply",
   "clarify",
   "timeout",
   "unavailable",
@@ -58,8 +59,8 @@ export const KNOWN_SPOKEN_KINDS = [
 
 export type SpokenKind = string;
 
-// One voiced phrase, extracted from the SpeechSpoken raw events of a session
-// and grouped under its turn for rendering the "Spoken output" track.
+// One playback-confirmed phrase extracted from a session's SpeechSpoken events.
+// Reply entries are authoritative; other kinds render as supplemental output.
 export interface VoiceSpokenLine {
   turn_id: string | null;
   ts_ms: number;

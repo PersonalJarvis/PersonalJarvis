@@ -85,18 +85,16 @@ is intentionally stable for tests that assert against
 # Spoken-track kinds (SpeechSpoken.spoken_kind)
 # ----------------------------------------------------------------------
 #
-# Same anti-drift contract as HANGUP_REASONS: every phrase Jarvis VOICES that
-# is not the brain's normal reply is published as a ``SpeechSpoken`` event and
+# Same anti-drift contract as HANGUP_REASONS: every phrase Jarvis commits to
+# the audible output path is published as a ``SpeechSpoken`` event and
 # tagged with one of these kinds. The Transcription view renders a per-kind
 # label, so the set has to agree across Python (this module), the Pydantic
 # mirror (``models.py``), the TS const (``types.ts``) and the UI label map
 # (``TurnCard.tsx``). The parity test in
 # ``tests/unit/sessions/test_spoken_kind_parity.py`` fails on any drift.
 #
-# Deliberately NOT a member: ``"reply"``. That is the sentinel default of
-# ``SpeechPipeline._speak`` for the ordinary brain reply, which is already
-# documented via ``ResponseGenerated`` -> ``jarvis_text``; ``_emit_spoken``
-# suppresses it so it never reaches the spoken track.
+SPOKEN_KIND_REPLY: Final[str] = "reply"
+"""A normal assistant reply confirmed by the audible output path."""
 
 SPOKEN_KIND_CLARIFY: Final[str] = "clarify"
 """A clarifying question ('Wie meinst du das genau?') for an empty/incomplete turn."""
@@ -147,6 +145,7 @@ SPOKEN_KIND_OTHER: Final[str] = "other"
 """Catch-all for any voiced phrase without a more specific tag."""
 
 SPOKEN_KINDS: Final[tuple[str, ...]] = (
+    SPOKEN_KIND_REPLY,
     SPOKEN_KIND_CLARIFY,
     SPOKEN_KIND_TIMEOUT,
     SPOKEN_KIND_UNAVAILABLE,
@@ -185,6 +184,7 @@ __all__ = [
     "SPOKEN_KIND_PREAMBLE",
     "SPOKEN_KIND_PRIVACY",
     "SPOKEN_KIND_PROGRESS",
+    "SPOKEN_KIND_REPLY",
     "SPOKEN_KIND_STT_UNAVAILABLE",
     "SPOKEN_KIND_SUBAGENT",
     "SPOKEN_KIND_TIMEOUT",

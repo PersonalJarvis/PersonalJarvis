@@ -71,7 +71,8 @@ export function SessionDetail({ detail, loading, error }: Props) {
   const [editorFormat, setEditorFormat] = useState<ExportFormat | null>(null);
 
   // Group the SpeechSpoken raw events under their turn so each TurnCard can
-  // render the "Spoken output" track (every voiced non-reply phrase). Hook
+  // render the playback-confirmed track. Reply entries replace generated model
+  // text; all other kinds appear in the separate Spoken-output section. Hook
   // runs unconditionally (before the early returns) per the rules of hooks.
   const spokenByTurn = useMemo(() => {
     const map = new Map<string, VoiceSpokenLine[]>();
@@ -333,10 +334,11 @@ export function SessionDetail({ detail, loading, error }: Props) {
               {t("session_detail.no_turns_suffix")}
             </div>
           ) : (
-            turns.map((t) => (
+            turns.map((t, index) => (
               <TurnCard
                 key={t.id}
                 turn={t}
+                displayNumber={index + 1}
                 spoken={spokenByTurn.get(t.id) ?? []}
               />
             ))
