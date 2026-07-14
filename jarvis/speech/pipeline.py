@@ -92,6 +92,7 @@ from jarvis.sessions.constants import (
     SPOKEN_KIND_PREAMBLE,
     SPOKEN_KIND_PRIVACY,
     SPOKEN_KIND_PROGRESS,
+    SPOKEN_KIND_REPLY,
     SPOKEN_KIND_STT_UNAVAILABLE,
     SPOKEN_KIND_SUBAGENT,
     SPOKEN_KIND_TIMEOUT,
@@ -3305,12 +3306,6 @@ class SpeechPipeline:
         # ``detail`` carries an optional technical diagnostic (e.g. a failed
         # Computer-Use exit code + harness reason) that is NOT spoken but is
         # surfaced in the transcript for debugging.
-        self._emit_spoken(
-            scrubbed.cleaned,
-            ann_lang,
-            _announcement_spoken_kind(getattr(event, "kind", None)),
-            getattr(event, "detail", None),
-        )
         # A finished sub-agent / mission readback (completion / subagent) hands
         # the floor BACK to the user — drive the UI/orb into SPEAKING for its
         # duration so the mascot animates. The out-of-band announcement path
@@ -3344,7 +3339,7 @@ class SpeechPipeline:
                 # plays (the synchronous JARVIS_SPEAKING guard already covers the
                 # already-speaking case; only the in-flight race is then uncovered).
                 try:
-                    await self._player.play_chunks(
+                    playback_result = await self._player.play_chunks(
                         chunks,
                         should_play=lambda: (
                             getattr(self, "_turn_state", TurnTakingState.IDLE)
@@ -3352,9 +3347,16 @@ class SpeechPipeline:
                         ),
                     )
                 except TypeError:
-                    await self._player.play_chunks(chunks)
+                    playback_result = await self._player.play_chunks(chunks)
             else:
-                await self._player.play_chunks(chunks)
+                playback_result = await self._player.play_chunks(chunks)
+            if self._playback_confirmed(playback_result):
+                self._emit_spoken(
+                    scrubbed.cleaned,
+                    ann_lang,
+                    _announcement_spoken_kind(getattr(event, "kind", None)),
+                    getattr(event, "detail", None),
+                )
         except Exception as exc:  # noqa: BLE001
             log.warning("Announcement-Speak fehlgeschlagen: %s", exc)
         finally:
@@ -3672,7 +3674,6 @@ class SpeechPipeline:
         # through this background path, not _speak, so it would otherwise be
         # invisible in the Transcription view. Tagged ``subagent`` so it renders
         # on the attributed "Jarvis Sub-Agent / Output" track.
-        self._emit_spoken(cleaned, lang, SPOKEN_KIND_SUBAGENT)
         # Re-arm the readback grace exactly like ``_on_announcement`` (:2386): a
         # background result delivered through THIS direct path also hands the
         # floor back to the user, so ``_active_session`` must keep the mic open
@@ -3696,7 +3697,9 @@ class SpeechPipeline:
                 chunks = self._tts.synthesize(cleaned, language_code=self._bcp47(lang))
             except TypeError:
                 chunks = self._tts.synthesize(cleaned)
-            await self._player.play_chunks(chunks)
+            playback_result = await self._player.play_chunks(chunks)
+            if self._playback_confirmed(playback_result):
+                self._emit_spoken(cleaned, lang, SPOKEN_KIND_SUBAGENT)
         except Exception as exc:  # noqa: BLE001
             log.warning("Background-completed Voice-Ansage failed: %s", exc)
         finally:
@@ -6193,7 +6196,9 @@ class SpeechPipeline:
                             )
                         except TypeError:
                             chunks = self._tts.synthesize(cleaned)
-                        await self._player.play_chunks(chunks)
+                        playback_result = await self._player.play_chunks(chunks)
+                        if self._playback_confirmed(playback_result):
+                            self._emit_spoken(cleaned, language, SPOKEN_KIND_REPLY)
                     except Exception as exc:  # noqa: BLE001 -- final voice fallback
                         log.warning(
                             "Realtime surface TTS fallback failed: %s",
@@ -8375,27 +8380,33 @@ class SpeechPipeline:
             finally:
                 await channel.put(None)
 
-        async def _merged_chunks() -> AsyncIterator[AudioChunk]:
-            """Drain per-sentence channels FIFO into one continuous stream.
+        async def _play_sentences() -> None:
+            """Play synthesized sentences FIFO and commit confirmed text.
 
-            FIFO over ``sentence_channels`` guarantees audio plays in sentence
-            order regardless of which synthesis task finishes first — the key
-            single-voice-continuity invariant (never as_completed)."""
+            The built-in player keeps its device stream open across calls, so a
+            per-sentence receipt preserves voice continuity while providing an
+            exact text unit for the audible transcript.
+            """
+            async def _sentence_chunks(
+                source: asyncio.Queue,
+            ) -> AsyncIterator[AudioChunk]:
+                while True:
+                    chunk = await source.get()
+                    if chunk is None:
+                        return
+                    self._brain_first_frame_played = True
+                    yield chunk
+
             while True:
-                channel = await sentence_channels.get()
+                item = await sentence_channels.get()
                 try:
-                    if channel is None:
-                        return  # end-of-turn sentinel
-                    while True:
-                        chunk = await channel.get()
-                        if chunk is None:
-                            break
-                        # First real audio chunk reaches the player: the thinking
-                        # phase is over, so the thinking-interrupt monitor in
-                        # _run_brain_with_stall_guard stands down and the
-                        # per-playback barge monitor takes over interruption.
-                        self._brain_first_frame_played = True
-                        yield chunk
+                    if item is None:
+                        return
+                    channel, sentence = item
+
+                    result = await self._player.play_chunks(_sentence_chunks(channel))
+                    if self._playback_confirmed(result):
+                        self._emit_spoken(sentence, lang, SPOKEN_KIND_REPLY)
                 finally:
                     sentence_channels.task_done()
 
@@ -8421,7 +8432,7 @@ class SpeechPipeline:
                 asyncio.create_task(_synth_into(channel, cleaned), name="tts-synth")
             )
             # Blocks once ``lookahead`` channels are outstanding — back-pressure.
-            await sentence_channels.put(channel)
+            await sentence_channels.put((channel, cleaned))
 
         async def _produce() -> None:
             nonlocal sentence_buffer, paraphrase_stripped, brain_first_token_marked
@@ -8504,9 +8515,7 @@ class SpeechPipeline:
                 await sentence_channels.put(None)
 
         produce_task = asyncio.create_task(_produce(), name="tts-produce-turn")
-        play_task = asyncio.create_task(
-            self._player.play_chunks(_merged_chunks()), name="tts-play-turn"
-        )
+        play_task = asyncio.create_task(_play_sentences(), name="tts-play-turn")
         barge_task = asyncio.create_task(self._barge_monitor(), name="barge-monitor-turn")
         # Hangup is the hard kill-switch ("auflegen"): when the user hangs up
         # MID-TURN, ``_player.stop()`` alone does not free this wait — a tool-use
@@ -9347,21 +9356,14 @@ class SpeechPipeline:
         kind: str,
         detail: str | None = None,
     ) -> None:
-        """Announce a VOICED phrase on the bus as a ``SpeechSpoken`` event.
+        """Publish one playback-confirmed phrase to the audible transcript.
 
-        The Transcription log was previously blind to everything Jarvis speaks
-        except the brain's normal reply (recorded via ``ResponseGenerated`` ->
-        ``jarvis_text``). This publishes every OTHER voiced phrase so the
-        passive ``SessionRecorder`` can document it in the transcript.
-
-        Fire-and-forget (``asyncio.create_task``), mirroring the
-        ``LatencyTurnComplete`` telemetry emit — the voice hot path never waits
-        on the bus dispatch (AP-9 / AD-OE2). The ``reply`` sentinel is dropped
-        because the reply is already in the transcript; empty text and a
-        missing bus are no-ops, and every error is swallowed so a telemetry
-        hiccup can never break a turn.
+        Callers own the playback receipt and invoke this only after audio was
+        accepted. Normal replies and supplemental phrases share this event.
+        Publishing remains fire-and-forget so the passive recorder cannot add
+        latency to the voice path. Empty text and a missing bus are no-ops.
         """
-        if kind == "reply" or not text or not text.strip():
+        if not text or not text.strip():
             return
         bus = getattr(self, "_bus", None)
         if bus is None:
@@ -9377,6 +9379,17 @@ class SpeechPipeline:
             asyncio.create_task(bus.publish(event))  # noqa: RUF006 — fire-and-forget
         except Exception:  # noqa: BLE001 — telemetry must never break the turn
             log.debug("SpeechSpoken emit failed", exc_info=True)
+
+    def _playback_confirmed(self, result: object) -> bool:
+        """Interpret a player receipt without breaking compatible older players.
+
+        The built-in player returns an explicit boolean. Older compatible
+        players returned ``None`` after successful consumption, so only those
+        non-built-in implementations retain the legacy success interpretation.
+        """
+        if isinstance(self._player, AudioPlayer):
+            return result is True
+        return result is not False
 
     #: Spoken readback for an OpenClaw background task that finished off the
     #: chat path. de/en/es so the readback follows the conversation language
@@ -9453,11 +9466,9 @@ class SpeechPipeline:
         und an TTS übergeben (voice bleibt gleich — Gemini-Voices sind
         sprachagnostisch).
 
-        ``kind`` tags WHAT is being voiced for the Transcription log. The
-        default ``"reply"`` is the ordinary brain answer (already documented as
-        ``jarvis_text``, so not re-recorded); a canned phrase passes its
-        specific kind (``"timeout"``, ``"clarify"``, ``"privacy"`` …) and is
-        published as a ``SpeechSpoken`` event via ``_emit_spoken``.
+        ``kind`` tags what is being voiced for the Transcription log. The
+        default ``"reply"`` is the ordinary brain answer; canned phrases pass
+        their specific kind. Both are published only after playback succeeds.
 
         Parallel zum Playback läuft ``_barge_monitor`` auf einer separaten
         Mic-Instanz. Erkennt Silero-VAD dort User-Sprache (Threshold 0.8,
@@ -9490,7 +9501,6 @@ class SpeechPipeline:
         # Document the voiced phrase in the session log (no-op for the reply
         # sentinel and empty text). After the mute check, so a suppressed
         # phrase — which is never actually voiced — is not recorded.
-        self._emit_spoken(text, language, kind)
         # Track that the assistant has spoken at least once in this session.
         # Used by _emit_completeness_signal to pick earcon vs. spoken cue.
         self._session_has_assistant_spoken = True
@@ -9563,6 +9573,13 @@ class SpeechPipeline:
                     await t
                 except (asyncio.CancelledError, Exception):
                     pass
+        if (
+            play_task.done()
+            and not play_task.cancelled()
+            and play_task.exception() is None
+            and self._playback_confirmed(play_task.result())
+        ):
+            self._emit_spoken(text, language, kind)
         if not barged:
             self._suppress_session_input_after_tts("response")
         return barged

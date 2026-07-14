@@ -1,14 +1,15 @@
-"""Every voiced phrase that is NOT the brain's normal reply must be announced
-on the bus as a ``SpeechSpoken`` event, so the SessionRecorder can document it
-in the Transcription log (user report 2026-06-15).
+"""Every playback-confirmed phrase must be announced as ``SpeechSpoken``.
+
+The SessionRecorder uses this authoritative audible track for normal replies
+and supplemental output alike.
 
 Two seams are under test:
 
 - ``_emit_spoken(text, language, kind)`` — the fire-and-forget publish helper.
-  It suppresses the ``reply`` sentinel (the normal reply is already captured as
-  ``jarvis_text``) and empty text, and never raises when there is no bus.
+  It accepts playback-confirmed replies, suppresses empty text, and never raises
+  when there is no bus.
 - ``_speak(..., kind=...)`` — the universal non-streaming speak chokepoint.
-  A canned phrase (kind != "reply") emits; a plain reply (default) does not.
+  It emits canned phrases and normal replies only after playback succeeds.
 - ``_announcement_spoken_kind`` — maps an ``AnnouncementRequested.kind`` to the
   spoken-track tag.
 """
@@ -25,7 +26,6 @@ from jarvis.core.events import ListeningStarted, SpeechSpoken
 from jarvis.core.protocols import AudioChunk
 from jarvis.sessions.constants import SPOKEN_KINDS
 from jarvis.speech.pipeline import SpeechPipeline, _announcement_spoken_kind
-
 
 # --- minimal __new__ pipe for the pure _emit_spoken helper -----------------
 
@@ -64,9 +64,7 @@ async def test_emit_spoken_publishes_for_nonreply_kind() -> None:
 
 
 @pytest.mark.asyncio
-async def test_emit_spoken_skips_the_reply_sentinel() -> None:
-    # The normal brain reply is already recorded via jarvis_text — re-emitting
-    # it would double-document the conversational turn.
+async def test_emit_spoken_publishes_playback_confirmed_reply() -> None:
     bus = EventBus()
     captured = await _capture(bus)
     pipe = _bare_pipe(bus)
@@ -74,7 +72,9 @@ async def test_emit_spoken_skips_the_reply_sentinel() -> None:
     pipe._emit_spoken("Hello, how can I help?", "de", "reply")
     await asyncio.sleep(0.05)
 
-    assert captured == []
+    assert len(captured) == 1
+    assert captured[0].spoken_kind == "reply"
+    assert captured[0].text == "Hello, how can I help?"
 
 
 @pytest.mark.asyncio
@@ -134,6 +134,17 @@ class _CompletingPlayer:
         pass
 
 
+@dataclass
+class _DroppingPlayer:
+    async def play_chunks(self, chunks: AsyncIterator[AudioChunk]) -> bool:
+        async for _chunk in chunks:
+            pass
+        return False
+
+    def stop(self) -> None:
+        pass
+
+
 def _make_speak_pipeline(bus: EventBus) -> SpeechPipeline:
     pipeline = SpeechPipeline(tts=_OneShotTTS(), bus=bus, enable_whisper_wake=False)
     pipeline._player = _CompletingPlayer()  # type: ignore[assignment]
@@ -162,13 +173,28 @@ async def test_speak_emits_spoken_for_a_canned_kind() -> None:
 
 
 @pytest.mark.asyncio
-async def test_speak_default_reply_does_not_emit_spoken() -> None:
+async def test_speak_default_reply_emits_after_playback() -> None:
     bus = EventBus()
     captured = await _capture(bus)
     pipeline = _make_speak_pipeline(bus)
 
-    # Default kind is the reply sentinel — the main brain reply path.
+    # The normal reply now joins the authoritative audible transcript track.
     await pipeline._speak("Hello, how can I help?", language="de")
+    await asyncio.sleep(0.05)
+
+    assert len(captured) == 1
+    assert captured[0].spoken_kind == "reply"
+    assert captured[0].text == "Hello, how can I help?"
+
+
+@pytest.mark.asyncio
+async def test_speak_does_not_record_audio_rejected_by_player() -> None:
+    bus = EventBus()
+    captured = await _capture(bus)
+    pipeline = _make_speak_pipeline(bus)
+    pipeline._player = _DroppingPlayer()  # type: ignore[assignment]
+
+    await pipeline._speak("This must stay out of the transcript.", language="en")
     await asyncio.sleep(0.05)
 
     assert captured == []
