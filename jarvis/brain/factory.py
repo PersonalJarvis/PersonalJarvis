@@ -107,6 +107,12 @@ ROUTER_TOOLS = frozenset({
     # wiki-recall when the brain has narrowed to one page and needs the
     # complete content, not the 240-char snippet.
     "wiki-page-read",
+    # Grounded vault listing (2026-07-14): deterministic ground-truth answer
+    # for "what is in my wiki" in ONE round. Without it the brain probed
+    # blindly (index.md/SOUL.md → not found, ~14 rounds, 66 s) and recited
+    # schema.md's example layout as actual content. Read-only, safe — never
+    # in a worker set (AP-5/AP-14). See ADR-0011 amendment "wiki-list tool".
+    "wiki-list",
     # Phase B5 follow-up: deterministic ingest path. Lets the brain
     # explicitly store a fact ("merk dir: …") rather than relying on the
     # aggressive-mode VoiceFactBridge heuristic.
@@ -462,6 +468,12 @@ def _load_tools_for_tier(
                 from jarvis.plugins.tool.wiki_page_read import _build_page_read_tool
 
                 inst = _build_page_read_tool()
+            elif ep.name == "wiki-list":
+                # Grounded vault listing: same vault-root resolution as the
+                # other wiki tools.
+                from jarvis.plugins.tool.wiki_list import _build_wiki_list_tool
+
+                inst = _build_wiki_list_tool()
             elif ep.name == "wiki-ingest":
                 # Phase B5 follow-up: lazy curator resolver — the curator is
                 # constructed by ``bootstrap_wiki_integration`` after the brain

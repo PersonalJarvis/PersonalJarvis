@@ -105,6 +105,36 @@ async def test_wiki_page_read_rejects_absolute_path(vault: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_wiki_page_read_flags_meta_contract_pages(tmp_path: Path) -> None:
+    """A ``type: meta`` page (schema.md) must carry a provenance warning.
+
+    Live incident 2026-07-14: the delegated brain read schema.md (the
+    vault's editing contract) and presented its EXAMPLE layout as the
+    actual vault contents. The served page must state, deterministically,
+    that it is contract — not content.
+    """
+    tmp_path.joinpath("schema.md").write_text(
+        "---\ntype: meta\npurpose: wiki-maintenance-contract\n---\n\n"
+        "# Wiki Schema\n\nExample layout: USER.md, people/…\n",
+        encoding="utf-8",
+    )
+    tool = WikiPageReadTool(vault_root=tmp_path)
+    result = await tool.execute({"path": "schema.md"}, ctx=None)
+    assert result.success is True
+    warning = result.output.splitlines()[0].lower()
+    assert "system file" in warning or "contract" in warning
+    assert "not" in warning  # "... NOT user content" phrasing
+
+
+@pytest.mark.asyncio
+async def test_wiki_page_read_leaves_content_pages_unflagged(vault: Path) -> None:
+    tool = WikiPageReadTool(vault_root=vault)
+    result = await tool.execute({"path": "people/harald.md"}, ctx=None)
+    assert result.success is True
+    assert "system file" not in result.output.lower()
+
+
+@pytest.mark.asyncio
 async def test_wiki_page_read_rejects_oversized_file(tmp_path: Path) -> None:
     tmp_path.joinpath("big.md").write_bytes(b"x" * (65 * 1024))
     tool = WikiPageReadTool(vault_root=tmp_path)

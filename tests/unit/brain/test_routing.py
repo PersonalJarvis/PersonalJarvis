@@ -1744,6 +1744,10 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # + deterministic ingest (write via WikiCurator). Both router-tier only.
             "wiki-page-read",
             "wiki-ingest",
+            # Grounded vault listing (2026-07-14): ground-truth answer for
+            # "what is in my wiki" in one round. Read-only, never a spawn.
+            # ADR-0011 amendment "wiki-list tool".
+            "wiki-list",
             # CLI-Integration (2026-05-24): virtual loader that expands to one
             # cli_<name> tool per connected & usable CLI. Router-tier only — a
             # cli_<name> tool is a direct safe-gated action, never a recursive

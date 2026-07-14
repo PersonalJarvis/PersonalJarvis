@@ -479,6 +479,9 @@ run-skill = "jarvis.plugins.tool.run_skill:RunSkillTool"
 wiki-recall = "jarvis.plugins.tool.wiki_recall:WikiRecallTool"
 # Phase B5 follow-up — full-page reader (router-tier, read-only).
 wiki-page-read = "jarvis.plugins.tool.wiki_page_read:WikiPageReadTool"
+# Grounded vault listing (2026-07-14) — deterministic "what is in my wiki"
+# answer in one round (router-tier, read-only).
+wiki-list = "jarvis.plugins.tool.wiki_list:WikiListTool"
 # Phase B5 follow-up — deterministic ingest tool (router-tier, write).
 wiki-ingest = "jarvis.plugins.tool.wiki_ingest:WikiIngestTool"
 # Profile-write (2026-05-30) — deterministic writer for the structured USER.md
