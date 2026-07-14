@@ -3948,3 +3948,70 @@ levels. An interim surface may report only the former, and its data must never
 enter an answer or memory channel. Any model-generated bridge that is allowed
 through solely because its prompt said "do not invent a result" is an
 untrusted answer generator, not a progress indicator.
+
+## BUG-055: Delegated wiki question answered from the schema contract + poisoned memory, 66 s deep (HIGH, FIXED 2026-07-14)
+
+**Symptom.** Voice session 2026-07-14 09:28: "Kannst du mir mal bitte dabei
+helfen, zu schauen, was genau alles in meinem Wiki-System steht?" <!-- i18n-allow: quoted German user utterance under forensic analysis -->
+took 66 seconds and answered that the wiki holds USER.md, SOUL.md, and a
+people folder with profiles for Harald, Joy, and the user's mother. The real
+vault holds none of those files (actual contents: log.md, memory.md,
+schema.md, entities/{andrew-tate,lukas,ruben}.md, projects/{drugs-in-schools-
+project,personal-jarvis}.md). Every named file in the spoken answer was
+invented.
+
+**Evidence (desktop log, 09:29:18–09:30:25).** The deterministic delegate
+dispatched a local-evidence turn at 09:29:18.5. The router brain then ran
+~14 sequential OpenRouter rounds; one round alone waited 32 s for its
+response (09:29:33 → 09:30:05). Tool trace: wiki-recall (3 hits) →
+wiki-page-read schema.md (served, 8945 bytes) → wiki-page-read index.md
+(NOT FOUND) → wiki-recall → … → wiki-page-read SOUL.md (NOT FOUND) → answer.
+Speech began 09:30:25 — 66 s after dispatch.
+
+**Root causes (four, compounding).**
+
+1. **No listing tool.** "What is in my wiki" is a LISTING question; the tool
+   surface offered only search (wiki-recall) and single-page read
+   (wiki-page-read), so no grounded answer was reachable. The model probed
+   blindly (each miss = one more LLM round) and then guessed.
+2. **The schema contract masqueraded as content.** schema.md (``type: meta``,
+   the vault's editing contract) documents an EXAMPLE layout. Served
+   verbatim by wiki-page-read, the model presented that example as the
+   actual vault — while holding two "not found" results contradicting it.
+3. **Poisoned memory closed the loop.** entities/ruben.md already carried
+   consolidated facts asserting SOUL.md/USER.md/people-profiles exist —
+   journaled from EARLIER hallucinated answers (same class as BUG-054: the
+   09:05 session's five invented notebook names were consolidated as
+   candidate 381). Context injection fed the poison back, the new wrong
+   answer was journaled again at 09:31:18 (candidates 382/383, consolidated)
+   — a self-reinforcing hallucination loop across turns.
+4. **No wall-clock bound.** The tool-use loop's only bound was the 15-round
+   iteration budget; rounds are not seconds, and one slow provider round ate
+   32 s alone. A voice user is gone long before round 14.
+
+**Fix (2026-07-14).**
+
+- New router tool ``wiki-list`` (ADR-0011 amendment): deterministic ground-
+  truth listing (path, size, first heading) in ONE round; ``type: meta``
+  pages flagged as system files; overview questions no longer probe or guess.
+- ``wiki-page-read`` prepends a deterministic provenance warning to
+  ``type: meta`` pages ("contract, not content — use wiki-list").
+- ``ToolUseLoop`` gains ``deadline_s``: on expiry it forces exactly ONE
+  final tool-less round with an answer-now directive (never silence, never
+  more churn). Delegated realtime turns run with max_turns=6 +
+  deadline 20 s (``_DELEGATE_MAX_TURNS`` / ``_DELEGATE_DEADLINE_S``).
+- Data purge: the three poisoned fact lines removed from entities/ruben.md
+  (invented notebooks, SOUL.md/USER.md, people profiles).
+
+**Still open (class rule, tracked).** The Stage-1 fact extractor journals
+ASSISTANT claims about tool results as facts about the user's world — that
+is how every hallucinated answer becomes durable memory. BUG-054's boundary
+rule applies here too: answer content may enter memory only when backed by
+executed-tool evidence. Guards:
+``tests/unit/plugins/tool/test_wiki_list.py``,
+``tests/unit/brain/test_tool_use_loop_deadline.py``.
+
+**Class rule.** A question about what EXISTS needs a deterministic
+enumeration tool; search + single-read cannot answer it groundedly, and a
+schema/contract page served without provenance becomes hallucination fuel.
+Voice-facing agentic loops need a TIME bound, not just a round bound.
