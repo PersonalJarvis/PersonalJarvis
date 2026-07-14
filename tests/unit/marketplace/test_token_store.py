@@ -10,6 +10,7 @@ import pytest
 from jarvis.marketplace.token_store import (
     ChunkedBackend,
     InMemoryBackend,
+    KeyringBackend,
     Tokens,
     TokenStore,
 )
@@ -122,6 +123,19 @@ def test_chunked_backend_cleanup_stops_after_silent_delete_failure():
 
     assert backend.get("plugin_gmail_tokens") == "small"
     assert primitive.overflow_get_calls == 2
+
+
+def test_keyring_delete_is_strict_but_housekeeping_remains_best_effort(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from jarvis.core import config
+
+    monkeypatch.setattr(config, "delete_secret", lambda _key: False)
+    backend = KeyringBackend()
+
+    backend.delete_best_effort("plugin_gmail_tokens__9")
+    with pytest.raises(RuntimeError, match="keyring delete could not be verified"):
+        backend.delete("plugin_gmail_tokens")
 
 
 class _FailNthSetBackend:

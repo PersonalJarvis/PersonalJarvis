@@ -2076,7 +2076,7 @@ _API_CRITIC_PROVIDERS: tuple[str, ...] = (
     "openai",
     "gemini",
     "claude-api",
-    "groq",
+    "grok",
     "nvidia",
 )
 

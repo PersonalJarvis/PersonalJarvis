@@ -134,8 +134,8 @@ PROVIDER_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
         ("openai_api_key", "OPENAI_API_KEY"),
     ),
     "openrouter": (("openrouter_api_key", "OPENROUTER_API_KEY"),),
-    # Shared with the existing ``groq-api`` STT provider.  The Brain provider
-    # uses the distinct ``groq`` slug while resolving the same portable secret.
+    # Groq remains a speech-to-text credential family even though it is not a
+    # selectable brain provider.
     "groq": (("groq_api_key", "GROQ_API_KEY"),),
     # NVIDIA NIM (OpenAI-compatible). Only the build.nvidia.com key (nvapi-),
     # not the legacy NGC key. One key, many NVIDIA-hosted models.

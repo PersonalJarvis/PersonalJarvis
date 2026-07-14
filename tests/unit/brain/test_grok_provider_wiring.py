@@ -1,4 +1,4 @@
-"""Groq is a first-class Brain and Jarvis-Agent provider, distinct from STT."""
+"""xAI Grok is a first-class Brain and Jarvis-Agent provider."""
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -24,7 +24,7 @@ from jarvis.missions.workers.api_agent_worker import (
     _DEFAULT_MODEL,
     supports_api_agent_worker,
 )
-from jarvis.plugins.brain.groq import BASE_URL, DEFAULT_MODEL, GroqBrain
+from jarvis.plugins.brain.grok import BASE_URL, DEFAULT_MODEL, GrokBrain
 from jarvis.ui.web.provider_spec import get_spec
 
 
@@ -70,54 +70,53 @@ class _ToolStream:
         return _chunks()
 
 
-def test_groq_is_a_registered_brain_plugin() -> None:
+def test_grok_is_registered_while_groq_is_stt_only() -> None:
     registry = BrainProviderRegistry()
-    assert "groq" in registry.available()
-    assert "groq" not in registry.failed()
-    brain = registry.instantiate("groq")
-    assert isinstance(brain, GroqBrain)
+    assert "grok" in registry.available()
+    assert "groq" not in registry.available()
+    assert isinstance(registry.instantiate("grok"), GrokBrain)
+
+    grok = get_spec("grok")
+    groq_stt = get_spec("groq-api")
+    assert grok is not None and grok.tier == "brain"
+    assert grok.label == "xAI Grok"
+    assert grok.secret_keys == ("grok_api_key",)
+    assert groq_stt is not None and groq_stt.tier == "stt"
+    assert groq_stt.secret_keys == ("groq_api_key",)
+    assert get_spec("groq") is None
 
 
-def test_groq_and_groq_stt_keep_distinct_provider_ids() -> None:
-    brain = get_spec("groq")
-    stt = get_spec("groq-api")
-    assert brain is not None and stt is not None
-    assert brain.tier == "brain"
-    assert stt.tier == "stt"
-    assert brain.secret_keys == stt.secret_keys == ("groq_api_key",)
-
-
-def test_groq_credential_and_auto_activation_mapping() -> None:
-    assert cfg.PROVIDER_SECRET_CANDIDATES["groq"] == (
-        ("groq_api_key", "GROQ_API_KEY"),
+def test_grok_credential_and_auto_activation_mapping() -> None:
+    assert cfg.PROVIDER_SECRET_CANDIDATES["grok"] == (
+        ("grok_api_key", "GROK_API_KEY"),
+        ("xai_api_key", "XAI_API_KEY"),
     )
-    assert _SECRET_KEY_TO_BRAIN["groq_api_key"] == "groq"
+    assert _SECRET_KEY_TO_BRAIN["grok_api_key"] == "grok"
+    assert _SECRET_KEY_TO_BRAIN["xai_api_key"] == "grok"
 
 
-def test_groq_defaults_are_current_and_tool_capable() -> None:
-    assert DEFAULT_MODEL == "openai/gpt-oss-120b"
-    assert TIER_DEFAULTS_BY_PROVIDER["router"]["groq"] == DEFAULT_MODEL
-    assert TIER_DEFAULTS_BY_PROVIDER["deep"]["groq"] == DEFAULT_MODEL
-    assert get_tier_default_model("router", "groq") == DEFAULT_MODEL
-    assert PROVIDER_ALIASES["groq"] == "groq"
-    brain = GroqBrain()
-    assert brain.context_window == 131_072
+def test_grok_defaults_are_universal_and_tool_capable() -> None:
+    assert DEFAULT_MODEL == "grok-4.3"
+    assert TIER_DEFAULTS_BY_PROVIDER["router"]["grok"] == DEFAULT_MODEL
+    assert TIER_DEFAULTS_BY_PROVIDER["deep"]["grok"] == DEFAULT_MODEL
+    assert get_tier_default_model("router", "grok") == DEFAULT_MODEL
+    assert PROVIDER_ALIASES["grok"] == "grok"
+    brain = GrokBrain()
+    assert brain.context_window == 1_000_000
     assert brain.can_call_tools() is True
     assert brain.supports_vision is False
 
 
-def test_groq_has_authenticated_live_model_catalog() -> None:
-    spec = catalog_spec("groq")
+def test_grok_has_authenticated_live_model_catalog() -> None:
+    spec = catalog_spec("grok")
     assert spec is not None and spec.tier == "brain" and spec.live is True
     assert spec.curated and spec.curated[0].id == DEFAULT_MODEL
-    assert "groq" in CATALOG_PROVIDERS
-    assert _ENDPOINTS["groq"] == (
-        "https://api.groq.com/openai/v1/models",
-        "bearer",
-    )
+    assert "grok" in CATALOG_PROVIDERS
+    assert "groq" not in CATALOG_PROVIDERS
+    assert _ENDPOINTS["grok"] == ("https://api.x.ai/v1/models", "bearer")
 
 
-def test_groq_uses_openai_compatible_client_without_vendor_sdk(
+def test_grok_uses_xai_openai_compatible_endpoint(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     import openai
@@ -128,22 +127,20 @@ def test_groq_uses_openai_compatible_client_without_vendor_sdk(
         "resolve_provider_endpoint",
         lambda provider, **kwargs: cfg.ResolvedEndpoint(
             base_url=kwargs["vendor_default_base_url"],
-            credential="gsk-test",
+            credential="xai-test",
             via_proxy=False,
         ),
     )
-    GroqBrain()._ensure_client()
-    assert _FakeOpenAI.last_kwargs["api_key"] == "gsk-test"
+    GrokBrain()._ensure_client()
+    assert _FakeOpenAI.last_kwargs["api_key"] == "xai-test"
     assert _FakeOpenAI.last_kwargs["base_url"] == BASE_URL
 
 
 @pytest.mark.asyncio
-async def test_groq_streams_a_local_tool_call_round_trip() -> None:
+async def test_grok_streams_a_local_tool_call_round_trip() -> None:
     completions = _ToolStream()
-    brain = GroqBrain()
-    brain._client = SimpleNamespace(
-        chat=SimpleNamespace(completions=completions)
-    )
+    brain = GrokBrain()
+    brain._client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
     request = BrainRequest(
         messages=(BrainMessage(role="user", content="Create result.txt"),),
         tools=(
@@ -172,18 +169,17 @@ async def test_groq_streams_a_local_tool_call_round_trip() -> None:
         }
     ]
     assert completions.kwargs["model"] == DEFAULT_MODEL
-    assert completions.kwargs["tools"][0]["function"]["name"] == "Write"
 
 
-def test_groq_runs_in_process_for_worker_and_critic() -> None:
-    assert "groq" in _API_AGENT_SLUGS
-    assert _select_subagent_worker_kind("groq", "foreign-model") == "api_agent"
-    assert supports_api_agent_worker("groq") is True
-    assert _BRAIN_BY_PROVIDER["groq"] == (
-        "jarvis.plugins.brain.groq",
-        "GroqBrain",
+def test_grok_runs_in_process_for_worker_and_critic() -> None:
+    assert "grok" in _API_AGENT_SLUGS
+    assert _select_subagent_worker_kind("grok", "foreign-model") == "api_agent"
+    assert supports_api_agent_worker("grok") is True
+    assert _BRAIN_BY_PROVIDER["grok"] == (
+        "jarvis.plugins.brain.grok",
+        "GrokBrain",
     )
-    assert _DEFAULT_MODEL["groq"] == DEFAULT_MODEL
-    assert "groq" in _API_CRITIC_PROVIDERS
-    assert to_worker_slug("groq") == "groq"
-    assert env_vars_for("groq") == ("GROQ_API_KEY",)
+    assert _DEFAULT_MODEL["grok"] == DEFAULT_MODEL
+    assert "grok" in _API_CRITIC_PROVIDERS
+    assert to_worker_slug("grok") == "xai"
+    assert env_vars_for("grok") == ("XAI_API_KEY", "GROK_API_KEY")

@@ -190,17 +190,18 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         ),
     ),
     ProviderSpec(
-        id="groq",
-        label="GroqCloud",
+        id="grok",
+        label="xAI Grok",
         tier="brain",
         auth_mode="api_key",
-        secret_keys=("groq_api_key",),
-        dashboard_url="https://console.groq.com/keys",
-        signup_url="https://console.groq.com",
+        secret_keys=("grok_api_key",),
+        dashboard_url="https://console.x.ai/",
+        signup_url="https://grok.com/",
         credential_help=(
-            "Groq API key (starts with gsk_). The same key powers the fast "
-            "Groq brain, Jarvis-Agent tool loops, and the separate Groq "
-            "Whisper STT provider; usage is billed on your GroqCloud account."
+            "xAI API key (starts with xai-) for the Grok brain and Jarvis-Agent "
+            "tool loops. Your grok.com and xAI API accounts share a login, but "
+            "API usage is billed separately through the xAI Console. The same "
+            "key also powers Grok Voice TTS."
         ),
     ),
     ProviderSpec(
@@ -263,10 +264,6 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "background tasks, sluggish as your main or voice brain."
         ),
     ),
-    # xAI Grok was removed as a BRAIN and SUB-AGENT provider on 2026-06-22
-    # (maintainer decision: Grok stays only as a TTS voice). The `grok-voice`
-    # TTS spec below is intentionally kept, and the `grok_api_key` credential it
-    # shares with the (now TTS-only) xAI key remains.
     # Ollama provider removed 2026-04-21 — pure API-provider chain.
     # ── TTS ───────────────────────────────────────────────────────────────
     # Voice-Output cards render in this tuple order. OpenRouter leads (one key

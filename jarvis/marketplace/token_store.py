@@ -103,13 +103,17 @@ class KeyringBackend:
     def delete(self, key: str) -> None:
         from jarvis.core.config import delete_secret
 
-        # Deliberately does not raise on a failed delete (unlike `set`): both
-        # `ChunkedBackend._clear_overflow` and `ChunkedBackend.set`'s
-        # rollback/leftover-cleanup call this as best-effort housekeeping and
-        # rely on it never raising, so a cleanup failure here can't mask a
-        # more important error or turn a successful token save into a
-        # reported failure. The return value is intentionally not checked;
-        # see jarvis/core/config.py:delete_secret for the honest result.
+        # Explicit disconnect is fail-closed. ``get_secret`` may degrade a
+        # locked platform keyring to an empty file fallback, so a later read is
+        # not proof that the OS credential was removed. ``delete_secret`` is
+        # the authoritative cross-backend verification result.
+        if not delete_secret(key):
+            raise RuntimeError(f"keyring delete could not be verified for {key!r}")
+
+    def delete_best_effort(self, key: str) -> None:
+        """Delete housekeeping data without masking an already-successful save."""
+        from jarvis.core.config import delete_secret
+
         delete_secret(key)
 
 
@@ -153,6 +157,14 @@ class ChunkedBackend:
         self._backend = backend
         self._chunk_size = chunk_size
 
+    def _delete_entry(self, key: str, *, strict: bool) -> None:
+        if not strict:
+            best_effort = getattr(self._backend, "delete_best_effort", None)
+            if callable(best_effort):
+                best_effort(key)
+                return
+        self._backend.delete(key)
+
     @staticmethod
     def _overflow_key(key: str, index: int) -> str:
         return f"{key}__{index}"
@@ -195,26 +207,26 @@ class ChunkedBackend:
 
     def _clear_cleanup_extent_best_effort(self, key: str) -> None:
         try:
-            self._backend.delete(self._cleanup_extent_key(key))
+            self._delete_entry(self._cleanup_extent_key(key), strict=False)
         except Exception:  # noqa: BLE001 - save already succeeded
             return
 
     def _clear_cleanup_extent_verified(self, key: str) -> None:
         extent_key = self._cleanup_extent_key(key)
-        self._backend.delete(extent_key)
+        self._delete_entry(extent_key, strict=True)
         if self._backend.get(extent_key) is not None:
             raise RuntimeError(f"could not delete cleanup extent for {key!r}")
 
     def _clear_overflow(self, key: str, *, start_index: int = 0) -> bool:
         """Best-effort delete contiguous ``<key>__i`` overflow pieces.
 
-        ``KeyringBackend.delete`` deliberately cannot raise when its lower-level
-        delete fails because this helper also runs after a successful save.  A
-        backend can therefore leave a chunk readable after ``delete``. Stop at
-        that first retained chunk instead of probing an unbounded sequence of
-        generated keys, and report whether every discovered chunk was removed.
-        Save-time cleanup may ignore this result. Explicit deletion uses the
-        persisted cleanup extent below so gaps cannot hide later chunks.
+        This helper runs after a successful save, so it explicitly selects a
+        backend's best-effort deletion path instead of strict disconnect
+        semantics. A backend may therefore leave a chunk readable after the
+        attempt. Stop at that first retained chunk instead of probing an
+        unbounded sequence of generated keys, and report whether every
+        discovered chunk was removed. Explicit deletion uses the persisted
+        cleanup extent below so gaps cannot hide later chunks.
         """
         i = start_index
         while True:
@@ -230,7 +242,7 @@ class ChunkedBackend:
             except Exception:  # noqa: BLE001 - keep save-time cleanup best-effort
                 return False
             try:
-                self._backend.delete(chunk_key)
+                self._delete_entry(chunk_key, strict=False)
                 retained = self._backend.get(chunk_key)
             except Exception:  # noqa: BLE001 - keep save-time cleanup best-effort
                 return False
@@ -238,7 +250,14 @@ class ChunkedBackend:
                 return False
             i += 1
 
-    def _clear_indexed_overflow(self, key: str, count: int, *, start_index: int = 0) -> bool:
+    def _clear_indexed_overflow(
+        self,
+        key: str,
+        count: int,
+        *,
+        start_index: int = 0,
+        strict: bool = False,
+    ) -> bool:
         """Attempt and verify every chunk named by a manifest or extent."""
         cleared = True
         for i in range(start_index, count):
@@ -251,7 +270,7 @@ class ChunkedBackend:
             if piece is None:
                 continue
             try:
-                self._backend.delete(chunk_key)
+                self._delete_entry(chunk_key, strict=strict)
             except Exception:  # noqa: BLE001 - finish the bounded cleanup pass
                 cleared = False
                 continue
@@ -289,7 +308,7 @@ class ChunkedBackend:
                 cleared = False
                 continue
             try:
-                self._backend.delete(chunk_key)
+                self._delete_entry(chunk_key, strict=True)
                 retained = self._backend.get(chunk_key)
             except Exception:  # noqa: BLE001 - finish the bounded cleanup pass
                 cleared = False
@@ -370,7 +389,7 @@ class ChunkedBackend:
             for i in range(written):
                 old_piece = prior[i]
                 if old_piece is None:
-                    self._backend.delete(self._overflow_key(key, i))
+                    self._delete_entry(self._overflow_key(key, i), strict=False)
                 else:
                     self._backend.set(self._overflow_key(key, i), old_piece)
             raise
@@ -394,7 +413,7 @@ class ChunkedBackend:
             active_count = self._manifest_count(key, head)
         if persisted_cleanup_extent:
             cleanup_extent = max(active_count, persisted_cleanup_extent)
-            overflow_cleared = self._clear_indexed_overflow(key, cleanup_extent)
+            overflow_cleared = self._clear_indexed_overflow(key, cleanup_extent, strict=True)
         else:
             # A pre-sidecar header records only its active prefix; an older
             # failed shrink may have left sparse chunks beyond that count.
@@ -406,7 +425,7 @@ class ChunkedBackend:
         # chunks beyond a newer header. Remove it only after every named chunk
         # is verified absent, then remove the primary value/header.
         self._clear_cleanup_extent_verified(key)
-        self._backend.delete(key)
+        self._delete_entry(key, strict=True)
 
 
 class InMemoryBackend:

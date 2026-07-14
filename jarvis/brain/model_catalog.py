@@ -60,7 +60,7 @@ CATALOG_PROVIDERS: tuple[str, ...] = (
     "openai",
     "gemini",
     "openrouter",
-    "groq",
+    "grok",
     "nvidia",
 )
 
@@ -78,9 +78,9 @@ _ENDPOINTS: dict[str, tuple[str, str]] = {
         "query",
     ),
     "openrouter": ("https://openrouter.ai/api/v1/models", "bearer_opt"),
-    # GroqCloud uses the OpenAI-compatible ``data[].id`` model roster and
-    # requires the same bearer key used for inference.
-    "groq": ("https://api.groq.com/openai/v1/models", "bearer"),
+    # xAI uses the OpenAI-compatible ``data[].id`` model roster and requires
+    # the same bearer key used for Grok inference.
+    "grok": ("https://api.x.ai/v1/models", "bearer"),
     # NVIDIA NIM speaks the OpenAI-compatible ``data[].id`` shape. Its catalog is
     # PUBLIC (verified 2026-07-08: an unauthenticated GET returns the full model
     # list), so ``bearer_opt`` like OpenRouter — the picker fills in before a key
@@ -169,19 +169,11 @@ CURATED_MODELS: dict[str, list[ModelInfo]] = {
         ("x-ai/grok-4.20", "Grok 4.20"),
         ("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro"),
     ]),
-    # GroqCloud's current tool-capable hosted families.  The live authenticated
-    # catalog replaces this list whenever reachable; these entries keep a fresh
-    # or temporarily offline install useful without inventing a stale model id.
-    "groq": _curated([
-        ("openai/gpt-oss-120b", "GPT-OSS 120B"),
-        ("openai/gpt-oss-20b", "GPT-OSS 20B"),
-        ("qwen/qwen3.6-27b", "Qwen 3.6 27B"),
-        ("qwen/qwen3-32b", "Qwen 3 32B"),
-        (
-            "meta-llama/llama-4-scout-17b-16e-instruct",
-            "Llama 4 Scout 17B",
-        ),
-        ("llama-3.1-8b-instant", "Llama 3.1 8B Instant"),
+    # Grok 4.3 is the universal default because Grok 4.5 is not yet available
+    # in every region. The authenticated live catalog replaces this fallback.
+    "grok": _curated([
+        ("grok-4.3", "Grok 4.3"),
+        ("grok-4.5", "Grok 4.5"),
     ]),
     # NVIDIA NIM — the offline fallback when the live /v1/models catalog is
     # unreachable. NVIDIA-hosted current families (Nemotron leads: it is NVIDIA's

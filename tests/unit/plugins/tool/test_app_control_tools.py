@@ -106,7 +106,7 @@ async def test_describe_rejects_params():
 async def test_describe_snapshot_structure(monkeypatch, configured_keys):
     from jarvis.plugins.tool.describe_app_settings import DescribeAppSettingsTool
 
-    # Use gemini as brain — grok was removed from the brain provider list.
+    # Use Gemini so the snapshot assertion remains independent of Grok.
     monkeypatch.setattr(
         "jarvis.brain.app_control.resolve_running_cfg", lambda: make_cfg(brain="gemini")
     )

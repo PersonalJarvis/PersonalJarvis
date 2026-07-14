@@ -279,7 +279,7 @@
         "url": "https://drivemcp.googleapis.com/mcp/v1",
         "auth_header_template": "Authorization: Bearer ${plugin_google_drive_access_token}"
       },
-      "post_install_hint_md": "Setup: see docs/marketplace/google-oauth-setup.md. Uses the non-sensitive drive.file scope (no Google verification, stays connected permanently). The Drive MCP server is Google's official endpoint (Developer Preview)."
+      "post_install_hint_md": "Setup: see docs/marketplace/google-oauth-setup.md. Uses the non-sensitive drive.file scope. Publish the Google consent app to 'In production' so offline access can refresh normally; a 'Testing' grant expires after 7 days. The Drive MCP server is Google's official endpoint (Developer Preview)."
     },
     {
       "id": "gmail",
@@ -306,7 +306,7 @@
         "offline_access": true
       },
       "native_tool": "gmail",
-      "post_install_hint_md": "Setup: see docs/marketplace/google-oauth-setup.md (shares the Google client with Drive). In Google 'Testing' status the connection expires every 7 days; publish the app + complete Google's restricted-scope verification to make it permanent."
+      "post_install_hint_md": "Setup: see docs/marketplace/google-oauth-setup.md (shares the Google client with Drive). In Google 'Testing' status the refresh grant expires after 7 days. Publish the consent app to 'In production' and complete restricted-scope verification when Google requires it so Jarvis can refresh offline access automatically. A user, account, or administrator can still revoke the grant."
     },
     {
       "id": "google_calendar",
@@ -332,7 +332,7 @@
         "offline_access": true
       },
       "native_tool": "google_calendar",
-      "post_install_hint_md": "Setup: shares the Google OAuth client with Gmail/Drive. Add the full 'calendar' scope to the OAuth consent screen (it reads events across ALL your calendars, not just the primary one) and publish the app to 'In production' so the refresh token (and thus the connection) never expires — a 'Testing' app drops it after 7 days."
+      "post_install_hint_md": "Setup: shares the Google OAuth client with Gmail/Drive. Add the full 'calendar' scope to the OAuth consent screen (it reads events across ALL your calendars, not just the primary one). A 'Testing' refresh grant expires after 7 days; publish the consent app to 'In production' so Jarvis can refresh offline access automatically. A user, account, or administrator can still revoke the grant."
     }
   ]
 }

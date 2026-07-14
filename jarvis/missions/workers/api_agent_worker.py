@@ -91,9 +91,9 @@ def _error_means_family_unusable(text: str) -> bool:
 _BRAIN_BY_PROVIDER: dict[str, tuple[str, str]] = {
     "openai": ("jarvis.plugins.brain.openai", "OpenAIBrain"),
     "openrouter": ("jarvis.plugins.brain.openrouter", "OpenRouterBrain"),
-    # GroqCloud speaks the same OpenAI-compatible streaming/tool-call protocol
+    # xAI Grok speaks the same OpenAI-compatible streaming/tool-call protocol
     # and needs no vendor SDK or external worker CLI.
-    "groq": ("jarvis.plugins.brain.groq", "GroqBrain"),
+    "grok": ("jarvis.plugins.brain.grok", "GrokBrain"),
     # NVIDIA NIM is OpenAI-compatible with no vendor CLI — same in-process
     # tool-loop path as openai/openrouter, running on the user's nvapi- key.
     "nvidia": ("jarvis.plugins.brain.nvidia", "NvidiaBrain"),
@@ -117,7 +117,7 @@ _OPENROUTER_FREE_DEFAULT = "nvidia/nemotron-3-ultra-550b-a55b:free"
 _DEFAULT_MODEL: dict[str, str] = {
     "openai": "gpt-5.5",
     "openrouter": _OPENROUTER_FREE_DEFAULT,
-    "groq": "openai/gpt-oss-120b",
+    "grok": "grok-4.3",
     "claude-api": "claude-opus-4-8",
     "gemini": "gemini-3.1-pro-preview",
     # NVIDIA's own reasoning flagship for heavy subagent work.

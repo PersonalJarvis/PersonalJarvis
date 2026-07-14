@@ -113,6 +113,6 @@ def test_grok_active_does_not_claim_to_be_gemini() -> None:
     m = _manager()
     m._active_turn_identity = ("grok", "grok-4.3")
     prompt = m._build_system_prompt()
-    assert "running on the brain provider Grok" in prompt
+    assert "running on the brain provider xAI Grok" in prompt
     # It must never say it is *running on* Gemini.
     assert "running on the brain provider Google Gemini" not in prompt

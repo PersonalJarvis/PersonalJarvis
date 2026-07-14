@@ -12,6 +12,7 @@ import keyring.backend
 import pytest
 
 import jarvis.core.config as cfg
+from jarvis.marketplace.token_store import Tokens, TokenStore
 
 
 class _MemoryBackend(keyring.backend.KeyringBackend):
@@ -43,6 +44,22 @@ class _ReadOnlyBackend(_MemoryBackend):
 class _NoDeleteBackend(_MemoryBackend):
     def delete_password(self, service: str, username: str) -> None:
         return None
+
+
+class _LockableBackend(_MemoryBackend):
+    """Platform store that becomes unreadable after a credential was saved."""
+
+    locked = False
+
+    def get_password(self, service: str, username: str) -> str | None:
+        if self.locked:
+            raise RuntimeError("platform credential store is locked")
+        return super().get_password(service, username)
+
+    def delete_password(self, service: str, username: str) -> None:
+        if self.locked:
+            raise RuntimeError("platform credential store is locked")
+        super().delete_password(service, username)
 
 
 @pytest.fixture
@@ -326,3 +343,37 @@ def test_failed_retained_platform_delete_preserves_newer_file_copy(
     assert cfg.delete_secret("google_client_secret") is False
     assert cfg._FileCredStore().get(cfg.KEYRING_SERVICE, "google_client_secret") == "new-file-value"
     assert cfg.get_secret("google_client_secret", "TEST_GOOGLE_CLIENT_SECRET") == "new-file-value"
+
+
+def test_marketplace_disconnect_fails_closed_when_platform_token_becomes_locked(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    _restore_keyring_backend,
+) -> None:
+    platform_backend = _LockableBackend()
+    credential_slot = "plugin_gmail_tokens"
+    raw_token = Tokens(access="platform-access" * 20).to_json()
+    chunks = [raw_token[i * len(raw_token) // 6 : (i + 1) * len(raw_token) // 6] for i in range(6)]
+    platform_backend.set_password(cfg.KEYRING_SERVICE, credential_slot, "\x00JCHUNKS\x006")
+    for index, chunk in enumerate(chunks):
+        platform_backend.set_password(cfg.KEYRING_SERVICE, f"{credential_slot}__{index}", chunk)
+    retained_entries = dict(platform_backend.values)
+    assert len(retained_entries) == 7
+    keyring.set_keyring(platform_backend)
+    monkeypatch.setattr(cfg, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(cfg, "_data_dir_cache", None, raising=False)
+    monkeypatch.setattr(cfg, "_KEYRING_BACKEND_READY", True)
+    monkeypatch.setattr(cfg, "_FILE_BACKEND_ACTIVE", False)
+    monkeypatch.setattr(cfg, "_PLATFORM_KEYRING_BACKEND", None)
+    monkeypatch.delenv("PLUGIN_GMAIL_TOKENS", raising=False)
+    platform_backend.locked = True
+
+    with pytest.raises(RuntimeError, match="token deletion could not be verified"):
+        TokenStore().delete("gmail")
+
+    # The read path has degraded to an empty file fallback, but that absence is
+    # not accepted as deletion proof while all seven OS entries are locked.
+    assert cfg.get_secret(credential_slot, env_fallback=None) is None
+    assert platform_backend.values == retained_entries
+    assert cfg._FILE_BACKEND_ACTIVE is True
+    assert cfg._PLATFORM_KEYRING_BACKEND is platform_backend

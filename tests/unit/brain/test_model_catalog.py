@@ -114,7 +114,7 @@ class TestProviderCatalog:
             "openai",
             "gemini",
             "openrouter",
-            "groq",
+            "grok",
             "nvidia",
         ):
             assert p in CATALOG_PROVIDERS
@@ -619,7 +619,7 @@ class TestListModels:
             "openai",
             "gemini",
             "openrouter",
-            "groq",
+            "grok",
             "nvidia",
         }
 

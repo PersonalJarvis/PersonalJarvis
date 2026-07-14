@@ -91,7 +91,7 @@ class ProviderMapping:
 # Single source of truth for the mapping. All derived dicts are generated
 # from this — drift between forward/reverse/env-var is impossible.
 #
-# Quelle: docs/openclaw-bridge.md Section 2 "Amendment AD-6" (2026-05-09).
+# Source: docs/jarvis-agents-bridge.md Section 2 "Amendment AD-6" (2026-05-09).
 # 2026-05-16 — claude-api migrated from the "anthropic" provider
 # (Messages-API path, requires paid Anthropic API key + extra-usage credits)
 # to "claude-cli" provider (OAuth path that reads ~/.claude/.credentials.json
@@ -110,16 +110,15 @@ MAPPINGS: Final[tuple[ProviderMapping, ...]] = (
     ),
     ProviderMapping("openai", "openai", "OPENAI_API_KEY"),
     ProviderMapping("openrouter", "openrouter", "OPENROUTER_API_KEY"),
-    # Groq runs through the in-process ApiAgentWorker.  The worker slug is a
-    # stable display/reverse-mapping identity; no external Groq CLI is spawned.
-    ProviderMapping("groq", "groq", "GROQ_API_KEY"),
+    # Grok runs through the in-process ApiAgentWorker. The xAI worker slug is a
+    # stable display/reverse-mapping identity; no external CLI is spawned.
+    ProviderMapping("grok", "xai", "XAI_API_KEY", "GROK_API_KEY"),
     # NVIDIA NIM: an OpenAI-compatible API provider. Like openai/openrouter it
     # runs through the in-process ApiAgentWorker (not the OpenClaw CLI harness),
     # so ``worker_slug`` is only a placeholder — this row exists so nvidia is a
     # selectable subagent in the API-Keys "Subagents" tab and env/slug lookups
     # stay consistent.
     ProviderMapping("nvidia", "nvidia", "NVIDIA_API_KEY"),
-    # xAI Grok removed as a sub-agent/brain provider 2026-06-22 (TTS-only now).
 )
 
 
