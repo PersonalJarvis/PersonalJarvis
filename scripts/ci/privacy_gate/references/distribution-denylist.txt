@@ -252,3 +252,15 @@ tests/unit/speech/tts_eval/**
 # by accurate user-facing architecture documentation. The finished engine and
 # its tests are intentionally public.
 docs/realtime-voice/**
+
+# --- Maintainer-private agent tooling + internal handoffs (2026-07-13, v1.0.6
+# privacy-audit findings) ------------------------------------------------------
+# .codex/hooks.json wires SessionStart/UserPromptSubmit/Stop hooks to the
+# maintainer's private BridgeSpace binary (bs-claude-hook.cjs) that no
+# downloader has — environment-specific tooling, not project knowledge. The
+# .codex/agents/*.toml mirror stays public (agent definitions are addressed to
+# every coding agent, like .claude/agents).
+.codex/hooks.json
+# Root-level Codex dev-handoff task prompts are internal working notes, not
+# user-facing docs.
+codex-*.md
