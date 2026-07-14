@@ -44,13 +44,18 @@ def test_installer_prompts_only_inside_missing_prerequisite_flow() -> None:
 
     sh_begin = sh.index("# --- prerequisite-bootstrap begin")
     sh_end = sh.index("# --- prerequisite-bootstrap end")
-    sh_outside = sh[:sh_begin] + sh[sh_end:]
+    # Design amendment 2026-07-14: ONE more allowed prompt — the welcome gate
+    # ("Would you like to install?") BEFORE phase 1. Nothing else may ask.
+    wg_begin = sh.index("# -------------------------------------------------------------- welcome gate")
+    wg_end = sh.index("# -------------------------------------------------------------- preflight")
+    sh_outside = sh[:wg_begin] + sh[wg_end:sh_begin] + sh[sh_end:]
     assert "read -r" not in sh_outside
     assert "read -p" not in sh
     assert sh[sh_begin:sh_end].count("read -r") == 2
     assert all(
-        "</dev/tty" in line
-        for line in sh[sh_begin:sh_end].splitlines()
+        "< /dev/tty" in line.replace("</dev/tty", "< /dev/tty")
+        for block in (sh[sh_begin:sh_end], sh[wg_begin:wg_end])
+        for line in block.splitlines()
         if "read -r" in line
     )
 
