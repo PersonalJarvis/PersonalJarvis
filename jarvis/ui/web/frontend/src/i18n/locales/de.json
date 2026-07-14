@@ -1121,7 +1121,7 @@
       "enable_local_button": "Beliebiges Wake-Word aktivieren",
       "enable_local_installing": "Sprachpaket wird installiert… das kann einen Moment dauern.",
       "enable_local_done": "Sprachpaket installiert. Dein Wake-Word ist ohne Neustart bereit.",
-      "enable_local_error": "Installation fehlgeschlagen. Prüfe deine Internetverbindung und versuche es erneut.",
+      "enable_local_error": "Installation fehlgeschlagen - die Details unten nennen die Ursache. Meist gibt es für diese Python-Version oder dieses System noch kein fertiges Paket; nur ein Verbindungsfehler in den Details bedeutet ein Netzwerkproblem.",
       "enable_local_retry": "Erneut versuchen",
       "enable_local_restart": "Jetzt neu starten",
       "restarting": "Neustart…",

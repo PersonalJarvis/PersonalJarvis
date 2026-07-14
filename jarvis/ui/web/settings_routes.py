@@ -538,7 +538,11 @@ def _run_local_speech_install() -> None:
 
     from jarvis.setup.dependencies import install_pip_package
 
-    ok, message = install_pip_package(_LOCAL_SPEECH_PACKAGE)
+    # only_binary: this runs on an END USER's machine — pip must never fall
+    # back to a source build (av needs FFmpeg dev libs, ctranslate2 a
+    # toolchain). No wheel for this Python/OS → fail fast with the honest
+    # classify_pip_failure diagnosis instead (BUG-059).
+    ok, message = install_pip_package(_LOCAL_SPEECH_PACKAGE, only_binary=True)
     # Let this same process's find_spec see the freshly-installed package, so the
     # status endpoint flips to available without a restart (the wake PIPELINE
     # still needs a restart to actually use it — the UI says so).

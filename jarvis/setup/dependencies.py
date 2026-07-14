@@ -243,7 +243,58 @@ def install_npm_package(package: str, *, timeout_s: float = 300.0) -> tuple[bool
     return True, (result.stdout or "").strip()[:400] or "install reported success"
 
 
-def install_pip_package(package: str, *, timeout_s: float = 600.0) -> tuple[bool, str]:
+# Marker substrings for classify_pip_failure, matched case-insensitively.
+# Network first would be wrong: a source-build log can mention retries, so the
+# more specific build/no-wheel signatures win before network generalities.
+_PIP_NO_WHEEL_MARKERS = (
+    "failed to build",
+    "getting requirements to build wheel",
+    "pkg-config could not find",
+    "no matching distribution found",
+    "could not find a version that satisfies",
+    "microsoft visual c++",
+    "fatal error:",
+)
+_PIP_NETWORK_MARKERS = (
+    "newconnectionerror",
+    "temporary failure in name resolution",
+    "connection refused",
+    "readtimeouterror",
+    "network is unreachable",
+    "proxyerror",
+    "ssl: certificate",
+)
+
+
+def classify_pip_failure(stderr: str) -> str | None:
+    """Turn pip's stderr tail into an honest one-line diagnosis, or ``None``.
+
+    BUG-059: on the first real-Mac onboarding a missing cp314/macOS wheel for
+    ``av`` sent pip into an FFmpeg SOURCE build that no end user can satisfy —
+    and the UI blamed the internet connection. A missing prebuilt wheel (or
+    the source build it triggers) must be named as such; only genuine network
+    signatures may point at the network.
+    """
+    s = (stderr or "").lower()
+    if any(marker in s for marker in _PIP_NO_WHEEL_MARKERS):
+        ver = f"{sys.version_info[0]}.{sys.version_info[1]}"
+        return (
+            f"No prebuilt package exists for Python {ver} on this system yet "
+            "(pip tried to build it from source, which needs developer "
+            "libraries). Python 3.12 or 3.13 has full prebuilt support - "
+            "install one from python.org and re-run the Jarvis installer."
+        )
+    if any(marker in s for marker in _PIP_NETWORK_MARKERS):
+        return (
+            "Network problem reaching the package index - check your "
+            "connection or proxy and try again."
+        )
+    return None
+
+
+def install_pip_package(
+    package: str, *, timeout_s: float = 600.0, only_binary: bool = False
+) -> tuple[bool, str]:
     """Best-effort ``<python> -m pip install <package>`` into the RUNNING
     interpreter. Never raises. Returns ``(ok, message)``.
 
@@ -255,17 +306,27 @@ def install_pip_package(package: str, *, timeout_s: float = 600.0) -> tuple[bool
     host does not flash a console (AP-1). Cross-platform: ``python -m pip`` is
     the one install invocation that behaves identically on Windows/macOS/Linux.
     A frozen/no-pip interpreter fails cleanly with a message instead of raising.
+
+    ``only_binary=True`` adds ``--only-binary=:all:`` — for end-user-facing
+    installs of native packages, so pip fails fast with the honest no-wheel
+    diagnosis instead of attempting a source build (FFmpeg/toolchain) that no
+    end user can satisfy (BUG-059).
     """
     if not sys.executable:
         return False, "no Python interpreter available to run pip"
 
-    logger.info("install_pip_package: %s -m pip install %s", sys.executable, package)
+    cmd = [
+        sys.executable, "-m", "pip", "install",
+        "--disable-pip-version-check",
+    ]
+    if only_binary:
+        cmd += ["--only-binary", ":all:"]
+    cmd.append(package)
+
+    logger.info("install_pip_package: %s", " ".join(cmd))
     try:
         result = subprocess.run(  # noqa: S603 -- args are controlled, not user input
-            [
-                sys.executable, "-m", "pip", "install",
-                "--disable-pip-version-check", package,
-            ],
+            cmd,
             capture_output=True,
             text=True,
             timeout=timeout_s,
@@ -280,7 +341,9 @@ def install_pip_package(package: str, *, timeout_s: float = 600.0) -> tuple[bool
         # The tail of stderr carries pip's actual reason (resolver conflict,
         # no matching wheel for the platform, network error).
         stderr = (result.stderr or "").strip()[-600:]
-        return False, f"pip exited {result.returncode}: {stderr or 'no stderr'}"
+        raw = f"pip exited {result.returncode}: {stderr or 'no stderr'}"
+        diagnosis = classify_pip_failure(stderr)
+        return False, f"{diagnosis} [{raw}]" if diagnosis else raw
 
     return True, (result.stdout or "").strip()[-400:] or "install reported success"
 
@@ -307,5 +370,6 @@ __all__ = [
     "check_openclaw",
     "install_claude_cli",
     "install_npm_package",
+    "classify_pip_failure",
     "install_pip_package",
 ]
