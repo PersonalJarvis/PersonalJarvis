@@ -10,6 +10,7 @@ import pytest
 from jarvis.marketplace.token_store import (
     ChunkedBackend,
     InMemoryBackend,
+    KeyringBackend,
     Tokens,
     TokenStore,
 )
@@ -57,12 +58,13 @@ class _SilentDeleteBackend:
 
 
 class _PartialOverflowDeleteBackend(_SizeLimitedFakeBackend):
-    """Silently retains chunk one until the test allows its deletion."""
+    """Silently retains one selected chunk until the test allows deletion."""
 
-    allow_chunk_one_delete = False
+    allow_blocked_chunk_delete = False
+    blocked_chunk_index = 1
 
     def delete(self, key: str) -> None:
-        if key.endswith("__1") and not self.allow_chunk_one_delete:
+        if key.endswith(f"__{self.blocked_chunk_index}") and not self.allow_blocked_chunk_delete:
             return
         super().delete(key)
 
@@ -121,6 +123,19 @@ def test_chunked_backend_cleanup_stops_after_silent_delete_failure():
 
     assert backend.get("plugin_gmail_tokens") == "small"
     assert primitive.overflow_get_calls == 2
+
+
+def test_keyring_delete_is_strict_but_housekeeping_remains_best_effort(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from jarvis.core import config
+
+    monkeypatch.setattr(config, "delete_secret", lambda _key: False)
+    backend = KeyringBackend()
+
+    backend.delete_best_effort("plugin_gmail_tokens__9")
+    with pytest.raises(RuntimeError, match="keyring delete could not be verified"):
+        backend.delete("plugin_gmail_tokens")
 
 
 class _FailNthSetBackend:
@@ -260,7 +275,7 @@ def test_store_delete_keeps_manifest_until_every_indexed_chunk_is_removed():
     assert backend.store[primary_key] == manifest
     assert backend.store[f"{primary_key}__1"]
 
-    backend.allow_chunk_one_delete = True
+    backend.allow_blocked_chunk_delete = True
     store.delete("gmail")
 
     assert backend.store == {}
@@ -294,7 +309,7 @@ def test_shrink_persists_cleanup_extent_across_restart_until_delete_succeeds():
     assert backend.store[f"{key}__extent"] == extent
     assert backend.store[f"{key}__1"]
 
-    backend.allow_chunk_one_delete = True
+    backend.allow_blocked_chunk_delete = True
     restarted.delete("gmail")
 
     assert backend.store == {}
@@ -339,7 +354,51 @@ def test_legacy_sparse_delete_retains_primary_and_extent_after_noop():
     assert backend.store[f"{key}__1"] == "legacy-fragment-one"
     assert backend.store[f"{key}__extent"] == "2"
 
-    backend.allow_chunk_one_delete = True
+    backend.allow_blocked_chunk_delete = True
+    store.delete("gmail")
+
+    assert backend.store == {}
+
+
+def test_legacy_sparse_delete_scans_beyond_valid_smaller_manifest():
+    backend = _SizeLimitedFakeBackend(limit=1000)
+    key = "plugin_gmail_tokens"
+    chunked = ChunkedBackend(backend, chunk_size=20)
+    chunked.set(key, "a" * 30)  # valid two-chunk active manifest
+    backend.store[f"{key}__4"] = "legacy-tail-fragment"
+    assert f"{key}__extent" not in backend.store
+
+    TokenStore(chunked).delete("gmail")
+
+    assert backend.store == {}
+
+
+def test_legacy_tail_failure_preserves_manifest_and_retries_exact_extent():
+    backend = _PartialOverflowDeleteBackend(limit=1000)
+    backend.blocked_chunk_index = 4
+    key = "plugin_gmail_tokens"
+    chunked = ChunkedBackend(backend, chunk_size=20)
+    chunked.set(key, "a" * 30)  # valid two-chunk active manifest
+    legacy_manifest = backend.store[key]
+    backend.store[f"{key}__4"] = "legacy-tail-fragment"
+    store = TokenStore(chunked)
+
+    with pytest.raises(RuntimeError):
+        store.delete("gmail")
+
+    assert backend.store[key] == legacy_manifest
+    assert f"{key}__0" not in backend.store
+    assert f"{key}__1" not in backend.store
+    assert backend.store[f"{key}__4"] == "legacy-tail-fragment"
+    assert backend.store[f"{key}__extent"] == "5"
+
+    # The durable extent makes subsequent retries exact rather than heuristic.
+    with pytest.raises(RuntimeError):
+        store.delete("gmail")
+    assert backend.store[key] == legacy_manifest
+    assert backend.store[f"{key}__4"] == "legacy-tail-fragment"
+
+    backend.allow_blocked_chunk_delete = True
     store.delete("gmail")
 
     assert backend.store == {}

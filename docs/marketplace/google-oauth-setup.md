@@ -83,36 +83,33 @@ client, do that in the same dialog first (above), then reconnect.
 
 ### Keeping it connected (the 7-day rule)
 
-Google issues a refresh token that **expires after 7 days** while your app's
-publishing status is **Testing** and a sensitive/restricted scope is requested.
-To keep a plugin connected permanently you must **publish the app to "In
-production"** (Audience → Publish app). Even an *unverified* production app keeps
-the refresh token alive for the app owner / test users — you just click through a
-one-time "Google hasn't verified this app" notice when connecting:
+Google authorizations issued while an external app's publishing status is
+**Testing** expire seven days after consent whenever the request includes any
+scope beyond basic identity (`openid`, email, and profile). That includes
+`drive.file`, `calendar`, and the Gmail scopes. Jarvis cannot extend that
+provider-enforced lifetime.
 
-- For **`drive.file`** (Drive): non-sensitive — publishing needs no verification,
-  so Drive is permanent immediately after you publish (or even in testing it is
-  unaffected by the 7-day rule because `drive.file` is non-sensitive… still,
-  publish to be safe).
-- For **`calendar`** (Calendar, full read/write across all calendars):
-  **sensitive but not restricted** — same light path as Gmail send: publishing to
-  production needs OAuth verification for *public* use but **no CASA assessment**.
-  For your own account just publish to production (unverified is fine) and the
-  connection stops expiring; voice commands like "what's on my calendar today" and
-  "schedule a meeting tomorrow at 3pm" then work indefinitely. (The narrower
-  `calendar.events` scope also works for create/read/delete but **cannot list your
-  other calendars**, so events on a secondary calendar would be invisible — use
-  the full `calendar` scope.)
-- For **Gmail read** (`gmail.readonly`, restricted): publishing to production
-  requires Google's OAuth app **verification + a CASA security assessment**
-  (several weeks). Until that completes, Gmail works but reconnects ~weekly.
-- For **Gmail send only** (`gmail.send`, sensitive but not restricted): a far
-  lighter path — production needs OAuth verification but **no** CASA assessment.
+For durable offline refresh, open **Google Auth Platform → Audience** and choose
+**Publish app** so the project is **In production**. A Google Workspace project
+used only inside its organization can instead use an **Internal** audience. Then
+reconnect each Google plugin once so Google issues a grant under the new audience
+configuration.
 
-For just Calendar + Drive + Gmail-send, the quick path is: publish the app to
-production and connect — no verification needed for your own use. The heavy
-verification + CASA path is only required for the restricted Gmail read scope, or
-for distributing the app publicly.
+- **Drive `drive.file`** is non-sensitive, but it is still outside the basic
+  identity-only exception to Testing's seven-day lifetime.
+- **Calendar `calendar`** and **Gmail `gmail.send`** are sensitive scopes.
+- **Gmail `gmail.readonly`** is restricted. Public distribution can require
+  Google's restricted-scope verification, and systems that transmit or store
+  restricted data through a third-party server can require a security assessment.
+  Personal use by a small number of known users may qualify for Google's
+  verification exception, subject to an unverified-app warning and user cap.
+
+Production status removes the scheduled seven-day Testing expiry; it does not
+make a grant irrevocable. Google can still require authorization again after a
+user revokes access, an account or administrator changes policy, credentials are
+rotated, or another provider security condition invalidates the refresh token.
+Jarvis handles ordinary access-token expiry automatically and only asks for
+reconnection when the refresh grant itself is no longer usable.
 
 ---
 
