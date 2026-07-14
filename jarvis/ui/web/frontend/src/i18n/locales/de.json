@@ -935,7 +935,8 @@
     "guide_realtime_title": "Welches Modell soll ich nehmen?",
     "guide_realtime_body": "OpenAI: GPT Realtime (der Anbieter-Standard) klingt am natürlichsten; GPT Realtime Mini ist die günstige Wahl. Google: Gemini 3.1 Flash Live ist das aktuelle Live-Flaggschiff. „Anbieter-Standard“ löst immer auf das empfohlene Modell auf — du kannst es einfach so lassen.",
     "guide_computer_use_title": "Welcher Provider soll das Tool Model antreiben?",
-    "guide_computer_use_body": "Das Tool Model übernimmt jede Aktion, die Jarvis für dich ausführt — auch Computer-Use, das Screenshots deines Bildschirms liest und deshalb ein Modell braucht, das Bilder versteht; die Auswahl blendet reine Text-Modelle aus. Im Zweifel: beim Haupt-Brain-Provider und seinem Standard-Modell bleiben."
+    "guide_computer_use_body": "Das Tool Model übernimmt jede Aktion, die Jarvis für dich ausführt — auch Computer-Use, das Screenshots deines Bildschirms liest und deshalb ein Modell braucht, das Bilder versteht; die Auswahl blendet reine Text-Modelle aus. Im Zweifel: beim Haupt-Brain-Provider und seinem Standard-Modell bleiben.",
+    "mode_status_unknown": "Der Engine-Status ist noch nicht geladen - der Schalter wird frei, sobald das Backend antwortet. Bleibt das so, starte die App neu."
   },
   "apikeys_test": {
     "button": "Testen",

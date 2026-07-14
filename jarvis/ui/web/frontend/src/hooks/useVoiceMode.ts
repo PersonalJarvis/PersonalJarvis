@@ -83,6 +83,11 @@ export function useVoiceMode() {
   return {
     mode: q.data?.mode ?? "pipeline",
     realtimeAvailable: q.data?.realtime_available ?? false,
+    // Distinguishes "the server SAID no realtime key" from "we never heard
+    // back" (timeout/loading). Without it a failed status fetch showed the
+    // false claim "Realtime needs an API key" and looked like a locked
+    // toggle on a machine that merely had a slow/broken backend moment.
+    statusKnown: q.isSuccess,
     sessionActive: q.data?.session_active ?? false,
     activeSessionMode: q.data?.active_session_mode ?? null,
     activeSessionProvider: q.data?.active_session_provider ?? "",
