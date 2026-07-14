@@ -11,6 +11,7 @@ engaged for ``fail.Keyring`` was skipped, ``keyring.set_password`` raised
 failed and nothing persisted. A locked/unusable OS keyring must degrade to the
 file store at RUNTIME, keeping the "recoverable in-app" guarantee (CLAUDE.md §3).
 """
+
 from __future__ import annotations
 
 import keyring
@@ -81,18 +82,18 @@ def test_delete_secret_reports_failure_on_locked_keyring_without_swapping_backen
     swapping the process-global backend to the file store and claiming
     success — a real OS-keyring-held value would otherwise survive
     untouched and reappear once the lock clears (the resurrection bug this
-    fix closes). The file-store copy (if any) is still removed so a
-    file-only value never lingers, but the overall result is False because
-    the OS-keyring side is unconfirmed.
+    fix closes). The newer file-store copy is preserved while the OS-keyring
+    side is unconfirmed, so it continues to shadow the stale platform value
+    and the deletion can be retried later.
     """
     store = c._FileCredStore()
     store.set(c.KEYRING_SERVICE, "del_prior", "y")
     original_keyring = keyring.get_keyring()
 
     assert c.delete_secret("del_prior") is False
-    # The file copy is gone...
-    assert c._FileCredStore().get(c.KEYRING_SERVICE, "del_prior") is None
-    # ...but the failed delete must NOT have swapped the active backend.
+    # The failed delete must preserve the fallback and must NOT swap the
+    # active backend.
+    assert c._FileCredStore().get(c.KEYRING_SERVICE, "del_prior") == "y"
     assert keyring.get_keyring() is original_keyring
     assert c._FILE_BACKEND_ACTIVE is False
 
@@ -110,6 +111,7 @@ def test_delete_secret_treats_already_absent_as_success(monkeypatch, tmp_path) -
         raise PasswordDeleteError("not found")
 
     monkeypatch.setattr(keyring, "delete_password", _raise_missing)
+    monkeypatch.setattr(keyring, "get_password", lambda *_args: None)
 
     assert c.delete_secret("never_stored_key") is True
 
@@ -122,6 +124,7 @@ def test_delete_secret_removes_stale_file_value_when_os_delete_succeeds(
     monkeypatch.setattr(c, "_KEYRING_BACKEND_READY", True)
     monkeypatch.setattr(c, "_FILE_BACKEND_ACTIVE", False)
     monkeypatch.setattr(keyring, "delete_password", lambda *_args: None)
+    monkeypatch.setattr(keyring, "get_password", lambda *_args: None)
     store = c._FileCredStore()
     store.set(c.KEYRING_SERVICE, "stale_key", "stale-value")
 

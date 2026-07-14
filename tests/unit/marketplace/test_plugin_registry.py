@@ -11,8 +11,13 @@ def _calendar_plugin() -> PluginSpec:
         category="Productivity", logo_slug="googlecalendar",
         auth={"mode": "pat_paste", "token_creation_url": "x", "token_prefix": "ya29",
               "validation_endpoint": "x", "instruction_md": "x"},
-        mcp_server={"transport": "http", "url": "https://cal/mcp",
-                    "auth_header_template": "Authorization: Bearer $plugin_google-calendar_access_token"},
+        mcp_server={
+            "transport": "http",
+            "url": "https://cal/mcp",
+            "auth_header_template": (
+                "Authorization: Bearer $plugin_google-calendar_access_token"
+            ),
+        },
     )
 
 
@@ -279,3 +284,308 @@ async def test_transient_connect_failure_does_not_mark_needs_reauth():
     assert tokens is not None
     assert tokens.needs_reauth is False
     assert "Connection closed" in (reg.last_connect_error("flaky") or "")
+
+
+class _RefreshHandler:
+    def __init__(self, *, failure: Exception | None = None) -> None:
+        self.failure = failure
+        self.calls = 0
+
+    async def refresh(self, current: Tokens) -> Tokens:
+        self.calls += 1
+        if self.failure is not None:
+            raise self.failure
+        return Tokens(access="fresh-access", refresh="fresh-refresh")
+
+
+@pytest.mark.asyncio
+async def test_auth_connect_failure_refreshes_and_retries_once() -> None:
+    plugin = _plugin("refreshable")
+    catalog = PluginCatalog(version=1, schema_version="1", plugins=[plugin])
+    store = TokenStore(InMemoryBackend())
+    store.save(plugin.id, Tokens(access="stale-access", refresh="refresh-1"))
+    handler = _RefreshHandler()
+    client_calls = 0
+
+    def client_factory(spec, env_overrides=None):  # noqa: ANN001
+        nonlocal client_calls
+        client_calls += 1
+        cls = _FailingClient if client_calls == 1 else _FakeClient
+        return cls(spec, env_overrides=env_overrides)
+
+    reg = PluginToolRegistry(
+        catalog=catalog,
+        token_store=store,
+        client_factory=client_factory,
+        bus=_RecordingBus(),
+        refresh_handler_builder=lambda _plugin_id: handler,
+    )
+
+    await reg.bootstrap()
+
+    assert handler.calls == 1
+    assert client_calls == 2
+    assert store.load(plugin.id).access == "fresh-access"
+    assert reg.live_tool_count(plugin.id) == 1
+    assert reg.last_connect_error(plugin.id) is None
+
+
+@pytest.mark.asyncio
+async def test_transient_refresh_failure_does_not_poison_token() -> None:
+    plugin = _plugin("refresh-transient")
+    catalog = PluginCatalog(version=1, schema_version="1", plugins=[plugin])
+    store = TokenStore(InMemoryBackend())
+    store.save(plugin.id, Tokens(access="stale-access", refresh="refresh-1"))
+    handler = _RefreshHandler(failure=RuntimeError("refresh HTTP 503"))
+    client_calls = 0
+
+    def client_factory(spec, env_overrides=None):  # noqa: ANN001
+        nonlocal client_calls
+        client_calls += 1
+        return _FailingClient(spec, env_overrides=env_overrides)
+
+    reg = PluginToolRegistry(
+        catalog=catalog,
+        token_store=store,
+        client_factory=client_factory,
+        bus=_RecordingBus(),
+        refresh_handler_builder=lambda _plugin_id: handler,
+    )
+
+    await reg.bootstrap()
+
+    assert handler.calls == 1
+    assert client_calls == 1
+    assert store.load(plugin.id).needs_reauth is False
+    assert "401" in (reg.last_connect_error(plugin.id) or "")
+
+
+@pytest.mark.asyncio
+async def test_terminal_refresh_failure_marks_needs_reauth() -> None:
+    plugin = _plugin("refresh-revoked")
+    catalog = PluginCatalog(version=1, schema_version="1", plugins=[plugin])
+    store = TokenStore(InMemoryBackend())
+    store.save(plugin.id, Tokens(access="stale-access", refresh="refresh-1"))
+    handler = _RefreshHandler(
+        failure=RuntimeError('refresh HTTP 400: {"error":"invalid_grant"}')
+    )
+    reg = PluginToolRegistry(
+        catalog=catalog,
+        token_store=store,
+        client_factory=_FailingClient,
+        bus=_RecordingBus(),
+        refresh_handler_builder=lambda _plugin_id: handler,
+    )
+
+    await reg.bootstrap()
+
+    assert handler.calls == 1
+    assert store.load(plugin.id).needs_reauth is True
+
+
+@pytest.mark.asyncio
+async def test_auth_shaped_retry_failure_marks_fresh_token_needs_reauth() -> None:
+    plugin = _plugin("retry-rejected")
+    catalog = PluginCatalog(version=1, schema_version="1", plugins=[plugin])
+    store = TokenStore(InMemoryBackend())
+    store.save(plugin.id, Tokens(access="stale-access", refresh="refresh-1"))
+    handler = _RefreshHandler()
+    client_calls = 0
+
+    def client_factory(spec, env_overrides=None):  # noqa: ANN001
+        nonlocal client_calls
+        client_calls += 1
+        return _FailingClient(spec, env_overrides=env_overrides)
+
+    reg = PluginToolRegistry(
+        catalog=catalog,
+        token_store=store,
+        client_factory=client_factory,
+        bus=_RecordingBus(),
+        refresh_handler_builder=lambda _plugin_id: handler,
+    )
+
+    await reg.bootstrap()
+
+    saved = store.load(plugin.id)
+    assert handler.calls == 1
+    assert client_calls == 2
+    assert saved.access == "fresh-access"
+    assert saved.needs_reauth is True
+
+
+@pytest.mark.asyncio
+async def test_transient_retry_failure_preserves_fresh_token() -> None:
+    class _TransientFailClient(_FakeClient):
+        async def start(self) -> None:
+            raise RuntimeError("Connection closed")
+
+    plugin = _plugin("retry-transient")
+    catalog = PluginCatalog(version=1, schema_version="1", plugins=[plugin])
+    store = TokenStore(InMemoryBackend())
+    store.save(plugin.id, Tokens(access="stale-access", refresh="refresh-1"))
+    handler = _RefreshHandler()
+    client_calls = 0
+
+    def client_factory(spec, env_overrides=None):  # noqa: ANN001
+        nonlocal client_calls
+        client_calls += 1
+        cls = _FailingClient if client_calls == 1 else _TransientFailClient
+        return cls(spec, env_overrides=env_overrides)
+
+    reg = PluginToolRegistry(
+        catalog=catalog,
+        token_store=store,
+        client_factory=client_factory,
+        bus=_RecordingBus(),
+        refresh_handler_builder=lambda _plugin_id: handler,
+    )
+
+    await reg.bootstrap()
+
+    saved = store.load(plugin.id)
+    assert handler.calls == 1
+    assert client_calls == 2
+    assert saved.access == "fresh-access"
+    assert saved.needs_reauth is False
+    assert "Connection closed" in (reg.last_connect_error(plugin.id) or "")
+
+
+@pytest.mark.asyncio
+async def test_new_grant_during_auth_retry_is_not_marked_needs_reauth() -> None:
+    import asyncio
+
+    retry_entered = asyncio.Event()
+    release_retry = asyncio.Event()
+
+    class _BlockingAuthFailClient(_FakeClient):
+        async def start(self) -> None:
+            retry_entered.set()
+            await release_retry.wait()
+            raise RuntimeError("HTTP 401 unauthorized")
+
+    plugin = _plugin("retry-reconnected")
+    catalog = PluginCatalog(version=1, schema_version="1", plugins=[plugin])
+    store = TokenStore(InMemoryBackend())
+    store.save(plugin.id, Tokens(access="stale-access", refresh="refresh-1"))
+    handler = _RefreshHandler()
+    client_calls = 0
+
+    def client_factory(spec, env_overrides=None):  # noqa: ANN001
+        nonlocal client_calls
+        client_calls += 1
+        cls = _FailingClient if client_calls == 1 else _BlockingAuthFailClient
+        return cls(spec, env_overrides=env_overrides)
+
+    reg = PluginToolRegistry(
+        catalog=catalog,
+        token_store=store,
+        client_factory=client_factory,
+        bus=_RecordingBus(),
+        refresh_handler_builder=lambda _plugin_id: handler,
+    )
+
+    bootstrap = asyncio.create_task(reg.bootstrap())
+    await asyncio.wait_for(retry_entered.wait(), timeout=1.0)
+    store.save(
+        plugin.id,
+        Tokens(access="new-user-grant", refresh="new-user-refresh"),
+    )
+    release_retry.set()
+    await bootstrap
+
+    saved = store.load(plugin.id)
+    assert handler.calls == 1
+    assert client_calls == 2
+    assert saved.access == "new-user-grant"
+    assert saved.needs_reauth is False
+
+
+@pytest.mark.asyncio
+async def test_cancelled_connect_stops_untracked_client_before_propagating() -> None:
+    import asyncio
+
+    start_entered = asyncio.Event()
+    stop_entered = asyncio.Event()
+    release_stop = asyncio.Event()
+    clients = []
+
+    class _CancellationClient(_FakeClient):
+        def __init__(self, spec, env_overrides=None):  # noqa: ANN001
+            super().__init__(spec, env_overrides=env_overrides)
+            self.open = True
+            clients.append(self)
+
+        async def start(self) -> None:
+            start_entered.set()
+            await asyncio.Event().wait()
+
+        async def stop(self) -> None:
+            stop_entered.set()
+            await release_stop.wait()
+            self.open = False
+
+    plugin = _plugin("cancel-connect")
+    catalog = PluginCatalog(version=1, schema_version="1", plugins=[plugin])
+    reg = PluginToolRegistry(
+        catalog=catalog,
+        token_store=_store_for(plugin.id),
+        client_factory=_CancellationClient,
+        bus=_RecordingBus(),
+    )
+
+    bootstrap = asyncio.create_task(reg.bootstrap())
+    await asyncio.wait_for(start_entered.wait(), timeout=1.0)
+    bootstrap.cancel()
+    await asyncio.wait_for(stop_entered.wait(), timeout=1.0)
+    await asyncio.sleep(0)
+    assert not bootstrap.done()
+    release_stop.set()
+    with pytest.raises(asyncio.CancelledError):
+        await bootstrap
+
+    assert clients and clients[0].open is False
+    assert reg._clients == {}
+
+
+@pytest.mark.asyncio
+async def test_cancelled_disconnect_finishes_stop_before_untracking_client() -> None:
+    import asyncio
+
+    stop_entered = asyncio.Event()
+    release_stop = asyncio.Event()
+    clients = []
+
+    class _CancellationClient(_FakeClient):
+        def __init__(self, spec, env_overrides=None):  # noqa: ANN001
+            super().__init__(spec, env_overrides=env_overrides)
+            self.open = True
+            clients.append(self)
+
+        async def stop(self) -> None:
+            stop_entered.set()
+            await release_stop.wait()
+            self.open = False
+
+    plugin = _plugin("cancel-disconnect")
+    catalog = PluginCatalog(version=1, schema_version="1", plugins=[plugin])
+    reg = PluginToolRegistry(
+        catalog=catalog,
+        token_store=_store_for(plugin.id),
+        client_factory=_CancellationClient,
+        bus=_RecordingBus(),
+    )
+    await reg.bootstrap()
+
+    shutdown = asyncio.create_task(reg.stop())
+    await asyncio.wait_for(stop_entered.wait(), timeout=1.0)
+    shutdown.cancel()
+    await asyncio.sleep(0)
+    assert not shutdown.done()
+    assert plugin.id in reg._clients
+    release_stop.set()
+    with pytest.raises(asyncio.CancelledError):
+        await shutdown
+
+    assert clients and clients[0].open is False
+    assert plugin.id not in reg._clients

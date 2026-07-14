@@ -118,36 +118,25 @@ def _default_token_provider() -> str | None:
     return tokens.access if tokens is not None else None
 
 
-async def _default_refresher() -> bool:
+async def _default_refresher(observed_access_token: str | None = None) -> bool:
     """Refresh the stored Google Calendar token in place. Returns True on success.
 
     Mirrors the Gmail refresher: on an un-healable failure (revoked /
     invalid_client / placeholder client) it flags ``needs_reauth`` so the
     Plugins view offers a Reconnect instead of a green status that lies."""
-    import contextlib
-    import dataclasses
-
     from jarvis.marketplace.connect_helpers import build_handler_from_catalog
+    from jarvis.marketplace.refresh_scheduler import refresh_plugin_token
     from jarvis.marketplace.token_store import TokenStore
 
     store = TokenStore()
-    tokens = store.load("google_calendar")
-    if tokens is None or not tokens.refresh:
-        return False
-    handler = build_handler_from_catalog("google_calendar")
-    if handler is None:
-        return False
-    try:
-        new = await handler.refresh(tokens)
-    except Exception as exc:  # noqa: BLE001 — classify, never propagate
-        with contextlib.suppress(Exception):
-            store.save(
-                "google_calendar", dataclasses.replace(tokens, needs_reauth=True)
-            )
-        log.info("google_calendar token refresh failed, flagged needs_reauth: %s", exc)
-        return False
-    store.save("google_calendar", dataclasses.replace(new, needs_reauth=False))
-    return True
+    attempt = await refresh_plugin_token(
+        "google_calendar",
+        store,
+        build_handler_from_catalog,
+        force=True,
+        observed_access_token=observed_access_token,
+    )
+    return attempt.usable
 
 
 class GoogleCalendarRestTool:
@@ -209,7 +198,7 @@ class GoogleCalendarRestTool:
     ) -> None:
         self._token_provider = access_token_provider or _default_token_provider
         self._node_runner = node_runner or _default_node_runner
-        self._refresher = token_refresher or _default_refresher
+        self._refresher = token_refresher
 
     # -- internal: token-aware call with one-shot 401 self-heal ---------------
 
@@ -221,7 +210,10 @@ class GoogleCalendarRestTool:
         if result.get("ok") is False and result.get("status") == 401:
             # Access token likely expired — refresh once and retry.
             try:
-                refreshed = bool(await self._refresher())
+                if self._refresher is None:
+                    refreshed = bool(await _default_refresher(token))
+                else:
+                    refreshed = bool(await self._refresher())
             except Exception:  # noqa: BLE001 — refresher must never crash the tool
                 refreshed = False
             if not refreshed:

@@ -138,6 +138,35 @@ async def test_refreshes_on_401_then_retries():
 
 
 @pytest.mark.asyncio
+async def test_default_refresh_receives_failed_access_token(monkeypatch) -> None:  # noqa: ANN001
+    seen: list[str | None] = []
+    calls = 0
+
+    async def runner(action, args, token):  # noqa: ANN001
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {"ok": False, "status": 401, "error": "Calendar API 401"}
+        return _ok({"events": []})
+
+    async def refresher(observed_access_token: str | None = None) -> bool:
+        seen.append(observed_access_token)
+        return True
+
+    monkeypatch.setattr(
+        "jarvis.plugins.tool.google_calendar_rest._default_refresher", refresher
+    )
+    tool = GoogleCalendarRestTool(
+        access_token_provider=lambda: "failed-access",
+        node_runner=runner,
+    )
+
+    await tool.list_events()
+
+    assert seen == ["failed-access"]
+
+
+@pytest.mark.asyncio
 async def test_returns_reconnect_error_when_refresh_fails():
     async def runner(action, args, token):
         return {"ok": False, "status": 401, "error": "Calendar API 401"}
