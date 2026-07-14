@@ -91,14 +91,13 @@ describe("ApiKeysView two-mode", () => {
     expect(realtimeSegment.textContent).not.toMatch(/active/i);
   });
 
-  it("marks Pipeline as the recommended engine, not Realtime", () => {
-    // Pipeline is the recommended default; Realtime is a research preview.
-    // The Recommended badge therefore rides the Pipeline segment only.
+  it("marks Realtime as recommended and Pipeline as not recommended", () => {
     render(<ApiKeysView />);
     const pipelineSegment = screen.getByRole("button", { name: /pipeline/i });
     const realtimeSegment = screen.getByRole("button", { name: /^realtime/i });
-    expect(pipelineSegment.textContent).toMatch(/recommended/i);
-    expect(realtimeSegment.textContent).not.toMatch(/recommended/i);
+    expect(pipelineSegment.textContent).toMatch(/not recommended/i);
+    expect(realtimeSegment.textContent).toMatch(/recommended/i);
+    expect(realtimeSegment.textContent).not.toMatch(/not recommended/i);
   });
 
   it("shows a research-preview disclaimer when Realtime is selected", () => {
@@ -149,6 +148,16 @@ describe("ApiKeysView two-mode", () => {
 });
 
 describe("ApiKeysView two-mode — realtime unavailable (no key in any family)", () => {
+  it("does not paint an unavailable configured Realtime mode as active", () => {
+    mockVoiceMode = "realtime";
+    mockRealtimeAvailable = false;
+    render(<ApiKeysView />);
+
+    const realtimeSegment = screen.getByRole("button", { name: /^realtime/i });
+    expect(realtimeSegment.textContent).not.toMatch(/active/i);
+    expect(screen.queryByTestId("voice-engine-live-thumb")).toBeNull();
+  });
+
   it("switching to Realtime still switches the view, but does NOT persist voice-mode", () => {
     mockRealtimeAvailable = false;
     render(<ApiKeysView />);

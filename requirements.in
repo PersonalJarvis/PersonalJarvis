@@ -22,6 +22,10 @@
 anthropic>=0.96
 openai>=1.30
 google-genai>=1.0
+# Keep transitive auth/JWT crypto wheel-installable where the newest release
+# stopped publishing the architecture.
+cryptography==46.0.3; sys_platform == 'win32' and platform_machine == 'ARM64'
+cryptography==48.0.1; sys_platform == 'darwin' and platform_machine == 'x86_64'
 
 # Config & settings
 pydantic>=2.9,<3.0
@@ -42,21 +46,32 @@ keyring>=25.5
 
 # Audio I/O
 sounddevice>=0.5
-numpy>=1.26,<2.2
+# NumPy 2.1 has no Windows ARM64 wheels. Use the first official ARM64-wheel
+# branch there so a stock machine never falls into an unavailable native build.
+numpy>=1.26,<2.2; python_version < '3.14' and (sys_platform != 'win32' or platform_machine != 'ARM64')
+numpy>=2.3.5,<2.4; python_version >= '3.14' or (sys_platform == 'win32' and platform_machine == 'ARM64')
 scipy>=1.14
+# Browser voice shares the telephony resampler. Python 3.13 removed stdlib
+# audioop, so the backport is a conditional base dependency, not telephony-only.
+audioop-lts; python_version>='3.13'
 # Always-on neural wake word — BASE (2026-07-04). The pretrained ONNX models ship
 # in every wheel already; openwakeword + CPU onnxruntime are the tiny (~15 MB),
 # torch-free runtime that runs them, so "Hey Jarvis" fires out-of-the-box on any
 # machine incl. a headless CPU VPS. CPU onnxruntime is universal and NOT on the
 # lockfile forbidden list (only torch/ctranslate2/faster-whisper/onnxruntime-gpu
 # are). See pyproject.toml note.
-openwakeword>=0.6
-onnxruntime>=1.17
+openwakeword>=0.6; sys_platform != 'linux' and (sys_platform != 'darwin' or python_version < '3.14')
+openwakeword>=0.6; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version < '3.12'
+# macOS 3.11-3.13 uses the last branch compatible with the supported deployment
+# floor. macOS 3.14 uses Vosk/energy; other operating systems use current ONNX.
+onnxruntime>=1.17,<1.24; sys_platform == 'darwin' and python_version < '3.14'
+onnxruntime>=1.17; sys_platform != 'darwin'
 # Any-word wake keyword spotting (vosk_kws engine, 2026-07-05): torch-free,
-# Apache-2.0, universal CPU wheels; per-language model fetched at setup, not
-# bundled. See pyproject.toml note. CAP below 0.3.45: that release ships NO
-# macOS wheel, and the universal lock must stay installable on every OS (AP-23).
-vosk>=0.3.44,<0.3.45
+# Apache-2.0, CPU wheels on macOS/Linux and Windows x86/x64; per-language model
+# fetched at setup, not bundled. Windows ARM64 has no upstream wheel and skips
+# this engine in favor of the ONNX/browser/cloud paths. CAP below 0.3.45: that
+# release ships NO macOS wheel (AP-23).
+vosk>=0.3.44,<0.3.45; sys_platform != 'win32' or platform_machine != 'ARM64'
 # The bundled Silero VAD uses CPU onnxruntime declared above. The redundant
 # silero-vad package is intentionally absent from every profile because its
 # loader pulls torch. WebRTC VAD and faster-whisper remain in the pyproject.toml
@@ -64,8 +79,8 @@ vosk>=0.3.44,<0.3.45
 # multi-GB, GPU-specific CUDA wheel stack (nvidia-*), which bricks portable
 # installation for arbitrary machines.
 
-# TTS
-google-cloud-texttospeech>=2.21
+# TTS. The unused google-cloud-texttospeech/grpc stack was removed; no runtime
+# module imported it.
 elevenlabs>=1.5
 
 # Memory
@@ -94,7 +109,7 @@ tenacity>=9.0
 # Web search — real DuckDuckGo SERP for the search_web tool (key-free, pure
 # Python, cross-platform). Lazy-imported, so a minimal install without it
 # degrades to the DuckDuckGo Instant-Answer fallback.
-ddgs>=9.0
+ddgs==9.14.3
 
 # MCP (Model Context Protocol)
 mcp>=1.0
@@ -109,13 +124,12 @@ click>=8.1
 
 # Desktop-App (Phase 1a) — cross-platform pieces stay in base.
 fastapi>=0.115
-uvicorn[standard]>=0.32
+uvicorn>=0.32
 websockets>=13
 filelock>=3.16
 packaging>=24.0
 
-# Skill-System + MCP (Phase 1c)
-python-frontmatter>=1.1
+# Skill-System + MCP (Phase 1c). PyYAML is the frontmatter parser.
 # Server-side markdown→HTML for the Outputs "view in browser" action.
 markdown>=3.5
 # Deterministic number->words for the voice path (spoken-safe).
@@ -123,7 +137,7 @@ num2words>=0.5.13
 jinja2>=3.1
 croniter>=6.0
 gitpython>=3.1
-watchdog>=5.0
+watchdog>=5.0; (sys_platform != 'darwin' or python_version < '3.14') and (sys_platform != 'win32' or platform_machine != 'ARM64')
 
 # Atomic TOML edits (Phase 1b)
 tomlkit>=0.12

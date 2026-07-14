@@ -193,6 +193,29 @@ def test_forcespawn_german_spawn_meta_stripped() -> None:
     assert "USA-Umzug" in prompt
 
 
+def test_forcespawn_topic_request_does_not_leave_an_orphaned_article() -> None:
+    """Exact 2026-07-13 regression: routing removal stranded an article.
+
+    The worker interpreted it as a missing deliverable noun and returned only a
+    format question instead of researching the topic.
+    """
+    prompt = _build_mission_prompt(
+        utterance=(
+            "Kannst du bitte einen Subagent spawnen "  # i18n-allow: fixture
+            "zum Thema Drogen in Schulen und was "  # i18n-allow: fixture
+            "damit verbunden ist?"  # i18n-allow: fixture
+        ),
+        action="",
+    )
+    low = prompt.lower()
+
+    assert "subagent spawnen" not in low
+    assert "einen zum thema" not in low
+    assert "research and analyze this topic thoroughly" in low
+    assert "Drogen in Schulen" in prompt  # i18n-allow: quoted speech input
+    assert "instead of asking which format" in low
+
+
 def test_forcespawn_pure_meta_phrase_falls_back_to_raw() -> None:
     """If stripping leaves nothing real (the utterance was ONLY the routing
     wrapper), the worker must never get an empty task — fall back to the raw

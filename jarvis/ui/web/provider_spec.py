@@ -190,6 +190,20 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         ),
     ),
     ProviderSpec(
+        id="groq",
+        label="GroqCloud",
+        tier="brain",
+        auth_mode="api_key",
+        secret_keys=("groq_api_key",),
+        dashboard_url="https://console.groq.com/keys",
+        signup_url="https://console.groq.com",
+        credential_help=(
+            "Groq API key (starts with gsk_). The same key powers the fast "
+            "Groq brain, Jarvis-Agent tool loops, and the separate Groq "
+            "Whisper STT provider; usage is billed on your GroqCloud account."
+        ),
+    ),
+    ProviderSpec(
         id="claude-api",
         label="Claude (API-Key)",
         tier="brain",

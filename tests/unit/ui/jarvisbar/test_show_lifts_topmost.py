@@ -40,9 +40,20 @@ class _FakeRoot:
     def lift(self) -> None:
         self.calls.append("lift")
 
+    def update_idletasks(self) -> None:
+        self.calls.append("update_idletasks")
+
     def wm_attributes(self, name: str, value: object) -> None:
         self.calls.append(f"wm_attributes:{name}={value}")
         self.attrs[name] = value
+
+
+class _FakeCanvas:
+    def __init__(self, calls: list[str]) -> None:
+        self.calls = calls
+
+    def itemconfig(self, image_id: int, *, image: object) -> None:
+        self.calls.append(f"itemconfig:{image_id}:{id(image)}")
 
 
 def _bar_with_fake_root(*, mapped: bool = False) -> tuple[JarvisBarOverlay, _FakeRoot]:
@@ -57,8 +68,8 @@ def test_do_show_deiconifies_then_lifts_and_repins_topmost() -> None:
 
     bar._do_show()  # noqa: SLF001
 
-    # deiconify must come first, then the topmost re-assert + lift.
-    assert root.calls[0] == "deiconify"
+    # The zero-alpha guard may run first, but mapping must still precede the
+    # post-map topmost re-assert + lift.
     assert "lift" in root.calls
     assert root.attrs.get("-topmost") is True
     # The lift happens after the deiconify (Windows remaps without topmost).
@@ -67,10 +78,14 @@ def test_do_show_deiconifies_then_lifts_and_repins_topmost() -> None:
 
 def test_do_show_mapped_window_skips_all_native_style_mutations() -> None:
     bar, root = _bar_with_fake_root(mapped=True)
+    bar._static_tick_key = ("idle", False, False)  # noqa: SLF001
+    bar._static_tick_count = 999  # noqa: SLF001
 
     bar._do_show()  # noqa: SLF001
 
     assert root.calls == []
+    assert bar._static_tick_key is None  # noqa: SLF001
+    assert bar._static_tick_count == 0  # noqa: SLF001
 
 
 def test_explicit_z_order_reassert_repins_an_already_mapped_window() -> None:
@@ -96,9 +111,57 @@ def test_do_show_reapplies_transparentcolor_and_alpha_after_topmost() -> None:
     assert root.attrs.get("-alpha") == bar._opacity  # noqa: SLF001
     # Re-applied AFTER the topmost mutation, not before — the whole point is
     # to heal whatever the topmost re-assert may have just dropped.
-    assert root.calls.index("wm_attributes:-topmost=True") < root.calls.index(
-        f"wm_attributes:-transparentcolor={COLOR_KEY_HEX}"
+    topmost_index = root.calls.index("wm_attributes:-topmost=True")
+    transparentcolor_indices = [
+        index
+        for index, call in enumerate(root.calls)
+        if call == f"wm_attributes:-transparentcolor={COLOR_KEY_HEX}"
+    ]
+    assert any(index > topmost_index for index in transparentcolor_indices)
+
+
+def test_do_show_composes_at_zero_alpha_before_becoming_visible() -> None:
+    """A withdrawn Tk backing surface must never be mapped while opaque."""
+    bar, root = _bar_with_fake_root()
+
+    bar._do_show()  # noqa: SLF001
+
+    zero_alpha = root.calls.index("wm_attributes:-alpha=0.0")
+    mapped = root.calls.index("deiconify")
+    composed = root.calls.index("update_idletasks")
+    visible_alpha = len(root.calls) - 1 - root.calls[::-1].index(
+        f"wm_attributes:-alpha={bar._opacity}"  # noqa: SLF001
     )
+    assert zero_alpha < mapped < composed < visible_alpha
+    assert root.attrs["-alpha"] == bar._opacity  # noqa: SLF001
+
+
+def test_do_show_invalidates_settled_idle_frame_for_post_map_repaint() -> None:
+    bar, _root = _bar_with_fake_root()
+    bar._static_tick_key = ("idle", False, False)  # noqa: SLF001
+    bar._static_tick_count = 999  # noqa: SLF001
+
+    bar._do_show()  # noqa: SLF001
+
+    assert bar._static_tick_key is None  # noqa: SLF001
+    assert bar._static_tick_count == 0  # noqa: SLF001
+
+
+def test_do_show_resubmits_prepared_frame_while_alpha_is_zero() -> None:
+    bar, root = _bar_with_fake_root()
+    photo = object()
+    bar._canvas = _FakeCanvas(root.calls)  # noqa: SLF001
+    bar._image_id = 7  # noqa: SLF001
+    bar._photo = photo  # noqa: SLF001
+
+    bar._do_show()  # noqa: SLF001
+
+    refreshed = root.calls.index(f"itemconfig:7:{id(photo)}")
+    composed = root.calls.index("update_idletasks")
+    visible_alpha = len(root.calls) - 1 - root.calls[::-1].index(
+        f"wm_attributes:-alpha={bar._opacity}"  # noqa: SLF001
+    )
+    assert refreshed < composed < visible_alpha
 
 
 def test_do_show_transparentcolor_reassert_failure_does_not_raise() -> None:

@@ -78,6 +78,7 @@ from jarvis.safety.tool_executor import ToolExecutor
 from jarvis.brain.provider_test import BILLING_LIMIT_MARKERS
 
 from .dispatcher import BrainDispatcher
+from .action_honesty import replace_unbacked_action_claim
 from .tool_surface import maybe_reconcile_tool_surface, stamp_tool_surface
 from .intent_router import RoutingDecision, classify
 from .local_action_gate import (
@@ -99,6 +100,7 @@ from .persona_loader import load_effective_persona_prompt
 from .provider_registry import BrainProviderRegistry
 from .rate_limit_tracker import RateLimitTracker
 from .streaming import aggregate
+from .turn_planner import plan_turn
 from .voice_command_gate import match_voice_command
 
 if TYPE_CHECKING:
@@ -162,6 +164,7 @@ PROVIDER_ALIASES = {
     "flash": "gemini",
     "pro": "gemini",
     "openrouter": "openrouter",
+    "groq": "groq",
     "nvidia": "nvidia",
     "nim": "nvidia",
     "nemotron": "nvidia",
@@ -176,6 +179,7 @@ _MAIN_BRAIN_FALLBACK_PROVIDER_ORDER: tuple[str, ...] = (
     "claude-api",
     "openai",
     "openrouter",
+    "groq",
     "nvidia",
 )
 
@@ -195,6 +199,7 @@ _PROVIDER_DISPLAY_NAMES: dict[str, str] = {
     "codex": "OpenAI Codex (GPT-5.5)",
     "openai-codex": "OpenAI Codex (GPT-5.5)",
     "openrouter": "OpenRouter",
+    "groq": "GroqCloud",
     "nvidia": "NVIDIA NIM",
     "gemini": "Google Gemini",
     "antigravity": "Google Antigravity (Gemini)",
@@ -248,6 +253,7 @@ _SECRET_KEY_TO_BRAIN: dict[str, str] = {
     "anthropic_api_key": "claude-api",
     "openai_api_key": "openai",
     "openrouter_api_key": "openrouter",
+    "groq_api_key": "groq",
     "nvidia_api_key": "nvidia",
 }
 
@@ -306,6 +312,8 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
         # general-purpose model degrades with a clean 404 if ever retired, instead
         # of silently billing the most expensive model in the catalog.
         "openrouter": "nvidia/nemotron-3-ultra-550b-a55b:free",
+        # Groq's current 131k-context production model with local tool use.
+        "groq": "openai/gpt-oss-120b",
         # NVIDIA NIM router pick: a widely-hosted, tool-capable, low-latency model
         # (the reasoning Nemotron flagships are the deep tier). The user's own pick
         # from the live catalog wins over this.
@@ -326,6 +334,7 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
         # Gateway: never a paid Anthropic default for a model-less OpenRouter
         # user (§3/AP-22) — see the router-tier note above.
         "openrouter": "nvidia/nemotron-3-ultra-550b-a55b:free",
+        "groq": "openai/gpt-oss-120b",
         # NVIDIA NIM deep pick: NVIDIA's own reasoning flagship.
         "nvidia": "nvidia/llama-3.1-nemotron-ultra-253b-v1",
         "mistral": "mistral-large-3",
@@ -1527,12 +1536,14 @@ _SUBAGENT_VOICE_TO_CANONICAL: dict[str, str] = {
     "claude": "claude-api", "anthropic": "claude-api",
     "gemini": "gemini",
     "openrouter": "openrouter",
+    "groq": "groq",
     "nvidia": "nvidia", "nim": "nvidia", "nemotron": "nvidia",
     "antigravity": "antigravity",
 }
 _SUBAGENT_DISPLAY: dict[str, str] = {
     "openai": "OpenAI", "openai-codex": "Codex", "claude-api": "Claude",
-    "gemini": "Gemini", "openrouter": "OpenRouter", "nvidia": "NVIDIA NIM",
+    "gemini": "Gemini", "openrouter": "OpenRouter", "groq": "GroqCloud",
+    "nvidia": "NVIDIA NIM",
     "antigravity": "Antigravity",
 }
 _SUBAGENT_SWITCH_CONFIRM: dict[str, str] = {
@@ -2281,59 +2292,251 @@ class BrainManager:
         )
 
     def _cu_model(self, name: str) -> str | None:
-        """Model the Computer-Use loop uses for ``name`` (Phase 3).
+        """Resolve the Tool Model for ``name``, including the legacy CU key."""
+        return self._tool_model_model(name)
 
-        Precedence: the pinned ``cu_model`` -> the provider's main ``model`` ->
-        the router-tier default. Provider-agnostic (AP-21): no provider name or
-        model id is special-cased. When nothing is pinned this equals the model
-        chat already uses, so CU behaviour is unchanged until a CU model is set.
-        """
+    def _tool_model_model(
+        self, name: str, fallback: str | None = None
+    ) -> str | None:
+        """Resolve an explicit Tool Model pin before a caller's model choice."""
         cfg = self._provider_cfg(name)
         if cfg is None:
-            return get_tier_default_model("router", name)
+            return fallback or get_tier_default_model("router", name)
         return (
-            getattr(cfg, "cu_model", None)
+            getattr(cfg, "tool_model", None)
+            or getattr(cfg, "cu_model", None)
+            or fallback
             or getattr(cfg, "model", None)
             or get_tier_default_model("router", name)
         )
 
-    def _cu_provider(self) -> str:
-        """The dedicated GLOBAL Computer-Use planner provider, or ``""``.
-
-        Reads ``[brain.computer_use].provider`` FRESH per call (like
-        ``_cu_model``), so an in-memory switch (``/api/computer-use/switch``)
-        takes effect on the very next CU dispatch. ``""`` means "not
-        configured" — the dispatch hoists (the CU-only one in
-        ``jarvis.cu.brain_call.call_vision_brain`` and the delegated-turn
-        ``_hoist_tool_model``) then leave the fallback chain untouched.
-        Never raises (getattr-chain safe): a config hiccup must not break
-        dispatch (AP-21/22).
-        """
+    def _tool_model_provider(self) -> str:
+        """Return the canonical Tool Model provider or its legacy fallback."""
         try:
-            cu_cfg = getattr(self._config.brain, "computer_use", None)
-            return (getattr(cu_cfg, "provider", None) or "").strip()
-        except Exception:  # noqa: BLE001 — config hiccup must not block dispatch
+            brain_cfg = self._config.brain
+            canonical = getattr(brain_cfg, "tool_model", None)
+            provider = (getattr(canonical, "provider", None) or "").strip()
+            if provider:
+                return provider
+            legacy = getattr(brain_cfg, "computer_use", None)
+            return (getattr(legacy, "provider", None) or "").strip()
+        except Exception:  # noqa: BLE001 -- config failure must not block dispatch
             return ""
+
+    def _tool_model_source(self) -> str:
+        """Identify whether the selection came from canonical or legacy config."""
+        try:
+            fields_set = getattr(self._config.brain, "model_fields_set", set())
+            if "tool_model" in fields_set:
+                return "tool_model"
+            if "computer_use" in fields_set:
+                return "computer_use"
+        except Exception:  # noqa: BLE001, S110 -- status must never raise
+            pass
+        return "auto" if self._tool_model_provider() in ("", "auto") else "tool_model"
+
+    @staticmethod
+    def _tool_model_family(provider: str) -> str:
+        """Credential/quota family used to avoid same-family fallback bricks."""
+        return {
+            "codex": "openai",
+            "openai-api": "openai",
+            "antigravity": "gemini",
+        }.get(provider, provider)
+
+    def _tool_model_credential_ready(self, provider: str) -> bool:
+        """Whether ``provider`` has a portable usable credential."""
+        try:
+            from jarvis.brain.app_control import get_spec, is_credential_present
+
+            spec = get_spec(provider)
+            if spec is not None:
+                return bool(is_credential_present(spec))
+            from jarvis.core import config as cfg_mod
+
+            return bool(cfg_mod.get_provider_secret(provider))
+        except Exception:  # noqa: BLE001 -- a failed probe is not readiness
+            return False
+
+    def tool_model_candidate_status(
+        self, provider: str, model: str | None = None
+    ) -> dict[str, Any]:
+        """Return a secret-free runtime capability verdict for one candidate."""
+        provider = (provider or "").strip()
+        model = model or self._cu_model(provider)
+        result: dict[str, Any] = {
+            "provider": provider,
+            "model": model,
+            "ready": False,
+            "reason": "unknown",
+            "tools": None,
+            "vision": None,
+        }
+        if not provider or provider == "auto":
+            result["reason"] = "automatic_selection"
+            return result
+        if provider not in set(self._registry.available()):
+            result["reason"] = "provider_unavailable"
+            return result
+        if provider in self._dead_providers:
+            result["reason"] = "provider_dead"
+            return result
+        if (provider, model) in self._dead_provider_models:
+            result["reason"] = "model_dead"
+            return result
+        if not self._rate_tracker.is_available(provider, model):
+            result["reason"] = "rate_limited"
+            return result
+        if not self._tool_model_credential_ready(provider):
+            result["reason"] = "missing_credential"
+            return result
+        try:
+            brain = self._get_brain(provider, model)
+        except Exception:  # noqa: BLE001 -- status must remain secret-free
+            result["reason"] = "provider_initialization_failed"
+            return result
+
+        result["vision"] = getattr(brain, "supports_vision", None)
+        try:
+            can_call = getattr(brain, "can_call_tools", None)
+            tools = (
+                bool(can_call())
+                if callable(can_call)
+                else bool(getattr(brain, "supports_tools", True))
+            )
+        except Exception:  # noqa: BLE001 -- fail closed for action routing
+            result["reason"] = "capability_probe_failed"
+            return result
+        result["tools"] = tools
+        if not tools:
+            result["reason"] = "tools_unsupported"
+            return result
+        result["ready"] = True
+        result["reason"] = "ready"
+        return result
+
+    def _tool_model_base_chain(self) -> list[tuple[str, str | None]]:
+        """Build the stable cross-provider chain used by automatic selection."""
+        brain_cfg = self._config.brain
+        names = [
+            getattr(brain_cfg, "primary", None),
+            getattr(brain_cfg, "deep_brain", None),
+            getattr(getattr(brain_cfg, "router", None), "provider", None),
+            "gemini",
+            "claude-api",
+            "openai",
+            "openrouter",
+            "groq",
+            "nvidia",
+            *self._registry.available(),
+        ]
+        seen: set[str] = set()
+        chain: list[tuple[str, str | None]] = []
+        for name in names:
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            chain.append((name, self._cu_model(name)))
+        return chain
+
+    def resolve_tool_model(
+        self, chain: list[tuple[str, str | None]] | None = None
+    ) -> dict[str, Any]:
+        """Resolve a key-ready, tool-capable provider across quota families."""
+        configured = self._tool_model_provider()
+        configured_model = (
+            self._cu_model(configured)
+            if configured and configured != "auto"
+            else None
+        )
+        candidates = list(chain) if chain is not None else self._tool_model_base_chain()
+        if configured and configured != "auto":
+            candidates.insert(0, (configured, configured_model))
+
+        seen_families: set[str] = set()
+        first_failure = "no_tool_capable_provider"
+        configured_failure: str | None = None
+        for index, (provider, model) in enumerate(candidates):
+            family = self._tool_model_family(provider)
+            if family in seen_families:
+                continue
+            seen_families.add(family)
+            verdict = self.tool_model_candidate_status(
+                provider, self._tool_model_model(provider, model)
+            )
+            if verdict["ready"]:
+                selected_configured = (
+                    configured not in ("", "auto") and provider == configured
+                )
+                return {
+                    "configured_provider": configured or "auto",
+                    "configured_model": configured_model,
+                    "effective_provider": provider,
+                    "effective_model": verdict["model"],
+                    "state": (
+                        "ready"
+                        if selected_configured or configured in ("", "auto")
+                        else "fallback"
+                    ),
+                    "reason": (
+                        "configured_selection"
+                        if selected_configured
+                        else (
+                            f"configured_{configured_failure}"
+                            if configured_failure is not None
+                            else "automatic_selection"
+                        )
+                    ),
+                    "source": self._tool_model_source(),
+                    "tools": verdict["tools"],
+                    "vision": verdict["vision"],
+                }
+            if index == 0:
+                first_failure = str(verdict["reason"])
+            if configured not in ("", "auto") and provider == configured:
+                configured_failure = str(verdict["reason"])
+
+        return {
+            "configured_provider": configured or "auto",
+            "configured_model": configured_model,
+            "effective_provider": None,
+            "effective_model": None,
+            "state": "blocked",
+            "reason": first_failure,
+            "source": self._tool_model_source(),
+            "tools": False,
+            "vision": None,
+        }
+
+    def _cu_provider(self) -> str:
+        """Compatibility accessor for the canonical global Tool Model provider."""
+        provider = self._tool_model_provider()
+        return "" if provider == "auto" else provider
 
     def _hoist_tool_model(
         self, chain: list[tuple[str, str | None]]
     ) -> list[tuple[str, str | None]]:
-        """Hoist the Tool-Model pick to the head of a turn's fallback chain.
+        """Filter a delegated turn to tool-capable cross-family candidates."""
+        configured = self._tool_model_provider()
+        candidates = list(chain)
+        if configured and configured != "auto":
+            candidates.insert(0, (configured, self._cu_model(configured)))
 
-        Mirrors the CU-only hoist in ``jarvis.cu.brain_call.call_vision_brain``:
-        reads ``[brain.computer_use].provider`` FRESH per call (an in-memory
-        switch takes effect on the very next delegated turn), resolves the
-        model via ``_cu_model``, and leaves the rest of the chain untouched as
-        the cross-family fallback (AP-21/22). A keyless/dead pick is skipped
-        here so the honest empty-chain diagnostic still fires unchanged. Only
-        the exact duplicate entry is filtered — other entries of the same
-        provider stay as legitimate same-provider fallbacks.
-        """
-        pref = self._cu_provider()
-        if not pref or pref in self._dead_providers:
-            return chain
-        entry = (pref, self._cu_model(pref))
-        return [entry] + [e for e in chain if e != entry]
+        ready: list[tuple[str, str | None]] = []
+        seen_families: set[str] = set()
+        for provider, model in candidates:
+            family = self._tool_model_family(provider)
+            if family in seen_families:
+                continue
+            seen_families.add(family)
+            verdict = self.tool_model_candidate_status(
+                provider, self._tool_model_model(provider, model)
+            )
+            if verdict["ready"]:
+                ready.append((provider, verdict["model"]))
+        if not ready:
+            log.warning("No credential-ready, tool-capable Tool Model is available.")
+        return ready
 
     def _get_brain(self, name: str, model: str | None = None) -> Brain:
         """Retrieves a Brain instance from the cache, or builds a new one."""
@@ -5561,6 +5764,7 @@ class BrainManager:
         user_request: str,
         outcome_text: str,
         diagnostic: str | None,
+        context_label: str = "on-screen-action",
     ) -> None:
         """Ground a finished background Computer-Use outcome in the live history.
 
@@ -5592,7 +5796,7 @@ class BrainManager:
             # clearly as a non-spoken background detail so the model treats it as
             # context, not as something it already said aloud.
             note = (
-                f"{note}\n\n(Background on-screen-action detail, not spoken aloud "
+                f"{note}\n\n(Background {context_label} detail, not spoken aloud "
                 f"— for your context on a follow-up: {diag})"
             ).strip()
         history.append(BrainMessage(role="assistant", content=note))
@@ -5880,7 +6084,7 @@ class BrainManager:
             log.debug("wiki-ingest completion announce failed", exc_info=True)
 
     async def _on_cu_tool_completion(self, event: Any) -> None:
-        """Mirror a router-tier ``computer_use`` TOOL outcome into the history.
+        """Mirror trusted asynchronous outcomes into the live brain history.
 
         The voice fast-path grounds its CU outcome inline (``_run_computer_use_
         background`` → :meth:`_append_cu_outcome_to_history`). The router-tier
@@ -5888,23 +6092,36 @@ class BrainManager:
         so it tags its completion announcement with
         ``source_layer=CU_TOOL_OUTCOME_LAYER`` and we mirror it here — same
         grounding, so a text-chat / router-picked desktop action is in the
-        model's next-turn context too (no subsystem confusion). Only the tagged
-        CU-tool completion is mirrored; a mission / worker / other announcement is
-        ignored, so an unrelated background readback never pollutes the grounding.
+        model's next-turn context too. A ``kind="subagent"`` event is the signed
+        terminal Jarvis-Agent readback and is also retained, including its
+        mission id/result URI, so a later question can retrieve the real files.
+        Other background announcements remain ignored.
         Never raises — a bus subscriber that throws would break the pipeline
         (AP-18). The fast-path leaves ``source_layer`` empty, so its outcome is
         NOT double-recorded here.
         """
         try:
-            if getattr(event, "source_layer", "") != CU_TOOL_OUTCOME_LAYER:
+            source_layer = getattr(event, "source_layer", "")
+            kind = getattr(event, "kind", None)
+            if source_layer == CU_TOOL_OUTCOME_LAYER:
+                outcome_text = getattr(event, "text", "") or ""
+                context_label = "on-screen-action"
+            elif kind == "subagent":
+                outcome_text = (
+                    "Jarvis-Agent mission result: "
+                    f"{getattr(event, 'text', '') or ''}"
+                )
+                context_label = "Jarvis-Agent mission"
+            else:
                 return
             self._append_cu_outcome_to_history(
                 user_request="",
-                outcome_text=getattr(event, "text", "") or "",
+                outcome_text=outcome_text,
                 diagnostic=getattr(event, "detail", None),
+                context_label=context_label,
             )
         except Exception:  # noqa: BLE001
-            log.debug("CU-tool completion history mirror failed", exc_info=True)
+            log.debug("Background completion history mirror failed", exc_info=True)
 
     async def _record_response_side_effects(
         self,
@@ -6422,7 +6639,7 @@ class BrainManager:
         db = self._config.brain.deep_brain
         if db:
             order.append(db)
-        order += ["gemini", "claude-api", "openai", "openrouter", "nvidia"]
+        order += ["gemini", "claude-api", "openai", "openrouter", "groq", "nvidia"]
         seen: set[str] = set()
         for name in order:
             if name in seen or name == self._active_name or name not in available:
@@ -6575,6 +6792,7 @@ class BrainManager:
             "gemini",               # Google AI Studio
             "openrouter",           # universal gateway
             "openai",
+            "groq",                 # GroqCloud (shared key with Groq STT)
             "nvidia",               # NVIDIA NIM (free dev tier)
         ]
         for name in cross_order:
@@ -7772,6 +7990,25 @@ class BrainManager:
                 )
                 response_text = _replacement
 
+        execution_evidence = set(_turn_executed)
+        if recovered is not None:
+            execution_evidence.add("recovered_tool_call")
+        honest_response = replace_unbacked_action_claim(
+            response_text,
+            executed_tools=execution_evidence,
+            language=resolve_output_language(
+                self._reply_language,
+                "unknown",
+                user_text,
+                default=DEFAULT_LOCALE,
+            ),
+        )
+        if honest_response != response_text:
+            log.warning(
+                "Blocked a model action promise with no execution evidence."
+            )
+            response_text = honest_response
+
         # 4. History + Events
         if use_history:
             self._history.append(BrainMessage(role="user", content=user_text))
@@ -7983,7 +8220,8 @@ class BrainManager:
         usual; pre-tool-use text is also streamed (the persona prompt forbids
         fillers, so this is uncritical). Evidence-gated turns are buffered
         until ``generate`` returns its authoritative final text, because the
-        post-call evidence enforcement may replace an unverified stream.
+        post-call evidence or action-honesty enforcement may replace an
+        unverified stream.
 
         ``on_progress`` (stall-timeout signal): forwarded to the tool-use loop,
         which pings it at every model-round + tool boundary. The speech pipeline
@@ -8005,6 +8243,15 @@ class BrainManager:
         # discarded this (BUG-028 pattern), so a leaked action-tool reached TTS
         # as raw JSON and the action was lost. We capture it here.
         holder: dict[str, str | None] = {"final": None}
+        context = tuple(
+            str(message.content or "")
+            for message in (
+                (getattr(self, "_history", ()) or ())[-8:]
+                if use_history
+                else ()
+            )
+        )
+        action_buffered = plan_turn(user_text, context=context).requires_orchestrator
 
         def _consumer(chunk: str) -> None:
             # ``put_nowait`` because the consumer is called on the sync
@@ -8052,6 +8299,8 @@ class BrainManager:
                 if getattr(self, "_evidence_required_tool", ""):
                     evidence_buffered = True
                     continue
+                if action_buffered:
+                    continue
                 yield chunk
                 yielded = True
             # Surface generate()'s authoritative final text whenever NOTHING was
@@ -8062,7 +8311,7 @@ class BrainManager:
             # silence on exactly those action turns — live repro 2026-05-25
             # "oeffne mir Chrome" returned empty while plain chat worked. The
             # old code only surfaced the final on the leaked-JSON path.
-            if leaked or not yielded or evidence_buffered:
+            if leaked or not yielded or evidence_buffered or action_buffered:
                 final = (holder.get("final") or "").strip()
                 if final and not _looks_like_tool_use_leak(final):
                     yield final
@@ -8741,6 +8990,7 @@ _PROVIDER_SETUP_HINTS: dict[str, str] = {
     "claude-api": "ANTHROPIC_API_KEY setzen",
     "openai": "OPENAI_API_KEY setzen",
     "openrouter": "OPENROUTER_API_KEY setzen",
+    "groq": "Set GROQ_API_KEY (key from console.groq.com)",
     "nvidia": "Set NVIDIA_API_KEY (nvapi- key from build.nvidia.com)",
     "ollama-local": "Ollama-Server starten (localhost:11434)",
     "ollama-cloud": "Ollama-Cloud-Token setzen",

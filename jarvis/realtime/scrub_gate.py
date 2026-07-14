@@ -10,7 +10,7 @@ Regex-only, no LLM (AP-11).
 
 from __future__ import annotations
 
-from jarvis.brain.output_filter import FALLBACK_PHRASES, scrub_for_voice
+from jarvis.brain.output_filter import FALLBACK_PHRASES, ScrubResult, scrub_for_voice
 from jarvis.core.protocols import AudioChunk
 
 _HARD_LEAK_ACTIONS = frozenset(
@@ -21,6 +21,8 @@ _HARD_LEAK_ACTIONS = frozenset(
         "replaced_with_fallback_residue",
     }
 )
+_RESIDUE_ACTION = "replaced_with_fallback_residue"
+_STREAM_SAFE_RESIDUE_ACTIONS = frozenset({"removed_em_dash"})
 _TRANSCRIPT_TAIL_MAX_CHARS = 4_096
 
 
@@ -61,20 +63,26 @@ class ScrubHoldGate:
         self._transcript_seen = True
         aggregate = scrub_for_voice(self._transcript_tail, language=self._language)
         result = scrub_for_voice(text, language=self._language)
-        aggregate_is_hard = bool(
-            aggregate.fallback_used
-            or (_HARD_LEAK_ACTIONS & set(aggregate.actions))
-        )
-        result_is_hard = bool(
-            result.fallback_used or (_HARD_LEAK_ACTIONS & set(result.actions))
-        )
+        aggregate_is_hard = _is_hard_scrub_result(aggregate)
+        result_is_hard = _is_hard_scrub_result(result)
         if aggregate_is_hard or result_is_hard:
             self._hard_leak = True
             self._cleared = False
             self._pending.clear()
             self._pending_audio_ms = 0.0
             return self.fallback_phrase()
+        if _is_stream_safe_residue(aggregate):
+            # A realtime provider may emit punctuation as its own transcript
+            # delta. The complete utterance is not available yet, so a benign
+            # dash-normalization residue neither authorizes buffered audio nor
+            # aborts the response. The next meaningful delta decides.
+            return text
         self._cleared = True
+        if _is_stream_safe_residue(result):
+            # Preserve the provider's boundary verbatim. Replacing this one
+            # harmless delta with the whole-utterance fallback would both
+            # corrupt the displayed transcript and false-cancel native audio.
+            return text
         if not result.actions:
             # Realtime providers stream transcript deltas with meaningful edge
             # whitespace (for example ``"All"``, ``" right"``). The voice
@@ -168,3 +176,22 @@ def _restore_edge_whitespace(original: str, cleaned: str) -> str:
     leading = original[:leading_count]
     trailing = original[-trailing_count:] if trailing_count else ""
     return f"{leading}{cleaned}{trailing}"
+
+
+def _is_stream_safe_residue(result: ScrubResult) -> bool:
+    """Return whether a whole-utterance fallback came from benign punctuation."""
+    actions = set(result.actions)
+    residue_sources = actions - {_RESIDUE_ACTION}
+    return bool(
+        result.fallback_used
+        and _RESIDUE_ACTION in actions
+        and residue_sources
+        and residue_sources <= _STREAM_SAFE_RESIDUE_ACTIONS
+    )
+
+
+def _is_hard_scrub_result(result: ScrubResult) -> bool:
+    """Classify leaks without treating isolated streaming punctuation as data."""
+    if _is_stream_safe_residue(result):
+        return False
+    return bool(result.fallback_used or (_HARD_LEAK_ACTIONS & set(result.actions)))

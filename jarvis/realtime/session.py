@@ -15,6 +15,10 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
+from jarvis.brain.action_honesty import (
+    action_not_started_phrase,
+    has_deferred_action_claim,
+)
 from jarvis.brain.turn_planner import TurnPlan, plan_turn
 from jarvis.core.protocols import AudioChunk, BrainMessage
 from jarvis.core.redact import safe_preview
@@ -22,7 +26,11 @@ from jarvis.core.turn_language import resolve_output_language
 from jarvis.realtime.audio import StreamingPcm16Resampler
 from jarvis.realtime.protocol import RealtimeSessionConfig
 from jarvis.realtime.scrub_gate import ScrubHoldGate
-from jarvis.sessions.constants import HANGUP_CLIENT_STOP, HANGUP_VOICE_PATTERN
+from jarvis.sessions.constants import (
+    HANGUP_CLIENT_STOP,
+    HANGUP_VOICE_PATTERN,
+    SPOKEN_KIND_PROGRESS,
+)
 from jarvis.speech.hangup import HANGUP_RE
 
 log = logging.getLogger(__name__)
@@ -247,6 +255,7 @@ class _DelegateTurnState:
     seen_tool_call_ids: set[str] = field(default_factory=set)
     dispatch_started: bool = False
     bridge_delivery_started: bool = False
+    wait_for_provider_boundary: bool = False
     input_boundary_ready: asyncio.Event = field(default_factory=asyncio.Event)
     provider_ready: asyncio.Event = field(default_factory=asyncio.Event)
     result_ready: asyncio.Event = field(default_factory=asyncio.Event)
@@ -279,7 +288,9 @@ _TOOL_ROLE_DIRECTIVE = (
     "you cannot act. Heavy multi-minute work (building files, coding, deep "
     "research) belongs to the Jarvis-Agent spawn function: start it, "
     "then briefly confirm what you started. If a function asks for a spoken "
-    "confirmation, relay the question and wait for the user's answer."
+    "confirmation, relay the question and wait for the user's answer. Never "
+    "announce that you will check, open, save, or do something and then end the "
+    "turn without a function call; an intention is not execution evidence."
 )
 
 
@@ -424,6 +435,7 @@ class RealtimeVoiceSession:
         self._delegate_bridge_task: asyncio.Task[None] | None = None
         self._delegate_turns: dict[str, _DelegateTurnState] = {}
         self._delegate_history: list[BrainMessage] = []
+        self._announcement_context_signatures: list[tuple[str, str, str]] = []
         self._delegate_required_for_turn = False
         self._delegate_reply_awaits_answer = False
         self._late_delegate_results: list[_LateDelegateResult] = []
@@ -469,6 +481,7 @@ class RealtimeVoiceSession:
         self._user_transcript_parts: list[str] = []
         self._input_turn_observed = False
         self._output_transcript: list[str] = []
+        self._provider_output_probe = ""
         self._executed_tool_names: set[str] = set()
         self._pending_tool_events: list[Any] = []
         self._tool_transcript_task: asyncio.Task[None] | None = None
@@ -496,10 +509,23 @@ class RealtimeVoiceSession:
 
     def _plan_turn(self, text: str) -> TurnPlan:
         """Use the Brain's canonical plan, with a live-catalog local fallback."""
+        context = tuple(
+            message.content
+            for message in self._delegate_history
+            if str(message.content or "").strip()
+        )
         brain_planner = getattr(self._brain, "plan_turn", None)
         if callable(brain_planner):
             try:
-                planned = brain_planner(text)
+                try:
+                    parameters = inspect.signature(brain_planner).parameters
+                except (TypeError, ValueError):
+                    parameters = {}
+                planned = (
+                    brain_planner(text, context=context)
+                    if "context" in parameters
+                    else brain_planner(text)
+                )
                 if isinstance(planned, TurnPlan):
                     return planned
             except Exception:  # noqa: BLE001 - local planner remains available
@@ -532,6 +558,7 @@ class RealtimeVoiceSession:
             evidence_domains=(
                 evidence_domains if isinstance(evidence_domains, dict) else None
             ),
+            context=context,
         )
 
     async def handle_control(self, msg: dict[str, Any]) -> None:
@@ -727,6 +754,41 @@ class RealtimeVoiceSession:
             and not self._failed.is_set()
         )
 
+    def remember_announcement_context(
+        self,
+        *,
+        text: str,
+        spoken_kind: str,
+        detail: str | None = None,
+    ) -> bool:
+        """Retain an owed background result for later delegated follow-ups.
+
+        Context retention is independent from audio delivery: a muted or busy
+        live session may not speak the result now, but the next question must
+        still know that the mission completed and which result endpoint to read.
+        """
+        cleaned = str(text or "").strip()
+        kind = str(spoken_kind or "").strip().lower()
+        metadata = str(detail or "").strip()
+        if kind not in {"completion", "subagent"} or not (cleaned or metadata):
+            return False
+        signature = (kind, cleaned, metadata)
+        if signature in self._announcement_context_signatures:
+            return False
+        self._announcement_context_signatures.append(signature)
+        self._announcement_context_signatures = self._announcement_context_signatures[-16:]
+
+        label = (
+            "Trusted Jarvis-Agent mission result"
+            if kind == "subagent"
+            else "Trusted background completion"
+        )
+        note = f"[{label}]\n{cleaned}".strip()
+        if metadata:
+            note = f"{note}\nResult metadata: {metadata}".strip()
+        self._remember_delegate_turn("", note)
+        return True
+
     async def deliver_announcement(
         self,
         *,
@@ -742,6 +804,11 @@ class RealtimeVoiceSession:
         while OpenAI permits only one unambiguous response lifecycle at a time.
         """
         cleaned = str(text or "").strip()
+        self.remember_announcement_context(
+            text=cleaned,
+            spoken_kind=spoken_kind,
+            detail=detail,
+        )
         send_text = getattr(self._session, "send_text", None)
         if (
             not cleaned
@@ -1009,6 +1076,11 @@ class RealtimeVoiceSession:
                         self._gate.drain()
                         continue
                     await self._ensure_turn_started()
+                    self._provider_output_probe = (
+                        f"{self._provider_output_probe}{event.text}"[-4_096:]
+                    )
+                    if await self._recover_unbacked_action_claim():
+                        continue
                     self._mark_latency_named("REALTIME_FIRST_TRANSCRIPT")
                     display = await self._gate.feed_transcript(event.text)
                     if self._gate.hard_leak_pending():
@@ -1095,10 +1167,11 @@ class RealtimeVoiceSession:
                         )
                     )
                     if hold_for_delegate and delegate_state is not None:
-                        if (
+                        bridge_completed = bool(
                             delegate_state.bridge_delivery_started
                             and not delegate_state.delivery_started
-                        ):
+                        )
+                        if bridge_completed:
                             # The bridge response was audible — flush its tail
                             # instead of discarding it with the withheld-output
                             # bookkeeping below. A scrub hard-leak still drops
@@ -1107,6 +1180,12 @@ class RealtimeVoiceSession:
                             if not self._gate.hard_leak_pending():
                                 for chunk in final_chunks:
                                     await self._emit_audio(chunk)
+                        bridge_text = "".join(self._output_transcript).strip()
+                        bridge_was_audible = bool(
+                            bridge_completed
+                            and bridge_text
+                            and self._output_samples_sent > 0
+                        )
                         self._gate.drain()
                         delegate_state.provider_boundary_seen = True
                         delegate_state.input_boundary_ready.set()
@@ -1114,6 +1193,14 @@ class RealtimeVoiceSession:
                         self._output_transcript.clear()
                         self._output_active = False
                         self._output_samples_sent = 0
+                        if bridge_completed:
+                            # The interim sentence is a complete local playback
+                            # segment, but the delegated action is still running.
+                            # Surfaces drain that segment and return to THINKING;
+                            # the final answer will open a new SPEAKING segment.
+                            await self._send_json({"type": "thinking"})
+                        if bridge_was_audible:
+                            await self._publish_delegate_bridge_spoken(bridge_text)
                         log.debug(
                             "realtime[%s] held provider turn_complete for "
                             "delegate turn %s",
@@ -1193,6 +1280,7 @@ class RealtimeVoiceSession:
         *,
         reason: str,
         interrupt_provider: bool = True,
+        fallback_text: str | None = None,
     ) -> None:
         """Cancel one unsafe provider response and emit one honest fallback."""
         if self._scrub_cancelled_for_turn:
@@ -1204,6 +1292,13 @@ class RealtimeVoiceSession:
             detail=f"reason={reason}",
         )
         log.warning("realtime[%s] scrub gate cancelled output: %s", self.session_id, reason)
+        try:
+            # Unsafe output is a terminal local playback boundary even when
+            # the provider never acknowledges response.cancel. Every surface
+            # consumes tts_cancel to flush audio and leave SPEAKING.
+            await self._send_json({"type": "tts_cancel"})
+        except Exception:  # noqa: BLE001, S110 -- surface may already be gone
+            pass
         should_interrupt = bool(
             interrupt_provider
             and self._session is not None
@@ -1218,10 +1313,57 @@ class RealtimeVoiceSession:
         self._output_samples_sent = 0
         try:
             await self._send_json(
-                {"type": "error_spoken", "text": self._gate.fallback_phrase()}
+                {
+                    "type": "error_spoken",
+                    "text": fallback_text or self._gate.fallback_phrase(),
+                }
             )
         except Exception:  # noqa: BLE001, S110 — surface may already be gone
             pass
+
+    async def _recover_unbacked_action_claim(self) -> bool:
+        """Turn a provider's unsupported action promise into a real outcome."""
+        if (
+            self._external_update is not None
+            or self._executed_tool_names
+            or self._delegate_delivery_started()
+            or not has_deferred_action_claim(self._provider_output_probe)
+        ):
+            return False
+
+        self._gate.drain()
+        self._output_transcript.clear()
+        self._output_active = False
+        self._output_samples_sent = 0
+        self._mark_latency_named(
+            "REALTIME_SCRUB_CANCEL",
+            detail="reason=unbacked_action_claim",
+        )
+        log.warning(
+            "realtime[%s] blocked an action promise with no execution evidence",
+            self.session_id,
+        )
+
+        if self._delegate_enabled and self._last_user_text:
+            self._delegate_required_for_turn = True
+            self._drop_provider_output_until_new_response = True
+            turn_state = self._delegate_turns.setdefault(
+                self._turn_id,
+                _DelegateTurnState(deterministic=True),
+            )
+            turn_state.wait_for_provider_boundary = True
+            try:
+                await self._session.interrupt()
+            except Exception:  # noqa: BLE001, S110 — provider may already be done
+                pass
+            self._start_deterministic_delegate(self._last_user_text)
+            return True
+
+        await self._cancel_unsafe_output(
+            reason="unbacked action promise",
+            fallback_text=action_not_started_phrase(self._language),
+        )
+        return True
 
     async def _publish_error(
         self, error_type: str, message: str, *, recoverable: bool
@@ -1294,6 +1436,26 @@ class RealtimeVoiceSession:
                     source_layer=f"realtime.{self.active_provider}",
                     text=text,
                     is_final=is_final,
+                )
+            )
+        except Exception:  # noqa: BLE001, S110
+            pass
+
+    async def _publish_delegate_bridge_spoken(self, text: str) -> None:
+        """Persist an audible delegate bridge as part of the spoken track."""
+        cleaned = str(text or "").strip()
+        if self._bus is None or not cleaned:
+            return
+        try:
+            from jarvis.core.events import SpeechSpoken
+
+            await self._bus.publish(
+                SpeechSpoken(
+                    **self._event_trace_kwargs(),
+                    source_layer=f"realtime.{self.active_provider}",
+                    text=cleaned,
+                    language=self._language,
+                    spoken_kind=SPOKEN_KIND_PROGRESS,
                 )
             )
         except Exception:  # noqa: BLE001, S110
@@ -1544,6 +1706,7 @@ class RealtimeVoiceSession:
         self._user_transcript_parts.clear()
         self._input_turn_observed = False
         self._output_transcript.clear()
+        self._provider_output_probe = ""
         self._executed_tool_names.clear()
         self._turn_final_text = ""
         self._delegate_required_for_turn = False
@@ -2090,7 +2253,7 @@ class RealtimeVoiceSession:
     ) -> None:
         try:
             boundary_ready = True
-            if bool(
+            if turn_state.wait_for_provider_boundary or bool(
                 getattr(
                     self._session,
                     "creates_responses_automatically",

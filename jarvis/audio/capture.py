@@ -1,17 +1,19 @@
-"""Microphone capture via sounddevice (WASAPI).
+"""Cross-platform microphone capture via sounddevice and PortAudio.
 
 Yields an `AsyncIterator[AudioChunk]` with 16 kHz mono int16 PCM —
 the format Whisper expects natively. sounddevice invokes the callback in
 the PortAudio thread; the bridge to asyncio runs through a queue.
 
-Why 16 kHz? Whisper resamples internally to 16 kHz — any other input rate
-would be resampled first. Capturing directly at 16 kHz saves that step.
+Why 16 kHz? Whisper consumes 16 kHz natively, so that remains the downstream
+contract. The stream requests 16 kHz first; when CoreAudio, ALSA, or a strict
+Windows endpoint only accepts its 44.1/48 kHz native rate, capture opens there
+and performs a stateful CPU resample before yielding each chunk.
 """
 from __future__ import annotations
 
 import asyncio
 import time
-from collections.abc import AsyncIterator, Sequence
+from collections.abc import AsyncIterator, Iterator, Sequence
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -82,7 +84,8 @@ _INPUT_PRIORITY = (
     "Logitech PRO X", "PRO X", "Logitech",
     "Jabra", "Sennheiser", "SteelSeries", "Arctis", "Corsair", "HyperX",
     "Razer", "Bose", "AirPods",
-    "USB Audio", "Headset", "Microphone", "Mikrofon",  # i18n-allow: localized (German) generic mic label used as matching data
+    "USB Audio", "Headset", "Microphone",
+    "Mikrofon",  # i18n-allow: localized German mic-label matching data
     "Realtek HD Audio", "Realtek",
 )
 
@@ -233,6 +236,95 @@ _RESOLVE_CACHE: dict[tuple[Any, tuple[str, ...]], tuple[Any, float]] = {}
 _RESOLVE_CACHE_FRESH_S = 5.0
 
 
+class _StreamingPcm16Resampler:
+    """Stateful CPU-only resampler for interleaved PCM16 microphone frames.
+
+    PortAudio callbacks split a continuous signal into independent buffers. A
+    stateless per-buffer conversion would introduce a discontinuity at every
+    boundary, so the final source frame and fractional position are retained
+    for the next callback. NumPy is part of the universal base installation;
+    no GPU or optional native inference dependency is involved.
+    """
+
+    def __init__(self, from_rate: int, to_rate: int, channels: int) -> None:
+        if from_rate <= 0 or to_rate <= 0:
+            raise ValueError("PCM sample rates must be positive")
+        if channels <= 0:
+            raise ValueError("PCM channel count must be positive")
+        self.from_rate = int(from_rate)
+        self.to_rate = int(to_rate)
+        self.channels = int(channels)
+        self._step = self.from_rate / self.to_rate
+        self._tail: np.ndarray | None = None
+        self._position = 0.0
+
+    def process(self, pcm16: bytes) -> bytes:
+        if not pcm16:
+            return b""
+        frame_width = 2 * self.channels
+        if len(pcm16) % frame_width:
+            raise ValueError("PCM16 input must contain complete audio frames")
+        if self.from_rate == self.to_rate:
+            return bytes(pcm16)
+
+        samples = np.frombuffer(pcm16, dtype="<i2").reshape(-1, self.channels)
+        frames = samples.astype(np.float64)
+        if self._tail is not None:
+            frames = np.concatenate((self._tail, frames), axis=0)
+        if frames.shape[0] < 2:
+            self._tail = frames[-1:].copy()
+            return b""
+
+        limit = float(frames.shape[0] - 1)
+        positions = np.arange(self._position, limit, self._step, dtype=np.float64)
+        if positions.size:
+            left = np.floor(positions).astype(np.int64)
+            fraction = (positions - left)[:, np.newaxis]
+            values = frames[left] + (frames[left + 1] - frames[left]) * fraction
+            output = (
+                np.clip(np.rint(values), -32768, 32767)
+                .astype("<i2")
+                .reshape(-1)
+                .tobytes()
+            )
+            self._position = float(positions[-1] + self._step - limit)
+        else:
+            output = b""
+            self._position -= limit
+
+        self._tail = frames[-1:].copy()
+        return output
+
+
+def _default_input_sample_rate(device: int | str | None) -> int:
+    """Return PortAudio's default input rate for ``device``, or zero.
+
+    Passing ``kind='input'`` is important for ``device=None``: sounddevice then
+    returns the default input device record rather than the complete device
+    list. The one-argument fallback keeps compatibility with simple test
+    doubles and older sounddevice-compatible implementations.
+    """
+    try:
+        try:
+            info = sd.query_devices(device, "input")
+        except TypeError:
+            info = sd.query_devices(device)
+        return int(info.get("default_samplerate", 0) or 0)
+    except Exception:  # noqa: BLE001 - device query is advisory
+        return 0
+
+
+def _native_input_rates(
+    device: int | str | None, target_rate: int
+) -> tuple[int, ...]:
+    """Candidate hardware rates after every device rejected ``target_rate``."""
+    rates: list[int] = []
+    for rate in (_default_input_sample_rate(device), 48_000, 44_100):
+        if rate > 0 and rate != target_rate and rate not in rates:
+            rates.append(rate)
+    return tuple(rates)
+
+
 def _resolve_cache_key(
     device: int | str | None, priority: tuple[str, ...]
 ) -> tuple[Any, tuple[str, ...]]:
@@ -318,7 +410,11 @@ def _resolve_input_device(
         devices = sd.query_devices()
         hostapis = sd.query_hostapis()
     except Exception as exc:
-        _log.warning("Mic-Resolve: sd.query_devices() failed ({}). Falling back to system default.", exc)
+        _log.warning(
+            "Mic-Resolve: sd.query_devices() failed ({}). Falling back to "
+            "system default.",
+            exc,
+        )
         return None
 
     # "Your device first": prefer the user's OS-selected default MICROPHONE over
@@ -461,6 +557,12 @@ class MicrophoneCapture:
         self._sample_rate = sample_rate
         self._blocksize = blocksize
         self._channels = channels
+        # ``_sample_rate`` is the stable downstream contract (normally 16 kHz).
+        # Some CoreAudio/ALSA devices only open at 44.1/48 kHz; in that case the
+        # hardware rate changes while the callback resamples back to the public
+        # contract before constructing an AudioChunk.
+        self._capture_sample_rate = sample_rate
+        self._capture_resampler: _StreamingPcm16Resampler | None = None
         # Queue bridges PortAudio thread → asyncio. maxsize bounds how STALE the
         # audio a consumer sees may get: with the drop-OLDEST policy in
         # ``_safe_put`` a full queue always holds the most-recent
@@ -494,6 +596,19 @@ class MicrophoneCapture:
             # Overflow/underflow — will be logged later via the event bus
             pass
         pcm_bytes = bytes(indata)  # copy
+        resampler = self._capture_resampler
+        if resampler is not None:
+            try:
+                pcm_bytes = resampler.process(pcm_bytes)
+            except ValueError as exc:
+                # A malformed callback buffer must not escape into PortAudio's
+                # real-time thread and terminate capture. Count it as a dropped
+                # frame; the next complete callback can continue normally.
+                self._drops += 1
+                _log.warning("Mic callback dropped malformed PCM: {}", exc)
+                return
+            if not pcm_bytes:
+                return
         chunk = AudioChunk(
             pcm=pcm_bytes,
             sample_rate=self._sample_rate,
@@ -552,14 +667,52 @@ class MicrophoneCapture:
                 attempts.extend(_fallback_input_devices(self._device))
         except Exception as exc:  # noqa: BLE001
             _log.debug("Mic fallback enumeration failed: {}", exc)
+        # Phase one intentionally preserves the Windows recovery contract: try
+        # 16 kHz on the selected endpoint and every same-device MME/DirectSound
+        # twin before changing the hardware rate. Those host APIs perform their
+        # own reliable conversion and remain preferable to a WASAPI native-rate
+        # stream. Only after every endpoint rejects the contract rate do we try
+        # CoreAudio/ALSA/native rates and resample locally on the CPU.
+        def _open_candidates() -> Iterator[tuple[int | str | None, int]]:
+            for attempt in attempts:
+                yield attempt, self._sample_rate
+            # This half of the generator is lazy: device-rate queries do not run
+            # on the normal 16 kHz fast path. They begin only after every target-
+            # rate endpoint above failed.
+            for attempt in attempts:
+                for rate in _native_input_rates(attempt, self._sample_rate):
+                    yield attempt, rate
+
         last_error: Exception | None = None
-        for attempt in attempts:
+        attempt_count = 0
+        for attempt, capture_rate in _open_candidates():
+            attempt_count += 1
             try:
+                capture_blocksize = (
+                    0
+                    if self._blocksize == 0
+                    else max(
+                        1,
+                        round(
+                            self._blocksize
+                            * capture_rate
+                            / max(1, self._sample_rate)
+                        ),
+                    )
+                )
+                self._capture_sample_rate = capture_rate
+                self._capture_resampler = (
+                    None
+                    if capture_rate == self._sample_rate
+                    else _StreamingPcm16Resampler(
+                        capture_rate, self._sample_rate, self._channels
+                    )
+                )
                 stream = sd.InputStream(
                     device=attempt,
                     channels=self._channels,
-                    samplerate=self._sample_rate,
-                    blocksize=self._blocksize,
+                    samplerate=capture_rate,
+                    blocksize=capture_blocksize,
                     dtype=DTYPE,
                     callback=self._callback,
                 )
@@ -571,10 +724,12 @@ class MicrophoneCapture:
                         self._device_spec, self._device_priority, attempt
                     )
                 _log.info(
-                    "Mic opened (device={}, sr={}, blocksize={}, dtype={}).",
+                    "Mic opened (device={}, capture_sr={}, output_sr={}, "
+                    "blocksize={}, dtype={}).",
                     attempt,
+                    capture_rate,
                     self._sample_rate,
-                    self._blocksize,
+                    capture_blocksize,
                     DTYPE,
                 )
                 return
@@ -584,13 +739,15 @@ class MicrophoneCapture:
                 # force the next construction through a fresh full resolve.
                 _invalidate_resolve_cache()
                 _log.warning(
-                    "Mic-Open on device={} failed ({}); trying next fallback.",
+                    "Mic-Open on device={} at {}Hz failed ({}); trying next "
+                    "fallback.",
                     attempt,
+                    capture_rate,
                     exc,
                 )
         _log.error(
             "Mic-Open failed completely ({} attempt(s)) — last error: {}",
-            len(attempts),
+            attempt_count,
             last_error,
         )
         if last_error is not None:

@@ -247,11 +247,11 @@ jobs:
   # bricking `pip install --require-hashes -r requirements.txt` for every
   # non-maintainer machine (nvidia-cufile is unresolvable on plain PyPI). This is
   # the guard for that shipped-broken-installer "works on my machine" bug (AP-23).
-  # Runs once (not across the OS matrix); stdlib + `packaging` only.
+  # Runs once: pinned uv resolves every advertised target from public PyPI.
   deps-sync:
-    name: deps-sync (requirements.in mirrors pyproject)
+    name: deps-sync + portable install matrix
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
@@ -263,9 +263,11 @@ jobs:
         with:
           python-version: "3.11"
 
+      - name: Install pinned dependency-gate tooling
+        run: python -m pip install --disable-pip-version-check packaging==25.0 uv==0.11.19
+
       - name: Requirements-sync gate (BLOCKING)
         run: |
-          python -m pip install --upgrade packaging
           python scripts/ci/check_requirements_sync.py
 
       # Companion gate: the compiled requirements.txt itself must stay
@@ -274,6 +276,15 @@ jobs:
       # installs (AP-23). Stdlib only — no extra install needed.
       - name: Lockfile universal + GPU-free gate (BLOCKING)
         run: python scripts/ci/check_lockfile_universal.py
+
+      # A universal solve can still hide an inactive marker branch, an sdist,
+      # or a wheel for a different interpreter/architecture. Compile one PEP
+      # 751 lock per CPython/OS/architecture cell, inspect only active packages,
+      # and dry-run the shipped hash lock plus the advertised [full] profile.
+      # The gate also runs `uv lock --check` and byte-compares a no-upgrade
+      # universal/hash recompile of requirements.in with requirements.txt.
+      - name: Target-resolved portable install matrix (BLOCKING)
+        run: python scripts/ci/check_portable_install_matrix.py --jobs 4
 
   # Output Language Policy enforcement (CLAUDE.md, HIGHEST PRIORITY): block any
   # NEWLY ADDED German text from reaching GitHub. Diff-based, so the in-flight

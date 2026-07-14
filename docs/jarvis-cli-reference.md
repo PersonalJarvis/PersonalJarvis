@@ -116,6 +116,7 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis missions kill <worker_id> --yes --dry-run` — Hard-kill a worker process by id.
 - `jarvis missions list --state --limit` — List missions (optionally filtered by state).
 - `jarvis missions rerun <mission_id> --confirmed --yes --dry-run` — Re-dispatch a terminal mission's prompt as a new linked mission.
+- `jarvis missions result <mission_id>` — Read a mission's signed outcome and actual deliverable contents.
 - `jarvis missions show <mission_id>` — Show one mission with its events + verdicts.
 - `jarvis missions tool-approvals <mission_id>` — List supervisor tool calls waiting for approval in a mission.
 

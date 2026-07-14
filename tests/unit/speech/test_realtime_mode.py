@@ -217,6 +217,113 @@ async def test_desktop_realtime_handshake_streams_audio_and_ends_single_turn(
 
 
 @pytest.mark.asyncio
+async def test_interim_audio_returns_to_thinking_before_final_answer(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipe = _pipe()
+    bridge_pcm = b"\x01\x00" * 16
+    final_pcm = b"\x02\x00" * 16
+
+    class _InterimSession(_FakeRealtimeSession):
+        async def handle_control(self, message) -> None:
+            self.controls.append(message)
+            await self._send_json(
+                {
+                    "type": "audio_ready",
+                    "provider": "fake-live",
+                    "input_sample_rate": 16_000,
+                    "output_sample_rate": 24_000,
+                }
+            )
+            await self._send_json(
+                {
+                    "type": "transcript",
+                    "role": "user",
+                    "text": "check my calendar",
+                    "is_final": True,
+                }
+            )
+            await self._send_binary(bridge_pcm)
+            await self._send_json({"type": "thinking"})
+            await self._send_binary(final_pcm)
+            await self._send_json({"type": "turn_complete"})
+
+    def _build(**kwargs):
+        return _InterimSession(kwargs["send_binary"], kwargs["send_json"])
+
+    monkeypatch.setattr("jarvis.realtime.factory.build_realtime_session", _build)
+    monkeypatch.setattr(
+        pipeline_mod,
+        "MicrophoneCapture",
+        lambda **_kwargs: _SilentMic(),
+    )
+
+    reason = await asyncio.wait_for(pipe._active_realtime_session(), timeout=2.0)
+
+    assert reason == HANGUP_TURN_COMPLETE
+    assert pipe._player.pcm == [bridge_pcm, final_pcm]
+    state_changes = [
+        state
+        for index, state in enumerate(pipe._test_states)
+        if index == 0 or state != pipe._test_states[index - 1]
+    ]
+    assert state_changes == [
+        pipeline_mod.TurnTakingState.PROCESSING,
+        pipeline_mod.TurnTakingState.JARVIS_SPEAKING,
+        pipeline_mod.TurnTakingState.PROCESSING,
+        pipeline_mod.TurnTakingState.JARVIS_SPEAKING,
+        pipeline_mod.TurnTakingState.LISTENING,
+    ]
+
+
+@pytest.mark.asyncio
+async def test_unsafe_output_cancel_stops_playback_and_returns_to_listening(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipe = _pipe()
+    cancel_delivered = asyncio.Event()
+    built: dict[str, object] = {}
+
+    class _UnsafeOutputSession(_HandshakeOnlyRealtimeSession):
+        async def handle_control(self, message) -> None:
+            self.controls.append(message)
+            await self._send_json(
+                {
+                    "type": "audio_ready",
+                    "provider": "fake-live",
+                    "input_sample_rate": 16_000,
+                    "output_sample_rate": 24_000,
+                }
+            )
+            await self._send_binary(b"\x05\x00" * 32)
+            await self._send_json({"type": "tts_cancel"})
+            await self._send_json({"type": "error_spoken", "text": "An error occurred."})
+            cancel_delivered.set()
+
+    def _build(**kwargs):
+        session = _UnsafeOutputSession(kwargs["send_binary"], kwargs["send_json"])
+        built["session"] = session
+        return session
+
+    monkeypatch.setattr("jarvis.realtime.factory.build_realtime_session", _build)
+    monkeypatch.setattr(pipeline_mod, "MicrophoneCapture", lambda **_kwargs: _SilentMic())
+
+    task = asyncio.create_task(pipe._active_realtime_session())
+    await asyncio.wait_for(cancel_delivered.wait(), timeout=0.5)
+    await asyncio.sleep(0)
+
+    assert pipe._player.stopped >= 1
+    assert pipe._test_states[-2:] == [
+        pipeline_mod.TurnTakingState.JARVIS_SPEAKING,
+        pipeline_mod.TurnTakingState.LISTENING,
+    ]
+
+    pipe._hangup_event.set()
+    assert await asyncio.wait_for(task, timeout=0.5) == HANGUP_HOTKEY
+    assert built["session"].end_reason == HANGUP_HOTKEY
+
+
+@pytest.mark.asyncio
 async def test_desktop_cpu_barge_in_cancels_and_forwards_user_preroll(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

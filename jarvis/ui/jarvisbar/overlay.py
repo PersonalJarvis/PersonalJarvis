@@ -18,9 +18,11 @@ drained on the Tk thread. ``set_level`` is the sole exception (atomic write).
 
 No ``SetWindowLong`` is ever called directly, but ``-topmost`` IS re-asserted
 on every reveal (``_do_show``), and Windows can silently drop the layered
-color-key/alpha on that kind of style mutation (BUG-030). ``_do_show``
-re-applies ``-transparentcolor``/``-alpha`` right after, so a dropped
-attribute self-heals on the next reveal instead of leaving a black flash.
+color-key/alpha on that kind of style mutation (BUG-030). A reveal therefore
+maps at zero opacity, composes the prepared canvas, and only then restores the
+configured opacity. This keeps Tk's opaque backing surface off-screen even
+when the bar spent long enough withdrawn for the idle renderer to stop
+repainting.
 """
 from __future__ import annotations
 
@@ -540,18 +542,73 @@ class JarvisBarOverlay:
         # ``self._mode`` directly, so a mapped window needs no native operation.
         try:
             if bool(self._root.winfo_ismapped()):
+                # Keep the no-native-mutation contract for a persistent mapped
+                # bar, but still submit one fresh canvas frame. This is the
+                # cheapest self-heal if DWM discarded a layered surface during
+                # a display/power transition while the logical HWND stayed
+                # mapped.
+                self._invalidate_static_frame()
                 return
         except Exception:  # noqa: BLE001
             # Unusual Tk shims may not expose the query. Prefer an attempted
             # reveal over leaving a genuinely hidden bar unavailable.
             log.debug("jarvisbar mapped-state query failed", exc_info=True)
+
+        # Reveal transaction (BUG-030): the boot-created bar can remain
+        # withdrawn for many seconds while voice warms. Its idle renderer has
+        # settled by then and deliberately skips byte-identical repaints. If a
+        # withdrawn -> deiconified/topmost transition makes DWM discard the
+        # prepared layered surface, mapping at the configured opacity exposes
+        # Tk's true opaque backing rectangle indefinitely -- there is no idle
+        # repaint left to replace it. Keep the HWND fully invisible during the
+        # native style changes, compose the already-painted canvas once, then
+        # restore the requested opacity. Every call is best-effort so a cosmetic
+        # platform limitation can never block the app.
+        self._apply_layered_attributes(opacity=0.0)
         try:
             self._root.deiconify()
         except Exception:  # noqa: BLE001
             log.debug("jarvisbar deiconify failed", exc_info=True)
-        self._do_reassert_z_order()
+        self._do_reassert_z_order(opacity=0.0)
+        self._refresh_prepared_frame()
+        try:
+            # Flush geometry/map/canvas work while the window is still fully
+            # transparent. The first visible DWM composition therefore already
+            # contains the magenta color-key frame instead of a black backing.
+            self._root.update_idletasks()
+        except Exception:  # noqa: BLE001
+            log.debug("jarvisbar reveal composition flush failed", exc_info=True)
+        finally:
+            self._apply_layered_attributes(opacity=self._opacity)
 
-    def _do_reassert_z_order(self) -> None:
+    def _apply_layered_attributes(self, *, opacity: float) -> None:
+        """Best-effort color-key + opacity application on the Tk thread."""
+        if self._root is None:
+            return
+        try:
+            self._root.wm_attributes("-transparentcolor", COLOR_KEY_HEX)
+        except Exception:  # noqa: BLE001
+            log.debug("jarvisbar transparentcolor re-assert failed", exc_info=True)
+        try:
+            self._root.wm_attributes("-alpha", opacity)
+        except Exception:  # noqa: BLE001
+            log.debug("jarvisbar alpha re-assert failed", exc_info=True)
+
+    def _invalidate_static_frame(self) -> None:
+        """Force the next animation tick to repaint even when idle settled."""
+        self._static_tick_key = None
+        self._static_tick_count = 0
+
+    def _refresh_prepared_frame(self) -> None:
+        """Resubmit the hidden pre-render to Tk before reveal becomes visible."""
+        if self._canvas is None or self._image_id is None or self._photo is None:
+            return
+        try:
+            self._canvas.itemconfig(self._image_id, image=self._photo)
+        except Exception:  # noqa: BLE001
+            log.debug("jarvisbar prepared-frame refresh failed", exc_info=True)
+
+    def _do_reassert_z_order(self, *, opacity: float | None = None) -> None:
         if self._root is None:
             return
         # Re-assert topmost + lift after every reveal. A withdrawn→deiconified
@@ -577,11 +634,13 @@ class JarvisBarOverlay:
         # exactly as set at creation so a dropped attribute self-heals on the
         # very next reveal instead of needing an app restart. Guarded
         # separately so a failure here can never undo the topmost re-assert.
-        try:
-            self._root.wm_attributes("-transparentcolor", COLOR_KEY_HEX)
-            self._root.wm_attributes("-alpha", self._opacity)
-        except Exception:  # noqa: BLE001
-            log.debug("jarvisbar transparentcolor/alpha re-assert failed", exc_info=True)
+        self._apply_layered_attributes(
+            opacity=self._opacity if opacity is None else opacity
+        )
+        # A long-withdrawn idle bar may already be in the static-frame fast
+        # path. Native style/map changes require one fresh canvas submission so
+        # DWM cannot keep a stale backing surface indefinitely.
+        self._invalidate_static_frame()
 
     def _do_hide(self) -> None:
         if self._root is None:

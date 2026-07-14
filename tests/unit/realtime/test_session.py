@@ -771,7 +771,11 @@ async def test_audio_without_transcript_is_cancelled_fail_closed():
     # response.done already closed the provider generation; fail closed locally
     # without sending a now-invalid response.cancel.
     assert provider.session.interrupts == 0
+    assert sum(item.get("type") == "tts_cancel" for item in messages) == 1
     assert sum(item.get("type") == "error_spoken" for item in messages) == 1
+    assert [item.get("type") for item in messages].index("tts_cancel") < [
+        item.get("type") for item in messages
+    ].index("error_spoken")
 
 
 @pytest.mark.asyncio
@@ -857,6 +861,52 @@ async def test_hard_leak_transcript_drops_audio():
     await sess.end(reason="test")
     # The pre-leak audio was buffered, then dropped when the leak transcript arrived.
     assert binaries == []
+    assert {"type": "tts_cancel"} in jsons
+
+
+@pytest.mark.asyncio
+async def test_isolated_dash_delta_keeps_realtime_audio_playing():
+    first = b"\x11\x22" * 8
+    continuation = b"\x33\x44" * 8
+    events = [
+        RealtimeEvent(type="output_transcript_delta", text="A safe opening clause"),
+        RealtimeEvent(
+            type="audio_delta",
+            audio=AudioChunk(pcm=first, sample_rate=24_000, timestamp_ns=0),
+        ),
+        RealtimeEvent(type="output_transcript_delta", text="\N{EM DASH}"),
+        RealtimeEvent(
+            type="audio_delta",
+            audio=AudioChunk(
+                pcm=continuation,
+                sample_rate=24_000,
+                timestamp_ns=0,
+            ),
+        ),
+        RealtimeEvent(
+            type="output_transcript_delta",
+            text="followed by a safe continuation.",
+        ),
+        RealtimeEvent(type="turn_complete"),
+    ]
+    binaries: list[bytes] = []
+    jsons: list[dict] = []
+    sess = RealtimeVoiceSession(
+        session_id="streaming-dash",
+        send_binary=lambda data: binaries.append(data) or asyncio.sleep(0),
+        send_json=lambda message: jsons.append(message) or asyncio.sleep(0),
+        provider=FakeProvider(events),
+        config=_cfg(),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    assert binaries == [first, continuation]
+    assert not any(item.get("type") == "tts_cancel" for item in jsons)
+    assert not any(item.get("type") == "error_spoken" for item in jsons)
 
 
 @pytest.mark.asyncio
@@ -1184,6 +1234,9 @@ async def test_idle_session_renders_external_update_as_realtime_spoken_track():
     assert spoken[0].detail == "artifact: report.md"
     assert not any(isinstance(event, ResponseGenerated) for event in bus.events)
     assert not any(isinstance(event, VoiceTurnCompleted) for event in bus.events)
+    history = "\n".join(str(message.content) for message in sess._delegate_history)
+    assert "Trusted Jarvis-Agent mission result" in history
+    assert "artifact: report.md" in history
 
 
 @pytest.mark.asyncio
@@ -1207,6 +1260,8 @@ async def test_busy_realtime_session_refuses_external_update_for_classic_fallbac
 
     assert accepted is False
     assert provider.session.text_inputs == []
+    history = "\n".join(str(message.content) for message in sess._delegate_history)
+    assert "The mission finished." in history
     await sess.end(reason="test")
 
 
@@ -2271,6 +2326,18 @@ class _SlowDelegateBridgeSession(FakeSession):
             is_final=True,
         )
         await self._bridge_sent.wait()
+        yield RealtimeEvent(
+            type="output_transcript_delta",
+            text="I'm checking that now.",
+        )
+        yield RealtimeEvent(
+            type="audio_delta",
+            audio=AudioChunk(
+                pcm=b"\x01\x02" * 8,
+                sample_rate=24_000,
+                timestamp_ns=0,
+            ),
+        )
         # The bridge line's own response lifecycle completes long before the
         # delegated result exists; the turn must survive this completion.
         yield RealtimeEvent(type="turn_complete")
@@ -2312,7 +2379,24 @@ async def test_slow_deterministic_delegate_speaks_a_bridge_line(monkeypatch):
     provider = _SlowDelegateBridgeProvider(
         bridge_sent=bridge_sent, result_delivered=result_delivered
     )
-    sess = _session(provider, brain=brain)
+    thinking_sent = asyncio.Event()
+
+    class _StatusMessages(list[dict]):
+        def append(self, message: dict) -> None:
+            super().append(message)
+            if message == {"type": "thinking"}:
+                thinking_sent.set()
+
+    jsons = _StatusMessages()
+    binaries: list[bytes] = []
+    bus = FakeBus()
+    sess = _session(
+        provider,
+        brain=brain,
+        jsons=jsons,
+        binaries=binaries,
+        bus=bus,
+    )
 
     await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
     await asyncio.wait_for(bridge_sent.wait(), timeout=2)
@@ -2324,6 +2408,9 @@ async def test_slow_deterministic_delegate_speaks_a_bridge_line(monkeypatch):
     # While the bridge response is live, provider output must flow.
     assert sess._must_withhold_provider_output() is False
 
+    # Keep the delegate pending until the provider closes the bridge response.
+    # Otherwise the fake result can overtake its own interim sentence.
+    await asyncio.wait_for(thinking_sent.wait(), timeout=2)
     gate.set()
     await asyncio.wait_for(result_delivered.wait(), timeout=2)
     result = provider.session.text_inputs[-1]
@@ -2333,6 +2420,11 @@ async def test_slow_deterministic_delegate_speaks_a_bridge_line(monkeypatch):
     # result is delivered into the live turn, not as a late follow-up.
     assert "finished only now" not in result
     await sess.wait_finished()
+    assert binaries
+    progress = [event for event in bus.events if isinstance(event, SpeechSpoken)]
+    assert [(event.text, event.spoken_kind) for event in progress] == [
+        ("I'm checking that now.", "progress")
+    ]
     await sess.end(reason="test")
 
 
@@ -2490,6 +2582,122 @@ async def test_gate_miss_lets_the_model_reach_the_wiki_through_jarvis_action():
         "success": True,
         "spoken_reply": "Your wiki holds pages about you and Lukas.",
     }
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_garbled_wiki_follow_up_inherits_session_context_and_delegates():
+    """The exact forensic STT output must not depend on model tool discretion."""
+    utterance = "Was steht im Mainim drin?"  # i18n-allow: exact German forensic STT
+    brain = FakeBrain(replies=("Your Wiki contains three project pages.",))
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text=utterance,
+                is_final=True,
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = _session(provider, brain=brain)
+    sess._remember_delegate_turn(
+        "What does a Wiki contain?",
+        "A Wiki contains linked pages and revision history.",
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await asyncio.sleep(0.02)
+
+    assert provider.session.required_tools == []
+    assert brain.calls[0][0] == utterance
+    assert "<trusted_action_result>" in provider.session.text_inputs[-1]
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_native_realtime_promise_without_tool_recovers_via_orchestrator():
+    """A provider violation starts the action instead of ending on a promise."""
+    utterance = "Was steht im Mainim drin?"  # i18n-allow: exact German forensic STT
+    speculative_audio = AudioChunk(
+        pcm=b"\x01\x02" * 8,
+        sample_rate=24_000,
+        timestamp_ns=0,
+    )
+    brain = FakeBrain(replies=("Your Wiki contains three project pages.",))
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text=utterance,
+                is_final=True,
+            ),
+            RealtimeEvent(
+                type="output_transcript_delta",
+                text=(
+                    "Das kann ich gerne für dich "  # i18n-allow
+                    "nachschauen. Einen Moment, "  # i18n-allow
+                    "ich werfe einen Blick in dein "  # i18n-allow
+                    "Wiki und sage dir gleich Bescheid."  # i18n-allow
+                ),  # i18n-allow: exact German runtime-output failure shape
+            ),
+            RealtimeEvent(type="audio_delta", audio=speculative_audio),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    jsons: list[dict] = []
+    binaries: list[bytes] = []
+    sess = _session(
+        provider,
+        brain=brain,
+        jsons=jsons,
+        binaries=binaries,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await asyncio.sleep(0.02)
+
+    assert provider.session.interrupts == 1
+    assert provider.session.required_tools == [None]
+    assert brain.calls[0][0] == utterance
+    assert "<trusted_action_result>" in provider.session.text_inputs[-1]
+    assert binaries == []
+    assert not any(
+        item.get("role") == "assistant" and "Einen Moment" in item.get("text", "")
+        for item in jsons
+    )
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_direct_realtime_promise_without_tool_fails_closed_honestly():
+    """Direct-tool mode cannot silently leave an announced action pending."""
+    from jarvis.brain.action_honesty import action_not_started_phrase
+
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="Could you handle that one?",
+                is_final=True,
+            ),
+            RealtimeEvent(
+                type="output_transcript_delta",
+                text="One moment, I'll check that and get back to you.",
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    jsons: list[dict] = []
+    sess = _session(provider, brain=FakeBrain(), tool_mode="direct", jsons=jsons)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+
+    assert provider.session.interrupts == 1
+    assert {"type": "error_spoken", "text": action_not_started_phrase("en")} in jsons
     await sess.end(reason="test")
 
 

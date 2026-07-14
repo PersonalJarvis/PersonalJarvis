@@ -3,6 +3,7 @@
 Endpoints:
 - ``GET    /api/missions``                 → list of all missions (filterable).
 - ``GET    /api/missions/{id}``            → mission detail + events + verdicts.
+- ``GET    /api/missions/{id}/result``     → signed summary + deliverable contents.
 - ``POST   /api/missions/dispatch``        → create a new mission + start the run.
 - ``POST   /api/missions/{id}/cancel``     → best-effort state transition.
 - ``POST   /api/missions/kill/{worker}``   → worker stub (full Job Object logic
@@ -17,19 +18,30 @@ Pattern like ``tasks_routes.py``:
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from pydantic import BaseModel
 
-from jarvis.missions.events import EventEnvelope, MissionCancelled, now_ms
+from jarvis.missions.events import (
+    EventEnvelope,
+    MissionApproved,
+    MissionCancelled,
+    MissionFailed,
+    MissionTimedOut,
+    now_ms,
+)
+from jarvis.missions.isolation.worktree import resolve_outputs_root
 from jarvis.missions.manager import MissionManager
+from jarvis.missions.result_reader import read_mission_artifacts
 from jarvis.missions.state_machine import (
     IllegalStateTransition,
     MissionState,
     is_terminal,
 )
+from jarvis.missions.stream_evidence import clean_request_body
 from jarvis.missions.tool_approvals import MissionToolApprovalCoordinator
 from jarvis.ui.web.missions_worker import extract_worker_missions
 
@@ -71,6 +83,23 @@ def _require_tool_approvals(request: Request) -> MissionToolApprovalCoordinator:
             detail="Mission tool approvals are not available",
         )
     return coordinator
+
+
+def _mission_outputs_root(request: Request) -> Path:
+    """Return the configured persistent Jarvis-Agent output directory."""
+    configured = getattr(request.app.state, "outputs_root", None)
+    if configured is not None:
+        return Path(configured)
+    repo_root = Path(__file__).resolve().parent.parent.parent.parent
+    return resolve_outputs_root(repo_root)
+
+
+def _prompt_preview(prompt: str, *, max_chars: int = 1_000) -> str:
+    """Strip the worker quality directive and bound list-response payloads."""
+    cleaned = clean_request_body(prompt or "").strip()
+    if len(cleaned) <= max_chars:
+        return cleaned
+    return f"{cleaned[:max_chars].rstrip()} …"
 
 
 # ---------------------------------------------------------------------------
@@ -160,7 +189,7 @@ async def list_missions(
     missions = [
         {
             "id": r[0],
-            "prompt": r[1],
+            "prompt": _prompt_preview(r[1]),
             "state": r[2],
             "language": r[3],
             "created_ms": int(r[4]),
@@ -226,6 +255,57 @@ async def get_mission(mission_id: str, request: Request) -> dict[str, Any]:
         "events": events_dump,
         "verdicts": verdicts,
         "worker_snapshots": worker_snapshots,
+    }
+
+
+@router.get("/{mission_id}/result")
+async def get_mission_result(
+    mission_id: str,
+    request: Request,
+) -> dict[str, Any]:
+    """Return one mission's signed outcome and bounded deliverable contents."""
+    mgr = _require_manager(request)
+    view = await mgr.store.get_mission_view(mission_id)
+    if view is None:
+        raise HTTPException(status_code=404, detail="Mission not found")
+    prompt, state, language, _iteration, _cost_usd = view
+    envelopes = await mgr.store.events_for_mission(mission_id)
+
+    terminal: MissionApproved | MissionFailed | MissionCancelled | MissionTimedOut | None = None
+    for envelope in reversed(envelopes):
+        if isinstance(
+            envelope.payload,
+            (MissionApproved, MissionFailed, MissionCancelled, MissionTimedOut),
+        ):
+            terminal = envelope.payload
+            break
+
+    summary: str | None = None
+    result_uri: str | None = None
+    reason: str | None = None
+    if isinstance(terminal, MissionApproved):
+        summary = terminal.summary_de if language == "de" else terminal.summary_en
+        result_uri = terminal.result_uri
+    elif isinstance(terminal, (MissionFailed, MissionCancelled)):
+        reason = terminal.reason
+    elif isinstance(terminal, MissionTimedOut):
+        reason = "mission_timed_out"
+
+    artifacts, truncated = read_mission_artifacts(
+        _mission_outputs_root(request), mission_id
+    )
+    return {
+        "mission_id": mission_id,
+        "state": state,
+        "language": language,
+        "prompt": _prompt_preview(prompt, max_chars=4_000),
+        "terminal_event": terminal.event_type if terminal is not None else None,
+        "summary": summary,
+        "result_uri": result_uri,
+        "reason": reason,
+        "artifacts": artifacts,
+        "artifact_count": len(artifacts),
+        "truncated": truncated,
     }
 
 

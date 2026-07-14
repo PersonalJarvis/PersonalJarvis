@@ -378,6 +378,7 @@ def test_summarize_answers_word_boundary_without_punctuation() -> None:
 # do-task that produced nothing.
 from jarvis.missions.stream_evidence import (  # noqa: E402
     informational_file_answer,
+    is_clarification_only_answer,
     is_informational_request,
 )
 
@@ -591,6 +592,28 @@ def test_readonly_answer_rejects_no_tool_answer_for_do_task_prompt() -> None:
     assert readonly_answer("", convo, prompt=prompt) is None
 
 
+def test_readonly_answer_rejects_worker_clarification_as_a_result() -> None:
+    """Exact 2026-07-13 failure: a long format question was auto-approved as
+    the completed research answer merely because the request was informational."""
+    clarification = (
+        "# Drugs in schools\n\n"
+        "Kurze Rückfrage, weil aus deiner Nachricht "  # i18n-allow: fixture
+        "ein Wort fehlt — einen was genau? "  # i18n-allow: fixture
+        "Soll ich einen Vortrag, einen Aufsatz, "  # i18n-allow: fixture
+        "eine Präsentation oder ein Infoblatt erstellen?"  # i18n-allow: fixture
+    )
+    convo = _stream([
+        {"type": "result", "result": clarification, "subtype": "success"},
+    ])
+
+    assert is_clarification_only_answer(clarification)
+    assert readonly_answer(
+        "",
+        convo,
+        prompt="Research and analyze drugs in schools.",
+    ) is None
+
+
 # --- informational_file_answer: research request answered in a prose document --
 #
 # Root cause of mission_019ecb56 (2026-06-15): "recherchiere AI-News" is an
@@ -649,6 +672,22 @@ def test_informational_file_answer_none_for_stub_document() -> None:
     # a near-empty / stub prose file is not a real answer — let the critic see it.
     stub = _prose("# KI-News\n\nInhalt folgt.\n")
     assert informational_file_answer(stub, prompt=_RESEARCH_PROMPT) is None
+
+
+def test_informational_file_answer_none_for_long_clarification() -> None:
+    clarification = (
+        "# Requested research\n\n"
+        "Quick clarifying question: which format should I use? "
+        "I can prepare a presentation, essay, handout, or detailed report. "
+        "Each option can include an introduction, a structured main section, "
+        "conclusions, prevention guidance, and references. Please choose the "
+        "format and audience before I begin so that I can tailor the result."
+    )
+
+    assert len(clarification) >= 300
+    assert informational_file_answer(
+        _prose(clarification), prompt=_RESEARCH_PROMPT
+    ) is None
 
 
 def test_informational_file_answer_none_when_code_mixed_in() -> None:

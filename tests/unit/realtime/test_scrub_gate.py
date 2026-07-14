@@ -31,6 +31,38 @@ async def test_clean_transcript_preserves_provider_delta_boundaries():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("dash", ["\N{EM DASH}", "\N{EN DASH}", " -- "])
+async def test_isolated_streaming_dash_does_not_false_cancel_output(dash: str):
+    gate = ScrubHoldGate(language="en")
+    first = _chunk(4)
+    continuation = _chunk(8)
+
+    await gate.feed_transcript("A safe opening clause")
+    assert await gate.push_audio(first) == [first]
+
+    display = await gate.feed_transcript(dash)
+    assert display == dash
+    assert gate.hard_leak_pending() is False
+    assert await gate.push_audio(continuation) == [continuation]
+
+    await gate.feed_transcript(" followed by a safe continuation.")
+    assert gate.hard_leak_pending() is False
+
+
+@pytest.mark.asyncio
+async def test_leading_streaming_dash_waits_for_meaningful_transcript():
+    gate = ScrubHoldGate(language="en")
+    buffered = _chunk(4)
+
+    assert await gate.feed_transcript("\N{EM DASH}") == "\N{EM DASH}"
+    assert await gate.push_audio(buffered) == []
+    await gate.feed_transcript("A safe continuation follows.")
+
+    assert gate.hard_leak_pending() is False
+    assert gate.release_available() == [buffered]
+
+
+@pytest.mark.asyncio
 async def test_scrubbed_delta_keeps_its_original_leading_separator():
     gate = ScrubHoldGate(language="en")
 

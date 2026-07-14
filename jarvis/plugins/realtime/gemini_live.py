@@ -300,11 +300,6 @@ class GeminiLiveProvider:
 
         client = genai.Client(api_key=self._api_key)
         voice = str(getattr(cfg, "voice", "") or "").strip()
-        pinned_language = (
-            str(getattr(cfg, "language", "") or "").strip().lower()
-            if bool(getattr(cfg, "language_is_pinned", False))
-            else ""
-        )
         speech_config: dict[str, Any] = {}
         if voice:
             speech_config["voice_config"] = types.VoiceConfig(
@@ -312,8 +307,6 @@ class GeminiLiveProvider:
                     voice_name=voice
                 )
             )
-        if pinned_language:
-            speech_config["language_code"] = pinned_language
         live_config = types.LiveConnectConfig(
             response_modalities=[types.Modality.AUDIO],
             system_instruction=str(getattr(cfg, "instructions", "") or "") or None,

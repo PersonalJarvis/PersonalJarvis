@@ -6,6 +6,7 @@ from typing import Any
 import pytest
 
 from jarvis.brain.manager import BrainManager
+from jarvis.core.protocols import BrainMessage
 
 
 def _bare_manager() -> BrainManager:
@@ -47,3 +48,23 @@ async def test_generate_stream_buffers_evidence_gated_chunks_until_final() -> No
     manager.generate = fake_generate  # type: ignore[method-assign]
 
     assert await _collect_stream(manager) == ["honest fallback"]
+
+
+@pytest.mark.asyncio
+async def test_generate_stream_buffers_contextual_action_turn_until_final() -> None:
+    manager = _bare_manager()
+    manager._history = [
+        BrainMessage(role="user", content="What is in my private Wiki?"),
+    ]
+
+    async def fake_generate(user_text: str, **kwargs: Any) -> str:
+        consumer = kwargs["text_consumer"]
+        consumer("One moment, ")
+        consumer("I'll check and get back to you.")
+        return "I did not start that action."
+
+    manager.generate = fake_generate  # type: ignore[method-assign]
+
+    assert await _collect_stream(manager, "What does it say?") == [
+        "I did not start that action."
+    ]

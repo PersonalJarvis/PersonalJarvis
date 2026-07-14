@@ -20,7 +20,12 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from jarvis.core import config as cfg_mod
 from jarvis.core.turn_language import DEFAULT_LOCALE, resolve_output_language
-from jarvis.sessions.constants import HANGUP_REALTIME_FALLBACK, HANGUP_WS_CLOSED
+from jarvis.sessions.constants import (
+    HANGUP_ERROR,
+    HANGUP_REALTIME_FALLBACK,
+    HANGUP_WS_CLOSED,
+)
+from jarvis.ui.web.missions_auth import validate_token
 
 log = logging.getLogger("jarvis.browser_voice.route")
 
@@ -29,6 +34,11 @@ router = APIRouter()
 _AUDIO_QUEUE_MAX_FRAMES = 32
 _TRANSPORT_SEND_TIMEOUT_S = 2.0
 _AUDIO_DRAIN_TIMEOUT_S = 2.0
+_UNSAFE_FALLBACK_DETAIL = (
+    "Realtime provider failed after this turn was accepted. The session was "
+    "closed without replaying audio through the classic pipeline to avoid "
+    "duplicate actions."
+)
 
 # BCP-47 from the canonical per-turn resolver (de/en/es).
 _LANG_MAP = {"de": "de-DE", "en": "en-US", "es": "es-ES"}
@@ -49,6 +59,42 @@ def _resolve_language(cfg: Any) -> str:
     pin = getattr(getattr(cfg, "brain", None), "reply_language", "") or ""
     language = resolve_output_language(pin, "", "", default=DEFAULT_LOCALE)
     return _LANG_MAP.get(language, _LANG_MAP[DEFAULT_LOCALE])
+
+
+def _browser_voice_authorized(ws: WebSocket) -> bool:
+    """Apply the shared mission-token policy to the browser voice socket.
+
+    A peer address is not an authentication boundary: a hostile webpage can
+    connect directly to a localhost WebSocket and still appear loopback to the
+    server. Every client therefore needs a registered token before a
+    tool-capable voice session is constructed.
+    """
+    token = str(ws.query_params.get("token", "") or "")
+    return validate_token(token)
+
+
+def _json_commits_semantic_turn(message: dict[str, Any]) -> bool:
+    """Whether an outbound status proves Realtime has accepted the turn.
+
+    This mirrors the desktop Realtime adapter. A final user transcript may have
+    already triggered a tool, while any assistant transcript or completed
+    browser-speech request makes replaying captured audio unsafe.
+    """
+    kind = str(message.get("type", "") or "")
+    if kind == "transcript":
+        role = str(message.get("role", "") or "")
+        return role == "assistant" or (
+            role == "user" and bool(message.get("is_final", False))
+        )
+    return kind in {
+        "thinking",
+        "turn_complete",
+        "hangup",
+        "error_spoken",
+        "tts_browser_fallback",
+        "tool_result",
+        "action_result",
+    }
 
 
 def _enqueue_audio_frame(queue: asyncio.Queue[bytes | None], data: bytes) -> bool:
@@ -143,6 +189,10 @@ async def browser_voice_ws(ws: WebSocket) -> None:
     """Browser-microphone voice socket: run the per-connection turn loop."""
     await ws.accept()
 
+    if not _browser_voice_authorized(ws):
+        await ws.close(code=4401, reason="unauthorized")
+        return
+
     app = ws.scope.get("app")
     state = app.state if app is not None else None
     bus = getattr(state, "bus", None)
@@ -158,13 +208,20 @@ async def browser_voice_ws(ws: WebSocket) -> None:
         return
 
     session_id = str(uuid4())
+    semantic_turn_committed = False
 
     async def _send_binary(data: bytes) -> None:
+        nonlocal semantic_turn_committed
+        if data:
+            semantic_turn_committed = True
         await asyncio.wait_for(
             ws.send_bytes(data), timeout=_TRANSPORT_SEND_TIMEOUT_S
         )
 
     async def _send_json(msg: dict[str, Any]) -> None:
+        nonlocal semantic_turn_committed
+        if _json_commits_semantic_turn(msg):
+            semantic_turn_committed = True
         await asyncio.wait_for(
             ws.send_json(msg), timeout=_TRANSPORT_SEND_TIMEOUT_S
         )
@@ -191,6 +248,27 @@ async def browser_voice_ws(ws: WebSocket) -> None:
     async def _switch_to_classic(reason: str) -> bool:
         nonlocal session
         if not bool(getattr(session, "is_realtime", False)):
+            return False
+        if semantic_turn_committed:
+            log.warning(
+                "browser_voice: realtime failed after a committed turn; "
+                "refusing unsafe classic replay: %s",
+                reason,
+            )
+            await session.end(reason=HANGUP_ERROR)
+            try:
+                await _send_json(
+                    {"type": "provider_error", "error": _UNSAFE_FALLBACK_DETAIL}
+                )
+            except Exception:  # noqa: BLE001 -- the provider may have torn down the wire
+                log.debug(
+                    "browser_voice: committed-turn failure status could not be sent",
+                    exc_info=True,
+                )
+            await ws.close(
+                code=1011,
+                reason="realtime failed after committed turn",
+            )
             return False
         log.warning(
             "browser_voice: realtime session unavailable; using classic pipeline: %s",

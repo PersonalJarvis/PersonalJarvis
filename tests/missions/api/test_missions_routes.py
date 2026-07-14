@@ -12,7 +12,6 @@ Pattern: FastAPI ``TestClient`` + a fresh ``MissionManager`` per test
 """
 from __future__ import annotations
 
-import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +23,7 @@ from fastapi.testclient import TestClient
 from jarvis.missions.events import (
     CriticVerdictReady,
     EventEnvelope,
+    MissionApproved,
     WorkerKilled,
     WorkerSpawned,
     now_ms,
@@ -31,7 +31,6 @@ from jarvis.missions.events import (
 from jarvis.missions.manager import MissionManager
 from jarvis.missions.state_machine import MissionState
 from jarvis.ui.web.missions_routes import router as missions_router
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -200,6 +199,58 @@ async def test_get_returns_events_and_verdicts(
     # 1 Verdict
     assert len(body["verdicts"]) == 1
     assert body["verdicts"][0]["verdict"] == "approve"
+
+
+async def test_result_returns_signed_summary_and_actual_artifact_contents(
+    manager: MissionManager,
+    tmp_path: Path,
+) -> None:
+    mid = await manager.dispatch(
+        prompt=(
+            "Deliver a complete, polished, production-quality result.\n\n"
+            "Research drugs in schools."
+        ),
+        language="en",
+    )
+    mission_dir = tmp_path / "outputs" / f"mission_{mid[:13]}"
+    files_dir = mission_dir / "tasks" / "task-1" / "artifacts" / "files"
+    files_dir.mkdir(parents=True)
+    report = files_dir / "report.md"
+    report.write_text(
+        "# Findings\n\nPrevention works best with evidence-based education.",
+        encoding="utf-8",
+    )
+    await manager.store.append_and_publish(
+        EventEnvelope(
+            mission_id=mid,
+            source_actor="kontrollierer",
+            ts_ms=now_ms(),
+            payload=MissionApproved(
+                result_uri=mission_dir.resolve().as_uri(),
+                tokens_used=100,
+                cost_usd=0.01,
+                wall_ms=500,
+                summary_de="Der Bericht ist fertig.",  # i18n-allow: German runtime-output fixture
+                summary_en="The report is ready.",
+            ),
+        )
+    )
+
+    app = FastAPI()
+    app.include_router(missions_router)
+    app.state.mission_manager = manager
+    app.state.outputs_root = tmp_path / "outputs"
+    with TestClient(app) as client:
+        response = client.get(f"/api/missions/{mid}/result")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["mission_id"] == mid
+    assert body["summary"] == "The report is ready."
+    assert body["prompt"] == "Research drugs in schools."
+    assert body["artifact_count"] == 1
+    assert body["artifacts"][0]["deliverable_path"] == "report.md"
+    assert "evidence-based education" in body["artifacts"][0]["content"]
 
 
 # ---------------------------------------------------------------------------

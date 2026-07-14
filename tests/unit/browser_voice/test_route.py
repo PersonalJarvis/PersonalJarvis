@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
+import pytest
 from fastapi import WebSocketDisconnect
 
 import jarvis.browser_voice.route as route_mod
@@ -19,10 +20,23 @@ from jarvis.realtime.protocol import RealtimeEvent
 from jarvis.realtime.session import RealtimeVoiceSession
 from jarvis.sessions.recorder import SessionRecorder
 from jarvis.sessions.store import SessionStore
+from jarvis.ui.web.missions_auth import register_token, revoke_token
 from tests.fakes.fake_realtime import (
     FakeRealtimeProvider,
     FakeRealtimeToolBridge,
 )
+
+_VALID_TOKEN = "registered-session-token"  # noqa: S105 -- synthetic test token
+_INVALID_TOKEN = "invalid-token"  # noqa: S105 -- synthetic test token
+
+
+@pytest.fixture(autouse=True)
+def _registered_browser_token():
+    register_token(_VALID_TOKEN)
+    try:
+        yield
+    finally:
+        revoke_token(_VALID_TOKEN)
 
 
 class _RecSession:
@@ -42,9 +56,20 @@ class _RecSession:
 
 
 class _FakeWS:
-    def __init__(self, incoming, *, state) -> None:
+    def __init__(
+        self,
+        incoming,
+        *,
+        state,
+        client_host: str = "127.0.0.1",
+        token: str = _VALID_TOKEN,
+    ) -> None:
         self._incoming = list(incoming)
-        self.scope = {"app": SimpleNamespace(state=state)}
+        self.scope = {
+            "app": SimpleNamespace(state=state),
+            "client": (client_host, 50_000),
+        }
+        self.query_params = {"token": token} if token else {}
         self.accepted = False
         self.sent_bytes: list[bytes] = []
         self.sent_json: list[dict] = []
@@ -114,6 +139,72 @@ async def test_route_dispatches_binary_and_control_then_ends():
     assert rec.audio == [b"\x01\x00\x02\x00"]
     assert rec.controls == [{"type": "barge_in"}]
     assert rec.ended  # end() ran in the finally
+
+
+@pytest.mark.parametrize("client_host", ["127.0.0.1", "::1"])
+async def test_loopback_route_rejects_missing_token(client_host: str) -> None:
+    rec = _RecSession()
+    ws = _FakeWS(
+        [],
+        state=_state(rec),
+        client_host=client_host,
+        token="",
+    )
+
+    await browser_voice_ws(ws)
+
+    assert ws.closed == (4401, "unauthorized")
+    assert rec.ended is False
+
+
+@pytest.mark.parametrize("token", ["", "invalid-token"])
+async def test_external_route_rejects_missing_or_invalid_token_before_session_build(
+    token: str,
+) -> None:
+    rec = _RecSession()
+    built = False
+    state = _state(rec)
+
+    def _factory(**_kwargs):
+        nonlocal built
+        built = True
+        return rec
+
+    state.browser_voice_session_factory = _factory
+    ws = _FakeWS([], state=state, client_host="203.0.113.8", token=token)
+
+    await browser_voice_ws(ws)
+
+    assert ws.accepted is True
+    assert ws.closed == (4401, "unauthorized")
+    assert built is False
+    assert rec.ended is False
+
+
+async def test_external_route_accepts_registered_token() -> None:
+    rec = _RecSession()
+    ws = _FakeWS(
+        [{"type": "websocket.disconnect", "code": 1000}],
+        state=_state(rec),
+        client_host="203.0.113.8",
+        token=_VALID_TOKEN,
+    )
+
+    await browser_voice_ws(ws)
+
+    assert ws.accepted is True
+    assert ws.closed is None
+    assert rec.ended is True
+
+
+async def test_loopback_route_rejects_supplied_invalid_token() -> None:
+    rec = _RecSession()
+    ws = _FakeWS([], state=_state(rec), token=_INVALID_TOKEN)
+
+    await browser_voice_ws(ws)
+
+    assert ws.closed == (4401, "unauthorized")
+    assert rec.ended is False
 
 
 async def test_route_drops_stale_frames_when_provider_is_backpressured(
@@ -252,6 +343,61 @@ async def test_dead_realtime_stream_crosses_to_classic_on_next_audio_frame(monke
     assert classic.controls == [{"type": "audio_start", "sample_rate": 48_000}]
     assert classic.audio == [b"\x01\x00\x02\x00"]
     assert {"type": "mode_fallback", "mode": "pipeline"} in ws.sent_json
+
+
+async def test_committed_realtime_failure_closes_without_classic_replay(monkeypatch):
+    classic = _RecSession()
+
+    class _CommittedRealtime(_RecSession):
+        is_realtime = True
+
+        def __init__(self, send_json) -> None:
+            super().__init__()
+            self._send_json = send_json
+
+        async def handle_control(self, msg: dict) -> None:
+            await self._send_json(
+                {
+                    "type": "transcript",
+                    "role": "user",
+                    "text": "Run the action",
+                    "is_final": True,
+                }
+            )
+            raise RuntimeError("provider failed after accepting the turn")
+
+    built: dict[str, _CommittedRealtime] = {}
+
+    def _build(**kwargs):
+        session = _CommittedRealtime(kwargs["send_json"])
+        built["session"] = session
+        return session
+
+    state = _state(classic)
+    state.config.voice = SimpleNamespace(mode="realtime")
+    monkeypatch.setattr(route_mod, "_build_browser_session", _build)
+    ws = _FakeWS(
+        [
+            {
+                "type": "websocket.receive",
+                "text": '{"type":"audio_start","sample_rate":48000}',
+            }
+        ],
+        state=state,
+    )
+
+    await browser_voice_ws(ws)
+
+    assert built["session"].ended is True
+    assert classic.controls == []
+    assert classic.audio == []
+    assert {"type": "mode_fallback", "mode": "pipeline"} not in ws.sent_json
+    assert any(
+        message.get("type") == "provider_error"
+        and "duplicate actions" in str(message.get("error", ""))
+        for message in ws.sent_json
+    )
+    assert ws.closed == (1011, "realtime failed after committed turn")
 
 
 async def test_realtime_socket_drop_flushes_pending_turn_to_session_store(

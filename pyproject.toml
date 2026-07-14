@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "personal-jarvis"
 version = "1.0.5"
 description = "Voice-driven meta-orchestrator that turns one spoken request into a fleet of self-checking AI agents"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<3.15"
 readme = "README.md"
 license = { text = "MIT" }
 authors = [{ name = "Ruben Lütke" }]  # i18n-allow: maintainer proper name (umlaut)
@@ -15,6 +15,11 @@ dependencies = [
     "anthropic>=0.96",
     "openai>=1.30",  # 1.30+ is the minimum version required for stream_options (June 2024)
     "google-genai>=1.0",
+    # cryptography 49 stopped publishing Windows ARM64 and Intel macOS wheels.
+    # Keep MCP/JWT and Google auth binary-installable on those targets with the
+    # newest tested releases that still publish the required architecture.
+    "cryptography==46.0.3; sys_platform == 'win32' and platform_machine == 'ARM64'",
+    "cryptography==48.0.1; sys_platform == 'darwin' and platform_machine == 'x86_64'",
     "pydantic>=2.9,<3.0",
     "pydantic-settings>=2.6",
     "pyyaml>=6.0",
@@ -29,8 +34,18 @@ dependencies = [
     "loguru>=0.7",
     "keyring>=25.5",
     "sounddevice>=0.5",  # PortAudio binding; needs system libportaudio2 on Linux
-    "numpy>=1.26,<2.2",
+    # NumPy 2.1 is the conservative runtime branch everywhere it ships. Its
+    # Windows ARM64 wheel gap is permanent, though, so that architecture uses
+    # the first compatible branch with official CPython 3.11+ ARM64 wheels.
+    # Without the split, pip attempts a native source build and a stock Windows
+    # ARM64 install fails before Jarvis can offer its cloud/browser fallbacks.
+    "numpy>=1.26,<2.2; python_version < '3.14' and (sys_platform != 'win32' or platform_machine != 'ARM64')",
+    "numpy>=2.3.5,<2.4; python_version >= '3.14' or (sys_platform == 'win32' and platform_machine == 'ARM64')",
     "scipy>=1.14",
+    # Browser voice reuses jarvis.telephony.audio's streaming resampler even
+    # when Twilio is not installed. Python 3.13 removed stdlib audioop, so the
+    # backport belongs in BASE rather than only in the [telephony] extra.
+    "audioop-lts; python_version>='3.13'",
     # Wake-word runtime — BASE, not opt-in. The word-agnostic openWakeWord
     # backbones (melspectrogram, embedding) ship in every wheel
     # (jarvis/assets/wakeword/) so a user-trained custom wake model loads
@@ -41,26 +56,39 @@ dependencies = [
     # onnxruntime). The VAD already runs Silero via onnxruntime
     # (jarvis/audio/vad.py), so base carrying it is proven. Both are
     # lazy-imported in openwakeword_provider.py.
-    "openwakeword>=0.6",
-    "onnxruntime>=1.17",  # CPU-only; pinned explicitly though openwakeword pulls it
+    # openWakeWord 0.6 hard-depends on tflite-runtime on Linux. Its wheels stop
+    # at CPython 3.11, and the ARM64 wheel requires a newer glibc than the
+    # supported manylinux_2_28 floor. macOS CPython 3.14 likewise lacks a usable
+    # ONNX Runtime wheel. Vosk, browser voice, cloud STT, and energy endpointing
+    # remain working fallbacks on the excluded cells.
+    "openwakeword>=0.6; sys_platform != 'linux' and (sys_platform != 'darwin' or python_version < '3.14')",
+    "openwakeword>=0.6; sys_platform == 'linux' and platform_machine == 'x86_64' and python_version < '3.12'",
+    # ONNX Runtime 1.24+ raises the macOS deployment floor and has no usable
+    # CPython 3.14 artifact for the supported baseline. Keep 1.23 on macOS
+    # 3.11-3.13; other operating systems use the current CPU line. The portable
+    # energy VAD is the explicit macOS 3.14 fallback.
+    "onnxruntime>=1.17,<1.24; sys_platform == 'darwin' and python_version < '3.14'",
+    "onnxruntime>=1.17; sys_platform != 'darwin'",
     # Any-word wake keyword spotting (vosk_kws engine, design spec 2026-07-05):
     # Vosk is Apache-2.0, torch-free, ~7 MB wheel with bundled libvosk, official
-    # CPU wheels for win/mac/manylinux x86+ARM — the identical-on-every-OS
-    # detector for a freely chosen wake phrase. The per-language model (~45 MB)
+    # CPU wheels for macOS and Linux x86+ARM plus Windows x86/x64. Upstream does
+    # not ship Windows ARM64, so that one target skips Vosk and retains the
+    # ONNX/browser/cloud wake paths. The per-language model (~45 MB)
     # is fetched once at setup into data/wake_models/vosk/<lang>/, NOT bundled.
     # Lazy-imported in vosk_kws_provider.py; base `import jarvis` stays clean.
     # CAP below 0.3.45: that release ships NO macOS wheel (linux/win only), so a
     # floor above 0.3.44 bricks every Mac install (AP-23; caught by the CI
     # fresh-install smoke's macOS leg 2026-07-07). 0.3.44 is the newest release
     # with wheels for ALL supported OSes (macosx_10_6_universal2 + linux + win).
-    "vosk>=0.3.44,<0.3.45",
+    "vosk>=0.3.44,<0.3.45; sys_platform != 'win32' or platform_machine != 'ARM64'",
     # The default VAD runs the bundled Silero ONNX model through base CPU
     # onnxruntime. WebRTC VAD and the local Whisper path (faster-whisper) stay
     # in the [local-voice] extra per the cloud-first doctrine (CLAUDE.md). All
     # optional engines are lazy-imported, so the base `import jarvis` stays
     # clean without them.
     # Local STT removed 2026-05-18 — Groq Whisper API is the new default.
-    "google-cloud-texttospeech>=2.21",
+    # google-cloud-texttospeech was removed: no runtime module imports it, and
+    # its unused gRPC stack prevented compiler-free Windows ARM64 installs.
     "elevenlabs>=1.5",  # cloud TTS (pure-Python HTTP SDK) — safe in base
     # chromadb removed 2026-06-28: it had ZERO importers in jarvis/ (vestige of the
     # soft-disabled legacy curator), pulled a large transitive tree, and carried a
@@ -78,7 +106,10 @@ dependencies = [
     "opentelemetry-sdk>=1.28",
     "prometheus-client>=0.21",
     "httpx>=0.27",
-    "ddgs>=9.0",  # real DuckDuckGo SERP for the search_web tool (key-free)
+    # 9.14.4 newly requires Brotli, which has no Windows ARM64 wheel. 9.14.3
+    # retains the same key-free multi-engine search surface without that native
+    # dependency; bump only when the full target matrix proves the replacement.
+    "ddgs==9.14.3",
     "aiofiles>=24.1",
     "aiolimiter>=1.1",
     "tenacity>=9.0",
@@ -95,12 +126,14 @@ dependencies = [
     "click>=8.1",
     # Desktop-App (Phase 1a) — cross-platform pieces stay in base.
     "fastapi>=0.115",
-    "uvicorn[standard]>=0.32",
+    # Plain uvicorn uses its portable asyncio/h11 implementation. The standard
+    # speed extra is optional and pulled source-only httptools on Windows ARM64.
+    "uvicorn>=0.32",
     "websockets>=13",
     "filelock>=3.16",
     "packaging>=24.0",
-    # Skill-System + MCP (Phase 1c)
-    "python-frontmatter>=1.1",
+    # Skill-System + MCP (Phase 1c). The loaders already parse frontmatter via
+    # PyYAML, so the redundant python-frontmatter wrapper is not required.
     # Server-side markdown→HTML for the Outputs "view in browser" action
     # (pure-Python; the /view route degrades to <pre> if it is ever absent).
     "markdown>=3.5",
@@ -108,7 +141,9 @@ dependencies = [
     "jinja2>=3.1",
     "croniter>=6.0",
     "gitpython>=3.1",
-    "watchdog>=5.0",
+    # Missing native observers degrade to the registries' existing no-op/polling
+    # behavior instead of turning installation into a compiler exercise.
+    "watchdog>=5.0; (sys_platform != 'darwin' or python_version < '3.14') and (sys_platform != 'win32' or platform_machine != 'ARM64')",
     # Atomic TOML edits from the desktop app (Phase 1b: provider persistence)
     "tomlkit>=0.12",
     # === F-FRIENDS [F0+F1] · feature/friends-section · ruben-2026-04-30 ===
@@ -150,14 +185,12 @@ full = [
 ]
 # Twilio telephony voice agent (call Jarvis on a phone number). Optional extra
 # per the cloud-first doctrine: the base install must boot without it, and the
-# telephony routes degrade gracefully when it is absent (AD-T8). `audioop` is
-# stdlib on Python <=3.12 and removed on 3.13+, so the backport is pulled in
-# only on 3.13+ for the mu-law transcode path.
+# telephony routes degrade gracefully when it is absent (AD-T8). BASE carries
+# audioop-lts on Python 3.13+ because browser voice shares the resampler.
 telephony = [
     # Stream/Connect TwiML, RequestValidator and the REST client used here are
     # stable since 8.x; verified green against the installed 8.11.0.
     "twilio>=8.0",
-    "audioop-lts; python_version>='3.13'",
 ]
 # Chat-channel bot libraries. Cloud-first doctrine (CLAUDE.md, RULE #1): the
 # base install must boot on a headless Linux VPS without these, so discord.py is
@@ -188,11 +221,11 @@ desktop = [
     "comtypes>=1.2; sys_platform == 'win32'",
     "pystray>=0.19",
     "pywebview>=5.3",
-    # Cross-platform ports (Wave 1, AD-14): pynput = global hotkey on macOS/Linux
-    # (all-platform). ptyprocess = Unix pseudo-terminal for the built-in terminal
-    # (POSIX only — Windows keeps pywinpty above). pyobjc-* lives in the separate
-    # [desktop-macos] extra (Wave 2); pyatspi is distro-packaged, never a pip dep.
-    "pynput>=1.7",
+    # macOS uses pynput for global hotkeys. Linux keeps pyautogui/no-op fallbacks:
+    # pynput would otherwise compile evdev against host kernel headers, breaking
+    # the advertised [full] install on a stock headless image. ptyprocess is the
+    # POSIX terminal backend; Windows keeps pywinpty above.
+    "pynput>=1.7; sys_platform == 'darwin'",
     "ptyprocess>=0.7; sys_platform != 'win32'",
     # Screen capture (mss) + desktop input automation (pyautogui) — all-platform
     # desktop deps that need a display (useless on a headless VPS). Both are
@@ -254,8 +287,15 @@ desktop-macos = [
 # recovery path for base installs). pvporcupine was removed 2026-07-07: never
 # imported anywhere, proprietary-keyed, ships branded built-in keywords.
 local-voice = [
-    "webrtcvad-wheels>=2.0",
-    "faster-whisper>=1.0",
+    # Neither WebRTC VAD nor CTranslate2 publishes a Windows ARM64 wheel, and
+    # WebRTC VAD has no CPython 3.14 wheel. Faster Whisper also pulls ONNX
+    # Runtime, whose supported-macOS CPython 3.14 wheel does not exist. The
+    # energy VAD plus cloud/browser speech remain available on those cells.
+    "webrtcvad-wheels>=2.0; python_version < '3.14' and (sys_platform != 'win32' or platform_machine != 'ARM64')",
+    "faster-whisper>=1.0; (sys_platform != 'win32' or platform_machine != 'ARM64') and (sys_platform != 'darwin' or python_version < '3.14')",
+    # PyAV 16+ raised its Apple-Silicon deployment floor to macOS 14. Version
+    # 15.1 retains wheels for the supported macOS 13 floor and Python 3.11-3.13.
+    "av==15.1.0; sys_platform == 'darwin' and platform_machine == 'arm64' and python_version < '3.14'",
 ]
 # Objective TTS evaluation suite (jarvis/speech/tts_eval): round-trip ASR WER via
 # faster-whisper (CPU). onnxruntime + numpy are already in base; the DNSMOS MOS
@@ -263,7 +303,8 @@ local-voice = [
 # tooling — never on the voice hot path, never in the base install (faster-whisper
 # pulls ctranslate2, which the lockfile guard bans from base).
 tts-eval = [
-    "faster-whisper>=1.0",
+    "faster-whisper>=1.0; (sys_platform != 'win32' or platform_machine != 'ARM64') and (sys_platform != 'darwin' or python_version < '3.14')",
+    "av==15.1.0; sys_platform == 'darwin' and platform_machine == 'arm64' and python_version < '3.14'",
 ]
 
 [project.scripts]

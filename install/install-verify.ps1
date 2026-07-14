@@ -261,14 +261,24 @@ try {
     # --------------------------------------------------------------- platform
     Write-Host ''
     Write-Host '[1/13] Detecting platform...' -ForegroundColor Yellow
-    # Windows-only verifier; we still log architecture for diagnostics and to
-    # make a future arm64 bump explicit.
-    $arch = $env:PROCESSOR_ARCHITECTURE
-    if ($arch -ne 'AMD64') {
-        Write-Host "  unsupported platform: Windows/$arch (this verifier targets Windows/AMD64)" -ForegroundColor Red
+    # --- verifier-architecture begin
+    # Windows 11 on Arm runs unmodified x64 user-mode applications through its
+    # built-in emulation. ARM64 therefore uses the exact same SHA-pinned x64
+    # verifier binaries as AMD64; no alternate download or trust pin is
+    # accepted. Every other architecture remains fail-closed.
+    $arch = ([string]$env:PROCESSOR_ARCHITECTURE).Trim().ToUpperInvariant()
+    $supportedArchitectures = @('AMD64', 'ARM64')
+    if ($arch -notin $supportedArchitectures) {
+        $reportedArch = if ($arch) { $arch } else { '<unknown>' }
+        Write-Host "  unsupported platform: Windows/$reportedArch (expected AMD64 or ARM64)" -ForegroundColor Red
         exit 1
     }
-    Write-Host "      Platform: Windows/$arch -> cosign-windows-amd64.exe + slsa-verifier-windows-amd64.exe" -ForegroundColor Green
+    if ($arch -eq 'ARM64') {
+        Write-Host '      Platform: Windows/ARM64 -> SHA-pinned cosign-windows-amd64.exe + slsa-verifier-windows-amd64.exe via built-in Windows 11 x64 emulation' -ForegroundColor Green
+    } else {
+        Write-Host '      Platform: Windows/AMD64 -> SHA-pinned cosign-windows-amd64.exe + slsa-verifier-windows-amd64.exe' -ForegroundColor Green
+    }
+    # --- verifier-architecture end
 
     # --------------------------------------------------------------- cosign
     Write-Host ''

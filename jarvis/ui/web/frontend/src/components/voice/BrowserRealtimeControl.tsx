@@ -4,7 +4,12 @@ import { Loader2, Mic, MicOff, RotateCcw } from "lucide-react";
 import { useCapabilities } from "@/hooks/useCapabilities";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { useT } from "@/i18n";
-import { RealtimeAudioClient } from "@/lib/realtimeAudio";
+import {
+  browserRealtimeSupportIssue,
+  RealtimeAudioClient,
+  RealtimeAudioSupportError,
+  type BrowserRealtimeSupportIssue,
+} from "@/lib/realtimeAudio";
 import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 
@@ -30,6 +35,19 @@ export function BrowserRealtimeControl() {
   const clientRef = useRef<RealtimeAudioClient | null>(null);
   const browserSurface = capabilities.data?.native_file_actions === false;
   const visible = browserSurface && mode === "realtime";
+  const supportIssue = visible ? browserRealtimeSupportIssue() : null;
+
+  const supportMessage = useCallback(
+    (issue: BrowserRealtimeSupportIssue) =>
+      t(
+        issue === "secure_context"
+          ? "sidebar.realtime_https_required"
+          : issue === "microphone_unavailable"
+            ? "sidebar.realtime_microphone_unavailable"
+            : "sidebar.realtime_audio_worklet_unavailable",
+      ),
+    [t],
+  );
 
   const stop = useCallback(async () => {
     const client = clientRef.current;
@@ -71,6 +89,8 @@ export function BrowserRealtimeControl() {
           // The session ended the call by voice ("auflegen" / end_call) —
           // release the microphone and return to idle.
           void stop();
+        } else if (status === "thinking") {
+          setVoice("thinking");
         } else if (status === "turn_complete" || status === "tts_end") {
           setVoice("listening");
         } else if (status === "tts_cancel") {
@@ -89,13 +109,19 @@ export function BrowserRealtimeControl() {
     try {
       await client.connect();
       setState("connected");
-    } catch {
+    } catch (cause) {
       if (clientRef.current === client) clientRef.current = null;
       setState("error");
-      setError(t("sidebar.realtime_error"));
+      setError(
+        cause instanceof RealtimeAudioSupportError
+          ? supportMessage(cause.issue)
+          : cause instanceof DOMException && cause.name === "NotAllowedError"
+            ? t("sidebar.realtime_microphone_denied")
+            : t("sidebar.realtime_error"),
+      );
       setVoice("error");
     }
-  }, [realtimeAvailable, setTranscription, setVoice, state, stop, t]);
+  }, [realtimeAvailable, setTranscription, setVoice, state, stop, supportMessage, t]);
 
   useEffect(() => {
     if (visible) return;
@@ -117,14 +143,16 @@ export function BrowserRealtimeControl() {
 
   const connected = state === "connected";
   const connecting = state === "connecting";
-  const unavailable = !realtimeAvailable;
-  const label = unavailable
-    ? t("sidebar.realtime_unavailable")
-    : connected
-      ? t("sidebar.realtime_stop")
-      : state === "error"
-        ? t("sidebar.realtime_retry")
-        : t("sidebar.realtime_start");
+  const unavailable = !realtimeAvailable || supportIssue !== null;
+  const label = supportIssue
+    ? t("sidebar.realtime_browser_unavailable")
+    : unavailable
+      ? t("sidebar.realtime_unavailable")
+      : connected
+        ? t("sidebar.realtime_stop")
+        : state === "error"
+          ? t("sidebar.realtime_retry")
+          : t("sidebar.realtime_start");
   const Icon = connecting ? Loader2 : connected ? MicOff : state === "error" ? RotateCcw : Mic;
 
   return (
@@ -166,6 +194,7 @@ export function BrowserRealtimeControl() {
       )}
       <div className="mt-1.5 min-h-4 text-[10px] text-muted-foreground" aria-live="polite">
         {error ||
+          (supportIssue ? supportMessage(supportIssue) : "") ||
           (connected
             ? `${t("sidebar.realtime_connected")} ${effectiveProvider}`.trim()
             : t("sidebar.realtime_browser_hint"))}

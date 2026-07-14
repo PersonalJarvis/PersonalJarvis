@@ -84,10 +84,14 @@ AUTH_PROVIDER_ALIASES: dict[str, str] = {
     "openai-tts": "openai",
     "openai-api": "openai",
     "openrouter": "openrouter",
+    "groq": "groq",
+    "groq-api": "groq",
     "gemini": "gemini",
     "gemini-flash-tts": "gemini",
+    "gemini-live": "gemini",
     "grok": "grok",
     "grok-voice": "grok",
+    "openai-realtime": "openai",
 }
 
 # Local providers that need no credential at all. Empty since v1.0.1: the only

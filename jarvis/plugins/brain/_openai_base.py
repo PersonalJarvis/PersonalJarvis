@@ -60,6 +60,8 @@ def _to_openai_messages(
     system_extra: str | None,
     *,
     supports_vision: bool = True,
+    tool_name_map: dict[str, str] | None = None,
+    assistant_tool_call_extra_content: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     """BrainMessages → OpenAI Chat-Completions array.
 
@@ -87,7 +89,11 @@ def _to_openai_messages(
         if m.role == "tool":
             out.append({
                 "role": "tool",
-                "content": m.content if isinstance(m.content, str) else json.dumps(m.content, default=str),
+                "content": (
+                    m.content
+                    if isinstance(m.content, str)
+                    else json.dumps(m.content, default=str)
+                ),
                 "tool_call_id": m.tool_call_id or "",
             })
             continue
@@ -102,14 +108,24 @@ def _to_openai_messages(
                 if block.get("type") == "text":
                     text_parts.append(block.get("text", ""))
                 elif block.get("type") == "tool_use":
+                    original_name = block.get("name", "")
                     tool_calls.append({
                         "id": block.get("id", ""),
                         "type": "function",
                         "function": {
-                            "name": block.get("name", ""),
+                            "name": (tool_name_map or {}).get(
+                                original_name,
+                                original_name,
+                            ),
                             "arguments": json.dumps(block.get("input", {}), ensure_ascii=False),
                         },
                     })
+            if tool_calls and assistant_tool_call_extra_content:
+                # Gemini 3 validates a thought signature on the first call in
+                # each reconstructed assistant tool step. Other compatible
+                # providers leave this unset. The caller owns the provider-
+                # specific payload; this shared adapter only preserves it.
+                tool_calls[0]["extra_content"] = assistant_tool_call_extra_content
             entry: dict[str, Any] = {"role": "assistant", "content": "\n".join(text_parts) or None}
             if tool_calls:
                 entry["tool_calls"] = tool_calls
@@ -233,13 +249,24 @@ async def stream_complete(
     *,
     extra_body: dict[str, Any] | None = None,
     supports_vision: bool = True,
+    assistant_tool_call_extra_content: dict[str, Any] | None = None,
 ) -> AsyncIterator[BrainDelta]:
     """Streaming run against OpenAI-compatible Chat-Completions.
 
     `supports_vision` is passed through to the message builder — when `False`,
     `BrainMessage.images` are dropped and a WARN is logged.
     """
-    messages = _to_openai_messages(req.messages, req.system, supports_vision=supports_vision)
+    # The same map must sanitize both declarations and reconstructed assistant
+    # tool history. Otherwise an MCP name such as ``github/search`` succeeds in
+    # the first round, then makes the provider reject the second-round history.
+    name_map = _openai_tool_name_map(req.tools) if req.tools else {}
+    messages = _to_openai_messages(
+        req.messages,
+        req.system,
+        supports_vision=supports_vision,
+        tool_name_map=name_map,
+        assistant_tool_call_extra_content=assistant_tool_call_extra_content,
+    )
     kwargs: dict[str, Any] = {
         "model": model,
         "messages": messages,
@@ -256,7 +283,6 @@ async def stream_complete(
     # Sanitize tool names to the OpenAI/Anthropic rule and keep a reverse map so
     # the model's tool_call resolves back to the ORIGINAL tool name (e.g. the
     # ``server/tool`` MCP name) that the executor knows.
-    name_map = _openai_tool_name_map(req.tools) if req.tools else {}
     reverse_name_map = {safe: original for original, safe in name_map.items()}
     if req.tools:
         kwargs["tools"] = _tools_openai_format(req.tools, name_map)

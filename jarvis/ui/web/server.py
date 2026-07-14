@@ -222,6 +222,7 @@ class WebServer:
         from jarvis.runs.routes import router as runs_router
         from jarvis.runs.runs_ws import router as runs_ws_router
 
+        from .antigravity_routes import router as antigravity_router
         from .board_routes import (
             board_router as board_meta_router,
         )
@@ -229,15 +230,18 @@ class WebServer:
             router as board_router,
         )
         from .chats_routes import router as chats_router
+        from .claude_routes import router as claude_router
         from .cli_routes import router as cli_router
         from .commands_routes import router as commands_router
-        from .drop_routes import router as drop_router
         from .contacts_routes import router as contacts_router
         from .control_routes import router as control_router
         from .diagnostics_routes import router as diagnostics_router
         from .dictionary_routes import router as dictionary_router
         from .docs_routes import router as docs_router
+        from .downloads_routes import router as downloads_router
+        from .drop_routes import router as drop_router
         from .federation_proxy_routes import router as federation_proxy_router
+        from .feedback_routes import router as feedback_router
         from .friends_routes import router as friends_router
         from .frontier_routes import router as frontier_router
         from .marketplace_routes import router as marketplace_router
@@ -251,11 +255,9 @@ class WebServer:
         from .missions_ws_routes import (
             router as missions_ws_router,
         )
-        from .downloads_routes import router as downloads_router
+        from .onboarding_routes import router as onboarding_router
         from .outputs_routes import router as outputs_router
         from .preview_routes import router as preview_router
-        from .antigravity_routes import router as antigravity_router
-        from .claude_routes import router as claude_router
         from .profile_routes import router as profile_router
         from .provider_routes import router as provider_router
         from .review_routes import router as review_router
@@ -263,13 +265,12 @@ class WebServer:
         from .sessions_routes import router as sessions_router
         from .settings_routes import router as settings_router
         from .setup_routes import router as setup_router
-        from .onboarding_routes import router as onboarding_router
         from .skills_routes import router as skills_router
-        from .feedback_routes import router as feedback_router
         from .socials_routes import router as socials_router
         from .sub_agents_routes import router as sub_agents_router
         from .tasks_routes import router as tasks_router
         from .telephony_routes import router as telephony_router
+        from .tool_model_routes import router as tool_model_router
         from .tools_routes import router as tools_router
         from .update_routes import router as update_router
         from .wiki_routes import router as wiki_router
@@ -286,6 +287,7 @@ class WebServer:
             conductor_router = None
         app.include_router(mcp_router)
         app.include_router(tools_router)
+        app.include_router(tool_model_router)
         # Event-loop diagnostics (read-only) — names the owner of an AP-20
         # cancellation busy-loop from inside the loop; see diagnostics_routes.
         app.include_router(diagnostics_router)

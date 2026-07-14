@@ -59,6 +59,9 @@ _SUB_JARVIS_MODEL_ENV = _WORKER_MODEL_ENV        # back-compat alias (pre-rename
 # at boot — the dedicated GLOBAL Computer-Use planner provider, decoupled
 # from ``[brain] primary``. Same shape as ``_WORKER_PROVIDER_ENV``.
 _CU_PROVIDER_ENV = "JARVIS__BRAIN__COMPUTER_USE__PROVIDER"
+# Canonical Tool Model selection. The legacy Computer-Use variable above is
+# still read for old installations, but new Tool Model saves use this key.
+_TOOL_MODEL_PROVIDER_ENV = "JARVIS__BRAIN__TOOL_MODEL__PROVIDER"
 
 # Canonical User-scope ENV vars that override ``[tts] provider`` / ``[stt]
 # provider`` at boot. Both section + key are single words, so
@@ -167,6 +170,82 @@ def set_computer_use_provider(name: str, *, path: Path = DEFAULT_CONFIG_FILE) ->
     _patch_computer_use_provider_toml(path, name)
     # Layers 2 + 3 — best-effort, never raise.
     _sync_computer_use_provider_drift_soll(name)  # i18n-allow
+
+
+def set_tool_model_selection(
+    provider: str,
+    *,
+    model: str | None = None,
+    path: Path = DEFAULT_CONFIG_FILE,
+) -> None:
+    """Persist the canonical global Tool Model selection atomically.
+
+    ``provider="auto"`` enables capability-aware automatic selection. ``model``
+    is a per-provider override; ``None`` leaves the existing override unchanged,
+    while ``""`` explicitly returns to the provider's main model. Legacy
+    ``[brain.computer_use]`` and ``cu_model`` keys are deliberately left intact
+    so old installations remain readable without making them authoritative.
+    """
+    provider = provider.strip()
+    if not provider:
+        raise ValueError("Tool Model provider must not be empty.")
+    if provider == "auto" and model not in (None, ""):
+        raise ValueError("An automatic Tool Model selection cannot pin a model.")
+
+    path = _ensure_writable_config_path(path)
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM) :]
+        doc: TOMLDocument = tomlkit.parse(raw)
+
+        brain = doc.get("brain")
+        if brain is None:
+            brain = tomlkit.table()
+            doc["brain"] = brain
+        tier = brain.get("tool_model")
+        if tier is None:
+            tier = tomlkit.table()
+            brain["tool_model"] = tier
+        tier["provider"] = provider
+
+        if model is not None and provider != "auto":
+            providers = brain.get("providers")
+            if providers is None:
+                providers = tomlkit.table(True)
+                brain["providers"] = providers
+            block = providers.get(provider)
+            if block is None:
+                block = tomlkit.table()
+                providers[provider] = block
+            block["tool_model"] = model
+
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
+
+    # The TOML write is authoritative. The drift-guard and User environment
+    # mirrors are best-effort so headless hosts never lose the successful save.
+    try:
+        _update_config_soll_section("brain.tool_model", {"provider": provider})  # i18n-allow
+        if model is not None and provider != "auto":
+            _update_config_soll_section(  # i18n-allow
+                f"brain.providers.{provider}", {"tool_model": model}
+            )
+    except Exception as exc:  # noqa: BLE001
+        log.warning(  # i18n-allow
+            "Could not sync Tool Model selection to config-soll.json: %s", exc  # i18n-allow: filename false positive
+        )
+    try:
+        _set_user_env_var(_TOOL_MODEL_PROVIDER_ENV, provider)
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "Could not sync %s to the User environment: %s",
+            _TOOL_MODEL_PROVIDER_ENV,
+            exc,
+        )
 
 
 def set_worker_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
@@ -1138,20 +1217,20 @@ def set_brain_provider_model(
     *,
     model: str | None = None,
     deep_model: str | None = None,
+    tool_model: str | None = None,
     cu_model: str | None = None,
     voice: str | None = None,
     path: Path = DEFAULT_CONFIG_FILE,
 ) -> None:
-    """Patch ``[brain.providers.<provider>]`` ``model`` / ``deep_model`` /
-    ``voice`` in the TOML file.
+    """Patch model selections under ``[brain.providers.<provider>]``.
 
     Used by the per-provider model picker (``PUT /api/providers/{id}/model``),
     the frontier auto-switch (Phase F.3), and the Realtime model+voice picker
     (``PUT /api/providers/{id}/realtime-options``) so a change is persisted in
     jarvis.toml — otherwise it is lost on the next ``cfg.load_config()``.
 
-    Three-layer persist (like ``set_brain_primary`` / ``set_sub_jarvis_provider``):
-    ``brain.providers.<p>.model`` / ``deep_model`` / ``voice`` are pinned in
+    Three-layer persist (like ``set_brain_primary`` / ``set_worker_provider``):
+    ``model`` / ``deep_model`` / ``tool_model`` / ``voice`` are pinned in
     ``config-soll.json``, so a TOML-only write would be reverted by the  # i18n-allow
     drift-guard within 5 minutes (BUG-010 class) — exactly the "I picked a model
     and it flipped back" symptom. We therefore sync config-soll.json too. No ENV  # i18n-allow
@@ -1166,7 +1245,13 @@ def set_brain_provider_model(
     nothing.
     """
     path = _ensure_writable_config_path(path)
-    if model is None and deep_model is None and cu_model is None and voice is None:
+    if (
+        model is None
+        and deep_model is None
+        and tool_model is None
+        and cu_model is None
+        and voice is None
+    ):
         return
 
     with _WRITE_LOCK:
@@ -1194,6 +1279,8 @@ def set_brain_provider_model(
             block["model"] = model
         if deep_model is not None:
             block["deep_model"] = deep_model
+        if tool_model is not None:
+            block["tool_model"] = tool_model
         if cu_model is not None:
             # "" is a meaningful value (UI "use my main model") distinct from
             # None ("leave unchanged"), so write whatever non-None was given.
@@ -1212,7 +1299,12 @@ def set_brain_provider_model(
     # TOML write). Only the keys actually written are synced so the guard sees
     # zero drift across the block.
     _sync_brain_provider_model_drift_soll(  # i18n-allow
-        provider, model=model, deep_model=deep_model, cu_model=cu_model, voice=voice
+        provider,
+        model=model,
+        deep_model=deep_model,
+        tool_model=tool_model,
+        cu_model=cu_model,
+        voice=voice,
     )
 
 
@@ -1727,6 +1819,7 @@ def _sync_brain_provider_model_drift_soll(  # i18n-allow
     *,
     model: str | None,
     deep_model: str | None,
+    tool_model: str | None = None,
     cu_model: str | None = None,
     voice: str | None = None,
 ) -> None:
@@ -1744,6 +1837,8 @@ def _sync_brain_provider_model_drift_soll(  # i18n-allow
         values["model"] = model
     if deep_model is not None:
         values["deep_model"] = deep_model
+    if tool_model is not None:
+        values["tool_model"] = tool_model
     if cu_model is not None:
         values["cu_model"] = cu_model
     if voice is not None:

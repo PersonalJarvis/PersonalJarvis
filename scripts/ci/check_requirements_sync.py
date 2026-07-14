@@ -14,13 +14,14 @@ unresolvable on a plain-PyPI machine (``nvidia-cufile==1.15.1.6`` does not exist
 on PyPI). "Works on my machine" is the defect (AP-23).
 
 ``requirements.in`` is the base runtime set ONLY. Every line in it must appear,
-byte-for-byte on name + extras + version specifier, in
+byte-for-byte on name + extras + version specifier + environment marker, in
 ``pyproject.toml [project].dependencies`` and vice-versa. Extras
 (``[project.optional-dependencies]``) are intentionally NOT mirrored here — they
 are installed separately and never enter the base lockfile.
 
 Exit 0 when in lockstep; exit 1 with a diff otherwise.
 """
+
 from __future__ import annotations
 
 import sys
@@ -40,24 +41,25 @@ PYPROJECT = REPO_ROOT / "pyproject.toml"
 REQUIREMENTS_IN = REPO_ROOT / "requirements.in"
 
 
-def _canonical(spec: str) -> tuple[str, frozenset[str], str]:
-    """Normalize a requirement to (name, extras, specifier) for comparison."""
+def _canonical(spec: str) -> tuple[str, frozenset[str], str, str]:
+    """Normalize a requirement to (name, extras, specifier, marker)."""
     req = Requirement(spec)
     name = req.name.lower().replace("_", "-")
     extras = frozenset(e.lower() for e in req.extras)
     # Sort specifier components so ">=1,<2" and "<2,>=1" compare equal.
     specifier = ",".join(sorted(str(s) for s in req.specifier))
-    return (name, extras, specifier)
+    marker = str(req.marker) if req.marker is not None else ""
+    return (name, extras, specifier, marker)
 
 
-def _parse_pyproject() -> dict[tuple[str, frozenset[str], str], str]:
+def _parse_pyproject() -> dict[tuple[str, frozenset[str], str, str], str]:
     data = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
     deps = data.get("project", {}).get("dependencies", [])
     return {_canonical(d): d for d in deps}
 
 
-def _parse_requirements_in() -> dict[tuple[str, frozenset[str], str], str]:
-    out: dict[tuple[str, frozenset[str], str], str] = {}
+def _parse_requirements_in() -> dict[tuple[str, frozenset[str], str, str], str]:
+    out: dict[tuple[str, frozenset[str], str, str], str] = {}
     for raw in REQUIREMENTS_IN.read_text(encoding="utf-8").splitlines():
         line = raw.split("#", 1)[0].strip()
         if not line:
@@ -78,10 +80,12 @@ def main() -> int:
         return 0
 
     print("FAIL: requirements.in has drifted from pyproject.toml [project].dependencies.")
-    print("      They must mirror each other exactly (name + extras + version).")
+    print("      They must mirror each other exactly (name + extras + version + marker).")
     print("      After fixing, regenerate the platform-universal lockfile:")
-    print("        uv pip compile --universal --generate-hashes "
-          "--python-version 3.11 --output-file=requirements.txt requirements.in")
+    print(
+        "        uv pip compile --universal --generate-hashes "
+        "--python-version 3.11 --output-file=requirements.txt requirements.in"
+    )
     print()
     if only_in_pyproject:
         print("  In pyproject.toml but MISSING from requirements.in:")
@@ -89,8 +93,7 @@ def main() -> int:
             print(f"    + {pyproject[key]}")
     if only_in_reqin:
         print("  In requirements.in but NOT a pyproject base dependency")
-        print("  (is it an extras-only package that belongs in "
-              "[project.optional-dependencies]?):")
+        print("  (is it an extras-only package that belongs in [project.optional-dependencies]?):")
         for key in only_in_reqin:
             print(f"    - {req_in[key]}")
     return 1

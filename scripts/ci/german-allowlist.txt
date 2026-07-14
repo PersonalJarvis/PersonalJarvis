@@ -262,7 +262,6 @@ jarvis/speech/pipeline.py
 jarvis/speech/completion.py
 jarvis/speech/continuation_buffer.py
 jarvis/brain/provider_test.py
-jarvis/ui/web/provider_routes.py
 tests/unit/speech/test_continuation_drain.py
 tests/unit/speech/test_completion_detection.py
 tests/unit/speech/test_spawn_watchdog.py

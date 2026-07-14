@@ -83,6 +83,14 @@ def test_usage_capped_codex_is_not_listed(monkeypatch: pytest.MonkeyPatch) -> No
     assert fams == ["openrouter"]
 
 
+def test_groq_only_key_is_a_reachable_worker_family(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A downloader whose only credential is Groq can run Jarvis-Agents."""
+    _patch_env(monkeypatch, keys=("groq",))
+    assert mi.reachable_worker_families() == ["groq"]
+
+
 def test_stale_oauth_bearer_claude_api_is_not_listed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

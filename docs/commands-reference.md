@@ -16,7 +16,7 @@ Commands marked **requires confirmation** never run on a bare voice request — 
 Switch the ACTIVE main brain (LLM) provider, e.g. from openai to claude-api. Reversible; validated against the provider catalog and stored credentials.
 
 - **Endpoint:** `POST /api/brain/switch`
-- **Arguments:** `provider` (one of: claude-api, gemini, nvidia, openai, openrouter; required); `persist` (boolean; optional)
+- **Arguments:** `provider` (one of: claude-api, gemini, groq, nvidia, openai, openrouter; required); `persist` (boolean; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "switch the brain provider to claude"
@@ -56,7 +56,7 @@ Switch which realtime voice engine (speech-to-speech) is active, e.g. openai-rea
 Switch the dedicated Computer-Use planner provider (screen control), decoupled from the main brain.
 
 - **Endpoint:** `POST /api/computer-use/switch`
-- **Arguments:** `provider` (one of: antigravity, claude-api, codex, gemini, nvidia, openai, openrouter; required); `persist` (boolean; optional)
+- **Arguments:** `provider` (one of: antigravity, claude-api, codex, gemini, groq, nvidia, openai, openrouter; required); `persist` (boolean; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "switch the computer use provider to gemini"
@@ -66,7 +66,7 @@ Switch the dedicated Computer-Use planner provider (screen control), decoupled f
 Switch the Jarvis-Agent / worker provider used for missions (e.g. codex to openai). Restart required.
 
 - **Endpoint:** `POST /api/jarvis-agent/switch`
-- **Arguments:** `provider` (one of: antigravity, claude-api, codex, gemini, nvidia, openai, openrouter; required); `persist` (boolean; optional)
+- **Arguments:** `provider` (one of: antigravity, claude-api, codex, gemini, groq, nvidia, openai, openrouter; required); `persist` (boolean; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `agents`
 - **Voice example (EN):** "switch the agent provider to openai"
@@ -86,7 +86,7 @@ List all configured providers and which ones are active.
 Test connectivity and authentication for one provider.
 
 - **Endpoint:** `POST /api/providers/{provider_id}/test`
-- **Arguments:** `provider_id` (one of: antigravity, cartesia, claude-api, codex, elevenlabs, gemini, gemini-flash-tts, gemini-live, grok-voice, groq-api, inworld, nvidia, openai, openai-api, openai-realtime, openrouter, openrouter-stt, openrouter-tts; required)
+- **Arguments:** `provider_id` (one of: antigravity, cartesia, claude-api, codex, elevenlabs, gemini, gemini-flash-tts, gemini-live, grok-voice, groq, groq-api, inworld, nvidia, openai, openai-api, openai-realtime, openrouter, openrouter-stt, openrouter-tts; required)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "test the openai provider"
@@ -200,6 +200,16 @@ List Jarvis-Agent missions and their status.
 - **Requires confirmation:** no
 - **Desktop UI section:** `agents`
 - **Voice example (EN):** "show me the missions"
+
+## `mission-result` — Read a mission result
+
+Read the signed summary and actual deliverable contents of one completed Jarvis-Agent mission. Use this after listing missions when the user asks what a mission found or produced.
+
+- **Endpoint:** `GET /api/missions/{mission_id}/result`
+- **Arguments:** `mission_id` (string; required)
+- **Requires confirmation:** no
+- **Desktop UI section:** `agents`
+- **Voice example (EN):** "what did the mission find"
 
 ## `mission-cancel` — Cancel a mission
 

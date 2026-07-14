@@ -53,16 +53,17 @@ def _reset_family_cooldowns() -> None:
     """The per-family cooldown is a process global — reset around every test."""
     from jarvis.api_family_quota_state import clear_api_family_cooldown
 
-    for prov in ("openai", "openrouter", "gemini", "claude-api"):
+    for prov in ("openai", "openrouter", "gemini", "claude-api", "groq"):
         clear_api_family_cooldown(prov)
     yield
-    for prov in ("openai", "openrouter", "gemini", "claude-api"):
+    for prov in ("openai", "openrouter", "gemini", "claude-api", "groq"):
         clear_api_family_cooldown(prov)
 
 
 def test_supports_api_agent_worker() -> None:
     assert supports_api_agent_worker("openai")
     assert supports_api_agent_worker("openrouter")
+    assert supports_api_agent_worker("groq")
     # grok was removed as a brain/worker provider — no longer an api-agent slug.
     assert not supports_api_agent_worker("grok")
     # claude-api and gemini are now in-process api-agent workers (B3/B4, 2026-06-29)

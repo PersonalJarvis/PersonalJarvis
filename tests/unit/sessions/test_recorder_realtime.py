@@ -188,3 +188,87 @@ async def test_realtime_completion_survives_desktop_listening_transition(tmp_pat
         assert turns[0].ended_ms is not None
     finally:
         store.close()
+
+
+@pytest.mark.asyncio
+async def test_realtime_bridge_accumulates_thinking_and_speaking_segments(
+    tmp_path,
+) -> None:
+    store = SessionStore(tmp_path / "sessions.db")
+    store.open()
+    try:
+        bus = EventBus()
+        SessionRecorder(store).attach(bus)
+        await bus.publish(
+            VoiceSessionStarted(
+                timestamp_ns=1_000_000_000,
+                source_layer="speech.pipeline",
+                session_id="segmented-realtime",
+                wake_keyword="hotkey",
+                language="en",
+            )
+        )
+        await bus.publish(
+            VoiceTurnStarted(
+                timestamp_ns=1_050_000_000,
+                source_layer="realtime.fake-live",
+                session_id="segmented-realtime",
+                turn_id="segmented-turn",
+                turn_index=1,
+            )
+        )
+        await bus.publish(
+            TranscriptionUpdate(
+                timestamp_ns=1_100_000_000,
+                source_layer="realtime.fake-live",
+                text="Check my calendar",
+                is_final=True,
+            )
+        )
+        for timestamp_ns, previous, new_state in (
+            (1_110_000_000, "LISTENING", "THINKING"),
+            (3_100_000_000, "THINKING", "SPEAKING"),
+            (4_100_000_000, "SPEAKING", "THINKING"),
+            (9_100_000_000, "THINKING", "SPEAKING"),
+            (11_100_000_000, "SPEAKING", "LISTENING"),
+        ):
+            await bus.publish(
+                SystemStateChanged(
+                    timestamp_ns=timestamp_ns,
+                    source_layer="supervisor",
+                    previous=previous,
+                    new_state=new_state,
+                )
+            )
+        await bus.publish(
+            VoiceTurnCompleted(
+                timestamp_ns=11_100_000_000,
+                source_layer="realtime.fake-live",
+                session_id="segmented-realtime",
+                turn_id="segmented-turn",
+                user_text="Check my calendar",
+                user_lang="en",
+                jarvis_text="You have one meeting.",
+                jarvis_lang="en",
+                tier="realtime",
+                provider="fake-live",
+                model="live-model",
+            )
+        )
+        await bus.publish(
+            VoiceSessionEnded(
+                timestamp_ns=11_200_000_000,
+                source_layer="speech.pipeline",
+                session_id="segmented-realtime",
+                hangup_reason="turn_complete",
+                turn_count=1,
+            )
+        )
+
+        turns = store.get_turns("segmented-realtime")
+        assert len(turns) == 1
+        assert turns[0].user_text == "Check my calendar"
+        assert turns[0].think_ms == 7_000
+        assert turns[0].speak_ms == 3_000
+    finally:
+        store.close()

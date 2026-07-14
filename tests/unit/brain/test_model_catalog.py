@@ -109,7 +109,14 @@ class TestProviderCatalog:
 
     def test_brain_catalog_providers_unchanged(self) -> None:
         # The brain-only CATALOG_PROVIDERS tuple: the live-fetchable API brains.
-        for p in ("claude-api", "openai", "gemini", "openrouter", "nvidia"):
+        for p in (
+            "claude-api",
+            "openai",
+            "gemini",
+            "openrouter",
+            "groq",
+            "nvidia",
+        ):
             assert p in CATALOG_PROVIDERS
         assert PROVIDER_CATALOG["claude-api"].tier == "brain"
 
@@ -612,6 +619,7 @@ class TestListModels:
             "openai",
             "gemini",
             "openrouter",
+            "groq",
             "nvidia",
         }
 

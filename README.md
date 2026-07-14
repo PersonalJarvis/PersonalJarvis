@@ -177,6 +177,11 @@ Mission-Manager experience lives in the browser, including voice through the bro
 microphone. On a headless deployment the same one-time setup guide runs in the browser; you
 can also set a provider key (e.g. `GEMINI_API_KEY`) in the environment or a `.env` file.
 
+Browser microphone access requires a secure context. `http://localhost:47821` works on the
+server itself; when opening a remote VPS from another device, terminate TLS with an HTTPS
+reverse proxy (for example Caddy or Nginx) and use its `https://` URL. A plain
+`http://server-ip:47821` connection remains usable for text, but browsers will block voice.
+
 <p align="center">
   <img src="assets/screenshots/app-home.png" alt="The Personal Jarvis desktop app" width="820" />
 </p>

@@ -163,10 +163,15 @@ _ACTION_FALLBACK_RE = re.compile(
     r"reserv\w*|usa\w*|habla\w*|prueba\w*)\b"  # i18n-allow: multilingual speech-input matching data
 )
 _FOLLOW_UP_REFERENCE_RE = re.compile(
-    r"\b(?:that|there|those|them|inside|what else|"
+    r"\b(?:that|there|those|them|inside|what else|findings?|results?|"
+    r"what (?:did|have) (?:you|it) (?:find|found)|found out|"
     r"da|darin|drin|dort|dazu|davon|darueber|was noch|"  # i18n-allow
-    r"eso|esto|ahi|alli|dentro|que mas)\b|"  # i18n-allow
-    r"\b(?:what\s+does\s+it|what(?:'s|\s+is)\s+in\s+it|in\s+it)\b"
+    r"rausgefunden|herausgefunden|ergebnis(?:se)?|recherche|"  # i18n-allow
+    r"eso|esto|ahi|alli|dentro|que mas|resultados?|hallazgos?)\b|"  # i18n-allow
+    r"\b(?:what\s+does\s+it|what(?:'s|\s+is)\s+in\s+it|in\s+it|"
+    r"what(?:'s|\s+is)\s+(?:it|this|that)\s+about|"
+    r"um\s+was\s+geht(?:\s+es|['’]?s)?|"
+    r"worum\s+geht(?:\s+es|['’]?s)?)\b"  # i18n-allow
 )
 _CONTEXT_MAX_CHARS = 2_000
 
@@ -246,6 +251,7 @@ def plan_turn(
     capability_registry: Any | None = None,
     tool_names: Iterable[str] = (),
     evidence_domains: Mapping[str, Sequence[str]] | None = None,
+    context: Sequence[str] = (),
 ) -> TurnPlan:
     """Return the conservative shared execution plan for ``text``.
 
@@ -308,6 +314,67 @@ def plan_turn(
         reasons.add(TurnReason.MISSION)
     if _SKILL_RE.search(normalized) and not definition:
         reasons.add(TurnReason.SKILL)
+
+    # Realtime follow-ups routinely omit the evidence domain and ASR may garble
+    # the possessive itself. Inherit only when the current lookup contains an
+    # explicit discourse reference; an unrelated standalone question must never
+    # be captured merely because an older turn mentioned a Wiki or connector.
+    context_text = " ".join(str(item or "") for item in context).strip()
+    if len(context_text) > _CONTEXT_MAX_CHARS:
+        context_text = context_text[-_CONTEXT_MAX_CHARS:]
+    context_normalized = _normalize(context_text)
+    contextual_follow_up = bool(
+        context_normalized
+        and lookup
+        and _FOLLOW_UP_REFERENCE_RE.search(normalized)
+        and not instructional
+    )
+    if contextual_follow_up:
+        inherited = False
+        if _LOCAL_STATE_RE.search(context_normalized):
+            reasons.add(TurnReason.LOCAL_STATE)
+            inherited = True
+        if _CONNECTED_DOMAIN_RE.search(context_normalized):
+            reasons.add(TurnReason.CONNECTED_DATA)
+            inherited = True
+        if _OWNERSHIP_RE.search(context_normalized):
+            reasons.add(TurnReason.PRIVATE_DATA)
+            inherited = True
+        if _CURRENT_RE.search(context_normalized):
+            reasons.add(TurnReason.CURRENT_DATA)
+            inherited = True
+        if _MISSION_RE.search(context_normalized):
+            reasons.add(TurnReason.MISSION)
+            inherited = True
+        if _SKILL_RE.search(context_normalized):
+            reasons.add(TurnReason.SKILL)
+            inherited = True
+
+        contextual_required = _matched_capabilities(
+            context_text,
+            capability_registry=capability_registry,
+            tool_names=tool_names,
+        )
+        if contextual_required:
+            required = tuple(sorted(set(required) | set(contextual_required)))
+            reasons.add(TurnReason.CAPABILITY)
+            reasons.add(TurnReason.CONNECTED_DATA)
+            inherited = True
+
+        if evidence_domains:
+            for keywords in evidence_domains.values():
+                if any(
+                    re.search(
+                        r"\b" + re.escape(_normalize(keyword)) + r"\b",
+                        context_normalized,
+                    )
+                    for keyword in keywords
+                ):
+                    reasons.add(TurnReason.CONNECTED_DATA)
+                    inherited = True
+                    break
+        if inherited:
+            reasons.add(TurnReason.UNCERTAIN)
 
     if evidence_domains and lookup and not definition:
         for keywords in evidence_domains.values():

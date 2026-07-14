@@ -491,7 +491,31 @@ class OpenAIRealtimeProvider:
         connection_cm = client.realtime.connect(
             model=str(getattr(cfg, "model", "") or _MODEL)
         )
-        connection = await connection_cm.__aenter__()
+        try:
+            connection = await connection_cm.__aenter__()
+        except BaseException as exc:
+            # ``__aenter__`` may allocate the WebSocket before failing or being
+            # cancelled. Python does not call ``__aexit__`` for a failed enter,
+            # so close both layers explicitly and preserve the original error.
+            try:
+                await connection_cm.__aexit__(type(exc), exc, exc.__traceback__)
+            except BaseException:  # noqa: BLE001 - cleanup must not mask root cause
+                log.debug(
+                    "OpenAI Realtime connection cleanup after failed enter failed",
+                    exc_info=True,
+                )
+            try:
+                close = getattr(client, "close", None)
+                if close is not None:
+                    result = close()
+                    if hasattr(result, "__await__"):
+                        await result
+            except BaseException:  # noqa: BLE001 - preserve failure/cancellation
+                log.debug(
+                    "OpenAI Realtime client cleanup after failed enter failed",
+                    exc_info=True,
+                )
+            raise
         session = _OpenAIRealtimeSession(
             connection=connection,
             connection_cm=connection_cm,

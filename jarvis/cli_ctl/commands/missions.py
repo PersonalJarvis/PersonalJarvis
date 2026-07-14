@@ -29,6 +29,12 @@ def show(mission_id: str = typer.Argument(..., help="Mission id.")) -> None:
     invoke.run("GET", f"/api/missions/{mission_id}")
 
 
+@app.command()
+def result(mission_id: str = typer.Argument(..., help="Mission id.")) -> None:
+    """Read a mission's signed outcome and actual deliverable contents."""
+    invoke.run("GET", f"/api/missions/{mission_id}/result")
+
+
 @app.command("tool-approvals")
 def tool_approvals(mission_id: str = typer.Argument(..., help="Mission id.")) -> None:
     """List supervisor tool calls waiting for approval in a mission."""

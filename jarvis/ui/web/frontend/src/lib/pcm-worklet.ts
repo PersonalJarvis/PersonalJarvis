@@ -4,6 +4,12 @@
 // to it (isolatedModules requires every file to be a module or a script; as a
 // script these ambient declarations would otherwise leak into the rest of the
 // app's type-check).
+import {
+  BoundedPcm16Queue,
+  Pcm16Packetizer,
+  playbackBufferSampleCount,
+} from "./pcmWorkletBuffer";
+
 export {};
 
 declare const sampleRate: number;
@@ -14,23 +20,18 @@ declare class AudioWorkletProcessor {
   process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean;
 }
 
-function floatToInt16(float32: Float32Array): ArrayBuffer {
-  const out = new Int16Array(float32.length);
-  for (let i = 0; i < float32.length; i++) {
-    const s = Math.max(-1, Math.min(1, float32[i]));
-    out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
-  }
-  return out.buffer;
-}
-
 class PcmCapture extends AudioWorkletProcessor {
   private levelSum = 0;
   private levelCount = 0;
+  private readonly packetizer = new Pcm16Packetizer(sampleRate);
+  private readonly emitPacket = (packet: ArrayBuffer): void => {
+    this.port.postMessage(packet, [packet]);
+  };
 
   process(inputs: Float32Array[][]): boolean {
     const ch = inputs[0]?.[0];
     if (ch && ch.length) {
-      // Throttled (~30 Hz) input-level messages for the speaking indicator —
+      // Throttled (~30 Hz) input-level messages for the speaking indicator;
       // computed here where the float32 samples already live, so no extra
       // server round-trip. Separate message type; the audio path below is
       // untouched.
@@ -42,48 +43,41 @@ class PcmCapture extends AudioWorkletProcessor {
         this.levelSum = 0;
         this.levelCount = 0;
       }
-      const buf = floatToInt16(ch);
-      this.port.postMessage(buf, [buf]);
+      // AudioWorklet render quanta are commonly only 128 samples. Sending one
+      // message per quantum would cross the thread boundary about 375 times/s
+      // at 48 kHz, so coalesce them into exact ~20 ms packets (at most 50/s).
+      this.packetizer.push(ch, this.emitPacket);
     }
     return true;
   }
 }
 
 class PcmPlayback extends AudioWorkletProcessor {
-  private queue: Float32Array[] = [];
+  private readonly queue = new BoundedPcm16Queue(
+    playbackBufferSampleCount(sampleRate),
+  );
+
   constructor() {
     super();
     this.port.onmessage = (e: MessageEvent) => {
       const msg = e.data as { type: string; data?: ArrayBuffer };
-      if (msg.type === "flush") this.queue = [];
+      if (msg.type === "flush") this.queue.clear();
       else if (msg.type === "pcm" && msg.data) {
-        const i16 = new Int16Array(msg.data);
-        const f32 = new Float32Array(i16.length);
-        for (let i = 0; i < i16.length; i++) f32[i] = i16[i] / 0x8000;
-        this.queue.push(f32);
+        // The bounded ring keeps the newest audio if a provider outruns
+        // playback for more than ten seconds. enqueue() drops the oldest
+        // samples on overrun, preventing stale latency and unbounded memory.
+        this.queue.enqueue(new Int16Array(msg.data));
       }
     };
   }
+
   process(_inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
     const out = outputs[0]?.[0];
     if (!out) return true;
-    let filled = 0;
-    while (filled < out.length && this.queue.length) {
-      const head = this.queue[0];
-      const n = Math.min(head.length, out.length - filled);
-      out.set(head.subarray(0, n), filled);
-      filled += n;
-      if (n === head.length) this.queue.shift();
-      else this.queue[0] = head.subarray(n);
-    }
+    this.queue.dequeueInto(out);
     return true;
   }
 }
 
 registerProcessor("pcm-capture", PcmCapture);
 registerProcessor("pcm-playback", PcmPlayback);
-
-// (Note: the backend advertises 24 kHz TTS output while the browser
-// AudioContext runs at its own rate — Phase 1 accepts minor pitch drift by
-// playing 24 kHz samples through the context; a resampling playback pass is a
-// Phase-2 polish item, logged here so it is not silently skipped.)

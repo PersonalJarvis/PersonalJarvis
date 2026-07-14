@@ -133,6 +133,9 @@ PROVIDER_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
         ("openai_api_key", "OPENAI_API_KEY"),
     ),
     "openrouter": (("openrouter_api_key", "OPENROUTER_API_KEY"),),
+    # Shared with the existing ``groq-api`` STT provider.  The Brain provider
+    # uses the distinct ``groq`` slug while resolving the same portable secret.
+    "groq": (("groq_api_key", "GROQ_API_KEY"),),
     # NVIDIA NIM (OpenAI-compatible). Only the build.nvidia.com key (nvapi-),
     # not the legacy NGC key. One key, many NVIDIA-hosted models.
     "nvidia": (("nvidia_api_key", "NVIDIA_API_KEY"),),
@@ -439,10 +442,16 @@ class TTSConfig(BaseModel):
 
 
 class BrainProviderConfig(BaseModel):
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
     model: str | None = None
     deep_model: str | None = None      # Optional: stronger reasoning model
-    cu_model: str | None = None        # Optional: model the Computer-Use loop uses
-                                       # (Phase 3). None -> use this provider's `model`.
+    # Canonical model for tool-bearing turns. ``cu_model`` remains a
+    # compatibility alias for installations predating the Tool Model rename.
+    tool_model: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("tool_model", "cu_model"),
+    )
     # Realtime voice pick (selectable Realtime model + voice). Only meaningful
     # for the two realtime-tier providers (openai-realtime / gemini-live); the
     # realtime model reuses `model` above. "" -> the adapter's own hardcoded
@@ -460,7 +469,14 @@ class BrainProviderConfig(BaseModel):
     # Currently only evaluated by ``GeminiBrain``; other providers ignore it.
     thinking_budget: int | None = None
 
-    model_config = {"extra": "allow"}  # allows unknown TOML keys
+    @property
+    def cu_model(self) -> str | None:
+        """Compatibility alias for callers that still use the old field name."""
+        return self.tool_model
+
+    @cu_model.setter
+    def cu_model(self, value: str | None) -> None:
+        self.tool_model = value
 
 
 class BrainPolicyConfig(BaseModel):
@@ -836,13 +852,12 @@ class BrainConfig(BaseModel):
     # None until the user opts into realtime voice. Reuses BrainTierConfig so the
     # fallback shape matches [brain.router]/[brain.worker].
     realtime: BrainTierConfig | None = None
-    # Dedicated GLOBAL Computer-Use planner provider — decoupled from
-    # ``primary`` (see docs plan "dedicated Computer-Use provider"). None
-    # until the user picks one; ``BrainManager._cu_provider`` then returns
-    # "" and Computer-Use keeps dispatching through the normal fallback
-    # chain (``primary`` first), so this is fully backward-compatible.
-    # Reuses BrainTierConfig, same shape as [brain.worker]/[brain.realtime].
-    computer_use: BrainTierConfig | None = None
+    # Canonical provider for tool-bearing turns in Pipeline and Realtime.
+    # ``computer_use`` below remains a compatibility alias for older configs.
+    tool_model: BrainTierConfig | None = Field(
+        default=None,
+        validation_alias=AliasChoices("tool_model", "computer_use"),
+    )
     # User-facing reply language pin (desktop "Languages" view → Reply Language).
     # "auto" mirrors the user's input language (DE/EN/ES); "de"/"en"/"es" force
     # that language as a hard rule for every Jarvis reply. Consumed by
@@ -876,6 +891,15 @@ class BrainConfig(BaseModel):
     # beheads with a misleading "took too long" phrase). Set False to fall back to
     # the UI-approval path.
     voice_confirm: bool = True
+
+    @property
+    def computer_use(self) -> BrainTierConfig | None:
+        """Compatibility alias for the old ``[brain.computer_use]`` tier."""
+        return self.tool_model
+
+    @computer_use.setter
+    def computer_use(self, value: BrainTierConfig | None) -> None:
+        self.tool_model = value
 
 
 class WikiCuratorConfig(BaseModel):
@@ -2268,6 +2292,7 @@ def _deep_merge(base: dict[str, Any], overlay: dict[str, Any]) -> dict[str, Any]
 # cartesia reverting to gemini-flash-tts on every restart.
 _PERSISTED_PROVIDER_ENV_KEYS: tuple[str, ...] = (
     "JARVIS__BRAIN__PRIMARY",
+    "JARVIS__BRAIN__TOOL_MODEL__PROVIDER",
     # Post-rename name (2026-06-29 Jarvis-Agents rename): config_writer now
     # writes to this key; the drift-guard / boot-heal reads it going forward.
     "JARVIS__BRAIN__WORKER__PROVIDER",

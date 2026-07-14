@@ -2071,7 +2071,14 @@ def _resolve_critic_provider_model() -> tuple[str | None, str | None]:
 
 # API-key brain providers that can grade IN-PROCESS via their own BrainProvider
 # (no external CLI). Order = the cross-family fallback preference.
-_API_CRITIC_PROVIDERS: tuple[str, ...] = ("openrouter", "openai", "gemini", "claude-api", "nvidia")
+_API_CRITIC_PROVIDERS: tuple[str, ...] = (
+    "openrouter",
+    "openai",
+    "gemini",
+    "claude-api",
+    "groq",
+    "nvidia",
+)
 
 
 def _provider_picked_model(provider: str) -> str | None:

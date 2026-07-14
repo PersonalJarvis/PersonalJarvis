@@ -2971,6 +2971,25 @@ class SpeechPipeline:
         exponiert. Der stumme ``AttributeError`` machte Sub-Agent-Announcements
         unhoerbar (Silent-Failure, entdeckt 2026-04-23).
         """
+        event_kind = getattr(event, "kind", None)
+        is_readback = event_kind in _READBACK_KINDS
+        if is_readback:
+            # Muting controls audio, not conversational memory. A mission that
+            # finishes while muted must still be available to the next follow-up.
+            session = getattr(self, "_active_realtime_handle", None)
+            remember = getattr(session, "remember_announcement_context", None)
+            if callable(remember):
+                try:
+                    remember(
+                        text=event.text,
+                        spoken_kind=event_kind,
+                        detail=getattr(event, "detail", None),
+                    )
+                except Exception:  # noqa: BLE001 -- memory mirror is best-effort
+                    log.debug(
+                        "Realtime announcement context mirror failed",
+                        exc_info=True,
+                    )
         if getattr(self, "_muted", False):
             log.debug("Announcement suppressed — voice muted: %r", event.text)
             return
@@ -2986,7 +3005,6 @@ class SpeechPipeline:
         # preamble / untagged late announcement stays dropped. Live bug
         # 2026-06-14: a heavy research mission's result was silently dropped
         # because the user hung up 13 s after the optimistic ACK.
-        is_readback = getattr(event, "kind", None) in _READBACK_KINDS
         if hangup is not None and hangup.is_set() and not is_readback:
             log.info(
                 "Announcement nach Hangup unterdrückt: %r", event.text[:80]
@@ -3018,7 +3036,6 @@ class SpeechPipeline:
                 event.text,
             )
             return
-        event_kind = getattr(event, "kind", None)
         is_preamble = event_kind == "preamble"
         is_progress = event_kind == "progress"
         # 2026-05-26 cross-surface voice incoherence guard. After an
@@ -6116,6 +6133,16 @@ class SpeechPipeline:
                     await self._set_turn_state(TurnTakingState.PROCESSING)
                 elif role == "assistant":
                     semantic_turn_committed = True
+            elif kind == "thinking":
+                # A short Realtime bridge sentence has finished, while the
+                # delegated action continues. Drain that exact audio segment
+                # before returning the taskbar/orb to THINKING. The next audio
+                # delta starts a fresh SPEAKING segment through _send_binary.
+                semantic_turn_committed = True
+                await playback.finish_turn()
+                speaking = False
+                barge_detector.stop_output()
+                await self._set_turn_state(TurnTakingState.PROCESSING)
             elif kind == "tts_cancel":
                 speaking = False
                 barge_detector.stop_output()

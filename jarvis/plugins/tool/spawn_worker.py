@@ -218,10 +218,32 @@ def _build_mission_prompt(
         # informational classification can never drift apart.
         stripped = re.sub(r"\s{2,}", " ", strip_spawn_meta(utterance)).strip()
         stripped = stripped.lstrip(_FORCE_SPAWN_HEAD_PUNCT)
-        stripped = _LEADING_CONNECTOR_RE.sub("", stripped, count=1).lstrip(_FORCE_SPAWN_HEAD_PUNCT)
+        stripped = _LEADING_CONNECTOR_RE.sub("", stripped, count=1).lstrip(
+            _FORCE_SPAWN_HEAD_PUNCT
+        )
         # Floor: if stripping left nothing real (the utterance was ONLY the
         # routing wrapper), fall back to the raw utterance — never an empty task.
-        body = stripped if len(stripped) >= _MIN_FORCE_SPAWN_TASK_CHARS else utterance
+        if len(stripped) >= _MIN_FORCE_SPAWN_TASK_CHARS:
+            topic_match = re.match(
+                r"^(?:about|on|regarding|"
+                r"zum\s+thema|ueber|über|sobre|acerca\s+de)\s+(.+)$",  # i18n-allow
+                stripped,
+                flags=re.IGNORECASE,
+            )
+            task = (
+                "Research and analyze this topic thoroughly for the user: "
+                f"{topic_match.group(1).strip()}"
+                if topic_match
+                else stripped
+            )
+            body = (
+                "Carry out the underlying user request directly. Use a sensible, "
+                "complete default deliverable instead of asking which format the "
+                "user wants, unless a genuinely indispensable fact is missing.\n\n"
+                f"Underlying request: {task}"
+            )
+        else:
+            body = utterance
     else:
         parts = [f"Aufgabe: {action}."]
         if target:

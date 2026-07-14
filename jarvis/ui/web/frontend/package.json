@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build --outDir ../dist --emptyOutDir",
+    "build": "tsc -b && vite build --outDir ../dist --emptyOutDir && node scripts/check-realtime-worklet.mjs",
     "preview": "vite preview",
     "test": "vitest run"
   },

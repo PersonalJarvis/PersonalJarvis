@@ -10,7 +10,7 @@ Failure-mode coverage (spec §6):
 - F2 Provider error (any exception during run)
 - F3 Empty / whitespace
 - F4 Over-long output (truncate at first [.!?])
-- F5 Schwarzliste-stripped to < 3 alnum chars
+- F5 Blacklist-stripped to < 3 alnum chars
 - F6 Language mismatch (top-100 word heuristic)
 - F8 Circuit breaker open
 - F10 Self-answer (post-filter for answer-shaped output) — spec
@@ -30,6 +30,7 @@ from typing import TYPE_CHECKING
 
 from jarvis.brain.ack_brain.circuit_breaker import CircuitBreaker
 from jarvis.brain.ack_brain.persona_prompt import get_persona_prompt
+from jarvis.brain.action_honesty import has_deferred_action_claim
 from jarvis.brain.output_filter import scrub_for_voice
 
 if TYPE_CHECKING:
@@ -374,6 +375,14 @@ class AckGenerator:
             await self._breaker.record_success()
             return None
 
+        if has_deferred_action_claim(scrubbed):
+            _emit_counter(
+                "ack_unbacked_action_suppressed_total",
+                provider=provider_label,
+            )
+            await self._breaker.record_success()
+            return None
+
         # (k) F10 self-answer post-filter (spec §6, 2026-05-13)
         pattern = _detect_self_answer(scrubbed)
         if pattern:
@@ -411,6 +420,8 @@ class AckGenerator:
             return None
         scrubbed = scrub_for_voice(text, language=language, ack_mode=True).cleaned
         if sum(1 for c in scrubbed if c.isalnum()) < 3:
+            return None
+        if has_deferred_action_claim(scrubbed):
             return None
         if _detect_self_answer(scrubbed):
             return None

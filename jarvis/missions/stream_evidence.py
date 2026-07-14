@@ -930,6 +930,20 @@ _SPAWN_META_RE = re.compile(
     rf"(?:a|an|the|ein|eine|einen|der|die|das)?\s*{_ROUTING_NOUN}\b",
     re.IGNORECASE,
 )
+# Removing a routing phrase can strand the polite request prefix and its
+# article when a polite request wraps a topic-only spawn instruction.
+# The worker then receives an ungrammatical topic fragment and asks
+# what noun is missing instead of doing the task. This cleanup runs only after
+# a spawn phrase was actually removed, so ordinary user requests are untouched.
+_ORPHANED_SPAWN_REQUEST_PREFIX_RE = re.compile(
+    r"^\s*(?:"
+    r"(?:can|could|would)\s+you(?:\s+please)?(?:\s+(?:me|us))?|"
+    r"(?:kannst|koenntest|wuerdest)\s+du(?:\s+mir)?(?:\s+bitte)?|"  # i18n-allow
+    r"bitte|"
+    r"(?:puedes|podrias)\s+(?:por\s+favor\s+)?(?:hacerme|hacernos)?"  # i18n-allow
+    r")\s+(?:(?:a|an|the|ein|eine|einen|einem|einer|un|una)\s+)?",  # i18n-allow
+    re.IGNORECASE,
+)
 _MAKE_RESEARCH_IDIOM_RE = re.compile(
     r"\bmake\s+(?:me|us)\s+(?:(?:a|an)\s+)?"
     r"(?:(?:deep|detailed|comprehensive|thorough|full)\s+){0,3}"
@@ -941,7 +955,10 @@ _MAKE_RESEARCH_IDIOM_RE = re.compile(
 
 def _strip_spawn_meta(text: str) -> str:
     """Remove spawn/routing meta-clauses so the classifier sees the real task."""
-    return _SPAWN_META_RE.sub(" ", text)
+    stripped, replacements = _SPAWN_META_RE.subn(" ", text)
+    if replacements:
+        stripped = _ORPHANED_SPAWN_REQUEST_PREFIX_RE.sub("", stripped, count=1)
+    return stripped
 
 
 def strip_spawn_meta(text: str) -> str:
@@ -1025,6 +1042,42 @@ def is_informational_request(prompt: str) -> bool:
     return bool(_INFO_TRIGGER_RE.search(body))
 
 
+# A worker clarification is not a completed informational deliverable. Match
+# only an explicit clarification lead near the beginning; substantive answers
+# that merely end with "let me know" remain valid. German and Spanish entries
+# are literal runtime-output classifiers (the multilingual product surface).
+_CLARIFICATION_LEAD_RE = re.compile(
+    r"\b(?:"
+    r"(?:quick|brief|short)\s+(?:clarifying\s+)?question|"
+    r"before\s+i\s+(?:start|continue|proceed).{0,80}\b(?:need|clarify|which|what)|"
+    r"could\s+you\s+(?:please\s+)?clarify|what\s+exactly\s+(?:do\s+you|should\s+i)|"
+    r"kurze\s+r(?:ue|ü)ckfrage|"  # i18n-allow: German runtime-output classifier
+    r"bevor\s+ich\s+(?:anfange|starte|weitermache)"  # i18n-allow
+    r".{0,80}\b(?:brauche|welch|was)|"  # i18n-allow
+    r"was\s+genau\s+(?:soll|moechtest|möchtest|willst)\s+du|"  # i18n-allow
+    r"(?:pregunta|duda)\s+(?:rápida|breve)\s+de\s+aclaraci[oó]n|"  # i18n-allow
+    r"antes\s+de\s+(?:empezar|continuar).{0,80}\b(?:necesito|aclarar|cu[aá]l|qu[eé])"
+    r")\b",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def is_clarification_only_answer(text: str) -> bool:
+    """Return True when the worker answered with a request for missing input.
+
+    Markdown workers often repeat the task as a heading before the actual
+    answer. Inspect only the first few meaningful lines so an incidental
+    clarification note after a substantive deliverable cannot invalidate it.
+    """
+    meaningful = [
+        re.sub(r"^\s*(?:#{1,6}|[-*+])\s*", "", line).strip()
+        for line in str(text or "").splitlines()
+        if line.strip()
+    ]
+    probe = " ".join(meaningful[:5])[:1_000]
+    return bool(probe and _CLARIFICATION_LEAD_RE.search(probe))
+
+
 def readonly_answer(
     diff_text: str, stream_text: str, *, prompt: str | None = None
 ) -> str | None:
@@ -1058,6 +1111,8 @@ def readonly_answer(
         return None
     answer = ev.final_answer.strip()
     if len(answer) < 3:
+        return None
+    if is_clarification_only_answer(answer):
         return None
     return answer
 
@@ -1140,7 +1195,11 @@ def informational_file_answer(diff_text: str, *, prompt: str) -> str | None:
     if not _is_prose_only_diff(diff_text):
         return None
     content = _added_document_text(diff_text)
-    if len(content) < _MIN_PROSE_CHARS or _looks_like_stub_document(content):
+    if (
+        len(content) < _MIN_PROSE_CHARS
+        or _looks_like_stub_document(content)
+        or is_clarification_only_answer(content)
+    ):
         return None
     return content
 
@@ -1254,6 +1313,7 @@ __all__ = [
     "extract_verified_external_actions",
     "extract_write_targets",
     "informational_file_answer",
+    "is_clarification_only_answer",
     "is_informational_request",
     "readonly_answer",
     "strip_spawn_meta",

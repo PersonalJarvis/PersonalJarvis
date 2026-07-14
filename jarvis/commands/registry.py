@@ -505,6 +505,33 @@ def _build_registry() -> tuple[AppCommand, ...]:
             },
         ),
         AppCommand(
+            id="mission-result",
+            title="Read a mission result",
+            description=(
+                "Read the signed summary and actual deliverable contents of one "
+                "completed Jarvis-Agent mission. Use this after listing missions "
+                "when the user asks what a mission found or produced."
+            ),
+            method="GET",
+            path="/api/missions/{mission_id}/result",
+            params={
+                "type": "object",
+                "properties": {
+                    "mission_id": _str_param(
+                        "Mission id whose result should be read.", min_length=1
+                    ),
+                },
+                "required": ["mission_id"],
+            },
+            path_params=("mission_id",),
+            ui_section="agents",
+            voice_aliases={
+                "de": ("was hat die mission herausgefunden",),  # i18n-allow: input vocab
+                "en": ("what did the mission find",),
+                "es": ("qué encontró la misión",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
             id="mission-cancel",
             title="Cancel a mission",
             description="Cancel a running Jarvis-Agent mission by id.",

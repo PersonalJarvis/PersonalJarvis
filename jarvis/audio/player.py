@@ -1,4 +1,4 @@
-"""Audio playback via sounddevice (WASAPI).
+"""Cross-platform audio playback via sounddevice and PortAudio.
 
 Consumes either ready-made PCM bytes or an `AsyncIterator[AudioChunk]`
 for pseudo-streaming (sentence-by-sentence synthesis while playback runs).
@@ -63,9 +63,10 @@ _BLOCKED_OUTPUT_SUBSTRINGS = (
 # explicit ``[audio].output_device`` index, both without editing code.
 #
 # "PRO X" precedes "Logitech PRO X" because sounddevice frequently enumerates
-# Logitech headsets as "Lautsprecher (PRO X)" / "Speakers (PRO X)" WITHOUT the
-# vendor name, so the bare product token matches where "Logitech PRO X" would
-# miss and fall back to the on-board Realtek device. The other bare tokens
+# Logitech headsets under localized speaker labels that contain only "PRO X"
+# and omit the vendor name, so the bare product token matches where "Logitech
+# PRO X" would miss and fall back to the on-board Realtek device. The other
+# bare tokens
 # (Arctis, AirPods, Bose, …) exist for the same reason — many headsets list
 # their model without the vendor prefix.
 _HEADSET_PRIORITY = (
@@ -409,12 +410,17 @@ class AudioPlayer:
         self._active_stream: sd.OutputStream | None = None
         self._active_source_rate: int | None = None
         self._active_device_rate: int | None = None
+        # Most devices expose at least two output channels, but small USB DACs,
+        # accessibility devices, and virtual sinks may be genuinely mono. The
+        # value is refreshed whenever a stream opens; stereo remains the safe
+        # fallback when PortAudio cannot report device capabilities.
+        self._stream_channels: int = 2
         # Cache of ((device_id, source_rate) -> working device_rate) per
         # AudioPlayer instance. Without this cache, every stop()+next-turn
         # restart pays the full samplerate-cascade cost — on the AB13X USB
         # headset that is one `OutputStream @ 24000Hz failed -9997` warning
         # followed by a 48000Hz open. The cache lets the second turn skip
-        # the failure attempt entirely. See 2026-05-16 Welle-2 diagnosis.
+        # the failure attempt entirely. See the 2026-05-16 Wave 2 diagnosis.
         #
         # 2026-05-18 H3 fix: keying by ``(device, source_rate)`` makes the
         # cache hot-swap-safe. Previously the key was only ``source_rate``,
@@ -519,7 +525,8 @@ class AudioPlayer:
                 default_out = sd.default.device[1]
                 dev_info = sd.query_devices(default_out)
                 log.info(
-                    "AudioPlayer nutzt System-Default-Output: %s (idx=%s, ch=%s, rate=%s)",
+                    "AudioPlayer using system default output: %s "
+                    "(idx=%s, ch=%s, rate=%s)",
                     dev_info.get("name"), default_out,
                     dev_info.get("max_output_channels"),
                     int(dev_info.get("default_samplerate", 0)),
@@ -557,7 +564,7 @@ class AudioPlayer:
             self._close_output_stream(stream)
 
     def _open_output_stream(self, source_rate: int) -> tuple[sd.OutputStream, int]:
-        """Open a persistent ``sd.OutputStream`` (float32 stereo).
+        """Open a persistent ``sd.OutputStream`` (float32 stereo or mono).
 
         Tries candidate rates (device default → 48 kHz → 44.1 kHz → source)
         until PortAudio stops failing with -9997 "Invalid sample rate". The
@@ -576,16 +583,31 @@ class AudioPlayer:
           values below ~480 frames force underruns.
         - ``channels=2`` + mono duplication in the caller — 7.1 surround headsets
           (e.g. Logitech PRO X) otherwise route mono to silent Center/LFE/Rear.
+          A device reporting only one output channel opens as mono instead.
         """
         try:
-            dev_info = sd.query_devices(self._device)
+            try:
+                # With device=None, ``kind='output'`` requests the default
+                # output record instead of the complete PortAudio device list.
+                dev_info = sd.query_devices(self._device, "output")
+            except TypeError:
+                # Compatibility with simple test doubles and older
+                # sounddevice-compatible implementations.
+                dev_info = sd.query_devices(self._device)
             dev_default = int(dev_info.get("default_samplerate", 0))
+            max_output_channels = int(dev_info.get("max_output_channels", 0) or 0)
         except Exception:  # noqa: BLE001
             dev_default = 0
+            max_output_channels = 0
+
+        # Preserve stereo routing for every device that supports it (important
+        # for surround headsets), while allowing true mono-only endpoints to
+        # open instead of failing with "Invalid number of channels".
+        stream_channels = 1 if max_output_channels == 1 else 2
 
         # Skip the cascade if we already learned which rate works for this
         # (device, source_rate) pair. Cuts log-noise and open-latency on
-        # every turn after the first (Welle-2 fix, 2026-05-16).
+        # every turn after the first (Wave 2 fix, 2026-05-16).
         #
         # Device-keyed (H3 fix, 2026-05-18): on USB hot-swap the resolved
         # device index changes, so the lookup misses and we walk the
@@ -604,7 +626,7 @@ class AudioPlayer:
                 # latency=0.2 reserves a real 200 ms PortAudio buffer.
                 # The string keyword "high" is a DEVICE HINT — on USB
                 # headsets like the AB13X it resolves to ~10 ms, far too
-                # small to absorb inter-sentence pipeline gaps. The Welle-2
+                # small to absorb inter-sentence pipeline gaps. The Wave 2
                 # diagnosis on 2026-05-16 attributed audible "crackling +
                 # slowdown" to this 10 ms drain. 0.2 s matches the buffer
                 # depth used by LiveKit-Agents / Pipecat / RealtimeTTS for
@@ -612,17 +634,22 @@ class AudioPlayer:
                 stream = sd.OutputStream(
                     samplerate=target_rate,
                     device=self._device,
-                    channels=2,
+                    channels=stream_channels,
                     dtype="float32",
                     blocksize=0,
                     latency=0.2,
                 )
                 stream.start()
+                self._stream_channels = stream_channels
                 self._device_rate_cache[cache_key] = target_rate
                 log.info(
                     "OutputStream opened @ %d Hz (source=%d Hz, device=%s, "
-                    "actual_latency=%.3fs)",
-                    target_rate, source_rate, self._device, stream.latency,
+                    "channels=%d, actual_latency=%.3fs)",
+                    target_rate,
+                    source_rate,
+                    self._device,
+                    stream_channels,
+                    stream.latency,
                 )
                 return stream, target_rate
             except _PortAudioError as exc:
@@ -645,7 +672,7 @@ class AudioPlayer:
         source_rate: int,
         device_rate: int,
     ) -> None:
-        """Int16 mono → float32 stereo + resample + ``stream.write()``.
+        """Int16 mono → float32 device channels + resample + ``stream.write()``.
 
         Blocks until the internal PortAudio buffer has room — this is the
         natural back-pressure mechanism (no user-side batching needed).
@@ -672,9 +699,14 @@ class AudioPlayer:
             arr = _resample_int16(arr, source_rate, device_rate)
         # int16 [-32768, 32767] → float32 [-1.0, 1.0)
         arr_f = arr.astype(np.float32) * (1.0 / 32768.0)
-        # Mono → stereo (Front-L, Front-R duplicated)
+        # Mono → the device's actual stream width. Stereo duplication keeps the
+        # established Front-L/Front-R routing on surround headsets; a mono-only
+        # endpoint receives an explicit N×1 array accepted by sounddevice.
         if arr_f.ndim == 1:
-            arr_f = np.column_stack((arr_f, arr_f))
+            if getattr(self, "_stream_channels", 2) == 1:
+                arr_f = arr_f.reshape(-1, 1)
+            else:
+                arr_f = np.column_stack((arr_f, arr_f))
         # column_stack returns an array whose strides may not match what
         # PortAudio expects — copy ensures C-contiguous layout. Cheap
         # (the buffer is at most ~120 ms of stereo float32).
@@ -730,7 +762,7 @@ class AudioPlayer:
         try:
             stream.close()
         except Exception:  # noqa: BLE001
-            pass
+            log.debug("Output stream close failed", exc_info=True)
 
     async def play_chunks(
         self,
@@ -947,5 +979,5 @@ class AudioPlayer:
             try:
                 stream.close()
             except Exception:  # noqa: BLE001
-                pass
+                log.debug("Output stream close during shutdown failed", exc_info=True)
         sd.stop()

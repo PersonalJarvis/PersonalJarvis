@@ -184,16 +184,21 @@ async def test_open_session_uses_current_default_model(
 
 
 @pytest.mark.asyncio
-async def test_explicit_reply_language_configures_gemini_speech(
+async def test_explicit_reply_language_uses_the_session_instruction(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     holder = _patch_genai_client(monkeypatch)
     session = await GeminiLiveProvider(api_key="test-key").open_session(
-        RealtimeSessionConfig(language="es", language_is_pinned=True)
+        RealtimeSessionConfig(
+            language="es",
+            language_is_pinned=True,
+            instructions="Reply only in Spanish for this turn.",
+        )
     )
     _model, config = holder["client"].aio.live.connect_calls[0]
 
-    assert config.speech_config.language_code == "es"
+    assert config.system_instruction == "Reply only in Spanish for this turn."
+    assert config.speech_config is None
     # Gemini auto-responds; the required-tool hint remains a compatible no-op.
     await session.request_response(required_tool="jarvis_action")
     await session.close()

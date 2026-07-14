@@ -1,17 +1,17 @@
-﻿"""REST-API für Brain-/TTS-/STT-Provider und ihre Credentials.
+﻿"""REST API for Brain, TTS, STT, and Realtime providers and credentials.
 
 Endpoints:
-    GET    /api/providers                    → Liste mit configured/active Status
-    POST   /api/secrets/{key}                → Secret setzen (Whitelist gegen wizard.SECRETS)
-    DELETE /api/secrets/{key}                → Secret löschen
-    POST   /api/brain/switch                 → aktiven Brain-Provider wechseln (+ persist)
-    POST   /api/tts/switch                   → aktiven TTS-Provider wechseln (persist in jarvis.toml)
-    POST   /api/stt/switch                   → aktiven STT-Provider wechseln (persist in jarvis.toml)
-    POST   /api/realtime/switch              → aktiven Realtime-Provider wechseln (persist)
-    POST   /api/subagent/switch              → aktiven Subagent-Provider wechseln (3-layer persist)
+    GET    /api/providers                    → list configured and active status
+    POST   /api/secrets/{key}                → set an allowlisted wizard secret
+    DELETE /api/secrets/{key}                → delete a secret
+    POST   /api/brain/switch                 → switch the active Brain provider
+    POST   /api/tts/switch                   → switch the active TTS provider
+    POST   /api/stt/switch                   → switch the active STT provider
+    POST   /api/realtime/switch              → switch the active Realtime provider
+    POST   /api/jarvis-agent/switch          → switch the Jarvis-Agent provider
     POST   /api/computer-use/switch          → switch the Computer-Use provider (persist)
 
-Wird vom WebServer in `_build_app()` eingehängt:
+Mounted by the WebServer in ``_build_app()``:
     from .provider_routes import router as provider_router
     app.include_router(provider_router)
 """
@@ -46,8 +46,7 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["providers"])
 
 
-# Whitelist aller Keys die gesetzt/gelöscht werden dürfen — exakt die im
-# Setup-Wizard deklarierten Slots.
+# Exact allowlist of credential slots declared by the setup wizard.
 ALLOWED_SECRET_KEYS: frozenset[str] = frozenset(s.key for s in WIZARD_SECRETS)
 
 # The airgapped local-provider allowlist (LOCAL_PROVIDERS) moved to
@@ -138,6 +137,10 @@ class BrainModelInfo(BaseModel):
     # modality data (unknown — treated as capable, no regression). The
     # Computer-Use model picker hides ONLY explicit ``False`` entries.
     vision: bool | None = None
+    # Tri-state tool-calling capability from provider model metadata. ``None``
+    # means the catalog does not expose it; runtime activation still performs
+    # the authoritative capability probe.
+    tools: bool | None = None
 
 
 class BrainModelsResponse(BaseModel):
@@ -234,7 +237,7 @@ class RealtimeOptionsSaveResponse(BaseModel):
 
 
 def _is_credential_present(spec: ProviderSpec, binary_path: str | None = None) -> bool:
-    """Heuristik je nach auth_mode.
+    """Apply the credential check for the provider's authentication mode.
 
     Delegates to the shared implementation in :mod:`jarvis.brain.app_control`
     (imported lazily) so the UI route and the brain's ``switch-provider`` tool
@@ -469,8 +472,12 @@ def _active_computer_use(request: Request) -> str | None:
     try:
         cfg = _resolve_cfg(request)
         brain_cfg = getattr(cfg, "brain", None)
-        cu_cfg = getattr(brain_cfg, "computer_use", None)
-        provider = (getattr(cu_cfg, "provider", None) or "").strip()
+        tier_cfg = getattr(brain_cfg, "tool_model", None) or getattr(
+            brain_cfg, "computer_use", None
+        )
+        provider = (getattr(tier_cfg, "provider", None) or "").strip()
+        if provider == "auto":
+            provider = ""
         if provider:
             return provider
         return (getattr(brain_cfg, "primary", None) or "").strip() or None
@@ -480,11 +487,11 @@ def _active_computer_use(request: Request) -> str | None:
 
 
 def _resolve_cfg(request: Request):
-    """Liefert die JarvisConfig.
+    """Return the active Jarvis configuration.
 
-    Server haengt sie als ``app.state.config`` (nicht ``cfg``!) — siehe
-    ``server.py::_build_app``. Fallback auf ``load_config()`` falls die App
-    headless gestartet wurde und kein Bootstrap stattfand.
+    The server stores it as ``app.state.config`` (not ``cfg``); see
+    ``server.py::_build_app``. Fall back to ``load_config()`` when a headless
+    app started without the normal bootstrap.
     """
     cfg_attr = getattr(request.app.state, "config", None) or getattr(
         request.app.state, "cfg", None
@@ -576,7 +583,7 @@ def _bus_from_brain(request: Request):
 
 @router.get("/providers")
 async def list_providers(request: Request) -> dict[str, Any]:
-    """Liefert die komplette Provider-Liste mit aktuellem Status pro Provider."""
+    """Return every provider with its current configured and active status."""
     active_brain = _active_brain(request)
     active_tts = _active_tts(request)
     active_stt = _active_stt(request)
@@ -625,12 +632,12 @@ async def test_provider_connection(
     """
     spec = get_spec(provider_id)
     if spec is None:
-        raise HTTPException(status_code=404, detail=f"Unbekannter Provider: {provider_id}")
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
 
     cfg = _resolve_cfg(request)
     if cfg is None:
         raise HTTPException(
-            status_code=503, detail="Konfiguration nicht verfügbar (Headless-Mode?)"
+            status_code=503, detail="Configuration is unavailable (headless mode?)"
         )
 
     # Hard ceiling ABOVE run_provider_test's own per-call timeout (60 s): the
@@ -1207,7 +1214,9 @@ def _provider_cu_model(cfg: Any, provider: str) -> str:
     """The pinned Computer-Use model for ``provider`` ("" when none is set)."""
     providers = getattr(getattr(cfg, "brain", None), "providers", None)
     pc = providers.get(provider) if isinstance(providers, dict) else None
-    return (getattr(pc, "cu_model", None) or "") if pc is not None else ""
+    if pc is None:
+        return ""
+    return getattr(pc, "tool_model", None) or getattr(pc, "cu_model", None) or ""
 
 
 def _set_brain_model_in_memory(cfg: Any, provider: str, value: str) -> None:
@@ -1242,6 +1251,7 @@ def _set_cu_model_in_memory(cfg: Any, provider: str, value: str) -> None:
 
             pc = BrainProviderConfig()
             providers[provider] = pc
+        pc.tool_model = value
         pc.cu_model = value
     except Exception as exc:  # noqa: BLE001 — frozen/detached cfg is acceptable
         log.debug("In-memory cu_model update skipped for %s: %s", provider, exc)
@@ -1284,12 +1294,12 @@ def _require_catalog_provider(provider_id: str):
     """
     spec = get_spec(provider_id)
     if spec is None:
-        raise HTTPException(status_code=404, detail=f"Unbekannter Provider: {provider_id}")
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
     cat = catalog_spec(provider_id)
     if cat is None:
         raise HTTPException(
             status_code=400,
-            detail=f"'{provider_id}' bietet keine Modell-/Stimmen-Auswahl.",
+            detail=f"'{provider_id}' does not expose model or voice selection.",
         )
     return spec, cat
 
@@ -1349,6 +1359,11 @@ def _brain_model_info(m: ModelInfo) -> BrainModelInfo:
             if m.input_modalities is not None
             else None
         ),
+        tools=(
+            ("tools" in m.supported_parameters)
+            if m.supported_parameters is not None
+            else None
+        ),
     )
 
 
@@ -1398,7 +1413,7 @@ async def _apply_brain_model(
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
-                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+                status_code=500, detail=f"TOML write failed: {exc}"
             ) from exc
 
     cfg = _resolve_cfg(request)
@@ -1461,7 +1476,7 @@ def _apply_tts_selection(
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
-                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+                status_code=500, detail=f"TOML write failed: {exc}"
             ) from exc
 
     cfg = _resolve_cfg(request)
@@ -1518,7 +1533,7 @@ def _apply_stt_model(
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
-                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+                status_code=500, detail=f"TOML write failed: {exc}"
             ) from exc
 
     cfg = _resolve_cfg(request)
@@ -1593,9 +1608,9 @@ async def set_cu_model(
 ) -> CuModelResponse:
     """Pin (or clear with "") the per-provider Computer-Use model (Phase 3).
 
-    Persists to ``[brain.providers.<id>].cu_model`` (+ drift-soll) and updates the
-    in-memory config so the next CU mission uses it with no restart. No live brain
-    probe — the model is validated lazily the next time CU dispatches.
+    Persists the canonical ``tool_model`` and legacy ``cu_model`` keys, then
+    updates both live config objects so the next mission uses it without restart.
+    No live brain probe: dispatch validates the model lazily.
     """
     _spec, cat = _require_catalog_provider(provider_id)
     if cat.tier != "brain":
@@ -1610,17 +1625,23 @@ async def set_cu_model(
         try:
             from jarvis.core.config_writer import set_brain_provider_model
 
-            set_brain_provider_model(provider_id, cu_model=value)
+            set_brain_provider_model(
+                provider_id, tool_model=value, cu_model=value
+            )
             persisted = True
         except FileNotFoundError as exc:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
-                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+                status_code=500, detail=f"TOML write failed: {exc}"
             ) from exc
 
     cfg = _resolve_cfg(request)
     _set_cu_model_in_memory(cfg, provider_id, value)
+    live_brain = getattr(request.app.state, "brain", None)
+    manager_cfg = getattr(live_brain, "_config", None)
+    if manager_cfg is not None and manager_cfg is not cfg:
+        _set_cu_model_in_memory(manager_cfg, provider_id, value)
     await _emit(
         request,
         SecretConfigured(key=f"brain.providers.{provider_id}.cu_model", action="set"),
@@ -1648,11 +1669,11 @@ def _require_realtime_provider(provider_id: str) -> ProviderSpec:
     """404 unknown id; 400 a non-realtime-tier id (mirrors /realtime/switch)."""
     spec = get_spec(provider_id)
     if spec is None:
-        raise HTTPException(status_code=404, detail=f"Unbekannter Provider: {provider_id}")
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
     if spec.tier != "realtime":
         raise HTTPException(
             status_code=400,
-            detail=f"Provider '{provider_id}' ist kein Realtime-Provider (tier={spec.tier})",
+            detail=f"Provider '{provider_id}' is not a Realtime provider (tier={spec.tier})",
         )
     return spec
 
@@ -1665,6 +1686,28 @@ def _current_realtime_selection(cfg: Any, provider_id: str) -> tuple[str, str]:
     model = (getattr(pc, "model", None) or "") if pc is not None else ""
     voice = (getattr(pc, "voice", None) or "") if pc is not None else ""
     return model, voice
+
+
+def _validate_realtime_option(
+    *, provider_id: str, field: str, value: str | None, allowed: set[str]
+) -> None:
+    """Reject non-empty Realtime selections outside the curated catalog."""
+    if value is None or value == "":
+        return
+    if value in allowed:
+        return
+    allowed_values = sorted(allowed)
+    raise HTTPException(
+        status_code=422,
+        detail={
+            "code": f"unsupported_realtime_{field}",
+            "message": (
+                f"Unsupported Realtime {field} '{value}' for provider "
+                f"'{provider_id}'."
+            ),
+            "allowed_values": allowed_values,
+        },
+    )
 
 
 @router.get("/providers/{provider_id}/realtime-options")
@@ -1710,13 +1753,30 @@ async def set_realtime_options(
     untouched.
     """
     spec = _require_realtime_provider(provider_id)
+    model = body.model.strip() if body.model is not None else None
+    voice = body.voice.strip() if body.voice is not None else None
+    from jarvis.brain.model_catalog import REALTIME_MODELS, REALTIME_VOICES
+
+    _validate_realtime_option(
+        provider_id=provider_id,
+        field="model",
+        value=model,
+        allowed={option.id for option in REALTIME_MODELS.get(provider_id, ())},
+    )
+    _validate_realtime_option(
+        provider_id=provider_id,
+        field="voice",
+        value=voice,
+        allowed={option.id for option in REALTIME_VOICES.get(provider_id, ())},
+    )
     if not _is_credential_present(spec):
         raise HTTPException(
             status_code=409,
-            detail=f"Provider '{provider_id}' hat keine Credentials — erst API-Key setzen.",
+            detail=(
+                f"Provider '{provider_id}' has no configured credentials. "
+                "Add its API key first."
+            ),
         )
-    model = body.model.strip() if body.model is not None else None
-    voice = body.voice.strip() if body.voice is not None else None
 
     if model is not None or voice is not None:
         try:
@@ -1727,7 +1787,7 @@ async def set_realtime_options(
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
-                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+                status_code=500, detail=f"TOML write failed: {exc}"
             ) from exc
 
     cfg = _resolve_cfg(request)
@@ -1791,14 +1851,14 @@ async def codex_set_binary_path(body: CodexBinaryPathBody, request: Request) -> 
     except FileNotFoundError as exc:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
-        raise HTTPException(status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"TOML write failed: {exc}") from exc
 
     cfg = _resolve_cfg(request)
     if cfg is not None and getattr(cfg, "codex", None) is not None:
         try:
             cfg.codex.binary_path = value  # type: ignore[attr-defined]
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as exc:  # noqa: BLE001
+            log.debug("In-memory Codex path update skipped: %s", exc)
     return {"ok": True, "binary_path": value}
 
 
@@ -1810,7 +1870,7 @@ async def codex_login(request: Request) -> dict[str, Any]:
         raise HTTPException(
             status_code=409,
             detail={
-                "message": "Codex CLI ist nicht installiert",
+                "message": "Codex CLI is not installed",
                 "install_command": "npm i -g @openai/codex",
             },
         )
@@ -1831,10 +1891,10 @@ async def codex_logout(request: Request) -> dict[str, Any]:
     service = CodexAuthService(_codex_binary_path(request))
     status = service.status()
     if not status.installed:
-        raise HTTPException(status_code=409, detail="Codex CLI ist nicht installiert")
+        raise HTTPException(status_code=409, detail="Codex CLI is not installed")
     ok, error = service.logout_blocking()
     if not ok:
-        raise HTTPException(status_code=500, detail=error or "codex logout fehlgeschlagen")
+        raise HTTPException(status_code=500, detail=error or "Codex logout failed")
     return {"ok": True, "message": "Codex wurde getrennt"}
 
 
@@ -1851,9 +1911,9 @@ _RESTART_REQUIRED_SECRET_KEYS: frozenset[str] = frozenset({
 @router.post("/secrets/{key}", openapi_extra={"x-jarvis-dangerous": True})
 async def set_secret_value(key: str, body: SecretBody, request: Request) -> dict[str, Any]:
     if key not in ALLOWED_SECRET_KEYS:
-        raise HTTPException(status_code=404, detail=f"Unbekannter Secret-Key: {key}")
+        raise HTTPException(status_code=404, detail=f"Unknown secret key: {key}")
     if not cfg_mod.set_secret(key, body.value):
-        raise HTTPException(status_code=500, detail="Keyring-Write fehlgeschlagen")
+        raise HTTPException(status_code=500, detail="Keyring write failed")
     await _emit(request, SecretConfigured(key=key, action="set"))
     _invalidate_section_health_state(request)
     return {
@@ -1866,8 +1926,8 @@ async def set_secret_value(key: str, body: SecretBody, request: Request) -> dict
 @router.delete("/secrets/{key}")
 async def delete_secret_value(key: str, request: Request) -> dict[str, Any]:
     if key not in ALLOWED_SECRET_KEYS:
-        raise HTTPException(status_code=404, detail=f"Unbekannter Secret-Key: {key}")
-    cfg_mod.delete_secret(key)  # idempotent — wirft nicht wenn nicht vorhanden
+        raise HTTPException(status_code=404, detail=f"Unknown secret key: {key}")
+    cfg_mod.delete_secret(key)  # Idempotent when no value exists.
     await _emit(request, SecretConfigured(key=key, action="delete"))
     _invalidate_section_health_state(request)
     return {"ok": True, "key": key}
@@ -1995,37 +2055,30 @@ async def brain_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
 
 @router.post("/tts/switch")
 async def tts_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
-    """Wechselt den aktiven TTS-Provider live, ohne Pipeline-Restart.
+    """Switch the active TTS provider without restarting the pipeline.
 
-    Schritte:
-      1. TOML-Persist (ueberlebt Restart)
-      2. ``cfg.tts.provider`` in-memory updaten
-      3. Wenn die SpeechPipeline aktiv ist (``app.state.speech_pipeline``):
-         neuen TTS-Provider via ``build_tts_from_config`` bauen und in die
-         Pipeline injizieren. Der naechste ``_speak()``-Call nutzt die neue
-         Stimme. ``restart_required=false``.
-      4. Wenn keine Pipeline laeuft (Headless/Voice abgeschaltet): nur Persist,
-         ``restart_required=true`` als ehrliche Info an die UI.
-
-    Frueher (vor 2026-04-25) gab es Schritt 3 nicht — der Switch persistierte
-    nur in der TOML, die laufende Pipeline behielt aber ihren alten
-    TTS-Provider in ``self._tts``. User klickte "switch", UI sagte OK, aber
-    er hoerte trotzdem den alten Provider bis zum App-Neustart.
+    The route persists the selection, updates the live configuration, and
+    injects a newly built provider into an active SpeechPipeline. If no
+    pipeline is running (headless or voice disabled), the persisted selection
+    applies on the next start and ``restart_required`` remains true.
     """
     spec = get_spec(body.provider)
     if spec is None:
         raise HTTPException(
-            status_code=404, detail=f"Unbekannter Provider: {body.provider}"
+            status_code=404, detail=f"Unknown provider: {body.provider}"
         )
     if spec.tier != "tts":
         raise HTTPException(
             status_code=400,
-            detail=f"Provider '{body.provider}' ist kein TTS-Provider (tier={spec.tier})",
+            detail=f"Provider '{body.provider}' is not a TTS provider (tier={spec.tier})",
         )
     if not _is_credential_present(spec):
         raise HTTPException(
             status_code=409,
-            detail=f"Provider '{body.provider}' hat keine Credentials — erst API-Key setzen.",
+            detail=(
+                f"Provider '{body.provider}' has no configured credentials. "
+                "Add its API key first."
+            ),
         )
 
     if body.persist:
@@ -2037,21 +2090,20 @@ async def tts_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
-                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+                status_code=500, detail=f"TOML write failed: {exc}"
             ) from exc
 
-    # Best-effort In-Memory-Update: wenn cfg an app.state haengt und das
-    # Pydantic-Model nicht frozen ist, koennen Subscriber den Wert sofort lesen.
+    # Best-effort live update lets subscribers observe the value immediately
+    # when the app-state Pydantic model is mutable.
     cfg = _resolve_cfg(request)
     if cfg is not None and getattr(cfg, "tts", None) is not None:
         try:
             cfg.tts.provider = body.provider  # type: ignore[attr-defined]
-        except Exception:  # noqa: BLE001 — frozen models sind kein Fehler
-            pass
+        except Exception as exc:  # noqa: BLE001 — a frozen model is not an error
+            log.debug("In-memory TTS provider update skipped: %s", exc)
 
-    # Live-Switch in die laufende SpeechPipeline (Hauptzweck dieses Fixes).
-    # Wenn die Pipeline nicht laeuft (Headless / Voice abgeschaltet), faellt
-    # der Switch auf "restart_required=true" zurueck — ehrliche UI-Info.
+    # Inject into the active SpeechPipeline. Headless or voice-disabled boots
+    # retain the honest ``restart_required=true`` response.
     pipeline = getattr(request.app.state, "speech_pipeline", None)
     restart_required = True
     live_switched = False
@@ -2064,15 +2116,14 @@ async def tts_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             restart_required = False
             live_switched = True
             log.info(
-                "TTS-Live-Switch in laufende SpeechPipeline: provider=%s",
+                "TTS live switch applied to the active SpeechPipeline: provider=%s",
                 body.provider,
             )
         except Exception as exc:  # noqa: BLE001
-            # Live-Switch fehlgeschlagen — Persist hat aber geklappt, also
-            # waere ein Restart die zweite Option. Wir loggen den Root-Cause
-            # mit Stack, damit der User im Log sieht, was schief ging.
+            # Persistence succeeded, so restart remains an honest recovery.
+            # Keep the root cause and stack in the log for diagnosis.
             log.error(
-                "TTS-Live-Switch fehlgeschlagen — Restart noetig: %s: %s",
+                "TTS live switch failed; restart required: %s: %s",
                 type(exc).__name__, exc, exc_info=True,
             )
             restart_required = True
@@ -2110,8 +2161,10 @@ _VOICE_PICKER_PROVIDER = "openrouter-tts"
 # table — AP-21 / runtime-language doctrine).
 _TTS_PREVIEW_SAMPLES: dict[str, str] = {
     "de": (
-        "Hallo! Ich bin dein persönlicher Assistent. "
-        "So klingt meine Stimme, wenn ich für dich spreche und dir zuhöre."
+        "Hallo! Ich bin dein "  # i18n-allow: German TTS preview output.
+        "persönlicher Assistent. "  # i18n-allow
+        "So klingt meine Stimme, "  # i18n-allow
+        "wenn ich für dich spreche und dir zuhöre."  # i18n-allow
     ),
     "en": (
         "Hi there! I am your personal assistant. "
@@ -2338,27 +2391,29 @@ async def tts_preview(body: TtsPreviewBody) -> Response:
 
 @router.post("/stt/switch")
 async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
-    """Wechselt den aktiven STT-Provider. Persistiert in jarvis.toml (tomlkit).
+    """Persist the active STT provider in ``jarvis.toml``.
 
-    Wie bei TTS gibt es keinen Live-Switch — der STT-Provider wird beim
-    SpeechPipeline-Bootstrap einmalig instanziiert (Whisper-Model laden ist
-    teuer). Der Switch greift daher erst nach dem naechsten Voice-Restart
-    bzw. App-Neustart. Response markiert das mit ``restart_required: true``.
+    The SpeechPipeline constructs STT once because loading a Whisper model is
+    expensive. The selection therefore applies after the next voice or app
+    restart and the response reports ``restart_required: true``.
     """
     spec = get_spec(body.provider)
     if spec is None:
         raise HTTPException(
-            status_code=404, detail=f"Unbekannter Provider: {body.provider}"
+            status_code=404, detail=f"Unknown provider: {body.provider}"
         )
     if spec.tier != "stt":
         raise HTTPException(
             status_code=400,
-            detail=f"Provider '{body.provider}' ist kein STT-Provider (tier={spec.tier})",
+            detail=f"Provider '{body.provider}' is not an STT provider (tier={spec.tier})",
         )
     if not _is_credential_present(spec):
         raise HTTPException(
             status_code=409,
-            detail=f"Provider '{body.provider}' hat keine Credentials — erst API-Key setzen.",
+            detail=(
+                f"Provider '{body.provider}' has no configured credentials. "
+                "Add its API key first."
+            ),
         )
 
     if body.persist:
@@ -2370,15 +2425,15 @@ async def stt_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
-                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+                status_code=500, detail=f"TOML write failed: {exc}"
             ) from exc
 
     cfg = _resolve_cfg(request)
     if cfg is not None and getattr(cfg, "stt", None) is not None:
         try:
             cfg.stt.provider = body.provider  # type: ignore[attr-defined]
-        except Exception:  # noqa: BLE001 — frozen models sind kein Fehler
-            pass
+        except Exception as exc:  # noqa: BLE001 — a frozen model is not an error
+            log.debug("In-memory STT provider update skipped: %s", exc)
 
     await _emit(request, SecretConfigured(key="stt.provider", action="set"))
 
@@ -2547,15 +2602,33 @@ async def computer_use_switch(body: SwitchBody, request: Request) -> dict[str, A
     cfg = _resolve_cfg(request)
     if cfg is not None and getattr(cfg, "brain", None) is not None:
         try:
-            cu_cfg = getattr(cfg.brain, "computer_use", None)
-            if cu_cfg is None:
+            tier_cfg = getattr(cfg.brain, "tool_model", None) or getattr(
+                cfg.brain, "computer_use", None
+            )
+            if tier_cfg is None:
                 from jarvis.core.config import BrainTierConfig
 
-                cfg.brain.computer_use = BrainTierConfig(provider=body.provider)
+                tier_cfg = BrainTierConfig(provider=body.provider)
             else:
-                cu_cfg.provider = body.provider
+                tier_cfg.provider = body.provider
+            cfg.brain.tool_model = tier_cfg
+            cfg.brain.computer_use = tier_cfg
         except Exception as exc:  # noqa: BLE001 — frozen/detached cfg is not an error
             log.debug("In-memory computer_use.provider update skipped: %s", exc)
+
+    live_brain = getattr(request.app.state, "brain", None)
+    manager_cfg = getattr(live_brain, "_config", None)
+    if manager_cfg is not None and manager_cfg is not cfg:
+        try:
+            from jarvis.core.config import BrainTierConfig
+
+            manager_tier = BrainTierConfig(provider=body.provider)
+            manager_cfg.brain.tool_model = manager_tier
+            manager_cfg.brain.computer_use = manager_tier
+        except Exception as exc:  # noqa: BLE001
+            log.debug("Live Tool Model provider update skipped: %s", exc)
+    if hasattr(live_brain, "reactivate_provider"):
+        live_brain.reactivate_provider(body.provider)
 
     await _emit(
         request, SecretConfigured(key="brain.computer_use.provider", action="set")
@@ -2572,29 +2645,14 @@ async def computer_use_switch(body: SwitchBody, request: Request) -> dict[str, A
 
 @router.post("/jarvis-agent/switch")
 async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
-    """Wechselt den aktiven SUBAGENT-Provider (``[brain.sub_jarvis].provider``).
+    """Switch the active Jarvis-Agent provider.
 
-    Das ist der Heavy-Task-Worker (lies Repo, baue Feature, reproduziere Bug) —
-    getrennt vom leichten Router-Brain (``[brain].primary``). Bisher war die
-    Subagent-Sektion read-only; dieser Endpoint gibt ihr — analog zu
-    ``stt_switch`` — den Schreibpfad fuer den "Als aktiv"-Wechsel.
-
-    Schritte:
-      1. Validierung gegen die subagent-faehigen Provider (provider_map MAPPINGS).
-      2. 409 wenn kein API-Key / OAuth-Token gespeichert (kein stiller No-Op —
-         analog zu brain/tts/stt-switch, sonst faellt der erste Mission-Step
-         mit ``missing_key``).
-      3. 3-Schichten-Persist via ``config_writer.set_sub_jarvis_provider``
-         (TOML + config-soll.json + ENV). Der config-soll-Pin ist
-         entscheidend: ohne ihn rollt der Drift-Guard den Switch in 5 Min
-         zurueck (gleiche Klasse wie der brain.primary-Persist-Bug).
-      4. In-Memory-Update fuer sofortiges UI-Feedback (``/openclaw/status``
-         liest ``cfg.brain.sub_jarvis.provider``).
-
-    Der Worker wird beim Mission-Bootstrap einmalig verdrahtet
-    (``jarvis.missions.init._worker_factory`` liest ``sub_jarvis_provider`` als
-    Closure-Variable), daher greift der Switch fuer laufende Missionen erst
-    nach Voice-/App-Restart: ``restart_required: true`` (wie bei STT).
+    Jarvis-Agents handle heavy tasks separately from the lightweight router
+    brain. The route validates worker-capable providers, requires an API key or
+    OAuth token, persists all drift-guard layers, and updates the live config
+    for immediate UI feedback. Legacy ``sub_jarvis`` identifiers below remain
+    read-time compatibility aliases. A running worker factory is wired once at
+    mission bootstrap, so existing missions require a voice or app restart.
     """
     from jarvis.missions.worker_runtime.provider_map import (
         JARVIS_TO_WORKER_SLUG,
@@ -2636,7 +2694,7 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
             except Exception as exc:  # noqa: BLE001
                 raise HTTPException(
-                    status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+                    status_code=500, detail=f"TOML write failed: {exc}"
                 ) from exc
         _apply_worker_in_memory(request, _CODEX_SUBAGENT_CANONICAL)
         await _emit(request, SecretConfigured(key="brain.worker.provider", action="set"))
@@ -2688,7 +2746,7 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
                 raise HTTPException(status_code=500, detail=str(exc)) from exc
             except Exception as exc:  # noqa: BLE001
                 raise HTTPException(
-                    status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+                    status_code=500, detail=f"TOML write failed: {exc}"
                 ) from exc
         _apply_worker_in_memory(request, ANTIGRAVITY_SUBAGENT_CANONICAL)
         await _emit(request, SecretConfigured(key="brain.worker.provider", action="set"))
@@ -2705,7 +2763,7 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
         raise HTTPException(
             status_code=404,
             detail=(
-                f"'{body.provider}' ist kein Subagent-faehiger Provider. "
+                f"'{body.provider}' is not a Jarvis-Agent-capable provider. "
                 f"Verfuegbar: {known}."
             ),
         )
@@ -2727,8 +2785,8 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
         raise HTTPException(
             status_code=409,
             detail=(
-                f"{provider} hat keinen gespeicherten Key. "
-                "Erst Key beim Brain-Provider setzen, dann aktivieren."
+                f"{provider} has no stored credential. "
+                "Add the key on its Brain provider card before activating it."
             ),
         )
 
@@ -2744,7 +2802,7 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
             raise HTTPException(status_code=500, detail=str(exc)) from exc
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(
-                status_code=500, detail=f"TOML-Write fehlgeschlagen: {exc}"
+                status_code=500, detail=f"TOML write failed: {exc}"
             ) from exc
 
     # Best-effort in-memory update so the next /jarvis-agent/status reflects the

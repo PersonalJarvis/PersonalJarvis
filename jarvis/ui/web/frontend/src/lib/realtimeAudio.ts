@@ -2,13 +2,45 @@
 // JSON-only WSClient: this socket carries raw mono PCM16 in both directions.
 
 import { LevelMeter } from "./levelMeter";
+import pcmWorkletUrl from "./pcm-worklet.ts?worker&url";
+
+type JarvisWindow = Window & { __JARVIS_TOKEN?: string };
+
+function jarvisWindow(): JarvisWindow {
+  return window as JarvisWindow;
+}
 
 export function buildAudioSocketUrl(): string {
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
   const host = window.location.host;
-  const token = (window as unknown as { __JARVIS_TOKEN?: string }).__JARVIS_TOKEN;
+  const token = jarvisWindow().__JARVIS_TOKEN;
   const query = token ? `?token=${encodeURIComponent(token)}` : "";
   return `${proto}://${host}/ws/audio${query}`;
+}
+
+/** Ensure a remote browser has the canonical token used by tool-capable sockets.
+ *
+ * Desktop WebViews inject this token before React starts. A normal headless
+ * browser does not, so obtain one from the same mission-token registry before
+ * opening `/ws/audio`. Tokenless localhost is deliberately rejected too: a
+ * hostile webpage can otherwise connect directly to the local WebSocket.
+ */
+export async function ensureAudioSocketToken(): Promise<string> {
+  const existing = jarvisWindow().__JARVIS_TOKEN?.trim();
+  if (existing) return existing;
+
+  const response = await fetch("/api/missions/auth/token", {
+    cache: "no-store",
+    credentials: "same-origin",
+  });
+  if (!response.ok) {
+    throw new Error(`Realtime voice authorization failed (${response.status})`);
+  }
+  const payload = (await response.json()) as { token?: unknown };
+  const token = typeof payload.token === "string" ? payload.token.trim() : "";
+  if (!token) throw new Error("Realtime voice authorization returned no token");
+  jarvisWindow().__JARVIS_TOKEN = token;
+  return token;
 }
 
 export type RealtimeStatusPayload = Record<string, unknown>;
@@ -22,6 +54,35 @@ export type RealtimeCallbacks = {
 };
 
 export type BrowserSpeechOutcome = "ended" | "error" | "unavailable";
+
+export type BrowserRealtimeSupportIssue =
+  | "secure_context"
+  | "microphone_unavailable"
+  | "audio_worklet_unavailable";
+
+export class RealtimeAudioSupportError extends Error {
+  constructor(readonly issue: BrowserRealtimeSupportIssue) {
+    super(`Browser Realtime Voice is unavailable: ${issue}`);
+    this.name = "RealtimeAudioSupportError";
+  }
+}
+
+/** Return the first browser capability that prevents microphone streaming. */
+export function browserRealtimeSupportIssue(): BrowserRealtimeSupportIssue | null {
+  if (typeof window === "undefined" || window.isSecureContext === false) {
+    return "secure_context";
+  }
+  if (
+    typeof navigator === "undefined" ||
+    typeof navigator.mediaDevices?.getUserMedia !== "function"
+  ) {
+    return "microphone_unavailable";
+  }
+  if (typeof AudioContext !== "function" || typeof AudioWorkletNode !== "function") {
+    return "audio_worklet_unavailable";
+  }
+  return null;
+}
 
 type BrowserSpeechHandlers = {
   onStart?: () => void;
@@ -194,8 +255,14 @@ export class RealtimeAudioClient {
   private async open(): Promise<void> {
     this.intentionalClose = false;
     try {
+      const supportIssue = browserRealtimeSupportIssue();
+      if (supportIssue) throw new RealtimeAudioSupportError(supportIssue);
+      await ensureAudioSocketToken();
       this.ctx = new AudioContext({ latencyHint: "interactive" });
-      await this.ctx.audioWorklet.addModule(new URL("./pcm-worklet.ts", import.meta.url));
+      if (!this.ctx.audioWorklet) {
+        throw new RealtimeAudioSupportError("audio_worklet_unavailable");
+      }
+      await this.ctx.audioWorklet.addModule(pcmWorkletUrl);
       await this.ctx.resume();
 
       this.stream = await navigator.mediaDevices.getUserMedia({
@@ -306,7 +373,7 @@ export class RealtimeAudioClient {
           this.setOutputRate(message.sample_rate);
         } else if (type === "tts_browser_fallback") {
           this.handleBrowserSpeech(message);
-        } else if (type === "turn_complete" || type === "tts_end") {
+        } else if (type === "thinking" || type === "turn_complete" || type === "tts_end") {
           this.playbackResampler?.reset();
         }
         this.cb.onStatus?.(type, message);

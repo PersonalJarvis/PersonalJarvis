@@ -305,14 +305,14 @@ function EngineModeSwitch({
   onSetVoiceMode: (mode: string) => void;
 }) {
   const t = useT();
-  // Pipeline leads: it is the recommended default (Realtime is still a
-  // research preview), so it takes the first (left) segment with the
-  // Recommended badge fully visible.
+  // Realtime leads as the recommended default. Pipeline follows with an
+  // explicit Not recommended badge so the product guidance is unambiguous.
   const segments: { key: VoiceEngineMode; label: string; icon: LucideIcon }[] = [
-    { key: "pipeline", label: t("apikeys_view.mode_pipeline"), icon: Waypoints },
     { key: "realtime", label: t("apikeys_view.mode_realtime"), icon: Radio },
+    { key: "pipeline", label: t("apikeys_view.mode_pipeline"), icon: Waypoints },
   ];
-  const liveIndex = liveMode === "pipeline" ? 0 : 1;
+  const liveIndex = liveMode === "realtime" ? 0 : 1;
+  const liveModeAvailable = liveMode !== "realtime" || realtimeAvailable;
   const runtimeDetail = [activeSessionProvider, activeSessionModel]
     .filter(Boolean)
     .join(" · ");
@@ -351,18 +351,22 @@ function EngineModeSwitch({
           {/* Two equal segments over one sliding thumb: the thumb tracks the
               LIVE engine, so its glide IS the switch feedback. */}
           {/* w-auto + equal columns: the container grows with the widest
-              segment (Pipeline + Recommended badge) instead of clipping it;
+              segment and its guidance badge instead of clipping it;
               the sliding thumb stays correct at any width. */}
           <div className="relative grid w-auto min-w-64 grid-cols-2 rounded-xl border border-border bg-card/40 p-1">
-            <span
-              aria-hidden="true"
-              className="absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-lg bg-primary shadow-[0_0_18px_rgba(255,214,10,0.25)] transition-transform duration-200 ease-out"
-              style={{ transform: `translateX(${liveIndex * 100}%)` }}
-            />
+            {liveModeAvailable && (
+              <span
+                data-testid="voice-engine-live-thumb"
+                aria-hidden="true"
+                className="absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-lg bg-primary shadow-[0_0_18px_rgba(255,214,10,0.25)] transition-transform duration-200 ease-out"
+                style={{ transform: `translateX(${liveIndex * 100}%)` }}
+              />
+            )}
             {segments.map((seg) => {
-              const isLive = liveMode === seg.key;
+              const isLive = liveModeAvailable && liveMode === seg.key;
               const isViewedOnly = mode === seg.key && !isLive;
               const needsKey = seg.key === "realtime" && !realtimeAvailable;
+              const isRecommended = seg.key === "realtime";
               const Icon = seg.icon;
               return (
                 <button
@@ -384,18 +388,24 @@ function EngineModeSwitch({
                 >
                   <Icon aria-hidden="true" className="h-3.5 w-3.5" />
                   {seg.label}
-                  {seg.key === "pipeline" && (
-                    <span
-                      className={cn(
-                        "whitespace-nowrap rounded-full px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide",
-                        isLive
+                  <span
+                    className={cn(
+                      "whitespace-nowrap rounded-full px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide",
+                      isRecommended
+                        ? isLive
                           ? "bg-primary-foreground/20 text-primary-foreground"
-                          : "bg-primary/15 text-primary",
-                      )}
-                    >
-                      {t("apikeys_view.mode_recommended")}
-                    </span>
-                  )}
+                          : "bg-primary/15 text-primary"
+                        : isLive
+                          ? "border border-primary-foreground/30 bg-primary-foreground/10 text-primary-foreground"
+                          : "border border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+                    )}
+                  >
+                    {t(
+                      isRecommended
+                        ? "apikeys_view.mode_recommended"
+                        : "apikeys_view.not_recommended",
+                    )}
+                  </span>
                   {isLive && (
                     <span className="sr-only">{t("apikeys_view.mode_active_badge")}</span>
                   )}

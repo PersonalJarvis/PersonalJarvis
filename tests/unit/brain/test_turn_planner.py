@@ -131,6 +131,29 @@ def test_unrelated_lookup_does_not_inherit_old_evidence_domain() -> None:
     assert plan_turn("What time is it?", context=context).path is TurnPath.NATIVE_REALTIME
 
 
+def test_mission_findings_follow_up_inherits_the_completed_mission() -> None:
+    context = (
+        "[Trusted Jarvis-Agent mission result] Research finished. "
+        'Result metadata: {"mission_id":"019f5ca2-e30f"}',
+    )
+
+    plan = plan_turn(
+        "Und, was hast du rausgefunden?",  # i18n-allow: exact German speech-input fixture
+        context=context,
+    )
+
+    assert plan.path is TurnPath.ORCHESTRATOR
+    assert TurnReason.MISSION in plan.reasons
+    assert TurnReason.UNCERTAIN in plan.reasons
+
+    topic_plan = plan_turn(
+        "Um was geht's?",  # i18n-allow: exact German speech-input fixture
+        context=context,
+    )
+    assert topic_plan.path is TurnPath.ORCHESTRATOR
+    assert TurnReason.MISSION in topic_plan.reasons
+
+
 @pytest.mark.parametrize(
     "utterance",
     [

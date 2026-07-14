@@ -19,6 +19,13 @@ def test_show(capture_api):
     assert capture_api["calls"][-1]["path"] == "/api/missions/m1"
 
 
+def test_result(capture_api):
+    runner.invoke(app, ["missions", "result", "m1"])
+    call = capture_api["calls"][-1]
+    assert call["method"] == "GET"
+    assert call["path"] == "/api/missions/m1/result"
+
+
 def test_tool_approvals(capture_api):
     runner.invoke(app, ["missions", "tool-approvals", "m1"])
     call = capture_api["calls"][-1]

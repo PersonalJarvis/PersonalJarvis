@@ -48,6 +48,11 @@ class _FakeRealtimeHandle:
     def __init__(self, *, accepted: bool) -> None:
         self.accepted = accepted
         self.calls: list[dict[str, object]] = []
+        self.remembered: list[dict[str, object]] = []
+
+    def remember_announcement_context(self, **kwargs: object) -> bool:
+        self.remembered.append(kwargs)
+        return True
 
     async def deliver_announcement(self, **kwargs: object) -> bool:
         self.calls.append(kwargs)
@@ -90,6 +95,33 @@ async def test_subagent_readback_is_handed_to_active_realtime_model() -> None:
             "detail": "artifact: report.md",
         }
     ]
+    assert tts.calls == []
+    assert player.plays == 0
+
+
+@pytest.mark.asyncio
+async def test_muted_subagent_readback_is_remembered_without_audio() -> None:
+    """Exact run regression: the mission finished while voice was muted."""
+    pipeline, tts, player, realtime = _pipeline(accepted=True)
+    pipeline._muted = True
+
+    await pipeline._on_announcement(
+        AnnouncementRequested(
+            text="The research report is ready.",
+            language="en",
+            kind="subagent",
+            detail='{"mission_id":"019f5ca2-e30f"}',
+        )
+    )
+
+    assert realtime.remembered == [
+        {
+            "text": "The research report is ready.",
+            "spoken_kind": "subagent",
+            "detail": '{"mission_id":"019f5ca2-e30f"}',
+        }
+    ]
+    assert realtime.calls == []
     assert tts.calls == []
     assert player.plays == 0
 

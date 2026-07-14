@@ -1,7 +1,14 @@
-"""Google Gemini Brain (via google-genai async SDK).
+"""Google Gemini Brain with native and portable HTTP transports.
 
 Gemini has its own functionCall format. We normalize to
 `BrainDelta.tool_call = {id, name, input}`.
+
+The native ``google-genai`` SDK remains the preferred transport because it
+supports Gemini-specific features such as context caching. When that SDK or
+one of its native/authentication dependencies cannot import, the provider
+uses Google's official OpenAI-compatible HTTPS endpoint. The fallback keeps
+core text, vision, streaming, and function-calling available on platforms
+where the Google SDK dependency graph has no installable wheel.
 """
 from __future__ import annotations
 
@@ -16,9 +23,23 @@ from uuid import uuid4
 from jarvis.core import config as cfg
 from jarvis.core.protocols import BrainDelta, BrainMessage, BrainRequest
 
+from ._openai_base import CLIENT_TIMEOUT, stream_complete
+
 log = logging.getLogger(__name__)
 
 DEFAULT_MODEL = "gemini-3-flash"
+OPENAI_COMPAT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+_TRANSPORT_NATIVE = "native"
+_TRANSPORT_OPENAI_COMPAT = "openai-compatible"
+
+# Gemini 3 requires a thought signature when an application reconstructs an
+# assistant function-call step. Jarvis deliberately normalizes provider output
+# into BrainDelta/BrainMessage instead of retaining the raw response object, so
+# Google's documented validator sentinel is the honest compatibility value.
+_TOOL_HISTORY_EXTRA_CONTENT = {
+    "google": {"thought_signature": "skip_thought_signature_validator"},
+}
 
 # Latency-Sprint-2: ENV switch for the context cache. BrainManager sets this
 # when ``[performance].gemini_context_cache = true``. The cache holds the
@@ -107,8 +128,8 @@ def _to_gemini_contents(messages: tuple[BrainMessage, ...]) -> list[dict[str, An
 
 # OpenAI-specific JSON-schema fields that Gemini's `Tool.functionDeclarations`
 # Pydantic validator does NOT accept. Phase 7.3 self-mod tools set
-# `strict=True` + `input_examples=[...]` an die Schema-Wurzel — diese Felder
-# fliegen sonst mit "11 validation errors for GenerateContentConfig" durch
+# `strict=True` + `input_examples=[...]` at the schema root. Without this
+# cleanup, Gemini rejects the request with GenerateContentConfig validation errors
 # (Bug #API-1, 2026-04-29).
 _GEMINI_FORBIDDEN_SCHEMA_KEYS: frozenset[str] = frozenset({
     "strict",            # OpenAI strict-mode flag
@@ -289,6 +310,99 @@ def _tools_gemini_format(tools: tuple[dict[str, Any], ...]) -> list[dict[str, An
     return payload
 
 
+def _openai_compat_base_url(resolved_base_url: str | None) -> str:
+    """Return the compatibility URL matching a resolved native endpoint.
+
+    ``resolve_provider_endpoint`` returns the native Gemini root. Google's
+    compatibility API lives below ``/openai/``; the team proxy mirrors the
+    same path shape. An explicitly compatible URL is left unchanged.
+    """
+    if not resolved_base_url:
+        return OPENAI_COMPAT_BASE_URL
+
+    base = resolved_base_url.rstrip("/")
+    if base.endswith("/openai"):
+        return f"{base}/"
+    if base == "https://generativelanguage.googleapis.com":
+        return OPENAI_COMPAT_BASE_URL
+    return f"{base}/openai/"
+
+
+def _create_native_client(endpoint: Any) -> Any:
+    """Create the preferred google-genai client at the import boundary."""
+    from google import genai
+
+    client_kwargs: dict[str, Any] = {"api_key": endpoint.credential}
+    if endpoint.base_url:
+        from google.genai import types as genai_types
+
+        client_kwargs["http_options"] = genai_types.HttpOptions(
+            base_url=endpoint.base_url,
+        )
+    return genai.Client(**client_kwargs)
+
+
+def _create_openai_compat_client(endpoint: Any) -> Any:
+    """Create the portable client for Gemini's official compatibility API."""
+    from openai import AsyncOpenAI
+
+    return AsyncOpenAI(
+        api_key=endpoint.credential,
+        base_url=_openai_compat_base_url(endpoint.base_url),
+        timeout=CLIENT_TIMEOUT,
+    )
+
+
+def _is_native_dependency_import_error(exc: BaseException) -> bool:
+    """Whether an exception chain reports an unavailable native SDK module."""
+    current: BaseException | None = exc
+    seen: set[int] = set()
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(current, ImportError):
+            missing = str(getattr(current, "name", "") or "").lower()
+            message = str(current).lower()
+            if (
+                not missing
+                or missing == "google"
+                or missing.startswith(("google.", "cryptography", "grpc"))
+                or any(
+                    marker in message
+                    for marker in ("google.genai", "google.auth", "cryptography", "grpc")
+                )
+            ):
+                return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
+def _openai_compat_request(req: BrainRequest) -> BrainRequest:
+    """Copy a request with schemas accepted by Gemini's compatibility API."""
+    sanitized_tools: list[dict[str, Any]] = []
+    for tool in req.tools:
+        copied = dict(tool)
+        raw_schema = (
+            tool.get("input_schema")
+            or tool.get("parameters")
+            or tool.get("schema")
+            or {}
+        )
+        copied["input_schema"] = (
+            _sanitize_for_gemini(raw_schema)
+            if raw_schema
+            else {"type": "object", "properties": {}}
+        )
+        sanitized_tools.append(copied)
+    return BrainRequest(
+        messages=req.messages,
+        tools=tuple(sanitized_tools),
+        system=req.system,
+        temperature=req.temperature,
+        max_tokens=req.max_tokens,
+        stream=req.stream,
+    )
+
+
 class GeminiBrain:
     name: str = "gemini"
     context_window: int = 1_048_576
@@ -303,6 +417,7 @@ class GeminiBrain:
     ) -> None:
         self._model = model or DEFAULT_MODEL
         self._client: Any = None
+        self._transport = _TRANSPORT_NATIVE
         # Latency-Sprint-1: thinking budget controls how much "extended
         # thinking" Gemini 3.x does. ``None`` = SDK default (auto, higher
         # latency). ``0`` = off, ``-1`` = dynamic, ``>0`` = fixed cap.
@@ -323,13 +438,23 @@ class GeminiBrain:
                     "No Gemini API key found. Set GEMINI_API_KEY or "
                     "GOOGLE_AIStudio_API_KEY in .env / Credential Manager."
                 )
-            from google import genai
-            client_kwargs: dict[str, Any] = {"api_key": ep.credential}
-            if ep.base_url:
-                from google.genai import types as genai_types
-
-                client_kwargs["http_options"] = genai_types.HttpOptions(base_url=ep.base_url)
-            self._client = genai.Client(**client_kwargs)
+            try:
+                self._client = _create_native_client(ep)
+                self._transport = _TRANSPORT_NATIVE
+            except (ImportError, AttributeError) as exc:
+                # A platform can have the OpenAI SDK and a valid Gemini key
+                # while google-genai's auth/native dependency graph is not
+                # installable. Keep Gemini itself usable through Google's
+                # documented HTTPS compatibility API. Log only the exception
+                # class: dependency messages can contain local paths, and the
+                # credential must never enter logs.
+                log.info(
+                    "Gemini native SDK unavailable (%s); using the "
+                    "OpenAI-compatible transport",
+                    type(exc).__name__,
+                )
+                self._client = _create_openai_compat_client(ep)
+                self._transport = _TRANSPORT_OPENAI_COMPAT
         return self._client
 
     async def _ensure_cache(
@@ -348,7 +473,9 @@ class GeminiBrain:
         # for an identity check.
         sig = (
             str(hash(system_text)),
-            str(hash(json.dumps(tools_payload, sort_keys=True, default=str))) if tools_payload else "",
+            str(hash(json.dumps(tools_payload, sort_keys=True, default=str)))
+            if tools_payload
+            else "",
         )
         if self._cache_signature == sig and self._cached_content_name:
             return self._cached_content_name
@@ -382,7 +509,7 @@ class GeminiBrain:
             return None
 
     def invalidate_cache(self) -> None:
-        """Cache-Identitaet vergessen (z.B. nach Tool-Reload).
+        """Forget cache identity, for example after a tool reload.
 
         ⚠ BUG-019 (2026-05-11) — this method is defined but NEVER called
         automatically. The only production trigger that should invalidate
@@ -402,6 +529,17 @@ class GeminiBrain:
 
     async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
         client = self._ensure_client()
+        if self._transport == _TRANSPORT_OPENAI_COMPAT:
+            async for delta in stream_complete(
+                client,
+                self._model,
+                _openai_compat_request(req),
+                supports_vision=self.supports_vision,
+                assistant_tool_call_extra_content=_TOOL_HISTORY_EXTRA_CONTENT,
+            ):
+                yield delta
+            return
+
         contents = _to_gemini_contents(req.messages)
         system_parts: list[str] = [m.content for m in req.messages
                                    if m.role == "system" and isinstance(m.content, str)]
@@ -571,6 +709,7 @@ class GeminiBrain:
         # The cache-not-found error fires before any token is generated, so
         # the from-scratch retry yields no duplicate chunks.
         attempt = 0
+        yielded_delta = False
         while True:
             attempt += 1
             try:
@@ -583,6 +722,7 @@ class GeminiBrain:
                     # Text
                     text = getattr(chunk, "text", None)
                     if text:
+                        yielded_delta = True
                         yield BrainDelta(content=text)
 
                     # Function-Calls
@@ -600,6 +740,7 @@ class GeminiBrain:
                             args = getattr(fc, "args", {}) or {}
                             if hasattr(args, "items"):
                                 args = dict(args)
+                            yielded_delta = True
                             yield BrainDelta(tool_call={
                                 "id": f"gemini_{uuid4().hex[:8]}",
                                 "name": tool_name_reverse.get(name, name),
@@ -607,14 +748,18 @@ class GeminiBrain:
                             })
                         finish = getattr(cand, "finish_reason", None)
                         if finish:
+                            yielded_delta = True
                             yield BrainDelta(finish_reason=str(finish))
 
                     usage = getattr(chunk, "usage_metadata", None)
                     if usage is not None:
+                        yielded_delta = True
                         yield BrainDelta(usage={
                             "input_tokens": int(getattr(usage, "prompt_token_count", 0) or 0),
                             "output_tokens": int(getattr(usage, "candidates_token_count", 0) or 0),
-                            "cache_read_input_tokens": int(getattr(usage, "cached_content_token_count", 0) or 0),
+                            "cache_read_input_tokens": int(
+                                getattr(usage, "cached_content_token_count", 0) or 0
+                            ),
                         })
                 return
             except Exception as exc:  # noqa: BLE001 — BUG-019 stale-cache recovery
@@ -634,6 +779,34 @@ class GeminiBrain:
                     if tools_payload:
                         config_dict["tools"] = tools_payload
                     continue
+                if (
+                    not yielded_delta
+                    and self._transport == _TRANSPORT_NATIVE
+                    and _is_native_dependency_import_error(exc)
+                ):
+                    # Some google-genai releases import auth/native modules
+                    # only when the first stream starts. Recover only before
+                    # any delta was emitted, so a retry can never duplicate
+                    # text or execute a tool twice.
+                    ep = cfg.resolve_provider_endpoint("gemini")
+                    if not ep.credential:
+                        raise
+                    log.info(
+                        "Gemini native stream dependency unavailable (%s); "
+                        "using the OpenAI-compatible transport",
+                        type(exc).__name__,
+                    )
+                    self._client = _create_openai_compat_client(ep)
+                    self._transport = _TRANSPORT_OPENAI_COMPAT
+                    async for delta in stream_complete(
+                        self._client,
+                        self._model,
+                        _openai_compat_request(req),
+                        supports_vision=self.supports_vision,
+                        assistant_tool_call_extra_content=_TOOL_HISTORY_EXTRA_CONTENT,
+                    ):
+                        yield delta
+                    return
                 raise
 
     def estimate_cost(self, req: BrainRequest) -> float:
