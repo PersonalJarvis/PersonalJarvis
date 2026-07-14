@@ -1158,7 +1158,7 @@ carrying the same `System.AppUserModel.ID`, then using that shortcut's **file
 name** + **icon**. There was no such shortcut under
 `%APPDATA%\…\Start Menu\Programs\` (only a Desktop shortcut — not scanned — and
 a `Startup\Disabled\` one tagged with a stale *personalised* AUMID
-`SamHerz.PersonalJarvis`). With no AUMID-matched shortcut, Explorer fell back
+(`<username>.PersonalJarvis`-shaped)). With no AUMID-matched shortcut, Explorer fell back
 to the process `FileDescription` → "Python".
 
 **Fix (`jarvis/ui/icon_utils.py`):** new `ensure_start_menu_shortcut()` creates
