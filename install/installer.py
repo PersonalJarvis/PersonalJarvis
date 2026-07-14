@@ -272,7 +272,14 @@ def step_models(*, dry_run: bool) -> None:
     # model can still leave "done" looking complete. So don't stop at rc — VERIFY
     # what actually landed on disk and print a per-model truth. Read-only +
     # best-effort: this never bricks the install (CLAUDE.md section 3).
-    run(cmd, cwd=repo_root(), check=False)
+    # run_quiet: the raw download progress (hundreds of scrolling lines) was
+    # the one step still wrecking the calm gold transcript — hide it behind
+    # the spinner; verify_models prints the honest per-model outcome after.
+    run_quiet(
+        cmd,
+        label="downloading voice models (the long step - a few hundred MB)",
+        cwd=repo_root(),
+    )
     verify_models()
 
 
