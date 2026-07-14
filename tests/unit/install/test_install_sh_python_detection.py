@@ -236,3 +236,18 @@ def test_stale_venv_is_rebuilt_on_interpreter_version_change() -> None:
     assert "rebuilding the Python environment" in src
     # The comparison must be version-based, not existence-based only.
     assert 'if [ "$_venv_mm" != "$_sel_mm" ]' in src
+
+
+def test_bootstraps_full_support_python_when_host_only_has_314() -> None:
+    """Maintainer mandate 2026-07-14: the one-liner leaves NOTHING to install
+    afterwards. A host offering only 3.14+ gets a self-contained CPython 3.13
+    fetched via uv; an explicit JARVIS_PYTHON pin is never substituted, and
+    JARVIS_NO_PYTHON_BOOTSTRAP=1 opts out."""
+    src = INSTALL_SH.read_text(encoding="utf-8")
+    assert "bootstrap_full_support_python" in src
+    assert "JARVIS_NO_PYTHON_BOOTSTRAP" in src
+    assert "3.11|3.12|3.13" in src  # the full-wheel-support set
+    # Pin stays authoritative: the bootstrap hook is gated on no JARVIS_PYTHON.
+    assert '[ -z "${JARVIS_PYTHON:-}" ]' in src
+    # Honest degrade when the bootstrap fails.
+    assert "the speech pack needs Python 3.11-3.13" in src
