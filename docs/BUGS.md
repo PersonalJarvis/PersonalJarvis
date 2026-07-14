@@ -4239,3 +4239,52 @@ init/teardown must be serialized behind a lock, and any macOS
 permission-gated native surface (mic, event tap, screen) must preflight a
 non-prompting probe and degrade honestly instead of letting the OS kill
 the process.
+
+## BUG-059: Local speech pack install blamed the internet — missing cp314 wheel sent pip into an FFmpeg source build (MEDIUM, FIXED 2026-07-14)
+
+**Symptom.** First real-Mac onboarding (BUG-056..058 fixed, app running):
+the wake-word step's "Install the local speech pack" fails with "Install
+failed. Check your internet connection and try again." on a perfectly
+healthy connection. The pip tail underneath shows the truth: seven FFmpeg
+``Package 'libav*' not found`` lines from pkg-config, ending in
+``Failed to build 'av' when getting requirements to build wheel``.
+
+**Root cause (three layers).**
+
+1. **No cp314 wheel.** The venv is Python 3.14 (install.sh preferred the
+   newest candidate); ``av`` (a faster-whisper dependency) publishes no
+   3.14/macOS wheel yet, so pip silently fell back to a SOURCE build that
+   needs FFmpeg dev libraries no end user has. Same wheel gap as
+   onnxruntime/webrtcvad on darwin+3.14 (pyproject markers exclude them
+   there — wake/VAD degrade, related open item).
+2. **The installer invited the source build.** ``install_pip_package`` ran
+   plain ``pip install`` — nothing told pip that an end-user machine must
+   never compile native packages.
+3. **The UI lied about the cause.** The ``enable_local_error`` string
+   hardcoded "Check your internet connection" for EVERY failure.
+
+**Fix (2026-07-14).**
+
+- ``classify_pip_failure`` (jarvis/setup/dependencies.py): missing-wheel /
+  source-build signatures → an honest "No prebuilt package exists for
+  Python X.Y on this system yet … Python 3.12 or 3.13 has full prebuilt
+  support"; only genuine network signatures name the network; unknown
+  stays the raw pip tail. The diagnosis leads the returned message.
+- ``install_pip_package(..., only_binary=True)`` adds
+  ``--only-binary=:all:``; the enable-local-speech route pins it so pip
+  fails fast with the diagnosis instead of attempting a toolchain build.
+- ``enable_local_error`` rewritten in en/de/es: the details name the
+  cause; only a connection error in the details means a network problem.
+- install.sh candidate order: ``python3.13 python3.12 python3.11
+  python3.14 …`` — 3.14 stays a working core fallback until the native
+  stack ships cp314 wheels (comment marks the revert condition).
+
+Guards: ``tests/unit/setup/test_pip_failure_diagnosis.py``,
+``tests/unit/ui/test_wake_local_speech_install.py::test_install_is_wheel_only_for_end_users``,
+``tests/unit/install/test_install_sh_python_detection.py::test_prefers_python_with_full_native_wheel_support``.
+
+**Class rule.** An in-app installer on an end-user machine is wheel-only:
+a source-build fallback is never satisfiable there, and every failure
+message must name the actual failing layer — "check your internet" as a
+catch-all turns a version gap into user gaslighting. "Newest Python
+first" is wrong while the native wheel ecosystem lags a fresh CPython.

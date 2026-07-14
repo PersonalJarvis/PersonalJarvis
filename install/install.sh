@@ -112,7 +112,11 @@ find_python() {
         _py_try "$JARVIS_PYTHON"
         return $?
     fi
-    for candidate in python3.14 python3.13 python3.12 python3.11 python3 python; do
+    # 3.13/3.12/3.11 before 3.14 (BUG-059): the local-voice native stack
+    # (av / ctranslate2 / onnxruntime) publishes no cp314 wheels yet, so a
+    # 3.14 venv boots fine but cannot install the local speech pack. 3.14
+    # stays as a working core fallback; move it forward once wheels exist.
+    for candidate in python3.13 python3.12 python3.11 python3.14 python3 python; do
         command -v "$candidate" >/dev/null 2>&1 || continue
         if _py_try "$candidate"; then return 0; fi
     done

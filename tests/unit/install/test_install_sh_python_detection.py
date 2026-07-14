@@ -214,3 +214,14 @@ def test_ps1_failure_reports_what_was_found() -> None:
     bootstrap must also name the too-old interpreter it found."""
     ps1 = (REPO / "install" / "install.ps1").read_text(encoding="utf-8")
     assert "Closest match" in ps1
+
+
+def test_prefers_python_with_full_native_wheel_support() -> None:
+    """BUG-059: the local-voice native stack (av / ctranslate2 / onnxruntime)
+    ships no cp314 wheels yet — a 3.14 venv boots but cannot install the
+    local speech pack. The finder must prefer 3.13/3.12/3.11 and keep 3.14
+    only as a working core fallback."""
+    src = INSTALL_SH.read_text(encoding="utf-8")
+    line = next(ln for ln in src.splitlines() if "for candidate in" in ln)
+    for older in ("python3.13", "python3.12", "python3.11"):
+        assert line.index(older) < line.index("python3.14"), older

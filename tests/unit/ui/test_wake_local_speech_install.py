@@ -143,3 +143,21 @@ def test_available_pack_reapplies_current_wake_plan_live(monkeypatch) -> None:
     assert pipeline.plan is not None
     assert pipeline.plan.phrase == "Hey Fable"
     assert pipeline.plan.wake_available is True
+
+
+def test_install_is_wheel_only_for_end_users(monkeypatch) -> None:
+    # BUG-059: pip must never fall back to a source build on an end-user
+    # machine (av needs FFmpeg dev libs) — the route pins only_binary=True.
+    _reset_state()
+    monkeypatch.setattr(sr, "_local_whisper_available", lambda: False)
+    kwargs: list[dict] = []
+
+    def fake_install(pkg, **kw):
+        kwargs.append(kw)
+        return True, "ok"
+
+    monkeypatch.setattr("jarvis.setup.dependencies.install_pip_package", fake_install)
+    monkeypatch.setattr(sr.threading, "Thread", _SyncThread)
+    _client().post("/api/settings/wake-word/enable-local-speech")
+    assert kwargs and kwargs[0].get("only_binary") is True
+    _reset_state()
