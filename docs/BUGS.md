@@ -3875,3 +3875,76 @@ cancel" must keep the call alive. A session should end only for an explicit
 user lifecycle action, configured inactivity, shutdown, or a genuinely
 unrecoverable failure; recoverable control-plane races must never masquerade as
 hang-up.
+
+## BUG-054: The realtime dead-air bridge invents a connected-tool result before the tool runs (HIGH, OPEN, 2026-07-14)
+
+**Symptom.** In the same 09:04 session as BUG-053, the user asked Jarvis to list
+their notebooks. Jarvis spoke five plausible-looking notebook names as though
+they came from the user's account. They did not. The background mission had not
+yet called the NotebookLM MCP server, and its eventual grounded outcome was
+that the NotebookLM login had expired and the notebooks could not be listed.
+
+The false list was not merely transient speech. It became the saved assistant
+text for turn two, appeared in the exported transcript, and was subsequently
+journaled as a candidate personal fact about the user. A progress sentence
+therefore crossed three authority boundaries: spoken answer, session history,
+and durable memory.
+
+**Evidence.** Desktop, session, mission, and Wiki-journal timestamps agree:
+
+- At 09:05:24, deterministic delegation dispatched the notebook-list request
+  to a background mission.
+- At 09:05:29.233, the realtime session logged that its delegate bridge had
+  requested an interim line because the action was still running.
+- The bridge response then spoke the five-name list and was finalized at
+  09:05:43.729. The worker's latest evidence at that moment was only a local
+  filename glob and repository text search.
+- The worker did not call the NotebookLM notebook-list tool until
+  09:06:05.216, more than 21 seconds after the invented list was finalized.
+  The call reported expired authentication. A refresh attempt and second list
+  call also failed.
+- The worker produced the honest blocked outcome at 09:06:26 and the mission
+  later ended failed. No successful MCP result ever supported the spoken list.
+- At 09:05:48.259, the memory candidate journal derived a fact asserting that
+  the user owned the five invented notebooks. That entry came from the
+  ungrounded bridge output, not connected-tool evidence.
+
+**Root cause.** `_delegate_bridge_prompt()` tells the live model to produce one
+short progress sentence and explicitly forbids outcomes or answer content.
+`_run_delegate_bridge()` then sets `bridge_delivery_started`, opens the output
+gate, and trusts whatever transcript/audio the model emits. There is no
+deterministic bridge-output validator. The general action-honesty guard detects
+unsupported future-tense promises, but a fabricated factual answer is not a
+promise, so it passes. The bridge test covers a compliant "still checking"
+sentence only; it never makes the provider violate the instruction.
+
+This is a direct recurrence of BUG-047's class rule in a newly exempted path:
+prompt compliance became a correctness boundary again. Starting a real mission
+proves that work exists, but it does not prove any result that the interim model
+chooses to state.
+
+**Required correction.** This incident is diagnosed and recorded; the runtime
+repair has not yet been applied. The bridge must become structurally incapable
+of supplying answer content:
+
+1. Keep bridge audio withheld until the full bridge transcript passes a strict,
+   deterministic progress-only contract. The safest contract is an exact
+   localized status template (rendered in the already resolved turn language),
+   not an open-ended instruction to invent a sentence. A non-conforming bridge
+   is dropped without affecting the running action.
+2. Never publish bridge text as `ResponseGenerated` or ordinary assistant turn
+   content. It is `SpeechSpoken(progress)` only and must be excluded from fact
+   extraction, personal-memory journaling, and answer history.
+3. Keep the real answer gate closed until the delegated result is complete and
+   its trusted payload is being delivered. Mission-start evidence may authorize
+   only a progress status, never a factual result.
+4. Add a hostile-provider regression test whose bridge ignores the prompt and
+   emits a plausible list. Assert zero leaked PCM, no authoritative response or
+   memory candidate, a still-live delegated action, and later delivery of only
+   the grounded tool outcome.
+
+**Class rule.** "Work started" and "result known" are different evidence
+levels. An interim surface may report only the former, and its data must never
+enter an answer or memory channel. Any model-generated bridge that is allowed
+through solely because its prompt said "do not invent a result" is an
+untrusted answer generator, not a progress indicator.
