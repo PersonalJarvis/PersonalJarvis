@@ -10,6 +10,7 @@ from jarvis.brain.app_control import AUTH_PROVIDER_ALIASES, is_credential_presen
 from jarvis.core import config as cfg_mod
 from jarvis.core.config import PROVIDER_SECRET_CANDIDATES, JarvisConfig
 from jarvis.plugins.realtime.gemini_live import GeminiLiveProvider
+from jarvis.plugins.realtime.grok_realtime import GrokRealtimeProvider
 from jarvis.ui.web.provider_routes import router
 from jarvis.ui.web.provider_spec import get_spec
 
@@ -19,6 +20,13 @@ def test_gemini_live_adapter_credentials_match_canonical_family() -> None:
         "gemini"
     ]
     assert AUTH_PROVIDER_ALIASES["gemini-live"] == "gemini"
+
+
+def test_grok_realtime_adapter_credentials_match_canonical_family() -> None:
+    assert GrokRealtimeProvider.credential_candidates == PROVIDER_SECRET_CANDIDATES[
+        "grok"
+    ]
+    assert AUTH_PROVIDER_ALIASES["grok-realtime"] == "grok"
 
 
 @pytest.mark.parametrize(

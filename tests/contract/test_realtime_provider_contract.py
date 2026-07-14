@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from jarvis.plugins.realtime.gemini_live import GeminiLiveProvider
+from jarvis.plugins.realtime.grok_realtime import GrokRealtimeProvider
 from jarvis.plugins.realtime.openai_realtime import OpenAIRealtimeProvider
 from jarvis.realtime.protocol import RealtimeProvider
 
@@ -15,6 +16,7 @@ from jarvis.realtime.protocol import RealtimeProvider
     [
         (OpenAIRealtimeProvider, "openai-realtime", 24_000),
         (GeminiLiveProvider, "gemini-live", 16_000),
+        (GrokRealtimeProvider, "grok-realtime", 24_000),
     ],
 )
 def test_provider_is_structurally_conformant(provider_cls, provider_id, input_rate):
@@ -28,7 +30,10 @@ def test_provider_is_structurally_conformant(provider_cls, provider_id, input_ra
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider_cls", [OpenAIRealtimeProvider, GeminiLiveProvider])
+@pytest.mark.parametrize(
+    "provider_cls",
+    [OpenAIRealtimeProvider, GeminiLiveProvider, GrokRealtimeProvider],
+)
 async def test_keyless_capability_probe_is_false(provider_cls):
     assert await provider_cls().can_open_duplex_session() is False
 
@@ -38,6 +43,7 @@ async def test_keyless_capability_probe_is_false(provider_cls):
     [
         Path("jarvis/plugins/realtime/openai_realtime.py"),
         Path("jarvis/plugins/realtime/gemini_live.py"),
+        Path("jarvis/plugins/realtime/grok_realtime.py"),
     ],
 )
 def test_plugin_module_imports_no_jarvis_modules(path: Path):
@@ -64,6 +70,7 @@ def test_plugin_module_imports_no_jarvis_modules(path: Path):
     [
         (Path("jarvis/plugins/realtime/openai_realtime.py"), "openai"),
         (Path("jarvis/plugins/realtime/gemini_live.py"), "google"),
+        (Path("jarvis/plugins/realtime/grok_realtime.py"), "openai"),
     ],
 )
 def test_provider_sdk_import_is_lazy(path: Path, sdk_root: str):
@@ -79,4 +86,7 @@ def test_provider_sdk_import_is_lazy(path: Path, sdk_root: str):
         for alias in (getattr(node, "names", []) or [])
     ]
     modules = [getattr(node, "module", "") or "" for node in top_level]
-    assert not any(name.startswith(sdk_root) for name in [*names, *modules])
+    assert not any(
+        name == sdk_root or name.startswith(f"{sdk_root}.")
+        for name in [*names, *modules]
+    )

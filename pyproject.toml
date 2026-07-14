@@ -375,10 +375,11 @@ telegram = "jarvis.channels.telegram:TelegramChannel"
 discord = "jarvis.channels.discord:DiscordChannel"
 
 [project.entry-points."jarvis.realtime"]
-# Provider-neutral speech-to-speech plugins. Both adapters load lazily; the
+# Provider-neutral speech-to-speech plugins. Every adapter loads lazily; the
 # orchestrator chooses a credential-ready family and crosses families on failure.
 openai-realtime = "jarvis.plugins.realtime.openai_realtime:OpenAIRealtimeProvider"
 gemini-live = "jarvis.plugins.realtime.gemini_live:GeminiLiveProvider"
+grok-realtime = "jarvis.plugins.realtime.grok_realtime:GrokRealtimeProvider"
 
 [project.entry-points."jarvis.tool"]
 open-app = "jarvis.plugins.tool.open_app:OpenAppTool"

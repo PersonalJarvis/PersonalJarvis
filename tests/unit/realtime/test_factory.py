@@ -40,9 +40,15 @@ class _GeminiProvider(_BaseProvider):
     credential_candidates = (("gemini_api_key", "GEMINI_API_KEY"),)
 
 
+class _GrokProvider(_BaseProvider):
+    name = "grok-realtime"
+    credential_candidates = (("grok_api_key", "GROK_API_KEY"),)
+
+
 _PLUGINS = {
     "openai-realtime": _OpenAIProvider,
     "gemini-live": _GeminiProvider,
+    "grok-realtime": _GrokProvider,
 }
 
 
@@ -69,7 +75,11 @@ def _fake_registry(monkeypatch, keys: set[str]) -> None:
 
     def _get_secret(candidates):
         slot = candidates[0][0]
-        family = "openai" if slot.startswith("openai") else "gemini"
+        family = (
+            "openai" if slot.startswith("openai")
+            else "grok" if slot.startswith("grok")
+            else "gemini"
+        )
         return f"{family}-key" if family in keys else None
 
     monkeypatch.setattr(factory, "get_secret_any", _get_secret)
@@ -83,6 +93,8 @@ def _fake_registry(monkeypatch, keys: set[str]) -> None:
         ("openai-realtime", {"gemini"}, "gemini-live"),
         ("gemini-live", {"openai"}, "openai-realtime"),
         ("openai-realtime", {"openai", "gemini"}, "openai-realtime"),
+        ("grok-realtime", {"grok"}, "grok-realtime"),
+        ("openai-realtime", {"grok"}, "grok-realtime"),
         ("openai-realtime", set(), None),
     ],
 )
