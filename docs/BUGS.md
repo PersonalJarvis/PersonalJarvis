@@ -3961,10 +3961,9 @@ untrusted answer generator, not a progress indicator.
 helfen, zu schauen, was genau alles in meinem Wiki-System steht?" <!-- i18n-allow: quoted German user utterance under forensic analysis -->
 took 66 seconds and answered that the wiki holds USER.md, SOUL.md, and a
 people folder with profiles for Harald, Joy, and the user's mother. The real
-vault holds none of those files (actual contents: log.md, memory.md,
-schema.md, entities/{andrew-tate,lukas,ruben}.md, projects/{drugs-in-schools-
-project,personal-jarvis}.md). Every named file in the spoken answer was
-invented.
+vault holds none of those files (actual contents: the log/memory/schema
+core pages plus a few entity and project pages — none matching a single
+spoken name). Every named file in the spoken answer was invented.
 
 **Evidence (desktop log, 09:29:18–09:30:25).** The deterministic delegate
 dispatched a local-evidence turn at 09:29:18.5. The router brain then ran
