@@ -4358,3 +4358,45 @@ platform must never sit unconditionally in the base lock: gate it with
 platform markers and give the capability an honest degrade. Wheel
 matrices shrink over time — "it resolved when pinned" is not "it resolves
 everywhere forever".
+
+## BUG-062: Realtime speech audibly choppy + answers cut short on a speakers+mic laptop (HIGH, PARTIALLY FIXED 2026-07-14, deep-dive documented)
+
+**Symptom.** First real realtime-voice run (old Intel MacBook, CPU-only,
+built-in speakers + mic): the assistant's TRANSCRIPT is complete, but the
+audible speech stutters constantly and large parts are never heard.
+
+**Deep-dive findings (full trace in the audit, two compounding causes).**
+
+1. **Self-barge-in via speaker echo.** The desktop realtime path arms the
+   Silero barge-in detector during playback but — unlike the classic
+   pipeline — never arms any echo-suppression window
+   (``_suppress_session_input_after_tts`` is classic-path only). Open
+   speakers feed the assistant's own voice into the detector; a false
+   confirm truncates the provider response AND aborts/drains playback —
+   exactly "complete transcript, mostly unheard".
+2. **Event-loop starvation from per-frame ONNX.** ``barge_detector.feed``
+   runs ~3 Silero inferences per 100 ms mic block synchronously on the
+   voice event loop for the whole answer; on a slow CPU this delays the
+   120 ms playback write batches → PortAudio underruns → steady stutter.
+   (Resampling ruled out: 24 kHz == 24 kHz. Queue drops ruled out: the
+   playback queue blocks, never drops.)
+
+**Fix now (2026-07-14).** Energy pre-gate in
+``DesktopRealtimeBargeInDetector.feed`` (``min_frame_rms``, default 0.010,
+AP-27-anchored: silence ghosts <= 0.0043, quiet speech ~0.009): quiet
+frames never reach the ONNX model — removing most of the per-frame CPU
+load AND damping moderate speaker echo. Documented trade-off:
+whisper-quiet barge-in no longer triggers. Guards:
+``tests/unit/realtime/test_desktop.py`` (gate skips ONNX on quiet frames,
+loud speech still confirms; logic tests pin ``min_frame_rms=0.0``).
+
+**Follow-ups (need on-device validation, tracked).** (a) A realtime echo-
+suppression window analogous to the classic path, or an energy comparison
+against the currently playing output level; (b) offload the detector off
+the audio-critical loop; (c) a small time-based release floor in
+``ScrubHoldGate`` so audio is not strictly transcript-delta-clocked.
+
+**Class rule.** Half-duplex voice on open speakers MUST treat its own
+output as hostile input: any interrupt detector needs an energy floor or
+echo reference before it may cancel playback, and nothing compute-heavy
+belongs on the audio-critical loop per mic frame.
