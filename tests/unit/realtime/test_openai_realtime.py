@@ -788,3 +788,74 @@ async def test_live_session_update_replaces_tool_declarations(
     assert update["tools"] == [{"type": "function", **declaration}]
     assert update["tool_choice"] == "auto"
     await session.close()
+
+
+@pytest.mark.asyncio
+async def test_response_cancel_not_active_error_is_recoverable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUG-053/BUG-056: a cancel that loses the response-boundary race is a
+    benign no-op — the response it wanted dead is already gone. The provider's
+    ``response_cancel_not_active`` error must surface as RECOVERABLE so the
+    session pump warns and continues instead of ending the call (live
+    incidents 09:04 barge-in and 15:13 scrub-cancel, both 2026-07-14)."""
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    conn = holder["client"].realtime.last_conn
+    conn._events = iter(
+        [
+            SimpleNamespace(
+                type="error",
+                error=SimpleNamespace(
+                    code="response_cancel_not_active",
+                    message="Cancellation failed: no active response found",
+                ),
+            ),
+        ]
+    )
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == ["error"]
+    assert events[0].recoverable is True
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_interrupt_skips_wire_cancel_when_no_response_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUG-053 correction 2: when the adapter already knows no response
+    lifecycle is active, ``interrupt()`` must not put ``response.cancel`` on
+    the wire at all — that request can only ever produce the benign error."""
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    conn = holder["client"].realtime.last_conn
+
+    await session.interrupt()
+
+    assert conn.response_cancels == []
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_interrupt_still_cancels_while_response_active(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The skip above must never eat a REAL cancellation: with a response
+    lifecycle in flight, interrupt() still sends response.cancel."""
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    conn = holder["client"].realtime.last_conn
+
+    await session.request_response()
+    await session.interrupt()
+
+    assert conn.response_cancels == ["<active>"]
+    await session.close()

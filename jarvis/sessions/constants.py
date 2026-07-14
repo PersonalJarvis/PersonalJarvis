@@ -137,6 +137,12 @@ SPOKEN_KIND_PREAMBLE: Final[str] = "preamble"
 SPOKEN_KIND_PROGRESS: Final[str] = "progress"
 """A 'still working' nudge while a long background mission runs."""
 
+SPOKEN_KIND_WITHHELD: Final[str] = "withheld"
+"""The safety scrubber cancelled an unsafe answer mid-output; this is the
+spoken fallback line. Recording it keeps the transcript honest about WHY the
+audible answer stopped (BUG-056: the 15:13 session showed a truncated reply
+with no trace of the abort)."""
+
 SPOKEN_KIND_OTHER: Final[str] = "other"
 """Catch-all for any voiced phrase without a more specific tag."""
 
@@ -153,6 +159,7 @@ SPOKEN_KINDS: Final[tuple[str, ...]] = (
     SPOKEN_KIND_ANNOUNCEMENT,
     SPOKEN_KIND_PREAMBLE,
     SPOKEN_KIND_PROGRESS,
+    SPOKEN_KIND_WITHHELD,
     SPOKEN_KIND_OTHER,
 )
 """All accepted ``SpeechSpoken.spoken_kind`` values. Order is stable for tests."""
