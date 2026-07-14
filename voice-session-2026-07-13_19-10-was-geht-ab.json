@@ -1,0 +1,1170 @@
+{
+  "session": {
+    "id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+    "started_ms": 1783962609515,
+    "ended_ms": 1783962719033,
+    "hangup_reason": "hotkey",
+    "turn_count": 4,
+    "total_cost_usd": 0.0,
+    "total_tokens_in": 193211,
+    "total_tokens_out": 393,
+    "providers_used": [
+      "openai-realtime"
+    ],
+    "language": "de",
+    "wake_keyword": "ruben"
+  },
+  "turns": [
+    {
+      "id": "df5b7d92-0728-43ef-a5cf-2e70a72af7bf",
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "idx": 1,
+      "started_ms": 1783962612826,
+      "ended_ms": 1783962621059,
+      "user_text": "Was geht ab?",
+      "user_lang": "de",
+      "jarvis_text": "Hey, schön, dass du da bist. Bei mir ist alles entspannt, und ich bin gespannt, was bei dir so ansteht. Lass uns loslegen.",
+      "jarvis_lang": "de",
+      "tier": "realtime",
+      "provider": "openai-realtime",
+      "model": "",
+      "tokens_in": 0,
+      "tokens_out": 0,
+      "cost_usd": 0.0,
+      "latency_total_ms": 8224,
+      "think_ms": 0,
+      "speak_ms": 7448,
+      "tool_calls": [],
+      "awaiting_confirmation": false
+    },
+    {
+      "id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "idx": 2,
+      "started_ms": 1783962642003,
+      "ended_ms": 1783962675000,
+      "user_text": "Was ist die teuerste Yacht, die jemals gebaut wurde? Was ist die modernste Yacht, die jemals gebaut wurde? Und was ist die neueste Yacht, welche 2025 gebaut wurde und dann gebaut wurde?",
+      "user_lang": "de",
+      "jarvis_text": "Die teuerste Yacht, die gebaut wurde, ist die Dilbar mit rund sechshundert Millionen Dollar, die modernste ist die Sailing Yacht A mit Hybridantrieb und Kohlefasermasten, und eine der neuesten Yachten zweitausendfünfundzwanzig ist die Leviathan von Oceanco mit einhundertelf Metern Länge.",
+      "jarvis_lang": "de",
+      "tier": "realtime",
+      "provider": "openai-realtime",
+      "model": "google/gemini-3.5-flash",
+      "tokens_in": 92027,
+      "tokens_out": 251,
+      "cost_usd": 0.0,
+      "latency_total_ms": 32993,
+      "think_ms": 0,
+      "speak_ms": 18033,
+      "tool_calls": [
+        "search_web",
+        "jarvis_action"
+      ],
+      "awaiting_confirmation": false
+    },
+    {
+      "id": "5a91b1bd-0d7c-4956-8cfd-507d4c864849",
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "idx": 3,
+      "started_ms": 1783962679751,
+      "ended_ms": 1783962694159,
+      "user_text": "Wie viel hat die Leviathan gekostet?",
+      "user_lang": "de",
+      "jarvis_text": "Die Leviathan hat schätzungsweise zwischen dreihundertfünfundsiebzig Millionen und fünfhundertfünfunddreißig Millionen Dollar gekostet.",
+      "jarvis_lang": "de",
+      "tier": "realtime",
+      "provider": "openai-realtime",
+      "model": "google/gemini-3.5-flash",
+      "tokens_in": 48668,
+      "tokens_out": 58,
+      "cost_usd": 0.0,
+      "latency_total_ms": 14407,
+      "think_ms": 0,
+      "speak_ms": 9221,
+      "tool_calls": [
+        "search_web",
+        "jarvis_action"
+      ],
+      "awaiting_confirmation": false
+    },
+    {
+      "id": "66c461ac-ea83-4b6b-99d1-896f5687f279",
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "idx": 4,
+      "started_ms": 1783962697623,
+      "ended_ms": 1783962705231,
+      "user_text": "Wer hat die gekauft?",
+      "user_lang": "de",
+      "jarvis_text": "Ich finde gerade heraus, wem die Leviathan gehört.",
+      "jarvis_lang": "de",
+      "tier": "realtime",
+      "provider": "openai-realtime",
+      "model": "google/gemini-3.5-flash",
+      "tokens_in": 52516,
+      "tokens_out": 84,
+      "cost_usd": 0.0,
+      "latency_total_ms": 7606,
+      "think_ms": 0,
+      "speak_ms": 4213,
+      "tool_calls": [
+        "search_web",
+        "jarvis_action"
+      ],
+      "awaiting_confirmation": false
+    }
+  ],
+  "events": [
+    {
+      "seq": 48590,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": null,
+      "ts_ms": 1783962609515,
+      "kind": "VoiceSessionStarted",
+      "payload": {
+        "wake_keyword": "ruben",
+        "language": "de",
+        "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525"
+      }
+    },
+    {
+      "seq": 48591,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": null,
+      "ts_ms": 1783962609520,
+      "kind": "SystemStateChanged",
+      "payload": {
+        "new_state": "LISTENING",
+        "previous": "IDLE"
+      }
+    },
+    {
+      "seq": 48592,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": null,
+      "ts_ms": 1783962610952,
+      "kind": "RealtimeSessionReady",
+      "payload": {
+        "output_sample_rate": 24000,
+        "model": "",
+        "provider": "openai-realtime",
+        "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+        "surface": "desktop",
+        "input_sample_rate": 24000
+      }
+    },
+    {
+      "seq": 48593,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "df5b7d92-0728-43ef-a5cf-2e70a72af7bf",
+      "ts_ms": 1783962612826,
+      "kind": "VoiceTurnStarted",
+      "payload": {
+        "turn_id": "df5b7d92-0728-43ef-a5cf-2e70a72af7bf",
+        "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+        "turn_index": 1
+      }
+    },
+    {
+      "seq": 48594,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "df5b7d92-0728-43ef-a5cf-2e70a72af7bf",
+      "ts_ms": 1783962612857,
+      "kind": "TranscriptionUpdate",
+      "payload": {
+        "text": "Was geht ab?",
+        "is_final": true
+      }
+    },
+    {
+      "seq": 48595,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "df5b7d92-0728-43ef-a5cf-2e70a72af7bf",
+      "ts_ms": 1783962612829,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 2.2309,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate;transcription=available",
+        "phase": "realtime_input_committed"
+      }
+    },
+    {
+      "seq": 48596,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "df5b7d92-0728-43ef-a5cf-2e70a72af7bf",
+      "ts_ms": 1783962612855,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 28.8707,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate;path=native_realtime;reasons=none",
+        "phase": "realtime_routing_decision"
+      }
+    },
+    {
+      "seq": 48597,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "df5b7d92-0728-43ef-a5cf-2e70a72af7bf",
+      "ts_ms": 1783962612858,
+      "kind": "SystemStateChanged",
+      "payload": {
+        "new_state": "THINKING",
+        "previous": "LISTENING"
+      }
+    },
+    {
+      "seq": 48598,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "df5b7d92-0728-43ef-a5cf-2e70a72af7bf",
+      "ts_ms": 1783962613445,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 618.9996,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate",
+        "phase": "realtime_first_transcript"
+      }
+    },
+    {
+      "seq": 48599,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "df5b7d92-0728-43ef-a5cf-2e70a72af7bf",
+      "ts_ms": 1783962613599,
+      "kind": "AudioOutFirst",
+      "payload": {}
+    },
+    {
+      "seq": 48600,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "df5b7d92-0728-43ef-a5cf-2e70a72af7bf",
+      "ts_ms": 1783962613599,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 773.3109,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate",
+        "phase": "realtime_first_audio"
+      }
+    },
+    {
+      "seq": 48601,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "df5b7d92-0728-43ef-a5cf-2e70a72af7bf",
+      "ts_ms": 1783962613601,
+      "kind": "SystemStateChanged",
+      "payload": {
+        "new_state": "SPEAKING",
+        "previous": "THINKING"
+      }
+    },
+    {
+      "seq": 48602,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "df5b7d92-0728-43ef-a5cf-2e70a72af7bf",
+      "ts_ms": 1783962613826,
+      "kind": "AudioOutFirst",
+      "payload": {}
+    },
+    {
+      "seq": 48603,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "df5b7d92-0728-43ef-a5cf-2e70a72af7bf",
+      "ts_ms": 1783962621049,
+      "kind": "SystemStateChanged",
+      "payload": {
+        "new_state": "LISTENING",
+        "previous": "SPEAKING"
+      }
+    },
+    {
+      "seq": 48604,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "df5b7d92-0728-43ef-a5cf-2e70a72af7bf",
+      "ts_ms": 1783962621051,
+      "kind": "ResponseGenerated",
+      "payload": {
+        "text": "Hey, schön, dass du da bist. Bei mir ist alles entspannt, und ich bin gespannt, was bei dir so ansteht. Lass uns loslegen.",
+        "language": "de"
+      }
+    },
+    {
+      "seq": 48605,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "df5b7d92-0728-43ef-a5cf-2e70a72af7bf",
+      "ts_ms": 1783962621051,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 8224.3963,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate;hangup_reason=none",
+        "phase": "realtime_turn_complete"
+      }
+    },
+    {
+      "seq": 48606,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "df5b7d92-0728-43ef-a5cf-2e70a72af7bf",
+      "ts_ms": 1783962621059,
+      "kind": "VoiceTurnCompleted",
+      "payload": {
+        "tool_calls": [],
+        "user_lang": "de",
+        "turn_id": "df5b7d92-0728-43ef-a5cf-2e70a72af7bf",
+        "tokens_in": 0,
+        "jarvis_lang": "de",
+        "model": "",
+        "provider": "openai-realtime",
+        "cost_usd": 0.0,
+        "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+        "user_text": "Was geht ab?",
+        "tokens_out": 0,
+        "tier": "realtime",
+        "latency_total_ms": 8224,
+        "jarvis_text": "Hey, schön, dass du da bist. Bei mir ist alles entspannt, und ich bin gespannt, was bei dir so ansteht. Lass uns loslegen."
+      }
+    },
+    {
+      "seq": 48607,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962642003,
+      "kind": "VoiceTurnStarted",
+      "payload": {
+        "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+        "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+        "turn_index": 2
+      }
+    },
+    {
+      "seq": 48608,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962642023,
+      "kind": "TranscriptionUpdate",
+      "payload": {
+        "text": "Was ist die teuerste Yacht, die jemals gebaut wurde? Was ist die modernste Yacht, die jemals gebaut wurde? Und was ist die neueste Yacht, welche 2025 gebaut wurde und dann gebaut wurde?",
+        "is_final": true
+      }
+    },
+    {
+      "seq": 48609,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962642005,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 3.0825,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate;transcription=available",
+        "phase": "realtime_input_committed"
+      }
+    },
+    {
+      "seq": 48610,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962642021,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 18.8543,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate;path=orchestrator;reasons=current_data",
+        "phase": "realtime_routing_decision"
+      }
+    },
+    {
+      "seq": 48611,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962642027,
+      "kind": "SystemStateChanged",
+      "payload": {
+        "new_state": "THINKING",
+        "previous": "LISTENING"
+      }
+    },
+    {
+      "seq": 48612,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962642030,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 26.8455,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate;kind=deterministic",
+        "phase": "realtime_delegate_started"
+      }
+    },
+    {
+      "seq": 48613,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962643770,
+      "kind": "ActionProposed",
+      "payload": {
+        "risk_tier": "safe",
+        "tool_name": "search_web",
+        "rationale": ""
+      }
+    },
+    {
+      "seq": 48614,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962644537,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 2533.7449,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate",
+        "phase": "realtime_first_transcript"
+      }
+    },
+    {
+      "seq": 48615,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962644546,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 2543.9585,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate;reason=unbacked_action_claim",
+        "phase": "realtime_scrub_cancel"
+      }
+    },
+    {
+      "seq": 48616,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962645445,
+      "kind": "ActionExecuted",
+      "payload": {
+        "duration_ms": 1682,
+        "success": true,
+        "output_preview": "{'query': 'teuerste Yacht jemals gebaut', 'results': [{'title': 'Teuerste Yacht der Welt - Die wahren Giganten der Meere', 'snippet': 'Kaum eine Legende hat die Welt der Yachten so geprägt wie die Erzählung von der History Supreme. Mit einem angeblichen Wert von 4,8 Milliarden Dollar sollte sie die teuerste Yacht der Welt sein.', 'url': 'https://www.luxury-first.de/teuerste-yacht-der-welt-26434/'}, {'title': 'Top10: Die teuersten Yachten der Welt | Luxusyacht Liste 2025', 'snippet': 'Das ist die aktuelle Liste der teuersten Luxusyachten der Welt. Wer hat die längste und wer hat die teuerste Yacht? Wir haben sie alle!', 'url': 'https://www.vermoegenmagazin.de/teuerste-luxusyachten-der-welt/'}, {'title': 'Teuerste Yachten der Welt 2025: Top 10 Preise & Besitzer', 'snippet': 'Die Sailing Yacht A des russischen Milliardärs Andrey Melnitschenko, gebaut von der Nobiskrug-Werft in Rendsburg, gilt mit ca. 500 Millionen Dollar als die teuerste und mit 143 Metern als die größte Luxus-Segelyacht der Welt.', 'url': 'https://www.luxusleben.info/die-5-teuersten-luxus-yachten/'}, {'title': 'Top 10 Luxusyachten 2026: VIP-Reisen & Privatflug | Fly Aeolus', 'snippet': 'Nach den luxuriösesten Autos und den 5 einzigartigsten Privatjets der Welt präsentiert Ihnen Fly Aeolus seine Top 10 der teuersten Luxus-Yachten der Welt.', 'url': 'https://flyaeolus.com/de/zeitung/die-top-10-teuersten-luxusyachten-der-welt/'}, {'title': 'Die 10 teuersten Yachten der Welt (2023) - vermoegeninsider.de', 'snippet': 'Die Serene ist derzeit die fünftteuerste Yacht der Welt. Ursprünglich wurde sie vom italienischen Schiffsbauer Fincantieri für den russischen Milliardär Yuri Shefler gebaut, der sein Vermögen durch sein alkoholisches Getränkeimperium erworben hat.', 'url': 'https://vermoegeninsider.de/die-10-teuersten-yachten-der-welt/'}], 'backend': 'ddg_serp', 'status': 'ok', 'answer_instruction': \"These 'results' are RAW web hits (title/snippet/url) for retrieval only. Answer ONLY the user's actual question, in one or two short spoken sentences, using j… (+263 more chars)",
+        "tool_name": "search_web"
+      }
+    },
+    {
+      "seq": 48617,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962645447,
+      "kind": "ActionProposed",
+      "payload": {
+        "risk_tier": "safe",
+        "tool_name": "search_web",
+        "rationale": ""
+      }
+    },
+    {
+      "seq": 48618,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962646857,
+      "kind": "ActionExecuted",
+      "payload": {
+        "duration_ms": 1408,
+        "success": true,
+        "output_preview": "{'query': 'modernste Yacht jemals gebaut', 'results': [{'title': 'Teuerste Yacht der Welt – Die wahren Giganten der Meere', 'snippet': 'Mit 180 Metern ist sie die längste private Yacht, die jemals gebaut wurde. ... Supreme ein Fake? Die Bilder wurden gefälscht, die Yacht nie gebaut ...', 'url': 'https://www.luxury-first.de/teuerste-yacht-der-welt-26434/'}, {'title': 'Die größten Superyachten der Welt 2026: Die größten Yachten, Werften ...', 'snippet': 'Entdecken Sie die größten Superyachten der Welt, von rekordverdächtigen Schiffen von Lürssen, Feadship und Blohm+Voss bis hin zu den neuesten Entwicklungen in den Bereichen Yachtdesign, Hybridantrieb, Wasserstofftechnologie und nachhaltige Technik.', 'url': 'https://www.superyachtfan.com/de/lists/biggest-super-yachts/'}, {'title': 'Top10: Die teuersten Yachten der Welt | Luxusyacht Liste 2025', 'snippet': 'Das ist die aktuelle Liste der teuersten Luxusyachten der Welt. Wer hat die längste und wer hat die teuerste Yacht? Wir haben sie alle!', 'url': 'https://www.vermoegenmagazin.de/teuerste-luxusyachten-der-welt/'}, {'title': 'SEGELYACHT A - Die größte Segelyacht der Welt - $600M - Eigner', 'snippet': 'Die Segelyacht A ist eine 143 Meter lange Superyacht, die von Philippe Starck für Andrey Melnichenko bei Nobiskrug gebaut wurde. Erfahren Sie mehr über ihren Wert, ihre Größe, ihre Technologie, ihren rechtlichen Status, ihre Ausstattung und ihren aktuellen Standort in Triest.', 'url': 'https://www.superyachtfan.com/de/yacht/sailing-yacht-a/'}, {'title': 'Das sind die 10 größten Yachten der Welt im Ranking 2026', 'snippet': 'Welche Yacht trägt gemessen an ihrer Länge derzeit den Titel der größten Luxus-Yacht der Welt? Wer sind die Besitzer der weltweiten Super-Yachten und welchen Wert haben sie?', 'url': 'https://www.wiwo.de/unternehmen/handel/das-sind-die-10-groessten-yachten-der-welt-im-ranking-2026/27744244.html'}], 'backend': 'ddg_serp', 'status': 'ok', 'answer_instruction': \"These 'results' are RAW web hits (title/snippet/url) for retrieval only. Answer ONLY the u… (+331 more chars)",
+        "tool_name": "search_web"
+      }
+    },
+    {
+      "seq": 48619,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962646859,
+      "kind": "ActionProposed",
+      "payload": {
+        "risk_tier": "safe",
+        "tool_name": "search_web",
+        "rationale": ""
+      }
+    },
+    {
+      "seq": 48620,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962647578,
+      "kind": "ActionExecuted",
+      "payload": {
+        "duration_ms": 717,
+        "success": true,
+        "output_preview": "{'query': 'neueste Yacht 2025 gebaut', 'results': [{'title': 'Yachten 2025: Das sind die 5 spannendsten Modelle der Saison', 'snippet': 'Noch herrscht der Winter, doch auf der \"boot\" in Düsseldorf, stand schon die kommende Segelsaison im Fokus. Das sind die innovativsten Yachten 2025.', 'url': 'https://www.gq-magazin.de/artikel/yachten-2025'}, {'title': 'LEVIATHAN Yacht • Gabe Newell $400M SuperYacht', 'snippet': \"Leviathan wurde 2025 vorgestellt und war zuvor als Projekt Y722 bekannt. Es signalisiert eine neue Richtung für Oceanco und für die nächste Generation großer Yachten. Die zentralen Thesen Leviathan Ist Oceanco 's neueste 111 m Hybrid Superyacht, im Jahr 2025 eingeführt.\", 'url': 'https://www.superyachtfan.com/de/yacht/leviathan/'}, {'title': 'See The Full List Of Superyachts Launched In 2025 | CharterWorld', 'snippet': 'Select a boat built in 2025 or contact the CharterWorld Team for the full selection of all 3000+ charter yachts available worldwide.', 'url': 'https://www.charterworld.com/index.html?sub=yacht-results&listings=1&year=2025'}, {'title': 'Top New Yachts - 2025 | Big Launches & Trends to Watch | YATCO', 'snippet': 'Discover the top new yachts of 2025, from silent to luxury superyachts. Explore launches, trends, and innovations in yacht design.', 'url': 'https://blog.yatco.com/new-yachts-2025/'}, {'title': 'Neue Segelkatamarane im Jahr 2025 | Neue Yachtmodelle', 'snippet': 'Mit dem Fortschreiten der Segelsaison zeichnet sich bereits jetzt ab, dass 2025 ein spannendes Jahr für Yacht-Enthusiasten wird. Die neuen Yachtmodelle dieses Jahres setzen neue Maßstäbe in puncto Komfort, Stil und Leistung – mit innovativen elektrischen Antriebssystemen, intelligenten Designverbesserungen und hochmodernen Wohnkonzepten an Bord.', 'url': 'https://navigare-yachting.com/de/bloggen/yacht-investment/neue-yachtmodelle-die-sie-2025-im-auge-behalten-sollten'}], 'backend': 'ddg_serp', 'status': 'ok', 'answer_instruction': \"These 'results' are RAW web hits (title/snippet/url) for retrieval only. Answer ONLY the use… (+329 more chars)",
+        "tool_name": "search_web"
+      }
+    },
+    {
+      "seq": 48621,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962651979,
+      "kind": "ActionProposed",
+      "payload": {
+        "risk_tier": "safe",
+        "tool_name": "search_web",
+        "rationale": ""
+      }
+    },
+    {
+      "seq": 48622,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962652743,
+      "kind": "ActionExecuted",
+      "payload": {
+        "duration_ms": 764,
+        "success": true,
+        "output_preview": "{'query': 'teuerste Yacht der Welt Dilbar Azzam', 'results': [{'title': 'Dilbar (Schiff) - Wikipedia', 'snippet': 'Die Dilbar wurde 2015 bis 2016 auf der Fr. Lürssen Werft in Bremen gebaut und ist eine der größten Megayachten der Welt. Sie übernahm den Namen einer kleineren Yacht desselben Eigners und derselben Werft aus dem Jahr 2008.', 'url': 'https://de.wikipedia.org/wiki/Dilbar_(Schiff)'}, {'title': 'Azzam (Schiff) - Wikipedia', 'snippet': 'Die Azzam ist mit einer Länge von knapp 181 Meter die längste private Megayacht der Welt. [1][2] Eigentümer war Scheich Chalifa bin Zayid Al Nahyan, ehemaliger Präsident der Vereinigten Arabischen Emirate (VAE). [3]', 'url': 'https://de.wikipedia.org/wiki/Azzam_(Schiff)'}, {'title': 'Teuerste Yacht der Welt Rangliste, Preise & Gold-Mythos', 'snippet': 'Die teuerste Yacht der Welt: Warum die 4,8-Mrd-Gold-Yacht History Supreme ein Mythos ist, was Eclipse, Azzam & Dilbar wirklich kosten - Rangliste mit Preisen.', 'url': 'https://luxussachen.kaufen/teuerste-yacht-der-welt/'}, {'title': 'Top10: Die teuersten Yachten der Welt | Luxusyacht Liste 2025', 'snippet': 'Das ist die aktuelle Liste der teuersten Luxusyachten der Welt. Wer hat die längste und wer hat die teuerste Yacht? Wir haben sie alle!', 'url': 'https://www.vermoegenmagazin.de/teuerste-luxusyachten-der-welt/'}, {'title': 'Azzam Yacht - Größte und teuerste Yacht der Welt im Detail', 'snippet': 'Die Azzam Yacht ist die größte Yacht der Welt. Entdecken Sie Preis, Interieur, Besitzer und Technik des schwimmenden Luxuspalasts.', 'url': 'https://bestchoiceyachting.com/blog/de/azzam-yacht/'}], 'backend': 'ddg_serp', 'status': 'ok', 'answer_instruction': \"These 'results' are RAW web hits (title/snippet/url) for retrieval only. Answer ONLY the user's actual question, in one or two short spoken sentences, using just the relevant facts from them. NEVER read out a title, a url, a domain/source name, a date, or a 'more results from ...' line, and never enumerate the hits as a list. If the hits do not actually answer the question, … (+44 more chars)",
+        "tool_name": "search_web"
+      }
+    },
+    {
+      "seq": 48623,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962656343,
+      "kind": "BrainTurnStarted",
+      "payload": {
+        "intent_level": "deep",
+        "model": "google/gemini-3.5-flash",
+        "provider": "openrouter"
+      }
+    },
+    {
+      "seq": 48624,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962656345,
+      "kind": "BrainTurnCompleted",
+      "payload": {
+        "tokens_in": 92027,
+        "model": "google/gemini-3.5-flash",
+        "provider": "openrouter",
+        "cost_usd": 0.0,
+        "text_len": 663,
+        "tokens_out": 251,
+        "finish_reason": "stop"
+      }
+    },
+    {
+      "seq": 48625,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962656346,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 14342.8903,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate;kind=deterministic;success=True",
+        "phase": "realtime_delegate_completed"
+      }
+    },
+    {
+      "seq": 48626,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962656957,
+      "kind": "AudioOutFirst",
+      "payload": {}
+    },
+    {
+      "seq": 48627,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962656957,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 14954.4088,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate",
+        "phase": "realtime_first_audio"
+      }
+    },
+    {
+      "seq": 48628,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962656960,
+      "kind": "SystemStateChanged",
+      "payload": {
+        "new_state": "SPEAKING",
+        "previous": "THINKING"
+      }
+    },
+    {
+      "seq": 48629,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962657091,
+      "kind": "AudioOutFirst",
+      "payload": {}
+    },
+    {
+      "seq": 48630,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962674993,
+      "kind": "SystemStateChanged",
+      "payload": {
+        "new_state": "LISTENING",
+        "previous": "SPEAKING"
+      }
+    },
+    {
+      "seq": 48631,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962674996,
+      "kind": "ResponseGenerated",
+      "payload": {
+        "text": "Die teuerste Yacht, die gebaut wurde, ist die Dilbar mit rund sechshundert Millionen Dollar, die modernste ist die Sailing Yacht A mit Hybridantrieb und Kohlefasermasten, und eine der neuesten Yachten zweitausendfünfundzwanzig ist die Leviathan von Oceanco mit einhundertelf Metern Länge.",
+        "language": "de"
+      }
+    },
+    {
+      "seq": 48632,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962674996,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 32993.4731,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate;hangup_reason=none",
+        "phase": "realtime_turn_complete"
+      }
+    },
+    {
+      "seq": 48633,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+      "ts_ms": 1783962675000,
+      "kind": "VoiceTurnCompleted",
+      "payload": {
+        "tool_calls": [
+          "jarvis_action"
+        ],
+        "user_lang": "de",
+        "turn_id": "911fc363-9fd4-42b1-b43f-2367ca897171",
+        "tokens_in": 0,
+        "jarvis_lang": "de",
+        "model": "",
+        "provider": "openai-realtime",
+        "cost_usd": 0.0,
+        "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+        "user_text": "Was ist die teuerste Yacht, die jemals gebaut wurde? Was ist die modernste Yacht, die jemals gebaut wurde? Und was ist die neueste Yacht, welche 2025 gebaut wurde und dann gebaut wurde?",
+        "tokens_out": 0,
+        "tier": "realtime",
+        "latency_total_ms": 32993,
+        "jarvis_text": "Die teuerste Yacht, die gebaut wurde, ist die Dilbar mit rund sechshundert Millionen Dollar, die modernste ist die Sailing Yacht A mit Hybridantrieb und Kohlefasermasten, und eine der neuesten Yachten zweitausendfünfundzwanzig ist die Leviathan von Oceanco mit einhundertelf Metern Länge."
+      }
+    },
+    {
+      "seq": 48634,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "5a91b1bd-0d7c-4956-8cfd-507d4c864849",
+      "ts_ms": 1783962679751,
+      "kind": "VoiceTurnStarted",
+      "payload": {
+        "turn_id": "5a91b1bd-0d7c-4956-8cfd-507d4c864849",
+        "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+        "turn_index": 3
+      }
+    },
+    {
+      "seq": 48635,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "5a91b1bd-0d7c-4956-8cfd-507d4c864849",
+      "ts_ms": 1783962679767,
+      "kind": "TranscriptionUpdate",
+      "payload": {
+        "text": "Wie viel hat die Leviathan gekostet?",
+        "is_final": true
+      }
+    },
+    {
+      "seq": 48636,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "5a91b1bd-0d7c-4956-8cfd-507d4c864849",
+      "ts_ms": 1783962679753,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 2.2947,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate;transcription=available",
+        "phase": "realtime_input_committed"
+      }
+    },
+    {
+      "seq": 48637,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "5a91b1bd-0d7c-4956-8cfd-507d4c864849",
+      "ts_ms": 1783962679765,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 14.7425,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate;path=native_realtime;reasons=none",
+        "phase": "realtime_routing_decision"
+      }
+    },
+    {
+      "seq": 48638,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "5a91b1bd-0d7c-4956-8cfd-507d4c864849",
+      "ts_ms": 1783962679770,
+      "kind": "SystemStateChanged",
+      "payload": {
+        "new_state": "THINKING",
+        "previous": "LISTENING"
+      }
+    },
+    {
+      "seq": 48639,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "5a91b1bd-0d7c-4956-8cfd-507d4c864849",
+      "ts_ms": 1783962680580,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 830.431,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate;kind=provider_requested",
+        "phase": "realtime_delegate_started"
+      }
+    },
+    {
+      "seq": 48640,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "5a91b1bd-0d7c-4956-8cfd-507d4c864849",
+      "ts_ms": 1783962682203,
+      "kind": "ActionProposed",
+      "payload": {
+        "risk_tier": "safe",
+        "tool_name": "search_web",
+        "rationale": ""
+      }
+    },
+    {
+      "seq": 48641,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "5a91b1bd-0d7c-4956-8cfd-507d4c864849",
+      "ts_ms": 1783962683043,
+      "kind": "ActionExecuted",
+      "payload": {
+        "duration_ms": 839,
+        "success": true,
+        "output_preview": "{'query': 'Oceanco Leviathan yacht cost price', 'results': [{'title': 'LEVIATHAN Yacht • Gabe Newell $400M SuperYacht', 'snippet': \"Oceanco 's 111m Superyacht Leviathan: A Bold Step Toward the Future of Yachting The new Oceanco yacht Leviathan is more than just another superyacht — it's a statement of intent. Measuring 111 meters, this hybrid diesel-electric yacht is built around three pillars: innovation, sustainability, and human-centered design. Unveiled in 2025 and previously known as Project Y722, Leviathan ...\", 'url': 'https://www.superyachtfan.com/yacht/leviathan/'}, {'title': 'LEVIATHAN Yacht - 111m (365ft) Oceanco 2025 | YachtBuyer', 'snippet': 'The award winning 111m (365ft) motor yacht Leviathan was delivered to her owner, Valve CEO and Steam founder Gabe Newell in 2025 by Dutch shipyard Oceanco and the first yacht of his Kraken Fleet after acquiring the shipyard. Her interiors are the work of Mark Berryman Design.', 'url': 'https://www.yachtbuyer.com/en/fleet/leviathan-364-oceanco'}, {'title': \"LEVIATHAN Yacht 364' Oceanco 2025 - limeyachts.com\", 'snippet': 'LEVIATHAN yacht 364\\' 2\" (111m) yacht built in 2025 by Oceanco - Price, specs, video, photos & similar yachts.', 'url': 'https://limeyachts.com/luxury-yachts/leviathan-yacht-12544/'}, {'title': 'Leviathan - Oceanco', 'snippet': 'A diesel-electric yacht, Leviathan incorporates innovative solutions to enhance onboard comfort. Through a combination of hull testing and optimization, technical platform configuration and focused efforts to reduce noise and vibration, she is the most comfortable yacht ever built by Oceanco.', 'url': 'https://www.oceancoyacht.com/fleet/leviathan/'}, {'title': \"Gaming billionaire Gabe Newell's new $500 million, 364-foot superyacht ...\", 'snippet': \"Image - Oceanco The Leviathan measures 364 feet in length and is one of the largest yachts ever built by Dutch shipyard Oceanco. At an estimated cost of between 375 million and 535 million dollars, it reflects not only extreme luxury but also Newell's personal philosophy about … (+630 more chars)",
+        "tool_name": "search_web"
+      }
+    },
+    {
+      "seq": 48642,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "5a91b1bd-0d7c-4956-8cfd-507d4c864849",
+      "ts_ms": 1783962684352,
+      "kind": "BrainTurnStarted",
+      "payload": {
+        "intent_level": "deep",
+        "model": "google/gemini-3.5-flash",
+        "provider": "openrouter"
+      }
+    },
+    {
+      "seq": 48643,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "5a91b1bd-0d7c-4956-8cfd-507d4c864849",
+      "ts_ms": 1783962684355,
+      "kind": "BrainTurnCompleted",
+      "payload": {
+        "tokens_in": 48668,
+        "model": "google/gemini-3.5-flash",
+        "provider": "openrouter",
+        "cost_usd": 0.0,
+        "text_len": 135,
+        "tokens_out": 58,
+        "finish_reason": "stop"
+      }
+    },
+    {
+      "seq": 48644,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "5a91b1bd-0d7c-4956-8cfd-507d4c864849",
+      "ts_ms": 1783962684356,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 4606.0145,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate;kind=provider_requested;success=True",
+        "phase": "realtime_delegate_completed"
+      }
+    },
+    {
+      "seq": 48645,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "5a91b1bd-0d7c-4956-8cfd-507d4c864849",
+      "ts_ms": 1783962684786,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 5035.2281,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate",
+        "phase": "realtime_first_transcript"
+      }
+    },
+    {
+      "seq": 48646,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "5a91b1bd-0d7c-4956-8cfd-507d4c864849",
+      "ts_ms": 1783962684933,
+      "kind": "AudioOutFirst",
+      "payload": {}
+    },
+    {
+      "seq": 48647,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "5a91b1bd-0d7c-4956-8cfd-507d4c864849",
+      "ts_ms": 1783962684933,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 5182.5764,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate",
+        "phase": "realtime_first_audio"
+      }
+    },
+    {
+      "seq": 48648,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "5a91b1bd-0d7c-4956-8cfd-507d4c864849",
+      "ts_ms": 1783962684934,
+      "kind": "SystemStateChanged",
+      "payload": {
+        "new_state": "SPEAKING",
+        "previous": "THINKING"
+      }
+    },
+    {
+      "seq": 48649,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "5a91b1bd-0d7c-4956-8cfd-507d4c864849",
+      "ts_ms": 1783962685038,
+      "kind": "AudioOutFirst",
+      "payload": {}
+    },
+    {
+      "seq": 48650,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "5a91b1bd-0d7c-4956-8cfd-507d4c864849",
+      "ts_ms": 1783962694155,
+      "kind": "SystemStateChanged",
+      "payload": {
+        "new_state": "LISTENING",
+        "previous": "SPEAKING"
+      }
+    },
+    {
+      "seq": 48651,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "5a91b1bd-0d7c-4956-8cfd-507d4c864849",
+      "ts_ms": 1783962694157,
+      "kind": "ResponseGenerated",
+      "payload": {
+        "text": "Die Leviathan hat schätzungsweise zwischen dreihundertfünfundsiebzig Millionen und fünfhundertfünfunddreißig Millionen Dollar gekostet.",
+        "language": "de"
+      }
+    },
+    {
+      "seq": 48652,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "5a91b1bd-0d7c-4956-8cfd-507d4c864849",
+      "ts_ms": 1783962694157,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 14407.3846,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate;hangup_reason=none",
+        "phase": "realtime_turn_complete"
+      }
+    },
+    {
+      "seq": 48653,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "5a91b1bd-0d7c-4956-8cfd-507d4c864849",
+      "ts_ms": 1783962694159,
+      "kind": "VoiceTurnCompleted",
+      "payload": {
+        "tool_calls": [
+          "jarvis_action"
+        ],
+        "user_lang": "de",
+        "turn_id": "5a91b1bd-0d7c-4956-8cfd-507d4c864849",
+        "tokens_in": 0,
+        "jarvis_lang": "de",
+        "model": "",
+        "provider": "openai-realtime",
+        "cost_usd": 0.0,
+        "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+        "user_text": "Wie viel hat die Leviathan gekostet?",
+        "tokens_out": 0,
+        "tier": "realtime",
+        "latency_total_ms": 14407,
+        "jarvis_text": "Die Leviathan hat schätzungsweise zwischen dreihundertfünfundsiebzig Millionen und fünfhundertfünfunddreißig Millionen Dollar gekostet."
+      }
+    },
+    {
+      "seq": 48654,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "66c461ac-ea83-4b6b-99d1-896f5687f279",
+      "ts_ms": 1783962697623,
+      "kind": "VoiceTurnStarted",
+      "payload": {
+        "turn_id": "66c461ac-ea83-4b6b-99d1-896f5687f279",
+        "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+        "turn_index": 4
+      }
+    },
+    {
+      "seq": 48655,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "66c461ac-ea83-4b6b-99d1-896f5687f279",
+      "ts_ms": 1783962697653,
+      "kind": "TranscriptionUpdate",
+      "payload": {
+        "text": "Wer hat die gekauft?",
+        "is_final": true
+      }
+    },
+    {
+      "seq": 48656,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "66c461ac-ea83-4b6b-99d1-896f5687f279",
+      "ts_ms": 1783962697626,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 3.9757,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate;transcription=available",
+        "phase": "realtime_input_committed"
+      }
+    },
+    {
+      "seq": 48657,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "66c461ac-ea83-4b6b-99d1-896f5687f279",
+      "ts_ms": 1783962697651,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 28.2545,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate;path=orchestrator;reasons=action,capability,connected_data",
+        "phase": "realtime_routing_decision"
+      }
+    },
+    {
+      "seq": 48658,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "66c461ac-ea83-4b6b-99d1-896f5687f279",
+      "ts_ms": 1783962697656,
+      "kind": "SystemStateChanged",
+      "payload": {
+        "new_state": "THINKING",
+        "previous": "LISTENING"
+      }
+    },
+    {
+      "seq": 48659,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "66c461ac-ea83-4b6b-99d1-896f5687f279",
+      "ts_ms": 1783962697658,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 35.9346,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate;kind=deterministic",
+        "phase": "realtime_delegate_started"
+      }
+    },
+    {
+      "seq": 48660,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "66c461ac-ea83-4b6b-99d1-896f5687f279",
+      "ts_ms": 1783962699038,
+      "kind": "ActionProposed",
+      "payload": {
+        "risk_tier": "safe",
+        "tool_name": "search_web",
+        "rationale": ""
+      }
+    },
+    {
+      "seq": 48661,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "66c461ac-ea83-4b6b-99d1-896f5687f279",
+      "ts_ms": 1783962700014,
+      "kind": "ActionExecuted",
+      "payload": {
+        "duration_ms": 976,
+        "success": true,
+        "output_preview": "{'query': 'Oceanco Leviathan yacht buyer owner', 'results': [{'title': 'LEVIATHAN Yacht - 111m (365ft) Oceanco 2025 | YachtBuyer', 'snippet': 'The award winning 111m (365ft) motor yacht Leviathan was delivered to her owner, Valve CEO and Steam founder Gabe Newell in 2025 by Dutch shipyard Oceanco and the first yacht of his Kraken Fleet after acquiring the shipyard. Her interiors are the work of Mark Berryman Design.', 'url': 'https://www.yachtbuyer.com/en/fleet/leviathan-364-oceanco'}, {'title': 'LEVIATHAN Yacht • Gabe Newell $400M SuperYacht', 'snippet': 'Since 2025 Gabe Newell is also the owner of the yacht-building company OCEANCO, who built two of his yachts. Oceanco Yachts Oceanco is a luxury yacht builder based in Alblasserdam, Netherlands. The company was founded in 1987 and has become one of the most respected yacht builders in the world.', 'url': 'https://www.superyachtfan.com/yacht/leviathan/'}, {'title': 'Oceanco Delivers 111m Diesel-Electric Superyacht Leviathan for Gabe ...', 'snippet': 'Oceanco Delivers 111m Diesel-Electric Superyacht Leviathan for Gabe Newell Now the third-largest yacht ever built by Oceanco, the 111-meter diesel-electric superyacht Leviathan, previously known as Project Y722, has officially been delivered.', 'url': 'https://www.yachtbuyer.com/en/news/oceanco-delivers-111m-diesel-electric-superyacht-leviathan-for-gabe-newell'}, {'title': \"Gaming billionaire Gabe Newell's new $500 million, 364-foot superyacht ...\", 'snippet': \"Gaming tycoon Gabe Newell, behind Half-Life and Dota 2, owns Oceanco and the Leviathan. Image - Oceanco The owner's suite alone makes a statement. Its bathroom is extraordinarily large, finished with parquet flooring and cabinets made of ash with leather handles. It is closer in feel to a high end residence than a cabin at sea. Around the yacht, the comforts and extravagances multiply ...\", 'url': 'https://luxurylaunches.com/transport/gabe-newell-leviathan-superyacht-cabling-09042025.php'}, {'title': \"Inside 'Leviathan,' Gabe Newell's Progressive New Superyach… (+832 more chars)",
+        "tool_name": "search_web"
+      }
+    },
+    {
+      "seq": 48662,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "66c461ac-ea83-4b6b-99d1-896f5687f279",
+      "ts_ms": 1783962700903,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 3279.9421,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate",
+        "phase": "realtime_first_transcript"
+      }
+    },
+    {
+      "seq": 48663,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "66c461ac-ea83-4b6b-99d1-896f5687f279",
+      "ts_ms": 1783962701010,
+      "kind": "AudioOutFirst",
+      "payload": {}
+    },
+    {
+      "seq": 48664,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "66c461ac-ea83-4b6b-99d1-896f5687f279",
+      "ts_ms": 1783962701010,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 3387.6818,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate",
+        "phase": "realtime_first_audio"
+      }
+    },
+    {
+      "seq": 48665,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "66c461ac-ea83-4b6b-99d1-896f5687f279",
+      "ts_ms": 1783962701013,
+      "kind": "SystemStateChanged",
+      "payload": {
+        "new_state": "SPEAKING",
+        "previous": "THINKING"
+      }
+    },
+    {
+      "seq": 48666,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "66c461ac-ea83-4b6b-99d1-896f5687f279",
+      "ts_ms": 1783962701132,
+      "kind": "AudioOutFirst",
+      "payload": {}
+    },
+    {
+      "seq": 48667,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "66c461ac-ea83-4b6b-99d1-896f5687f279",
+      "ts_ms": 1783962701432,
+      "kind": "BrainTurnStarted",
+      "payload": {
+        "intent_level": "fast",
+        "model": "google/gemini-3.5-flash",
+        "provider": "openrouter"
+      }
+    },
+    {
+      "seq": 48668,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "66c461ac-ea83-4b6b-99d1-896f5687f279",
+      "ts_ms": 1783962701433,
+      "kind": "BrainTurnCompleted",
+      "payload": {
+        "tokens_in": 52516,
+        "model": "google/gemini-3.5-flash",
+        "provider": "openrouter",
+        "cost_usd": 0.0,
+        "text_len": 258,
+        "tokens_out": 84,
+        "finish_reason": "stop"
+      }
+    },
+    {
+      "seq": 48669,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "66c461ac-ea83-4b6b-99d1-896f5687f279",
+      "ts_ms": 1783962701435,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 3811.8478,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate;kind=deterministic;success=True",
+        "phase": "realtime_delegate_completed"
+      }
+    },
+    {
+      "seq": 48670,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "66c461ac-ea83-4b6b-99d1-896f5687f279",
+      "ts_ms": 1783962701589,
+      "kind": "ErrorOccurred",
+      "payload": {
+        "message": "conversation_already_has_active_response: Conversation already has an active response in progress: resp_E1ETrvPNfNKDy328bQ2cd. Wait until the response is finished before creating a new one.",
+        "error_type": "RealtimeProviderError",
+        "layer": "realtime.openai-realtime",
+        "recoverable": true
+      }
+    },
+    {
+      "seq": 48671,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "66c461ac-ea83-4b6b-99d1-896f5687f279",
+      "ts_ms": 1783962705226,
+      "kind": "SystemStateChanged",
+      "payload": {
+        "new_state": "LISTENING",
+        "previous": "SPEAKING"
+      }
+    },
+    {
+      "seq": 48672,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "66c461ac-ea83-4b6b-99d1-896f5687f279",
+      "ts_ms": 1783962705229,
+      "kind": "ResponseGenerated",
+      "payload": {
+        "text": "Ich finde gerade heraus, wem die Leviathan gehört.",
+        "language": "de"
+      }
+    },
+    {
+      "seq": 48673,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "66c461ac-ea83-4b6b-99d1-896f5687f279",
+      "ts_ms": 1783962705229,
+      "kind": "LatencySpan",
+      "payload": {
+        "duration_ms": 7606.6425,
+        "detail": "session_id=1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525;provider=openai-realtime;model=default;tool_mode=delegate;hangup_reason=none",
+        "phase": "realtime_turn_complete"
+      }
+    },
+    {
+      "seq": 48674,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "66c461ac-ea83-4b6b-99d1-896f5687f279",
+      "ts_ms": 1783962705231,
+      "kind": "VoiceTurnCompleted",
+      "payload": {
+        "tool_calls": [
+          "jarvis_action"
+        ],
+        "user_lang": "de",
+        "turn_id": "66c461ac-ea83-4b6b-99d1-896f5687f279",
+        "tokens_in": 0,
+        "jarvis_lang": "de",
+        "model": "",
+        "provider": "openai-realtime",
+        "cost_usd": 0.0,
+        "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+        "user_text": "Wer hat die gekauft?",
+        "tokens_out": 0,
+        "tier": "realtime",
+        "latency_total_ms": 7606,
+        "jarvis_text": "Ich finde gerade heraus, wem die Leviathan gehört."
+      }
+    },
+    {
+      "seq": 48675,
+      "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+      "turn_id": "66c461ac-ea83-4b6b-99d1-896f5687f279",
+      "ts_ms": 1783962719033,
+      "kind": "VoiceSessionEnded",
+      "payload": {
+        "session_id": "1d8fb7b4-ff41-4cce-9d38-0bc44d7a7525",
+        "hangup_reason": "hotkey",
+        "turn_count": 0,
+        "duration_s": 109.51733088493347
+      }
+    }
+  ]
+}
