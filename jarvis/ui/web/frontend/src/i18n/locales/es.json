@@ -935,7 +935,8 @@
     "guide_realtime_title": "¿Qué modelo debería elegir?",
     "guide_realtime_body": "OpenAI: GPT Realtime (el predeterminado del proveedor) suena más natural; GPT Realtime Mini es la opción económica. Google: Gemini 3.1 Flash Live es el buque insignia actual de Live. «Predeterminado del proveedor» siempre resuelve al modelo recomendado, así que puedes dejarlo tal cual.",
     "guide_computer_use_title": "¿Qué proveedor debería impulsar el Tool Model?",
-    "guide_computer_use_body": "El Tool Model se encarga de cada acción que Jarvis realiza por ti — incluido Computer-Use, que lee capturas de tu pantalla y necesita un modelo que entienda imágenes; el selector oculta los modelos de solo texto. En caso de duda, quédate con tu proveedor Brain principal y su modelo predeterminado."
+    "guide_computer_use_body": "El Tool Model se encarga de cada acción que Jarvis realiza por ti — incluido Computer-Use, que lee capturas de tu pantalla y necesita un modelo que entienda imágenes; el selector oculta los modelos de solo texto. En caso de duda, quédate con tu proveedor Brain principal y su modelo predeterminado.",
+    "mode_status_unknown": "El estado del motor aún no se ha cargado: el selector se desbloquea en cuanto el backend responda. Si persiste, reinicia la aplicación."
   },
   "apikeys_test": {
     "button": "Probar",

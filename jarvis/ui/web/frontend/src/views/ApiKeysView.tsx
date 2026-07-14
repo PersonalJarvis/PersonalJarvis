@@ -156,6 +156,7 @@ export function ApiKeysView() {
   const {
     mode: liveMode,
     realtimeAvailable,
+    statusKnown,
     sessionActive,
     activeSessionMode,
     activeSessionProvider,
@@ -196,6 +197,7 @@ export function ApiKeysView() {
         mode={engineMode}
         liveMode={liveMode}
         realtimeAvailable={realtimeAvailable}
+        statusKnown={statusKnown}
         sessionActive={sessionActive}
         activeSessionMode={activeSessionMode}
         activeSessionProvider={activeSessionProvider}
@@ -281,6 +283,7 @@ function EngineModeSwitch({
   mode,
   liveMode,
   realtimeAvailable,
+  statusKnown,
   sessionActive,
   activeSessionMode,
   activeSessionProvider,
@@ -294,6 +297,10 @@ function EngineModeSwitch({
   liveMode: string;
   /** Whether SOME realtime family (OpenAI/Gemini) has a key configured. */
   realtimeAvailable: boolean;
+  /** False while the voice-mode status fetch has not succeeded yet: the
+   *  availability is UNKNOWN then, and the hint must say so instead of
+   *  falsely claiming "needs an API key" on a slow/broken backend moment. */
+  statusKnown: boolean;
   /** What the currently open voice session actually uses. */
   sessionActive: boolean;
   activeSessionMode: "pipeline" | "realtime" | null;
@@ -415,7 +422,11 @@ function EngineModeSwitch({
           </div>
           <p className="mt-1.5 max-w-64 text-right text-[11px] leading-snug text-muted-foreground">
             {mode === "realtime" && !realtimeAvailable
-              ? t("apikeys_view.mode_needs_key")
+              ? t(
+                  statusKnown
+                    ? "apikeys_view.mode_needs_key"
+                    : "apikeys_view.mode_status_unknown",
+                )
               : mode === "realtime"
                 ? t("apikeys_view.mode_desc_realtime")
                 : t("apikeys_view.mode_desc_pipeline")}
