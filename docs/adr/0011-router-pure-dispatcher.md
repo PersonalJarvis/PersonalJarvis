@@ -938,3 +938,40 @@ the Mission Manager. Stale configured harness names are reported by the doctor.
 - `tests/contract/test_harness_protocol.py`
 - `tests/unit/diagnostics/test_doctor_diagnostics.py`
 - `tests/unit/core/test_capabilities.py`
+
+## Amendment 2026-07-14 - `wiki-list` tool (grounded vault listing)
+
+**Status:** Amendment 2026-07-14
+
+### Context
+
+Voice session 2026-07-14 09:29 ("what is in my wiki"): the delegated
+router turn had no way to enumerate the Obsidian vault. It probed blindly
+(`wiki-recall` -> `wiki-page-read index.md` -> not found -> `SOUL.md` ->
+not found), burned ~14 sequential LLM rounds (66 s wall clock), and
+finally recited the EXAMPLE directory layout from `schema.md` (the
+vault's editing contract, `type: meta`) as if it were the actual vault
+contents. Every file named in the spoken answer was invented, and the
+invented facts were then journaled by the fact extractor — a
+self-reinforcing hallucination loop.
+
+### Decision
+
+`ROUTER_TOOLS` gains `wiki-list`
+(`jarvis/plugins/tool/wiki_list.py::WikiListTool`): a read-only,
+risk-`safe`, deterministic listing of every markdown page in the vault
+(vault-relative path, size, first heading), with `type: meta` contract
+pages explicitly flagged as system files. Overview questions ("what is
+in my wiki / my notes") resolve in ONE tool round against ground truth
+instead of a probe-and-guess loop. Complementarily, `wiki-page-read`
+prepends a deterministic provenance warning when serving a `type: meta`
+page.
+
+The router remains a pure dispatcher: the tool is a direct safe-gated
+read, never a spawn, and never enters a worker tool set (AP-5/AP-14).
+
+### Regression guards
+
+- `tests/unit/plugins/tool/test_wiki_list.py`
+- `tests/unit/plugins/tool/test_wiki_tools.py` (meta-page warning)
+- `tests/unit/brain/test_routing.py` (ROUTER_TOOLS parity)
