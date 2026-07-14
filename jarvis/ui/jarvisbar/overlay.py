@@ -348,6 +348,9 @@ class JarvisBarOverlay:
         self._feedback_publisher: Callable[[str, dict], None] | None = None
         self._on_show_window: Callable[[], None] | None = None
         self._hovered = False  # mouse over the bar → reveal the close cross
+        # True only on a macOS root whose "-transparent" attribute took; the
+        # frame loop then converts frames to RGBA (renderer.key_to_alpha).
+        self._mac_transparent = False
         self._hangup_click_block_until = 0.0
         # Local mirror of the global voice-mute state (mic muted FOR JARVIS only).
         # Flipped optimistically on a mic-button click and reconciled by the
@@ -554,11 +557,30 @@ class JarvisBarOverlay:
             log.debug("jarvisbar icon setup skipped", exc_info=True)
         root.overrideredirect(True)
         root.wm_attributes("-topmost", True)
-        try:
-            root.wm_attributes("-transparentcolor", COLOR_KEY_HEX)
-        except tk.TclError:
-            log.warning("transparentcolor unsupported — bar will show its key colour")
-        root.configure(bg=COLOR_KEY_HEX)
+        # Per-pixel transparency, per platform: Windows keys out the magenta
+        # color key on the layered window; macOS has no color key, so there
+        # the WINDOW itself becomes transparent (Aqua-Tk's "-transparent" +
+        # the systemTransparent background) and every frame carries a real
+        # alpha channel instead (renderer.key_to_alpha in the frame loop).
+        self._mac_transparent = False
+        if sys.platform == "darwin":
+            try:
+                root.wm_attributes("-transparent", True)
+                root.configure(bg="systemTransparent")
+                self._mac_transparent = True
+            except tk.TclError:
+                log.warning(
+                    "macOS -transparent unsupported — bar will show its key colour"
+                )
+                root.configure(bg=COLOR_KEY_HEX)
+        else:
+            try:
+                root.wm_attributes("-transparentcolor", COLOR_KEY_HEX)
+            except tk.TclError:
+                log.warning(
+                    "transparentcolor unsupported — bar will show its key colour"
+                )
+            root.configure(bg=COLOR_KEY_HEX)
         # Window-level alpha ON TOP of the color key: the magenta stays fully
         # keyed out (verified — no bleed) while the pill itself goes
         # semi-transparent, so the desktop shows through it (Wispr-like).
@@ -574,7 +596,7 @@ class JarvisBarOverlay:
             root,
             width=renderer.WIN_W,
             height=renderer.WIN_H,
-            bg=COLOR_KEY_HEX,
+            bg="systemTransparent" if self._mac_transparent else COLOR_KEY_HEX,
             highlightthickness=0,
             borderwidth=0,
         )
@@ -728,10 +750,16 @@ class JarvisBarOverlay:
         """Best-effort color-key + opacity application on the Tk thread."""
         if self._root is None:
             return
-        try:
-            self._root.wm_attributes("-transparentcolor", COLOR_KEY_HEX)
-        except Exception:  # noqa: BLE001
-            log.debug("jarvisbar transparentcolor re-assert failed", exc_info=True)
+        if sys.platform != "darwin":
+            # The color key is a Windows layered-window concept (BUG-030
+            # re-assert); macOS transparency is the immutable "-transparent"
+            # attribute set at creation — nothing to re-assert there.
+            try:
+                self._root.wm_attributes("-transparentcolor", COLOR_KEY_HEX)
+            except Exception:  # noqa: BLE001
+                log.debug(
+                    "jarvisbar transparentcolor re-assert failed", exc_info=True
+                )
         try:
             self._root.wm_attributes("-alpha", opacity)
         except Exception:  # noqa: BLE001
@@ -896,6 +924,9 @@ class JarvisBarOverlay:
                     t, effective_mode, self._ext_level,
                     hovered=self._hovered, muted=self._muted,
                 )
+                if getattr(self, "_mac_transparent", False):
+                    # macOS: no color key — carry real per-pixel alpha instead.
+                    img = renderer.key_to_alpha(img)
                 # PhotoImage must be retained on self, else Tk GCs it before
                 # drawing.
                 self._photo = ImageTk.PhotoImage(img)

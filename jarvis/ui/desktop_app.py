@@ -1964,21 +1964,45 @@ class DesktopApp:
         """
         if sys.platform == "darwin":
             # This runs on the jarvis-backend worker thread; Aqua-Tk (like
-            # AppKit) is main-thread-only on macOS, so a bar/mascot Tk root
-            # here aborts the WHOLE process natively — the second macOS
-            # first-boot crash (BUG-057; the first was the BUG-056 tray).
-            # NullOverlay keeps the bridge wiring intact; the desktop window
-            # + Dock icon remain the macOS surface until the overlay is
-            # hosted in its own process.
+            # AppKit) is main-thread-only on macOS, so an in-process bar or
+            # mascot Tk root here aborts the WHOLE process natively — the
+            # second macOS first-boot crash (BUG-057; the first was the
+            # BUG-056 tray). The bar therefore lives in its own companion
+            # process whose MAIN thread owns the Tk mainloop
+            # (jarvis.ui.jarvisbar.host), remote-driven over stdio. The
+            # mascot orb has no host yet and stays a no-op surface.
             from loguru import logger
 
+            if style == "jarvis_bar":
+                try:
+                    from jarvis.ui.jarvisbar.subprocess_overlay import (
+                        SubprocessBarOverlay,
+                    )
+
+                    surface = SubprocessBarOverlay(
+                        persistent=self.cfg.ui.bar_persistent,
+                        accent=self.cfg.ui.bar_accent,
+                        startup_gated=gate_until_voice_ready,
+                    )
+                    surface.start_in_thread()
+                    logger.info(
+                        "JarvisBar hosted out-of-process on macOS "
+                        "(jarvis.ui.jarvisbar.host)."
+                    )
+                    return surface
+                except Exception:  # noqa: BLE001 — cosmetic; never block boot
+                    logger.opt(exception=True).warning(
+                        "macOS JarvisBar host failed to start — falling back "
+                        "to the no-op surface."
+                    )
             from jarvis.ui.jarvisbar import NullOverlay
 
-            logger.info(
-                "On-screen overlay disabled on macOS (style={}): Tk windows "
-                "are main-thread-only there — using the no-op surface.",
-                style,
-            )
+            if style not in ("jarvis_bar", "none"):
+                logger.info(
+                    "On-screen mascot disabled on macOS (style={}): Tk windows "
+                    "are main-thread-only there — using the no-op surface.",
+                    style,
+                )
             return NullOverlay()
         if style == "none":
             from jarvis.ui.jarvisbar import NullOverlay

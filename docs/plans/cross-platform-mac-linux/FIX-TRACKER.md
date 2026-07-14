@@ -103,3 +103,17 @@ creators on darwin (bar, mascot orb, virtual cursor, `make_overlay_surface`
 Commit `b82d821a`, shipped public same day. The follow-up above therefore
 grows: main-thread/own-process hosting is needed for the menu-bar icon AND
 the bar/orb before macOS gets any on-screen overlay.
+
+**Own-process bar host (2026-07-14, this session).** The BUG-057 follow-up
+for the bar landed: `jarvis.ui.jarvisbar.host` is a companion process whose
+MAIN thread runs the bar's Tk mainloop (legal on Aqua-Tk), remote-driven by
+`SubprocessBarOverlay` over a JSON-per-line stdio protocol (stdin EOF =
+parent died → host exits; events like mute-toggle stream back on stdout).
+`_build_overlay_surface` on darwin now returns the proxy for
+`style == "jarvis_bar"` (NullOverlay stays the fallback + the mascot's
+surface). macOS transparency: no color key there — the root sets
+`-transparent` + `systemTransparent` and frames carry a real alpha channel
+(`renderer.key_to_alpha`).
+- [ ] **Verify on real Mac hardware:** bar visible, transparent (no magenta
+  rectangle), draggable, mute/hang-up clicks round-trip, no Dock icon for
+  the host (pyobjc accessory policy is best-effort), clean exit on quit.
