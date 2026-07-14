@@ -613,22 +613,31 @@ def cmd_verify(args: argparse.Namespace) -> int:
     # unrelated latent bug doesn't make the repo permanently un-shippable.
     unresolved_block: list[dict] = []
     unresolved_warn: list[dict] = []
+    # 3. Unresolved merge-conflict markers => BLOCK. A stash/merge conflict
+    #    frozen by an auto-save commit shipped once (v1.0.6 follow-up: the
+    #    delta privacy audit caught '<<<<<<< Updated upstream' blocks in
+    #    tool_use_loop.py) — a .py file with markers cannot even import.
+    conflict_markers: list[dict] = []
+    _conflict_rx = re.compile(r"^(?:<{7}|>{7})(?: |$)", re.MULTILINE)
     for path, data in _iter_text_files(staging):
-        if path.suffix != ".py":
-            continue
         rel = path.relative_to(staging).as_posix()
         text, _ = _decode(data)
-        seen: set[tuple[str, bool]] = set()
-        for m in _INTERNAL_IMPORT_RX.finditer(text):
-            indent, mod = m.group(1), m.group(2)
-            top_level = indent == ""
-            key = (mod, top_level)
-            if key in seen:
-                continue
-            seen.add(key)
-            if not any(c in staged_set for c in _module_candidates(mod)):
-                row = {"file": rel, "module": mod, "top_level": top_level}
-                (unresolved_block if top_level else unresolved_warn).append(row)
+        if path.suffix == ".py":
+            seen: set[tuple[str, bool]] = set()
+            for m in _INTERNAL_IMPORT_RX.finditer(text):
+                indent, mod = m.group(1), m.group(2)
+                top_level = indent == ""
+                key = (mod, top_level)
+                if key in seen:
+                    continue
+                seen.add(key)
+                if not any(c in staged_set for c in _module_candidates(mod)):
+                    row = {"file": rel, "module": mod, "top_level": top_level}
+                    (unresolved_block if top_level else unresolved_warn).append(row)
+        marker = _conflict_rx.search(text)
+        if marker is not None:
+            line_no = text.count("\n", 0, marker.start()) + 1
+            conflict_markers.append({"file": rel, "line": line_no})
 
     report = {
         "staged_files": len(staged),
@@ -639,14 +648,17 @@ def cmd_verify(args: argparse.Namespace) -> int:
         "unresolved_toplevel": unresolved_block,
         "unresolved_lazy_count": len(unresolved_warn),
         "unresolved_lazy": unresolved_warn,
+        "conflict_marker_count": len(conflict_markers),
+        "conflict_markers": conflict_markers,
     }
     _write_report(args.report, report)
 
-    ok = not missing_from_commit and not unresolved_block
+    ok = not missing_from_commit and not unresolved_block and not conflict_markers
     print(
         f"verify: {len(missing_from_commit)} staged files MISSING from the commit, "
         f"{len(unresolved_block)} top-level broken imports (BLOCK), "
-        f"{len(unresolved_warn)} lazy broken imports (warn)."
+        f"{len(unresolved_warn)} lazy broken imports (warn), "
+        f"{len(conflict_markers)} unresolved merge-conflict markers (BLOCK)."
     )
     for x in missing_from_commit[:30]:
         _eprint(f"  DROPPED (in staging, not committed): {x}")
@@ -654,6 +666,8 @@ def cmd_verify(args: argparse.Namespace) -> int:
         _eprint(f"  BROKEN IMPORT (top-level): {u['file']} -> {u['module']}")
     for u in unresolved_warn[:30]:
         _eprint(f"  warn lazy import: {u['file']} -> {u['module']}")
+    for c in conflict_markers[:30]:
+        _eprint(f"  CONFLICT MARKER: {c['file']}:{c['line']}")
     return 0 if ok else 2
 
 
