@@ -19,7 +19,13 @@ flashing at the top-left of the screen.
 """
 from __future__ import annotations
 
-from jarvis.ui.jarvisbar.overlay import COLOR_KEY_HEX, JarvisBarOverlay
+import jarvis.ui.jarvisbar.overlay as overlay_module
+from jarvis.ui.jarvisbar.overlay import (
+    COLOR_KEY_HEX,
+    Z_ORDER_GUARD_INTERVAL_MS,
+    JarvisBarOverlay,
+    _win32_force_topmost,
+)
 
 
 class _FakeRoot:
@@ -54,6 +60,38 @@ class _FakeCanvas:
 
     def itemconfig(self, image_id: int, *, image: object) -> None:
         self.calls.append(f"itemconfig:{image_id}:{id(image)}")
+
+
+class _FakeNativeRoot:
+    def __init__(self, hwnd: int = 0x1111) -> None:
+        self.hwnd = hwnd
+
+    def winfo_id(self) -> int:
+        return self.hwnd
+
+
+class _FakeUser32:
+    def __init__(self, *, parent: int = 0x2222, succeeds: bool = True) -> None:
+        self.parent = parent
+        self.succeeds = succeeds
+        self.calls: list[tuple[object, ...]] = []
+
+    def GetParent(self, hwnd: int) -> int:  # noqa: N802 - native API seam
+        self.calls.append(("GetParent", hwnd))
+        return self.parent
+
+    def SetWindowPos(self, *args: object) -> bool:  # noqa: N802 - native API seam
+        self.calls.append(("SetWindowPos", *args))
+        return self.succeeds
+
+
+class _GuardRoot(_FakeRoot):
+    def __init__(self, *, mapped: bool) -> None:
+        super().__init__(mapped=mapped)
+        self.after_calls: list[tuple[int, object]] = []
+
+    def after(self, delay_ms: int, callback: object) -> None:
+        self.after_calls.append((delay_ms, callback))
 
 
 def _bar_with_fake_root(*, mapped: bool = False) -> tuple[JarvisBarOverlay, _FakeRoot]:
@@ -97,6 +135,99 @@ def test_explicit_z_order_reassert_repins_an_already_mapped_window() -> None:
     assert "lift" in root.calls
     assert root.attrs.get("-topmost") is True
     assert root.attrs.get("-transparentcolor") == COLOR_KEY_HEX
+
+
+def test_win32_native_pin_targets_toplevel_parent_without_activation() -> None:
+    root = _FakeNativeRoot()
+    user32 = _FakeUser32()
+
+    assert _win32_force_topmost(root, user32=user32) is True
+
+    assert user32.calls[0] == ("GetParent", root.hwnd)
+    call = user32.calls[1]
+    assert call[0] == "SetWindowPos"
+    assert call[1] == user32.parent  # outer TkTopLevel, not the inner TkChild
+    assert call[2] == -1  # HWND_TOPMOST
+    flags = int(call[-1])
+    assert flags & 0x0001  # SWP_NOSIZE
+    assert flags & 0x0002  # SWP_NOMOVE
+    assert flags & 0x0010  # SWP_NOACTIVATE: never steal foreground focus
+    assert flags & 0x0200  # SWP_NOOWNERZORDER
+    assert not flags & 0x0004  # SWP_NOZORDER would defeat this repair
+
+
+def test_win32_native_pin_uses_inner_handle_when_it_is_already_toplevel() -> None:
+    root = _FakeNativeRoot()
+    user32 = _FakeUser32(parent=0)
+
+    assert _win32_force_topmost(root, user32=user32) is True
+
+    call = user32.calls[1]
+    assert call[0] == "SetWindowPos"
+    assert call[1] == root.hwnd
+
+
+def test_win32_native_pin_failure_is_nonfatal() -> None:
+    assert (
+        _win32_force_topmost(
+            _FakeNativeRoot(), user32=_FakeUser32(succeeds=False)
+        )
+        is False
+    )
+
+
+def test_win32_pin_skips_tk_lift_that_can_leave_the_wrong_z_order_band(
+    monkeypatch,
+) -> None:
+    bar, root = _bar_with_fake_root(mapped=True)
+    monkeypatch.setattr(overlay_module.sys, "platform", "win32")
+    monkeypatch.setattr(overlay_module, "_win32_force_topmost", lambda _root: True)
+
+    assert bar._do_pin_topmost() == "native"  # noqa: SLF001
+
+    assert root.calls == []
+
+
+def test_non_windows_pin_uses_portable_tk_topmost(monkeypatch) -> None:
+    bar, root = _bar_with_fake_root(mapped=True)
+    monkeypatch.setattr(overlay_module.sys, "platform", "darwin")
+
+    assert bar._do_pin_topmost() == "tk"  # noqa: SLF001
+
+    assert root.attrs["-topmost"] is True
+    assert "lift" in root.calls
+
+
+def test_z_order_guard_repins_mapped_bar_and_rearms(monkeypatch) -> None:
+    bar = JarvisBarOverlay(persistent=True)
+    root = _GuardRoot(mapped=True)
+    bar._root = root  # noqa: SLF001
+    bar._running = True  # noqa: SLF001
+    calls: list[bool] = []
+    monkeypatch.setattr(bar, "_do_pin_topmost", lambda: calls.append(True) or "native")
+
+    bar._schedule_z_order_guard()  # noqa: SLF001
+
+    assert calls == [True]
+    assert root.after_calls == [
+        (Z_ORDER_GUARD_INTERVAL_MS, bar._schedule_z_order_guard)  # noqa: SLF001
+    ]
+
+
+def test_z_order_guard_never_maps_hidden_bar(monkeypatch) -> None:
+    bar = JarvisBarOverlay(persistent=False)
+    root = _GuardRoot(mapped=False)
+    bar._root = root  # noqa: SLF001
+    bar._running = True  # noqa: SLF001
+    monkeypatch.setattr(
+        bar,
+        "_do_pin_topmost",
+        lambda: (_ for _ in ()).throw(AssertionError("hidden bar was raised")),
+    )
+
+    bar._schedule_z_order_guard()  # noqa: SLF001
+
+    assert root.after_calls
 
 
 def test_do_show_reapplies_transparentcolor_and_alpha_after_topmost() -> None:
