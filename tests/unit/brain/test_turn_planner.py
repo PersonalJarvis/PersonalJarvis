@@ -43,6 +43,13 @@ def registry() -> CapabilityRegistry:
         "Explain how DNS works.",
         "What is SAP?",
         "How do I open a file in Python?",
+        (
+            "Ach, ich versuche gerade Suggestionen zu studieren. "  # i18n-allow
+            "Wie würdest du mir am besten dabei helfen, "  # i18n-allow
+            "Suggestionen anzuwenden und konkreter zu benutzen, "  # i18n-allow
+            "um meine Mitmenschen dazu zu bringen, "  # i18n-allow
+            "meine Interessen zu verfolgen?"  # i18n-allow
+        ),
         "Tell me a joke.",
     ],
 )

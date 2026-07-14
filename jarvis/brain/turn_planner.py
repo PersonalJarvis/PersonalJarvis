@@ -72,6 +72,8 @@ _DEFINITION_RE = re.compile(
 _INSTRUCTIONAL_RE = re.compile(
     r"\b(?:how (?:do|can|would) (?:i|you)|how to|"
     r"wie (?:kann|koennte|wuerde) (?:ich|man)|"  # i18n-allow: speech input
+    r"wie (?:kannst|koenntest|wuerdest) du|"  # i18n-allow: speech input
+    r"wie (?:koennen|koennten|wuerden) sie|"  # i18n-allow: speech input
     r"como (?:puedo|se puede)|como hacer)\b"  # i18n-allow: multilingual speech-input matching data
 )
 _OWNERSHIP_RE = re.compile(
@@ -266,6 +268,14 @@ def plan_turn(
     reasons: set[TurnReason] = set()
     definition = bool(_DEFINITION_RE.search(normalized))
     instructional = bool(_INSTRUCTIONAL_RE.search(normalized))
+    # An instructional form asks for an explanation, even when the sentence
+    # also contains words that resemble an action, private ownership, or a
+    # current-time marker. For example, "How would you help me use ...?" must
+    # not execute the referenced action or fetch private/current evidence.
+    # Return early so none of the conservative evidence heuristics below can
+    # turn an advice question into an orchestrator-owned action.
+    if instructional:
+        return TurnPlan(path=TurnPath.NATIVE_REALTIME)
     required = () if definition or instructional else _matched_capabilities(
         text,
         capability_registry=capability_registry,

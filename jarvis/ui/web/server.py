@@ -93,6 +93,14 @@ class WebServer:
         self._doc_registry: Any | None = None
         self._cli_registry: Any | None = None
         self._plugin_registry: Any | None = None
+        # Marketplace OAuth refresh belongs to the shared WebServer lifecycle,
+        # not to one launcher. The actual scheduler is created with call_soon
+        # at the end of start(), after the serving/readiness path has returned;
+        # the pending handle also makes repeated start() calls idempotent.
+        self._refresh_scheduler: Any | None = None
+        self._refresh_scheduler_start_handle: asyncio.Handle | None = None
+        self._refresh_registry_tasks: set[asyncio.Task[Any]] = set()
+        self._refresh_scheduler_stopping = False
         # Board stack is populated in _setup_board() (in the _build_app path).
         self._board_aggregator: Any | None = None
         self._board_aggregator_task: asyncio.Task[None] | None = None
@@ -126,6 +134,7 @@ class WebServer:
 
         self._mission_tool_approvals = MissionToolApprovalCoordinator(self.bus)
         self.app: FastAPI = self._build_app()
+        self.app.state.refresh_scheduler = None
 
     async def _forward_preamble_to_chat(self, event: AnnouncementRequested) -> None:
         """Bridge AnnouncementRequested(kind="preamble") → MessageSent.
@@ -1621,6 +1630,115 @@ class WebServer:
     # Lifecycle
     # ------------------------------------------------------------------
 
+    def _schedule_marketplace_refresh_scheduler(self) -> None:
+        """Start marketplace token refresh after the current boot turn.
+
+        Both desktop and headless launch through :meth:`start`. Deferring the
+        small amount of catalog/keyring setup until the loop gets control back
+        keeps it off the readiness-critical path, while the stored handle makes
+        the operation exactly-once even if start is invoked again before the
+        callback runs.
+        """
+        if (
+            self._refresh_scheduler is not None
+            or self._refresh_scheduler_start_handle is not None
+        ):
+            return
+        self._refresh_scheduler_stopping = False
+        loop = asyncio.get_running_loop()
+        self._refresh_scheduler_start_handle = loop.call_soon(
+            self._start_marketplace_refresh_scheduler
+        )
+
+    def _start_marketplace_refresh_scheduler(self) -> None:
+        """Create the periodic OAuth refresh task (best-effort, exactly once)."""
+        self._refresh_scheduler_start_handle = None
+        if self._refresh_scheduler is not None:
+            return
+        try:
+            from jarvis.marketplace.connect_helpers import (
+                build_handler_from_catalog,
+                connected_plugin_ids,
+            )
+            from jarvis.marketplace.refresh_scheduler import RefreshScheduler
+            from jarvis.marketplace.token_store import TokenStore
+
+            token_store = TokenStore()
+
+            def _refresh_live_session(plugin_id: str) -> None:
+                registry = self._plugin_registry
+                if registry is None or self._refresh_scheduler_stopping:
+                    return
+                task = asyncio.create_task(
+                    registry.refresh_plugin(plugin_id),
+                    name=f"plugin-refresh:{plugin_id}",
+                )
+                self._refresh_registry_tasks.add(task)
+
+                def _consume_refresh_result(done: asyncio.Task[Any]) -> None:
+                    self._refresh_registry_tasks.discard(done)
+                    if done.cancelled():
+                        return
+                    try:
+                        done.result()
+                    except Exception as exc:  # noqa: BLE001 -- background isolation
+                        logger.opt(exception=exc).warning(
+                            "Marketplace live-session refresh failed for {}.",
+                            plugin_id,
+                        )
+
+                task.add_done_callback(_consume_refresh_result)
+
+            scheduler = RefreshScheduler(
+                plugin_ids_fn=lambda: connected_plugin_ids(token_store),
+                store=token_store,
+                build_handler=build_handler_from_catalog,
+                on_refreshed=_refresh_live_session,
+            )
+            scheduler.start()
+        except Exception as exc:  # noqa: BLE001 -- refresh must never block boot
+            logger.opt(exception=exc).warning(
+                "Marketplace refresh scheduler did not start; connected OAuth "
+                "plugins may expire."
+            )
+            return
+
+        self._refresh_scheduler = scheduler
+        self.app.state.refresh_scheduler = scheduler
+        logger.info(
+            "Marketplace refresh scheduler started; connected OAuth tokens "
+            "will be renewed in the background."
+        )
+
+    async def _stop_marketplace_refresh_scheduler(self) -> None:
+        """Cancel a pending start and stop the live refresh task, if any."""
+        self._refresh_scheduler_stopping = True
+        handle = self._refresh_scheduler_start_handle
+        self._refresh_scheduler_start_handle = None
+        if handle is not None:
+            handle.cancel()
+
+        scheduler = self._refresh_scheduler
+        self._refresh_scheduler = None
+        self.app.state.refresh_scheduler = None
+        if scheduler is not None:
+            try:
+                await scheduler.stop()
+            except Exception as exc:  # noqa: BLE001 -- shutdown stays best-effort
+                logger.opt(exception=exc).warning(
+                    "Marketplace refresh scheduler stop failed."
+                )
+
+        # A successful token refresh may already have queued a live MCP-session
+        # rebuild. Drain those tasks before PluginToolRegistry.stop(); otherwise
+        # a late task can reconnect a client after registry shutdown and leak it.
+        pending = list(self._refresh_registry_tasks)
+        for task in pending:
+            task.cancel()
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+        self._refresh_registry_tasks.clear()
+
     async def start(
         self,
         host: str = "127.0.0.1",
@@ -1933,6 +2051,10 @@ class WebServer:
             )
 
         _boot_mark("watchers_and_background")
+        # Schedule last: callers regain control and publish the ready app before
+        # catalog/keyring reads or refresh network calls can begin. This shared
+        # hook covers normal desktop, headless, and direct WebServer starts.
+        self._schedule_marketplace_refresh_scheduler()
 
     async def _init_screenshot_retention(self) -> None:
         """Auto-delete captured screenshot blobs older than the configured
@@ -2563,6 +2685,10 @@ class WebServer:
                 )
 
     async def stop(self) -> None:
+        # Stop token refresh before the plugin registry so an in-flight refresh
+        # cannot enqueue a live-session rebuild while that registry is closing.
+        await self._stop_marketplace_refresh_scheduler()
+
         # Stop the skill watcher, otherwise the watchdog thread stays behind
         # as a zombie and prevents the process from exiting.
         if self._skill_registry is not None:

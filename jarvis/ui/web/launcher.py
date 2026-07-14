@@ -701,51 +701,6 @@ async def _run_headless(args) -> int:
 
     asyncio.create_task(_autostart_mcps())
 
-    # Wave 2 — token-refresh scheduler: keep connected OAuth plugins' access
-    # tokens fresh so long sessions don't start 401-ing mid-flight. Guarded so
-    # a failure here never blocks boot (mirrors the MCP autostart above).
-    try:
-        from jarvis.marketplace.connect_helpers import (
-            build_handler_from_catalog,
-            connected_plugin_ids,
-        )
-        from jarvis.marketplace.refresh_scheduler import RefreshScheduler
-        from jarvis.marketplace.token_store import TokenStore
-
-        def _refresh_live_session(plugin_id: str) -> None:
-            # Lazy import: keeps this off the boot-critical import path (AP-26) —
-            # it is only ever needed once a background refresh actually succeeds.
-            from jarvis.ui.web.marketplace_routes import _refresh_plugin_in_live_registry
-
-            _refresh_plugin_in_live_registry(plugin_id)
-
-        _token_store = TokenStore()
-        _refresh_scheduler = RefreshScheduler(
-            plugin_ids_fn=lambda: connected_plugin_ids(_token_store),
-            store=_token_store,
-            build_handler=build_handler_from_catalog,
-            on_refreshed=_refresh_live_session,
-        )
-        _refresh_scheduler.start()
-        server.app.state.refresh_scheduler = _refresh_scheduler
-        import logging as _logging
-
-        _logging.getLogger(__name__).info(
-            "marketplace refresh scheduler started (%d connected plugins) — "
-            "tokens kept warm so connections stay alive",
-            len(connected_plugin_ids(_token_store)),
-        )
-    except Exception:
-        import logging as _logging
-
-        # A failed scheduler = tokens silently expire = the exact failure mode we
-        # are fixing. Surface it at WARNING, never swallow it at DEBUG.
-        _logging.getLogger(__name__).warning(
-            "marketplace refresh scheduler NOT started — connected plugins may "
-            "expire; check the error",
-            exc_info=True,
-        )
-
     stop_event = asyncio.Event()
 
     def _stop(*_):

@@ -6856,6 +6856,7 @@ class BrainManager:
         source_layer: str | None = None,
         allow_voice_confirm: bool = False,
         prefer_tool_model: bool = False,
+        emit_tool_ack: bool = True,
         publish_response: bool = True,
         history_override: Iterable[BrainMessage] | None = None,
     ) -> str:
@@ -6882,6 +6883,7 @@ class BrainManager:
                 source_layer=source_layer,
                 allow_voice_confirm=allow_voice_confirm,
                 prefer_tool_model=prefer_tool_model,
+                emit_tool_ack=emit_tool_ack,
             )
         finally:
             _TURN_HISTORY_OVERRIDE.reset(history_token)
@@ -6898,6 +6900,7 @@ class BrainManager:
         source_layer: str | None = None,
         allow_voice_confirm: bool = False,
         prefer_tool_model: bool = False,
+        emit_tool_ack: bool = True,
     ) -> str:
         # 1. Intercept meta-commands (cancel, switch, depth override).
         # User request 2026-04-25: no standardised confirmation phrases
@@ -7541,7 +7544,9 @@ class BrainManager:
         # provider-chain retry cannot double-announce. The loop fires it the
         # moment a tool is actually selected; None when the feature is off or
         # this is a Voice-Control utterance.
-        _tool_ack_emitter = self._build_tool_ack_emitter(user_text)
+        _tool_ack_emitter = (
+            self._build_tool_ack_emitter(user_text) if emit_tool_ack else None
+        )
 
         for idx, (prov_name, model) in enumerate(chain):
             # Skip providers already marked dead in THIS turn.

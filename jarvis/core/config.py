@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import secrets
 import sys
 import threading
 import tomllib
@@ -2485,6 +2486,12 @@ def load_config(
 # installed ONLY when the current backend is the no-op fail.Keyring).
 _KEYRING_BACKEND_READY: bool = False
 _FILE_BACKEND_ACTIVE: bool = False
+# The platform backend that was active before a runtime failure forced the
+# process-wide ``keyring`` module onto our file backend. Retaining it matters
+# for mixed states: one failed write must not hide other credentials that are
+# still readable from the OS store, and recovery probes must not mistake the
+# currently installed file backend for a recovered platform backend.
+_PLATFORM_KEYRING_BACKEND: Any | None = None
 _SECRET_REVISION_LOCK = threading.Lock()
 _SECRET_REVISIONS: dict[str, int] = {}
 
@@ -2572,7 +2579,22 @@ class _FileCredStore:
             self._save(data)
 
 
-def _install_file_cred_backend(reason: str) -> bool:
+def _is_platform_keyring_backend(backend: Any) -> bool:
+    """Return whether *backend* is a real platform credential-store candidate."""
+    if backend is None or getattr(backend, "_jarvis_file_backend", False):
+        return False
+    try:
+        # ``fail.Keyring`` advertises zero priority. Use that capability rather
+        # than an isinstance check against unpinned third-party internals.
+        priority = getattr(backend, "priority", None)
+        return priority is None or priority > 0
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _install_file_cred_backend(
+    reason: str, *, retain_platform_backend: bool = True
+) -> bool:
     """Force the local 0600 file credential store as the active keyring backend.
 
     Used both when NO OS keyring exists at all (headless VPS → ``fail.Keyring``)
@@ -2586,15 +2608,22 @@ def _install_file_cred_backend(reason: str) -> bool:
 
     Returns True iff the file backend is now active.
     """
-    global _FILE_BACKEND_ACTIVE
+    global _FILE_BACKEND_ACTIVE, _PLATFORM_KEYRING_BACKEND
     try:
         import keyring
         import keyring.backend
+
+        current_backend = keyring.get_keyring()
+        if not retain_platform_backend:
+            _PLATFORM_KEYRING_BACKEND = None
+        elif _is_platform_keyring_backend(current_backend):
+            _PLATFORM_KEYRING_BACKEND = current_backend
 
         _store = _FileCredStore()
 
         class _FileKeyringBackend(keyring.backend.KeyringBackend):
             priority = 0.1  # type: ignore[assignment]  # below any real OS backend
+            _jarvis_file_backend = True
 
             def get_password(self, service: str, username: str) -> str | None:
                 return _store.get(service, username)
@@ -2634,10 +2663,12 @@ def _ensure_keyring_backend() -> None:
     _KEYRING_BACKEND_READY = True
     try:
         import keyring
-        from keyring.backends import fail
 
-        if isinstance(keyring.get_keyring(), fail.Keyring):
-            _install_file_cred_backend("no OS credential store available (headless host)")
+        if not _is_platform_keyring_backend(keyring.get_keyring()):
+            _install_file_cred_backend(
+                "no OS credential store available (headless host)",
+                retain_platform_backend=False,
+            )
     except Exception:  # noqa: BLE001
         pass
 
@@ -2657,12 +2688,13 @@ def _try_restore_platform_keyring_backend() -> bool:
     add startup latency or prompts.  Returns ``True`` when the platform backend
     is active, including when no fallback swap had occurred.
     """
-    global _FILE_BACKEND_ACTIVE
+    global _FILE_BACKEND_ACTIVE, _PLATFORM_KEYRING_BACKEND
     if not _FILE_BACKEND_ACTIVE:
         return True
 
     keyring_mod = None
     previous_backend = None
+    candidate = None
     try:
         import keyring as keyring_mod
         from keyring.core import init_backend
@@ -2670,10 +2702,29 @@ def _try_restore_platform_keyring_backend() -> bool:
         previous_backend = keyring_mod.get_keyring()
         init_backend()
         candidate = keyring_mod.get_keyring()
-        # Capability probe, never an isinstance check against third-party
-        # internals. A real backend returns None for this absent slot; fail or
-        # locked backends raise and are rejected below.
-        candidate.get_password(KEYRING_SERVICE, "__jarvis_backend_probe__")
+        if not _is_platform_keyring_backend(candidate):
+            raise RuntimeError("platform backend discovery found no usable backend")
+
+        # A read-only probe was insufficient on Windows: WinVault could read an
+        # old value while every write failed with error 1312. Use a unique,
+        # disposable entry and prove the full write/read/delete lifecycle.
+        probe_key = f"__jarvis_backend_probe__{secrets.token_hex(8)}"
+        probe_value = secrets.token_urlsafe(24)
+        try:
+            candidate.set_password(KEYRING_SERVICE, probe_key, probe_value)
+            if candidate.get_password(KEYRING_SERVICE, probe_key) != probe_value:
+                raise RuntimeError("platform credential-store probe read mismatch")
+            candidate.delete_password(KEYRING_SERVICE, probe_key)
+            if candidate.get_password(KEYRING_SERVICE, probe_key) is not None:
+                raise RuntimeError("platform credential-store probe delete failed")
+        except Exception:
+            # A backend may write and then raise, so cleanup is unconditional.
+            try:
+                candidate.delete_password(KEYRING_SERVICE, probe_key)
+            except Exception:  # noqa: BLE001, S110 -- best-effort probe cleanup
+                pass
+            _PLATFORM_KEYRING_BACKEND = candidate
+            raise
     except Exception:  # noqa: BLE001 -- unavailable OS keyring is expected headlessly
         if keyring_mod is not None and previous_backend is not None:
             try:
@@ -2682,6 +2733,7 @@ def _try_restore_platform_keyring_backend() -> bool:
                 pass
         return False
 
+    _PLATFORM_KEYRING_BACKEND = candidate
     _FILE_BACKEND_ACTIVE = False
     logging.getLogger(__name__).info(
         "OS credential store recovered; future credential saves use the platform keyring."
@@ -2692,11 +2744,10 @@ def _try_restore_platform_keyring_backend() -> bool:
 def get_secret(key: str, env_fallback: str | None = None) -> str | None:
     """Retrieve a secret value from every portable credential source.
 
-    Priority is OS keyring → ENV → ``.env`` → local-file fallback.
-    The final read-through is required even when a nominally working OS
-    keyring returns ``None``: a previous in-app save may have fallen back to
-    ``data/credentials.json`` while that keyring was temporarily unavailable.
-    Without the read-through the saved key becomes invisible after restart.
+    Normal priority is OS keyring → ENV → ``.env`` → local-file
+    fallback. A fallback value for the same slot is newer than a stale OS copy,
+    while ENV and ``.env`` keep their documented precedence. This lets an
+    in-app save survive both a temporary keyring outage and the next restart.
 
     Args:
         key: Secret name in the Credential Manager (e.g. "anthropic_api_key").
@@ -2711,13 +2762,40 @@ def get_secret(key: str, env_fallback: str | None = None) -> str | None:
     if env_fallback is None:
         env_fallback = key.upper()
 
+    # A file value marks a later explicit save whose platform write failed. Read
+    # it up front so an older-but-readable OS value cannot shadow it after a
+    # restart. A later successful platform save removes this copy.
+    file_val: str | None = None
+    try:
+        file_val = _FileCredStore().get(KEYRING_SERVICE, key)
+    except Exception:  # noqa: BLE001, S110 — unreadable fallback is absent
+        pass
+
+    platform_val: str | None = None
     # Lazy import — keyring requires pywin32 on Windows
     try:
         import keyring
 
-        val = keyring.get_password(KEYRING_SERVICE, key)
-        if val:
-            return val
+        active_val = keyring.get_password(KEYRING_SERVICE, key)
+        active_backend = keyring.get_keyring()
+        if _FILE_BACKEND_ACTIVE and getattr(
+            active_backend, "_jarvis_file_backend", False
+        ):
+            # The process-wide keyring now points at the file backend. Keep
+            # reading the retained platform backend for slots that never needed
+            # a fallback, so one failed write does not hide all OS credentials.
+            file_val = active_val or file_val
+            platform_backend = _PLATFORM_KEYRING_BACKEND
+            if (
+                platform_backend is not None
+                and _is_platform_keyring_backend(platform_backend)
+            ):
+                try:
+                    platform_val = platform_backend.get_password(KEYRING_SERVICE, key)
+                except Exception:  # noqa: BLE001 — locked platform stays fallback-only
+                    platform_val = None
+        else:
+            platform_val = active_val
     except Exception:  # noqa: BLE001
         # A reachable-but-locked OS keyring raises here even though
         # _ensure_keyring_backend saw a viable backend. Degrade to the 0600 file
@@ -2727,11 +2805,15 @@ def get_secret(key: str, env_fallback: str | None = None) -> str | None:
             try:
                 import keyring
 
-                val = keyring.get_password(KEYRING_SERVICE, key)
-                if val:
-                    return val
-            except Exception:  # noqa: BLE001
+                file_val = keyring.get_password(KEYRING_SERVICE, key) or file_val
+            except Exception:  # noqa: BLE001, S110
                 pass
+
+    # Preserve OS-keyring-over-ENV precedence when this exact slot has no newer
+    # fallback value. When both copies exist, ENV/.env keep their documented
+    # precedence and the fallback copy beats only the stale OS copy.
+    if platform_val and not file_val:
+        return platform_val
 
     if env_fallback and (val := os.environ.get(env_fallback)):
         return val
@@ -2747,15 +2829,8 @@ def get_secret(key: str, env_fallback: str | None = None) -> str | None:
             if k.strip() == env_fallback:
                 return v.strip().strip('"').strip("'")
 
-    # Portable read-through. Do not replace a healthy OS backend merely because
-    # it returned no value: consult the file store directly so a key written
-    # during an earlier keyring outage remains recoverable after restart.
-    try:
-        val = _FileCredStore().get(KEYRING_SERVICE, key)
-        if val:
-            return val
-    except Exception:  # noqa: BLE001, S110 — unreadable fallback is absent
-        pass
+    if file_val:
+        return file_val
 
     return None
 
@@ -2847,12 +2922,29 @@ def set_secret(key: str, value: str) -> bool:
         # When the installed backend IS the file fallback, deleting here would
         # erase the value that was just written.
         if not _FILE_BACKEND_ACTIVE:
+            store = _FileCredStore()
             try:
-                store = _FileCredStore()
-                if store.get(KEYRING_SERVICE, key) is not None:
+                fallback_exists = store.get(KEYRING_SERVICE, key) is not None
+            except Exception:  # noqa: BLE001 -- incomplete save must be reported
+                return False
+            if fallback_exists:
+                cleanup_succeeded = False
+                try:
                     store.delete(KEYRING_SERVICE, key)
-            except Exception:  # noqa: BLE001, S110 — secure write already succeeded
-                pass
+                    cleanup_succeeded = store.get(KEYRING_SERVICE, key) is None
+                except Exception:  # noqa: BLE001 -- synchronize below
+                    cleanup_succeeded = False
+                if not cleanup_succeeded:
+                    # A stale fallback outranks the platform copy in
+                    # ``get_secret``. If it cannot be removed, make both stores
+                    # agree before reporting success; otherwise callers would
+                    # immediately read the credential this save replaced.
+                    try:
+                        store.set(KEYRING_SERVICE, key, value)
+                        if store.get(KEYRING_SERVICE, key) != value:
+                            return False
+                    except Exception:  # noqa: BLE001
+                        return False
         _mark_secret_changed(key)
         return True
     except Exception as exc:  # noqa: BLE001
@@ -2888,6 +2980,25 @@ def delete_secret(key: str) -> bool:
     on the next boot. The ENV layer is read-only here and is never touched.
     """
     _ensure_keyring_backend()
+
+    # When a platform failure swapped this process onto the file backend, the
+    # retained platform store is a second live copy. Delete and verify it first.
+    # If that cannot be confirmed, leave the newer file copy intact: removing it
+    # would immediately reveal the stale platform value through get_secret().
+    retained_backend = _PLATFORM_KEYRING_BACKEND
+    if _FILE_BACKEND_ACTIVE and _is_platform_keyring_backend(retained_backend):
+        try:
+            from keyring.errors import PasswordDeleteError
+
+            try:
+                retained_backend.delete_password(KEYRING_SERVICE, key)
+            except PasswordDeleteError:
+                pass
+            if retained_backend.get_password(KEYRING_SERVICE, key) is not None:
+                return False
+        except Exception:  # noqa: BLE001
+            return False
+
     keyring_ok = False
     try:
         import keyring
@@ -2895,13 +3006,16 @@ def delete_secret(key: str) -> bool:
 
         try:
             keyring.delete_password(KEYRING_SERVICE, key)
-            keyring_ok = True
         except PasswordDeleteError:
             # Every backend we rely on raises this specifically when the
             # entry is already absent (e.g. the Windows Credential Manager
             # backend; the file-fallback backend's delete is idempotent and
             # never raises at all) — "nothing to delete" is itself a success.
-            keyring_ok = True
+            pass
+        # Some backends return success without deleting anything. Read the
+        # active backend back before removing a newer fallback copy or claiming
+        # that the secret is gone.
+        keyring_ok = keyring.get_password(KEYRING_SERVICE, key) is None
     except Exception:  # noqa: BLE001
         # A genuine backend failure (locked Secret Service, transport
         # error, ...). Deliberately do not retry via
@@ -2911,12 +3025,19 @@ def delete_secret(key: str) -> bool:
         # the real OS-keyring entry survives untouched.
         keyring_ok = False
 
+    if not keyring_ok and not _FILE_BACKEND_ACTIVE:
+        # The fallback is authoritative when both copies exist. Preserve it
+        # until the platform deletion can be confirmed; removing it here would
+        # immediately resurface the stale platform credential through
+        # ``get_secret`` and make a later retry impossible.
+        return False
+
     file_ok = False
     try:
         store = _FileCredStore()
         if store.get(KEYRING_SERVICE, key) is not None:
             store.delete(KEYRING_SERVICE, key)
-        file_ok = True
+        file_ok = store.get(KEYRING_SERVICE, key) is None
     except Exception:  # noqa: BLE001, S110
         pass
     if keyring_ok or file_ok:
