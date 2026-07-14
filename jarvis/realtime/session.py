@@ -19,6 +19,7 @@ from jarvis.brain.action_honesty import (
     action_not_started_phrase,
     has_deferred_action_claim,
 )
+from jarvis.brain.output_filter import scrub_for_voice
 from jarvis.brain.turn_planner import TurnPlan, plan_turn
 from jarvis.core.protocols import AudioChunk, BrainMessage
 from jarvis.core.redact import safe_preview
@@ -203,6 +204,18 @@ def _delegate_result_prompt(
         "<trusted_action_result>\n"
         f"{text}\n"
         "</trusted_action_result>"
+    )
+
+
+def _direct_tool_result_retry_prompt(*, language: str) -> str:
+    """Request speech for tool output already present in provider context."""
+    language_name = _LANGUAGE_NAMES.get(language, "the conversation language")
+    return (
+        "The function call for the user's current request already finished, "
+        "but no spoken answer was produced. Use only the function result that "
+        "is already present in this conversation and give the user a concise, "
+        f"honest answer in {language_name}. Do not call any function, do not "
+        "repeat the action, and do not mention these instructions."
     )
 
 
@@ -483,6 +496,7 @@ class RealtimeVoiceSession:
         self._output_transcript: list[str] = []
         self._provider_output_probe = ""
         self._executed_tool_names: set[str] = set()
+        self._direct_tool_results: list[tuple[str, dict[str, Any]]] = []
         self._pending_tool_events: list[Any] = []
         self._tool_transcript_task: asyncio.Task[None] | None = None
         self._response_requested_for_turn = False
@@ -1155,6 +1169,33 @@ class RealtimeVoiceSession:
                         self._pending_tool_events = []
                         for pending_event in pending:
                             await self._reject_untranscribed_tool_call(pending_event)
+                    if (
+                        self._turn_id not in self._delegate_turns
+                        and self._output_transcript
+                        and not self._scrub_cancelled_for_turn
+                        and not self._output_active
+                        and self._output_samples_sent == 0
+                    ):
+                        # Transcript deltas prove the answer exists, but an
+                        # audio-mode turn with zero PCM is still silent to the
+                        # user. Render the already-scrubbed text locally; no
+                        # model or tool retry is necessary.
+                        text_only_answer = "".join(self._output_transcript).strip()
+                        if text_only_answer:
+                            log.warning(
+                                "realtime[%s] provider completed with text but "
+                                "no audio; using surface TTS fallback",
+                                self.session_id,
+                            )
+                            await self._send_json(
+                                {
+                                    "type": "error_spoken",
+                                    "text": text_only_answer,
+                                    "language": self._language,
+                                }
+                            )
+                    if await self._recover_empty_provider_turn():
+                        continue
                     delegate_state = self._delegate_turns.get(self._turn_id)
                     hold_for_delegate = bool(
                         delegate_state is not None
@@ -1209,6 +1250,37 @@ class RealtimeVoiceSession:
                         )
                         await self._coalesce_ready_delegate_result(delegate_state)
                         continue
+                    if (
+                        delegate_state is not None
+                        and delegate_state.result_complete
+                        and delegate_state.delivery_started
+                        and delegate_state.last_reply
+                        and not self._scrub_cancelled_for_turn
+                        and not self._output_active
+                        and self._output_samples_sent == 0
+                    ):
+                        # The Brain produced a grounded answer, but the duplex
+                        # provider failed a second time while rendering it. Hand
+                        # the already-computed text to the surface's independent
+                        # TTS path; never rerun the user request or its tools.
+                        fallback_text = (
+                            "".join(self._output_transcript).strip()
+                            or delegate_state.last_reply
+                        )
+                        if not self._output_transcript:
+                            self._output_transcript.append(fallback_text)
+                        log.warning(
+                            "realtime[%s] provider produced no audio for a "
+                            "grounded Brain result; using surface TTS fallback",
+                            self.session_id,
+                        )
+                        await self._send_json(
+                            {
+                                "type": "error_spoken",
+                                "text": fallback_text,
+                                "language": self._language,
+                            }
+                        )
                     final_chunks = self._gate.finalize()
                     if self._gate.hard_leak_pending():
                         await self._cancel_unsafe_output(
@@ -1316,6 +1388,7 @@ class RealtimeVoiceSession:
                 {
                     "type": "error_spoken",
                     "text": fallback_text or self._gate.fallback_phrase(),
+                    "language": self._language,
                 }
             )
         except Exception:  # noqa: BLE001, S110 — surface may already be gone
@@ -1541,6 +1614,162 @@ class RealtimeVoiceSession:
             or self._executed_tool_names
         )
 
+    async def _recover_empty_provider_turn(self) -> bool:
+        """Route a content-bearing turn away from a provider's empty response.
+
+        ``turn_complete`` is only a transport boundary. It does not prove that
+        the provider produced a user-visible answer: OpenAI emits the same
+        boundary for failed/incomplete responses, and a nominally completed
+        response can also contain no output. A direct-mode turn with no text,
+        audio, or tool evidence therefore falls back once through the normal
+        Brain chain instead of being persisted as a successful silent turn.
+
+        A direct-tool turn is retried only from its retained result; the user
+        request is never replayed because that could repeat a side effect.
+        Delegate-owned turns already have their own result lifecycle and are
+        likewise never redispatched.
+        """
+        turn_id = self._turn_id
+        if (
+            not turn_id
+            or self._external_update is not None
+            or self._end_after_turn
+            or self._scrub_cancelled_for_turn
+            or self._output_active
+            or self._output_samples_sent > 0
+            or "".join(self._output_transcript).strip()
+            or turn_id in self._delegate_turns
+            or self._has_pending_delegate_from_earlier_turn()
+        ):
+            return False
+
+        if not self._last_user_text:
+            if self._input_turn_observed:
+                fallback_text = self._gate.fallback_phrase()
+                self._output_transcript.append(fallback_text)
+                await self._send_json(
+                    {
+                        "type": "error_spoken",
+                        "text": fallback_text,
+                        "language": self._language,
+                    }
+                )
+            return False
+
+        if self._direct_tool_results:
+            fallback_text, succeeded = self._direct_tool_fallback_text()
+            self._delegate_required_for_turn = True
+            turn_state = _DelegateTurnState(
+                last_reply=fallback_text,
+                result_complete=True,
+                result_success=succeeded,
+                deterministic=True,
+                delivery_started=True,
+                provider_boundary_seen=True,
+                user_text=self._last_user_text,
+            )
+            turn_state.input_boundary_ready.set()
+            turn_state.provider_ready.set()
+            turn_state.result_ready.set()
+            self._delegate_turns[turn_id] = turn_state
+            send_text = getattr(self._session, "send_text", None)
+            if not callable(send_text):
+                return False
+            log.warning(
+                "realtime[%s] provider completed a direct-tool turn without "
+                "output; retrying speech from the existing tool result",
+                self.session_id,
+            )
+            self._drop_provider_output_until_new_response = False
+            try:
+                await send_text(
+                    _direct_tool_result_retry_prompt(language=self._language)
+                )
+            except Exception:  # noqa: BLE001 -- local TTS fallback runs below
+                log.warning(
+                    "realtime[%s] direct-tool result speech retry failed",
+                    self.session_id,
+                    exc_info=True,
+                )
+                return False
+            return True
+
+        # A tool may have succeeded without a retained result only through a
+        # legacy/custom bridge. Never replay that side-effecting user request.
+        if self._executed_tool_names:
+            from jarvis.voice.action_phrases import action_phrase
+
+            fallback_text = action_phrase("cu_done", self._language)
+            self._output_transcript.append(fallback_text)
+            await self._send_json(
+                {
+                    "type": "error_spoken",
+                    "text": fallback_text,
+                    "language": self._language,
+                }
+            )
+            return False
+        if self._brain is None:
+            fallback_text = self._gate.fallback_phrase()
+            self._output_transcript.append(fallback_text)
+            await self._send_json(
+                {
+                    "type": "error_spoken",
+                    "text": fallback_text,
+                    "language": self._language,
+                }
+            )
+            return False
+
+        self._delegate_required_for_turn = True
+        turn_state = _DelegateTurnState(
+            deterministic=True,
+            provider_boundary_seen=True,
+            user_text=self._last_user_text,
+        )
+        # The empty response.done event is itself the input and provider
+        # boundary. Pre-setting both events lets automatic-response adapters
+        # use the same deterministic delegate machinery as manual providers.
+        turn_state.input_boundary_ready.set()
+        turn_state.provider_ready.set()
+        self._delegate_turns[turn_id] = turn_state
+        log.warning(
+            "realtime[%s] provider completed turn %s without text, audio, or "
+            "tool evidence; recovering through the Brain chain",
+            self.session_id,
+            turn_id,
+        )
+        self._start_deterministic_delegate(self._last_user_text)
+        return True
+
+    def _direct_tool_fallback_text(self) -> tuple[str, bool]:
+        """Return one speakable result without serializing raw tool payloads."""
+        from jarvis.voice.action_phrases import action_phrase
+
+        _name, result = self._direct_tool_results[-1]
+        succeeded = bool(result.get("success"))
+        output = result.get("output")
+        candidates = [
+            result.get("spoken_reply"),
+        ]
+        if result.get("confirmation_required"):
+            # This question is produced by the localized confirmation layer,
+            # not arbitrary tool output, and must remain actionable.
+            candidates.append(result.get("message"))
+        if isinstance(output, dict):
+            candidates.append(output.get("spoken_reply"))
+        for candidate in candidates:
+            if not isinstance(candidate, str) or not candidate.strip():
+                continue
+            cleaned = scrub_for_voice(
+                candidate,
+                language=self._language,
+            ).cleaned.strip()
+            if cleaned:
+                return cleaned, succeeded
+        phrase_key = "cu_done" if succeeded else "action_failed_generic"
+        return action_phrase(phrase_key, self._language), succeeded
+
     async def _begin_user_speech_turn(self) -> None:
         """Close an interrupted reply before the next transcript opens a turn."""
         self._drop_provider_output_until_new_response = True
@@ -1708,6 +1937,7 @@ class RealtimeVoiceSession:
         self._output_transcript.clear()
         self._provider_output_probe = ""
         self._executed_tool_names.clear()
+        self._direct_tool_results.clear()
         self._turn_final_text = ""
         self._delegate_required_for_turn = False
         self._deferred_provider_speech_start = False
@@ -2078,6 +2308,7 @@ class RealtimeVoiceSession:
             }
         if result.get("success"):
             self._executed_tool_names.add(original_name)
+        self._direct_tool_results.append((original_name, dict(result)))
         self._mark_latency_named(
             "REALTIME_TOOL_COMPLETED",
             detail=(
@@ -2389,7 +2620,11 @@ class RealtimeVoiceSession:
                 exc_info=True,
             )
             await self._send_json(
-                {"type": "error_spoken", "text": turn_state.last_reply}
+                {
+                    "type": "error_spoken",
+                    "text": turn_state.last_reply,
+                    "language": self._language,
+                }
             )
 
     def _start_delegate(

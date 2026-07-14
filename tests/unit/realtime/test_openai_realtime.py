@@ -526,6 +526,55 @@ async def test_runtime_errors_preserve_provider_recoverability(
 
 
 @pytest.mark.asyncio
+async def test_failed_response_done_is_reported_before_turn_completion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    conn = holder["client"].realtime.last_conn
+
+    await session.request_response()
+    marker = conn.response_create_payloads[0]["response"]["metadata"][
+        "jarvis_request_id"
+    ]
+    conn._events = iter(
+        [
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(
+                    id="resp-failed",
+                    metadata={"jarvis_request_id": marker},
+                ),
+            ),
+            SimpleNamespace(
+                type="response.done",
+                response=SimpleNamespace(
+                    id="resp-failed",
+                    status="failed",
+                    status_details=SimpleNamespace(
+                        error=SimpleNamespace(
+                            code="server_error",
+                            message="The response could not be generated.",
+                        )
+                    ),
+                ),
+            ),
+        ]
+    )
+    session._events = conn.__aiter__()
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == ["error", "turn_complete"]
+    assert events[0].recoverable is True
+    assert "failed" in str(events[0].error)
+    assert "server_error" in str(events[0].error)
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_response_requests_wait_for_the_active_response_boundary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

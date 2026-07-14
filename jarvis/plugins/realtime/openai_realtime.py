@@ -63,6 +63,29 @@ def _error_message(event: Any) -> str:
     return (message or code or "OpenAI Realtime session error")[:800]
 
 
+def _response_status_error(event: Any) -> str:
+    """Describe a terminal response status that did not complete normally."""
+    response = getattr(event, "response", None)
+    raw_status = getattr(response, "status", "")
+    status = str(getattr(raw_status, "value", raw_status) or "").strip().lower()
+    if "." in status:
+        status = status.rsplit(".", 1)[-1]
+    # Cancellation is expected during barge-in. The session-level output guard
+    # still catches an unexpected cancelled response that leaves a user turn
+    # empty, without surfacing a false provider warning on normal interruption.
+    if status in {"", "completed", "cancelled"}:
+        return ""
+
+    details = getattr(response, "status_details", None)
+    error = getattr(details, "error", None)
+    code = str(getattr(error, "code", "") or "").strip()
+    message = str(getattr(error, "message", "") or "").strip()
+    reason = str(getattr(details, "reason", "") or "").strip()
+    detail = ": ".join(part for part in (code, message or reason) if part)
+    summary = f"OpenAI Realtime response ended with status {status}"
+    return f"{summary}: {detail}"[:800] if detail else summary
+
+
 def _session_payload(cfg: Any) -> dict[str, Any]:
     """Build the current GA ``session.update`` payload.
 
@@ -260,6 +283,16 @@ class _OpenAIRealtimeSession:
                 elif len(self._accepted_response_ids) == 1:
                     self._accepted_response_ids.pop()
                 self._response_idle.set()
+                status_error = _response_status_error(event)
+                if status_error:
+                    # response.done is emitted for completed, failed, and
+                    # incomplete generations. Preserve the lifecycle boundary,
+                    # but do not mislabel a provider failure as clean success.
+                    yield _ProviderEvent(
+                        type="error",
+                        error=status_error,
+                        recoverable=True,
+                    )
                 if self._response_had_tool_calls:
                     self._tool_response_done_seen = True
                     await self._continue_after_tools_if_ready()

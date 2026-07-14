@@ -3635,10 +3635,15 @@ the classic Brain/TTS pipeline. Legacy `delegate` remains an explicit opt-in.
 isolation, autonomous defaults, error recoverability, and OpenAI response
 serialization are covered under `tests/unit/realtime/`.
 
-**Class rule.** A voice surface has ONE voice at a time. Any fallback from
+**Class rule.** A voice surface has ONE voice at a time. Ordinary fallback from
 the live realtime voice to classic TTS must be gated on the accepted call
 handle being GONE, never merely busy or unhealthy — those states mean wait,
-drop, or end the call, not switch voices mid-call.
+drop, or end the call, not switch voices mid-call. The narrow terminal-turn
+exception is BUG-052's `error_spoken` path: after the current provider response
+has completed or been cancelled, realtime playback is stopped, and a grounded
+or curated result still has zero audio, the surface may render that fixed text
+through classic TTS. It may not run another model/tool or overlap provider
+audio.
 
 ## BUG-050: run_shell on Windows echoes quoted commands instead of executing them (HIGH, 2026-07-13)
 
@@ -3736,3 +3741,55 @@ it is meant to cover is not an ack. The bridge over dead air needs a latency
 budget bounded by user patience (~2–3 s), independent of any model round —
 and it must be a bystander: a helper task that merely waits must never feed
 the liveness signals (turn hold, endpoint protection) that real work feeds.
+
+## BUG-052: Realtime records an empty response as success and returns to listening (HIGH, 2026-07-14)
+
+**Symptom.** A healthy realtime voice session accepted and transcribed five
+user turns, but three substantive turns returned to LISTENING after roughly
+half a second with no assistant transcript and no audio. The run inspector
+reported every turn and the whole session as successful. The silent turns had
+zero speak time, no tool calls, no error event, and no `AudioOutFirst` or
+`ResponseGenerated`; normal turns in the same call spoke through the same
+output device. This was response-generation silence, not microphone, TTS
+device, watchdog, or long-thinking latency.
+
+**Root cause.** `response.done` is a transport lifecycle boundary, not proof of
+a completed answer. The OpenAI Realtime API emits it for `completed`, `failed`,
+`incomplete`, and `cancelled` responses, but the adapter discarded
+`response.status` and `status_details` and always emitted `turn_complete`.
+`RealtimeVoiceSession` then persisted an empty `VoiceTurnCompleted` as success
+and returned the surface to LISTENING without checking for user-visible output.
+A nominally `completed` response can also contain no output, so adapter status
+checking alone cannot enforce the product contract. Direct tool mode made the
+gap much easier to hit because ordinary turns now use the native response path,
+but the missing invariant predated that default.
+
+**Fix.** The defense is layered and provider-neutral:
+
+1. The OpenAI adapter now reports failed/incomplete terminal statuses as a
+   recoverable provider error before preserving the `turn_complete` boundary.
+   Expected barge-in cancellation remains quiet.
+2. A content-bearing turn with no text, audio, or tool evidence cannot close.
+   It dispatches exactly once through the normal Brain chain, so configured
+   key-aware, cross-family fallback remains available.
+3. A direct-tool turn never replays the user's request. It retains the existing
+   tool result and asks the provider to render that result with tools disabled;
+   this prevents duplicate side effects.
+4. A transcript with zero PCM, a grounded recovery result with zero PCM, or an
+   exhausted Brain fallback is rendered through the surface's classic TTS path
+   after realtime playback stops. No model or tool is called again, and the
+   persisted turn contains the text the user actually heard.
+
+**Guards.** `tests/unit/realtime/test_openai_realtime.py` covers failed
+`response.done` status propagation. `tests/unit/realtime/test_session.py`
+covers no-output conversation recovery, a second empty response, and direct
+tool-result recovery without repeating the action.
+`tests/unit/speech/test_realtime_mode.py` proves that `error_spoken` reaches
+real TTS audio and restores LISTENING only after playback.
+
+**Class rule.** A successful voice turn requires user-visible output evidence:
+spoken audio, an explicit lifecycle action such as hang-up, or a safely retained
+result that is rendered by a working fallback. `turn_complete`, provider
+health, and a zero-error run row are never sufficient evidence by themselves.
+Never recover a silent tool turn by replaying the original request; recover
+from the retained result so a side effect can occur at most once.
