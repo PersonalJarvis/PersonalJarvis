@@ -66,6 +66,19 @@ scrub	LUETKE	MAINTAINER	maintainer surname all-caps ascii-fold (regression guard
 scrub	C:.Users.Administrator	<USER_HOME>	windows personal home path
 scrub	C:[\\/]+Users[\\/]+Administrator	<USER_HOME>	windows personal home path (escaped/double-separator variant in source literals & docstrings)
 scrub	C--Users-Administrator-Desktop-Personal-Jarvis	<your-claude-project-dir>	personal .claude memory dir
+# Partial-slug backstop for ellipsis/abbreviated forms (e.g. `C--Users-Administrator-…`
+# in agent-definition prose) that the full-slug rule above cannot match. Ordered
+# AFTER it so the more specific full-slug replacement wins where both apply.
+scrub	C--Users-Administrator	C--Users-<name>	partial memory-dir slug (abbreviated forms in agent defs; 2026-07-15 privacy review)
+
+# --- maintainer personal online handle (2026-07-15 privacy review) -----------
+# The local-part of a private email address; appeared as STT example vocabulary.
+# Sources were renamed to the invented word pair Veltrok/Veltroc; these rules
+# are the regression net for any future occurrence.
+scrub	Aethroc	Veltroc	maintainer personal handle -> neutral invented word
+scrub	Aethrok	Veltrok	maintainer personal handle (misheard form) -> neutral invented word
+scrub	aethroc	veltroc	maintainer personal handle, lowercase -> neutral invented word
+scrub	aethrok	veltrok	maintainer personal handle (misheard form), lowercase -> neutral invented word
 
 # --- cloud project identifier (regression guard; 0 current hits) ------------
 scrub	gen-lang-client-0108934957	<GCP_PROJECT_ID>	personal GCP project id

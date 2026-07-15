@@ -6,7 +6,7 @@ Wispr-Flow-style feature: the user registers words the STT keeps getting wrong
 
 - ``misheard`` empty → plain vocabulary word. The corrector canonicalizes the
   casing of exact (case-insensitive) hits and repairs conservative near-misses
-  of single tokens ("Aethrok" → "Aethroc").
+  of single tokens ("Veltrok" → "Veltroc").
 - ``misheard`` non-empty → explicit replacement pairs ("Gitter" → "GitHub"),
   word-boundary + case-insensitive, multi-word capable.
 
@@ -52,7 +52,7 @@ MAX_MISHEARD_PER_ENTRY = 20
 # Conservative fuzzy-repair gates (plain vocabulary words only). A token is
 # rewritten toward a dictionary word only when ALL hold: same first letter,
 # minimum length, and edit distance within the length-scaled budget below.
-# This keeps "table" from becoming "Fable" while still fixing "Aethrok".
+# This keeps "table" from becoming "Fable" while still fixing "Veltrok".
 _FUZZY_MIN_TOKEN_LEN = 4
 _FUZZY_DISTANCE_BUDGET = ((8, 2), (_FUZZY_MIN_TOKEN_LEN, 1))
 
@@ -360,7 +360,7 @@ class TranscriptCorrector:
         for pattern, target in self._casing:
             text = pattern.sub(target, text)
         # 3) Conservative fuzzy repair of single tokens toward vocabulary
-        #    words ("Aethrok" → "Aethroc").
+        #    words ("Veltrok" → "Veltroc").
         if self._fuzzy_index:
             text = self._token_re.sub(self._fix_token, text)
         return text
