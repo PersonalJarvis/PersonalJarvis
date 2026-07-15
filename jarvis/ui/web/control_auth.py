@@ -8,11 +8,9 @@ CLI, Claude Code) drive, is key-gated.
 
 - ``require_control_key`` — every control route. Bearer required, constant-time
   compared. Never logs the presented or stored key.
-- ``require_control_key_or_loopback`` — the key-reveal / rotate endpoints. A
-  same-host (loopback) request is allowed so the desktop Settings panel can
-  fetch/rotate the key before the user possesses it; a remote caller still needs
-  the Bearer. A loopback process can already read the keyring/0600 file, so this
-  is not a new exposure.
+- ``require_control_key_or_session`` — key-reveal / rotate and local permission
+  endpoints. A valid authenticated UI session may use them; a raw loopback peer
+  is never treated as authenticated.
 - ``assert_bind_safe`` — fail-closed boot check (cloud-first): never expose a
   non-loopback bind without a key.
 """
@@ -21,6 +19,9 @@ from __future__ import annotations
 from fastapi import HTTPException, Request, status
 
 from jarvis.core import control_key as ck
+
+from .missions_auth import validate_token
+from .surface_security import COOKIE_NAME
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 _UNAUTHORIZED = {
@@ -39,12 +40,6 @@ def _bearer_token(request: Request) -> str | None:
     return None
 
 
-def _is_loopback(request: Request) -> bool:
-    client = getattr(request, "client", None)
-    host = getattr(client, "host", None)
-    return host in _LOOPBACK_HOSTS
-
-
 async def require_control_key(request: Request) -> None:
     """FastAPI dependency: require a valid Bearer control key (401 otherwise).
 
@@ -56,12 +51,10 @@ async def require_control_key(request: Request) -> None:
         raise HTTPException(**_UNAUTHORIZED)
 
 
-async def require_control_key_or_loopback(request: Request) -> None:
-    """Looser dependency for key-reveal / rotate: allow a same-host request OR a
-    valid Bearer. Lets the desktop Settings panel bootstrap the key; remote
-    callers still need it.
-    """
-    if _is_loopback(request) or ck.verify_control_key(_bearer_token(request)):
+async def require_control_key_or_session(request: Request) -> None:
+    """Allow a control Bearer or an authenticated HttpOnly UI session."""
+    session_token = request.cookies.get(COOKIE_NAME, "")
+    if validate_token(session_token) or ck.verify_control_key(_bearer_token(request)):
         return
     raise HTTPException(**_UNAUTHORIZED)
 

@@ -27,18 +27,6 @@ interface WorkspaceTerminalProps {
   title: string;
 }
 
-async function getToken(): Promise<string> {
-  const injected = (window as unknown as { __JARVIS_TOKEN?: string }).__JARVIS_TOKEN;
-  if (injected) return injected;
-  try {
-    const res = await fetch("/api/missions/auth/token");
-    const body = (await res.json()) as { token?: string };
-    return body.token ?? "";
-  } catch {
-    return "";
-  }
-}
-
 function buildUrl(paneKey: string, params: Record<string, string>): string {
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
   const query = new URLSearchParams(params).toString();
@@ -100,11 +88,8 @@ export function WorkspaceTerminal({
       }
     };
 
-    void (async () => {
-      const token = await getToken();
-      if (disposed) return;
+    {
       const params: Record<string, string> = {
-        token,
         cols: String(term.cols || 80),
         rows: String(term.rows || 24),
       };
@@ -168,7 +153,7 @@ export function WorkspaceTerminal({
           ws.send(JSON.stringify({ t: "i", d: data }));
         }
       });
-    })();
+    }
 
     window.addEventListener("resize", sendResize);
     const ro = new ResizeObserver(() => sendResize());

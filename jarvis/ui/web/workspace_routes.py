@@ -30,7 +30,7 @@ from jarvis.workspace.agents import (
 from jarvis.workspace.launcher import LAYOUT_CHOICES, plan_workspace, validate_split
 from jarvis.workspace.trust import ensure_trusted
 
-from .missions_auth import validate_token
+from .surface_security import credentials_valid
 
 log = logging.getLogger(__name__)
 
@@ -111,11 +111,11 @@ async def workspace_pty(ws: WebSocket, key: str) -> None:
     ``{t:"r",cols,rows}`` resize; server → ``{t:"o",d}`` output, ``{t:"ready"}``,
     ``{t:"exit",code}``, ``{t:"error",message}``."""
     await ws.accept()
-    qp = ws.query_params
-
-    if not validate_token(qp.get("token", "")):
+    if not credentials_valid(ws.scope):
         await ws.close(code=4401, reason="unauthorized")
         return
+
+    qp = ws.query_params
 
     agent = qp.get("agent")
     install = qp.get("install")

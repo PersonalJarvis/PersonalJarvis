@@ -9,24 +9,16 @@
  * backoff up to 30s, infinite retries). The UI shows "offline" via
  * store.connected.
  *
- * Auth tokens (`missions_auth.py`) live in server memory only and are
- * wiped on restart, so a `window.__JARVIS_TOKEN` captured before a restart
- * closes the socket with 4401. `getUrl` is passed as a function (not a
- * plain string) so react-use-websocket re-resolves it on every reconnect
- * attempt, including scheduled ones — a 4401 close flags the next
- * resolution to fetch a fresh token first (mirrors the fallback in
- * WorkspaceTerminal.tsx's `getToken()`).
+ * Mission tokens (`missions_auth.py`) live in server memory only and are
+ * wiped on restart. `getUrl` obtains a fresh token before each connection,
+ * while the URL itself stays token-free; the token is sent only in the first
+ * hello frame.
  */
 import { useCallback, useEffect, useRef } from "react";
 import useWebSocket, { ReadyState } from "react-use-websocket";
 import type { EventEnvelope } from "@/types/missions";
+import { buildMissionSocketUrl, fetchMissionToken } from "@/lib/missionAuth";
 import { useMissionsStore } from "./store";
-
-declare global {
-  interface Window {
-    __JARVIS_TOKEN?: string;
-  }
-}
 
 interface ServerHello {
   type: "hello_ack";
@@ -49,33 +41,15 @@ function isEventEnvelope(msg: WsMessage): msg is EventEnvelope {
  * a one-off race with a restart. */
 const MAX_CONSECUTIVE_AUTH_FAILURES = 3;
 
-async function fetchFreshToken(): Promise<string> {
-  try {
-    const res = await fetch("/api/missions/auth/token");
-    const body = (await res.json()) as { token?: string };
-    const token = body.token ?? "";
-    window.__JARVIS_TOKEN = token;
-    return token;
-  } catch {
-    return window.__JARVIS_TOKEN ?? "";
-  }
-}
-
 export function useMissionWebSocket(): { readyState: ReadyState } {
   const setConnected = useMissionsStore((s) => s.setConnected);
   const applyEvent = useMissionsStore((s) => s.applyEvent);
-  const needsFreshToken = useRef(false);
+  const token = useRef("");
   const consecutiveAuthFailures = useRef(0);
 
   const getUrl = useCallback(async () => {
-    const token = needsFreshToken.current
-      ? await fetchFreshToken()
-      : (window.__JARVIS_TOKEN ?? "");
-    needsFreshToken.current = false;
-    const proto = window.location.protocol === "https:" ? "wss" : "ws";
-    const host = window.location.host;
-    const query = token ? `?token=${encodeURIComponent(token)}` : "";
-    return `${proto}://${host}/api/missions/ws${query}`;
+    token.current = await fetchMissionToken();
+    return buildMissionSocketUrl("/api/missions/ws");
   }, []);
 
   const { sendJsonMessage, lastJsonMessage, readyState } = useWebSocket(getUrl, {
@@ -85,13 +59,8 @@ export function useMissionWebSocket(): { readyState: ReadyState } {
       sendJsonMessage({
         type: "hello",
         last_seq: lastSeq,
-        token: window.__JARVIS_TOKEN ?? "",
+        token: token.current,
       });
-    },
-    onClose: (event) => {
-      if (event.code === 4401) {
-        needsFreshToken.current = true;
-      }
     },
     shouldReconnect: (event) => {
       if (event.code !== 4401) {
@@ -105,6 +74,7 @@ export function useMissionWebSocket(): { readyState: ReadyState } {
       return consecutiveAuthFailures.current <= MAX_CONSECUTIVE_AUTH_FAILURES;
     },
     reconnectAttempts: Number.POSITIVE_INFINITY,
+    retryOnError: true,
     reconnectInterval: (attempt: number) =>
       Math.min(1000 * 2 ** attempt, 30000),
     share: true,

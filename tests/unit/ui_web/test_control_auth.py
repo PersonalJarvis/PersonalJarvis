@@ -1,8 +1,8 @@
 """Auth for the Jarvis Control API (step 5).
 
 ``require_control_key`` guards every /api/control/* route with a Bearer key.
-``require_control_key_or_loopback`` additionally lets a same-host request through
-so the desktop Settings panel can fetch/rotate the key before the user has it.
+``require_control_key_or_session`` additionally accepts an authenticated UI
+session so the desktop Settings panel can fetch or rotate the key.
 ``assert_bind_safe`` is the fail-closed boot check: never expose a non-loopback
 bind without a key (the key, not the bind address, is the boundary).
 """
@@ -21,11 +21,20 @@ class _FakeClient:
 
 
 class _FakeRequest:
-    def __init__(self, *, auth: str | None = None, host: str = "testclient") -> None:
+    def __init__(
+        self,
+        *,
+        auth: str | None = None,
+        host: str = "testclient",
+        session_token: str | None = None,
+    ) -> None:
         self.headers: dict[str, str] = {}
         if auth is not None:
             self.headers["authorization"] = auth
         self.client = _FakeClient(host)
+        self.cookies = {}
+        if session_token is not None:
+            self.cookies[ca.COOKIE_NAME] = session_token
 
 
 @pytest.fixture
@@ -61,23 +70,34 @@ async def test_loopback_does_not_bypass_main_guard(stored_key) -> None:
         await ca.require_control_key(_FakeRequest(host="127.0.0.1"))
 
 
-# --- require_control_key_or_loopback (key-reveal / rotate) ---
+# --- require_control_key_or_session (key-reveal / rotate) ---
 
 
-async def test_or_loopback_allows_same_host(stored_key) -> None:
-    await ca.require_control_key_or_loopback(_FakeRequest(host="127.0.0.1"))
-    await ca.require_control_key_or_loopback(_FakeRequest(host="::1"))
-
-
-async def test_or_loopback_denies_remote_without_key(stored_key) -> None:
+async def test_raw_loopback_does_not_bypass_session_guard(stored_key) -> None:
     with pytest.raises(HTTPException):
-        await ca.require_control_key_or_loopback(_FakeRequest(host="203.0.113.7"))
+        await ca.require_control_key_or_session(_FakeRequest(host="127.0.0.1"))
 
 
-async def test_or_loopback_allows_remote_with_valid_key(stored_key) -> None:
-    await ca.require_control_key_or_loopback(
+async def test_session_guard_denies_remote_without_key(stored_key) -> None:
+    with pytest.raises(HTTPException):
+        await ca.require_control_key_or_session(_FakeRequest(host="203.0.113.7"))
+
+
+async def test_session_guard_allows_remote_with_valid_key(stored_key) -> None:
+    await ca.require_control_key_or_session(
         _FakeRequest(auth="Bearer jctl_realkey", host="203.0.113.7")
     )
+
+
+async def test_session_guard_accepts_registered_ui_session(stored_key) -> None:
+    from jarvis.ui.web.missions_auth import register_token, revoke_token
+
+    token = "ui-session-token"  # noqa: S105
+    register_token(token)
+    try:
+        await ca.require_control_key_or_session(_FakeRequest(session_token=token))
+    finally:
+        revoke_token(token)
 
 
 # --- assert_bind_safe (fail-closed) ---

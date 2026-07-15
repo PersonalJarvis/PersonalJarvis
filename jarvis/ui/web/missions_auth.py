@@ -1,25 +1,20 @@
-"""Short-lived in-memory token store for mission WebSocket auth.
+"""Process-local tokens for authenticated UI and mission WebSocket sessions.
 
-Localhost-only setup. No secret management needed (single-user browser):
-- **No** token is pre-generated at server start; every browser fetches
-  its own via ``GET /api/missions/auth/token``.
-- Tokens live in module memory and are discarded on restart.
-- ``validate_token()`` is an O(1) set lookup.
-
-Deliberately no JWT library, no cookies, no sessions — the WS handshake
-separates auth (hello frame) from frame validation, which is enough for the
-single-user-localhost threat model.
+Tokens are minted only behind the global Host/Origin/credential boundary, live
+in memory, and disappear on restart. Mission sockets keep their narrower
+hello-frame check as defense in depth; the main UI session itself is carried in
+an HttpOnly cookie managed by :mod:`jarvis.ui.web.surface_security`.
 """
 from __future__ import annotations
 
-import os
 import secrets
 from typing import Final
 
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 
 # Module-global token store. A set for O(1) lookup. Reset on
-# restart — sufficient for the localhost single-user use case.
+# restart — sufficient for a process-scoped browser session.
 _TOKENS: set[str] = set()
 _TOKEN_BYTES: Final[int] = 32  # 256 bits of entropy
 
@@ -41,29 +36,11 @@ def validate_token(tok: str) -> bool:
 def register_token(tok: str) -> None:
     """Register an externally-minted token as valid. Idempotent.
 
-    The fast-boot desktop path mints a RAW ``secrets.token_urlsafe`` and injects
-    it into ``window.__JARVIS_TOKEN`` without ever issuing it through
-    ``GET /token`` — so without this it fails ``validate_token`` (close 4401) on
-    every token-gated WebSocket. That is exactly what hung the "Make It Yours"
-    workspace PTY terminals forever on "connecting".
+    The fast-boot boundary can mint an authenticated HttpOnly session before the
+    full app exists. Registering that issued session preserves it at handoff.
     """
     if tok:
         _TOKENS.add(tok)
-
-
-def register_session_token_from_env(env_var: str) -> str | None:
-    """Read the desktop session token from ``env_var`` and register it as valid.
-
-    Called once at server build with ``cfg.ui.auth_token_env`` so the injected
-    ``window.__JARVIS_TOKEN`` passes ``validate_token``. Returns the token when
-    present, else ``None`` (headless / browser-only boots inject no token and
-    fetch a fresh one via ``GET /token`` instead).
-    """
-    tok = os.environ.get(env_var)
-    if tok:
-        _TOKENS.add(tok)
-        return tok
-    return None
 
 
 def revoke_token(tok: str) -> None:
@@ -80,6 +57,9 @@ router = APIRouter(prefix="/api/missions/auth", tags=["missions-auth"])
 
 
 @router.get("/token")
-async def get_token() -> dict[str, str]:
-    """Returns a fresh mission token. The browser holds it in memory."""
-    return {"token": issue_token()}
+async def get_token() -> JSONResponse:
+    """Return a fresh in-memory mission token without allowing caching."""
+    return JSONResponse(
+        {"token": issue_token()},
+        headers={"Cache-Control": "no-store"},
+    )
