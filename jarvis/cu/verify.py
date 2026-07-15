@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -368,12 +369,16 @@ def snap_point_to_element(
 # ---------------------------------------------------------------------------
 
 async def foreground_ui_snapshot(
-    timeout_s: float = UIA_TIMEOUT_S, max_labels: int = 28,
+    timeout_s: float = UIA_TIMEOUT_S,
+    max_labels: int = 28,
+    observation_guard: Callable[[], bool] | None = None,
 ) -> tuple[list[str], str, str | None, list[tuple[str, str, tuple[int, int, int, int]]]]:
     """One tree observation → (clickable labels, field-values hint, handoff
     reason, clickable rects). ``([], "", None, [])`` on any failure or a
     label-less surface — that empty path self-gates the loop back to raw
     pixel clicks (canvas apps expose no useful tree)."""
+    if observation_guard is not None and not observation_guard():
+        raise RuntimeError("foreground window changed before UI-tree observation")
     try:
         obs = await asyncio.wait_for(
             _get_ui_tree_source().observe(), timeout=timeout_s,
@@ -381,6 +386,8 @@ async def foreground_ui_snapshot(
     except Exception as exc:  # noqa: BLE001 — best-effort enumeration
         logger.debug("[cu] UI-tree snapshot failed (non-fatal): %s", exc)
         return [], "", None, []
+    if observation_guard is not None and not observation_guard():
+        raise RuntimeError("foreground window changed during UI-tree observation")
     nodes = tuple(getattr(obs, "nodes", ()) or ())
     return (
         clickable_labels(nodes, max_n=max_labels),

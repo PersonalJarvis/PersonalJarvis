@@ -24,7 +24,7 @@ import logging
 import time
 from types import SimpleNamespace
 
-from jarvis.cu.actuate.base import Actuator
+from jarvis.cu.actuate.base import Actuator, is_known_key_name
 from jarvis.cu.geometry import input_space
 
 logger = logging.getLogger(__name__)
@@ -55,8 +55,9 @@ _MOUSE_FLAGS_UP: dict[str, int] = {
 _VK_TABLE: dict[str, int] = {
     "ctrl": 0x11, "control": 0x11,
     "shift": 0x10,
-    "alt": 0x12, "menu": 0x12,
+    "alt": 0x12, "option": 0x12, "menu": 0x12,
     "win": 0x5B, "windows": 0x5B, "lwin": 0x5B, "rwin": 0x5C,
+    "cmd": 0x5B, "command": 0x5B, "meta": 0x5B, "super": 0x5B,
     "esc": 0x1B, "escape": 0x1B,
     "enter": 0x0D, "return": 0x0D,
     "tab": 0x09,
@@ -112,7 +113,7 @@ def expand_combo_keys(keys: list[str]) -> list[str]:
         t = str(token).strip()
         if "+" in t and len(t) > 1:
             parts = [p.strip() for p in t.split("+") if p.strip()]
-            if len(parts) >= 2 and all(resolve_vk(p) is not None for p in parts):
+            if len(parts) >= 2 and all(is_known_key_name(p) for p in parts):
                 out.extend(parts)
                 continue
         out.append(str(token))
@@ -255,7 +256,13 @@ class WindowsActuator(Actuator):
                 events.append(self._mouse_input(0, 0, 0, _MOUSE_FLAGS_UP[b]))
             self._send(events)
 
-    def click_at_cursor(self, *, button: str = "left", double: bool = False) -> None:
+    def click_at_cursor(
+        self,
+        *,
+        button: str = "left",
+        double: bool = False,
+        expected: tuple[int, int] | None = None,
+    ) -> None:
         """Press+release at the CURRENT cursor position (no positioning).
 
         For callers that already positioned the cursor themselves (e.g. the
@@ -265,6 +272,17 @@ class WindowsActuator(Actuator):
         if b not in _MOUSE_FLAGS_DOWN:
             raise ValueError(
                 f"Unknown mouse button: {button!r}. Allowed: left/right/middle",
+            )
+        current = self.cursor_pos()
+        if current is None or (
+            expected is not None
+            and (
+                abs(current[0] - expected[0]) > 2
+                or abs(current[1] - expected[1]) > 2
+            )
+        ):
+            raise RuntimeError(
+                "cursor moved after landing verification; refusing to click",
             )
         with input_space():
             events = []
@@ -276,10 +294,21 @@ class WindowsActuator(Actuator):
     def drag(
         self, x1: int, y1: int, x2: int, y2: int, *, duration_s: float = 0.4,
     ) -> None:
+        self.move(x1, y1)
+        self.drag_from_cursor(x1, y1, x2, y2, duration_s=duration_s)
+
+    def drag_from_cursor(
+        self, x1: int, y1: int, x2: int, y2: int, *, duration_s: float = 0.4,
+    ) -> None:
+        """Drag from the current, already-verified cursor position."""
+        current = self.cursor_pos()
+        if current is None or abs(current[0] - x1) > 2 or abs(current[1] - y1) > 2:
+            raise RuntimeError(
+                "cursor moved after drag-start verification; refusing to drag",
+            )
         steps = max(2, min(40, int(duration_s * 60)))
         pause = max(0.0, duration_s) / steps
         with input_space():
-            self._send([self._abs_move_event(x1, y1)])
             self._send([self._mouse_input(0, 0, 0, _MOUSE_FLAGS_DOWN["left"])])
             try:
                 for i in range(1, steps + 1):

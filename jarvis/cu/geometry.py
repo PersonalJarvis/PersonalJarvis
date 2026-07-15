@@ -187,6 +187,50 @@ def virtual_screen_bounds(monitors: list[MonitorInfo]) -> tuple[int, int, int, i
     return (left, top, right - left, bottom - top)
 
 
+def monitor_topology_signature(
+    monitors: list[MonitorInfo],
+) -> tuple[tuple[int, int, int, int], ...]:
+    """Stable geometry-only display signature for capture/action race checks."""
+    return tuple(sorted((m.left, m.top, m.width, m.height) for m in monitors))
+
+
+def point_on_physical_display(
+    x: float,
+    y: float,
+    monitors: list[MonitorInfo],
+) -> bool:
+    """True when a point is on a real display, not a virtual-desktop gap."""
+    return any(m.contains(x, y) for m in monitors)
+
+
+def segment_on_physical_displays(
+    x1: int,
+    y1: int,
+    x2: int,
+    y2: int,
+    monitors: list[MonitorInfo],
+) -> bool:
+    """Whether the complete straight segment stays on real displays.
+
+    Pointer moves without a pressed button may safely cross a virtual-desktop
+    gap because their final landing is verified. A drag may not: the OS can
+    clamp or reroute its held-button path before the endpoint check runs.
+    Sampling once per input unit covers the integer cursor trajectory while
+    keeping even very wide desktops cheap to validate.
+    """
+    steps = max(abs(int(x2) - int(x1)), abs(int(y2) - int(y1)))
+    if steps == 0:
+        return point_on_physical_display(x1, y1, monitors)
+    return all(
+        point_on_physical_display(
+            int(round(x1 + (x2 - x1) * index / steps)),
+            int(round(y1 + (y2 - y1) * index / steps)),
+            monitors,
+        )
+        for index in range(steps + 1)
+    )
+
+
 # ---------------------------------------------------------------------------
 # CoordinateMapper — one per captured frame
 # ---------------------------------------------------------------------------

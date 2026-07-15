@@ -27,7 +27,16 @@ from jarvis.cu.actuate.windows import (
 from jarvis.cu.actuate.windows import (
     normalize_virtualdesk as _normalize_virtualdesk,  # noqa: F401 — re-export (tests + callers)
 )
+from jarvis.cu.target_guard import foreground_matches, foreground_signature
 from jarvis.overlay.virtual_cursor import get_virtual_cursor
+
+
+def _foreground_window_signature() -> tuple[Any, ...]:
+    return foreground_signature()
+
+
+def _window_signature_matches(expected: tuple[Any, ...]) -> bool:
+    return foreground_matches(expected)
 
 
 def _send_click(button: str, double: bool, abs_xy: tuple[int, int] | None = None) -> None:
@@ -48,7 +57,14 @@ def _send_click(button: str, double: bool, abs_xy: tuple[int, int] | None = None
         actuator.click_at_cursor(button=button, double=double)
 
 
-def _click_windows(x: int, y: int, button: str, double: bool) -> None:
+def _click_windows(
+    x: int,
+    y: int,
+    button: str,
+    double: bool,
+    *,
+    expected_window_signature: tuple[Any, ...] | None = None,
+) -> None:
     """Click at an absolute screen coordinate, with a visible cursor glide.
 
     The real OS cursor glides to ``(x, y)`` (so the user can watch where
@@ -64,15 +80,30 @@ def _click_windows(x: int, y: int, button: str, double: bool) -> None:
     if button_l not in _MOUSE_FLAGS_DOWN:
         raise ValueError(f"Unknown mouse button: {button!r}. Allowed: left/right/middle")
 
+    from jarvis.cu.actuate.base import verified_move  # noqa: PLC0415
+    from jarvis.cu.actuate.windows import WindowsActuator  # noqa: PLC0415
+
     glide_os_cursor(int(x), int(y))
+    actuator = WindowsActuator()
+    landing = verified_move(actuator, int(x), int(y))
+    if not landing.ok:
+        raise OSError(landing.detail)
     try:
         get_virtual_cursor().show_click(int(x), int(y), button=button_l, double=double)
-    except Exception:  # noqa: BLE001 — overlay must never break a real click
+    except Exception:  # noqa: BLE001, S110 — overlay must never break a real click
         pass
-    # Click ABSOLUTELY on the virtual desktop (negative-X monitors included) so a
-    # flaky SetCursorPos during the glide can't make the button-press land on the
-    # wrong screen — the glide is now purely the visible cursor animation.
-    _send_click(button_l, double, abs_xy=(int(x), int(y)))
+    if (
+        expected_window_signature is not None
+        and not _window_signature_matches(expected_window_signature)
+    ):
+        raise OSError(
+            "foreground window changed during cursor movement; refusing to click",
+        )
+    actuator.click_at_cursor(
+        button=button_l,
+        double=double,
+        expected=(int(x), int(y)),
+    )
 
 
 class ClickTool:
@@ -122,9 +153,36 @@ class ClickTool:
                 error=f"Unknown button={button!r}. Allowed: left/right/middle",
             )
 
+        current_signature = _foreground_window_signature()
+        expected_raw = args.get("_expected_window_signature")
+        if expected_raw is not None and not isinstance(expected_raw, (list, tuple)):
+            return ToolResult(
+                success=False, output=None,
+                error="Refusing click: invalid captured-window identity.",
+            )
+        expected_signature = (
+            tuple(expected_raw) if expected_raw is not None else current_signature
+        )
+        if not _window_signature_matches(expected_signature):
+            return ToolResult(
+                success=False,
+                output=None,
+                error=(
+                    "Refusing click: foreground window identity is unavailable "
+                    "or changed after the screenshot."
+                ),
+            )
+
         if os.name == "nt":
             try:
-                await asyncio.to_thread(_click_windows, x, y, button, double)
+                await asyncio.to_thread(
+                    _click_windows,
+                    x,
+                    y,
+                    button,
+                    double,
+                    expected_window_signature=expected_signature,
+                )
                 kind = "double-click" if double else "click"
                 return ToolResult(
                     success=True,
@@ -137,13 +195,27 @@ class ClickTool:
                     error=f"Click at ({x},{y}) failed: {exc}",
                 )
 
-        from jarvis.cu.actuate import ActuationUnavailable, get_actuator
+        from jarvis.cu.actuate import (
+            ActuationUnavailable,
+            get_actuator,
+            verified_click,
+        )
 
         try:
             actuator = get_actuator()
-            await asyncio.to_thread(
-                actuator.click, x, y, button=button, double=double,
+            landing = await asyncio.to_thread(
+                verified_click,
+                actuator,
+                x,
+                y,
+                button=button,
+                double=double,
+                pre_action_check=lambda: _window_signature_matches(
+                    expected_signature,
+                ),
             )
+            if not landing.ok:
+                return ToolResult(success=False, output=None, error=landing.detail)
             return ToolResult(
                 success=True,
                 output=(

@@ -81,6 +81,84 @@ def test_stable_screen_returns_after_one_regrab():
     assert frame.jpeg[:2] == b"\xff\xd8"  # JPEG magic
 
 
+def test_macos_screen_recording_denial_stops_before_grab(monkeypatch):
+    from jarvis.platform.permissions import PermissionState
+
+    calls = {"grab": 0, "probe": 0}
+
+    class _DeniedPort:
+        def runtime_access_granted(self, _permission_id):
+            calls["probe"] += 1
+            return False
+
+        def state(self, _permission_id):
+            return PermissionState.NOT_GRANTED
+
+    monkeypatch.setattr("jarvis.platform.detect_platform", lambda: "darwin")
+    monkeypatch.setattr(
+        "jarvis.platform.permissions.get_system_permission_port",
+        lambda: _DeniedPort(),
+    )
+
+    def grab(_bbox):
+        calls["grab"] += 1
+        return _solid((192, 108), (10, 20, 30))
+
+    with pytest.raises(RuntimeError, match="Screen Recording"):
+        capture_stable_frame(_monitor(), grab=grab, sleep=lambda _s: None)
+
+    assert calls == {"grab": 0, "probe": 1}
+
+
+def test_macos_screen_recording_is_rechecked_before_each_grab(monkeypatch):
+    from jarvis.platform.permissions import PermissionState
+
+    states = [True, False]
+    calls = {"grab": 0}
+
+    class _RevokedPort:
+        def runtime_access_granted(self, _permission_id):
+            return states.pop(0)
+
+        def state(self, _permission_id):
+            return PermissionState.NOT_GRANTED
+
+    monkeypatch.setattr("jarvis.platform.detect_platform", lambda: "darwin")
+    monkeypatch.setattr(
+        "jarvis.platform.permissions.get_system_permission_port",
+        lambda: _RevokedPort(),
+    )
+
+    def grab(_bbox):
+        calls["grab"] += 1
+        return _solid((192, 108), (10, 20, 30))
+
+    with pytest.raises(RuntimeError, match="Screen Recording"):
+        capture_stable_frame(_monitor(), grab=grab, sleep=lambda _s: None)
+
+    assert calls["grab"] == 1
+    assert states == []
+
+
+def test_capture_guard_rechecks_window_identity_around_each_grab():
+    checks = iter((True, False))
+    calls = {"grab": 0}
+
+    def grab(_bbox):
+        calls["grab"] += 1
+        return _solid((192, 108), (10, 20, 30))
+
+    with pytest.raises(RuntimeError, match="during screen capture"):
+        capture_stable_frame(
+            _monitor(),
+            grab=grab,
+            sleep=lambda _s: None,
+            capture_guard=lambda: next(checks),
+        )
+
+    assert calls["grab"] == 1
+
+
 def test_animating_screen_times_out_unstable():
     shade = {"v": 0}
 

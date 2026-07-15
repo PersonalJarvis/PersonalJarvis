@@ -10,14 +10,14 @@ cleanly reversible, but it raises no irreversible system change. Routing it
 through this tool (instead of an inline call) gives the drag the same risk-tier /
 blacklist / audit path as every other Computer-Use action (audit #13).
 
-pyautogui is imported lazily so the module still loads on a non-desktop host (the
-harness is desktop-gated anyway); on a host without pyautogui the tool fails
-gracefully with a clear message rather than raising.
+The shared verified-actuation layer selects native ``SendInput`` on Windows,
+native Quartz mouse events on macOS, or a supported X11 desktop backend. It
+remains import-clean on headless hosts and fails with an actionable message
+when no safe input backend is available.
 """
 from __future__ import annotations
 
 import asyncio
-import os
 from typing import Any
 
 from jarvis.core.protocols import ExecutionContext, ToolResult
@@ -27,25 +27,39 @@ from jarvis.core.protocols import ExecutionContext, ToolResult
 _DEFAULT_DRAG_DURATION_MS = 400
 
 
-def _perform_drag(x1: int, y1: int, x2: int, y2: int, duration_s: float) -> None:
+def _perform_drag(
+    x1: int,
+    y1: int,
+    x2: int,
+    y2: int,
+    duration_s: float,
+    *,
+    expected_window_signature: tuple[Any, ...] | None = None,
+) -> None:
     """Press left at ``(x1, y1)``, drag to ``(x2, y2)``, release. Blocking;
     callers run it via ``asyncio.to_thread``.
 
-    Windows keeps the proven pyautogui path unchanged. Elsewhere the backend
-    is resolved via the capability probe so Wayland/headless/missing-deps
-    hosts raise ``ActuationUnavailable`` with the actionable message instead
-    of a raw pyautogui error.
+    The platform backend is resolved through the capability probe and the
+    start/end pointer positions are verified around the gesture.
     """
-    if os.name == "nt":
-        import pyautogui  # noqa: PLC0415 — lazy: keeps non-desktop import clean
+    from jarvis.cu.actuate.base import get_actuator, verified_drag  # noqa: PLC0415
+    from jarvis.plugins.tool.click import _window_signature_matches  # noqa: PLC0415
 
-        pyautogui.moveTo(x1, y1)
-        pyautogui.dragTo(x2, y2, duration=max(0.0, duration_s), button="left")
-        return
-
-    from jarvis.cu.actuate.base import get_actuator  # noqa: PLC0415
-
-    get_actuator().drag(x1, y1, x2, y2, duration_s=max(0.0, duration_s))
+    result = verified_drag(
+        get_actuator(),
+        x1,
+        y1,
+        x2,
+        y2,
+        duration_s=max(0.0, duration_s),
+        pre_action_check=(
+            (lambda: _window_signature_matches(expected_window_signature))
+            if expected_window_signature is not None
+            else None
+        ),
+    )
+    if not result.ok:
+        raise RuntimeError(result.detail)
 
 
 class DragTool:
@@ -94,8 +108,39 @@ class DragTool:
             )
         from jarvis.cu.actuate.base import ActuationUnavailable  # noqa: PLC0415
 
+        expected_raw = args.get("_expected_window_signature")
+        if expected_raw is not None and not isinstance(expected_raw, (list, tuple)):
+            return ToolResult(
+                success=False, output=None,
+                error="Refusing drag: invalid captured-window identity.",
+            )
         try:
-            await asyncio.to_thread(_perform_drag, x1, y1, x2, y2, duration_s)
+            if expected_raw is None:
+                await asyncio.to_thread(_perform_drag, x1, y1, x2, y2, duration_s)
+            else:
+                expected_signature = tuple(expected_raw)
+                from jarvis.plugins.tool.click import (  # noqa: PLC0415
+                    _window_signature_matches,
+                )
+
+                if not _window_signature_matches(expected_signature):
+                    return ToolResult(
+                        success=False,
+                        output=None,
+                        error=(
+                            "Refusing drag: foreground window identity is "
+                            "unavailable or changed after the screenshot."
+                        ),
+                    )
+                await asyncio.to_thread(
+                    _perform_drag,
+                    x1,
+                    y1,
+                    x2,
+                    y2,
+                    duration_s,
+                    expected_window_signature=expected_signature,
+                )
         except ActuationUnavailable as exc:
             return ToolResult(success=False, output=None, error=str(exc))
         except ImportError as exc:

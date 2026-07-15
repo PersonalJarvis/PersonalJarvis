@@ -71,6 +71,28 @@ class AXPointerResolver(_BaseResolver):
     name = "macos-pointer"
     _native = staticmethod(lambda x, y: _ax_query_element_at_point(x, y))
 
+    def at(self, x: int, y: int) -> PointerElement | None:
+        """Query AX only for the canonical, currently authorized app process.
+
+        This check deliberately runs for every point lookup: TCC grants can be
+        revoked while Jarvis is running, and an ad-hoc Python/Terminal launch
+        must never inherit a different executable's Accessibility grant.
+        """
+        try:
+            from jarvis.platform.permissions import (  # noqa: PLC0415
+                PermissionId,
+                get_system_permission_port,
+            )
+
+            if not get_system_permission_port().runtime_access_granted(
+                PermissionId.ACCESSIBILITY,
+            ):
+                return None
+        except Exception:  # noqa: BLE001 - native permission failures fail closed
+            log.debug("macOS Accessibility permission gate failed", exc_info=True)
+            return None
+        return super().at(x, y)
+
 
 class AtspiPointerResolver(_BaseResolver):
     name = "linux-pointer"

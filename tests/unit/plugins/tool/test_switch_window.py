@@ -1,14 +1,14 @@
-"""H2: switch_window must work on macOS (osascript) and Linux/X11 (wmctrl),
+"""H2: switch_window must work on macOS (Quartz/AppKit/AX) and Linux/X11,
 degrade cleanly on Wayland / headless / missing-tool with a clear English
 message, and leave the Windows ctypes path untouched (AD-7).
 
-Seam-level only: the platform is forced via detect_platform/probes and the
-osascript/wmctrl subprocesses are faked — this proves the dispatch + parsing,
-NOT that real osascript/wmctrl behave as assumed on real hardware.
+Seam-level only: platform APIs and subprocesses are faked. This proves the
+dispatch and parsing, not behavior on real hardware.
 """
 from __future__ import annotations
 
 import subprocess
+import sys
 import types
 
 from jarvis.core.protocols import ExecutionContext
@@ -30,75 +30,154 @@ def _ctx() -> ExecutionContext:
     )
 
 
-# --- macOS (osascript) -----------------------------------------------------
+# --- macOS (Quartz/AppKit/AX) ----------------------------------------------
+
+
+def _install_fake_macos_apis(monkeypatch, *, trusted=True, minimized=False):
+    from jarvis.platform.permissions import PermissionState
+
+    ax_window = object()
+    ax_root = object()
+    calls: list[tuple] = []
+
+    class _App:
+        def activateWithOptions_(self, options):
+            calls.append(("activate", options))
+            return True
+
+    appkit = types.SimpleNamespace(
+        NSApplicationActivateAllWindows=1,
+        NSApplicationActivateIgnoringOtherApps=2,
+        NSRunningApplication=types.SimpleNamespace(
+            runningApplicationWithProcessIdentifier_=lambda pid: _App(),
+        ),
+    )
+
+    def copy_attr(element, attribute, _out):
+        if element is ax_root and attribute == "AXWindows":
+            return 0, [ax_window]
+        if element is ax_window and attribute == "AXTitle":
+            return 0, "My Editor"
+        if element is ax_window and attribute == "AXMinimized":
+            return 0, minimized
+        return 1, None
+
+    services = types.SimpleNamespace(
+        AXIsProcessTrusted=lambda: trusted,
+        AXUIElementCreateApplication=lambda pid: ax_root,
+        AXUIElementCopyAttributeValue=copy_attr,
+        AXUIElementPerformAction=lambda element, action: calls.append(
+            ("perform", action)
+        ) or 0,
+        AXUIElementSetAttributeValue=lambda element, attr, value: calls.append(
+            ("set", attr)
+        ) or 0,
+    )
+    monkeypatch.setitem(sys.modules, "AppKit", appkit)
+    monkeypatch.setitem(sys.modules, "ApplicationServices", services)
+    permission_port = types.SimpleNamespace(
+        runtime_access_granted=lambda _permission_id: trusted,
+        state=lambda _permission_id: (
+            PermissionState.GRANTED
+            if trusted
+            else PermissionState.NOT_GRANTED
+        ),
+    )
+    monkeypatch.setattr(
+        "jarvis.platform.permissions.get_system_permission_port",
+        lambda: permission_port,
+    )
+    return calls
+
+
+def _mac_window(title="My Editor", *, on_screen=True):
+    return {
+        "kCGWindowLayer": 0,
+        "kCGWindowName": title,
+        "kCGWindowOwnerName": "Editor",
+        "kCGWindowOwnerPID": 42,
+        "kCGWindowNumber": 7,
+        "kCGWindowIsOnscreen": on_screen,
+    }
 
 
 def test_macos_focus_success(monkeypatch):
-    monkeypatch.setattr("shutil.which", lambda n: f"/usr/bin/{n}")
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _cp(0, stdout="My Editor\n"))
+    calls = _install_fake_macos_apis(monkeypatch)
+    monkeypatch.setattr(
+        "jarvis.platform.window_state._quartz_window_list",
+        lambda **_kwargs: [_mac_window()],
+    )
     found, msg = _find_and_focus_macos("Editor")
     assert found is True
     assert msg == "My Editor"
+    assert ("set", "AXFocusedWindow") in calls
+    assert ("perform", "AXRaise") in calls
+
+
+def test_macos_focus_restores_minimized_window_from_all_window_catalog(monkeypatch):
+    calls = _install_fake_macos_apis(monkeypatch, minimized=True)
+    catalog_requests: list[bool] = []
+
+    def catalog(*, on_screen_only=True):
+        catalog_requests.append(on_screen_only)
+        return [_mac_window(on_screen=False)]
+
+    monkeypatch.setattr(
+        "jarvis.platform.window_state._quartz_window_list",
+        catalog,
+    )
+    found, msg = _find_and_focus_macos("Editor")
+
+    assert found is True
+    assert msg == "My Editor"
+    assert catalog_requests == [False]
+    assert ("set", "AXMinimized") in calls
+    assert ("perform", "AXRaise") in calls
+    assert calls.index(("set", "AXMinimized")) < calls.index(("perform", "AXRaise"))
+    assert calls.index(("perform", "AXRaise")) < calls.index(("set", "AXFocusedWindow"))
 
 
 def test_macos_accessibility_denied_message(monkeypatch):
-    monkeypatch.setattr("shutil.which", lambda n: f"/usr/bin/{n}")
-    err = "System Events got an error: osascript is not allowed assistive access. (-1719)"
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _cp(1, stderr=err))
+    _install_fake_macos_apis(monkeypatch, trusted=False)
+    monkeypatch.setattr(
+        "jarvis.platform.window_state._quartz_window_list",
+        lambda **_kwargs: [_mac_window()],
+    )
     found, msg = _find_and_focus_macos("Editor")
     assert found is False
     assert "Accessibility" in msg
 
 
-def test_macos_missing_osascript(monkeypatch):
-    monkeypatch.setattr("shutil.which", lambda n: None)
+def test_macos_missing_native_frameworks(monkeypatch):
+    monkeypatch.setattr(
+        "jarvis.platform.window_state._quartz_window_list",
+        lambda **_kwargs: [_mac_window()],
+    )
+    monkeypatch.setitem(sys.modules, "AppKit", None)
+    monkeypatch.setitem(sys.modules, "ApplicationServices", None)
     found, msg = _find_and_focus_macos("Editor")
     assert found is False
-    assert "osascript" in msg.lower()
+    assert "unavailable" in msg.lower()
 
 
 def test_macos_no_match(monkeypatch):
-    monkeypatch.setattr("shutil.which", lambda n: f"/usr/bin/{n}")
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _cp(0, stdout="\n"))
+    monkeypatch.setattr(
+        "jarvis.platform.window_state._quartz_window_list", lambda **_kwargs: [],
+    )
     found, msg = _find_and_focus_macos("Nope")
     assert found is False
     assert "Nope" in msg
 
 
-def test_macos_escapes_applescript_injection(monkeypatch):
-    # A crafted title with a newline must NOT break out of the contains "..."
-    # literal and inject a new AppleScript statement (review HIGH).
-    monkeypatch.setattr("shutil.which", lambda n: f"/usr/bin/{n}")
-    captured: dict[str, str] = {}
-
-    def fake_run(cmd, *a, **k):
-        captured["script"] = cmd[2]  # ["osascript", "-e", <script>]
-        return _cp(0, stdout="")
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-    _find_and_focus_macos('x"\ndo shell script "evil"')
-    script = captured["script"]
-    # No raw newline may precede the injected statement — it must be escaped.
-    assert "\ndo shell script" not in script
-    # The substring is still present, only as an escaped literal (not dropped).
-    assert "do shell script" in script
-
-
 def test_macos_matching_is_case_insensitive(monkeypatch):
-    # Parity with the Linux path: the generated AppleScript lowercases both
-    # sides so "editor" matches "My Editor" (review MEDIUM).
-    monkeypatch.setattr("shutil.which", lambda n: f"/usr/bin/{n}")
-    captured: dict[str, str] = {}
-
-    def fake_run(cmd, *a, **k):
-        captured["script"] = cmd[2]
-        return _cp(0, stdout="My Editor\n")
-
-    monkeypatch.setattr(subprocess, "run", fake_run)
-    _find_and_focus_macos("EdItOr")
-    script = captured["script"]
-    assert "lowercase of" in script
-    assert '"editor"' in script  # needle lowercased before interpolation
+    _install_fake_macos_apis(monkeypatch)
+    monkeypatch.setattr(
+        "jarvis.platform.window_state._quartz_window_list",
+        lambda **_kwargs: [_mac_window()],
+    )
+    found, msg = _find_and_focus_macos("EdItOr")
+    assert found is True
+    assert msg == "My Editor"
 
 
 # --- Linux (wmctrl) --------------------------------------------------------

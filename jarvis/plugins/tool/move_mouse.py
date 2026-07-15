@@ -23,10 +23,16 @@ def _move_windows(x: int, y: int) -> None:
     if os.name != "nt":
         raise RuntimeError("Native mouse movement is only available on Windows")
 
+    from jarvis.cu.actuate.base import verified_move  # noqa: PLC0415
+    from jarvis.cu.actuate.windows import WindowsActuator  # noqa: PLC0415
+
     glide_os_cursor(int(x), int(y))
+    landing = verified_move(WindowsActuator(), int(x), int(y))
+    if not landing.ok:
+        raise OSError(landing.detail)
     try:
         get_virtual_cursor().show_move(int(x), int(y))
-    except Exception:  # noqa: BLE001 — overlay must never break a move
+    except Exception:  # noqa: BLE001, S110 — overlay must never break a move
         pass
 
 
@@ -63,11 +69,17 @@ class MoveMouseTool:
         # Non-Windows: resolve the input backend via the capability probe so
         # Wayland/headless/missing-deps hosts fail with the actionable
         # ActuationUnavailable message instead of a raw pyautogui error.
-        from jarvis.cu.actuate.base import ActuationUnavailable, get_actuator
+        from jarvis.cu.actuate.base import (
+            ActuationUnavailable,
+            get_actuator,
+            verified_move,
+        )
 
         try:
             actuator = get_actuator()
-            await asyncio.to_thread(actuator.move, x, y)
+            landing = await asyncio.to_thread(verified_move, actuator, x, y)
+            if not landing.ok:
+                return ToolResult(success=False, output=None, error=landing.detail)
             return ToolResult(
                 success=True, output=f"Mouse ({actuator.name}) at ({x},{y})"
             )

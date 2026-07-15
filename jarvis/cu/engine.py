@@ -59,8 +59,15 @@ from jarvis.cu.geometry import (
     CoordinateConvention,
     CoordinateMapper,
     MonitorInfo,
+    list_monitors,
+    monitor_topology_signature,
 )
 from jarvis.cu.ledger import ActionLedger
+from jarvis.cu.target_guard import (
+    foreground_matches,
+    read_foreground_target,
+    window_signature,
+)
 from jarvis.cu.verify import (
     crop_raw,
     foreground_ui_snapshot,
@@ -293,10 +300,35 @@ def _foreground_title() -> str:
         return ""
 
 
+def _window_state_signature(
+    window: Any,
+    rect: tuple[int, int, int, int] | None,
+) -> tuple[Any, ...]:
+    """Stable-enough foreground identity for capture-to-action race checks."""
+    return window_signature(window, rect)
+
+
+async def _live_window_state_signature() -> tuple[Any, ...]:
+    """Read foreground identity and geometry as one fail-closed check."""
+    return (await asyncio.to_thread(read_foreground_target)).signature
+
+
 async def _dispatch_tool(
     ctx: Any, tool_name: str, args: dict[str, Any], trace_id: Any,
 ) -> tuple[bool, str]:
     """Run one action through the ToolExecutor (AP-3 choke point)."""
+    # A macOS Screen Recording grant can be revoked after perception but
+    # before actuation. Re-probe at the final dispatcher choke point so no CU
+    # action can run against a screen Jarvis is no longer allowed to observe.
+    try:
+        from jarvis.cu.capture import (  # noqa: PLC0415
+            _require_macos_screen_recording_permission,
+        )
+
+        _require_macos_screen_recording_permission()
+    except RuntimeError as exc:
+        return False, str(exc)
+
     tools = ctx.tools or {}
     tool = tools.get(tool_name)
     if tool is None:
@@ -390,6 +422,7 @@ async def _zoom_refine_point(
     *,
     goal: str,
     target: str,
+    expected_window_signature: tuple[Any, ...],
 ) -> tuple[int, int] | None:
     """One coarse-to-fine grounding round after a VERIFIED miss.
 
@@ -403,9 +436,14 @@ async def _zoom_refine_point(
     import json as _json  # noqa: PLC0415
     import re as _re  # noqa: PLC0415
 
+    if await _live_window_state_signature() != expected_window_signature:
+        return None
     bbox = frame.mapper.region_around(int(x), int(y), _REFINE_RADIUS)
     raw = await asyncio.to_thread(grab_region, bbox)
-    if raw is None:
+    if (
+        raw is None
+        or await _live_window_state_signature() != expected_window_signature
+    ):
         return None
     try:
         from PIL import Image  # noqa: PLC0415
@@ -435,6 +473,8 @@ async def _zoom_refine_point(
         )
     except Exception:  # noqa: BLE001 — refine is strictly best-effort
         log.debug("[cu] zoom refine call failed", exc_info=True)
+        return None
+    if await _live_window_state_signature() != expected_window_signature:
         return None
     cleaned = (reply.text or "").strip()
     fence = _re.search(r"```(?:json)?\s*(.+?)\s*```", cleaned, _re.DOTALL)
@@ -622,6 +662,20 @@ async def run_cu_loop(
             except Exception:  # noqa: BLE001 — normalize is best-effort
                 log.debug("[cu] window normalize failed", exc_info=True)
         try:
+            captured_displays = await asyncio.to_thread(list_monitors)
+            if not captured_displays:
+                raise RuntimeError(
+                    "no physical displays are available for Computer-Use",
+                )
+            captured_topology = monitor_topology_signature(captured_displays)
+            pre_capture_target = await asyncio.to_thread(read_foreground_target)
+            pre_capture_window_signature = pre_capture_target.signature
+
+            def capture_identity_guard(
+                expected: tuple[Any, ...] = pre_capture_window_signature,
+            ) -> bool:
+                return foreground_matches(expected)
+
             monitor = await asyncio.to_thread(
                 select_capture_target,
                 monitor_policy,
@@ -633,12 +687,46 @@ async def run_cu_loop(
                 monitor,
                 max_dimension=image_cfg.max_dimension,
                 blob_dir=image_cfg.blob_dir,
+                capture_guard=capture_identity_guard,
             )
-            snapshot_coro = foreground_ui_snapshot()
+            snapshot_coro = foreground_ui_snapshot(
+                observation_guard=capture_identity_guard,
+            )
             frame, (labels, field_hint, handoff, clickables) = await asyncio.wait_for(
                 asyncio.gather(frame_coro, snapshot_coro),
                 timeout=_OBSERVE_TIMEOUT_S,
             )
+            if captured_topology:
+                live_topology = monitor_topology_signature(
+                    await asyncio.to_thread(list_monitors),
+                )
+                if live_topology != captured_topology:
+                    raise RuntimeError(
+                        "display topology changed during capture; retrying with fresh geometry"
+                    )
+            captured_target = await asyncio.to_thread(read_foreground_target)
+            captured_window = captured_target.window
+            captured_window_rect = captured_target.rect
+            captured_window_signature = captured_target.signature
+            if captured_window_signature[0] == "none":
+                raise RuntimeError(
+                    "foreground window identity is unavailable; refusing "
+                    "unbound Computer-Use input"
+                )
+            if captured_window_signature != pre_capture_window_signature:
+                raise RuntimeError(
+                    "foreground window changed during capture; retrying with a fresh frame"
+                )
+            if monitor.window_handle is not None and (
+                captured_window is None
+                or captured_window.handle != monitor.window_handle
+                or captured_window_rect != (
+                    monitor.left, monitor.top, monitor.width, monitor.height,
+                )
+            ):
+                raise RuntimeError(
+                    "foreground window changed during capture; retrying with a fresh frame"
+                )
         except Exception as exc:  # noqa: BLE001 — capture is inherently flaky
             observe_failures += 1
             log.warning("[cu] observe failed (step %d): %s", step_idx, exc)
@@ -857,9 +945,10 @@ async def run_cu_loop(
                 return
 
             # -- pointer staleness rule -----------------------------------
-            is_pointer = kind in ("click", "drag") or (
-                kind == "scroll" and "x" in action
-            )
+            # Scrolling always targets the pointer's current surface. Treat it
+            # as a pointer action even when the model omitted coordinates; the
+            # omission is resolved to this frame's capture center below.
+            is_pointer = kind in ("click", "click_element", "drag", "scroll")
             if is_pointer and pointer_used:
                 history.append(
                     f"step {step_idx}: {_summarize_action(action)} SKIPPED — "
@@ -902,13 +991,32 @@ async def run_cu_loop(
                 resolved_xy = frame.mapper.model_to_screen(
                     action["x"], action["y"], convention,
                 )
-            elif kind == "scroll" and "x" in action:
-                sx, sy = frame.mapper.model_to_screen(
-                    action["x"], action["y"], convention,
-                )
+            elif kind == "scroll":
+                if "x" in action:
+                    sx, sy = frame.mapper.model_to_screen(
+                        action["x"], action["y"], convention,
+                    )
+                else:
+                    # A stale cursor can sit on a different monitor. Ground a
+                    # coordinate-less scroll in the center of the window or
+                    # monitor that THIS screenshot represents.
+                    sx = monitor.left + max(0, monitor.width) // 2
+                    sy = monitor.top + max(0, monitor.height) // 2
                 action = {**action, "x": sx, "y": sy}
 
             # -- idempotency ledger -----------------------------------------
+            if kind in {"click", "click_element", "drag", "scroll"} and captured_topology:
+                live_topology = monitor_topology_signature(
+                    await asyncio.to_thread(list_monitors),
+                )
+                if live_topology != captured_topology:
+                    history.append(
+                        f"step {step_idx}: {_summarize_action(action)} REFUSED — "
+                        "the display layout changed after the screenshot; "
+                        "capturing fresh geometry before any pointer action."
+                    )
+                    break
+
             if ledger.is_duplicate(action, frame.thumb, resolved_xy=resolved_xy):
                 guard_hits += 1
                 history.append(
@@ -927,6 +1035,15 @@ async def run_cu_loop(
                     return
                 break  # re-perceive
 
+            if kind in {"click", "click_element", "drag", "scroll", "type", "key"}:
+                if await _live_window_state_signature() != captured_window_signature:
+                    history.append(
+                        f"step {step_idx}: {_summarize_action(action)} REFUSED — "
+                        "the foreground window changed after the screenshot; "
+                        "capturing a fresh frame before acting."
+                    )
+                    break
+
             # -- execute ------------------------------------------------------
             t0 = time.monotonic()
             ok = False
@@ -940,6 +1057,7 @@ async def run_cu_loop(
                     {
                         "x": resolved_xy[0], "y": resolved_xy[1],
                         "button": action["button"], "double": action["double"],
+                        "_expected_window_signature": captured_window_signature,
                     },
                     trace_id,
                 )
@@ -996,7 +1114,9 @@ async def run_cu_loop(
                             # happy path never pays for it.
                             refined = await _zoom_refine_point(
                                 ctx, frame, *resolved_xy,
-                                goal=goal, target=str(action.get("target", "")),
+                                goal=goal,
+                                target=str(action.get("target", "")),
+                                expected_window_signature=captured_window_signature,
                             )
                             if refined is not None and (
                                 abs(refined[0] - resolved_xy[0]) > 12
@@ -1010,12 +1130,29 @@ async def run_cu_loop(
                                 pre2 = await asyncio.to_thread(
                                     grab_region, monitor.bbox,
                                 )
+                                if (
+                                    await _live_window_state_signature()
+                                    != captured_window_signature
+                                    or monitor_topology_signature(
+                                        await asyncio.to_thread(list_monitors),
+                                    )
+                                    != captured_topology
+                                ):
+                                    history.append(
+                                        f"step {step_idx}: zoom-refined click REFUSED — "
+                                        "the foreground window or display layout changed; "
+                                        "capturing a fresh frame before retrying."
+                                    )
+                                    break
                                 ok2, detail2 = await _dispatch_tool(
                                     ctx, "click",
                                     {
                                         "x": refined[0], "y": refined[1],
                                         "button": action["button"],
                                         "double": action["double"],
+                                        "_expected_window_signature": (
+                                            captured_window_signature
+                                        ),
                                     },
                                     trace_id,
                                 )
@@ -1047,12 +1184,43 @@ async def run_cu_loop(
 
             elif kind == "type":
                 if action.get("clear_first"):
-                    await _dispatch_tool(
-                        ctx, "hotkey", {"keys": _select_all_keys()}, trace_id,
+                    clear_ok, clear_detail = await _dispatch_tool(
+                        ctx,
+                        "hotkey",
+                        {
+                            "keys": _select_all_keys(),
+                            "_expected_window_signature": captured_window_signature,
+                        },
+                        trace_id,
                     )
-                ok, detail = await _dispatch_tool(
-                    ctx, "type_text", {"text": action["text"]}, trace_id,
-                )
+                    if not clear_ok:
+                        ok = False
+                        detail = (
+                            "could not select existing text before replacement: "
+                            f"{clear_detail}; refusing to append new text"
+                        )
+                    else:
+                        ok, detail = await _dispatch_tool(
+                            ctx,
+                            "type_text",
+                            {
+                                "text": action["text"],
+                                "_expected_window_signature": (
+                                    captured_window_signature
+                                ),
+                            },
+                            trace_id,
+                        )
+                else:
+                    ok, detail = await _dispatch_tool(
+                        ctx,
+                        "type_text",
+                        {
+                            "text": action["text"],
+                            "_expected_window_signature": captured_window_signature,
+                        },
+                        trace_id,
+                    )
                 profiler.add("act", t0, step_idx)
                 t0 = time.monotonic()
                 if ok:
@@ -1084,7 +1252,13 @@ async def run_cu_loop(
 
             elif kind == "key":
                 ok, detail = await _dispatch_tool(
-                    ctx, "hotkey", {"keys": action["keys"]}, trace_id,
+                    ctx,
+                    "hotkey",
+                    {
+                        "keys": action["keys"],
+                        "_expected_window_signature": captured_window_signature,
+                    },
+                    trace_id,
                 )
                 if ok:
                     ledger.record(action, frame.thumb)
@@ -1093,10 +1267,10 @@ async def run_cu_loop(
             elif kind == "scroll":
                 args: dict[str, Any] = {
                     "direction": action["direction"], "amount": action["amount"],
+                    "x": int(action["x"]), "y": int(action["y"]),
+                    "_expected_window_signature": captured_window_signature,
                 }
-                if "x" in action:
-                    pointer_used = True
-                    args["x"], args["y"] = int(action["x"]), int(action["y"])
+                pointer_used = True
                 ok, detail = await _dispatch_tool(ctx, "scroll", args, trace_id)
                 if ok:
                     ledger.record(action, frame.thumb)
@@ -1114,6 +1288,7 @@ async def run_cu_loop(
                         "x1": resolved_xy[0], "y1": resolved_xy[1],
                         "x2": end_xy[0], "y2": end_xy[1],
                         "duration_ms": action["duration_ms"],
+                        "_expected_window_signature": captured_window_signature,
                     },
                     trace_id,
                 )
@@ -1148,7 +1323,13 @@ async def run_cu_loop(
             elif kind == "click_element":
                 pointer_used = True
                 ok, detail = await _dispatch_tool(
-                    ctx, "click_element", {"name": action["name"]}, trace_id,
+                    ctx,
+                    "click_element",
+                    {
+                        "name": action["name"],
+                        "_expected_window_signature": captured_window_signature,
+                    },
+                    trace_id,
                 )
                 if ok:
                     ledger.record(action, frame.thumb)

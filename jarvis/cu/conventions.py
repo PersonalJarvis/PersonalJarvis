@@ -23,6 +23,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import sys
 from typing import Any
 
 from jarvis.cu.geometry import CoordinateConvention
@@ -121,7 +122,9 @@ def action_grammar_block() -> str:
         "into the FOCUSED field; set clear_first true to replace existing "
         "content (address bars, search boxes)\n"
         '  {"action": "key", "keys": ["enter"]}   key or combo, e.g. '
-        '["ctrl","t"]\n'
+        '["ctrl","t"]. The current host is '
+        f'{sys.platform!r}: use ["cmd", ...] for standard macOS shortcuts '
+        'and ["ctrl", ...] on Windows/Linux; never substitute ctrl for Command.\n'
         '  {"action": "scroll", "direction": "up|down|left|right", '
         '"amount": <notches>, "x": <num>, "y": <num>}   x/y optional\n'
         '  {"action": "drag", "x": <num>, "y": <num>, "x2": <num>, '

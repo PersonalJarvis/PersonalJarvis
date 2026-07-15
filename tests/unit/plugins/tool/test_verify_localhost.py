@@ -103,3 +103,29 @@ async def test_http_call_is_offloaded_via_to_thread(
     assert result.success is True
     assert len(recorder.calls) == 1
     assert recorder.calls[0][0] is httpx.get
+
+
+@pytest.mark.asyncio
+async def test_screenshot_refuses_capture_when_screen_recording_is_blocked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A wallpaper-only macOS capture must never be reported as evidence."""
+    import httpx
+
+    monkeypatch.setattr(
+        httpx, "get", lambda *_a, **_k: _FakeResponse(status_code=200, text="hi")
+    )
+    monkeypatch.setattr(
+        "jarvis.vision.screenshot.warn_if_screen_recording_denied",
+        lambda: True,
+    )
+
+    tool = VerifyLocalhostTool()
+    result = await tool.execute(
+        {"port": 5173, "take_screenshot": True}, ctx=None
+    )
+
+    assert result.success is True
+    assert result.artifacts
+    error = result.artifacts[0]["screenshot_error"]
+    assert "Screen Recording permission is not granted" in error

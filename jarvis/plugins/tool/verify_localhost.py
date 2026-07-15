@@ -76,6 +76,17 @@ class VerifyLocalhostTool:
                 import mss  # type: ignore[import-not-found]
                 import mss.tools
 
+                from jarvis.vision.screenshot import (  # noqa: PLC0415
+                    warn_if_screen_recording_denied,
+                )
+
+                if warn_if_screen_recording_denied():
+                    raise PermissionError(
+                        "macOS Screen Recording permission is not granted. "
+                        "Grant it in Personal Jarvis > Settings > Permissions "
+                        "and retry."
+                    )
+
                 with mss.mss() as sct:
                     sct_img = sct.shot()
                     artifacts.append({"screenshot_path": sct_img})

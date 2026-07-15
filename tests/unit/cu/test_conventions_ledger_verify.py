@@ -14,6 +14,7 @@ from jarvis.cu.verify import (
     crop_raw,
     element_is_focused,
     field_values_hint,
+    foreground_ui_snapshot,
     human_handoff_reason,
     regions_equal,
     typed_text_landed,
@@ -276,10 +277,16 @@ def test_field_values_hint_lists_filled_fields_only():
 
 
 def test_human_handoff_reasons():
-    assert human_handoff_reason((_node(role="Text", name="Complete the reCAPTCHA"),)) == "captcha challenge"
-    assert human_handoff_reason((_node(role="Text", name="Enter the verification code"),)) == "two-factor / one-time code"
+    assert human_handoff_reason(
+        (_node(role="Text", name="Complete the reCAPTCHA"),),
+    ) == "captcha challenge"
+    assert human_handoff_reason(
+        (_node(role="Text", name="Enter the verification code"),),
+    ) == "two-factor / one-time code"
     assert human_handoff_reason((_node(role="Edit", name="Password"),)) == "login / password entry"
-    assert human_handoff_reason((_node(role="Edit", name="", is_password=True),)) == "login / password entry"
+    assert human_handoff_reason(
+        (_node(role="Edit", name="", is_password=True),),
+    ) == "login / password entry"
     # A "Change password" BUTTON alone must not trip the handoff.
     assert human_handoff_reason((_node(role="Button", name="Change password"),)) is None
     assert human_handoff_reason(()) is None
@@ -295,6 +302,24 @@ def test_clickable_labels_filters_roles_and_dedupes():
         _node(role="Button", name="Disabled", enabled=False),
     )
     assert clickable_labels(nodes) == ["OK", "File"]
+
+
+@pytest.mark.asyncio
+async def test_ui_snapshot_guard_rejects_foreground_switch(monkeypatch):
+    class _Source:
+        async def observe(self):
+            return SimpleNamespace(nodes=())
+
+    checks = iter((True, False))
+    monkeypatch.setattr(
+        "jarvis.cu.verify._get_ui_tree_source",
+        lambda: _Source(),
+    )
+
+    with pytest.raises(RuntimeError, match="during UI-tree observation"):
+        await foreground_ui_snapshot(
+            observation_guard=lambda: next(checks),
+        )
 
 
 def test_snap_point_to_element_smallest_containing_rect_wins():

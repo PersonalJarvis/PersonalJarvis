@@ -71,6 +71,31 @@ async def test_drag_reports_backend_error(monkeypatch):
     assert "failed" in (res.error or "")
 
 
+async def test_drag_refuses_engine_capture_from_different_window(
+    monkeypatch,
+    _no_real_mouse,
+):
+    monkeypatch.setattr(
+        "jarvis.plugins.tool.click._window_signature_matches",
+        lambda _expected: False,
+    )
+
+    res = await DragTool().execute(
+        {
+            "x1": 0,
+            "y1": 0,
+            "x2": 10,
+            "y2": 10,
+            "_expected_window_signature": ("handle", 11, (0, 0, 800, 600)),
+        },
+        SimpleNamespace(),
+    )
+
+    assert res.success is False
+    assert "changed after the screenshot" in (res.error or "")
+    assert _no_real_mouse == []
+
+
 async def test_drag_reports_missing_pyautogui(monkeypatch):
     def _no_pyautogui(*_a, **_k):
         raise ImportError("No module named 'pyautogui'")
@@ -109,13 +134,21 @@ async def test_drag_reports_actuation_unavailable_verbatim(monkeypatch):
 
 
 def test_perform_drag_posix_routes_through_capability_probe(monkeypatch):
-    """Non-Windows _perform_drag must use get_actuator(), not raw pyautogui."""
-    monkeypatch.setattr(drag_mod.os, "name", "posix")
+    """Drag must use the capability-probed actuator and verify both endpoints."""
     drags: list[tuple] = []
 
     class _FakeActuator:
-        def drag(self, x1, y1, x2, y2, *, duration_s=0.4):
+        current = (0, 0)
+
+        def move(self, x, y):
+            self.current = (x, y)
+
+        def cursor_pos(self):
+            return self.current
+
+        def drag_from_cursor(self, x1, y1, x2, y2, *, duration_s=0.4):
             drags.append((x1, y1, x2, y2, duration_s))
+            self.current = (x2, y2)
 
     monkeypatch.setattr(
         "jarvis.cu.actuate.base.get_actuator", lambda: _FakeActuator()

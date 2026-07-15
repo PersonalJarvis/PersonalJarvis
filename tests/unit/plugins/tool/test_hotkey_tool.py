@@ -90,3 +90,65 @@ async def test_unknown_combo_part_still_reports_clean_error(monkeypatch):
     # existing "Unknown key" error instead of a confusing split.
     assert res.success is False
     assert "Unknown key" in (res.error or "")
+
+
+async def test_macos_command_combo_reaches_posix_actuator(monkeypatch):
+    sent: list[list[str]] = []
+
+    class _Actuator:
+        name = "fake-macos"
+
+        def key_combo(self, keys):
+            sent.append(list(keys))
+
+    monkeypatch.setattr(hk.os, "name", "posix")
+    monkeypatch.setattr("jarvis.cu.actuate.get_actuator", lambda: _Actuator())
+
+    res = await HotkeyTool().execute({"keys": ["cmd+a"]}, _Ctx())
+
+    assert res.success is True
+    assert sent == [["cmd", "a"]]
+
+
+async def test_macos_option_alias_reaches_posix_actuator(monkeypatch):
+    sent: list[list[str]] = []
+
+    class _Actuator:
+        name = "fake-macos"
+
+        def key_combo(self, keys):
+            sent.append(keys)
+
+    monkeypatch.setattr(hk.os, "name", "posix")
+    monkeypatch.setattr("jarvis.cu.actuate.get_actuator", lambda: _Actuator())
+
+    result = await HotkeyTool().execute({"keys": ["option", "left"]}, _Ctx())
+
+    assert result.success is True
+    assert sent == [["option", "left"]]
+
+
+async def test_screenshot_bound_hotkey_refuses_changed_foreground(monkeypatch):
+    sent: list[list[str]] = []
+
+    class _Actuator:
+        name = "fake-macos"
+
+        def key_combo(self, keys):
+            sent.append(list(keys))
+
+    monkeypatch.setattr(hk.os, "name", "posix")
+    monkeypatch.setattr("jarvis.cu.actuate.get_actuator", lambda: _Actuator())
+    monkeypatch.setattr("jarvis.cu.target_guard.foreground_matches", lambda _: False)
+
+    result = await HotkeyTool().execute(
+        {
+            "keys": ["cmd", "a"],
+            "_expected_window_signature": ("handle", 7, (0, 0, 800, 600)),
+        },
+        _Ctx(),
+    )
+
+    assert result.success is False
+    assert "foreground window changed" in (result.error or "")
+    assert sent == []

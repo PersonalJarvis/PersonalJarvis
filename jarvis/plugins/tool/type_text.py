@@ -19,6 +19,26 @@ from jarvis.core.protocols import ExecutionContext, ToolResult
 log = logging.getLogger(__name__)
 
 
+class _ForegroundTargetChanged(RuntimeError):
+    """Raised before input when the screenshot-bound window is no longer active."""
+
+
+def _type_for_expected_window(
+    sender: Any,
+    text: str,
+    delay_s: float,
+    expected_signature: tuple[Any, ...] | None,
+) -> None:
+    if expected_signature is not None:
+        from jarvis.cu.target_guard import foreground_matches  # noqa: PLC0415
+
+        if not foreground_matches(expected_signature):
+            raise _ForegroundTargetChanged(
+                "foreground window changed after the screenshot"
+            )
+    sender(text, delay_s=delay_s)
+
+
 def _build_windows_input_types() -> Any:
     """Build the ctypes structs for SendInput keyboard injection.
 
@@ -117,6 +137,16 @@ class TypeTextTool:
         delay_s = float(args.get("delay_s", 0.02))
         if not text:
             return ToolResult(success=False, output=None, error="text missing")
+        expected_raw = args.get("_expected_window_signature")
+        if expected_raw is not None and not isinstance(expected_raw, (list, tuple)):
+            return ToolResult(
+                success=False,
+                output=None,
+                error="Refusing text input: invalid captured-window identity.",
+            )
+        expected_signature = (
+            tuple(expected_raw) if expected_raw is not None else None
+        )
         # Windows: prefer the native KEYEVENTF_UNICODE SendInput path. It injects
         # the exact Unicode codepoint regardless of the active keyboard layout
         # (this machine runs German QWERTZ) and is far more robust into
@@ -125,10 +155,22 @@ class TypeTextTool:
         # (CU typo bug 2026-06-15). pyautogui stays a best-effort fallback.
         if os.name == "nt":
             try:
-                await asyncio.to_thread(_send_text_windows, text, delay_s)
+                await asyncio.to_thread(
+                    _type_for_expected_window,
+                    lambda value, *, delay_s: _send_text_windows(value, delay_s),
+                    text,
+                    delay_s,
+                    expected_signature,
+                )
                 return ToolResult(
                     success=True,
                     output=f"Typed {len(text)} chars via native Windows Unicode input",
+                )
+            except _ForegroundTargetChanged as exc:
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=f"Refusing text input: {exc}.",
                 )
             except Exception as native_exc:  # noqa: BLE001
                 log.warning(
@@ -146,8 +188,23 @@ class TypeTextTool:
                     error=f"text input unavailable: pyautogui import failed: {exc}",
                 )
             try:
-                await asyncio.to_thread(pyautogui.typewrite, text, interval=delay_s)
+                await asyncio.to_thread(
+                    _type_for_expected_window,
+                    lambda value, *, delay_s: pyautogui.typewrite(
+                        value,
+                        interval=delay_s,
+                    ),
+                    text,
+                    delay_s,
+                    expected_signature,
+                )
                 return ToolResult(success=True, output=f"Typed {len(text)} chars")
+            except _ForegroundTargetChanged as exc:
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=f"Refusing text input: {exc}.",
+                )
             except Exception as exc:  # noqa: BLE001
                 return ToolResult(success=False, output=None, error=str(exc))
 
@@ -155,7 +212,13 @@ class TypeTextTool:
 
         try:
             actuator = get_actuator()
-            await asyncio.to_thread(actuator.type_text, text, delay_s=delay_s)
+            await asyncio.to_thread(
+                _type_for_expected_window,
+                actuator.type_text,
+                text,
+                delay_s,
+                expected_signature,
+            )
             return ToolResult(
                 success=True,
                 output=f"Typed {len(text)} chars ({actuator.name})",
@@ -165,6 +228,12 @@ class TypeTextTool:
                 success=False,
                 output=None,
                 error=f"text input unavailable: {exc}",
+            )
+        except _ForegroundTargetChanged as exc:
+            return ToolResult(
+                success=False,
+                output=None,
+                error=f"Refusing text input: {exc}.",
             )
         except Exception as exc:  # noqa: BLE001
             return ToolResult(success=False, output=None, error=str(exc))

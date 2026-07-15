@@ -15,12 +15,12 @@ and the model prompt are platform-agnostic. The only macOS-specific work is:
    ``jarvis.vision.role_map.normalize_role`` so the emitted ``UIANode.role`` is
    exactly what the Windows source would have produced.
 
-Permission gate (AD-13): before walking, ``observe`` checks
-``AXIsProcessTrusted()``. If accessibility access is not granted it logs an
-English onboarding message and returns an ``Observation`` with empty ``nodes``
-and ``source="screenshot_only"`` — never raises. That empty-tree path self-gates
-the consumers back to the already-working pixel-click loop, exactly like
-``_foreground_clickable_labels`` returning ``[]`` (AD-6 / AD-OE6).
+Permission gate (AD-13): before walking, ``observe`` checks the process-wide
+system-permission port. That combines the live native Accessibility probe with
+stable app identity and pending-restart enforcement. A missing/revoked grant
+returns an ``Observation`` with empty ``nodes`` and
+``source="screenshot_only"``; named-UI lookup and protected input remain
+disabled until the grant is ready.
 
 Import-cleanliness contract (HN-7): the pyobjc frameworks
 (``Quartz`` / ``ApplicationServices`` / ``HIServices`` / ``AppKit``) are imported
@@ -59,9 +59,9 @@ _DEPTH_RETRY_LADDER: tuple[int, ...] = (6, 5, 4)
 # Onboarding message surfaced once when the macOS Accessibility permission is
 # missing — English-only, per the Output Language Policy + AD-13.
 _AX_PERMISSION_MSG = (
-    "macOS Accessibility permission not granted — grant it in "
-    "System Settings > Privacy & Security > Accessibility to enable named UI "
-    "clicks; falling back to pixel clicks."
+    "macOS Accessibility permission is not ready — grant it to Personal "
+    "Jarvis in System Settings > Privacy & Security > Accessibility, then "
+    "restart Jarvis. Named UI lookup and protected input remain disabled."
 )
 
 
@@ -107,7 +107,7 @@ class AXTreeSource:
         if cancel_token is not None and cancel_token.is_cancelled():
             raise RuntimeError(f"cancelled: {cancel_token.reason}")
 
-        # Permission gate (AD-13): never raise — degrade to the pixel path.
+        # Permission gate (AD-13): never raise; protected input stays disabled.
         permission_check = self._permission_check or self._ax_is_process_trusted
         if not await asyncio.to_thread(permission_check):
             logger.warning(_AX_PERMISSION_MSG)
@@ -193,22 +193,22 @@ class AXTreeSource:
 
     @staticmethod
     def _ax_is_process_trusted() -> bool:
-        """Real ``AXIsProcessTrusted()`` probe (lazy pyobjc import, HN-7).
+        """Unified live Accessibility + stable-app-identity gate.
 
-        Returns ``False`` when pyobjc is absent or the call raises — both mean
-        "cannot read the AX tree", which routes the caller to the pixel path.
+        The process-wide permission port owns the uncached native TCC probe,
+        stable bundle identity check, and pending-restart state. Imports remain
+        lazy so this module is clean on Windows and headless Linux.
         """
         try:
-            from ApplicationServices import (  # type: ignore[import-not-found] # noqa: PLC0415
-                AXIsProcessTrusted,
+            from jarvis.platform.permissions import (  # noqa: PLC0415
+                PermissionId,
+                get_system_permission_port,
             )
-        except (ImportError, ModuleNotFoundError):
-            logger.warning("pyobjc (ApplicationServices) not installed — AX tree empty")
-            return False
-        try:
-            return bool(AXIsProcessTrusted())
+            return get_system_permission_port().runtime_access_granted(
+                PermissionId.ACCESSIBILITY,
+            )
         except Exception:  # noqa: BLE001
-            logger.debug("AXIsProcessTrusted() raised", exc_info=True)
+            logger.debug("Accessibility permission gate raised", exc_info=True)
             return False
 
     def _empty_observation(self) -> Observation:
@@ -317,6 +317,8 @@ class AXTreeSource:
                 enabled=n.enabled,
                 parent_index=n.parent_index,
                 value=n.value,
+                is_password=n.is_password,
+                focused=n.focused,
             )
             for n in raw
         ]
@@ -358,6 +360,8 @@ _AX_IDENTIFIER = "AXIdentifier"
 _AX_POSITION = "AXPosition"
 _AX_SIZE = "AXSize"
 _AX_ENABLED = "AXEnabled"
+_AX_FOCUSED = "AXFocused"
+_AX_SUBROLE = "AXSubrole"
 _AX_CHILDREN = "AXChildren"
 
 
@@ -396,29 +400,22 @@ def _ax_copy_attr(element: Any, attribute: str) -> Any:
 
 
 def _ax_point(value: Any) -> tuple[int, int]:
-    """Extract an (x, y) from an AX position value (CGPoint-like or dict)."""
-    if value is None:
-        return (0, 0)
-    if isinstance(value, dict):
-        return (int(value.get("x", 0)), int(value.get("y", 0)))
-    x = getattr(value, "x", None)
-    y = getattr(value, "y", None)
-    if x is not None and y is not None:
-        return (int(x), int(y))
+    """Extract an (x, y) from an AX position value."""
+    from jarvis.platform.macos_ax import decode_ax_point  # noqa: PLC0415
+
+    pair = decode_ax_point(value)
+    if pair is not None:
+        return (int(pair[0]), int(pair[1]))
     return (0, 0)
 
 
 def _ax_size(value: Any) -> tuple[int, int]:
-    """Extract a (w, h) from an AX size value (CGSize-like or dict)."""
-    if value is None:
-        return (0, 0)
-    if isinstance(value, dict):
-        return (int(value.get("w", value.get("width", 0))),
-                int(value.get("h", value.get("height", 0))))
-    w = getattr(value, "width", None)
-    h = getattr(value, "height", None)
-    if w is not None and h is not None:
-        return (int(w), int(h))
+    """Extract a (w, h) from an AX size value."""
+    from jarvis.platform.macos_ax import decode_ax_size  # noqa: PLC0415
+
+    pair = decode_ax_size(value)
+    if pair is not None:
+        return (int(pair[0]), int(pair[1]))
     return (0, 0)
 
 
@@ -442,11 +439,18 @@ def _ax_flatten(
         return
     try:
         native_role = str(_ax_copy_attr(element, _AX_ROLE) or "")
+        native_subrole = str(_ax_copy_attr(element, _AX_SUBROLE) or "")
         canonical = normalize_role(native_role, "darwin")
         role = canonical or ""
 
+        is_password = (
+            native_role.casefold() == "axsecuretextfield"
+            or native_subrole.casefold() == "axsecuretextfield"
+        )
+        focused = bool(_ax_copy_attr(element, _AX_FOCUSED) or False)
+
         name = _ax_copy_attr(element, _AX_TITLE)
-        if not name:
+        if not name and not is_password:
             name = _ax_copy_attr(element, _AX_VALUE)
         if not name:
             name = _ax_copy_attr(element, _AX_DESCRIPTION)
@@ -464,7 +468,7 @@ def _ax_flatten(
         # L3 value-read: AXValue is the current text of an editable control
         # (search box, text field). Read separately from the name-fallback above
         # so the loop can see what a field already holds.
-        value = str(_ax_copy_attr(element, _AX_VALUE) or "")
+        value = "" if is_password else str(_ax_copy_attr(element, _AX_VALUE) or "")
     except Exception:  # noqa: BLE001
         return
 
@@ -479,6 +483,8 @@ def _ax_flatten(
         depth=depth,
         parent_index=parent_index,
         value=value,
+        is_password=is_password,
+        focused=focused,
     ))
 
     if depth >= max_depth:

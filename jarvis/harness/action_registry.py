@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from jarvis.core.protocols import ToolResult
+from jarvis.platform import detect_platform
 
 log = logging.getLogger(__name__)
 
@@ -182,13 +183,15 @@ def _transform_press_shortcut(args: dict[str, Any]) -> dict[str, Any]:
 
 
 def _transform_open_terminal(args: dict[str, Any]) -> dict[str, Any]:
-    """``open_terminal(profile='powershell')`` -> ``open_app(app_name='wt')``.
+    """Map the generic terminal action to the current platform's launcher.
 
-    Default is Windows Terminal (``wt``). Fallback profiles via argument:
-    ``cmd``, ``powershell``, ``pwsh``.
+    Explicit Windows profiles remain available; the default and generic
+    ``terminal`` alias resolve to ``wt`` only on Windows.
     """
-    profile = (args.get("profile") or args.get("app") or "wt").strip().lower()
-    if profile in ("wt", "windowsterminal", "terminal"):
+    profile = (args.get("profile") or args.get("app") or "terminal").strip().lower()
+    if profile == "terminal":
+        app = "wt" if detect_platform() == "win32" else "terminal"
+    elif profile in ("wt", "windowsterminal"):
         app = "wt"
     elif profile in ("cmd", "command"):
         app = "cmd"
@@ -213,10 +216,10 @@ async def _composite_open_new_tab(
     tools: dict[str, Any],
     trace_id: Any,
 ) -> ToolResult:
-    """Sends Ctrl+T to the active window — the standard shortcut for 'new tab'.
+    """Send the platform-native standard shortcut for a new tab.
 
-    Works in every browser, Windows Terminal, and many editors. If an app
-    maps this differently, the LLM can use ``press_shortcut`` directly instead.
+    macOS uses Command+T; Windows and Linux use Ctrl+T. If an app maps this
+    differently, the LLM can use ``press_shortcut`` directly instead.
     """
     hotkey_tool = tools.get("hotkey")
     if hotkey_tool is None:
@@ -226,7 +229,7 @@ async def _composite_open_new_tab(
         )
     return await executor.execute(
         hotkey_tool,
-        {"keys": ["ctrl", "t"]},
+        {"keys": ["cmd" if detect_platform() == "darwin" else "ctrl", "t"]},
         user_utterance="open_new_tab",
         trace_id=trace_id,
     )
@@ -286,6 +289,12 @@ def build_default_registry() -> ActionRegistry:
     is architecturally impossible.
     """
     reg = ActionRegistry()
+    platform_name = detect_platform()
+    is_macos = platform_name == "darwin"
+    new_tab_combo = "cmd+t" if is_macos else "ctrl+t"
+    window_switch_combo = "cmd+tab" if is_macos else "alt+tab"
+    restore_tab_combo = "cmd+shift+t" if is_macos else "ctrl+shift+t"
+    terminal_name = "Windows Terminal (wt)" if platform_name == "win32" else "Terminal"
 
     # ---- Direct (1:1 tool mapping) -----------------------------------
     reg.register(ActionSpec(
@@ -409,10 +418,11 @@ def build_default_registry() -> ActionRegistry:
         name="press_shortcut",
         tool_name="hotkey",
         description=(
-            "Sends a key combination such as 'ctrl+t' (new tab), "
-            "'alt+tab' (window switch), 'ctrl+shift+t' (restore tab)."
+            f"Sends a key combination such as '{new_tab_combo}' (new tab), "
+            f"'{window_switch_combo}' (window switch), "
+            f"'{restore_tab_combo}' (restore tab)."
         ),
-        arg_schema={"combo": "string (e.g. 'ctrl+t')"},
+        arg_schema={"combo": f"string (e.g. '{new_tab_combo}')"},
         arg_transform=_transform_press_shortcut,
         risk_hint="monitor",
     ))
@@ -420,8 +430,8 @@ def build_default_registry() -> ActionRegistry:
         name="open_terminal",
         tool_name="open_app",
         description=(
-            "Opens a terminal window. Default: Windows Terminal (wt). "
-            "Optional: profile='cmd'|'powershell'|'pwsh'."
+            f"Opens a terminal window. Default: {terminal_name}. "
+            "An optional profile may select another installed terminal."
         ),
         arg_schema={"profile": "string?"},
         arg_transform=_transform_open_terminal,
@@ -432,7 +442,10 @@ def build_default_registry() -> ActionRegistry:
     reg.register(ActionSpec(
         name="open_new_tab",
         tool_name=None,
-        description="Opens a new tab in the active window (sends Ctrl+T).",
+        description=(
+            "Opens a new tab in the active window "
+            f"(sends {new_tab_combo})."
+        ),
         arg_schema={},
         composite=_composite_open_new_tab,
         risk_hint="monitor",

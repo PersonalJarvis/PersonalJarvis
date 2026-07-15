@@ -1,9 +1,9 @@
-"""hotkey tool: simulates key combos like Ctrl+T, Alt+Tab, Win+R.
+"""hotkey tool: simulate platform-native keyboard combinations.
 
-Uses Win32 ``SendInput`` with virtual-key codes as the primary path. Falls
-back to ``pyautogui.hotkey`` when the Win32 subsystem is missing — so tests
-keep running on Linux/Mac and headless CI, even though real keystrokes only
-work on Windows.
+Windows uses ``SendInput``; macOS maps Command/Option aliases through the
+native Quartz-capable desktop actuator; X11 uses the available pynput or
+pyautogui backend. Unsupported and headless hosts fail with an actionable
+error.
 
 Risk tier: ``monitor`` — a key combo can trigger non-reversible actions
 (Ctrl+W closes a tab, Ctrl+S opens a dialog). Toast notification, but no
@@ -17,15 +17,34 @@ from typing import Any
 
 from jarvis.core.protocols import ExecutionContext, ToolResult
 
-# Key-name resolution + combined-token expansion ("ctrl+v" -> ["ctrl", "v"])
-# live in the shared CU v2 Windows backend; re-exported here so callers and
-# tests keep their import path. The vocabulary is unchanged.
+# Combined-token expansion ("ctrl+v" -> ["ctrl", "v"]) lives in the shared
+# CU backend. Validation is platform-neutral off Windows so Command/Meta can
+# reach the macOS actuator instead of being rejected by a Win32-only table.
 from jarvis.cu.actuate.windows import (  # noqa: E402
     expand_combo_keys as _expand_combo_keys,
 )
 from jarvis.cu.actuate.windows import (
     resolve_vk as _resolve_vk,
 )
+
+
+class _ForegroundTargetChanged(RuntimeError):
+    """Raised before a shortcut when its screenshot-bound target changed."""
+
+
+def _send_for_expected_window(
+    sender: Any,
+    keys: list[str],
+    expected_signature: tuple[Any, ...] | None,
+) -> None:
+    if expected_signature is not None:
+        from jarvis.cu.target_guard import foreground_matches  # noqa: PLC0415
+
+        if not foreground_matches(expected_signature):
+            raise _ForegroundTargetChanged(
+                "foreground window changed after the screenshot"
+            )
+    sender(keys)
 
 
 def _send_hotkey_windows(keys: list[str]) -> None:
@@ -60,7 +79,9 @@ class HotkeyTool:
                 "items": {"type": "string"},
                 "description": (
                     "List of keys in press order. Modifiers (ctrl, shift, "
-                    "alt, win) first, then the action key. Letters individually, "
+                    "alt/option, win, cmd/command/meta) first, then the action key. "
+                    "Use cmd for standard macOS shortcuts and ctrl on Windows/Linux. "
+                    "Letters individually, "
                     "special keys by name (enter, tab, esc, f1-f12, left, right, "
                     "up, down, home, end, pageup, pagedown, delete, backspace)."
                 ),
@@ -81,17 +102,31 @@ class HotkeyTool:
         # Tolerate a combined shortcut string ("ctrl+v") in place of the
         # documented list form (["ctrl", "v"]) — LLM callers emit it constantly.
         keys_str = _expand_combo_keys(keys_str)
+        expected_raw = args.get("_expected_window_signature")
+        if expected_raw is not None and not isinstance(expected_raw, (list, tuple)):
+            return ToolResult(
+                success=False,
+                output=None,
+                error="Refusing hotkey: invalid captured-window identity.",
+            )
+        expected_signature = (
+            tuple(expected_raw) if expected_raw is not None else None
+        )
 
-        # Pre-validation for a better error message — otherwise only
-        # "Unknown key 'X'" comes out of the ctypes path.
+        from jarvis.cu.actuate.base import is_known_key_name
+
+        # Keep Windows validation exact; off Windows use the common vocabulary
+        # and let the selected backend perform its final capability check.
         for k in keys_str:
-            if _resolve_vk(k) is None:
+            known = _resolve_vk(k) is not None if os.name == "nt" else is_known_key_name(k)
+            if not known:
                 return ToolResult(
                     success=False,
                     output=None,
                     error=(
                         f"Unknown key: {k!r}. Known modifiers: ctrl, shift, "
-                        f"alt, win. Known keys: a-z, 0-9, f1-f12, enter, tab, "
+                        f"alt/option, win, cmd/command/meta. Known keys: printable "
+                        f"characters, f1-f12, enter, tab, "
                         f"esc, space, backspace, delete, home, end, pageup, "
                         f"pagedown, left, right, up, down."
                     ),
@@ -103,10 +138,21 @@ class HotkeyTool:
         # mapping (e.g. 'win' is called 'winleft' there).
         if os.name == "nt":
             try:
-                await asyncio.to_thread(_send_hotkey_windows, keys_str)
+                await asyncio.to_thread(
+                    _send_for_expected_window,
+                    _send_hotkey_windows,
+                    keys_str,
+                    expected_signature,
+                )
                 return ToolResult(
                     success=True,
                     output=f"Hotkey sent: {'+'.join(keys_str)}",
+                )
+            except _ForegroundTargetChanged as exc:
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=f"Refusing hotkey: {exc}.",
                 )
             except (ValueError, OSError) as exc:
                 return ToolResult(
@@ -119,12 +165,23 @@ class HotkeyTool:
 
         try:
             actuator = get_actuator()
-            await asyncio.to_thread(actuator.key_combo, keys_str)
+            await asyncio.to_thread(
+                _send_for_expected_window,
+                actuator.key_combo,
+                keys_str,
+                expected_signature,
+            )
             return ToolResult(
                 success=True,
                 output=f"Hotkey sent ({actuator.name}): {'+'.join(keys_str)}",
             )
         except ActuationUnavailable as exc:
             return ToolResult(success=False, output=None, error=str(exc))
+        except _ForegroundTargetChanged as exc:
+            return ToolResult(
+                success=False,
+                output=None,
+                error=f"Refusing hotkey: {exc}.",
+            )
         except Exception as exc:  # noqa: BLE001
             return ToolResult(success=False, output=None, error=str(exc))

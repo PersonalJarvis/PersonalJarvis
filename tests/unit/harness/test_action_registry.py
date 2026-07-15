@@ -32,7 +32,6 @@ from jarvis.harness.action_registry import (
     build_default_registry,
 )
 
-
 # ---------------------------------------------------------------------
 # Vocabulary coverage
 # ---------------------------------------------------------------------
@@ -141,9 +140,38 @@ def test_transform_press_shortcut_missing_args_raises() -> None:
         _transform_press_shortcut({})
 
 
-def test_transform_open_terminal_default_is_wt() -> None:
+@pytest.mark.parametrize(
+    ("platform_name", "expected_app"),
+    (("win32", "wt"), ("darwin", "terminal"), ("linux", "terminal")),
+)
+def test_transform_open_terminal_default_is_platform_native(
+    monkeypatch,
+    platform_name: str,
+    expected_app: str,
+) -> None:
+    monkeypatch.setattr(
+        "jarvis.harness.action_registry.detect_platform",
+        lambda: platform_name,
+    )
     result = _transform_open_terminal({})
-    assert result == {"app_name": "wt", "arguments": ""}
+    assert result == {"app_name": expected_app, "arguments": ""}
+
+
+@pytest.mark.parametrize(
+    ("platform_name", "expected_app"),
+    (("win32", "wt"), ("darwin", "terminal"), ("linux", "terminal")),
+)
+def test_transform_open_terminal_generic_alias_is_platform_native(
+    monkeypatch,
+    platform_name: str,
+    expected_app: str,
+) -> None:
+    monkeypatch.setattr(
+        "jarvis.harness.action_registry.detect_platform",
+        lambda: platform_name,
+    )
+    result = _transform_open_terminal({"profile": "terminal"})
+    assert result["app_name"] == expected_app
 
 
 def test_transform_open_terminal_profile_aliases() -> None:
@@ -158,8 +186,52 @@ def test_transform_open_terminal_passthrough_for_custom_path() -> None:
     assert result["app_name"] == "/usr/local/bin/iterm2"
 
 
+@pytest.mark.parametrize(
+    (
+        "platform_name",
+        "new_tab_combo",
+        "window_switch_combo",
+        "restore_tab_combo",
+        "terminal_name",
+    ),
+    (
+        ("win32", "ctrl+t", "alt+tab", "ctrl+shift+t", "Windows Terminal"),
+        ("darwin", "cmd+t", "cmd+tab", "cmd+shift+t", "Terminal"),
+        ("linux", "ctrl+t", "alt+tab", "ctrl+shift+t", "Terminal"),
+    ),
+)
+def test_registry_planner_vocabulary_is_platform_native(
+    monkeypatch,
+    platform_name: str,
+    new_tab_combo: str,
+    window_switch_combo: str,
+    restore_tab_combo: str,
+    terminal_name: str,
+) -> None:
+    monkeypatch.setattr(
+        "jarvis.harness.action_registry.detect_platform",
+        lambda: platform_name,
+    )
+    registry = build_default_registry()
+    shortcut = registry.get("press_shortcut")
+    terminal = registry.get("open_terminal")
+    new_tab = registry.get("open_new_tab")
+
+    assert shortcut is not None
+    assert new_tab_combo in shortcut.description
+    assert window_switch_combo in shortcut.description
+    assert restore_tab_combo in shortcut.description
+    assert new_tab_combo in shortcut.arg_schema["combo"]
+    assert terminal is not None and terminal_name in terminal.description
+    assert new_tab is not None and new_tab_combo in new_tab.description
+    if platform_name == "darwin":
+        assert "ctrl+t" not in shortcut.description
+        assert "alt+tab" not in shortcut.description
+        assert "Windows Terminal" not in terminal.description
+
+
 # ---------------------------------------------------------------------
-# Composite-Runners — ohne echte Tools, mit Fake-Executor
+# Composite runners with fake tools and an in-memory executor
 # ---------------------------------------------------------------------
 
 class _FakeExecutor:
@@ -196,8 +268,19 @@ class _FakeTool:
 
 
 @pytest.mark.asyncio
-async def test_composite_open_new_tab_calls_hotkey_with_ctrl_t() -> None:
-    """open_new_tab must send exactly ctrl+T — that's the universal tab shortcut."""
+@pytest.mark.parametrize(
+    ("platform_name", "modifier"),
+    (("win32", "ctrl"), ("darwin", "cmd"), ("linux", "ctrl")),
+)
+async def test_composite_open_new_tab_uses_platform_shortcut(
+    monkeypatch,
+    platform_name: str,
+    modifier: str,
+) -> None:
+    monkeypatch.setattr(
+        "jarvis.harness.action_registry.detect_platform",
+        lambda: platform_name,
+    )
     executor = _FakeExecutor()
     tools = {"hotkey": _FakeTool("hotkey")}
 
@@ -206,7 +289,7 @@ async def test_composite_open_new_tab_calls_hotkey_with_ctrl_t() -> None:
     assert result.success is True
     assert len(executor.calls) == 1
     assert executor.calls[0]["tool"] == "hotkey"
-    assert executor.calls[0]["args"] == {"keys": ["ctrl", "t"]}
+    assert executor.calls[0]["args"] == {"keys": [modifier, "t"]}
 
 
 @pytest.mark.asyncio

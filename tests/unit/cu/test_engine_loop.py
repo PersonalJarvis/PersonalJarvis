@@ -92,6 +92,8 @@ def patched(monkeypatch, tmp_path):
         clickables=[],
         focus_hit=None,            # verify_click_focus_point verdict
         capture_calls=0,           # capture_stable_frame invocations
+        foreground_handle=11,
+        foreground_rect=(0, 0, 192, 108),
     )
 
     def fake_select_capture_target(
@@ -107,6 +109,7 @@ def patched(monkeypatch, tmp_path):
             sleep=lambda s: None,
             max_dimension=max_dimension,
             blob_dir=Path(tmp_path),
+            capture_guard=kw.get("capture_guard"),
         )
 
     def fake_grab_region(bbox, *, grab=None):
@@ -131,6 +134,7 @@ def patched(monkeypatch, tmp_path):
     monkeypatch.setattr(
         engine_mod, "select_capture_target", fake_select_capture_target,
     )
+    monkeypatch.setattr(engine_mod, "list_monitors", lambda: [MONITOR])
     monkeypatch.setattr(engine_mod, "capture_stable_frame", fake_capture)
     monkeypatch.setattr(engine_mod, "grab_region", fake_grab_region)
     monkeypatch.setattr(engine_mod, "foreground_ui_snapshot", fake_snapshot)
@@ -145,6 +149,14 @@ def patched(monkeypatch, tmp_path):
 
     monkeypatch.setattr(
         ws, "normalize_foreground_window", lambda: (False, "test"),
+    )
+    monkeypatch.setattr(
+        ws,
+        "foreground_window",
+        lambda: ws.WindowInfo("Test Window", handle=state.foreground_handle),
+    )
+    monkeypatch.setattr(
+        ws, "window_frame_rect", lambda _window: state.foreground_rect,
     )
     return state
 
@@ -175,6 +187,27 @@ async def test_done_is_verified_and_proof_flows_to_stdout(patched):
     final = _final(chunks)
     assert final.exit_code == 0
     assert "[cu] done (verified: the calculator shows 8)" in final.stdout
+
+
+async def test_dispatch_refuses_action_after_screen_permission_revocation(
+    monkeypatch,
+):
+    executor = FakeExecutor()
+    ctx = _ctx(FakeBrain([]), executor)
+    monkeypatch.setattr(
+        "jarvis.cu.capture._require_macos_screen_recording_permission",
+        lambda: (_ for _ in ()).throw(
+            RuntimeError("Screen Recording permission was revoked"),
+        ),
+    )
+
+    ok, detail = await engine_mod._dispatch_tool(
+        ctx, "click", {"x": 10, "y": 10}, trace_id=None,
+    )
+
+    assert ok is False
+    assert "Screen Recording" in detail
+    assert executor.calls == []
 
 
 async def test_rejected_done_feeds_history_and_eventually_fails(patched):
@@ -238,6 +271,95 @@ async def test_second_pointer_action_in_one_batch_is_skipped(patched):
     clicks = [c for c in executor.calls if c[0] == "click"]
     assert len(clicks) == 1, "a second stale-frame pointer action must not execute"
     assert any("only one pointer action" in user for (_, user) in brain.calls)
+
+
+async def test_click_then_click_element_in_one_batch_is_skipped(patched):
+    brain = FakeBrain([
+        '[{"action":"click","x":100,"y":100},'
+        '{"action":"click_element","name":"Continue"}]',
+        '{"action": "done", "reason": "clicked"}',
+        '{"done": true, "proof": "the dialog advanced"}',
+    ])
+    executor = FakeExecutor()
+
+    chunks = await _run(_ctx(brain, executor))
+
+    assert _final(chunks).exit_code == 0
+    assert [name for name, _args in executor.calls].count("click") == 1
+    assert not any(name == "click_element" for name, _args in executor.calls)
+    assert any("only one pointer action" in user for _system, user in brain.calls)
+
+
+async def test_foreground_change_after_model_decision_refuses_action(patched):
+    class _FocusChangingBrain(FakeBrain):
+        async def complete_text(self, *, system: str, user: str) -> str:
+            reply = await super().complete_text(system=system, user=user)
+            if len(self.calls) == 1:
+                patched.foreground_handle = 22
+            return reply
+
+    brain = _FocusChangingBrain([
+        '{"action":"click","x":500,"y":500}',
+        '{"action":"fail","reason":"the target window changed"}',
+    ])
+    executor = FakeExecutor()
+
+    chunks = await _run(_ctx(brain, executor))
+
+    assert _final(chunks).exit_code == 5
+    assert executor.calls == []
+    assert any("foreground window changed" in user for _system, user in brain.calls)
+
+
+async def test_foreground_change_during_capture_discards_stale_frame(
+    patched,
+    monkeypatch,
+):
+    from jarvis.platform import window_state as ws
+
+    handles = iter((11, 22, 22, 22))
+    monkeypatch.setattr(
+        ws,
+        "foreground_window",
+        lambda: ws.WindowInfo("Test Window", handle=next(handles, 22)),
+    )
+    brain = FakeBrain([
+        '{"action":"fail","reason":"fresh frame reached the model"}',
+    ])
+    executor = FakeExecutor()
+
+    chunks = await _run(_ctx(brain, executor))
+
+    assert _final(chunks).exit_code == 5
+    assert patched.capture_calls == 2
+    assert len(brain.calls) == 1
+    assert executor.calls == []
+
+
+async def test_coordinate_less_scroll_targets_capture_center_and_stales_batch(patched):
+    brain = FakeBrain([
+        '[{"action":"scroll","direction":"down","amount":2},'
+        '{"action":"click","x":900,"y":900}]',
+        '{"action": "done", "reason": "scrolled"}',
+        '{"done": true, "proof": "the target is visible"}',
+    ])
+    executor = FakeExecutor()
+
+    chunks = await _run(_ctx(brain, executor))
+
+    assert _final(chunks).exit_code == 0
+    scrolls = [args for name, args in executor.calls if name == "scroll"]
+    assert scrolls == [
+        {
+            "direction": "down",
+            "amount": 2,
+            "x": 96,
+            "y": 54,
+            "_expected_window_signature": ("handle", 11, (0, 0, 192, 108)),
+        }
+    ]
+    assert not any(name == "click" for name, _args in executor.calls)
+    assert any("only one pointer action" in user for _system, user in brain.calls)
 
 
 async def test_done_judge_reuses_the_step_frame_when_no_action_ran(patched):
@@ -339,6 +461,25 @@ async def test_clear_first_sends_platform_select_all(patched):
     assert _final(chunks).exit_code == 0
     hotkeys = [args for (name, args) in executor.calls if name == "hotkey"]
     assert hotkeys and hotkeys[0]["keys"][-1] == "a"
+    assert hotkeys[0]["_expected_window_signature"] == (
+        "handle",
+        11,
+        (0, 0, 192, 108),
+    )
+
+
+async def test_clear_first_aborts_typing_when_select_all_fails(patched):
+    brain = FakeBrain([
+        '{"action":"type","text":"replacement","clear_first":true}',
+        '{"action":"fail","reason":"keyboard shortcut unavailable"}',
+    ])
+    executor = FakeExecutor(failures={"hotkey"})
+
+    chunks = await _run(_ctx(brain, executor))
+
+    assert _final(chunks).exit_code == 5
+    assert not any(name == "type_text" for name, _args in executor.calls)
+    assert any("refusing to append" in user for _system, user in brain.calls)
 
 
 async def test_cancelled_token_stops_immediately(patched):
@@ -423,6 +564,34 @@ async def test_verified_miss_triggers_one_zoom_refined_retry(patched):
     clicks = [args for (name, args) in executor.calls if name == "click"]
     assert len(clicks) == 2, "exactly one refined retry after the verified miss"
     assert (clicks[1]["x"], clicks[1]["y"]) != (clicks[0]["x"], clicks[0]["y"])
+    assert all(
+        args["_expected_window_signature"][0:2] == ("handle", 11)
+        for args in clicks
+    )
+
+
+async def test_zoom_refine_refuses_click_after_foreground_switch(patched):
+    patched.region_changes_after_click = False
+
+    class _SwitchDuringRefineBrain(FakeBrain):
+        async def complete_text(self, *, system: str, user: str) -> str:
+            reply = await super().complete_text(system=system, user=user)
+            if len(self.calls) == 2:
+                patched.foreground_handle = 22
+            return reply
+
+    brain = _SwitchDuringRefineBrain([
+        '{"action": "click", "x": 500, "y": 500, "target": "tiny icon"}',
+        '{"found": true, "x": 900, "y": 900}',
+        '{"action": "fail", "reason": "the original window lost focus"}',
+    ])
+    executor = FakeExecutor()
+
+    chunks = await _run(_ctx(brain, executor))
+
+    assert _final(chunks).exit_code == 5
+    clicks = [args for name, args in executor.calls if name == "click"]
+    assert len(clicks) == 1, "the stale zoom-refined click must not execute"
 
 
 async def test_handoff_screen_fails_fast_with_speakable_reason(patched, monkeypatch):
