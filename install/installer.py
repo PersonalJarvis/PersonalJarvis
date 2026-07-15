@@ -151,6 +151,32 @@ def run_quiet(cmd: list[str], *, label: str, cwd: Path | None = None) -> int:
     return subprocess.run(cmd, cwd=cwd).returncode
 
 
+def run_captured(
+    cmd: list[str], *, label: str, cwd: Path | None = None, timeout: float | None = None
+) -> subprocess.CompletedProcess[str]:
+    """Run a captured command behind the standard gold spinner.
+
+    Like ``run_quiet``, but for callers that PARSE the captured stdout (probe
+    verdicts, JSON reports): output stays captured on every host and the full
+    ``CompletedProcess`` is returned. The spinner renders only on a real
+    terminal so a long step never looks hung; a non-tty run still prints one
+    honest "label…" note so logs show what the wait was. Raises ``OSError`` /
+    ``TimeoutExpired`` exactly like ``subprocess.run`` — callers keep their
+    own handling.
+    """
+    def _run() -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            cmd, cwd=cwd, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=timeout,
+        )
+
+    if console.is_terminal:
+        with console.status(f"[brand]{label}…[/]", spinner="dots", spinner_style="brand"):
+            return _run()
+    note(f"{label}…")
+    return _run()
+
+
 def is_headless_linux() -> bool:
     """Best-effort: True on a Linux VPS without a display server."""
     return sys.platform.startswith("linux") and not (
@@ -366,10 +392,9 @@ def verify_models() -> None:
         "import sys; sys.exit(0 if report_complete(items) else 3)\n"
     )
     try:
-        result = subprocess.run(
+        result = run_captured(
             [str(venv_python()), "-c", probe], cwd=repo_root(),
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=180,
+            label="checking the voice models", timeout=180,
         )
     except (OSError, subprocess.TimeoutExpired):
         note("could not verify the voice models - they will be checked on first launch")
@@ -412,10 +437,9 @@ def step_worker_cli(*, dry_run: bool) -> None:
         "print('installed' if installed else 'failed')\n"
     )
     try:
-        result = subprocess.run(
+        result = run_captured(
             [str(venv_python()), "-c", probe], cwd=repo_root(),
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=600,
+            label="setting up the Jarvis-Agent worker CLI (npm download)", timeout=600,
         )
         stdout = (result.stdout or "").strip()
         verdict = stdout.splitlines()[-1] if stdout else "failed"
@@ -439,7 +463,7 @@ def step_desktop_integration(*, enabled: bool, dry_run: bool) -> bool:
         console.print("[muted]      (dry-run) repair desktop-shell registration[/]")
         return True
     try:
-        result = subprocess.run(
+        result = run_captured(
             [
                 str(venv_python()),
                 "-m",
@@ -449,7 +473,7 @@ def step_desktop_integration(*, enabled: bool, dry_run: bool) -> bool:
                 "--json",
             ],
             cwd=repo_root(),
-            capture_output=True, text=True, encoding="utf-8", errors="replace",
+            label="registering the desktop app (a macOS first run can take a few minutes)",
             # py2app build + icon conversion + signing + LaunchServices import
             # probe can legitimately exceed two minutes on Intel macOS.
             timeout=600,

@@ -63,6 +63,41 @@ ok()   { printf '%s    ✓%s %s%s%s\n' "$GREEN" "$RST" "$DIM" "$1" "$RST"; }
 note() { printf '%s      %s%s\n' "$DIM" "$1" "$RST"; }
 err()  { printf '%s    ✗ %s%s\n' "$RED" "$1" "$RST"; }
 
+# Run a slow, otherwise-silent command behind a one-line dots spinner so a
+# long download never looks hung (maintainer report 2026-07-15). TTY only:
+# a piped/CI run prints the label once and streams the command instead.
+# Output is captured to a temp log whose tail is printed on failure, so
+# errors are never swallowed. Do NOT wrap anything that may prompt (sudo) —
+# the background redirect would eat the prompt.
+run_spin() {
+    _spin_label="$1"; shift
+    if [ ! -t 1 ]; then
+        note "$_spin_label…"
+        "$@"
+        return $?
+    fi
+    _spin_log=$(mktemp)
+    "$@" >"$_spin_log" 2>&1 &
+    _spin_pid=$!
+    _spin_i=0
+    while kill -0 "$_spin_pid" 2>/dev/null; do
+        _spin_i=$(( (_spin_i + 1) % 4 ))
+        printf '\r%s      %s%-3.*s%s ' "$DIM" "$_spin_label" "$_spin_i" '...' "$RST"
+        sleep 0.4 2>/dev/null || sleep 1
+    done
+    _spin_rc=0
+    wait "$_spin_pid" || _spin_rc=$?
+    printf '\r\033[K'
+    if [ "$_spin_rc" -ne 0 ]; then
+        err "$_spin_label failed"
+        # sed, not a `read` loop: the prompt-free guard test permits `read`
+        # only inside the welcome gate and the prerequisite-bootstrap flow.
+        tail -n 20 "$_spin_log" | sed -e "s/^/${DIM}      /" -e "s/\$/${RST}/"
+    fi
+    rm -f "$_spin_log"
+    return $_spin_rc
+}
+
 # Banner glyphs are machine-generated (figlet "ANSI Shadow"); do not hand-edit
 # — that is how the historical "Harvis" typo crept in. Rows are colored as a
 # vertical gradient (hi → brand → deep) to match the forged-gold wordmark.
@@ -287,13 +322,15 @@ bootstrap_full_support_python() {
     _uv=$(command -v uv 2>/dev/null || true)
     [ -z "$_uv" ] && [ -x "$HOME/.local/bin/uv" ] && _uv="$HOME/.local/bin/uv"
     if [ -z "$_uv" ]; then
-        note "downloading uv to fetch a self-contained Python $(_bootstrap_target_version) (per-user, no sudo)"
-        curl -LsSf https://astral.sh/uv/install.sh | env UV_NO_MODIFY_PATH=1 sh >/dev/null 2>&1 || return 1
+        note "fetching a self-contained Python $(_bootstrap_target_version) (per-user, no sudo)"
+        run_spin 'downloading the uv Python manager' \
+            sh -c 'curl -LsSf https://astral.sh/uv/install.sh | UV_NO_MODIFY_PATH=1 sh' || return 1
         _uv="$HOME/.local/bin/uv"
         [ -x "$_uv" ] || return 1
     fi
     _target=$(_bootstrap_target_version)
-    "$_uv" python install "$_target" >/dev/null 2>&1 || return 1
+    run_spin "downloading Python $_target (about 30 MB)" \
+        "$_uv" python install "$_target" || return 1
     _bp=$("$_uv" python find "$_target" 2>/dev/null) || return 1
     [ -x "$_bp" ] || return 1
     PYTHON_EXE="$_bp"
@@ -764,10 +801,13 @@ fi
 phase '2/6' 'Fetching Personal Jarvis'
 note "$INSTALL_DIR"
 
+# On a terminal, git paints its own "Receiving objects: NN%" progress so a
+# slow download never looks hung (maintainer report 2026-07-15); a piped/CI
+# run keeps --quiet for a clean log. Errors surface on stderr either way.
+GIT_VERBOSITY='--quiet'
+[ -t 2 ] && GIT_VERBOSITY='--progress'
 if [ -d "$INSTALL_DIR/.git" ]; then
-    # --quiet keeps the noisy "Receiving objects: NN%" churn out of the clean
-    # transcript; real errors still surface on stderr.
-    git -C "$INSTALL_DIR" fetch --quiet --depth 1 origin "$BRANCH"
+    git -C "$INSTALL_DIR" fetch "$GIT_VERBOSITY" --depth 1 origin "$BRANCH"
     git -C "$INSTALL_DIR" checkout --quiet "$BRANCH"
     git -C "$INSTALL_DIR" reset --quiet --hard "origin/$BRANCH"
     ok 'updated existing checkout to latest'
@@ -776,7 +816,7 @@ elif [ -e "$INSTALL_DIR" ]; then
     note 'Aborting to avoid clobbering your files. Remove or move that directory, then re-run.'
     exit 1
 else
-    git clone --quiet --depth 1 --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
+    git clone "$GIT_VERBOSITY" --depth 1 --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
     ok 'downloaded'
 fi
 
@@ -859,16 +899,17 @@ if [ -x "$VENV_PYTHON" ] && [ "$(uname -s 2>/dev/null)" = "Linux" ] &&
 fi
 if [ ! -x "$VENV_PYTHON" ]; then
     if [ "$(uname -s 2>/dev/null)" = "Linux" ]; then
-        "$PYTHON_EXE" -m venv --system-site-packages "$VENV_PATH"
+        run_spin 'creating the virtual environment' \
+            "$PYTHON_EXE" -m venv --system-site-packages "$VENV_PATH"
     else
-        "$PYTHON_EXE" -m venv "$VENV_PATH"
+        run_spin 'creating the virtual environment' \
+            "$PYTHON_EXE" -m venv "$VENV_PATH"
     fi
 fi
 ok 'virtual environment ready'
 
-note 'installing bootstrap dependencies (rich, packaging)'
-"$VENV_PYTHON" -m pip install --quiet --upgrade pip
-"$VENV_PYTHON" -m pip install --quiet rich packaging
+run_spin 'installing bootstrap dependencies (rich, packaging)' \
+    "$VENV_PYTHON" -m pip install --quiet --upgrade pip rich packaging
 ok 'bootstrap dependencies ready'
 
 # -------------------------------------------------------------- hand off

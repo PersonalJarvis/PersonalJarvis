@@ -418,12 +418,15 @@ if ($ExtraArgs -contains '--headless') {
 Write-Phase '2/6' 'Fetching Personal Jarvis'
 Write-Note $InstallDir
 
+# On an interactive console, git paints its own "Receiving objects: NN%"
+# progress (on stderr) so a slow download never looks hung (maintainer
+# report 2026-07-15); a redirected/CI run keeps --quiet for a clean
+# transcript. Real errors still surface on stderr either way.
+$GitVerbosity = if ([Console]::IsErrorRedirected) { '--quiet' } else { '--progress' }
 if (Test-Path (Join-Path $InstallDir '.git')) {
     Push-Location $InstallDir
     try {
-        # --quiet keeps the noisy "Receiving objects: NN%" churn out of the
-        # clean transcript; real errors still surface on stderr.
-        & git fetch --quiet --depth 1 origin $Branch
+        & git fetch $GitVerbosity --depth 1 origin $Branch
         & git checkout --quiet $Branch
         & git reset --quiet --hard "origin/$Branch"
     } finally {
@@ -436,7 +439,7 @@ if (Test-Path (Join-Path $InstallDir '.git')) {
         Write-Note 'Aborting to avoid clobbering your files. Remove or move that directory, then re-run.'
         exit 1
     }
-    & git clone --quiet --depth 1 --branch $Branch $RepoUrl $InstallDir
+    & git clone $GitVerbosity --depth 1 --branch $Branch $RepoUrl $InstallDir
     if ($LASTEXITCODE -ne 0) { Write-Err 'git clone failed.'; exit 1 }
     Write-Ok 'downloaded'
 }
@@ -526,9 +529,8 @@ if (-not (Test-Path $VenvPython)) {
 }
 Write-Ok 'virtual environment ready'
 
-Write-Note 'installing bootstrap dependencies (rich, packaging)'
-& $VenvPython -m pip install --quiet --upgrade pip
-& $VenvPython -m pip install --quiet rich packaging
+Write-Note 'installing bootstrap dependencies (rich, packaging) - this can take a moment'
+& $VenvPython -m pip install --quiet --upgrade pip rich packaging
 if ($LASTEXITCODE -ne 0) { Write-Err 'bootstrap pip install failed.'; exit 1 }
 Write-Ok 'bootstrap dependencies ready'
 
