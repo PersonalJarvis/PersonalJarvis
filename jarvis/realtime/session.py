@@ -77,17 +77,24 @@ _DELEGATE_NATIVE_BOUNDARY_WAIT_S = 1.0
 # end. Keep the classic speech-pipeline acknowledgement timing unchanged; this
 # longer threshold belongs only to the realtime provider bridge.
 _DELEGATE_BRIDGE_DELAY_S = 6.0
-_DELEGATE_HISTORY_MAX_MESSAGES = 8
+# 20 messages, not 8: a failed screen action typically costs the user several
+# correction turns, and each background completion adds a context note. With 8,
+# the original task was trimmed out exactly when the recovery turn needed it
+# (live forensic 2026-07-15 08:00: the final mission posted a placeholder
+# announcement because the announce request had just left the window).
+_DELEGATE_HISTORY_MAX_MESSAGES = 20
 _DELEGATE_HISTORY_MAX_CHARS = 1_200
 _DELEGATE_DECLARATION: dict[str, Any] = {
     "name": "jarvis_action",
     "description": (
         "Execute an action for the user through the Jarvis action system: "
-        "open apps or views, change settings, control the computer, manage "
-        "files, start background research or coding missions, read or write "
-        "the user's private Wiki memory, and inspect the current MCP, CLI, "
-        "tool, integration, configuration, or system state. Also call this "
-        "to relay the user's answer to a pending confirmation question."
+        "open apps or views, change settings, control the computer on screen "
+        "(click, type, and navigate inside any application window until the "
+        "task is finished), manage files, start background research or coding "
+        "missions, read or write the user's private Wiki memory, and inspect "
+        "the current MCP, CLI, tool, integration, configuration, or system "
+        "state. Also call this to relay the user's answer to a pending "
+        "confirmation question."
     ),
     "parameters": {
         "type": "object",
@@ -115,6 +122,13 @@ _DELEGATE_ROLE_DIRECTIVE = (
     "cannot see any of it yourself, so guessing is always wrong. Answer from "
     "your own knowledge only for general world knowledge and ordinary social "
     "chat. "
+    "The action system physically operates the user's computer on screen: it "
+    "opens apps and clicks, types, and navigates inside any application "
+    "window until a multi-step task is finished end to end. Never tell the "
+    "user that you lack a tool, an API, access, or permission for something "
+    "in their world, and never propose manual workarounds, scripts, or "
+    "keyboard tricks instead of acting — call jarvis_action (again, with the "
+    "user's correction folded in) and let the action system do it. "
     "Never announce that you are going to look something up, check, read, "
     "fetch, open, save, enter, or do anything: either call jarvis_action in the "
     "same response, or do not say it at all. An announcement without a function "

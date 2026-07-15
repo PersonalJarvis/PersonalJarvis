@@ -1776,6 +1776,58 @@ async def test_delegate_mode_declares_single_action_function():
 
 
 @pytest.mark.asyncio
+async def test_delegate_directive_names_screen_control_and_forbids_capability_denial():
+    """The live model must know its on-screen reach and never deny it.
+
+    Live forensic 2026-07-15 07:59: asked why a screen action failed, the
+    model claimed it had no API access and offered to type via 'a script or
+    the keyboard' — inventing capability gaps instead of calling
+    jarvis_action. The directive must name Computer-Use-style screen control
+    explicitly and forbid claiming a missing tool/API/access for anything in
+    the user's world.
+    """
+    provider = FakeProvider([RealtimeEvent(type="turn_complete")])
+    sess = _session(provider, brain=FakeBrain())
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    instructions = provider.opened_with.instructions
+    assert "clicks, types, and navigates" in instructions
+    assert "Never tell the user that you lack" in instructions
+    declaration = next(
+        d for d in provider.opened_with.tools if d["name"] == "jarvis_action"
+    )
+    assert "click, type, and navigate" in declaration["description"]
+
+
+def test_delegate_history_keeps_a_task_five_exchanges_back():
+    """The window must survive a correction sequence plus announcements.
+
+    Live forensic 2026-07-15 08:00: after four correction turns and two
+    background-completion notes, the original announce request had just been
+    trimmed out of the 8-message window — the final mission posted a
+    placeholder announcement instead of the requested content.
+    """
+    sess = _session(FakeProvider([]), brain=FakeBrain())
+    sess._remember_delegate_turn(
+        "Announce the live event on my Personal Jarvis server.", "On it."
+    )
+    # One failure completion + four correction exchanges follow, mirroring
+    # the live session's shape.
+    sess._remember_delegate_turn("", "[Trusted background completion]\nIt failed.")
+    for index in range(4):
+        sess._remember_delegate_turn(f"correction {index}", f"reply {index}")
+    sess._remember_delegate_turn("", "[Trusted background completion]\nDone-ish.")
+
+    contents = [str(m.content) for m in sess._delegate_history]
+    assert any("Personal Jarvis" in c for c in contents), (
+        f"the original task must survive the correction sequence: {contents}"
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "utterance",
     [
