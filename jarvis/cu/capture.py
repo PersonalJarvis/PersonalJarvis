@@ -96,10 +96,19 @@ def _require_macos_screen_recording_permission() -> None:
 
 
 def mss_grab(bbox: dict[str, int]) -> tuple[tuple[int, int], bytes]:
-    """Default grabber via mss, inside the thread DPI pin."""
+    """Default grabber via mss, inside the thread DPI pin.
+
+    Wrapped in the indicator capture guard: on hosts without a native
+    capture-exclusion API (non-Windows) the yellow CU screen border is
+    blanked for the duration of the grab so the model never sees it.
+    """
     import mss  # noqa: PLC0415
 
-    with input_space(), mss.mss() as sct:
+    from jarvis.cu.indicator.capture_guard import (  # noqa: PLC0415
+        indicator_suppressed,
+    )
+
+    with indicator_suppressed(), input_space(), mss.mss() as sct:
         raw = sct.grab(bbox)
     return (tuple(raw.size), raw.rgb)
 
@@ -123,9 +132,15 @@ def grabber_for(target: MonitorInfo) -> Grabber:
     def grab(bbox: dict[str, int]) -> tuple[tuple[int, int], bytes]:
         nonlocal native_alive
         if native_alive:
+            from jarvis.cu.indicator.capture_guard import (  # noqa: PLC0415
+                indicator_suppressed,
+            )
             from jarvis.platform import window_capture  # noqa: PLC0415
 
-            raw = window_capture.grab_window(handle, bbox)
+            # Native per-window capture can still include an overlapping
+            # topmost overlay on some platforms — same guard as mss_grab.
+            with indicator_suppressed():
+                raw = window_capture.grab_window(handle, bbox)
             if raw is not None:
                 return raw
             native_alive = False

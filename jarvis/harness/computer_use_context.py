@@ -153,21 +153,29 @@ _CU_SUPPRESS_UNTIL = 0.0
 _CU_SUPPRESS_GRACE_S = 8.0
 
 
-def cancel_active_cu(reason: str = "voice_hangup") -> bool:
-    """Cancel EVERY active Computer-Use mission AND open the post-hangup
-    suppression window so a mission starting moments later is aborted too.
+def cancel_active_cu(
+    reason: str = "voice_hangup", *, suppress_new: bool = True,
+) -> bool:
+    """Cancel EVERY active Computer-Use mission AND (by default) open the
+    post-hangup suppression window so a mission starting moments later is
+    aborted too.
 
     Cancels ALL registered tokens (overlapping missions are common — CU runs as
     a detached background task), not just the most recent. Returns True if at
     least one live token was cancelled. Never raises (the hangup path must never
     crash) — a token whose ``cancel`` raises is skipped, the rest still cancel.
+
+    ``suppress_new=False`` skips the suppression window: the Escape-to-cancel
+    indicator path means "stop what is running NOW", not "and refuse the next
+    request" — a user may press Esc and immediately ask for something else.
     """
     global _CU_SUPPRESS_UNTIL
-    try:
-        import time  # noqa: PLC0415
-        _CU_SUPPRESS_UNTIL = time.monotonic() + _CU_SUPPRESS_GRACE_S
-    except Exception:  # noqa: BLE001
-        pass
+    if suppress_new:
+        try:
+            import time  # noqa: PLC0415
+            _CU_SUPPRESS_UNTIL = time.monotonic() + _CU_SUPPRESS_GRACE_S
+        except Exception:  # noqa: BLE001
+            pass
     cancelled_any = False
     for tok in list(_ACTIVE_CU_TOKENS):
         try:

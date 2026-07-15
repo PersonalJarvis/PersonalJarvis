@@ -228,6 +228,12 @@ desktop = [
     # no-op when they are absent.
     "pyautogui>=0.9.54",
     "mss>=10.0",
+    # Computer-Use screen indicator (jarvis/cu/indicator): the yellow glow
+    # border + "Esc to cancel" pill rendered by a small PySide6 sidecar
+    # process. Essentials only (QtCore/QtGui/QtWidgets — no WebEngine).
+    # Imported ONLY inside the sidecar; the controller probes for it and
+    # degrades to a logged no-op when absent (headless/base install).
+    "pyside6-essentials>=6.7",
     # Drag-drop ONTO the floating overlay (bar/mascot): the cross-platform tkdnd
     # Tcl extension, with bundled binaries for Windows / macOS / Linux. Registered
     # onto the live Tk root in place (jarvis/overlay/drop_target.py). All-platform

@@ -1202,8 +1202,19 @@ def _phase2_full_brain(
             # ("setze Schrittlimit auf N" -> computer_use.step_budget) applies
             # to the next mission without an app restart (idempotent per bus).
             subscribe_context_reload(bus)
+            # Screen indicator (yellow CU border + Esc-to-cancel): a bus
+            # subscription only — the PySide6 sidecar spawns lazily on the
+            # first CUControlStarted (AP-26).
+            try:
+                from jarvis.cu.indicator.controller import (  # noqa: PLC0415
+                    wire_cu_indicator,
+                )
+
+                wire_cu_indicator(bus)
+            except Exception as _ind_exc:  # noqa: BLE001
+                log.warning("CU indicator not wired: %s", _ind_exc)
             log.info(
-                "ComputerUseContext verdrahtet (tools=%s, step_budget=%d, "
+                "ComputerUseContext wired (tools=%s, step_budget=%d, "
                 "verify=%s, max_replans=%d)",
                 sorted(cu_tools.keys()),
                 cu_cfg.step_budget,

@@ -14,9 +14,11 @@ import asyncio
 import logging
 import sys
 import time
+import uuid
 from collections.abc import AsyncIterator
 
 from jarvis.control import CancelScope
+from jarvis.core.events import CUControlEnded, CUControlStarted
 from jarvis.core.protocols import HarnessResult, HarnessTask
 from jarvis.harness.computer_use_context import (
     ComputerUseContext,
@@ -29,6 +31,18 @@ from jarvis.harness.computer_use_context import (
 _log = logging.getLogger(__name__)
 
 _TIMEOUT_EXIT_CODE = 124
+_CANCEL_EXIT_CODE = 130
+
+
+async def _publish_cu_control(bus, event) -> None:
+    """Publish a control-indicator event; a publish failure must never
+    break the mission (the indicator is strictly best-effort)."""
+    if bus is None:
+        return
+    try:
+        await bus.publish(event)
+    except Exception:  # noqa: BLE001
+        _log.debug("[cu] control event publish failed", exc_info=True)
 
 
 def _resolve_run_cu_loop():
@@ -158,6 +172,15 @@ class ComputerUseHarness:
             # registry is a SET — concurrent CU missions each register so a
             # single hangup cancels them ALL (BUG-CU-CONCURRENT-CANCEL).
             register_active_cu_token(token)
+            # Control-indicator contract (jarvis.cu.indicator): Started fires
+            # once the token is registered — i.e. the moment this mission may
+            # actually drive mouse/keyboard — and Ended ALWAYS fires in the
+            # finally below, on every exit path.
+            mission_id = uuid.uuid4().hex[:12]
+            await _publish_cu_control(
+                ctx.bus, CUControlStarted(mission_id=mission_id)
+            )
+            end_reason = "finished"
             run_cu_loop = _resolve_run_cu_loop()
             stream = run_cu_loop(task, ctx, cancel_token=token)
             try:
@@ -174,8 +197,13 @@ class ComputerUseHarness:
                         return
                     yield chunk
                     if chunk.is_final:
+                        if chunk.exit_code == _CANCEL_EXIT_CODE:
+                            end_reason = "cancelled"
+                        elif chunk.exit_code != 0:
+                            end_reason = "error"
                         return
             except TimeoutError:
+                end_reason = "timeout"
                 token.cancel("computer_use_harness_timeout")
                 duration_ms = (time.time_ns() - t_start) // 1_000_000
                 yield HarnessResult(
@@ -192,6 +220,10 @@ class ComputerUseHarness:
                 # CANCEL: clearing the whole registry here orphaned the sibling
                 # so a later hangup found no token at all).
                 unregister_active_cu_token(token)
+                await _publish_cu_control(
+                    ctx.bus,
+                    CUControlEnded(mission_id=mission_id, reason=end_reason),
+                )
 
     async def cancel(self) -> None:
         """Aborts the running invoke.

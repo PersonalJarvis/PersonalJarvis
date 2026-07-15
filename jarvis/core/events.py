@@ -667,11 +667,38 @@ class CUStepProfiled(Event):
     cache_read_tokens: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class CUControlStarted(Event):
+    """A Computer-Use mission took control of the local mouse/keyboard.
+
+    Published by ``ComputerUseHarness.invoke()`` the moment the mission's
+    cancel token is registered — exactly when "Jarvis is controlling this
+    computer" begins. Drives user-facing control indicators (the yellow
+    screen border in ``jarvis.cu.indicator``). Concurrent missions each
+    publish their own Started/Ended pair; subscribers refcount.
+    """
+    mission_id: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class CUControlEnded(Event):
+    """A Computer-Use mission released control of the local mouse/keyboard.
+
+    Always published in the ``finally`` of ``ComputerUseHarness.invoke()``
+    — on success, timeout, cancel, and crash alike. ``reason`` is a short
+    machine-readable tag: "finished" | "cancelled" | "timeout" | "error".
+    """
+    mission_id: str = ""
+    reason: str = "finished"
+
+
 #: Heartbeat contract (2026-06-09): every event type the Computer-Use loop
 #: publishes as a liveness signal. The speech pipeline subscribes its
 #: ``_on_agent_progress`` handler to EXACTLY this tuple — extending the loop
 #: with a new progress event means adding it here, and the contract test in
 #: tests/unit/harness/test_cu_wave0.py keeps both sides honest.
+#: (CUControlStarted/Ended are deliberately NOT part of this tuple — they
+#: fire once per mission, not per step, so they carry no liveness signal.)
 CU_PROGRESS_EVENTS: tuple[type, ...] = (
     ObservationCaptured,
     ActionPlanned,

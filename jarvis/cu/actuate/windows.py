@@ -345,6 +345,11 @@ class WindowsActuator(Actuator):
 
     def key_combo(self, keys: list[str]) -> None:
         expanded = expand_combo_keys([str(k) for k in keys])
+        # A Jarvis-typed Esc must not trip the Escape-to-cancel listener
+        # (jarvis.cu.indicator) — stamp BEFORE the OS sees the keystroke.
+        from jarvis.cu.indicator.self_input import stamp_if_escape  # noqa: PLC0415
+
+        stamp_if_escape(expanded)
         vk_codes: list[int] = []
         for k in expanded:
             vk = resolve_vk(k)
