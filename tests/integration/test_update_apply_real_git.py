@@ -79,10 +79,16 @@ def test_real_apply_moves_head_to_new_tip(tmp_path: Path, monkeypatch: pytest.Mo
     assert '9.9.9' in (install / "jarvis" / "__init__.py").read_text(encoding="utf-8")
 
     monkeypatch.setattr(u, "_repo_root", lambda: install)
+
+    async def _desktop_ok(_root: Path) -> tuple[bool, None]:
+        return True, None
+
+    monkeypatch.setattr(u, "_refresh_desktop_integration", _desktop_ok)
     result = asyncio.run(u.update_apply())
 
     assert result["ok"] is True
     assert result["restart_required"] is True
     assert result["version"] == "9.9.10"
+    assert result["desktop_integration_ok"] is True
     # The real reset --hard moved the working tree to B.
     assert '9.9.10' in (install / "jarvis" / "__init__.py").read_text(encoding="utf-8")

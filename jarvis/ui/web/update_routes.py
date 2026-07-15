@@ -11,9 +11,10 @@ Now" button so the user never has to re-run the installer from a terminal:
   update" rather than erroring, so a flaky connection never breaks the UI.
 * ``POST /api/update/apply``  — pulls the new code (the same ``git fetch`` +
   ``git reset --hard origin/main`` the installer uses), refreshes dependencies
-  only if the lockfile changed, and reports ``restart_required``. It does NOT
-  restart — the caller then hits the existing ``POST /api/settings/restart-app``
-  which already owns the mission-guard + cross-platform relauncher.
+  only if the lockfile changed, and repairs the platform's desktop registration
+  before reporting ``restart_required``. It does NOT restart — the caller then
+  hits the existing ``POST /api/settings/restart-app`` which already owns the
+  mission guard + cross-platform relauncher.
 
 Safety-critical guard (the single most important thing here):
 ``git reset --hard`` destroys uncommitted local changes. That is fine for an
@@ -38,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import json
 import logging
 import re
 import sys
@@ -340,6 +342,41 @@ async def _refresh_dependencies(root: Path) -> tuple[bool, str]:
     return True, ""
 
 
+async def _refresh_desktop_integration(root: Path) -> tuple[bool, str]:
+    """Run the freshly pulled desktop-registration code in the install venv.
+
+    The updater process still has the old modules in memory after ``git reset``.
+    A subprocess is therefore intentional: it imports the new checkout and can
+    create a Windows Installed Apps entry, a macOS bundle, or a Linux desktop
+    entry before the current process exits. Headless Linux reports a clean skip.
+    """
+
+    py = _venv_python(root)
+    rc, out, err = await _run(
+        [
+            str(py),
+            "-m",
+            "jarvis.setup.desktop_integration",
+            "--install-dir",
+            str(root),
+            "--json",
+        ],
+        cwd=root,
+        timeout_s=120.0,
+    )
+    if rc != 0:
+        return False, (err or out or "desktop registration failed")[-400:]
+    try:
+        payload = json.loads(out.splitlines()[-1])
+    except (IndexError, json.JSONDecodeError, TypeError):
+        return False, "desktop registration returned an unreadable result"
+    if not payload.get("ok"):
+        warnings = payload.get("warnings") or []
+        detail = "; ".join(str(item) for item in warnings)
+        return False, (detail or "desktop registration is incomplete")[-400:]
+    return True, ""
+
+
 # --------------------------------------------------------------------------- #
 # Routes
 # --------------------------------------------------------------------------- #
@@ -403,7 +440,8 @@ async def update_status(force: bool = False) -> dict[str, object]:
 async def update_apply() -> dict[str, object]:
     """Pull the latest code for a managed install. Does NOT restart.
 
-    Returns ``{ok, restart_required, version, deps_refreshed, deps_warning}``.
+    Returns update, dependency, and desktop-registration status plus
+    ``restart_required``.
     The caller applies the update by then calling
     ``POST /api/settings/restart-app``.
     """
@@ -442,6 +480,10 @@ async def update_apply() -> dict[str, object]:
         if not ok:
             deps_warning = msg
 
+    desktop_integration_ok, desktop_integration_warning = (
+        await _refresh_desktop_integration(root)
+    )
+
     new_version = _version_on_disk(root) or _running_version()
     return {
         "ok": True,
@@ -449,4 +491,6 @@ async def update_apply() -> dict[str, object]:
         "version": new_version,
         "deps_refreshed": deps_refreshed,
         "deps_warning": deps_warning,
+        "desktop_integration_ok": desktop_integration_ok,
+        "desktop_integration_warning": desktop_integration_warning or None,
     }

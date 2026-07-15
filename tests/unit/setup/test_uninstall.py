@@ -32,8 +32,13 @@ def _use_plan(monkeypatch: pytest.MonkeyPatch, plan: UninstallPlan) -> None:
 
 
 def _record_steps(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Replace the three removal helpers with recorders; return the shared log."""
+    """Replace the four removal helpers with recorders; return the shared log."""
     called: list[str] = []
+    monkeypatch.setattr(
+        uninstall,
+        "_remove_desktop_registration",
+        lambda: called.append("desktop"),
+    )
     monkeypatch.setattr(uninstall, "_remove_autostart", lambda: called.append("autostart"))
     monkeypatch.setattr(uninstall, "_remove_keys", lambda k: called.append("keys"))
     monkeypatch.setattr(uninstall, "_remove_folder", lambda p: called.append("folder"))
@@ -111,13 +116,18 @@ def test_confirm_requires_yes(monkeypatch: pytest.MonkeyPatch, answer: str, expe
 
 
 # ---------------------------------------------------------------- happy path
-def test_assume_yes_runs_all_three_steps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_assume_yes_runs_all_four_steps(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _use_plan(monkeypatch, _fake_plan(tmp_path, keys=["openai_api_key"]))
     called = _record_steps(monkeypatch)
 
     rc = uninstall.run_uninstall(assume_yes=True)
     assert rc == 0
-    assert called == ["autostart", "keys", "folder"]  # order: outside-the-folder first
+    assert called == [
+        "desktop",
+        "autostart",
+        "keys",
+        "folder",
+    ]  # order: outside-the-folder first
 
 
 def test_keep_keys_skips_key_removal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -136,6 +146,17 @@ def test_keep_folder_skips_folder_removal(tmp_path: Path, monkeypatch: pytest.Mo
     uninstall.run_uninstall(assume_yes=True, keep_folder=True)
     assert "folder" not in called
     assert "keys" in called
+
+
+def test_bootstrap_fallbacks_remove_registration_without_the_venv() -> None:
+    root = Path(__file__).resolve().parents[3]
+    windows = (root / "install" / "uninstall.ps1").read_text(encoding="utf-8")
+    posix = (root / "install" / "uninstall.sh").read_text(encoding="utf-8")
+
+    assert "CurrentVersion\\Uninstall\\PersonalJarvis" in windows
+    assert "Start Menu\\Programs\\Personal Jarvis.lnk" in windows
+    assert "$HOME/Applications/Personal Jarvis.app" in posix
+    assert "applications/personal-jarvis.desktop" in posix
 
 
 # ---------------------------------------------------------------- key removal

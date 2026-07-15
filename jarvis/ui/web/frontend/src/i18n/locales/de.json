@@ -25,7 +25,8 @@
     "updating": "{name} wird aktualisiert…",
     "update_failed": "Update fehlgeschlagen",
     "update_hint": "Neue Version herunterladen und installieren",
-    "update_deps_warning": "Aktualisiert — einige Komponenten brauchen evtl. eine manuelle Neuinstallation"
+    "update_deps_warning": "Aktualisiert — einige Komponenten brauchen evtl. eine manuelle Neuinstallation",
+    "update_desktop_warning": "Aktualisiert — das Betriebssystem konnte den App-Starter nicht vollständig reparieren"
   },
   "nav": {
     "chats": "Chats",

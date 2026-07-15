@@ -5,10 +5,11 @@
 #   & "$env:USERPROFILE\.personal-jarvis\install\uninstall.ps1" --dry-run   # preview
 #   & "$env:USERPROFILE\.personal-jarvis\install\uninstall.ps1" --yes       # no prompt
 #
-# It removes three things a plain folder-delete would miss:
+# It removes four things a plain folder-delete would miss:
 #   1. the install folder (~\.personal-jarvis)
-#   2. the login-autostart entry (a logon scheduled task / Startup shortcut)
-#   3. the API keys saved in the OS keychain (Windows Credential Manager, service
+#   2. the Start-menu launcher and Installed Apps registration
+#   3. the login-autostart entry (a logon scheduled task / Startup shortcut)
+#   4. the API keys saved in the OS keychain (Windows Credential Manager, service
 #      "personal-jarvis")
 #
 # Heavy logic lives in `python -m jarvis --uninstall` (cross-platform, tested).
@@ -47,20 +48,27 @@ if (-not (Test-Path -LiteralPath $InstallDir)) {
     exit 0
 }
 
-# 1 + 2 + 3: run the tested cleanup (autostart + keys), keeping the folder so we
-#            delete it ourselves below (the running venv must not self-delete).
+# 2 + 3 + 4: run the tested cleanup (app registration, autostart, and keys),
+#            keeping the folder so we can delete it below.
 $Rc = 0
 if (Test-Path -LiteralPath $VenvPython) {
     & $VenvPython -m jarvis --uninstall --keep-folder @args
     $Rc = $LASTEXITCODE
 } else {
     Write-Err 'Python environment missing - skipping autostart/key cleanup.'
-    Write-Note 'Removing the folder only; saved API keys may remain in Credential Manager.'
+    Write-Note 'The app registration and folder can still be removed; saved API keys may remain.'
     if ($DryRun) { exit 0 }
     if (-not $AssumeYes) {
         $ans = Read-Host "Type 'yes' to delete $InstallDir"
         if ($ans -ne 'yes') { Write-Note 'Cancelled.'; exit 1 }
     }
+    if ($env:APPDATA) {
+        $Shortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Personal Jarvis.lnk'
+        Remove-Item -LiteralPath $Shortcut -Force -ErrorAction SilentlyContinue
+    }
+    Remove-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Uninstall\PersonalJarvis' -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\AppUserModelId\PersonalJarvis.PersonalJarvis' -Recurse -Force -ErrorAction SilentlyContinue
+    Write-Ok 'Removed the desktop app registration.'
     $Rc = 0
 }
 

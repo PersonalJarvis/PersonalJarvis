@@ -487,16 +487,26 @@ def _default_start_menu_programs_dir() -> Path | None:
     return Path(appdata) / "Microsoft" / "Windows" / "Start Menu" / "Programs"
 
 
-def _shortcut_paths_are_live(lnk: Path) -> bool:
-    """True only if the ``.lnk``'s icon file AND target file both exist on disk.
+def _shortcut_matches_install(
+    lnk: Path,
+    *,
+    expected_target: Path,
+    expected_icon: Path,
+    expected_arguments: str,
+) -> bool:
+    """True only when a ``.lnk`` points at this exact live installation.
 
     The taskbar renders an AUMID-grouped button from its Start-Menu shortcut's
     icon; a dangling ``IconLocation`` (install moved/renamed) silently degrades
     to the target's icon (``pythonw.exe`` -> Python logo). An empty
     ``IconLocation`` means "use the target's icon", which is exactly the Python
-    fallback, so that counts as NOT live. Best-effort: any read failure returns
-    ``False`` so the caller rewrites rather than trusting a shortcut it cannot
-    verify. Windows-only helper (``WScript.Shell`` is a shell COM object).
+    fallback, so that counts as NOT live.
+
+    Mere existence is not enough: an old Python installation can remain on disk
+    after Jarvis rebuilt its venv. The old check accepted that stale executable
+    forever, leaving Windows search with a launcher for the previous environment.
+    Compare target, icon, and arguments to the values this process would write.
+    Best-effort: any read failure returns ``False`` so the caller repairs it.
     """
     if sys.platform != "win32":
         return False
@@ -509,11 +519,23 @@ def _shortcut_paths_are_live(lnk: Path) -> bool:
         sc = Dispatch("WScript.Shell").CreateShortcut(str(lnk))
         # IconLocation is "<path>,<index>"; an empty path == inherit the target
         # icon == the pythonw.exe fallback, so treat it as not-live.
-        icon_path = (sc.IconLocation or "").rsplit(",", 1)[0].strip().strip('"')
-        target = (sc.TargetPath or "").strip().strip('"')
-        icon_ok = bool(icon_path) and Path(icon_path).is_file()
-        target_ok = bool(target) and Path(target).is_file()
-        return icon_ok and target_ok
+        icon_raw = (sc.IconLocation or "").rsplit(",", 1)[0].strip().strip('"')
+        target_raw = (sc.TargetPath or "").strip().strip('"')
+
+        def _same_path(actual: str, expected: Path) -> bool:
+            if not actual:
+                return False
+            return os.path.normcase(os.path.abspath(actual)) == os.path.normcase(
+                os.path.abspath(expected)
+            )
+
+        return (
+            Path(icon_raw).is_file()
+            and Path(target_raw).is_file()
+            and _same_path(icon_raw, expected_icon)
+            and _same_path(target_raw, expected_target)
+            and (sc.Arguments or "").strip() == expected_arguments
+        )
     except Exception as exc:  # noqa: BLE001
         logger.debug("could not read shortcut target/icon, treating as stale: {}", exc)
         return False
@@ -540,9 +562,10 @@ def ensure_start_menu_shortcut(
     a *fresh* launch picks it up (an already-grouped button is not retroactively
     renamed).
 
-    Idempotent (an existing shortcut already carrying ``aumid`` is left alone),
-    Windows-only, best-effort — it never raises and never blocks boot. Returns
-    ``True`` only when a matching shortcut is present afterwards.
+    Idempotent (an existing shortcut carrying ``aumid`` and pointing at this
+    exact interpreter is left alone), Windows-only, best-effort - it never
+    raises and never blocks boot. Returns ``True`` only when a matching shortcut
+    is present afterwards.
     """
     if sys.platform != "win32":
         return False
@@ -583,7 +606,12 @@ def ensure_start_menu_shortcut(
                 str(lnk), None, 0, iid  # GPS_DEFAULT
             )
             existing = ro_store.GetValue(pscon.PKEY_AppUserModel_ID).GetValue()
-            if existing == aumid and _shortcut_paths_are_live(lnk):
+            if existing == aumid and _shortcut_matches_install(
+                lnk,
+                expected_target=pythonw,
+                expected_icon=ico,
+                expected_arguments=f"-m {_LAUNCHER_MODULE}",
+            ):
                 return True
             logger.debug("stale/broken Start-Menu shortcut, rewriting: {}", lnk)
         except Exception as exc:  # noqa: BLE001

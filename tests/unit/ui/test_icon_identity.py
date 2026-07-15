@@ -233,3 +233,26 @@ def test_ensure_start_menu_shortcut_is_idempotent(tmp_path: Path) -> None:
     assert first is True
     assert second is True
     assert (tmp_path / START_MENU_SHORTCUT_NAME).is_file()
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="shortcuts are Windows-only")
+def test_ensure_start_menu_shortcut_rewrites_a_live_but_stale_target(
+    tmp_path: Path,
+) -> None:
+    """An old Python executable may still exist after a venv migration."""
+    from win32com.client import Dispatch
+
+    assert ensure_start_menu_shortcut(aumid=_TEST_AUMID, programs_dir=tmp_path)
+    link = tmp_path / START_MENU_SHORTCUT_NAME
+    shell = Dispatch("WScript.Shell")
+    original = shell.CreateShortcut(str(link)).TargetPath
+
+    stale = tmp_path / "old-pythonw.exe"
+    stale.write_bytes(b"still exists")
+    shortcut = shell.CreateShortcut(str(link))
+    shortcut.TargetPath = str(stale)
+    shortcut.Save()
+    assert shell.CreateShortcut(str(link)).TargetPath == str(stale)
+
+    assert ensure_start_menu_shortcut(aumid=_TEST_AUMID, programs_dir=tmp_path)
+    assert shell.CreateShortcut(str(link)).TargetPath == original

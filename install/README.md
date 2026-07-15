@@ -29,13 +29,19 @@ app as its last action. Re-running the one-liner updates in place and never
 re-runs setup. `--headless` keeps the minimal torch-free base (the tiny-VPS /
 advanced path).
 
+GUI installs also register Personal Jarvis with the current desktop shell:
+Windows Search and Installed Apps, Spotlight via a per-user macOS app bundle,
+or the Linux application menu. The in-app updater and first desktop launch
+repair these artifacts, and uninstall removes them again. Developer checkouts
+and headless Linux hosts are deliberately not registered.
+
 ## File layout
 
 | File              | Stage | Responsibility |
 |-------------------|-------|----------------|
 | `install.ps1`     | 1     | Windows bootstrap: Python+Git detect/install/re-check, clone, venv, install `rich`, exec `installer.py`. |
 | `install.sh`      | 1     | macOS/Linux bootstrap: same flow through native package managers, POSIX bash. |
-| `installer.py`    | 2     | Python orchestrator: pip install, optional extras, model prefetch, worker CLI, launch (last). All cross-platform logic lives here. |
+| `installer.py`    | 2     | Python orchestrator: pip install, optional extras, model prefetch, worker CLI, desktop registration, launch (last). |
 | `README.md`       | docs  | This file. |
 
 ## Why two stages?

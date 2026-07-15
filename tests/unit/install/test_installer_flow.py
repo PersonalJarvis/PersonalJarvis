@@ -46,7 +46,9 @@ def test_installer_prompts_only_inside_missing_prerequisite_flow() -> None:
     sh_end = sh.index("# --- prerequisite-bootstrap end")
     # Design amendment 2026-07-14: ONE more allowed prompt — the welcome gate
     # ("Would you like to install?") BEFORE phase 1. Nothing else may ask.
-    wg_begin = sh.index("# -------------------------------------------------------------- welcome gate")
+    wg_begin = sh.index(
+        "# -------------------------------------------------------------- welcome gate"
+    )
     wg_end = sh.index("# -------------------------------------------------------------- preflight")
     sh_outside = sh[:wg_begin] + sh[wg_end:sh_begin] + sh[sh_end:]
     assert "read -r" not in sh_outside
@@ -97,6 +99,22 @@ def test_headless_pip_plan_stays_base_floor(capsys) -> None:
     out = capsys.readouterr().out
     assert ".[full]" not in out
     assert ".[desktop]" not in out
+
+
+def test_linux_gui_gets_full_profile_and_app_menu_registration(
+    monkeypatch, capsys
+) -> None:
+    """A Linux desktop is a first-class app install, not the headless floor."""
+    monkeypatch.setattr(installer.sys, "platform", "linux")
+    monkeypatch.setenv("DISPLAY", ":99")
+
+    rc = installer.main(["--dry-run", "--no-launch"])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert ".[full]" in out
+    assert "repair desktop-shell registration" in out
+    assert 'app menu -> "Personal Jarvis"' in out
 
 
 def test_update_summary_promises_no_reonboarding(monkeypatch, capsys, tmp_path) -> None:

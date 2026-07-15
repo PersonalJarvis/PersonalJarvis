@@ -25,7 +25,8 @@
     "updating": "Updating {name}…",
     "update_failed": "Update failed",
     "update_hint": "Download and install the new version",
-    "update_deps_warning": "Updated — some components may need a manual reinstall"
+    "update_deps_warning": "Updated — some components may need a manual reinstall",
+    "update_desktop_warning": "Updated — the operating system could not fully repair the app launcher"
   },
   "nav": {
     "chats": "Chats",

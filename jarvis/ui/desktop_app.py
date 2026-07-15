@@ -3047,6 +3047,40 @@ class DesktopApp:
         except Exception:  # noqa: BLE001
             pass
 
+        # Repair shell registration only after the first webview paint. This is
+        # deliberately off the boot-critical path (AP-26), and it is the bridge
+        # that upgrades old installations: the v1.0.7 updater itself did not run
+        # installer finalizers, but its restart loads this new boot hook.
+        self._start_desktop_integration_repair()
+
+    def _start_desktop_integration_repair(self) -> None:
+        """Repair the managed install's launcher/app bundle in the background."""
+
+        if getattr(self, "_desktop_integration_repair_started", False):
+            return
+        self._desktop_integration_repair_started = True
+
+        def _repair() -> None:
+            from loguru import logger as _log
+
+            try:
+                from jarvis.setup.desktop_integration import ensure_desktop_integration
+
+                report = ensure_desktop_integration()
+                if report.attempted and not report.ok:
+                    _log.warning(
+                        "Desktop registration repair incomplete: {}",
+                        "; ".join(report.warnings),
+                    )
+            except Exception:  # noqa: BLE001 - registration never blocks the app
+                _log.opt(exception=True).debug("Desktop registration repair failed")
+
+        threading.Thread(
+            target=_repair,
+            name="jarvis-desktop-registration",
+            daemon=True,
+        ).start()
+
     # ---- Backend-ready check --------------------------------------------------
 
     def _wait_for_backend(self, timeout_s: float = 45.0) -> bool:

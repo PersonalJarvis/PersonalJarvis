@@ -7,6 +7,16 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **Desktop installs remain discoverable after an in-app update.** Managed
+  installs now register and repair the Windows Start-menu and Installed Apps
+  entries, the macOS per-user app bundle, or the Linux application-menu entry.
+  Installer, updater, first desktop paint, and uninstaller share one guarded
+  lifecycle, while headless and developer checkouts remain untouched.
+
 ## [1.0.7] — 2026-07-14
 
 ### Fixed

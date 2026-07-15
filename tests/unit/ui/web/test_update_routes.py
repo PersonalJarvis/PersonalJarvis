@@ -6,6 +6,7 @@ fail-closed on an unknown running version, and the network check is fail-open.
 """
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 import pytest
@@ -15,12 +16,19 @@ from fastapi.testclient import TestClient
 import jarvis.ui.web.update_routes as u
 from jarvis.ui.web.update_routes import router as update_router
 
+_REAL_REFRESH_DESKTOP_INTEGRATION = u._refresh_desktop_integration
+
 
 @pytest.fixture(autouse=True)
-def _reset_cache() -> None:
+def _reset_cache(monkeypatch: pytest.MonkeyPatch) -> None:
     # The status cache is module-global; clear it so each test sees a fresh check.
     u._status_cache = None
     u._status_cache_until = 0.0
+
+    async def _desktop_ok(_root: Path) -> tuple[bool, str]:
+        return True, ""
+
+    monkeypatch.setattr(u, "_refresh_desktop_integration", _desktop_ok)
 
 
 @pytest.fixture
@@ -164,6 +172,8 @@ def test_apply_happy_path_pulls_and_signals_restart(
     assert body["ok"] is True
     assert body["restart_required"] is True
     assert body["version"] == "1.0.2"
+    assert body["desktop_integration_ok"] is True
+    assert body["desktop_integration_warning"] is None
     assert ["fetch", "--depth", "1", "origin", "main"] in calls
     assert ["reset", "--hard", "origin/main"] in calls
 
@@ -204,3 +214,56 @@ def test_apply_refreshes_deps_only_when_lockfile_changes(
     body = client.post("/api/update/apply").json()
     assert body["deps_refreshed"] is True
     assert refreshed.get("called") is True
+
+
+def test_apply_reports_desktop_registration_failure_without_rolling_back_code(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_managed(monkeypatch, tmp_path)
+
+    async def _fake_git(args, *, cwd, timeout_s=60.0):
+        return 0, "", ""
+
+    async def _desktop_failed(_root: Path) -> tuple[bool, str]:
+        return False, "could not register the app launcher"
+
+    monkeypatch.setattr(u, "_git", _fake_git)
+    monkeypatch.setattr(u, "_version_on_disk", lambda root: "1.0.2")
+    monkeypatch.setattr(u, "_refresh_desktop_integration", _desktop_failed)
+
+    body = client.post("/api/update/apply").json()
+
+    assert body["ok"] is True
+    assert body["desktop_integration_ok"] is False
+    assert body["desktop_integration_warning"] == "could not register the app launcher"
+
+
+def test_desktop_refresh_imports_the_new_checkout_in_a_subprocess(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    calls: list[list[str]] = []
+
+    async def _fake_run(cmd, *, cwd, timeout_s):
+        calls.append(cmd)
+        return 0, '{"ok": true, "attempted": false}', ""
+
+    monkeypatch.setattr(u, "_run", _fake_run)
+
+    result = asyncio.run(_REAL_REFRESH_DESKTOP_INTEGRATION(tmp_path))
+
+    assert result == (True, "")
+    assert calls[0][1:3] == ["-m", "jarvis.setup.desktop_integration"]
+
+
+def test_desktop_refresh_reports_an_unreadable_subprocess_result(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    async def _fake_run(cmd, *, cwd, timeout_s):
+        return 0, "not-json", ""
+
+    monkeypatch.setattr(u, "_run", _fake_run)
+
+    ok, warning = asyncio.run(_REAL_REFRESH_DESKTOP_INTEGRATION(tmp_path))
+
+    assert ok is False
+    assert "unreadable" in warning
