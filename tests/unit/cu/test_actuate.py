@@ -538,3 +538,83 @@ def test_macos_quartz_drag_posts_down_dragged_endpoint_and_up(monkeypatch):
     assert posted[0].point == (10, 20)
     assert posted[-2].point == (30, 40)
     assert posted[-1].point == (30, 40)
+
+
+# ---------------------------------------------------------------------------
+# POSIX pyautogui fallback: Unicode typing (deep-dive 2026-07-15 follow-up)
+# ---------------------------------------------------------------------------
+#
+# Linux always runs on the pyautogui fallback (the desktop extras skip pynput
+# there), and pyautogui.typewrite silently DROPS non-ASCII characters — so
+# German umlauts / accents would vanish from typed text. Non-ASCII must route
+# through `xdotool type` (Unicode-capable on X11) and only fall back to
+# pyautogui with a loud warning.
+
+
+def _pyautogui_only_actuator(monkeypatch):
+    """A PosixActuator forced onto the pyautogui fallback with a spy."""
+    from jarvis.cu.actuate import posix as posix_mod
+
+    calls: dict[str, list] = {"typewrite": []}
+
+    class _FakePyautogui:
+        FAILSAFE = True
+
+        @staticmethod
+        def typewrite(text, interval=0.0):
+            calls["typewrite"].append(text)
+
+    actuator = posix_mod.PosixActuator.__new__(posix_mod.PosixActuator)
+    actuator._mouse = None
+    actuator._keyboard = None
+    actuator._keys = {}
+    actuator._buttons = {}
+    actuator._pyautogui = _FakePyautogui()
+    return actuator, calls
+
+
+def test_posix_ascii_typing_stays_on_pyautogui(monkeypatch):
+    actuator, calls = _pyautogui_only_actuator(monkeypatch)
+    xdotool_calls: list[str] = []
+    monkeypatch.setattr(
+        type(actuator), "_xdotool_type",
+        staticmethod(lambda text, *, delay_s: xdotool_calls.append(text) or True),
+    )
+    actuator.type_text("hello world", delay_s=0)
+    assert calls["typewrite"] == ["hello world"]
+    assert xdotool_calls == []
+
+
+def test_posix_unicode_typing_prefers_xdotool(monkeypatch):
+    actuator, calls = _pyautogui_only_actuator(monkeypatch)
+    xdotool_calls: list[str] = []
+    monkeypatch.setattr(
+        type(actuator), "_xdotool_type",
+        staticmethod(lambda text, *, delay_s: xdotool_calls.append(text) or True),
+    )
+    actuator.type_text("Grüße aus München", delay_s=0)  # i18n-allow: umlaut fixture under test
+    assert xdotool_calls == ["Grüße aus München"]  # i18n-allow: umlaut fixture under test
+    assert calls["typewrite"] == []  # never reached pyautogui
+
+
+def test_posix_unicode_typing_falls_back_loudly(monkeypatch, caplog):
+    """xdotool absent/failed -> pyautogui still types, with a WARNING."""
+    import logging
+
+    actuator, calls = _pyautogui_only_actuator(monkeypatch)
+    monkeypatch.setattr(
+        type(actuator), "_xdotool_type",
+        staticmethod(lambda text, *, delay_s: False),
+    )
+    with caplog.at_level(logging.WARNING, logger="jarvis.cu.actuate.posix"):
+        actuator.type_text("Grüße", delay_s=0)  # i18n-allow: umlaut fixture under test
+    assert calls["typewrite"] == ["Grüße"]  # i18n-allow: umlaut fixture under test
+    assert any("non-ASCII" in r.message for r in caplog.records)
+
+
+def test_xdotool_type_refuses_off_linux():
+    """The xdotool path is X11-only; Windows/macOS must return False."""
+    from jarvis.cu.actuate.posix import PosixActuator
+
+    if not sys.platform.startswith("linux"):
+        assert PosixActuator._xdotool_type("text", delay_s=0.02) is False

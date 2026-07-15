@@ -271,10 +271,14 @@ class PosixActuator(Actuator):
             self._pyautogui.scroll(dy)
 
     def key_combo(self, keys: list[str]) -> None:
-        # Accept "ctrl+t" combined tokens like the Windows backend.
+        # Accept "ctrl+t" combined tokens like the Windows backend. The
+        # self_input stamp keeps a Jarvis-typed Esc from tripping the
+        # Escape-to-cancel listener (jarvis.cu.indicator).
         from jarvis.cu.actuate.windows import expand_combo_keys  # noqa: PLC0415
+        from jarvis.cu.indicator.self_input import stamp_if_escape  # noqa: PLC0415
 
         expanded = expand_combo_keys([str(k) for k in keys])
+        stamp_if_escape(expanded)
         if self._keyboard is None:
             aliases = {"cmd", "command", "meta", "super", "win", "windows", "lwin"}
             mapped: list[str] = []
@@ -382,6 +386,20 @@ class PosixActuator(Actuator):
 
     def type_text(self, text: str, *, delay_s: float = 0.02) -> None:
         if self._keyboard is None:
+            # pyautogui.typewrite silently DROPS every non-ASCII character
+            # (umlauts, eszett, accents, CJK), and Linux always runs on this fallback (the
+            # desktop extras skip pynput there — evdev would compile against
+            # kernel headers). Route non-ASCII through `xdotool type`, which
+            # synthesizes arbitrary Unicode on X11 and is provisioned by the
+            # installer since deep-dive 2026-07-15 H-01.
+            if not text.isascii() and self._xdotool_type(text, delay_s=delay_s):
+                return
+            if not text.isascii():
+                logger.warning(
+                    "[cu] typing non-ASCII text via pyautogui — characters "
+                    "outside ASCII will be dropped (install xdotool or pynput "
+                    "for Unicode input).",
+                )
             self._pyautogui.typewrite(text, interval=delay_s)
             return
         if delay_s <= 0:
@@ -390,3 +408,31 @@ class PosixActuator(Actuator):
         for char in text:
             self._keyboard.type(char)
             time.sleep(delay_s)
+
+    @staticmethod
+    def _xdotool_type(text: str, *, delay_s: float) -> bool:
+        """Type ``text`` via ``xdotool type`` on X11. Returns False when the
+        binary is missing or the call fails, so the caller can fall back."""
+        if not sys.platform.startswith("linux"):
+            return False
+        import shutil  # noqa: PLC0415
+        import subprocess  # noqa: PLC0415
+
+        if shutil.which("xdotool") is None:
+            return False
+        try:
+            from jarvis.core.process_utils import (  # noqa: PLC0415
+                NO_WINDOW_CREATIONFLAGS,
+            )
+
+            delay_ms = max(1, int(delay_s * 1000)) if delay_s > 0 else 1
+            proc = subprocess.run(
+                ["xdotool", "type", "--delay", str(delay_ms), "--", text],
+                capture_output=True,
+                timeout=max(30.0, 0.5 * len(text)),
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+            )
+        except Exception:  # noqa: BLE001 — fall back to pyautogui
+            logger.debug("xdotool type failed", exc_info=True)
+            return False
+        return proc.returncode == 0
