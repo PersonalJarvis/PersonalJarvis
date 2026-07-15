@@ -10,7 +10,9 @@ registry holds one instance; REST routes read through its methods.
 from __future__ import annotations
 
 import logging
+import os
 import sqlite3
+import tempfile
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -42,35 +44,50 @@ class DocSearch:
     def __init__(self, db_path: Path) -> None:
         self.db_path = Path(db_path)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._lock = threading.Lock()
         # ``check_same_thread=False`` because watchdog wants to upsert from a
         # different thread. We serialise access via the lock.
-        self._conn = sqlite3.connect(
-            str(self.db_path), check_same_thread=False, isolation_level=None,
-        )
-        self._lock = threading.Lock()
+        self._conn = self._connect(self.db_path)
         self._init_schema()
 
     # ------------------------------------------------------------------
     # Schema
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def _connect(path: Path) -> sqlite3.Connection:
+        return sqlite3.connect(
+            str(path), check_same_thread=False, isolation_level=None,
+        )
+
+    @staticmethod
+    def _configure_connection(
+        connection: sqlite3.Connection,
+        *,
+        use_wal: bool,
+    ) -> None:
+        if use_wal:
+            connection.execute("PRAGMA journal_mode=WAL")
+        else:
+            connection.execute("PRAGMA journal_mode=DELETE")
+        connection.execute(
+            """
+            CREATE VIRTUAL TABLE IF NOT EXISTS docs_index USING fts5(
+                slug UNINDEXED,
+                title,
+                diataxis UNINDEXED,
+                phase UNINDEXED,
+                tags,
+                headings,
+                body,
+                tokenize='unicode61 remove_diacritics 2'
+            )
+            """
+        )
+
     def _init_schema(self) -> None:
         with self._lock:
-            self._conn.executescript(
-                """
-                PRAGMA journal_mode=WAL;
-                CREATE VIRTUAL TABLE IF NOT EXISTS docs_index USING fts5(
-                    slug UNINDEXED,
-                    title,
-                    diataxis UNINDEXED,
-                    phase UNINDEXED,
-                    tags,
-                    headings,
-                    body,
-                    tokenize='unicode61 remove_diacritics 2'
-                );
-                """
-            )
+            self._configure_connection(self._conn, use_wal=True)
 
     # ------------------------------------------------------------------
     # Upsert / Delete
@@ -103,35 +120,90 @@ class DocSearch:
             self._conn.execute("DELETE FROM docs_index WHERE slug = ?", (slug,))
 
     def replace_all(self, docs: list[Doc]) -> None:
-        """Full re-indexing — called on bootstrap and after larger reloads.
-        Atomic via a transaction."""
+        """Atomically replace the index with a newly built SQLite file.
+
+        Deleting FTS rows leaves their previous pages recoverable in SQLite's
+        free list and WAL. Building a fresh file prevents retired engineering
+        docs or local paths from surviving a scope reduction in raw bytes.
+        """
+        rows = [
+            (
+                doc.frontmatter.slug,
+                doc.frontmatter.title,
+                doc.frontmatter.diataxis.value,
+                doc.frontmatter.phase,
+                " ".join(doc.frontmatter.tags),
+                " ".join(text for _level, text, _slug in doc.headings),
+                doc.body,
+            )
+            for doc in docs
+        ]
         with self._lock:
-            self._conn.execute("BEGIN")
+            descriptor, raw_temp_path = tempfile.mkstemp(
+                prefix=f".{self.db_path.name}.",
+                suffix=".tmp",
+                dir=self.db_path.parent,
+            )
+            os.close(descriptor)
+            temp_path = Path(raw_temp_path)
+            temp_connection: sqlite3.Connection | None = None
+            current_connection_closed = False
             try:
-                self._conn.execute("DELETE FROM docs_index")
-                self._conn.executemany(
+                temp_connection = self._connect(temp_path)
+                # DELETE mode keeps the completed replacement self-contained;
+                # no temporary WAL can be orphaned during the rename.
+                self._configure_connection(temp_connection, use_wal=False)
+                temp_connection.execute("BEGIN IMMEDIATE")
+                temp_connection.executemany(
                     """
                     INSERT INTO docs_index
                         (slug, title, diataxis, phase, tags, headings, body)
                     VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
-                    [
-                        (
-                            d.frontmatter.slug,
-                            d.frontmatter.title,
-                            d.frontmatter.diataxis.value,
-                            d.frontmatter.phase,
-                            " ".join(d.frontmatter.tags),
-                            " ".join(t for _l, t, _s in d.headings),
-                            d.body,
-                        )
-                        for d in docs
-                    ],
+                    rows,
                 )
-                self._conn.execute("COMMIT")
+                temp_connection.execute("COMMIT")
+                temp_connection.close()
+                temp_connection = None
+
+                # Flush the complete replacement before exposing it at the
+                # stable path. ``os.replace`` is atomic within this directory.
+                # Windows requires a writable descriptor for ``fsync``.
+                with temp_path.open("rb+") as replacement_file:
+                    os.fsync(replacement_file.fileno())
+
+                try:
+                    self._conn.close()
+                finally:
+                    current_connection_closed = True
+                self._remove_sidecars(self.db_path)
+                os.replace(temp_path, self.db_path)
+
+                self._conn = self._connect(self.db_path)
+                current_connection_closed = False
+                self._configure_connection(self._conn, use_wal=True)
             except Exception:
-                self._conn.execute("ROLLBACK")
+                if temp_connection is not None:
+                    try:
+                        temp_connection.execute("ROLLBACK")
+                    except sqlite3.Error:
+                        pass
+                if current_connection_closed:
+                    # A failed swap must leave the previous database usable.
+                    self._conn = self._connect(self.db_path)
+                    current_connection_closed = False
+                    self._configure_connection(self._conn, use_wal=True)
                 raise
+            finally:
+                if temp_connection is not None:
+                    temp_connection.close()
+                temp_path.unlink(missing_ok=True)
+                self._remove_sidecars(temp_path)
+
+    @staticmethod
+    def _remove_sidecars(path: Path) -> None:
+        for suffix in ("-wal", "-shm", "-journal"):
+            Path(f"{path}{suffix}").unlink(missing_ok=True)
 
     # ------------------------------------------------------------------
     # Query

@@ -5,21 +5,24 @@ Endpoints:
 - ``GET /api/docs/grouped``        Grouped by Diataxis quadrant — directly
                                    usable for the sidebar tree view.
 - ``GET /api/docs/search``         FTS5 full-text search with BM25 rank + snippet.
-- ``GET /api/docs/asset/{path}``   Images/static files relative to the doc path.
+- ``GET /api/docs/asset/{slug}/{path}`` Images/static files relative to a guide.
 - ``GET /api/docs/{slug}``         Full body + frontmatter.
 - ``POST /api/docs/reload``        Forces re-indexing (dev helper).
 
 The router expects a ``DocRegistry`` on ``app.state.doc_registry`` —
 ``WebServer._setup_doc_registry()`` sets it at startup.
 """
+
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import FileResponse
 
+from jarvis.core.paths import repo_root
 from jarvis.docs.registry import DocRegistry
 from jarvis.docs.schema import Doc, DocDiataxis, DocStatus
 
@@ -32,6 +35,7 @@ router = APIRouter(prefix="/api/docs", tags=["docs"])
 # Dependencies
 # ----------------------------------------------------------------------
 
+
 def _require_registry(request: Request) -> DocRegistry:
     reg = getattr(request.app.state, "doc_registry", None)
     if reg is None:
@@ -39,9 +43,17 @@ def _require_registry(request: Request) -> DocRegistry:
     return reg
 
 
+async def _ready_registry(request: Request) -> DocRegistry:
+    """Return a populated registry, loading it on demand when necessary."""
+    reg = _require_registry(request)
+    await reg.ensure_loaded()
+    return reg
+
+
 # ----------------------------------------------------------------------
 # Serialization
 # ----------------------------------------------------------------------
+
 
 def _frontmatter_dump(doc: Doc) -> dict[str, Any]:
     """Pydantic ``model_dump`` with ISO date strings (instead of datetime)."""
@@ -55,6 +67,10 @@ def _frontmatter_dump(doc: Doc) -> dict[str, Any]:
         "last_reviewed": fm.last_reviewed.isoformat() if fm.last_reviewed else None,
         "phase": fm.phase,
         "audience": fm.audience,
+        "summary": fm.summary,
+        "section": fm.section,
+        "section_order": fm.section_order,
+        "order": fm.order,
         "tags": list(fm.tags),
         "related": list(fm.related),
         "deprecates": fm.deprecates,
@@ -70,10 +86,50 @@ def _doc_to_summary(doc: Doc) -> dict[str, Any]:
     """
     return {
         **_frontmatter_dump(doc),
-        "path": doc.path.as_posix(),
+        "path": _safe_display_path(doc.path),
         "body_hash": doc.body_hash,
-        "error": doc.error,
+        "error": _safe_doc_error(doc.error),
         "heading_count": len(doc.headings),
+    }
+
+
+def _safe_display_path(path: Path) -> str:
+    """Return a useful path without exposing a local user directory."""
+    resolved = path.resolve()
+    try:
+        return resolved.relative_to(repo_root().resolve()).as_posix()
+    except ValueError:
+        return path.name
+
+
+def _safe_doc_error(error: str | None) -> str | None:
+    """Expose an actionable category without leaking a local path or content."""
+    if error is None:
+        return None
+    category = error.partition(":")[0].strip().lower()
+    if category in {
+        "read failed",
+        "frontmatter parse failed",
+        "frontmatter schema invalid",
+        "hard failure",
+    }:
+        return category
+    return "indexing failed"
+
+
+def _doc_to_nav_summary(doc: Doc) -> dict[str, Any]:
+    """Compact sidebar payload used by the desktop Docs view."""
+    fm = doc.frontmatter
+    return {
+        "title": fm.title,
+        "slug": fm.slug,
+        "diataxis": fm.diataxis.value,
+        "summary": fm.summary,
+        "section": fm.section,
+        "section_order": fm.section_order,
+        "order": fm.order,
+        "tags": list(fm.tags),
+        "related": list(fm.related),
     }
 
 
@@ -81,10 +137,7 @@ def _doc_to_detail(doc: Doc) -> dict[str, Any]:
     """Full payload for ``GET /api/docs/{slug}``."""
     out = _doc_to_summary(doc)
     out["body"] = doc.body
-    out["headings"] = [
-        {"level": lv, "text": txt, "slug": sl}
-        for lv, txt, sl in doc.headings
-    ]
+    out["headings"] = [{"level": lv, "text": txt, "slug": sl} for lv, txt, sl in doc.headings]
     return out
 
 
@@ -92,30 +145,37 @@ def _doc_to_detail(doc: Doc) -> dict[str, Any]:
 # List + Filter
 # ----------------------------------------------------------------------
 
+
 @router.get("")
-def list_docs(
+async def list_docs(
     request: Request,
     diataxis: DocDiataxis | None = None,
     status: DocStatus | None = None,
     phase: str | None = None,
     tags: list[str] = Query(default_factory=list),  # noqa: B008
 ) -> list[dict[str, Any]]:
-    reg = _require_registry(request)
+    reg = await _ready_registry(request)
     docs = reg.filter(
-        diataxis=diataxis, status=status, phase=phase, tags=tags or None,
+        diataxis=diataxis,
+        status=status,
+        phase=phase,
+        tags=tags or None,
     )
     docs.sort(key=lambda d: (d.frontmatter.diataxis.value, d.frontmatter.title.lower()))
     return [_doc_to_summary(d) for d in docs]
 
 
 @router.get("/grouped")
-def grouped_docs(request: Request) -> dict[str, list[dict[str, Any]]]:
+async def grouped_docs(
+    request: Request,
+    compact: bool = False,
+) -> dict[str, list[dict[str, Any]]]:
     """Grouped by Diataxis — sidebar tree template.
 
     Order: tutorial -> howto -> explanation -> reference ->
     troubleshooting -> adr -> unclassified.
     """
-    reg = _require_registry(request)
+    reg = await _ready_registry(request)
     raw = reg.grouped_by_diataxis()
     order = [
         DocDiataxis.TUTORIAL,
@@ -126,8 +186,9 @@ def grouped_docs(request: Request) -> dict[str, list[dict[str, Any]]]:
         DocDiataxis.ADR,
         DocDiataxis.UNCLASSIFIED,
     ]
+    serializer = _doc_to_nav_summary if compact else _doc_to_summary
     return {
-        key.value: [_doc_to_summary(d) for d in raw.get(key, [])]
+        key.value: [serializer(d) for d in raw.get(key, [])]
         for key in order
         if key in raw and raw[key]
     }
@@ -137,8 +198,9 @@ def grouped_docs(request: Request) -> dict[str, list[dict[str, Any]]]:
 # Search
 # ----------------------------------------------------------------------
 
+
 @router.get("/search")
-def search_docs(
+async def search_docs(
     request: Request,
     q: str,
     diataxis: DocDiataxis | None = None,
@@ -146,33 +208,39 @@ def search_docs(
 ) -> list[dict[str, Any]]:
     if limit < 1 or limit > 100:
         raise HTTPException(status_code=400, detail="limit must be between 1 and 100")
-    reg = _require_registry(request)
+    reg = await _ready_registry(request)
     results = reg.search_query(q, diataxis=diataxis, limit=limit)
-    return [
-        {
-            "slug": r.slug,
-            "title": r.title,
-            "diataxis": r.diataxis,
-            "phase": r.phase,
-            "snippet": r.snippet,
-            "score": r.score,
-        }
-        for r in results
-    ]
+    payload: list[dict[str, Any]] = []
+    for result in results:
+        doc = reg.get(result.slug)
+        payload.append(
+            {
+                "slug": result.slug,
+                "title": result.title,
+                "diataxis": result.diataxis,
+                "phase": result.phase,
+                "summary": doc.frontmatter.summary if doc else "",
+                "section": doc.frontmatter.section if doc else "Other",
+                "snippet": result.snippet,
+                "score": result.score,
+            }
+        )
+    return payload
 
 
 # ----------------------------------------------------------------------
 # Asset (images relative to the doc path)
 # ----------------------------------------------------------------------
 
+
 @router.get("/asset/{slug}/{asset_path:path}")
-def get_asset(request: Request, slug: str, asset_path: str) -> FileResponse:
+async def get_asset(request: Request, slug: str, asset_path: str) -> FileResponse:
     """Returns a sibling file (image, diagram) relative to the doc path.
 
     Path-traversal protection: the resolved asset must live under the
     ``parent`` of the doc file. Otherwise 400.
     """
-    reg = _require_registry(request)
+    reg = await _ready_registry(request)
     doc = reg.get(slug)
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Doc '{slug}' not found")
@@ -183,7 +251,8 @@ def get_asset(request: Request, slug: str, asset_path: str) -> FileResponse:
         target.relative_to(base)
     except ValueError as exc:
         raise HTTPException(
-            status_code=400, detail="path traversal not allowed",
+            status_code=400,
+            detail="path traversal not allowed",
         ) from exc
     if not target.is_file():
         raise HTTPException(status_code=404, detail="asset does not exist")
@@ -194,9 +263,10 @@ def get_asset(request: Request, slug: str, asset_path: str) -> FileResponse:
 # Detail (must go last — otherwise ``/{slug}`` swallows the other routes)
 # ----------------------------------------------------------------------
 
+
 @router.get("/{slug}")
-def get_doc(request: Request, slug: str) -> dict[str, Any]:
-    reg = _require_registry(request)
+async def get_doc(request: Request, slug: str) -> dict[str, Any]:
+    reg = await _ready_registry(request)
     doc = reg.get(slug)
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Doc '{slug}' not found")
@@ -207,8 +277,9 @@ def get_doc(request: Request, slug: str) -> dict[str, Any]:
 # Edit-this-page — opens the .md in the Windows default editor
 # ----------------------------------------------------------------------
 
+
 @router.post("/{slug}/open")
-def open_doc_in_editor(request: Request, slug: str) -> dict[str, Any]:
+async def open_doc_in_editor(request: Request, slug: str) -> dict[str, Any]:
     """Opens the Markdown file in the OS default editor.
 
     Cross-platform via ``jarvis.platform.open_path.open_file`` (Windows
@@ -222,7 +293,7 @@ def open_doc_in_editor(request: Request, slug: str) -> dict[str, Any]:
     """
     from jarvis.platform import open_path
 
-    reg = _require_registry(request)
+    reg = await _ready_registry(request)
     doc = reg.get(slug)
     if doc is None:
         raise HTTPException(status_code=404, detail=f"Doc '{slug}' not found")
@@ -234,15 +305,16 @@ def open_doc_in_editor(request: Request, slug: str) -> dict[str, Any]:
     opened = open_path.open_file(target)
     if not opened:
         raise HTTPException(status_code=500, detail="editor start failed")
-    return {"path": str(target), "opened": True}
+    return {"path": _safe_display_path(target), "opened": True}
 
 
 # ----------------------------------------------------------------------
 # Reload (dev helper)
 # ----------------------------------------------------------------------
 
+
 @router.post("/reload")
-def reload_docs(request: Request) -> dict[str, Any]:
+async def reload_docs(request: Request) -> dict[str, Any]:
     reg = _require_registry(request)
-    reg.reload_sync()
+    await reg.reload()
     return {"total": len(reg.list())}

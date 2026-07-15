@@ -5,7 +5,8 @@ from pathlib import Path
 
 import pytest
 
-from jarvis.docs.schema import Doc, DocDiataxis, DocFrontmatter, DocStatus
+import jarvis.docs.search as search_module
+from jarvis.docs.schema import Doc, DocFrontmatter
 from jarvis.docs.search import DocSearch
 
 
@@ -24,7 +25,7 @@ def _doc(
         phase=phase,
         tags=tags or [],
     )
-    return Doc(path=Path(f"/tmp/{slug}.md"), frontmatter=fm, body=body)
+    return Doc(path=Path("docs") / f"{slug}.md", frontmatter=fm, body=body)
 
 
 @pytest.fixture
@@ -42,7 +43,7 @@ def test_upsert_and_query_basic(search: DocSearch) -> None:
     search.upsert(_doc(
         slug="router-discipline",
         title="Concept: Router-Discipline",
-        body="Hauptjarvis is a Pure Dispatcher and delegates via spawn_worker.",
+        body="The supervisor is a pure dispatcher and delegates via spawn_worker.",
     ))
     results = search.query("Dispatcher")
     assert len(results) == 1
@@ -77,6 +78,57 @@ def test_replace_all_atomic(search: DocSearch) -> None:
     assert len(search.query("Beta")) == 1
 
 
+def test_replace_all_removes_retired_content_from_raw_database_files(
+    tmp_path: Path,
+) -> None:
+    db_path = tmp_path / "privacy_index.sqlite"
+    retired_marker = b"RETIRED_PRIVATE_DOC_SENTINEL_7f6c05a9"
+    search = DocSearch(db_path)
+    try:
+        search.upsert(
+            _doc("retired", "Retired", retired_marker.decode("ascii")),
+        )
+        database_files = [
+            db_path,
+            Path(f"{db_path}-wal"),
+            Path(f"{db_path}-shm"),
+        ]
+        assert any(
+            retired_marker in path.read_bytes()
+            for path in database_files
+            if path.exists()
+        )
+
+        search.replace_all([_doc("public", "Public", "Public reader content")])
+
+        assert search.query("RETIRED_PRIVATE_DOC_SENTINEL_7f6c05a9") == []
+        assert len(search.query("Public")) == 1
+        assert all(
+            retired_marker not in path.read_bytes()
+            for path in database_files
+            if path.exists()
+        )
+    finally:
+        search.close()
+
+
+def test_replace_all_keeps_previous_index_when_atomic_swap_fails(
+    search: DocSearch,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    search.upsert(_doc("stable", "Stable", "Previous searchable content"))
+
+    def fail_replace(*_args: object) -> None:
+        raise OSError("simulated atomic replace failure")
+
+    monkeypatch.setattr(search_module.os, "replace", fail_replace)
+    with pytest.raises(OSError, match="simulated atomic replace failure"):
+        search.replace_all([_doc("new", "New", "Replacement content")])
+
+    assert len(search.query("Previous")) == 1
+    assert search.query("Replacement") == []
+
+
 # ----------------------------------------------------------------------
 # Query — Filter + BM25
 # ----------------------------------------------------------------------
@@ -108,7 +160,7 @@ def test_query_orders_by_rank(search: DocSearch) -> None:
 def test_query_with_phrase(search: DocSearch) -> None:
     search.upsert(_doc("a", "A", "the quick brown fox"))
     search.upsert(_doc("b", "B", "the brown quick fox"))
-    # Phrase-Match nur in A
+    # The phrase match occurs only in A.
     results = search.query('"quick brown"')
     slugs = [r.slug for r in results]
     assert "a" in slugs
@@ -134,7 +186,7 @@ def test_query_handles_unbalanced_quote(search: DocSearch) -> None:
 
 def test_query_handles_only_operators(search: DocSearch) -> None:
     search.upsert(_doc("a", "A", "content"))
-    # Nur Operatoren — sanitizer trimmt sie weg
+    # The sanitizer removes input made only from operators.
     results = search.query("+++")
     assert results == []
 

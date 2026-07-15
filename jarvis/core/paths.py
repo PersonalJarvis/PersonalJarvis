@@ -9,10 +9,12 @@ This module replaces the scattered ``Path.home() / ".jarvis"`` literals and the
 local ``_app_data_dir()`` in ``jarvis.ui.shell.single_instance``. All consumers
 go through the getters defined here.
 """
+
 from __future__ import annotations
 
 import os
 import sys
+import sysconfig
 from pathlib import Path
 
 
@@ -94,16 +96,39 @@ def repo_root() -> Path:
 def default_doc_roots() -> list[Path]:
     """Default discovery roots for the documentation registry.
 
-    ``docs/`` is the canonical documentation tree. The ``.exists()`` filter is
-    kept as a defensive guard so a missing root never breaks the registry, and
-    so additional roots can be appended later (optionally overridable via a
-    ``[docs]`` section in ``jarvis.toml``).
+    ``docs/product/`` is the curated reader library. The wider ``docs/`` tree
+    remains an engineering source archive and is never exposed in the reader.
     """
     root = repo_root()
-    candidates = [
-        root / "docs",
-    ]
-    return [p for p in candidates if p.exists()]
+    # The desktop reader intentionally indexes only the curated product guide.
+    # Engineering plans, ADRs, audits, and forensic reports remain under
+    # ``docs/`` as source material, but they are not reader documentation.
+    product_docs = root / "docs" / "product"
+    if product_docs.exists():
+        return [product_docs]
+
+    # Wheels install the reader library as platform data. Check the active
+    # environment, a ``pip --target``-style root, and the user-install scheme.
+    # This keeps discovery portable without scanning a home directory.
+    data_prefixes = [Path(sysconfig.get_path("data")), root]
+    try:
+        user_scheme = sysconfig.get_preferred_scheme("user")
+        data_prefixes.append(Path(sysconfig.get_path("data", scheme=user_scheme)))
+    except (KeyError, TypeError, ValueError):
+        pass
+
+    seen_prefixes: set[Path] = set()
+    for prefix in data_prefixes:
+        if prefix in seen_prefixes:
+            continue
+        seen_prefixes.add(prefix)
+        installed_docs = prefix / "share" / "personal-jarvis" / "docs"
+        if installed_docs.exists():
+            return [installed_docs]
+
+    # Fail closed if the packaged reader library is missing. Falling back to
+    # the engineering archive could expose plans, audits, or local diagnostics.
+    return []
 
 
 def board_db_path() -> Path:

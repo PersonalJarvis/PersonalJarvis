@@ -7,6 +7,7 @@ neither, so the else-branch called a non-existent binary and raised a
 ``jarvis.platform.open_path.open_file``, the cross-platform helper already
 used by the Outputs view's native file actions.
 """
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -16,7 +17,7 @@ from unittest.mock import patch
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from jarvis.ui.web.docs_routes import router
+from jarvis.ui.web.docs_routes import _safe_doc_error, router
 
 
 class _FakeRegistry:
@@ -25,6 +26,9 @@ class _FakeRegistry:
 
     def get(self, slug: str):
         return self._docs.get(slug)
+
+    async def ensure_loaded(self) -> None:
+        return None
 
 
 def _app(doc_path: Path) -> FastAPI:
@@ -39,12 +43,10 @@ def test_open_doc_calls_open_file(tmp_path: Path):
     target = tmp_path / "my-doc.md"
     target.write_text("# hi", encoding="utf-8")
     client = TestClient(_app(target))
-    with patch(
-        "jarvis.platform.open_path.open_file", return_value=True
-    ) as opn:
+    with patch("jarvis.platform.open_path.open_file", return_value=True) as opn:
         r = client.post("/api/docs/my-doc/open")
     assert r.status_code == 200
-    assert r.json() == {"path": str(target.resolve()), "opened": True}
+    assert r.json() == {"path": "my-doc.md", "opened": True}
     opn.assert_called_once_with(target.resolve())
 
 
@@ -70,3 +72,12 @@ def test_open_doc_404_when_file_deleted_on_disk(tmp_path: Path):
     client = TestClient(_app(target))
     r = client.post("/api/docs/my-doc/open")
     assert r.status_code == 404
+
+
+def test_doc_error_category_does_not_expose_local_path() -> None:
+    error = r"read failed: [Errno 2] C:\Users\private-name\secret-doc.md"
+
+    safe = _safe_doc_error(error)
+
+    assert safe == "read failed"
+    assert "private-name" not in safe

@@ -11,6 +11,7 @@ optionality. Differences:
 - Index lookup key is ``slug`` (instead of ``name``); the synthetic slugs
   from ``loader._synth_frontmatter`` guarantee uniqueness per path.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -29,6 +30,7 @@ from .search import DocSearch, SearchResult
 try:
     from watchdog.events import FileSystemEventHandler  # type: ignore
     from watchdog.observers import Observer  # type: ignore
+
     _HAVE_WATCHDOG = True
 except Exception:  # pragma: no cover
     FileSystemEventHandler = object  # type: ignore
@@ -59,6 +61,7 @@ class DocRegistry:
         self._docs: dict[str, Doc] = {}
         self._async_lock = asyncio.Lock()
         self._thread_lock = threading.Lock()
+        self._loaded = threading.Event()
         self._observers: list[Any] = []
         self._pending_reload: float | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -73,6 +76,11 @@ class DocRegistry:
 
     def list(self) -> list[Doc]:
         return list(self._docs.values())
+
+    @property
+    def is_loaded(self) -> bool:
+        """Whether the first complete disk scan and FTS build has landed."""
+        return self._loaded.is_set()
 
     def filter(
         self,
@@ -128,19 +136,40 @@ class DocRegistry:
     def reload_sync(self) -> None:
         """Synchronous reload — used for bootstrap and tests."""
         docs = discover_docs(self.roots)
+        self.search.replace_all(docs)
         with self._thread_lock:
             self._docs = {d.frontmatter.slug: d for d in docs}
-        self.search.replace_all(docs)
+        self._loaded.set()
+        self._emit_reloaded()
+
+    async def ensure_loaded(self) -> None:
+        """Load once, prioritising an explicit request from the Docs view.
+
+        Startup normally defers this work until the wake model is ready. A user
+        can open Docs before then, so API routes call this method instead of
+        returning and caching an empty registry. Concurrent callers share the
+        same async lock and only the first one performs the disk scan.
+        """
+        if self._loaded.is_set():
+            return
+        async with self._async_lock:
+            if self._loaded.is_set():
+                return
+            docs = await asyncio.to_thread(discover_docs, self.roots)
+            await asyncio.to_thread(self.search.replace_all, docs)
+            with self._thread_lock:
+                self._docs = {d.frontmatter.slug: d for d in docs}
+            self._loaded.set()
         self._emit_reloaded()
 
     async def reload(self) -> None:
         """Async reload with lock — prevents concurrent re-indexings."""
         async with self._async_lock:
-            loop = asyncio.get_event_loop()
-            docs = await loop.run_in_executor(None, discover_docs, self.roots)
+            docs = await asyncio.to_thread(discover_docs, self.roots)
+            await asyncio.to_thread(self.search.replace_all, docs)
             with self._thread_lock:
                 self._docs = {d.frontmatter.slug: d for d in docs}
-            await loop.run_in_executor(None, self.search.replace_all, docs)
+            self._loaded.set()
         self._emit_reloaded()
 
     def _emit_reloaded(self) -> None:
@@ -224,15 +253,23 @@ class DocRegistry:
             pass
 
     async def _debounced_reload(self) -> None:
-        await asyncio.sleep(self._debounce_ms / 1000.0)
-        with self._thread_lock:
-            deadline = self._pending_reload
-            self._pending_reload = None
-        if deadline is None:
-            return
-        if time.monotonic() + 0.001 < deadline:
-            # A newer reload was requested in the meantime — skip this one
-            return
+        # Wait for the latest deadline, not merely one debounce interval from
+        # this coroutine's creation. On coarse Windows timers, two callbacks
+        # can otherwise both wake before a newer deadline and lose the reload.
+        while True:
+            with self._thread_lock:
+                deadline = self._pending_reload
+            if deadline is None:
+                return
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                await asyncio.sleep(remaining)
+                continue
+            with self._thread_lock:
+                if self._pending_reload != deadline:
+                    continue
+                self._pending_reload = None
+                break
         try:
             await self.reload()
         except Exception as exc:  # noqa: BLE001

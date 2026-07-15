@@ -1,14 +1,15 @@
 """Unit tests for DocRegistry."""
+
 from __future__ import annotations
 
 import asyncio
+import time
 from pathlib import Path
 
 import pytest
 
 from jarvis.docs.registry import DocRegistry
 from jarvis.docs.schema import DocDiataxis, DocStatus
-
 
 CONCEPT_MD = """---
 title: "Concept: Router"
@@ -21,11 +22,11 @@ tags: [brain, routing]
 
 # Concept: Router
 
-Hauptjarvis dispatcht via Sub-Jarvis-Spawn.
+The main assistant dispatches through a Jarvis-Agent.
 """
 
 HOWTO_MD = """---
-title: "How-To: Provider hinzufuegen"  # i18n-allow: matched by the "hinzufuegen" search-query test below
+title: "How-To: Add a provider"
 slug: provider-add
 diataxis: howto
 status: draft
@@ -35,12 +36,12 @@ tags: [brain, plugin]
 
 # How-To
 
-Schritt 1.
+Step 1.
 """
 
 LEGACY_MD = """# Phase 1c Test Results
 
-Ergebnisse.
+Results.
 """
 
 
@@ -68,13 +69,14 @@ def registry(doc_root: Path) -> DocRegistry:
 # Lookup
 # ----------------------------------------------------------------------
 
+
 def test_registry_lists_all_docs(registry: DocRegistry) -> None:
     docs = registry.list()
     assert len(docs) == 3
     slugs = {d.frontmatter.slug for d in docs}
     assert "router-concept" in slugs
     assert "provider-add" in slugs
-    # Legacy bekommt Synth-Slug
+    # A legacy page receives a synthesized slug.
     assert any("phase1c" in s for s in slugs)
 
 
@@ -91,6 +93,7 @@ def test_registry_get_unknown_slug(registry: DocRegistry) -> None:
 # ----------------------------------------------------------------------
 # Filter
 # ----------------------------------------------------------------------
+
 
 def test_filter_by_diataxis(registry: DocRegistry) -> None:
     howtos = registry.filter(diataxis=DocDiataxis.HOWTO)
@@ -128,6 +131,7 @@ def test_filter_combined(registry: DocRegistry) -> None:
 # grouped_by_diataxis
 # ----------------------------------------------------------------------
 
+
 def test_grouped_by_diataxis(registry: DocRegistry) -> None:
     groups = registry.grouped_by_diataxis()
     assert DocDiataxis.EXPLANATION in groups
@@ -140,25 +144,27 @@ def test_grouped_by_diataxis(registry: DocRegistry) -> None:
 # Search-Integration
 # ----------------------------------------------------------------------
 
+
 def test_search_via_registry(registry: DocRegistry) -> None:
-    results = registry.search_query("Sub-Jarvis-Spawn")
+    results = registry.search_query("Jarvis-Agent")
     assert len(results) == 1
     assert results[0].slug == "router-concept"
 
 
 def test_search_with_diataxis_filter(registry: DocRegistry) -> None:
-    # Neither doc mentions the word "Schritt" or "Hauptjarvis" in both —
-    # we pick a term that only the how-to has.
+    # Pick a term that appears only in the how-to title.
     results = registry.search_query(
-        "hinzufuegen", diataxis=DocDiataxis.HOWTO,  # i18n-allow: matches the fixture title's German search term
+        "provider",
+        diataxis=DocDiataxis.HOWTO,
     )
-    # Title contains "hinzufuegen"  # i18n-allow: matches the fixture title's German search term
+    # The title contains "provider".
     assert any(r.slug == "provider-add" for r in results)
 
 
 # ----------------------------------------------------------------------
 # Reload
 # ----------------------------------------------------------------------
+
 
 def test_reload_picks_up_new_file(registry: DocRegistry, doc_root: Path) -> None:
     new_md = """---
@@ -195,9 +201,71 @@ async def test_async_reload(doc_root: Path) -> None:
     reg.close()
 
 
+@pytest.mark.asyncio
+async def test_ensure_loaded_deduplicates_concurrent_first_requests(
+    doc_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import jarvis.docs.registry as registry_module
+
+    calls = 0
+    real_discover = registry_module.discover_docs
+
+    def counted_discover(roots: list[Path]):
+        nonlocal calls
+        calls += 1
+        return real_discover(roots)
+
+    monkeypatch.setattr(registry_module, "discover_docs", counted_discover)
+    reg = DocRegistry(
+        roots=[doc_root / "docs"],
+        index_db=doc_root / "index.sqlite",
+    )
+
+    assert reg.is_loaded is False
+    await asyncio.gather(reg.ensure_loaded(), reg.ensure_loaded())
+
+    assert reg.is_loaded is True
+    assert len(reg.list()) == 3
+    assert calls == 1
+    reg.close()
+
+
+@pytest.mark.asyncio
+async def test_debounce_keeps_newer_reload_deadline(
+    doc_root: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A second watcher event must not be cleared by the first timer."""
+    reg = DocRegistry(
+        roots=[doc_root / "docs"],
+        index_db=doc_root / "index.sqlite",
+        debounce_ms=20,
+    )
+    reloads = 0
+
+    async def counted_reload() -> None:
+        nonlocal reloads
+        reloads += 1
+
+    monkeypatch.setattr(reg, "reload", counted_reload)
+    reg._pending_reload = time.monotonic() + 0.020
+    first = asyncio.create_task(reg._debounced_reload())
+    await asyncio.sleep(0.005)
+    reg._pending_reload = time.monotonic() + 0.020
+    second = asyncio.create_task(reg._debounced_reload())
+
+    await asyncio.gather(first, second)
+
+    assert reloads == 1
+    assert reg._pending_reload is None
+    reg.close()
+
+
 # ----------------------------------------------------------------------
 # Bus-Event-Emission
 # ----------------------------------------------------------------------
+
 
 class _StubBus:
     """Minimal bus stub for reload-event tests."""
@@ -227,6 +295,7 @@ def test_emit_reloaded_without_loop_does_not_crash(
 # ----------------------------------------------------------------------
 # Multi-Root-Dedup
 # ----------------------------------------------------------------------
+
 
 def test_multi_root_no_double_index(tmp_path: Path) -> None:
     """When two roots overlap, each file appears only once."""

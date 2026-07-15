@@ -1,4 +1,5 @@
 """Unit tests for DocFrontmatter + doc schema."""
+
 from __future__ import annotations
 
 from datetime import date
@@ -9,10 +10,10 @@ from pydantic import ValidationError
 
 from jarvis.docs.schema import Doc, DocDiataxis, DocFrontmatter, DocStatus
 
-
 # ----------------------------------------------------------------------
 # DocFrontmatter — Happy-Path
 # ----------------------------------------------------------------------
+
 
 def test_frontmatter_minimal_valid() -> None:
     fm = DocFrontmatter(title="Hello World", slug="hello-world")
@@ -22,6 +23,10 @@ def test_frontmatter_minimal_valid() -> None:
     assert fm.status == DocStatus.DRAFT
     assert fm.owner == "maintainers"
     assert fm.phase == "-"
+    assert fm.summary == ""
+    assert fm.section == "Other"
+    assert fm.section_order == 999
+    assert fm.order == 999
     assert fm.tags == []
 
 
@@ -34,18 +39,36 @@ def test_frontmatter_full() -> None:
         last_reviewed=date(2026, 4, 28),
         phase="5",
         audience="developer",
+        summary="How requests reach the right provider.",
+        section="Understand Jarvis",
+        section_order=8,
+        order=2,
         tags=["brain", "routing"],
         related=["adr-0011-router-discipline"],
     )
     assert fm.diataxis == DocDiataxis.EXPLANATION
     assert fm.status == DocStatus.ACTIVE
     assert fm.last_reviewed == date(2026, 4, 28)
+    assert fm.summary == "How requests reach the right provider."
+    assert fm.section == "Understand Jarvis"
     assert fm.tags == ["brain", "routing"]
+
+
+def test_reader_metadata_is_trimmed() -> None:
+    fm = DocFrontmatter(
+        title="t",
+        slug="s",
+        summary="  A short outcome.  ",
+        section="  Get Started  ",
+    )
+    assert fm.summary == "A short outcome."
+    assert fm.section == "Get Started"
 
 
 # ----------------------------------------------------------------------
 # DocFrontmatter — Tolerance & Coercion
 # ----------------------------------------------------------------------
+
 
 def test_frontmatter_phase_int_coerced_to_str() -> None:
     fm = DocFrontmatter(title="t", slug="s", phase=5)
@@ -74,18 +97,21 @@ def test_frontmatter_tags_none_becomes_empty_list() -> None:
 
 def test_frontmatter_extra_fields_ignored() -> None:
     """``extra='ignore'`` must swallow unknown fields — no crash."""
-    fm = DocFrontmatter.model_validate({
-        "title": "t",
-        "slug": "s",
-        "unknown_future_field": "value",
-        "another": [1, 2, 3],
-    })
+    fm = DocFrontmatter.model_validate(
+        {
+            "title": "t",
+            "slug": "s",
+            "unknown_future_field": "value",
+            "another": [1, 2, 3],
+        }
+    )
     assert fm.title == "t"
 
 
 # ----------------------------------------------------------------------
 # DocFrontmatter — Validation-Failures
 # ----------------------------------------------------------------------
+
 
 def test_frontmatter_empty_title_rejected() -> None:
     with pytest.raises(ValidationError):
@@ -99,25 +125,30 @@ def test_frontmatter_empty_slug_rejected() -> None:
 
 def test_frontmatter_invalid_diataxis_rejected() -> None:
     with pytest.raises(ValidationError):
-        DocFrontmatter.model_validate({
-            "title": "t",
-            "slug": "s",
-            "diataxis": "fancy-new-quadrant",
-        })
+        DocFrontmatter.model_validate(
+            {
+                "title": "t",
+                "slug": "s",
+                "diataxis": "fancy-new-quadrant",
+            }
+        )
 
 
 def test_frontmatter_invalid_status_rejected() -> None:
     with pytest.raises(ValidationError):
-        DocFrontmatter.model_validate({
-            "title": "t",
-            "slug": "s",
-            "status": "halffinished",
-        })
+        DocFrontmatter.model_validate(
+            {
+                "title": "t",
+                "slug": "s",
+                "status": "halffinished",
+            }
+        )
 
 
 # ----------------------------------------------------------------------
 # Doc DataClass
 # ----------------------------------------------------------------------
+
 
 def test_doc_property_shortcuts() -> None:
     fm = DocFrontmatter(title="Hello", slug="hello", diataxis="howto")

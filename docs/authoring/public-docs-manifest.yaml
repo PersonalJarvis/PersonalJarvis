@@ -1,0 +1,916 @@
+version: 1
+language: en
+content_root: docs/product
+page_count: 42
+navigation_principle: reader-journey
+authoring_contract:
+  audience: People using Personal Jarvis, including readers with no software background.
+  style: Lead with the outcome, explain one idea at a time, and prefer short examples and diagrams over large code blocks.
+  safety: Use placeholders for credentials, account identifiers, paths, phone numbers, and personal data. Never copy local secrets or PII into documentation.
+  connections: Every page must explain how its feature connects to the related features named in this manifest.
+generated_reference_policy:
+  policy: link-only
+  description: Generated references remain generated. Reader pages may introduce and link to them, but must not copy or hand-maintain their contents.
+  paths:
+    - docs/commands-reference.md
+    - docs/jarvis-cli-reference.md
+
+pages:
+  - section: Start here
+    section_order: 1
+    order: 1
+    slug: welcome-to-personal-jarvis
+    file: docs/product/start-here/welcome-to-personal-jarvis.md
+    title: Welcome to Personal Jarvis
+    diataxis: explanation
+    summary: Understand what Personal Jarvis can do, what stays under your control, and where to begin.
+    authoritative_sources:
+      - README.md
+      - docs/PHILOSOPHY.md
+      - jarvis/ui/web/frontend/src/components/layout/Sidebar.tsx
+      - jarvis/ui/web/frontend/src/components/layout/MainView.tsx
+    related:
+      - install-personal-jarvis
+      - desktop-app-tour
+      - start-your-first-chat
+    reader_level: beginner
+    maturity: stable
+
+  - section: Start here
+    section_order: 1
+    order: 2
+    slug: install-personal-jarvis
+    file: docs/product/start-here/install-personal-jarvis.md
+    title: Install Personal Jarvis
+    diataxis: howto
+    summary: Install the app on a supported computer, then confirm that Personal Jarvis starts correctly.
+    authoritative_sources:
+      - install/README.md
+      - install/install.ps1
+      - install/install.sh
+      - install/installer.py
+      - pyproject.toml
+    related:
+      - first-run-setup
+      - platform-support
+      - troubleshooting
+    reader_level: beginner
+    maturity: stable
+
+  - section: Start here
+    section_order: 1
+    order: 3
+    slug: first-run-setup
+    file: docs/product/start-here/first-run-setup.md
+    title: Complete First-Run Setup
+    diataxis: tutorial
+    summary: Walk through language, permissions, microphone, wake word, and provider setup without exposing credentials.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/components/onboarding/OnboardingFlow.tsx
+      - jarvis/ui/web/frontend/src/components/onboarding/steps/ApiKeysStep.tsx
+      - jarvis/ui/web/frontend/src/components/onboarding/steps/MicTestStep.tsx
+      - jarvis/ui/web/frontend/src/components/onboarding/steps/PermissionsStep.tsx
+      - jarvis/ui/web/onboarding_routes.py
+    related:
+      - providers-and-api-keys
+      - audio-and-wake-word
+      - permissions
+      - start-your-first-chat
+    reader_level: beginner
+    maturity: stable
+
+  - section: Start here
+    section_order: 1
+    order: 4
+    slug: desktop-app-tour
+    file: docs/product/start-here/desktop-app-tour.md
+    title: Tour the Desktop App
+    diataxis: explanation
+    summary: Learn where conversations, agents, tools, history, settings, and help live in the desktop app.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/App.tsx
+      - jarvis/ui/web/frontend/src/components/layout/Sidebar.tsx
+      - jarvis/ui/web/frontend/src/components/layout/MainView.tsx
+      - jarvis/ui/web/frontend/src/i18n/locales/en.json
+    related:
+      - start-your-first-chat
+      - chats
+      - find-help-in-the-app
+    reader_level: beginner
+    maturity: stable
+
+  - section: Start here
+    section_order: 1
+    order: 5
+    slug: start-your-first-chat
+    file: docs/product/start-here/start-your-first-chat.md
+    title: Start Your First Chat
+    diataxis: tutorial
+    summary: Send a first message, attach useful context, and understand how the conversation is saved.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/ChatsView.tsx
+      - jarvis/ui/web/chats_routes.py
+      - jarvis/state/chat_store.py
+      - jarvis/ui/web/frontend/src/lib/chatsApi.ts
+    related:
+      - chats
+      - start-your-first-voice-conversation
+      - sessions-and-run-inspector
+    reader_level: beginner
+    maturity: stable
+
+  - section: Start here
+    section_order: 1
+    order: 6
+    slug: start-your-first-voice-conversation
+    file: docs/product/start-here/start-your-first-voice-conversation.md
+    title: Start Your First Voice Conversation
+    diataxis: tutorial
+    summary: Check the microphone, wake Jarvis, ask a question, and know when the app is listening or speaking.
+    authoritative_sources:
+      - jarvis/speech/pipeline.py
+      - jarvis/realtime/session.py
+      - jarvis/ui/web/voice_runtime.py
+      - jarvis/ui/web/frontend/src/components/VoiceIndicator.tsx
+    related:
+      - voice-conversations
+      - audio-and-wake-word
+      - languages-and-voices
+      - permissions
+    reader_level: beginner
+    maturity: stable
+
+  - section: Everyday use
+    section_order: 2
+    order: 1
+    slug: chats
+    file: docs/product/everyday-use/chats.md
+    title: Chats
+    diataxis: howto
+    summary: Organize conversations, continue earlier work, add files, and understand how chats relate to sessions and outputs.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/ChatsView.tsx
+      - jarvis/ui/web/chats_routes.py
+      - jarvis/channels/chat_bridge.py
+      - jarvis/state/chat_store.py
+    related:
+      - sessions-and-run-inspector
+      - outputs-and-files
+      - instructions-and-persona
+    reader_level: beginner
+    maturity: stable
+
+  - section: Everyday use
+    section_order: 2
+    order: 2
+    slug: voice-conversations
+    file: docs/product/everyday-use/voice-conversations.md
+    title: Voice Conversations
+    diataxis: explanation
+    summary: Learn how wake detection, speech recognition, the assistant, and text-to-speech form one voice turn.
+    authoritative_sources:
+      - jarvis/speech/pipeline.py
+      - jarvis/realtime/session.py
+      - jarvis/browser_voice/session.py
+      - jarvis/core/turn_language.py
+      - docs/realtime-voice/DESIGN.md
+    related:
+      - audio-and-wake-word
+      - languages-and-voices
+      - sessions-and-run-inspector
+      - speech-dictionary
+    reader_level: beginner
+    maturity: stable
+
+  - section: Everyday use
+    section_order: 2
+    order: 3
+    slug: tasks-and-reminders
+    file: docs/product/everyday-use/tasks-and-reminders.md
+    title: Tasks and Reminders
+    diataxis: howto
+    summary: Create, review, approve, and complete tasks, including scheduled and recurring work.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/TasksView.tsx
+      - jarvis/ui/web/tasks_routes.py
+      - jarvis/tasks/store.py
+      - jarvis/tasks/scheduler.py
+      - jarvis/tasks/approval_bridge.py
+    related:
+      - jarvis-agents
+      - workflows-and-commands
+      - safety-and-approvals
+    reader_level: beginner
+    maturity: stable
+
+  - section: Everyday use
+    section_order: 2
+    order: 4
+    slug: sessions-and-run-inspector
+    file: docs/product/everyday-use/sessions-and-run-inspector.md
+    title: Sessions and Run Inspector
+    diataxis: explanation
+    summary: See the difference between conversation history and a detailed run trace, then use both to understand an answer.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/SessionsView.tsx
+      - jarvis/ui/web/frontend/src/views/RunInspectorView.tsx
+      - jarvis/ui/web/sessions_routes.py
+      - jarvis/ui/web/diagnostics_routes.py
+      - jarvis/sessions/recorder.py
+    related:
+      - chats
+      - voice-conversations
+      - troubleshooting
+      - privacy-and-local-data
+    reader_level: intermediate
+    maturity: stable
+
+  - section: Everyday use
+    section_order: 2
+    order: 5
+    slug: outputs-and-files
+    file: docs/product/everyday-use/outputs-and-files.md
+    title: Outputs and Files
+    diataxis: howto
+    summary: Find generated files, preview them safely, open them in another app, and recover unfinished work when available.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/OutputsView.tsx
+      - jarvis/ui/web/outputs_routes.py
+      - jarvis/ui/web/downloads_routes.py
+      - jarvis/ui/web/frontend/src/lib/fileActions.ts
+    related:
+      - chats
+      - jarvis-agents
+      - privacy-and-local-data
+    reader_level: beginner
+    maturity: stable
+
+  - section: Everyday use
+    section_order: 2
+    order: 6
+    slug: speech-dictionary
+    file: docs/product/everyday-use/speech-dictionary.md
+    title: Speech Dictionary
+    diataxis: howto
+    summary: Teach speech recognition names and specialist words it often mishears, then test the improvement.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/DictionaryView.tsx
+      - jarvis/ui/web/dictionary_routes.py
+      - jarvis/speech/stt_dictionary.py
+    related:
+      - voice-conversations
+      - audio-and-wake-word
+      - languages-and-voices
+    reader_level: beginner
+    maturity: stable
+
+  - section: Everyday use
+    section_order: 2
+    order: 7
+    slug: profile-and-contacts
+    file: docs/product/everyday-use/profile-and-contacts.md
+    title: Profile and Contacts
+    diataxis: howto
+    summary: Keep your own preferences and the people you mention organized, and understand how both support more relevant conversations.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/ProfileView.tsx
+      - jarvis/ui/web/frontend/src/views/contacts/ContactsView.tsx
+      - jarvis/ui/web/profile_routes.py
+      - jarvis/ui/web/contacts_routes.py
+      - jarvis/contacts/store.py
+    related:
+      - instructions-and-persona
+      - wiki-and-memory
+      - privacy-and-local-data
+    reader_level: beginner
+    maturity: stable
+
+  - section: Personalize and connect
+    section_order: 3
+    order: 1
+    slug: providers-and-api-keys
+    file: docs/product/personalize-and-connect/providers-and-api-keys.md
+    title: Providers and API Keys
+    diataxis: howto
+    summary: Connect the services you choose, see which capabilities they provide, and learn where fallback is available.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/ApiKeysView.tsx
+      - jarvis/ui/web/provider_routes.py
+      - jarvis/brain/provider_registry.py
+      - jarvis/brain/resolver.py
+      - jarvis/core/config.py
+    related:
+      - credentials-and-secrets
+      - languages-and-voices
+      - troubleshooting
+      - tasks-and-reminders
+    reader_level: beginner
+    maturity: stable
+
+  - section: Personalize and connect
+    section_order: 3
+    order: 2
+    slug: audio-and-wake-word
+    file: docs/product/personalize-and-connect/audio-and-wake-word.md
+    title: Audio Devices and Wake Word
+    diataxis: howto
+    summary: Choose a microphone and speaker, set a wake phrase, and tune reliable hands-free listening.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/settings/AudioDevicesGroup.tsx
+      - jarvis/ui/web/frontend/src/views/SettingsView.tsx
+      - jarvis/speech/wake_phrase.py
+      - jarvis/plugins/wake/openwakeword_provider.py
+      - docs/local-wakeword/USER-GUIDE-WAKE-WORD.md
+    related:
+      - voice-conversations
+      - speech-dictionary
+      - permissions
+      - troubleshooting
+    reader_level: beginner
+    maturity: stable
+
+  - section: Personalize and connect
+    section_order: 3
+    order: 3
+    slug: languages-and-voices
+    file: docs/product/personalize-and-connect/languages-and-voices.md
+    title: Languages and Voices
+    diataxis: howto
+    summary: Choose reply language, speech language, and speaking voice while keeping every layer of a conversation consistent.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/settings/LanguagesGroup.tsx
+      - jarvis/ui/web/frontend/src/views/settings/RealtimeVoiceGroup.tsx
+      - jarvis/core/turn_language.py
+      - jarvis/plugins/tts/grok_voice_tts.py
+      - jarvis/realtime/factory.py
+    related:
+      - voice-conversations
+      - providers-and-api-keys
+      - audio-and-wake-word
+    reader_level: beginner
+    maturity: stable
+
+  - section: Personalize and connect
+    section_order: 3
+    order: 4
+    slug: settings-and-appearance
+    file: docs/product/personalize-and-connect/settings-and-appearance.md
+    title: Settings and Appearance
+    diataxis: howto
+    summary: Adjust startup, sound, keyboard shortcuts, the Jarvis Bar, overlays, and other everyday behavior.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/SettingsView.tsx
+      - jarvis/ui/web/frontend/src/views/settings/AppSettingsGroup.tsx
+      - jarvis/ui/web/frontend/src/views/settings/OverlayTaskbarGroup.tsx
+      - jarvis/ui/web/frontend/src/views/settings/KeyboardMap.tsx
+      - jarvis/ui/web/settings_routes.py
+    related:
+      - desktop-app-tour
+      - audio-and-wake-word
+      - permissions
+    reader_level: beginner
+    maturity: stable
+
+  - section: Personalize and connect
+    section_order: 3
+    order: 5
+    slug: instructions-and-persona
+    file: docs/product/personalize-and-connect/instructions-and-persona.md
+    title: Instructions and Persona
+    diataxis: howto
+    summary: Shape how Jarvis responds without changing providers, memories, or safety rules.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/AgentInstructionsView.tsx
+      - jarvis/brain/agent_instructions.py
+      - jarvis/brain/persona_loader.py
+      - jarvis/brain/JARVIS_PERSONA.md
+      - jarvis/ui/web/frontend/src/views/settings/SystemPromptGroup.tsx
+    related:
+      - chats
+      - profile-and-contacts
+      - safety-and-approvals
+    reader_level: intermediate
+    maturity: stable
+
+  - section: Personalize and connect
+    section_order: 3
+    order: 6
+    slug: phone-calls
+    file: docs/product/personalize-and-connect/phone-calls.md
+    title: Phone Calls
+    diataxis: howto
+    summary: Connect the optional telephony feature, understand inbound and outbound calls, and keep call credentials private.
+    authoritative_sources:
+      - docs/telephony.md
+      - jarvis/ui/web/frontend/src/views/TelephonyView.tsx
+      - jarvis/ui/web/telephony_routes.py
+      - jarvis/telephony/session.py
+      - jarvis/telephony/security.py
+    related:
+      - providers-and-api-keys
+      - credentials-and-secrets
+      - safety-and-approvals
+    reader_level: advanced
+    maturity: stable
+
+  - section: Knowledge and sharing
+    section_order: 4
+    order: 1
+    slug: wiki-and-memory
+    file: docs/product/knowledge-and-sharing/wiki-and-memory.md
+    title: Wiki and Memory
+    diataxis: explanation
+    summary: Understand what Jarvis can remember, how the Wiki connects ideas, and how memory supports chats, contacts, and agents.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/WikiView.tsx
+      - jarvis/ui/web/wiki_routes.py
+      - jarvis/memory/wiki/integration.py
+      - jarvis/memory/wiki/curator.py
+      - docs/adr/0013-knowledge-wiki-architecture.md
+    related:
+      - profile-and-contacts
+      - connect-obsidian
+      - jarvis-agents
+      - privacy-and-local-data
+    reader_level: intermediate
+    maturity: stable
+
+  - section: Knowledge and sharing
+    section_order: 4
+    order: 2
+    slug: connect-obsidian
+    file: docs/product/knowledge-and-sharing/connect-obsidian.md
+    title: Connect an Obsidian Vault
+    diataxis: howto
+    summary: Use an existing Obsidian vault as a readable knowledge source while keeping file ownership and backups clear.
+    authoritative_sources:
+      - docs/obsidian-setup.md
+      - jarvis/ui/web/frontend/src/components/wiki/ObsidianSetupDialog.tsx
+      - jarvis/ui/web/frontend/src/components/wiki/ObsidianStatus.tsx
+      - jarvis/memory/wiki/vault_root.py
+      - jarvis/memory/wiki/watcher.py
+    related:
+      - wiki-and-memory
+      - privacy-and-local-data
+      - troubleshooting
+    reader_level: advanced
+    maturity: stable
+
+  - section: Knowledge and sharing
+    section_order: 4
+    order: 3
+    slug: jarvis-board
+    file: docs/product/knowledge-and-sharing/jarvis-board.md
+    title: Jarvis Board
+    diataxis: explanation
+    summary: Explore personal activity, achievements, and optional sharing, including what data leaves the device.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/BoardView.tsx
+      - jarvis/ui/web/board_routes.py
+      - jarvis/board/aggregator.py
+      - jarvis/board/sync.py
+      - docs/jarvis-board/ARCHITECTURE.md
+    related:
+      - profile-and-contacts
+      - socials-and-feedback
+      - privacy-and-local-data
+    reader_level: intermediate
+    maturity: experimental
+
+  - section: Knowledge and sharing
+    section_order: 4
+    order: 4
+    slug: socials-and-feedback
+    file: docs/product/knowledge-and-sharing/socials-and-feedback.md
+    title: Social Links and Feedback
+    diataxis: howto
+    summary: Find official community links and share useful feedback without accidentally including private information.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/socials/SocialsView.tsx
+      - jarvis/ui/web/frontend/src/views/feedback/FeedbackView.tsx
+      - jarvis/ui/web/socials_routes.py
+      - jarvis/ui/web/feedback_routes.py
+    related:
+      - profile-and-contacts
+      - jarvis-board
+      - privacy-and-local-data
+    reader_level: beginner
+    maturity: stable
+
+  - section: Knowledge and sharing
+    section_order: 4
+    order: 5
+    slug: find-help-in-the-app
+    file: docs/product/knowledge-and-sharing/find-help-in-the-app.md
+    title: Find Help in the App
+    diataxis: howto
+    summary: Search the built-in documentation, use related-page links, and move between overview, guides, troubleshooting, and reference material.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/DocsView.tsx
+      - jarvis/ui/web/frontend/src/components/docs/DocsOverview.tsx
+      - jarvis/ui/web/frontend/src/components/docs/DocsSearchModal.tsx
+      - jarvis/ui/web/docs_routes.py
+      - jarvis/docs/registry.py
+    related:
+      - desktop-app-tour
+      - troubleshooting
+      - app-command-reference
+    reader_level: beginner
+    maturity: stable
+
+  - section: Extend and automate
+    section_order: 5
+    order: 1
+    slug: jarvis-agents
+    file: docs/product/extend-and-automate/jarvis-agents.md
+    title: Jarvis-Agents
+    diataxis: explanation
+    summary: Learn when Jarvis delegates longer work, how missions and workers fit together, and how to follow progress and results.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/JarvisAgentsView.tsx
+      - jarvis/ui/web/missions_routes.py
+      - jarvis/missions/manager.py
+      - jarvis/missions/state_machine.py
+      - docs/jarvis-agents-bridge.md
+    related:
+      - tasks-and-reminders
+      - outputs-and-files
+      - skills
+      - safety-and-approvals
+    reader_level: intermediate
+    maturity: stable
+
+  - section: Extend and automate
+    section_order: 5
+    order: 2
+    slug: skills
+    file: docs/product/extend-and-automate/skills.md
+    title: Skills
+    diataxis: explanation
+    summary: Understand how a skill gives Jarvis repeatable instructions, when it runs, and how drafts differ from enabled skills.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/SkillsView.tsx
+      - jarvis/ui/web/skills_routes.py
+      - jarvis/skills/registry.py
+      - jarvis/skills/lifecycle.py
+      - jarvis/skills/runner.py
+    related:
+      - plugins
+      - mcp-connections
+      - jarvis-agents
+      - safety-and-approvals
+    reader_level: intermediate
+    maturity: stable
+
+  - section: Extend and automate
+    section_order: 5
+    order: 3
+    slug: plugins
+    file: docs/product/extend-and-automate/plugins.md
+    title: Plugins
+    diataxis: explanation
+    summary: Connect packaged capabilities, understand sign-in and health states, and see how plugins can expose tools and skills.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/PluginsView.tsx
+      - jarvis/ui/web/marketplace_routes.py
+      - jarvis/marketplace/plugin_registry.py
+      - jarvis/marketplace/plugin_loader.py
+      - jarvis/marketplace/plugin_mcp.py
+    related:
+      - skills
+      - mcp-connections
+      - providers-and-api-keys
+      - credentials-and-secrets
+    reader_level: intermediate
+    maturity: stable
+
+  - section: Extend and automate
+    section_order: 5
+    order: 4
+    slug: mcp-connections
+    file: docs/product/extend-and-automate/mcp-connections.md
+    title: MCP Connections
+    diataxis: howto
+    summary: Add and inspect Model Context Protocol servers, then understand how their tools become available safely.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/McpsView.tsx
+      - jarvis/ui/web/mcp_routes.py
+      - jarvis/mcp/registry.py
+      - jarvis/mcp/client.py
+      - mcp.json.example
+    related:
+      - plugins
+      - skills
+      - credentials-and-secrets
+      - safety-and-approvals
+    reader_level: advanced
+    maturity: stable
+
+  - section: Extend and automate
+    section_order: 5
+    order: 5
+    slug: cli-connections
+    file: docs/product/extend-and-automate/cli-connections.md
+    title: CLI Connections
+    diataxis: howto
+    summary: Let Jarvis discover command-line tools, check their readiness, and use only the capabilities available on the current computer.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/ClisView.tsx
+      - jarvis/ui/web/cli_routes.py
+      - jarvis/clis/registry.py
+      - jarvis/clis/prober.py
+      - jarvis/clis/risk_integration.py
+    related:
+      - skills
+      - workflows-and-commands
+      - cli-reference
+      - safety-and-approvals
+    reader_level: advanced
+    maturity: stable
+
+  - section: Extend and automate
+    section_order: 5
+    order: 6
+    slug: computer-use
+    file: docs/product/extend-and-automate/computer-use.md
+    title: Computer Use
+    diataxis: howto
+    summary: Understand how Jarvis sees and operates desktop apps, when it asks for confirmation, and how to stop or recover a run.
+    authoritative_sources:
+      - docs/computer-use.md
+      - jarvis/plugins/tool/computer_use_tool.py
+      - jarvis/harness/native_computer_use.py
+      - jarvis/vision/engine.py
+      - jarvis/safety/vision_telemetry.py
+    related:
+      - permissions
+      - safety-and-approvals
+      - jarvis-agents
+      - platform-support
+    reader_level: advanced
+    maturity: stable
+
+  - section: Extend and automate
+    section_order: 5
+    order: 7
+    slug: workflows-and-commands
+    file: docs/product/extend-and-automate/workflows-and-commands.md
+    title: Workflows and App Commands
+    diataxis: explanation
+    summary: See how reusable workflows, natural-language actions, REST routes, and CLI commands connect to the same underlying capability.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/WorkflowsView.tsx
+      - jarvis/ui/web/workflows_routes.py
+      - jarvis/workflows/runner.py
+      - jarvis/commands/registry.py
+      - docs/commands-reference.md
+    related:
+      - tasks-and-reminders
+      - skills
+      - cli-reference
+      - app-command-reference
+    reader_level: advanced
+    maturity: experimental
+    source_policy: Link to docs/commands-reference.md; do not copy its generated command catalog.
+
+  - section: Privacy, safety, and support
+    section_order: 6
+    order: 1
+    slug: privacy-and-local-data
+    file: docs/product/privacy-safety-and-support/privacy-and-local-data.md
+    title: Privacy and Local Data
+    diataxis: explanation
+    summary: Learn what Jarvis stores locally, what may be sent to a connected service, and how each optional feature changes that boundary.
+    authoritative_sources:
+      - docs/PHILOSOPHY.md
+      - jarvis/core/paths.py
+      - jarvis/core/redact.py
+      - jarvis/state/chat_store.py
+      - jarvis/memory/wiki/secret_guard.py
+    related:
+      - credentials-and-secrets
+      - permissions
+      - wiki-and-memory
+      - jarvis-board
+    reader_level: beginner
+    maturity: stable
+
+  - section: Privacy, safety, and support
+    section_order: 6
+    order: 2
+    slug: credentials-and-secrets
+    file: docs/product/privacy-safety-and-support/credentials-and-secrets.md
+    title: Credentials and Secrets
+    diataxis: explanation
+    summary: Understand how credentials are entered, stored, redacted, replaced, and kept out of conversations and documentation.
+    authoritative_sources:
+      - jarvis/core/config.py
+      - jarvis/core/control_key.py
+      - jarvis/core/redact.py
+      - jarvis/marketplace/token_store.py
+      - jarvis/memory/wiki/secret_guard.py
+    related:
+      - providers-and-api-keys
+      - privacy-and-local-data
+      - mcp-connections
+      - troubleshooting
+    reader_level: beginner
+    maturity: stable
+
+  - section: Privacy, safety, and support
+    section_order: 6
+    order: 3
+    slug: permissions
+    file: docs/product/privacy-safety-and-support/permissions.md
+    title: App Permissions
+    diataxis: howto
+    summary: Grant only the microphone, screen, accessibility, and input permissions needed for voice, global shortcuts, and Computer Use.
+    authoritative_sources:
+      - jarvis/ui/web/frontend/src/views/settings/PermissionsPanel.tsx
+      - jarvis/ui/web/permissions_routes.py
+      - jarvis/platform/permissions.py
+      - jarvis/platform/capabilities.py
+    related:
+      - first-run-setup
+      - audio-and-wake-word
+      - computer-use
+      - privacy-and-local-data
+    reader_level: beginner
+    maturity: stable
+
+  - section: Privacy, safety, and support
+    section_order: 6
+    order: 4
+    slug: safety-and-approvals
+    file: docs/product/privacy-safety-and-support/safety-and-approvals.md
+    title: Safety and Approvals
+    diataxis: explanation
+    summary: Learn why some actions run immediately, some require confirmation, and some are blocked before they can affect your computer or accounts.
+    authoritative_sources:
+      - docs/PHILOSOPHY.md
+      - jarvis/safety/risk_tier.py
+      - jarvis/safety/approval.py
+      - jarvis/safety/tool_executor.py
+      - jarvis/missions/tool_approvals.py
+    related:
+      - computer-use
+      - tasks-and-reminders
+      - skills
+      - privacy-and-local-data
+    reader_level: beginner
+    maturity: stable
+
+  - section: Privacy, safety, and support
+    section_order: 6
+    order: 5
+    slug: troubleshooting
+    file: docs/product/privacy-safety-and-support/troubleshooting.md
+    title: Troubleshooting
+    diataxis: troubleshooting
+    summary: Diagnose startup, connection, provider, voice, permission, and extension problems using safe checks before changing configuration.
+    authoritative_sources:
+      - docs/BUGS.md
+      - docs/README-desktop-black-screen.md
+      - docs/overlay-troubleshooting.md
+      - jarvis/diagnostics/doctor.py
+      - jarvis/ui/web/diagnostics_routes.py
+    related:
+      - install-personal-jarvis
+      - providers-and-api-keys
+      - audio-and-wake-word
+      - platform-support
+    reader_level: beginner
+    maturity: stable
+
+  - section: Reference
+    section_order: 7
+    order: 1
+    slug: cli-reference
+    file: docs/product/reference/cli-reference.md
+    title: CLI Reference
+    diataxis: reference
+    summary: Find the supported command-line surfaces, authentication options, common flags, and the generated command catalog.
+    authoritative_sources:
+      - docs/jarvis-cli.md
+      - docs/jarvis-cli-reference.md
+      - docs/reference/jarvis-cli.md
+      - jarvis/cli_ctl
+      - scripts/ci/gen_cli_reference.py
+    related:
+      - cli-connections
+      - control-api-reference
+      - app-command-reference
+      - configuration-reference
+    reader_level: advanced
+    maturity: stable
+    source_policy: Link to docs/jarvis-cli-reference.md; do not copy or hand-edit its generated command catalog.
+
+  - section: Reference
+    section_order: 7
+    order: 2
+    slug: control-api-reference
+    file: docs/product/reference/control-api-reference.md
+    title: Control API Reference
+    diataxis: reference
+    summary: Understand API authentication, discovery, error behavior, and how REST operations map to CLI and in-app actions.
+    authoritative_sources:
+      - docs/jarvis-control-api.md
+      - jarvis/ui/web/server.py
+      - jarvis/ui/web/control_routes.py
+      - jarvis/ui/web/surface_security.py
+      - jarvis/core/control_key.py
+    related:
+      - cli-reference
+      - app-command-reference
+      - credentials-and-secrets
+      - architecture
+    reader_level: advanced
+    maturity: stable
+
+  - section: Reference
+    section_order: 7
+    order: 3
+    slug: configuration-reference
+    file: docs/product/reference/configuration-reference.md
+    title: Configuration Reference
+    diataxis: reference
+    summary: Look up supported settings, defaults, environment overrides, and safe configuration-write behavior.
+    authoritative_sources:
+      - jarvis/core/config.py
+      - jarvis/core/config_writer.py
+      - pyproject.toml
+      - jarvis/ui/web/settings_routes.py
+      - jarvis/ui/web/provider_spec.py
+    related:
+      - settings-and-appearance
+      - providers-and-api-keys
+      - credentials-and-secrets
+      - platform-support
+    reader_level: advanced
+    maturity: stable
+
+  - section: Reference
+    section_order: 7
+    order: 4
+    slug: app-command-reference
+    file: docs/product/reference/app-command-reference.md
+    title: App Command Reference
+    diataxis: reference
+    summary: Learn how to browse the canonical app-command catalog shared by voice, chat, desktop, CLI, and REST surfaces.
+    authoritative_sources:
+      - docs/commands-reference.md
+      - jarvis/commands/registry.py
+      - jarvis/ui/web/commands_routes.py
+      - scripts/ci/gen_commands_reference.py
+    related:
+      - workflows-and-commands
+      - cli-reference
+      - control-api-reference
+    reader_level: advanced
+    maturity: stable
+    source_policy: Link to docs/commands-reference.md; never duplicate or hand-maintain the generated entries.
+
+  - section: Reference
+    section_order: 7
+    order: 5
+    slug: architecture
+    file: docs/product/reference/architecture.md
+    title: How Personal Jarvis Fits Together
+    diataxis: explanation
+    summary: Follow a request from the user interface through providers, tools, safety checks, events, agents, memory, and output.
+    authoritative_sources:
+      - docs/architecture-overview.md
+      - jarvis/core/protocols.py
+      - jarvis/core/bus.py
+      - jarvis/brain/factory.py
+      - pyproject.toml
+    related:
+      - providers-and-api-keys
+      - jarvis-agents
+      - safety-and-approvals
+      - control-api-reference
+    reader_level: advanced
+    maturity: stable
+
+  - section: Reference
+    section_order: 7
+    order: 6
+    slug: platform-support
+    file: docs/product/reference/platform-support.md
+    title: Platform Support and Requirements
+    diataxis: reference
+    summary: Check operating-system support, optional hardware and audio capabilities, headless behavior, and graceful feature fallbacks.
+    authoritative_sources:
+      - pyproject.toml
+      - install/README.md
+      - install/install.ps1
+      - install/install.sh
+      - jarvis/platform/capabilities.py
+      - docs/plans/cross-platform-mac-linux/README.md
+    related:
+      - install-personal-jarvis
+      - permissions
+      - configuration-reference
+      - troubleshooting
+    reader_level: advanced
+    maturity: stable

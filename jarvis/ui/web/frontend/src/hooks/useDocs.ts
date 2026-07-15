@@ -26,6 +26,10 @@ export interface DocSummary {
   last_reviewed: string | null;
   phase: string;
   audience: DocAudience;
+  summary: string;
+  section: string;
+  section_order: number;
+  order: number;
   tags: string[];
   related: string[];
   deprecates: string | null;
@@ -36,6 +40,18 @@ export interface DocSummary {
   body_hash: string;
   error: string | null;
   heading_count: number;
+}
+
+export interface DocNavSummary {
+  title: string;
+  slug: string;
+  diataxis: DocDiataxis;
+  summary: string;
+  section: string;
+  section_order: number;
+  order: number;
+  tags: string[];
+  related: string[];
 }
 
 export interface DocHeading {
@@ -54,6 +70,8 @@ export interface DocSearchResult {
   title: string;
   diataxis: DocDiataxis;
   phase: string;
+  summary: string;
+  section: string;
   snippet: string;
   score: number;
 }
@@ -79,37 +97,93 @@ export const DIATAXIS_LABELS: Record<DocDiataxis, string> = {
   unclassified: "Unclassified",
 };
 
+export interface DocSection {
+  name: string;
+  order: number;
+  docs: DocNavSummary[];
+}
+
+/** Build the reader navigation from compact API metadata. */
+export function buildDocSections(
+  grouped: Partial<Record<DocDiataxis, DocNavSummary[]>> | undefined,
+): DocSection[] {
+  const bySection = new Map<string, DocSection>();
+  for (const kind of DIATAXIS_ORDER) {
+    for (const doc of grouped?.[kind] ?? []) {
+      const name = doc.section || "Other";
+      const existing = bySection.get(name);
+      if (existing) {
+        existing.order = Math.min(existing.order, doc.section_order);
+        existing.docs.push(doc);
+      } else {
+        bySection.set(name, {
+          name,
+          order: doc.section_order,
+          docs: [doc],
+        });
+      }
+    }
+  }
+  const sections = [...bySection.values()].map((section) => ({
+    ...section,
+    docs: [...section.docs].sort(
+      (a, b) => a.order - b.order || a.title.localeCompare(b.title),
+    ),
+  }));
+  return sections.sort(
+    (a, b) => a.order - b.order || a.name.localeCompare(b.name),
+  );
+}
+
 // ----------------------------------------------------------------------
 // Fetchers
 // ----------------------------------------------------------------------
 
-async function fetchDocsGrouped(): Promise<Record<DocDiataxis, DocSummary[]>> {
-  const res = await fetch("/api/docs/grouped");
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+const DOC_REQUEST_TIMEOUT_MS = 8_000;
+
+async function fetchDocsJson<T>(url: string, init?: RequestInit): Promise<T> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(
+    () => controller.abort(),
+    DOC_REQUEST_TIMEOUT_MS,
+  );
+  try {
+    const res = await fetch(url, { ...init, signal: controller.signal });
+    const body = (await res.json().catch(() => null)) as unknown;
+    if (!res.ok) {
+      const detail =
+        body && typeof body === "object" && "detail" in body
+          ? String((body as { detail: unknown }).detail)
+          : `HTTP ${res.status}`;
+      throw new Error(detail);
+    }
+    return body as T;
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") {
+      throw new Error("Documentation request timed out");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+async function fetchDocsGrouped(): Promise<Partial<Record<DocDiataxis, DocNavSummary[]>>> {
+  return fetchDocsJson("/api/docs/grouped?compact=true");
 }
 
 async function fetchDocsList(): Promise<DocSummary[]> {
-  const res = await fetch("/api/docs");
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  return fetchDocsJson("/api/docs");
 }
 
 async function fetchDocDetail(slug: string): Promise<DocDetail> {
-  const res = await fetch(`/api/docs/${encodeURIComponent(slug)}`);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  return fetchDocsJson(`/api/docs/${encodeURIComponent(slug)}`);
 }
 
 async function openDocInEditor(slug: string): Promise<{ path: string }> {
-  const res = await fetch(`/api/docs/${encodeURIComponent(slug)}/open`, {
+  return fetchDocsJson(`/api/docs/${encodeURIComponent(slug)}/open`, {
     method: "POST",
   });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    throw new Error(body.detail ?? `HTTP ${res.status}`);
-  }
-  return res.json();
 }
 
 async function fetchDocSearch(
@@ -119,9 +193,7 @@ async function fetchDocSearch(
 ): Promise<DocSearchResult[]> {
   const params = new URLSearchParams({ q, limit: String(limit) });
   if (diataxis) params.set("diataxis", diataxis);
-  const res = await fetch(`/api/docs/search?${params}`);
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  return res.json();
+  return fetchDocsJson(`/api/docs/search?${params}`);
 }
 
 // ----------------------------------------------------------------------
@@ -132,7 +204,8 @@ export function useDocsGrouped() {
   return useQuery({
     queryKey: ["docs", "grouped"],
     queryFn: fetchDocsGrouped,
-    staleTime: 30_000,
+    staleTime: 5 * 60_000,
+    retry: false,
   });
 }
 
@@ -150,6 +223,7 @@ export function useDocDetail(slug: string | null) {
     queryFn: () => fetchDocDetail(slug!),
     enabled: slug !== null,
     staleTime: 60_000,
+    retry: false,
   });
 }
 
@@ -169,5 +243,6 @@ export function useDocSearch(
     queryFn: () => fetchDocSearch(q, diataxis),
     enabled: enabled && q.trim().length > 0,
     staleTime: 5_000,
+    retry: false,
   });
 }
