@@ -1,7 +1,9 @@
 """macOS login autostart via a per-user LaunchAgent.
 
 Writes ``~/Library/LaunchAgents/com.personal-jarvis.autostart.plist`` with
-``RunAtLoad=true``. A **LaunchAgent (per-user), not a LaunchDaemon** — the agent
+``RunAtLoad=true``. The canonical launch specification uses ``/usr/bin/open``
+to enter through ``Personal Jarvis.app`` and preserve its TCC identity. A
+**LaunchAgent (per-user), not a LaunchDaemon** — the agent
 runs inside the user's GUI session so it keeps microphone access (a Daemon runs
 as a non-interactive system context with no mic/seat, the macOS analogue of the
 "no Windows Service" rule, AP-17).
@@ -82,6 +84,9 @@ class MacOSAutostart:
         matches = (
             data.get("ProgramArguments") == _program_arguments(spec)
             and data.get("WorkingDirectory") == spec.working_dir
+            and data.get("RunAtLoad") is True
+            and data.get("ProcessType") == "Interactive"
+            and data.get("LimitLoadToSessionType") == "Aqua"
         )
         return AutostartStatus(
             supported=True,
@@ -105,6 +110,8 @@ class MacOSAutostart:
             "WorkingDirectory": spec.working_dir,
             "RunAtLoad": True,
             "ProcessType": "Interactive",
+            # Keep voice and Computer-Use inside the signed-in GUI session.
+            "LimitLoadToSessionType": "Aqua",
         }
         tmp = self._path.with_suffix(".plist.tmp")
         with tmp.open("wb") as fh:
