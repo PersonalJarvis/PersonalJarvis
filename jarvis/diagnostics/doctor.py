@@ -223,6 +223,80 @@ def check_brain_provider(config: Any) -> list[DoctorFinding]:
     )]
 
 
+def check_computer_use_prereqs(config: Any) -> list[DoctorFinding]:
+    """Computer Use's OS prerequisites, honestly reported per platform.
+
+    Deep-dive 2026-07-15, H-01: on Linux/X11 the live engine's foreground
+    guard is load-bearing on the ``xdotool`` binary and window switching on
+    ``wmctrl`` — neither is a pip package, and a clean install without them
+    fails with "cannot see the screen" before any useful action. Report the
+    gap with the exact install command instead of letting the user discover
+    it at run time. Windows/macOS use native APIs (nothing to check here);
+    Wayland and headless hosts are outside the interactive support envelope
+    by design and reported as info, not failure.
+    """
+    import sys as _sys
+
+    cu_cfg = getattr(config, "computer_use", None)
+    cu_enabled = bool(cu_cfg is not None and getattr(cu_cfg, "enabled", False))
+    prefix = "Computer Use" if cu_enabled else "Computer Use (currently disabled)"
+    severity: Status = "fail" if cu_enabled else "warn"
+
+    if not _sys.platform.startswith("linux"):
+        return []
+
+    try:
+        from jarvis.platform.probes import display_present, is_wayland
+        if not display_present():
+            return [DoctorFinding(
+                "computer-use", "info",
+                f"{prefix}: headless host — interactive desktop control is "
+                "unavailable here by design.",
+            )]
+        if is_wayland():
+            return [DoctorFinding(
+                "computer-use", "info",
+                f"{prefix}: Wayland session — global desktop control is not "
+                "supported by Wayland's design; use an X11 session for "
+                "Computer Use.",
+            )]
+    except Exception:  # noqa: BLE001 — probe failure: fall through to tool checks
+        pass
+
+    findings: list[DoctorFinding] = []
+    missing_bins = [b for b in ("xdotool", "wmctrl") if shutil.which(b) is None]
+    if missing_bins:
+        tools = " + ".join(missing_bins)
+        findings.append(DoctorFinding(
+            "computer-use", severity,
+            f"{prefix}: {tools} not installed — X11 window identity/switching "
+            "cannot work (missions refuse before acting)",
+            hint=f"sudo apt install {' '.join(missing_bins)}  "
+                 "(dnf/pacman/zypper: same package names)",
+        ))
+    else:
+        findings.append(DoctorFinding(
+            "computer-use", "ok",
+            f"{prefix}: xdotool + wmctrl present (X11 window control ready)",
+        ))
+    try:
+        import importlib
+        importlib.import_module("pyatspi")
+        findings.append(DoctorFinding(
+            "computer-use", "ok",
+            f"{prefix}: AT-SPI accessibility tree available",
+        ))
+    except Exception:  # noqa: BLE001 — optional: absent pyatspi only degrades
+        findings.append(DoctorFinding(
+            "computer-use", "info",
+            f"{prefix}: AT-SPI (pyatspi) not importable — element-level "
+            "clicks fall back to pixel coordinates",
+            hint="sudo apt install python3-pyatspi gir1.2-atspi-2.0 "
+                 "(needs a venv created with --system-site-packages)",
+        ))
+    return findings
+
+
 def run_doctor(config: Any) -> list[DoctorFinding]:
     """Run every completeness check and return a flat, ordered finding list.
 
@@ -235,6 +309,7 @@ def run_doctor(config: Any) -> list[DoctorFinding]:
         ("harness-config", lambda: check_harness_config(config)),
         ("subagent-backend", lambda: check_subagent_backend()),
         ("brain-provider", lambda: check_brain_provider(config)),
+        ("computer-use", lambda: check_computer_use_prereqs(config)),
     )
     for category, fn in checks:
         try:

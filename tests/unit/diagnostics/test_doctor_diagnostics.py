@@ -142,3 +142,66 @@ def test_run_doctor_isolates_a_crashing_check(monkeypatch) -> None:
     # ...and the other checks still ran.
     assert any(f.category == "brain-provider" for f in findings)
     assert has_failures(findings)
+
+
+# ---------------------------------------------------------------------------
+# Computer-Use prerequisites (deep-dive 2026-07-15, H-01)
+# ---------------------------------------------------------------------------
+
+
+def _cu_config(enabled: bool = True):
+    return SimpleNamespace(computer_use=SimpleNamespace(enabled=enabled))
+
+
+def test_cu_prereqs_silent_off_linux(monkeypatch) -> None:
+    """Windows/macOS use native APIs — no Linux tool findings there."""
+    monkeypatch.setattr("sys.platform", "win32")
+    assert doctor.check_computer_use_prereqs(_cu_config()) == []
+
+
+def test_cu_prereqs_flags_missing_xdotool_wmctrl_on_x11(monkeypatch) -> None:
+    """A clean X11 box without xdotool/wmctrl gets a fail + install hint."""
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setattr(
+        "jarvis.platform.probes.display_present", lambda: True
+    )
+    monkeypatch.setattr("jarvis.platform.probes.is_wayland", lambda: False)
+    monkeypatch.setattr(doctor.shutil, "which", lambda _name: None)
+    findings = doctor.check_computer_use_prereqs(_cu_config(enabled=True))
+    tool_findings = [f for f in findings if "xdotool" in f.message]
+    assert tool_findings and tool_findings[0].status == "fail"
+    assert "apt install" in (tool_findings[0].hint or "")
+
+
+def test_cu_prereqs_missing_tools_only_warn_when_cu_disabled(monkeypatch) -> None:
+    """CU off: the gap is a warn (heads-up), never a hard doctor failure."""
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setattr(
+        "jarvis.platform.probes.display_present", lambda: True
+    )
+    monkeypatch.setattr("jarvis.platform.probes.is_wayland", lambda: False)
+    monkeypatch.setattr(doctor.shutil, "which", lambda _name: None)
+    findings = doctor.check_computer_use_prereqs(_cu_config(enabled=False))
+    tool_findings = [f for f in findings if "xdotool" in f.message]
+    assert tool_findings and tool_findings[0].status == "warn"
+
+
+def test_cu_prereqs_wayland_and_headless_are_info_not_failure(monkeypatch) -> None:
+    """Wayland/headless are outside the support envelope BY DESIGN."""
+    monkeypatch.setattr("sys.platform", "linux")
+    monkeypatch.setattr(
+        "jarvis.platform.probes.display_present", lambda: False
+    )
+    findings = doctor.check_computer_use_prereqs(_cu_config())
+    assert len(findings) == 1
+    assert findings[0].status == "info"
+    assert "headless" in findings[0].message
+
+    monkeypatch.setattr(
+        "jarvis.platform.probes.display_present", lambda: True
+    )
+    monkeypatch.setattr("jarvis.platform.probes.is_wayland", lambda: True)
+    findings = doctor.check_computer_use_prereqs(_cu_config())
+    assert len(findings) == 1
+    assert findings[0].status == "info"
+    assert "Wayland" in findings[0].message

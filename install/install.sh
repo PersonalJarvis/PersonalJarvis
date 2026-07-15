@@ -565,12 +565,169 @@ ensure_prerequisites() {
     write_prerequisite_state 0
     return 0
 }
+# Linux desktop-automation prerequisites (deep-dive 2026-07-15, H-01).
+# Computer Use's window control on X11 is load-bearing on two small binaries
+# the base install never provided: xdotool (foreground-window identity —
+# without it every mission refuses with "cannot see the screen" before doing
+# useful work) and wmctrl (focus / switch / maximize). The desktop window
+# needs the distro GTK WebKit backend (python3-gi + WebKit GIR), and the
+# OPTIONAL accessibility tree uses distro pyatspi. None of these are pip
+# packages. Best-effort by design: a refusal or a failed package NEVER aborts
+# the install — Computer Use degrades honestly at runtime and names what is
+# missing. Skipped on --headless installs and when no graphical session is
+# visible (a server has no desktop to automate).
+
+linux_desktop_tool_packages() {
+    # $1 = missing binaries ("xdotool wmctrl"), $2 = missing GI modules
+    # ("gi webkit pyatspi"). Prints the distro package list for PREREQ_MANAGER.
+    _pkgs=""
+    for _bin in $1; do _pkgs="${_pkgs:+$_pkgs }$_bin"; done
+    case "$PREREQ_MANAGER" in
+        apt-get)
+            case " $2 " in *" gi "*) _pkgs="${_pkgs:+$_pkgs }python3-gi" ;; esac
+            # WebKit GIR is handled separately (4.1 with a 4.0 fallback).
+            case " $2 " in *" pyatspi "*) _pkgs="${_pkgs:+$_pkgs }python3-pyatspi gir1.2-atspi-2.0" ;; esac
+            ;;
+        dnf|yum)
+            case " $2 " in *" gi "*) _pkgs="${_pkgs:+$_pkgs }python3-gobject" ;; esac
+            case " $2 " in *" webkit "*) _pkgs="${_pkgs:+$_pkgs }webkit2gtk4.1" ;; esac
+            case " $2 " in *" pyatspi "*) _pkgs="${_pkgs:+$_pkgs }python3-pyatspi" ;; esac
+            ;;
+        zypper)
+            case " $2 " in *" gi "*) _pkgs="${_pkgs:+$_pkgs }python3-gobject" ;; esac
+            ;;
+        pacman)
+            case " $2 " in *" gi "*) _pkgs="${_pkgs:+$_pkgs }python-gobject" ;; esac
+            case " $2 " in *" webkit "*) _pkgs="${_pkgs:+$_pkgs }webkit2gtk-4.1" ;; esac
+            case " $2 " in *" pyatspi "*) _pkgs="${_pkgs:+$_pkgs }python-atspi" ;; esac
+            ;;
+        apk)
+            case " $2 " in *" gi "*) _pkgs="${_pkgs:+$_pkgs }py3-gobject3" ;; esac
+            case " $2 " in *" webkit "*) _pkgs="${_pkgs:+$_pkgs }webkit2gtk-4.1" ;; esac
+            ;;
+    esac
+    printf '%s' "$_pkgs"
+}
+
+ensure_linux_desktop_tools() {
+    [ "$(uname -s 2>/dev/null)" = "Linux" ] || return 0
+    for _arg in "$@"; do
+        if [ "$_arg" = "--headless" ]; then
+            note 'Desktop automation tools skipped (--headless).'
+            return 0
+        fi
+    done
+    if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+        note 'No graphical session detected - skipping the desktop automation tools.'
+        note 'On an X11 desktop, window control needs xdotool + wmctrl (e.g. apt install xdotool wmctrl).'
+        return 0
+    fi
+
+    _missing_bins=""
+    command -v xdotool >/dev/null 2>&1 || _missing_bins='xdotool'
+    command -v wmctrl >/dev/null 2>&1 || _missing_bins="${_missing_bins:+$_missing_bins }wmctrl"
+
+    # GI modules are checked against the SYSTEM python3: the Linux venv links
+    # to system site-packages (phase 3), so distro visibility is what counts.
+    _missing_gi=""
+    _sys_py=$(command -v python3 2>/dev/null || true)
+    if [ -n "$_sys_py" ]; then
+        "$_sys_py" -c 'import gi' >/dev/null 2>&1 || _missing_gi='gi'
+        if ! "$_sys_py" -c 'import gi; gi.require_version("WebKit2", "4.1")' >/dev/null 2>&1 &&
+           ! "$_sys_py" -c 'import gi; gi.require_version("WebKit2", "4.0")' >/dev/null 2>&1; then
+            _missing_gi="${_missing_gi:+$_missing_gi }webkit"
+        fi
+        "$_sys_py" -c 'import pyatspi' >/dev/null 2>&1 || _missing_gi="${_missing_gi:+$_missing_gi }pyatspi"
+    fi
+
+    if [ -z "$_missing_bins" ] && [ -z "$_missing_gi" ]; then
+        ok 'desktop automation tools present (xdotool, wmctrl, webview, accessibility)'
+        return 0
+    fi
+
+    detect_prerequisite_manager || true
+    if [ -z "$PREREQ_MANAGER" ]; then
+        note "Desktop automation tools missing: $_missing_bins $_missing_gi"
+        note 'No supported package manager found - install xdotool + wmctrl manually for window control.'
+        return 0
+    fi
+
+    _consent=0
+    case "$PREREQUISITE_MODE" in
+        auto) _consent=1 ;;
+        never) ;;
+        *)
+            if has_install_tty; then
+                note "Optional desktop tools for window control are missing: $_missing_bins $_missing_gi"
+                note "Without them, asking Jarvis to click / type / switch windows cannot work on X11."
+                printf '  Install them now with %s? [Y/n] ' "$PREREQ_MANAGER" >/dev/tty
+                IFS= read -r _answer </dev/tty || _answer='n'
+                case "$_answer" in ''|y|Y|yes|YES|Yes) _consent=1 ;; esac
+            else
+                note 'This shell cannot ask for consent - skipping the optional desktop tools.'
+            fi
+            ;;
+    esac
+    if [ "$_consent" -eq 0 ]; then
+        note 'Skipped. Install later for window control, e.g.: sudo apt install xdotool wmctrl'
+        return 0
+    fi
+
+    _pkgs=$(linux_desktop_tool_packages "$_missing_bins" "$_missing_gi")
+    _dt_log=$(mktemp "${TMPDIR:-/tmp}/jarvis-desktop-tools.XXXXXX") || return 0
+    _dt_ok=1
+    if [ -n "$_pkgs" ]; then
+        case "$PREREQ_MANAGER" in
+            apt-get)
+                # shellcheck disable=SC2086 — word splitting is intentional
+                if run_privileged env DEBIAN_FRONTEND=noninteractive apt-get update -qq >"$_dt_log" 2>&1 &&
+                   run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $_pkgs >>"$_dt_log" 2>&1; then
+                    _dt_ok=0
+                fi
+                # WebKit GIR: package name differs across releases; try 4.1 then 4.0.
+                case " $_missing_gi " in
+                    *" webkit "*)
+                        run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gir1.2-webkit2-4.1 >>"$_dt_log" 2>&1 ||
+                            run_privileged env DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gir1.2-webkit2-4.0 >>"$_dt_log" 2>&1 || true
+                        ;;
+                esac
+                ;;
+            dnf|yum)
+                # shellcheck disable=SC2086
+                if run_privileged "$PREREQ_MANAGER_CMD" -q -y install $_pkgs >"$_dt_log" 2>&1; then _dt_ok=0; fi
+                ;;
+            zypper)
+                # shellcheck disable=SC2086
+                if run_privileged zypper --non-interactive --quiet install $_pkgs >"$_dt_log" 2>&1; then _dt_ok=0; fi
+                ;;
+            pacman)
+                # shellcheck disable=SC2086
+                if run_privileged pacman -Sy --noconfirm --needed $_pkgs >"$_dt_log" 2>&1; then _dt_ok=0; fi
+                ;;
+            apk)
+                # shellcheck disable=SC2086
+                if run_privileged apk add --no-progress $_pkgs >"$_dt_log" 2>&1; then _dt_ok=0; fi
+                ;;
+        esac
+    fi
+    if [ "$_dt_ok" -eq 0 ]; then
+        ok 'desktop automation tools installed'
+    else
+        note 'Some desktop tools could not be installed - continuing; window control may be limited.'
+        tail -n 6 "$_dt_log" 2>/dev/null || true
+    fi
+    rm -f "$_dt_log"
+    return 0
+}
+
 # --- prerequisite-bootstrap end --------------------------------------------
 
 if ! ensure_prerequisites; then
     err 'Prerequisite setup was not completed.'
     exit 1
 fi
+
+ensure_linux_desktop_tools "$@"
 
 # Node.js 18+ — powers only the OPTIONAL Jarvis-Agent worker CLIs (Claude Code
 # / Codex) that heavy missions delegate to, plus the Node-based marketplace
@@ -689,8 +846,23 @@ if [ -x "$VENV_PYTHON" ]; then
         rm -rf "$VENV_PATH"
     fi
 fi
+# Linux venvs include system site-packages (deep-dive 2026-07-15, H-01): the
+# GTK webview backend (python3-gi) and the optional accessibility tree
+# (pyatspi) are GObject-Introspection DISTRO packages that pip cannot install
+# and an isolated venv cannot import. The venv's own installs still shadow
+# system packages on sys.path. Existing isolated Linux venvs are rebuilt once —
+# packages are reinstalled by the installer right after, so nothing is lost.
+if [ -x "$VENV_PYTHON" ] && [ "$(uname -s 2>/dev/null)" = "Linux" ] &&
+   grep -qi 'include-system-site-packages *= *false' "$VENV_PATH/pyvenv.cfg" 2>/dev/null; then
+    note 'rebuilding the Python environment (linking distro webview/accessibility packages)'
+    rm -rf "$VENV_PATH"
+fi
 if [ ! -x "$VENV_PYTHON" ]; then
-    "$PYTHON_EXE" -m venv "$VENV_PATH"
+    if [ "$(uname -s 2>/dev/null)" = "Linux" ]; then
+        "$PYTHON_EXE" -m venv --system-site-packages "$VENV_PATH"
+    else
+        "$PYTHON_EXE" -m venv "$VENV_PATH"
+    fi
 fi
 ok 'virtual environment ready'
 
