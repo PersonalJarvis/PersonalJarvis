@@ -4400,3 +4400,63 @@ the audio-critical loop; (c) a small time-based release floor in
 output as hostile input: any interrupt detector needs an energy floor or
 echo reference before it may cancel playback, and nothing compute-heavy
 belongs on the audio-critical loop per mic frame.
+
+## BUG-063: Realtime Computer-Use task needed 4 dispatches — context-free goals, boundary-timeout refusal, invented capability gaps (HIGH, FIXED 2026-07-15)
+
+**Symptom (voice session 2026-07-15 07:57).** "Open my Discord server, go to
+Personal Jarvis, and announce a live event the day after tomorrow" took four
+dispatches and two why-questions. In between the user heard a canned "that
+didn't work just now" with no action attempt, an invented explanation ("I have
+no API access", offering to type via "a script or the keyboard"), and a
+premature "Done." while Discord merely showed the Friends view. The final
+mission posted a placeholder announcement instead of the requested content.
+
+**Root causes (four, compounding).**
+
+1. **Context-free CU goal.** The deterministic local-action gate ships the RAW
+   current utterance as the mission goal (``plan.prompt=original``). A
+   correction / follow-up turn ("Ihr macht es doch mit Computer-Use") carries <!-- i18n-allow: quoted German speech input from the forensic -->
+   no task of its own, so the loop ran against a vacuous goal and the verifier
+   passed on trivial state (Friends view open → "Done").
+2. **Boundary-timeout refusal after a promise block.** The unbacked-action
+   guard interrupts the response that carried the promise; when that response
+   is already complete on the wire, no further ``turn_complete`` arrives, so
+   the deterministic delegate's 3 s input-boundary wait timed out and REFUSED
+   the action — a canned failure with zero LLM calls, although the final input
+   transcript was in hand.
+3. **No tool self-knowledge in the delegate directive.** Neither the
+   ``jarvis_action`` declaration nor the role directive named on-screen
+   control, so the live model invented capability gaps instead of re-calling
+   the function with the correction folded in.
+4. **History window too small for a correction sequence.** 8 delegate-history
+   messages were exhausted by 4 correction turns + 2 background-completion
+   notes; the original announce request was trimmed out exactly when the
+   recovery turn needed it → placeholder announcement content.
+
+**Fixes (2026-07-15).** (1) ``BrainManager._cu_goal_with_context`` appends a
+bounded recent-turns block (``_TURN_HISTORY_OVERRIDE`` → ``self._history``) to
+every gate-claimed CU goal. (2) ``_DelegateTurnState.input_final``: the
+promise-block recovery marks the input final, and a boundary timeout then
+delays the dispatch instead of vetoing it. (3) The delegate declaration +
+directive name click/type/navigate screen control and forbid claiming a
+missing tool/API/access for anything in the user's world. (4)
+``_DELEGATE_HISTORY_MAX_MESSAGES`` 8 → 20.
+
+**Guards.** ``tests/unit/brain/test_computer_use_offload.py`` (goal context:
+carried, bare-on-first-turn, live-history fallback);
+``tests/unit/realtime/test_session.py`` (promise-block recovery dispatches
+after boundary timeout; directive names screen control + forbids capability
+denial; history keeps a task five exchanges back).
+
+**Open finding (not fixed here).** The CU speed-tune swapped the configured
+``z-ai/glm-5.2`` for ``meta/llama-3.3-70b-instruct`` on the nvidia provider
+and logged it as "the fast vision model" — the nvidia catalog carries no
+modality data, so the router-tier fallback treats vision as unknown-capable;
+llama-3.3 is text-only. Pin a real vision model as the Computer-Use model in
+Settings, or extend the catalog with modality data for direct providers.
+
+**Class rule.** A deterministic action dispatched from a conversation must
+carry the conversation: any harness goal built from a single utterance is
+wrong for every follow-up, correction, and instrument-naming turn. And a
+recovery path that already holds the complete user text must never refuse to
+act because a provider wire event failed to arrive.
