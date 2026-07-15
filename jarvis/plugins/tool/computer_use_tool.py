@@ -175,8 +175,13 @@ class ComputerUseTool:
                 error=(
                     "computer-use is not active on this machine: [computer_use].enabled "
                     "is false (the shipped default) or no vision engine could be built. "
-                    "Tell the user desktop control is currently OFF and can be switched "
-                    "on in Settings; do not retry this tool in this turn."
+                    "Tell the user desktop control is currently OFF. There is no "
+                    "Settings toggle for it (yet); it is enabled via the config value "
+                    "computer_use.enabled=true — you may offer to set it through the "
+                    "config self-mod path (ask-tier, requires the user's confirmation "
+                    "and an app restart), or the user can run: "
+                    "jarvis config set computer_use.enabled true. "
+                    "Do not retry this tool in this turn."
                 ),
             )
         # Wave 0 (frontier-speed, 2026-06-09): with a bus wired (production),
