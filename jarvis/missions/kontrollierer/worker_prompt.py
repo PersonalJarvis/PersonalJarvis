@@ -73,6 +73,17 @@ OUTPUT_SHAPE_DIRECTIVE: Final[str] = (
 )
 
 
+SUPERVISOR_BOUNDARY_DIRECTIVE: Final[str] = (
+    "SUPERVISOR BOUNDARY - USE ONLY EXPLICITLY GRANTED JARVIS TOOLS. You may "
+    "use the worker's own sandboxed shell and file tools inside the assigned "
+    "worktree. Never invoke jarvis, jarvisctl, or jctl to control the running "
+    "app; never operate the live desktop or Computer Use; never read control "
+    "credentials; and never change live configuration. For Wiki work, use only "
+    "the supervisor-granted wiki-list, wiki-recall, wiki-page-read, and "
+    "wiki-ingest tools."
+)
+
+
 def compose_worker_prompt(prior_block: str, step_prompt: str) -> str:
     """Build the full worker prompt: framing directives first.
 
@@ -83,7 +94,10 @@ def compose_worker_prompt(prior_block: str, step_prompt: str) -> str:
     ``step_prompt`` is the task instruction for this step (verbatim user
     utterance or a decomposed sub-task).
     """
-    head = f"{ARTIFACT_LANGUAGE_DIRECTIVE}\n\n{OUTPUT_SHAPE_DIRECTIVE}"
+    head = (
+        f"{ARTIFACT_LANGUAGE_DIRECTIVE}\n\n{OUTPUT_SHAPE_DIRECTIVE}\n\n"
+        f"{SUPERVISOR_BOUNDARY_DIRECTIVE}"
+    )
     if prior_block and prior_block.strip():
         return f"{head}\n\n{prior_block}\n\n{step_prompt}"
     return f"{head}\n\n{step_prompt}"
@@ -92,5 +106,6 @@ def compose_worker_prompt(prior_block: str, step_prompt: str) -> str:
 __all__ = [
     "ARTIFACT_LANGUAGE_DIRECTIVE",
     "OUTPUT_SHAPE_DIRECTIVE",
+    "SUPERVISOR_BOUNDARY_DIRECTIVE",
     "compose_worker_prompt",
 ]

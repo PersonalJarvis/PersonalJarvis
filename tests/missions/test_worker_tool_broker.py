@@ -29,6 +29,7 @@ from jarvis.missions.workers.worker_tool_broker import (
     BROKER_EXECUTION_TIMEOUT_S,
     BROKER_TOKEN_ENV,
     BROKER_URL_ENV,
+    worker_tool_name_allowed,
 )
 from jarvis.safety import ApprovalWorkflow, RiskTierEvaluator, ToolExecutor
 
@@ -94,6 +95,9 @@ def _wire_manager(executor: _Executor) -> None:
                 "github/list_issues": _Tool("github/list_issues"),
                 "github/read_secret": _Tool("github/read_secret"),
                 "wiki-ingest": _Tool("wiki-ingest"),
+                "wiki-list": _Tool("wiki-list", risk_tier="safe"),
+                "wiki-recall": _Tool("wiki-recall", risk_tier="safe"),
+                "wiki-page-read": _Tool("wiki-page-read", risk_tier="safe"),
                 "brain-switch": _Tool("brain-switch"),
                 "gmail": _Tool("gmail", risk_tier="ask"),
                 "spawn-worker": _Tool("spawn-worker"),
@@ -114,7 +118,12 @@ def _inventory() -> WorkerCapabilityInventory:
             }
         },
         app_commands=("wiki-ingest",),
-        native_tool_names=("gmail",),
+        native_tool_names=(
+            "wiki-list",
+            "wiki-recall",
+            "wiki-page-read",
+            "gmail",
+        ),
         task_text="List the open GitHub issues and read my Gmail inbox.",
     )
 
@@ -131,7 +140,14 @@ async def test_binding_is_filtered_and_executes_only_through_supervisor() -> Non
     )
 
     assert binding is not None
-    assert set(binding.tool_names) == {"github/list_issues", "wiki-ingest", "gmail"}
+    assert set(binding.tool_names) == {
+        "github/list_issues",
+        "wiki-ingest",
+        "wiki-list",
+        "wiki-recall",
+        "wiki-page-read",
+        "gmail",
+    }
     result = await binding.execute("github/list_issues", {"value": "open"})
     assert result["success"] is True
     assert binding.execution_summary.clean is True
@@ -143,6 +159,30 @@ async def test_binding_is_filtered_and_executes_only_through_supervisor() -> Non
     denied = await binding.execute("unrelated", {})
     assert denied["status"] == "denied"
     assert len(executor.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "name",
+    (
+        "computer_use",
+        "open_app",
+        "type_text",
+        "run_shell",
+        "jarvisctl",
+        "cli_jarvis",
+        "github/click",
+    ),
+)
+def test_live_control_tools_are_forbidden_to_workers(name: str) -> None:
+    assert worker_tool_name_allowed(name) is False
+
+
+@pytest.mark.parametrize(
+    "name",
+    ("wiki-list", "wiki-recall", "wiki-page-read", "wiki-ingest"),
+)
+def test_wiki_tools_are_allowed_to_workers(name: str) -> None:
+    assert worker_tool_name_allowed(name) is True
 
 
 @pytest.mark.asyncio

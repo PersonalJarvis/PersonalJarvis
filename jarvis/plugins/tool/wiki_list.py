@@ -15,8 +15,9 @@ heading — so the model neither probes nor guesses.
 
 Placement rule
 --------------
-Router-tier only, read-only, risk ``safe``. Never in any worker tool set
-(AP-5/AP-14).
+Router-visible, read-only, risk ``safe``. Jarvis-Agents may reach the live tool
+only through ADR-0025's mission-scoped supervisor broker; it never enters a
+legacy worker tier or direct worker tool set (AP-5/AP-14).
 
 Privacy rule (matches ``wiki-recall`` / ``wiki-page-read``):
     Only paths, sizes, and first headings are returned/logged — never

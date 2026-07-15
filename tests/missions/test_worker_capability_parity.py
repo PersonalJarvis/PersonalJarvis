@@ -11,6 +11,7 @@ from jarvis.missions.workers.api_agent_worker import ApiAgentWorker
 from jarvis.missions.workers.capabilities import (
     WorkerCapabilityInventory,
     restricted_worker_app_commands,
+    restricted_worker_knowledge_tools,
 )
 from jarvis.missions.workers.claude_direct_worker import ClaudeDirectWorker
 from jarvis.missions.workers.codex_direct_worker import (
@@ -100,6 +101,43 @@ def test_registry_drives_the_restricted_worker_command_surface() -> None:
 def test_config_command_is_rejected_from_worker_inventory() -> None:
     with pytest.raises(ValueError, match="not allowed for mission workers"):
         WorkerCapabilityInventory.build(app_commands=("brain-switch",))
+
+
+def test_worker_knowledge_surface_is_wiki_only() -> None:
+    tools = set(restricted_worker_knowledge_tools())
+
+    assert tools == {"wiki-list", "wiki-recall", "wiki-page-read"}
+    assert "computer_use" not in tools
+    assert "run_shell" not in tools
+    assert not any(name.startswith("cli_") for name in tools)
+
+
+def test_mission_inventory_combines_wiki_reads_with_relevant_connectors(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from jarvis.missions import init as missions_init
+
+    monkeypatch.setattr(
+        missions_init,
+        "_assemble_worker_mcp_servers",
+        lambda **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        missions_init,
+        "_connected_native_worker_tools",
+        lambda _task_text: ("gmail",),
+    )
+
+    inventory = missions_init._assemble_worker_capability_inventory(
+        "Review the Wiki and my relevant email."
+    )
+
+    assert set(inventory.native_tool_names) == {
+        "wiki-list",
+        "wiki-recall",
+        "wiki-page-read",
+        "gmail",
+    }
 
 
 def test_codex_worker_ignores_machine_global_config(tmp_path: Path) -> None:

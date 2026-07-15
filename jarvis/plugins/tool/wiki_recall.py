@@ -14,9 +14,9 @@ Usage pattern:
     prompt.
 
 Placement rule:
-    This tool is in ``ROUTER_TOOLS`` only.  It must **never** appear in
-    any ``SUB_TOOLS`` frozenset (AP-D9 recursion-protection; the router
-    tier is the correct consumer).
+    This tool is router-visible. Jarvis-Agents may reach the live tool only
+    through ADR-0025's mission-scoped supervisor broker. It must **never**
+    appear in any ``SUB_TOOLS`` frozenset or direct worker tool set (AP-D9).
 
 Privacy rule (AP-7 / §5 overview):
     Query text is logged only at DEBUG level.  Hit count summary is

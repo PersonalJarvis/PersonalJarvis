@@ -14,6 +14,12 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+RESTRICTED_WORKER_KNOWLEDGE_TOOLS: tuple[str, ...] = (
+    "wiki-list",
+    "wiki-recall",
+    "wiki-page-read",
+)
+
 _FORBIDDEN_RECURSIVE_NAMES = frozenset(
     {
         "dispatch-with-review",
@@ -189,6 +195,11 @@ def restricted_worker_app_commands() -> tuple[str, ...]:
         return ()
 
 
+def restricted_worker_knowledge_tools() -> tuple[str, ...]:
+    """Return the read-only native Wiki surface granted to Jarvis-Agents."""
+    return RESTRICTED_WORKER_KNOWLEDGE_TOOLS
+
+
 def worker_app_command_allowed(command_id: str) -> bool:
     """Fail closed unless a live registry command explicitly allows workers."""
     try:
@@ -211,7 +222,9 @@ RESTRICTED_WORKER_APP_COMMANDS: tuple[str, ...] = restricted_worker_app_commands
 
 __all__ = [
     "RESTRICTED_WORKER_APP_COMMANDS",
+    "RESTRICTED_WORKER_KNOWLEDGE_TOOLS",
     "WorkerCapabilityInventory",
     "restricted_worker_app_commands",
+    "restricted_worker_knowledge_tools",
     "worker_app_command_allowed",
 ]

@@ -54,6 +54,7 @@ from .workers.api_agent_worker import ApiAgentWorker
 from .workers.capabilities import (
     WorkerCapabilityInventory,
     restricted_worker_app_commands,
+    restricted_worker_knowledge_tools,
 )
 from .workers.claude_direct_worker import ClaudeDirectWorker
 from .workers.codex_direct_worker import CodexDirectWorker
@@ -316,7 +317,10 @@ def _assemble_worker_capability_inventory(task_text: str) -> WorkerCapabilityInv
     return WorkerCapabilityInventory.build(
         mcp_servers=_assemble_worker_mcp_servers(task_text=task_text),
         app_commands=restricted_worker_app_commands(),
-        native_tool_names=_connected_native_worker_tools(task_text),
+        native_tool_names=(
+            *restricted_worker_knowledge_tools(),
+            *_connected_native_worker_tools(task_text),
+        ),
         task_text=task_text,
     )
 

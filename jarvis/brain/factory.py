@@ -110,8 +110,9 @@ ROUTER_TOOLS = frozenset({
     # Grounded vault listing (2026-07-14): deterministic ground-truth answer
     # for "what is in my wiki" in ONE round. Without it the brain probed
     # blindly (index.md/SOUL.md → not found, ~14 rounds, 66 s) and recited
-    # schema.md's example layout as actual content. Read-only, safe — never
-    # in a worker set (AP-5/AP-14). See ADR-0011 amendment "wiki-list tool".
+    # schema.md's example layout as actual content. Read-only and safe;
+    # Jarvis-Agents may call it only through the ADR-0025 supervisor broker,
+    # never through a legacy worker tier (AP-5/AP-14). See ADR-0011.
     "wiki-list",
     # Phase B5 follow-up: deterministic ingest path. Lets the brain
     # explicitly store a fact ("merk dir: …") rather than relying on the
