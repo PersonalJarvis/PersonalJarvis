@@ -11,10 +11,10 @@ Bridge mechanics (summary for future readers):
     5. env_vars_for() -> ENV vars that the worker harness reads at spawn time (primary +
        fallback; both are set so that harness provider drift does not break auth).
 
-Why no dedicated per-provider API-key namespace (as originally assumed in AD-6)?
-The worker harness reads the standard provider ENV vars like any other
-Anthropic/OpenAI/Gemini client. Dual-maintenance in the wizard would be friction
-without benefit.
+Jarvis-Agent credentials use dedicated keyring slots. The supervisor resolves
+the scoped slot and translates it to the standard provider ENV name only at the
+worker boundary. Generic Brain credentials remain a compatibility fallback for
+upgraded installations; Realtime-only credentials are never candidates.
 """
 from __future__ import annotations
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import pytest
 
+import jarvis.missions.workers.api_agent_worker as api_worker_mod
 import jarvis.missions.workers.google_cli_worker as mod
 from jarvis.google_cli.pty_runner import PtyRunResult
 from jarvis.google_cli.resolver import GoogleCli
@@ -157,7 +158,7 @@ async def test_spawn_agy_with_gemini_key_but_no_oauth_bills_via_gemini(
 ) -> None:
     """Antigravity dual billing: agy is installed, but the user has NO Google
     OAuth login and a Gemini API key IS set → bill per token via the proven
-    GeminiWorker, NOT the agy PTY path (which would coerce OAuth)."""
+    API worker, not the agy PTY path (which would coerce OAuth)."""
     monkeypatch.setattr(
         mod, "resolve_google_cli", lambda: GoogleCli(kind="agy", argv_prefix=["agy.exe"])
     )
@@ -169,7 +170,7 @@ async def test_spawn_agy_with_gemini_key_but_no_oauth_bills_via_gemini(
         called["gemini"] = True
         yield "GEMINI_EVENT"
 
-    monkeypatch.setattr(mod.GeminiWorker, "spawn", _fake_gemini_spawn)
+    monkeypatch.setattr(api_worker_mod.ApiAgentWorker, "spawn", _fake_gemini_spawn)
     # run_cli_over_pty must NOT be called on this path — make it explode if it is.
     monkeypatch.setattr(
         mod, "run_cli_over_pty",

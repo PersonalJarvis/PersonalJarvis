@@ -88,11 +88,11 @@ AUTH_PROVIDER_ALIASES: dict[str, str] = {
     "groq-api": "groq",
     "gemini": "gemini",
     "gemini-flash-tts": "gemini",
-    "gemini-live": "gemini",
+    "gemini-live": "gemini-live",
     "grok": "grok",
     "grok-voice": "grok",
-    "grok-realtime": "grok",
-    "openai-realtime": "openai",
+    "grok-realtime": "grok-realtime",
+    "openai-realtime": "openai-realtime",
 }
 
 # Local providers that need no credential at all. Empty since v1.0.1: the only
@@ -596,13 +596,25 @@ async def _switch_subagent(
         try:
             from jarvis.codex_auth import CodexAuthService
 
-            codex_connected = CodexAuthService().status().connected
+            codex_status = CodexAuthService().status()
+            codex_connected = codex_status.connected
         except Exception:  # noqa: BLE001 — codex CLI absent is just "not connected"
+            codex_status = None
             codex_connected = False
         has_key = bool(
-            cfg_mod.get_secret("codex_openai_api_key")
-            or cfg_mod.get_provider_secret("codex")
+            cfg_mod.get_secret(
+                "codex_openai_api_key", env_fallback="CODEX_OPENAI_API_KEY"
+            )
         )
+        if codex_status is None or not codex_status.installed:
+            return {
+                "ok": False,
+                "error_kind": "subagent_unavailable",
+                "error": (
+                    "Codex CLI is not installed. Install it or select the OpenAI "
+                    "Jarvis-Agent provider for key-only execution."
+                ),
+            }
         if not (codex_connected or has_key):
             return {
                 "ok": False,
@@ -634,17 +646,22 @@ async def _switch_subagent(
         try:
             from jarvis.google_cli.auth_service import GoogleCliAuthService
 
-            antigravity_connected = GoogleCliAuthService().status().connected
+            antigravity_status = GoogleCliAuthService().status()
+            antigravity_connected = (
+                antigravity_status.connected
+                and antigravity_status.mode == "oauth-personal"
+            )
         except Exception:  # noqa: BLE001 — Google CLI absent is just "not connected"
             antigravity_connected = False
-        if not antigravity_connected:
+        has_key = bool(cfg_mod.get_jarvis_agent_secret("gemini"))
+        if not (antigravity_connected or has_key):
             return {
                 "ok": False,
                 "error_kind": "missing_credential",
                 "error": (
                     "Antigravity is not connected — sign in with Google "
-                    "(install agy or the Gemini CLI and log in), then switch "
-                    "the subagent."
+                    "(install agy or the Gemini CLI and log in) or save a "
+                    "Jarvis-Agent Gemini key, then switch the Agent."
                 ),
             }
         persisted = (
@@ -683,13 +700,21 @@ async def _switch_subagent(
             "error_kind": "unknown_provider",
             "error": f"{provider!r} is not a subagent-capable provider. Available: {known}.",
         }
-    if not cfg_mod.get_provider_secret(canon):
+    has_credential = bool(cfg_mod.get_jarvis_agent_secret(canon))
+    if canon == "claude-api" and not has_credential:
+        try:
+            from jarvis.missions.isolation.env import read_live_claude_oauth_token
+
+            has_credential = bool(read_live_claude_oauth_token())
+        except Exception:  # noqa: BLE001
+            has_credential = False
+    if not has_credential:
         return {
             "ok": False,
             "error_kind": "missing_credential",
             "error": (
-                f"{canon} has no stored key. Set the key on the brain provider "
-                "first, then switch the subagent."
+                f"{canon} has no Jarvis-Agent credential. Save a key on its "
+                "Jarvis-Agent card first, then switch the Agent."
             ),
         }
 

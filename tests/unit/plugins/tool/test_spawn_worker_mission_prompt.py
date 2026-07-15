@@ -80,6 +80,35 @@ def test_no_action_falls_back_to_raw_utterance() -> None:
     assert "Aufgabe:" not in prompt  # no interpretation enrichment
 
 
+def test_no_action_keeps_bounded_recent_context_for_references() -> None:
+    """A forced follow-up must not reach a stateless worker without its topic."""
+    long_hint = "bounded-marker " + ("x" * 1_000)
+    prompt = _build_mission_prompt(
+        utterance="Where is it? I also installed it as a plugin.",
+        action="",
+        context_hints=[
+            "Conversation context (recent turns, newest last):",
+            (
+                "Earlier turn — User: 'Please inspect my Gmail plugin.' | "
+                "Assistant: 'The lookup did not finish.'"
+            ),
+            long_hint,
+        ],
+    )
+
+    assert "Please inspect my Gmail plugin" in prompt
+    assert "The lookup did not finish" in prompt
+    assert "Supporting context from the recent conversation" in prompt
+    assert "bounded-marker" in prompt
+    assert long_hint not in prompt
+
+
+def test_empty_no_action_stays_empty_even_when_context_exists() -> None:
+    assert _build_mission_prompt(
+        utterance="", action="", context_hints=["old context"],
+    ) == ""
+
+
 def test_generic_default_action_is_not_treated_as_interpretation() -> None:
     """The generic ACK filler ('einer komplexen Aufgabe nachgeht') is NOT a
     real interpretation — it must not become the worker's task; fall back to

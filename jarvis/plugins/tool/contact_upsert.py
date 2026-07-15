@@ -108,7 +108,11 @@ class ContactUpsertTool:
                 continue
             text = str(value).strip()
             if text:
-                fields[key] = text
+                # The voice/tool schema accepts the address as one natural
+                # language string, while ContactStore persists a structured
+                # address mapping. Preserve the complete phrase in the street
+                # field instead of passing an incompatible string to the store.
+                fields[key] = {"street": text} if key == "address" else text
 
         if not fields:
             return ToolResult(
@@ -132,10 +136,8 @@ class ContactUpsertTool:
                 ),
             )
 
-        # Privacy: the field VALUES are logged at DEBUG only; INFO carries the
-        # name + which fields changed, never the data itself.
+        # Contact values are personal data, so logs carry field names only.
         log.info("contact-upsert: writing %r (fields=%s)", name, sorted(fields))
-        log.debug("contact-upsert: %r fields=%r", name, fields)
         try:
             contact = store.upsert(name=name, **fields)
         except Exception as exc:  # noqa: BLE001 — a store error must not crash the turn

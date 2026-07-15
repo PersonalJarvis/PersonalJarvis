@@ -73,7 +73,8 @@ def _latest_login_mtime(real_dir: str) -> float | None:
 
 def real_gemini_dir() -> str:
     """The user's real ~/.gemini dir — read-only source of the OAuth login."""
-    return os.path.join(os.path.expanduser("~"), ".gemini")
+    override = os.environ.get("GEMINI_HOME")
+    return override if override else os.path.join(os.path.expanduser("~"), ".gemini")
 
 
 def iso_home_root() -> str:

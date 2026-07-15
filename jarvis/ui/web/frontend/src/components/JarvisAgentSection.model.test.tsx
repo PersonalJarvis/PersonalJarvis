@@ -42,6 +42,24 @@ const MODELS = {
   selects: "model",
 };
 
+const OPENAI_AGENT_ROW = {
+  jarvis: "openai",
+  worker_slug: "openai",
+  env_var: "OPENAI_API_KEY",
+  env_fallback: null,
+  key_set: false,
+  api_key_set: false,
+  dedicated_key_set: false,
+  shared_key_set: false,
+  oauth_connected: false,
+  credential_source: "none",
+  secret_key: "jarvis_agent_openai_api_key",
+  dashboard_url: "https://platform.openai.com/api-keys",
+  credential_help: "Dedicated Jarvis-Agent key.",
+  is_active_brain: false,
+  billing: "api",
+};
+
 function mockFetch() {
   return vi.fn().mockImplementation(async (url: string) => {
     const u = String(url);
@@ -99,5 +117,24 @@ describe("JarvisAgentSection — dedicated subagent LLM dropdown", () => {
         "claude-opus-4-8",
       );
     });
+  });
+
+  it("renders a dedicated API-key input on the Jarvis-Agents card", async () => {
+    const status = { ...STATUS, mapping: [OPENAI_AGENT_ROW] };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation(async (url: string) => {
+        if (String(url).includes("/api/jarvis-agent/status")) {
+          return { ok: true, json: async () => status };
+        }
+        return { ok: true, json: async () => ({}) };
+      }),
+    );
+
+    render(<JarvisAgentSection />);
+
+    expect(
+      await screen.findByLabelText("Enter jarvis_agent_openai_api_key"),
+    ).toBeTruthy();
   });
 });

@@ -420,3 +420,4 @@ def test_schema_offers_spoken_ack_and_language() -> None:
     assert SpawnWorkerTool.schema["required"] == ["utterance", "action"]
     description = props["spoken_ack"]["description"]
     assert "stock phrase" in description
+    assert "'Jarvis-Agent' exactly once" in description

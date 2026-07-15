@@ -28,7 +28,7 @@ import json
 import logging
 import re
 import time
-from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID, uuid4
@@ -52,6 +52,7 @@ from jarvis.core.protocols import (
     ImageBlock,
     Tool,
 )
+from jarvis.core.redact import safe_preview
 from jarvis.core.turn_language import (
     DEFAULT_LOCALE,
     detect_text_language,
@@ -100,7 +101,8 @@ from .persona_loader import load_effective_persona_prompt
 from .provider_registry import BrainProviderRegistry
 from .rate_limit_tracker import RateLimitTracker
 from .streaming import aggregate
-from .turn_planner import plan_turn
+from .tool_call_recovery import extract_leaked_tool_calls
+from .turn_planner import is_contextual_follow_up, plan_turn
 from .voice_command_gate import match_voice_command
 
 if TYPE_CHECKING:
@@ -117,6 +119,25 @@ _PUBLISH_RESPONSE_EVENT: ContextVar[bool] = ContextVar(
 )
 _TURN_HISTORY_OVERRIDE: ContextVar[tuple[BrainMessage, ...] | None] = ContextVar(
     "jarvis.brain.manager.turn_history_override",
+    default=None,
+)
+
+
+class _SkillTurnState:
+    """Task-local mutable state for one manager skill-routing turn."""
+
+    __slots__ = ("content", "injected_inline", "match", "owner", "source")
+
+    def __init__(self, owner: Any) -> None:
+        self.owner = owner
+        self.match: Any | None = None
+        self.content = ""
+        self.source = "match"
+        self.injected_inline = False
+
+
+_SKILL_TURN_STATE: ContextVar[_SkillTurnState | None] = ContextVar(
+    "jarvis.brain.manager.skill_turn_state",
     default=None,
 )
 
@@ -1066,43 +1087,6 @@ def _is_conversational_coaching(user_text: str) -> bool:
     return bool(_CONVERSATIONAL_COACHING_RE.search(user_text or ""))
 
 
-def _balanced_json_objects(text: str) -> list[str]:
-    """Return every top-level balanced ``{...}`` substring of ``text``.
-
-    String/escape-aware brace walk so a tool_use object can be recovered even
-    when a provider wraps it in prose or markdown. Used by
-    :func:`_extract_leaked_spawn_call` to find a tool_use block that a provider
-    emitted as TEXT instead of executing.
-    """
-    objects: list[str] = []
-    depth = 0
-    start = -1
-    in_str = False
-    escape = False
-    for i, ch in enumerate(text):
-        if in_str:
-            if escape:
-                escape = False
-            elif ch == "\\":
-                escape = True
-            elif ch == '"':
-                in_str = False
-            continue
-        if ch == '"':
-            in_str = True
-        elif ch == "{":
-            if depth == 0:
-                start = i
-            depth += 1
-        elif ch == "}":
-            if depth > 0:
-                depth -= 1
-                if depth == 0 and start >= 0:
-                    objects.append(text[start:i + 1])
-                    start = -1
-    return objects
-
-
 def _extract_leaked_spawn_call(text: str) -> dict[str, Any] | None:
     """Return the ``input`` dict of a leaked ``spawn_worker`` tool_use, else None.
 
@@ -1110,41 +1094,13 @@ def _extract_leaked_spawn_call(text: str) -> dict[str, Any] | None:
     the response *text* instead of invoking the tool — the brain reply becomes
     raw ``[{"type":"tool_use","name":"spawn_worker","input":{...}}]`` JSON,
     which would otherwise be spoken (scrubbed to "Es trat ein Fehler auf") and
-    the delegated sub-agent would never run. This detects that leak (bare
-    object or list, with or without prose/markdown fences) and returns the
-    tool ``input`` (possibly empty) so the caller can execute it deterministically.
+    the delegated Jarvis-Agent would never run. This accepts only a whole JSON
+    response (bare or strictly fenced); JSON quoted inside prose is never an
+    executable instruction.
     """
-    if not text or "spawn_worker" not in text or "tool_use" not in text:
-        return None
-
-    candidates: list[Any] = []
-    stripped = text.strip()
-    # Drop a leading ```json / ``` fence if the whole reply is fenced.
-    if stripped.startswith("```"):
-        stripped = stripped.lstrip("`")
-        if stripped[:4].lower() == "json":
-            stripped = stripped[4:]
-        stripped = stripped.strip().rstrip("`").strip()
-    try:
-        candidates.append(json.loads(stripped))
-    except (json.JSONDecodeError, ValueError):
-        # Embedded in prose — recover balanced {...} objects individually.
-        for obj_str in _balanced_json_objects(text):
-            try:
-                candidates.append(json.loads(obj_str))
-            except (json.JSONDecodeError, ValueError):
-                continue
-
-    for cand in candidates:
-        blocks = cand if isinstance(cand, list) else [cand]
-        for block in blocks:
-            if (
-                isinstance(block, dict)
-                and block.get("type") == "tool_use"
-                and block.get("name") == "spawn_worker"
-            ):
-                inp = block.get("input")
-                return inp if isinstance(inp, dict) else {}
+    for call in extract_leaked_tool_calls(text):
+        if call.get("name") == "spawn_worker":
+            return dict(call.get("input") or {})
     return None
 
 
@@ -1415,6 +1371,12 @@ def _unfulfilled_replacement(
     return _evidence_unfulfilled_answer(lang=lang, domain=domain)
 
 
+def _safe_recovered_text(value: Any) -> str:
+    """Redact, cap, and reject tool-envelope text before it reaches speech."""
+    text = safe_preview(value, max_chars=600)[:600].strip()
+    return "" if _looks_like_tool_use_leak(text) else text
+
+
 def _render_recovered_tool_output(output: Any) -> str:
     """Speakable plain-text rendering of a recovered tool's output.
 
@@ -1438,8 +1400,7 @@ def _render_recovered_tool_output(output: Any) -> str:
     if output is None:
         return ""
     if isinstance(output, str):
-        s = output.strip()
-        return "" if _looks_like_tool_use_leak(s) else s
+        return _safe_recovered_text(output)
     if isinstance(output, dict):
         results = output.get("results")
         if isinstance(results, list):
@@ -1447,34 +1408,75 @@ def _render_recovered_tool_output(output: Any) -> str:
             for item in results:
                 if not isinstance(item, dict):
                     continue
-                title = str(item.get("title") or "").strip()
-                snippet = str(item.get("snippet") or "").strip()
+                title = _safe_recovered_text(item.get("title") or "")
+                snippet = _safe_recovered_text(item.get("snippet") or "")
                 if snippet and title and title.lower() not in snippet.lower():
                     parts.append(f"{title}: {snippet}")
                 else:
                     parts.append(snippet or title)
             joined = " ".join(p for p in parts if p).strip()
-            return joined[:600]
+            return _safe_recovered_text(joined)
         # CLI tools (cli_<name>) return {exit_code, stdout, stderr, duration_ms}.
         # This renderer is reached only after the caller verified success, so a
         # non-empty stdout IS the answer — surface it instead of dead-ending in
         # "" (which made the caller speak "Dazu habe ich nichts gefunden" even
         # though gcloud returned real project data; live repro 2026-06-17).
         if "exit_code" in output and ("stdout" in output or "stderr" in output):
-            stdout = str(output.get("stdout") or "").strip()
-            return stdout[:600] if stdout else ""
-        # Other structured tools: surface the first human-readable text field,
-        # never the dict repr.
-        for key in ("text", "answer", "summary", "message", "content", "result"):
+            return _safe_recovered_text(output.get("stdout") or "")
+        # Connected tools use many result schemas. Preserve a bounded set of
+        # human-facing scalar fields while omitting technical identifiers,
+        # raw bodies, URLs, tokens, and headers. The normal ToolUseLoop gives
+        # structured results back to the model for synthesis; this branch is a
+        # defense-in-depth fallback when a provider leaked the call as text.
+        parts: list[str] = []
+        for key in (
+            "sender", "from", "subject", "title", "date", "time", "status",
+            "summary", "description",
+        ):
             val = output.get(key)
             if isinstance(val, str) and val.strip():
-                return val.strip()[:600]
+                rendered = _safe_recovered_text(val)
+                if rendered:
+                    parts.append(rendered)
+            elif isinstance(val, (list, tuple)):
+                rendered = _render_recovered_tool_output(val)
+                if rendered:
+                    parts.append(rendered)
+        if parts:
+            return _safe_recovered_text(" — ".join(parts))
+        normalized_keys = {
+            re.sub(r"[^a-z0-9]", "", str(key).lower()) for key in output
+        }
+        has_private_or_technical_key = any(
+            key.endswith(("id", "token"))
+            or any(
+                marker in key
+                for marker in (
+                    "body", "secret", "authorization", "header", "raw",
+                    "html", "attachment", "payload", "apikey",
+                )
+            )
+            for key in normalized_keys
+        )
+        if not has_private_or_technical_key:
+            # Preserve the established fallback contract for compact explicit
+            # answer/status mappings. ``content`` remains excluded because
+            # connector schemas routinely use it for full private bodies.
+            for key in ("text", "answer", "message", "result"):
+                val = output.get(key)
+                if isinstance(val, str) and val.strip():
+                    return _safe_recovered_text(val)
+        # Fail closed for unknown mappings. Connector schemas commonly store
+        # full private bodies under content/message/result and use camelCase
+        # identifiers/tokens, so a generic scalar fallback can disclose data.
         return ""
     if isinstance(output, (list, tuple)):
-        joined = " ".join(str(x).strip() for x in output if str(x).strip()).strip()
-        return "" if _looks_like_tool_use_leak(joined) else joined[:600]
-    text = str(output).strip()
-    return "" if _looks_like_tool_use_leak(text) else text
+        rendered_items = (
+            _render_recovered_tool_output(item).strip() for item in output
+        )
+        joined = " ".join(item for item in rendered_items if item).strip()
+        return _safe_recovered_text(joined)
+    return _safe_recovered_text(output)
 
 
 def _extract_leaked_tool_call(text: str) -> tuple[str, dict[str, Any]] | None:
@@ -1488,31 +1490,10 @@ def _extract_leaked_tool_call(text: str) -> tuple[str, dict[str, Any]] | None:
     the call so it can be executed deterministically (see
     :meth:`BrainManager._recover_leaked_tool`).
     """
-    if not text or "tool_use" not in text:
-        return None
-    candidates: list[Any] = []
-    stripped = text.strip()
-    if stripped.startswith("```"):
-        stripped = stripped.lstrip("`")
-        if stripped[:4].lower() == "json":
-            stripped = stripped[4:]
-        stripped = stripped.strip().rstrip("`").strip()
-    try:
-        candidates.append(json.loads(stripped))
-    except (json.JSONDecodeError, ValueError):
-        for obj_str in _balanced_json_objects(text):
-            try:
-                candidates.append(json.loads(obj_str))
-            except (json.JSONDecodeError, ValueError):
-                continue
-    for cand in candidates:
-        blocks = cand if isinstance(cand, list) else [cand]
-        for block in blocks:
-            if isinstance(block, dict) and block.get("type") == "tool_use":
-                name = block.get("name")
-                if isinstance(name, str) and name:
-                    inp = block.get("input")
-                    return name, (inp if isinstance(inp, dict) else {})
+    calls = extract_leaked_tool_calls(text)
+    if calls:
+        call = calls[0]
+        return str(call["name"]), dict(call.get("input") or {})
     return None
 
 
@@ -4224,13 +4205,14 @@ class BrainManager:
     # for the CURRENT turn, set early in generate() and overwritten on every
     # turn. While set, force-spawn and the local-action fast path stand down
     # and run-skill stays visible even on smalltalk turns.
-    _skill_turn_match: Any | None = None
+    _skill_turn_match_fallback: Any | None = None
     # Direct-trigger handoff (AD-S4): the speech pipeline / chat hook notes a
     # trigger match here instead of macro-running it; generate() consumes it
     # on the next call and injects the skill instructions into the turn.
     _pending_forced_skill: tuple[str, str, str] | None = None
-    _skill_turn_content: str = ""
-    _skill_turn_source: str = "match"
+    _skill_turn_content_fallback: str = ""
+    _skill_turn_source_fallback: str = "match"
+    _skill_injected_inline_fallback: bool = False
     # AD-S6: warn exactly once per manager lifetime when the AVAILABLE
     # SKILLS section cannot be rendered (RC2 used to be silent).
     _skills_omit_warned: bool = False
@@ -4251,6 +4233,82 @@ class BrainManager:
     # Per-turn self-control directive (general settings/config control). Reset
     # at the start of every generate() turn; appended to the system prompt.
     _self_control_directive: str = ""
+
+    def _local_skill_turn_state(self) -> _SkillTurnState | None:
+        state = _SKILL_TURN_STATE.get()
+        return state if state is not None and state.owner is self else None
+
+    @property
+    def _skill_turn_match(self) -> Any | None:
+        state = self._local_skill_turn_state()
+        if state is not None:
+            return state.match
+        return self.__dict__.get(
+            "_skill_turn_match_fallback",
+            type(self)._skill_turn_match_fallback,
+        )
+
+    @_skill_turn_match.setter
+    def _skill_turn_match(self, value: Any | None) -> None:
+        state = self._local_skill_turn_state()
+        if state is not None:
+            state.match = value
+        else:
+            self._skill_turn_match_fallback = value
+
+    @property
+    def _skill_turn_content(self) -> str:
+        state = self._local_skill_turn_state()
+        if state is not None:
+            return state.content
+        return self.__dict__.get(
+            "_skill_turn_content_fallback",
+            type(self)._skill_turn_content_fallback,
+        )
+
+    @_skill_turn_content.setter
+    def _skill_turn_content(self, value: str) -> None:
+        state = self._local_skill_turn_state()
+        if state is not None:
+            state.content = value
+        else:
+            self._skill_turn_content_fallback = value
+
+    @property
+    def _skill_turn_source(self) -> str:
+        state = self._local_skill_turn_state()
+        if state is not None:
+            return state.source
+        return self.__dict__.get(
+            "_skill_turn_source_fallback",
+            type(self)._skill_turn_source_fallback,
+        )
+
+    @_skill_turn_source.setter
+    def _skill_turn_source(self, value: str) -> None:
+        state = self._local_skill_turn_state()
+        if state is not None:
+            state.source = value
+        else:
+            self._skill_turn_source_fallback = value
+
+    @property
+    def _skill_injected_inline(self) -> bool:
+        state = self._local_skill_turn_state()
+        if state is not None:
+            return state.injected_inline
+        return self.__dict__.get(
+            "_skill_injected_inline_fallback",
+            type(self)._skill_injected_inline_fallback,
+        )
+
+    @_skill_injected_inline.setter
+    def _skill_injected_inline(self, value: bool) -> None:
+        state = self._local_skill_turn_state()
+        if state is not None:
+            state.injected_inline = bool(value)
+        else:
+            self._skill_injected_inline_fallback = bool(value)
 
     def note_skill_trigger(
         self, skill_name: str, *, content: str = "", source: str = "trigger"
@@ -4331,6 +4389,57 @@ class BrainManager:
             return skill
         except Exception:  # noqa: BLE001
             return None
+
+    def _previous_user_turn_text(self, *, use_history: bool) -> str:
+        """Return the latest bounded user message from this task's history."""
+        override = _TURN_HISTORY_OVERRIDE.get()
+        history = (
+            tuple(override)
+            if override is not None
+            else tuple(self._history if use_history else ())
+        )
+        for message in reversed(history):
+            if getattr(message, "role", None) != "user":
+                continue
+            content = getattr(message, "content", "")
+            if isinstance(content, str) and content.strip():
+                return content.strip()[-1_200:]
+        return ""
+
+    def _contextual_routing_state(
+        self, user_text: str, *, use_history: bool
+    ) -> tuple[str, tuple[str, ...]]:
+        """Return bounded context and live tools inherited by a follow-up.
+
+        The actual user message and tool arguments stay untouched. Only
+        deterministic skill/plugin/MCP selection sees the previous user turn,
+        and only when the shared planner identifies an explicit referential
+        follow-up. An unrelated request therefore cannot replay an old action.
+        """
+        previous = self._previous_user_turn_text(use_history=use_history)
+        if not previous:
+            return user_text, ()
+        if not is_contextual_follow_up(user_text, (previous,)):
+            return user_text, ()
+
+        try:
+            plan = plan_turn(
+                user_text,
+                tool_names=tuple((getattr(self, "_tools", None) or {}).keys()),
+                context=(previous,),
+            )
+        except Exception:  # noqa: BLE001 - context must never break a turn
+            return user_text, ()
+        live_tools = tuple(
+            name
+            for name in plan.required_capabilities
+            if name in (getattr(self, "_tools", None) or {})
+        )
+        contextual = (
+            f"Previous user request: {previous}\n"
+            f"Current referential follow-up: {user_text}"
+        )
+        return contextual, live_tools
 
     @staticmethod
     def _skill_is_blocked(skill: Any) -> bool:
@@ -4610,7 +4719,7 @@ class BrainManager:
             if not _is_plain_knowledge_question(t):
                 return tools
             # User explicitly named the vehicle → respect it, never hide (AD-S9).
-            if self._get_force_spawn_pattern().search(t):
+            if self._is_explicit_heavy_request(t):
                 return tools
             # A real desktop/action turn or an artifact-build request still needs
             # the spawn tools — only a pure ANSWER question loses them.
@@ -4661,7 +4770,7 @@ class BrainManager:
             if (
                 self._turn_has_action_intent(t)
                 or self._research_wants_artifact(t)
-                or self._get_force_spawn_pattern().search(t)
+                or self._is_explicit_heavy_request(t)
             ):
                 return tools
             # Hide computer_use/spawn AND the deterministic write/record tools so
@@ -4713,7 +4822,7 @@ class BrainManager:
                 return tools
             # An explicit heavy-work vehicle or an artifact-build request still
             # legitimately spawns — never hide the spawn vehicles there.
-            if self._get_force_spawn_pattern().search(t) or self._research_wants_artifact(t):
+            if self._is_explicit_heavy_request(t) or self._research_wants_artifact(t):
                 return tools
             from jarvis.marketplace.usage_cards.loader import load_usage_card
 
@@ -4875,7 +4984,7 @@ class BrainManager:
         # combo like "Spawne einen Subagenten UND zeig mir die Socials" names the
         # execution vehicle, so it must reach force-spawn rather than merely
         # switch the sidebar section. Stand down and let the normal path spawn.
-        if self._get_force_spawn_pattern().search(user_text):
+        if self._is_explicit_heavy_request(user_text):
             log.info(
                 "navigation fast-path stands down — explicit heavy-work trigger "
                 "in the utterance wins (mission, not a sidebar switch)."
@@ -4902,6 +5011,18 @@ class BrainManager:
             re.search(r"\b(zeig\w*|öffne|oeffne|geh\w*|wechs\w*|spring\w*)\b", user_text, re.I)  # i18n-allow
         )
         return f"Öffne {label}." if is_de else f"Opening {label}."  # i18n-allow
+
+    def _is_explicit_heavy_request(self, user_text: str) -> bool:
+        """Return whether the user semantically requested a heavy worker."""
+        text = (user_text or "").strip()
+        if not text or _is_spawn_decline(text) or _is_spawn_feature_reference(text):
+            return False
+        trigger = self._get_force_spawn_pattern().search(text)
+        if trigger is None:
+            return False
+        if _trigger_names_vehicle(trigger.group(0)):
+            return True
+        return not _looks_like_pc_control(text)
 
     def _should_force_spawn(
         self, user_text: str, *, source_layer: str | None = None
@@ -5037,11 +5158,9 @@ class BrainManager:
         # decide. This reuses the existing pc-control detector — no new
         # signal-word list, no widening of force_spawn_phrases.
         _trigger = self._get_force_spawn_pattern().search(t)
+        if self._is_explicit_heavy_request(t):
+            return True
         if _trigger is not None:
-            if _trigger_names_vehicle(_trigger.group(0)):
-                return True
-            if not _looks_like_pc_control(t):
-                return True  # depth marker, no screen signal → heavy background work
             log.info(
                 "force-spawn deferred to LLM: depth trigger %r + computer-use "
                 "request — router decides computer_use vs spawn",
@@ -6478,6 +6597,7 @@ class BrainManager:
         *,
         user_text: str,
         trace_id: UUID,
+        allowed_tools: Mapping[str, Tool],
     ) -> str | None:
         """Execute a ``spawn_worker`` call a provider leaked as TEXT.
 
@@ -6496,7 +6616,7 @@ class BrainManager:
         leaked = _extract_leaked_spawn_call(response_text)
         if leaked is None:
             return None
-        tool = self._tools.get("spawn_worker")
+        tool = allowed_tools.get("spawn_worker")
         if tool is None or self._tool_executor is None:
             return None
 
@@ -6548,7 +6668,7 @@ class BrainManager:
                 reason_key="spawn_failed_reason",
                 lang=out_lang,
             )
-        return str(result.output or "")
+        return _safe_recovered_text(result.output or "")
 
     async def _recover_leaked_tool(
         self,
@@ -6556,6 +6676,7 @@ class BrainManager:
         *,
         user_text: str,
         trace_id: UUID,
+        allowed_tools: Mapping[str, Tool],
     ) -> str | None:
         """Execute ANY tool a provider leaked as TEXT (generalises spawn-only).
 
@@ -6577,11 +6698,14 @@ class BrainManager:
         name, inp = parsed
         if name == "spawn_worker":
             return await self._recover_leaked_spawn(
-                response_text, user_text=user_text, trace_id=trace_id,
+                response_text,
+                user_text=user_text,
+                trace_id=trace_id,
+                allowed_tools=allowed_tools,
             )
         if self._tool_executor is None:
             return None
-        tool = self._tools.get(name)
+        tool = allowed_tools.get(name)
         if tool is None:
             return None
         log.warning(
@@ -6596,8 +6720,12 @@ class BrainManager:
             # it instead of the bare "exit N" error token (live repro
             # 2026-06-17, gcloud billing budgets list -> exit 1).
             if name.startswith(_CLI_TOOL_PREFIX):
-                return _cli_failure_reason(
-                    result.output, result.error, german=_looks_german(user_text),
+                return _safe_recovered_text(
+                    _cli_failure_reason(
+                        result.output,
+                        result.error,
+                        german=_looks_german(user_text),
+                    )
                 )
             return await self._honest_failure_readback(
                 result,
@@ -6920,6 +7048,8 @@ class BrainManager:
         history_token = _TURN_HISTORY_OVERRIDE.set(
             tuple(history_override) if history_override is not None else None
         )
+        skill_state = _SkillTurnState(self)
+        skill_token = _SKILL_TURN_STATE.set(skill_state)
         try:
             return await self._generate(
                 user_text,
@@ -6933,6 +7063,14 @@ class BrainManager:
                 emit_tool_ack=emit_tool_ack,
             )
         finally:
+            # Keep the last completed turn inspectable for diagnostics/tests,
+            # while active concurrent turns continue reading their own
+            # ContextVar-backed state.
+            self._skill_turn_match_fallback = skill_state.match
+            self._skill_turn_content_fallback = skill_state.content
+            self._skill_turn_source_fallback = skill_state.source
+            self._skill_injected_inline_fallback = skill_state.injected_inline
+            _SKILL_TURN_STATE.reset(skill_token)
             _TURN_HISTORY_OVERRIDE.reset(history_token)
             _PUBLISH_RESPONSE_EVENT.reset(token)
 
@@ -7110,6 +7248,10 @@ class BrainManager:
                 "set_mission_command_handlers() rufen."
             )
 
+        routing_text, contextual_tool_names = self._contextual_routing_state(
+            user_text, use_history=use_history,
+        )
+
         # Skill-aware routing guard (AD-S3): probe ONCE per turn, before any
         # fast path can grab the utterance. "starte die Morgenroutine" is an
         # is_open_app_intent hit AND a spawn-verb hit — without this early
@@ -7129,6 +7271,18 @@ class BrainManager:
         # AD-S4: a trigger noted by the speech pipeline / chat hook takes
         # precedence — it carries the captured content and the source label.
         self._consume_pending_skill_trigger(user_text)
+        if self._skill_turn_match is None and routing_text != user_text:
+            # Match the prior utterance independently before trying the
+            # composite routing context. Whole-utterance (``^...$``) plugin
+            # skill triggers cannot match the wrapper by design, yet they
+            # still own an explicitly referential follow-up.
+            previous_text = self._previous_user_turn_text(use_history=use_history)
+            if previous_text:
+                self._skill_turn_match = self._match_skill_for_turn(previous_text)
+            if self._skill_turn_match is None:
+                self._skill_turn_match = self._match_skill_for_turn(routing_text)
+            if self._skill_turn_match is not None:
+                self._skill_turn_source = "continuation"
         # AD-S9: an explicit heavy-work trigger ("Sub-Agent", "OpenClaw",
         # "spawne", "deep dive", …) names the execution vehicle — the mission
         # path owns such a turn, not the inline skill prompt. Live bug
@@ -7136,7 +7290,7 @@ class BrainManager:
         # inline gmail-skill turn instead of a mission.
         if (
             self._skill_turn_match is not None
-            and self._get_force_spawn_pattern().search(user_text)
+            and self._is_explicit_heavy_request(user_text)
         ):
             log.info(
                 "Skill match %s stands down — explicit heavy-work trigger in "
@@ -7269,9 +7423,20 @@ class BrainManager:
         # the LLM tool-use loop. Prevents spawn reflex on ambiguous smalltalk
         # inputs (see docs/persona-research.md section 2 — 60% empty smalltalk
         # outputs from the reflexive LLM spawn path).
-        forced_spawn = await self._force_spawn_worker(
-            user_text, trace_id=turn_trace_id, source_layer=source_layer,
-        )
+        if (
+            contextual_tool_names
+            and not self._is_explicit_heavy_request(user_text)
+            and not self._research_wants_artifact(user_text)
+        ):
+            log.info(
+                "Force-spawn stood down for contextual live tool(s): %s",
+                ", ".join(contextual_tool_names),
+            )
+            forced_spawn = None
+        else:
+            forced_spawn = await self._force_spawn_worker(
+                user_text, trace_id=turn_trace_id, source_layer=source_layer,
+            )
         if forced_spawn is not None:
             # Bug fix 2026-04-30: history update also in the force-spawn path.
             # Previously returned directly → main Jarvis had no memory on the
@@ -7649,7 +7814,7 @@ class BrainManager:
                 # utterance (progressive disclosure), then hide any plugin whose
                 # CLI counterpart is connected (req 4: CLI > plugin fallback).
                 else self._suppress_plugins_covered_by_cli(
-                    self._apply_plugin_relevance(user_text, self._tools)
+                    self._apply_plugin_relevance(routing_text, self._tools)
                 )
             )
             # Skill inline-injected (AD-S4): drop run-skill so a weak model
@@ -7686,8 +7851,23 @@ class BrainManager:
             # the spawn vehicles so the router uses the plugin tool DIRECTLY.
             if isinstance(_turn_tools, dict):
                 _turn_tools = self._hide_spawn_when_plugin_tool_handles_turn(
-                    _turn_tools, user_text
+                    _turn_tools, routing_text
                 )
+            # A referential follow-up that inherited a currently registered
+            # plugin/MCP tool remains inline even when that tool has no usage
+            # card. The explicit heavy-work and artifact requests above retain
+            # their normal mission path.
+            if (
+                isinstance(_turn_tools, dict)
+                and contextual_tool_names
+                and not self._is_explicit_heavy_request(user_text)
+                and not self._research_wants_artifact(user_text)
+            ):
+                _turn_tools = {
+                    name: tool
+                    for name, tool in _turn_tools.items()
+                    if name not in _SPAWN_TOOL_NAMES
+                }
             # PC-control run-skill hide (forensic 2026-07-02, voice 20:28): "ein
             # Terminal öffnen, Cloud-Code öffnen, … ein Prompt geben" — an
             # explicit desktop request — was hijacked by the semantically-similar
@@ -8019,14 +8199,11 @@ class BrainManager:
             )
             return await self._provider_down_reply(trace_uuid)
 
-        # Robustness net (2026-05-24): a provider (notably Gemini) sometimes
-        # emits a spawn_worker tool_use block as TEXT instead of executing
-        # it — response_text becomes raw `[{"type":"tool_use",...}]` JSON.
-        # Without this the JSON is spoken (scrubbed to "Es trat ein Fehler
-        # auf") and the delegated Opus-4.7 sub-agent never runs. Detect the
-        # leak and execute the spawn through the normal tool path so the
-        # heavy-work delegation is robust against provider function-calling
-        # flakiness.
+        # Text-serialized calls are recovered inside BrainDispatcher's shared
+        # ToolUseLoop, where the exact turn-scoped tool surface, deadline,
+        # safety guards, and exactly-once tracking remain authoritative. Never
+        # re-parse and execute here against the manager-global tool registry:
+        # that old fallback bypassed per-turn plugin/screen/deadline gates.
         # Two-turn voice/chat confirmation (turn N): the tool-use loop deferred a
         # consequential tool and produced a confirmation QUESTION as its text.
         # Arm the pending state and return the question directly — the leaked-tool
@@ -8043,21 +8220,15 @@ class BrainManager:
             )
             return agg.text
 
-        recovered = await self._recover_leaked_tool(
-            response_text, user_text=user_text, trace_id=trace_uuid,
-        )
-        if recovered is not None:
-            response_text = recovered
-
         # Evidence-gate enforcement (live repro 2026-06-17, session 296abc82):
         # the gate MANDATED a tool this turn, but neither the normal tool loop
         # nor the leaked-tool recovery above actually ran it — so the model's
         # answer is unverified, at worst a confabulation ("the gcloud tool
         # blocked execution because it classified the request as an explanatory
         # question"). Replace it with an honest non-data fallback; never speak an
-        # answer a mandated read tool was supposed to ground. Runs AFTER recovery
-        # so a leaked-but-recovered mandated tool (real data) is not pre-empted.
-        if recovered is None and self._evidence_required_tool:
+        # answer a mandated read tool was supposed to ground. Shared-loop leak
+        # recovery has already populated ``_turn_executed`` when it succeeded.
+        if self._evidence_required_tool:
             _replacement = _unfulfilled_replacement(
                 required_tool=self._evidence_required_tool,
                 executed=_turn_executed,
@@ -8080,8 +8251,6 @@ class BrainManager:
                 response_text = _replacement
 
         execution_evidence = set(_turn_executed)
-        if recovered is not None:
-            execution_evidence.add("recovered_tool_call")
         honest_response = replace_unbacked_action_claim(
             response_text,
             executed_tools=execution_evidence,

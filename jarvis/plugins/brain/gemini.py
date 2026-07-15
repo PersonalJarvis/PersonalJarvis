@@ -718,6 +718,7 @@ class GeminiBrain:
                     contents=contents,
                     config=config_dict,
                 )
+                final_usage: dict[str, int] | None = None
                 async for chunk in stream:
                     # Text
                     text = getattr(chunk, "text", None)
@@ -754,13 +755,37 @@ class GeminiBrain:
                     usage = getattr(chunk, "usage_metadata", None)
                     if usage is not None:
                         yielded_delta = True
-                        yield BrainDelta(usage={
-                            "input_tokens": int(getattr(usage, "prompt_token_count", 0) or 0),
-                            "output_tokens": int(getattr(usage, "candidates_token_count", 0) or 0),
-                            "cache_read_input_tokens": int(
-                                getattr(usage, "cached_content_token_count", 0) or 0
-                            ),
-                        })
+                        # Gemini reports cumulative snapshots, not per-chunk
+                        # deltas. Emitting every snapshot makes the shared
+                        # aggregator sum the same prompt repeatedly. Retain the
+                        # latest snapshot and emit it once after the stream.
+                        prompt_tokens = int(
+                            getattr(usage, "prompt_token_count", 0) or 0
+                        )
+                        cache_hit_tokens = int(
+                            getattr(usage, "cached_content_token_count", 0) or 0
+                        )
+                        candidate_tokens = int(
+                            getattr(usage, "candidates_token_count", 0) or 0
+                        )
+                        thought_tokens = int(
+                            getattr(usage, "thoughts_token_count", 0) or 0
+                        )
+                        tool_result_tokens = int(
+                            getattr(usage, "tool_use_prompt_token_count", 0) or 0
+                        )
+                        final_usage = {
+                            # The canonical cost contract stores non-cached
+                            # input separately from discounted cache hits.
+                            "input_tokens": max(
+                                prompt_tokens - cache_hit_tokens,
+                                0,
+                            ) + tool_result_tokens,
+                            "output_tokens": candidate_tokens + thought_tokens,
+                            "cache_hit_tokens": cache_hit_tokens,
+                        }
+                if final_usage is not None:
+                    yield BrainDelta(usage=final_usage)
                 return
             except Exception as exc:  # noqa: BLE001 — BUG-019 stale-cache recovery
                 if (

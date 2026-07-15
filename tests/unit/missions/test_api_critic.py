@@ -10,6 +10,7 @@ from pathlib import Path
 import pytest
 
 import jarvis.core.config as cfg_mod
+from jarvis.core.protocols import BrainDelta
 from jarvis.missions.critic.runner import (
     REQUIRED_AXES,
     CriticAxis,
@@ -27,7 +28,7 @@ def _valid_verdict_json() -> str:
         issues=[],
         correction_instruction="",
         summary="Looks good.",
-        summary_de="Sieht gut aus.",
+        summary_de="Looks good.",
         confidence=0.9,
         suggested_next_action="accept",
     )
@@ -88,6 +89,46 @@ def test_api_critic_resolver_can_exclude_a_failed_family(monkeypatch):
     )
 
     assert provider == "gemini"
+
+
+@pytest.mark.asyncio
+async def test_api_critic_uses_scoped_jarvis_agent_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    observed: list[str | None] = []
+
+    class _Brain:
+        def __init__(self, model=None):  # noqa: ANN001
+            pass
+
+        async def complete(self, req):  # noqa: ANN001, ANN201
+            observed.append(cfg_mod.get_provider_secret("openai"))
+            yield BrainDelta(content=_valid_verdict_json())
+
+    monkeypatch.setattr(
+        cfg_mod,
+        "get_secret",
+        lambda key, *args, **kwargs: {
+            "jarvis_agent_openai_api_key": "agent-key",
+            "openai_api_key": "brain-key",
+        }.get(key),
+    )
+    monkeypatch.setattr(
+        "jarvis.brain.provider_registry.BrainProviderRegistry.get_class",
+        lambda self, provider: _Brain,
+    )
+
+    verdict = await CriticRunner()._invoke_via_api_critic(
+        prompt="Review it.",
+        model="gpt-test",
+        provider="openai",
+        iteration=0,
+        adversarial_reframe=False,
+    )
+
+    assert verdict is not None and verdict.verdict == "approve"
+    assert observed == ["agent-key"]
+    assert cfg_mod.get_provider_secret("openai") == "brain-key"
 
 
 @pytest.mark.asyncio

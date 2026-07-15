@@ -182,6 +182,26 @@ def _shares_content_word(a: str, b: str) -> bool:
     return bool(wa & wb)
 
 
+_MAX_CONTEXT_HINTS = 8
+_MAX_CONTEXT_HINT_CHARS = 320
+
+
+def _bounded_context_hints(context_hints: list[str] | None) -> list[str]:
+    """Normalize and bound context copied into a worker mission prompt."""
+    hints: list[str] = []
+    for raw_hint in context_hints or []:
+        if not isinstance(raw_hint, str):
+            continue
+        hint = re.sub(r"[\x00-\x1f\x7f]+", " ", raw_hint)
+        hint = re.sub(r"\s{2,}", " ", hint).strip()
+        if not hint:
+            continue
+        hints.append(hint[:_MAX_CONTEXT_HINT_CHARS])
+        if len(hints) >= _MAX_CONTEXT_HINTS:
+            break
+    return hints
+
+
 def _build_mission_prompt(
     utterance: str,
     action: str,
@@ -205,7 +225,9 @@ def _build_mission_prompt(
     utterance = (utterance or "").strip()
     action = (action or "").strip()
     target = (target or "").strip()
-    if not action or action == _GENERIC_ACTION_FALLBACK:
+    hints = _bounded_context_hints(context_hints)
+    no_interpretation = not action or action == _GENERIC_ACTION_FALLBACK
+    if no_interpretation:
         # Force-spawn / no interpretation — the verbatim utterance is all we
         # have. Strip any spawn/routing meta-clause ("spawn a sub-agent that …",
         # "create and spawn a sub-agent …") so the worker receives the REAL task,
@@ -248,16 +270,18 @@ def _build_mission_prompt(
         parts = [f"Aufgabe: {action}."]
         if target:
             parts.append(f"Zielort/Kontext: {target}.")
-        hints = [
-            h.strip()
-            for h in (context_hints or [])
-            if isinstance(h, str) and h.strip()
-        ]
         if hints:
             parts.append("Hinweise: " + "; ".join(hints) + ".")
         if utterance:
             parts.append(f'Wortlaut des Nutzers: "{utterance}".')
         body = "\n".join(parts)
+    if body and no_interpretation and hints:
+        context_block = "\n".join(f"- {hint}" for hint in hints)
+        body = (
+            f"{body}\n\nSupporting context from the recent conversation "
+            "(use only to resolve references; the underlying request remains "
+            f"authoritative):\n{context_block}"
+        )
     if not body:
         # Nothing to dispatch — keep the empty-in/empty-out contract so the
         # caller's empty-utterance guard still short-circuits cleanly.
@@ -339,8 +363,12 @@ class SpawnWorkerTool:
                     "max) in the user's language, phrased freshly for THIS "
                     "exact request: name the concrete topic and naturally "
                     "convey that it runs on the side and may take a moment. "
+                    "It MUST contain the exact public product term "
+                    "'Jarvis-Agent' exactly once and make clear that one was "
+                    "just started or brought in. Vary how and where that fact "
+                    "is expressed; do not use a fixed sentence template. "
                     "NEVER a generic stock phrase, never claim the task is "
-                    "already done, no internal component names."
+                    "already done, and never expose internal component names."
                 ),
                 "default": "",
             },

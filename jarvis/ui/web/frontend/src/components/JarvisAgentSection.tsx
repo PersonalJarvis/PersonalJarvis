@@ -18,16 +18,16 @@ import {
   type CodexStatus,
 } from "@/hooks/useProviders";
 import { BrainModelSelector } from "@/components/BrainModelSelector";
+import { ApiKeyForm } from "@/components/ApiKeyForm";
 
 /**
  * Subagent tier for the API-Keys view.
  *
  * Visually a sibling of the brain/tts/stt tiers in `ApiKeysView`: the same
  * tier header + `card-outline` cards + identical `StatusBadge` styling. Each
- * provider card carries the same "Set active" radio as the API-key tiers, so
- * the user can switch the Heavy-Task subagent provider seamlessly instead of
- * being stuck on one. There is no key input — sub-agent workers reuse the
- * brain-provider keys entered above (`key_set` mirrors that state).
+ * provider card carries its own scoped API-key field and the same "Set active"
+ * radio as the other tiers. Legacy shared Brain credentials remain a visible
+ * compatibility fallback, never the only configuration path.
  *
  * Data source is `GET /api/jarvis-agent/status`; the switch posts to
  * `POST /api/jarvis-agent/switch` (3-layer persist). This is its own section
@@ -43,6 +43,14 @@ interface SubagentMappingRow {
   env_var: string;
   env_fallback: string | null;
   key_set: boolean;
+  api_key_set: boolean;
+  dedicated_key_set: boolean;
+  shared_key_set: boolean;
+  oauth_connected: boolean;
+  credential_source: string;
+  secret_key: string | null;
+  dashboard_url: string | null;
+  credential_help: string | null;
   is_active_brain: boolean;
   /** How this subagent is billed — "api" (per token) / "subscription" /
    * "subscription_or_api". Drives the billing badge so the API-vs-subscription
@@ -221,17 +229,14 @@ export function JarvisAgentSection({
 
       <BridgeStatusStrip status={bridge} />
 
-      {/* The coupling is non-obvious: subagent providers have no key field of
-          their own — they reuse the Brain-provider keys set above. A dim one-line
-          hint instead of a loud banner: it informs without competing with the
-          cards below. */}
+      {/* Scoped Agent keys are managed here. Older shared Brain keys remain a
+          compatibility fallback and are labelled honestly on the relevant card. */}
       <p className="flex items-start gap-2 px-1 text-[11px] leading-relaxed text-muted-foreground">
         <ArrowUp className="mt-0.5 h-3 w-3 shrink-0 text-primary" />
         <span>
-          Agents reuse the keys from the{" "}
-          <strong className="text-foreground">Brain</strong> tab. Codex uses the
-          ChatGPT login, Antigravity the Google login — connect there, then pick
-          which provider runs heavy background tasks.
+          API-backed Agents can use a dedicated key set on this tab. Existing
+          Brain keys remain available as a compatibility fallback; Realtime keys
+          stay isolated to Realtime Voice.
         </span>
       </p>
 
@@ -395,8 +400,8 @@ function BridgeMeta({
  * noise and is not surfaced.
  */
 function BridgeStatusStrip({ status }: { status: SubagentStatus }) {
-  const installed = Boolean(status.binary_detected);
-  const live = status.enabled && installed;
+  const activeRow = status.mapping.find((row) => row.is_active_brain);
+  const live = Boolean(activeRow?.key_set);
   const worker = PROVIDER_LABELS[status.brain_primary] ?? status.brain_primary;
   const model = status.model_resolved ?? status.sub_model_override ?? null;
 
@@ -411,10 +416,10 @@ function BridgeStatusStrip({ status }: { status: SubagentStatus }) {
         )}
       />
       <span className="text-sm font-medium">
-        {live ? "Agent bridge active" : "Agent bridge inactive"}
+        {live ? "Agent provider configured" : "Agent provider needs setup"}
       </span>
       <span className="text-[11px] text-muted-foreground">
-        {installed ? "Engine installed" : "Engine not installed"}
+        {live ? "Credential or subscription available" : "Add a key or connect a login"}
         {status.version_pin && (
           <>
             {" · pin "}
@@ -809,17 +814,40 @@ function CodexConnectionCard({
       title="OpenAI Codex"
       billing={row?.billing}
       active={isActive}
-      badge={<StatusPill state={isActive ? "active" : connected ? "ready" : "open"} />}
+      badge={
+        <StatusPill
+          state={
+            isActive
+              ? "active"
+              : connected || (installed && row?.api_key_set)
+                ? "ready"
+                : "open"
+          }
+        />
+      }
       subtitle={detail}
       warning={
-        !installed && <CardHint icon={Terminal}>Install Codex before connecting.</CardHint>
+        <div className="space-y-2" data-agent-card-control>
+          {row?.secret_key && (
+            <ApiKeyForm
+              secretKey={row.secret_key}
+              dashboardUrl={row.dashboard_url}
+              configured={row.dedicated_key_set}
+              credentialHelp={row.credential_help}
+              onChanged={onChanged}
+            />
+          )}
+          {!installed && (
+            <CardHint icon={Terminal}>Install Codex before activating it.</CardHint>
+          )}
+        </div>
       }
       footer={
         <>
           {/* When connected, the same "Set active" control as the other
               provider cards — so this subscription login is selectable right
               here, not only via a duplicate card further down. */}
-          {connected && row && (
+          {(connected || (installed && row?.api_key_set)) && row && (
             <SubagentActiveControl
               row={row}
               activating={activating}
@@ -849,13 +877,17 @@ function AntigravityConnectionCard({
   const pushToast = useEventStore((s) => s.pushToast);
   const [pending, setPending] = useState(false);
   const { activating, activate } = useSubagentActivate(row, onChanged);
-  const connected = Boolean(status?.connected);
+  const connected = Boolean(status?.connected && status.mode === "oauth-personal");
   const installed = status?.installed ?? false;
+  const apiKeyReady = Boolean(row?.api_key_set);
+  const usable = connected || apiKeyReady;
   const isActive = Boolean(row?.is_active_brain);
   const detail = connected
     ? status?.user_email
       ? `Connected as ${status.user_email}`
       : status?.message || "Connected"
+    : apiKeyReady
+      ? "Gemini Jarvis-Agent API key ready (billed per token)"
     : status?.message || "Google login not connected";
 
   async function connect() {
@@ -896,10 +928,10 @@ function AntigravityConnectionCard({
       title="Antigravity"
       billing={row?.billing}
       active={isActive}
-      badge={<StatusPill state={isActive ? "active" : connected ? "ready" : "open"} />}
+      badge={<StatusPill state={isActive ? "active" : usable ? "ready" : "open"} />}
       subtitle={detail}
       warning={
-        !installed && (
+        !installed && !apiKeyReady && (
           <CardHint icon={Terminal}>
             Install Antigravity or the Gemini CLI before connecting.
           </CardHint>
@@ -907,7 +939,7 @@ function AntigravityConnectionCard({
       }
       footer={
         <>
-          {connected && row && (
+          {usable && row && (
             <SubagentActiveControl
               row={row}
               activating={activating}
@@ -937,7 +969,7 @@ function ClaudeConnectionCard({
   const pushToast = useEventStore((s) => s.pushToast);
   const [pending, setPending] = useState(false);
   const { activating, activate } = useSubagentActivate(row, onChanged);
-  const connected = Boolean(status?.connected);
+  const connected = Boolean(status?.connected && status.mode === "subscription");
   const installed = status?.installed ?? false;
   // Claude has ONE subagent slug (claude-api) reached by EITHER the Claude Max
   // OAuth login OR an Anthropic API key — split into two sibling cards (mirror
@@ -945,7 +977,7 @@ function ClaudeConnectionCard({
   // when claude-api is the active worker AND it is running over the OAuth login
   // (mode != "api_key"); the API key card owns the api_key mode. So exactly one
   // of the two ever shows "active".
-  const isActive = Boolean(row?.is_active_brain) && status?.mode !== "api_key";
+  const isActive = Boolean(row?.is_active_brain) && status?.mode === "subscription";
   // A subscription login shows the signed-in account + tier ("Connected as
   // ruben@… · Claude Max"); not connected shows how to sign in. The API-key
   // alternative now lives on its own card below, not here.
@@ -1048,15 +1080,20 @@ function ClaudeApiCard({
   onChanged: () => void | Promise<void>;
 }) {
   const { activating, activate } = useSubagentActivate(row, onChanged);
-  // Mirror the other API cards: ready/locked tracks the stored brain key.
-  const keySet = Boolean(row?.key_set);
+  // OAuth unlocks the subscription sibling only. This API card reflects an
+  // actual API key, so a Claude Max login cannot paint it falsely ready.
+  const keySet = Boolean(row?.api_key_set);
   const isActive = Boolean(row?.is_active_brain) && status?.mode === "api_key";
 
   // Click anywhere on the card activates — except the radio/label (own handler)
   // so a single user click never fires activate() twice (mirror of the others).
   function handleCardActivate(e: React.MouseEvent<HTMLDivElement>) {
     const target = e.target as HTMLElement | null;
-    if (target && (target.closest("input") || target.closest("label"))) {
+    if (
+      target?.closest(
+        "input, label, button, a, select, textarea, [data-agent-card-control]",
+      )
+    ) {
       return;
     }
     void activate();
@@ -1071,23 +1108,32 @@ function ClaudeApiCard({
       active={isActive}
       interactive={keySet && !isActive}
       onClick={handleCardActivate}
-      onDoubleClick={handleCardActivate}
       tooltip={
         isActive
           ? "This Jarvis-Agent provider is active"
           : keySet
             ? "Activate this Jarvis-Agent provider"
-            : "Add the Claude API key in the Brain section first"
+            : "Save a dedicated Claude Jarvis-Agent key first"
       }
       badge={<StatusPill state={isActive ? "active" : keySet ? "ready" : "open"} />}
       subtitle="API key · billed per token"
       warning={
-        !keySet && (
-          <CardHint icon={Lock}>
-            Locked &mdash; add the <strong>Claude (API-Key)</strong> key in the
-            Brain tab to unlock it.
-          </CardHint>
-        )
+        <div className="space-y-2" data-agent-card-control>
+          {row?.secret_key && (
+            <ApiKeyForm
+              secretKey={row.secret_key}
+              dashboardUrl={row.dashboard_url}
+              configured={row.dedicated_key_set}
+              credentialHelp={row.credential_help}
+              onChanged={onChanged}
+            />
+          )}
+          {!keySet && (
+            <CardHint icon={Lock}>
+              Locked &mdash; save a dedicated <strong>Claude API key</strong> above.
+            </CardHint>
+          )}
+        </div>
       }
       footer={
         row && (
@@ -1126,7 +1172,7 @@ function useSubagentActivate(
           ? `${label}: connect the ChatGPT login first.`
           : row.jarvis === "antigravity"
             ? `${label}: connect the Google login first.`
-            : `${label}: set the API key on the brain provider above first.`,
+            : `${label}: save a key on its Jarvis-Agent card first.`,
       );
       return;
     }
@@ -1179,7 +1225,11 @@ function SubagentProviderCard({
   // has its own handler) so a single user click never fires activate() twice.
   function handleCardActivate(e: React.MouseEvent<HTMLDivElement>) {
     const target = e.target as HTMLElement | null;
-    if (target && (target.closest("input") || target.closest("label"))) {
+    if (
+      target?.closest(
+        "[data-agent-card-control], button, a, input, label, textarea, select",
+      )
+    ) {
       return;
     }
     void activate();
@@ -1194,7 +1244,6 @@ function SubagentProviderCard({
       active={row.is_active_brain}
       interactive={row.key_set && !row.is_active_brain}
       onClick={handleCardActivate}
-      onDoubleClick={handleCardActivate}
       tooltip={
         row.is_active_brain
           ? "This Jarvis-Agent provider is active"
@@ -1207,28 +1256,30 @@ function SubagentProviderCard({
           state={row.is_active_brain ? "active" : row.key_set ? "ready" : "open"}
         />
       }
-      subtitle="Reuses the matching key from the Brain tab"
+      subtitle={
+        row.dedicated_key_set
+          ? "Dedicated Jarvis-Agent key configured"
+          : row.shared_key_set
+            ? "Using the shared Brain key as a compatibility fallback"
+            : "Set a dedicated key for this Jarvis-Agent"
+      }
       warning={
-        !row.key_set && (
-          <CardHint icon={Lock}>
-            {row.jarvis === "openai-codex" ? (
-              <>
-                Locked &mdash; connect <strong>{label}</strong> with ChatGPT above
-                to unlock it.
-              </>
-            ) : row.jarvis === "antigravity" ? (
-              <>
-                Locked &mdash; connect <strong>{label}</strong> with Google above
-                to unlock it.
-              </>
-            ) : (
-              <>
-                Locked &mdash; add the <strong>{label}</strong> key in the Brain
-                tab to unlock it.
-              </>
-            )}
-          </CardHint>
-        )
+        <div className="space-y-2" data-agent-card-control>
+          {row.secret_key && (
+            <ApiKeyForm
+              secretKey={row.secret_key}
+              dashboardUrl={row.dashboard_url}
+              configured={row.dedicated_key_set}
+              credentialHelp={row.credential_help}
+              onChanged={onSwitched}
+            />
+          )}
+          {!row.key_set && (
+            <CardHint icon={Lock}>
+              Locked &mdash; save a dedicated <strong>{label}</strong> key on this card.
+            </CardHint>
+          )}
+        </div>
       }
       footer={
         <SubagentActiveControl
