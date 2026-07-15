@@ -377,3 +377,6 @@ jobs:
 
       - name: Docs privacy gate (BLOCKING - name / email / paths / ids in docs/)
         run: python scripts/ci/docs_privacy_scan.py
+
+      - name: Public reader docs contract (BLOCKING)
+        run: python scripts/ci/check_public_docs.py

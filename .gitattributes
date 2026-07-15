@@ -26,6 +26,9 @@ requirements.txt             text eol=lf
 requirements.in              text eol=lf
 verify-wave6.sh              text eol=lf
 
+# Git hooks run through a POSIX shell and must never be checked out as CRLF.
+.githooks/*                  text eol=lf
+
 # The supply-chain documentation, workflows, and in-toto layout are
 # also pinned to LF so any future inclusion in the signed-artifact
 # set does not require revisiting this file.

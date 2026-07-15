@@ -255,9 +255,15 @@ desktop = [
 # (``apt install python3-pyatspi gir1.2-atspi-2.0``), surfaced via the
 # ``capabilities.has_ax_tree`` runtime probe — it is NEVER a pip dependency.
 desktop-macos = [
+    # Builds the managed-install alias bundle around a native Mach-O launcher.
+    # A shell CFBundleExecutable that execs external Python has no stable TCC
+    # identity; py2app keeps the interpreter inside the app process while the
+    # source/dependencies remain in the installer-managed checkout.
+    "py2app>=0.28.10; sys_platform == 'darwin'",
     "pyobjc-framework-Quartz>=10; sys_platform == 'darwin'",
     "pyobjc-framework-ApplicationServices>=10; sys_platform == 'darwin'",
     "pyobjc-framework-Accessibility>=10; sys_platform == 'darwin'",
+    "pyobjc-framework-AVFoundation>=10; sys_platform == 'darwin'",
     # Native per-window Computer-Use capture (SCScreenshotManager by
     # CGWindowID); runtime-probed — an absent framework degrades to rect grabs.
     "pyobjc-framework-ScreenCaptureKit>=10; sys_platform == 'darwin'",
@@ -567,6 +573,9 @@ jarvis = [
     "skills/builtin/**/*.md",
     "skills/builtin/**/*.txt",
 ]
+
+[tool.setuptools.data-files]
+"share/personal-jarvis/docs" = ["docs/product/**/*.md"]
 
 [tool.ruff]
 line-length = 100
