@@ -259,6 +259,33 @@ def _fast_auth_token_env() -> str:
     return "JARVIS_UI_TOKEN"
 
 
+def _fast_vite_dev_url(force_dev: bool) -> str | None:
+    """Read the trusted Vite origin without loading the full config graph."""
+    import contextlib
+
+    configured_dev = False
+    vite_url = "http://localhost:5173"
+    with contextlib.suppress(Exception):
+        import tomllib
+
+        override = os.environ.get("JARVIS_CONFIG")
+        if override:
+            path = override
+        else:
+            repo_root = os.path.dirname(
+                os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            )
+            path = os.path.join(repo_root, "jarvis.toml")
+        if os.path.exists(path):
+            with open(path, "rb") as fh:
+                ui = tomllib.load(fh).get("ui", {})
+            configured_dev = bool(ui.get("dev_mode", False))
+            value = ui.get("vite_dev_url")
+            if isinstance(value, str) and value:
+                vite_url = value
+    return vite_url if force_dev or configured_dev else None
+
+
 async def _run_headless(args) -> int:
     """Headless **fast boot** (the "serve first, init behind" contract).
 
@@ -786,6 +813,8 @@ def _serve_bootstrap_with_retry(
     host: str,
     port: int,
     *,
+    session_token: str | None = None,
+    vite_dev_url: str | None = None,
     attempts: int = 5,
     delay: float = 0.4,
     _factory=None,
@@ -812,7 +841,11 @@ def _serve_bootstrap_with_retry(
 
     factory = _factory if _factory is not None else FastBootstrap
     for attempt in range(attempts):
-        bootstrap = factory()
+        bootstrap = (
+            factory(session_token=session_token, vite_dev_url=vite_dev_url)
+            if session_token is not None
+            else factory()
+        )
         try:
             loop.run_until_complete(bootstrap.serve(host, port))
             return bootstrap
@@ -847,7 +880,13 @@ def _desktop_backend_main(args, port: int, token: str, holder: dict, app_ready) 
         # bind before concluding "already running" (the lock below is the real
         # arbiter). Without this, the fresh restart instance bounces and the app
         # "shuts down but never comes back".
-        bootstrap = _serve_bootstrap_with_retry(loop, "127.0.0.1", port)
+        bootstrap = _serve_bootstrap_with_retry(
+            loop,
+            "127.0.0.1",
+            port,
+            session_token=token,
+            vite_dev_url=_fast_vite_dev_url(bool(args.dev)),
+        )
         if bootstrap is None:
             holder["already_running"] = True
             app_ready.set()

@@ -84,6 +84,16 @@ describe("WSClient", () => {
     client.close();
   });
 
+  it("never places an injected session token in the socket URL", () => {
+    window.__JARVIS_TOKEN = "session-secret";
+    const client = new WSClient();
+    client.connect();
+
+    expect(MockWebSocket.last!.url).toBe("ws://localhost:5173/ws");
+    expect(MockWebSocket.last!.url).not.toContain("session-secret");
+    client.close();
+  });
+
   it("passes the close code to onClose", async () => {
     const onClose = vi.fn();
     const client = new WSClient({ onClose });

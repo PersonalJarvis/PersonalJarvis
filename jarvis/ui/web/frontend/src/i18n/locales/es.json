@@ -1,4 +1,15 @@
 {
+  "auth_gate": {
+    "checking": "Comprobando el acceso…",
+    "title": "Desbloquear Personal Jarvis",
+    "subtitle": "Introduce la clave de control configurada para esta instancia de Jarvis.",
+    "control_key": "Clave de control",
+    "placeholder": "Pega tu clave de control",
+    "submit": "Desbloquear",
+    "submitting": "Comprobando…",
+    "invalid": "La clave de control no ha sido aceptada.",
+    "unavailable": "No se pudo conectar con Jarvis. Inténtalo de nuevo."
+  },
   "file_toast": {
     "show_in_folder": "Mostrar en la carpeta",
     "open": "Abrir",
@@ -107,7 +118,7 @@
   "socials": {
     "subtitle": "Enlaces a nuestra comunidad y perfiles.",
     "add": "Añadir enlace",
-    "empty": "Aún no hay enlaces — añade el primero.",
+    "empty": "No hay enlaces sociales disponibles.",
     "edit": "Editar",
     "delete": "Eliminar",
     "open": "Abrir",
@@ -176,7 +187,7 @@
     "added": "«{0}» se añadió al diccionario.",
     "saved": "Entrada del diccionario guardada.",
     "deleted": "«{0}» se eliminó del diccionario.",
-    "applies_note": "Los cambios se aplican a tu próxima frase — no hace falta reiniciar.",
+    "applies_note": "Los cambios se aplican desde la siguiente transcripción de Pipeline — no hace falta reiniciar. El modo Realtime no usa las correcciones del diccionario.",
     "dialog_add_title": "Añadir a tu vocabulario",
     "dialog_edit_title": "Editar entrada del diccionario",
     "correction_toggle": "Corregir un error de reconocimiento",
@@ -477,6 +488,12 @@
       "tools": "Herramientas",
       "errors": "Errores"
     }
+  },
+  "voice_mode": {
+    "label": "Modo",
+    "realtime": "Tiempo real",
+    "pipeline": "Pipeline",
+    "unknown": "Desconocido"
   },
   "sessions_view": {
     "title": "Transcripción",
@@ -907,7 +924,7 @@
     "runtime_realtime": "Sesión actual: Tiempo real",
     "runtime_pipeline": "Sesión actual: Pipeline",
     "runtime_fallback_pipeline": "La sesión actual volvió a Pipeline; Tiempo real no está atendiendo esta llamada.",
-    "cat_brain_desc": "El modelo que impulsa el chat, el enrutamiento y Computer-Use.",
+    "cat_brain_desc": "El modelo que redacta tus respuestas de chat y voz. El modelo de herramientas independiente gestiona las acciones y Computer Use.",
     "cat_tts_desc": "La voz con la que habla Jarvis.",
     "cat_stt_desc": "Cómo convierte Jarvis tu voz en texto.",
     "cat_realtime_desc": "Voz a voz dúplex completo mediante cualquier proveedor de tiempo real configurado, en escritorio o navegador.",
@@ -1008,6 +1025,38 @@
     "effective": "El Tool Model usa",
     "cleared": "Tool Model restablecido a tu modelo principal",
     "vision_note": "Solo se muestran modelos que entienden imágenes: Computer-Use lee la pantalla mediante capturas, un modelo de solo texto no puede controlarlo."
+  },
+  "permissions": {
+    "group_title": "Permisos de privacidad",
+    "title": "Permisos de macOS",
+    "description": "Concede solo el acceso del sistema necesario para voz, Computer-Use, atajos globales y control de ventanas. Jarvis nunca modifica la base de datos de privacidad de macOS.",
+    "loading": "Comprobando los permisos del sistema…",
+    "load_failed": "No se pudo leer el estado actual de los permisos.",
+    "refresh": "Comprobar de nuevo",
+    "not_required": "Este sistema operativo no requiere permisos de privacidad de escritorio adicionales.",
+    "identity_warning": "Inicia Personal Jarvis desde su paquete de aplicación antes de conceder acceso. macOS vincula los permisos a la identidad exacta de la aplicación.",
+    "restart_required": "Reinicia Personal Jarvis antes de usar el acceso recién concedido.",
+    "restart_now": "Reiniciar ahora",
+    "restarting": "Reiniciando…",
+    "restart_failed": "Personal Jarvis no pudo reiniciarse. Ciérralo y ábrelo de nuevo manualmente.",
+    "request": "Permitir",
+    "open_settings": "Abrir Ajustes",
+    "status": {
+      "granted": "Permitido",
+      "not_determined": "No solicitado",
+      "denied": "Denegado",
+      "restricted": "Restringido",
+      "not_granted": "No permitido",
+      "unavailable": "No disponible",
+      "not_required": "No requerido"
+    },
+    "items": {
+      "microphone": { "title": "Micrófono", "description": "Necesario para la palabra de activación y la entrada de voz local." },
+      "screen_recording": { "title": "Grabación de pantalla", "description": "Necesario para que Computer-Use vea todas las pantallas conectadas." },
+      "accessibility": { "title": "Accesibilidad", "description": "Necesario para clics, escritura, enfoque y control de ventanas fiables." },
+      "input_monitoring": { "title": "Monitorización de entrada", "description": "Necesario para pulsar para hablar y atajos de teclado globales." },
+      "event_posting": { "title": "Control de entrada", "description": "Necesario para que Computer-Use envíe eventos de ratón y teclado." }
+    }
   },
   "settings_view": {
     "silence_window": {
@@ -1115,7 +1164,7 @@
       "derived_name": "Tu asistente se llamará: {0}",
       "engine_options": {
         "auto": "Automático (recomendado)",
-        "openwakeword": "openWakeWord (frases integradas)",
+        "openwakeword": "openWakeWord (modelo personalizado)",
         "vosk_kws": "Detección de palabras clave (cualquier frase, igual en todos los equipos)",
         "stt_match": "Coincidencia STT (cualquier frase, requiere Whisper local)",
         "custom_onnx": "Modelo ONNX personalizado"
@@ -1400,6 +1449,8 @@
     "search_modal_placeholder": "Buscar documentos…",
     "search_hint": "Escribe un término para buscar…",
     "search_loading": "Buscando…",
+    "search_failed": "No se pudo cargar la búsqueda.",
+    "search_retry": "Volver a intentar",
     "no_results": "Sin resultados para \"{0}\"",
     "for_fulltext": "para la búsqueda completa.",
     "could_not_load": "No se pudo cargar el documento.",
@@ -1553,6 +1604,13 @@
       "ui_label": "Idioma de la interfaz",
       "reply_label": "Idioma de respuesta"
     },
+    "permissions": {
+      "title": "Permite el acceso en este Mac",
+      "body": "macOS pide aprobar cada capacidad por separado. Usa los botones de abajo y vuelve aquí; el estado se actualizará automáticamente.",
+      "privacy_note": "Estos avisos proceden de macOS. El instalador no puede aprobarlos de forma silenciosa y Personal Jarvis nunca elude Ajustes del Sistema.",
+      "continue": "Continuar",
+      "text_only": "Continuar solo con texto"
+    },
     "wake_word": {
       "choice_title": "¿Cómo quieres activar a {name}?",
       "choice_body": "Elige lo que mejor se adapte a tu forma de trabajar — puedes cambiarlo después en Ajustes.",
@@ -1561,7 +1619,7 @@
       "mode_shortcut_title": "Atajo de teclado",
       "mode_shortcut_body": "Sin palabra de activación — mantén pulsada una tecla para hablar y suéltala para enviar (pulsar para hablar).",
       "back_to_choice": "Atrás",
-      "shortcut_note": "Activarás a {name} con un atajo de teclado en lugar de una palabra de activación. Puedes configurar la tecla exacta en cualquier momento en Ajustes → Palabra de activación.",
+      "shortcut_note": "Activarás a {name} con un atajo de teclado en lugar de una palabra de activación. Puedes configurar la tecla exacta en cualquier momento en Ajustes → Atajos de voz.",
       "shortcut_cta": "Continuar",
       "title": "Elige tu palabra de activación",
       "body": "Elige la palabra que activa tu asistente. \"Hey\" queda fija — tú eliges el resto.",
@@ -1586,6 +1644,7 @@
         "good": "Suena bien — tu micrófono captó tu voz con claridad.",
         "too_quiet": "Eso sonó muy bajo. Sube el volumen del micrófono o acércate y vuelve a intentarlo.",
         "no_device": "No se detectó ningún micrófono — puedes terminar la configuración igualmente y solucionarlo más tarde en Ajustes.",
+        "permission_required": "Concede acceso al micrófono en Permisos antes de ejecutar esta comprobación.",
         "error": "No se pudo comprobar el micrófono en este momento."
       }
     },
@@ -1646,7 +1705,7 @@
     "reply_section": "Idioma de Respuesta",
     "reply_hint": "En qué idioma habla {name} al responderte. Nombres propios, identificadores de código y términos técnicos se mantienen en su forma original.",
     "stt_section": "Idioma de Reconocimiento (Voz)",
-    "stt_hint": "En qué idioma se reconoce tu voz hablada y se convierte en texto. Automático detecta por sí solo el idioma que hablas.",
+    "stt_hint": "En qué idioma se reconoce tu voz y se convierte en texto. Automático lo detecta por ti. Tras cambiarlo, termina cualquier llamada Realtime y reinicia Jarvis para el modo Pipeline.",
     "options": {
       "auto": {
         "label": "Automático",
@@ -1810,7 +1869,12 @@
     "loading": "Cargando grafo…",
     "load_error": "No se pudo cargar el grafo.",
     "reset_view_title": "Restablecer el zoom a todos los nodos",
-    "center": "Centrar"
+    "center": "Centrar",
+    "relationship_graph": "Grafo de relaciones del wiki",
+    "node_details": "{0} ({1}) · {2} {3}",
+    "backlink_one": "retroenlace",
+    "backlink_many": "retroenlaces",
+    "unresolved": "sin resolver"
   },
   "tree_sidebar": {
     "load_error": "No se pudo cargar el wiki.",
@@ -1890,11 +1954,43 @@
   },
   "docs_sidebar": {
     "title": "Documentación",
-    "error": "Error"
+    "error": "Error",
+    "indexing": "Creando el índice local…",
+    "retry": "Intentar de nuevo",
+    "documents": "documentos",
+    "no_results": "No hay documentos coincidentes"
   },
   "docs_content": {
     "prev": "Anterior",
-    "next": "Siguiente"
+    "next": "Siguiente",
+    "breadcrumb": "Documentación",
+    "related_guides": "Guías relacionadas",
+    "last_reviewed": "Última revisión:",
+    "review_unavailable": "Fecha de revisión no disponible",
+    "on_this_page": "En esta página",
+    "copy_code": "Copiar código",
+    "code_copied": "Código copiado",
+    "skip_to_content": "Saltar al contenido de la documentación"
+  },
+  "docs_overview": {
+    "eyebrow": "Documentación",
+    "title": "Documentación de Personal Jarvis",
+    "description": "Todo, desde la configuración inicial hasta la arquitectura de la voz. Explora la biblioteca local completa o abre la documentación pública rediseñada.",
+    "online_docs": "Abrir la documentación web rediseñada",
+    "load_failed_title": "No se pudo cargar la documentación",
+    "load_failed_description": "El índice local no estuvo listo a tiempo. Inténtalo de nuevo sin reiniciar la aplicación.",
+    "retry": "Intentar de nuevo",
+    "empty_title": "No se encontraron documentos locales",
+    "empty_description": "La documentación web sigue disponible mediante el botón de arriba.",
+    "local_library": "Empieza en la biblioteca local",
+    "local_library_description": "Acceso rápido y sin conexión a la documentación incluida en esta instalación.",
+    "indexing_title": "Preparando tu documentación",
+    "indexing_description": "Se está leyendo la biblioteca Markdown local y creando la búsqueda de texto completo. Normalmente solo tarda un momento.",
+    "loading_page": "Cargando documento…",
+    "browse_by_topic": "Explorar por tema",
+    "browse_description": "Sigue una ruta de aprendizaje o ve directamente a la función que necesitas.",
+    "guide": "guía",
+    "guides": "guías"
   },
   "docs_search_modal": {
     "navigate": "navegar",
@@ -2226,6 +2322,22 @@
     "manual_c": "tú mismo en cualquier momento."
   },
   "wiki_health": {
+    "capture_aria": "Embudo de captura del wiki de las últimas {0} horas",
+    "capture_window": "Captura de las últimas {0} h",
+    "capture_reviewed": "Revisadas",
+    "capture_candidate_reviews": "Revisiones productivas",
+    "capture_candidate_facts": "Candidatos",
+    "capture_writes": "Escrituras",
+    "capture_noop": "Sin cambios",
+    "capture_rejected": "Rechazados",
+    "capture_skipped": "Omitidos",
+    "capture_pending": "Pendientes",
+    "capture_filtered": "Filtrados",
+    "capture_empty": "Vacíos",
+    "capture_failed": "Fallidos",
+    "capture_in_progress": "En curso",
+    "capture_session_sweeps": "Revisiones de sesión",
+    "capture_store_unavailable": "Almacén de captura no disponible",
     "checking": "Comprobando el estado del wiki…",
     "unavailable": "Comprobación del estado del wiki no disponible",
     "vault_prefix": "Bóveda: {0}",
@@ -2398,10 +2510,11 @@
   },
   "feedback": {
     "discord_cta_title": "Repórtalo en nuestro Discord",
-    "discord_cta_subtitle": "Únete a #bug-reports y publica tu error, idea o pregunta directamente.",
-    "discord_cta_button": "Abrir Discord",
+    "discord_cta_subtitle": "Abre #report-a-bug y publica tu error, idea o pregunta directamente.",
+    "discord_cta_button": "Abrir #report-a-bug",
+    "discord_join_button": "Unirse primero a Discord",
     "or_send_here": "o envíalo desde aquí",
-    "subtitle": "Reporta un error, comparte una idea o haz una pregunta — va directo a nuestro Discord.",
+    "subtitle": "Abre nuestro Discord para reportar un error, compartir una idea o hacer una pregunta.",
     "type_label": "Tipo",
     "type_bug": "Error",
     "type_idea": "Idea",

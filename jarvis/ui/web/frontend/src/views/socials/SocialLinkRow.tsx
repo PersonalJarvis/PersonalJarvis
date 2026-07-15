@@ -1,5 +1,6 @@
 import { ExternalLink } from "lucide-react";
 
+import { openExternalUrl } from "@/lib/openExternal";
 import type { SocialEntry } from "./api";
 
 /**
@@ -12,9 +13,12 @@ export function SocialLinkRow({ entry }: { entry: SocialEntry }) {
   return (
     <a
       href={entry.url}
-      target="_blank"
+      onClick={(event) => {
+        event.preventDefault();
+        void openExternalUrl(entry.url);
+      }}
       rel="noopener noreferrer"
-      className="group flex items-center gap-4 rounded-xl border border-border bg-card/40 p-4 transition-all hover:border-primary/40 hover:bg-card/60 focus:outline-none"
+      className="group flex items-center gap-4 rounded-xl border border-border bg-card/40 p-4 transition-all hover:border-primary/40 hover:bg-card/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <span className="flex min-w-0 flex-1 flex-col">
         <span className="flex items-center gap-1.5 truncate font-medium text-foreground">

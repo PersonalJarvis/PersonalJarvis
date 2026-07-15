@@ -50,6 +50,9 @@ describe("expectedKindForSecret", () => {
     expect(expectedKindForSecret("grok_api_key")).toBe("xai");
     expect(expectedKindForSecret("cartesia_api_key")).toBe("cartesia");
     expect(expectedKindForSecret("elevenlabs_api_key")).toBe("elevenlabs");
+    expect(expectedKindForSecret("jarvis_agent_openai_api_key")).toBe("openai");
+    expect(expectedKindForSecret("jarvis_agent_gemini_api_key")).toBe("google-aistudio");
+    expect(expectedKindForSecret("realtime_grok_api_key")).toBe("xai");
   });
 
   it("returns null for slots without a known key format", () => {

@@ -52,9 +52,10 @@ def test_command_unknown_action_rejected() -> None:
         WSCommand.model_validate(raw)
 
 
-def test_welcome_serializable() -> None:
-    w = WSWelcome(session_id="s1", version="0.1.0", token=None)
+def test_welcome_serializable_without_credentials() -> None:
+    w = WSWelcome(session_id="s1", version="0.1.0")
     encoded = json.loads(w.model_dump_json())
     assert encoded["type"] == "welcome"
     assert encoded["session_id"] == "s1"
     assert encoded["version"] == "0.1.0"
+    assert "token" not in encoded

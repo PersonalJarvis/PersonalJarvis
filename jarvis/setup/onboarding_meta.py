@@ -22,6 +22,7 @@ CURRENT_TERMS_VERSION = "1.0"
 ONBOARDING_STEPS: list[str] = [
     "welcome",
     "language",
+    "permissions",
     "wake-word",
     "api-keys",
     "finish",

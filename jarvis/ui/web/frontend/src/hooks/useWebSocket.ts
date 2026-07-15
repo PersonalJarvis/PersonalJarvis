@@ -1,4 +1,6 @@
 import { useEffect, useRef } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+
 import { WSClient } from "@/lib/ws";
 import {
   SECTION_LABELS,
@@ -28,6 +30,7 @@ export function getWSClient(): WSClient | null {
  */
 export function useWebSocket(): void {
   const mounted = useRef(false);
+  const queryClient = useQueryClient();
   const setConnected = useEventStore((s) => s.setConnected);
   const setWarming = useEventStore((s) => s.setWarming);
   const pushEvent = useEventStore((s) => s.pushEvent);
@@ -259,6 +262,13 @@ export function useWebSocket(): void {
           }
         }
 
+        if (env.event_name === "DocIndexReloaded") {
+          // The registry can reload while the reader is not mounted. Invalidate
+          // the complete docs cache here so navigation, details, and search all
+          // reflect the same index the next time they are shown.
+          void queryClient.invalidateQueries({ queryKey: ["docs"] });
+        }
+
         if (env.event_name === "ActionApprovalRequired") {
           const p = env.payload as {
             mission_id?: unknown;
@@ -319,6 +329,7 @@ export function useWebSocket(): void {
     setActiveSection,
     setBrainProvider,
     pushToast,
+    queryClient,
   ]);
 }
 

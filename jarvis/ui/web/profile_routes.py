@@ -225,7 +225,7 @@ async def get_profile(request: Request) -> dict[str, Any]:
         "user": {
             "name": profile.name,
             "meta": profile.meta,
-            "path": str(profile.path),
+            "path": profile.path.name,
         },
         "people": people_list,
         "reviews_count": reviews_count,
@@ -355,7 +355,7 @@ async def get_raw(request: Request) -> dict[str, Any]:
     Shape:
         {
           "content": str,        # full Markdown content
-          "path": str,           # absolute path (display purpose)
+          "path": str,           # safe display name, never a user directory
           "mtime_ms": int|null,  # filesystem modification time (UI cache-bust)
           "size_bytes": int      # display helper
         }
@@ -373,7 +373,7 @@ async def get_raw(request: Request) -> dict[str, Any]:
     except FileNotFoundError:
         return {
             "content": "",
-            "path": str(path),
+            "path": path.name,
             "mtime_ms": None,
             "size_bytes": 0,
         }
@@ -383,7 +383,7 @@ async def get_raw(request: Request) -> dict[str, Any]:
 
     return {
         "content": content,
-        "path": str(path),
+        "path": path.name,
         "mtime_ms": int(stat.st_mtime * 1000),
         "size_bytes": stat.st_size,
     }
@@ -481,7 +481,7 @@ async def put_raw(request: Request, body: RawWriteBody) -> dict[str, Any]:
 
     return {
         "ok": True,
-        "path": str(path),
+        "path": path.name,
         "mtime_ms": mtime_ms,
         "size_bytes": size_bytes,
         "reparsed": reparsed,

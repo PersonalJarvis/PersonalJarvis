@@ -6,8 +6,9 @@ import { openExternalUrl } from "@/lib/openExternal";
 
 /**
  * The Feedback section — bugs, ideas, and questions are reported exclusively in
- * the project's Discord #bug-reports channel. The button forwards the user
- * straight there via a public, never-expiring invite link.
+ * the project's Discord #report-a-bug forum. The primary button opens the forum
+ * directly; a separate permanent invite remains available for people who have
+ * not joined the server yet.
  *
  * The button uses {@link openExternalUrl} rather than a bare
  * `<a target="_blank">`, because the desktop shell (WebView2) silently drops
@@ -16,10 +17,14 @@ import { openExternalUrl } from "@/lib/openExternal";
  * `window.open` on a remote/VPS browser).
  */
 
-// Public, never-expiring Discord invite that drops the visitor directly into the
-// #bug-reports channel of the PersonalJarvis server. An invite link is meant to
-// be shared, so it is safe to ship in the client.
-const DISCORD_INVITE_URL = "https://discord.gg/9QesfUrtq";
+// Discord's Community onboarding redirects invite links to #welcome even when
+// the invite was created for a different channel. Existing members therefore
+// need the canonical channel URL for a guaranteed direct hop to the bug forum.
+const DISCORD_BUG_FORUM_URL =
+  "https://discord.com/channels/1511102439066177656/1521522036709789736";
+
+// Public, never-expiring server invite for people who are not members yet.
+const DISCORD_INVITE_URL = "https://discord.gg/x7USduHxbc";
 
 /** The official Discord brand mark (inline so it renders without an asset). */
 function DiscordIcon({ className }: { className?: string }) {
@@ -52,13 +57,22 @@ export function FeedbackView() {
           <p className="mb-6 text-sm text-muted-foreground">
             {t("feedback.discord_cta_subtitle")}
           </p>
-          <button
-            type="button"
-            onClick={() => void openExternalUrl(DISCORD_INVITE_URL)}
-            className="w-full rounded-lg bg-[#5865F2] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#4752c4]"
-          >
-            {t("feedback.discord_cta_button")}
-          </button>
+          <div className="space-y-3">
+            <button
+              type="button"
+              onClick={() => void openExternalUrl(DISCORD_BUG_FORUM_URL)}
+              className="w-full rounded-lg bg-[#5865F2] px-4 py-3 text-sm font-semibold text-white transition hover:bg-[#4752c4]"
+            >
+              {t("feedback.discord_cta_button")}
+            </button>
+            <button
+              type="button"
+              onClick={() => void openExternalUrl(DISCORD_INVITE_URL)}
+              className="w-full rounded-lg border border-[#5865F2]/40 px-4 py-2.5 text-sm font-medium text-[#8b94ff] transition hover:border-[#5865F2]/70 hover:bg-[#5865F2]/10"
+            >
+              {t("feedback.discord_join_button")}
+            </button>
+          </div>
         </div>
       </div>
     </div>

@@ -6,6 +6,7 @@
  * VoiceBootStatus frame flips `voiceReady` in the store.
  */
 import { cleanup, render } from "@testing-library/react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { useWebSocket } from "@/hooks/useWebSocket";
@@ -60,9 +61,21 @@ function envelope(eventName: string, payload: Record<string, unknown>) {
   };
 }
 
-function Harness() {
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { retry: false } },
+});
+
+function WebSocketHarness() {
   useWebSocket();
   return null;
+}
+
+function Harness() {
+  return (
+    <QueryClientProvider client={queryClient}>
+      <WebSocketHarness />
+    </QueryClientProvider>
+  );
 }
 
 describe("useWebSocket VoiceBootStatus handling", () => {
@@ -77,6 +90,7 @@ describe("useWebSocket VoiceBootStatus handling", () => {
     };
     useEventStore.setState({ voiceReady: false, toasts: [] });
     useI18nStore.getState().setUi("en", { push: false });
+    queryClient.clear();
   });
 
   afterEach(() => {
@@ -122,6 +136,18 @@ describe("useWebSocket VoiceBootStatus handling", () => {
     expect(toast.message).toContain("gmail/send_message");
     expect(toast.message).toContain("mission-42");
     expect(toast.message).not.toContain("private content");
+  });
+
+  it("invalidates every documentation query after a registry reload", async () => {
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
+    render(<Harness />);
+    await Promise.resolve();
+
+    MockWebSocket.last!.deliver(
+      envelope("DocIndexReloaded", { total: 42, by_diataxis: {}, errors: 0 }),
+    );
+
+    expect(invalidate).toHaveBeenCalledWith({ queryKey: ["docs"] });
   });
 });
 

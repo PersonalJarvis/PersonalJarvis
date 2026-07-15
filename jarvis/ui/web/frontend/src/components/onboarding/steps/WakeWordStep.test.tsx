@@ -185,3 +185,30 @@ it("wake-word path: mic-check reports a neutral no-device state on a headless ho
     expect(screen.getByText("onboarding.wake_word.mic_check.no_device")).toBeDefined(),
   );
 });
+
+it("wake-word path: mic-check directs a blocked macOS user to Permissions", async () => {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(() =>
+      Promise.resolve({
+        ok: true,
+        status: 200,
+        json: () =>
+          Promise.resolve({
+            max_dbfs: -120.0,
+            no_device: false,
+            too_quiet: false,
+            permission_required: true,
+          }),
+      }),
+    ),
+  );
+  renderStep();
+  selectWakeMode();
+
+  fireEvent.click(screen.getByRole("button", { name: "onboarding.wake_word.mic_check.test_button" }));
+
+  expect(
+    await screen.findByText("onboarding.wake_word.mic_check.permission_required"),
+  ).toBeDefined();
+});

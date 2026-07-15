@@ -8,6 +8,8 @@ def test_meta_constants():
     # gate + MIT-license disclaimer carry the legal posture now.
     assert "terms" not in m.ONBOARDING_STEPS
     assert m.ONBOARDING_STEPS[1] == "language"
+    assert m.ONBOARDING_STEPS[2] == "permissions"
+    assert m.ONBOARDING_STEPS.index("permissions") < m.ONBOARDING_STEPS.index("wake-word")
     assert m.ONBOARDING_STEPS[-1] == "finish"
     assert "wake-word" in m.ONBOARDING_STEPS
     assert "persona-theme" not in m.ONBOARDING_STEPS
@@ -16,7 +18,7 @@ def test_meta_constants():
     assert "system-style" not in m.ONBOARDING_STEPS
     assert "mic-test" not in m.ONBOARDING_STEPS
     assert m.ONBOARDING_STEPS[-2] == "api-keys"
-    assert len(m.ONBOARDING_STEPS) == 5
+    assert len(m.ONBOARDING_STEPS) == 6
     assert len(m.WAKE_WORD_LEGAL_REFERENCES) >= 3
     for ref in m.WAKE_WORD_LEGAL_REFERENCES:
         assert ref["label"] and ref["url"].startswith("https://")

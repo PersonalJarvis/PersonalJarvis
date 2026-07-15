@@ -70,12 +70,12 @@ ALLOWED_SECRET_KEYS: frozenset[str] = frozenset(s.key for s in WIZARD_SECRETS)
 
 
 class SecretBody(BaseModel):
-    value: str = Field(..., min_length=1, description="Roher Secret-Wert (API-Key, Token, ...)")
+    value: str = Field(..., min_length=1, description="Raw secret value (API key, token, etc.)")
 
 
 class SwitchBody(BaseModel):
     provider: str = Field(..., min_length=1)
-    persist: bool = Field(default=True, description="In jarvis.toml schreiben")
+    persist: bool = Field(default=True, description="Write the selection to jarvis.toml")
 
 
 class CodexBinaryPathBody(BaseModel):
@@ -788,22 +788,32 @@ def _worker_usable(provider: str) -> bool:
     """
     p = (provider or "").lower()
     try:
+        from jarvis.core.config import get_jarvis_agent_secret
+
         if p in _CODEX_SUBAGENT_SLUGS or p in {"codex", "openai-codex"}:
-            connected = bool(CodexAuthService(_codex_binary_path()).status().connected)
-            return connected or _has_openai_brain_credential()
+            status = CodexAuthService(_codex_binary_path()).status()
+            has_key = bool(
+                cfg_mod.get_secret(
+                    "codex_openai_api_key", env_fallback="CODEX_OPENAI_API_KEY"
+                )
+            )
+            return bool(status.connected or (status.installed and has_key))
         if p == "antigravity":
             from jarvis.google_cli.auth_service import GoogleCliAuthService
 
-            return bool(GoogleCliAuthService().status().connected)
+            return bool(
+                GoogleCliAuthService().status().connected
+                or get_jarvis_agent_secret("gemini")
+            )
         if p in {"claude-api", "claude"}:
             from jarvis.claude_auth import ClaudeAuthService
 
             st = ClaudeAuthService().status()
             return bool(
-                getattr(st, "connected", False) or getattr(st, "api_key_present", False)
+                getattr(st, "connected", False)
+                or get_jarvis_agent_secret("claude-api")
             )
-        spec = get_spec(p)
-        return bool(spec is not None and _is_credential_present(spec))
+        return bool(get_jarvis_agent_secret(p))
     except Exception:  # noqa: BLE001
         return False
 
@@ -1927,7 +1937,14 @@ async def set_secret_value(key: str, body: SecretBody, request: Request) -> dict
 async def delete_secret_value(key: str, request: Request) -> dict[str, Any]:
     if key not in ALLOWED_SECRET_KEYS:
         raise HTTPException(status_code=404, detail=f"Unknown secret key: {key}")
-    cfg_mod.delete_secret(key)  # Idempotent when no value exists.
+    if not cfg_mod.delete_secret(key):
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Credential deletion could not be verified. The platform "
+                "credential store may be locked or unavailable."
+            ),
+        )
     await _emit(request, SecretConfigured(key=key, action="delete"))
     _invalidate_section_health_state(request)
     return {"ok": True, "key": key}
@@ -2012,7 +2029,8 @@ async def brain_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
         from jarvis.google_cli.auth_service import GoogleCliAuthService
 
         def _antigravity_connected() -> bool:
-            return GoogleCliAuthService().status().connected
+            status = GoogleCliAuthService().status()
+            return status.connected and status.mode == "oauth-personal"
 
         if not await asyncio.to_thread(_antigravity_connected):
             raise HTTPException(
@@ -2667,14 +2685,24 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
     # it is not in JARVIS_TO_WORKER_SLUG. Handle it explicitly: it can be backed by
     # the ChatGPT subscription (OAuth, ``codex login``) OR an OpenAI API key.
     if provider in _CODEX_SUBAGENT_SLUGS:
-        def _codex_connected() -> bool:
-            return CodexAuthService(_codex_binary_path(request)).status().connected
+        def _codex_status():  # noqa: ANN202
+            return CodexAuthService(_codex_binary_path(request)).status()
 
-        codex_connected = await asyncio.to_thread(_codex_connected)
+        codex_status = await asyncio.to_thread(_codex_status)
+        codex_connected = bool(codex_status.connected)
         has_key = bool(
-            cfg_mod.get_secret("codex_openai_api_key")
-            or cfg_mod.get_provider_secret("codex")
+            cfg_mod.get_secret(
+                "codex_openai_api_key", env_fallback="CODEX_OPENAI_API_KEY"
+            )
         )
+        if not codex_status.installed:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Codex CLI is not installed. Install it or choose the OpenAI "
+                    "Jarvis-Agent card for key-only, in-process execution."
+                ),
+            )
         if not (codex_connected or has_key):
             raise HTTPException(
                 status_code=409,
@@ -2720,12 +2748,11 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
         # Dual billing (mirror of codex): the Google subscription OAuth login OR
         # a Gemini API key (per token). Either is enough to run the worker.
         def _antigravity_connected() -> bool:
-            return GoogleCliAuthService().status().connected
+            status = GoogleCliAuthService().status()
+            return status.connected and status.mode == "oauth-personal"
 
         antigravity_connected = await asyncio.to_thread(_antigravity_connected)
-        antigravity_key = bool(
-            cfg_mod.get_secret("gemini_api_key", env_fallback="GEMINI_API_KEY")
-        )
+        antigravity_key = bool(cfg_mod.get_jarvis_agent_secret("gemini"))
         if not (antigravity_connected or antigravity_key):
             raise HTTPException(
                 status_code=409,
@@ -2773,7 +2800,7 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
     # ClaudeDirectWorker from ~/.claude/.credentials.json) as a credential, so a
     # fresh Claude-Max user who only ran `claude login` (no stored API key) can
     # still select it — mirrors the codex/antigravity OAuth branches above.
-    has_credential = bool(cfg_mod.get_provider_secret(provider))
+    has_credential = bool(cfg_mod.get_jarvis_agent_secret(provider))
     if not has_credential and provider == "claude-api":
         try:
             from jarvis.missions.isolation.env import read_live_claude_oauth_token
@@ -2786,7 +2813,7 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
             status_code=409,
             detail=(
                 f"{provider} has no stored credential. "
-                "Add the key on its Brain provider card before activating it."
+                "Add a key on its Jarvis-Agent card before activating it."
             ),
         )
 

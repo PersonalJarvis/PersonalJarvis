@@ -50,6 +50,7 @@ from .schema import (
     WSWelcome,
     event_to_ws_envelope,
 )
+from .surface_security import SurfaceSecurity
 
 if TYPE_CHECKING:
     import uvicorn
@@ -180,12 +181,38 @@ class WebServer:
 
         # CORS only for the Vite dev server — production serves the frontend
         # from dist/ and needs no cross-origin requests.
+        vite_dev_url = self.cfg.ui.vite_dev_url if self.cfg.ui.dev_mode else None
+        if vite_dev_url:
+            app.add_middleware(
+                CORSMiddleware,
+                allow_origins=[vite_dev_url],
+                allow_credentials=True,
+                allow_methods=["*"],
+                allow_headers=["*"],
+            )
+
+        twilio_cfg = getattr(
+            getattr(self.cfg, "integrations", None), "twilio", None
+        )
+        public_urls = tuple(
+            value
+            for value in (
+                getattr(twilio_cfg, "public_base_url", ""),
+                getattr(
+                    getattr(self.cfg, "marketplace", None),
+                    "public_callback_base_url",
+                    "",
+                ),
+            )
+            if value
+        )
+        # The security boundary must wrap every router and both HTTP and WS.
+        # It is added after CORS so Starlette places it outside the CORS layer:
+        # hostile Host/Origin values never reach route code or preflight logic.
         app.add_middleware(
-            CORSMiddleware,
-            allow_origins=[self.cfg.ui.vite_dev_url],
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
+            SurfaceSecurity,
+            vite_dev_url=vite_dev_url,
+            public_urls=public_urls,
         )
 
         self._register_rest_routes(app)
@@ -195,8 +222,9 @@ class WebServer:
         # (``reload_sync`` — globbing + FTS indexing, ~hundreds of ms) off the
         # boot critical path. The scans run after uvicorn is listening (see
         # ``start()``); nothing at BOOT_READY needs the skill/doc lists (the
-        # brain builds its own skill context; the Skills/Docs views tolerate an
-        # empty registry until the reload lands). Each entry is (label, registry).
+        # brain builds its own skill context; the Skills view tolerates an empty
+        # registry, while Docs can trigger its own shared on-demand load). Each
+        # entry is (label, registry).
         self._pending_reloads: list[tuple[str, Any]] = []
 
         # Skill-registry setup: bootstrap (copy builtin skills) + create the
@@ -204,7 +232,7 @@ class WebServer:
         # watchdog watcher is only activated in ``start()``.
         self._setup_skill_registry(app)
 
-        # Doc registry: Markdown discovery under ``docs/`` + siblings,
+        # Doc registry: curated reader-guide discovery under ``docs/product/``,
         # FTS5 index. The watchdog is likewise only activated in ``start()``.
         self._setup_doc_registry(app)
 
@@ -266,6 +294,7 @@ class WebServer:
         )
         from .onboarding_routes import router as onboarding_router
         from .outputs_routes import router as outputs_router
+        from .permissions_routes import router as permissions_router
         from .preview_routes import router as preview_router
         from .profile_routes import router as profile_router
         from .provider_routes import router as provider_router
@@ -306,6 +335,7 @@ class WebServer:
         app.include_router(control_router)
         app.include_router(profile_router)
         app.include_router(settings_router)
+        app.include_router(permissions_router)
         # In-app updater (GET status / POST apply). Managed-install only — see
         # jarvis/ui/web/update_routes.py; refuses to self-reset a dev checkout.
         app.include_router(update_router)
@@ -377,18 +407,9 @@ class WebServer:
         # Default: no recorder wired up — _init_session_stack() in start()
         # sets this once it succeeds.
         app.state.session_store = None
-        # Phase-6 mission stack — the auth token before all others, so the
-        # browser can even fetch it; then REST + WS + PTY.
+        # Phase-6 mission stack — token issuance is behind SurfaceSecurity;
+        # mission WS and PTY then perform their narrower hello-frame auth too.
         app.include_router(missions_auth_router)
-        # Seed the desktop session token (injected as window.__JARVIS_TOKEN by
-        # the fast-boot path) into the token store. The fast-boot token is a RAW
-        # secrets.token_urlsafe that is never issued via GET /token, so without
-        # this it fails validate_token → 4401 on every token-gated WebSocket —
-        # which hung the "Make It Yours" workspace PTY terminals forever on
-        # "connecting" (missions survive via the unauthenticated main /ws).
-        from .missions_auth import register_session_token_from_env
-
-        register_session_token_from_env(self.cfg.ui.auth_token_env)
         app.include_router(missions_router)
         app.include_router(missions_ws_router)
         app.include_router(missions_pty_router)
@@ -650,7 +671,7 @@ class WebServer:
         The index DB lives under ``user_data_dir()/data/docs_index.sqlite``.
 
         Failure cases (read-only FS, index-DB lock) are not fatal — the UI
-        then shows "No docs available" instead of crashing.
+        surfaces a retryable load error instead of crashing.
         """
         try:
             from jarvis.core.paths import default_doc_roots, docs_index_db_path
@@ -664,9 +685,8 @@ class WebServer:
             )
             self._doc_registry = registry
             app.state.doc_registry = registry
-            # reload_sync() (glob 200+ docs + FTS index build, ~hundreds of ms)
-            # is deferred off the boot critical path — run after uvicorn is
-            # listening (start()).
+            # The initial Markdown scan + FTS index build is deferred off the
+            # boot critical path and runs after uvicorn is listening (start()).
             self._pending_reloads.append(("DocRegistry", registry))
             logger.info(
                 "DocRegistry created (scan deferred) for {} roots", len(roots)
@@ -910,36 +930,41 @@ class WebServer:
                         binary_detected = cand
                         break
 
-            from jarvis.core.config import get_secret
+            from jarvis.core.config import (
+                get_jarvis_agent_secret,
+                get_provider_secret,
+                get_secret,
+                jarvis_agent_secret_slot,
+            )
+            from jarvis.ui.web.provider_spec import get_spec
 
-            secret_key_overrides = {
-                "claude-api": "anthropic_api_key",
-                "openrouter": "openrouter_api_key",
-                "openai": "openai_api_key",
-                "gemini": "gemini_api_key",
-            }
             mapping_rows = []
             for mapping in MAPPINGS:
-                secret_key = secret_key_overrides.get(
-                    mapping.jarvis, f"{mapping.jarvis}_api_key"
-                )
+                slot = jarvis_agent_secret_slot(mapping.jarvis)
+                secret_key = slot[0] if slot else None
                 try:
-                    key_set = bool(get_secret(secret_key, mapping.env_var))
+                    dedicated_key_set = bool(
+                        slot and get_secret(slot[0], env_fallback=slot[1])
+                    )
+                    shared_key_set = bool(get_provider_secret(mapping.jarvis))
                 except Exception:  # noqa: BLE001
-                    key_set = False
+                    dedicated_key_set = False
+                    shared_key_set = False
+                api_key_set = dedicated_key_set or shared_key_set
+                oauth_connected = False
                 # Claude Max users authenticate the subagent via the LIVE OAuth
                 # login in ~/.claude/.credentials.json (read by ClaudeDirectWorker),
                 # not a stored API key — count that as configured so a fresh
                 # Claude-Max user (only ran `claude login`) is not falsely locked.
-                if not key_set and mapping.jarvis == "claude-api":
+                if mapping.jarvis == "claude-api":
                     try:
                         from jarvis.missions.isolation.env import (
                             read_live_claude_oauth_token,
                         )
 
-                        key_set = bool(read_live_claude_oauth_token())
+                        oauth_connected = bool(read_live_claude_oauth_token())
                     except Exception:  # noqa: BLE001
-                        key_set = False
+                        oauth_connected = False
                 # claude-api is dual-billed like Codex/Antigravity: the Claude Max
                 # subscription (claude CLI OAuth login) OR an Anthropic API key.
                 # Every other MAPPINGS provider bills per token on an API account.
@@ -948,13 +973,36 @@ class WebServer:
                     if mapping.jarvis == "claude-api"
                     else "api"
                 )
+                spec = get_spec(mapping.jarvis)
+                credential_source = (
+                    "dedicated"
+                    if dedicated_key_set
+                    else "legacy_shared"
+                    if shared_key_set
+                    else "oauth"
+                    if oauth_connected
+                    else "none"
+                )
                 mapping_rows.append(
                     {
                         "jarvis": mapping.jarvis,
                         "worker_slug": mapping.worker_slug,
                         "env_var": mapping.env_var,
                         "env_fallback": mapping.env_fallback,
-                        "key_set": key_set,
+                        "key_set": api_key_set or oauth_connected,
+                        "api_key_set": api_key_set,
+                        "dedicated_key_set": dedicated_key_set,
+                        "shared_key_set": shared_key_set,
+                        "oauth_connected": oauth_connected,
+                        "credential_source": credential_source,
+                        "secret_key": secret_key,
+                        "dashboard_url": spec.dashboard_url if spec else None,
+                        "credential_help": (
+                            f"Dedicated Jarvis-Agent key for {spec.label}. "
+                            "It is not used by Brain or Realtime."
+                            if spec
+                            else "Dedicated Jarvis-Agent API key."
+                        ),
                         "is_active_brain": mapping.jarvis == primary,
                         "billing": row_billing,
                     }
@@ -970,12 +1018,18 @@ class WebServer:
                 codex_bin = (
                     getattr(getattr(cfg, "codex", None), "binary_path", "") or None
                 )
-                codex_connected = CodexAuthService(codex_bin).status().connected
+                codex_status = CodexAuthService(codex_bin).status()
+                codex_connected = codex_status.connected
+                codex_installed = codex_status.installed
             except Exception:  # noqa: BLE001
                 codex_connected = False
+                codex_installed = False
             try:
                 codex_key = bool(
-                    get_secret("codex_openai_api_key", env_fallback="OPENAI_API_KEY")
+                    get_secret(
+                        "codex_openai_api_key",
+                        env_fallback="CODEX_OPENAI_API_KEY",
+                    )
                 )
             except Exception:  # noqa: BLE001
                 codex_key = False
@@ -985,7 +1039,20 @@ class WebServer:
                     "openclaw": "codex-cli (direct)",
                     "env_var": "ChatGPT-OAuth",
                     "env_fallback": "OPENAI_API_KEY",
-                    "key_set": codex_connected or codex_key,
+                    "key_set": codex_connected or (codex_installed and codex_key),
+                    "api_key_set": codex_key,
+                    "dedicated_key_set": codex_key,
+                    "shared_key_set": False,
+                    "oauth_connected": codex_connected,
+                    "credential_source": (
+                        "oauth" if codex_connected else "dedicated" if codex_key else "none"
+                    ),
+                    "secret_key": "codex_openai_api_key",
+                    "dashboard_url": "https://platform.openai.com/api-keys",
+                    "credential_help": (
+                        "Dedicated OpenAI key for the Codex Jarvis-Agent. "
+                        "It is not used by Brain or Realtime."
+                    ),
                     "is_active_brain": primary == "openai-codex",
                     # ChatGPT subscription OAuth OR an OpenAI API key.
                     "billing": "subscription_or_api",
@@ -1000,13 +1067,15 @@ class WebServer:
             try:
                 from jarvis.google_cli.auth_service import GoogleCliAuthService
 
-                antigravity_connected = GoogleCliAuthService().status().connected
+                antigravity_status = GoogleCliAuthService().status()
+                antigravity_connected = (
+                    antigravity_status.connected
+                    and antigravity_status.mode == "oauth-personal"
+                )
             except Exception:  # noqa: BLE001
                 antigravity_connected = False
             try:
-                antigravity_key = bool(
-                    get_secret("gemini_api_key", env_fallback="GEMINI_API_KEY")
-                )
+                antigravity_key = bool(get_jarvis_agent_secret("gemini"))
             except Exception:  # noqa: BLE001
                 antigravity_key = False
             mapping_rows.append(
@@ -1016,6 +1085,20 @@ class WebServer:
                     "env_var": "Google-OAuth",
                     "env_fallback": "GEMINI_API_KEY",
                     "key_set": antigravity_connected or antigravity_key,
+                    "api_key_set": antigravity_key,
+                    "dedicated_key_set": False,
+                    "shared_key_set": False,
+                    "oauth_connected": antigravity_connected,
+                    "credential_source": (
+                        "oauth"
+                        if antigravity_connected
+                        else "gemini_agent_key"
+                        if antigravity_key
+                        else "none"
+                    ),
+                    "secret_key": None,
+                    "dashboard_url": None,
+                    "credential_help": None,
                     "is_active_brain": primary == "antigravity",
                     # Google subscription OAuth OR a Gemini API key.
                     "billing": "subscription_or_api",
@@ -1124,8 +1207,7 @@ class WebServer:
         session_id = str(uuid4())
         self._clients[session_id] = ws
 
-        token = os.environ.get(self.cfg.ui.auth_token_env)
-        welcome = WSWelcome(session_id=session_id, version=__version__, token=token)
+        welcome = WSWelcome(session_id=session_id, version=__version__)
 
         send_lock = asyncio.Lock()
 
@@ -2021,22 +2103,29 @@ class WebServer:
         if self._pending_reloads:
             pending = list(self._pending_reloads)
             self._pending_reloads.clear()
+            # Docs are user-facing and can be opened immediately after the
+            # shell appears. Keep the scans sequential, but put Docs ahead of
+            # the authoring-only skill catalog once the wake gate releases.
+            pending.sort(key=lambda item: item[0] != "DocRegistry")
 
             async def _run_deferred_reloads() -> None:
                 # Yield until the wake model is loaded before these blocking disk
-                # scans (DocRegistry FTS build ~5 s) start their worker thread —
+                # scans start their worker thread —
                 # otherwise they steal CPU/disk from the custom-wake base/cpu
-                # model load and ~double its time (measured: base load 3.2 s
-                # isolated vs ~8 s racing this scan). NO-OP on headless / voice-off
-                # (returns immediately — no regress); bounded so a stuck wake load
-                # never blocks the scans. The views tolerate an empty registry for
-                # this brief gap.
+                # model load and can extend its time. NO-OP on headless / voice-off
+                # (returns immediately); bounded so a stuck wake load never blocks
+                # the scans. The Docs view can request the same load immediately.
                 from jarvis.core import runtime_refs as _rr
 
                 await _rr.await_wake_model_ready(timeout=12.0)
                 for label, registry in pending:
                     try:
-                        await asyncio.to_thread(registry.reload_sync)
+                        if label == "DocRegistry":
+                            # Shares the on-demand route lock: if the user
+                            # already opened Docs this becomes an instant no-op.
+                            await registry.ensure_loaded()
+                        else:
+                            await asyncio.to_thread(registry.reload_sync)
                         logger.info(
                             "{} deferred scan complete ({} entries)",
                             label, len(registry.list()),

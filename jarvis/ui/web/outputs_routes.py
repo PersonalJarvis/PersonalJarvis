@@ -10,6 +10,7 @@ abstraction one level deeper (the `tasks/<mission_id>/workspace/` subdir).
 Keeping the dir listing as the primary index lets users open the worktree
 even when the mission row is gone (DB pruned, recovery cleanup).
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -38,9 +39,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/outputs", tags=["outputs"])
 
 
-_SLUG_RE = re.compile(
-    r"^(?P<ts>\d{8}T\d{6})__(?P<utterance>.+?)__(?P<short>[0-9a-f]{6,16})$"
-)
+_SLUG_RE = re.compile(r"^(?P<ts>\d{8}T\d{6})__(?P<utterance>.+?)__(?P<short>[0-9a-f]{6,16})$")
 
 # 2026-05-16: Mission-Manager also creates persistent state directories named
 # `mission_<8-char-hex>` (the short-prefix of the UUID). These are NOT the
@@ -63,6 +62,7 @@ def _outputs_root(request: Request) -> Path:
     if cached is not None:
         return Path(cached)
     from jarvis.missions.isolation.worktree import resolve_outputs_root
+
     here = Path(__file__).resolve()
     repo_root = here.parent.parent.parent.parent
     return resolve_outputs_root(repo_root)
@@ -85,9 +85,7 @@ def _parse_slug(name: str) -> dict[str, Any]:
         try:
             from datetime import datetime, timezone
 
-            dt = datetime.strptime(ts, "%Y%m%dT%H%M%S").replace(
-                tzinfo=timezone.utc
-            )
+            dt = datetime.strptime(ts, "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc)
             started_at: float | None = dt.timestamp()
         except ValueError:
             started_at = None
@@ -204,9 +202,7 @@ async def _mission_status_lookup(
             row = await cur.fetchone()
             await cur.close()
         except Exception as exc:  # noqa: BLE001
-            logger.debug(
-                "outputs: mission DB lookup failed for %s: %s", prefix, exc
-            )
+            logger.debug("outputs: mission DB lookup failed for %s: %s", prefix, exc)
             continue
         if row is None:
             continue
@@ -248,9 +244,7 @@ _STATE_TO_STATUS: dict[str, str] = {
 # Terminal mission-state *values* (string form). A re-run child counts as a
 # "live" continuation only while its state is NOT in this set. Single source of
 # truth = the state machine (mirrors ``missions_routes._TERMINAL_STATE_VALUES``).
-_TERMINAL_STATE_VALUES: frozenset[str] = frozenset(
-    s.value for s in MissionState if is_terminal(s)
-)
+_TERMINAL_STATE_VALUES: frozenset[str] = frozenset(s.value for s in MissionState if is_terminal(s))
 
 
 async def _live_continuation_map(request: Request) -> dict[str, str]:
@@ -330,9 +324,7 @@ async def list_outputs(request: Request) -> dict[str, Any]:
         )
     except OSError as exc:
         logger.warning("outputs: listdir failed for %s: %s", root, exc)
-        raise HTTPException(
-            status_code=500, detail=f"Outputs root not readable: {exc}"
-        ) from exc
+        raise HTTPException(status_code=500, detail=f"Outputs root not readable: {exc}") from exc
 
     sessions: list[dict[str, Any]] = []
     # Map dir-name → mission-id prefix derived from the dir-name itself.
@@ -407,9 +399,7 @@ async def list_outputs(request: Request) -> dict[str, Any]:
             if child_id:
                 summary["active_child_id"] = child_id
                 summary["active_child_slug"] = f"mission_{child_id[:13]}"
-            summary["utterance"] = (
-                summary["utterance"] or mission_row.get("prompt")
-            )
+            summary["utterance"] = summary["utterance"] or mission_row.get("prompt")
             # Running missions tick wall-clock from created_ms: right after
             # dispatch created_ms == updated_ms, so updated-minus-created
             # rendered a frozen "RUNNING 0.0s" until the next mission event
@@ -421,9 +411,7 @@ async def list_outputs(request: Request) -> dict[str, Any]:
             if mission_row["updated_ms"] and not running:
                 summary["completed_at"] = mission_row["updated_ms"] / 1000.0
             if mission_row["created_ms"]:
-                end_ms = (
-                    time.time() * 1000.0 if running else mission_row["updated_ms"]
-                )
+                end_ms = time.time() * 1000.0 if running else mission_row["updated_ms"]
                 if end_ms:
                     summary["duration_s"] = max(
                         0.0,
@@ -501,11 +489,7 @@ def _is_deliverable_relpath(rel_parts: tuple[str, ...]) -> bool:
     # Shortest valid deliverable: tasks/<id>/artifacts/files/<name> (5 parts).
     if len(rel_parts) < 5:
         return False
-    if not (
-        rel_parts[0] == "tasks"
-        and rel_parts[2] == "artifacts"
-        and rel_parts[3] == "files"
-    ):
+    if not (rel_parts[0] == "tasks" and rel_parts[2] == "artifacts" and rel_parts[3] == "files"):
         return False
     # Defence-in-depth (2026-06-21): hide tool-scratch the archive's --ignored
     # union may have re-imported on a PRE-FIX mission — a browser/QA worker's
@@ -535,9 +519,7 @@ def _resolve_artifact_target(request: Request, slug: str, path: str) -> Path:
     try:
         rel_parts = target.relative_to(base).parts
     except ValueError as exc:
-        raise HTTPException(
-            status_code=404, detail=f"unknown file: {path}"
-        ) from exc
+        raise HTTPException(status_code=404, detail=f"unknown file: {path}") from exc
     if not _is_deliverable_relpath(rel_parts):
         raise HTTPException(status_code=404, detail=f"unknown file: {path}")
     if not target.is_file():
@@ -548,11 +530,36 @@ def _resolve_artifact_target(request: Request, slug: str, path: str) -> Path:
 def _is_text_filename(name: str) -> bool:
     """Heuristic — file extensions whose contents are safe to inline-preview."""
     lower = name.lower()
-    return lower.endswith((
-        ".md", ".txt", ".json", ".jsonl", ".yaml", ".yml", ".toml",
-        ".log", ".patch", ".diff", ".py", ".ts", ".tsx", ".js", ".jsx",
-        ".html", ".css", ".csv", ".env", ".cfg", ".ini", ".sh", ".ps1",
-    )) or "." not in lower
+    return (
+        lower.endswith(
+            (
+                ".md",
+                ".txt",
+                ".json",
+                ".jsonl",
+                ".yaml",
+                ".yml",
+                ".toml",
+                ".log",
+                ".patch",
+                ".diff",
+                ".py",
+                ".ts",
+                ".tsx",
+                ".js",
+                ".jsx",
+                ".html",
+                ".css",
+                ".csv",
+                ".env",
+                ".cfg",
+                ".ini",
+                ".sh",
+                ".ps1",
+            )
+        )
+        or "." not in lower
+    )
 
 
 @router.get("/{slug}/artifacts")
@@ -623,9 +630,7 @@ async def list_output_artifacts(slug: str, request: Request) -> dict[str, Any]:
             }
             if entry["is_text"] and stat.st_size <= _ARTIFACT_PREVIEW_BYTES * 4:
                 try:
-                    preview = child.read_text(
-                        encoding="utf-8", errors="replace"
-                    )
+                    preview = child.read_text(encoding="utf-8", errors="replace")
                     if len(preview) > _ARTIFACT_PREVIEW_BYTES:
                         preview = preview[:_ARTIFACT_PREVIEW_BYTES] + "\n…"
                     entry["preview"] = preview
@@ -636,18 +641,14 @@ async def list_output_artifacts(slug: str, request: Request) -> dict[str, Any]:
                 break
     except OSError as exc:
         logger.warning("outputs: rglob failed for %s: %s", target, exc)
-        raise HTTPException(
-            status_code=500, detail=f"artifact listing failed: {exc}"
-        ) from exc
+        raise HTTPException(status_code=500, detail=f"artifact listing failed: {exc}") from exc
 
     files.sort(key=lambda f: f["mtime"], reverse=True)
     return {"files": files}
 
 
 @router.get("/{slug}/files/{path:path}/raw")
-async def get_output_artifact_raw(
-    slug: str, path: str, request: Request
-) -> dict[str, Any]:
+async def get_output_artifact_raw(slug: str, path: str, request: Request) -> dict[str, Any]:
     """Return the full UTF-8 decoded contents of a single artifact file.
 
     Sandboxed to `<outputs_root>/<slug>/`. Returns JSON `{path, size,
@@ -665,9 +666,7 @@ async def get_output_artifact_raw(
     try:
         rel_parts = target.relative_to(base).parts
     except ValueError as exc:
-        raise HTTPException(
-            status_code=400, detail="path escapes session dir"
-        ) from exc
+        raise HTTPException(status_code=400, detail="path escapes session dir") from exc
     # Defense-in-depth: serve ONLY genuine deliverables, mirroring the listing
     # endpoint's `_is_deliverable_relpath` allowlist. The listing no longer
     # surfaces claude_config/.codex/diff/log paths, so the UI never links to
@@ -682,9 +681,7 @@ async def get_output_artifact_raw(
     try:
         size = target.stat().st_size
     except OSError as exc:
-        raise HTTPException(
-            status_code=500, detail=f"stat failed: {exc}"
-        ) from exc
+        raise HTTPException(status_code=500, detail=f"stat failed: {exc}") from exc
 
     # 1 MiB hard ceiling on inline text fetch — anything bigger should be
     # opened on the desktop (the UI offers that path).
@@ -692,15 +689,11 @@ async def get_output_artifact_raw(
     truncated = size > max_inline
     try:
         if _is_text_filename(target.name):
-            text = target.read_text(
-                encoding="utf-8", errors="replace"
-            )[:max_inline]
+            text = target.read_text(encoding="utf-8", errors="replace")[:max_inline]
         else:
             text = f"<binary file, {size} bytes — open on desktop>"
     except OSError as exc:
-        raise HTTPException(
-            status_code=500, detail=f"read failed: {exc}"
-        ) from exc
+        raise HTTPException(status_code=500, detail=f"read failed: {exc}") from exc
     return {
         "path": path,
         "size": size,
@@ -725,10 +718,11 @@ async def download_output_artifact(
     target = _resolve_artifact_target(request, slug, path)
     media_type, _ = mimetypes.guess_type(target.name)
     headers = {"X-Content-Type-Options": "nosniff"}
-    # Serving an HTML artifact inline renders it in the app origin; lock it down
-    # with the same no-script CSP the /view route uses so a worker-authored .html
-    # can't execute JS against the app.
-    if disposition == "inline" and (media_type or "").startswith("text/html"):
+    # HTML and SVG are active document formats when rendered inline in the app
+    # origin. Apply the same no-script CSP used by the /view route so a
+    # worker-authored artifact cannot execute code against the app.
+    active_document_types = {"text/html", "image/svg+xml"}
+    if disposition == "inline" and media_type in active_document_types:
         headers["Content-Security-Policy"] = VIEW_CSP
     return FileResponse(
         target,
@@ -740,9 +734,7 @@ async def download_output_artifact(
 
 
 @router.get("/{slug}/files/{path:path}/view")
-async def view_output_artifact(
-    slug: str, path: str, request: Request
-) -> HTMLResponse:
+async def view_output_artifact(slug: str, path: str, request: Request) -> HTMLResponse:
     """Render a text/markdown artifact as a standalone styled HTML page.
 
     Markdown is rendered to HTML; other text is shown escaped in <pre>. Carries a
@@ -762,9 +754,7 @@ async def view_output_artifact(
     try:
         text = target.read_text(encoding="utf-8", errors="replace")
     except OSError as exc:
-        raise HTTPException(
-            status_code=500, detail=f"read failed: {exc}"
-        ) from exc
+        raise HTTPException(status_code=500, detail=f"read failed: {exc}") from exc
     return HTMLResponse(
         render_artifact_html(target.name, text),
         headers={
@@ -775,9 +765,7 @@ async def view_output_artifact(
 
 
 @router.post("/{slug}/files/{path:path}/reveal")
-async def reveal_output_artifact(
-    slug: str, path: str, request: Request
-) -> dict[str, Any]:
+async def reveal_output_artifact(slug: str, path: str, request: Request) -> dict[str, Any]:
     """Open the OS file manager with the artifact selected. Local desktop only."""
     if not getattr(request.app.state, "native_file_actions", False):
         raise HTTPException(status_code=404, detail="native file actions unavailable")
@@ -789,9 +777,7 @@ async def reveal_output_artifact(
 
 
 @router.post("/{slug}/files/{path:path}/open-native")
-async def open_output_artifact_native(
-    slug: str, path: str, request: Request
-) -> dict[str, Any]:
+async def open_output_artifact_native(slug: str, path: str, request: Request) -> dict[str, Any]:
     """Open the artifact with the OS default application. Local desktop only."""
     if not getattr(request.app.state, "native_file_actions", False):
         raise HTTPException(status_code=404, detail="native file actions unavailable")
@@ -823,7 +809,12 @@ _OPENER_EDITORS: list[tuple[str, str]] = [
 
 # Browsers tried, in order, for the "browser" opener (first installed wins).
 _BROWSER_CANDIDATES: tuple[str, ...] = (
-    "chrome", "msedge", "firefox", "brave", "opera", "vivaldi",
+    "chrome",
+    "msedge",
+    "firefox",
+    "brave",
+    "opera",
+    "vivaldi",
 )
 
 
@@ -955,9 +946,7 @@ def get_preferred_opener(request: Request) -> dict[str, Any]:
 
 
 @router.put("/preferred-opener")
-def put_preferred_opener(
-    body: PreferredOpenerBody, request: Request
-) -> dict[str, Any]:
+def put_preferred_opener(body: PreferredOpenerBody, request: Request) -> dict[str, Any]:
     """Persist the remembered opener id (or ``""`` to clear it).
 
     Validated against the closed opener set — never a raw path. Persists to
@@ -1002,18 +991,14 @@ async def open_artifact_with(
     target = _resolve_artifact_target(request, slug, path)
     resolved = _resolve_opener(opener)
     if resolved is None:
-        raise HTTPException(
-            status_code=409, detail=f"opener not available: {opener}"
-        )
+        raise HTTPException(status_code=409, detail=f"opener not available: {opener}")
     from jarvis.platform import open_path
 
     kind, value = resolved
     if kind == "default":
         opened = await asyncio.to_thread(open_path.open_file, target)
     else:
-        opened = await asyncio.to_thread(
-            open_path.open_file_with, target, kind, value
-        )
+        opened = await asyncio.to_thread(open_path.open_file_with, target, kind, value)
     return {"opened": bool(opened), "opener": opener}
 
 

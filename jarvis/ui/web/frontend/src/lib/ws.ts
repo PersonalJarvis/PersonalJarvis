@@ -1,6 +1,6 @@
 /**
  * WebSocket client with exponential-backoff reconnect (500ms → 10s cap).
- * Ping/Pong every 30s. Token via window.__JARVIS_TOKEN as query param.
+ * Ping/Pong every 30s. Authentication uses the same-origin HttpOnly cookie.
  *
  * Aside from the singleton onMessage callback (used by useWebSocket for the
  * Zustand store), additional consumers can attach via subscribe() — needed by
@@ -14,12 +14,6 @@ export interface WSClientOptions {
   onMessage?: WSHandler;
   onOpen?: () => void;
   onClose?: (code?: number) => void;
-}
-
-declare global {
-  interface Window {
-    __JARVIS_TOKEN?: string;
-  }
 }
 
 const MIN_BACKOFF = 500;
@@ -49,9 +43,7 @@ export class WSClient {
   private defaultUrl(): string {
     const proto = window.location.protocol === "https:" ? "wss" : "ws";
     const host = window.location.host;
-    const token = window.__JARVIS_TOKEN;
-    const query = token ? `?token=${encodeURIComponent(token)}` : "";
-    return `${proto}://${host}/ws${query}`;
+    return `${proto}://${host}/ws`;
   }
 
   connect(): void {

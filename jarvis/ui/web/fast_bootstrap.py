@@ -24,9 +24,12 @@ from __future__ import annotations
 
 import asyncio
 import mimetypes
+import secrets
 from contextlib import suppress
 from pathlib import Path
 from typing import Any
+
+from .surface_security import SurfaceSecurity
 
 # The built React frontend lives next to this module (jarvis/ui/web/dist),
 # the same directory the real FastAPI app serves it from. Resolving it here —
@@ -40,7 +43,12 @@ class FastBootstrap:
     """Hold-and-delegate ASGI bootstrap server. See module docstring."""
 
     def __init__(
-        self, *, hold_timeout: float = 120.0, dist_dir: Path | None = None
+        self,
+        *,
+        hold_timeout: float = 120.0,
+        dist_dir: Path | None = None,
+        session_token: str | None = None,
+        vite_dev_url: str | None = None,
     ) -> None:
         self._full: dict[str, Any] = {"app": None}
         self._ready = asyncio.Event()
@@ -48,6 +56,12 @@ class FastBootstrap:
         self._server: Any = None
         self._task: asyncio.Task | None = None
         self._dist_dir = (dist_dir or _DEFAULT_DIST_DIR).resolve()
+        self._session_token = session_token or secrets.token_urlsafe(32)
+        self._secured_app = SurfaceSecurity(
+            self._asgi,
+            vite_dev_url=vite_dev_url,
+            bootstrap_tokens=(self._session_token,),
+        )
         # Listener self-healing (see the "lifecycle" section). The bootstrap
         # OWNS the listening socket for the whole process lifetime (it delegates
         # to the real app via set_app but never hands off the socket), so when a
@@ -74,7 +88,14 @@ class FastBootstrap:
     @property
     def app(self) -> Any:
         """The bootstrap ASGI app (handed to uvicorn / driven directly in tests)."""
-        return self._asgi
+        return self._entry_app
+
+    async def _entry_app(self, scope: dict, receive: Any, send: Any) -> None:
+        """Guard warm-up, then delegate directly to the secured full app."""
+        if self._ready.is_set() and self._full["app"] is not None:
+            await self._full["app"](scope, receive, send)
+            return
+        await self._secured_app(scope, receive, send)
 
     async def _asgi(self, scope: dict, receive: Any, send: Any) -> None:
         kind = scope["type"]
@@ -313,6 +334,7 @@ class FastBootstrap:
         docstring) so the readiness event is set loop-locally.
         """
         self._full["app"] = app
+        self._secured_app.sync_local_tokens()
         self._ready.set()
 
     async def serve(

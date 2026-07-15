@@ -15,6 +15,7 @@ the DB, and that worktree slug-style dirs stay un-enriched (their
 embedded random ``hex[:8]`` is decoupled from any mission UUID by
 design).
 """
+
 from __future__ import annotations
 
 import time
@@ -110,9 +111,7 @@ def _make_mission_dir(root: Path, mission_id: str) -> Path:
     return d
 
 
-def _make_worktree_dir(
-    root: Path, utterance: str = "test-task", short: str | None = None
-) -> Path:
+def _make_worktree_dir(root: Path, utterance: str = "test-task", short: str | None = None) -> Path:
     """Create a worktree slug-style dir as ``WorktreeManager.create`` does."""
     short = short or "deadbeef"
     ts = time.strftime("%Y%m%dT%H%M%S")
@@ -146,8 +145,7 @@ async def _insert_mission(
     created_ms = created_ms or int(time.time() * 1000) - 5000
     updated_ms = updated_ms or int(time.time() * 1000)
     await conn.execute(
-        "INSERT INTO missions (id, prompt, state, created_ms, updated_ms) "
-        "VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO missions (id, prompt, state, created_ms, updated_ms) VALUES (?, ?, ?, ?, ?)",
         (mission_id, prompt, state, created_ms, updated_ms),
     )
 
@@ -176,8 +174,7 @@ async def _insert_dispatch_event(
         }
     )
     await conn.execute(
-        "INSERT INTO mission_events (mission_id, event_type, payload_json) "
-        "VALUES (?, ?, ?)",
+        "INSERT INTO mission_events (mission_id, event_type, payload_json) VALUES (?, ?, ?)",
         (child_id, "MissionDispatched", payload),
     )
 
@@ -206,19 +203,12 @@ def test_parse_slug_unknown_returns_nones() -> None:
 
 def test_mission_id_prefix_for_persistent_dir() -> None:
     """The mission_<short> dir-name yields its short as the LIKE-prefix."""
-    assert (
-        _mission_id_prefix_for_dir("mission_019e3600-a84e") == "019e3600-a84e"
-    )
+    assert _mission_id_prefix_for_dir("mission_019e3600-a84e") == "019e3600-a84e"
 
 
 def test_mission_id_prefix_for_worktree_dir_is_none() -> None:
     """Worktree slug dirs embed a random hex[:8] — no mission-id mapping."""
-    assert (
-        _mission_id_prefix_for_dir(
-            "20260518T120000__refactor-router__deadbeef"
-        )
-        is None
-    )
+    assert _mission_id_prefix_for_dir("20260518T120000__refactor-router__deadbeef") is None
 
 
 def test_mission_id_prefix_for_random_dir_is_none() -> None:
@@ -462,9 +452,7 @@ async def test_list_outputs_terminal_mission_duration_frozen(
         r = client.get("/api/outputs")
     sess = r.json()["sessions"][0]
     assert sess["duration_s"] == pytest.approx(100.0, abs=5.0)
-    assert sess["completed_at"] == pytest.approx(
-        (now_ms - 200_000) / 1000.0, abs=5.0
-    )
+    assert sess["completed_at"] == pytest.approx((now_ms - 200_000) / 1000.0, abs=5.0)
 
 
 @pytest.mark.asyncio
@@ -483,9 +471,7 @@ async def test_list_outputs_mission_dir_no_db_row_falls_back_to_unknown(
 
 
 @pytest.mark.asyncio
-async def test_list_outputs_hides_worktree_slug_dirs(
-    app: FastAPI, tmp_path: Path
-) -> None:
+async def test_list_outputs_hides_worktree_slug_dirs(app: FastAPI, tmp_path: Path) -> None:
     """Worktree slug dirs (``<ts>__<utterance>__<short>``) are temporary scaffolding
     created and torn down by ``WorktreeManager``. They have no mission-id mapping
     so their status would always render as ``unknown`` — together with the
@@ -542,12 +528,8 @@ async def test_list_outputs_multiple_mission_dirs(
     mid_b = "019e3600-bbbb-7000-8000-000000000011"
     _make_mission_dir(tmp_path, mid_a)
     _make_mission_dir(tmp_path, mid_b)
-    await _insert_mission(
-        db_conn, mission_id=mid_a, state="APPROVED", prompt="task A"
-    )
-    await _insert_mission(
-        db_conn, mission_id=mid_b, state="FAILED", prompt="task B"
-    )
+    await _insert_mission(db_conn, mission_id=mid_a, state="APPROVED", prompt="task A")
+    await _insert_mission(db_conn, mission_id=mid_b, state="FAILED", prompt="task B")
 
     with TestClient(app) as client:
         r = client.get("/api/outputs")
@@ -587,9 +569,7 @@ async def test_list_outputs_mission_dir_ignores_task_subdir_names(
         prompt="WRONG ROW — should not appear",
     )
     # And the correct mission row.
-    await _insert_mission(
-        db_conn, mission_id=mission_id, state="APPROVED", prompt="correct row"
-    )
+    await _insert_mission(db_conn, mission_id=mission_id, state="APPROVED", prompt="correct row")
 
     with TestClient(app) as client:
         r = client.get("/api/outputs")
@@ -626,9 +606,7 @@ async def test_list_outputs_without_mission_manager_stays_functional(
 
 
 @pytest.mark.asyncio
-async def test_get_output_plan_returns_empty_stub(
-    app: FastAPI, tmp_path: Path
-) -> None:
+async def test_get_output_plan_returns_empty_stub(app: FastAPI, tmp_path: Path) -> None:
     """The Plan tab is intentionally a placeholder (Welle-4 not plumbed).
 
     Confirmed as out-of-scope per the B1 brief: returns ``{plan: null,
@@ -637,9 +615,7 @@ async def test_get_output_plan_returns_empty_stub(
     """
     _make_mission_dir(tmp_path, "019e3600-eeee-7000-8000-000000000040")
     with TestClient(app) as client:
-        r = client.get(
-            "/api/outputs/mission_019e3600-eeee/plan"
-        )
+        r = client.get("/api/outputs/mission_019e3600-eeee/plan")
     assert r.status_code == 200
     assert r.json() == {"plan": None, "steps": []}
 
@@ -662,20 +638,12 @@ async def test_get_output_plan_404_for_unknown_slug(app: FastAPI) -> None:
 
 def test_is_deliverable_relpath() -> None:
     """The allowlist predicate: only ``tasks/<id>/artifacts/files/<rel>`` wins."""
-    assert _is_deliverable_relpath(
-        ("tasks", "019e0000", "artifacts", "files", "out.html")
-    )
-    assert _is_deliverable_relpath(
-        ("tasks", "019e0000", "artifacts", "files", "sub", "deep.css")
-    )
+    assert _is_deliverable_relpath(("tasks", "019e0000", "artifacts", "files", "out.html"))
+    assert _is_deliverable_relpath(("tasks", "019e0000", "artifacts", "files", "sub", "deep.css"))
     # Forensic + scaffolding paths are all rejected.
-    assert not _is_deliverable_relpath(
-        ("tasks", "019e0000", "artifacts", "diff.patch")
-    )
+    assert not _is_deliverable_relpath(("tasks", "019e0000", "artifacts", "diff.patch"))
     assert not _is_deliverable_relpath(("claude_config", "settings.json"))
-    assert not _is_deliverable_relpath(
-        ("claude_config", "sessions", "45552.json")
-    )
+    assert not _is_deliverable_relpath(("claude_config", "sessions", "45552.json"))
     assert not _is_deliverable_relpath((".codex", "auth.json"))
     assert not _is_deliverable_relpath(("openclaw_state", "openclaw.json"))
     assert not _is_deliverable_relpath(("reflections.md",))
@@ -697,8 +665,14 @@ def test_is_deliverable_relpath_excludes_browser_scratch() -> None:
         (*base, "qa-artifacts", "chrome-profile-dd6355b8", "Last Browser")
     )
     assert not _is_deliverable_relpath(
-        (*base, "qa-artifacts", "chrome-profile-dd6355b8", "Default",
-         "Shared Dictionary", "db-journal")
+        (
+            *base,
+            "qa-artifacts",
+            "chrome-profile-dd6355b8",
+            "Default",
+            "Shared Dictionary",
+            "db-journal",
+        )
     )
     # Genuine deliverables — including one INSIDE qa-artifacts/ next to junk.
     assert _is_deliverable_relpath((*base, "index.html"))
@@ -706,9 +680,7 @@ def test_is_deliverable_relpath_excludes_browser_scratch() -> None:
 
 
 @pytest.mark.asyncio
-async def test_list_artifacts_lists_only_deliverables(
-    app: FastAPI, tmp_path: Path
-) -> None:
+async def test_list_artifacts_lists_only_deliverables(app: FastAPI, tmp_path: Path) -> None:
     """Only genuine deliverables are listed; the forensic ``diff.patch`` one
     level up in ``artifacts/`` is excluded (contract change 2026-05-30)."""
     d = _make_mission_dir(tmp_path, "019e3288abcd")
@@ -723,9 +695,7 @@ async def test_list_artifacts_lists_only_deliverables(
 
 
 @pytest.mark.asyncio
-async def test_list_artifacts_skips_claude_config_scaffolding(
-    app: FastAPI, tmp_path: Path
-) -> None:
+async def test_list_artifacts_skips_claude_config_scaffolding(app: FastAPI, tmp_path: Path) -> None:
     """The isolated ``CLAUDE_CONFIG_DIR`` (``run_dir/claude_config/``) seeded by
     ``build_worker_env`` must never leak into the Outputs view."""
     d = _make_mission_dir(tmp_path, "019e3288abcd")
@@ -752,9 +722,7 @@ async def test_list_artifacts_skips_claude_config_scaffolding(
 
 
 @pytest.mark.asyncio
-async def test_list_artifacts_skips_codex_and_forensics(
-    app: FastAPI, tmp_path: Path
-) -> None:
+async def test_list_artifacts_skips_codex_and_forensics(app: FastAPI, tmp_path: Path) -> None:
     """``.codex/`` (CODEX_HOME), worker ``logs/`` and ``reflections.md`` are
     internal scaffolding — only the deliverable survives the listing filter."""
     d = _make_mission_dir(tmp_path, "019e3288abcd")
@@ -773,9 +741,7 @@ async def test_list_artifacts_skips_codex_and_forensics(
 
 
 @pytest.mark.asyncio
-async def test_list_artifacts_lists_nested_deliverables(
-    app: FastAPI, tmp_path: Path
-) -> None:
+async def test_list_artifacts_lists_nested_deliverables(app: FastAPI, tmp_path: Path) -> None:
     """Deliverables in nested sub-dirs under ``artifacts/files/`` are kept."""
     d = _make_mission_dir(tmp_path, "019e3288abcd")
     _seed(
@@ -793,14 +759,9 @@ async def test_list_artifacts_lists_nested_deliverables(
 async def test_raw_serves_deliverable(app: FastAPI, tmp_path: Path) -> None:
     """The raw-file endpoint returns the contents of a genuine deliverable."""
     d = _make_mission_dir(tmp_path, "019e3288abcd")
-    _seed(
-        d / "tasks" / "019e0000" / "artifacts" / "files" / "out.txt", "payload"
-    )
+    _seed(d / "tasks" / "019e0000" / "artifacts" / "files" / "out.txt", "payload")
     with TestClient(app) as client:
-        r = client.get(
-            f"/api/outputs/{d.name}/files/"
-            "tasks/019e0000/artifacts/files/out.txt/raw"
-        )
+        r = client.get(f"/api/outputs/{d.name}/files/tasks/019e0000/artifacts/files/out.txt/raw")
     assert r.status_code == 200
     assert r.json()["text"] == "payload"
 
@@ -813,9 +774,7 @@ async def test_raw_404s_for_scaffolding(app: FastAPI, tmp_path: Path) -> None:
     d = _make_mission_dir(tmp_path, "019e3288abcd")
     _seed(d / "claude_config" / ".claude.json", '{"secret":"x"}')
     with TestClient(app) as client:
-        r = client.get(
-            f"/api/outputs/{d.name}/files/claude_config/.claude.json/raw"
-        )
+        r = client.get(f"/api/outputs/{d.name}/files/claude_config/.claude.json/raw")
     assert r.status_code == 404
 
 
@@ -825,8 +784,7 @@ async def test_raw_404s_for_scaffolding(app: FastAPI, tmp_path: Path) -> None:
 def _make_deliverable(root: Path, mission_id: str, name: str, content: str) -> str:
     """Create tasks/<tid>/artifacts/files/<name> under mission_<id>; return rel path."""
     files_dir = (
-        root / f"mission_{mission_id[:13]}" / "tasks" / "019edeadbeef"
-        / "artifacts" / "files"
+        root / f"mission_{mission_id[:13]}" / "tasks" / "019edeadbeef" / "artifacts" / "files"
     )
     files_dir.mkdir(parents=True, exist_ok=True)
     (files_dir / name).write_text(content, encoding="utf-8")
@@ -847,14 +805,22 @@ def test_download_sets_attachment_disposition(app):
     assert r.text == "# Hi"
 
 
-def test_download_inline_disposition(app):
+@pytest.mark.parametrize(
+    ("filename", "content"),
+    [
+        ("page.html", "<p>x</p>"),
+        ("image.svg", "<svg><script>bad()</script></svg>"),
+    ],
+)
+def test_download_inline_active_document_has_csp(app, filename, content):
     root = Path(app.state.outputs_root)
     slug = "mission_019ed2dfd0fab"
-    rel = _make_deliverable(root, "019ed2dfd0fab1234", "page.html", "<p>x</p>")
+    rel = _make_deliverable(root, "019ed2dfd0fab1234", filename, content)
     client = TestClient(app)
     r = client.get(f"/api/outputs/{slug}/files/{rel}/download?disposition=inline")
     assert r.status_code == 200
     assert r.headers["content-disposition"].startswith("inline")
+    assert "default-src 'none'" in r.headers["content-security-policy"]
 
 
 def test_download_blocks_non_deliverable(app):
@@ -931,9 +897,7 @@ def test_open_session_folder_calls_reveal_in_folder(app):
     target = root / slug
     target.mkdir(parents=True, exist_ok=True)
     client = TestClient(app)
-    with patch(
-        "jarvis.platform.open_path.reveal_in_folder", return_value=True
-    ) as rev:
+    with patch("jarvis.platform.open_path.reveal_in_folder", return_value=True) as rev:
         r = client.post(f"/api/outputs/{slug}/open")
     assert r.status_code == 200
     assert r.json() == {"opened": True, "path": str(target.resolve())}
@@ -1023,6 +987,7 @@ def test_download_attachment_html_no_csp_needed(app):
 
 def test_view_rejects_oversize_file(app, monkeypatch):
     import jarvis.ui.web.outputs_routes as oroutes
+
     monkeypatch.setattr(oroutes, "_VIEW_MAX_BYTES", 4)
     root = Path(app.state.outputs_root)
     slug = "mission_019ed2dfd0fab"
@@ -1045,10 +1010,12 @@ def _fake_resolver_only(*installed: str):
     """Return a resolve_app_launch_target stub where only *installed* keys map
     to a real executable; everything else returns the raw-name startfile
     fallback (= 'not installed')."""
+
     def _resolve(name: str) -> LaunchTarget:
         if name in installed:
             return LaunchTarget("executable", rf"C:\apps\{name}.exe")
         return LaunchTarget("startfile", name)
+
     return _resolve
 
 
@@ -1062,11 +1029,12 @@ def test_openers_native_disabled_returns_empty(app):
 
 def test_openers_always_includes_default(app):
     app.state.native_file_actions = True
-    with patch(
-        "jarvis.plugins.tool.app_resolver.resolve_app_launch_target",
-        side_effect=_fake_resolver_only(),
-    ), patch(
-        "jarvis.ui.web.outputs_routes._resolve_browser_target", return_value=None
+    with (
+        patch(
+            "jarvis.plugins.tool.app_resolver.resolve_app_launch_target",
+            side_effect=_fake_resolver_only(),
+        ),
+        patch("jarvis.ui.web.outputs_routes._resolve_browser_target", return_value=None),
     ):
         client = TestClient(app)
         r = client.get("/api/outputs/openers")
@@ -1076,11 +1044,12 @@ def test_openers_always_includes_default(app):
 
 def test_openers_detects_installed_editor_only(app):
     app.state.native_file_actions = True
-    with patch(
-        "jarvis.plugins.tool.app_resolver.resolve_app_launch_target",
-        side_effect=_fake_resolver_only("code"),
-    ), patch(
-        "jarvis.ui.web.outputs_routes._resolve_browser_target", return_value=None
+    with (
+        patch(
+            "jarvis.plugins.tool.app_resolver.resolve_app_launch_target",
+            side_effect=_fake_resolver_only("code"),
+        ),
+        patch("jarvis.ui.web.outputs_routes._resolve_browser_target", return_value=None),
     ):
         client = TestClient(app)
         r = client.get("/api/outputs/openers")
@@ -1098,10 +1067,9 @@ def test_openers_result_is_memoized(app):
 
     app.state.native_file_actions = True
     resolver = MagicMock(side_effect=_fake_resolver_only("code"))
-    with patch(
-        "jarvis.plugins.tool.app_resolver.resolve_app_launch_target", resolver
-    ), patch(
-        "jarvis.ui.web.outputs_routes._resolve_browser_target", return_value=None
+    with (
+        patch("jarvis.plugins.tool.app_resolver.resolve_app_launch_target", resolver),
+        patch("jarvis.ui.web.outputs_routes._resolve_browser_target", return_value=None),
     ):
         client = TestClient(app)
         first = client.get("/api/outputs/openers")
@@ -1119,9 +1087,7 @@ def test_open_with_404_when_native_disabled(app):
     rel = _make_deliverable(root, "019ed2dfd0fab1234", "report.md", "# Hi")
     app.state.native_file_actions = False
     client = TestClient(app)
-    r = client.post(
-        f"/api/outputs/{slug}/files/{rel}/open-with", json={"opener": "default"}
-    )
+    r = client.post(f"/api/outputs/{slug}/files/{rel}/open-with", json={"opener": "default"})
     assert r.status_code == 404
 
 
@@ -1147,12 +1113,13 @@ def test_open_with_editor_calls_open_file_with(app):
     rel = _make_deliverable(root, "019ed2dfd0fab1234", "report.md", "# Hi")
     app.state.native_file_actions = True
     client = TestClient(app)
-    with patch(
-        "jarvis.plugins.tool.app_resolver.resolve_app_launch_target",
-        side_effect=_fake_resolver_only("code"),
-    ), patch(
-        "jarvis.platform.open_path.open_file_with", return_value=True
-    ) as opn:
+    with (
+        patch(
+            "jarvis.plugins.tool.app_resolver.resolve_app_launch_target",
+            side_effect=_fake_resolver_only("code"),
+        ),
+        patch("jarvis.platform.open_path.open_file_with", return_value=True) as opn,
+    ):
         r = client.post(
             f"/api/outputs/{slug}/files/{rel}/open-with",
             json={"opener": "code"},
@@ -1215,12 +1182,8 @@ def test_get_preferred_opener_defaults_empty(app):
 def test_put_preferred_opener_persists_and_updates(app):
     app.state.config = SimpleNamespace(ui=SimpleNamespace(preferred_opener=""))
     client = TestClient(app)
-    with patch(
-        "jarvis.core.config_writer.set_preferred_opener"
-    ) as setter:
-        r = client.put(
-            "/api/outputs/preferred-opener", json={"opener": "code"}
-        )
+    with patch("jarvis.core.config_writer.set_preferred_opener") as setter:
+        r = client.put("/api/outputs/preferred-opener", json={"opener": "code"})
     assert r.status_code == 200
     setter.assert_called_once_with("code")
     assert app.state.config.ui.preferred_opener == "code"
@@ -1228,7 +1191,5 @@ def test_put_preferred_opener_persists_and_updates(app):
 
 def test_put_preferred_opener_rejects_unknown(app):
     client = TestClient(app)
-    r = client.put(
-        "/api/outputs/preferred-opener", json={"opener": "../../evil"}
-    )
+    r = client.put("/api/outputs/preferred-opener", json={"opener": "../../evil"})
     assert r.status_code == 400

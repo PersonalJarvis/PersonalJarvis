@@ -90,7 +90,7 @@ def test_dynamic_api_layer_fails_clean_with_diagnosis(monkeypatch) -> None:
                   "summary": "Ping"}}},
     }
 
-    def runner(method, path, params, body):
+    def runner(method, path, params, body, *, timeout_s=None):
         raise ApiError(
             "Jarvis at http://127.0.0.1:47821 is unreachable.",
             None, base_url="http://127.0.0.1:47821",

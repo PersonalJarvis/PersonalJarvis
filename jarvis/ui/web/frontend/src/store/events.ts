@@ -71,6 +71,10 @@ export function isSectionId(value: unknown): value is SectionId {
   return typeof value === "string" && SECTION_IDS.includes(value as SectionId);
 }
 
+export function initialSectionFromSearch(search: string): SectionId {
+  return new URLSearchParams(search).has("doc") ? "docs" : "chats";
+}
+
 export const SECTION_LABELS: Record<SectionId, string> = {
   chats: "Chats",
   agents: "Agents",
@@ -294,7 +298,9 @@ export const useEventStore = create<EventStore>((set, get) => ({
   voiceReady: false,
   connected: false,
   wsWarming: true,
-  activeSection: "chats",
+  activeSection: initialSectionFromSearch(
+    typeof window === "undefined" ? "" : window.location.search,
+  ),
   transcription: "",
   transcriptionFinal: true,
   toasts: [],

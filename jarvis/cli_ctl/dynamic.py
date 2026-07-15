@@ -17,7 +17,7 @@ import click
 
 _log = logging.getLogger(__name__)
 
-Runner = Callable[[str, str, dict[str, Any], Any], Any]
+Runner = Callable[..., Any]
 
 _HTTP_METHODS = {"get", "post", "put", "patch", "delete"}
 _CLICK_TYPE = {
@@ -94,6 +94,28 @@ def _build_command(
                 help="Print the request that would be sent and exit without sending.",
             )
         )
+    timeout_default: float | None = None
+    if "request_timeout" not in existing_kwargs:
+        declared_timeout = op.get("x-jarvis-timeout-seconds")
+        try:
+            timeout_default = (
+                max(0.1, float(declared_timeout))
+                if declared_timeout is not None
+                else None
+            )
+        except (TypeError, ValueError):
+            timeout_default = None
+        params.append(
+            click.Option(
+                ["--request-timeout"],
+                type=click.FloatRange(min=0.1),
+                default=timeout_default,
+                help=(
+                    "HTTP read timeout in seconds; defaults to route metadata "
+                    "or the normal client timeout."
+                ),
+            )
+        )
 
     # Server-declared danger metadata (route `openapi_extra`): the authoritative
     # signal for the safety gate. `None` (absent) falls back to the method+path
@@ -104,6 +126,7 @@ def _build_command(
     def callback(**kwargs: Any) -> None:
         assume_yes = bool(kwargs.pop("yes", False))
         dry_run = bool(kwargs.pop("dry_run", False))
+        request_timeout = kwargs.pop("request_timeout", timeout_default)
         body = None
         raw = kwargs.pop("json_body", None)
         if raw is not None:
@@ -132,7 +155,13 @@ def _build_command(
         from jarvis.cli_ctl.client import ApiError
 
         try:
-            result = runner(method, url_path, query, body)
+            result = runner(
+                method,
+                url_path,
+                query,
+                body,
+                timeout_s=request_timeout,
+            )
         except ApiError as exc:
             # Same clean failure contract as the curated commands (invoke.run):
             # no raw traceback; transport failures get the cause-specific

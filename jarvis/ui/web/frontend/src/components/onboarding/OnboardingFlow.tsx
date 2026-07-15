@@ -4,6 +4,7 @@ import { useT } from "@/i18n";
 import type { useOnboarding } from "@/hooks/useOnboarding";
 import { WelcomeStep } from "./steps/WelcomeStep";
 import { LanguageStep } from "./steps/LanguageStep";
+import { PermissionsStep } from "./steps/PermissionsStep";
 import { WakeWordStep } from "./steps/WakeWordStep";
 import { ApiKeysStep } from "./steps/ApiKeysStep";
 import { FinishStep } from "./steps/FinishStep";
@@ -20,6 +21,7 @@ export interface StepProps {
 const REGISTRY: Record<string, (p: StepProps) => JSX.Element> = {
   welcome: WelcomeStep,
   language: LanguageStep,
+  permissions: PermissionsStep,
   "wake-word": WakeWordStep,
   "api-keys": ApiKeysStep,
   finish: FinishStep,

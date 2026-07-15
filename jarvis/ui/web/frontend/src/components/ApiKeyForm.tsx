@@ -104,6 +104,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
             variant="ghost"
             onClick={handleDelete}
             disabled={pending}
+            aria-label={`Delete ${secretKey}`}
             className="text-destructive hover:text-destructive"
           >
             <Trash2 className="h-3.5 w-3.5" />
@@ -123,6 +124,7 @@ export function ApiKeyForm({ secretKey, dashboardUrl, configured, credentialHelp
         <div className="relative flex-1">
           <input
             type={reveal ? "text" : "password"}
+            aria-label={`Enter ${secretKey}`}
             value={value}
             onChange={(e) => setValue(e.target.value)}
             placeholder={`Enter ${secretKey}…`}

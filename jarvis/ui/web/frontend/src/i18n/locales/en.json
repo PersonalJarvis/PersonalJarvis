@@ -1,4 +1,15 @@
 {
+  "auth_gate": {
+    "checking": "Checking access…",
+    "title": "Unlock Personal Jarvis",
+    "subtitle": "Enter the control key configured for this Jarvis instance.",
+    "control_key": "Control key",
+    "placeholder": "Paste your control key",
+    "submit": "Unlock",
+    "submitting": "Checking…",
+    "invalid": "That control key was not accepted.",
+    "unavailable": "Could not reach Jarvis. Try again."
+  },
   "file_toast": {
     "show_in_folder": "Show in folder",
     "open": "Open",
@@ -107,7 +118,7 @@
   "socials": {
     "subtitle": "Links to our community and profiles.",
     "add": "Add link",
-    "empty": "No social links yet — add your first one.",
+    "empty": "No social links are available.",
     "edit": "Edit",
     "delete": "Delete",
     "open": "Open",
@@ -176,7 +187,7 @@
     "added": "\"{0}\" added to the dictionary.",
     "saved": "Dictionary entry saved.",
     "deleted": "\"{0}\" removed from the dictionary.",
-    "applies_note": "Changes apply to the next thing you say — no restart needed.",
+    "applies_note": "Changes apply to your next Pipeline transcription — no restart needed. Realtime mode does not use Dictionary corrections.",
     "dialog_add_title": "Add to your vocabulary",
     "dialog_edit_title": "Edit dictionary entry",
     "correction_toggle": "Fix a misrecognition",
@@ -477,6 +488,12 @@
       "tools": "Tools",
       "errors": "Errors"
     }
+  },
+  "voice_mode": {
+    "label": "Mode",
+    "realtime": "Realtime",
+    "pipeline": "Pipeline",
+    "unknown": "Unknown"
   },
   "sessions_view": {
     "title": "Transcription",
@@ -907,7 +924,7 @@
     "runtime_realtime": "Current session: Realtime",
     "runtime_pipeline": "Current session: Pipeline",
     "runtime_fallback_pipeline": "Current session fell back to Pipeline; Realtime is not serving this call.",
-    "cat_brain_desc": "The model that powers chat, routing, and Computer-Use.",
+    "cat_brain_desc": "The model that writes your chat and voice answers. The separate Tool Model handles actions and Computer Use.",
     "cat_tts_desc": "The voice Jarvis speaks with.",
     "cat_stt_desc": "How Jarvis turns your speech into text.",
     "cat_realtime_desc": "Full-duplex speech-to-speech through any configured Realtime provider, on desktop or in the browser.",
@@ -1009,6 +1026,38 @@
     "effective": "The Tool Model runs",
     "cleared": "Tool Model reset to your main model",
     "vision_note": "Only models that can see images are listed - Computer-Use reads the screen from screenshots, so a text-only model cannot run it."
+  },
+  "permissions": {
+    "group_title": "Privacy permissions",
+    "title": "macOS permissions",
+    "description": "Grant only the system access needed for voice, Computer-Use, global shortcuts, and window control. Jarvis never edits the macOS privacy database.",
+    "loading": "Checking system permissions…",
+    "load_failed": "Could not read the current permission status.",
+    "refresh": "Check again",
+    "not_required": "No extra desktop privacy permissions are required on this operating system.",
+    "identity_warning": "Launch Personal Jarvis from its app bundle before granting access. macOS attaches permissions to the exact app identity.",
+    "restart_required": "Restart Personal Jarvis before using the newly granted access.",
+    "restart_now": "Restart now",
+    "restarting": "Restarting…",
+    "restart_failed": "Personal Jarvis could not restart. Quit and reopen it manually.",
+    "request": "Allow",
+    "open_settings": "Open Settings",
+    "status": {
+      "granted": "Allowed",
+      "not_determined": "Not requested",
+      "denied": "Denied",
+      "restricted": "Restricted",
+      "not_granted": "Not allowed",
+      "unavailable": "Unavailable",
+      "not_required": "Not required"
+    },
+    "items": {
+      "microphone": { "title": "Microphone", "description": "Required for wake-word and local voice input." },
+      "screen_recording": { "title": "Screen Recording", "description": "Required for Computer-Use to see every connected display." },
+      "accessibility": { "title": "Accessibility", "description": "Required for reliable clicks, typing, focus, and window control." },
+      "input_monitoring": { "title": "Input Monitoring", "description": "Required for global push-to-talk and keyboard shortcuts." },
+      "event_posting": { "title": "Input control", "description": "Required for Computer-Use to send mouse and keyboard events." }
+    }
   },
   "settings_view": {
     "silence_window": {
@@ -1116,7 +1165,7 @@
       "derived_name": "Your assistant will be called: {0}",
       "engine_options": {
         "auto": "Auto (recommended)",
-        "openwakeword": "openWakeWord (built-in phrases)",
+        "openwakeword": "openWakeWord (custom model)",
         "vosk_kws": "Keyword spotting (any phrase, same on every device)",
         "stt_match": "STT match (any phrase, needs local Whisper)",
         "custom_onnx": "Custom ONNX model"
@@ -1401,6 +1450,8 @@
     "search_modal_placeholder": "Search docs…",
     "search_hint": "Type a term to search…",
     "search_loading": "Searching…",
+    "search_failed": "Search could not be loaded.",
+    "search_retry": "Try again",
     "no_results": "No results for \"{0}\"",
     "for_fulltext": "for full-text search.",
     "could_not_load": "Could not load doc.",
@@ -1554,6 +1605,13 @@
       "ui_label": "Interface language",
       "reply_label": "Reply language"
     },
+    "permissions": {
+      "title": "Allow access on this Mac",
+      "body": "macOS asks you to approve each capability separately. Use the buttons below, then return here; the status updates automatically.",
+      "privacy_note": "These prompts come from macOS. The installer cannot silently approve them, and Personal Jarvis never bypasses System Settings.",
+      "continue": "Continue",
+      "text_only": "Continue with text only"
+    },
     "wake_word": {
       "choice_title": "How do you want to activate {name}?",
       "choice_body": "Pick whichever fits how you work — you can change this later in Settings.",
@@ -1562,7 +1620,7 @@
       "mode_shortcut_title": "Keyboard shortcut",
       "mode_shortcut_body": "No wake word — hold a key to talk, release to send (push-to-talk).",
       "back_to_choice": "Back",
-      "shortcut_note": "You'll activate {name} with a keyboard shortcut instead of a wake word. You can set up the exact key anytime in Settings → Wake Word.",
+      "shortcut_note": "You'll activate {name} with a keyboard shortcut instead of a wake word. You can set up the exact key anytime in Settings → Voice Keybinds.",
       "shortcut_cta": "Continue",
       "title": "Pick your wake word",
       "body": "Choose the word that wakes your assistant. \"Hey\" stays fixed — you pick the rest.",
@@ -1587,6 +1645,7 @@
         "good": "Sounds good — your microphone picked up your voice clearly.",
         "too_quiet": "That was very quiet. Turn up your microphone volume or move closer, then try again.",
         "no_device": "No microphone detected — you can still finish setup and fix this later in Settings.",
+        "permission_required": "Grant Microphone access in Permissions before running this check.",
         "error": "Could not check the microphone right now."
       }
     },
@@ -1647,7 +1706,7 @@
     "reply_section": "Reply Language",
     "reply_hint": "Which language {name} speaks when answering you. Proper names, code identifiers and technical terms stay in their original form.",
     "stt_section": "Voice Recognition Language",
-    "stt_hint": "Which language your spoken voice is recognised and turned into text. Automatic detects the language you speak on its own.",
+    "stt_hint": "Which language your spoken voice is recognised and turned into text. Automatic detects it for you. After changing this, end any Realtime call and restart Jarvis for Pipeline mode.",
     "options": {
       "auto": {
         "label": "Automatic",
@@ -1811,7 +1870,12 @@
     "loading": "Loading graph…",
     "load_error": "Could not load the graph.",
     "reset_view_title": "Reset zoom to all nodes",
-    "center": "Center"
+    "center": "Center",
+    "relationship_graph": "Wiki relationship graph",
+    "node_details": "{0} ({1}) · {2} {3}",
+    "backlink_one": "backlink",
+    "backlink_many": "backlinks",
+    "unresolved": "unresolved"
   },
   "tree_sidebar": {
     "load_error": "Could not load the wiki.",
@@ -1891,11 +1955,43 @@
   },
   "docs_sidebar": {
     "title": "Documentation",
-    "error": "Error"
+    "error": "Error",
+    "indexing": "Building local index…",
+    "retry": "Try again",
+    "documents": "documents",
+    "no_results": "No matching documents"
   },
   "docs_content": {
     "prev": "Previous",
-    "next": "Next"
+    "next": "Next",
+    "breadcrumb": "Documentation",
+    "related_guides": "Related Guides",
+    "last_reviewed": "Last reviewed:",
+    "review_unavailable": "Review date unavailable",
+    "on_this_page": "On this page",
+    "copy_code": "Copy code",
+    "code_copied": "Code copied",
+    "skip_to_content": "Skip to documentation content"
+  },
+  "docs_overview": {
+    "eyebrow": "Documentation",
+    "title": "Personal Jarvis docs",
+    "description": "Everything from first setup to the architecture behind the voice. Browse the complete local library or open the redesigned public documentation.",
+    "online_docs": "Open redesigned online docs",
+    "load_failed_title": "Documentation could not be loaded",
+    "load_failed_description": "The local index did not become ready in time. Try again without restarting the app.",
+    "retry": "Try again",
+    "empty_title": "No local documents found",
+    "empty_description": "The online documentation is still available from the button above.",
+    "local_library": "Start in the local library",
+    "local_library_description": "Fast, offline access to the documentation shipped with this installation.",
+    "indexing_title": "Preparing your documentation",
+    "indexing_description": "Scanning the local Markdown library and building full-text search. This usually takes only a moment.",
+    "loading_page": "Loading document…",
+    "browse_by_topic": "Browse by Topic",
+    "browse_description": "Follow a learning path or jump to the feature you need.",
+    "guide": "guide",
+    "guides": "guides"
   },
   "docs_search_modal": {
     "navigate": "navigate",
@@ -2227,6 +2323,22 @@
     "manual_c": "yourself at any time."
   },
   "wiki_health": {
+    "capture_aria": "Wiki capture funnel for the last {0} hours",
+    "capture_window": "Last {0}h capture",
+    "capture_reviewed": "Reviewed",
+    "capture_candidate_reviews": "Productive reviews",
+    "capture_candidate_facts": "Candidates",
+    "capture_writes": "Writes",
+    "capture_noop": "No change",
+    "capture_rejected": "Rejected",
+    "capture_skipped": "Skipped",
+    "capture_pending": "Pending",
+    "capture_filtered": "Filtered",
+    "capture_empty": "Empty",
+    "capture_failed": "Failed",
+    "capture_in_progress": "In progress",
+    "capture_session_sweeps": "Session sweeps",
+    "capture_store_unavailable": "Capture store unavailable",
     "checking": "Checking wiki health…",
     "unavailable": "Wiki health check unavailable",
     "vault_prefix": "Vault: {0}",
@@ -2399,10 +2511,11 @@
   },
   "feedback": {
     "discord_cta_title": "Report on our Discord",
-    "discord_cta_subtitle": "Join #bug-reports and post your bug, idea, or question directly.",
-    "discord_cta_button": "Open Discord",
+    "discord_cta_subtitle": "Open #report-a-bug and post your bug, idea, or question directly.",
+    "discord_cta_button": "Open #report-a-bug",
+    "discord_join_button": "Join Discord first",
     "or_send_here": "or send it from here",
-    "subtitle": "Report a bug, share an idea, or ask a question — sent straight to our Discord.",
+    "subtitle": "Open our Discord to report a bug, share an idea, or ask a question.",
     "type_label": "Type",
     "type_bug": "Bug",
     "type_idea": "Idea",

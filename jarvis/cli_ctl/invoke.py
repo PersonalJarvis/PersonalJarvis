@@ -8,6 +8,7 @@ the result honoring the global ``--json`` flag. Curated command modules call
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import typer
@@ -25,6 +26,8 @@ def run(
     assume_yes: bool = False,
     dry_run: bool = False,
     dangerous: bool | None = None,
+    before_request: Callable[[], None] | None = None,
+    request_timeout_s: float | None = None,
 ) -> None:
     """Resolve client, gate mutations, send the request, render the result.
 
@@ -32,6 +35,7 @@ def run(
     provider switch is reversible → False; ``config set`` / a phone call →
     True). When None, the method+path heuristic in ``safety.is_dangerous``
     decides — which is what the generic dynamic ``api`` layer relies on.
+    ``before_request`` runs only after confirmation and never during a dry run.
     """
     # Local import avoids a load-time cycle with __main__ (which imports the
     # command modules that import this helper).
@@ -52,8 +56,16 @@ def run(
         )
         if not proceed:
             return  # dry run: preview already printed, nothing sent
+        if before_request is not None:
+            before_request()
         try:
-            out = client.request(method, path, params=params, json=body)
+            out = client.request(
+                method,
+                path,
+                params=params,
+                json=body,
+                timeout_s=request_timeout_s,
+            )
         except ApiError as exc:
             if exc.status_code is None:
                 # Transport failure: replace the terse core message with the

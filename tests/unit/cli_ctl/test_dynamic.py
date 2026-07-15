@@ -55,8 +55,14 @@ SPEC = {
 def test_builds_group_per_tag_with_commands():
     captured = {}
 
-    def runner(method, path, params, body):
-        captured.update(method=method, path=path, params=params, body=body)
+    def runner(method, path, params, body, *, timeout_s=None):
+        captured.update(
+            method=method,
+            path=path,
+            params=params,
+            body=body,
+            timeout_s=timeout_s,
+        )
         return {"ok": True}
 
     grp = dynamic.build_api_group(SPEC, runner)
@@ -70,11 +76,46 @@ def test_builds_group_per_tag_with_commands():
 def test_path_param_substituted_and_query_passed():
     captured = {}
 
-    def runner(method, path, params, body):
-        captured.update(method=method, path=path, params=params, body=body)
+    def runner(method, path, params, body, *, timeout_s=None):
+        captured.update(
+            method=method,
+            path=path,
+            params=params,
+            body=body,
+            timeout_s=timeout_s,
+        )
         return {}
 
     grp = dynamic.build_api_group(SPEC, runner)
     cmd = grp.get_command(None, "tasks").get_command(None, "get-task")
     cmd.callback(task_id="abc")
     assert captured["path"] == "/api/tasks/{task_id}".replace("{task_id}", "abc")
+
+
+def test_route_timeout_metadata_and_cli_override_reach_runner():
+    captured = {}
+    spec = {
+        "openapi": "3.1.0",
+        "info": {"version": "1"},
+        "paths": {
+            "/api/wiki/backfill": {
+                "post": {
+                    "tags": ["wiki"],
+                    "operationId": "backfill_wiki",
+                    "x-jarvis-timeout-seconds": 21600,
+                }
+            }
+        },
+    }
+
+    def runner(method, path, params, body, *, timeout_s=None):
+        captured["timeout_s"] = timeout_s
+        return {}
+
+    group = dynamic.build_api_group(spec, runner)
+    command = group.get_command(None, "wiki").get_command(None, "backfill-wiki")
+    command.callback(request_timeout=123.0, yes=True)
+    assert captured["timeout_s"] == 123.0
+
+    command.callback(yes=True)
+    assert captured["timeout_s"] == 21600.0

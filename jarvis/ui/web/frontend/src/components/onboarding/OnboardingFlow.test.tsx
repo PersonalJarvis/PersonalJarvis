@@ -16,6 +16,7 @@ const { dbl } = vi.hoisted(() => {
 });
 vi.mock("./steps/WelcomeStep", () => ({ WelcomeStep: dbl("step-welcome") }));
 vi.mock("./steps/LanguageStep", () => ({ LanguageStep: dbl("step-language") }));
+vi.mock("./steps/PermissionsStep", () => ({ PermissionsStep: dbl("step-permissions") }));
 vi.mock("./steps/WakeWordStep", () => ({ WakeWordStep: dbl("step-wake-word") }));
 vi.mock("./steps/ApiKeysStep", () => ({ ApiKeysStep: dbl("step-api-keys") }));
 vi.mock("./steps/FinishStep", () => ({ FinishStep: dbl("step-finish") }));
@@ -79,7 +80,7 @@ it("skip accumulates the skipped step", () => {
 it("REGISTRY covers exactly the canonical backend steps", () => {
   expect(new Set(STEP_KEYS)).toEqual(
     new Set([
-      "welcome", "language", "wake-word",
+      "welcome", "language", "permissions", "wake-word",
       "api-keys", "finish",
     ]),
   );

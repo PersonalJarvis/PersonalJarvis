@@ -2,7 +2,8 @@
  * Component tests for FeedbackView.
  *
  * The Feedback section is Discord-only: a single button forwards the user to the
- * #bug-reports channel via {@link openExternalUrl}. There is no in-app form.
+ * #report-a-bug forum via {@link openExternalUrl}. A separate permanent invite
+ * is available for people who have not joined the server yet.
  *
  * Verifies:
  *   - The Discord call-to-action (heading + button) renders.
@@ -25,11 +26,12 @@ describe("FeedbackView", () => {
   it("renders the Discord call-to-action with a forward button", () => {
     render(<FeedbackView />);
 
-    // A button that forwards to Discord must be present.
-    const buttons = screen.getAllByRole("button");
-    expect(buttons.length).toBeGreaterThan(0);
-    // The CTA button text references opening Discord.
-    expect(screen.getByText(/open discord/i)).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Open #report-a-bug" }),
+    ).toBeTruthy();
+    expect(
+      screen.getByRole("button", { name: "Join Discord first" }),
+    ).toBeTruthy();
   });
 
   it("does NOT render the old in-app form (Discord-only)", () => {
@@ -40,18 +42,33 @@ describe("FeedbackView", () => {
     expect(screen.queryByRole("button", { name: /submit/i })).toBeNull();
   });
 
-  it("clicking the button opens the Discord invite via the external-open bridge", () => {
+  it("opens the bug forum directly via the external-open bridge", () => {
     const openSpy = vi
       .spyOn(openExternal, "openExternalUrl")
       .mockResolvedValue(undefined);
 
     render(<FeedbackView />);
-    fireEvent.click(screen.getByText(/open discord/i));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Open #report-a-bug" }),
+    );
 
     expect(openSpy).toHaveBeenCalledTimes(1);
-    // Must forward to a discord.gg invite link.
     expect(openSpy).toHaveBeenCalledWith(
-      expect.stringContaining("discord.gg/"),
+      "https://discord.com/channels/1511102439066177656/1521522036709789736",
     );
+  });
+
+  it("keeps a permanent server invite for people who have not joined yet", () => {
+    const openSpy = vi
+      .spyOn(openExternal, "openExternalUrl")
+      .mockResolvedValue(undefined);
+
+    render(<FeedbackView />);
+    fireEvent.click(
+      screen.getByRole("button", { name: "Join Discord first" }),
+    );
+
+    expect(openSpy).toHaveBeenCalledTimes(1);
+    expect(openSpy).toHaveBeenCalledWith("https://discord.gg/x7USduHxbc");
   });
 });

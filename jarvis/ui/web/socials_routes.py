@@ -71,7 +71,7 @@ def _seed_entries() -> list[dict[str, Any]]:
     real handle via the UI — the org page is a sane stand-in until then.
     """
     raw = [
-        ("discord", "Discord", "https://discord.gg/UPu6pFWrJ"),
+        ("discord", "Discord", "https://discord.gg/x7USduHxbc"),
         ("github", "GitHub (Repo)", "https://github.com/PersonalJarvis/PersonalJarvis"),
         ("github", "GitHub (Profile)", "https://github.com/PersonalJarvis"),
         # X: the official project account. The first-run seed ships ONLY the
