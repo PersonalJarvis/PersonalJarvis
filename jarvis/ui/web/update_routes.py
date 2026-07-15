@@ -9,12 +9,11 @@ Now" button so the user never has to re-run the installer from a terminal:
   published GitHub Release and reports whether an update is available (plus its
   release notes). It is **fail-open**: any network or parse error reports "no
   update" rather than erroring, so a flaky connection never breaks the UI.
-* ``POST /api/update/apply``  — pulls the new code (the same ``git fetch`` +
-  ``git reset --hard origin/main`` the installer uses), refreshes dependencies
-  only if the lockfile changed, and repairs the platform's desktop registration
-  before reporting ``restart_required``. It does NOT restart — the caller then
-  hits the existing ``POST /api/settings/restart-app`` which already owns the
-  mission guard + cross-platform relauncher.
+* ``POST /api/update/apply``  — fetches and pins the exact target revision, then
+  writes a pending-update manifest without changing the running checkout. The
+  caller hits ``POST /api/settings/restart-app``; after the old process exits,
+  the detached relauncher applies the revision and re-runs the full installer
+  before it starts the new app.
 
 Safety-critical guard (the single most important thing here):
 ``git reset --hard`` destroys uncommitted local changes. That is fine for an
@@ -29,23 +28,24 @@ renders) and ``apply`` refuses with HTTP 403. This makes the dev tree and any
 fork structurally immune to the self-update.
 
 Cross-platform: git runs via ``asyncio`` subprocess with
-``NO_WINDOW_CREATIONFLAGS`` (AP-1, no console flash under ``pythonw.exe``); the
-dependency refresh calls the checkout's venv python; nothing here is Windows-
-specific. On a headless VPS the pull works and the caller's restart step
-degrades honestly (``restart-app`` returns 503).
+``NO_WINDOW_CREATIONFLAGS`` (AP-1, no console flash under ``pythonw.exe``).
+Dependency and desktop files are changed only by the detached relauncher after
+the live process has released imported modules. On a headless VPS the fetch
+works and the caller's restart step degrades honestly (``restart-app`` returns
+503).
 """
 
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import json
 import logging
+import os
 import re
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
 
@@ -65,10 +65,15 @@ _RELEASES_LATEST_API = (
 # Written by install/installer.py into the checkout root. Its presence is one
 # half of "this copy is safe to self-update".
 _MARKER_NAME = ".jarvis-managed-install"
+_PENDING_UPDATE_NAME = ".jarvis-update-pending.json"
+_UPDATE_RESULT_NAME = ".jarvis-update-result.json"
 
 _NETWORK_TIMEOUT_S = 6.0
 _STATUS_CACHE_TTL_S = 1800.0  # 30 min — don't hit GitHub on every poll.
 _STATUS_RETRY_S = 120.0  # after a failed network check, retry sooner than the TTL.
+_RELEASE_TAG_RE = re.compile(
+    r"^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$"
+)
 
 # In-process cache of the last status result. The managed state is stable for a
 # process lifetime; the network result is what the TTL protects.
@@ -140,7 +145,22 @@ def _is_newer(latest: str, current: str) -> bool:
         return Version(latest) > Version(current)
     except ImportError:
         return _naive_version_gt(latest, current)
-    except Exception:  # noqa: BLE001 — InvalidVersion → not newer
+    except Exception:  # noqa: BLE001 - malformed versions are never newer
+        return False
+
+
+def _versions_equal(left: str, right: str) -> bool:
+    """Compare release versions and fail closed on malformed metadata."""
+    if not left or not right:
+        return False
+    try:
+        from packaging.version import Version
+
+        return Version(left) == Version(right)
+    except ImportError:
+        dotted = re.compile(r"^\d+(?:\.\d+){2,3}$")
+        return bool(dotted.fullmatch(left) and left == right)
+    except Exception:  # noqa: BLE001 - malformed versions never compare equal
         return False
 
 
@@ -289,11 +309,12 @@ async def _fetch_latest_release() -> dict[str, Any] | None:
             log.debug("update check: releases/latest HTTP %s", resp.status_code)
             return None
         data = resp.json()
-        tag = str(data.get("tag_name") or "").strip().lstrip("vV")
-        if not tag:
+        release_tag = str(data.get("tag_name") or "").strip()
+        if not _RELEASE_TAG_RE.fullmatch(release_tag):
             return None
         return {
-            "version": tag,
+            "version": release_tag.lstrip("vV"),
+            "tag": release_tag,
             "notes": (data.get("body") or "").strip(),
             "published_at": data.get("published_at"),
             "release_url": data.get("html_url"),
@@ -304,77 +325,80 @@ async def _fetch_latest_release() -> dict[str, Any] | None:
 
 
 # --------------------------------------------------------------------------- #
-# Dependency refresh (best-effort)
+# Managed install profile + deferred transaction manifest
 # --------------------------------------------------------------------------- #
-def _venv_python(root: Path) -> Path:
-    """The python inside the checkout's venv, falling back to the running one."""
-    if sys.platform == "win32":
-        cand = root / ".venv" / "Scripts" / "python.exe"
-    else:
-        cand = root / ".venv" / "bin" / "python"
-    return cand if cand.exists() else Path(sys.executable)
+InstallProfile = Literal["full", "headless"]
 
 
-def _hash_file(path: Path) -> str | None:
+def _managed_install_profile(root: Path) -> InstallProfile:
+    """Resolve the installer profile, including pre-profile marker fallback.
+
+    New installers persist the decision in the managed marker. Older markers
+    predate that field, so desktop sessions retain the advertised ``[full]``
+    profile while a display-less Linux host keeps the torch-free base floor.
+    """
+
     try:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
+        payload = json.loads((root / _MARKER_NAME).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
+        payload = {}
+    if isinstance(payload, dict):
+        profile = payload.get("profile")
+        if profile in {"full", "headless"}:
+            return profile
+        desktop = payload.get("desktop")
+        if isinstance(desktop, bool):
+            return "full" if desktop else "headless"
+
+    if sys.platform in {"win32", "darwin"}:
+        return "full"
+    if sys.platform.startswith("linux") and (
+        os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+    ):
+        return "full"
+    return "headless"
+
+
+def _write_pending_update(
+    root: Path,
+    *,
+    previous_revision: str,
+    target_revision: str,
+    profile: InstallProfile,
+) -> None:
+    """Atomically stage the post-exit update transaction for the relauncher."""
+
+    path = root / _PENDING_UPDATE_NAME
+    temp = path.with_suffix(path.suffix + ".tmp")
+    payload = {
+        "schema": 1,
+        "previous_revision": previous_revision,
+        "target_revision": target_revision,
+        "profile": profile,
+        "created_at": int(time.time()),
+    }
+    temp.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+    os.replace(temp, path)
+    try:
+        (root / _UPDATE_RESULT_NAME).unlink(missing_ok=True)
     except OSError:
-        return None
+        pass
 
 
-async def _refresh_dependencies(root: Path) -> tuple[bool, str]:
-    """Best-effort ``pip install -r requirements.txt`` on the venv python.
+async def _version_at_revision(root: Path, revision: str) -> str | None:
+    """Read a target version without checking that target out over the live app."""
 
-    Only called when the lockfile actually changed. Never raises; a failure is
-    reported so the UI can warn honestly (the pull still succeeded).
-    """
-    req = root / "requirements.txt"
-    if not req.exists():
-        return True, ""
-    py = _venv_python(root)
-    rc, out, err = await _run(
-        [str(py), "-m", "pip", "install", "--disable-pip-version-check", "-r", str(req)],
-        cwd=root,
-        timeout_s=600.0,
-    )
-    if rc != 0:
-        return False, (err or out or "pip failed")[-400:]
-    return True, ""
-
-
-async def _refresh_desktop_integration(root: Path) -> tuple[bool, str]:
-    """Run the freshly pulled desktop-registration code in the install venv.
-
-    The updater process still has the old modules in memory after ``git reset``.
-    A subprocess is therefore intentional: it imports the new checkout and can
-    create a Windows Installed Apps entry, a macOS bundle, or a Linux desktop
-    entry before the current process exits. Headless Linux reports a clean skip.
-    """
-
-    py = _venv_python(root)
-    rc, out, err = await _run(
-        [
-            str(py),
-            "-m",
-            "jarvis.setup.desktop_integration",
-            "--install-dir",
-            str(root),
-            "--json",
-        ],
-        cwd=root,
-        timeout_s=120.0,
-    )
-    if rc != 0:
-        return False, (err or out or "desktop registration failed")[-400:]
-    try:
-        payload = json.loads(out.splitlines()[-1])
-    except (IndexError, json.JSONDecodeError, TypeError):
-        return False, "desktop registration returned an unreadable result"
-    if not payload.get("ok"):
-        warnings = payload.get("warnings") or []
-        detail = "; ".join(str(item) for item in warnings)
-        return False, (detail or "desktop registration is incomplete")[-400:]
-    return True, ""
+    for rel, pattern in (
+        ("jarvis/__init__.py", r'__version__\s*=\s*"([^"]+)"'),
+        ("pyproject.toml", r'^version\s*=\s*"([^"]+)"'),
+    ):
+        raw = await _git_output(["show", f"{revision}:{rel}"], cwd=root)
+        if raw is None:
+            continue
+        match = re.search(pattern, raw, re.MULTILINE)
+        if match:
+            return match.group(1)
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -436,14 +460,13 @@ async def update_status(force: bool = False) -> dict[str, object]:
     return result
 
 
-@router.post("/apply")
+@router.post("/apply", openapi_extra={"x-jarvis-dangerous": True})
 async def update_apply() -> dict[str, object]:
-    """Pull the latest code for a managed install. Does NOT restart.
+    """Prepare the latest code for a managed install. Does NOT restart.
 
-    Returns update, dependency, and desktop-registration status plus
-    ``restart_required``.
-    The caller applies the update by then calling
-    ``POST /api/settings/restart-app``.
+    The live checkout remains untouched. The caller then invokes
+    ``POST /api/settings/restart-app``; its detached relauncher applies the
+    pinned revision and completes installation after this process exits.
     """
     root = await _resolve_managed_repo()
     if root is None:
@@ -452,45 +475,82 @@ async def update_apply() -> dict[str, object]:
             detail="not a managed install — in-app update is disabled here",
         )
 
-    # Snapshot the lockfile so we can tell whether deps need a refresh.
-    req_before = _hash_file(root / "requirements.txt")
+    latest = await _fetch_latest_release()
+    if latest is None:
+        raise HTTPException(
+            status_code=502,
+            detail="could not resolve the latest published release",
+        )
+    release_version = str(latest.get("version") or "")
+    release_tag = str(latest.get("tag") or "")
+    if not _RELEASE_TAG_RE.fullmatch(release_tag):
+        raise HTTPException(status_code=502, detail="latest release tag is invalid")
+    if not _is_newer(release_version, _running_version()):
+        raise HTTPException(status_code=409, detail="no newer published release exists")
 
+    previous_revision = await _git_output(["rev-parse", "HEAD"], cwd=root)
+    if not previous_revision:
+        raise HTTPException(
+            status_code=500,
+            detail="could not identify the currently installed revision",
+        )
+
+    # Fetch the published tag, never the moving main branch. The update button
+    # promises a specific GitHub Release; applying an unreleased main commit
+    # would make the displayed version and installed bytes disagree.
     rc, _out, err = await _git(
-        ["fetch", "--depth", "1", "origin", "main"], cwd=root, timeout_s=120.0
+        ["fetch", "--depth", "1", "origin", f"refs/tags/{release_tag}"],
+        cwd=root,
+        timeout_s=120.0,
     )
     if rc != 0:
         raise HTTPException(
             status_code=502, detail=f"git fetch failed: {err[:300] or 'unknown error'}"
         )
-    rc, _out, err = await _git(["reset", "--hard", "origin/main"], cwd=root, timeout_s=60.0)
-    if rc != 0:
+
+    target_revision = await _git_output(
+        ["rev-parse", "FETCH_HEAD^{commit}"], cwd=root
+    )
+    if not target_revision:
         raise HTTPException(
-            status_code=500, detail=f"git reset failed: {err[:300] or 'unknown error'}"
+            status_code=500,
+            detail="could not identify the fetched update revision",
         )
 
-    # The new code refreshes the UI (prebuilt dist/ ships with the pull) and the
-    # Python source (editable install loads it on restart). Refresh deps only if
-    # the lockfile actually moved.
-    deps_refreshed = False
-    deps_warning: str | None = None
-    req_after = _hash_file(root / "requirements.txt")
-    if req_before != req_after:
-        deps_refreshed = True
-        ok, msg = await _refresh_dependencies(root)
-        if not ok:
-            deps_warning = msg
+    new_version = await _version_at_revision(root, target_revision)
+    if new_version is None or not _versions_equal(new_version, release_version):
+        raise HTTPException(
+            status_code=502,
+            detail="published tag version does not match its release metadata",
+        )
 
-    desktop_integration_ok, desktop_integration_warning = (
-        await _refresh_desktop_integration(root)
-    )
+    profile = _managed_install_profile(root)
+    try:
+        _write_pending_update(
+            root,
+            previous_revision=previous_revision,
+            target_revision=target_revision,
+            profile=profile,
+        )
+    except OSError as exc:
+        log.warning("Could not stage the pending update manifest: %s", type(exc).__name__)
+        raise HTTPException(
+            status_code=500,
+            detail="could not stage the update transaction",
+        ) from exc
 
-    new_version = _version_on_disk(root) or _running_version()
     return {
         "ok": True,
+        "prepared": True,
         "restart_required": True,
         "version": new_version,
-        "deps_refreshed": deps_refreshed,
-        "deps_warning": deps_warning,
-        "desktop_integration_ok": desktop_integration_ok,
-        "desktop_integration_warning": desktop_integration_warning or None,
+        "release_tag": release_tag,
+        "install_profile": profile,
+        "deps_refreshed": False,
+        "deps_pending": True,
+        "deps_warning": None,
+        "ui_bundle_pending": True,
+        "desktop_integration_ok": None,
+        "desktop_integration_pending": profile == "full",
+        "desktop_integration_warning": None,
     }

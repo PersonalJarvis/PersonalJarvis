@@ -2,6 +2,8 @@
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[3]
 _spec = importlib.util.spec_from_file_location("installer", REPO / "install" / "installer.py")
 installer = importlib.util.module_from_spec(_spec)
@@ -99,6 +101,43 @@ def test_headless_pip_plan_stays_base_floor(capsys) -> None:
     out = capsys.readouterr().out
     assert ".[full]" not in out
     assert ".[desktop]" not in out
+
+
+def test_full_profile_failure_stops_desktop_install(monkeypatch) -> None:
+    results = iter([0, 0, 1])
+    monkeypatch.setattr(installer, "run_quiet", lambda *args, **kwargs: next(results))
+
+    with pytest.raises(SystemExit, match="2"):
+        installer.step_pip_install(
+            with_desktop=True,
+            with_voice_local=False,
+            dry_run=False,
+        )
+
+
+def test_macos_launch_enters_through_application_bundle(monkeypatch, tmp_path) -> None:
+    launched: dict[str, object] = {}
+    bundle = tmp_path / "Personal Jarvis.app"
+    monkeypatch.setattr(installer.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        "jarvis.setup.macos_app_bundle.macos_app_bundle_path", lambda: bundle
+    )
+    monkeypatch.setattr(
+        "jarvis.setup.macos_app_bundle.macos_app_bundle_is_launchable", lambda _p: True
+    )
+    monkeypatch.setattr(
+        "jarvis.setup.macos_app_bundle.macos_launch_services_command",
+        lambda _p: ["/usr/bin/open", "-a", str(bundle)],
+    )
+    monkeypatch.setattr(
+        installer.subprocess,
+        "Popen",
+        lambda cmd, **kwargs: launched.update(cmd=cmd, kwargs=kwargs),
+    )
+
+    installer.step_launch(headless=False, dry_run=False)
+
+    assert launched["cmd"] == ["/usr/bin/open", "-a", str(bundle)]
 
 
 def test_linux_gui_gets_full_profile_and_app_menu_registration(

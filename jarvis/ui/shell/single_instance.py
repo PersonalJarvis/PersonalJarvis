@@ -128,8 +128,8 @@ class SingleInstance:
     def write_session(self, *, port: int, token: str) -> None:
         data = {"port": port, "token": token, "pid": os.getpid()}
         path = self.session_file
-        # The token authorizes the full control API, so the file must be
-        # owner-only. O_CREAT's mode keeps a NEW file at 0600 from the first
+        # The token can bootstrap an authenticated UI session, so the file must
+        # be owner-only. O_CREAT's mode keeps a NEW file at 0600 from the first
         # byte; the explicit chmod repairs a pre-existing file from older
         # builds that wrote with the default umask. Windows relies on the
         # per-user profile ACL instead of POSIX bits.

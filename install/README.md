@@ -35,13 +35,26 @@ or the Linux application menu. The in-app updater and first desktop launch
 repair these artifacts, and uninstall removes them again. Developer checkouts
 and headless Linux hosts are deliberately not registered.
 
+On macOS, every launch path enters through the same app bundle so privacy
+grants stay attached to one identity. The source installer builds a native
+py2app alias launcher, ad-hoc signs it for that machine, verifies the identity
+from inside a LaunchServices process, and preserves the bundle unchanged across
+ordinary updates. A separately distributed binary still requires the release
+pipeline's Developer-ID signing and notarization. Apple does not permit an installer to
+silently grant Microphone, Screen Recording, Accessibility, Input Monitoring,
+or input-control access. The app therefore presents one explicit button per
+permission during first launch, uses only Apple's native prompt/System Settings
+flows, and remains fully usable for text when the user declines. The installer
+stops instead of claiming success if the full profile or app-bundle registration
+fails.
+
 ## File layout
 
 | File              | Stage | Responsibility |
 |-------------------|-------|----------------|
 | `install.ps1`     | 1     | Windows bootstrap: Python+Git detect/install/re-check, clone, venv, install `rich`, exec `installer.py`. |
 | `install.sh`      | 1     | macOS/Linux bootstrap: same flow through native package managers, POSIX bash. |
-| `installer.py`    | 2     | Python orchestrator: pip install, optional extras, model prefetch, worker CLI, desktop registration, launch (last). |
+| `installer.py`    | 2     | Python orchestrator: full-profile install, model prefetch, worker CLI, desktop registration, launch (last). |
 | `README.md`       | docs  | This file. |
 
 ## Why two stages?

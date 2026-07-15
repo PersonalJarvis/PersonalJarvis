@@ -19,18 +19,53 @@ start fast and never pull the heavy ``jarvis`` runtime into a throwaway process.
 """
 from __future__ import annotations
 
+import json
+import logging
 import os
+import re
 import subprocess
 import sys
 import threading
 import time
+from pathlib import Path
 
 LAUNCHER_MODULE = "jarvis.ui.web.launcher"
+MANAGED_MARKER = ".jarvis-managed-install"
+PENDING_UPDATE_FILENAME = ".jarvis-update-pending.json"
+UPDATE_RESULT_FILENAME = ".jarvis-update-result.json"
+_REVISION_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
 
 
 def build_launch_command(executable: str) -> list[str]:
-    """Argv that boots a fresh desktop app with the same interpreter."""
-    return [executable, "-m", LAUNCHER_MODULE]
+    """Argv that boots a fresh desktop app through its stable OS identity.
+
+    A macOS desktop restart always re-enters through LaunchServices so it can
+    never attach TCC access to a raw Python interpreter.  A missing or invalid
+    bundle therefore fails closed; the managed installer/repair path owns
+    recreating it.
+    """
+    fallback = [executable, "-m", LAUNCHER_MODULE]
+    if sys.platform == "darwin":
+        bundle = Path.home() / "Applications" / "Personal Jarvis.app"
+        try:
+            from jarvis.setup.macos_app_bundle import (
+                macos_app_bundle_is_launchable,
+                macos_app_bundle_path,
+                macos_launch_services_command,
+            )
+
+            bundle = macos_app_bundle_path()
+            if not macos_app_bundle_is_launchable(bundle):
+                logging.getLogger(__name__).error(
+                    "macOS restart target is missing or invalid: %s", bundle
+                )
+            return macos_launch_services_command(bundle, wait_for_exit=True)
+        except Exception:  # noqa: BLE001 - preserve stable identity fail-closed
+            logging.getLogger(__name__).exception(
+                "Could not validate the macOS restart bundle; using its canonical path"
+            )
+            return ["/usr/bin/open", "-W", "-a", str(bundle)]
+    return fallback
 
 
 def detached_creationflags() -> int:
@@ -179,6 +214,215 @@ def _new_instance_settled(
     return True
 
 
+def _read_pending_update(root: Path) -> dict[str, object] | None:
+    """Read and strictly validate a relaunch-time update transaction."""
+
+    try:
+        payload = json.loads(
+            (root / PENDING_UPDATE_FILENAME).read_text(encoding="utf-8")
+        )
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("schema") != 1:
+        return None
+    previous = payload.get("previous_revision")
+    target = payload.get("target_revision")
+    profile = payload.get("profile")
+    if not isinstance(previous, str) or not _REVISION_RE.fullmatch(previous):
+        return None
+    if not isinstance(target, str) or not _REVISION_RE.fullmatch(target):
+        return None
+    if profile not in {"full", "headless"}:
+        return None
+    return payload
+
+
+def _managed_python(root: Path) -> str:
+    """Use only the checkout venv for installer work when it is available."""
+
+    if sys.platform == "win32":
+        candidate = root / ".venv" / "Scripts" / "python.exe"
+    else:
+        candidate = root / ".venv" / "bin" / "python"
+    return str(candidate if candidate.is_file() else Path(sys.executable))
+
+
+def _run_update_command(
+    cmd: list[str], *, root: Path, timeout: float
+) -> int:
+    """Run a windowless update child and collapse every launch failure to -1."""
+
+    kwargs: dict[str, object] = {
+        "cwd": str(root),
+        "env": {
+            key: value
+            for key, value in os.environ.items()
+            if key != "JARVIS_INSTALL_NO_PIP"
+        },
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "timeout": timeout,
+        "check": False,
+    }
+    if sys.platform == "win32":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
+    try:
+        return subprocess.run(cmd, **kwargs).returncode
+    except (OSError, subprocess.SubprocessError):
+        return -1
+
+
+def _installer_command(root: Path, profile: str) -> list[str]:
+    """Build the full, no-relaunch installer command for an update profile."""
+
+    cmd = [
+        _managed_python(root),
+        str(root / "install" / "installer.py"),
+        "--no-launch",
+    ]
+    cmd.append("--with-desktop" if profile == "full" else "--headless")
+    return cmd
+
+
+def _ui_bundle_ready(root: Path) -> bool:
+    """Verify that the checked-out release owns a loadable JS/CSS entry set."""
+
+    dist = root / "jarvis" / "ui" / "web" / "dist"
+    index = dist / "index.html"
+    try:
+        html = index.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    refs = {
+        match.group(1).split("?", 1)[0]
+        for match in re.finditer(r'(?:src|href)=["\']/?(assets/[^"\']+)', html)
+    }
+    if not any(ref.endswith(".js") for ref in refs):
+        return False
+
+    required = {"jarvis/ui/web/dist/index.html"}
+    for ref in refs:
+        asset = dist / Path(ref)
+        try:
+            if not asset.is_file() or asset.stat().st_size <= 0:
+                return False
+        except OSError:
+            return False
+        required.add(f"jarvis/ui/web/dist/{ref}")
+
+    for rel in required:
+        if _run_update_command(
+            ["git", "ls-files", "--error-unmatch", "--", rel],
+            root=root,
+            timeout=30.0,
+        ) != 0:
+            return False
+    return True
+
+
+def _write_update_result(
+    root: Path,
+    *,
+    ok: bool,
+    rolled_back: bool,
+    previous_revision: str,
+    target_revision: str,
+) -> None:
+    """Persist a non-sensitive result for diagnostics after the new launch."""
+
+    path = root / UPDATE_RESULT_FILENAME
+    temp = path.with_suffix(path.suffix + ".tmp")
+    payload = {
+        "schema": 1,
+        "ok": ok,
+        "rolled_back": rolled_back,
+        "previous_revision": previous_revision,
+        "target_revision": target_revision,
+        "completed_at": int(time.time()),
+    }
+    try:
+        temp.write_text(json.dumps(payload, sort_keys=True) + "\n", encoding="utf-8")
+        os.replace(temp, path)
+    except OSError:
+        pass
+
+
+def finalize_pending_update(cwd: str | Path) -> bool:
+    """Apply a fetched update while the old app is fully stopped.
+
+    Success requires the complete installer and a tracked JavaScript bundle.
+    Any failure resets the checkout to the exact previous revision and runs its
+    installer once more before launch, so an incomplete update is never treated
+    as installed.
+    """
+
+    root = Path(cwd).resolve()
+    pending_path = root / PENDING_UPDATE_FILENAME
+    payload = _read_pending_update(root)
+    if payload is None:
+        return True
+    if not (root / MANAGED_MARKER).is_file() or not (root / ".git").exists():
+        pending_path.unlink(missing_ok=True)
+        return False
+
+    previous = str(payload["previous_revision"])
+    target = str(payload["target_revision"])
+    profile = str(payload["profile"])
+
+    target_reset_ok = (
+        _run_update_command(
+            ["git", "reset", "--hard", target], root=root, timeout=120.0
+        )
+        == 0
+    )
+    target_install_ok = False
+    if target_reset_ok:
+        target_install_ok = (
+            _run_update_command(
+                _installer_command(root, profile), root=root, timeout=3600.0
+            )
+            == 0
+            and _ui_bundle_ready(root)
+        )
+    if target_install_ok:
+        pending_path.unlink(missing_ok=True)
+        _write_update_result(
+            root,
+            ok=True,
+            rolled_back=False,
+            previous_revision=previous,
+            target_revision=target,
+        )
+        return True
+
+    rollback_reset_ok = (
+        _run_update_command(
+            ["git", "reset", "--hard", previous], root=root, timeout=120.0
+        )
+        == 0
+    )
+    rollback_install_ok = False
+    if rollback_reset_ok:
+        rollback_install_ok = (
+            _run_update_command(
+                _installer_command(root, profile), root=root, timeout=3600.0
+            )
+            == 0
+            and _ui_bundle_ready(root)
+        )
+    pending_path.unlink(missing_ok=True)
+    rolled_back = rollback_reset_ok and rollback_install_ok
+    _write_update_result(
+        root,
+        ok=False,
+        rolled_back=rolled_back,
+        previous_revision=previous,
+        target_revision=target,
+    )
+    return False
+
+
 def main(
     argv: list[str] | None = None,
     *,
@@ -187,6 +431,7 @@ def main(
     _sleep=time.sleep,
     _alive=pid_alive,
     _settled=_new_instance_settled,
+    _finalize_update=finalize_pending_update,
     attempts: int = 3,
 ) -> int:
     """Wait for the old app to exit, then start a fresh launcher — verified.
@@ -214,14 +459,24 @@ def main(
     else:
         kwargs["start_new_session"] = True
 
+    update_finalized = False
     for attempt in range(attempts):
         # Never launch into a still-held lock: the old process must be gone.
         if _alive(pid):
-            _wait(pid, timeout=45.0 if attempt == 0 else 15.0)
+            parent_exited = _wait(pid, timeout=45.0 if attempt == 0 else 15.0)
+            if not parent_exited:
+                continue
         # Extra grace so the kernel finishes releasing the mutex + the TCP port
         # before the new launcher tries to claim them. Short — the kernel frees
         # both the instant the old PID is gone; this only covers the tail.
         _sleep(0.2)
+
+        # Update only after the old interpreter has released imported native
+        # modules. The finalizer runs the complete installer and rolls back on
+        # any incomplete dependency, UI, or desktop-registration result.
+        if not update_finalized:
+            _finalize_update(cwd)
+            update_finalized = True
 
         proc = _spawn(build_launch_command(sys.executable), **kwargs)
         new_pid = getattr(proc, "pid", None)

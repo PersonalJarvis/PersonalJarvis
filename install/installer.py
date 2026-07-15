@@ -32,7 +32,8 @@ Exit codes:
     0  success
     1  pre-flight failure (Python version, missing files)
     2  pip install failure
-    4  launch failure
+    4  desktop registration or launch failure
+    5  shipped UI bundle missing or incomplete
 """
 from __future__ import annotations
 
@@ -40,8 +41,11 @@ import argparse
 import json
 import os
 import platform
+import shutil
+import stat
 import subprocess
 import sys
+import sysconfig
 from pathlib import Path
 
 # CLAUDE.md: new CLI modules must use UTF-8 stdout or stick to ASCII. Without
@@ -178,7 +182,7 @@ def step_preflight() -> None:
         sys.exit(1)
 
 
-def write_managed_marker() -> None:
+def write_managed_marker(*, with_desktop: bool) -> None:
     """Mark this checkout as an installer-managed copy.
 
     The in-app "Update Now" button (jarvis/ui/web/update_routes.py) only appears,
@@ -193,12 +197,67 @@ def write_managed_marker() -> None:
         "managed": True,
         "install_path": str(repo_root()),
         "created_by": "install/installer.py",
+        "profile": "full" if with_desktop else "headless",
+        "desktop": with_desktop,
     }
     try:
         marker.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
         ok("registered as a managed install (in-app updates enabled)")
     except OSError as exc:
         note(f"could not write update marker ({exc}); in-app updates stay disabled")
+
+
+def repair_distribution_metadata(
+    *, site_packages: Path | None = None, dry_run: bool = False
+) -> bool:
+    """Remove torn ``dist-info`` records left by an interrupted old update.
+
+    The legacy updater could run while Python still had the environment open.
+    On Windows that sometimes left empty or RECORD-only metadata directories;
+    pip then treated the environment as corrupt and could not prove that the
+    next update was complete. Removing only invalid metadata is safe: the
+    normal install plan immediately restores every distribution still required
+    by the selected profile, while obsolete packages remain unregistered.
+    """
+    if dry_run:
+        note("(dry-run) repair interrupted package metadata")
+        return True
+
+    root = site_packages or Path(sysconfig.get_path("purelib"))
+    try:
+        candidates = sorted(root.glob("*.dist-info"))
+    except OSError as exc:
+        note(f"could not inspect package metadata ({exc})")
+        return False
+
+    broken: list[Path] = []
+    for candidate in candidates:
+        metadata = candidate / "METADATA"
+        try:
+            content = metadata.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            broken.append(candidate)
+            continue
+        if "Metadata-Version:" not in content or "\nName:" not in f"\n{content}":
+            broken.append(candidate)
+
+    for candidate in broken:
+        try:
+            if candidate.is_symlink():
+                candidate.unlink()
+            else:
+                def _retry_readonly(func, path, _exc_info):
+                    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
+                    func(path)
+
+                shutil.rmtree(candidate, onerror=_retry_readonly)
+        except OSError as exc:
+            note(f"could not repair package metadata at {candidate.name} ({exc})")
+            return False
+
+    if broken:
+        ok(f"repaired {len(broken)} interrupted package metadata record(s)")
+    return True
 
 
 def step_pip_install(*, with_desktop: bool, with_voice_local: bool, dry_run: bool) -> None:
@@ -237,8 +296,13 @@ def step_pip_install(*, with_desktop: bool, with_voice_local: bool, dry_run: boo
         # ``with_voice_local`` is a deprecated no-op: [full] already carries it.
         plans.append(("full profile extras (desktop, telephony, channels, local voice)",
                       pip + ["install", "-e", ".[full]"]))
+    plans.append(("dependency consistency check", pip + ["check"]))
 
     note("this can take a minute — grabbing dependencies")
+
+    if not repair_distribution_metadata(dry_run=dry_run):
+        console.print("[bad]    ✗ package metadata repair failed — installation stopped.[/]")
+        sys.exit(2)
 
     if dry_run:
         for label, cmd in plans:
@@ -250,10 +314,10 @@ def step_pip_install(*, with_desktop: bool, with_voice_local: bool, dry_run: boo
     for label, cmd in plans:
         rc = run_quiet(cmd, label=label, cwd=repo_root())
         if rc != 0:
-            # Desktop / voice-local extras are best-effort — never fatal.
-            if "extras" in label:
-                console.print(f"[bad]    ✗ {label} failed — continuing without it.[/]")
-                continue
+            # The advertised desktop install is the [full] profile. Continuing
+            # after that profile fails would advertise a ready app without the
+            # microphone, macOS bridge, or local-voice dependencies it needs.
+            console.print(f"[bad]    ✗ {label} failed — installation stopped.[/]")
             sys.exit(2)
         ok(label)
 
@@ -367,13 +431,13 @@ def step_worker_cli(*, dry_run: bool) -> None:
         note("Jarvis-Agent worker CLI install failed - it can be added later in-app")
 
 
-def step_desktop_integration(*, enabled: bool, dry_run: bool) -> None:
+def step_desktop_integration(*, enabled: bool, dry_run: bool) -> bool:
     """Register the managed install with the current desktop shell."""
     if not enabled:
-        return
+        return True
     if dry_run:
         console.print("[muted]      (dry-run) repair desktop-shell registration[/]")
-        return
+        return True
     try:
         result = subprocess.run(
             [
@@ -386,7 +450,9 @@ def step_desktop_integration(*, enabled: bool, dry_run: bool) -> None:
             ],
             cwd=repo_root(),
             capture_output=True, text=True, encoding="utf-8", errors="replace",
-            timeout=120,
+            # py2app build + icon conversion + signing + LaunchServices import
+            # probe can legitimately exceed two minutes on Intel macOS.
+            timeout=600,
         )
         output = (result.stdout or "").strip().splitlines()
         report = json.loads(output[-1]) if output else {}
@@ -402,11 +468,15 @@ def step_desktop_integration(*, enabled: bool, dry_run: bool) -> None:
         and report.get("attempted")
     ):
         ok("desktop app registered with the operating system")
-    else:
-        note("desktop registration is incomplete - the app will retry after first paint")
+        return True
+    console.print(
+        "[bad]    ✗ desktop app registration failed — installation stopped. "
+        "The app must have a stable launcher identity.[/]"
+    )
+    return False
 
 
-def step_ui_bundle_check() -> None:
+def step_ui_bundle_check() -> bool:
     """Honest packaging check: the shipped UI build must be present + intact.
 
     The public snapshot ships a prebuilt ``jarvis/ui/web/dist``; a dev clone
@@ -418,19 +488,32 @@ def step_ui_bundle_check() -> None:
     if not index.is_file():
         note("no prebuilt UI found (dev clone?) - the app will serve a minimal page")
         note("public installs always ship the UI; if you used the one-liner, please report this")
-        return
+        return False
     import re
 
-    html = index.read_text(encoding="utf-8", errors="replace")
+    try:
+        html = index.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        console.print("[bad]      UI build index is unreadable.[/]")
+        return False
+    refs = [
+        ref.split("?", 1)[0]
+        for ref in re.findall(r'(?:src|href)="/?(assets/[^"]+)"', html)
+    ]
+    if not any(ref.endswith(".js") for ref in refs):
+        console.print("[bad]      UI build has no JavaScript entry bundle.[/]")
+        return False
     missing = [
-        ref for ref in re.findall(r'(?:src|href)="/?(assets/[^"]+)"', html)
+        ref for ref in refs
         if not (dist / ref.replace("/", os.sep)).is_file()
     ]
     if missing:
         console.print(f"[bad]      UI build is incomplete ({missing[0]} missing) - "
                       "please report this; the app may look broken.[/]")
+        return False
     else:
         ok("UI build present and intact")
+        return True
 
 
 def _resolved_admin_port() -> int:
@@ -461,6 +544,22 @@ def step_launch(*, headless: bool, dry_run: bool) -> None:
         msg = f"the headless server on http://localhost:{_resolved_admin_port()}"
     elif sys.platform == "win32":
         cmd = [str(repo_root() / "run.bat")]
+        msg = "the Desktop App"
+    elif sys.platform == "darwin":
+        from jarvis.setup.macos_app_bundle import (
+            macos_app_bundle_is_launchable,
+            macos_app_bundle_path,
+            macos_launch_services_command,
+        )
+
+        bundle = macos_app_bundle_path()
+        if not macos_app_bundle_is_launchable(bundle):
+            console.print(
+                "[bad]      Could not launch: the installed macOS app bundle is missing "
+                "or invalid.[/]"
+            )
+            sys.exit(4)
+        cmd = macos_launch_services_command(bundle)
         msg = "the Desktop App"
     else:
         cmd = [str(venv_python()), "-m", "jarvis.ui.web.launcher"]
@@ -498,6 +597,10 @@ def step_summary(*, no_launch: bool, update: bool, headless: bool) -> None:
         console.print(
             "    [muted]Start again[/]   [brand]Spotlight → \"Personal Jarvis\"[/] "
             "[muted](app in ~/Applications)[/]"
+        )
+        console.print(
+            "    [muted]Permissions[/]   [muted]macOS asks on first launch; approve each "
+            "item in the guided setup[/]"
         )
     elif sys.platform.startswith("linux") and not (headless or is_headless_linux()):
         console.print(
@@ -581,7 +684,7 @@ def main(argv: list[str] | None = None) -> int:
 
     step_preflight()
     if not args.dry_run:
-        write_managed_marker()
+        write_managed_marker(with_desktop=with_desktop)
     if not os.environ.get("JARVIS_INSTALL_NO_PIP"):
         step_pip_install(
             with_desktop=with_desktop,
@@ -593,8 +696,10 @@ def main(argv: list[str] | None = None) -> int:
 
     phase("6/6", "Finish & launch")
     step_worker_cli(dry_run=args.dry_run)
-    step_desktop_integration(enabled=with_desktop, dry_run=args.dry_run)
-    step_ui_bundle_check()
+    if not step_desktop_integration(enabled=with_desktop, dry_run=args.dry_run):
+        sys.exit(4)
+    if not step_ui_bundle_check() and not args.dry_run:
+        sys.exit(5)
 
     # Summary FIRST, launch LAST: when the app window appears, the terminal
     # story is already told — and everything the first launch needs is on disk.

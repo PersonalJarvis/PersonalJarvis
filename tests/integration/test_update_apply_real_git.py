@@ -1,10 +1,8 @@
-"""Integration test: the updater's REAL git operations against a local repo.
+"""Integration test: the updater's real git operations against a local repo.
 
-No network, no mocks — a real bare "upstream" and a real "installed" clone prove
-that (a) the managed guard passes only with the marker + an official-slug origin
-using real ``git remote get-url``, and (b) the fetch/reset sequence actually
-moves the installed checkout to the new upstream tip. This exercises the one
-destructive operation (``git reset --hard``) end to end.
+A real bare upstream and installed clone prove that the managed guard requires
+the marker plus official-slug origin, and that apply fetches the exact published
+tag without mutating the running checkout. Only the release-API edge is mocked.
 """
 from __future__ import annotations
 
@@ -26,6 +24,16 @@ def _git(args: list[str], cwd: Path) -> None:
     subprocess.run(
         ["git", *args], cwd=str(cwd), check=True, capture_output=True, text=True
     )
+
+
+def _git_output(args: list[str], cwd: Path) -> str:
+    return subprocess.run(
+        ["git", *args],
+        cwd=str(cwd),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
 
 
 def _make_upstream_and_install(tmp_path: Path) -> tuple[Path, Path, Path]:
@@ -66,29 +74,37 @@ def test_managed_guard_passes_with_real_git(
     assert asyncio.run(u._resolve_managed_repo()) is None
 
 
-def test_real_apply_moves_head_to_new_tip(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_real_apply_fetches_and_pins_without_mutating_live_head(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     _upstream, seed, install = _make_upstream_and_install(tmp_path)
 
     # Publish a new upstream commit B (bumped version).
     (seed / "jarvis" / "__init__.py").write_text('__version__ = "9.9.10"\n', encoding="utf-8")
     _git(["add", "-A"], seed)
     _git(["commit", "-m", "B"], seed)
+    _git(["tag", "v9.9.10"], seed)
     _git(["push", "origin", "main"], seed)
+    _git(["push", "origin", "v9.9.10"], seed)
 
     # Before: the installed checkout is still on A.
     assert '9.9.9' in (install / "jarvis" / "__init__.py").read_text(encoding="utf-8")
 
     monkeypatch.setattr(u, "_repo_root", lambda: install)
+    monkeypatch.setattr(u, "_running_version", lambda: "9.9.9")
 
-    async def _desktop_ok(_root: Path) -> tuple[bool, None]:
-        return True, None
+    async def _latest() -> dict[str, object]:
+        return {"version": "9.9.10", "tag": "v9.9.10"}
 
-    monkeypatch.setattr(u, "_refresh_desktop_integration", _desktop_ok)
+    monkeypatch.setattr(u, "_fetch_latest_release", _latest)
     result = asyncio.run(u.update_apply())
 
     assert result["ok"] is True
+    assert result["prepared"] is True
     assert result["restart_required"] is True
     assert result["version"] == "9.9.10"
-    assert result["desktop_integration_ok"] is True
-    # The real reset --hard moved the working tree to B.
-    assert '9.9.10' in (install / "jarvis" / "__init__.py").read_text(encoding="utf-8")
+    # The running checkout stays on A until the old process has exited.
+    assert '9.9.9' in (install / "jarvis" / "__init__.py").read_text(encoding="utf-8")
+    pending = (install / u._PENDING_UPDATE_NAME).read_text(encoding="utf-8")
+    assert _git_output(["rev-parse", "HEAD"], install) in pending
+    assert _git_output(["rev-parse", "FETCH_HEAD^{commit}"], install) in pending
