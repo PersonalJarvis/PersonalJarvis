@@ -4,43 +4,10 @@
 import { LevelMeter } from "./levelMeter";
 import pcmWorkletUrl from "./pcm-worklet.ts?worker&url";
 
-type JarvisWindow = Window & { __JARVIS_TOKEN?: string };
-
-function jarvisWindow(): JarvisWindow {
-  return window as JarvisWindow;
-}
-
 export function buildAudioSocketUrl(): string {
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
   const host = window.location.host;
-  const token = jarvisWindow().__JARVIS_TOKEN;
-  const query = token ? `?token=${encodeURIComponent(token)}` : "";
-  return `${proto}://${host}/ws/audio${query}`;
-}
-
-/** Ensure a remote browser has the canonical token used by tool-capable sockets.
- *
- * Desktop WebViews inject this token before React starts. A normal headless
- * browser does not, so obtain one from the same mission-token registry before
- * opening `/ws/audio`. Tokenless localhost is deliberately rejected too: a
- * hostile webpage can otherwise connect directly to the local WebSocket.
- */
-export async function ensureAudioSocketToken(): Promise<string> {
-  const existing = jarvisWindow().__JARVIS_TOKEN?.trim();
-  if (existing) return existing;
-
-  const response = await fetch("/api/missions/auth/token", {
-    cache: "no-store",
-    credentials: "same-origin",
-  });
-  if (!response.ok) {
-    throw new Error(`Realtime voice authorization failed (${response.status})`);
-  }
-  const payload = (await response.json()) as { token?: unknown };
-  const token = typeof payload.token === "string" ? payload.token.trim() : "";
-  if (!token) throw new Error("Realtime voice authorization returned no token");
-  jarvisWindow().__JARVIS_TOKEN = token;
-  return token;
+  return `${proto}://${host}/ws/audio`;
 }
 
 export type RealtimeStatusPayload = Record<string, unknown>;
@@ -257,7 +224,6 @@ export class RealtimeAudioClient {
     try {
       const supportIssue = browserRealtimeSupportIssue();
       if (supportIssue) throw new RealtimeAudioSupportError(supportIssue);
-      await ensureAudioSocketToken();
       this.ctx = new AudioContext({ latencyHint: "interactive" });
       if (!this.ctx.audioWorklet) {
         throw new RealtimeAudioSupportError("audio_worklet_unavailable");

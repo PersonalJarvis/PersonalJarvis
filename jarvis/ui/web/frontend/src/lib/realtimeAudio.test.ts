@@ -3,7 +3,6 @@ import {
   BrowserSpeechFallback,
   browserRealtimeSupportIssue,
   buildAudioSocketUrl,
-  ensureAudioSocketToken,
   StreamingPcm16Resampler,
 } from "./realtimeAudio";
 
@@ -17,39 +16,11 @@ describe("realtime audio client", () => {
 
   afterEach(() => vi.unstubAllGlobals());
 
-  it("builds a wss /ws/audio url with the token", () => {
-    expect(buildAudioSocketUrl()).toBe("wss://app.example/ws/audio?token=tok");
+  it("builds a token-free wss /ws/audio URL", () => {
+    expect(buildAudioSocketUrl()).toBe("wss://app.example/ws/audio");
   });
 
-  it("reuses an injected desktop token without fetching another", async () => {
-    const fetchToken = vi.fn();
-    vi.stubGlobal("fetch", fetchToken);
-
-    await expect(ensureAudioSocketToken()).resolves.toBe("tok");
-    expect(fetchToken).not.toHaveBeenCalled();
-  });
-
-  it("fetches and registers a canonical token for a remote browser", async () => {
-    (window as Window & { __JARVIS_TOKEN?: string }).__JARVIS_TOKEN = undefined;
-    const fetchToken = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: vi.fn().mockResolvedValue({ token: "remote-token" }),
-    });
-    vi.stubGlobal("fetch", fetchToken);
-
-    await expect(ensureAudioSocketToken()).resolves.toBe("remote-token");
-
-    expect(fetchToken).toHaveBeenCalledWith("/api/missions/auth/token", {
-      cache: "no-store",
-      credentials: "same-origin",
-    });
-    expect(buildAudioSocketUrl()).toBe(
-      "wss://app.example/ws/audio?token=remote-token",
-    );
-  });
-
-  it("fails closed when localhost cannot obtain a token", async () => {
+  it("builds a token-free localhost audio URL", () => {
     vi.stubGlobal("window", {
       location: {
         protocol: "http:",
@@ -57,17 +28,7 @@ describe("realtime audio client", () => {
         hostname: "localhost",
       },
     });
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("backend warming")));
-
-    await expect(ensureAudioSocketToken()).rejects.toThrow("backend warming");
     expect(buildAudioSocketUrl()).toBe("ws://localhost:47821/ws/audio");
-  });
-
-  it("fails closed when a remote browser cannot obtain a token", async () => {
-    (window as Window & { __JARVIS_TOKEN?: string }).__JARVIS_TOKEN = undefined;
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("token unavailable")));
-
-    await expect(ensureAudioSocketToken()).rejects.toThrow("token unavailable");
   });
 
   it("rejects browser microphone capture outside a secure context", () => {

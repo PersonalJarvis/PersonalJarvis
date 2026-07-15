@@ -106,6 +106,10 @@ def _session_payload(cfg: Any) -> dict[str, Any]:
     invalid. PCM input and output are both explicitly declared as 24 kHz.
     """
     transcription: dict[str, Any] = {"model": "gpt-4o-mini-transcribe"}
+    input_language = str(getattr(cfg, "input_language", "auto") or "auto")
+    input_language = input_language.strip().lower().replace("_", "-").split("-", 1)[0]
+    if input_language in {"de", "en", "es"}:
+        transcription["language"] = input_language
 
     turn_detection = str(getattr(cfg, "turn_detection", "server_vad") or "server_vad")
     if turn_detection not in {"server_vad", "semantic_vad"}:
@@ -525,7 +529,10 @@ class OpenAIRealtimeProvider:
     supports_realtime = True
     input_sample_rate = _INPUT_RATE
     output_sample_rate = _OUTPUT_RATE
-    credential_candidates = (("openai_api_key", "OPENAI_API_KEY"),)
+    credential_candidates = (
+        ("realtime_openai_api_key", "JARVIS_REALTIME_OPENAI_API_KEY"),
+        ("openai_api_key", "OPENAI_API_KEY"),
+    )
 
     def __init__(self, *, api_key: str | None = None) -> None:
         self._api_key = (api_key or "").strip()

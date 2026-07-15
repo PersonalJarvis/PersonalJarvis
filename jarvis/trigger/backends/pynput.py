@@ -41,6 +41,15 @@ import threading
 
 log = logging.getLogger(__name__)
 
+
+def _macos_hotkey_permissions_granted() -> bool:
+    """Probe both native grants required by a macOS keyboard event tap."""
+    from jarvis.platform.permissions import (  # noqa: PLC0415
+        get_system_permission_port,
+    )
+
+    return get_system_permission_port().runtime_feature_ready("global_hotkeys")
+
 # global-hotkeys modifier token -> canonical pynput modifier name (the attribute
 # on ``pynput.keyboard.Key``). Anything not here is a literal key (e.g. "j") or
 # an F-key (e.g. "f1", which is also a ``Key`` attribute).
@@ -97,6 +106,7 @@ class PynputBackend:
         self._incremented = False
         # The live set of canonical tokens currently held down.
         self._held: set[str] = set()
+        self._permission_check = lambda: True
 
     def register(self, bindings, on_event=None) -> None:
         """Stash binding rows as token-set combos. Never raises (AD-6).
@@ -148,6 +158,14 @@ class PynputBackend:
 
     def _reconcile(self) -> None:
         """Fire press/release handlers on chord down/up transitions."""
+        if not self._permission_check():
+            # A grant can be revoked while the listener thread is alive. Clear
+            # every partial chord and refuse the callback before it can activate
+            # voice; a later re-grant starts from a clean key state.
+            self._held.clear()
+            for combo in self._combos:
+                combo["down"] = False
+            return
         for combo in self._combos:
             is_down = combo["tokens"].issubset(self._held)
             if is_down and not combo["down"]:
@@ -172,7 +190,7 @@ class PynputBackend:
         except Exception as exc:  # noqa: BLE001 — optional [desktop] extra
             log.warning(
                 "pynput unavailable (%s) — hotkeys disabled; voice still works "
-                "via wake word. Install the [desktop] extra to enable global "
+                "via wake word. Install the [full] profile to enable global "
                 "hotkeys.",
                 exc,
             )
@@ -181,29 +199,26 @@ class PynputBackend:
 
         if sys.platform == "darwin":
             # pynput's darwin backend creates a Quartz event tap on its own
-            # internal thread; without the Accessibility grant that native
+            # internal thread; without Accessibility and Input Monitoring that native
             # init is useless at best and a process-level abort at worst
             # (uncatchable, BUG-058 class). Preflight the non-prompting
-            # AXIsProcessTrusted probe and fail CLOSED (None = unverifiable
-            # -> treat as not granted) instead of touching pynput.
-            granted: bool | None = None
+            # native preflights and fail CLOSED instead of touching pynput.
+            granted = False
             try:
-                from jarvis.platform.probes import ax_permission_granted
-
-                granted = ax_permission_granted()
+                granted = _macos_hotkey_permissions_granted()
             except Exception:  # noqa: BLE001 — the probe must never crash the trigger
-                granted = None
+                granted = False
             if granted is not True:
                 log.warning(
                     "Global hotkeys disabled on macOS: the Accessibility "
-                    "permission is %s. Grant it under System Settings > "
-                    "Privacy & Security > Accessibility for the app you "
-                    "launch Jarvis from, then restart Jarvis — voice still "
+                    "and Input Monitoring permissions are not both granted. "
+                    "Use Personal Jarvis > Settings > Permissions, then "
+                    "re-arm the shortcut or restart Jarvis — voice still "
                     "works via the wake word.",
-                    "not granted" if granted is False else "not verifiable",
                 )
                 self._listener = None
                 return
+            self._permission_check = _macos_hotkey_permissions_granted
 
         try:
             listener = keyboard.Listener(

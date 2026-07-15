@@ -910,6 +910,46 @@ async def test_isolated_dash_delta_keeps_realtime_audio_playing():
 
 
 @pytest.mark.asyncio
+async def test_split_filler_opener_keeps_realtime_answer_playing():
+    answer_audio = b"\x55\x66" * 8
+    events = [
+        RealtimeEvent(type="output_transcript_delta", text="Let me"),
+        RealtimeEvent(type="output_transcript_delta", text=" think"),
+        RealtimeEvent(
+            type="audio_delta",
+            audio=AudioChunk(
+                pcm=answer_audio,
+                sample_rate=24_000,
+                timestamp_ns=0,
+            ),
+        ),
+        RealtimeEvent(
+            type="output_transcript_delta",
+            text=", the benefits include stronger bones.",
+        ),
+        RealtimeEvent(type="turn_complete"),
+    ]
+    binaries: list[bytes] = []
+    jsons: list[dict] = []
+    sess = RealtimeVoiceSession(
+        session_id="streaming-filler-opener",
+        send_binary=lambda data: binaries.append(data) or asyncio.sleep(0),
+        send_json=lambda message: jsons.append(message) or asyncio.sleep(0),
+        provider=FakeProvider(events),
+        config=_cfg(),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    assert binaries == [answer_audio]
+    assert not any(item.get("type") == "tts_cancel" for item in jsons)
+    assert not any(item.get("type") == "error_spoken" for item in jsons)
+
+
+@pytest.mark.asyncio
 async def test_later_segment_leak_audio_not_emitted():
     # Regression test for the T4 ScrubHoldGate one-chunk-boundary residual:
     # push_audio's "cleared" branch bundles the release-triggering chunk with

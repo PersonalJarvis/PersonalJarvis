@@ -305,6 +305,7 @@ class GeminiLiveProvider:
     input_sample_rate = _INPUT_RATE
     output_sample_rate = _OUTPUT_RATE
     credential_candidates = (
+        ("realtime_gemini_api_key", "JARVIS_REALTIME_GEMINI_API_KEY"),
         ("gemini_api_key", "GEMINI_API_KEY"),
         ("google_aistudio_api_key", "GOOGLE_AIStudio_API_KEY"),
         ("google_api_key", "GOOGLE_API_KEY"),

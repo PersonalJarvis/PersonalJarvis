@@ -16,12 +16,12 @@ import pytest
 
 from jarvis.sessions.models import (
     KNOWN_HANGUP_REASONS,
+    KNOWN_VOICE_MODES,
     KNOWN_VOICE_TIERS,
     SessionListItem,
     VoiceSessionRow,
     VoiceTurnRow,
 )
-
 
 # --- Layer 1: every known value validates -------------------------
 
@@ -72,6 +72,21 @@ def test_unknown_tier_does_not_break_validation() -> None:
         tier="phase8_future_tier",
     )
     assert turn.tier == "phase8_future_tier"
+
+
+@pytest.mark.parametrize("voice_mode", sorted(KNOWN_VOICE_MODES))
+def test_session_validates_every_known_voice_mode(voice_mode: str) -> None:
+    item = VoiceSessionRow(id="s1", started_ms=0, voice_mode=voice_mode)
+    assert item.voice_mode == voice_mode
+
+
+def test_unknown_voice_mode_does_not_break_validation() -> None:
+    item = SessionListItem(
+        id="s1",
+        started_ms=0,
+        voice_mode="future-duplex-v2",
+    )
+    assert item.voice_mode == "future-duplex-v2"
 
 
 # --- Layer 3: live-DB drift detector --------------------------------

@@ -32,10 +32,11 @@ import {
   usePreferredOpener,
   useSetPreferredOpener,
 } from "@/hooks/useOutputs";
-import { useT } from "@/i18n";
+import { useT, useUiLanguage } from "@/i18n";
 
 import { fetchSessionExport, openSessionWith, sessionExportUrl } from "./api";
 import { TurnCard } from "./TurnCard";
+import { VoiceModeBadge } from "./VoiceModeBadge";
 import type {
   SessionDetail as SessionDetailModel,
   VoiceSpokenLine,
@@ -57,6 +58,9 @@ interface Props {
 
 export function SessionDetail({ detail, loading, error }: Props) {
   const t = useT();
+  const uiLanguage = useUiLanguage();
+  const locale =
+    uiLanguage === "de" ? "de-DE" : uiLanguage === "es" ? "es-ES" : "en-US";
   const pushToast = useEventStore((s) => s.pushToast);
   // Desktop shell? Then save straight to ~/Downloads (browser downloads are
   // silently dropped by pywebview); otherwise use the normal browser download.
@@ -250,12 +254,15 @@ export function SessionDetail({ detail, loading, error }: Props) {
       <div className="shrink-0 border-b border-border bg-card/40 px-5 py-4 backdrop-blur">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="font-display text-lg font-semibold">
-              {t("session_detail.title")}
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="font-display text-lg font-semibold">
+                {t("session_detail.title")}
+              </div>
+              <VoiceModeBadge mode={session.voice_mode} prominence="prominent" />
             </div>
             <div className="font-mono text-xs text-muted-foreground">
-              {startedDt.toLocaleString("de")}
-              {endedDt && ` — ${endedDt.toLocaleTimeString("de")}`}
+              {startedDt.toLocaleString(locale)}
+              {endedDt && ` — ${endedDt.toLocaleTimeString(locale)}`}
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-1.5">
               <Badge variant="secondary">{session.turn_count} {t("session_detail.turns")}</Badge>

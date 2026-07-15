@@ -434,6 +434,116 @@ async def test_desktop_cpu_barge_in_cancels_and_forwards_user_preroll(
 
 
 @pytest.mark.asyncio
+async def test_post_output_echo_tail_stays_local_and_preserves_immediate_user(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Hardware playback tail must not become a phantom realtime turn."""
+    pipe = _pipe()
+    pipe._continue_listening_after_response = True
+    output_finished = asyncio.Event()
+    echo_pcm = b"\x01\x00" * 32
+    user_pcm = b"\x02\x00" * 32
+    forwarded = b"\x09\x00" * 32
+    detector_inputs: list[bytes] = []
+
+    class _Detector:
+        def __init__(self) -> None:
+            self.active = False
+
+        def warmup(self) -> None:
+            return None
+
+        def start_output(self) -> None:
+            self.active = True
+
+        def stop_output(self) -> None:
+            self.active = False
+
+        def feed(self, pcm: bytes) -> bytes | None:
+            detector_inputs.append(pcm)
+            if pcm == user_pcm:
+                self.active = False
+                return forwarded
+            return None
+
+    class _Mic:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc: object) -> bool:
+            return False
+
+        async def stream(self):
+            await output_finished.wait()
+            # The capture task starts before the provider handshake. Let the
+            # completed handshake open its provider_ready gate before yielding.
+            await asyncio.sleep(0.05)
+            yield AudioChunk(pcm=echo_pcm, sample_rate=16_000, timestamp_ns=0)
+            await asyncio.sleep(0)
+            yield AudioChunk(pcm=user_pcm, sample_rate=16_000, timestamp_ns=0)
+            await asyncio.Event().wait()
+
+    class _Session(_HandshakeOnlyRealtimeSession):
+        def __init__(self, send_binary, send_json) -> None:
+            super().__init__(send_binary, send_json)
+            self.audio_frames: list[bytes] = []
+            self.received = asyncio.Event()
+
+        async def handle_control(self, message) -> None:
+            self.controls.append(message)
+            if message.get("type") == "audio_start":
+                await self._send_json(
+                    {
+                        "type": "audio_ready",
+                        "provider": "fake-live",
+                        "input_sample_rate": 16_000,
+                        "output_sample_rate": 24_000,
+                    }
+                )
+                await self._send_json(
+                    {
+                        "type": "transcript",
+                        "role": "user",
+                        "text": "simple question",
+                        "is_final": True,
+                    }
+                )
+                await self._send_binary(b"\x03\x00" * 32)
+                await self._send_json({"type": "turn_complete"})
+                output_finished.set()
+            elif message.get("type") == "barge_in":
+                await self._send_json({"type": "tts_cancel"})
+
+        async def handle_audio_frame(self, pcm: bytes) -> None:
+            self.audio_frames.append(pcm)
+            self.received.set()
+
+        async def wait_finished(self) -> None:
+            await self.received.wait()
+
+    built: dict[str, object] = {}
+
+    def _build(**kwargs):
+        session = _Session(kwargs["send_binary"], kwargs["send_json"])
+        built["session"] = session
+        return session
+
+    monkeypatch.setattr("jarvis.realtime.factory.build_realtime_session", _build)
+    monkeypatch.setattr(
+        "jarvis.realtime.desktop.DesktopRealtimeBargeInDetector", _Detector
+    )
+    monkeypatch.setattr(pipeline_mod, "MicrophoneCapture", lambda **_kwargs: _Mic())
+
+    reason = await asyncio.wait_for(pipe._active_realtime_session(), timeout=2.0)
+
+    session = built["session"]
+    assert reason == HANGUP_ERROR
+    assert detector_inputs == [echo_pcm, user_pcm]
+    assert session.audio_frames == [forwarded]
+    assert {"type": "barge_in"} in session.controls
+
+
+@pytest.mark.asyncio
 async def test_completed_startup_tasks_do_not_end_healthy_realtime_session(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -50,6 +50,7 @@ from jarvis.core.events import (
     JarvisAgentTaskCompleted,
     JarvisAgentTaskStarted,
     ListeningStarted,
+    RealtimeSessionReady,
     ResponseGenerated,
     SpeechSpoken,
     SystemStateChanged,
@@ -64,7 +65,12 @@ from jarvis.core.events import (
     WakeWordDetected,
 )
 
-from .constants import SPOKEN_KIND_COMPLETION, SPOKEN_KIND_SUBAGENT
+from .constants import (
+    SPOKEN_KIND_COMPLETION,
+    SPOKEN_KIND_SUBAGENT,
+    VOICE_MODE_PIPELINE,
+    VOICE_MODE_REALTIME,
+)
 from .store import SessionStore
 
 log = logging.getLogger(__name__)
@@ -253,7 +259,18 @@ class SessionRecorder:
         elif isinstance(event, WakeWordDetected):
             # Wake in multi-turn mode — counts as a turn boundary.
             self._ensure_turn_open(event.timestamp_ns // 1_000_000)
+        elif isinstance(event, RealtimeSessionReady):
+            if event.session_id != self._state.session_id:
+                return
+            self._on_realtime_ready(event)
         elif isinstance(event, ListeningStarted):
+            # This event is emitted only after the classic STT -> Brain -> TTS
+            # path has actually begun listening. It therefore also captures a
+            # fallback that follows a successful realtime handshake.
+            self._store.update_session_voice_mode(
+                session_id=self._state.session_id,
+                voice_mode=VOICE_MODE_PIPELINE,
+            )
             self._ensure_turn_open(event.timestamp_ns // 1_000_000)
         elif isinstance(event, TranscriptFinal):
             self._on_transcript_final(event)
@@ -313,6 +330,15 @@ class SessionRecorder:
             language=event.language or "de",
         )
         log.info("SessionRecorder: session started id=%s", event.session_id)
+
+    def _on_realtime_ready(self, event: RealtimeSessionReady) -> None:
+        """Record only an accepted provider handshake as Realtime evidence."""
+        if self._state is None:
+            return
+        self._store.update_session_voice_mode(
+            session_id=self._state.session_id,
+            voice_mode=VOICE_MODE_REALTIME,
+        )
 
     def _on_session_ended(self, event: VoiceSessionEnded) -> None:
         if self._state is None:

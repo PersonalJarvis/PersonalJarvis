@@ -601,6 +601,7 @@ def _stt_retry_delay(exc: BaseException | None, attempt: int) -> float:
 
 
 _SESSION_START_BUFFER_MAX_BYTES = 16_000 * 2 * 30  # 30 s of mono PCM16
+_REALTIME_POST_OUTPUT_ECHO_GUARD_S = 0.5
 
 
 def _feed_live_mic_level(chunk: AudioChunk) -> None:
@@ -2703,6 +2704,17 @@ class SpeechPipeline:
             return "pause"
         return None
 
+    def _capture_permission_allowed(self) -> bool:
+        """Return the live local-capture gate without applying Jarvis mute."""
+        gate = getattr(self, "_activation_gate", None)
+        if gate is None:
+            return True
+        try:
+            return bool(gate())
+        except Exception as exc:  # noqa: BLE001
+            log.warning("Voice capture permission gate failed closed: %s", exc)
+            return False
+
     def _activation_allowed(self) -> bool:
         """True when external UI/lifecycle state permits voice activation.
 
@@ -2716,11 +2728,7 @@ class SpeechPipeline:
         """
         if getattr(self, "_muted", False):
             return False
-        try:
-            return bool(self._activation_gate())
-        except Exception as exc:  # noqa: BLE001
-            log.warning("Voice activation gate failed closed: %s", exc)
-            return False
+        return self._capture_permission_allowed()
 
     @property
     def is_muted(self) -> bool:
@@ -6080,7 +6088,20 @@ class SpeechPipeline:
         barge_detector = DesktopRealtimeBargeInDetector()
         turn_complete = asyncio.Event()
         speaking = False
+        post_output_echo_guard_until = 0.0
         semantic_turn_committed = False
+
+        def _close_output_segment(*, preserve_echo_tail: bool) -> None:
+            """Keep half-duplex protection through physical speaker drain."""
+            nonlocal post_output_echo_guard_until, speaking
+            speaking = False
+            if preserve_echo_tail:
+                post_output_echo_guard_until = (
+                    time.monotonic() + _REALTIME_POST_OUTPUT_ECHO_GUARD_S
+                )
+                return
+            post_output_echo_guard_until = 0.0
+            barge_detector.stop_output()
 
         async def _warm_barge_detector() -> None:
             try:
@@ -6097,9 +6118,11 @@ class SpeechPipeline:
         )
 
         async def _send_binary(pcm: bytes) -> None:
+            nonlocal post_output_echo_guard_until
             nonlocal semantic_turn_committed, speaking
             semantic_turn_committed = True
             if not speaking:
+                post_output_echo_guard_until = 0.0
                 speaking = True
                 barge_detector.start_output()
                 await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
@@ -6143,25 +6166,25 @@ class SpeechPipeline:
                 # delta starts a fresh SPEAKING segment through _send_binary.
                 semantic_turn_committed = True
                 await playback.finish_turn()
-                speaking = False
-                barge_detector.stop_output()
+                _close_output_segment(
+                    preserve_echo_tail=speaking,
+                )
                 await self._set_turn_state(TurnTakingState.PROCESSING)
             elif kind == "tts_cancel":
-                speaking = False
-                barge_detector.stop_output()
+                _close_output_segment(preserve_echo_tail=False)
                 await playback.cancel()
                 await self._set_turn_state(TurnTakingState.LISTENING)
             elif kind == "hangup":
                 semantic_turn_committed = True
-                speaking = False
-                barge_detector.stop_output()
+                _close_output_segment(preserve_echo_tail=False)
                 await playback.cancel()
             elif kind == "turn_complete":
                 semantic_turn_committed = True
                 await playback.finish_turn()
                 interrupted_during_drain = not speaking
-                speaking = False
-                barge_detector.stop_output()
+                _close_output_segment(
+                    preserve_echo_tail=not interrupted_during_drain,
+                )
                 await self._set_turn_state(TurnTakingState.LISTENING)
                 if (
                     not self._continue_listening_after_response
@@ -6205,8 +6228,9 @@ class SpeechPipeline:
                             exc,
                         )
                     finally:
-                        speaking = False
-                        barge_detector.stop_output()
+                        _close_output_segment(
+                            preserve_echo_tail=speaking,
+                        )
                         await self._set_turn_state(TurnTakingState.LISTENING)
             elif kind == "provider_error":
                 log.warning("Realtime desktop status: %s", message)
@@ -6233,7 +6257,7 @@ class SpeechPipeline:
         try:
             async with self._session_input_source(input_buffer) as input_chunks:
                 async def _send_microphone() -> None:
-                    nonlocal preroll_bytes
+                    nonlocal post_output_echo_guard_until, preroll_bytes
                     async for chunk in self._session_input_stream(input_chunks):
                         if not provider_ready.is_set():
                             if (
@@ -6252,18 +6276,26 @@ class SpeechPipeline:
                             buffered = preroll.popleft()
                             preroll_bytes = max(0, preroll_bytes - len(buffered))
                             await session.handle_audio_frame(buffered)
-                        if speaking:
+                        echo_guard_active = bool(
+                            speaking
+                            or time.monotonic() < post_output_echo_guard_until
+                        )
+                        if echo_guard_active:
                             interrupted_pcm = barge_detector.feed(chunk.pcm)
                             if interrupted_pcm is None:
                                 # Provider half-duplex remains intact: speaker
-                                # echo is inspected locally but never uploaded.
+                                # echo, including the hardware playback tail,
+                                # is inspected locally but never uploaded.
                                 continue
                             log.info(
                                 "Realtime desktop barge-in confirmed by local CPU VAD"
                             )
+                            post_output_echo_guard_until = 0.0
                             await session.handle_control({"type": "barge_in"})
                             await session.handle_audio_frame(interrupted_pcm)
                             continue
+                        if bool(getattr(barge_detector, "active", False)):
+                            barge_detector.stop_output()
                         await session.handle_audio_frame(chunk.pcm)
 
                 # A shared capture buffer already owns and meters production
@@ -6609,7 +6641,11 @@ class SpeechPipeline:
         Lets the UI hide the mic button on a headless host with no capture
         device (cloud-first: a missing capability is a clean no-op, AD-OE6).
         """
-        return self._utterance_stt is not None and self._input_device != "none"
+        return (
+            self._utterance_stt is not None
+            and self._input_device != "none"
+            and self._capture_permission_allowed()
+        )
 
     def start_dictation(self) -> bool:
         """Begin a transcribe-only dictation session (idempotent-safe).
@@ -6622,6 +6658,9 @@ class SpeechPipeline:
         This NEVER routes to the brain: it spawns ``_dictation_session`` which
         only publishes ``DictationTranscript`` events.
         """
+        if not self._capture_permission_allowed():
+            log.info("start_dictation ignored: microphone access is not ready.")
+            return False
         if self._utterance_stt is None:
             log.info("start_dictation ignored: no STT provider.")
             return False

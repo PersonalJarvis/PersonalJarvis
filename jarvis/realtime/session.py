@@ -23,7 +23,7 @@ from jarvis.brain.output_filter import scrub_for_voice
 from jarvis.brain.turn_planner import TurnPlan, plan_turn
 from jarvis.core.protocols import AudioChunk, BrainMessage
 from jarvis.core.redact import safe_preview
-from jarvis.core.turn_language import resolve_output_language
+from jarvis.core.turn_language import normalize_language_tag, resolve_output_language
 from jarvis.realtime.audio import StreamingPcm16Resampler
 from jarvis.realtime.protocol import RealtimeSessionConfig
 from jarvis.realtime.scrub_gate import ScrubHoldGate
@@ -343,6 +343,7 @@ _TOOL_ROLE_DIRECTIVE = (
 def _session_instructions(
     language: str,
     *,
+    input_language: str = "auto",
     provider: str = "",
     model: str = "",
     language_is_pinned: bool = True,
@@ -352,6 +353,19 @@ def _session_instructions(
 
     persona = load_effective_persona_prompt().strip()
     language_name = _LANGUAGE_NAMES.get(language, "the user's language")
+    input_language_name = _LANGUAGE_NAMES.get(input_language)
+    if input_language_name:
+        input_directive = (
+            f"Interpret the user's spoken audio as {input_language_name}. "
+            "Do not infer a different input language from the persona, prior "
+            "turns, or the reply language."
+        )
+    else:
+        input_directive = (
+            "Detect the language of every substantive spoken turn from its "
+            "current audio. Do not assume the input language from the persona "
+            "or from an earlier turn."
+        )
     if language_is_pinned:
         language_directive = f"Reply only in {language_name} for this turn."
     else:
@@ -364,6 +378,7 @@ def _session_instructions(
         persona,
         tool_directive,
         _REALTIME_SAFETY_APPENDIX,
+        input_directive,
         (
             "Runtime identity: this voice session is using the Realtime engine"
             + (f", provider {provider}" if provider else "")
@@ -445,6 +460,12 @@ class RealtimeVoiceSession:
         ).strip().lower()
         self._stt_language = getattr(
             getattr(self._config, "stt", None), "language", "unknown"
+        )
+        normalized_input_language = normalize_language_tag(self._stt_language)
+        self._input_language = (
+            normalized_input_language
+            if normalized_input_language in _LANGUAGE_NAMES
+            else "auto"
         )
         self._language = self._resolve_lang(text="")
         self._brain = brain
@@ -671,12 +692,14 @@ class RealtimeVoiceSession:
             session_config = RealtimeSessionConfig(
                 instructions=_session_instructions(
                     self._language,
+                    input_language=self._input_language,
                     provider=str(getattr(provider, "name", "") or ""),
                     model=model,
                     language_is_pinned=self._language_is_pinned,
                     tool_directive=self._tool_directive(),
                 ),
                 language=self._language,
+                input_language=self._input_language,
                 language_is_pinned=self._language_is_pinned,
                 model=model,
                 voice=voice,
@@ -1001,6 +1024,7 @@ class RealtimeVoiceSession:
                         update_kwargs: dict[str, Any] = {
                             "instructions": _session_instructions(
                                 new_language,
+                                input_language=self._input_language,
                                 provider=self.active_provider,
                                 model=self._active_model,
                                 language_is_pinned=True,

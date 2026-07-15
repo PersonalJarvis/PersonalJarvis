@@ -20,7 +20,8 @@ CREATE TABLE IF NOT EXISTS voice_sessions (
     total_tokens_out   INTEGER NOT NULL DEFAULT 0,
     providers_used     TEXT NOT NULL DEFAULT '[]',  -- JSON array of distinct provider names
     language           TEXT NOT NULL DEFAULT 'de',
-    wake_keyword       TEXT NOT NULL DEFAULT ''
+    wake_keyword       TEXT NOT NULL DEFAULT '',
+    voice_mode         TEXT NOT NULL DEFAULT 'unknown' -- unknown|pipeline|realtime; open string for forward compatibility
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_started ON voice_sessions(started_ms DESC);

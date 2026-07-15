@@ -34,6 +34,11 @@ export const KNOWN_VOICE_TIERS = [
 
 export type VoiceTier = string;
 
+export const KNOWN_VOICE_MODES = ["unknown", "pipeline", "realtime"] as const;
+
+export type KnownVoiceMode = (typeof KNOWN_VOICE_MODES)[number];
+export type VoiceMode = KnownVoiceMode | (string & Record<never, never>);
+
 // Mirror of jarvis/sessions/constants.py SPOKEN_KINDS. Every phrase Jarvis
 // VOICES that is not the brain's normal reply is recorded as a SpeechSpoken
 // event tagged with one of these. Parity: tests/unit/sessions/
@@ -119,6 +124,7 @@ export interface VoiceSessionRow {
   providers_used: string[];
   language: string;
   wake_keyword: string;
+  voice_mode: VoiceMode;
 }
 
 export interface SessionListItem extends VoiceSessionRow {
