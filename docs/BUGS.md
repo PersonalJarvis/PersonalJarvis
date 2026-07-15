@@ -4448,12 +4448,23 @@ carried, bare-on-first-turn, live-history fallback);
 after boundary timeout; directive names screen control + forbids capability
 denial; history keeps a task five exchanges back).
 
-**Open finding (not fixed here).** The CU speed-tune swapped the configured
-``z-ai/glm-5.2`` for ``meta/llama-3.3-70b-instruct`` on the nvidia provider
-and logged it as "the fast vision model" — the nvidia catalog carries no
-modality data, so the router-tier fallback treats vision as unknown-capable;
-llama-3.3 is text-only. Pin a real vision model as the Computer-Use model in
-Settings, or extend the catalog with modality data for direct providers.
+**Corrected finding (2026-07-15, follow-up forensic).** The first version of
+this entry claimed a text-only ``meta/llama-3.3-70b-instruct`` stepped the
+mission. Wrong: that came from the per-candidate speed-tune INFO line
+("[cu] nvidia: stepping with the fast vision model …"), which fired on every
+step for a chain CANDIDATE that never served a single call. The missions
+actually stepped on the openrouter Tool Model pin
+(``google/gemini-3.5-flash``, vision-capable) — the fast-chain head. Fixed:
+candidate swaps now log at DEBUG with "chain candidate" wording, and a
+change-triggered INFO line names the brain that actually serves
+("[cu] vision calls served by …"). Guard:
+``tests/unit/cu/test_brain_call_cu_provider.py::test_serving_brain_logged_once_per_identity``.
+Additionally the global Tool Model was never ACTIVATED ([brain.tool_model]
+unset → automatic selection); it is now pinned to the vision-capable
+``gemini`` provider, which the ``call_vision_brain`` hoist and the delegated
+``prefer_tool_model`` turns both lead with — Computer-Use and tool routing
+deterministically run on the user's Tool Model, in Realtime and Pipeline
+alike.
 
 **Class rule.** A deterministic action dispatched from a conversation must
 carry the conversation: any harness goal built from a single utterance is
