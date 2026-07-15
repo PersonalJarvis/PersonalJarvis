@@ -2449,6 +2449,79 @@ async def test_slow_deterministic_delegate_speaks_a_bridge_line(monkeypatch):
     await sess.end(reason="test")
 
 
+class _StalledPromiseSession(FakeSession):
+    """Answer with an unbacked action promise, then never complete the turn.
+
+    Live forensic 2026-07-15 07:59: the promise-block guard interrupted a
+    response that was already complete on the wire, so no further
+    turn_complete arrived. The deterministic recovery then timed out waiting
+    for the provider boundary and refused the action outright — the user heard
+    a canned failure although the full final input transcript was in hand.
+    """
+
+    def __init__(self, *, released):
+        super().__init__([])
+        self._released = released
+
+    async def receive(self):
+        yield RealtimeEvent(
+            type="input_transcript",
+            text="That is not the right server.",
+            is_final=True,
+        )
+        yield RealtimeEvent(
+            type="output_transcript_delta",
+            text="I'll check and get back to you.",
+        )
+        await self._released.wait()
+
+
+class _StalledPromiseProvider(FakeProvider):
+    def __init__(self, *, released):
+        super().__init__([])
+        self._released = released
+
+    async def open_session(self, cfg):
+        self.opened_with = cfg
+        self.session = _StalledPromiseSession(released=self._released)
+        return self.session
+
+
+@pytest.mark.asyncio
+async def test_blocked_action_promise_still_dispatches_after_boundary_timeout(
+    monkeypatch,
+):
+    """The promise-block recovery must run the action, not refuse it.
+
+    The input transcript is final by construction on this path (the provider
+    already produced a response for it), so a missing provider boundary after
+    the interrupt may delay the dispatch but never veto it.
+    """
+    monkeypatch.setattr(
+        "jarvis.realtime.session._DELEGATE_INPUT_BOUNDARY_WAIT_S", 0.05
+    )
+    released = asyncio.Event()
+    brain = FakeBrain(replies=("Switched to the right server.",))
+    provider = _StalledPromiseProvider(released=released)
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    async with asyncio.timeout(2):
+        while not provider.session.text_inputs:
+            await asyncio.sleep(0.01)
+
+    assert brain.calls, "the recovery must dispatch the brain turn"
+    assert brain.calls[0][0] == "That is not the right server."
+    result = provider.session.text_inputs[-1]
+    assert "<trusted_action_result>" in result
+    assert "Switched to the right server." in result
+    assert "Result status: success" in result
+
+    released.set()
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+
 @pytest.mark.asyncio
 async def test_fast_deterministic_delegate_needs_no_bridge_line(monkeypatch):
     """A result faster than the bridge delay keeps the turn chatter-free."""

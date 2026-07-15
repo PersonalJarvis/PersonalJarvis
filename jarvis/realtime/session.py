@@ -284,6 +284,10 @@ class _DelegateTurnState:
     bridge_transcript_parts: list[str] = field(default_factory=list)
     bridge_audio_chunks: list[Any] = field(default_factory=list)
     wait_for_provider_boundary: bool = False
+    # True when the dispatching path KNOWS the input transcript is complete
+    # (e.g. the provider already produced a response for it). A missing
+    # provider boundary may then delay the dispatch but never veto it.
+    input_final: bool = False
     input_boundary_ready: asyncio.Event = field(default_factory=asyncio.Event)
     provider_ready: asyncio.Event = field(default_factory=asyncio.Event)
     result_ready: asyncio.Event = field(default_factory=asyncio.Event)
@@ -1515,6 +1519,13 @@ class RealtimeVoiceSession:
                 _DelegateTurnState(deterministic=True),
             )
             turn_state.wait_for_provider_boundary = True
+            # The provider already produced a response for this input, so the
+            # transcript is final by construction. When the interrupt lands on
+            # an already-completed response, no further turn_complete arrives
+            # and the boundary wait times out — that must delay the dispatch,
+            # never veto it (live forensic 2026-07-15 07:59: the recovery
+            # spoke a canned failure without ever dispatching the action).
+            turn_state.input_final = True
             try:
                 await self._session.interrupt()
             except Exception:  # noqa: BLE001, S110 — provider may already be done
@@ -2628,7 +2639,13 @@ class RealtimeVoiceSession:
                         timeout=_DELEGATE_INPUT_BOUNDARY_WAIT_S,
                     )
                 except TimeoutError:
-                    boundary_ready = False
+                    # The refusal below protects against acting on a PARTIAL
+                    # input transcript. When the dispatching path marked the
+                    # input final, the missing provider boundary is only a
+                    # wire artifact (an interrupt that landed on an
+                    # already-completed response) — proceed; result delivery
+                    # still waits for its own provider boundary.
+                    boundary_ready = turn_state.input_final
             else:
                 # A manual-response provider may already have queued a native
                 # function call or cancelled output behind the final input
