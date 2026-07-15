@@ -40,9 +40,14 @@ async def test_receive_maps_audio_transcripts_interrupt_and_completion():
         ),
     ]
 
+    receive_calls = 0
+
     async def fake_receive():
-        for message in messages:
-            yield message
+        nonlocal receive_calls
+        receive_calls += 1
+        if receive_calls == 1:
+            for message in messages:
+                yield message
 
     fake_session = SimpleNamespace(receive=fake_receive)
     session = _GeminiLiveSession(
@@ -65,6 +70,63 @@ async def test_receive_maps_audio_transcripts_interrupt_and_completion():
     assert events[0].audio.sample_rate == 24_000
     assert events[1].text == "hello there"
     assert events[3].text == "what the user said"
+    assert receive_calls == 2
+
+
+@pytest.mark.asyncio
+async def test_receive_reenters_sdk_iterator_for_a_second_user_turn() -> None:
+    sdk_turns = [
+        [
+            _fake_message(
+                server_content=SimpleNamespace(
+                    output_transcription=SimpleNamespace(text="first answer"),
+                    input_transcription=None,
+                    interrupted=False,
+                    turn_complete=True,
+                )
+            )
+        ],
+        [
+            _fake_message(
+                server_content=SimpleNamespace(
+                    output_transcription=SimpleNamespace(text="second answer"),
+                    input_transcription=None,
+                    interrupted=False,
+                    turn_complete=True,
+                )
+            )
+        ],
+    ]
+    receive_calls = 0
+
+    async def fake_receive():
+        nonlocal receive_calls
+        receive_calls += 1
+        turn_index = receive_calls - 1
+        if turn_index < len(sdk_turns):
+            for message in sdk_turns[turn_index]:
+                yield message
+
+    session = _GeminiLiveSession(
+        session=SimpleNamespace(receive=fake_receive),
+        connection_cm=SimpleNamespace(),
+        client=SimpleNamespace(),
+        session_id="two-turns",
+    )
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == [
+        "output_transcript_delta",
+        "turn_complete",
+        "output_transcript_delta",
+        "turn_complete",
+    ]
+    assert [event.text for event in events if event.text] == [
+        "first answer",
+        "second answer",
+    ]
+    assert receive_calls == 3
 
 
 @pytest.mark.asyncio
@@ -272,33 +334,42 @@ async def test_tools_are_declared_mapped_and_answered(
 
 @pytest.mark.asyncio
 async def test_tool_call_suppresses_intermediate_turn_complete() -> None:
-    messages = [
-        _fake_message(
-            tool_call=SimpleNamespace(
-                function_calls=[
-                    SimpleNamespace(id="call-1", name="open_app", args={})
-                ]
-            ),
-            server_content=SimpleNamespace(
-                output_transcription=None,
-                input_transcription=None,
-                interrupted=False,
-                turn_complete=True,
-            ),
-        ),
-        _fake_message(
-            server_content=SimpleNamespace(
-                output_transcription=None,
-                input_transcription=None,
-                interrupted=False,
-                turn_complete=True,
+    sdk_turns = [
+        [
+            _fake_message(
+                tool_call=SimpleNamespace(
+                    function_calls=[
+                        SimpleNamespace(id="call-1", name="open_app", args={})
+                    ]
+                ),
+                server_content=SimpleNamespace(
+                    output_transcription=None,
+                    input_transcription=None,
+                    interrupted=False,
+                    turn_complete=True,
+                ),
             )
-        ),
+        ],
+        [
+            _fake_message(
+                server_content=SimpleNamespace(
+                    output_transcription=None,
+                    input_transcription=None,
+                    interrupted=False,
+                    turn_complete=True,
+                )
+            )
+        ],
     ]
+    receive_calls = 0
 
     async def fake_receive():
-        for message in messages:
-            yield message
+        nonlocal receive_calls
+        receive_calls += 1
+        turn_index = receive_calls - 1
+        if turn_index < len(sdk_turns):
+            for message in sdk_turns[turn_index]:
+                yield message
 
     session = _GeminiLiveSession(
         session=SimpleNamespace(receive=fake_receive),
@@ -310,6 +381,7 @@ async def test_tool_call_suppresses_intermediate_turn_complete() -> None:
     events = [event async for event in session.receive()]
 
     assert [event.type for event in events] == ["tool_call", "turn_complete"]
+    assert receive_calls == 3
 
 
 # --- function_declarations schema sanitizing --------------------------------
