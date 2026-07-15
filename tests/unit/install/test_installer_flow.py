@@ -55,7 +55,10 @@ def test_installer_prompts_only_inside_missing_prerequisite_flow() -> None:
     sh_outside = sh[:wg_begin] + sh[wg_end:sh_begin] + sh[sh_end:]
     assert "read -r" not in sh_outside
     assert "read -p" not in sh
-    assert sh[sh_begin:sh_end].count("read -r") == 2
+    # 3 sanctioned prompts: install Python?, install Git?, and (Linux X11,
+    # commit 72fd9aa2) install the desktop-automation tools? All must read
+    # from /dev/tty (asserted below).
+    assert sh[sh_begin:sh_end].count("read -r") == 3
     assert all(
         "< /dev/tty" in line.replace("</dev/tty", "< /dev/tty")
         for block in (sh[sh_begin:sh_end], sh[wg_begin:wg_end])
