@@ -210,6 +210,32 @@ class KillSwitch:
         await to_bus.publish(event)
 
 
+# ----------------------------------------------------------------------
+# Process-wide singleton (deep-dive 2026-07-15, C-02)
+# ----------------------------------------------------------------------
+#
+# Every component of the Emergency Stop existed (this KillSwitch, the wiring
+# helpers, the tray menu item, the CancelScope in the CU harness) but nothing
+# at boot ever INSTANTIATED a KillSwitch — so ComputerUseContext.kill_switch
+# stayed None and the advertised global stop was a no-op. The singleton gives
+# the brain factory, the tray bridge, and REST routes one shared instance
+# without threading it through every constructor.
+
+_PROCESS_KILL_SWITCH: KillSwitch | None = None
+
+
+def get_kill_switch() -> KillSwitch:
+    """The process-wide :class:`KillSwitch`, created on first use.
+
+    Callers that own a bus should also call ``.bind(bus)`` (idempotent per
+    bus) so ``KillRequested`` events actually reach it.
+    """
+    global _PROCESS_KILL_SWITCH
+    if _PROCESS_KILL_SWITCH is None:
+        _PROCESS_KILL_SWITCH = KillSwitch()
+    return _PROCESS_KILL_SWITCH
+
+
 def event_bus_of(_event: KillRequested, bound: list[EventBus]) -> EventBus | None:
     """Heuristic: we do not know which bus the event came from because the bus
     reference is not embedded in the event. We publish acks on the last bound

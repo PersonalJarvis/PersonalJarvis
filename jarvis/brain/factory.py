@@ -561,7 +561,6 @@ def _load_local_action_tools(
     from jarvis.plugins.tool.hotkey import HotkeyTool
     from jarvis.plugins.tool.open_app import OpenAppTool
     from jarvis.plugins.tool.reset_orb_position import ResetOrbPositionTool
-    from jarvis.plugins.tool.respawn_mascot import RespawnMascotTool
     from jarvis.plugins.tool.type_text import TypeTextTool
 
     return {
@@ -578,11 +577,6 @@ def _load_local_action_tools(
         # "wo bist du" / "reset orb"). Publishes OrbResetRequested
         # on the bus; the orb-side bridge handles the Tk-thread dispatch.
         "reset_orb_position": ResetOrbPositionTool(bus=bus),
-        # Voice-driven mascot recovery ("Maskottchen wieder auftauchen" /
-        # "Spawner" / "respawn mascot"). Calls OverlaySupervisor.force_respawn
-        # so the user can get the mascot back after a cap-fire, crash, or
-        # hidden-window state.
-        "respawn_mascot": RespawnMascotTool(),
     }
 
 
@@ -1164,12 +1158,24 @@ def _phase2_full_brain(
                              native_cu.model)
             except Exception as _exc:  # noqa: BLE001 — never block CU bootstrap
                 log.debug("native CU engine not built: %s", _exc)
+            # Emergency Stop (deep-dive 2026-07-15, C-02): the CU harness
+            # already registers its CancelScope token with ctx.kill_switch —
+            # but nothing ever provided one, so the advertised global stop
+            # (tray "Emergency stop", hotkey, voice kill phrase) never reached
+            # a running mission. Bind the process-wide switch to THIS bus
+            # (idempotent) so every KillRequested cancels active CU tokens.
+            from jarvis.control import get_kill_switch  # noqa: PLC0415
+
+            cu_kill_switch = get_kill_switch()
+            if bus is not None:
+                cu_kill_switch.bind(bus)
             set_computer_use_context(ComputerUseContext(
                 vision_engine=vision_engine_for_cu,
                 brain_manager=manager,
                 tool_executor=executor,
                 tools=cu_tools,
                 bus=bus,
+                kill_switch=cu_kill_switch,
                 step_budget=cu_cfg.step_budget,
                 per_step_timeout_s=cu_cfg.per_step_timeout_s,
                 think_timeout_cap_s=getattr(cu_cfg, "think_timeout_cap_s", 10.0),

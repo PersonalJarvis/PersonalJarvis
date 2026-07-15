@@ -1773,37 +1773,6 @@ class DesktopApp:
             # the deferred brain proxy — NONE of that chain. The user-perceived
             # "ready to talk to Jarvis" gate is the wake listener, not the full
             # backend, so it must not wait ~15-20 s for subsystems it never uses.
-            async def _start_overlay_bg() -> None:
-                try:
-                    # Phase 9.8: start the overlay subprocess when [overlay].enabled=true.
-                    # Optional package: when it is not installed, desktop boot still serves.
-                    from jarvis.overlay.integration import start_overlay
-
-                    await start_overlay(bus=server.bus)
-                except ModuleNotFoundError as exc:
-                    from loguru import logger as _overlay_logger
-                    if exc.name == "overlay":
-                        # Genuinely headless: the optional overlay package
-                        # itself isn't installed (cloud/VPS base install).
-                        _overlay_logger.debug(
-                            "Overlay bootstrap skipped: optional overlay package not installed."
-                        )
-                    else:
-                        # AP-23 W2-C: some OTHER dependency in the overlay
-                        # import chain is missing (e.g. `python-ulid`) — a
-                        # real, fixable gap, not "no overlay package". Name
-                        # it explicitly instead of collapsing into the same
-                        # silent "headless" bucket.
-                        _overlay_logger.opt(exception=exc).warning(
-                            "Overlay bootstrap skipped: overlay dependency {!r} missing.",
-                            exc.name,
-                        )
-                except Exception as exc:  # noqa: BLE001
-                    from loguru import logger as _overlay_logger
-                    _overlay_logger.opt(exception=exc).warning(
-                        "Overlay bootstrap failed."
-                    )
-
             def _log_speech_and_orb_done(task: asyncio.Task) -> None:
                 if task.cancelled():
                     return
@@ -1836,7 +1805,6 @@ class DesktopApp:
                 name="speech-and-orb",
             )
             speech_task.add_done_callback(_log_speech_and_orb_done)
-            loop.create_task(_start_overlay_bg(), name="overlay-bootstrap")
 
             # === 2) Everything else, BEHIND the live wake listener ==========
             # The heavy backend keeps its original internal order (server.start()
@@ -3498,6 +3466,13 @@ class DesktopApp:
                 action = cmd.action
                 if action == "open_ui":
                     self._safe_window_show()
+                elif action == "kill":
+                    # Emergency stop (deep-dive 2026-07-15, C-02): this arm was
+                    # missing entirely — the advertised tray "Emergency stop"
+                    # was silently swallowed here. Publish KillRequested on the
+                    # backend bus (the same bus the CU context's KillSwitch is
+                    # bound to) from this non-async pystray bridge thread.
+                    self._publish_kill_requested_threadsafe()
                 elif action == "quit":
                     self._user_requested_quit = True
                     try:
@@ -3510,6 +3485,33 @@ class DesktopApp:
         threading.Thread(
             target=_bridge_loop, name="jarvis-tray-bridge", daemon=True
         ).start()
+
+    def _publish_kill_requested_threadsafe(self) -> None:
+        """Publish ``KillRequested(source="tray")`` from a non-async thread.
+
+        Best-effort and never raises: during early boot the backend loop or
+        the server bus may not exist yet — then there is nothing running that
+        could be stopped, and we log honestly instead of crashing the tray.
+        """
+        from loguru import logger
+
+        loop = self._backend_loop
+        bus = getattr(self._server, "bus", None) if self._server is not None else None
+        if loop is None or loop.is_closed() or bus is None:
+            logger.warning(
+                "Emergency stop pressed, but the backend bus is not up yet — "
+                "nothing is running that could be stopped."
+            )
+            return
+        try:
+            from jarvis.core.events import KillRequested  # noqa: PLC0415
+
+            asyncio.run_coroutine_threadsafe(
+                bus.publish(KillRequested(source="tray")), loop
+            )
+            logger.info("Emergency stop: KillRequested(source=tray) published.")
+        except Exception:  # noqa: BLE001 — the tray must survive a failed kill
+            logger.opt(exception=True).warning("Emergency stop publish failed.")
 
     async def _on_show_window_requested(self, _event: object) -> None:
         """Bus subscriber for ``ShowWindowRequested`` (overlay right-click).
@@ -3810,12 +3812,6 @@ class DesktopApp:
                     _logger.warning("PTY-Cleanup failed: {}", exc)
             try:
                 asyncio.run_coroutine_threadsafe(_pty_cleanup(), loop).result(timeout=2.0)
-            except Exception:  # noqa: BLE001
-                pass
-            # Phase 9.8: stop the overlay subprocess BEFORE server.stop().
-            try:
-                from jarvis.overlay.integration import stop_overlay
-                asyncio.run_coroutine_threadsafe(stop_overlay(), loop).result(timeout=2.0)
             except Exception:  # noqa: BLE001
                 pass
             # Stop the serve-first bootstrap (it owns the listening socket).
