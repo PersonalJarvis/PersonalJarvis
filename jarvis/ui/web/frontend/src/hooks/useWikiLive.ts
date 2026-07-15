@@ -5,8 +5,8 @@ import { useQueryClient } from "@tanstack/react-query";
  * Live-reload hook for the desktop wiki view.
  *
  * Mounts a WebSocket connection to `/api/wiki/live` and invalidates the
- * four React Query caches that depend on vault state every time the
- * server pushes a `page_changed` message.
+ * all React Query caches that project vault state every time the server
+ * connects or pushes a `page_changed` message.
  *
  * Mount this hook **once** at the WikiView level (not deeper). Switching
  * away from the wiki tab unmounts the hook and closes the socket — that
@@ -63,6 +63,22 @@ export function useWikiLive(): UseWikiLiveResult {
     mountedRef.current = true;
     const url = buildWsUrl();
 
+    const invalidateWikiProjection = () => {
+      // Prefix invalidation is intentional for pages, searches, and backlinks.
+      // A changed source page can add links to several targets, so refreshing
+      // backlinks only for that source leaves the target panels stale.
+      for (const queryKey of [
+        ["wiki", "tree"],
+        ["wiki", "graph"],
+        ["wiki", "health"],
+        ["wiki", "search"],
+        ["wiki", "page"],
+        ["wiki", "backlinks"],
+      ]) {
+        void qc.invalidateQueries({ queryKey });
+      }
+    };
+
     const scheduleReconnect = () => {
       if (!mountedRef.current) return;
       // Exponential backoff capped at 30 s, with a small floor at 250 ms
@@ -93,6 +109,8 @@ export function useWikiLive(): UseWikiLiveResult {
         if (!mountedRef.current) return;
         reconnectAttemptsRef.current = 0;
         setConnected(true);
+        // Recover any events missed while the socket was disconnected.
+        invalidateWikiProjection();
       };
 
       ws.onmessage = (ev: MessageEvent) => {
@@ -104,12 +122,9 @@ export function useWikiLive(): UseWikiLiveResult {
           return;
         }
         if (!isPageChanged(parsed)) return;
-        // Invalidate the four queries that depend on vault state. The
-        // keys match the contract documented in 00-OVERVIEW.md §4.
-        qc.invalidateQueries({ queryKey: ["wiki", "tree"] });
-        qc.invalidateQueries({ queryKey: ["wiki", "page", parsed.slug] });
-        qc.invalidateQueries({ queryKey: ["wiki", "graph"] });
-        qc.invalidateQueries({ queryKey: ["wiki", "backlinks", parsed.slug] });
+        // Refresh every projection, including relationship targets whose
+        // backlinks changed even though their own page did not.
+        invalidateWikiProjection();
         setLastEventAt(Date.now());
       };
 

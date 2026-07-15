@@ -72,7 +72,29 @@ describe("useWikiLive", () => {
     expect(result.current.connected).toBe(true);
   });
 
-  it("invalidates the four wiki query keys on page_changed", async () => {
+  it("refreshes every wiki projection when the socket opens", async () => {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const spy = vi.spyOn(qc, "invalidateQueries");
+    const customWrapper = ({ children }: { children: ReactNode }) =>
+      createElement(QueryClientProvider, { client: qc }, children);
+
+    renderHook(() => useWikiLive(), { wrapper: customWrapper });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    const keys = spy.mock.calls.map((call) => call[0]?.queryKey);
+    expect(keys).toEqual([
+      ["wiki", "tree"],
+      ["wiki", "graph"],
+      ["wiki", "health"],
+      ["wiki", "search"],
+      ["wiki", "page"],
+      ["wiki", "backlinks"],
+    ]);
+  });
+
+  it("refreshes every wiki projection on page_changed", async () => {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const spy = vi.spyOn(qc, "invalidateQueries");
 
@@ -84,6 +106,7 @@ describe("useWikiLive", () => {
       await Promise.resolve();
     });
     expect(result.current.connected).toBe(true);
+    spy.mockClear();
 
     await act(async () => {
       MockWebSocket.instances[0].deliver({
@@ -96,14 +119,14 @@ describe("useWikiLive", () => {
     });
 
     const keys = spy.mock.calls.map((call) => call[0]?.queryKey);
-    expect(keys).toEqual(
-      expect.arrayContaining([
-        ["wiki", "tree"],
-        ["wiki", "page", "harald"],
-        ["wiki", "graph"],
-        ["wiki", "backlinks", "harald"],
-      ]),
-    );
+    expect(keys).toEqual([
+      ["wiki", "tree"],
+      ["wiki", "graph"],
+      ["wiki", "health"],
+      ["wiki", "search"],
+      ["wiki", "page"],
+      ["wiki", "backlinks"],
+    ]);
     expect(result.current.lastEventAt).not.toBeNull();
   });
 
@@ -135,6 +158,7 @@ describe("useWikiLive", () => {
     await act(async () => {
       await Promise.resolve();
     });
+    spy.mockClear();
 
     await act(async () => {
       MockWebSocket.instances[0].deliver("not json at all");

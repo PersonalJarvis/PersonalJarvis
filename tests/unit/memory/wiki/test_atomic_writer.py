@@ -17,7 +17,6 @@ several edge cases (rename, archive, brand-new pages, mid-write crash).
 from __future__ import annotations
 
 import asyncio
-import datetime as _dt
 import os
 import time
 from pathlib import Path
@@ -34,7 +33,6 @@ from jarvis.memory.wiki.backup import BackupManager
 from jarvis.memory.wiki.protocols import PageUpdate
 
 from .conftest import FakePageRepository, write_page
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -157,6 +155,64 @@ def test_brand_new_page_is_never_lock_skipped(
     assert result.applied == [target.resolve()]
 
 
+def test_successive_self_writes_bypass_recent_edit_lock(
+    writer: AtomicWriter, vault_root: Path, fake_repo: FakePageRepository
+) -> None:
+    """A confirmed writer-owned mtime must not throttle the next curator pass."""
+    target = write_page(vault_root, "entity", "ruben", body="old content")
+    old = time.time() - 300.0
+    os.utime(target, (old, old))
+
+    first = PageUpdate(
+        target_path=target,
+        operation="update",
+        new_body=_valid_entity_body("ruben", body="first curator fact"),
+    )
+    first_result = asyncio.run(writer.apply([first], repo=fake_repo))
+    assert first_result.applied == [target.resolve()]
+
+    second = PageUpdate(
+        target_path=target,
+        operation="update",
+        new_body=_valid_entity_body("ruben", body="second curator fact"),
+    )
+    second_result = asyncio.run(writer.apply([second], repo=fake_repo))
+
+    assert second_result.applied == [target.resolve()]
+    assert second_result.skipped_due_to_recent_edit == []
+    assert "second curator fact" in target.read_text(encoding="utf-8")
+
+
+def test_external_edit_after_self_write_remains_lock_protected(
+    writer: AtomicWriter, vault_root: Path, fake_repo: FakePageRepository
+) -> None:
+    """Changing a confirmed self-written file invalidates its exemption."""
+    target = write_page(vault_root, "entity", "ruben", body="old content")
+    old = time.time() - 300.0
+    os.utime(target, (old, old))
+
+    first = PageUpdate(
+        target_path=target,
+        operation="update",
+        new_body=_valid_entity_body("ruben", body="curator fact"),
+    )
+    first_result = asyncio.run(writer.apply([first], repo=fake_repo))
+    assert first_result.applied == [target.resolve()]
+
+    external_body = _valid_entity_body("ruben", body="external editor fact")
+    target.write_text(external_body, encoding="utf-8")
+    second = PageUpdate(
+        target_path=target,
+        operation="update",
+        new_body=_valid_entity_body("ruben", body="should stay blocked"),
+    )
+    second_result = asyncio.run(writer.apply([second], repo=fake_repo))
+
+    assert second_result.applied == []
+    assert second_result.skipped_due_to_recent_edit == [target.resolve()]
+    assert target.read_text(encoding="utf-8") == external_body
+
+
 # ---------------------------------------------------------------------------
 # Step 2 — single backup per apply()
 # ---------------------------------------------------------------------------
@@ -244,6 +300,155 @@ def test_validation_rollback_deletes_brand_new_invalid_page(
     assert result.failed_validation == [target.resolve()]
     assert result.applied == []
     assert not target.exists()
+
+
+def test_all_or_nothing_validation_failure_restores_every_page(
+    writer: AtomicWriter, vault_root: Path, fake_repo: FakePageRepository
+) -> None:
+    """A later invalid page rolls back an earlier valid transaction write."""
+    good = write_page(vault_root, "entity", "good", body="initial good")
+    bad = write_page(vault_root, "entity", "bad", body="initial bad")
+    for path in (good, bad):
+        os.utime(path, (time.time() - 600, time.time() - 600))
+    original_good = good.read_text(encoding="utf-8")
+    original_bad = bad.read_text(encoding="utf-8")
+
+    result = asyncio.run(
+        writer.apply(
+            [
+                PageUpdate(
+                    target_path=good,
+                    operation="update",
+                    new_body=_valid_entity_body("good", body="new good"),
+                ),
+                PageUpdate(
+                    target_path=bad,
+                    operation="update",
+                    new_body=_broken_entity_body("bad"),
+                ),
+            ],
+            repo=fake_repo,
+            all_or_nothing=True,
+        )
+    )
+
+    assert result.applied == []
+    assert result.failed_validation == [bad.resolve()]
+    assert good.read_text(encoding="utf-8") == original_good
+    assert bad.read_text(encoding="utf-8") == original_bad
+
+
+def test_all_or_nothing_recent_edit_aborts_before_any_write(
+    writer: AtomicWriter, vault_root: Path, fake_repo: FakePageRepository
+) -> None:
+    """One human-edit lock prevents every sibling update from starting."""
+    safe = write_page(vault_root, "entity", "safe", body="initial safe")
+    recent = write_page(vault_root, "entity", "recent", body="human edit")
+    os.utime(safe, (time.time() - 600, time.time() - 600))
+    os.utime(recent, (time.time() - 5, time.time() - 5))
+    original_safe = safe.read_text(encoding="utf-8")
+
+    result = asyncio.run(
+        writer.apply(
+            [
+                PageUpdate(
+                    target_path=safe,
+                    operation="update",
+                    new_body=_valid_entity_body("safe", body="must not land"),
+                ),
+                PageUpdate(
+                    target_path=recent,
+                    operation="update",
+                    new_body=_valid_entity_body("recent", body="must stay locked"),
+                ),
+            ],
+            repo=fake_repo,
+            all_or_nothing=True,
+        )
+    )
+
+    assert result.applied == []
+    assert result.skipped_due_to_recent_edit == [recent.resolve()]
+    assert result.backup_path == Path()
+    assert safe.read_text(encoding="utf-8") == original_safe
+
+
+def test_all_or_nothing_secret_block_aborts_clean_sibling(
+    writer: AtomicWriter, vault_root: Path, fake_repo: FakePageRepository
+) -> None:
+    """A secret-bearing page prevents a clean sibling create from landing."""
+    clean = vault_root / "entities" / "clean-sibling.md"
+    blocked = vault_root / "entities" / "blocked-sibling.md"
+
+    result = asyncio.run(
+        writer.apply(
+            [
+                PageUpdate(
+                    target_path=clean,
+                    operation="create",
+                    new_body=_valid_entity_body("clean-sibling"),
+                ),
+                PageUpdate(
+                    target_path=blocked,
+                    operation="create",
+                    new_body=_valid_entity_body(
+                        "blocked-sibling",
+                        body="token sk-proj-AbCdEf0123456789AbCdEf0123456789",
+                    ),
+                ),
+            ],
+            repo=fake_repo,
+            all_or_nothing=True,
+        )
+    )
+
+    assert result.applied == []
+    assert result.blocked_pii == [blocked.resolve()]
+    assert not clean.exists()
+    assert not blocked.exists()
+
+
+def test_all_or_nothing_write_failure_rolls_back_earlier_page(
+    writer: AtomicWriter, vault_root: Path, fake_repo: FakePageRepository
+) -> None:
+    """An I/O failure on page two restores page one's pre-call bytes."""
+    first = write_page(vault_root, "entity", "first", body="initial first")
+    second = write_page(vault_root, "entity", "second", body="initial second")
+    for path in (first, second):
+        os.utime(path, (time.time() - 600, time.time() - 600))
+    original_first = first.read_text(encoding="utf-8")
+    original_second = second.read_text(encoding="utf-8")
+    real_write = writer._write_text_atomic
+
+    def fail_second(target: Path, content: str) -> None:
+        if target == second.resolve():
+            raise OSError("simulated transaction write failure")
+        real_write(target, content)
+
+    with mock.patch.object(writer, "_write_text_atomic", side_effect=fail_second):
+        result = asyncio.run(
+            writer.apply(
+                [
+                    PageUpdate(
+                        target_path=first,
+                        operation="update",
+                        new_body=_valid_entity_body("first", body="new first"),
+                    ),
+                    PageUpdate(
+                        target_path=second,
+                        operation="update",
+                        new_body=_valid_entity_body("second", body="new second"),
+                    ),
+                ],
+                repo=fake_repo,
+                all_or_nothing=True,
+            )
+        )
+
+    assert result.applied == []
+    assert result.backup_path.is_file()
+    assert first.read_text(encoding="utf-8") == original_first
+    assert second.read_text(encoding="utf-8") == original_second
 
 
 # ---------------------------------------------------------------------------

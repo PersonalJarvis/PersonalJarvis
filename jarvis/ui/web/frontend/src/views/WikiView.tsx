@@ -25,8 +25,10 @@ import {
   fetchWikiHealth,
   fetchWikiTree,
   rebuildWikiIndex,
+  type WikiCaptureFunnel,
   type WikiHealthSnapshot,
 } from "@/lib/wikiApi";
+import { useWikiLive } from "@/hooks/useWikiLive";
 
 import { TreeSidebar } from "@/components/wiki/TreeSidebar";
 import { PageRenderer } from "@/components/wiki/PageRenderer";
@@ -53,6 +55,7 @@ interface WikiToast {
 
 export function WikiView(): JSX.Element {
   const t = useT();
+  useWikiLive();
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [centreTab, setCentreTab] = useState<CentreTab>("graph");
   const [toast, setToast] = useState<WikiToast | null>(null);
@@ -202,6 +205,10 @@ export function WikiView(): JSX.Element {
         isLoading={healthQuery.isLoading}
         isReindexing={isReindexing}
         onReindex={handleReindex}
+      />
+      <WikiCaptureFunnelStrip
+        error={healthQuery.data?.capture_error}
+        funnel={healthQuery.data?.capture_funnel}
       />
 
       {dialogOpen && setupHint && (
@@ -511,6 +518,77 @@ function WikiHealthStrip({
         </span>
       )}
     </div>
+  );
+}
+
+function WikiCaptureFunnelStrip({
+  error,
+  funnel,
+}: {
+  error: string | null | undefined;
+  funnel: WikiCaptureFunnel | undefined;
+}): JSX.Element | null {
+  const t = useT();
+  if (!funnel) return null;
+
+  const windowHours = Math.max(1, Math.round(funnel.window_hours));
+  const metrics = [
+    ["reviewed", t("wiki_health.capture_reviewed"), funnel.total],
+    ["candidate-reviews", t("wiki_health.capture_candidate_reviews"), funnel.candidates],
+    ["candidate-facts", t("wiki_health.capture_candidate_facts"), funnel.facts],
+    ["writes", t("wiki_health.capture_writes"), funnel.writes],
+    ["noop", t("wiki_health.capture_noop"), funnel.stage2_noop],
+    ["rejected", t("wiki_health.capture_rejected"), funnel.stage2_rejected],
+    ["skipped", t("wiki_health.capture_skipped"), funnel.stage2_skipped],
+    ["pending", t("wiki_health.capture_pending"), funnel.stage2_pending],
+    ["filtered", t("wiki_health.capture_filtered"), funnel.filtered],
+    ["empty", t("wiki_health.capture_empty"), funnel.empty],
+    ["failed", t("wiki_health.capture_failed"), funnel.failed],
+    ["in-progress", t("wiki_health.capture_in_progress"), funnel.started],
+    ["session-sweeps", t("wiki_health.capture_session_sweeps"), funnel.sessions_swept],
+  ] as const;
+  const windowLabel = t("wiki_health.capture_window").replace(
+    "{0}",
+    String(windowHours),
+  );
+
+  return (
+    <section
+      aria-label={t("wiki_health.capture_aria").replace("{0}", String(windowHours))}
+      className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b border-border bg-card/20 px-4 py-1.5 text-[11px]"
+      data-testid="wiki-capture-funnel"
+    >
+      <span className="font-medium text-foreground">{windowLabel}</span>
+      {error && (
+        <span className="font-medium text-destructive" data-testid="wiki-capture-error">
+          {t("wiki_health.capture_store_unavailable")}
+        </span>
+      )}
+      <dl className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
+        {metrics.map(([key, label, value]) => (
+          <div
+            className={cn(
+              "flex items-baseline gap-1",
+              key === "failed" && value > 0 && "text-destructive",
+            )}
+            data-testid={`wiki-capture-${key}`}
+            key={key}
+          >
+            <dt>{label}</dt>
+            <dd
+              className={cn(
+                "font-medium",
+                key === "failed" && value > 0
+                  ? "text-destructive"
+                  : "text-foreground",
+              )}
+            >
+              {value}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </section>
   );
 }
 

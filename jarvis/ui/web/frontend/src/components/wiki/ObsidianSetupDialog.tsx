@@ -18,13 +18,12 @@
  *      until relaunch), a one-click restart wired to the same
  *      ``POST /api/settings/restart-app`` relauncher the Settings panel uses.
  *
- * The component never talks to the global event store and never wires
- * itself into the chat/voice path. It is a self-contained dialog whose
- * only side effects are (a) HTTP via ``fetchImpl`` and (b) a single
- * ``window.location.href`` assignment in step 3.
+ * The component stays outside the chat/voice path. Its side effects are HTTP
+ * via ``fetchImpl``, the Obsidian URL handoff, and navigation to the matching
+ * in-app guide when troubleshooting is requested.
  *
- * Sub-Agent 6 will wire `onComplete` into the first-run flag; we expose
- * the slot but do not act on it here.
+ * The optional `onComplete` callback lets the setup owner record first-run
+ * completion without coupling that state to this dialog.
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Check, ExternalLink, Loader2, X } from "lucide-react";
@@ -32,6 +31,7 @@ import { Check, ExternalLink, Loader2, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
+import { useEventStore } from "@/store/events";
 import type { ObsidianStatus } from "@/types/setup";
 import {
   buildObsidianUrl,
@@ -64,7 +64,7 @@ type StepState = "done" | "active" | "future";
 
 const REGISTER_URL = "/api/setup/obsidian/register";
 const OBSIDIAN_DOWNLOAD_URL = "https://obsidian.md/download";
-const TROUBLESHOOT_URL = "/docs/obsidian-setup.md";
+const TROUBLESHOOT_SLUG = "connect-obsidian";
 
 interface RegisterResponse {
   status: "added" | "already_registered" | "config_missing" | "rolled_back";
@@ -409,8 +409,12 @@ export function ObsidianSetupDialog({
   }, [onComplete, onClose]);
 
   const handleTroubleshoot = useCallback(() => {
-    window.open(TROUBLESHOOT_URL, "_blank", "noopener,noreferrer");
-  }, []);
+    const url = new URL(window.location.href);
+    url.searchParams.set("doc", TROUBLESHOOT_SLUG);
+    window.history.replaceState(null, "", url);
+    useEventStore.getState().setActiveSection("docs");
+    onClose();
+  }, [onClose]);
 
   if (!open) return null;
 
@@ -638,9 +642,11 @@ export function ObsidianSetupDialog({
               >
                 <p>{registerError}</p>
                 <a
-                  href={TROUBLESHOOT_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
+                  href={`?doc=${TROUBLESHOOT_SLUG}`}
+                  onClick={(event) => {
+                    event.preventDefault();
+                    handleTroubleshoot();
+                  }}
                   className="inline-flex items-center gap-1 text-xs underline hover:no-underline"
                   data-testid="obsidian-setup-help-link"
                 >

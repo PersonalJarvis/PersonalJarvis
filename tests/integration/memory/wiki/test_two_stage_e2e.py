@@ -15,8 +15,8 @@ Four conversation turns drive the scenario:
 3. Contradiction (Berlin, not Hamburg) → a corrected concept page is
    added and the old one is superseded (``valid_until`` +
    ``superseded-by`` wikilink) — nothing deleted.
-4. A turn carrying an API key → the write is refused (AP-2), the journal
-   row is rejected, no page appears.
+4. A turn carrying an API key → Stage 1 refuses it before journal storage
+   (AP-2), and no page appears.
 
 Final sweep: zero dangling wikilinks anywhere, ``memory.md`` exists and
 reflects the runs, quality counters advanced.
@@ -26,6 +26,7 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import re
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -87,6 +88,15 @@ class TwoRoleFakeBrain:
             self.judge_prompts.append(req.messages[0].content)
             queue = self.judge_responses
         text = queue.pop(0) if queue else "[]"
+        if queue is self.extractor_responses:
+            focus = re.search(
+                r"FOCUS USER TURN \[([^\]]+)\]", req.messages[0].content,
+            )
+            if focus:
+                payload = json.loads(text)
+                for fact in payload:
+                    fact.setdefault("evidence_turn_id", focus.group(1))
+                text = json.dumps(payload)
         yield BrainDelta(content=text)
         yield BrainDelta(finish_reason="stop")
 
@@ -140,7 +150,7 @@ PROFILE_WITH_LENA = (
     "# Ruben\n\n## Summary\n\nThe project owner.\n\n## Identity\n\n"
     "## Preferences\n\n## Work style\n\n## Values\n\n"
     "## Relationships\n\n- [[entities/lena|Lena]] — friend, veterinarian\n\n"
-    "## Active projects\n\n## Decisions\n\n## Sources\n\n- conversation\n"
+    "## Active projects\n\n## Decisions\n\n## Sources\n\n- seed\n- conversation\n"
 )
 
 
@@ -308,14 +318,14 @@ async def test_friend_page_appears_links_grows_and_contradictions_supersede(stac
     ]))
     await _turn(bus, journal, "Lena got a new job at the animal clinic in Altona.")
     cid_job = journal.pending()[0].id
+    lena_with_job = lena_page.read_text(encoding="utf-8").replace(
+        "- Lena lives in Hamburg.\n",
+        "- Lena lives in Hamburg.\n- Lena works at the animal clinic in Altona.\n",
+    )
     brain.judge_responses.append(json.dumps([
         {"candidate_id": cid_job, "decision": "update",
          "target": "entities/lena.md",
-         "new_body": _entity("lena",
-                             ["Lena works as a veterinarian.",
-                              "Lena lives in Hamburg.",
-                              "Lena works at the animal clinic in Altona."],
-                             ["[[entities/ruben|Ruben]] — friend"]),
+         "new_body": lena_with_job,
          "reason": "merge job fact"},
     ]))
     await scheduler.trigger(TriggerSource.JOURNAL)
@@ -361,26 +371,31 @@ async def test_friend_page_appears_links_grows_and_contradictions_supersede(stac
         {"fact": "The user's OpenAI key is sk-proj-AbCdEf0123456789AbCdEf0123456789.",
          "kind": "other", "subjects": ["ruben"]},
     ]))
-    await _turn(
-        bus, journal,
-        "Save this: my OpenAI key is sk-proj-AbCdEf0123456789AbCdEf0123456789",
-    )
-    cid_secret = journal.pending()[0].id
-    brain.judge_responses.append(json.dumps([
-        {"candidate_id": cid_secret, "decision": "add",
-         "target": "concepts/api-key-note.md",
-         "new_body": _concept(
-             "api-key-note",
-             "Key sk-proj-AbCdEf0123456789AbCdEf0123456789 for OpenAI.",
-         ),
-         "reason": "user asked to save it"},
-    ]))
-    await scheduler.trigger(TriggerSource.JOURNAL)
+    audit_before = journal.capture_summary()
+    await bus.publish(TranscriptFinal(
+        transcript=Transcript(
+            text=(
+                "Save this: my OpenAI key is "
+                "sk-proj-AbCdEf0123456789AbCdEf0123456789"
+            ),
+            language="en",
+            confidence=0.95,
+        ),
+    ))
+    await bus.publish(ResponseGenerated(text="Noted.", language="en"))
+    for _ in range(100):
+        audit_after = journal.capture_summary()
+        if audit_after["total"] > audit_before["total"]:
+            break
+        await asyncio.sleep(0.02)
+    else:
+        raise AssertionError("secret-bearing turn was not audited")
 
     assert not (vault_root / "concepts" / "api-key-note.md").exists(), (
         "secret-shaped body must never reach disk"
     )
-    assert journal.backlog_count() == 0  # rejected, not stuck pending
+    assert journal.backlog_count() == 0
+    assert audit_after["failed"] == audit_before["failed"] + 1
 
     # ---- Final sweep: zero junk -----------------------------------------
     # log.md is the append-only chronicle (it references root meta pages
@@ -404,9 +419,9 @@ async def test_friend_page_appears_links_grows_and_contradictions_supersede(stac
     def _delta(name: str) -> int:
         return counters.get(name, 0) - counters_before.get(name, 0)
 
-    assert _delta("wiki_candidates_extracted") == 6
+    assert _delta("wiki_candidates_extracted") == 5
+    assert _delta("wiki_candidates_blocked_secret") == 1
     assert _delta("wiki_consolidator_add") == 3       # lena, hamburg, berlin
     assert _delta("wiki_consolidator_update") == 2    # profile, lena job
     assert _delta("wiki_consolidator_invalidate") == 1
-    assert _delta("wiki_consolidator_runs") == 4
-    assert _delta("wiki_writes_blocked_pii") == 1
+    assert _delta("wiki_consolidator_runs") == 3

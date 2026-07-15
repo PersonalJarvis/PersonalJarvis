@@ -5,8 +5,7 @@
 // `react-force-graph-2d`. No filter chips, no custom force tweaks; this is the
 // landing view inside the Wiki tab, so it stays minimal and fast.
 //
-// Visual contract: docs/plans/b3/00-OVERVIEW.md §3 + the HTML mockup at
-// C:\Users\Administrator\Desktop\b3-wiki-view-mockup.html. Node colours live in
+// Visual contract: docs/plans/b3/00-OVERVIEW.md §3. Node colours live in
 // `lib/wikiGraph.ts:NODE_COLOUR` — never hardcoded here.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
@@ -32,6 +31,50 @@ async function fetchGraph(): Promise<WikiGraphPayload> {
   const res = await fetch("/api/wiki/graph");
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
+}
+
+function endpointId(endpoint: unknown): string {
+  if (typeof endpoint === "string" || typeof endpoint === "number") {
+    return String(endpoint);
+  }
+  if (endpoint && typeof endpoint === "object" && "id" in endpoint) {
+    const id = (endpoint as { id?: unknown }).id;
+    return typeof id === "string" || typeof id === "number" ? String(id) : "";
+  }
+  return "";
+}
+
+function escapeTooltipText(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function nodeDetails(node: RenderNode, t: (key: string) => string): string {
+  const backlinks = node.backlinkCount ?? 0;
+  const suffix = t(
+    backlinks === 1 ? "wiki_graph.backlink_one" : "wiki_graph.backlink_many",
+  );
+  return t("wiki_graph.node_details")
+    .replace("{0}", node.title)
+    .replace("{1}", node.kind)
+    .replace("{2}", String(backlinks))
+    .replace("{3}", suffix);
+}
+
+function edgeDetails(
+  edge: RenderEdge,
+  titles: ReadonlyMap<string, string>,
+): string {
+  const sourceId = endpointId(edge.source);
+  const targetId = endpointId(edge.target);
+  const source = titles.get(sourceId) ?? sourceId;
+  const target = titles.get(targetId) ?? targetId;
+  const relationship = edge.context.trim();
+  return `${source} → ${target}${relationship ? ` · ${relationship}` : ""}`;
 }
 
 export interface WikiGraphProps {
@@ -75,6 +118,11 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
     });
     return out;
   }, [data]);
+
+  const nodeTitles = useMemo(
+    () => new Map(graphData.nodes.map((node) => [node.id, node.title])),
+    [graphData.nodes],
+  );
 
   const graphRef = useRef<ForceGraphMethods<RenderNode, RenderEdge> | undefined>(undefined);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -294,7 +342,13 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
   };
 
   return (
-    <div ref={wrapRef} data-testid="wiki-graph-wrap" className="relative h-full w-full overflow-hidden">
+    <div
+      ref={wrapRef}
+      data-testid="wiki-graph-wrap"
+      className="relative h-full w-full overflow-hidden"
+      role="group"
+      aria-label={t("wiki_graph.relationship_graph")}
+    >
       <button
         type="button"
         onClick={handleResetView}
@@ -323,10 +377,28 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
               <button
                 type="button"
                 onClick={() => onNodeClick(node.id)}
-                aria-label={`${node.title} (${node.kind})`}
+                aria-label={nodeDetails(node, t)}
               >
                 {node.title}
               </button>
+            </li>
+          );
+        })}
+      </ul>
+      <ul data-testid="wiki-graph-edge-list" className="sr-only">
+        {graphData.links.map((edge, index) => {
+          const source = endpointId(edge.source);
+          const target = endpointId(edge.target);
+          return (
+            <li
+              key={`${source}:${target}:${index}`}
+              data-testid="wiki-graph-edge"
+              data-edge-source={source}
+              data-edge-target={target}
+              data-edge-broken={edge.broken ? "true" : "false"}
+            >
+              {edgeDetails(edge, nodeTitles)}
+              {edge.broken ? ` · ${t("wiki_graph.unresolved")}` : ""}
             </li>
           );
         })}
@@ -348,6 +420,7 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
         height={winSize.h}
         backgroundColor="rgba(0,0,0,0)"
         nodeId="id"
+        nodeLabel={(node) => escapeTooltipText(nodeDetails(node as RenderNode, t))}
         // Pan + zoom + drag — all interactions enabled so the user
         // can move freely. NO bounding box — the previous bounding
         // box implementation created an "invisible wall" the user
@@ -429,9 +502,19 @@ export function WikiGraph({ onNodeClick, highlightSlug }: WikiGraphProps): JSX.E
             ctx.restore();
           }
         }}
+        linkLabel={(link) =>
+          escapeTooltipText(edgeDetails(link as RenderEdge, nodeTitles))
+        }
         linkColor={(link) => ((link as RenderEdge).broken ? BROKEN_EDGE_COLOUR : "rgba(106, 169, 255, 0.45)")}
         linkWidth={(link) => ((link as RenderEdge).broken ? 1.0 : 1.0)}
         linkLineDash={(link) => ((link as RenderEdge).broken ? [4, 4] : null)}
+        linkDirectionalArrowLength={4}
+        linkDirectionalArrowRelPos={0.82}
+        linkDirectionalArrowColor={(link) =>
+          (link as RenderEdge).broken
+            ? BROKEN_EDGE_COLOUR
+            : "rgba(106, 169, 255, 0.75)"
+        }
         // Force-sim tuning for dense graphs (~10+ edges per node).
         // Calibrated for a vault with ~14 backlinks per node:
         //  - charge -500: strong repulsion so dense clusters spread out

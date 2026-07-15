@@ -134,6 +134,27 @@ class _FakeCurator:
         return self.result
 
 
+class _FakeBackfillResult:
+    review_keys: tuple[str, ...] = ()
+    attempted_review_keys: tuple[str, ...] = ()
+    sessions_failed = 0
+    sessions_in_progress = 0
+
+    def as_dict(self) -> dict[str, int | bool]:
+        return {
+            "dry_run": True,
+            "days": 2,
+            "sessions_scanned": 3,
+            "sessions_eligible": 2,
+            "sessions_already_reviewed": 1,
+            "sessions_in_progress": 0,
+            "sessions_reviewed": 0,
+            "sessions_failed": 0,
+            "turns_considered": 7,
+            "candidates_journaled": 0,
+        }
+
+
 # ----------------------------------------------------------------------
 # /tree
 # ----------------------------------------------------------------------
@@ -483,6 +504,307 @@ def test_ingest_openapi_declares_monitor_risk() -> None:
     assert operation["x-jarvis-risk-tier"] == "monitor"
 
 
+def test_backfill_preview_uses_live_capture_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    runtime = SimpleNamespace(
+        extractor=object(),
+        journal=SimpleNamespace(backlog_count=lambda: 0),
+        scheduler=None,
+    )
+    monkeypatch.setattr(wiki_routes, "get_running_capture_runtime", lambda: runtime)
+
+    async def _fake_backfill(**kwargs):  # noqa: ANN003, ANN202
+        assert kwargs["dry_run"] is True
+        assert kwargs["days"] == 2
+        return _FakeBackfillResult()
+
+    monkeypatch.setattr(
+        "jarvis.memory.wiki.backfill.backfill_realtime_sessions",
+        _fake_backfill,
+    )
+    app = _make_app(tmp_path / "vault")
+    app.state.session_store = object()
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/wiki/backfill",
+            json={"days": 2, "max_sessions": 20, "dry_run": True},
+        )
+    assert response.status_code == 200
+    assert response.json()["sessions_eligible"] == 2
+    assert response.json()["consolidation_runs"] == 0
+
+
+def test_backfill_execute_reports_only_writes_from_this_request(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from jarvis.memory.wiki.journal import CandidateFact, CandidateJournal
+
+    journal = CandidateJournal(tmp_path / "data" / "jarvis.db")
+    historical_key = "session:v2:historical"
+    attempted_key = "session:v2:attempted"
+    try:
+        assert journal.claim_capture(
+            historical_key, "old", "session-sweep", "a" * 64, "historical"
+        )
+        assert journal.commit_capture_candidates(
+            [CandidateFact(fact="An older fact.", evidence_turn_id="old-turn")],
+            review_key=historical_key,
+            source_label="old",
+            turn_hash=historical_key,
+        ) == 1
+        historical_id = journal.pending()[0].id
+        journal.mark(
+            [historical_id],
+            status="consolidated",
+            decision="add",
+            target_path="entities/old.md",
+        )
+        assert journal.claim_capture(
+            attempted_key, "new", "session-sweep", "b" * 64, "attempted"
+        )
+        assert journal.commit_capture_candidates(
+            [CandidateFact(fact="A current fact.", evidence_turn_id="new-turn")],
+            review_key=attempted_key,
+            source_label="new",
+            turn_hash=attempted_key,
+        ) == 1
+        assert journal.append(
+            [CandidateFact(fact="An unrelated pending fact.")],
+            source_label="unrelated",
+            turn_hash="unrelated",
+        ) == 1
+
+        class _Scheduler:
+            async def trigger(  # noqa: ANN202
+                self, _source, *, review_keys  # noqa: ANN001
+            ):
+                assert tuple(review_keys) == (historical_key, attempted_key)
+                pending_id = journal.pending(review_keys=review_keys)[0].id
+                journal.mark(
+                    [pending_id],
+                    status="consolidated",
+                    decision="update",
+                    target_path="entities/current.md",
+                )
+                return SimpleNamespace(
+                    triggered=True,
+                    skip_reason="",
+                    curator_output_label="journal-batch:1",
+                )
+
+        runtime = SimpleNamespace(
+            extractor=object(), journal=journal, scheduler=_Scheduler()
+        )
+        monkeypatch.setattr(
+            wiki_routes, "get_running_capture_runtime", lambda: runtime
+        )
+        result = SimpleNamespace(
+            review_keys=(historical_key, attempted_key),
+            attempted_review_keys=(attempted_key,),
+            sessions_failed=0,
+            sessions_in_progress=0,
+            as_dict=lambda: {
+                "dry_run": False,
+                "days": 2,
+                "sessions_scanned": 2,
+                "sessions_eligible": 1,
+                "sessions_already_reviewed": 1,
+                "sessions_in_progress": 0,
+                "sessions_reviewed": 1,
+                "sessions_failed": 0,
+                "turns_considered": 2,
+                "candidates_journaled": 1,
+            },
+        )
+
+        async def _fake_backfill(**_kwargs):  # noqa: ANN003, ANN202
+            return result
+
+        monkeypatch.setattr(
+            "jarvis.memory.wiki.backfill.backfill_realtime_sessions",
+            _fake_backfill,
+        )
+        app = _make_app(tmp_path / "vault")
+        app.state.session_store = object()
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/wiki/backfill",
+                json={"days": 2, "max_sessions": 20, "dry_run": False},
+            )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["accepted_writes"] == 1
+        assert body["stage2"]["add"] == 1
+        assert body["stage2"]["update"] == 1
+        assert body["journal_backlog"] == 1
+        assert [row.fact for row in journal.pending()] == [
+            "An unrelated pending fact."
+        ]
+    finally:
+        journal.close()
+
+
+@pytest.mark.parametrize(
+    ("terminal_status", "label", "expected_status", "expected_code"),
+    [
+        ("rejected", "journal-batch:1", 422, "wiki-backfill-stage2-rejected"),
+        ("skipped", "judge-truncated", 503, "wiki-backfill-stage2-skipped"),
+    ],
+)
+def test_backfill_execute_reports_terminal_stage2_loss(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    terminal_status: str,
+    label: str,
+    expected_status: int,
+    expected_code: str,
+) -> None:
+    from jarvis.memory.wiki.journal import CandidateFact, CandidateJournal
+
+    journal = CandidateJournal(tmp_path / "data" / "jarvis.db")
+    key = "session:v2:loss"
+    assert journal.claim_capture(key, "loss", "session-sweep", "c" * 64, "loss")
+    assert journal.commit_capture_candidates(
+        [CandidateFact(fact="A candidate that cannot land.", evidence_turn_id="t1")],
+        review_key=key,
+        source_label="loss",
+        turn_hash=key,
+    ) == 1
+
+    class _Scheduler:
+        async def trigger(  # noqa: ANN202
+            self, _source, *, review_keys  # noqa: ANN001
+        ):
+            candidate_id = journal.pending(review_keys=review_keys)[0].id
+            journal.mark([candidate_id], status=terminal_status)
+            return SimpleNamespace(
+                triggered=True,
+                skip_reason="",
+                curator_output_label=label,
+            )
+
+    result = SimpleNamespace(
+        review_keys=(key,),
+        attempted_review_keys=(key,),
+        sessions_failed=0,
+        sessions_in_progress=0,
+        as_dict=lambda: {
+            "dry_run": False,
+            "days": 2,
+            "sessions_scanned": 1,
+            "sessions_eligible": 1,
+            "sessions_already_reviewed": 0,
+            "sessions_in_progress": 0,
+            "sessions_reviewed": 1,
+            "sessions_failed": 0,
+            "turns_considered": 1,
+            "candidates_journaled": 1,
+        },
+    )
+
+    async def _fake_backfill(**_kwargs):  # noqa: ANN003, ANN202
+        return result
+
+    runtime = SimpleNamespace(
+        extractor=object(), journal=journal, scheduler=_Scheduler()
+    )
+    monkeypatch.setattr(wiki_routes, "get_running_capture_runtime", lambda: runtime)
+    monkeypatch.setattr(
+        "jarvis.memory.wiki.backfill.backfill_realtime_sessions", _fake_backfill
+    )
+    app = _make_app(tmp_path / "vault")
+    app.state.session_store = object()
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/wiki/backfill",
+                json={"days": 2, "max_sessions": 20, "dry_run": False},
+            )
+        assert response.status_code == expected_status
+        assert response.json()["detail"]["code"] == expected_code
+    finally:
+        journal.close()
+
+
+@pytest.mark.parametrize(
+    ("failed", "in_progress", "expected_status", "expected_code"),
+    [
+        (1, 0, 503, "wiki-backfill-extraction-failed"),
+        (0, 1, 409, "wiki-backfill-already-running"),
+    ],
+)
+def test_backfill_execute_fails_closed_on_incomplete_extraction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    failed: int,
+    in_progress: int,
+    expected_status: int,
+    expected_code: str,
+) -> None:
+    from jarvis.memory.wiki.journal import CandidateJournal
+
+    journal = CandidateJournal(tmp_path / "data" / "jarvis.db")
+    runtime = SimpleNamespace(
+        extractor=object(), journal=journal, scheduler=object()
+    )
+    monkeypatch.setattr(wiki_routes, "get_running_capture_runtime", lambda: runtime)
+    result = SimpleNamespace(
+        review_keys=(),
+        attempted_review_keys=(),
+        sessions_failed=failed,
+        sessions_in_progress=in_progress,
+        as_dict=lambda: {
+            "dry_run": False,
+            "days": 2,
+            "sessions_scanned": 1,
+            "sessions_eligible": int(not in_progress),
+            "sessions_already_reviewed": 0,
+            "sessions_in_progress": in_progress,
+            "sessions_reviewed": 0,
+            "sessions_failed": failed,
+            "turns_considered": 1,
+            "candidates_journaled": 0,
+        },
+    )
+
+    async def _fake_backfill(**_kwargs):  # noqa: ANN003, ANN202
+        return result
+
+    monkeypatch.setattr(
+        "jarvis.memory.wiki.backfill.backfill_realtime_sessions", _fake_backfill
+    )
+    app = _make_app(tmp_path / "vault")
+    app.state.session_store = object()
+    try:
+        with TestClient(app) as client:
+            response = client.post(
+                "/api/wiki/backfill",
+                json={"days": 2, "max_sessions": 20, "dry_run": False},
+            )
+        assert response.status_code == expected_status
+        assert response.json()["detail"]["code"] == expected_code
+    finally:
+        journal.close()
+
+
+def test_backfill_requires_both_live_stores(tmp_path: Path) -> None:
+    app = _make_app(tmp_path / "vault")
+    app.state.session_store = None
+    with TestClient(app) as client:
+        response = client.post("/api/wiki/backfill", json={"dry_run": True})
+    assert response.status_code == 503
+
+
+def test_backfill_openapi_declares_dangerous_ask_risk() -> None:
+    operation = _make_app(None).openapi()["paths"]["/api/wiki/backfill"]["post"]
+    assert operation["x-jarvis-dangerous"] is True
+    assert operation["x-jarvis-risk-tier"] == "ask"
+
+
 # ----------------------------------------------------------------------
 # /reindex
 # ----------------------------------------------------------------------
@@ -603,6 +925,26 @@ def test_health_returns_200_with_fresh_snapshot(
     assert body["health"]["index_available"] is False
     assert body["health"]["index_state"] == "stale"
     assert body["health"]["index_state_reason"] == "vault_unavailable"
+    assert body["health"]["capture_funnel"] == {
+        "window_hours": 24,
+        "total": 0,
+        "started": 0,
+        "filtered": 0,
+        "empty": 0,
+        "candidates": 0,
+        "failed": 0,
+        "facts": 0,
+        "sessions_swept": 0,
+        "stage2_pending": 0,
+        "stage2_add": 0,
+        "stage2_update": 0,
+        "stage2_noop": 0,
+        "stage2_invalidate": 0,
+        "stage2_rejected": 0,
+        "stage2_skipped": 0,
+        "writes": 0,
+    }
+    assert body["health"]["capture_error"] is None
 
 
 def test_health_restores_last_write_and_backlog_from_journal(tmp_path: Path) -> None:
@@ -635,6 +977,20 @@ def test_health_restores_last_write_and_backlog_from_journal(tmp_path: Path) -> 
         source_label="test-source",
         turn_hash="hash-2",
     ) == 1
+    assert journal.claim_capture(
+        "live:v2:s1:t1",
+        "realtime:1",
+        "realtime",
+        "a" * 64,
+        "s1",
+        "t1",
+    )
+    assert journal.finish_capture(
+        "live:v2:s1:t1",
+        "candidates",
+        candidate_count=2,
+        provider="gemini",
+    )
 
     with TestClient(app) as client:
         body = client.get("/api/wiki/health").json()
@@ -646,3 +1002,6 @@ def test_health_restores_last_write_and_backlog_from_journal(tmp_path: Path) -> 
     assert health["missing_pages"] == 1
     assert health["orphaned_pages"] == 0
     assert health["index_state"] == "stale"
+    assert health["capture_funnel"]["total"] == 1
+    assert health["capture_funnel"]["candidates"] == 1
+    assert health["capture_funnel"]["facts"] == 2

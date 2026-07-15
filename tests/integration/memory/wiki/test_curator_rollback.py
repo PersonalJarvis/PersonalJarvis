@@ -129,3 +129,41 @@ async def test_invalid_page_rolls_back_while_valid_page_survives(real_stack):
     log_text = (vault_root / "log.md").read_text(encoding="utf-8")
     assert "[[entities/good]]" in log_text
     assert "[[entities/bad]]" not in log_text
+
+
+@pytest.mark.asyncio
+async def test_external_transaction_rolls_back_valid_page_with_invalid_sibling(
+    real_stack,
+):
+    """The curator exposes call-scoped atomicity for candidate write groups."""
+    curator, vault_root, _backup_dir = real_stack
+    good = vault_root / "entities" / "transaction-good.md"
+    bad = vault_root / "entities" / "transaction-bad.md"
+
+    result = await curator.apply_external_updates(
+        [
+            PageUpdate(
+                target_path=good,
+                operation="create",
+                new_body=_valid_entity_body("transaction-good"),
+                reason="valid candidate page",
+            ),
+            PageUpdate(
+                target_path=bad,
+                operation="create",
+                new_body=_malformed_body_no_frontmatter(),
+                reason="invalid candidate sibling",
+            ),
+        ],
+        source_label="realtime-candidate:transaction-test",
+        verb="merge",
+        all_or_nothing=True,
+    )
+
+    assert result.applied == []
+    assert result.failed_validation == [bad.resolve()]
+    assert not good.exists()
+    assert not bad.exists()
+    log_text = (vault_root / "log.md").read_text(encoding="utf-8")
+    assert "transaction-good" not in log_text
+    assert "transaction-bad" not in log_text

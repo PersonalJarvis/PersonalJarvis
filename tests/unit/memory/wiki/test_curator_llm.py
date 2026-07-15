@@ -15,6 +15,7 @@ from jarvis.core.config import (
     BrainProviderConfig,
     JarvisConfig,
     MemoryConfig,
+    SessionRollupConfig,
     WikiCuratorConfig,
     WikiMemoryConfig,
 )
@@ -23,6 +24,14 @@ from jarvis.memory.wiki import curator_llm as curator_module
 from jarvis.memory.wiki.curator_llm import WikiCuratorLLM, _parse_updates
 from jarvis.memory.wiki.protocols import PageUpdate
 
+_REAL_SCHEMA_PATH = (
+    Path(__file__).resolve().parents[4]
+    / "jarvis"
+    / "memory"
+    / "wiki"
+    / "templates"
+    / "schema.md"
+)
 
 # ---------------------------------------------------------------------
 # In-memory fakes — no unittest.mock for collaborators.
@@ -149,6 +158,7 @@ def _make_config(
     curator_provider: str = "",
     curator_model: str = "",
     timeout_s: float = 90.0,
+    user_entity_slug: str = "",
     providers: dict[str, BrainProviderConfig] | None = None,
 ) -> JarvisConfig:
     """Compose a ``JarvisConfig`` populated only with the fields Instance D reads."""
@@ -166,6 +176,9 @@ def _make_config(
                 provider=curator_provider,
                 model=curator_model,
                 timeout_s=timeout_s,
+            ),
+            session_rollup=SessionRollupConfig(
+                user_entity_slug=user_entity_slug,
             ),
         ),
     )
@@ -186,7 +199,11 @@ def _ok_response() -> str:
         {
             "target": "entities/ruben-luetke.md",
             "operation": "update",
-            "new_body": "---\ntype: entity\nslug: ruben-luetke\n---\n\n# Ruben Lütke\n",  # i18n-allow: proper name with umlaut used as wiki-page fixture data
+            # i18n-allow: proper name with umlaut used as wiki-page fixture data
+            "new_body": (
+                "---\ntype: entity\nslug: ruben-luetke\n---\n\n"
+                "# Ruben L\u00fctke\n"
+            ),
             "rename_from": None,
             "reason": "added phase B1 milestone",
         }
@@ -291,7 +308,10 @@ def test_parse_updates_rename_requires_rename_from() -> None:
 
 
 @pytest.mark.asyncio
-async def test_propose_updates_returns_parsed_updates(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+async def test_propose_updates_returns_parsed_updates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     """Happy path: brain responds with a valid array, curator returns it."""
 
     cfg = _make_config(primary="gemini")
@@ -311,6 +331,33 @@ async def test_propose_updates_returns_parsed_updates(tmp_path: Path, monkeypatc
     )
     assert len(updates) == 1
     assert updates[0].target_path == Path("entities/ruben-luetke.md")
+
+
+@pytest.mark.asyncio
+async def test_direct_ingest_real_schema_binds_portable_runtime_user_slug() -> None:
+    """The shipped direct-ingest prompt carries no maintainer identity."""
+    cfg = _make_config(user_entity_slug="Owner-Profile")
+    brain = FakeBrain("[]")
+    registry = FakeRegistry(brain)
+    llm = WikiCuratorLLM(
+        config=cfg,
+        schema_path=_REAL_SCHEMA_PATH,
+        registry=registry,
+    )
+
+    await llm.propose_updates(
+        "The speaker prefers dark mode.",
+        "direct-ingest-regression",
+        repo=FakeRepo(),
+        vault=FakeVault(),
+    )
+
+    assert len(brain.received_requests) == 1
+    system = brain.received_requests[0].system
+    assert system is not None
+    assert 'exact subject slug is ["owner-profile"]' in system
+    assert "profile page is entities/owner-profile.md" in system
+    assert "ruben" not in system.casefold()
 
 
 @pytest.mark.asyncio

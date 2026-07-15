@@ -29,9 +29,13 @@ class FakeCurator:
 class FakeConsolidator:
     def __init__(self) -> None:
         self.runs = 0
+        self.review_keys: list[tuple[str, ...] | None] = []
 
-    async def run_once(self) -> str:
+    async def run_once(self, *, review_keys=None) -> str:  # noqa: ANN001
         self.runs += 1
+        self.review_keys.append(
+            tuple(review_keys) if review_keys is not None else None
+        )
         return f"journal-batch:{self.runs}"
 
 
@@ -54,6 +58,83 @@ async def test_journal_trigger_runs_consolidator(tmp_path: Path) -> None:
     assert result.triggered is True
     assert consolidator.runs == 1
     assert result.curator_output_label == "journal-batch:1"
+
+
+@pytest.mark.asyncio
+async def test_global_trigger_immediately_rechecks_deferred_same_target_rows(
+    tmp_path: Path,
+) -> None:
+    class _DeferredOnce(FakeConsolidator):
+        async def run_once(self, *, review_keys=None) -> str:  # noqa: ANN001
+            self.runs += 1
+            self.review_keys.append(review_keys)
+            return "journal-deferred:1" if self.runs == 1 else "journal-batch:1"
+
+    consolidator = _DeferredOnce()
+    scheduler = _scheduler(tmp_path, consolidator=consolidator)
+
+    result = await scheduler.trigger(TriggerSource.JOURNAL)
+
+    assert result.triggered is True
+    assert consolidator.runs == 2
+    assert result.curator_output_label == "journal-batch:1"
+
+
+@pytest.mark.asyncio
+async def test_targeted_journal_trigger_forwards_exact_review_keys(
+    tmp_path: Path,
+) -> None:
+    consolidator = FakeConsolidator()
+    scheduler = _scheduler(tmp_path, consolidator=consolidator)
+
+    result = await scheduler.trigger(
+        TriggerSource.JOURNAL,
+        review_keys=("session:v2:one", "session:v2:two"),
+    )
+
+    assert result.triggered is True
+    assert consolidator.review_keys == [
+        ("session:v2:one", "session:v2:two")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_targeted_trigger_waits_for_active_pressure_drain(
+    tmp_path: Path,
+) -> None:
+    entered = asyncio.Event()
+    release = asyncio.Event()
+
+    class _SlowGlobalConsolidator(FakeConsolidator):
+        async def run_once(self, *, review_keys=None) -> str:  # noqa: ANN001
+            self.runs += 1
+            keys = tuple(review_keys) if review_keys is not None else None
+            self.review_keys.append(keys)
+            if keys is None:
+                entered.set()
+                await release.wait()
+            return f"journal-batch:{self.runs}"
+
+    consolidator = _SlowGlobalConsolidator()
+    scheduler = _scheduler(tmp_path, consolidator=consolidator)
+    pressure = fire_journal_trigger(scheduler)
+    await entered.wait()
+    scoped = asyncio.create_task(
+        scheduler.trigger(
+            TriggerSource.JOURNAL,
+            review_keys=("session:v3:backfill",),
+        )
+    )
+    await asyncio.sleep(0)
+
+    assert not scoped.done(), "scoped maintenance must wait for the lock owner"
+    release.set()
+    pressure_result, scoped_result = await asyncio.gather(pressure, scoped)
+
+    assert pressure_result.triggered is True
+    assert scoped_result.triggered is True
+    assert scoped_result.skip_reason == ""
+    assert consolidator.review_keys == [None, ("session:v3:backfill",)]
 
 
 @pytest.mark.asyncio

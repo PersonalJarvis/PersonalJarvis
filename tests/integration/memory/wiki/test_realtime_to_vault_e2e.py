@@ -45,9 +45,11 @@ class _ReviewBrain:
     def __init__(self, responses: list[str]) -> None:
         self._responses = list(responses)
         self.calls = 0
+        self.requests: list[BrainRequest] = []
 
     async def complete(self, request: BrainRequest) -> AsyncIterator[BrainDelta]:
         self.calls += 1
+        self.requests.append(request)
         yield BrainDelta(content=self._responses.pop(0))
         yield BrainDelta(finish_reason="stop")
 
@@ -85,12 +87,38 @@ def _entity_page(slug: str, fact: str) -> str:
     )
 
 
-def _turn(*, turn_id: str, provider: str, text: str) -> VoiceTurnCompleted:
+def _asset_page(slug: str, fact: str, owner_slug: str) -> str:
+    title = slug.replace("-", " ").title()
+    owner = owner_slug.replace("-", " ").title()
+    return (
+        "---\n"
+        "type: entity\n"
+        "entity_kind: vehicle\n"
+        f"slug: {slug}\n"
+        f"aliases: [{title}]\n"
+        "created: 2026-07-15\n"
+        "updated: 2026-07-15\n"
+        "---\n\n"
+        f"# {title}\n\n"
+        f"## Summary\n\n{fact}\n\n"
+        f"## Facts\n\n- {fact}\n\n"
+        f"## Relationships\n\n- Owned by [[entities/{owner_slug}|{owner}]]\n\n"
+        "## Sources\n\n- realtime conversation\n"
+    )
+
+
+def _turn(
+    *,
+    turn_id: str,
+    provider: str,
+    text: str,
+    assistant_text: str = "Thanks for telling me.",
+) -> VoiceTurnCompleted:
     return VoiceTurnCompleted(
         session_id="realtime-session",
         turn_id=turn_id,
         user_text=text,
-        jarvis_text="Thanks for telling me.",
+        jarvis_text=assistant_text,
         tier="realtime",
         provider=provider,
         model="realtime-test-model",
@@ -99,11 +127,26 @@ def _turn(*, turn_id: str, provider: str, text: str) -> VoiceTurnCompleted:
 
 async def _wait_for_page(path: Path, timeout_s: float = 3.0) -> None:
     deadline = time.monotonic() + timeout_s
-    while time.monotonic() < deadline:
-        if path.is_file():
+    while time.monotonic() < deadline:  # noqa: ASYNC110 -- bounded test polling
+        if path.is_file():  # noqa: ASYNC240 -- bounded integration-test probe
             return
         await asyncio.sleep(0.02)
     raise AssertionError(f"reviewed realtime fact never reached {path}")
+
+
+async def _wait_for_idle(
+    brain: _ReviewBrain,
+    journal: CandidateJournal,
+    *,
+    calls: int,
+    timeout_s: float = 3.0,
+) -> None:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:  # noqa: ASYNC110 -- bounded test polling
+        if brain.calls >= calls and journal.backlog_count() == 0:
+            return
+        await asyncio.sleep(0.02)
+    raise AssertionError("realtime wiki review did not become idle")
 
 
 @pytest.mark.asyncio
@@ -116,6 +159,10 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
     (vault_root / "schema.md").write_text("# Schema\n", encoding="utf-8")
     (vault_root / "index.md").write_text("# Index\n", encoding="utf-8")
     (vault_root / "log.md").write_text("# Wiki Log\n", encoding="utf-8")
+    (vault_root / "entities" / "ruben.md").write_text(
+        _entity_page("ruben", "Ruben is the user."),
+        encoding="utf-8",
+    )
 
     config = JarvisConfig(
         brain=BrainConfig(
@@ -130,9 +177,21 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
     facts = [
         "Lena moved to Hamburg last month.",
         "Noah works at the city library.",
+        "Ruben owns a yacht named Aurora.",
+        "Ruben needs to use the bathroom right now.",
+        "Ruben owns an aircraft.",
     ]
     responses = [
-        json.dumps([{"fact": facts[0], "kind": "person", "subjects": ["lena"]}]),
+        json.dumps(
+            [
+                {
+                    "fact": facts[0],
+                    "kind": "person",
+                    "subjects": ["lena"],
+                    "evidence_turn_id": "openai-turn",
+                }
+            ]
+        ),
         json.dumps(
             [
                 {
@@ -144,7 +203,16 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
                 }
             ]
         ),
-        json.dumps([{"fact": facts[1], "kind": "person", "subjects": ["noah"]}]),
+        json.dumps(
+            [
+                {
+                    "fact": facts[1],
+                    "kind": "person",
+                    "subjects": ["noah"],
+                    "evidence_turn_id": "gemini-turn",
+                }
+            ]
+        ),
         json.dumps(
             [
                 {
@@ -153,6 +221,68 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
                     "target": "entities/noah.md",
                     "new_body": _entity_page("noah", facts[1]),
                     "reason": "new durable person fact",
+                }
+            ]
+        ),
+        json.dumps(
+            [
+                {
+                    "fact": facts[2],
+                    "kind": "asset",
+                    "subjects": ["aurora"],
+                    "evidence_turn_id": "short-asset-turn",
+                }
+            ]
+        ),
+        json.dumps(
+            [
+                {
+                    "candidate_id": 3,
+                    "decision": "add",
+                    "target": "entities/aurora.md",
+                    "new_body": _asset_page("aurora", facts[2], "ruben"),
+                    "reason": "durable owned asset and relationship",
+                }
+            ]
+        ),
+        # Stage 1 may over-capture; Stage 2 remains the binding slop filter.
+        json.dumps(
+            [
+                {
+                    "fact": facts[3],
+                    "kind": "other",
+                    "subjects": ["ruben"],
+                    "evidence_turn_id": "transient-turn",
+                }
+            ]
+        ),
+        json.dumps(
+            [
+                {
+                    "candidate_id": 4,
+                    "decision": "noop",
+                    "reason": "transient bodily need has no durable value",
+                }
+            ]
+        ),
+        # Hostile Stage 1 copies an assistant guess while citing the valid user
+        # turn. Stage 2 sees the user-only evidence and rejects the claim.
+        json.dumps(
+            [
+                {
+                    "fact": facts[4],
+                    "kind": "asset",
+                    "subjects": ["ruben", "aircraft"],
+                    "evidence_turn_id": "assistant-guess-turn",
+                }
+            ]
+        ),
+        json.dumps(
+            [
+                {
+                    "candidate_id": 5,
+                    "decision": "noop",
+                    "reason": "the user asked a question and did not assert ownership",
                 }
             ]
         ),
@@ -221,6 +351,31 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
             )
         )
         await _wait_for_page(vault_root / "entities" / "noah.md")
+        await bus.publish(
+            _turn(
+                turn_id="short-asset-turn",
+                provider="openai-realtime",
+                text="I own a yacht named Aurora.",
+            )
+        )
+        await _wait_for_page(vault_root / "entities" / "aurora.md")
+        await bus.publish(
+            _turn(
+                turn_id="transient-turn",
+                provider="gemini-live",
+                text="I need to use the bathroom right now.",
+            )
+        )
+        await _wait_for_idle(brain, journal, calls=8)
+        await bus.publish(
+            _turn(
+                turn_id="assistant-guess-turn",
+                provider="openai-realtime",
+                text="What do you think I own?",
+                assistant_text="Perhaps you own an aircraft.",
+            )
+        )
+        await _wait_for_idle(brain, journal, calls=10)
     finally:
         bridge.stop()
         journal.close()
@@ -231,5 +386,24 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
     assert facts[1] in (vault_root / "entities" / "noah.md").read_text(
         encoding="utf-8"
     )
-    assert brain.calls == 4
+    asset_body = (vault_root / "entities" / "aurora.md").read_text(encoding="utf-8")
+    assert facts[2] in asset_body
+    assert "[[entities/ruben|Ruben]]" in asset_body
+    fresh_index = VaultIndex(repo=MarkdownPageRepository())
+    await fresh_index.scan(vault_root)
+    assert [page.slug for page in fresh_index.backlinks_to("ruben")] == ["aurora"]
+    assert all(
+        "bathroom" not in path.read_text(encoding="utf-8").lower()
+        for path in vault_root.rglob("*.md")
+    )
+    assert all(
+        "aircraft" not in path.read_text(encoding="utf-8").lower()
+        for path in vault_root.rglob("*.md")
+    )
+    final_judge_prompt = brain.requests[-1].messages[0].content
+    assert "user_evidence_excerpt=" in final_judge_prompt
+    assert "Evidence user turn [assistant-guess-turn]" in final_judge_prompt
+    assert "What do you think I own?" in final_judge_prompt
+    assert "Perhaps you own an aircraft." not in final_judge_prompt
+    assert brain.calls == 10
     assert journal.backlog_count() == 0

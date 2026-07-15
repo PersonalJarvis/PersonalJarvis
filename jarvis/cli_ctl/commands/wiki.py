@@ -75,3 +75,40 @@ def reindex(
         "/api/wiki/reindex",
         params={"dry_run": str(preview).lower()},
     )
+
+
+@app.command()
+def backfill(
+    days: int = typer.Option(2, "--days", min=1, max=30, help="Recent days to scan."),
+    max_sessions: int = typer.Option(
+        20,
+        "--max-sessions",
+        min=1,
+        max=100,
+        help="Maximum Realtime sessions to review.",
+    ),
+    preview: bool = typer.Option(
+        False,
+        "--preview",
+        help="Count eligible sessions without running any model or write.",
+    ),
+    yes: bool = options.yes_opt(),
+    dry_run: bool = options.dry_opt(),
+) -> None:
+    """Backfill recent Realtime sessions through evidence-safe Wiki capture."""
+    invoke.run(
+        "POST",
+        "/api/wiki/backfill",
+        body={
+            "days": days,
+            "max_sessions": max_sessions,
+            "dry_run": preview,
+        },
+        assume_yes=yes,
+        dry_run=dry_run,
+        dangerous=not preview,
+        # Stage 1 and Stage 2 both use bounded provider calls. Large explicit
+        # backfills therefore need a command-specific read timeout while the
+        # normal CLI keeps its fast 30-second failure contract.
+        request_timeout_s=max(300.0, float(max_sessions) * 210.0),
+    )

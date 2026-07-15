@@ -116,6 +116,26 @@ export interface WikiHealthLastChainFailure {
   detail: string;
 }
 
+export interface WikiCaptureFunnel {
+  window_hours: number;
+  total: number;
+  started: number;
+  filtered: number;
+  empty: number;
+  candidates: number;
+  failed: number;
+  facts: number;
+  sessions_swept: number;
+  stage2_pending: number;
+  stage2_add: number;
+  stage2_update: number;
+  stage2_noop: number;
+  stage2_invalidate: number;
+  stage2_rejected: number;
+  stage2_skipped: number;
+  writes: number;
+}
+
 export interface WikiHealthSnapshot {
   bootstrap_ok: boolean | null;
   bootstrap_error: string | null;
@@ -128,6 +148,8 @@ export interface WikiHealthSnapshot {
   indexed_pages: number;
   vault_pages: number;
   index_state: "ok" | "stale";
+  capture_funnel: WikiCaptureFunnel;
+  capture_error: string | null;
 }
 
 export interface WikiReindexResponse {

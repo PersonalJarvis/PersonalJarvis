@@ -113,6 +113,7 @@ class AtomicWriter(Protocol):
     async def apply(
         self, updates: list[PageUpdate], *,
         repo: PageRepository,
+        all_or_nothing: bool = False,
     ) -> WriteResult: ...
 
 

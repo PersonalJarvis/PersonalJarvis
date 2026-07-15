@@ -239,3 +239,142 @@ async def test_returns_none_when_every_provider_output_is_invalid() -> None:
 
     assert result is None
     assert reg.tried == ["openrouter", "gemini"]
+
+
+async def test_empty_second_opinion_can_find_a_missed_durable_fact() -> None:
+    reg = _ScriptedRegistry(
+        {"openrouter": "[]", "gemini": '[{"fact":"The user owns a yacht."}]'}
+    )
+
+    result = await complete_with_fallback(
+        registry=reg,
+        chain=[("openrouter", None), ("gemini", None)],
+        request=object(),
+        timeout_s=5.0,
+        label="test",
+        aggregate=_aggregate,
+        validate=lambda agg: "empty-needs-second-opinion" if agg.text == "[]" else None,
+        allow_last_rejection=lambda reason: reason == "empty-needs-second-opinion",
+    )
+
+    assert result is not None
+    assert result[1] == "gemini"
+    assert "yacht" in result[0].text
+    assert reg.tried == ["openrouter", "gemini"]
+
+
+async def test_final_valid_empty_is_accepted_after_bounded_second_opinion() -> None:
+    reg = _ScriptedRegistry({"openrouter": "[]", "gemini": "[]"})
+
+    result = await complete_with_fallback(
+        registry=reg,
+        chain=[("openrouter", None), ("gemini", None)],
+        request=object(),
+        timeout_s=5.0,
+        label="test",
+        aggregate=_aggregate,
+        validate=lambda agg: "empty-needs-second-opinion" if agg.text == "[]" else None,
+        allow_last_rejection=lambda reason: reason == "empty-needs-second-opinion",
+    )
+
+    assert result is not None
+    assert result[0].text == "[]"
+    assert result[1] == "gemini"
+    assert reg.tried == ["openrouter", "gemini"]
+
+
+async def test_safe_empty_survives_later_unusable_provider() -> None:
+    reg = _ScriptedRegistry({"openrouter": "[]", "gemini": "not-json"})
+
+    def _validate(agg: Any) -> str | None:
+        if agg.text == "[]":
+            return "empty-needs-second-opinion"
+        return "malformed JSON"
+
+    result = await complete_with_fallback(
+        registry=reg,
+        chain=[("openrouter", None), ("gemini", None)],
+        request=object(),
+        timeout_s=5.0,
+        label="test",
+        aggregate=_aggregate,
+        validate=_validate,
+        allow_last_rejection=lambda reason: reason == "empty-needs-second-opinion",
+    )
+
+    assert result is not None
+    assert result[0].text == "[]"
+    assert result[1] == "openrouter"
+    assert reg.tried == ["openrouter", "gemini"]
+
+
+async def test_two_valid_empty_opinions_stop_later_provider_attempts() -> None:
+    reg = _ScriptedRegistry(
+        {
+            "openrouter": "[]",
+            "antigravity": "not-json",
+            "gemini": "[]",
+            "nvidia": '[{"fact":"too late"}]',
+        }
+    )
+
+    def _validate(agg: Any) -> str | None:
+        if agg.text == "[]":
+            return "empty-needs-second-opinion"
+        if not agg.text.startswith("["):
+            return "malformed JSON"
+        return None
+
+    result = await complete_with_fallback(
+        registry=reg,
+        chain=[
+            ("openrouter", None),
+            ("antigravity", None),
+            ("gemini", None),
+            ("nvidia", None),
+        ],
+        request=object(),
+        timeout_s=5.0,
+        label="test",
+        aggregate=_aggregate,
+        validate=_validate,
+        allow_last_rejection=lambda reason: reason == "empty-needs-second-opinion",
+    )
+
+    assert result is not None
+    assert result[0].text == "[]"
+    assert result[1] == "gemini"
+    assert reg.tried == ["openrouter", "antigravity", "gemini"]
+
+
+@pytest.mark.asyncio
+async def test_provider_failures_never_expose_raw_exception_secrets(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    from jarvis.memory.wiki import health as health_module
+    from jarvis.memory.wiki.health import WikiHealth
+
+    secret = "sk-proj-" + "Z" * 32
+
+    class _SecretRegistry:
+        def instantiate(self, _name: str, **_kwargs: Any) -> Any:
+            raise RuntimeError(f"request failed ?key={secret} at C:/Users/private")
+
+    isolated_health = WikiHealth()
+    monkeypatch.setattr(health_module, "health", isolated_health)
+    result = await complete_with_fallback(
+        registry=_SecretRegistry(),
+        chain=[("openrouter", None)],
+        request=object(),
+        timeout_s=5.0,
+        label="test",
+        aggregate=_aggregate,
+    )
+
+    assert result is None
+    detail = isolated_health.snapshot()["last_chain_failure"]["detail"]
+    assert "RuntimeError" in detail
+    assert secret not in detail
+    assert "C:/Users/private" not in detail
+    assert secret not in caplog.text
