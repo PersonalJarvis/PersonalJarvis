@@ -7,7 +7,35 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
-## [Unreleased]
+## [1.0.8] — 2026-07-15
+
+### Added
+
+- **macOS permissions surface.** Runtime TCC permission probes (microphone,
+  accessibility, screen recording) with a settings panel, an onboarding step,
+  REST routes, and a `jarvis` CLI command — degrading to a quiet no-op on
+  other platforms. A dedicated macOS desktop CI workflow guards the path.
+- **In-app docs system.** Authoring pipeline, docs overview, sidebar and
+  full-text search UI, plus a public-docs CI check.
+- **Wiki grounding.** Extraction now records bounded, secret-redacted evidence
+  excerpts (migrations 0006–0008) with an audit trail and a backfill for
+  existing entries.
+- **Computer-Use foreground target guard** — actuation tools verify the
+  intended window is actually in the foreground before clicking or typing.
+- **Brain tool-call recovery** — malformed provider tool calls are repaired
+  instead of failing the turn.
+- **Persistent realtime voice sessions** stay open between turns, with a
+  voice-mode badge in the session UI.
+
+### Changed
+
+- **Unified web-surface security**: one cookie/bearer policy as route-level
+  defense in depth, an auth gate in the frontend, and authenticated mission
+  WebSockets and terminals.
+- **Transactional self-update**: the relauncher applies updates as a guarded
+  transaction with rollback on failure.
+- Scoped provider credentials, realtime scrub-gate refinements, onboarding /
+  socials / settings polish, and WS schema updates.
 
 ### Fixed
 
