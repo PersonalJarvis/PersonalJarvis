@@ -22,21 +22,38 @@ BRANCH="${JARVIS_INSTALL_REF:-main}"
 INSTALL_DIR="${JARVIS_INSTALL_DIR:-$HOME/.personal-jarvis}"
 PREREQUISITE_MODE="${JARVIS_INSTALL_PREREQS:-ask}"
 
-# 24-bit brand palette (docs/BRAND.md): Signal Yellow on matte black, with the
-# forged-gold wordmark gradient #FFE552 → #FFD60A → #B8960A. On a real terminal
-# we emit ANSI escapes so the banner sweeps gold and the ✓ ticks render; on a
-# dumb terminal / pipe we omit them entirely.
+# Brand palette (docs/BRAND.md): Signal Yellow on matte black, with the
+# forged-gold wordmark gradient #FFE552 → #FFD60A → #B8960A. True 24-bit
+# escapes ONLY when the terminal advertises them via COLORTERM: a terminal
+# without truecolor support (notably macOS Terminal.app) parses the ";2;" of
+# an unknown 24-bit sequence as SGR 2 (faint) — which once rendered the
+# HIGHLIGHTED welcome choice dimmer than the plain one. Everything else gets
+# the closest xterm-256 colors, which every modern terminal renders; a dumb
+# terminal / pipe gets no escapes at all.
 if [ -t 1 ]; then
-    GOLD_HI=$(printf '\033[38;2;255;229;82m')
-    GOLD=$(printf '\033[38;2;255;214;10m')
-    GOLD_DEEP=$(printf '\033[38;2;184;150;10m')
-    GREEN=$(printf '\033[38;2;122;200;140m')
-    DIM=$(printf '\033[38;2;143;143;143m')
-    RED=$(printf '\033[38;2;224;122;110m')
+    case "${COLORTERM:-}" in
+        truecolor|24bit)
+            GOLD_HI=$(printf '\033[38;2;255;229;82m')
+            GOLD=$(printf '\033[38;2;255;214;10m')
+            GOLD_DEEP=$(printf '\033[38;2;184;150;10m')
+            GREEN=$(printf '\033[38;2;122;200;140m')
+            DIM=$(printf '\033[38;2;143;143;143m')
+            RED=$(printf '\033[38;2;224;122;110m')
+            ;;
+        *)
+            GOLD_HI=$(printf '\033[38;5;227m')
+            GOLD=$(printf '\033[38;5;220m')
+            GOLD_DEEP=$(printf '\033[38;5;136m')
+            GREEN=$(printf '\033[38;5;114m')
+            DIM=$(printf '\033[38;5;245m')
+            RED=$(printf '\033[38;5;174m')
+            ;;
+    esac
     BOLD=$(printf '\033[1m')
+    REV=$(printf '\033[7m')
     RST=$(printf '\033[0m')
 else
-    GOLD_HI=""; GOLD=""; GOLD_DEEP=""; GREEN=""; DIM=""; RED=""; BOLD=""; RST=""
+    GOLD_HI=""; GOLD=""; GOLD_DEEP=""; GREEN=""; DIM=""; RED=""; BOLD=""; REV=""; RST=""
 fi
 
 # One six-phase journey spans BOTH installer stages: this shell owns phases
@@ -72,13 +89,21 @@ ask_welcome() {
     [ -n "${JARVIS_INSTALL_YES:-}" ] && return 0
     { [ -r /dev/tty ] && [ -w /dev/tty ]; } 2>/dev/null || return 0
     _sel=0  # 0 = yes, 1 = no
+    # The highlighted choice renders as a solid color pill (reverse video:
+    # gold Yes / red No) with a ▸ marker; the other choice is dimmed. Reverse
+    # video still inverts on terminals that drop color, and the ▸ marker
+    # survives even with no escapes at all — the selection is never ambiguous.
+    # Both renderings are the same visible width so the \r redraw leaves no
+    # residue.
+    printf '\n  %s←/→ to choose · Enter to confirm (or press y / n)%s\n\n' \
+        "$DIM" "$RST" > /dev/tty
     while :; do
         if [ "$_sel" -eq 0 ]; then
-            printf '\r  %sWould you like to install Personal Jarvis?%s   %s%s▸ Yes%s      No   ' \
-                "$BOLD" "$RST" "$BOLD" "$GOLD" "$RST" > /dev/tty
+            printf '\r  %sWould you like to install Personal Jarvis?%s   %s%s ▸ Yes %s   %s   No  %s' \
+                "$BOLD" "$RST" "$GOLD" "$REV" "$RST" "$DIM" "$RST" > /dev/tty
         else
-            printf '\r  %sWould you like to install Personal Jarvis?%s     Yes   %s%s▸ No%s   ' \
-                "$BOLD" "$RST" "$BOLD" "$RED" "$RST" > /dev/tty
+            printf '\r  %sWould you like to install Personal Jarvis?%s   %s   Yes %s   %s%s ▸ No  %s' \
+                "$BOLD" "$RST" "$DIM" "$RST" "$RED" "$REV" "$RST" > /dev/tty
         fi
         IFS= read -rsn1 _key < /dev/tty || return 0
         case "$_key" in
