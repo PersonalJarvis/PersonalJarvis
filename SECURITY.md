@@ -11,7 +11,7 @@ on. This document explains how to report a vulnerability and how the system defe
 - **Preferred:** use GitHub's private vulnerability reporting — the **"Report a vulnerability"**
   button on this repository's **Security** tab. It opens a private advisory only the
   maintainers can see.
-- **Alternative:** reach out on [Discord](https://discord.gg/UPu6pFWrJ) and ask a maintainer
+- **Alternative:** reach out on [Discord](https://discord.gg/x7USduHxbc) and ask a maintainer
   for a private channel before sharing any details.
 
 Please include a clear description, the affected component, and reproduction steps. We'll

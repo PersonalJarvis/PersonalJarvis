@@ -18,7 +18,7 @@ audience: developer
 
 Phases 0-5 deliver Voice→Brain→Tool/Harness, but every tool call is a single shot: if it fails, the user hears an error message and has to try again. The master-plan goal "Jarvis-Agent as Kontrollierer with critic loop" (see `Jarvis-Behavior/persona-delegation-mandate.md`) cannot be fulfilled with the current `SubJarvisManager` (Phase 5) — it spawns a sub-brain, but without verification, without retry, without worktree isolation, and writes directly into the user's working tree.
 
-The research document `SubAgentenSt/Unbenanntes Dokument (4).md` (to be moved to `docs/research/self-healing-architecture.md`) distills six converging pattern lines (Reflexion, Self-Refine, CRITIC, Constitutional AI, Aider Architect/Editor, OpenHands Action/Observation) into a single viable architecture for a single-user Windows orchestrator. Phase 6 implements this architecture.
+The private research note later moved to `docs/research/self-healing-architecture.md` distills six converging pattern lines (Reflexion, Self-Refine, CRITIC, Constitutional AI, Aider Architect/Editor, OpenHands Action/Observation) into a single viable architecture for a single-user Windows orchestrator. Phase 6 implements this architecture.
 
 The core question is not "which algorithm" — but "which invariant carries everything else". Six of the top-10 failure modes (hallucinated execution, file races, lost mission state, WS-disconnect data loss, cascading failures, triangle deadlock) are neutralized by a single design decision: **Action/Observation strict separation as a typed event stream with WAL**.
 
@@ -113,7 +113,7 @@ Heuristic: a mission is Phase-6-eligible if the router classifier returns `code`
 
 ## References
 
-- Research document: `SubAgentenSt/Unbenanntes Dokument (4).md` (== `docs/research/self-healing-architecture.md`).
+- Research document: private source note, later moved to `docs/research/self-healing-architecture.md`.
 - Phase-6 plan: `docs/phase6-plan.md` (TBD).
 - Prompt chain: `docs/phase6-prompt-chain.md` (skeleton created).
 - Persona mandate: `Jarvis-Behavior/persona-delegation-mandate.md` §"Phase 4 — Multi-Step-Missions".

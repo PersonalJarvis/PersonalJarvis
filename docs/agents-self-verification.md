@@ -158,7 +158,7 @@ This is where false positives land that reviewers repeatedly flag incorrectly as
 | ADR collection | `docs/adr/0001-0011*` | Architecture decisions with justification |
 | Jarvis-Agents bridge doc | `docs/jarvis-agents-bridge.md` | AD-1..AD-21, AP-OC1..OC13, test strategy |
 | Phase-7 doc | `docsplansphase-7-self-mod/PROJEKT_KONTEXT.md` | AD-1..AD-10, AP-SM1..SM14, EK-1..EK-4 |
-| Awareness Plan | `Jarvis  Long-Term Memory/Unbenanntes Dokument (3).md` | A0–A5 specification, §10 anti-pattern register |
+| Awareness Plan | Private source note | A0–A5 specification, §10 anti-pattern register |
 | Master plan | `<USER_HOME>\.claude\plans\also-er-muss-auch-lexical-pond.md` | Binding architecture document  <!-- i18n-allow --> |
 
 ---

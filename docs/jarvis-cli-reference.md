@@ -129,6 +129,12 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis outputs plan <slug>` — Show a session's plan + steps.
 - `jarvis outputs preferred-opener <opener> --yes --dry-run` — Get or set the default artifact opener.
 
+## permissions
+
+- `jarvis permissions open-settings <permission_id> --yes --dry-run` — Open the matching macOS privacy pane through LaunchServices.
+- `jarvis permissions request <permission_id> --yes --dry-run` — Show the native macOS prompt for one permission.
+- `jarvis permissions status` — Show permission and feature readiness without caching native state.
+
 ## refresh
 
 - `jarvis refresh` — Clear the cached API schema (next call re-fetches it).
@@ -187,6 +193,7 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 
 ## wiki
 
+- `jarvis wiki backfill --days --max-sessions --preview --yes --dry-run` — Backfill recent Realtime sessions through evidence-safe Wiki capture.
 - `jarvis wiki health` — Show wiki subsystem health: bootstrap, last write, chain failures, backlog (spec A5).
 - `jarvis wiki ingest <text> --source --dry-run` — Store a fact through the guarded Wiki curator.
 - `jarvis wiki page <slug>` — Read a wiki page by vault path / slug.

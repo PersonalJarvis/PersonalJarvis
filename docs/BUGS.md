@@ -3960,7 +3960,7 @@ untrusted answer generator, not a progress indicator.
 **Symptom.** Voice session 2026-07-14 09:28: "Kannst du mir mal bitte dabei
 helfen, zu schauen, was genau alles in meinem Wiki-System steht?" <!-- i18n-allow: quoted German user utterance under forensic analysis -->
 took 66 seconds and answered that the wiki holds USER.md, SOUL.md, and a
-people folder with profiles for Harald, Joy, and the user's mother. The real
+people folder with profiles for Sam, Joy, and the user's mother. The real
 vault holds none of those files (actual contents: the log/memory/schema
 core pages plus a few entity and project pages — none matching a single
 spoken name). Every named file in the spoken answer was invented.
@@ -3983,7 +3983,7 @@ Speech began 09:30:25 — 66 s after dispatch.
    the vault's editing contract) documents an EXAMPLE layout. Served
    verbatim by wiki-page-read, the model presented that example as the
    actual vault — while holding two "not found" results contradicting it.
-3. **Poisoned memory closed the loop.** entities/ruben.md already carried
+3. **Poisoned memory closed the loop.** entities/alex.md already carried
    consolidated facts asserting SOUL.md/USER.md/people-profiles exist —
    journaled from EARLIER hallucinated answers (same class as BUG-054: the
    09:05 session's five invented notebook names were consolidated as
@@ -4005,16 +4005,24 @@ Speech began 09:30:25 — 66 s after dispatch.
   final tool-less round with an answer-now directive (never silence, never
   more churn). Delegated realtime turns run with max_turns=6 +
   deadline 20 s (``_DELEGATE_MAX_TURNS`` / ``_DELEGATE_DEADLINE_S``).
-- Data purge: the three poisoned fact lines removed from entities/ruben.md
+- Data purge: the three poisoned fact lines removed from entities/alex.md
   (invented notebooks, SOUL.md/USER.md, people profiles).
 
-**Still open (class rule, tracked).** The Stage-1 fact extractor journals
-ASSISTANT claims about tool results as facts about the user's world — that
-is how every hallucinated answer becomes durable memory. BUG-054's boundary
-rule applies here too: answer content may enter memory only when backed by
-executed-tool evidence. Guards:
-``tests/unit/plugins/tool/test_wiki_list.py``,
-``tests/unit/brain/test_tool_use_loop_deadline.py``.
+**Memory-ingest follow-up (fixed 2026-07-15).** Realtime capture is now a
+grounded two-stage pipeline. Stage 1 may use assistant replies only to resolve
+references, but every candidate must cite an exact user turn and persists a
+bounded, secret-redacted USER-only evidence excerpt. Stage 2 sees that excerpt
+next to the candidate and must NOOP unsupported or assistant-only claims;
+captured legacy rows without user evidence are rejected and can be recreated
+from persisted transcripts through the policy-v3 backfill. Landed pages receive
+a deterministic session/turn source marker. Follow-up live backfill hardened
+three semantic gaps: one-off questions cannot manufacture a lasting user
+interest, new numeric claims must occur in evidence/current page, and an
+explicit remember/note/add-to-wiki request cannot silently become NOOP unless
+the fact is already present unchanged or lacks user evidence. Guards:
+``tests/unit/memory/wiki/test_extractor.py``,
+``tests/unit/memory/wiki/test_consolidator.py``,
+``tests/integration/memory/wiki/test_realtime_to_vault_e2e.py``.
 
 **Class rule.** A question about what EXISTS needs a deterministic
 enumeration tool; search + single-read cannot answer it groundedly, and a
@@ -4296,27 +4304,30 @@ nothing, Launchpad and /Applications showed nothing — relaunch required a
 terminal command. A pip-based install ships no ``.app`` bundle, and macOS
 only surfaces bundles.
 
-**Fix (2026-07-14).** New ``jarvis/setup/macos_app_bundle.py``:
-``ensure_macos_app_bundle`` writes a minimal per-user
-``~/Applications/Personal Jarvis.app`` (Info.plist + a two-line bash
-executable exec'ing the install venv's Python desktop launcher + a
-best-effort ``jarvis.icns`` via PIL/iconutil). Spotlight indexes
-``~/Applications``, so Cmd+Space finds it. Wired into the installer's
-finish step (``step_macos_app``), removed by the uninstaller, and the
-installer's "Start again" hint now names Spotlight on macOS (the old
-``python -m …`` hint did not even work without the venv on PATH). Bonus:
-a real bundle gives TCC an identity — the mic prompt names "Personal
-Jarvis" with an honest ``NSMicrophoneUsageDescription`` instead of being
-attributed to whichever terminal started the process.
+**Fix (2026-07-14, hardened 2026-07-15).**
+``jarvis/setup/macos_app_bundle.py`` installs
+``~/Applications/Personal Jarvis.app`` so Spotlight and Launchpad can find
+the managed source install. The first implementation used a bash executable
+that replaced itself with the venv Python. That was discoverable but did not
+provide a reliable ``NSBundle`` identity: TCC could still attach grants to
+Python or Terminal. The hardened installer now builds a native Mach-O py2app
+alias launcher, ad-hoc signs and verifies it, then launches a short identity
+probe through LaunchServices. Ordinary source updates preserve the valid
+bundle byte-for-byte so its local TCC identity does not churn. All manual,
+restart, updater, and login-autostart paths re-enter through that bundle.
+Developer-ID signing and notarization remain requirements for a separately
+distributed binary artifact; the source installer does not pretend its local
+ad-hoc signature is a notarized release.
 
-Guards: ``tests/unit/setup/test_macos_app_bundle.py`` (bundle layout,
-plist incl. mic usage string, venv-python launcher script, idempotency,
-off-darwin no-op, icon best-effort).
+Guards: ``tests/unit/setup/test_macos_app_bundle.py`` rejects shell launchers,
+checks native structure and privacy metadata, proves idempotent preservation,
+and covers the identity-probe contract. ``.github/workflows/macos-desktop.yml``
+builds and self-probes the real bundle on Intel and Apple-Silicon runners.
 
 **Class rule.** "Installed" is not "discoverable": every OS needs its
 native launch surface (Windows Start-Menu shortcut, macOS ``.app``
-bundle, Linux XDG ``.desktop``) or closing the app strands the user. The
-Linux ``.desktop`` entry is the remaining gap of this class.
+bundle, Linux XDG ``.desktop``) or closing the app strands the user. Managed
+desktop installs now register and remove all three surfaces.
 
 ## BUG-061: Base install bricked on Intel Macs — pinned onnxruntime has no x86_64 macOS wheels (HIGH, FIXED 2026-07-14)
 
@@ -4359,7 +4370,7 @@ platform markers and give the capability an honest degrade. Wheel
 matrices shrink over time — "it resolved when pinned" is not "it resolves
 everywhere forever".
 
-## BUG-062: Realtime speech audibly choppy + answers cut short on a speakers+mic laptop (HIGH, PARTIALLY FIXED 2026-07-14, deep-dive documented)
+## BUG-062: Realtime speech audibly choppy + answers cut short on a speakers+mic laptop (HIGH, FIXED 2026-07-15)
 
 **Symptom.** First real realtime-voice run (old Intel MacBook, CPU-only,
 built-in speakers + mic): the assistant's TRANSCRIPT is complete, but the
@@ -4390,10 +4401,19 @@ whisper-quiet barge-in no longer triggers. Guards:
 ``tests/unit/realtime/test_desktop.py`` (gate skips ONNX on quiet frames,
 loud speech still confirms; logic tests pin ``min_frame_rms=0.0``).
 
-**Follow-ups (need on-device validation, tracked).** (a) A realtime echo-
-suppression window analogous to the classic path, or an energy comparison
-against the currently playing output level; (b) offload the detector off
-the audio-critical loop; (c) a small time-based release floor in
+**Completion (2026-07-15).** A Windows voice-session forensic proved the
+remaining boundary: the output device reported 210 ms latency, playback
+drained, and the desktop adapter uploaded that physical speaker tail
+immediately. OpenAI transcribed it as a new user turn (``Mostly cloudy, with a
+high near``), cancelled the real answer, then remained in that phantom turn for
+29.4 s. Desktop realtime now keeps the existing local Barge-in/VAD detector
+armed for 500 ms after a normal playback drain. Echo remains local, while
+confirmed immediate user speech is forwarded with its buffered opening
+syllables. Cancellation by a real Barge-in does not arm the tail guard. Guard:
+``tests/unit/speech/test_realtime_mode.py::test_post_output_echo_tail_stays_local_and_preserves_immediate_user``.
+
+**Follow-ups (performance only).** (a) Offload the detector off the
+audio-critical loop; (b) add a small time-based release floor in
 ``ScrubHoldGate`` so audio is not strictly transcript-delta-clocked.
 
 **Class rule.** Half-duplex voice on open speakers MUST treat its own

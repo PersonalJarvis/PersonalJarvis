@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-26
 **ADR:** [`docs/adr/0009-self-healing-worker-critic.md`](adr/0009-self-healing-worker-critic.md)
-**Research doc:** `SubAgentenSt/Unbenanntes Dokument (4).md` §B (Claude-CLI), §C (Job Objects), §E (worktree layout)
+**Research doc:** Private source note §B (Claude CLI), §C (Job Objects), §E (worktree layout)
 **Branch:** `phase6-self-healing`
 **Status:** **BUILT** — `jarvis/missions/isolation/` (T1) + `jarvis/missions/workers/` (T2) are live, smoke tests green.
 

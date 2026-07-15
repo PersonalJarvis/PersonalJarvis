@@ -79,7 +79,7 @@ The prompt chain is **complete** — all 5 prompts implemented. The next steps a
 ## Cross-refs
 - ADR: `docs/adr/0009-self-healing-worker-critic.md`
 - Prompt chain: `docs/phase6-prompt-chain.md`
-- Research: `SubAgentenSt/Unbenanntes Dokument (4).md` (== `docs/research/self-healing-architecture.md` final)
+- Research: private source note (later moved to `docs/research/self-healing-architecture.md`)
 - Test report: `docs/phase6-test-report.md`
 - Plan files:
   - `<USER_HOME>\.claude\plans\glistening-wobbling-owl.md` (Phase 6 tooling bootstrap)

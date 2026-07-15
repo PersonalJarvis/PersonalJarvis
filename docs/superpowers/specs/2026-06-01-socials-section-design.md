@@ -14,7 +14,7 @@ the pywebview desktop runtime and the browser runtime.
 
 First seed (on first run, when no data file exists yet):
 
-1. **Discord** — `https://discord.gg/UPu6pFWrJ` (top)
+1. **Discord** — `https://discord.gg/x7USduHxbc` (top)
 2. **GitHub (Repo)** — `https://github.com/PersonalJarvis/PersonalJarvis`
 3. **GitHub (Profile)** — placeholder `https://github.com/PersonalJarvis`
    (the maintainer corrects this to their real handle via the UI)
@@ -50,7 +50,7 @@ avatar endpoints).
       "id": "b1c0…",            // uuid4 hex, server-assigned
       "platform": "discord",     // brand key (see brands.ts)
       "label": "Discord",        // display name, user-editable
-      "url": "https://discord.gg/UPu6pFWrJ",
+      "url": "https://discord.gg/x7USduHxbc",
       "enabled": true,
       "order": 0
     }

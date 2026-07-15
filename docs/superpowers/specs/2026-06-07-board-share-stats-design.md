@@ -7,8 +7,8 @@
 ## Goal
 
 Let a user share their Personal Jarvis usage as a polished image, in the spirit
-of Strava / Duolingo / GitHub-Wrapped recap cards (the user's reference was
-"BridgeMind"). From the Board, a **Share** button opens a dialog showing a
+of Strava / Duolingo / GitHub-Wrapped recap cards (the user supplied a private
+community-card reference). From the Board, a **Share** button opens a dialog showing a
 1080×1080 stats card with three actions: **Copy Image**, **Save as PNG**, and
 **Share on X**.
 
@@ -24,7 +24,7 @@ API is missing.
   open the prefilled composer, then the user pastes the image (Ctrl/Cmd+V). On
   mobile, the Web Share API (`navigator.share({files})`) can include the image
   directly. The "Share on X" action implements both paths with a fallback chain.
-- **BridgeMind's exact card is unverified** (no public screenshot). We build to
+- **The private reference card is unverified** (no public screenshot). We build to
   the well-documented recap-card pattern, not a pixel copy.
 - **Handle is not hardcoded.** The user's X handle lives in `localStorage`
   (`board.share.handle`), editable in the dialog, empty by default. This keeps

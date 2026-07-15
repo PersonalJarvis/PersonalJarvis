@@ -8,7 +8,7 @@
     "Vosk per-language model download failure at setup → clear English message +
     lazy retry at runtime + hotkey fallback; never fatal" — this spec implements
     that never-built download step).
-- **Bug report:** `Unbenanntes Dokument (7).md` (custom wake word never fires on
+- **Bug report:** Private source note (custom wake word never fires on
   a fresh v1.0.3 install; `auto` silently degrades to `stt_match`).
 
 ## 1. Problem statement

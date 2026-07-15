@@ -14,7 +14,7 @@
 <p align="center">
   <a href="https://github.com/PersonalJarvis/PersonalJarvis/pulls"><img alt="PRs welcome" src="https://img.shields.io/badge/PRs-welcome-FFD60A?style=flat-square&labelColor=0A0A0A" /></a>
   <a href="https://github.com/PersonalJarvis/PersonalJarvis/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22"><img alt="Good first issues" src="https://img.shields.io/badge/good%20first%20issues-open-FFD60A?style=flat-square&labelColor=0A0A0A" /></a>
-  <a href="https://discord.gg/UPu6pFWrJ"><img alt="Discord" src="https://img.shields.io/badge/Discord-join-FFD60A?style=flat-square&logo=discord&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
+  <a href="https://discord.gg/x7USduHxbc"><img alt="Discord" src="https://img.shields.io/badge/Discord-join-FFD60A?style=flat-square&logo=discord&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-FFD60A?style=flat-square&labelColor=0A0A0A" /></a>
 </p>
 
@@ -59,7 +59,7 @@ We value contributions in this order:
 > For anything non-trivial, **open an issue first** so we can agree on the approach — it
 > saves you from a merged-PR-shaped surprise.
 
-- Search existing issues, and say hi on [Discord](https://discord.gg/UPu6pFWrJ).
+- Search existing issues, and say hi on [Discord](https://discord.gg/x7USduHxbc).
 - Keep each PR focused — one logical change is far easier to review and merge.
 
 ## Development environment
@@ -156,12 +156,12 @@ By contributing, you agree your contribution is licensed under the [MIT License]
 ## Community
 
 <p align="center">
-  <a href="https://discord.gg/UPu6pFWrJ"><img alt="Discord" src="https://img.shields.io/badge/Discord-join_the_server-FFD60A?style=for-the-badge&logo=discord&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
+  <a href="https://discord.gg/x7USduHxbc"><img alt="Discord" src="https://img.shields.io/badge/Discord-join_the_server-FFD60A?style=for-the-badge&logo=discord&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
   <a href="https://x.com/PersonalJarvis"><img alt="X" src="https://img.shields.io/badge/X-follow-FFD60A?style=for-the-badge&logo=x&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
 </p>
 
 <p align="center">
-  <a href="https://discord.gg/UPu6pFWrJ">Discord</a> ·
+  <a href="https://discord.gg/x7USduHxbc">Discord</a> ·
   <a href="https://x.com/PersonalJarvis">X</a> ·
   <a href="https://github.com/PersonalJarvis/PersonalJarvis/issues">Issues</a>
 </p>
