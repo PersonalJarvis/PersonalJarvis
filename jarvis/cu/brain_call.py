@@ -49,6 +49,22 @@ class BrainReply:
 #: Builds (system_prompt, user_message) for the provider the call lands on.
 PromptBuilder = Callable[[str, Any], tuple[str, str]]
 
+#: Last (provider, model) pair whose vision calls were logged as serving.
+#: Change-triggered: one INFO line per identity switch instead of one per
+#: step, so the log names the brain that ACTUALLY steps without flooding.
+_serving_logged: tuple[str, str | None] | None = None
+
+
+def _log_serving(provider: str, model: str | None) -> None:
+    """Log the serving brain identity once per change (the ground truth)."""
+    global _serving_logged
+    if (provider, model) != _serving_logged:
+        logger.info(
+            "[cu] vision calls served by %s(%s)",
+            provider, model or "provider default",
+        )
+        _serving_logged = (provider, model)
+
 
 def _explicit_cu_pin(manager: Any, provider: str) -> str | None:
     """The user's RAW ``cu_model`` config pin for ``provider``, or ``None``.
@@ -134,18 +150,26 @@ def _speed_tune_chain(
                 except Exception:  # noqa: BLE001
                     alt = None
             if alt and alt != model and (blind or model):
+                # DEBUG, not INFO: this fires for EVERY unpinned chain
+                # CANDIDATE on every step — including providers that never
+                # serve a single call. Logged at INFO it reads as "this model
+                # is stepping" (live forensic 2026-07-15: the nvidia
+                # candidate line was mistaken for the serving brain and
+                # produced a false "text-only model drove Computer-Use"
+                # diagnosis). The change-triggered "served by" log below is
+                # the ground truth for what actually steps.
                 if blind:
-                    logger.info(
-                        "[cu] %s model %s cannot see the screen — using the "
-                        "vision-capable %s for this mission",
+                    logger.debug(
+                        "[cu] chain candidate %s: model %s cannot see the "
+                        "screen — candidate swapped to the vision-capable %s",
                         provider, model, alt,
                     )
                 else:
-                    logger.info(
-                        "[cu] %s: stepping with the fast vision model %s "
-                        "instead of %s (pin a Computer-Use model in Settings "
-                        "to override)",
-                        provider, alt, model,
+                    logger.debug(
+                        "[cu] chain candidate %s: %s swapped for the fast "
+                        "vision sibling %s (pin a Tool Model in Settings to "
+                        "override)",
+                        provider, model, alt,
                     )
                 tuned.append((provider, alt))
                 continue
@@ -285,6 +309,7 @@ async def call_vision_brain(
                     "[cu] fallback hit: %s(%s) after %d skipped provider(s)",
                     provider, model, idx,
                 )
+            _log_serving(provider, model)
             return reply
 
     # Stale-dead-flag resilience: retry every REGISTERED vision provider once.
@@ -304,6 +329,7 @@ async def call_vision_brain(
                     "chain had no vision provider (stale dead-flag?)",
                     provider, model,
                 )
+                _log_serving(provider, model)
                 return reply
 
     raise CUNoVisionProviderError(
