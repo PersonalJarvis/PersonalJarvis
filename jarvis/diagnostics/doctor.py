@@ -260,8 +260,8 @@ def check_computer_use_prereqs(config: Any) -> list[DoctorFinding]:
                 "supported by Wayland's design; use an X11 session for "
                 "Computer Use.",
             )]
-    except Exception:  # noqa: BLE001 — probe failure: fall through to tool checks
-        pass
+    except Exception as exc:  # noqa: BLE001 — probe failure: fall through to tool checks
+        log.debug("display/wayland probe failed; checking tools anyway: %s", exc)
 
     findings: list[DoctorFinding] = []
     missing_bins = [b for b in ("xdotool", "wmctrl") if shutil.which(b) is None]
