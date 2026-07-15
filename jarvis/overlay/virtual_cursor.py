@@ -12,9 +12,8 @@ unit-tested on a headless CI box and on a €5 VPS:
 * :class:`NullVirtualCursor` — a no-op that absorbs every call, so a missing
   display (headless VPS, cloud-first doctrine) can never break a real click.
 * :func:`get_virtual_cursor` / :func:`set_virtual_cursor` — the singleton
-  accessor, mirroring the existing ``get_cursor_streamer`` / ``get_overlay``
-  pattern so the low-level mouse tools can fire an indicator from anywhere
-  without threading the EventBus through ``ExecutionContext``.
+  accessor pattern, so the low-level mouse tools can fire an indicator from
+  anywhere without threading the EventBus through ``ExecutionContext``.
 
 The actual Tk window that renders the halo + pulse lives in
 ``ui/orb/virtual_cursor_window.py`` and registers itself here via

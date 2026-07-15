@@ -595,66 +595,6 @@ def test_orb_reset_false_positive_corpus(text: str) -> None:
     )
 
 
-# ----------------------------------------------------------------------
-# Mascot respawn voice commands (mirror of ADR-0016 L2 for the overlay
-# supervisor — BUG-012 class, cap-fired / hidden / hung subprocess).
-# ----------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        "Hey Jarvis, Maskottchen wieder auftauchen",
-        "Hey Jarvis, Maskottchen wieder auftauchen?",
-        "Hey Jarvis, Maskottchen zurück",
-        "Maskottchen zurück",
-        "Maskottchen weg",
-        "Maskottchen kommt zurück",
-        "Hey Jarvis, Maskottchen reset",
-        "Hey Jarvis, Maskottchen respawn",
-        "Hey Jarvis, Maskottchen spawnen",
-        "Hey Jarvis, spawne das Maskottchen",
-        "Hey Jarvis, respawn the mascot",
-        "Hey Jarvis, mascot back",
-        "Hey Jarvis, Mascot come back",
-        "Wo ist das Maskottchen?",
-        "Hey Jarvis, Spawner",
-        "Spawner",
-        "Hey Jarvis, der Spawner",
-    ],
-)
-def test_mascot_respawn_phrases_dispatch_respawn_mascot(text: str) -> None:
-    """Every phrasing in the user's vocabulary for "bring the mascot back"
-    must produce a DIRECT plan that calls ``respawn_mascot``."""
-    plan = match_local_action(text)
-    assert plan is not None, f"no match for: {text!r}"
-    assert plan == LocalActionPlan(
-        mode=LocalActionMode.DIRECT,
-        tool_calls=(LocalToolCall(name="respawn_mascot", args={}),),
-    )
-
-
-@pytest.mark.parametrize(
-    "text",
-    [
-        # Conversational queries that mention mascot/spawn but are NOT a
-        # respawn command. Regression guard for the regex anchoring.
-        "Spawne mir mal ein Terminal",
-        "Hey Jarvis, das Maskottchen-Konzept ist toll",
-        "Wo ist mein Schlüssel?",
-        "Was macht der Spawner intern?",
-        "respawn the server",
-    ],
-)
-def test_mascot_respawn_false_positive_corpus(text: str) -> None:
-    plan = match_local_action(text)
-    if plan is None:
-        return
-    assert plan.tool_calls and plan.tool_calls[0].name != "respawn_mascot", (
-        f"false positive: {text!r} matched mascot-respawn"
-    )
-
-
 # ---------------------------------------------------------------------------
 # UNSUPPORTED gate — capability-coupling spec §Layer 2, insertion point (a)
 #

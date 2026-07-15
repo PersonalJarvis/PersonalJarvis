@@ -1582,10 +1582,6 @@ python-telegram-bot==22.8 \
     --hash=sha256:42373918097f1b837cc4e717d588c19ea79651497ec712bb5b0c76e5e63c50e1 \
     --hash=sha256:f9d3847fcb23ee603477e442800b33bb4adf851a73e0619d2050be879decf1ef
     # via -r requirements.in
-python-ulid==3.1.0 \
-    --hash=sha256:e2cdc979c8c877029b4b7a38a6fba3bc4578e4f109a308419ff4d3ccf0a46619 \
-    --hash=sha256:ff0410a598bc5f6b01b602851a3296ede6f91389f913a5d5f8c496003836f636
-    # via -r requirements.in
 pywin32==312 ; sys_platform == 'win32' \
     --hash=sha256:02ebca0f0242b75292e218065004310d6a477407c09fa449bfe4f6022bc0c0fc \
     --hash=sha256:17948aeadbdb091f0ced6ef0841620794e68327b94ee415571c1203594b7215c \

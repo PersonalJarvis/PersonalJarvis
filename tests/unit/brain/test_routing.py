@@ -54,11 +54,6 @@ class _FakeHotkeyTool:
     schema: dict[str, Any] = {}
 
 
-class _FakeRespawnMascotTool:
-    name = "respawn_mascot"
-    schema: dict[str, Any] = {}
-
-
 class _FakeNavigateTool:
     name = "navigate"
     schema: dict[str, Any] = {}
@@ -2779,8 +2774,8 @@ def test_explicit_trigger_outranks_disambiguation_guards(utterance: str) -> None
 
 def _seeded_strict_manager_with_local_actions() -> tuple[BrainManager, _RecordingExecutor]:
     """Strict-mode manager over the REAL seeded registry, with spawn_worker AND
-    the local-action tools (incl. respawn_mascot) wired — the exact production
-    gate path for the end-to-end ``generate()`` mandate tests."""
+    the local-action tools wired — the exact production gate path for the
+    end-to-end ``generate()`` mandate tests."""
     from jarvis.core.capabilities import get_registry
     from jarvis.core.capabilities_seed import seed_registry
 
@@ -2796,7 +2791,6 @@ def _seeded_strict_manager_with_local_actions() -> tuple[BrainManager, _Recordin
             "open_app": _FakeOpenAppTool(),
             "type_text": _FakeTypeTextTool(),
             "hotkey": _FakeHotkeyTool(),
-            "respawn_mascot": _FakeRespawnMascotTool(),
         },
         tool_executor=executor,  # type: ignore[arg-type]
     )
@@ -2850,7 +2844,7 @@ async def test_explicit_subagent_outranks_navigation_fast_path() -> None:
         config=config,
         bus=EventBus(),
         tools={"spawn_worker": _FakeTool(), "navigate": _FakeNavigateTool()},
-        local_action_tools={"respawn_mascot": _FakeRespawnMascotTool()},
+        local_action_tools={"open_app": _FakeOpenAppTool()},
         tool_executor=executor,  # type: ignore[arg-type]
     )
     manager._vision_provider = _VisionShouldNotRun()
@@ -2864,22 +2858,6 @@ async def test_explicit_subagent_outranks_navigation_fast_path() -> None:
     assert not any(
         getattr(c[0], "name", "") == "navigate" for c in executor.calls
     ), "navigation fast-path ran instead of standing down for the explicit trigger"
-
-
-@pytest.mark.asyncio
-async def test_mascot_respawn_still_wins_over_explicit_spawn_word() -> None:
-    """No-regression: 'Spawne das Maskottchen' is a deterministic local recovery
-    that legitimately reuses the word 'spawn' — it must respawn the mascot, NOT
-    dispatch a heavy worker."""
-    manager, executor = _seeded_strict_manager_with_local_actions()
-    await manager.generate("Spawne das Maskottchen")
-    assert not _spawn_calls(executor), (
-        "'Spawne das Maskottchen' wrongly dispatched a heavy worker instead of "
-        "respawning the mascot"
-    )
-    assert any(
-        getattr(c[0], "name", "") == "respawn_mascot" for c in executor.calls
-    ), "mascot respawn tool was not called"
 
 
 @pytest.mark.asyncio

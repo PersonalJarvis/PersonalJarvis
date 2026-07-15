@@ -168,8 +168,9 @@ video/**
 #                  jarvis/plugins/tool/search_web.py (no sys.path/loader points here)
 # DELIBERATELY KEPT (verified load-bearing, do NOT add): board-backend/
 # (jarvis/board/sync.py + federation_proxy_routes.py import board_backend.crypto),
-# OS-Level/ (jarvis/overlay/schema.py re-exports OS-Level/src/overlay), ui/
-# (the Orb overlay is imported at runtime), conductor/ (3 import sites).
+# ui/ (the Orb overlay is imported at runtime), conductor/ (3 import sites).
+# (OS-Level/ was removed from the repo in 2026-07 — the CU screen indicator
+# in jarvis/cu/indicator replaced its edge-glow.)
 skillbook/**
 keyproxy/**
 src/**

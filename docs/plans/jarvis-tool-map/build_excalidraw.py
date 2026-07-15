@@ -463,7 +463,6 @@ def region_catalog():
             ("type_text", "safe · local-action gate (type_text.py:81)", "live"),
             ("hotkey", "monitor · local-action gate (hotkey.py:141)", "live"),
             ("reset_orb_position", "safe · orb recovery (reset_orb_position.py:32)", "live"),
-            ("respawn_mascot", "safe · mascot recovery (respawn_mascot.py:25)", "live"),
         ]),
         ("COMPUTER-USE ONLY (loaded into CU context, NOT router)", [
             ("click", "monitor · CU loop only (click.py:109)", "partial"),

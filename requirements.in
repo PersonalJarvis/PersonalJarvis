@@ -32,11 +32,6 @@ pydantic>=2.9,<3.0
 pydantic-settings>=2.6
 pyyaml>=6.0
 
-# Desktop overlay/mascot IPC wire IDs (jarvis/overlay + OS-Level/src/overlay
-# schema.py `from ulid import ULID`). Small pure-Python, platform-universal
-# package. See pyproject.toml note.
-python-ulid>=2.2
-
 # Logging
 structlog>=24.4
 loguru>=0.7

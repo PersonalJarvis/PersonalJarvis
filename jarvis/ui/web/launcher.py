@@ -648,45 +648,6 @@ async def _run_headless(args) -> int:
     # first request WAIT, which the functional smoke proves).
     asyncio.create_task(_build_brain_bg(), name="brain-build")
 
-    # Phase 9.8: start the overlay subprocess when [overlay].enabled=true.
-    # No-op when disabled or JARVIS_DEPTH>0 (sub-agent).
-    # Bus is passed so mascot-originated user events (mute toggle on
-    # doubleClick) can be republished on the EventBus where the voice
-    # pipeline subscribes.
-    # Orb overlay is a desktop-only extra (separate `overlay` package). On a
-    # headless / cloud base install it isn't present — skip it cleanly so the
-    # server still boots (cloud-first). The no-op stubs keep the shutdown path
-    # (stop_overlay, below) valid. start_overlay itself no-ops when disabled.
-    try:
-        from jarvis.overlay.integration import start_overlay, stop_overlay
-    except ModuleNotFoundError as exc:
-        import logging as _overlay_logging
-
-        _overlay_log = _overlay_logging.getLogger(__name__)
-        if exc.name == "overlay":
-            # Genuinely headless: the optional overlay package itself isn't
-            # installed (cloud/VPS base install). Quiet — expected.
-            _overlay_log.debug(
-                "Overlay bootstrap skipped: optional overlay package not installed."
-            )
-        else:
-            # AP-23 W2-C: some OTHER import in the overlay chain is missing
-            # (e.g. `python-ulid`) — this is a real, fixable dependency gap,
-            # not "no overlay package". Log it honestly instead of silently
-            # collapsing into the same "headless" bucket.
-            _overlay_log.warning(
-                "Overlay bootstrap skipped: overlay dependency %r missing.",
-                exc.name,
-            )
-
-        async def start_overlay(*_a: object, **_k: object) -> None:  # type: ignore[misc]
-            return None
-
-        async def stop_overlay(*_a: object, **_k: object) -> None:  # type: ignore[misc]
-            return None
-
-    await start_overlay(bus=server.bus)
-
     # (BOOT_READY was already emitted the moment the bootstrap server began
     # serving — the full app built above warms up behind it.)
 
@@ -745,7 +706,6 @@ async def _run_headless(args) -> int:
     try:
         await stop_event.wait()
     finally:
-        await stop_overlay()  # Phase 9.8: Overlay sauber beenden BEVOR server.stop
         # Stop the fast-boot bootstrap server (it owns the listening socket).
         _bootstrap_server.should_exit = True
         try:

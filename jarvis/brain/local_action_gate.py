@@ -591,54 +591,6 @@ def _matches_orb_reset(text: str) -> bool:
     return any(pattern.match(text) for pattern in _ORB_RESET_PATTERNS)
 
 
-# Voice-driven mascot recovery patterns. Same shape and reasoning as the
-# orb-reset patterns above: anchored on ^...$, normalized input only, and
-# limited to a hand-picked phrase list so generic "spawne mir ein
-# Terminal" or "wo ist mein Schlüssel" does NOT fall through here.
-_MASCOT_RESPAWN_PATTERNS = (
-    # "Maskottchen wieder auftauchen", "Maskottchen zurück", "Maskottchen
-    # kommt zurück", "Maskottchen weg", "Mascot back", "Maskottchen
-    # spawnen / reset / respawn".
-    re.compile(
-        r"^(?:hey\s+)?(?:jarvis[,\s]+)?"
-        r"(?:das\s+|der\s+|den\s+|mein\s+)?(?:maskottchen|mascot)"
-        r"\s+(?:wieder\s+|kommt\s+|soll\s+wieder\s+)?"
-        r"(?:auftauchen|auftaucht|zurueck|zurueckkommen|her|holen|da|"
-        r"spawnen|spawn|spawne|spawner|reset|respawn|weg|verschwunden|"
-        r"come\s+back|back)"
-        r"\s*[?.!]*$",
-        re.I,
-    ),
-    # "Spawn das Maskottchen", "spawne das Maskottchen", "respawn the mascot"
-    re.compile(
-        r"^(?:hey\s+)?(?:jarvis[,\s]+)?"
-        r"(?:spawn(?:e|en)?|respawn|reset|bring)\s+"
-        r"(?:das\s+|den\s+|the\s+|mein\s+|my\s+)?(?:maskottchen|mascot)"
-        r"(?:\s+(?:zurueck|back))?"
-        r"\s*[?.!]*$",
-        re.I,
-    ),
-    # "wo ist (das) Maskottchen"
-    re.compile(
-        r"^(?:hey\s+)?(?:jarvis[,\s]+)?"
-        r"wo\s+ist\s+(?:das\s+|der\s+|mein\s+)?(?:maskottchen|mascot|spawner)"
-        r"\s*[?.!]*$",
-        re.I,
-    ),
-    # Standalone "(der) Spawner" — short form the user reaches for.
-    re.compile(
-        r"^(?:hey\s+)?(?:jarvis[,\s]+)?"
-        r"(?:(?:der|den|ein|the|my|mein)\s+)?spawner"
-        r"\s*[?.!]*$",
-        re.I,
-    ),
-)
-
-
-def _matches_mascot_respawn(text: str) -> bool:
-    return any(pattern.match(text) for pattern in _MASCOT_RESPAWN_PATTERNS)
-
-
 def _unsupported_response(text: str, lang: str) -> str:
     """Return a deterministic, no-LLM rejection message.
 
@@ -829,15 +781,6 @@ def match_local_action(
         return LocalActionPlan(
             mode=LocalActionMode.DIRECT,
             tool_calls=(LocalToolCall(name="reset_orb_position", args={}),),
-        )
-    # Mascot recovery — same fast-path tier as the orb reset; checked
-    # before the scripted / open-app / visual-target gates so the user
-    # gets the deterministic respawn even if the phrase contains words
-    # that would otherwise trip another branch.
-    if _matches_mascot_respawn(normalized):
-        return LocalActionPlan(
-            mode=LocalActionMode.DIRECT,
-            tool_calls=(LocalToolCall(name="respawn_mascot", args={}),),
         )
     scripted = _match_scripted_local_plan(normalized)
     if scripted is not None:

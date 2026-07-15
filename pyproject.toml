@@ -23,13 +23,6 @@ dependencies = [
     "pydantic>=2.9,<3.0",
     "pydantic-settings>=2.6",
     "pyyaml>=6.0",
-    # Desktop overlay/mascot IPC wire IDs (jarvis/overlay + OS-Level/src/overlay
-    # schema.py `from ulid import ULID`). Small pure-Python, platform-universal
-    # package — was previously declared ONLY in OS-Level's own egg-info, so a
-    # fresh clone without the maintainer's manual `pip install -e OS-Level`
-    # raised `ModuleNotFoundError: ulid` the first time any keyboard/mouse tool
-    # action ran (AP-23).
-    "python-ulid>=2.2",
     "structlog>=24.4",
     "loguru>=0.7",
     "keyring>=25.5",
