@@ -612,13 +612,22 @@ class WorkerToolBroker:
         if gateway is None:
             return None
 
+        from .capabilities import worker_app_command_allowed
+
+        requested_app_commands = tuple(dict.fromkeys(app_commands))
+        if any(
+            not worker_app_command_allowed(name)
+            for name in requested_app_commands
+        ):
+            return None
+
         scope = _BrokerScope(
             task_text=task_text,
             gateway=gateway,
             loop=loop,
             expires_at=time.monotonic() + max(1.0, float(ttl_s)),
             mcp_server_ids=tuple(dict.fromkeys(mcp_server_ids)),
-            app_commands=tuple(dict.fromkeys(app_commands)),
+            app_commands=requested_app_commands,
             native_tool_names=tuple(dict.fromkeys(native_tool_names)),
             mission_id=mission_id,
             worker_id=worker_id,

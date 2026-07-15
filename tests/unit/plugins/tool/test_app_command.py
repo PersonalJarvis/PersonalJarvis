@@ -157,10 +157,11 @@ def test_validator_covers_types_and_ranges() -> None:
     assert _validate_args(schema, {})  # missing required
 
 
-async def test_end_to_end_against_real_webserver_app() -> None:
+async def test_end_to_end_against_real_webserver_app(monkeypatch) -> None:
     """The full chain: flat tool -> ASGI -> the REAL /api/brain/switch route
     (shared app_control validation) -> readback from the route's response."""
     from jarvis.core import config as cfg_mod
+    from jarvis.core import control_key as control_key_mod
     from jarvis.core.bus import EventBus
     from jarvis.core.config import JarvisConfig
     from jarvis.ui.web.server import WebServer
@@ -177,6 +178,12 @@ async def test_end_to_end_against_real_webserver_app() -> None:
 
     cfg = JarvisConfig()
     cfg.ui.dev_mode = True
+    test_control_key = "jctl_test_app_command"
+    monkeypatch.setattr(
+        control_key_mod,
+        "get_control_key",
+        lambda: test_control_key,
+    )
     server = WebServer(cfg, bus=EventBus())
     server.app.state.brain = _FakeBrain()
     server.app.state.cfg = cfg
@@ -188,7 +195,7 @@ async def test_end_to_end_against_real_webserver_app() -> None:
     try:
         loader = AppCommandTool(
             transport=httpx.ASGITransport(app=server.app),
-            control_key_resolver=lambda: None,
+            control_key_resolver=lambda: test_control_key,
         )
         tools = {t.name: t for t in loader.expand()}
         result = await tools["brain-switch"].execute(

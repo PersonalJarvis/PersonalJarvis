@@ -4,7 +4,7 @@ slug: adr-0025-mission-scoped-worker-tool-broker
 diataxis: adr
 status: active
 owner: project-maintainers
-last_reviewed: 2026-07-13
+last_reviewed: 2026-07-15
 phase: 6
 audience: developer
 ---
@@ -34,7 +34,10 @@ not depend on a provider-specific MCP implementation.
 Personal Jarvis uses a process-local, mission-scoped worker tool broker. Each
 mission receives a short-lived authenticated grant containing only
 task-relevant MCP tools, connected native connector tools, and the restricted
-app commands explicitly allowed for workers. CLI workers reach the grant
+app commands carrying an explicit `worker_allowed` Command Registry marker.
+The initial action surface covers operational reads, provider health tests,
+mission/task inspection, and guarded wiki ingest through the same REST-backed
+tools used by voice and chat. CLI workers reach the grant
 through a stdio MCP companion connected to a loopback-only HTTP endpoint; API
 workers call the same binding directly.
 
@@ -55,7 +58,10 @@ existing worker-error mission path. A worker model therefore cannot ignore a
 tool error and claim successful completion.
 
 The grant fails closed. Recursive mission tools, skill execution, credential
-surfaces, secret-reading names, and config mutation are never exported. A
+surfaces, secret-reading names, dangerous commands, and config mutation are
+never exported. Both inventory construction and broker issuance validate the
+live Command Registry marker, so a forged inventory cannot promote a denied
+command. A
 missing supervisor reference, empty relevant tool set, expired token, or
 unsupported runtime produces no grant rather than a partially trusted one.
 Catalog descriptors are resolved from the live supervisor on each list and

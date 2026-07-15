@@ -21,8 +21,9 @@ from the model's intent. Dangerous registry commands carry risk tier ``ask``
 (ToolExecutor two-turn voice confirmation); the rest run at ``monitor``.
 
 Security: the registry contains no raw-secret writes (AP-2) and no spawn
-commands (mission dispatch stays with spawn-worker, AP-5/AP-14) — these
-tools must never enter a worker tool set.
+commands (mission dispatch stays with spawn-worker, AP-5/AP-14). Only entries
+with an explicit ``worker_allowed`` grant may enter a mission-scoped broker;
+configuration mutation and dangerous commands remain supervisor-only.
 """
 from __future__ import annotations
 
@@ -202,7 +203,10 @@ class RegistryCommandTool:
             headers["Authorization"] = f"Bearer {key}"
         try:
             async with httpx.AsyncClient(
-                transport=transport, base_url="http://jarvis.internal",
+                # The request stays in-process through ASGITransport. Use a
+                # canonical loopback authority so the global Host guard applies
+                # the same policy as every other trusted local control client.
+                transport=transport, base_url="http://127.0.0.1",
                 headers=headers, timeout=30.0,
             ) as client:
                 if cmd.method.upper() == "GET":

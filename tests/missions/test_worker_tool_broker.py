@@ -94,6 +94,7 @@ def _wire_manager(executor: _Executor) -> None:
                 "github/list_issues": _Tool("github/list_issues"),
                 "github/read_secret": _Tool("github/read_secret"),
                 "wiki-ingest": _Tool("wiki-ingest"),
+                "brain-switch": _Tool("brain-switch"),
                 "gmail": _Tool("gmail", risk_tier="ask"),
                 "spawn-worker": _Tool("spawn-worker"),
                 "unrelated": _Tool("unrelated"),
@@ -142,6 +143,23 @@ async def test_binding_is_filtered_and_executes_only_through_supervisor() -> Non
     denied = await binding.execute("unrelated", {})
     assert denied["status"] == "denied"
     assert len(executor.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_broker_rejects_forged_config_command_grant() -> None:
+    executor = _Executor()
+    _wire_manager(executor)
+
+    binding = _BROKER.issue(
+        task_text="Switch the active brain provider.",
+        mcp_server_ids=(),
+        app_commands=("brain-switch",),
+        native_tool_names=(),
+        ttl_s=30,
+    )
+
+    assert binding is None
+    assert executor.calls == []
 
 
 @pytest.mark.asyncio

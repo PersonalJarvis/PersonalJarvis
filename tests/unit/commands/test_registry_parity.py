@@ -97,6 +97,29 @@ def test_danger_flags_at_least_as_strict_as_cli_heuristic() -> None:
             )
 
 
+def test_worker_commands_are_explicitly_non_dangerous_and_non_configuring() -> None:
+    """Jarvis-Agents may reuse commands, but never mutate live configuration."""
+    config_paths = (
+        "/api/settings/",
+        "/api/brain/switch",
+        "/api/tts/switch",
+        "/api/stt/switch",
+        "/api/realtime/switch",
+        "/api/computer-use/switch",
+        "/api/jarvis-agent/switch",
+    )
+    for cmd in get_registry():
+        if not cmd.worker_allowed:
+            continue
+        assert not cmd.dangerous, f"{cmd.id}: dangerous worker command"
+        is_config_write = cmd.method != "GET" and any(
+            cmd.path.startswith(prefix) for prefix in config_paths
+        )
+        assert not is_config_write, (
+            f"{cmd.id}: configuration command entered the worker surface"
+        )
+
+
 def test_reply_languages_match_brain_source_of_truth() -> None:
     from jarvis.brain.manager import SUPPORTED_REPLY_LANGUAGES
 
@@ -128,6 +151,9 @@ def test_registry_served_over_rest() -> None:
         body = resp.json()
         assert body["count"] == len(get_registry())
         assert {c["id"] for c in body["commands"]} == {c.id for c in get_registry()}
+        by_id = {command["id"]: command for command in body["commands"]}
+        assert by_id["providers-list"]["worker_allowed"] is True
+        assert by_id["brain-switch"]["worker_allowed"] is False
 
         one = client.get("/api/commands/brain-switch")
         assert one.status_code == 200

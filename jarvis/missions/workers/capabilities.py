@@ -4,20 +4,15 @@ Mission workers all receive the same restricted inventory and consume it
 through a mission-scoped supervisor broker. No backend may silently discover
 extra app or MCP tools from a machine-global CLI config.
 
-Only the two app commands needed for the durable knowledge workflow are in the
-initial allowlist. Spawn, review, and skill-execution commands are deliberately
-absent (AP-5/AP-14).
+App commands enter the inventory only when their Command Registry entry carries
+an explicit ``worker_allowed`` grant. Spawn, review, skill execution, dangerous
+actions, and configuration mutation remain absent (AP-5/AP-14).
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any
-
-RESTRICTED_WORKER_APP_COMMANDS: tuple[str, ...] = (
-    "session-latest-turn",
-    "wiki-ingest",
-)
 
 _FORBIDDEN_RECURSIVE_NAMES = frozenset(
     {
@@ -62,6 +57,14 @@ class WorkerCapabilityInventory:
             raise ValueError(
                 "recursive tools are forbidden in worker capability inventories: "
                 + ", ".join(sorted(forbidden))
+            )
+        forbidden_commands = tuple(
+            name for name in commands if not worker_app_command_allowed(name)
+        )
+        if forbidden_commands:
+            raise ValueError(
+                "app commands are not allowed for mission workers: "
+                + ", ".join(sorted(forbidden_commands))
             )
         server_ids = tuple(
             dict.fromkeys(
@@ -173,21 +176,42 @@ class WorkerCapabilityInventory:
 
 
 def restricted_worker_app_commands() -> tuple[str, ...]:
-    """Return only allowlisted commands that exist in the live registry."""
+    """Return the explicit, non-dangerous Jarvis-Agent command surface."""
     try:
-        from jarvis.commands.registry import get_command
+        from jarvis.commands.registry import get_registry
 
         return tuple(
-            command_id
-            for command_id in RESTRICTED_WORKER_APP_COMMANDS
-            if get_command(command_id) is not None
+            command.id
+            for command in get_registry()
+            if command.worker_allowed and not command.dangerous
         )
     except Exception:  # noqa: BLE001 - registry drift must not break missions
         return ()
+
+
+def worker_app_command_allowed(command_id: str) -> bool:
+    """Fail closed unless a live registry command explicitly allows workers."""
+    try:
+        from jarvis.commands.registry import get_command
+
+        command = get_command(str(command_id or ""))
+        return bool(
+            command is not None
+            and command.worker_allowed
+            and not command.dangerous
+        )
+    except Exception:  # noqa: BLE001 - no registry means no app-command grant
+        return False
+
+
+# Backward-compatible discovery snapshot. Authorization never trusts this value;
+# inventory construction and broker issuance revalidate the live registry.
+RESTRICTED_WORKER_APP_COMMANDS: tuple[str, ...] = restricted_worker_app_commands()
 
 
 __all__ = [
     "RESTRICTED_WORKER_APP_COMMANDS",
     "WorkerCapabilityInventory",
     "restricted_worker_app_commands",
+    "worker_app_command_allowed",
 ]
