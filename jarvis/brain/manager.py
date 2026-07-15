@@ -120,6 +120,15 @@ _TURN_HISTORY_OVERRIDE: ContextVar[tuple[BrainMessage, ...] | None] = ContextVar
     default=None,
 )
 
+#: Bounds for the conversation-context block appended to a Computer-Use goal.
+#: The deterministic gate ships the RAW current utterance as the mission goal;
+#: a correction / follow-up turn ("that is the wrong server", "do it with
+#: Computer-Use") carries no task of its own, so the goal must inherit the
+#: recent turns that defined it. Kept small: the CU step prompt repeats the
+#: goal on every screenshot cycle.
+_CU_CONTEXT_MAX_MESSAGES = 8
+_CU_CONTEXT_MAX_MESSAGE_CHARS = 240
+
 #: Hard bound on the per-turn vision capture (Wave-3 latency fix). ``vision.
 #: current()`` can stall (mss BitBlt hang, paused-state miss, slow disk); without
 #: a cap it blocks the whole brain turn on the hot path. On timeout the turn
@@ -5343,6 +5352,41 @@ class BrainManager:
             facts=facts,
         )
 
+    def _cu_goal_with_context(self, goal: str) -> str:
+        """Append bounded recent conversation context to a Computer-Use goal.
+
+        The deterministic local-action gate ships the raw current utterance as
+        the mission goal. Without the turns that defined the task, a follow-up
+        or correction turn hands the loop a vacuous goal and the verifier
+        passes against it (live forensic 2026-07-15 07:59: after a failed
+        Discord-announcement mission, "Ihr macht es doch mit Computer-Use."  # i18n-allow: quoted German speech input from the forensic
+        became the whole goal — the loop opened Discord's Friends view and
+        announced success). Delegated turns carry their history in
+        ``_TURN_HISTORY_OVERRIDE``; classic turns fall back to the live
+        ``self._history``. No history → the goal stays bare.
+        """
+        history = _TURN_HISTORY_OVERRIDE.get()
+        if history is None:
+            history = tuple(getattr(self, "_history", None) or ())
+        lines: list[str] = []
+        for message in history[-_CU_CONTEXT_MAX_MESSAGES:]:
+            role = "User" if getattr(message, "role", "") == "user" else "Jarvis"
+            content = " ".join(str(getattr(message, "content", "") or "").split())
+            if not content:
+                continue
+            if len(content) > _CU_CONTEXT_MAX_MESSAGE_CHARS:
+                content = f"{content[:_CU_CONTEXT_MAX_MESSAGE_CHARS]} …"
+            lines.append(f"{role}: {content}")
+        if not lines:
+            return goal
+        context = "\n".join(lines)
+        return (
+            f"{goal}\n\n"
+            "CONVERSATION CONTEXT (recent turns, oldest first — the goal above "
+            "may refer back to these):\n"
+            f"{context}"
+        )
+
     async def _run_local_action_fast_path(
         self,
         user_text: str,
@@ -5516,7 +5560,9 @@ class BrainManager:
                 self._run_computer_use_background(
                     tool=tool,
                     harness_name=harness_name,
-                    prompt=plan.prompt or user_text,
+                    # A follow-up/correction turn carries no task of its own —
+                    # the goal inherits the recent turns that defined it.
+                    prompt=self._cu_goal_with_context(plan.prompt or user_text),
                     timeout_s=timeout_s,
                     user_text=user_text,
                     trace_id=tid,
