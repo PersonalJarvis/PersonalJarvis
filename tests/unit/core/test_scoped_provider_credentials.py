@@ -21,7 +21,6 @@ def _secret_reader(values: dict[str, str]):
     [
         ("openai", "jarvis_agent_openai_api_key", "openai-realtime", "realtime_openai_api_key"),
         ("gemini", "jarvis_agent_gemini_api_key", "gemini-live", "realtime_gemini_api_key"),
-        ("grok", "jarvis_agent_grok_api_key", "grok-realtime", "realtime_grok_api_key"),
     ],
 )
 def test_scoped_keys_do_not_cross_between_agent_realtime_and_brain(

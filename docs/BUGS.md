@@ -4682,6 +4682,24 @@ FIRST, and let only proof-of-cure reset a defense. A wedge that emits
 symptoms on a timer will otherwise starve every timeout-based defense
 forever.
 
+**Resolution — grok-realtime REMOVED from the product (maintainer decision
+2026-07-16).** Four server-side wedge variants inside one morning (contract
+drop after cancel, ignored VAD silence window, swallowed `response.done`,
+symptom emissions that starve the watchdogs), plus VAD truncation that no
+client can compensate, made the provider unshippable: even perfect self-heal
+still loses the truncated turn. Removed: the `grok-realtime` entry point,
+`jarvis/plugins/realtime/grok_realtime.py`, its REALTIME_MODELS /
+REALTIME_VOICES catalogs, the ProviderSpec card, the credential family, and
+the auth alias. The key-aware factory (AP-22) makes the removal self-healing:
+a config still naming `grok-realtime` simply resolves to the next installed
+credential-ready realtime provider. The four BUG-064 defenses stay in the
+shared OpenAI-compatible adapter — they protect `openai-realtime` and any
+future compatible provider. Grok Voice TTS (`grok-voice`) and the Grok brain
+are unaffected. Guards: `test_grok_realtime_stays_removed`,
+`test_grok_realtime_spec_stays_removed`,
+`test_get_realtime_options_removed_grok_is_unknown`, catalog assertions in
+`test_current_model_catalogs.py`.
+
 ## BUG-065: macOS/Linux desktop shows a permanent OFFLINE — WebKit drops the HttpOnly session cookie from WebSocket handshakes (HIGH, FIXED 2026-07-16)
 
 **Symptom (real Mac hardware, 2026-07-15).** During and after boot the macOS

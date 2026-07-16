@@ -46,7 +46,7 @@ Switch the speech-to-text provider. Takes effect on the next voice-pipeline star
 Switch which realtime voice engine (speech-to-speech) is active, e.g. openai-realtime or gemini-live.
 
 - **Endpoint:** `POST /api/realtime/switch`
-- **Arguments:** `provider` (one of: gemini-live, grok-realtime, openai-realtime; required); `persist` (boolean; optional)
+- **Arguments:** `provider` (one of: gemini-live, openai-realtime; required); `persist` (boolean; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "switch the realtime model to gemini"
@@ -86,7 +86,7 @@ List all configured providers and which ones are active.
 Test connectivity and authentication for one provider.
 
 - **Endpoint:** `POST /api/providers/{provider_id}/test`
-- **Arguments:** `provider_id` (one of: antigravity, cartesia, claude-api, codex, elevenlabs, gemini, gemini-flash-tts, gemini-live, grok, grok-realtime, grok-voice, groq-api, inworld, nvidia, openai, openai-api, openai-realtime, openrouter, openrouter-stt, openrouter-tts; required)
+- **Arguments:** `provider_id` (one of: antigravity, cartesia, claude-api, codex, elevenlabs, gemini, gemini-flash-tts, gemini-live, grok, grok-voice, groq-api, inworld, nvidia, openai, openai-api, openai-realtime, openrouter, openrouter-stt, openrouter-tts; required)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "test the openai provider"

@@ -165,11 +165,8 @@ PROVIDER_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
         ("google_aistudio_api_key", "GOOGLE_AIStudio_API_KEY"),
         ("google_api_key", "GOOGLE_API_KEY"),
     ),
-    "grok-realtime": (
-        ("realtime_grok_api_key", "JARVIS_REALTIME_GROK_API_KEY"),
-        ("grok_api_key", "GROK_API_KEY"),
-        ("xai_api_key", "XAI_API_KEY"),
-    ),
+    # "grok-realtime" was removed 2026-07-16 (BUG-064 deaf-session wedge);
+    # any stored realtime_grok_api_key simply stays unused in its backend.
 }
 
 # Jarvis-Agent API credentials are independently replaceable from the Agent

@@ -384,7 +384,6 @@ discord = "jarvis.channels.discord:DiscordChannel"
 # orchestrator chooses a credential-ready family and crosses families on failure.
 openai-realtime = "jarvis.plugins.realtime.openai_realtime:OpenAIRealtimeProvider"
 gemini-live = "jarvis.plugins.realtime.gemini_live:GeminiLiveProvider"
-grok-realtime = "jarvis.plugins.realtime.grok_realtime:GrokRealtimeProvider"
 
 [project.entry-points."jarvis.tool"]
 open-app = "jarvis.plugins.tool.open_app:OpenAppTool"

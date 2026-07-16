@@ -152,12 +152,10 @@ def test_current_realtime_models_and_voices() -> None:
         "gemini-2.5-flash-native-audio-preview-12-2025",
     } == _ids(REALTIME_MODELS["gemini-live"])
     assert len(_ids(REALTIME_VOICES["gemini-live"])) == 30
-    assert _ids(REALTIME_MODELS["grok-realtime"]) == {
-        "grok-voice-latest",
-        "grok-voice-think-fast-1.0",
-    }
-    assert len(_ids(REALTIME_VOICES["grok-realtime"])) == 26
-    assert REALTIME_VOICES["grok-realtime"][0].id == "eve"
+    # grok-realtime was removed 2026-07-16 (BUG-064 deaf-session wedge);
+    # neither catalog may resurrect it.
+    assert "grok-realtime" not in REALTIME_MODELS
+    assert "grok-realtime" not in REALTIME_VOICES
 
 
 def test_gemini_voice_roster_is_identical_across_runtime_and_pickers() -> None:

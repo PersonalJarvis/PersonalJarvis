@@ -280,7 +280,7 @@ TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
 }
 
 # Realtime catalogs — REALTIME_MODELS + REALTIME_VOICES, keyed by realtime
-# provider id (``openai-realtime`` / ``gemini-live`` / ``grok-realtime``).
+# provider id (``openai-realtime`` / ``gemini-live``).
 # Realtime needs BOTH a
 # model AND a voice selection per provider (unlike every other picker, which
 # serves ONE selection), so these two dicts are looked up directly by the
@@ -326,13 +326,11 @@ REALTIME_MODELS: dict[str, list[ModelInfo]] = {
             "Gemini 2.5 Flash Native Audio",
         ),
     ]),
-    # xAI Voice Agent API. ``grok-voice-latest`` tracks the recommended model;
-    # the versioned sibling lets users pin production behavior. The deprecated
-    # grok-voice-fast-1.0 model is intentionally omitted.
-    "grok-realtime": _curated([
-        ("grok-voice-latest", "Grok Voice Latest (default)"),
-        ("grok-voice-think-fast-1.0", "Grok Voice Think Fast 1.0"),
-    ]),
+    # grok-realtime (xAI Voice Agent API) was REMOVED 2026-07-16: the xAI
+    # server drops the session contract after any response cancel, ignores
+    # the configured VAD silence window, swallows response.done, and spams
+    # stray auto-responses — four deaf-session variants in one morning
+    # (BUG-064 recurrences #1-#4). Maintainer decision: not shippable.
 }
 
 # Realtime voice catalogs — stable prebuilt-voice names (curated, not live).
@@ -354,12 +352,6 @@ REALTIME_VOICES: dict[str, list[ModelInfo]] = {
     ]),
     # Live roster verified through xAI's authenticated /v1/tts/voices endpoint.
     # Eve leads because it is xAI's current Voice Agent default.
-    "grok-realtime": _ids([
-        "eve", "altair", "ara", "atlas", "carina", "castor", "celeste",
-        "cosmo", "helios", "helix", "iris", "kepler", "leo", "lumen",
-        "luna", "lux", "naksh", "orion", "perseus", "rex", "rigel",
-        "sal", "sirius", "ursa", "zagan", "zenith",
-    ]),
 }
 
 

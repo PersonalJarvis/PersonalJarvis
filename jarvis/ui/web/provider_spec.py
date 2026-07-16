@@ -431,20 +431,8 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "remain a compatibility fallback until a dedicated key is saved."
         ),
     ),
-    ProviderSpec(
-        id="grok-realtime",
-        label="xAI Grok Realtime",
-        tier="realtime",
-        auth_mode="api_key",
-        secret_keys=("realtime_grok_api_key",),
-        dashboard_url="https://console.x.ai/",
-        signup_url="https://grok.com/",
-        credential_help=(
-            "xAI API key dedicated to Grok Realtime Voice. It is not reused by "
-            "the Grok Brain, TTS, or Jarvis-Agents. Existing shared xAI credentials "
-            "remain a compatibility fallback until a dedicated key is saved."
-        ),
-    ),
+    # grok-realtime was removed 2026-07-16 (BUG-064: the xAI realtime server
+    # drops its session contract after any response cancel and goes deaf).
 )
 
 
