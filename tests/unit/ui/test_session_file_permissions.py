@@ -41,3 +41,22 @@ def test_write_session_repairs_preexisting_loose_permissions(tmp_path):
     os.chmod(loose, 0o644)  # what older builds left behind
     SingleInstance(app_dir=tmp_path).write_session(port=1, token="t")
     assert stat.S_IMODE(loose.stat().st_mode) == 0o600
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="flock is POSIX-only")
+def test_posix_claim_is_exclusive_and_released(tmp_path):
+    """The POSIX flock claim must actually enforce single-instance semantics:
+    a second claim on the same app dir fails while the first is held and
+    succeeds again after release()."""
+    first = SingleInstance(app_dir=tmp_path).try_claim()
+    assert first is not None
+
+    # flock is per-(process, fd); a second fd in the SAME process still
+    # observes the exclusivity because we use LOCK_NB on a fresh descriptor.
+    second = SingleInstance(app_dir=tmp_path).try_claim()
+    assert second is None
+
+    first.release()
+    third = SingleInstance(app_dir=tmp_path).try_claim()
+    assert third is not None
+    third.release()

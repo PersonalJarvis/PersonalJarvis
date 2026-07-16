@@ -2,11 +2,13 @@
 
 **Two-layer strategy:**
 
-1. **Named mutex via pywin32** — atomic primary claim. OS-guaranteed
-   cleanup on crash (the kernel releases the handle), no stale
-   lock files. More robust than `filelock` on Windows.
+1. **Atomic primary claim with kernel-guaranteed crash cleanup:**
+   a named mutex via pywin32 on Windows, an exclusive non-blocking
+   ``flock`` on ``instance.lock`` on POSIX. In both cases the OS releases
+   the claim when the process dies (handle close / fd close), so there are
+   no stale locks to garbage-collect.
 
-2. **Session file** (`%LOCALAPPDATA%\\Jarvis\\session.json`) — stores the port +
+2. **Session file** (``<user-app-dir>/session.json``) — stores the port +
    token of the running primary instance, so a secondary can ping it on
    ``/internal/activate``. Token-protected: owner-only 0600 on POSIX
    (explicit), per-user profile ACL on Windows.
@@ -37,6 +39,10 @@ logger = logging.getLogger(__name__)
 
 MUTEX_NAME = "Global\\PersonalJarvis_v1"
 SESSION_FILENAME = "session.json"
+#: POSIX primary-claim lock file (flock'd exclusively by the primary). Distinct
+#: from the launcher's ``acquire_single_instance_lock`` file so the two
+#: mechanisms can never contend for the same path.
+LOCK_FILENAME = "instance.lock"
 
 
 def _app_data_dir() -> Path:
@@ -50,12 +56,13 @@ def _app_data_dir() -> Path:
 
 @dataclass(slots=True)
 class InstanceClaim:
-    """Handle to the active mutex — call `release()` on shutdown."""
+    """Handle to the active claim — call `release()` on shutdown."""
     _mutex: Any = None
+    _lock_fd: int | None = None
     _session_file: Path | None = None
 
     def release(self) -> None:
-        # Release the mutex
+        # Release the Windows mutex
         if self._mutex is not None:
             try:
                 import win32api  # type: ignore[import-not-found]
@@ -66,6 +73,13 @@ class InstanceClaim:
             except Exception:  # noqa: BLE001
                 pass
             self._mutex = None
+        # Release the POSIX flock (closing the fd drops the kernel lock)
+        if self._lock_fd is not None:
+            try:
+                os.close(self._lock_fd)
+            except OSError:
+                pass
+            self._lock_fd = None
         # Clean up the session file
         if self._session_file is not None:
             try:
@@ -103,11 +117,14 @@ class SingleInstance:
         """Primary claim — returns an `InstanceClaim`, or None if another
         process is already active.
         """
+        if os.name != "nt":
+            return self._try_claim_posix()
         try:
             import win32event  # type: ignore[import-not-found]
             import winerror  # type: ignore[import-not-found]
         except ImportError:
-            # Not Windows — no mutex, just report as primary.
+            # Windows without pywin32 — no mutex available, report as primary
+            # (the load-bearing launcher lock still enforces exclusivity).
             self._on_primary_claim()
             return InstanceClaim(_mutex=None, _session_file=self.session_file)
 
@@ -124,6 +141,36 @@ class SingleInstance:
             return None
         self._on_primary_claim()
         return InstanceClaim(_mutex=mutex, _session_file=self.session_file)
+
+    def _try_claim_posix(self) -> InstanceClaim | None:
+        """POSIX primary claim via an exclusive non-blocking ``flock``.
+
+        Same guarantee class as the Windows named mutex: the kernel drops the
+        lock when the holding process dies (fd close), so a crashed primary
+        never leaves a stale claim behind.
+        """
+        try:
+            import fcntl
+        except ImportError:  # pragma: no cover — fcntl exists on all POSIX
+            self._on_primary_claim()
+            return InstanceClaim(_session_file=self.session_file)
+
+        lock_path = self._app_dir / LOCK_FILENAME
+        try:
+            fd = os.open(lock_path, os.O_RDWR | os.O_CREAT, 0o600)
+        except OSError:
+            # Unwritable app dir — claiming must not crash the boot; report
+            # primary like the historic (no-op) behavior did.
+            logger.warning("single-instance lock file unavailable: %s", lock_path)
+            self._on_primary_claim()
+            return InstanceClaim(_session_file=self.session_file)
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError:
+            os.close(fd)
+            return None
+        self._on_primary_claim()
+        return InstanceClaim(_lock_fd=fd, _session_file=self.session_file)
 
     def write_session(self, *, port: int, token: str) -> None:
         data = {"port": port, "token": token, "pid": os.getpid()}

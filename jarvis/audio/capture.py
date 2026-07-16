@@ -151,6 +151,10 @@ _INPUT_DEPRIORITIZE = (
 # Forensics 2026-04-26: Logitech PRO X on WASAPI silently killed the wake
 # loop (exception swallowed in the asyncio task), which is why
 # "Hey Jarvis" had no effect. Prioritising MME fixes this.
+# Cross-platform note: WINDOWS host-API names by design — on macOS ("Core
+# Audio") and Linux ("ALSA"/"JACK") nothing matches, so ranking falls through
+# to the OS default enumeration order. Intentionally inert-by-data; add
+# macOS/Linux preferences as new entries if ever needed, don't platform-gate.
 _HOSTAPI_PREFERENCE = {
     "MME": 0,
     "Windows DirectSound": 1,

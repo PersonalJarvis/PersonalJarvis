@@ -91,6 +91,13 @@ _HEADSET_PRIORITY = (
 #: WDM-KS now receives the default rank of 99 (effective last) and is also
 #: actively filtered out in ``_resolve_output_device`` when the same physical
 #: device is available on another host API.
+#:
+#: Cross-platform note: these keys are WINDOWS host-API names by design. On
+#: macOS ("Core Audio") and Linux ("ALSA"/"JACK") nothing matches, every host
+#: API gets the default rank 99, and PortAudio's enumeration order (= the OS
+#: default) wins. That inert-by-data behavior is intentional — do not "fix"
+#: it by adding a platform guard, and keep any future macOS/Linux preference
+#: as new table entries, never as a rewrite of the ranking logic.
 _HOSTAPI_PREFERENCE = {
     "Windows WASAPI": 0,     # modern, reliable mono routing, blocking OK
     "Windows DirectSound": 1,
@@ -986,4 +993,7 @@ class AudioPlayer:
                 stream.close()
             except Exception:  # noqa: BLE001
                 log.debug("Output stream close during shutdown failed", exc_info=True)
-        sd.stop()
+        # sounddevice is None on hosts without PortAudio (headless server) —
+        # stop() must stay callable there instead of raising AttributeError.
+        if sd is not None:
+            sd.stop()

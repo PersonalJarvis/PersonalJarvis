@@ -29,6 +29,9 @@ verify-wave6.sh              text eol=lf
 # Git hooks run through a POSIX shell and must never be checked out as CRLF.
 .githooks/*                  text eol=lf
 
+# POSIX launcher (parity twin of run.bat) — CRLF breaks the shebang.
+run.sh                       text eol=lf
+
 # The supply-chain documentation, workflows, and in-toto layout are
 # also pinned to LF so any future inclusion in the signed-artifact
 # set does not require revisiting this file.
