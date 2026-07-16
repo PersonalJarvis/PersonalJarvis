@@ -55,9 +55,10 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 try:
+    from rich import box as rich_box
     from rich.console import Console
     from rich.markup import escape as rich_escape
-    from rich.rule import Rule
+    from rich.panel import Panel
     from rich.theme import Theme
 except ImportError:  # pragma: no cover - Stage 1 installs rich; failure here is a bug
     print("ERROR: rich is not installed. The Stage-1 bootstrap should have done this.")
@@ -99,30 +100,38 @@ def venv_python() -> Path:
 
 
 # ---------------------------------------------------------------- presentation
+# Connected-journey look (maintainer request 2026-07-16, visuals only): every
+# line hangs off one continuous dim │ gutter, phases are gold ◆ diamonds, and
+# the flow closes with a └ outro — the clack-style wizard grammar, recolored
+# to the brand gold. Twins: the phase/ok/note/err helpers in install.sh and
+# install.ps1; keep the three surfaces in visual lockstep.
+GUTTER = "[muted]│[/]"
+
+
 def phase(num: str, title: str) -> None:
-    """A numbered phase marker (gold ``N/6``), continuing the Stage-1 journey.
+    """A numbered phase diamond (gold ``◆ N/6``), continuing the Stage-1 journey.
 
     One six-phase journey spans BOTH installer stages: the Stage-1 shell owns
     phases 1-3 (prerequisites, fetch, venv), this script owns 4-6 — keep the
     numbering in sync with install.sh / install.ps1.
     """
-    console.print()
-    console.print(f"[brand]  {num}[/] [brand.bold]{title}[/]")
+    console.print(GUTTER)
+    console.print(f"[brand]◆[/]  [brand]{num}[/]  [brand.bold]{title}[/]")
 
 
 def ok(text: str) -> None:
-    console.print(f"[ok]    ✓[/] [muted]{text}[/]")
+    console.print(f"{GUTTER}  [ok]✓[/] [muted]{text}[/]")
 
 
 def note(text: str) -> None:
-    console.print(f"[muted]      {text}[/]")
+    console.print(f"{GUTTER}    [muted]{text}[/]")
 
 
 def run(cmd: list[str], *, cwd: Path | None = None, check: bool = True) -> int:
     """Run an interactive/streaming subprocess (wizard, launch)."""
     result = subprocess.run(cmd, cwd=cwd)
     if check and result.returncode != 0:
-        console.print(f"[bad]      command failed with exit code {result.returncode}[/]")
+        console.print(f"[bad]│    command failed with exit code {result.returncode}[/]")
     return result.returncode
 
 
@@ -141,10 +150,10 @@ def run_quiet(cmd: list[str], *, label: str, cwd: Path | None = None) -> int:
                 encoding="utf-8", errors="replace",
             )
         if result.returncode != 0:
-            console.print(f"[bad]    ✗ {label} failed[/]")
+            console.print(f"[bad]│  ✗ {label} failed[/]")
             tail = (result.stdout or "") + (result.stderr or "")
             for line in tail.strip().splitlines()[-20:]:
-                console.print(f"[muted]      {line}[/]")
+                console.print(f"[muted]│      {line}[/]")
         return result.returncode
     # Non-interactive: stream for the log.
     note(f"{label}…")
@@ -187,7 +196,9 @@ def is_headless_linux() -> bool:
 # ---------------------------------------------------------------- steps
 def step_preflight() -> None:
     """Sanity re-assert (Stage 1 already gate-keeps) + a quiet environment line."""
-    console.print()
+    # A gutter line, not a blank one: Stage 1 ends mid-journey and this stage
+    # continues the same connected └/│ rail without a visual break.
+    console.print(GUTTER)
     note(
         f"{platform.system()} {platform.release()} ({platform.machine()})"
         f" · Python {sys.version.split()[0]}"
@@ -197,12 +208,12 @@ def step_preflight() -> None:
         note("headless Linux detected — installing the server profile")
 
     if sys.version_info < (3, 11):  # noqa: UP036 - Stage 2 rechecks Stage 1
-        console.print("[bad]      Python 3.11+ required.[/]")
+        console.print("[bad]│    Python 3.11+ required.[/]")
         sys.exit(1)
 
     if not (repo_root() / "pyproject.toml").exists():
         console.print(
-            "[bad]      pyproject.toml not found — installer.py was invoked "
+            "[bad]│    pyproject.toml not found — installer.py was invoked "
             "outside the repo.[/]"
         )
         sys.exit(1)
@@ -327,14 +338,14 @@ def step_pip_install(*, with_desktop: bool, with_voice_local: bool, dry_run: boo
     note("this can take a minute — grabbing dependencies")
 
     if not repair_distribution_metadata(dry_run=dry_run):
-        console.print("[bad]    ✗ package metadata repair failed — installation stopped.[/]")
+        console.print("[bad]│  ✗ package metadata repair failed — installation stopped.[/]")
         sys.exit(2)
 
     if dry_run:
         for label, cmd in plans:
             # rich would swallow literal command text like ``.[full]`` as
             # markup — escape so the dry-run shows the REAL command.
-            console.print(f"[muted]      (dry-run) {label}: {rich_escape(' '.join(cmd))}[/]")
+            console.print(f"[muted]│    (dry-run) {label}: {rich_escape(' '.join(cmd))}[/]")
         return
 
     for label, cmd in plans:
@@ -343,7 +354,7 @@ def step_pip_install(*, with_desktop: bool, with_voice_local: bool, dry_run: boo
             # The advertised desktop install is the [full] profile. Continuing
             # after that profile fails would advertise a ready app without the
             # microphone, macOS bridge, or local-voice dependencies it needs.
-            console.print(f"[bad]    ✗ {label} failed — installation stopped.[/]")
+            console.print(f"[bad]│  ✗ {label} failed — installation stopped.[/]")
             sys.exit(2)
         ok(label)
 
@@ -359,7 +370,7 @@ def step_models(*, dry_run: bool) -> None:
     note("launch is ready immediately - nothing is fetched at startup")
     cmd = [str(venv_python()), "-m", "jarvis", "--prefetch"]
     if dry_run:
-        console.print(f"[muted]      (dry-run) {' '.join(cmd)}[/]")
+        console.print(f"[muted]│    (dry-run) {' '.join(cmd)}[/]")
         return
     # The download step's exit code alone is not proof: a skipped or cache-served
     # model can still leave "done" looking complete. So don't stop at rc — VERIFY
@@ -408,23 +419,25 @@ def verify_models() -> None:
         # markup=False: the report text contains literal '[full]' / quotes that
         # must NOT be parsed as rich markup.
         style = "ok" if line.startswith("✓") else ("bad" if line.startswith("✗") else "muted")
-        console.print(f"      {line}", style=style, markup=False)
+        # The whole line (gutter included) takes the state color — clack
+        # colors its side bar by state the same way.
+        console.print(f"│     {line}", style=style, markup=False)
     if not produced:
         note("could not verify the voice models - they will be checked on first launch")
         for tail in (result.stderr or "").strip().splitlines()[-5:]:
-            console.print(f"[muted]      {tail}[/]")
+            console.print(f"[muted]│      {tail}[/]")
         return
     if result.returncode == 0:
         ok("everything the default voice path needs is present")
     else:
-        console.print("[bad]      Some required voice models are missing - re-run "
+        console.print("[bad]│    Some required voice models are missing - re-run "
                       "the installer or check your connection.[/]")
 
 
 def step_worker_cli(*, dry_run: bool) -> None:
     """Finish & launch sub-step: the coding-agent worker CLI (needs Node.js)."""
     if dry_run:
-        console.print("[muted]      (dry-run) npm i -g @anthropic-ai/claude-code[/]")
+        console.print("[muted]│    (dry-run) npm i -g @anthropic-ai/claude-code[/]")
         return
     probe = (
         "from jarvis.setup.dependencies import check_claude_cli, check_npm, install_claude_cli\n"
@@ -460,7 +473,7 @@ def step_desktop_integration(*, enabled: bool, dry_run: bool) -> bool:
     if not enabled:
         return True
     if dry_run:
-        console.print("[muted]      (dry-run) repair desktop-shell registration[/]")
+        console.print("[muted]│    (dry-run) repair desktop-shell registration[/]")
         return True
     try:
         result = run_captured(
@@ -494,7 +507,7 @@ def step_desktop_integration(*, enabled: bool, dry_run: bool) -> bool:
         ok("desktop app registered with the operating system")
         return True
     console.print(
-        "[bad]    ✗ desktop app registration failed — installation stopped. "
+        "[bad]│  ✗ desktop app registration failed — installation stopped. "
         "The app must have a stable launcher identity.[/]"
     )
     return False
@@ -518,21 +531,21 @@ def step_ui_bundle_check() -> bool:
     try:
         html = index.read_text(encoding="utf-8", errors="replace")
     except OSError:
-        console.print("[bad]      UI build index is unreadable.[/]")
+        console.print("[bad]│    UI build index is unreadable.[/]")
         return False
     refs = [
         ref.split("?", 1)[0]
         for ref in re.findall(r'(?:src|href)="/?(assets/[^"]+)"', html)
     ]
     if not any(ref.endswith(".js") for ref in refs):
-        console.print("[bad]      UI build has no JavaScript entry bundle.[/]")
+        console.print("[bad]│    UI build has no JavaScript entry bundle.[/]")
         return False
     missing = [
         ref for ref in refs
         if not (dist / ref.replace("/", os.sep)).is_file()
     ]
     if missing:
-        console.print(f"[bad]      UI build is incomplete ({missing[0]} missing) - "
+        console.print(f"[bad]│    UI build is incomplete ({missing[0]} missing) - "
                       "please report this; the app may look broken.[/]")
         return False
     else:
@@ -579,7 +592,7 @@ def step_launch(*, headless: bool, dry_run: bool) -> None:
         bundle = macos_app_bundle_path()
         if not macos_app_bundle_is_launchable(bundle):
             console.print(
-                "[bad]      Could not launch: the installed macOS app bundle is missing "
+                "[bad]│    Could not launch: the installed macOS app bundle is missing "
                 "or invalid.[/]"
             )
             sys.exit(4)
@@ -589,9 +602,10 @@ def step_launch(*, headless: bool, dry_run: bool) -> None:
         cmd = [str(venv_python()), "-m", "jarvis.ui.web.launcher"]
         msg = "the Desktop App"
 
-    console.print(f"  [muted]Launching {msg} — the app takes over from here…[/]")
+    # └ closes the connected journey the Stage-1 shell opened with ┌.
+    console.print(f"[muted]└[/]  [brand]Launching {msg}[/] [muted]— the app takes over from here…[/]")
     if dry_run:
-        console.print(f"[muted]      (dry-run) {' '.join(cmd)}[/]")
+        console.print(f"[muted]│    (dry-run) {' '.join(cmd)}[/]")
         return
 
     # We deliberately do not wait for the App — the installer returns control
@@ -599,69 +613,77 @@ def step_launch(*, headless: bool, dry_run: bool) -> None:
     try:
         subprocess.Popen(cmd, cwd=repo_root(), close_fds=True)
     except OSError as exc:
-        console.print(f"[bad]      Could not launch: {exc}[/]")
+        console.print(f"[bad]│    Could not launch: {exc}[/]")
         sys.exit(4)
 
 
 def step_summary(*, no_launch: bool, update: bool, headless: bool) -> None:
-    """The flat finale: two deep-gold rules around a short, calm summary.
+    """The finale: one rounded deep-gold box around a short, calm summary.
 
-    Deliberately NOT a rich ``Panel`` — the boxed panel is the signature look
-    of generated projects (design 2026-07-09); modern installers end flat.
+    Boxed finale by maintainer request 2026-07-16 (clack-style connected
+    journey), superseding the flat two-rule finale of design 2026-07-09.
     """
-    console.print()
-    console.print(Rule(style="brand.deep"))
-    console.print(f"  [ok.bold]✓ Personal Jarvis is {'updated' if update else 'ready'}.[/]")
-    console.print(f"    [muted]Installed to[/]  {repo_root()}")
+    lines: list[str] = [f"[muted]Installed to[/]  {repo_root()}"]
     if sys.platform == "win32":
-        console.print(
-            "    [muted]Start again[/]   [brand]Windows search -> \"Personal Jarvis\"[/]"
+        lines.append(
+            "[muted]Start again[/]   [brand]Windows search -> \"Personal Jarvis\"[/]"
         )
     elif sys.platform == "darwin":
-        console.print(
-            "    [muted]Start again[/]   [brand]Spotlight → \"Personal Jarvis\"[/] "
+        lines.append(
+            "[muted]Start again[/]   [brand]Spotlight → \"Personal Jarvis\"[/] "
             "[muted](app in ~/Applications)[/]"
         )
-        console.print(
-            "    [muted]Permissions[/]   [muted]macOS asks on first launch; approve each "
-            "item in the guided setup[/]"
+        lines.append(
+            "[muted]Permissions[/]   [muted]macOS asks on first launch - approve "
+            "each prompt[/]"
         )
     elif sys.platform.startswith("linux") and not (headless or is_headless_linux()):
-        console.print(
-            "    [muted]Start again[/]   [brand]app menu -> \"Personal Jarvis\"[/]"
+        lines.append(
+            "[muted]Start again[/]   [brand]app menu -> \"Personal Jarvis\"[/]"
         )
     else:
-        console.print(
-            "    [muted]Start again[/]   [brand].venv/bin/python -m jarvis.ui.web.launcher[/] "
-            "[muted](in the install folder)[/]"
+        lines.append(
+            "[muted]Start again[/]   [brand].venv/bin/python -m jarvis.ui.web.launcher[/]"
         )
-    console.print(
-        "    [muted]Update[/]        [muted]re-run the same install one-liner - "
+        lines.append("[muted]              (in the install folder)[/]")
+    lines.append(
+        "[muted]Update[/]        [muted]re-run the same install one-liner - "
         "it updates in place[/]"
     )
     if update:
-        console.print(
-            "    [muted]Next[/]          [muted]your setup and settings are kept - "
+        lines.append(
+            "[muted]Next[/]          [muted]your setup and settings are kept - "
             "no re-onboarding[/]"
         )
     elif headless or is_headless_linux():
-        console.print(
-            f"    [muted]Next[/]          [muted]open http://localhost:{_resolved_admin_port()} "
-            "in your browser - a one-time[/]"
+        lines.append(
+            f"[muted]Next[/]          [muted]open http://localhost:{_resolved_admin_port()} "
+            "in your browser -[/]"
         )
-        console.print(
-            "    [muted]              setup guide (language, wake word, API keys) runs "
-            "there, once[/]"
+        lines.append(
+            "[muted]              the one-time setup guide (language, wake word,[/]"
         )
+        lines.append("[muted]              API keys) runs there, once[/]")
     else:
-        console.print(
-            "    [muted]Next[/]          [muted]the app opens with a one-time setup guide "
-            "(language,[/]"
+        lines.append(
+            "[muted]Next[/]          [muted]the app opens with a one-time setup guide[/]"
         )
-        console.print(
-            "    [muted]              wake word, API keys) - it never shows again[/]"
+        lines.append(
+            "[muted]              (language, wake word, API keys) - it never "
+            "shows again[/]"
         )
-    console.print(Rule(style="brand.deep"))
+    console.print(GUTTER)
+    console.print(
+        Panel(
+            "\n".join(lines),
+            box=rich_box.ROUNDED,
+            border_style="brand.deep",
+            title=f"[ok.bold]✓ Personal Jarvis is {'updated' if update else 'ready'}[/]",
+            title_align="left",
+            padding=(0, 2),
+            expand=False,
+        )
+    )
 
 
 # ---------------------------------------------------------------- entry

@@ -49,6 +49,13 @@ $Rst      = "${e}[0m"
 $Chk = [char]0x2713   # check mark
 $Crs = [char]0x2717   # cross mark
 
+# Connected-journey glyphs (maintainer request 2026-07-16, visuals only):
+# every line hangs off one continuous dim vertical gutter, phases are gold
+# diamonds — the clack-style wizard grammar, recolored to the brand gold.
+# Twins: the phase/ok/note/err helpers in install.sh and installer.py.
+$Dia = [char]0x25C6   # black diamond - phase marker
+$Gut = "$Dim$([char]0x2502)$Rst"   # dim gutter bar
+
 # ----------------------------------------------------------------- helpers
 function Write-Banner {
     # Banner glyphs are machine-generated (figlet ANSI Shadow) and live inside
@@ -57,6 +64,12 @@ function Write-Banner {
     # colored as a vertical gradient (hi -> brand -> deep) to match the
     # forged-gold wordmark.
     $art = @"
+
+$GoldHi                          ╷$Rst
+$GoldHi                       ╭──┴──╮$Rst
+$Gold                       │ ● ● │$Rst
+$Gold                       │  ─  │$Rst
+$GoldDeep                       ╰─────╯$Rst
 
 $GoldHi     ██╗ █████╗ ██████╗ ██╗   ██╗██╗███████╗$Rst
 $GoldHi     ██║██╔══██╗██╔══██╗██║   ██║██║██╔════╝$Rst
@@ -67,16 +80,18 @@ $GoldDeep ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═╝  ╚══
 
 $Dim     P E R S O N A L  J A R V I S   ·   talk to your computer$Rst
 $Dim     Checks prerequisites · installs the full profile · launches when done$Rst
+
+$Dim┌$Rst  ${Gold}Personal Jarvis installer$Rst
 "@
     Write-Host $art
 }
 
 # One six-phase journey spans BOTH installer stages: this shell owns phases
 # 1-3, installer.py continues with 4-6 -- keep the numbering in sync there.
-function Write-Phase([string]$Num, [string]$Text) { Write-Host ""; Write-Host "$Gold  $Num$Rst $Bold$Text$Rst" }
-function Write-Ok([string]$Text)     { Write-Host "$Green    $Chk$Rst $Dim$Text$Rst" }
-function Write-Note([string]$Text)   { Write-Host "$Dim      $Text$Rst" }
-function Write-Err([string]$Text)    { Write-Host "$Red    $Crs $Text$Rst" }
+function Write-Phase([string]$Num, [string]$Text) { Write-Host $Gut; Write-Host "$Gold$Dia$Rst  $Gold$Num$Rst  $Bold$Text$Rst" }
+function Write-Ok([string]$Text)     { Write-Host "$Gut  $Green$Chk$Rst $Dim$Text$Rst" }
+function Write-Note([string]$Text)   { Write-Host "$Gut    $Dim$Text$Rst" }
+function Write-Err([string]$Text)    { Write-Host "$Gut  $Red$Crs $Text$Rst" }
 
 Write-Banner
 

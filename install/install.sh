@@ -58,10 +58,20 @@ fi
 
 # One six-phase journey spans BOTH installer stages: this shell owns phases
 # 1-3, installer.py continues with 4-6 — keep the numbering in sync there.
-phase() { printf '\n%s  %s%s %s%s%s\n' "$GOLD" "$1" "$RST" "$BOLD" "$2" "$RST"; }
-ok()   { printf '%s    ✓%s %s%s%s\n' "$GREEN" "$RST" "$DIM" "$1" "$RST"; }
-note() { printf '%s      %s%s\n' "$DIM" "$1" "$RST"; }
-err()  { printf '%s    ✗ %s%s\n' "$RED" "$1" "$RST"; }
+# Connected-journey look (maintainer request 2026-07-16, visuals only): every
+# line hangs off one continuous dim │ gutter, phases are gold ◆ diamonds,
+# ┌ opens the journey and installer.py's outro └ closes it — the visual
+# grammar of the widely-loved clack-style wizards, recolored to the brand
+# gold. The glyphs live ONLY in these helpers (and their installer.py /
+# install.ps1 twins) so the three surfaces stay in visual lockstep.
+GUT="${DIM}│${RST}"
+phase() {
+    printf '%s\n' "$GUT"
+    printf '%s◆%s  %s%s%s  %s%s%s\n' "$GOLD" "$RST" "$GOLD" "$1" "$RST" "$BOLD" "$2" "$RST"
+}
+ok()   { printf '%s  %s✓%s %s%s%s\n' "$GUT" "$GREEN" "$RST" "$DIM" "$1" "$RST"; }
+note() { printf '%s    %s%s%s\n' "$GUT" "$DIM" "$1" "$RST"; }
+err()  { printf '%s  %s✗ %s%s\n' "$GUT" "$RED" "$1" "$RST"; }
 
 # Run a slow, otherwise-silent command behind a one-line dots spinner so a
 # long download never looks hung (maintainer report 2026-07-15). TTY only:
@@ -82,7 +92,7 @@ run_spin() {
     _spin_i=0
     while kill -0 "$_spin_pid" 2>/dev/null; do
         _spin_i=$(( (_spin_i + 1) % 4 ))
-        printf '\r%s      %s%-3.*s%s ' "$DIM" "$_spin_label" "$_spin_i" '...' "$RST"
+        printf '\r%s    %s%s%-3.*s%s ' "$GUT" "$DIM" "$_spin_label" "$_spin_i" '...' "$RST"
         sleep 0.4 2>/dev/null || sleep 1
     done
     _spin_rc=0
@@ -101,7 +111,15 @@ run_spin() {
 # Banner glyphs are machine-generated (figlet "ANSI Shadow"); do not hand-edit
 # — that is how the historical "Harvis" typo crept in. Rows are colored as a
 # vertical gradient (hi → brand → deep) to match the forged-gold wordmark.
+# The little orb mascot above it is hand-drawn from the same box-drawing +
+# geometric set the step glyphs use, so it renders wherever they do.
 cat <<EOF
+
+${GOLD_HI}                          ╷${RST}
+${GOLD_HI}                       ╭──┴──╮${RST}
+${GOLD}                       │ ● ● │${RST}
+${GOLD}                       │  ─  │${RST}
+${GOLD_DEEP}                       ╰─────╯${RST}
 
 ${GOLD_HI}     ██╗ █████╗ ██████╗ ██╗   ██╗██╗███████╗${RST}
 ${GOLD_HI}     ██║██╔══██╗██╔══██╗██║   ██║██║██╔════╝${RST}
@@ -112,6 +130,8 @@ ${GOLD_DEEP} ╚════╝ ╚═╝  ╚═╝╚═╝  ╚═╝  ╚═
 
 ${DIM}     P E R S O N A L  J A R V I S   ·   talk to your computer${RST}
 ${DIM}     Checks prerequisites · installs the full profile · launches when done${RST}
+
+${DIM}┌${RST}  ${GOLD}Personal Jarvis installer${RST}
 EOF
 
 # -------------------------------------------------------------- welcome gate
@@ -130,15 +150,15 @@ ask_welcome() {
     # survives even with no escapes at all — the selection is never ambiguous.
     # Both renderings are the same visible width so the \r redraw leaves no
     # residue.
-    printf '\n  %s←/→ to choose · Enter to confirm (or press y / n)%s\n\n' \
-        "$DIM" "$RST" > /dev/tty
+    printf '%s\n%s    %s←/→ to choose · Enter to confirm (or press y / n)%s\n' \
+        "$GUT" "$GUT" "$DIM" "$RST" > /dev/tty
     while :; do
         if [ "$_sel" -eq 0 ]; then
-            printf '\r  %sWould you like to install Personal Jarvis?%s   %s%s ▸ Yes %s   %s   No  %s' \
-                "$BOLD" "$RST" "$GOLD" "$REV" "$RST" "$DIM" "$RST" > /dev/tty
+            printf '\r%s◆%s  %sWould you like to install Personal Jarvis?%s   %s%s ▸ Yes %s   %s   No  %s' \
+                "$GOLD" "$RST" "$BOLD" "$RST" "$GOLD" "$REV" "$RST" "$DIM" "$RST" > /dev/tty
         else
-            printf '\r  %sWould you like to install Personal Jarvis?%s   %s   Yes %s   %s%s ▸ No  %s' \
-                "$BOLD" "$RST" "$DIM" "$RST" "$RED" "$REV" "$RST" > /dev/tty
+            printf '\r%s◆%s  %sWould you like to install Personal Jarvis?%s   %s   Yes %s   %s%s ▸ No  %s' \
+                "$GOLD" "$RST" "$BOLD" "$RST" "$DIM" "$RST" "$RED" "$REV" "$RST" > /dev/tty
         fi
         IFS= read -rsn1 _key < /dev/tty || return 0
         case "$_key" in
