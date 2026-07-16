@@ -353,3 +353,12 @@ tests/unit/speech/test_rolling_whisper_wake_silence_ghost.py
 # ghost-activation forensics — inline i18n-allow impossible inside a docstring
 # (bucket 4, forensic; same rationale as the docstring/prompt files above)
 jarvis/speech/rolling_whisper_wake.py
+
+# --- Interim-ack redesign spec (2026-07-06): quotes the German spoken ack
+#     phrases (product surface, reason 1) it specifies, incl. the broken
+#     ASCII-umlaut variants under repair ---
+docs/superpowers/specs/2026-07-06-interim-ack-redesign-design.md
+
+# --- TTS evaluation corpus: the German sentences ARE the evaluation data the
+#     speech synthesis is scored on (product-surface test fixtures, reason 4) ---
+jarvis/speech/tts_eval/corpus.py
