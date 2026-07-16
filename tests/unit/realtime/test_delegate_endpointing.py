@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 
 from jarvis.brain.turn_planner import TurnPath, TurnPlan, TurnReason
+from jarvis.core.protocols import AudioChunk
 from jarvis.realtime.protocol import RealtimeEvent
 from jarvis.realtime.session import RealtimeVoiceSession
 
@@ -220,6 +221,30 @@ class _AutoResponseWire:
         if self._script == "interrupted-after-delivery":
             # The trusted readback was injected but no PCM is audible yet.
             yield RealtimeEvent(type="interrupted")
+        if self._script == "turn-complete-no-render":
+            # A boundary (e.g. the bridge response ending) arrives after
+            # delivery, but the provider never renders the readback at all.
+            yield RealtimeEvent(type="turn_complete")
+            await self.closed.wait()
+            return
+        if self._script == "late-render-after-fallback":
+            yield RealtimeEvent(type="turn_complete")
+            # The provider renders the same reply seconds after the surface
+            # fallback already spoke it (live forensic 2026-07-16 11:43:
+            # heard a third time). It must stay inaudible.
+            yield RealtimeEvent(
+                type="output_transcript_delta",
+                text="Tomorrow is Friday.",
+            )
+            yield RealtimeEvent(
+                type="audio_delta",
+                audio=AudioChunk(
+                    pcm=b"\x11\x00" * 480, sample_rate=24_000, timestamp_ns=0
+                ),
+            )
+            yield RealtimeEvent(type="turn_complete")
+            await self.closed.wait()
+            return
         yield RealtimeEvent(
             type="output_transcript_delta",
             text="Tomorrow is Friday.",
@@ -375,6 +400,103 @@ async def test_undelivered_readback_falls_back_to_surface_tts(
             "language": "en",
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_no_render_fallback_speaks_exactly_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The no-audio fallback and the readback watchdog must never both speak.
+
+    Live forensic 2026-07-16 11:43: the turn-complete fallback spoke the
+    reply through the classic TTS (which blocks the pump for the whole
+    playback), the watchdog saw zero realtime samples and spoke it AGAIN.
+    The blocking playback is emulated by an error_spoken handler that sleeps
+    past the watchdog deadline.
+    """
+    _shorten_delegate_waits(monkeypatch)
+    brain = _InstantBrain()
+    provider = _AutoResponseProvider(brain, script="turn-complete-no-render")
+    messages: list[dict[str, Any]] = []
+
+    async def _send_json(message: dict[str, Any]) -> None:
+        messages.append(message)
+        if message.get("type") == "error_spoken":
+            # Emulate the desktop surface: the fallback playback holds the
+            # handler (and with it the pump) well past the watchdog window.
+            await asyncio.sleep(0.3)
+
+    session = RealtimeVoiceSession(
+        session_id="delegate-single-voice",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=_send_json,
+        provider=provider,
+        config=_config(),
+        bus=None,
+        browser_sample_rate=16_000,
+        surface="desktop",
+        brain=brain,
+    )
+    await session.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    try:
+        await asyncio.wait_for(provider.session.text_sent.wait(), timeout=2.0)
+        await asyncio.sleep(0.6)  # past playback emulation + watchdog window
+    finally:
+        await session.end(reason="test")
+
+    fallbacks = [m for m in messages if m.get("type") == "error_spoken"]
+    assert len(fallbacks) == 1
+    assert fallbacks[0]["text"] == "Tomorrow is Friday."
+
+
+@pytest.mark.asyncio
+async def test_late_provider_rendering_after_fallback_stays_silent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A provider rendering arriving after the surface fallback is withheld.
+
+    Live forensic 2026-07-16 11:43: Gemini rendered the reply ~13 s late,
+    AFTER the turn had closed — the per-turn withhold flag was gone with the
+    popped turn state and the answer was heard a third time. The
+    session-level guard must keep it inaudible until the user opens the
+    next turn.
+    """
+    _shorten_delegate_waits(monkeypatch)
+    brain = _InstantBrain()
+    provider = _AutoResponseProvider(brain, script="late-render-after-fallback")
+    messages: list[dict[str, Any]] = []
+    binary_chunks: list[bytes] = []
+
+    async def _send_binary(data: bytes) -> None:
+        binary_chunks.append(bytes(data))
+
+    session = RealtimeVoiceSession(
+        session_id="delegate-late-render",
+        send_binary=_send_binary,
+        send_json=lambda message: messages.append(message) or asyncio.sleep(0),
+        provider=provider,
+        config=_config(),
+        bus=None,
+        browser_sample_rate=16_000,
+        surface="desktop",
+        brain=brain,
+    )
+    await session.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    try:
+        await asyncio.wait_for(provider.session.text_sent.wait(), timeout=2.0)
+        await asyncio.sleep(0.4)  # let the late rendering arrive and be judged
+    finally:
+        await session.end(reason="test")
+
+    fallbacks = [m for m in messages if m.get("type") == "error_spoken"]
+    assert len(fallbacks) == 1
+    assistant_transcripts = [
+        m
+        for m in messages
+        if m.get("type") == "transcript" and m.get("role") == "assistant"
+    ]
+    assert assistant_transcripts == []
+    assert binary_chunks == []
 
 
 @pytest.mark.asyncio

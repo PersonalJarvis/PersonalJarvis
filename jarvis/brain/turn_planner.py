@@ -82,11 +82,18 @@ _OWNERSHIP_RE = re.compile(
     r"mein\w*|unser\w*|mir|wir|ueber mich|uber mich|erinner\w* mich|"  # i18n-allow: speech input
     r"mi|mis|mio|nuestr\w*|sobre mi|recuerd\w* de mi)\b"  # i18n-allow: speech input
 )
+# Colloquial temporal particles (German "gerade", "eben", "vorhin",
+# "soeben") are deliberately NOT in this vocabulary: in spoken language they
+# are discourse fillers, not freshness claims, and treating them as
+# current-data markers force-delegated plain world-knowledge questions
+# ("Wo wohnt der gerade?") through the router brain and its web searches
+# (live incident 2026-07-16 11:24, 16 s of silence ending in an error).
+# Genuinely current topics keep their strong markers below (weather, news,
+# today, now, status, ...).  # i18n-allow: names the retired German filler tokens
 _CURRENT_RE = re.compile(
     r"\b(?:current|currently|latest|today|tonight|tomorrow|now|recent|"
     r"news|weather|status|available|online|"
     r"aktuell\w*|neueste\w*|heute|morgen|jetzt|kuerzlich|nachrichten|"
-    r"gerade|eben|vorhin|soeben|"  # i18n-allow: speech input
     r"wetter|status|verfuegbar|online|"  # i18n-allow: speech input
     r"actual\w*|ultimo\w*|hoy|manana|ahora|reciente\w*|noticias|"
     r"clima|tiempo|estado|disponible)\b"  # i18n-allow: multilingual speech-input matching data
@@ -95,6 +102,11 @@ _LOCAL_STATE_RE = re.compile(
     r"\b(?:wiki|mcp\w*|cli\w*|tool\w*|plugin\w*|connector\w*|"
     r"integration\w*|setting\w*|configuration\w*|api[\s-]?key\w*|"
     r"jarvis|installed\w*|connected\w*|capabilit\w*|activity history|"
+    # Asking the assistant what it is working on queries its own mission /
+    # activity state; the idiom anchors it here instead of leaning on the
+    # temporal filler ("gerade") that used to co-trigger it.  # i18n-allow
+    r"what are you working on|woran arbeitest du|"  # i18n-allow: speech input
+    r"en que estas trabajando|"  # i18n-allow: speech input
     r"werkzeug\w*|einstellung\w*|konfiguration\w*|"  # i18n-allow: speech input
     r"installiert\w*|verbunden\w*|faehigkeit\w*|"  # i18n-allow: speech input
     r"aktivitaetsverlauf|"  # i18n-allow: speech input

@@ -126,11 +126,13 @@ _DELEGATE_DECLARATION: dict[str, Any] = {
         "Execute an action for the user through the Jarvis action system: "
         "open apps or views, change settings, control the computer on screen "
         "(click, type, and navigate inside any application window until the "
-        "task is finished), manage files, start background research or coding "
-        "missions, read or write the user's private Wiki memory, and inspect "
-        "the current MCP, CLI, tool, integration, configuration, or system "
-        "state. Also call this to relay the user's answer to a pending "
-        "confirmation question."
+        "task is finished), manage files, start a background research or "
+        "coding mission the user explicitly asked to run, read or write the "
+        "user's private Wiki memory, and inspect the current MCP, CLI, tool, "
+        "integration, configuration, or system state. Also call this to "
+        "relay the user's answer to a pending confirmation question. Never "
+        "call it just to look up general world knowledge, public facts or "
+        "figures, definitions, or smalltalk — answer those directly yourself."
     ),
     "parameters": {
         "type": "object",
@@ -155,9 +157,14 @@ _DELEGATE_ROLE_DIRECTIVE = (
     "apps, their settings, their system state, or any action on their computer "
     "— including a vague, elliptical, or garbled follow-up that refers back to "
     "such a turn ('and what else is in there?', 'what does it say?'). You "
-    "cannot see any of it yourself, so guessing is always wrong. Answer from "
-    "your own knowledge only for general world knowledge and ordinary social "
-    "chat. "
+    "cannot see any of it yourself, so guessing is always wrong. "
+    "General world knowledge is YOURS: public facts and figures, well-known "
+    "people and companies, definitions, explanations, recommendations, "
+    "opinions, and ordinary social chat. Answer those immediately from your "
+    "own knowledge, without any function call, even when you are only mostly "
+    "sure — qualify the answer briefly instead of delegating. A jarvis_action "
+    "round trip costs the user many seconds of silence, so calling it for a "
+    "question you can answer yourself is a latency failure, not caution. "
     "The action system physically operates the user's computer on screen: it "
     "opens apps and clicks, types, and navigates inside any application "
     "window until a multi-step task is finished end to end. Never tell the "
@@ -184,6 +191,22 @@ _DELEGATE_REQUIRED_DIRECTIVE = (
     "The Jarvis orchestrator is handling this current turn deterministically. "
     "Do not answer, do not call a function, and do not promise an outcome. Wait "
     "for the trusted action result that the orchestrator will inject."
+)
+# The local planner judged the current turn plain world knowledge or social
+# chat. The planner's verdict used to steer the model only in one direction
+# (forcing delegation); a NATIVE verdict changed nothing, so a
+# delegation-biased model still round-tripped trivia through the router
+# brain and its web searches (live incident 2026-07-16 11:23: "How much
+# money does Peter Thiel have?" cost 16 s of silence). The tool stays
+# declared — the planner is conservative and can miss oddly-phrased real
+# actions — but the model is told the fast path is the correct one.
+_DELEGATE_DISCOURAGED_DIRECTIVE = (
+    "This current turn looks like general world knowledge or ordinary "
+    "conversation. Answer it directly from your own knowledge now, without "
+    "calling any function. Call jarvis_action on this turn ONLY if the "
+    "request actually needs the user's own world (their Wiki or personal "
+    "memory, their files, apps, settings, or system state) or performs a "
+    "real action on their computer."
 )
 # A slow action (a Wiki write curates pages through an LLM) outlives the turn
 # that asked for it as soon as the user speaks into the waiting silence. The
@@ -604,6 +627,11 @@ class RealtimeVoiceSession:
         self._response_requested_for_turn = False
         self._response_requested_input_ids: set[str] = set()
         self._drop_provider_output_until_new_response = False
+        # Set when a surface fallback already spoke a delegate reply: a very
+        # late provider rendering of that same reply may arrive AFTER its turn
+        # closed (turn state popped), so this session-level guard withholds
+        # provider output until the user audibly opens the next turn.
+        self._drop_provider_output_until_user_turn = False
         self._hangup_reason = ""
         self._turn_final_text = ""
         self._end_after_turn = False
@@ -963,6 +991,9 @@ class RealtimeVoiceSession:
         self._language = resolved_language
         self._gate = ScrubHoldGate(resolved_language)
         self._response_requested_for_turn = True
+        # This deliberate injection expects a rendered response; it must not
+        # inherit a fallback-era suppression from an earlier delegate turn.
+        self._drop_provider_output_until_user_turn = False
         await self._ensure_turn_started()
         try:
             await send_text(
@@ -1019,6 +1050,9 @@ class RealtimeVoiceSession:
                     if input_observed:
                         self._input_turn_observed = True
                         self._user_speech_active = False
+                        # The user audibly opened this turn — a fallback-era
+                        # suppression of stale provider output ends here.
+                        self._drop_provider_output_until_user_turn = False
                         await self._ensure_turn_started()
                     new_language = self._language
                     if transcript:
@@ -1080,6 +1114,9 @@ class RealtimeVoiceSession:
                                     delegate_required=self._delegate_required_for_turn,
                                     action_pending=(
                                         self._has_pending_delegate_from_earlier_turn()
+                                    ),
+                                    delegate_discouraged=(
+                                        not turn_plan.requires_orchestrator
                                     ),
                                 ),
                             ),
@@ -1265,8 +1302,28 @@ class RealtimeVoiceSession:
                     if self._gate.fail_if_pending_exceeds(
                         _MAX_UNSCRUBBED_AUDIO_MS
                     ):
+                        # A tripped hold during a trusted delegate readback is
+                        # a rendering failure, not a leak: the provider only
+                        # re-speaks OUR already-delivered brain reply, and its
+                        # output transcription simply fell >5 s behind the
+                        # audio (live incident 2026-07-16 11:24: the user
+                        # waited 16 s of web searches and then heard a generic
+                        # error). Speak the trusted reply through the surface
+                        # TTS instead of discarding it; the flag withholds any
+                        # late provider rendering so nothing plays twice.
+                        trusted_reply = ""
+                        if (
+                            delegate_state is not None
+                            and delegate_state.delivery_started
+                        ):
+                            trusted_reply = str(
+                                delegate_state.last_reply or ""
+                            ).strip()
+                            if trusted_reply:
+                                delegate_state.surface_fallback_spoken = True
                         await self._cancel_unsafe_output(
-                            reason="output transcript exceeded safe audio buffer"
+                            reason="output transcript exceeded safe audio buffer",
+                            fallback_text=trusted_reply or None,
                         )
                 elif event.type in {"speech_started", "interrupted"} and (
                     self._pending_delegate_needs_endpoint_protection()
@@ -1454,6 +1511,14 @@ class RealtimeVoiceSession:
                             "grounded Brain result; using surface TTS fallback",
                             self.session_id,
                         )
+                        # One reply, one voice (live forensic 2026-07-16
+                        # 11:43: THREE renderings of the same answer). The
+                        # readback watchdog must not speak it a second time,
+                        # and a very late provider rendering — arriving after
+                        # this turn closes — must stay inaudible until the
+                        # user opens the next turn.
+                        delegate_state.surface_fallback_spoken = True
+                        self._drop_provider_output_until_user_turn = True
                         await self._send_json(
                             {
                                 "type": "error_spoken",
@@ -2176,12 +2241,18 @@ class RealtimeVoiceSession:
         *,
         delegate_required: bool = False,
         action_pending: bool = False,
+        delegate_discouraged: bool = False,
     ) -> str:
         if self._delegate_enabled:
             if delegate_required:
                 return f"{_DELEGATE_ROLE_DIRECTIVE}\n\n{_DELEGATE_REQUIRED_DIRECTIVE}"
             if action_pending:
                 return f"{_DELEGATE_ROLE_DIRECTIVE}\n\n{_DELEGATE_PENDING_DIRECTIVE}"
+            if delegate_discouraged:
+                return (
+                    f"{_DELEGATE_ROLE_DIRECTIVE}\n\n"
+                    f"{_DELEGATE_DISCOURAGED_DIRECTIVE}"
+                )
             return _DELEGATE_ROLE_DIRECTIVE
         if self._tool_bridge is not None:
             return _TOOL_ROLE_DIRECTIVE
@@ -2248,6 +2319,7 @@ class RealtimeVoiceSession:
         """Drop untrusted output during delegation and after barge-in."""
         return bool(
             self._drop_provider_output_until_new_response
+            or self._drop_provider_output_until_user_turn
             or self._must_withhold_delegate_output()
             or self._delegate_surface_fallback_spoken()
         )
@@ -2438,6 +2510,7 @@ class RealtimeVoiceSession:
         # being dropped. This trusted follow-up is the new response it waits for.
         drop_before_delivery = self._drop_provider_output_until_new_response
         self._drop_provider_output_until_new_response = False
+        self._drop_provider_output_until_user_turn = False
         await self._ensure_turn_started()
         try:
             await send_text(
@@ -2970,6 +3043,7 @@ class RealtimeVoiceSession:
                 self._ended
                 or self._session is None
                 or self._user_speech_active
+                or turn_state.surface_fallback_spoken
                 or not self._delegate_turn_is_active(turn_id, turn_state)
             ):
                 return
@@ -2979,9 +3053,15 @@ class RealtimeVoiceSession:
                 break
             await asyncio.sleep(_DELEGATE_READBACK_POLL_S)
         reply = str(turn_state.last_reply or "").strip()
-        if not reply:
+        # One reply, one voice: the turn-complete no-audio fallback may have
+        # spoken it already through the same surface TTS, which never touches
+        # the realtime sample counters this loop watches (live forensic
+        # 2026-07-16 11:43: both nets fired and the answer was heard twice —
+        # then a third time when the provider rendered it late).
+        if not reply or turn_state.surface_fallback_spoken:
             return
         turn_state.surface_fallback_spoken = True
+        self._drop_provider_output_until_user_turn = True
         log.warning(
             "realtime[%s] provider rendered no readback for a delivered "
             "delegate result within %.1fs; speaking it through the surface "

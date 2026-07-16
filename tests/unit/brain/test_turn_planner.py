@@ -81,6 +81,36 @@ def test_private_current_connected_and_action_turns_use_orchestrator(
     assert plan.path is TurnPath.ORCHESTRATOR
 
 
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # Live incident 2026-07-16 11:24: the temporal filler "gerade" was a
+        # current-data marker, so a plain world-knowledge follow-up was
+        # force-delegated through the router brain (16 s of web searches
+        # ending in a spoken error). Fillers alone must never delegate.
+        "Wo wohnt der gerade?",  # i18n-allow: German speech-input fixture
+        "Wie viel Geld hat Peter Thiel?",  # i18n-allow: German fixture
+        "Was hat der eben gesagt?",  # i18n-allow: German speech-input fixture
+    ],
+)
+def test_temporal_filler_world_knowledge_stays_native(utterance: str) -> None:
+    assert plan_turn(utterance).path is TurnPath.NATIVE_REALTIME
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # Strong freshness markers must keep forcing the orchestrator even
+        # after the colloquial fillers were retired.
+        "Wie ist das Wetter gerade?",  # i18n-allow: German speech-input fixture
+        "Was gibt es heute für Nachrichten?",  # i18n-allow: German fixture
+        "What is the latest Python release?",
+    ],
+)
+def test_strong_current_markers_still_use_orchestrator(utterance: str) -> None:
+    assert plan_turn(utterance).path is TurnPath.ORCHESTRATOR
+
+
 def test_read_only_dynamic_connector_matches_live_capability(
     registry: CapabilityRegistry,
 ) -> None:

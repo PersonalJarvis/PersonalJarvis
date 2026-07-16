@@ -1945,6 +1945,130 @@ async def test_general_knowledge_turn_keeps_native_realtime_answering(utterance)
     await sess.end(reason="test")
 
 
+@pytest.mark.asyncio
+async def test_native_turn_update_discourages_delegation():
+    """A planner-NATIVE turn steers the model AWAY from the action function.
+
+    The planner verdict used to work in one direction only (forcing
+    delegation); a NATIVE verdict changed nothing, so a delegation-biased
+    provider still round-tripped plain world knowledge through the router
+    brain (live incident 2026-07-16 11:23, 16 s of web searches for a
+    net-worth question). The tool stays declared; the directive flips.
+    """
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="How much money does Peter Thiel have?",
+                is_final=True,
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = _session(provider, brain=FakeBrain())
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+
+    update = provider.session.session_updates[-1]["instructions"]
+    assert "Answer it directly from your own knowledge" in update
+    assert "orchestrator is handling this current turn" not in update
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_forced_turn_update_never_carries_discourage_directive():
+    """The orchestrator-owned branch wins over the discourage branch."""
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="What is in my Gmail inbox?",
+                is_final=True,
+            ),
+        ]
+    )
+    sess = _session(provider, brain=FakeBrain())
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+
+    update = provider.session.session_updates[-1]["instructions"]
+    assert "orchestrator is handling this current turn" in update
+    assert "Answer it directly from your own knowledge" not in update
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_scrub_trip_during_delegate_readback_speaks_trusted_reply():
+    """A tripped transcript hold re-speaks the delivered reply, not an error.
+
+    Gemini renders an injected trusted result faster than real time while its
+    output transcription lags; once >5 s of PCM sat unclaimed the scrub gate
+    cancelled the readback and the user heard a generic error AFTER waiting
+    through the whole delegated action (live incident 2026-07-16 11:24). The
+    reply text is our own already-delivered brain output, so the surface TTS
+    must speak it instead.
+    """
+    reply = "The delegated answer the user must still hear."
+    # 3 s of 24 kHz 16-bit PCM per chunk; the second chunk pushes the
+    # unclaimed buffer past the 5 s scrub cap without any transcript delta.
+    three_seconds = AudioChunk(
+        pcm=b"\x01\x02" * 72_000, sample_rate=24_000, timestamp_ns=0
+    )
+
+    class _GatedReadbackSession(FakeSession):
+        def __init__(self, events):
+            super().__init__(events)
+            self._text_sent = asyncio.Event()
+
+        async def receive(self):
+            yield RealtimeEvent(
+                type="input_transcript",
+                text="What is in my Gmail inbox?",
+                is_final=True,
+            )
+            await self._text_sent.wait()
+            async for event in super().receive():
+                yield event
+
+        async def send_text(self, text):
+            await super().send_text(text)
+            self._text_sent.set()
+
+    class _GatedReadbackProvider(FakeProvider):
+        async def open_session(self, cfg):
+            self.opened_with = cfg
+            self.session = _GatedReadbackSession(self._events)
+            return self.session
+
+    jsons: list[dict] = []
+    binaries: list[bytes] = []
+    provider = _GatedReadbackProvider(
+        [
+            RealtimeEvent(type="audio_delta", audio=three_seconds),
+            RealtimeEvent(type="audio_delta", audio=three_seconds),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = _session(
+        provider,
+        brain=FakeBrain(replies=(reply,)),
+        jsons=jsons,
+        binaries=binaries,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(sess.wait_finished(), timeout=5)
+    await sess.end(reason="test")
+
+    assert provider.session.text_inputs, "trusted result was never injected"
+    spoken = [item for item in jsons if item.get("type") == "error_spoken"]
+    assert [item["text"] for item in spoken] == [reply]
+    assert not any("error occurred" in item["text"].lower() for item in spoken)
+    assert binaries == []
+
+
 class _ConfirmAwaitingBrain(FakeBrain):
     """FakeBrain that reports a pending two-turn voice confirmation."""
 
