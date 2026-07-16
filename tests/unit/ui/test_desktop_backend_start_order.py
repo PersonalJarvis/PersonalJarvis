@@ -160,7 +160,7 @@ def _cfg(tmp_path: Path) -> SimpleNamespace:
         memory=SimpleNamespace(data_dir=tmp_path),
         latency=SimpleNamespace(log_jsonl=False),
         harness=SimpleNamespace(default_risk_tier="safe"),
-        ui=SimpleNamespace(admin_api_port=18123),
+        ui=SimpleNamespace(admin_api_port=18123, dev_mode=False, vite_dev_url=None),
     )
 
 
@@ -269,6 +269,7 @@ def test_desktop_voice_start_does_not_wait_for_brain_ready(monkeypatch, tmp_path
 
     app = DesktopApp.__new__(DesktopApp)
     app.cfg = _cfg(tmp_path)
+    app.session_token = "test-session-token"
     app._backend_loop = None
     app._server = None
     app._workflow_store = None
