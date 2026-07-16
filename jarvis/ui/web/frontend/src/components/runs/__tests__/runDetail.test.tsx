@@ -23,7 +23,10 @@ vi.mock("@/hooks/useRuns", () => ({
     },
   }),
 }));
-vi.mock("@/i18n", () => ({ useT: () => (k: string) => k }));
+vi.mock("@/i18n", () => ({
+  useT: () => (k: string) => k,
+  useUiLanguage: () => "en",
+}));
 
 import { RunDetail } from "../RunDetail";
 

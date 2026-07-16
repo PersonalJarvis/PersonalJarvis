@@ -39,13 +39,17 @@ describe("SystemPromptGroup", () => {
   });
 
   it("PUTs the edited content when Save is clicked", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => DEFAULT_STATE })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ ...CUSTOM_STATE, ok: true, restart_required: false }),
-      });
+    // Answer by method, not by call order: an extra GET (e.g. a re-mount
+    // refetch) must not consume the PUT response and silently un-dirty the
+    // draft, which leaves Save disabled and no PUT ever issued.
+    const fetchMock = vi.fn(async (_url: string, opts?: RequestInit) =>
+      opts?.method === "PUT"
+        ? {
+            ok: true,
+            json: async () => ({ ...CUSTOM_STATE, ok: true, restart_required: false }),
+          }
+        : { ok: true, json: async () => DEFAULT_STATE },
+    );
     vi.stubGlobal("fetch", fetchMock);
     render(<SystemPromptGroup />);
 
@@ -54,7 +58,9 @@ describe("SystemPromptGroup", () => {
     );
     fireEvent.change(editor, { target: { value: "You are NOVA, a custom assistant." } });
 
-    fireEvent.click(screen.getByText("Save prompt"));
+    const save = screen.getByText("Save prompt").closest("button")!;
+    await waitFor(() => expect(save.hasAttribute("disabled")).toBe(false));
+    fireEvent.click(save);
 
     await waitFor(() => {
       const putCall = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT");
