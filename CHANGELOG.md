@@ -7,6 +7,17 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
+## [1.0.9] — 2026-07-16
+
+### Fixed
+
+- **Headless first boot: onboarding answers again.** The full server's
+  security boundary now serves `/api/onboarding/*` without a credential,
+  matching the serve-first bootstrap. A fresh install on a headless box
+  could otherwise never complete onboarding — the first-boot contract broke
+  the moment the full app took over from the bootstrap (caught by the
+  fresh-install smoke workflow on the v1.0.8 release commit).
+
 ## [1.0.8] — 2026-07-15
 
 ### Added
