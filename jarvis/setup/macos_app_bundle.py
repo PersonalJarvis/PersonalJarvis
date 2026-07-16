@@ -48,13 +48,9 @@ _MACHO_MAGICS = frozenset(
     }
 )
 
-_MIC_USAGE = (
-    "Personal Jarvis listens on this microphone for your wake word and "
-    "voice commands."
-)
+_MIC_USAGE = "Personal Jarvis listens on this microphone for your wake word and voice commands."
 _SCREEN_CAPTURE_USAGE = (
-    "Personal Jarvis captures the screen only when you ask it to see or "
-    "control applications."
+    "Personal Jarvis captures the screen only when you ask it to see or control applications."
 )
 
 
@@ -97,27 +93,42 @@ def _is_macho_executable(path: Path) -> bool:
     # Windows cannot represent POSIX execute bits. The only Windows caller is
     # the explicit cross-platform fixture seam; production validation runs on
     # macOS and therefore still requires an executable mode.
-    executable_mode = os.name == "nt" or bool(
-        mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-    )
+    executable_mode = os.name == "nt" or bool(mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH))
     return executable_mode and magic in _MACHO_MAGICS
 
 
-def _codesign_valid(bundle: Path) -> bool:
+def _codesign_issue(bundle: Path) -> str | None:
+    """Return the codesign verification failure detail, or ``None`` if valid.
+
+    Deliberately verifies WITHOUT ``--strict`` and ``--deep``: the local app
+    is a py2app *alias* bundle whose entire design is symlinking the managed
+    checkout and Python runtime, and strict validation rejects every symlink
+    that leaves the bundle ("invalid destination for symbolic link") — it
+    failed on 100% of freshly built bundles on real macOS (Intel and Apple
+    Silicon alike). The ad-hoc signature only has to give the app a stable
+    local TCC identity; distribution-grade validation belongs to the separate
+    Developer-ID signing and notarization pipeline.
+    """
     if sys.platform != "darwin":
-        return True
+        return None
     try:
         result = subprocess.run(
-            ["/usr/bin/codesign", "--verify", "--deep", "--strict", str(bundle)],
+            ["/usr/bin/codesign", "--verify", str(bundle)],
             capture_output=True,
             text=True,
             timeout=30,
             check=False,
             creationflags=NO_WINDOW_CREATIONFLAGS,
         )
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return result.returncode == 0
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"codesign verification did not run: {exc}"
+    if result.returncode == 0:
+        return None
+    return (result.stderr or result.stdout or "unknown codesign error").strip()
+
+
+def _codesign_valid(bundle: Path) -> bool:
+    return _codesign_issue(bundle) is None
 
 
 def macos_app_bundle_is_launchable(bundle: Path | None = None) -> bool:
@@ -194,9 +205,7 @@ def _try_build_icns(resources_dir: Path) -> str | None:
             image = Image.open(source).convert("RGBA")
             for size in (16, 32, 64, 128, 256, 512):
                 image.resize((size, size)).save(iconset / f"icon_{size}x{size}.png")
-                image.resize((size * 2, size * 2)).save(
-                    iconset / f"icon_{size}x{size}@2x.png"
-                )
+                image.resize((size * 2, size * 2)).save(iconset / f"icon_{size}x{size}@2x.png")
             output = resources_dir / "jarvis.icns"
             result = subprocess.run(
                 ["iconutil", "-c", "icns", str(iconset), "-o", str(output)],
@@ -248,12 +257,7 @@ def _write_cross_platform_fixture_bundle(bundle: Path) -> Path:
     executable_name = "PersonalJarvis"
     executable = macos_dir / executable_name
     executable.write_bytes(b"\xcf\xfa\xed\xfeJARVIS_TEST_FIXTURE\n")
-    executable.chmod(
-        executable.stat().st_mode
-        | stat.S_IXUSR
-        | stat.S_IXGRP
-        | stat.S_IXOTH
-    )
+    executable.chmod(executable.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     info = _bundle_plist()
     info["CFBundleExecutable"] = executable_name
     with (contents / "Info.plist").open("wb") as stream:
@@ -304,9 +308,7 @@ def _build_py2app_alias(install_root: Path, work_dir: Path) -> Path:
         raise RuntimeError(f"py2app alias build failed: {detail[-1200:]}")
     candidates = tuple((work_dir / "dist").glob("*.app"))
     if len(candidates) != 1:
-        raise RuntimeError(
-            f"py2app produced {len(candidates)} application bundles; expected one"
-        )
+        raise RuntimeError(f"py2app produced {len(candidates)} application bundles; expected one")
     return candidates[0]
 
 
@@ -322,17 +324,18 @@ def _sign_bundle(bundle: Path) -> None:
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "unknown codesign error").strip()
         raise RuntimeError(f"ad-hoc code signing failed: {detail[-1200:]}")
-    if not _codesign_valid(bundle):
-        raise RuntimeError("the generated macOS bundle failed code-signature verification")
+    issue = _codesign_issue(bundle)
+    if issue is not None:
+        raise RuntimeError(
+            f"the generated macOS bundle failed code-signature verification: {issue[-1200:]}"
+        )
 
 
 def _runtime_identity_valid(bundle: Path, *, install_root: Path) -> bool:
     """Verify native identity and imports against the managed checkout."""
     if sys.platform != "darwin":
         return True
-    descriptor, raw_probe = tempfile.mkstemp(
-        prefix="jarvis-bundle-probe-", suffix=".json"
-    )
+    descriptor, raw_probe = tempfile.mkstemp(prefix="jarvis-bundle-probe-", suffix=".json")
     os.close(descriptor)
     probe = Path(raw_probe)
     probe.unlink(missing_ok=True)

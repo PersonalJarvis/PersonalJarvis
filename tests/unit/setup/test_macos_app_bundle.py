@@ -60,9 +60,9 @@ def test_bundle_layout_and_plist(tmp_path: Path, monkeypatch) -> None:
 
 def test_rerun_preserves_existing_bundle_byte_for_byte(tmp_path: Path, monkeypatch) -> None:
     first = _build(tmp_path, monkeypatch)
-    executable_name = plistlib.loads(
-        (first / "Contents" / "Info.plist").read_bytes()
-    )["CFBundleExecutable"]
+    executable_name = plistlib.loads((first / "Contents" / "Info.plist").read_bytes())[
+        "CFBundleExecutable"
+    ]
     executable = first / "Contents" / "MacOS" / executable_name
     marker = executable.read_bytes()
     second = ensure_macos_app_bundle(
@@ -73,9 +73,7 @@ def test_rerun_preserves_existing_bundle_byte_for_byte(tmp_path: Path, monkeypat
     assert executable.read_bytes() == marker
 
 
-def test_failed_runtime_probe_rebuilds_instead_of_preserving(
-    tmp_path: Path, monkeypatch
-) -> None:
+def test_failed_runtime_probe_rebuilds_instead_of_preserving(tmp_path: Path, monkeypatch) -> None:
     import jarvis.setup.macos_app_bundle as mab
 
     bundle = _build(tmp_path, monkeypatch)
@@ -100,10 +98,13 @@ def test_failed_runtime_probe_rebuilds_instead_of_preserving(
     monkeypatch.setattr(mab, "_install_native_bundle", _rebuild)
     install_root = tmp_path / "install"
 
-    assert ensure_macos_app_bundle(
-        install_dir=install_root,
-        applications_dir=tmp_path / "Applications",
-    ) == bundle
+    assert (
+        ensure_macos_app_bundle(
+            install_dir=install_root,
+            applications_dir=tmp_path / "Applications",
+        )
+        == bundle
+    )
     assert rebuilt == [(install_root.resolve(), bundle)]
 
 
@@ -126,10 +127,13 @@ def test_running_canonical_app_skips_second_launchservices_probe(
         lambda *_args, **_kwargs: pytest.fail("must not spawn a second app probe"),
     )
 
-    assert ensure_macos_app_bundle(
-        install_dir=tmp_path / "install",
-        applications_dir=tmp_path / "Applications",
-    ) == bundle
+    assert (
+        ensure_macos_app_bundle(
+            install_dir=tmp_path / "install",
+            applications_dir=tmp_path / "Applications",
+        )
+        == bundle
+    )
 
 
 def test_noop_off_darwin_without_override(monkeypatch) -> None:
@@ -140,9 +144,7 @@ def test_noop_off_darwin_without_override(monkeypatch) -> None:
 def test_bundle_path_and_launchservices_command(tmp_path: Path, monkeypatch) -> None:
     bundle = _build(tmp_path, monkeypatch)
     probe = str(tmp_path / "probe.json")
-    assert macos_app_bundle_path(
-        applications_dir=tmp_path / "Applications"
-    ) == bundle
+    assert macos_app_bundle_path(applications_dir=tmp_path / "Applications") == bundle
     assert macos_launch_services_command(
         bundle,
         background=True,
@@ -191,6 +193,47 @@ def test_incomplete_bundle_is_not_launchable(tmp_path: Path) -> None:
     assert macos_app_bundle_is_launchable(bundle) is False
 
 
+def test_codesign_verify_never_uses_strict_or_deep(tmp_path: Path, monkeypatch) -> None:
+    """The alias bundle symlinks OUTSIDE itself by design, and strict
+    validation rejects exactly that ("invalid destination for symbolic
+    link") — it failed on every freshly built bundle on real macOS CI.
+    Local verification must stay a plain identity check."""
+    import jarvis.setup.macos_app_bundle as mab
+
+    monkeypatch.setattr(mab.sys, "platform", "darwin")
+    seen: list[list[str]] = []
+
+    def _fake_run(argv, **_kwargs):
+        seen.append(list(argv))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(mab.subprocess, "run", _fake_run)
+    assert mab._codesign_valid(tmp_path / APP_DIR_NAME) is True
+    assert len(seen) == 1
+    assert seen[0][:2] == ["/usr/bin/codesign", "--verify"]
+    assert "--strict" not in seen[0]
+    assert "--deep" not in seen[0]
+
+
+def test_sign_bundle_reports_the_codesign_verify_detail(tmp_path: Path, monkeypatch) -> None:
+    import jarvis.setup.macos_app_bundle as mab
+
+    monkeypatch.setattr(mab.sys, "platform", "darwin")
+
+    def _fake_run(argv, **_kwargs):
+        if "--verify" in argv:
+            return SimpleNamespace(
+                returncode=1,
+                stdout="",
+                stderr="invalid destination for symbolic link in bundle",
+            )
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    monkeypatch.setattr(mab.subprocess, "run", _fake_run)
+    with pytest.raises(RuntimeError, match="invalid destination for symbolic link"):
+        mab._sign_bundle(tmp_path / APP_DIR_NAME)
+
+
 def test_launcher_identity_probe_uses_main_bundle(tmp_path: Path, monkeypatch) -> None:
     from jarvis.setup.macos_launcher_entry import main
 
@@ -209,15 +252,9 @@ def test_launcher_identity_probe_uses_main_bundle(tmp_path: Path, monkeypatch) -
     assert json.loads(probe.read_text(encoding="utf-8")) == {
         "bundle_id": "com.personal-jarvis.desktop",
         "bundle_path": "/Users/test/Applications/Personal Jarvis.app",
-        "executable": (
-            "/Users/test/Applications/Personal Jarvis.app/Contents/MacOS/launcher"
-        ),
+        "executable": ("/Users/test/Applications/Personal Jarvis.app/Contents/MacOS/launcher"),
         "launcher_file": str(
-            Path(__file__).resolve().parents[3]
-            / "jarvis"
-            / "ui"
-            / "web"
-            / "launcher.py"
+            Path(__file__).resolve().parents[3] / "jarvis" / "ui" / "web" / "launcher.py"
         ),
         "install_root": str(Path(__file__).resolve().parents[3]),
         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
