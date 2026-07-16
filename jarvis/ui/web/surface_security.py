@@ -632,6 +632,11 @@ def _http_auth_exception(path: str, method: str) -> bool:
         _is_static_request(path, method)
         or (path == "/api/health" and method == "GET")
         or (path == "/api/ui/shell-painted" and method == "POST")
+        # First-boot contract: onboarding must answer before any credential
+        # exists (headless fresh install has no token to present). Parity with
+        # the serve-first bootstrap, which serves /api/onboarding/* unauthenticated
+        # via jarvis.setup.onboarding_fastpath; the routes carry setup state only.
+        or path.startswith("/api/onboarding/")
         or _external_http_auth(path, method)
     )
 
