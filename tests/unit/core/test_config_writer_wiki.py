@@ -32,7 +32,13 @@ def test_selected_vault_survives_config_reload(
     set_wiki_vault_root(selected, path=config_path)
 
     parsed = tomllib.loads(config_path.read_text(encoding="utf-8"))
+    # The file must keep the user's path VERBATIM (a Windows rewrite must not
+    # mangle a POSIX vault path or vice versa).
+    assert parsed["wiki_integration"]["vault_root"] == selected
     reloaded = JarvisConfig.model_validate(parsed)
-    assert str(reloaded.wiki_integration.vault_root) == selected
+    # In memory the value is a Path; compare Path-to-Path so the assertion does
+    # not fail on the host platform's separator rendering of a FOREIGN-style
+    # path (str(WindowsPath("/srv/x")) == r"\srv\x").
+    assert reloaded.wiki_integration.vault_root == Path(selected)
     assert reloaded.wiki_integration.enabled is True
     assert reloaded.wiki_integration.subscribe_idle is False
