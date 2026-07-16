@@ -208,7 +208,12 @@ async def call_vision_brain(
             "CU v2 cannot dispatch",
         )
 
-    from jarvis.brain.streaming import aggregate, aggregate_first_json  # noqa: PLC0415
+    from jarvis.brain.streaming import (  # noqa: PLC0415
+        aggregate,
+        aggregate_first_json,
+        has_complete_json_action,
+        is_length_truncated,
+    )
     from jarvis.harness.computer_use_planner import (  # noqa: PLC0415
         ComputerUsePlannerSelector,
         iter_last_resort_vision,
@@ -277,17 +282,45 @@ async def call_vision_brain(
 
     async def _try(provider: str, model: str | None, brain: Any) -> BrainReply | None:
         system, user = build_prompt(provider, brain)
-        req = BrainRequest(
-            messages=(BrainMessage(
-                role="user", content=user, images=tuple(images),
-            ),),
-            system=system,
-            temperature=0.0,
-            max_tokens=max_tokens,
-            stream=True,
-        )
-        result = await agg(brain.complete(req))
+
+        async def _once(tokens: int) -> Any:
+            req = BrainRequest(
+                messages=(BrainMessage(
+                    role="user", content=user, images=tuple(images),
+                ),),
+                system=system,
+                temperature=0.0,
+                max_tokens=tokens,
+                stream=True,
+                # CU calls are small deterministic JSON decisions — internal
+                # "thinking" only burns the output budget (2026-07-16: every
+                # step died "unterminated JSON", thoughts=304 of 320).
+                reasoning_effort="none",
+            )
+            return await agg(brain.complete(req))
+
+        result = await _once(max_tokens)
         text = (result.text or "").strip()
+        if (
+            early_stop_json
+            and text
+            and not has_complete_json_action(text)
+            and is_length_truncated(result.finish_reason, text)
+        ):
+            # The model hit the output-token cap before finishing its JSON —
+            # typically a thinking-by-default model whose thoughts consumed
+            # the budget despite the reasoning hint (or a provider without a
+            # thinking knob at all). ONE retry with real headroom; the
+            # early-stop aggregator still cuts the stream at the JSON
+            # boundary, so the extra ceiling costs nothing on success.
+            retry_tokens = max(2048, max_tokens * 4)
+            logger.info(
+                "[cu] %s(%s) reply hit the %d-token cap before completing "
+                "its JSON — retrying once with %d",
+                provider, model, max_tokens, retry_tokens,
+            )
+            result = await _once(retry_tokens)
+            text = (result.text or "").strip()
         if not text:
             selector.record_empty(provider, model)
             return None

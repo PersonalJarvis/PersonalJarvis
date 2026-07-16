@@ -91,6 +91,14 @@ class BrainRequest:
     temperature: float = 0.7
     max_tokens: int = 4096
     stream: bool = True
+    # Hint for providers whose models spend internal reasoning ("thinking")
+    # tokens before answering. "none" asks the provider to disable/minimize
+    # internal reasoning for THIS call — used by small deterministic
+    # structured-output calls (Computer-Use actions/judges) where thinking
+    # would eat the whole ``max_tokens`` budget and truncate the visible
+    # reply. ``None`` keeps the provider default; providers without a
+    # reasoning knob ignore the field (capability hint, never a hard switch).
+    reasoning_effort: Literal["none"] | None = None
 
 
 @dataclass(frozen=True, slots=True)

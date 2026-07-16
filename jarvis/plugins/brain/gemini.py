@@ -78,6 +78,21 @@ def _is_stale_context_cache_error(exc: Exception) -> bool:
     return False
 
 
+def _is_thinking_config_rejected_error(exc: Exception) -> bool:
+    """True when the API rejected the ``thinking_config`` itself.
+
+    Thinking-mandatory models answer 400 "Budget 0 is invalid. This model
+    only works in thinking mode." when asked to disable thinking. The
+    concrete exception class differs across ``google-genai`` versions, so we
+    match on the message. Recoverable by retrying once without the field —
+    a capability probe, never a model-name pin (AP-21).
+    """
+    msg = str(exc).lower()
+    if "thinking" not in msg:
+        return False
+    return "budget" in msg or "invalid" in msg or "thinking mode" in msg
+
+
 def _to_gemini_contents(messages: tuple[BrainMessage, ...]) -> list[dict[str, Any]]:
     """BrainMessages → Gemini contents array. Role mapping: assistant→model.
 
@@ -601,11 +616,24 @@ class GeminiBrain:
         # older SDK versions don't have the field and raise AttributeError. In
         # that case we ignore the value instead of killing the whole brain
         # call (best-effort optimization).
-        if self._thinking_budget is not None:
+        effective_thinking_budget = self._thinking_budget
+        if (
+            effective_thinking_budget is None
+            and getattr(req, "reasoning_effort", None) == "none"
+        ):
+            # The caller asked for minimal internal reasoning (small
+            # structured-output calls: Computer-Use actions/judges). A
+            # thinking-by-default model otherwise spends the whole
+            # ``max_output_tokens`` budget on thoughts and the visible reply
+            # arrives truncated mid-JSON — live forensic 2026-07-16: every CU
+            # step failed "unterminated JSON" with thoughts=304 of
+            # max_tokens=320. An explicit constructor budget always wins.
+            effective_thinking_budget = 0
+        if effective_thinking_budget is not None:
             try:
                 from google.genai import types as _genai_types
                 config_dict["thinking_config"] = _genai_types.ThinkingConfig(
-                    thinking_budget=self._thinking_budget,
+                    thinking_budget=effective_thinking_budget,
                 )
             except (ImportError, AttributeError):
                 pass
@@ -803,6 +831,22 @@ class GeminiBrain:
                         config_dict["system_instruction"] = system_text
                     if tools_payload:
                         config_dict["tools"] = tools_payload
+                    continue
+                if (
+                    not yielded_delta
+                    and "thinking_config" in config_dict
+                    and _is_thinking_config_rejected_error(exc)
+                ):
+                    # Some models REQUIRE thinking mode and 400 on budget=0
+                    # ("Budget 0 is invalid. This model only works in thinking
+                    # mode."). Capability recovery, not a model-name pin
+                    # (AP-21): drop the config and retry once. Safe: the
+                    # rejection fires before any token is generated.
+                    log.info(
+                        "Gemini model %s rejected thinking_config — retrying "
+                        "once without it: %s", self._model, exc,
+                    )
+                    config_dict.pop("thinking_config", None)
                     continue
                 if (
                     not yielded_delta

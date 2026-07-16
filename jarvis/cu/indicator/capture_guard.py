@@ -45,14 +45,29 @@ def indicator_suppressed() -> Iterator[None]:
         return
     try:
         cm = hook()
+        enter = getattr(cm, "__enter__", None)
+        exit_ = getattr(cm, "__exit__", None)
+        if enter is None or exit_ is None:
+            yield
+            return
+        enter()
     except Exception:  # noqa: BLE001 — fail-open
         yield
         return
+    # The blank succeeded — run the grab exactly once and swallow ONLY the
+    # unblank failure. The previous ``with cm: yield`` + ``except: yield``
+    # shape resumed the generator into a SECOND yield whenever the hook's
+    # __exit__ raised (dead sidecar, late ack), which @contextmanager turns
+    # into ``RuntimeError: generator didn't stop`` — killing the very frame
+    # grab this guard exists to protect (macOS/Linux path; Windows uses
+    # WDA_EXCLUDEFROMCAPTURE and never registers a hook).
     try:
-        with cm:  # type: ignore[union-attr]
-            yield
-    except Exception:  # noqa: BLE001 — a guard failure must not kill the grab
         yield
+    finally:
+        try:
+            exit_(None, None, None)
+        except Exception:  # noqa: BLE001, S110 — guard failure must not kill the grab
+            pass
 
 
 __all__ = ["indicator_suppressed", "register_hook", "unregister_hook"]

@@ -116,6 +116,13 @@ def _has_complete_json_action(text: str) -> bool:
     return True
 
 
+# Public name: the CU dispatch uses this to decide whether a length-capped
+# reply still holds a usable JSON payload (truncation-retry gate).
+def has_complete_json_action(text: str) -> bool:
+    """Public wrapper around :func:`_has_complete_json_action`."""
+    return _has_complete_json_action(text)
+
+
 async def _aclose_quietly(stream: AsyncIterator[BrainDelta]) -> None:
     """Best-effort close of an async stream after an early stop, so the
     provider connection/generator is released. Never raises."""
@@ -262,6 +269,7 @@ __all__ = [
     "aggregate",
     "aggregate_first_json",
     "aggregate_with_consumer",
+    "has_complete_json_action",
     "tee_text",
     "is_length_truncated",
 ]
