@@ -834,6 +834,138 @@ async def test_response_cancel_not_active_error_is_recoverable(
 
 
 @pytest.mark.asyncio
+async def test_unsolicited_response_after_heard_user_turn_is_adopted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the server dropped the manual-response contract and auto-answers a
+    user turn it audibly heard (speech_started since our last response), that
+    response is the ONLY answer the turn will ever get. Suppressing it left
+    Jarvis silent until manual hang-up (live grok-realtime 2026-07-16 09:23).
+    It must be adopted — audible, uncancelled — while the contract is still
+    re-armed for the following turns."""
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    conn = holder["client"].realtime.last_conn
+    conn._events = iter(
+        [
+            SimpleNamespace(type="input_audio_buffer.speech_started"),
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(id="resp-auto", metadata=None),
+            ),
+            SimpleNamespace(
+                type="response.output_audio.delta",
+                response_id="resp-auto",
+                item_id="item-auto",
+                delta=base64.b64encode(b"\x03\x00").decode("ascii"),
+            ),
+            SimpleNamespace(
+                type="response.done",
+                response=SimpleNamespace(id="resp-auto"),
+            ),
+        ]
+    )
+    session._events = conn.__aiter__()
+
+    events = [event async for event in session.receive()]
+
+    assert "audio_delta" in [event.type for event in events]
+    assert conn.response_cancels == []
+    assert len(conn.session_updates) == 2
+    rearmed = conn.session_updates[-1]
+    assert rearmed["audio"]["input"]["turn_detection"]["create_response"] is False
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_delayed_transcript_after_adoption_does_not_double_speak(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If the adopted auto-response's input transcript arrives DELAYED (not
+    lost), the orchestrator requests its own response for it. Honoring that
+    request would speak a second, independent answer to the same utterance —
+    it must be skipped exactly once."""
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    conn = holder["client"].realtime.last_conn
+    conn._events = iter(
+        [
+            SimpleNamespace(type="input_audio_buffer.speech_started"),
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(id="resp-auto", metadata=None),
+            ),
+            SimpleNamespace(
+                type="response.done",
+                response=SimpleNamespace(id="resp-auto"),
+            ),
+            SimpleNamespace(
+                type="conversation.item.input_audio_transcription.completed",
+                item_id="item-late",
+                transcript="The real question",
+            ),
+        ]
+    )
+    session._events = conn.__aiter__()
+
+    [event async for event in session.receive()]
+
+    await session.request_response()
+    assert conn.response_creates == 0, (
+        "the delayed transcript's response request must be skipped — the "
+        "adopted auto-response already answered this turn"
+    )
+    await session.request_response()
+    assert conn.response_creates == 1, "the skip must be one-shot"
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_second_unsolicited_response_without_new_speech_is_still_cancelled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Adoption is a one-shot salvage per heard user turn: a further
+    unsolicited response WITHOUT new speech evidence is a true stray and keeps
+    the BUG-064 suppression (no double-speak)."""
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    conn = holder["client"].realtime.last_conn
+    conn._events = iter(
+        [
+            SimpleNamespace(type="input_audio_buffer.speech_started"),
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(id="resp-auto-1", metadata=None),
+            ),
+            SimpleNamespace(
+                type="response.done",
+                response=SimpleNamespace(id="resp-auto-1"),
+            ),
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(id="resp-auto-2", metadata=None),
+            ),
+            SimpleNamespace(
+                type="response.done",
+                response=SimpleNamespace(id="resp-auto-2"),
+            ),
+        ]
+    )
+    session._events = conn.__aiter__()
+
+    [event async for event in session.receive()]
+
+    assert conn.response_cancels == ["resp-auto-2"]
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_unsolicited_response_rearms_the_full_session_contract(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1148,3 +1280,102 @@ async def test_failed_transport_rebuild_closes_the_session(
     assert [event.type for event in events] == ["speech_started"]
     assert session._closed is True
     assert holder["client"].closed is True
+
+
+@pytest.mark.asyncio
+async def test_grok_generic_cancellation_failed_error_is_recoverable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUG-064 recurrence #2 (grok-realtime 2026-07-16 10:23): xAI wraps the
+    benign cancel-after-done race in the generic ``invalid_request_error``
+    code instead of ``response_cancel_not_active``, so the code set alone
+    cannot recognize it. The message shape must be matched — labeling this
+    error terminal ended a healthy live call with hangup_reason=error."""
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    conn = holder["client"].realtime.last_conn
+    conn._events = iter(
+        [
+            SimpleNamespace(
+                type="error",
+                error=SimpleNamespace(
+                    code="invalid_request_error",
+                    message="Cancellation failed: no active response found",
+                ),
+            ),
+        ]
+    )
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == ["error"]
+    assert events[0].recoverable is True
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_second_stray_after_unheeded_rearm_rebuilds_the_transport(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUG-064 recurrence #2 (grok-realtime 2026-07-16 10:23, session
+    204b108a): the first stray auto-response arrived 1.9 s after the turn's
+    transcript — inside the benign-race quiet window, so no transcript
+    deadline was armed — and the deaf server then emitted nothing for 16 s,
+    so the deadline path never got a second chance. A FURTHER unsolicited
+    response after a contract re-arm that produced no transcript is proof the
+    re-arm failed to restore hearing: the adapter must rebuild the transport
+    immediately instead of re-arming forever."""
+    holder = _patch_openai_client(monkeypatch)
+    monkeypatch.setattr(openai_realtime, "_CONTRACT_REARM_COOLDOWN_S", 0.0)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig(model="gpt-realtime")
+    )
+    api = holder["client"].realtime
+    conn1 = api.last_conn
+    conn2 = _FakeConn()
+    conn2._events = iter(
+        [
+            SimpleNamespace(type="session.updated"),
+            SimpleNamespace(
+                type="conversation.item.input_audio_transcription.completed",
+                item_id="post-rebuild-1",
+                transcript="Heard again",
+            ),
+        ]
+    )
+    api.extra_conns.append(conn2)
+    conn1._events = iter(
+        [
+            SimpleNamespace(
+                type="conversation.item.input_audio_transcription.completed",
+                item_id="item-1",
+                transcript="Was?",
+            ),
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(id="resp-stray-1", metadata=None),
+            ),
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(id="resp-stray-2", metadata=None),
+            ),
+        ]
+    )
+    session._events = conn1.__aiter__()
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == [
+        "input_transcript",
+        "error",
+        "input_transcript",
+    ]
+    assert events[1].recoverable is True
+    assert "rebuilt" in str(events[1].error)
+    assert events[2].text == "Heard again"
+    assert conn1.response_cancels == ["resp-stray-1", "resp-stray-2"]
+    assert api.connect_calls == ["gpt-realtime", "gpt-realtime"]
+    assert session._conn is conn2
+    await session.close()

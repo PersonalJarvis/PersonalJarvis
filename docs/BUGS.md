@@ -4595,6 +4595,33 @@ Additional guards: `test_deaf_session_rebuilds_the_transport_and_receive_hops_on
 `test_failed_transport_rebuild_closes_the_session` (openai) and
 `test_deaf_grok_session_rebuild_carries_the_grok_contract` (grok).
 
+**Recurrence #2, 2026-07-16 10:23 — the deadline path has a blind spot and a
+Grok error wording killed the session (session `204b108a`, first live run
+WITH the transport-rebuild escalation).** Turn 1 fine; turn 2 committed and
+transcribed ("Was?" — xAI's VAD again cut the utterance short), then the
+known wedge. The rebuild never fired, for a provable reason: the first stray
+auto-response arrived 1.9 s after the turn's transcript — inside the 2 s
+benign-race quiet window, so no transcript deadline was armed — and the deaf
+server then emitted NOTHING for 16 s (no speech_started, no committed, no
+transcript), so nothing else could ever arm it. When the server's next stray
+finally arrived, the client's `response.cancel` raced the response's own
+completion and xAI answered with `invalid_request_error: Cancellation
+failed: no active response found` — a wording the recoverable-code set
+(`response_cancel_not_active`) does not cover, so a benign no-op error was
+labeled terminal and ended the session (`Beendet durch: Fehler`). <!-- i18n-allow: quoted German session-export field under test -->
+
+**Fixes (same adapter).** (1) Benign lifecycle races are also recognized by
+message shape (`_RECOVERABLE_ERROR_MESSAGE_MARKERS`: "no active response" /
+"already has an active response") because xAI wraps them in the generic
+`invalid_request_error` code. (2) Stray-after-unheeded-re-arm escalation: a
+FURTHER unsolicited response arriving ≥ the re-arm cooldown after a contract
+re-arm that produced no input transcript since (`_transcript_heard_since_rearm`,
+a sequence marker — Windows' ~16 ms `time.monotonic()` resolution makes
+timestamp ordering lie) rebuilds the transport immediately instead of
+re-arming forever. Guards:
+`test_grok_generic_cancellation_failed_error_is_recoverable`,
+`test_second_stray_after_unheeded_rearm_rebuilds_the_transport`.
+
 ## BUG-065: macOS/Linux desktop shows a permanent OFFLINE — WebKit drops the HttpOnly session cookie from WebSocket handshakes (HIGH, FIXED 2026-07-16)
 
 **Symptom (real Mac hardware, 2026-07-15).** During and after boot the macOS
@@ -4661,3 +4688,67 @@ Prove the session over plain HTTP and hand the socket a short-lived,
 single-use credential; and never close a websocket before accepting it, or
 every specific rejection collapses into an unreadable 1006 that the UI can
 only mis-render as "server down".
+
+## BUG-066: Realtime voice — live transcript freezes on the first fragment + spoken reply cut short or fully suppressed (HIGH, FIXED 2026-07-16)
+
+**Symptoms (live incidents 2026-07-15/16, maintainer report).** (1) The
+desktop sidebar's live-transcript box showed only "Was" while the user had
+asked a full question — and kept showing it long after the session ended.
+(2) gemini-live: the reply TEXT was fully stored, but the spoken audio
+stopped mid-answer and the session ended `reason=error`
+(session `dced755b`, 36.4s spoken of a ~40s answer). (3) grok-realtime:
+three sessions in one morning produced an EMPTY spoken reply — the turn was
+cancelled by barge-in and the server's follow-up answer never played
+(sessions `3cefaede`, `30c532cb`, `9fbcb348`).
+
+**Root causes (six, individually verified).**
+1. *Store/UI truncation at capture:* xAI's server VAD ignores the
+   `silence_duration_ms=1500` we send in the session contract and commits an
+   utterance mid-sentence after ~200ms of micro-pause ("Was", "Constable.",
+   "Can you please"). Server-side; cannot be fully fixed client-side.
+2. *Stale sidebar:* the frontend event store's `transcription` field had NO
+   reset path — the last utterance survived into IDLE and the next session,
+   masquerading as a frozen live transcript (`useWebSocket.ts`).
+3. *Raw-chunk publishing (latent):* `RealtimeVoiceSession` published the raw
+   per-chunk transcript instead of its own accumulated `_last_user_text`;
+   every 1:1 mirror (Sidebar, TranscriptionView, SessionRecorder) would show
+   only the last fragment of a multi-final turn (`session.py:1067`).
+4. *Silent server truncation:* `gemini_live.py` discarded
+   `turn_complete_reason` — every named enum value except UNSPECIFIED is an
+   abnormal stop (safety filter, regeneration limit...), so a
+   server-truncated reply looked like a clean `turn_complete`.
+5. *Fatal teardown drops speakable audio:* Gemini `go_away` (a courteous
+   pre-disconnect notice) was mapped to a terminal error; the terminal-error
+   branch never released transcript-cleared audio still held by the scrub
+   gate; the pipeline `finally:` hard-cancel()ed the playback queue instead
+   of draining already-safe PCM.
+6. *Answer suppressed as "unsolicited" (BUG-064 follow-up):* after a barge-in
+   cancel cleared `_pending_response_markers`, the server's auto-generated
+   answer to the user's real (heard but never transcribed) utterance matched
+   no marker and was cancelled — the turn stayed silent until manual hangup.
+
+**Fixes.** Frontend: clear `transcription` at IDLE session boundaries
+(`useWebSocket.ts`). Session: publish accumulated snapshots
+(`session.py:1067`); finalize + emit the scrub-gate tail on terminal provider
+errors (`session.py:1417`). Gemini: `go_away` → `recoverable=True`; log
+abnormal `turn_complete_reason` (`gemini_live.py`). OpenAI/Grok: adopt the
+FIRST unsolicited response when the server heard the user speak
+(speech_started / committed / barge-in) WITHOUT a subsequent input
+transcript; an input transcript re-enables suppression so the benign
+duplicate race (2026-07-15) stays covered (`openai_realtime.py`). Pipeline:
+bounded `finish_turn()` drain before `playback.close()` on non-shutdown
+teardown; Orb bridge: accept a FINAL user transcript during THINKING while
+no reply text exists (`pipeline.py`, `bus_bridge.py`).
+
+**Guards.** `test_transcript_persistence.py` (snapshots + gate-tail-on-error),
+`test_gemini_live.py` (go_away recoverable, abnormal reason logged),
+`test_openai_realtime.py` (adopt vs. suppress matrix),
+`test_orb_listening_transcript.py` (late-final repaint),
+`useWebSocket.test.tsx` (transcript reset at session boundaries).
+
+**Lesson.** A voice turn has three independent tracks — captured transcript,
+generated text, spoken audio — and each can silently diverge from the other
+two. Persist and display from ONE accumulated source of truth, never from
+raw wire chunks; treat every provider "done" signal as carrying a REASON that
+must be read; and never let a suppression/safety path discard the only answer
+a committed user turn will ever get without a salvage check.

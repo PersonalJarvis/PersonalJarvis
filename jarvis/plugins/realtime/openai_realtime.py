@@ -60,6 +60,26 @@ _RECOVERABLE_ERROR_CODES = frozenset(
         "response_cancel_not_active",
     }
 )
+# xAI Grok reports the SAME benign races under the generic code
+# ``invalid_request_error``, so the code set alone cannot recognize them.
+# Observed live (grok-realtime 2026-07-16 10:23): the cancel of a suppressed
+# unsolicited response raced the response's own completion, the server
+# answered "Cancellation failed: no active response found", and the generic
+# code made a healthy session end with hangup_reason=error. Match the
+# lifecycle shape in the message instead — both markers describe an outcome
+# that already happened, never a broken connection.
+_RECOVERABLE_ERROR_MESSAGE_MARKERS = (
+    "no active response",
+    "already has an active response",
+)
+
+
+def _error_is_recoverable(event: Any) -> bool:
+    if _error_code(event) in _RECOVERABLE_ERROR_CODES:
+        return True
+    error = getattr(event, "error", None)
+    message = str(getattr(error, "message", "") or "").casefold()
+    return any(marker in message for marker in _RECOVERABLE_ERROR_MESSAGE_MARKERS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -219,6 +239,11 @@ class _OpenAIRealtimeSession:
         # instructions or tool declarations to their session-start values.
         self._session_contract = session_payload
         self._last_contract_rearm = float("-inf")
+        # Sequence marker, not a timestamp: has ANY input transcript arrived
+        # since the last contract re-arm actually went out? Windows'
+        # time.monotonic() ticks at ~16 ms, so two adjacent events can carry
+        # the SAME timestamp and an ordering comparison silently lies.
+        self._transcript_heard_since_rearm = True
         self._last_item_id = ""
         self._response_had_tool_calls = False
         self._tool_response_done_seen = False
@@ -237,6 +262,21 @@ class _OpenAIRealtimeSession:
         self._response_create_lock = asyncio.Lock()
         self._response_idle = asyncio.Event()
         self._response_idle.set()
+        # Evidence that the server heard the user speak (speech_started /
+        # committed buffer / a local barge-in) WITHOUT a subsequent input
+        # transcript. An unsolicited response.created is adopted as the
+        # genuine answer to that heard-but-untranscribed turn ONLY while this
+        # is True. An input transcript clears it: from there the manual flow
+        # requests its own response, so a crossing auto-response is a
+        # duplicate and stays suppressed (BUG-064, benign race 2026-07-15).
+        self._server_heard_user_since_response = False
+        # One-shot: an adopted auto-response already answers the current user
+        # turn. If that turn's input transcript arrives merely DELAYED (not
+        # lost), the orchestrator will request its own response for it —
+        # honoring that request would speak a second, independent answer to
+        # the same utterance. Cleared by new speech evidence or by consuming
+        # exactly one skipped request.
+        self._auto_adopted_unanswered_input = False
         self._closed = False
 
     async def wait_until_ready(self) -> None:
@@ -351,8 +391,13 @@ class _OpenAIRealtimeSession:
             # The server sealed a user turn; the session contract now owes an
             # input transcript (completed or failed). If none arrives, the
             # transcription half of the contract is dead (BUG-064).
+            self._server_heard_user_since_response = True
             self._arm_transcript_deadline(require_recent_quiet=False)
         elif event_type == "input_audio_buffer.speech_started":
+            self._server_heard_user_since_response = True
+            # New speech means a NEW user turn: an earlier adopted
+            # auto-response no longer answers what comes next.
+            self._auto_adopted_unanswered_input = False
             yield _ProviderEvent(type="speech_started")
         elif event_type == "response.function_call_arguments.done":
             call_id = str(getattr(event, "call_id", "") or "")
@@ -395,11 +440,10 @@ class _OpenAIRealtimeSession:
             else:
                 yield _ProviderEvent(type="turn_complete")
         elif event_type == "error":
-            error_code = _error_code(event)
             yield _ProviderEvent(
                 type="error",
                 error=_error_message(event),
-                recoverable=error_code in _RECOVERABLE_ERROR_CODES,
+                recoverable=_error_is_recoverable(event),
             )
 
     async def update_session(
@@ -433,6 +477,18 @@ class _OpenAIRealtimeSession:
             await self._conn.session.update(session=update)
 
     async def request_response(self, *, required_tool: str | None = None) -> None:
+        if self._auto_adopted_unanswered_input and required_tool is None:
+            # The adopted auto-response already answers this turn; its input
+            # transcript arrived delayed, not lost. Creating another response
+            # would speak a second answer to the same utterance. One-shot: a
+            # required_tool request still goes through (the adopted response
+            # cannot satisfy an explicit tool demand).
+            self._auto_adopted_unanswered_input = False
+            log.info(
+                "OpenAI Realtime skipping response.create — an adopted "
+                "auto-response already answers the current user turn"
+            )
+            return
         tool_choice: Any = None
         if required_tool:
             tool_choice = {"type": "function", "name": str(required_tool)}
@@ -462,6 +518,12 @@ class _OpenAIRealtimeSession:
         # audio/transcript/done events keep their old response id and are then
         # suppressed by ``_response_is_accepted`` even if they race the next
         # user turn.
+        # A barge-in is local proof the user is speaking again: if the server
+        # then auto-answers that speech under a dropped manual-response
+        # contract, the response must be adopted, not suppressed. It also
+        # opens a NEW turn, so any earlier adopted response is history.
+        self._server_heard_user_since_response = True
+        self._auto_adopted_unanswered_input = False
         self._pending_response_markers.clear()
         self._accepted_response_ids.clear()
         self._response_had_tool_calls = False
@@ -556,6 +618,32 @@ class _OpenAIRealtimeSession:
                 "accepted one pending response by lifecycle order"
             )
         else:
+            if (
+                response_id
+                and self._response_idle.is_set()
+                and self._server_heard_user_since_response
+            ):
+                # The server dropped the manual-response contract and
+                # auto-answered a user turn it audibly heard (speech_started /
+                # committed buffer / barge-in since our last response).
+                # Cancelling would discard the only answer this turn will
+                # ever get — observed live on grok-realtime 2026-07-16:
+                # barge-in cancel → contract dropped → the genuine reply was
+                # suppressed as unsolicited → Jarvis stayed silent until a
+                # manual hang-up. Adopt the response; the re-arm below
+                # restores the contract for the following turns.
+                log.warning(
+                    "OpenAI Realtime adopting unsolicited response %s as the "
+                    "answer to a heard user turn (server dropped the "
+                    "manual-response contract)",
+                    response_id,
+                )
+                self._response_idle.clear()
+                self._accepted_response_ids.add(response_id)
+                self._server_heard_user_since_response = False
+                self._auto_adopted_unanswered_input = True
+                await self._rearm_session_contract()
+                return
             log.warning(
                 "OpenAI Realtime suppressed unsolicited response %s",
                 response_id or "<unknown>",
@@ -568,6 +656,27 @@ class _OpenAIRealtimeSession:
                         "OpenAI Realtime unsolicited response cancel failed",
                         exc_info=True,
                     )
+            # BUG-064 recurrence #2 (grok-realtime 2026-07-16 10:23): a
+            # FURTHER unsolicited response, arriving well after the previous
+            # contract re-arm with not a single input transcript in between,
+            # is proof the re-arm never restored the server's hearing. That
+            # session's first stray fell inside the benign-race quiet window
+            # (1.9 s after the turn's transcript), so no transcript deadline
+            # was armed — and the deaf server then emitted nothing for 16 s,
+            # leaving the deadline path without a second chance. The cooldown
+            # bound keeps a same-instant burst of strays (one server hiccup,
+            # re-arm still unassessed) on the cheap re-arm path.
+            if (
+                not self._transcript_heard_since_rearm
+                and time.monotonic() - self._last_contract_rearm >= _CONTRACT_REARM_COOLDOWN_S
+            ):
+                log.warning(
+                    "OpenAI Realtime unsolicited response after an unheeded "
+                    "contract re-arm (no input transcript since) — rebuilding "
+                    "the transport now"
+                )
+                self._begin_rebuild()
+                return
             # BUG-064: under the manual-response contract an unsolicited
             # response should be impossible — its arrival means the server
             # dropped the session configuration (observed live on grok-realtime
@@ -591,6 +700,9 @@ class _OpenAIRealtimeSession:
             )
             return
         self._accepted_response_ids.add(response_id)
+        # This lifecycle now answers the pending user turn; only NEW speech
+        # evidence may qualify a later unsolicited response for adoption.
+        self._server_heard_user_since_response = False
 
     async def _rearm_session_contract(self) -> None:
         """Re-send the full session payload after an unsolicited response.
@@ -606,6 +718,7 @@ class _OpenAIRealtimeSession:
         if now - self._last_contract_rearm < _CONTRACT_REARM_COOLDOWN_S:
             return
         self._last_contract_rearm = now
+        self._transcript_heard_since_rearm = False
         log.warning(
             "OpenAI Realtime re-arming the session contract (input "
             "transcription + manual-response mode) after an unsolicited "
@@ -623,6 +736,10 @@ class _OpenAIRealtimeSession:
         """Any input transcript proves the server can still hear."""
         self._last_transcript_at = time.monotonic()
         self._transcript_deadline = None
+        self._transcript_heard_since_rearm = True
+        # The manual flow answers transcribed turns itself; a crossing
+        # auto-response is now a duplicate, not a salvageable answer.
+        self._server_heard_user_since_response = False
 
     def _arm_transcript_deadline(self, *, require_recent_quiet: bool) -> None:
         # Only arm while the session is at rest: with a response lifecycle in
@@ -643,6 +760,11 @@ class _OpenAIRealtimeSession:
 
     def _maybe_begin_rebuild(self) -> None:
         if not self._transcript_overdue():
+            return
+        self._begin_rebuild()
+
+    def _begin_rebuild(self) -> None:
+        if self._closed or self._session_contract is None:
             return
         if self._rebuild_task is not None and not self._rebuild_task.done():
             return
@@ -733,6 +855,9 @@ class _OpenAIRealtimeSession:
         self._last_item_id = ""
         self._transcript_deadline = None
         self._last_contract_rearm = float("-inf")
+        self._transcript_heard_since_rearm = True
+        self._server_heard_user_since_response = False
+        self._auto_adopted_unanswered_input = False
         self._response_idle.set()
         try:
             await old_cm.__aexit__(None, None, None)
