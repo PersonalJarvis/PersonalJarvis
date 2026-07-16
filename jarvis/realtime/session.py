@@ -77,6 +77,15 @@ _DELEGATE_INPUT_BOUNDARY_WAIT_S = 3.0
 # (the user is audibly mid-utterance); a stable transcript dispatches.
 _DELEGATE_INPUT_BOUNDARY_MAX_ROUNDS = 6
 _DELEGATE_NATIVE_BOUNDARY_WAIT_S = 1.0
+# Delivering a delegate result does not force the provider to render it:
+# Gemini's realtime text stream carries no turn-end signal, and a transport
+# that died mid-turn renders nothing either. If no readback becomes audible
+# within this window the surface TTS speaks the trusted reply itself (live
+# forensic 2026-07-16 10:26: a delivered reply was recorded in the
+# transcript but never heard). Gemini normally starts readback audio well
+# under one second after a tool result.
+_DELEGATE_READBACK_WAIT_S = 2.5
+_DELEGATE_READBACK_POLL_S = 0.1
 # Mid-reply audio-flow diagnostics: an audible hole inside one spoken answer
 # has three distinct producers (scrub gate waiting for a late transcript, the
 # provider sending no audio, or silence embedded in the provider's own PCM).
@@ -329,6 +338,14 @@ class _DelegateTurnState:
     # (e.g. the provider already produced a response for it). A missing
     # provider boundary may then delay the dispatch but never veto it.
     input_final: bool = False
+    # True once the surface TTS spoke the trusted reply because the provider
+    # rendered no readback in time; any late provider rendering of the same
+    # reply is then withheld so the user never hears it twice.
+    surface_fallback_spoken: bool = False
+    # True while the delegate task lingers in the readback-verification
+    # watchdog AFTER delivery. In that phase a pending delegate task no
+    # longer holds provider turn boundaries.
+    readback_verification_active: bool = False
     input_boundary_ready: asyncio.Event = field(default_factory=asyncio.Event)
     provider_ready: asyncio.Event = field(default_factory=asyncio.Event)
     result_ready: asyncio.Event = field(default_factory=asyncio.Event)
@@ -1330,10 +1347,18 @@ class RealtimeVoiceSession:
                     if await self._recover_empty_provider_turn():
                         continue
                     delegate_state = self._delegate_turns.get(self._turn_id)
+                    # The delegate task stays alive PAST result delivery: it
+                    # lingers in the readback-verification watchdog. In that
+                    # phase a provider boundary belongs to the readback and
+                    # must publish the turn normally, so a pending task alone
+                    # no longer proves the result is outstanding.
                     hold_for_delegate = bool(
                         delegate_state is not None
                         and (
-                            self._turn_has_pending_delegate(self._turn_id)
+                            (
+                                self._turn_has_pending_delegate(self._turn_id)
+                                and not delegate_state.readback_verification_active
+                            )
                             or (
                                 delegate_state.deterministic
                                 and not delegate_state.delivery_started
@@ -1409,6 +1434,7 @@ class RealtimeVoiceSession:
                         and delegate_state.result_complete
                         and delegate_state.delivery_started
                         and delegate_state.last_reply
+                        and not delegate_state.surface_fallback_spoken
                         and not self._scrub_cancelled_for_turn
                         and not self._output_active
                         and self._output_samples_sent == 0
@@ -2213,11 +2239,17 @@ class RealtimeVoiceSession:
         state = self._delegate_turns.get(self._turn_id)
         return not (state is not None and state.bridge_delivery_started)
 
+    def _delegate_surface_fallback_spoken(self) -> bool:
+        """True once the surface already spoke this turn's trusted reply."""
+        state = self._delegate_turns.get(self._turn_id)
+        return bool(state is not None and state.surface_fallback_spoken)
+
     def _must_withhold_provider_output(self) -> bool:
         """Drop untrusted output during delegation and after barge-in."""
         return bool(
             self._drop_provider_output_until_new_response
             or self._must_withhold_delegate_output()
+            or self._delegate_surface_fallback_spoken()
         )
 
     def _track_delegate_task(
@@ -2911,6 +2943,59 @@ class RealtimeVoiceSession:
                     "language": self._language,
                 }
             )
+            return
+        await self._verify_delegate_readback(turn_id, turn_state)
+
+    async def _verify_delegate_readback(
+        self,
+        turn_id: str,
+        turn_state: _DelegateTurnState,
+    ) -> None:
+        """Speak a delivered trusted reply locally when the provider stays mute.
+
+        Delivery does not force a rendering: Gemini's realtime text stream
+        carries no turn-end signal, so an injected result prompt may never
+        start a response generation, and a transport that died mid-turn
+        renders nothing either (live forensic 2026-07-16 10:26: the delivered
+        reply was recorded in the transcript but never heard). When no
+        readback becomes audible inside the wait window, the surface TTS
+        speaks the trusted reply itself; ``surface_fallback_spoken`` then
+        withholds any late provider rendering so the user never hears the
+        answer twice.
+        """
+        turn_state.readback_verification_active = True
+        deadline = time.monotonic() + _DELEGATE_READBACK_WAIT_S
+        while True:
+            if (
+                self._ended
+                or self._session is None
+                or self._user_speech_active
+                or not self._delegate_turn_is_active(turn_id, turn_state)
+            ):
+                return
+            if self._output_active or self._output_samples_sent > 0:
+                return
+            if time.monotonic() >= deadline:
+                break
+            await asyncio.sleep(_DELEGATE_READBACK_POLL_S)
+        reply = str(turn_state.last_reply or "").strip()
+        if not reply:
+            return
+        turn_state.surface_fallback_spoken = True
+        log.warning(
+            "realtime[%s] provider rendered no readback for a delivered "
+            "delegate result within %.1fs; speaking it through the surface "
+            "TTS fallback",
+            self.session_id,
+            _DELEGATE_READBACK_WAIT_S,
+        )
+        await self._send_json(
+            {
+                "type": "error_spoken",
+                "text": reply,
+                "language": self._language,
+            }
+        )
 
     def _start_delegate(
         self,
@@ -3023,6 +3108,8 @@ class RealtimeVoiceSession:
                 self.session_id,
                 exc_info=True,
             )
+            return
+        await self._verify_delegate_readback(turn_id, turn_state)
 
     async def _dispatch_brain_turn(self, text: str) -> str:
         # allow_voice_confirm=True is load-bearing: without it an ask-tier

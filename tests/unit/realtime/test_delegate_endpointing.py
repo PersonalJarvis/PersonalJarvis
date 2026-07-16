@@ -273,6 +273,8 @@ def _shorten_delegate_waits(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(session_module, "_DELEGATE_INPUT_BOUNDARY_WAIT_S", 0.05)
     monkeypatch.setattr(session_module, "_DELEGATE_NATIVE_BOUNDARY_WAIT_S", 0.05)
+    monkeypatch.setattr(session_module, "_DELEGATE_READBACK_WAIT_S", 0.1)
+    monkeypatch.setattr(session_module, "_DELEGATE_READBACK_POLL_S", 0.02)
 
 
 async def _run_auto_response_session(
@@ -326,6 +328,53 @@ async def test_silent_provider_boundary_timeout_dispatches_instead_of_refusing(
     assert len(provider.session.text_inputs) == 1
     assert "Tomorrow is Friday." in provider.session.text_inputs[0]
     assert "didn't work" not in provider.session.text_inputs[0]
+
+
+@pytest.mark.asyncio
+async def test_undelivered_readback_falls_back_to_surface_tts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A delivered result the provider never renders must still be heard.
+
+    Gemini's realtime text stream carries no turn-end signal, so an injected
+    result prompt may never start a response generation; a transport that
+    died mid-turn renders nothing either. The readback watchdog speaks the
+    trusted reply through the surface TTS instead of letting it vanish.
+    """
+    _shorten_delegate_waits(monkeypatch)
+    brain = _InstantBrain()
+    provider = _AutoResponseProvider(brain, script="silent")
+    messages: list[dict[str, Any]] = []
+
+    session = RealtimeVoiceSession(
+        session_id="delegate-readback-watchdog",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda message: messages.append(message) or asyncio.sleep(0),
+        provider=provider,
+        config=_config(),
+        bus=None,
+        browser_sample_rate=16_000,
+        surface="desktop",
+        brain=brain,
+    )
+    await session.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    try:
+        await asyncio.wait_for(provider.session.text_sent.wait(), timeout=2.0)
+        for _ in range(100):
+            if any(m.get("type") == "error_spoken" for m in messages):
+                break
+            await asyncio.sleep(0.02)
+    finally:
+        await session.end(reason="test")
+
+    fallbacks = [m for m in messages if m.get("type") == "error_spoken"]
+    assert fallbacks == [
+        {
+            "type": "error_spoken",
+            "text": "Tomorrow is Friday.",
+            "language": "en",
+        }
+    ]
 
 
 @pytest.mark.asyncio

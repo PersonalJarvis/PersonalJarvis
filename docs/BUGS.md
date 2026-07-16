@@ -4890,11 +4890,22 @@ question one turn later worked (the provider natively called
    logs stalls >= 400 ms with the scrub-gate hold time (late transcript vs.
    silent provider) and detects embedded-silence runs inside provider PCM;
    `ScrubHoldGate` exposes `pending_audio_ms` / `last_hold_ms`.
+4. Readback watchdog (`_verify_delegate_readback`): delivering a delegate
+   result does not force the provider to render it — Gemini's
+   `send_realtime_input(text=...)` carries no turn-end signal, so an
+   injected result prompt may never start a response generation, and a
+   transport that died mid-turn renders nothing either. When no readback
+   becomes audible within `_DELEGATE_READBACK_WAIT_S` the surface TTS
+   speaks the trusted reply itself; `surface_fallback_spoken` withholds a
+   late provider rendering so nothing is heard twice, and the turn-complete
+   hold ends at delivery (`readback_verification_active`) so the readback's
+   own boundary still publishes the turn normally.
 
 **Guards.** `tests/unit/realtime/test_delegate_endpointing.py`
 (`test_silent_provider_boundary_timeout_dispatches_instead_of_refusing`,
 `test_phantom_interrupted_edge_defers_while_delegate_pending`,
-`test_phantom_interrupted_after_delivery_keeps_the_readback`).
+`test_phantom_interrupted_after_delivery_keeps_the_readback`,
+`test_undelivered_readback_falls_back_to_surface_tts`).
 
 **Lesson.** A safety wait may DELAY an action on missing evidence, never
 convert missing evidence into a guaranteed failure — "provider said nothing"
