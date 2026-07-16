@@ -15,9 +15,24 @@ Architecture (binding):
      ``PrivacyFilter`` + ``bus.publish`` of ``FrameUpdated`` or
      ``AwarenessCaptureBlocked``.
 
-Platform guard: ``os.name != "nt"`` makes ``start()`` a no-op (tests
-run without a Win32 stack). Lazy imports of ``ctypes``, ``win32event``
-and ``psutil`` INSIDE the methods (Plan §5 Hard-Negative HN3).
+Platform guard: ``detect_platform() != "win32"`` routes ``start()`` to the
+POSIX polling fallback below instead of the Win32 hook path. Lazy imports
+of ``ctypes``, ``win32event`` and ``psutil`` INSIDE the methods (Plan §5
+Hard-Negative HN3).
+
+POSIX polling fallback (macOS/Linux): no OS-level foreground-change hook
+is used there, so ``WindowFocusWatcher`` instead polls
+``jarvis.platform.window_state.foreground_window()`` on a
+``_POSIX_POLL_INTERVAL_S`` cadence and calls the SAME ``_emit_frame`` tail
+the Win32 drain loop uses, so both platforms publish identical
+``FrameUpdated`` / ``AwarenessCaptureBlocked`` events. macOS always has a
+display (no TCC/Accessibility grant is needed just to read the frontmost
+application — ``window_state.foreground_window()`` already degrades to
+``None`` without the optional Screen-Recording grant or without pyobjc, and
+that "no usable window" case feeds the same consecutive-failure counter
+that disables the fallback rather than spinning forever). Headless Linux
+and Wayland sessions are gated up front (mirrors ``IdleDetector``): one
+honest log line, no polling task, no crash.
 
 Lifecycle order in ``stop()`` (subagent Q4, 6 phases):
   P1: cancel drain task (asyncio side first, so no ``bus.publish``
@@ -35,18 +50,24 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shutil
+import subprocess
 import threading
 import time
 from typing import TYPE_CHECKING
 
 from jarvis.awareness.state import FrameSnapshot
 from jarvis.core.events import AwarenessCaptureBlocked, FrameUpdated
+from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from jarvis.core.win32_dpi import ensure_dpi_awareness
+from jarvis.platform import detect_platform, window_state
+from jarvis.platform.probes import display_present, is_wayland
 
 if TYPE_CHECKING:
     from jarvis.awareness.manager import AwarenessManager
     from jarvis.awareness.privacy import PrivacyFilter
     from jarvis.core.bus import EventBus
+    from jarvis.platform.window_state import WindowInfo
 
 logger = logging.getLogger(__name__)
 
@@ -62,6 +83,13 @@ _PUMP_JOIN_TIMEOUT_S: float = 1.5     # Stop-Phase 3
 _DRAIN_CANCEL_TIMEOUT_S: float = 0.5  # Stop-Phase 1
 _HWND_DEDUPE_NS: int = 50_000_000     # 50ms — schluckt Win32-Doppel-Events
 _PUMP_READY_TIMEOUT_S: float = 2.0    # start() wait-bis-Hook-gesetzt
+
+# POSIX polling fallback (macOS/Linux) — no OS-level focus-change hook is
+# used there, so we poll at a modest cadence instead. 2 s balances staying
+# off the voice hot path against noticing an app switch reasonably fast.
+_POSIX_POLL_INTERVAL_S: float = 2.0
+_POSIX_POLL_MAX_FAILURES: int = 5     # consecutive empty probes before giving up
+_POSIX_POLL_STOP_TIMEOUT_S: float = 1.5
 
 
 class WindowFocusWatcher:
@@ -92,6 +120,12 @@ class WindowFocusWatcher:
         # GC'd, the C pointer dangles, and Win32 calls invalid memory.
         self._wineventproc_ref: object | None = None
 
+        # POSIX polling side (macOS/Linux fallback — no hook available)
+        self._poll_task: asyncio.Task[None] | None = None
+        self._poll_stop: asyncio.Event = asyncio.Event()
+        self._poll_last_handle: int | None = None
+        self._poll_last_title: str = ""
+
         # State
         self._started: bool = False
         self._stopping: bool = False
@@ -110,13 +144,16 @@ class WindowFocusWatcher:
     # ---- Lifecycle ----------------------------------------------------------
 
     async def start(self) -> None:
-        """Start pump thread and drain task. Idempotent.
+        """Start the Win32 pump thread and drain task, or the POSIX polling
+        fallback on macOS/Linux. Idempotent.
 
-        On Linux/Mac: no-op (tests run without Win32).
+        Headless Linux / Wayland: logs one honest line and starts no task
+        (mirrors ``IdleDetector``).
         """
         if self._started:
             return
-        if os.name != "nt":
+        if detect_platform() != "win32":
+            self._start_posix_polling()
             self._started = True
             return
 
@@ -146,12 +183,21 @@ class WindowFocusWatcher:
         self._started = True
 
     async def stop(self) -> None:
-        """Clean shutdown <2 s. Idempotent. 6-phase sequence."""
+        """Clean shutdown <2 s. Idempotent. 6-phase sequence on Windows;
+        a 2-phase cancel-and-join on the POSIX polling fallback."""
         if self._stopping:
             return
         if not self._started:
             return
         self._stopping = True
+
+        if detect_platform() != "win32":
+            try:
+                await self._stop_posix_polling()
+            finally:
+                self._started = False
+                self._stopping = False
+            return
 
         try:
             # P1: Drain-Task cancellen (asyncio-side)
@@ -407,7 +453,27 @@ class WindowFocusWatcher:
             logger.debug("Window-meta lookup failed for hwnd=%d", hwnd, exc_info=True)
             return
 
-        # PrivacyFilter — on the asyncio thread, not the Win32 thread.
+        await self._emit_frame(
+            ts_ns=ts_ns, handle=hwnd, window_title=window_title,
+            pid=pid, process_name=process_name,
+        )
+
+    async def _emit_frame(
+        self, *, ts_ns: int, handle: int, window_title: str, pid: int, process_name: str,
+    ) -> None:
+        """Privacy-filter + probe + publish one resolved frame.
+
+        Shared tail of both frame sources — the Win32 drain loop (hwnd
+        events dequeued from the WinEventHook callback) and the POSIX
+        polling fallback (macOS/Linux, see below) — so every platform
+        builds and publishes the identical ``FrameUpdated`` /
+        ``AwarenessCaptureBlocked`` event through one code path. Callers
+        are responsible for their own change-detection/dedupe before
+        calling this (the Win32 path dedupes by hwnd+timestamp in
+        ``_drain_once``; the POSIX path dedupes by handle+title in
+        ``_poll_once``).
+        """
+        # PrivacyFilter — on the asyncio thread, not a native callback.
         allowed, reason = self._privacy.is_allowed(
             window_title=window_title,
             process_name=process_name,
@@ -426,8 +492,10 @@ class WindowFocusWatcher:
                 probe_data = {}
 
         # Build FrameSnapshot and set AwarenessState.current_frame.
-        # Single-writer pattern: only this drain loop writes
-        # current_frame. Readers are synchronous in the same loop, no race.
+        # Single-writer pattern: only this method writes current_frame
+        # (the Win32 drain loop and the POSIX poll loop never run at the
+        # same time — start() branches to exactly one of them). Readers
+        # are synchronous in the same loop, no race.
         cur_frame = self._manager.state.current_frame
         idle_since_ns = cur_frame.idle_since_ns if cur_frame is not None else None
         snap = FrameSnapshot(
@@ -441,7 +509,7 @@ class WindowFocusWatcher:
             idle_since_ns=idle_since_ns,
         )
         self._manager.state.current_frame = snap
-        self._last_hwnd = hwnd
+        self._last_hwnd = handle
         self._last_emit_ns = ts_ns
 
         # Publish bus event. allowed → FrameUpdated, blocked →
@@ -493,3 +561,189 @@ class WindowFocusWatcher:
             return (title, pid_int, proc_name)
         except Exception:  # noqa: BLE001
             return ("", 0, "")
+
+    # ---- POSIX polling fallback (macOS/Linux) --------------------------------
+
+    def _start_posix_polling(self) -> None:
+        """Start the polling fallback, or degrade honestly.
+
+        macOS always has a display (``probes.display_present()`` is
+        unconditional there) and needs no permission just to read the
+        frontmost application, so it always starts polling; a session
+        that genuinely cannot be read (no pyobjc, or later a revoked
+        grant) is discovered per-tick by ``_poll_once`` and disables the
+        loop via the consecutive-failure counter instead of being gated
+        here. Linux needs a real X11 session — headless hosts and Wayland
+        compositors (no global foreground-window query by OS design, the
+        same reason ``probes.has_hotkey``/``has_cursor`` refuse there) are
+        rejected up front instead of polling a backend that can never work.
+        """
+        plat = detect_platform()
+        if plat not in ("darwin", "linux"):
+            logger.info(
+                "window-focus tracking unavailable on this platform (%s)", plat,
+            )
+            return
+        if plat == "linux" and (is_wayland() or not display_present()):
+            logger.info(
+                "window-focus tracking unavailable on this platform: "
+                "no usable X11 display (headless session or Wayland)",
+            )
+            return
+
+        self._poll_stop.clear()
+        loop = asyncio.get_running_loop()
+        self._poll_task = loop.create_task(
+            self._poll_loop(), name="awareness-window-poll",
+        )
+
+    async def _stop_posix_polling(self) -> None:
+        """Cancel the polling task, wait <1.5 s. Idempotent."""
+        self._poll_stop.set()
+        task = self._poll_task
+        self._poll_task = None
+        if task is None:
+            return
+        task.cancel()
+        try:
+            await asyncio.wait_for(task, timeout=_POSIX_POLL_STOP_TIMEOUT_S)
+        except (TimeoutError, asyncio.CancelledError):
+            pass
+        except Exception:  # noqa: BLE001
+            logger.debug("POSIX poll task ended with exception", exc_info=True)
+
+    async def _poll_loop(self) -> None:
+        """Call ``_poll_once`` every ``_POSIX_POLL_INTERVAL_S`` until stopped.
+
+        Stops itself after ``_POSIX_POLL_MAX_FAILURES`` consecutive probes
+        that returned no usable window (missing pyobjc/xdotool, or a
+        session that genuinely cannot be queried) instead of polling a
+        dead backend forever. Waits on ``_poll_stop`` rather than a plain
+        sleep so ``stop()`` wakes the loop immediately instead of waiting
+        out the interval.
+        """
+        consecutive_failures = 0
+        while not self._poll_stop.is_set():
+            try:
+                ok = await self._poll_once()
+            except asyncio.CancelledError:
+                break
+
+            if ok:
+                consecutive_failures = 0
+            else:
+                consecutive_failures += 1
+                if consecutive_failures >= _POSIX_POLL_MAX_FAILURES:
+                    logger.info(
+                        "window-focus polling produced no usable window info "
+                        "for %d consecutive attempts — stopping (missing "
+                        "pyobjc/xdotool, or the session cannot be probed)",
+                        consecutive_failures,
+                    )
+                    return
+
+            try:
+                await asyncio.wait_for(
+                    self._poll_stop.wait(), timeout=_POSIX_POLL_INTERVAL_S,
+                )
+            except TimeoutError:
+                pass
+            except asyncio.CancelledError:
+                break
+
+    async def _poll_once(self) -> bool:
+        """One polling iteration: probe the foreground window, emit a frame
+        via :meth:`_emit_frame` if focus actually changed.
+
+        Returns ``True`` when the probe returned usable window info
+        (whether or not focus changed — an unchanged focus is still a
+        healthy probe), ``False`` when it returned nothing usable (feeds
+        the consecutive-failure counter in :meth:`_poll_loop`).
+        Independently testable — tests call this directly instead of
+        waiting out the real polling interval.
+        """
+        try:
+            win = await asyncio.to_thread(self._posix_foreground_window)
+        except Exception:  # noqa: BLE001
+            logger.debug("POSIX foreground-window probe failed", exc_info=True)
+            return False
+
+        if win is None or not (win.title or "").strip():
+            return False
+
+        changed = (win.handle, win.title) != (self._poll_last_handle, self._poll_last_title)
+        if not changed:
+            return True
+
+        self._poll_last_handle = win.handle
+        self._poll_last_title = win.title
+        try:
+            pid, process_name = await asyncio.to_thread(
+                self._resolve_posix_focus_meta, win,
+            )
+            await self._emit_frame(
+                ts_ns=time.time_ns(),
+                handle=win.handle or 0,
+                window_title=win.title,
+                pid=pid,
+                process_name=process_name,
+            )
+        except Exception:  # noqa: BLE001
+            logger.debug("POSIX frame emit failed", exc_info=True)
+        return True
+
+    @staticmethod
+    def _posix_foreground_window() -> WindowInfo | None:
+        """Thin seam over ``window_state.foreground_window`` — tests patch
+        this directly to simulate macOS/Linux without a real display."""
+        return window_state.foreground_window()
+
+    @staticmethod
+    def _resolve_posix_focus_meta(win: WindowInfo) -> tuple[int, str]:
+        """Best-effort ``(pid, process_name)`` for a foreground ``WindowInfo``.
+
+        macOS: the frontmost application via ``NSWorkspace`` — the same
+        source ``window_state`` uses internally to resolve the foreground
+        title, so pid and title stay consistent even without the
+        Screen-Recording grant and without any Accessibility permission
+        (NSWorkspace's frontmost-application query needs neither). Linux:
+        ``xdotool`` resolves the owning pid from the X11 window id.
+        ``psutil`` resolves the process name from the pid on both. Never
+        raises — a missing pyobjc/xdotool or a transient lookup error
+        degrades to ``(0, "")``; the frame still publishes and title-based
+        privacy filtering still applies.
+        """
+        pid = 0
+        try:
+            plat = detect_platform()
+            if plat == "darwin":
+                from AppKit import NSWorkspace  # type: ignore[import-not-found] # noqa: PLC0415
+
+                app = NSWorkspace.sharedWorkspace().frontmostApplication()
+                if app is not None:
+                    pid = int(app.processIdentifier())
+            elif plat == "linux" and win.handle and shutil.which("xdotool"):
+                proc = subprocess.run(
+                    ["xdotool", "getwindowpid", str(int(win.handle))],
+                    capture_output=True,
+                    text=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=5,
+                    creationflags=NO_WINDOW_CREATIONFLAGS,
+                )
+                if proc.returncode == 0:
+                    pid = int((proc.stdout or "").strip() or "0")
+        except Exception:  # noqa: BLE001
+            logger.debug("POSIX focus pid resolution failed", exc_info=True)
+            pid = 0
+
+        process_name = ""
+        if pid > 0:
+            try:
+                import psutil  # noqa: PLC0415
+
+                process_name = psutil.Process(pid).name()
+            except Exception:  # noqa: BLE001
+                process_name = ""
+        return pid, process_name

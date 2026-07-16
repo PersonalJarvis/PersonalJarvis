@@ -20,12 +20,14 @@ from unittest.mock import patch
 
 import pytest
 
+import jarvis.awareness.watchers.window as window_mod
 from jarvis.awareness.config import AwarenessConfig
 from jarvis.awareness.manager import AwarenessManager
 from jarvis.awareness.privacy import PrivacyFilter
 from jarvis.awareness.watchers.window import WindowFocusWatcher
 from jarvis.core.bus import EventBus
 from jarvis.core.events import AwarenessCaptureBlocked, FrameUpdated
+from jarvis.platform.window_state import WindowInfo
 
 
 def _make_components() -> tuple[EventBus, AwarenessManager, PrivacyFilter]:
@@ -203,3 +205,194 @@ async def test_resolve_meta_failure_skips_frame_no_crash() -> None:
         await watcher._drain_once()
 
     assert len(received) == 0
+
+
+# ---- POSIX polling fallback (macOS/Linux) -----------------------------------
+# Platform behavior is simulated by monkeypatching the resolvers window.py
+# imports (detect_platform / display_present / is_wayland) so these tests run
+# deterministically on any host, including this Windows dev machine.
+
+
+@pytest.mark.asyncio
+async def test_posix_start_degrades_honestly_on_headless_linux(monkeypatch) -> None:
+    """start() on a headless Linux host logs one line and starts no poll task."""
+    monkeypatch.setattr(window_mod, "detect_platform", lambda: "linux")
+    monkeypatch.setattr(window_mod, "display_present", lambda: False)
+    monkeypatch.setattr(window_mod, "is_wayland", lambda: False)
+
+    bus, manager, privacy = _make_components()
+    watcher = WindowFocusWatcher(manager=manager, privacy=privacy, bus=bus)
+    await watcher.start()
+
+    assert watcher._poll_task is None
+    await watcher.stop()    # idempotent no-op, no crash, no hang
+
+
+@pytest.mark.asyncio
+async def test_posix_start_degrades_honestly_on_wayland(monkeypatch) -> None:
+    """start() on a Wayland session logs one line and starts no poll task."""
+    monkeypatch.setattr(window_mod, "detect_platform", lambda: "linux")
+    monkeypatch.setattr(window_mod, "display_present", lambda: True)
+    monkeypatch.setattr(window_mod, "is_wayland", lambda: True)
+
+    bus, manager, privacy = _make_components()
+    watcher = WindowFocusWatcher(manager=manager, privacy=privacy, bus=bus)
+    await watcher.start()
+
+    assert watcher._poll_task is None
+    await watcher.stop()
+
+
+@pytest.mark.asyncio
+async def test_posix_start_polls_on_macos(monkeypatch) -> None:
+    """macOS always has a display — start() always starts the poll task."""
+    monkeypatch.setattr(window_mod, "detect_platform", lambda: "darwin")
+
+    bus, manager, privacy = _make_components()
+    watcher = WindowFocusWatcher(manager=manager, privacy=privacy, bus=bus)
+    with patch.object(
+        WindowFocusWatcher, "_posix_foreground_window", staticmethod(lambda: None),
+    ):
+        await watcher.start()
+        assert watcher._poll_task is not None
+        await watcher.stop()
+
+    assert watcher._poll_task is None
+
+
+@pytest.mark.asyncio
+async def test_posix_poll_once_emits_on_focus_change() -> None:
+    """A changed foreground window publishes exactly one FrameUpdated."""
+    bus, manager, privacy = _make_components()
+    received: list[FrameUpdated] = []
+    bus.subscribe(FrameUpdated, _async_collect(received))
+
+    watcher = WindowFocusWatcher(manager=manager, privacy=privacy, bus=bus)
+    with patch.object(
+        WindowFocusWatcher, "_posix_foreground_window",
+        staticmethod(lambda: WindowInfo(title="Terminal", handle=42)),
+    ), patch.object(
+        WindowFocusWatcher, "_resolve_posix_focus_meta",
+        staticmethod(lambda win: (123, "Terminal.app")),
+    ):
+        ok_first = await watcher._poll_once()
+        ok_second = await watcher._poll_once()    # unchanged focus — no re-emit
+
+    assert ok_first is True
+    assert ok_second is True
+    assert len(received) == 1
+    assert received[0].process_name == "Terminal.app"
+    assert received[0].pid == 123
+    assert manager.state.current_frame is not None
+    assert manager.state.current_frame.active_window_title == "Terminal"
+
+
+@pytest.mark.asyncio
+async def test_posix_poll_once_detects_a_second_focus_change() -> None:
+    """Two distinct focus changes publish two distinct events."""
+    bus, manager, privacy = _make_components()
+    received: list[FrameUpdated] = []
+    bus.subscribe(FrameUpdated, _async_collect(received))
+
+    windows = iter([
+        WindowInfo(title="Terminal", handle=1),
+        WindowInfo(title="Browser", handle=2),
+    ])
+
+    watcher = WindowFocusWatcher(manager=manager, privacy=privacy, bus=bus)
+    with patch.object(
+        WindowFocusWatcher, "_posix_foreground_window",
+        staticmethod(lambda: next(windows)),
+    ), patch.object(
+        WindowFocusWatcher, "_resolve_posix_focus_meta",
+        staticmethod(lambda win: (1, "some.app")),
+    ):
+        await watcher._poll_once()
+        await watcher._poll_once()
+
+    assert len(received) == 2
+    assert received[0].window_title == "Terminal"
+    assert received[1].window_title == "Browser"
+
+
+@pytest.mark.asyncio
+async def test_posix_poll_once_routes_blocked_title_to_capture_blocked() -> None:
+    """A privacy-blocked title publishes AwarenessCaptureBlocked, not FrameUpdated."""
+    bus, manager, privacy = _make_components()
+    blocked: list[AwarenessCaptureBlocked] = []
+    updated: list[FrameUpdated] = []
+    bus.subscribe(AwarenessCaptureBlocked, _async_collect(blocked))
+    bus.subscribe(FrameUpdated, _async_collect(updated))
+
+    watcher = WindowFocusWatcher(manager=manager, privacy=privacy, bus=bus)
+    with patch.object(
+        WindowFocusWatcher, "_posix_foreground_window",
+        staticmethod(lambda: WindowInfo(title="Sparkasse Online-Banking", handle=9)),
+    ), patch.object(
+        WindowFocusWatcher, "_resolve_posix_focus_meta",
+        staticmethod(lambda win: (55, "firefox")),
+    ):
+        await watcher._poll_once()
+
+    assert len(blocked) == 1
+    assert len(updated) == 0
+
+
+@pytest.mark.asyncio
+async def test_posix_poll_once_returns_false_on_no_window() -> None:
+    """No usable window info → _poll_once reports a failure, no crash."""
+    bus, manager, privacy = _make_components()
+    watcher = WindowFocusWatcher(manager=manager, privacy=privacy, bus=bus)
+    with patch.object(
+        WindowFocusWatcher, "_posix_foreground_window", staticmethod(lambda: None),
+    ):
+        ok = await watcher._poll_once()
+    assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_posix_poll_once_returns_false_on_probe_exception() -> None:
+    """A raising probe is a failure too, not a crash."""
+    def _raises() -> WindowInfo | None:
+        raise RuntimeError("simulated Quartz failure")
+
+    bus, manager, privacy = _make_components()
+    watcher = WindowFocusWatcher(manager=manager, privacy=privacy, bus=bus)
+    with patch.object(
+        WindowFocusWatcher, "_posix_foreground_window", staticmethod(_raises),
+    ):
+        ok = await watcher._poll_once()
+    assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_posix_poll_loop_stops_after_max_consecutive_failures(monkeypatch) -> None:
+    """The poll loop self-disables after consecutive empty probes instead of
+    spinning forever."""
+    monkeypatch.setattr(window_mod, "detect_platform", lambda: "linux")
+    monkeypatch.setattr(window_mod, "display_present", lambda: True)
+    monkeypatch.setattr(window_mod, "is_wayland", lambda: False)
+    monkeypatch.setattr(window_mod, "_POSIX_POLL_INTERVAL_S", 0.0)
+
+    bus, manager, privacy = _make_components()
+    watcher = WindowFocusWatcher(manager=manager, privacy=privacy, bus=bus)
+    with patch.object(
+        WindowFocusWatcher, "_posix_foreground_window", staticmethod(lambda: None),
+    ):
+        await watcher.start()
+        assert watcher._poll_task is not None
+        await asyncio.wait_for(watcher._poll_task, timeout=5.0)
+
+    # The loop returned on its own (self-disabled) rather than being cancelled.
+    assert watcher._poll_task.done()
+    assert not watcher._poll_task.cancelled()
+    await watcher.stop()    # idempotent cleanup, no crash
+
+
+@pytest.mark.asyncio
+async def test_posix_stop_without_start_is_noop() -> None:
+    """stop() without a prior start() is a no-op on the POSIX path too."""
+    bus, manager, privacy = _make_components()
+    watcher = WindowFocusWatcher(manager=manager, privacy=privacy, bus=bus)
+    await watcher.stop()
+    await watcher.stop()

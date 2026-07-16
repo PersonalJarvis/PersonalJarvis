@@ -13,11 +13,13 @@ Architecture assumptions that the wave-2 implementation is bound to:
 """
 from __future__ import annotations
 
+import sys
 import time
 from unittest.mock import patch
 
 import pytest
 
+import jarvis.awareness.watchers.idle as idle_mod
 from jarvis.awareness.config import AwarenessConfig
 from jarvis.awareness.manager import AwarenessManager
 from jarvis.awareness.state import FrameSnapshot
@@ -160,3 +162,168 @@ async def test_stop_idempotent_and_fast() -> None:
         await detector.stop()
         elapsed = time.perf_counter() - t0
         assert elapsed < 1.5
+
+
+# ---- Backend resolution (macOS/Linux) ----------------------------------------
+# Platform behavior is simulated by monkeypatching the resolvers idle.py
+# imports (detect_platform / display_present / is_wayland) so these tests run
+# deterministically on any host, including this Windows dev machine.
+
+
+def test_resolve_backend_windows() -> None:
+    with patch.object(idle_mod, "detect_platform", lambda: "win32"):
+        backend, reason = IdleDetector._resolve_backend()
+    assert backend == "win32"
+    assert reason == ""
+
+
+def test_resolve_backend_macos_without_quartz(monkeypatch) -> None:
+    """No pyobjc-Quartz importable → backend=None with a clear reason.
+
+    Forced via ``sys.modules["Quartz"] = None`` (the standard "known
+    unimportable" sentinel) so this is deterministic regardless of whether
+    the host actually has pyobjc installed.
+    """
+    monkeypatch.setattr(idle_mod, "detect_platform", lambda: "darwin")
+    monkeypatch.setitem(sys.modules, "Quartz", None)
+    backend, reason = IdleDetector._resolve_backend()
+    assert backend is None
+    assert "Quartz" in reason
+
+
+def test_resolve_backend_linux_wayland(monkeypatch) -> None:
+    monkeypatch.setattr(idle_mod, "detect_platform", lambda: "linux")
+    monkeypatch.setattr(idle_mod, "is_wayland", lambda: True)
+    backend, reason = IdleDetector._resolve_backend()
+    assert backend is None
+    assert "Wayland" in reason
+
+
+def test_resolve_backend_linux_headless(monkeypatch) -> None:
+    monkeypatch.setattr(idle_mod, "detect_platform", lambda: "linux")
+    monkeypatch.setattr(idle_mod, "is_wayland", lambda: False)
+    monkeypatch.setattr(idle_mod, "display_present", lambda: False)
+    backend, reason = IdleDetector._resolve_backend()
+    assert backend is None
+    assert "headless" in reason
+
+
+def test_resolve_backend_linux_missing_xprintidle(monkeypatch) -> None:
+    monkeypatch.setattr(idle_mod, "detect_platform", lambda: "linux")
+    monkeypatch.setattr(idle_mod, "is_wayland", lambda: False)
+    monkeypatch.setattr(idle_mod, "display_present", lambda: True)
+    monkeypatch.setattr(idle_mod.shutil, "which", lambda name: None)
+    backend, reason = IdleDetector._resolve_backend()
+    assert backend is None
+    assert "xprintidle" in reason
+
+
+def test_resolve_backend_linux_available(monkeypatch) -> None:
+    monkeypatch.setattr(idle_mod, "detect_platform", lambda: "linux")
+    monkeypatch.setattr(idle_mod, "is_wayland", lambda: False)
+    monkeypatch.setattr(idle_mod, "display_present", lambda: True)
+    monkeypatch.setattr(idle_mod.shutil, "which", lambda name: "/usr/bin/xprintidle")
+    backend, reason = IdleDetector._resolve_backend()
+    assert backend == "linux"
+    assert reason == ""
+
+
+@pytest.mark.asyncio
+async def test_start_degrades_honestly_when_no_backend(monkeypatch, caplog) -> None:
+    """No usable backend: start() logs one line and never creates the task
+    (mirrors WindowFocusWatcher's honest degradation), instead of spinning
+    the 1 s loop forever reporting "never idle"."""
+    monkeypatch.setattr(idle_mod, "detect_platform", lambda: "linux")
+    monkeypatch.setattr(idle_mod, "is_wayland", lambda: False)
+    monkeypatch.setattr(idle_mod, "display_present", lambda: False)
+
+    detector = IdleDetector(manager=_make_manager(), bus=EventBus(), threshold_s=300)
+    with caplog.at_level("INFO"):
+        await detector.start()
+
+    assert detector._task is None
+    assert any("idle detection unavailable" in r.message for r in caplog.records)
+    await detector.stop()    # no crash on stop-without-start
+
+
+@pytest.mark.asyncio
+async def test_tick_disables_after_max_consecutive_failures() -> None:
+    """A backend that always raises stops the loop after N failures, not
+    before, and never crashes the tick."""
+    detector = IdleDetector(manager=_make_manager(), bus=EventBus(), threshold_s=300)
+    detector._backend = "linux"
+
+    def _raise() -> float:
+        raise RuntimeError("xprintidle vanished")
+
+    with patch.object(IdleDetector, "_get_idle_seconds", staticmethod(_raise)):
+        for _ in range(idle_mod._MAX_CONSECUTIVE_FAILURES - 1):
+            await detector._tick_once()
+            assert detector._stopped is False
+        await detector._tick_once()
+
+    assert detector._stopped is True
+    assert detector._consecutive_failures == idle_mod._MAX_CONSECUTIVE_FAILURES
+
+
+@pytest.mark.asyncio
+async def test_tick_resets_failure_counter_on_success() -> None:
+    """A single successful tick after failures resets the counter to zero."""
+    detector = IdleDetector(manager=_make_manager(), bus=EventBus(), threshold_s=300)
+    detector._backend = "linux"
+    detector._consecutive_failures = idle_mod._MAX_CONSECUTIVE_FAILURES - 1
+
+    with patch.object(IdleDetector, "_get_idle_seconds", staticmethod(lambda: 0.0)):
+        await detector._tick_once()
+
+    assert detector._consecutive_failures == 0
+    assert detector._stopped is False
+
+
+def test_get_idle_seconds_macos_backend(monkeypatch) -> None:
+    """The macOS backend calls CGEventSourceSecondsSinceLastEventType and
+    converts the result to a float."""
+    import types
+
+    fake_quartz = types.SimpleNamespace(
+        CGEventSourceSecondsSinceLastEventType=lambda state, event_type: 12.5,
+        kCGEventSourceStateCombinedSessionState=object(),
+        kCGAnyInputEventType=object(),
+    )
+    monkeypatch.setitem(sys.modules, "Quartz", fake_quartz)
+
+    detector = IdleDetector(manager=_make_manager(), bus=EventBus(), threshold_s=300)
+    detector._backend = "macos"
+    assert detector._get_idle_seconds() == 12.5
+
+
+def test_get_idle_seconds_linux_backend(monkeypatch) -> None:
+    """The Linux backend parses xprintidle's stdout (milliseconds) to seconds."""
+    class _FakeCompleted:
+        returncode = 0
+        stdout = "4200\n"
+
+    monkeypatch.setattr(
+        idle_mod.subprocess, "run", lambda *a, **kw: _FakeCompleted(),
+    )
+
+    detector = IdleDetector(manager=_make_manager(), bus=EventBus(), threshold_s=300)
+    detector._backend = "linux"
+    assert detector._get_idle_seconds() == 4.2
+
+
+def test_get_idle_seconds_linux_backend_raises_on_nonzero_exit(monkeypatch) -> None:
+    """A non-zero xprintidle exit raises — the tick-level failure counter
+    is what disables the backend, not a silent 0.0 here."""
+    class _FakeCompleted:
+        returncode = 1
+        stdout = ""
+
+    monkeypatch.setattr(
+        idle_mod.subprocess, "run", lambda *a, **kw: _FakeCompleted(),
+    )
+
+    detector = IdleDetector(manager=_make_manager(), bus=EventBus(), threshold_s=300)
+    detector._backend = "linux"
+    with pytest.raises(RuntimeError):
+        detector._get_idle_seconds()
