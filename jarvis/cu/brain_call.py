@@ -67,7 +67,16 @@ def _log_serving(provider: str, model: str | None) -> None:
 
 
 def _explicit_cu_pin(manager: Any, provider: str) -> str | None:
-    """The user's RAW ``cu_model`` config pin for ``provider``, or ``None``.
+    """The user's RAW Tool Model pin for ``provider``, or ``None``.
+
+    Reads the CANONICAL ``tool_model`` field first, then the legacy
+    ``cu_model`` — both are the user's explicit word and must never be
+    second-guessed by the speed tune. Reading only ``cu_model`` here was a
+    live defect (2026-07-16): the Tool Model tab persists ``tool_model``
+    only, so after a restart the selection stopped counting as a pin and
+    the speed tune silently swapped the user's chosen model for the fast
+    vision sibling — the selection then applied to realtime delegation but
+    not to Computer-Use.
 
     Deliberately NOT ``manager._cu_model`` — that resolver falls back to the
     main model / tier default and therefore never returns ``None``, which
@@ -76,7 +85,7 @@ def _explicit_cu_pin(manager: Any, provider: str) -> str | None:
     try:
         provider_cfg = getattr(manager, "_provider_cfg", None)
         cfg = provider_cfg(provider) if callable(provider_cfg) else None
-        pin = getattr(cfg, "cu_model", None)
+        pin = getattr(cfg, "tool_model", None) or getattr(cfg, "cu_model", None)
         return str(pin) if pin else None
     except Exception:  # noqa: BLE001
         return None
