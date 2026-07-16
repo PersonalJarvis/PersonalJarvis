@@ -4560,3 +4560,70 @@ the server no longer holds it, and the client must re-assert the full
 contract instead of only suppressing the symptom. Suppression without
 restoration turns one server-side hiccup into an unbounded silent outage that
 the user experiences as "it hears me (indicators fire) but nothing happens."
+
+## BUG-065: macOS/Linux desktop shows a permanent OFFLINE — WebKit drops the HttpOnly session cookie from WebSocket handshakes (HIGH, FIXED 2026-07-16)
+
+**Symptom (real Mac hardware, 2026-07-15).** During and after boot the macOS
+desktop window shows "Assistant OFFLINE", the chat placeholder "Offline", and
+the "Ready for commands" hero — while REST-backed surfaces (history, views,
+onboarding) all work. On Windows the same boot shows the intended sequence:
+"STARTING…" → the "Jarvis is starting up" banner → connected. The user-facing
+read on macOS is "Jarvis is broken", although the backend is healthy.
+
+**Root cause (engine split, not a boot split).** The live event channel `/ws`
+is authenticated by the `jarvis_session` cookie (`HttpOnly` +
+`SameSite=Strict`). Chromium (Windows WebView2) attaches that cookie to the
+WebSocket handshake; WebKit engines — WKWebView on macOS, WebKitGTK on Linux,
+Safari in the headless/VPS browser case — do NOT attach `HttpOnly` /
+`SameSite=Strict` cookies to WS handshakes (long-standing WebKit behavior;
+same engine family, same drop). `SurfaceSecurity` then rejected the handshake
+**before the accept**, which every browser surfaces as an opaque close code
+1006 — indistinguishable from "server down" — so the frontend's
+`wsWarming`/`connected` state machine rendered a permanent OFFLINE. Fetch/XHR
+requests DO carry the cookie on WebKit, which is why everything REST kept
+working and made the failure look like a cosmetic boot-status bug.
+
+**Why no cookie-attribute tweak can fix it.** Dropping `SameSite=Strict`
+weakens CSRF posture on every engine, and Apple-forum forensics show the
+`HttpOnly` flag alone suppresses the cookie on WS — removing THAT would expose
+the session token to any injected script. The transport, not the cookie, had
+to change.
+
+**Fix (2026-07-16) — engine-agnostic WS auth + readable close codes.**
+
+1. **Readable rejects.** `SurfaceSecurity._reject` now accept-then-closes
+   websockets, so a browser reads the real `4401`/`4403` instead of 1006.
+2. **One-time tickets.** `POST /api/ui/ws-ticket` (implemented inside
+   `SurfaceSecurity`, like the session exchange, so it exists identically
+   behind the fast-boot bootstrap and the full app) mints a single-use,
+   60 s ticket for any cookie/bearer-authenticated caller. A websocket may
+   present it as `?ticket=` — consumed atomically, Origin required, never an
+   HTTP credential, and (mirroring the session exchange's
+   `is_secure_or_loopback` rule) both minting and presentation refuse
+   sniffable plain-HTTP non-loopback transports. The boundary stamps a
+   ticket-authenticated scope (`WS_TICKET_SCOPE_KEY`) so route-level
+   defense-in-depth re-checks (`credentials_valid` in `/ws/audio`, workspace
+   PTY) recognize the already-consumed ticket instead of closing 4401 on
+   exactly the WebKit clients the ticket exists for. The frontend `WSClient`
+   reacts to a 4401 by minting over cookie-authenticated HTTP and
+   reconnecting fast (capped at 3 consecutive fast retries, then honest
+   offline + escalating backoff); `/ws/audio` mints proactively. A failed
+   mint (dead session) still reports the honest offline state.
+3. **Warming is credential-free.** The fast-boot bootstrap and the headless
+   launcher bootstrap answer EVERY warming websocket with accept-then-close
+   1013 — the headless path previously HELD the handshake up to 120 s, which
+   browsers time out into the same spurious OFFLINE.
+
+**Guards.** `tests/unit/ui_web/test_surface_security.py` (readable 4401,
+ticket mint auth/origin, single-use, expiry, WS-only, hostile-origin);
+`tests/unit/ui/web/test_fast_bootstrap_ws.py` (cookie-less warming 1013);
+frontend `src/__tests__/ws.test.ts` + `src/hooks/useWebSocket.test.tsx`
+(4401 → ticket retry keeps the warming state, failed mint drops it) +
+`src/lib/realtimeAudio.test.ts`.
+
+**Class rule.** Never authenticate a browser WebSocket with an
+HttpOnly/SameSite cookie alone — one whole engine family silently omits it.
+Prove the session over plain HTTP and hand the socket a short-lived,
+single-use credential; and never close a websocket before accepting it, or
+every specific rejection collapses into an unreadable 1006 that the UI can
+only mis-render as "server down".
