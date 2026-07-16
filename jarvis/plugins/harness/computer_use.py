@@ -20,6 +20,7 @@ from collections.abc import AsyncIterator
 from jarvis.control import CancelScope
 from jarvis.core.events import CUControlEnded, CUControlStarted
 from jarvis.core.protocols import HarnessResult, HarnessTask
+from jarvis.harness import cu_run_registry
 from jarvis.harness.computer_use_context import (
     ComputerUseContext,
     cu_recently_cancelled,
@@ -27,6 +28,11 @@ from jarvis.harness.computer_use_context import (
     register_active_cu_token,
     unregister_active_cu_token,
 )
+
+# env keys the run-control REST surface uses to thread identity/provenance
+# through the (frozen) HarnessTask without a protocol change (H-09).
+CU_MISSION_ID_ENV_KEY = "JARVIS_CU_MISSION_ID"
+CU_SOURCE_ENV_KEY = "JARVIS_CU_SOURCE"
 
 _log = logging.getLogger(__name__)
 
@@ -181,8 +187,26 @@ class ComputerUseHarness:
             # registry is a SET — concurrent CU missions each register so a
             # single hangup cancels them ALL (BUG-CU-CONCURRENT-CANCEL).
             register_active_cu_token(token)
-            mission_id = uuid.uuid4().hex[:12]
+            # Run-control registry (H-09): the REST surface may pre-assign the
+            # mission id via task.env so it can hand it back to the caller;
+            # every other launch route gets a fresh one. Registered as
+            # "queued" here, "running" once the desktop lock is held, and
+            # terminal in the finally — so `jarvis api` status/cancel sees
+            # every mission regardless of how it was started.
+            task_env = task.env or {}
+            mission_id = (
+                str(task_env.get(CU_MISSION_ID_ENV_KEY, "") or "")
+                or uuid.uuid4().hex[:12]
+            )
+            cu_run_registry.register_run(
+                mission_id,
+                task.prompt,
+                token,
+                source=str(task_env.get(CU_SOURCE_ENV_KEY, "") or "app"),
+            )
             end_reason = "finished"
+            final_exit_code: int | None = None
+            final_stdout = ""
             control_started = False
             lock_acquired = False
             stream = None
@@ -198,6 +222,7 @@ class ComputerUseHarness:
                 while not lock_acquired:
                     if token.is_cancelled():
                         end_reason = "cancelled"
+                        final_exit_code = _CANCEL_EXIT_CODE
                         yield HarnessResult(
                             stderr="[cu] cancelled while waiting for the desktop\n",
                             exit_code=_CANCEL_EXIT_CODE,
@@ -207,6 +232,7 @@ class ComputerUseHarness:
                     remaining_s = deadline - time.monotonic()
                     if remaining_s <= 0:
                         end_reason = "timeout"
+                        final_exit_code = _TIMEOUT_EXIT_CODE
                         yield HarnessResult(
                             stderr=(
                                 f"[cu] timeout after {timeout_s:.3g}s waiting "
@@ -232,6 +258,7 @@ class ComputerUseHarness:
                     ctx.bus, CUControlStarted(mission_id=mission_id)
                 )
                 control_started = True
+                cu_run_registry.mark_running(mission_id)
                 run_cu_loop = _resolve_run_cu_loop()
                 stream = run_cu_loop(task, ctx, cancel_token=token)
                 while True:
@@ -247,6 +274,8 @@ class ComputerUseHarness:
                         return
                     yield chunk
                     if chunk.is_final:
+                        final_exit_code = chunk.exit_code
+                        final_stdout = chunk.stdout or ""
                         if chunk.exit_code == _CANCEL_EXIT_CODE:
                             end_reason = "cancelled"
                         elif chunk.exit_code != 0:
@@ -254,6 +283,7 @@ class ComputerUseHarness:
                         return
             except TimeoutError:
                 end_reason = "timeout"
+                final_exit_code = _TIMEOUT_EXIT_CODE
                 token.cancel("computer_use_harness_timeout")
                 duration_ms = (time.time_ns() - t_start) // 1_000_000
                 yield HarnessResult(
@@ -263,6 +293,12 @@ class ComputerUseHarness:
                     is_final=True,
                 )
             finally:
+                cu_run_registry.finish_run(
+                    mission_id,
+                    end_reason,
+                    exit_code=final_exit_code,
+                    result_text=final_stdout,
+                )
                 if stream is not None:
                     await stream.aclose()
                 if lock_acquired:
