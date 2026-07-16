@@ -1665,7 +1665,7 @@ class ComputerUseConfig(BaseModel):
     enabled: bool = False
     # Screen indicator (2026-07-15): while a CU mission controls the local
     # mouse/keyboard, a pulsing gold border glows on every monitor edge and
-    # an "Esc to cancel" pill is shown (jarvis/cu/indicator, Codex-style).
+    # an "Esc to cancel" pill is shown (jarvis/cu/indicator).
     # Default ON; turning it off also skips the sidecar process entirely.
     # The global Escape-to-cancel listener is armed per mission regardless
     # of this flag (it is a safety affordance, not a visual).

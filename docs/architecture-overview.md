@@ -204,7 +204,7 @@ The six desktop power-user features that were historically Windows-only are now 
 - **Doctrine intact:** the headless €5-VPS base install ships **none** of these desktop extras and still boots on a fresh `python:3.11-slim` Linux container — every port is extras-gated and degrades to a logged no-op (AD-6) when its capability is absent.
 - **Computer-Use screen indicator (ADR-0028):** while a CU mission drives the
   local mouse/keyboard, a breathing Jarvis-gold border glows on every monitor
-  edge with a localized "Esc to cancel" pill (Codex-style). It is a minimal
+  edge with a localized "Esc to cancel" pill. It is a minimal
   PySide6 sidecar (`jarvis/cu/indicator`, `pyside6-essentials` in
   `[desktop]`) spawned lazily per mission off the `CUControlStarted/Ended`
   events at the `ComputerUseHarness.invoke()` boundary; a global Escape

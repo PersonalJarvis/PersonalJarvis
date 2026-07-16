@@ -1,5 +1,5 @@
 """Computer-Use screen indicator — the yellow "Jarvis is controlling this
-computer" glow border (Codex-style) plus the Esc-to-cancel hint.
+computer" glow border plus the Esc-to-cancel hint.
 
 Architecture (2026-07, replaces the removed OS-Level edge-glow):
 

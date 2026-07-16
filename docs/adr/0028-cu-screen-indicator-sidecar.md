@@ -6,9 +6,9 @@ Status: Accepted
 ## Context
 
 Users need an unmistakable, always-visible signal that Jarvis is
-controlling their mouse and keyboard — the affordance Codex ships as a
-blue glow around the monitor edges plus an "Esc to cancel" hint. Two
-prior states existed:
+controlling their mouse and keyboard: a colored glow around the monitor
+edges plus an "Esc to cancel" hint — the screen-edge affordance modern
+agent desktops have made familiar. Two prior states existed:
 
 1. The **Phase-9 OS-Level overlay** contained a finished `EdgeGlowWindow`
    (PySide6 + QtWebEngine rendering a Vite/TypeScript edge-glow page),

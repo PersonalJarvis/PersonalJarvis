@@ -9,7 +9,7 @@ stack is unavailable.
 Visual contract (maintainer-approved 2026-07-15):
 
 - A soft gold glow along every edge of EVERY monitor, breathing on a
-  ~2.4 s sine loop, 300 ms fade in/out — Codex-style, in Jarvis gold.
+  ~2.4 s sine loop, 300 ms fade in/out.
 - An "Esc to cancel" pill top-center on the primary monitor (text arrives
   pre-localized from the controller; omitted when Escape isn't armable).
 - Frameless, always-on-top, fully click-through, never activates, and on
