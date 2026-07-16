@@ -195,12 +195,23 @@ The six desktop power-user features that were historically Windows-only are now 
 | UI-element-click | `vision.tree_factory.make_ui_tree_source` | UIA | AX (`pyobjc`) | AT-SPI (`pyatspi`) | live sign-off (AX/AT-SPI tree) |
 | Orb overlay | `overlay.surface.make_overlay_surface` | Tk color-key | Tk `-transparentcolor` | best-effort + tray | live sign-off (transparency) |
 | Hotkey | `trigger.backends.make_hotkey_backend` | `global-hotkeys` | `pynput` | `pynput` (X11); Wayland no-op | live sign-off (capture) |
+| CU screen indicator | `cu.indicator.controller.wire_cu_indicator` | PySide6 sidecar + capture-affinity | PySide6 sidecar + capture guard | PySide6 sidecar (X11); Wayland no-op | live sign-off (glow + Esc) |
 | Admin/elevation | `admin.transport.make_admin_transport` + `admin.elevator.make_elevator` | UAC + SDDL pipe | Authorization Services + unix socket | pkexec/sudo + unix socket | live sign-off (prompt); never CI-E2E |
 
 **Verification is honestly labelled per feature in `docs/plans/cross-platform-mac-linux/SIGNOFF-LOG.md`.** As of this writing the maintainer has Windows only and nothing is pushed, so every macOS/Linux **live** GUI/permission behavior is `unverified-on-real-desktop` and the `ci.yml` matrix is `CI-configured` (first green run pending push) — **never** claim "CI-verified" or "live-verified" until that log says so.
 
 - **Dependency reality (AD-14 — do not "fix" this):** `pynput` + `ptyprocess` live in the `[desktop]` extra (`ptyprocess` gated `sys_platform != 'win32'`); `pyobjc-framework-{Quartz,ApplicationServices,Accessibility}` in `[desktop-macos]` (`sys_platform == 'darwin'`). **Linux `pyatspi` is NOT on PyPI — never add it as a pip dependency.** It is GObject-Introspection, distro-packaged (`apt install python3-pyatspi gir1.2-atspi-2.0`), surfaced via the `capabilities.has_ax_tree` runtime probe.
 - **Doctrine intact:** the headless €5-VPS base install ships **none** of these desktop extras and still boots on a fresh `python:3.11-slim` Linux container — every port is extras-gated and degrades to a logged no-op (AD-6) when its capability is absent.
+- **Computer-Use screen indicator (ADR-0028):** while a CU mission drives the
+  local mouse/keyboard, a breathing Jarvis-gold border glows on every monitor
+  edge with a localized "Esc to cancel" pill (Codex-style). It is a minimal
+  PySide6 sidecar (`jarvis/cu/indicator`, `pyside6-essentials` in
+  `[desktop]`) spawned lazily per mission off the `CUControlStarted/Ended`
+  events at the `ComputerUseHarness.invoke()` boundary; a global Escape
+  (existing hotkey backends, armed only while a mission runs) cancels all
+  active missions through the CU-scoped token registry. Windows hides the
+  border from all capture via `WDA_EXCLUDEFROMCAPTURE`; macOS/Linux blank it
+  around CU's own frame grabs (fail-open). Headless/Wayland → logged no-op.
 - **CPU-first device selection (ADR-0024):** the default compute device is always `cpu`. A GPU is used only on an *explicit* config request (`device = "cuda"`) with a *verified* capability; `auto`/empty/unknown resolve to CPU, and a known-bad GPU degrades to CPU with a logged warning. One central policy — `jarvis/core/device.py::resolve_device` — expresses this; the capability verdict is injected so the always-on wake path keeps its strict out-of-process inference gate (AP-25) and the policy module adds no `torch`/`ctranslate2` import to any path (AP-26).
 
 ## Windows specifics (do not skip)
