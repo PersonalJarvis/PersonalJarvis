@@ -14,6 +14,7 @@ GPU, or keyring is touched, only the on-disk model caches.
 from __future__ import annotations
 
 import importlib.util
+import os
 from collections.abc import Callable
 from typing import Any
 
@@ -85,6 +86,16 @@ def prefetch_all(echo: Callable[[str], None] = print) -> int:
     runtime lazy-download remains the safety net), the exit code just keeps
     the installer's summary honest.
     """
+    # Tame the Hugging Face downloader BEFORE it is imported (both env vars
+    # are read at import time): no tqdm progress bars — they shred the
+    # installer's line-oriented transcript (Intel-Mac field report
+    # 2026-07-16) — and no "unauthenticated requests / set HF_TOKEN" warning,
+    # because anonymous downloads ARE the intended end-user path and telling
+    # a downloader to create a HF token is pure confusion. ``setdefault``
+    # keeps any explicit user override in force.
+    os.environ.setdefault("HF_HUB_DISABLE_PROGRESS_BARS", "1")
+    os.environ.setdefault("HF_HUB_VERBOSITY", "error")
+
     failed = False
 
     if _wakeword_bundle_present():

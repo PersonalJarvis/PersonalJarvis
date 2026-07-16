@@ -184,6 +184,38 @@ def run_captured(
     return _run()
 
 
+def run_noted(cmd: list[str], *, label: str, cwd: Path | None = None) -> int:
+    """Stream a milestone-printing command as live gutter notes under a spinner.
+
+    For subprocesses whose output is a short series of human-readable
+    milestone lines (the voice-model prefetch): each line renders as a dim
+    │-gutter note the moment it appears, so a multi-minute download shows
+    real, honest progress instead of a frozen label or raw column-0 spam
+    (Intel-Mac field report 2026-07-16). stderr joins stdout so stray
+    library noise can never break the layout. Non-tty hosts get the same
+    lines without the spinner.
+    """
+    proc = subprocess.Popen(  # noqa: S603 — fixed argv built by the caller, no shell
+        cmd, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+        text=True, encoding="utf-8", errors="replace", bufsize=1,
+    )
+
+    def _pump() -> None:
+        assert proc.stdout is not None
+        for raw in proc.stdout:
+            line = raw.rstrip()
+            if line:
+                note(rich_escape(line))
+
+    if console.is_terminal:
+        with console.status(f"[brand]{label}…[/]", spinner="dots", spinner_style="brand"):
+            _pump()
+    else:
+        note(f"{label}…")
+        _pump()
+    return proc.wait()
+
+
 def is_headless_linux() -> bool:
     """Best-effort: True on a Linux VPS without a display server."""
     return sys.platform.startswith("linux") and not (
@@ -374,10 +406,12 @@ def step_models(*, dry_run: bool) -> None:
     # model can still leave "done" looking complete. So don't stop at rc — VERIFY
     # what actually landed on disk and print a per-model truth. Read-only +
     # best-effort: this never bricks the install (CLAUDE.md section 3).
-    # run_quiet: the raw download progress (hundreds of scrolling lines) was
-    # the one step still wrecking the calm gold transcript — hide it behind
-    # the spinner; verify_models prints the honest per-model outcome after.
-    run_quiet(
+    # run_noted, not run_quiet: with the HF progress bars silenced inside the
+    # prefetch itself, its output is a handful of milestone lines ("downloading
+    # wake model … ~40 MB", "speech model 'base': ready") — streaming them as
+    # gutter notes under the spinner is the honest progress indicator a
+    # multi-minute download needs; a static label just reads as a hang.
+    run_noted(
         cmd,
         label="downloading voice models (the long step - a few hundred MB)",
         cwd=repo_root(),
