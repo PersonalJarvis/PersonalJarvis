@@ -124,6 +124,20 @@ async def test_escape_cancels_missions_without_suppression(
     assert seen == {"reason": "user_escape", "suppress_new": False}
 
 
+def test_esc_binding_matches_each_backend_vocabulary(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Live 2026-07-16: global-hotkeys (win32) only accepts "escape" — "esc"
+    raises and disables the registration; pynput canonicalizes the key to
+    "esc" and never matches "escape". The binding must be per-platform."""
+    monkeypatch.setattr(controller_mod.sys, "platform", "win32")
+    assert controller_mod._esc_binding() == ["escape"]
+    monkeypatch.setattr(controller_mod.sys, "platform", "darwin")
+    assert controller_mod._esc_binding() == ["esc"]
+    monkeypatch.setattr(controller_mod.sys, "platform", "linux")
+    assert controller_mod._esc_binding() == ["esc"]
+
+
 def test_hint_table_covers_every_supported_locale() -> None:
     """Repo language rule: a phrase table carries ALL supported locales and
     resolves through the one resolver."""

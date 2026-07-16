@@ -51,6 +51,15 @@ _QUIT_GRACE_S = 1.5
 _BLANK_ACK_TIMEOUT_S = 0.15
 
 
+def _esc_binding() -> list[str]:
+    """The Escape key's name differs per hotkey backend (live 2026-07-16):
+    Windows ``global-hotkeys`` only accepts ``"escape"`` (``"esc"`` raises
+    "not a valid virtual keystroke" and disables the whole registration),
+    while the pynput backend (macOS/Linux-X11) canonicalizes the key event
+    to ``Key.esc.name == "esc"`` and would never match ``"escape"``."""
+    return ["escape"] if sys.platform == "win32" else ["esc"]
+
+
 def _screen_indicator_enabled() -> bool:
     try:
         from jarvis.core.config import load_config  # noqa: PLC0415
@@ -295,10 +304,11 @@ class CUIndicatorController:
         try:
             from jarvis.trigger.hotkey import HotkeyTrigger  # noqa: PLC0415
 
-            # Bare "esc" is intentionally NOT run through validate_hotkey():
-            # that guard protects user-configured push-to-talk combos; this
-            # binding exists only while Jarvis itself is typing/clicking.
-            trigger = HotkeyTrigger({"cu_cancel": ["esc"]})
+            # The bare Escape key is intentionally NOT run through
+            # validate_hotkey(): that guard protects user-configured
+            # push-to-talk combos; this binding exists only while Jarvis
+            # itself is typing/clicking.
+            trigger = HotkeyTrigger({"cu_cancel": _esc_binding()})
             async with trigger:
                 async for event_name in trigger.events():
                     if event_name != "cu_cancel":
