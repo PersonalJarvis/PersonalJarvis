@@ -87,7 +87,10 @@ EOF
 # explicit opt-in there. JARVIS_INSTALL_YES=1 skips the question entirely.
 ask_welcome() {
     [ -n "${JARVIS_INSTALL_YES:-}" ] && return 0
-    { [ -r /dev/tty ] && [ -w /dev/tty ]; } 2>/dev/null || return 0
+    # `test -r/-w` uses access(2) and passes even when the process has no
+    # controlling terminal (CI runners): actually try to open it, matching
+    # the have_tty probe used later in this script.
+    { { : </dev/tty; } 2>/dev/null && { : >/dev/tty; } 2>/dev/null; } || return 0
     _sel=0  # 0 = yes, 1 = no
     # The highlighted choice renders as a solid color pill (reverse video:
     # gold Yes / red No) with a ▸ marker; the other choice is dimmed. Reverse
