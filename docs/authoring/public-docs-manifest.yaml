@@ -771,7 +771,6 @@ pages:
     authoritative_sources:
       - docs/BUGS.md
       - docs/README-desktop-black-screen.md
-      - docs/overlay-troubleshooting.md
       - jarvis/diagnostics/doctor.py
       - jarvis/ui/web/diagnostics_routes.py
     related:
