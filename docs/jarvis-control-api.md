@@ -26,9 +26,12 @@ gets a unique key.
   keyring → file → `JARVIS_CONTROL_API_KEY` env seed.
 - **Never exported into `os.environ`** during normal operation (a spawned worker
   would inherit it and leak it via `/proc/<pid>/environ`). Read on demand.
-- **Where the user finds it:** desktop app → **Settings → Jarvis API** (masked by
-  default, Show/Hide, one-click Copy, Regenerate). Headless: `GET
-  /api/control/api-key` from the loopback interface, or read the key file.
+- **Where the user finds it:** desktop app → **API Keys → Access &
+  Integrations → Control Key** (masked by default, Show/Hide, one-click Copy,
+  Regenerate behind a confirm dialog, or replace it with a user-chosen key —
+  min 12 chars, `[A-Za-z0-9._~-]`). The browser lock screen (AuthGate) points
+  to this section. Headless: `GET /api/control/api-key` from the loopback
+  interface, or read the key file.
 
 ## Auth
 
@@ -56,7 +59,8 @@ Settings panel can bootstrap the key before the user has it.
 | GET | `/api/control/secrets` | list secret slots (masked) |
 | PUT/DELETE | `/api/control/secrets/{key}` | set / delete a provider key |
 | GET | `/api/control/api-key` | reveal the key (loopback or Bearer) |
-| POST | `/api/control/api-key/rotate` | regenerate (`{confirm:true}`) |
+| POST | `/api/control/api-key/rotate` | regenerate randomly (`{confirm:true}`) |
+| PUT | `/api/control/api-key` | set a user-chosen key (`{value, confirm:true}`; 422 on weak/invalid values, response is masked-only) |
 
 ### Two languages (interface vs reply)
 

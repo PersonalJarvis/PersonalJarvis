@@ -203,6 +203,53 @@ def test_rotate_requires_confirm(client) -> None:
     assert res.status_code == 200 and res.json()["key"] == "jctl_rotated_key"
 
 
+# --- user-chosen key (PUT /api/control/api-key) ---
+
+
+@pytest.mark.no_auto_web_auth
+def test_set_custom_key_requires_auth(client) -> None:
+    # Opt out of the conftest auto-session: this asserts the raw boundary.
+    tc, _, _ = client
+    res = tc.put("/api/control/api-key", json={"value": "correct-horse-battery", "confirm": True})
+    assert res.status_code == 401
+
+
+def test_set_custom_key_requires_confirm(client) -> None:
+    tc, _, _ = client
+    res = tc.put("/api/control/api-key", json={"value": "correct-horse-battery"}, headers=AUTH)
+    assert res.status_code == 400
+
+
+def test_set_custom_key_rejects_weak_or_invalid_values(client) -> None:
+    tc, _, _ = client
+    too_short = tc.put(
+        "/api/control/api-key", json={"value": "short", "confirm": True}, headers=AUTH
+    )
+    assert too_short.status_code == 422
+    bad_chars = tc.put(
+        "/api/control/api-key",
+        json={"value": "has spaces in the key", "confirm": True},
+        headers=AUTH,
+    )
+    assert bad_chars.status_code == 422
+
+
+def test_set_custom_key_persists_and_returns_masked_only(client) -> None:
+    tc, _, secret_store = client
+    res = tc.put(
+        "/api/control/api-key",
+        json={"value": "correct-horse-battery", "confirm": True},
+        headers=AUTH,
+    )
+    assert res.status_code == 200
+    body = res.json()
+    assert body["ok"] is True
+    assert body["masked"] == "…tery"
+    # The caller typed the value — the clear key never crosses the wire twice.
+    assert "key" not in body
+    assert secret_store[control_key.KEYRING_SLOT] == "correct-horse-battery"
+
+
 # --- providers (snapshot needs no live manager) ---
 
 

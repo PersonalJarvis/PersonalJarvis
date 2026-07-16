@@ -114,6 +114,42 @@ def test_env_seed_used_when_no_keyring_no_file(isolated, monkeypatch) -> None:
     assert ck.KEYRING_SLOT not in isolated
 
 
+# --- user-chosen key (set_control_key) ---
+
+
+def test_validate_custom_key_rules() -> None:
+    with pytest.raises(ck.ControlKeyValidationError):
+        ck.validate_custom_control_key("short")
+    with pytest.raises(ck.ControlKeyValidationError):
+        ck.validate_custom_control_key("has spaces in the key")
+    with pytest.raises(ck.ControlKeyValidationError):
+        ck.validate_custom_control_key("x" * (ck.MAX_CUSTOM_KEY_LENGTH + 1))
+    # The publicly shipped placeholder passes length/charset but must be refused.
+    with pytest.raises(ck.ControlKeyValidationError):
+        ck.validate_custom_control_key(ck.SHIPPED_PLACEHOLDER_KEY)
+    assert ck.validate_custom_control_key("  correct-horse-battery ") == "correct-horse-battery"
+
+
+def test_set_control_key_replaces_and_verifies(isolated) -> None:
+    ck.ensure_control_key()
+    stored = ck.set_control_key("correct-horse-battery")
+    assert stored == "correct-horse-battery"
+    assert ck.get_control_key() == "correct-horse-battery"
+    assert ck.verify_control_key("correct-horse-battery") is True
+
+
+def test_set_control_key_invalid_value_keeps_old_key(isolated) -> None:
+    old = ck.ensure_control_key()
+    with pytest.raises(ck.ControlKeyValidationError):
+        ck.set_control_key("short")
+    assert ck.get_control_key() == old
+
+
+def test_mask_custom_key_has_no_generated_prefix() -> None:
+    # A user-chosen key must not be dressed up with the generated jctl_ prefix.
+    assert ck.mask_control_key("correct-horse-battery") == "…tery"
+
+
 # --- shipped docker-compose.yml placeholder must never be accepted as real ---
 
 

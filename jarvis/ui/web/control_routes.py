@@ -164,6 +164,11 @@ class RotateBody(BaseModel):
     confirm: bool = Field(default=False)
 
 
+class SetKeyBody(BaseModel):
+    value: str = Field(..., min_length=1, description="The new user-chosen control key")
+    confirm: bool = Field(default=False)
+
+
 # ----------------------------------------------------------------------
 # Auth probe + discovery
 # ----------------------------------------------------------------------
@@ -400,3 +405,38 @@ async def rotate_api_key(body: RotateBody) -> dict[str, Any]:
         # Both stores rejected the new key — the old one is still active.
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return {"ok": True, "key": key, "masked": control_key.mask_control_key(key)}
+
+
+@router.put(
+    "/api-key",
+    dependencies=[Depends(require_control_key_or_session)],
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def set_api_key(body: SetKeyBody, request: Request) -> dict[str, Any]:
+    """Replace the control key with a user-chosen value.
+
+    The caller already typed the value, so the response returns only the
+    masked form — the clear key never crosses the wire twice. An invalid
+    value (too short, unsafe characters, the shipped placeholder) is a 422
+    and leaves the current key untouched.
+    """
+    if not body.confirm:
+        raise HTTPException(
+            status_code=400,
+            detail="Setting a new key requires confirm=true; it invalidates the current key.",
+        )
+    try:
+        key = control_key.set_control_key(body.value)
+    except control_key.ControlKeyValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+    except RuntimeError as exc:
+        # Both stores rejected the new key — the old one is still active.
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
+    client = getattr(request, "client", None)
+    log.info(
+        "control: API key replaced by a user-chosen value from %s",
+        getattr(client, "host", "unknown"),
+    )
+    return {"ok": True, "masked": control_key.mask_control_key(key)}

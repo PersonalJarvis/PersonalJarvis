@@ -1,4 +1,9 @@
-"""Per-user Jarvis Control API key — generation, cross-platform storage, rotation.
+"""Per-user Jarvis Control key — generation, cross-platform storage, rotation.
+
+One credential, two doors: the key unlocks the browser UI (the AuthGate's
+"Control Key" prompt mints an HttpOnly session from it) AND authenticates the
+local Control API. It is auto-generated on first boot; the user may replace it
+with a memorable value of their own via :func:`set_control_key`.
 
 Open-source contract: every install owns a unique key (no shared secret baked
 into the package). The key authenticates the local Control API (``/api/control/*``)
@@ -22,6 +27,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import secrets
 import stat
 from pathlib import Path
@@ -35,6 +41,18 @@ KEYRING_SLOT = "jarvis_control_api_key"
 ENV_VAR = "JARVIS_CONTROL_API_KEY"
 _FILE_NAME = ".control_api_key"
 _TOKEN_BYTES = 32  # 256-bit
+
+# User-chosen key rules. The key doubles as an RFC-6750 Bearer token (CLI /
+# local agents) and as the value typed into the browser unlock form, so it
+# must stay header-safe: no spaces, URL-safe characters only. The minimum
+# length keeps a memorable passphrase from degrading into a guessable PIN.
+MIN_CUSTOM_KEY_LENGTH = 12
+MAX_CUSTOM_KEY_LENGTH = 128
+_CUSTOM_KEY_RE = re.compile(r"^[A-Za-z0-9._~-]+$")
+
+
+class ControlKeyValidationError(ValueError):
+    """A user-chosen control key failed the format/strength rules."""
 
 # The literal value shipped as the default in docker-compose.yml. It is
 # world-known (public repo, public image) the moment it is ever used
@@ -72,11 +90,17 @@ def generate_control_key() -> str:
 
 
 def mask_control_key(key: str | None) -> str:
-    """``jctl_…last4`` for logs / UI lists. Empty string for a missing key."""
+    """``jctl_…last4`` (or ``…last4`` for a user-chosen key) for logs / UI.
+
+    Empty string for a missing key. The ``jctl_`` prefix is only echoed when
+    the key actually carries it — a user-chosen key must not be dressed up as
+    a generated one.
+    """
     if not key:
         return ""
     tail = key[-4:] if len(key) >= 4 else key
-    return f"{KEY_PREFIX}…{tail}"
+    prefix = KEY_PREFIX if key.startswith(KEY_PREFIX) else ""
+    return f"{prefix}…{tail}"
 
 
 def control_key_file() -> Path:
@@ -188,14 +212,13 @@ def ensure_control_key() -> str:
     return key
 
 
-def rotate_control_key() -> str:
-    """Generate a NEW key, overwrite the old one everywhere, return it.
+def _replace_key_everywhere(key: str) -> str:
+    """Overwrite the active key in keyring AND file; fail loudly on total miss.
 
     The single-key model means writing the new value invalidates the old (no
     separate revocation list). The file copy is overwritten too so a stale file
     cannot resurrect the previous key on the next boot.
     """
-    key = generate_control_key()
     keyring_ok = cfg.set_secret(KEYRING_SLOT, key)
     file_ok = _write_file_key(key)
     if not keyring_ok and not file_ok:
@@ -203,10 +226,52 @@ def rotate_control_key() -> str:
         # caller: the NEXT get_control_key() reads the OLD key, so verify() of
         # the just-returned key fails. Fail loudly instead — the old key stays.
         raise RuntimeError(
-            "Control key rotation failed: neither the OS keyring nor the file "
-            "fallback accepted the new key. The previous key remains active."
+            "Control key replacement failed: neither the OS keyring nor the "
+            "file fallback accepted the new key. The previous key remains active."
         )
     return key
+
+
+def rotate_control_key() -> str:
+    """Generate a NEW random key, overwrite the old one everywhere, return it."""
+    return _replace_key_everywhere(generate_control_key())
+
+
+def validate_custom_control_key(value: str) -> str:
+    """Return the trimmed user-chosen key or raise ``ControlKeyValidationError``.
+
+    The messages are user-facing (surfaced verbatim by the UI/CLI), so they
+    state the exact rule that failed.
+    """
+    candidate = (value or "").strip()
+    if len(candidate) < MIN_CUSTOM_KEY_LENGTH:
+        raise ControlKeyValidationError(
+            f"The control key must be at least {MIN_CUSTOM_KEY_LENGTH} characters long."
+        )
+    if len(candidate) > MAX_CUSTOM_KEY_LENGTH:
+        raise ControlKeyValidationError(
+            f"The control key must be at most {MAX_CUSTOM_KEY_LENGTH} characters long."
+        )
+    if not _CUSTOM_KEY_RE.fullmatch(candidate):
+        raise ControlKeyValidationError(
+            "The control key may only contain letters, digits, and . _ ~ - "
+            "(no spaces) so it works as an HTTP Bearer token."
+        )
+    if candidate == SHIPPED_PLACEHOLDER_KEY:
+        raise ControlKeyValidationError(
+            "This value is the publicly shipped placeholder key and cannot be used."
+        )
+    return candidate
+
+
+def set_control_key(value: str) -> str:
+    """Persist a user-chosen key as the active control key and return it.
+
+    Validation is fail-closed (``ControlKeyValidationError``); persistence
+    mirrors :func:`rotate_control_key` — the old key stays active if neither
+    store accepts the new one.
+    """
+    return _replace_key_everywhere(validate_custom_control_key(value))
 
 
 def verify_control_key(presented: str | None) -> bool:
