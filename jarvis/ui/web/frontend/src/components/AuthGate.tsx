@@ -175,6 +175,16 @@ export function AuthGate({ children }: AuthGateProps) {
         >
           {t(submitting ? "auth_gate.submitting" : "auth_gate.submit")}
         </button>
+
+        <div className="mt-5 border-t border-border pt-4">
+          <h2 className="text-xs font-medium">{t("auth_gate.where_title")}</h2>
+          <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
+            {t("auth_gate.where_hint")}
+          </p>
+          <p className="mt-1.5 text-xs leading-relaxed text-muted-foreground">
+            {t("auth_gate.where_hint_server")}
+          </p>
+        </div>
       </form>
     </main>
   );

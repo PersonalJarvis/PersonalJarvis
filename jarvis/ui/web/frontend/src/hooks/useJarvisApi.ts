@@ -16,7 +16,7 @@ interface RotateResult {
   masked: string;
 }
 
-/** Loads /api/control/api-key and exposes rotate(). Mirrors useAutostart. */
+/** Loads /api/control/api-key and exposes rotate() + setKey(). Mirrors useAutostart. */
 export function useJarvisApi() {
   const [data, setData] = useState<ControlApiKey | null>(null);
   const [loading, setLoading] = useState(true);
@@ -55,5 +55,23 @@ export function useJarvisApi() {
     return result;
   }, []);
 
-  return { data, loading, error, refetch, rotate };
+  /**
+   * Replace the key with a user-chosen value (PUT /api/control/api-key).
+   * The response carries only the masked form; the clear value is what the
+   * user just typed, so the local state can be updated without a refetch.
+   */
+  const setKey = useCallback(async (value: string): Promise<void> => {
+    const res = await fetch("/api/control/api-key", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ value, confirm: true }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(body.detail ?? `HTTP ${res.status}`);
+    }
+    setData({ key: value.trim(), masked: (body as { masked?: string }).masked ?? "…" });
+  }, []);
+
+  return { data, loading, error, refetch, rotate, setKey };
 }

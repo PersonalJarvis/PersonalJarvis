@@ -86,7 +86,7 @@ describe("AuthGate", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<AuthGate><div>Application</div></AuthGate>);
-    const input = await screen.findByLabelText("Control key");
+    const input = await screen.findByLabelText("Control Key");
     fireEvent.change(input, { target: { value: "control-secret" } });
     fireEvent.submit(input.closest("form")!);
 
@@ -110,9 +110,20 @@ describe("AuthGate", () => {
 
     render(<AuthGate><div>Application</div></AuthGate>);
 
-    expect(await screen.findByLabelText("Control key")).toBeTruthy();
+    expect(await screen.findByLabelText("Control Key")).toBeTruthy();
     expect(window.__JARVIS_TOKEN).toBeUndefined();
     expect(screen.queryByText("Application")).toBeNull();
+  });
+
+  it("tells the user where to find the Control Key on the lock screen", async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(response(401));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AuthGate><div>Application</div></AuthGate>);
+
+    expect(await screen.findByText("Where do I find the Control Key?")).toBeTruthy();
+    expect(screen.getByText(/generated automatically for this Jarvis install/i)).toBeTruthy();
+    expect(screen.getByText(/\.control_api_key/)).toBeTruthy();
   });
 
   it("keeps the gate closed when the control key is rejected", async () => {
@@ -123,12 +134,12 @@ describe("AuthGate", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     render(<AuthGate><div>Application</div></AuthGate>);
-    const input = await screen.findByLabelText("Control key");
+    const input = await screen.findByLabelText("Control Key");
     fireEvent.change(input, { target: { value: "wrong" } });
     fireEvent.submit(input.closest("form")!);
 
     expect((await screen.findByRole("alert")).textContent).toBe(
-      "That control key was not accepted.",
+      "That Control Key was not accepted.",
     );
     expect(screen.queryByText("Application")).toBeNull();
   });
