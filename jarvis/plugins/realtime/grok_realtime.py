@@ -82,14 +82,16 @@ class GrokRealtimeProvider:
                 )
             raise
 
+        payload = _grok_session_payload(cfg)
         session = _OpenAIRealtimeSession(
             connection=connection,
             connection_cm=connection_cm,
             client=client,
             session_id=str(uuid4()),
+            session_payload=payload,
         )
         try:
-            await connection.session.update(session=_grok_session_payload(cfg))
+            await connection.session.update(session=payload)
             await session.wait_until_ready()
         except BaseException:
             await session.close()

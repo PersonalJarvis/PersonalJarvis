@@ -12,6 +12,7 @@ import asyncio
 import base64
 import json
 import logging
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
@@ -24,6 +25,14 @@ _INPUT_RATE = 24_000
 _OUTPUT_RATE = 24_000
 _HANDSHAKE_TIMEOUT_S = 12.0
 _RESPONSE_REQUEST_METADATA_KEY = "jarvis_request_id"
+# BUG-064: an unsolicited response is proof the server no longer honors the
+# manual-response contract (``create_response: false``). One xAI Grok live
+# session additionally stopped emitting input transcription events after a
+# legitimate barge-in ``response.cancel`` — the session stayed connected but
+# went permanently deaf. Re-sending the full session payload restores both
+# halves of the contract; the cooldown keeps a burst of unsolicited responses
+# from turning into a session.update storm.
+_CONTRACT_REARM_COOLDOWN_S = 5.0
 # Benign response-lifecycle races (BUG-053/BUG-056): both sides of the same
 # boundary. ``conversation_already_has_active_response`` = our response.create
 # arrived while one was still running; ``response_cancel_not_active`` = our
@@ -177,12 +186,18 @@ class _OpenAIRealtimeSession:
         connection_cm: Any,
         client: Any,
         session_id: str,
+        session_payload: dict[str, Any] | None = None,
     ) -> None:
         self._conn = connection
         self._connection_cm = connection_cm
         self._client = client
         self._events = connection.__aiter__()
         self.session_id = session_id
+        # The full session contract as sent at open. Kept current by
+        # update_session() so a BUG-064 re-arm never reverts live
+        # instructions or tool declarations to their session-start values.
+        self._session_contract = session_payload
+        self._last_contract_rearm = float("-inf")
         self._last_item_id = ""
         self._response_had_tool_calls = False
         self._tool_response_done_seen = False
@@ -346,6 +361,10 @@ class _OpenAIRealtimeSession:
             ]
             update["tool_choice"] = "auto" if update["tools"] else "none"
         if len(update) > 1:
+            if self._session_contract is not None:
+                for key in ("instructions", "tools", "tool_choice"):
+                    if key in update:
+                        self._session_contract[key] = update[key]
             await self._conn.session.update(session=update)
 
     async def request_response(self, *, required_tool: str | None = None) -> None:
@@ -486,6 +505,15 @@ class _OpenAIRealtimeSession:
                         "OpenAI Realtime unsolicited response cancel failed",
                         exc_info=True,
                     )
+            # BUG-064: under the manual-response contract an unsolicited
+            # response should be impossible — its arrival means the server
+            # dropped the session configuration (observed live on grok-realtime
+            # 2026-07-16 08:07: after a barge-in cancel, input transcription
+            # stopped and server VAD auto-created responses; the session sat
+            # deaf until manual hang-up). Re-assert the full contract so the
+            # session hears again; on a healthy server this is an idempotent
+            # no-op.
+            await self._rearm_session_contract()
             return
 
         if not response_id:
@@ -495,6 +523,33 @@ class _OpenAIRealtimeSession:
             )
             return
         self._accepted_response_ids.add(response_id)
+
+    async def _rearm_session_contract(self) -> None:
+        """Re-send the full session payload after an unsolicited response.
+
+        Restores input transcription and ``create_response: false`` when the
+        server silently dropped them (BUG-064). Throttled so a burst of
+        unsolicited responses re-arms once, and fail-safe so a rejected
+        session.update can never take down the receive pump.
+        """
+        if self._session_contract is None or self._closed:
+            return
+        now = time.monotonic()
+        if now - self._last_contract_rearm < _CONTRACT_REARM_COOLDOWN_S:
+            return
+        self._last_contract_rearm = now
+        log.warning(
+            "OpenAI Realtime re-arming the session contract (input "
+            "transcription + manual-response mode) after an unsolicited "
+            "response — the server may have dropped session state"
+        )
+        try:
+            await self._conn.session.update(session=self._session_contract)
+        except Exception:  # noqa: BLE001 -- the pump must survive a failed re-arm
+            log.debug(
+                "OpenAI Realtime session contract re-arm failed",
+                exc_info=True,
+            )
 
     def _response_is_accepted(self, event: Any) -> bool:
         response_id = self._event_response_id(event)
@@ -575,14 +630,16 @@ class OpenAIRealtimeProvider:
                     exc_info=True,
                 )
             raise
+        payload = _session_payload(cfg)
         session = _OpenAIRealtimeSession(
             connection=connection,
             connection_cm=connection_cm,
             client=client,
             session_id=str(uuid4()),
+            session_payload=payload,
         )
         try:
-            await connection.session.update(session=_session_payload(cfg))
+            await connection.session.update(session=payload)
             await session.wait_until_ready()
         except BaseException:
             await session.close()

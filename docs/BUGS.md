@@ -4491,3 +4491,72 @@ carry the conversation: any harness goal built from a single utterance is
 wrong for every follow-up, correction, and instrument-naming turn. And a
 recovery path that already holds the complete user text must never refuse to
 act because a provider wire event failed to arrive.
+
+## BUG-064: Grok realtime session goes permanently deaf after a barge-in cancel — server drops the session contract (HIGH, FIXED 2026-07-16)
+
+**Symptom.** Desktop realtime session on `grok-realtime`, 2026-07-16 08:07
+(session `3cefaede`, exported as `voice-session-2026-07-16_08-07-constable.md`).
+Turn 1 ("Constable.") completed normally. Turn 2 was cut short by server VAD
+("Can you please" — the user paused mid-sentence), Jarvis requested a
+response, and 362 ms later the user resumed speaking, so the barge-in path
+cancelled the in-flight response (`realtime_cancel … reason=barge_in`). From
+that moment the user kept talking for over 80 seconds: the taskbar/JarvisBar
+audio indicators kept reacting (local mic level + server VAD both alive), but
+**no transcription ever appeared again, no turn started, and Jarvis never
+answered** until the user hung up via hotkey at 08:09:02. The exported
+transcript therefore ends after two turns although substantially more was
+said.
+
+**Evidence.** `data/jarvis_desktop.log` + `data/flight_recorder/2026-07-16.jsonl`:
+
+- 08:07:36.878 `LatencySpan realtime_cancel duration_ms=362 reason=barge_in`
+  — the only wire `response.cancel` of the session that hit an ACTIVE
+  response lifecycle.
+- Afterwards, five `OpenAI Realtime suppressed unsolicited response <id>`
+  warnings (08:07:57.918, 08:08:19.499, 08:08:26.469, 08:08:29.878,
+  08:08:44.740) — the server auto-created a response at each detected end of
+  speech, which `create_response: false` forbids.
+- Zero `conversation.item.input_audio_transcription.completed` **and** zero
+  `.failed` events after turn 2 — the deafness is server-side; the client
+  pump was demonstrably alive (it processed and suppressed the five
+  responses).
+- Contrast: the same suppression on `openai-realtime` (2026-07-15 11:03:03)
+  occurred once, was followed by the benign `response_cancel_not_active`
+  error, and the session continued normally — the wedge is Grok-specific.
+
+**Root cause.** The barge-in `response.cancel` of an active response left the
+xAI server without the session contract Jarvis configured at open: input
+transcription (`grok-transcribe`) stopped producing events and manual
+response mode (`turn_detection.create_response: false`) reverted to automatic
+— both live in the same `audio.input` session block, consistent with the
+server dropping/reverting session state. The client correctly cancelled each
+unsolicited response (the exactly-one-response invariant held; no stray audio
+reached the speaker) but had no path that ever RESTORED the contract, so the
+session stayed connected, listening, and deaf until manual hang-up.
+
+**Fix.** In the shared OpenAI-compatible adapter
+(`jarvis/plugins/realtime/openai_realtime.py`, inherited by `grok_realtime`):
+the session now retains the full session payload sent at open, kept current
+by `update_session()` (live instructions/tool changes are folded in, so a
+re-arm never reverts newer state). Suppressing an unsolicited response —
+impossible in a healthy manual-response session, hence a reliable wedge
+signal — now re-sends that full payload (`_rearm_session_contract()`),
+restoring input transcription and `create_response: false` in place. The
+re-arm is throttled (5 s cooldown per burst) and fail-safe (a rejected
+session.update never kills the receive pump). On a healthy server the re-arm
+is an idempotent no-op, so the defense is provider-family-wide and free.
+
+Guards: `tests/unit/realtime/test_openai_realtime.py`
+(`test_unsolicited_response_rearms_the_full_session_contract`,
+`test_contract_rearm_is_throttled_within_a_burst`,
+`test_contract_rearm_carries_live_instruction_and_tool_updates`) and
+`tests/unit/realtime/test_grok_realtime.py`
+(`test_unsolicited_response_rearms_grok_transcription_contract`).
+
+**Class rule.** A duplex provider's session configuration is a CONTRACT, not
+an initialization detail: any event that is impossible under the configured
+contract (here: an unsolicited response under manual-response mode) is proof
+the server no longer holds it, and the client must re-assert the full
+contract instead of only suppressing the symptom. Suppression without
+restoration turns one server-side hiccup into an unbounded silent outage that
+the user experiences as "it hears me (indicators fire) but nothing happens."

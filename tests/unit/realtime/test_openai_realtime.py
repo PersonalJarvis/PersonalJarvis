@@ -824,6 +824,119 @@ async def test_response_cancel_not_active_error_is_recoverable(
 
 
 @pytest.mark.asyncio
+async def test_unsolicited_response_rearms_the_full_session_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUG-064: an unsolicited response means the server dropped the
+    manual-response contract (live grok-realtime 2026-07-16 08:07: after a
+    barge-in cancel the session went permanently deaf — no input transcription
+    events, server VAD auto-created responses). Suppression must re-send the
+    FULL session payload so transcription and ``create_response: false`` are
+    restored."""
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    conn = holder["client"].realtime.last_conn
+    conn._events = iter(
+        [
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(id="resp-auto", metadata=None),
+            ),
+            SimpleNamespace(
+                type="response.done",
+                response=SimpleNamespace(id="resp-auto"),
+            ),
+        ]
+    )
+    session._events = conn.__aiter__()
+
+    events = [event async for event in session.receive()]
+
+    assert events == []
+    assert conn.response_cancels == ["resp-auto"]
+    assert len(conn.session_updates) == 2
+    rearmed = conn.session_updates[-1]
+    assert rearmed == conn.session_updates[0]
+    assert rearmed["audio"]["input"]["transcription"]["model"]
+    assert rearmed["audio"]["input"]["turn_detection"]["create_response"] is False
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_contract_rearm_is_throttled_within_a_burst(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUG-064: a burst of unsolicited responses re-arms the contract once per
+    cooldown window; every response in the burst is still cancelled."""
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    conn = holder["client"].realtime.last_conn
+    conn._events = iter(
+        [
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(id="resp-auto-1", metadata=None),
+            ),
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(id="resp-auto-2", metadata=None),
+            ),
+        ]
+    )
+    session._events = conn.__aiter__()
+
+    events = [event async for event in session.receive()]
+
+    assert events == []
+    assert conn.response_cancels == ["resp-auto-1", "resp-auto-2"]
+    assert len(conn.session_updates) == 2
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_contract_rearm_carries_live_instruction_and_tool_updates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUG-064: the re-armed payload must reflect the LATEST live session
+    state — re-asserting the contract must never revert instructions or tool
+    declarations to their session-start values."""
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig(instructions="Session-start instructions.")
+    )
+    conn = holder["client"].realtime.last_conn
+    declaration = {
+        "name": "late_tool",
+        "description": "A tool connected mid-session.",
+        "parameters": {"type": "object", "properties": {}},
+    }
+    await session.update_session(
+        instructions="Turn-updated instructions.", tools=(declaration,)
+    )
+    conn._events = iter(
+        [
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(id="resp-auto", metadata=None),
+            ),
+        ]
+    )
+    session._events = conn.__aiter__()
+
+    _ = [event async for event in session.receive()]
+
+    rearmed = conn.session_updates[-1]
+    assert rearmed["instructions"] == "Turn-updated instructions."
+    assert rearmed["tools"] == [{"type": "function", **declaration}]
+    assert rearmed["audio"]["input"]["turn_detection"]["create_response"] is False
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_interrupt_skips_wire_cancel_when_no_response_active(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

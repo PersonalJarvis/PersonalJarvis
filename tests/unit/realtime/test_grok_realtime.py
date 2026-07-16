@@ -211,6 +211,45 @@ async def test_default_model_audio_and_xai_events_are_mapped(
 
 
 @pytest.mark.asyncio
+async def test_unsolicited_response_rearms_grok_transcription_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUG-064 (live incident 2026-07-16 08:07): after a barge-in cancel the
+    Grok server stopped emitting input transcription events and auto-created
+    responses — the session stayed connected but permanently deaf. Suppressing
+    such an unsolicited response must re-send the full Grok session payload,
+    including the grok-transcribe input transcription."""
+    _patch_client(monkeypatch)
+    session = await GrokRealtimeProvider(api_key="xai-test").open_session(
+        RealtimeSessionConfig()
+    )
+    client = _FakeAsyncOpenAI.last
+    assert client is not None
+    conn = client.realtime.conn
+    conn._events = iter(
+        [
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(id="resp-auto", metadata=None),
+            ),
+        ]
+    )
+    session._events = conn.__aiter__()
+
+    events = [event async for event in session.receive()]
+
+    assert events == []
+    assert conn.response_cancels == ["resp-auto"]
+    assert len(conn.session_updates) == 2
+    rearmed = conn.session_updates[-1]
+    assert rearmed["audio"]["input"]["transcription"] == {
+        "model": "grok-transcribe"
+    }
+    assert rearmed["audio"]["input"]["turn_detection"]["create_response"] is False
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_keyless_provider_is_unavailable() -> None:
     assert await GrokRealtimeProvider().can_open_duplex_session() is False
 
