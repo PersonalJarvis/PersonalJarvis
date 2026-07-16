@@ -4561,6 +4561,40 @@ contract instead of only suppressing the symptom. Suppression without
 restoration turns one server-side hiccup into an unbounded silent outage that
 the user experiences as "it hears me (indicators fire) but nothing happens."
 
+**Recurrence 2026-07-16 09:23 — the re-arm alone does NOT heal Grok; transport
+rebuild escalation added.** Session `30c532cb`, first live run WITH the re-arm
+fix (committed 08:34): turn 0 committed ("Constable?", an English mishearing
+of the German sentence opener), the user kept talking, the barge-in cancel
+fired (`realtime_cancel reason=barge_in`), and the known wedge followed — one
+suppressed unsolicited response at 09:23:45, the re-arm log line proves the
+recovery ran, and **still no input transcription event ever arrived again**.
+The session sat in LISTENING for 19 more seconds until manual hang-up
+(`turn_count=0`). Conclusion: on a wedged Grok server, re-sending the session
+contract restores at most the manual-response half; the transcription half
+stays dead server-side.
+
+**Escalation fix (same adapter).** The session now tracks a *transcript
+deadline*: whenever the server has provably heard a user turn — an
+`input_audio_buffer.committed` event, or an auto-created response it is
+forbidden to create — an input transcript (completed or failed) is owed under
+the contract. If none arrives within `_TRANSCRIPT_OVERDUE_S` (6 s) while no
+response lifecycle is active, the adapter **rebuilds the transport in place**:
+a fresh WebSocket connection carrying the CURRENT session contract, state
+reset, and the receive pump hops onto the new iterator (the orchestrator sees
+one recoverable `RealtimeProviderError` warning, not a session end). In-call
+conversation history is lost — strictly better than a call that can no longer
+hear. A suppressed duplicate arriving <2 s after a transcript (the benign
+openai-realtime race, 2026-07-15) never arms the deadline; a failed rebuild
+closes the session so the orchestrator reports an honest provider error. The
+deaf-wedge watchdog also runs from `send_audio`, because a fully deaf server
+emits no events at all — the microphone pump is the only guaranteed heartbeat.
+
+Additional guards: `test_deaf_session_rebuilds_the_transport_and_receive_hops_onto_it`,
+`test_committed_turn_arms_and_transcript_clears_the_deadline`,
+`test_suppressed_duplicate_right_after_a_transcript_does_not_arm`,
+`test_failed_transport_rebuild_closes_the_session` (openai) and
+`test_deaf_grok_session_rebuild_carries_the_grok_contract` (grok).
+
 ## BUG-065: macOS/Linux desktop shows a permanent OFFLINE — WebKit drops the HttpOnly session cookie from WebSocket handshakes (HIGH, FIXED 2026-07-16)
 
 **Symptom (real Mac hardware, 2026-07-15).** During and after boot the macOS

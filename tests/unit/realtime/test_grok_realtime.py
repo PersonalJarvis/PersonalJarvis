@@ -82,9 +82,13 @@ class _FakeRealtimeAPI:
     def __init__(self) -> None:
         self.models: list[str] = []
         self.conn = _FakeConn()
+        # Transports handed out to reconnects (BUG-064 rebuild tests).
+        self.extra_conns: list[_FakeConn] = []
 
     def connect(self, *, model: str) -> _FakeConnectCM:
         self.models.append(model)
+        if len(self.models) > 1 and self.extra_conns:
+            self.conn = self.extra_conns.pop(0)
         return _FakeConnectCM(self.conn)
 
 
@@ -246,6 +250,56 @@ async def test_unsolicited_response_rearms_grok_transcription_contract(
         "model": "grok-transcribe"
     }
     assert rearmed["audio"]["input"]["turn_detection"]["create_response"] is False
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_deaf_grok_session_rebuild_carries_the_grok_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUG-064 escalation (live 2026-07-16 09:23): the re-arm ran and the Grok
+    server still delivered no further input transcript. The transport rebuild
+    must reconnect with the Grok model and re-send the full Grok session
+    payload — including grok-transcribe input transcription — on the fresh
+    connection."""
+    _patch_client(monkeypatch)
+    from jarvis.plugins.realtime import openai_realtime as shared_adapter
+
+    monkeypatch.setattr(shared_adapter, "_TRANSCRIPT_OVERDUE_S", 0.0)
+    session = await GrokRealtimeProvider(api_key="xai-test").open_session(
+        RealtimeSessionConfig()
+    )
+    client = _FakeAsyncOpenAI.last
+    assert client is not None
+    api = client.realtime
+    conn1 = api.conn
+    conn2 = _FakeConn()
+    conn2._events = iter([SimpleNamespace(type="session.updated")])
+    api.extra_conns.append(conn2)
+    conn1._events = iter(
+        [
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(id="resp-auto", metadata=None),
+            ),
+            SimpleNamespace(type="input_audio_buffer.speech_started"),
+        ]
+    )
+    session._events = conn1.__aiter__()
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == ["speech_started", "error"]
+    assert events[1].recoverable is True
+    assert api.models == ["grok-voice-latest", "grok-voice-latest"]
+    rebuilt_contract = conn2.session_updates[0]
+    assert rebuilt_contract["audio"]["input"]["transcription"] == {
+        "model": "grok-transcribe"
+    }
+    assert (
+        rebuilt_contract["audio"]["input"]["turn_detection"]["create_response"]
+        is False
+    )
     await session.close()
 
 

@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from jarvis.brain.model_catalog import REALTIME_MODELS
+from jarvis.plugins.realtime import openai_realtime
 from jarvis.plugins.realtime.openai_realtime import OpenAIRealtimeProvider
 from jarvis.realtime.protocol import RealtimeSessionConfig
 
@@ -78,9 +79,18 @@ class _FakeRealtimeAPI:
     def __init__(self) -> None:
         self.connect_calls: list[str] = []
         self.last_conn = _FakeConn()
+        # Transports handed out to reconnects (BUG-064 rebuild tests).
+        self.extra_conns: list[_FakeConn] = []
+        self.connect_error: Exception | None = None
 
     def connect(self, *, model: str) -> _FakeConnectCM:
         self.connect_calls.append(model)
+        if len(self.connect_calls) > 1:
+            if self.connect_error is not None:
+                raise self.connect_error
+            self.last_conn = (
+                self.extra_conns.pop(0) if self.extra_conns else _FakeConn()
+            )
         return _FakeConnectCM(self.last_conn)
 
 
@@ -972,3 +982,169 @@ async def test_interrupt_still_cancels_while_response_active(
 
     assert conn.response_cancels == ["<active>"]
     await session.close()
+
+
+@pytest.mark.asyncio
+async def test_deaf_session_rebuilds_the_transport_and_receive_hops_onto_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUG-064 escalation (grok-realtime 2026-07-16 09:23): the contract
+    re-arm demonstrably ran and the server STILL never delivered another
+    input transcript — the call sat in LISTENING until manual hang-up. Once
+    the transcript deadline for a heard-but-untranscribed user turn expires,
+    the adapter must open a fresh transport carrying the same session
+    contract, and the receive pump must hop onto it instead of treating the
+    old transport's end as the end of the voice session."""
+    holder = _patch_openai_client(monkeypatch)
+    monkeypatch.setattr(openai_realtime, "_TRANSCRIPT_OVERDUE_S", 0.0)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig(model="gpt-realtime")
+    )
+    api = holder["client"].realtime
+    conn1 = api.last_conn
+    conn2 = _FakeConn()
+    conn2._events = iter(
+        [
+            SimpleNamespace(type="session.updated"),
+            SimpleNamespace(
+                type="conversation.item.input_audio_transcription.completed",
+                item_id="post-rebuild-1",
+                transcript="Repeated question",
+            ),
+        ]
+    )
+    api.extra_conns.append(conn2)
+    conn1._events = iter(
+        [
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(id="resp-auto", metadata=None),
+            ),
+            SimpleNamespace(type="input_audio_buffer.speech_started"),
+        ]
+    )
+    session._events = conn1.__aiter__()
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == [
+        "speech_started",
+        "error",
+        "input_transcript",
+    ]
+    assert events[1].recoverable is True
+    assert "rebuilt" in str(events[1].error)
+    assert events[2].text == "Repeated question"
+    assert api.connect_calls == ["gpt-realtime", "gpt-realtime"]
+    contract = conn2.session_updates[0]
+    assert contract["audio"]["input"]["turn_detection"]["create_response"] is False
+    assert contract["audio"]["input"]["transcription"]["model"]
+    assert session._conn is conn2
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_committed_turn_arms_and_transcript_clears_the_deadline(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An input_audio_buffer commit means the contract owes a transcript; the
+    arriving transcript proves the server hears and must disarm the rebuild
+    deadline so healthy sessions never reconnect."""
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    conn = holder["client"].realtime.last_conn
+    conn._events = iter(
+        [SimpleNamespace(type="input_audio_buffer.committed", item_id="item-1")]
+    )
+    session._events = conn.__aiter__()
+
+    assert [event async for event in session.receive()] == []
+    assert session._transcript_deadline is not None
+
+    conn._events = iter(
+        [
+            SimpleNamespace(
+                type="conversation.item.input_audio_transcription.completed",
+                item_id="item-1",
+                transcript="One request",
+            )
+        ]
+    )
+    session._events = conn.__aiter__()
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == ["input_transcript"]
+    assert session._transcript_deadline is None
+    assert holder["client"].realtime.connect_calls == ["gpt-realtime"]
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_suppressed_duplicate_right_after_a_transcript_does_not_arm(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The benign duplicate race (openai-realtime 2026-07-15): our
+    response.create crossed the server's auto response moments after the
+    input transcript arrived. That suppression must NOT arm the transcript
+    deadline — the session demonstrably hears."""
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    conn = holder["client"].realtime.last_conn
+    conn._events = iter(
+        [
+            SimpleNamespace(
+                type="conversation.item.input_audio_transcription.completed",
+                item_id="item-1",
+                transcript="Heard fine",
+            ),
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(id="resp-duplicate", metadata=None),
+            ),
+        ]
+    )
+    session._events = conn.__aiter__()
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == ["input_transcript"]
+    assert conn.response_cancels == ["resp-duplicate"]
+    assert session._transcript_deadline is None
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_transport_rebuild_closes_the_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A rebuild that cannot reconnect must close the session so the
+    orchestrator reports an honest provider error — never keep a silently
+    deaf call open."""
+    holder = _patch_openai_client(monkeypatch)
+    monkeypatch.setattr(openai_realtime, "_TRANSCRIPT_OVERDUE_S", 0.0)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+    api = holder["client"].realtime
+    api.connect_error = RuntimeError("reconnect refused")
+    conn1 = api.last_conn
+    conn1._events = iter(
+        [
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(id="resp-auto", metadata=None),
+            ),
+            SimpleNamespace(type="input_audio_buffer.speech_started"),
+        ]
+    )
+    session._events = conn1.__aiter__()
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == ["speech_started"]
+    assert session._closed is True
+    assert holder["client"].closed is True

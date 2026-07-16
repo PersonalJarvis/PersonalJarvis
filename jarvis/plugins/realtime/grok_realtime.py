@@ -56,9 +56,8 @@ class GrokRealtimeProvider:
         from openai import AsyncOpenAI  # lazy (AP-26)
 
         client = AsyncOpenAI(api_key=self._api_key, base_url=_BASE_URL)
-        connection_cm = client.realtime.connect(
-            model=str(getattr(cfg, "model", "") or _MODEL)
-        )
+        connect_model = str(getattr(cfg, "model", "") or _MODEL)
+        connection_cm = client.realtime.connect(model=connect_model)
         try:
             connection = await connection_cm.__aenter__()
         except BaseException as exc:
@@ -89,6 +88,7 @@ class GrokRealtimeProvider:
             client=client,
             session_id=str(uuid4()),
             session_payload=payload,
+            connect_model=connect_model,
         )
         try:
             await connection.session.update(session=payload)
