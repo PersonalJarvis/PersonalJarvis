@@ -8,9 +8,11 @@ status callbacks.
 
 from __future__ import annotations
 
+import array
 import asyncio
 import inspect
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
@@ -70,7 +72,32 @@ _END_CALL_DECLARATION: dict[str, Any] = {
 # turn that exceeds this is stuck, not busy.
 _DELEGATE_TIMEOUT_S = 90.0
 _DELEGATE_INPUT_BOUNDARY_WAIT_S = 3.0
+# A provider that stays completely silent must never veto a delegated turn.
+# Each wait round re-arms only while the input transcript is still growing
+# (the user is audibly mid-utterance); a stable transcript dispatches.
+_DELEGATE_INPUT_BOUNDARY_MAX_ROUNDS = 6
 _DELEGATE_NATIVE_BOUNDARY_WAIT_S = 1.0
+# Mid-reply audio-flow diagnostics: an audible hole inside one spoken answer
+# has three distinct producers (scrub gate waiting for a late transcript, the
+# provider sending no audio, or silence embedded in the provider's own PCM).
+# Logging separates them, because each needs a different fix (live forensic
+# 2026-07-16 10:26: a ~1 s hole mid-sentence was unattributable from the log).
+_AUDIO_FLOW_STALL_LOG_MS = 400.0
+_EMBEDDED_SILENCE_LOG_MS = 400.0
+# int16 peak below this is treated as silence inside provider PCM (~0.6 % of
+# full scale — comfortably above the AP-27 silence-ghost RMS empirics, far
+# below any audible speech).
+_EMBEDDED_SILENCE_PEAK = 200
+
+
+def _pcm16_peak(pcm: bytes) -> int:
+    """Peak absolute amplitude of little-endian int16 PCM (C-speed, no numpy)."""
+    usable = len(pcm) - (len(pcm) % 2)
+    if usable < 2:
+        return 0
+    samples = array.array("h")
+    samples.frombytes(pcm[:usable])
+    return max(max(samples), -min(samples))
 # A realtime bridge is useful only for a genuinely long delegated turn. Starting
 # a second provider response after two seconds made ordinary 5-7 second searches
 # slower: the trusted result had to wait for the interim response lifecycle to
@@ -565,6 +592,10 @@ class RealtimeVoiceSession:
         self._end_after_turn = False
         self._end_call_timer: asyncio.Task[None] | None = None
         self._scrub_cancelled_for_turn = False
+        # Mid-reply audio-flow diagnostics (attribution of audible holes).
+        self._last_audio_emit_monotonic = 0.0
+        self._last_audio_emit_turn = ""
+        self._embedded_silence_ms = 0.0
 
     def _resolve_lang(self, *, text: str) -> str:
         brain = getattr(self._config, "brain", None)
@@ -1220,15 +1251,27 @@ class RealtimeVoiceSession:
                         await self._cancel_unsafe_output(
                             reason="output transcript exceeded safe audio buffer"
                         )
-                elif (
-                    event.type == "speech_started"
-                    and self._pending_delegate_needs_endpoint_protection()
+                elif event.type in {"speech_started", "interrupted"} and (
+                    self._pending_delegate_needs_endpoint_protection()
+                    or self._delegate_readback_awaits_first_audio()
                 ):
+                    # Gemini has no separate speech-start edge: its server VAD
+                    # reports noise blips and real barge-ins alike as
+                    # ``interrupted``. During the silent span of a delegated
+                    # action — thinking, or the trusted readback injected but
+                    # not yet audible — there is no output to cut, so an
+                    # unconfirmed edge must not abandon the turn: doing so
+                    # closed the turn with the trusted reply recorded but
+                    # never spoken, and the barge-in drop flag then swallowed
+                    # the injected readback (live forensic 2026-07-16 10:26).
+                    # Defer it; a real utterance confirms itself through its
+                    # final input transcript moments later.
                     if not self._deferred_provider_speech_start:
                         log.info(
                             "realtime[%s] deferred an unconfirmed provider "
-                            "speech start while an action result was pending",
+                            "%s edge while an action result was pending",
                             self.session_id,
+                            event.type,
                         )
                     self._deferred_provider_speech_start = True
                 elif event.type in {"speech_started", "interrupted"}:
@@ -2093,6 +2136,7 @@ class RealtimeVoiceSession:
         self._delegate_required_for_turn = False
         self._deferred_provider_speech_start = False
         self._scrub_cancelled_for_turn = False
+        self._embedded_silence_ms = 0.0
 
     def _declared_tools(self) -> tuple[dict[str, Any], ...]:
         if self._delegate_enabled:
@@ -2208,6 +2252,27 @@ class RealtimeVoiceSession:
             and not self._output_active
             and not self._delegate_delivery_started()
             and self._turn_has_pending_delegate(self._turn_id)
+        )
+
+    def _delegate_readback_awaits_first_audio(self) -> bool:
+        """Protect a delivered-but-not-yet-audible trusted delegate result.
+
+        Between the injection of a delegate result (``send_text`` /
+        ``send_tool_result``) and the first audible PCM of the provider's
+        readback the session is completely silent, so a provider VAD edge in
+        this window is indistinguishable from room noise. Closing the turn
+        here records a reply the user never heard and arms the barge-in drop
+        flag against the very response that would have spoken it (live
+        forensic 2026-07-16 10:26).
+        """
+        state = self._delegate_turns.get(self._turn_id)
+        return bool(
+            self._turn_id
+            and state is not None
+            and state.result_complete
+            and state.delivery_started
+            and not self._output_active
+            and self._output_samples_sent == 0
         )
 
     @staticmethod
@@ -2657,13 +2722,58 @@ class RealtimeVoiceSession:
         except Exception:  # noqa: BLE001, S110 — boundary wait retains its fallback
             pass
 
+    async def _await_stable_input_boundary(
+        self, turn_state: _DelegateTurnState
+    ) -> None:
+        """Delay a deterministic dispatch until the utterance is provably over.
+
+        The provider's own boundary (its held turn_complete, native function
+        call, or the dispatching path marking the input final) is the
+        strongest end-of-utterance evidence. A provider that stays completely
+        silent must not veto the turn, though: after a full wait window in
+        which the accumulated input transcript did not grow, the utterance is
+        final by local evidence and the dispatch proceeds (live forensic
+        2026-07-16 10:26 — Gemini produced neither a response nor a boundary
+        for a complete question, and the old veto answered it with the canned
+        generic failure phrase instead of dispatching the brain). A
+        transcript still growing re-arms the window: the user is audibly
+        mid-utterance, and dispatching would act on a partial request.
+        """
+        for _ in range(_DELEGATE_INPUT_BOUNDARY_MAX_ROUNDS):
+            transcript_before_wait = self._last_user_text
+            try:
+                await asyncio.wait_for(
+                    turn_state.input_boundary_ready.wait(),
+                    timeout=_DELEGATE_INPUT_BOUNDARY_WAIT_S,
+                )
+            except TimeoutError:
+                if turn_state.input_final or (
+                    self._last_user_text == transcript_before_wait
+                ):
+                    log.info(
+                        "realtime[%s] deterministic delegate: provider input "
+                        "boundary missing after %.1fs; dispatching on the "
+                        "stable local transcript",
+                        self.session_id,
+                        _DELEGATE_INPUT_BOUNDARY_WAIT_S,
+                    )
+                    return
+                continue
+            return
+        log.warning(
+            "realtime[%s] deterministic delegate: input transcript kept "
+            "growing through %d wait rounds; dispatching on the newest "
+            "snapshot",
+            self.session_id,
+            _DELEGATE_INPUT_BOUNDARY_MAX_ROUNDS,
+        )
+
     async def _run_deterministic_delegate(
         self,
         turn_id: str,
         turn_state: _DelegateTurnState,
     ) -> None:
         try:
-            boundary_ready = True
             if turn_state.wait_for_provider_boundary or bool(
                 getattr(
                     self._session,
@@ -2671,19 +2781,7 @@ class RealtimeVoiceSession:
                     False,
                 )
             ):
-                try:
-                    await asyncio.wait_for(
-                        turn_state.input_boundary_ready.wait(),
-                        timeout=_DELEGATE_INPUT_BOUNDARY_WAIT_S,
-                    )
-                except TimeoutError:
-                    # The refusal below protects against acting on a PARTIAL
-                    # input transcript. When the dispatching path marked the
-                    # input final, the missing provider boundary is only a
-                    # wire artifact (an interrupt that landed on an
-                    # already-completed response) — proceed; result delivery
-                    # still waits for its own provider boundary.
-                    boundary_ready = turn_state.input_final
+                await self._await_stable_input_boundary(turn_state)
             else:
                 # A manual-response provider may already have queued a native
                 # function call or cancelled output behind the final input
@@ -3061,8 +3159,59 @@ class RealtimeVoiceSession:
                 )
             except Exception:  # noqa: BLE001, S110 — best-effort telemetry
                 pass
+        self._note_audio_flow(pcm, chunk)
         self._output_samples_sent += len(pcm) // 2
         await self._send_binary(pcm)
+
+    def _note_audio_flow(self, pcm: bytes, chunk: Any) -> None:
+        """Attribute audible mid-reply holes to their actual producer.
+
+        A silent gap inside one spoken answer has three distinct causes that a
+        plain log cannot separate after the fact (live forensic 2026-07-16
+        10:26, ~1 s hole mid-sentence): the scrub gate holding released audio
+        because its transcript delta arrived late, the provider sending no
+        audio for that span, or silence embedded in the provider's own PCM.
+        Emit one INFO line per event so the next occurrence is attributable.
+        Pure integer math on the already-decoded chunk — no LLM, no I/O.
+        """
+        now = time.monotonic()
+        if (
+            self._output_samples_sent > 0
+            and self._turn_id
+            and self._last_audio_emit_turn == self._turn_id
+        ):
+            gap_ms = (now - self._last_audio_emit_monotonic) * 1_000.0
+            if gap_ms >= _AUDIO_FLOW_STALL_LOG_MS:
+                held_ms = float(getattr(self._gate, "last_hold_ms", 0.0) or 0.0)
+                cause = (
+                    "the transcript needed to clear this audio arrived late"
+                    if held_ms >= gap_ms * 0.6
+                    else "the provider sent no audio for this span"
+                )
+                log.info(
+                    "realtime[%s] mid-reply audio stalled %d ms before this "
+                    "chunk (scrub-gate hold %d ms, %d ms still gated) — %s",
+                    self.session_id,
+                    int(gap_ms),
+                    int(held_ms),
+                    int(float(getattr(self._gate, "pending_audio_ms", 0.0) or 0.0)),
+                    cause,
+                )
+        self._last_audio_emit_monotonic = now
+        self._last_audio_emit_turn = self._turn_id
+        sample_rate = max(1, int(getattr(chunk, "sample_rate", 0) or 24_000))
+        chunk_ms = (len(pcm) / 2) * 1_000.0 / sample_rate
+        if _pcm16_peak(pcm) < _EMBEDDED_SILENCE_PEAK:
+            self._embedded_silence_ms += chunk_ms
+            return
+        if self._embedded_silence_ms >= _EMBEDDED_SILENCE_LOG_MS:
+            log.info(
+                "realtime[%s] provider audio carried %d ms of embedded "
+                "silence mid-reply (generation pause rendered as silent PCM)",
+                self.session_id,
+                int(self._embedded_silence_ms),
+            )
+        self._embedded_silence_ms = 0.0
 
     async def _barge_in(self, *, interrupt_provider: bool = True) -> None:
         should_interrupt = bool(

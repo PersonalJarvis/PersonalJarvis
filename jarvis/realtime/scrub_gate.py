@@ -10,6 +10,8 @@ Regex-only, no LLM (AP-11).
 
 from __future__ import annotations
 
+import time
+
 from jarvis.brain.output_filter import FALLBACK_PHRASES, ScrubResult, scrub_for_voice
 from jarvis.core.protocols import AudioChunk
 
@@ -59,6 +61,24 @@ class ScrubHoldGate:
         self._transcript_seen = False
         self._transcript_tail = ""
         self._hard_leak_actions: tuple[str, ...] = ()
+        # Hold-time telemetry: how long the batch released last waited for its
+        # clearing transcript. Lets the session attribute an audible mid-reply
+        # hole to a late transcript delta instead of a silent provider
+        # (live forensic 2026-07-16 10:26).
+        self._pending_since: float | None = None
+        self.last_hold_ms = 0.0
+
+    @property
+    def pending_audio_ms(self) -> float:
+        """Milliseconds of audio currently held while awaiting a transcript."""
+        return self._pending_audio_ms
+
+    def _consume_hold_clock(self) -> None:
+        if self._pending_since is not None:
+            self.last_hold_ms = (time.monotonic() - self._pending_since) * 1_000.0
+            self._pending_since = None
+        else:
+            self.last_hold_ms = 0.0
 
     def hard_leak_pending(self) -> bool:
         return self._hard_leak
@@ -102,6 +122,7 @@ class ScrubHoldGate:
             self._cleared = False
             self._pending.clear()
             self._pending_audio_ms = 0.0
+            self._pending_since = None
             return self.fallback_phrase()
         if _is_stream_safe_residue(aggregate):
             # A realtime provider may emit punctuation or the first half of a
@@ -136,7 +157,10 @@ class ScrubHoldGate:
             self._pending = []
             self._pending_audio_ms = 0.0
             self._cleared = False
+            self._consume_hold_clock()
             return out
+        if not self._pending and self._pending_since is None:
+            self._pending_since = time.monotonic()
         self._pending.append(chunk)
         sample_rate = max(1, int(chunk.sample_rate or 0))
         self._pending_audio_ms += (len(chunk.pcm) / 2) * 1_000 / sample_rate
@@ -155,6 +179,7 @@ class ScrubHoldGate:
         self._pending = []
         self._pending_audio_ms = 0.0
         self._cleared = False
+        self._consume_hold_clock()
         return out
 
     def fail_closed(self) -> bool:
@@ -163,6 +188,7 @@ class ScrubHoldGate:
             return False
         self._pending.clear()
         self._pending_audio_ms = 0.0
+        self._pending_since = None
         self._cleared = False
         self._hard_leak = True
         self._hard_leak_actions = ("no_transcript",)
@@ -178,6 +204,7 @@ class ScrubHoldGate:
             return False
         self._pending.clear()
         self._pending_audio_ms = 0.0
+        self._pending_since = None
         self._cleared = False
         self._hard_leak = True
         self._hard_leak_actions = ("transcript_stalled",)
@@ -191,6 +218,7 @@ class ScrubHoldGate:
         self._pending = []
         self._pending_audio_ms = 0.0
         self._cleared = False
+        self._consume_hold_clock()
         return out
 
     def drain(self) -> None:
@@ -202,6 +230,8 @@ class ScrubHoldGate:
         self._transcript_seen = False
         self._transcript_tail = ""
         self._hard_leak_actions = ()
+        self._pending_since = None
+        self.last_hold_ms = 0.0
 
 
 def _restore_edge_whitespace(original: str, cleaned: str) -> str:
