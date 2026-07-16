@@ -15,11 +15,14 @@ from fastapi.testclient import TestClient
 from starlette.websockets import WebSocketDisconnect
 
 from jarvis.core import control_key
+from jarvis.ui.web import surface_security
 from jarvis.ui.web.missions_auth import register_token, reset_tokens
 from jarvis.ui.web.surface_security import (
     COOKIE_NAME,
     SurfaceSecurity,
     build_set_cookie_header,
+    credentials_valid,
+    reset_ws_tickets,
 )
 
 pytestmark = pytest.mark.no_auto_web_auth
@@ -57,12 +60,14 @@ class _ProbeApp:
 @pytest.fixture(autouse=True)
 def _auth_state(monkeypatch: pytest.MonkeyPatch):
     reset_tokens()
+    reset_ws_tickets()
     register_token(_SESSION_TOKEN)
     monkeypatch.setattr(control_key, "get_control_key", lambda: _CONTROL_KEY)
     try:
         yield
     finally:
         reset_tokens()
+        reset_ws_tickets()
 
 
 def _client(
@@ -509,14 +514,17 @@ def test_public_telephony_websocket_allows_a_non_browser_without_origin() -> Non
 def test_public_telephony_websocket_still_enforces_host_and_supplied_origin(
     headers: dict[str, str],
 ) -> None:
+    # Rejects are accept-then-close so the client can read the specific code:
+    # a close before the accept surfaces as an opaque 1006 in every browser,
+    # which the UI cannot distinguish from "server down" (BUG-065).
     client, inner = _client()
 
-    with pytest.raises(WebSocketDisconnect) as exc_info:
-        with client.websocket_connect(
-            "/api/telephony/media",
-            headers=headers,
-        ):
-            pass
+    with client.websocket_connect(
+        "/api/telephony/media",
+        headers=headers,
+    ) as websocket:
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            websocket.receive_json()
 
     assert exc_info.value.code == 4403
     assert inner.scopes == []
@@ -543,4 +551,228 @@ def test_public_callback_allowlist_is_method_and_path_exact(
     response = client.request(method, path, headers=_headers(origin=None))
 
     assert response.status_code == 401
+    assert inner.scopes == []
+
+
+# ---------------------------------------------------------------------------
+# One-time WebSocket tickets + readable websocket rejects (BUG-065).
+#
+# WebKit engines (Safari / WKWebView on macOS, WebKitGTK on Linux) do not
+# attach the HttpOnly session cookie to a WebSocket handshake, so cookie-only
+# WS auth bricks the live event channel on every non-Chromium browser. The
+# boundary therefore (a) closes rejected sockets AFTER the accept so the
+# specific 4401/4403 is readable, and (b) accepts a short-lived single-use
+# ticket minted over cookie-authenticated plain HTTP.
+# ---------------------------------------------------------------------------
+
+
+def test_cookieless_websocket_reject_is_a_readable_4401() -> None:
+    client, inner = _client()
+
+    with client.websocket_connect("/ws", headers=_headers()) as websocket:
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            websocket.receive_json()
+
+    assert exc_info.value.code == 4401
+    assert inner.scopes == []
+
+
+def test_ws_ticket_mint_requires_a_credential() -> None:
+    client, inner = _client()
+
+    response = client.post("/api/ui/ws-ticket", headers=_headers())
+
+    assert response.status_code == 401
+    assert inner.scopes == []
+
+
+def test_session_ws_ticket_mint_requires_an_origin() -> None:
+    client, inner = _client()
+    client.cookies.set(COOKIE_NAME, _SESSION_TOKEN)
+
+    response = client.post("/api/ui/ws-ticket", headers=_headers(origin=None))
+
+    assert response.status_code == 403
+    assert inner.scopes == []
+
+
+def test_ws_ticket_opens_the_socket_without_any_cookie() -> None:
+    client, inner = _client()
+    client.cookies.set(COOKIE_NAME, _SESSION_TOKEN)
+    minted = client.post("/api/ui/ws-ticket", headers=_headers())
+    assert minted.status_code == 200
+    assert minted.headers["cache-control"] == "no-store"
+    ticket = minted.json()["ticket"]
+    assert isinstance(ticket, str) and len(ticket) >= 32
+
+    # The WS handshake itself presents NO cookie — the WebKit reality.
+    client.cookies.clear()
+    with client.websocket_connect(
+        f"/ws?ticket={ticket}", headers=_headers()
+    ) as websocket:
+        assert websocket.receive_json() == {"type": "probe"}
+
+    assert len(inner.scopes) == 1
+
+
+def test_ws_ticket_is_single_use() -> None:
+    client, inner = _client()
+    client.cookies.set(COOKIE_NAME, _SESSION_TOKEN)
+    ticket = client.post("/api/ui/ws-ticket", headers=_headers()).json()["ticket"]
+    client.cookies.clear()
+
+    with client.websocket_connect(f"/ws?ticket={ticket}", headers=_headers()):
+        pass
+    with client.websocket_connect(
+        f"/ws?ticket={ticket}", headers=_headers()
+    ) as replay:
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            replay.receive_json()
+
+    assert exc_info.value.code == 4401
+    assert len(inner.scopes) == 1
+
+
+def test_expired_ws_ticket_is_rejected() -> None:
+    client, inner = _client()
+    client.cookies.set(COOKIE_NAME, _SESSION_TOKEN)
+    ticket = client.post("/api/ui/ws-ticket", headers=_headers()).json()["ticket"]
+    client.cookies.clear()
+    surface_security._WS_TICKETS[ticket] = 0.0  # force expiry
+
+    with client.websocket_connect(
+        f"/ws?ticket={ticket}", headers=_headers()
+    ) as websocket:
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            websocket.receive_json()
+
+    assert exc_info.value.code == 4401
+    assert inner.scopes == []
+
+
+def test_ws_ticket_from_a_hostile_origin_is_rejected_before_consumption() -> None:
+    client, inner = _client()
+    client.cookies.set(COOKIE_NAME, _SESSION_TOKEN)
+    ticket = client.post("/api/ui/ws-ticket", headers=_headers()).json()["ticket"]
+    client.cookies.clear()
+
+    with client.websocket_connect(
+        f"/ws?ticket={ticket}",
+        headers=_headers(origin="https://attacker.example"),
+    ) as websocket:
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            websocket.receive_json()
+
+    # The global Origin gate fires before ticket handling: the hostile page
+    # is rejected outright and the unconsumed ticket stays valid for the
+    # legitimate same-origin owner.
+    assert exc_info.value.code == 4403
+    assert inner.scopes == []
+    with client.websocket_connect(
+        f"/ws?ticket={ticket}", headers=_headers()
+    ) as legitimate:
+        assert legitimate.receive_json() == {"type": "probe"}
+    assert len(inner.scopes) == 1
+
+
+def test_ws_ticket_without_any_origin_is_consumed_and_rejected() -> None:
+    # required=True on the ticket path: a browser always sends an Origin on a
+    # WS handshake, so an origin-less ticket presentation is not a browser —
+    # native clients authenticate with a Bearer instead. Fail-closed AND burn
+    # the ticket so it cannot be probed origin-less and replayed later.
+    client, inner = _client()
+    client.cookies.set(COOKIE_NAME, _SESSION_TOKEN)
+    ticket = client.post("/api/ui/ws-ticket", headers=_headers()).json()["ticket"]
+    client.cookies.clear()
+
+    with client.websocket_connect(
+        f"/ws?ticket={ticket}", headers=_headers(origin=None)
+    ) as websocket:
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            websocket.receive_json()
+    assert exc_info.value.code == 4403
+
+    with client.websocket_connect(
+        f"/ws?ticket={ticket}", headers=_headers()
+    ) as replay:
+        with pytest.raises(WebSocketDisconnect) as replay_exc:
+            replay.receive_json()
+    assert replay_exc.value.code == 4401
+    assert inner.scopes == []
+
+
+def test_ws_ticket_never_authenticates_plain_http() -> None:
+    client, inner = _client()
+    client.cookies.set(COOKIE_NAME, _SESSION_TOKEN)
+    ticket = client.post("/api/ui/ws-ticket", headers=_headers()).json()["ticket"]
+    client.cookies.clear()
+
+    response = client.get(f"/api/config?ticket={ticket}", headers=_headers())
+
+    assert response.status_code == 401
+    assert inner.scopes == []
+
+
+def test_ticket_authenticated_socket_passes_route_level_recheck() -> None:
+    """Tool-capable sockets (/ws/audio, workspace PTY) re-check credentials
+    route-locally via ``credentials_valid``. A ticket is consumed by the outer
+    boundary and cannot be validated twice, so the boundary stamps the scope
+    and the re-check must honor it — otherwise the exact WebKit clients the
+    ticket exists for (BUG-065) get accepted by the boundary and then closed
+    4401 by the route itself."""
+    client, inner = _client()
+    client.cookies.set(COOKIE_NAME, _SESSION_TOKEN)
+    ticket = client.post("/api/ui/ws-ticket", headers=_headers()).json()["ticket"]
+    client.cookies.clear()
+
+    with client.websocket_connect(
+        f"/ws/audio?ticket={ticket}", headers=_headers()
+    ) as websocket:
+        assert websocket.receive_json() == {"type": "probe"}
+
+    assert len(inner.scopes) == 1
+    assert credentials_valid(inner.scopes[0]) is True
+
+
+def test_non_loopback_plain_http_ws_ticket_mint_is_rejected() -> None:
+    public_url = "http://jarvis.example"
+    client, inner = _client(
+        base_url=public_url,
+        peer=("203.0.113.9", 50_000),
+        public_urls=(public_url,),
+    )
+    client.cookies.set(COOKIE_NAME, _SESSION_TOKEN)
+
+    response = client.post(
+        "/api/ui/ws-ticket",
+        headers=_headers(origin=public_url, host="jarvis.example"),
+    )
+
+    assert response.status_code == 403
+    assert inner.scopes == []
+
+
+def test_non_loopback_plain_ws_ticket_presentation_is_rejected() -> None:
+    # Mint legitimately over loopback, then present the ticket over a
+    # sniffable plain-HTTP non-loopback transport: refused, unconsumed.
+    loopback_client, _ = _client()
+    loopback_client.cookies.set(COOKIE_NAME, _SESSION_TOKEN)
+    ticket = loopback_client.post(
+        "/api/ui/ws-ticket", headers=_headers()
+    ).json()["ticket"]
+
+    public_url = "http://jarvis.example"
+    client, inner = _client(
+        base_url=public_url,
+        peer=("203.0.113.9", 50_000),
+        public_urls=(public_url,),
+    )
+    with client.websocket_connect(
+        f"/ws?ticket={ticket}",
+        headers=_headers(origin=public_url, host="jarvis.example"),
+    ) as websocket:
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            websocket.receive_json()
+
+    assert exc_info.value.code == 4403
     assert inner.scopes == []

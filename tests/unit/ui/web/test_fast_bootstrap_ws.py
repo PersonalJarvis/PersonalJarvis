@@ -35,3 +35,27 @@ async def test_warming_ws_is_fast_closed_with_1013() -> None:
     finally:
         await bs.stop()
         logging.disable(logging.NOTSET)
+
+
+@pytest.mark.asyncio
+async def test_warming_ws_gets_1013_even_without_any_credential() -> None:
+    """The macOS/Linux desktop reality (BUG-065): WebKit engines drop the
+    HttpOnly session cookie from WS handshakes. A warming socket must still
+    receive the readable accept-then-close 1013 — an auth reject here would
+    surface as an opaque 1006 and render the boot as a spurious OFFLINE."""
+    logging.disable(logging.CRITICAL)
+    bs = FastBootstrap(session_token=_TOKEN)
+    await bs.serve("127.0.0.1", 47996)  # NOT set_app -> warming
+    try:
+        async with websockets.connect(
+            "ws://127.0.0.1:47996/ws",
+            open_timeout=3,
+            origin="http://127.0.0.1:47996",
+            # No Cookie header at all — the cookie-less WebKit handshake.
+        ) as ws:
+            with pytest.raises(websockets.ConnectionClosed) as exc:
+                await asyncio.wait_for(ws.recv(), timeout=3)
+            assert exc.value.code == 1013
+    finally:
+        await bs.stop()
+        logging.disable(logging.NOTSET)

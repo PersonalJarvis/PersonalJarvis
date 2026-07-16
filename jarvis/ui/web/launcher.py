@@ -333,7 +333,18 @@ async def _run_headless(args) -> int:
                     await send({"type": "lifespan.shutdown.complete"})
                     return
             return
-        # http / websocket: hold until the full app is ready, then delegate.
+        # Websocket while warming: answer NOW with accept-then-close 1013.
+        # Holding the handshake open makes browsers time out after tens of
+        # seconds and report an opaque 1006, so a headless boot watched from a
+        # browser rendered as a long spurious OFFLINE instead of "starting"
+        # (the same contract FastBootstrap serves on the desktop; BUG-065).
+        if kind == "websocket" and not _full_ready.is_set():
+            await receive()  # consume the websocket.connect event
+            await send({"type": "websocket.accept"})
+            await send({"type": "websocket.close", "code": 1013})
+            return
+
+        # http: hold until the full app is ready, then delegate.
         if not _full_ready.is_set():
             try:
                 await asyncio.wait_for(_full_ready.wait(), timeout=120.0)
@@ -367,6 +378,8 @@ async def _run_headless(args) -> int:
             await send({"type": "http.response.body", "body": body})
         elif kind == "websocket":
             # 1013 = "try again later" → clients reconnect once the app is up.
+            # Accept first so browsers read the code instead of an opaque 1006.
+            await send({"type": "websocket.accept"})
             await send({"type": "websocket.close", "code": 1013})
 
     # Cloud-first: a headless VPS / container must be reachable by a remote

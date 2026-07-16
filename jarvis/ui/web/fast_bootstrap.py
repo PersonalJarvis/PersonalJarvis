@@ -87,13 +87,34 @@ class FastBootstrap:
 
     @property
     def app(self) -> Any:
-        """The bootstrap ASGI app (handed to uvicorn / driven directly in tests)."""
+        """The SECURED bootstrap entry, for tests and external embedders.
+
+        NOT what :meth:`serve` binds. Production serves :meth:`_asgi` directly
+        (see the comment in :meth:`_start_server`): the warming surface is
+        deliberately credential-free — static shell, health, onboarding
+        fastpath, accept-then-close 1013 websockets — and every held request
+        delegates to the real app, which applies its own SurfaceSecurity.
+        This wrapped variant adds the boundary in front of the SAME warming
+        surface for callers that embed the bootstrap somewhere less trusted.
+        """
         return self._entry_app
 
     async def _entry_app(self, scope: dict, receive: Any, send: Any) -> None:
         """Guard warm-up, then delegate directly to the secured full app."""
         if self._ready.is_set() and self._full["app"] is not None:
             await self._full["app"](scope, receive, send)
+            return
+        if scope["type"] == "websocket":
+            # Answer a warming websocket BEFORE the security boundary: WebKit
+            # engines drop the HttpOnly session cookie from WS handshakes
+            # (BUG-065), so an auth check here would reject exactly the
+            # clients this "try again later" is meant for. Accept-then-close
+            # leaks nothing ("warming" is already public via /api/health) and
+            # gives every engine a readable 1013 instead of an opaque 1006
+            # that renders as OFFLINE.
+            await receive()  # consume the websocket.connect event
+            await send({"type": "websocket.accept"})
+            await send({"type": "websocket.close", "code": 1013})
             return
         await self._secured_app(scope, receive, send)
 
@@ -241,6 +262,9 @@ class FastBootstrap:
             await send({"type": "http.response.body", "body": body})
         elif kind == "websocket":
             # 1013 = "try again later" → clients reconnect once the app is up.
+            # Accept first: a close before the accept surfaces as an opaque
+            # 1006 in every browser, which the UI reads as OFFLINE (BUG-065).
+            await send({"type": "websocket.accept"})
             await send({"type": "websocket.close", "code": 1013})
 
     # ---- static frontend (served while warming, no black screen) -----------
@@ -373,6 +397,14 @@ class FastBootstrap:
         # (``iscoroutinefunction(method.__call__)`` is False), which would call
         # it as ``app(scope)`` and crash. A module-level-style closure is
         # correctly detected as ASGI3.
+        #
+        # DELIBERATELY ``_asgi`` and not the secured ``self.app``: the warming
+        # surface must stay credential-free. Gating it on the session cookie
+        # would race the desktop token injection at every boot (AuthGate would
+        # 401 before pywebview delivers the token) and would go dark for
+        # WebKit websockets entirely (BUG-065). Everything held during warm-up
+        # is delegated to the real app afterwards, which enforces its own
+        # SurfaceSecurity — so nothing protected is ever served from here.
         _self = self
 
         async def _asgi3(scope: dict, receive: Any, send: Any) -> None:

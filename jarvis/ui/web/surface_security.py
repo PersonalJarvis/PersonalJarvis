@@ -20,10 +20,11 @@ import re
 import secrets
 import sys
 import threading
+import time
 from collections.abc import Awaitable, Callable, Iterable, MutableMapping
 from http.cookies import CookieError, SimpleCookie
 from typing import Any, Literal
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 COOKIE_NAME = "jarvis_session"
 
@@ -65,6 +66,51 @@ def _consume_bootstrap_token(token: str) -> bool:
             return False
         _BOOTSTRAP_TOKENS.remove(token)
         return True
+
+
+# One-time WebSocket handshake tickets. WebKit (Safari / WKWebView on macOS,
+# WebKitGTK on Linux) does not attach the HttpOnly + SameSite=Strict session
+# cookie to a WebSocket handshake — the same cookie that authenticates every
+# fetch — so cookie-only WS auth silently bricks the live event channel on
+# every non-Chromium engine (BUG-065). A ticket is minted over an
+# authenticated HTTP request (where the cookie IS sent on all engines),
+# expires quickly, and is consumed on first presentation, so a leaked URL
+# cannot be replayed. Process-local and shared module-globally so a ticket
+# minted by the fast-boot bootstrap's boundary instance stays valid for the
+# real app's boundary instance after the serve-first handoff.
+_WS_TICKET_LOCK = threading.Lock()
+_WS_TICKETS: dict[str, float] = {}
+_WS_TICKET_TTL_S = 60.0
+_WS_TICKET_MAX_LIVE = 256  # runaway-mint guard; a UI needs a handful
+
+
+def _mint_ws_ticket() -> str | None:
+    """Mint a single-use, short-lived WebSocket ticket (None when saturated)."""
+    now = time.monotonic()
+    with _WS_TICKET_LOCK:
+        expired = [ticket for ticket, expiry in _WS_TICKETS.items() if expiry < now]
+        for ticket in expired:
+            del _WS_TICKETS[ticket]
+        if len(_WS_TICKETS) >= _WS_TICKET_MAX_LIVE:
+            return None
+        ticket = secrets.token_urlsafe(32)
+        _WS_TICKETS[ticket] = now + _WS_TICKET_TTL_S
+        return ticket
+
+
+def _consume_ws_ticket(ticket: str) -> bool:
+    """Atomically consume a live ticket; expired or replayed tickets fail."""
+    if not ticket:
+        return False
+    with _WS_TICKET_LOCK:
+        expiry = _WS_TICKETS.pop(ticket, None)
+    return expiry is not None and expiry >= time.monotonic()
+
+
+def reset_ws_tickets() -> None:
+    """Test hook: clears the ticket store entirely."""
+    with _WS_TICKET_LOCK:
+        _WS_TICKETS.clear()
 
 
 def _iter_values(value: str | Iterable[str] | None) -> tuple[str, ...]:
@@ -419,6 +465,14 @@ def _default_session_validator(token: str) -> bool:
         return False
 
 
+#: Scope key stamped by :class:`SurfaceSecurity` after it consumed a valid
+#: one-time WebSocket ticket. Tickets are single-use, so a route-level
+#: re-check can never re-validate the raw credential — it must honor this
+#: process-internal stamp instead. Clients cannot forge it: ASGI scopes are
+#: built by the server from the wire request; arbitrary keys never cross it.
+WS_TICKET_SCOPE_KEY = "jarvis.ws_ticket_authenticated"
+
+
 def credentials_valid(scope: Scope) -> bool:
     """Validate the credential carried by ``scope`` without Host/Origin checks.
 
@@ -426,8 +480,13 @@ def credentials_valid(scope: Scope) -> bool:
     A Bearer may be either the persistent control key or a registered ephemeral
     UI token.  Cookie credentials are ephemeral UI tokens.  Supplying any
     malformed Authorization header is authoritative and prevents cookie
-    fallback.
+    fallback.  A websocket the outer boundary authenticated via a one-time
+    ticket (BUG-065: WebKit engines drop the HttpOnly session cookie from WS
+    handshakes) carries the boundary's scope stamp — the ticket itself was
+    already consumed and cannot be checked twice.
     """
+    if scope.get(WS_TICKET_SCOPE_KEY) is True:
+        return True
     bearer_present, bearer = _presented_bearer(scope)
     if bearer_present:
         if bearer is None:
@@ -450,8 +509,18 @@ async def _reject(
     detail: str,
     ws_code: int,
     authenticate: bool = False,
+    receive: Receive | None = None,
 ) -> None:
     if scope.get("type") == "websocket":
+        # Accept, then close with the specific code. Closing BEFORE the accept
+        # turns into an opaque HTTP handshake failure that every browser
+        # reports as code 1006 — indistinguishable from "server down", which
+        # made a WebKit auth miss render as a permanent OFFLINE (BUG-065).
+        # Accepting first costs nothing, leaks nothing, and lets the client
+        # read the real 4401/4403 and react (mint a ticket, stop retrying).
+        if receive is not None:
+            await receive()  # consume the pending websocket.connect event
+        await send({"type": "websocket.accept"})
         await send({"type": "websocket.close", "code": ws_code, "reason": detail})
         return
     body = json.dumps({"detail": detail}, separators=(",", ":")).encode("utf-8")
@@ -472,7 +541,9 @@ async def _reject(
     await send({"type": "http.response.body", "body": body})
 
 
-async def reject_host(scope: Scope, send: Send) -> None:
+async def reject_host(
+    scope: Scope, send: Send, receive: Receive | None = None
+) -> None:
     """Reject an untrusted Host for HTTP or WebSocket before downstream code."""
     await _reject(
         scope,
@@ -480,10 +551,13 @@ async def reject_host(scope: Scope, send: Send) -> None:
         status_code=400,
         detail="Untrusted Host header.",
         ws_code=4403,
+        receive=receive,
     )
 
 
-async def reject_origin(scope: Scope, send: Send) -> None:
+async def reject_origin(
+    scope: Scope, send: Send, receive: Receive | None = None
+) -> None:
     """Reject a foreign, null, malformed, or required-but-missing Origin."""
     await _reject(
         scope,
@@ -491,10 +565,13 @@ async def reject_origin(scope: Scope, send: Send) -> None:
         status_code=403,
         detail="Untrusted Origin header.",
         ws_code=4403,
+        receive=receive,
     )
 
 
-async def reject_unauthorized(scope: Scope, send: Send) -> None:
+async def reject_unauthorized(
+    scope: Scope, send: Send, receive: Receive | None = None
+) -> None:
     """Reject a request that lacks a valid Jarvis credential."""
     await _reject(
         scope,
@@ -503,7 +580,28 @@ async def reject_unauthorized(scope: Scope, send: Send) -> None:
         detail="Invalid or missing Jarvis credential.",
         ws_code=4401,
         authenticate=True,
+        receive=receive,
     )
+
+
+def _presented_ws_ticket(scope: Scope) -> str | None:
+    """Extract the single ``ticket`` query value from a websocket scope.
+
+    Returns ``None`` when absent; an ambiguous (repeated) or empty value is
+    returned as ``""`` so the caller rejects instead of falling back to other
+    credentials — presenting a ticket is authoritative, like a Bearer header.
+    """
+    raw = scope.get("query_string", b"")
+    try:
+        query = parse_qs(bytes(raw).decode("latin-1"), keep_blank_values=True)
+    except (AttributeError, UnicodeDecodeError, ValueError):
+        return None
+    values = query.get("ticket")
+    if values is None:
+        return None
+    if len(values) != 1:
+        return ""
+    return values[0]
 
 
 def _is_static_request(path: str, method: str) -> bool:
@@ -764,6 +862,66 @@ class SurfaceSecurity:
         )
         await send({"type": "http.response.body", "body": b""})
 
+    async def _handle_ws_ticket_request(
+        self, scope: Scope, receive: Receive, send: Send
+    ) -> None:
+        """Mint a one-time WebSocket ticket for an already-authenticated caller.
+
+        The ticket exists because WebKit engines drop the HttpOnly session
+        cookie from WebSocket handshakes (BUG-065): the browser proves its
+        session over plain HTTP here — where the cookie IS sent — and gets a
+        short-lived, single-use credential its next WS handshake can carry.
+        Framework-free and implemented at this boundary (like the session
+        exchange above) so it exists identically behind the fast-boot
+        bootstrap and the full app.
+        """
+        if not is_secure_or_loopback(scope):
+            # Mirror the session exchange: a bearer credential must never be
+            # minted over sniffable plain HTTP on a non-loopback bind.
+            await _reject(
+                scope,
+                send,
+                status_code=403,
+                detail="WebSocket tickets require HTTPS or direct loopback.",
+                ws_code=4403,
+                receive=receive,
+            )
+            return
+        auth_kind = self._authenticate(scope)
+        if auth_kind is None:
+            await reject_unauthorized(scope, send, receive)
+            return
+        if auth_kind == "session" and not self.origin_is_trusted(scope, required=True):
+            await reject_origin(scope, send, receive)
+            return
+        ticket = _mint_ws_ticket()
+        if ticket is None:
+            await _reject(
+                scope,
+                send,
+                status_code=503,
+                detail="WebSocket ticket store is saturated; retry shortly.",
+                ws_code=1013,
+                receive=receive,
+            )
+            return
+        body = json.dumps(
+            {"ticket": ticket, "expires_in": int(_WS_TICKET_TTL_S)},
+            separators=(",", ":"),
+        ).encode("utf-8")
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [
+                    (b"content-type", b"application/json"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                    (b"cache-control", b"no-store"),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": body})
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         kind = scope.get("type")
         if kind not in {"http", "websocket"}:
@@ -771,7 +929,7 @@ class SurfaceSecurity:
             return
 
         if not self.host_is_trusted(scope):
-            await reject_host(scope, send)
+            await reject_host(scope, send, receive)
             return
 
         path = str(scope.get("path", "") or "")
@@ -781,7 +939,7 @@ class SurfaceSecurity:
         # A supplied Origin is never advisory: malformed, null, or foreign
         # values fail even on otherwise-public static and health requests.
         if not self.origin_is_trusted(scope):
-            await reject_origin(scope, send)
+            await reject_origin(scope, send, receive)
             return
 
         if kind == "websocket" and path == "/api/telephony/media":
@@ -794,16 +952,19 @@ class SurfaceSecurity:
             # them without weakening the actual request's credential check.
             if method == "OPTIONS":
                 if not self.origin_is_trusted(scope, required=True):
-                    await reject_origin(scope, send)
+                    await reject_origin(scope, send, receive)
                     return
                 await self.app(scope, receive, send)
                 return
             if path == "/api/ui/session" and method == "POST":
                 await self._handle_session_request(scope, receive, send)
                 return
+            if path == "/api/ui/ws-ticket" and method == "POST":
+                await self._handle_ws_ticket_request(scope, receive, send)
+                return
             if path == "/api/ui/shell-painted" and method == "POST":
                 if not self.origin_is_trusted(scope, required=True):
-                    await reject_origin(scope, send)
+                    await reject_origin(scope, send, receive)
                     return
                 await self.app(scope, receive, send)
                 return
@@ -813,28 +974,58 @@ class SurfaceSecurity:
 
             auth_kind = self._authenticate(scope)
             if auth_kind is None:
-                await reject_unauthorized(scope, send)
+                await reject_unauthorized(scope, send, receive)
                 return
             if auth_kind == "session" and method in _UNSAFE_HTTP_METHODS:
                 if not self.origin_is_trusted(scope, required=True):
-                    await reject_origin(scope, send)
+                    await reject_origin(scope, send, receive)
                     return
             await self.app(scope, receive, send)
             return
 
         if _mission_inner_auth_socket(path):
             if not self.origin_is_trusted(scope, required=True):
-                await reject_origin(scope, send)
+                await reject_origin(scope, send, receive)
                 return
+            await self.app(scope, receive, send)
+            return
+
+        # A presented ticket is authoritative (no cookie fallback), mirroring
+        # the Bearer rule: WebKit engines cannot attach the HttpOnly session
+        # cookie to a WS handshake, so this one-time credential — minted via
+        # POST /api/ui/ws-ticket over cookie-authenticated HTTP — is how a
+        # non-Chromium browser opens the live event channel (BUG-065).
+        # Transport rule mirrors the mint: HTTPS/WSS or direct loopback only.
+        ticket = _presented_ws_ticket(scope)
+        if ticket is not None:
+            if not is_secure_or_loopback(scope):
+                await _reject(
+                    scope,
+                    send,
+                    status_code=403,
+                    detail="WebSocket tickets require HTTPS or direct loopback.",
+                    ws_code=4403,
+                    receive=receive,
+                )
+                return
+            if not _consume_ws_ticket(ticket):
+                await reject_unauthorized(scope, send, receive)
+                return
+            if not self.origin_is_trusted(scope, required=True):
+                await reject_origin(scope, send, receive)
+                return
+            # Stamp the scope so route-level defense-in-depth re-checks
+            # (credentials_valid) recognize the already-consumed ticket.
+            scope[WS_TICKET_SCOPE_KEY] = True
             await self.app(scope, receive, send)
             return
 
         auth_kind = self._authenticate(scope)
         if auth_kind is None:
-            await reject_unauthorized(scope, send)
+            await reject_unauthorized(scope, send, receive)
             return
         if auth_kind == "session" and not self.origin_is_trusted(scope, required=True):
-            await reject_origin(scope, send)
+            await reject_origin(scope, send, receive)
             return
         await self.app(scope, receive, send)
 
@@ -842,6 +1033,7 @@ class SurfaceSecurity:
 __all__ = [
     "COOKIE_NAME",
     "SurfaceSecurity",
+    "WS_TICKET_SCOPE_KEY",
     "append_session_cookie",
     "build_set_cookie_header",
     "credentials_valid",
@@ -849,6 +1041,7 @@ __all__ = [
     "reject_host",
     "reject_origin",
     "reject_unauthorized",
+    "reset_ws_tickets",
     "scope_host_is_trusted",
     "scope_origin_is_trusted",
 ]
