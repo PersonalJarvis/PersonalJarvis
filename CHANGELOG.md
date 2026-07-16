@@ -7,6 +7,17 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
+## [1.0.10] — 2026-07-16
+
+### Fixed
+
+- **The one-line installer works in non-interactive environments again.**
+  The welcome gate's terminal probe relied on `test -r/-w`, which passes on
+  CI runners and headless automation where `/dev/tty` exists but cannot be
+  opened (no controlling terminal) — the piped install aborted before doing
+  anything. The gate now probes with a real open and quietly skips the
+  question when no terminal is available.
+
 ## [1.0.9] — 2026-07-16
 
 ### Fixed
