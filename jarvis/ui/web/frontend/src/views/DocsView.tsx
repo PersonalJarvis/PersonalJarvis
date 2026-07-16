@@ -6,6 +6,7 @@ import { DocsToc } from "@/components/docs/DocsToc";
 import { DocsSearchModal } from "@/components/docs/DocsSearchModal";
 import { useDocDetail } from "@/hooks/useDocs";
 import { useRecentDocs } from "@/hooks/useRecentDocs";
+import { useT } from "@/i18n";
 
 /**
  * Top-level view for the docs section. 3-column layout (Anthropic/Mintlify style):
@@ -24,7 +25,10 @@ import { useRecentDocs } from "@/hooks/useRecentDocs";
  * search modal in ChatsView/MissionsView etc.
  */
 export function DocsView() {
-  const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
+  const t = useT();
+  const [selectedSlug, setSelectedSlug] = useState<string | null>(() => {
+    return new URLSearchParams(window.location.search).get("doc");
+  });
   const [searchOpen, setSearchOpen] = useState(false);
   const contentRef = useRef<HTMLElement>(null);
   const { push: pushRecent } = useRecentDocs();
@@ -44,8 +48,31 @@ export function DocsView() {
     }
   }, [detail.data, pushRecent]);
 
+  // A copied ``?doc=slug#heading`` link resolves before the async Markdown
+  // exists. Scroll once the requested guide has rendered.
+  useEffect(() => {
+    if (!detail.data || !window.location.hash) return;
+    const headingId = decodeURIComponent(window.location.hash.slice(1));
+    window.requestAnimationFrame(() => {
+      document.getElementById(headingId)?.scrollIntoView({ block: "start" });
+    });
+  }, [detail.data]);
+
   const selectDoc = useCallback((slug: string) => {
     setSelectedSlug(slug);
+    const url = new URL(window.location.href);
+    url.searchParams.set("doc", slug);
+    url.hash = "";
+    window.history.replaceState(null, "", url);
+    contentRef.current?.scrollTo({ top: 0 });
+  }, []);
+
+  const showOverview = useCallback(() => {
+    setSelectedSlug(null);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("doc");
+    url.hash = "";
+    window.history.replaceState(null, "", url);
     contentRef.current?.scrollTo({ top: 0 });
   }, []);
 
@@ -62,17 +89,30 @@ export function DocsView() {
   }, []);
 
   return (
-    <div className="flex h-full">
+    <div className="flex h-full min-h-0 bg-background">
+      <a
+        href="#docs-content"
+        className="sr-only z-50 rounded-md bg-background px-3 py-2 text-sm text-foreground focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {t("docs_content.skip_to_content")}
+      </a>
       <DocsSidebar
         selectedSlug={selectedSlug}
         onSelect={selectDoc}
+        onShowOverview={showOverview}
         onOpenSearch={() => setSearchOpen(true)}
       />
       <main
+        id="docs-content"
         ref={contentRef as React.RefObject<HTMLElement>}
-        className="flex-1 overflow-y-auto"
+        tabIndex={-1}
+        className="min-w-0 flex-1 overflow-y-auto"
       >
-        <DocsContent slug={selectedSlug} onSelect={selectDoc} />
+        <DocsContent
+          slug={selectedSlug}
+          onSelect={selectDoc}
+          onShowOverview={showOverview}
+        />
       </main>
       <DocsToc headings={headings} contentRef={contentRef} />
 

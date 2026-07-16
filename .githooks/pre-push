@@ -162,6 +162,18 @@ if [ -f "$docs_privacy_gate" ]; then
     fi
 fi
 
+# --- 5a) PUBLIC DOCS contract (FAIL-CLOSED) ----------------------------------
+# Reader-facing pages must stay complete, cross-linked, short-exampled, and
+# free of secret/PII shapes even when the wider engineering archive changes.
+public_docs_gate="scripts/ci/check_public_docs.py"
+if [ -f "$public_docs_gate" ]; then
+    "$PY" "$public_docs_gate" </dev/null
+    if [ "$?" -ne 0 ]; then
+        status=1
+        public_docs_hit=1
+    fi
+fi
+
 # --- 5b) PRIVATE-KEY gate (FAIL-CLOSED) ---------------------------------------
 # Signing private keys (and the retired signing passphrase) must NEVER enter the
 # repo — they live ONLY in GitHub Actions secrets (WAVE2_OFFLINE_KEY_B64 /
@@ -264,6 +276,10 @@ if [ "$status" -ne 0 ]; then
         echo "  See the findings above. Fix with:"
         echo "    python scripts/ci/docs_privacy_scan.py --fix <file>"
         echo "  or run the docs-privacy-reviewer sub-agent for a semantic pass."
+    fi
+    if [ "${public_docs_hit:-0}" -ne 0 ]; then
+        echo "pre-push BLOCKED: PUBLIC DOCS contract (reader guide incomplete or unsafe)."
+        echo "  Run: python scripts/ci/check_public_docs.py"
     fi
     if [ "${privkey_hit:-0}" -ne 0 ]; then
         echo "pre-push BLOCKED: PRIVATE-KEY gate (private key / passphrase in the tree)."

@@ -51,7 +51,8 @@ class RealtimeSessionConfig:
     """Everything a provider needs to open one duplex session."""
 
     instructions: str = ""
-    language: str = "en"                     # bare de/en/es (resolved once, upstream)
+    language: str = "en"                     # output: bare de/en/es, resolved upstream
+    input_language: str = "auto"              # recognition: auto or bare de/en/es
     language_is_pinned: bool = False          # explicit reply-language preference
     model: str = ""                          # provider model id ("" -> the adapter's
                                               # hardcoded default; no regression)

@@ -114,17 +114,14 @@ class SecretSpec:
 
 
 SECRETS: list[SecretSpec] = [
-    # Brain providers that SIMULTANEOUSLY enable the Jarvis-Agent worker harness.
-    # The harness reads the standard provider ENV vars (see the AD-6 mapping in
-    # docs/jarvis-agents-bridge.md §2). There is NO separate per-harness namespace
-    # — the wizard maintains one key, the harness uses it on subprocess spawn.
-    # Full mapping table: jarvis/missions/worker_runtime/provider_map.py.
+    # General provider credentials. Dedicated Realtime and Jarvis-Agent slots
+    # are declared below; these remain compatibility fallbacks for upgrades.
     SecretSpec(
         key="anthropic_api_key",
         env_fallback="ANTHROPIC_API_KEY",
         label="Anthropic API Key (Claude)",
         help_url="https://console.anthropic.com/settings/keys",
-        required_for="Brain (Claude via API key) + Jarvis-Agent harness (anthropic provider)",
+        required_for="Brain (Claude via API key)",
         optional=True,
         section="brain",
     ),
@@ -133,7 +130,7 @@ SECRETS: list[SecretSpec] = [
         env_fallback="OPENROUTER_API_KEY",
         label="OpenRouter API Key (universal gateway)",
         help_url="https://openrouter.ai/keys",
-        required_for="Brain (universal: access to all models via one key) + Jarvis-Agent harness (openrouter provider)",
+        required_for="Brain (universal: access to all models via one key)",
         section="brain",
     ),
     SecretSpec(
@@ -141,7 +138,7 @@ SECRETS: list[SecretSpec] = [
         env_fallback="NVIDIA_API_KEY",
         label="NVIDIA API Key (NIM — build.nvidia.com, nvapi-)",
         help_url="https://build.nvidia.com/settings/api-keys",
-        required_for="Brain (NVIDIA NIM: Nemotron/Llama/DeepSeek) + Jarvis-Agent worker (nvidia)",
+        required_for="Brain (NVIDIA NIM: Nemotron/Llama/DeepSeek)",
         section="brain",
     ),
     SecretSpec(
@@ -149,7 +146,7 @@ SECRETS: list[SecretSpec] = [
         env_fallback="OPENAI_API_KEY",
         label="OpenAI API Key",
         help_url="https://platform.openai.com/api-keys",
-        required_for="Brain (GPT), Whisper API (STT), TTS + Jarvis-Agent harness (openai provider)",
+        required_for="Brain (GPT), Whisper API (STT), and TTS",
         section="brain",
     ),
     SecretSpec(
@@ -165,7 +162,7 @@ SECRETS: list[SecretSpec] = [
         env_fallback="GEMINI_API_KEY",
         label="Google AI Studio / Gemini API Key",
         help_url="https://aistudio.google.com/app/apikey",
-        required_for="Brain (Gemini) + Jarvis-Agent harness (google provider)",
+        required_for="Brain (Gemini)",
         section="brain",
     ),
     SecretSpec(
@@ -173,8 +170,85 @@ SECRETS: list[SecretSpec] = [
         env_fallback="GROK_API_KEY",
         label="xAI Grok API Key",
         help_url="https://console.x.ai/",
-        required_for="Grok Brain, Realtime Voice, Jarvis-Agents, and xAI TTS",
+        required_for="Grok Brain and xAI TTS",
         section="brain",
+    ),
+    # Scoped Realtime credentials. They are app-only fields in the Realtime tab,
+    # not extra first-run questions. Generic credentials remain compatibility
+    # fallbacks for existing installations.
+    SecretSpec(
+        key="realtime_openai_api_key",
+        env_fallback="JARVIS_REALTIME_OPENAI_API_KEY",
+        label="OpenAI Realtime API Key",
+        help_url="https://platform.openai.com/api-keys",
+        required_for="Realtime Voice (OpenAI)",
+        prompt=False,
+    ),
+    SecretSpec(
+        key="realtime_gemini_api_key",
+        env_fallback="JARVIS_REALTIME_GEMINI_API_KEY",
+        label="Gemini Live API Key",
+        help_url="https://aistudio.google.com/app/apikey",
+        required_for="Realtime Voice (Gemini Live)",
+        prompt=False,
+    ),
+    SecretSpec(
+        key="realtime_grok_api_key",
+        env_fallback="JARVIS_REALTIME_GROK_API_KEY",
+        label="Grok Realtime API Key",
+        help_url="https://console.x.ai/",
+        required_for="Realtime Voice (Grok)",
+        prompt=False,
+    ),
+    # Scoped Jarvis-Agent credentials. These slots never become Brain or
+    # Realtime credentials; the old generic slots are fallback-only.
+    SecretSpec(
+        key="jarvis_agent_anthropic_api_key",
+        env_fallback="JARVIS_AGENT_ANTHROPIC_API_KEY",
+        label="Anthropic API Key for Jarvis-Agents",
+        help_url="https://console.anthropic.com/settings/keys",
+        required_for="Jarvis-Agents (Claude API)",
+        prompt=False,
+    ),
+    SecretSpec(
+        key="jarvis_agent_openai_api_key",
+        env_fallback="JARVIS_AGENT_OPENAI_API_KEY",
+        label="OpenAI API Key for Jarvis-Agents",
+        help_url="https://platform.openai.com/api-keys",
+        required_for="Jarvis-Agents (OpenAI)",
+        prompt=False,
+    ),
+    SecretSpec(
+        key="jarvis_agent_gemini_api_key",
+        env_fallback="JARVIS_AGENT_GEMINI_API_KEY",
+        label="Gemini API Key for Jarvis-Agents",
+        help_url="https://aistudio.google.com/app/apikey",
+        required_for="Jarvis-Agents (Gemini)",
+        prompt=False,
+    ),
+    SecretSpec(
+        key="jarvis_agent_openrouter_api_key",
+        env_fallback="JARVIS_AGENT_OPENROUTER_API_KEY",
+        label="OpenRouter API Key for Jarvis-Agents",
+        help_url="https://openrouter.ai/keys",
+        required_for="Jarvis-Agents (OpenRouter)",
+        prompt=False,
+    ),
+    SecretSpec(
+        key="jarvis_agent_grok_api_key",
+        env_fallback="JARVIS_AGENT_GROK_API_KEY",
+        label="Grok API Key for Jarvis-Agents",
+        help_url="https://console.x.ai/",
+        required_for="Jarvis-Agents (Grok)",
+        prompt=False,
+    ),
+    SecretSpec(
+        key="jarvis_agent_nvidia_api_key",
+        env_fallback="JARVIS_AGENT_NVIDIA_API_KEY",
+        label="NVIDIA API Key for Jarvis-Agents",
+        help_url="https://build.nvidia.com/settings/api-keys",
+        required_for="Jarvis-Agents (NVIDIA NIM)",
+        prompt=False,
     ),
     SecretSpec(
         key="google_tts_credentials_path",

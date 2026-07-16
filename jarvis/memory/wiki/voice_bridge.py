@@ -54,8 +54,10 @@ from jarvis.core.events import (
     MessageSent,
     ResponseGenerated,
     TranscriptFinal,
+    VoiceSessionEnded,
     VoiceTurnCompleted,
 )
+from jarvis.memory.wiki.extractor import ConversationContextTurn
 from jarvis.memory.wiki.telemetry import telemetry
 
 if TYPE_CHECKING:
@@ -108,6 +110,10 @@ class _PendingTurn:
     # "voice" (TranscriptFinal) or "chat" (MessageSent role=user) — only
     # labels the journal source; the processing pipeline is identical.
     origin: str = "voice"
+    session_id: str = ""
+    turn_id: str = ""
+    review_key: str = ""
+    context_turns: tuple[ConversationContextTurn, ...] = ()
 
 
 class VoiceFactBridge:
@@ -118,7 +124,7 @@ class VoiceFactBridge:
     bridge subscribes itself and runs until :meth:`stop` is called.
 
     ``config=None`` falls back to default settings (aggressive_mode=True,
-    min_user_chars=30, rate_limit_seconds=0) so legacy callers keep
+    min_user_chars=12, rate_limit_seconds=0) so legacy callers keep
     working unchanged.
     """
 
@@ -126,9 +132,9 @@ class VoiceFactBridge:
         self,
         *,
         bus: EventBus,
-        curator: "WikiCurator",
-        config: "VoiceBridgeConfig | None" = None,
-        extractor: "ConversationFactExtractor | None" = None,
+        curator: WikiCurator,
+        config: VoiceBridgeConfig | None = None,
+        extractor: ConversationFactExtractor | None = None,
     ) -> None:
         # Late import keeps the dataclass-only module import-cheap and
         # avoids a circular-import risk with ``jarvis.core.config`` in
@@ -147,6 +153,9 @@ class VoiceFactBridge:
         self._pending = _PendingTurn()
         self._unsubs: list[Any] = []
         self._inflight: set[asyncio.Task[Any]] = set()
+        self._session_inflight: dict[str, set[asyncio.Task[Any]]] = {}
+        self._realtime_sessions: dict[str, list[ConversationContextTurn]] = {}
+        self._realtime_turn_ids: dict[str, set[str]] = {}
         self._started = False
         # Recently dispatched turn hashes (bounded LRU) — dedupes the
         # TranscriptFinal/MessageSent double delivery of the same turn.
@@ -176,6 +185,9 @@ class VoiceFactBridge:
         self._unsubs.append(
             self._bus.subscribe(VoiceTurnCompleted, self._on_voice_turn_completed)
         )
+        self._unsubs.append(
+            self._bus.subscribe(VoiceSessionEnded, self._on_voice_session_ended)
+        )
         self._started = True
         log.info(
             "VoiceFactBridge started "
@@ -187,16 +199,43 @@ class VoiceFactBridge:
 
     def stop(self) -> None:
         """Cancel in-flight ingests and unsubscribe. Idempotent."""
+        self._cancel_and_unsubscribe()
+
+    async def stop_and_wait(self, *, timeout_s: float = 5.0) -> None:
+        """Cancel and drain background reviews before their journal closes."""
+        tasks = self._cancel_and_unsubscribe()
+        if not tasks:
+            return
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(*tasks, return_exceptions=True),
+                timeout=max(0.1, float(timeout_s)),
+            )
+        except TimeoutError:
+            log.warning(
+                "VoiceFactBridge: %d review task(s) did not cancel within %.1fs",
+                len(tasks),
+                timeout_s,
+            )
+        finally:
+            self._inflight.difference_update(tasks)
+
+    def _cancel_and_unsubscribe(self) -> tuple[asyncio.Task[Any], ...]:
+        """Stop accepting work and return tasks whose cancellation must drain."""
         for unsub in self._unsubs:
             try:
                 unsub()
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110
                 pass
         self._unsubs.clear()
-        for task in list(self._inflight):
+        tasks = tuple(self._inflight)
+        for task in tasks:
             task.cancel()
-        self._inflight.clear()
+        self._session_inflight.clear()
+        self._realtime_sessions.clear()
+        self._realtime_turn_ids.clear()
         self._started = False
+        return tasks
 
     # ------------------------------------------------------------------
     # bus handlers
@@ -217,6 +256,7 @@ class VoiceFactBridge:
             user_text=text,
             user_language=lang,
             captured_at_ns=ts_ns,
+            review_key=f"live:v2:voice:{ts_ns}:{_turn_hash(text)}",
         )
 
     async def _on_user_message(self, event: MessageSent) -> None:
@@ -242,6 +282,7 @@ class VoiceFactBridge:
             user_language="",
             captured_at_ns=ts_ns,
             origin="chat",
+            review_key=f"live:v2:chat:{ts_ns}:{_turn_hash(text)}",
         )
 
     async def _on_response_generated(self, event: ResponseGenerated) -> None:
@@ -276,14 +317,49 @@ class VoiceFactBridge:
         if not user_text:
             return
         telemetry.inc("voice_turns_seen")
+        session_id = (getattr(event, "session_id", "") or "").strip()
+        raw_turn_id = (getattr(event, "turn_id", "") or "").strip()
+        captured_at_ns = getattr(event, "timestamp_ns", 0) or 0
+        turn_id = raw_turn_id or f"turn-{captured_at_ns}"
+        review_key = f"live:v2:{session_id or 'unknown-session'}:{turn_id}"
+        session_turns = self._realtime_sessions.setdefault(session_id, [])
+        seen_ids = self._realtime_turn_ids.setdefault(session_id, set())
+        context_turns = tuple(session_turns[-5:])
+        reply_raw = (getattr(event, "jarvis_text", "") or "").strip()
+        if turn_id not in seen_ids:
+            session_turns.append(
+                ConversationContextTurn(
+                    turn_id=turn_id,
+                    user_text=user_text,
+                    assistant_text=reply_raw,
+                )
+            )
+            seen_ids.add(turn_id)
         pending = _PendingTurn(
             user_text=user_text,
             user_language=getattr(event, "user_lang", "") or "",
-            captured_at_ns=getattr(event, "timestamp_ns", 0) or 0,
+            captured_at_ns=captured_at_ns,
             origin="realtime",
+            session_id=session_id,
+            turn_id=turn_id,
+            review_key=review_key,
+            context_turns=context_turns,
         )
-        reply_raw = (getattr(event, "jarvis_text", "") or "").strip()
         self._decide_and_dispatch(pending, reply_raw)
+
+    async def _on_voice_session_ended(self, event: VoiceSessionEnded) -> None:
+        """Schedule one full-run Realtime completeness sweep off the hot path."""
+        session_id = (getattr(event, "session_id", "") or "").strip()
+        turns = tuple(self._realtime_sessions.pop(session_id, ()))
+        self._realtime_turn_ids.pop(session_id, None)
+        if self._extractor is None or not session_id or not turns:
+            return
+        task = asyncio.create_task(
+            self._sweep_session_safe(session_id, turns),
+            name=f"wiki-realtime-session-sweep-{session_id[:12]}",
+        )
+        self._inflight.add(task)
+        task.add_done_callback(self._inflight.discard)
 
     def _decide_and_dispatch(self, pending: _PendingTurn, reply_raw: str) -> bool:
         """Run ack-path first, then aggressive-path. At most one dispatch fires.
@@ -301,6 +377,13 @@ class VoiceFactBridge:
                     "short (len=%d).",
                     len(pending.user_text),
                 )
+                if self._extractor is not None:
+                    self._dispatch(
+                        pending,
+                        reply_raw,
+                        source_kind=f"{pending.origin}-filtered",
+                    )
+                    return True
                 return False
             telemetry.inc("voice_turns_ingested_ack")
             log.info(
@@ -314,7 +397,19 @@ class VoiceFactBridge:
         # ---- Path 2: aggressive ingest -----------------------------------
         if not self._cfg.aggressive_mode:
             return False
-        if len(pending.user_text) < self._cfg.min_user_chars:
+        min_chars = (
+            self._extractor.min_user_chars
+            if self._extractor is not None
+            else int(self._cfg.min_user_chars)
+        )
+        if len(pending.user_text) < min_chars:
+            if self._extractor is not None:
+                self._dispatch(
+                    pending,
+                    reply_raw,
+                    source_kind=f"{pending.origin}-filtered",
+                )
+                return True
             return False
         if not self._aggressive_rate_limit_ok():
             log.debug(
@@ -355,16 +450,23 @@ class VoiceFactBridge:
             return
 
         turn_hash = _turn_hash(pending.user_text)
-        if turn_hash in self._seen_hashes:
+        review_key = pending.review_key or (
+            f"live:v2:{pending.origin}:{pending.captured_at_ns}:{turn_hash}"
+        )
+        if review_key in self._seen_hashes:
             log.debug(
                 "VoiceFactBridge: duplicate turn (hash=%s) — skipping extraction",
-                turn_hash[:12],
+                review_key[-24:],
             )
             return
 
         task = asyncio.create_task(
             self._extract_safe(
-                pending, reply_raw, source_kind=source_kind, turn_hash=turn_hash,
+                pending,
+                reply_raw,
+                source_kind=source_kind,
+                turn_hash=turn_hash,
+                review_key=review_key,
             ),
             name=f"voice-fact-bridge-extract-{source_kind}",
         )
@@ -373,11 +475,24 @@ class VoiceFactBridge:
         # block this turn text for the rest of the process lifetime. The
         # dispatch path runs on the event loop, so add-after-create cannot
         # race a concurrent dispatch of the same hash.
-        self._seen_hashes[turn_hash] = None
+        self._seen_hashes[review_key] = None
         while len(self._seen_hashes) > _SEEN_HASHES_MAX:
             self._seen_hashes.popitem(last=False)
         self._inflight.add(task)
         task.add_done_callback(self._inflight.discard)
+        if pending.session_id:
+            session_tasks = self._session_inflight.setdefault(pending.session_id, set())
+            session_tasks.add(task)
+
+            def _discard_session_task(done: asyncio.Task[Any]) -> None:
+                active = self._session_inflight.get(pending.session_id)
+                if active is None:
+                    return
+                active.discard(done)
+                if not active:
+                    self._session_inflight.pop(pending.session_id, None)
+
+            task.add_done_callback(_discard_session_task)
 
     def _spawn_ingest(self, pending: _PendingTurn, *, source_kind: str) -> None:
         """Start a fire-and-forget ingest task. Voice path is never blocked."""
@@ -395,6 +510,7 @@ class VoiceFactBridge:
         *,
         source_kind: str,
         turn_hash: str,
+        review_key: str,
     ) -> None:
         """Stage-1 extraction with broad exception handling (background only).
 
@@ -402,10 +518,10 @@ class VoiceFactBridge:
         on; the worst case is one lost candidate fact.
         """
         try:
-            if self._extractor.seen_turn(turn_hash):
+            if self._extractor.capture_seen(review_key):
                 log.debug(
                     "VoiceFactBridge: turn already journaled (hash=%s) — skipping",
-                    turn_hash[:12],
+                    review_key[-24:],
                 )
                 return
             count = await self._extractor.extract_and_journal(
@@ -413,6 +529,11 @@ class VoiceFactBridge:
                 reply_raw,
                 source_label=f"{source_kind}:{pending.captured_at_ns}",
                 turn_hash=turn_hash,
+                review_key=review_key,
+                session_id=pending.session_id,
+                turn_id=pending.turn_id,
+                source_kind=source_kind,
+                context_turns=pending.context_turns,
             )
             log.info(
                 "VoiceFactBridge[%s]: extraction done — %d candidate(s) journaled",
@@ -422,6 +543,34 @@ class VoiceFactBridge:
             log.exception(
                 "VoiceFactBridge[%s]: extraction failed, candidates lost.",
                 source_kind,
+            )
+
+    async def _sweep_session_safe(
+        self,
+        session_id: str,
+        turns: tuple[ConversationContextTurn, ...],
+    ) -> None:
+        """Wait for turn reviews, then audit the complete Realtime run once."""
+        try:
+            active = tuple(self._session_inflight.get(session_id, ()))
+            if active:
+                await asyncio.gather(*active, return_exceptions=True)
+            count = await self._extractor.extract_session_and_journal(
+                turns,
+                session_id=session_id,
+                source_label=f"realtime-session-sweep:{session_id}",
+            )
+            log.info(
+                "VoiceFactBridge[session-sweep]: %d candidate(s) journaled for %s",
+                count,
+                session_id,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001
+            log.exception(
+                "VoiceFactBridge[session-sweep]: extraction failed for %s",
+                session_id,
             )
 
     def _aggressive_rate_limit_ok(self) -> bool:

@@ -16,6 +16,7 @@ from __future__ import annotations
 from jarvis.missions.kontrollierer.worker_prompt import (
     ARTIFACT_LANGUAGE_DIRECTIVE,
     OUTPUT_SHAPE_DIRECTIVE,
+    SUPERVISOR_BOUNDARY_DIRECTIVE,
     compose_worker_prompt,
 )
 
@@ -93,6 +94,21 @@ def test_shape_directive_is_provider_and_language_agnostic() -> None:
 def test_compose_includes_output_shape_directive() -> None:
     out = compose_worker_prompt("", "Make a single HTML file about moving to SF")
     assert OUTPUT_SHAPE_DIRECTIVE in out
+
+
+def test_supervisor_boundary_excludes_live_control_surfaces() -> None:
+    text = SUPERVISOR_BOUNDARY_DIRECTIVE.lower()
+    assert "jarvisctl" in text
+    assert "computer use" in text
+    assert "live configuration" in text
+    assert "wiki-list" in text
+    assert "wiki-ingest" in text
+
+
+def test_compose_places_supervisor_boundary_before_the_step() -> None:
+    step = "Research this topic and update the Wiki."
+    out = compose_worker_prompt("", step)
+    assert out.index(SUPERVISOR_BOUNDARY_DIRECTIVE) < out.index(step)
 
 
 def test_compose_orders_both_directives_before_the_step() -> None:

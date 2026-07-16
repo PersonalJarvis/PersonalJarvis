@@ -94,6 +94,9 @@ async def test_realtime_provider_model_and_ready_event_are_recorded(tmp_path) ->
         assert turns[0].model == "live-model"
         assert turns[0].latency_total_ms == 120
         assert turns[0].tool_calls == ["safe-tool"]
+        session = store.get_session("realtime-session")
+        assert session is not None
+        assert session.voice_mode == "realtime"
         ready = [
             event
             for event in store.get_events("realtime-session")

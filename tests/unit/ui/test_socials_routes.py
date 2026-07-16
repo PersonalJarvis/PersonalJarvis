@@ -26,7 +26,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-DISCORD_URL = "https://discord.gg/UPu6pFWrJ"
+DISCORD_URL = "https://discord.gg/x7USduHxbc"
 REPO_URL = "https://github.com/PersonalJarvis/PersonalJarvis"
 PROFILE_URL = "https://github.com/PersonalJarvis"
 JARVIS_X_URL = "https://x.com/PersonalJarvis"

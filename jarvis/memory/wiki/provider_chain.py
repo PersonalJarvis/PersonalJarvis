@@ -27,9 +27,23 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from jarvis.core.redact import safe_preview
 from jarvis.memory.wiki import telemetry
 
 log = logging.getLogger(__name__)
+
+
+def _exception_summary(exc: Exception) -> str:
+    """Return diagnostic class/status metadata without persisting raw SDK text."""
+    status = getattr(exc, "status_code", None)
+    if status is None:
+        status = getattr(getattr(exc, "response", None), "status_code", None)
+    name = type(exc).__name__
+    try:
+        code = int(status) if status is not None else None
+    except (TypeError, ValueError):
+        code = None
+    return f"{name} HTTP {code}" if code is not None else name
 
 def credential_ready_wiki_providers(
     *,
@@ -108,6 +122,7 @@ async def complete_with_fallback(
     label: str,
     aggregate: Callable[[Any], Any],
     validate: Callable[[Any], str | None] | None = None,
+    allow_last_rejection: Callable[[str], bool] | None = None,
 ) -> tuple[Any, str] | None:
     """Try each ``(provider, model)`` until one returns an aggregated response.
 
@@ -123,15 +138,20 @@ async def complete_with_fallback(
     # record (spec A5) so "openai 401; gemini 429" is visible, not just a
     # generic "ALL N failed" count.
     failure_summaries: list[str] = []
+    allowed_rejection_fallback: tuple[Any, str, str] | None = None
 
-    for provider, model in chain:
+    for index, (provider, model) in enumerate(chain):
         try:
             brain = instantiate_curator_brain(registry, provider, model)
         except Exception as exc:  # noqa: BLE001 — a bad provider must not abort the chain
+            detail = _exception_summary(exc)
             log.warning(
-                "%s: could not instantiate %s (%s) — trying next provider", label, provider, exc
+                "%s: could not instantiate %s (%s) — trying next provider",
+                label,
+                provider,
+                detail,
             )
-            failure_summaries.append(f"{provider} instantiate failed: {exc}")
+            failure_summaries.append(f"{provider} instantiate failed: {detail}")
             continue
         if brain is None:
             failure_summaries.append(f"{provider} unavailable")
@@ -142,17 +162,53 @@ async def complete_with_fallback(
                 try:
                     rejection = validate(agg)
                 except Exception as exc:  # noqa: BLE001 - validator faults mean unusable output
-                    rejection = f"response validation failed: {exc}"
+                    rejection = (
+                        "response validation failed: "
+                        f"{_exception_summary(exc)}"
+                    )
                 if rejection:
+                    safe_rejection = safe_preview(rejection, max_chars=240)
+                    allowed = (
+                        allow_last_rejection is not None
+                        and allow_last_rejection(rejection)
+                    )
+                    if allowed:
+                        # Keep a semantically safe fallback (currently the
+                        # extractor's valid empty array) while still asking the
+                        # remaining providers for one *valid structured*
+                        # second opinion. Transport/malformed failures do not
+                        # count, but a second allowed answer is agreement and
+                        # ends the chain immediately.
+                        if allowed_rejection_fallback is not None:
+                            log.info(
+                                "%s: accepting provider %s output after a "
+                                "second provider agreed (%s)",
+                                label,
+                                provider,
+                                safe_rejection,
+                            )
+                            return agg, provider
+                        # If every later provider fails, their failure must not
+                        # erase this valid bounded answer.
+                        allowed_rejection_fallback = (agg, provider, rejection)
+                    if index == len(chain) - 1 and allowed:
+                        log.info(
+                            "%s: accepting final provider %s output after "
+                            "bounded second-opinion attempts (%s)",
+                            label,
+                            provider,
+                            safe_rejection,
+                        )
+                        return agg, provider
                     log.warning(
                         "%s: provider %s returned unusable output (%s) - "
                         "trying next provider",
                         label,
                         provider,
-                        rejection,
+                        safe_rejection,
                     )
                     failure_summaries.append(
-                        f"{provider} unusable output: {rejection}"
+                        f"{provider} unusable output: {safe_rejection}"
                     )
                     try:
                         telemetry.inc("wiki_provider_output_rejected")
@@ -174,9 +230,26 @@ async def complete_with_fallback(
             failure_summaries.append(f"{provider} timeout ({timeout_s:.1f}s)")
             continue
         except Exception as exc:  # noqa: BLE001 — try the next family, never dead-end on one
-            log.warning("%s: provider %s failed (%s) — trying next provider", label, provider, exc)
-            failure_summaries.append(f"{provider} {exc}")
+            detail = _exception_summary(exc)
+            log.warning(
+                "%s: provider %s failed (%s) — trying next provider",
+                label,
+                provider,
+                detail,
+            )
+            failure_summaries.append(f"{provider} {detail}")
             continue
+
+    if allowed_rejection_fallback is not None:
+        agg, provider, rejection = allowed_rejection_fallback
+        log.info(
+            "%s: accepting provider %s output after later second-opinion "
+            "attempts failed (%s)",
+            label,
+            provider,
+            safe_preview(rejection, max_chars=240),
+        )
+        return agg, provider
 
     log.error(
         "%s: ALL %d wiki provider(s) failed or returned unusable output — "
@@ -192,7 +265,12 @@ async def complete_with_fallback(
         from jarvis.memory.wiki.health import health
 
         health.record_chain_failure(
-            "; ".join(failure_summaries) if failure_summaries else f"{label}: empty provider chain"
+            safe_preview(
+                "; ".join(failure_summaries)
+                if failure_summaries
+                else f"{label}: empty provider chain",
+                max_chars=800,
+            )
         )
     except Exception:  # noqa: BLE001 — health recording must never break the pipeline
         log.debug("%s: health record_chain_failure failed", label, exc_info=True)

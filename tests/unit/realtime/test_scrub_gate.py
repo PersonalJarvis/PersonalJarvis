@@ -1,7 +1,10 @@
 import pytest
 
+import jarvis.realtime.scrub_gate as scrub_gate_module
+from jarvis.brain.output_filter import ScrubResult
 from jarvis.core.protocols import AudioChunk
 from jarvis.realtime.scrub_gate import ScrubHoldGate
+from jarvis.speech.hangup import END_CALL_SIGNAL
 
 
 def _chunk(n: int) -> AudioChunk:
@@ -63,6 +66,77 @@ async def test_leading_streaming_dash_waits_for_meaningful_transcript():
 
 
 @pytest.mark.asyncio
+async def test_split_filler_opener_can_complete_a_substantive_reply():
+    """A temporary ``Let me think`` prefix must not abort streamed output."""
+    gate = ScrubHoldGate(language="en")
+    buffered = _chunk(8)
+
+    display = [await gate.feed_transcript("Let me")]
+    display.append(await gate.feed_transcript(" think"))
+    assert gate.hard_leak_pending() is False
+    assert await gate.push_audio(buffered) == []
+
+    continuation = ", the benefits include stronger bones."
+    display.append(await gate.feed_transcript(continuation))
+
+    assert gate.hard_leak_pending() is False
+    assert "".join(display) == f"Let me think{continuation}"
+    assert gate.release_available() == [buffered]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "fragment",
+    [
+        pytest.param("**", id="markdown"),
+        pytest.param("https://example.com", id="source-url"),
+        pytest.param("As an AI.", id="self-reference"),
+        pytest.param("I'm noting that down.", id="background-narration"),
+        pytest.param(
+            "If I understand correctly, yes.",
+            id="echo-paraphrase",
+        ),
+        pytest.param("Great question.", id="filler-opener"),
+        pytest.param("MCP", id="engineering-jargon"),
+        pytest.param("Sir,", id="honorific"),
+        pytest.param("\N{EM DASH}", id="dash"),
+    ],
+)
+async def test_harmless_scrub_fragment_never_becomes_generic_error(
+    fragment: str,
+):
+    gate = ScrubHoldGate(language="en")
+    buffered = _chunk(8)
+
+    assert await gate.feed_transcript(fragment) == fragment
+    assert gate.hard_leak_pending() is False
+    assert await gate.push_audio(buffered) == []
+
+    continuation = " A substantive answer follows."
+    assert await gate.feed_transcript(continuation) == continuation
+    assert gate.hard_leak_pending() is False
+    assert gate.release_available() == [buffered]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("fragment", "expected_display"),
+    [
+        pytest.param(END_CALL_SIGNAL, "", id="end-call-control"),
+        pytest.param("1", "one", id="number-spelling"),
+    ],
+)
+async def test_other_non_blocking_scrub_actions_do_not_raise_generic_error(
+    fragment: str,
+    expected_display: str,
+):
+    gate = ScrubHoldGate(language="en")
+
+    assert await gate.feed_transcript(fragment) == expected_display
+    assert gate.hard_leak_pending() is False
+
+
+@pytest.mark.asyncio
 async def test_streamed_jargon_prefix_can_complete_a_user_facing_compound():
     """A partial ``MCP-Server`` transcript must not abort a clean reply."""
     gate = ScrubHoldGate(language="de")
@@ -107,6 +181,50 @@ async def test_hard_leak_transcript_marks_leak_and_drops_audio():
     out = await gate.push_audio(_chunk(4))
     assert out == []
     assert gate.fallback_phrase() == "An error occurred."
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("transcript", "expected_action"),
+    [
+        pytest.param(
+            "Traceback (most recent call last):\n  File x\nValueError: y\n",
+            "replaced_stacktrace",
+            id="stacktrace",
+        ),
+        pytest.param("{'result': 'raw'}", "replaced_raw_repr", id="raw-repr"),
+        pytest.param(
+            "cmd /c start app",
+            "replaced_shell_command",
+            id="shell-command",
+        ),
+        pytest.param(
+            'Before <tool_call>{"name":"spawn_worker"}</tool_call> after.',
+            "removed_tool_json",
+            id="tool-payload-with-prose",
+        ),
+    ],
+)
+async def test_actual_machine_leak_still_blocks_output(
+    transcript: str,
+    expected_action: str,
+):
+    gate = ScrubHoldGate(language="en")
+
+    await gate.feed_transcript(transcript)
+
+    assert gate.hard_leak_pending() is True
+    assert expected_action in gate.hard_leak_actions()
+
+
+def test_unclassified_scrub_action_fails_closed():
+    result = ScrubResult(
+        cleaned="Future output",
+        actions=["future_unclassified_action"],
+        fallback_used=False,
+    )
+
+    assert scrub_gate_module._is_hard_scrub_result(result) is True
 
 
 @pytest.mark.asyncio

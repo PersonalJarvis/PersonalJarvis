@@ -52,9 +52,10 @@ class TurnPlan:
 
 
 _LOOKUP_SHAPE_RE = re.compile(
-    r"\b(?:what|when|where|which|who|how many|how is|show|read|list|find|"
+    r"\b(?:what|when|where|why|which|who|how many|how is|show|read|list|find|"
     r"lookup|check|summarize|search|do i have|is there|are there|"
-    r"was|wann|wo|welch\w*|wer|wie viele|wie ist|wie lautet|wie heisst|"
+    r"was|wann|wo|woran|warum|wieso|weshalb|welch\w*|wer|wie viele|"
+    r"wie ist|wie lautet|wie heisst|"
     r"zeig\w*|lies|lese|list\w*|"
     r"find\w*|such\w*|pruef\w*|fass\w*|habe ich|hab ich|gibt es|"
     r"que|cuando|donde|cual\w*|quien|cuantos|muestra|lee|lista|"
@@ -172,6 +173,9 @@ _FOLLOW_UP_REFERENCE_RE = re.compile(
     r"eso|esto|ahi|alli|dentro|que mas|resultados?|hallazgos?)\b|"  # i18n-allow
     r"\b(?:what\s+does\s+it|what(?:'s|\s+is)\s+in\s+it|in\s+it|"
     r"what(?:'s|\s+is)\s+(?:it|this|that)\s+about|"
+    r"where\s+(?:is|did)\s+it|why\s+(?:did|does|is|was)\s+(?:it|this|that)|"
+    r"wo\s+(?:liegt|ist)\s+es|woran\s+liegt\s+es|"  # i18n-allow: German speech-input matching data
+    r"(?:warum|wieso|weshalb).{0,30}\b(?:es|das)\b|"  # i18n-allow: speech input
     r"um\s+was\s+geht(?:\s+es|['’]?s)?|"
     r"worum\s+geht(?:\s+es|['’]?s)?)\b"  # i18n-allow
 )
@@ -214,6 +218,8 @@ def _matched_capabilities(
     *,
     capability_registry: Any | None,
     tool_names: Iterable[str],
+    require_lookup_shape: bool = True,
+    contextual_identity_only: bool = False,
 ) -> tuple[str, ...]:
     matched: set[str] = set()
     capabilities: Sequence[Any] = ()
@@ -227,13 +233,40 @@ def _matched_capabilities(
             capabilities = ()
 
     normalized = _normalize(text)
-    if _LOOKUP_SHAPE_RE.search(normalized):
+    if not require_lookup_shape or _LOOKUP_SHAPE_RE.search(normalized):
         for capability in capabilities:
             tokens = _tokens_from_capability(capability)
             if any(re.search(r"\b" + re.escape(token) + r"\b", normalized) for token in tokens):
                 matched.add(str(getattr(capability, "id", "")))
         for name in tool_names:
             normalized_name = _normalize(name).replace("_", " ").replace("/", " ")
+            if contextual_identity_only:
+                raw_name = _normalize(str(name)).replace("_", " ")
+                namespace, separator, _ = raw_name.partition("/")
+                identity = namespace if separator else raw_name
+                identity = re.sub(
+                    r"^(?:(?:cli|mcp|plugin|server)[\s._-]+)+",
+                    "",
+                    identity,
+                )
+                identity = re.sub(
+                    r"(?:[\s._-]+(?:cli|mcp|plugin|server))+$",
+                    "",
+                    identity,
+                )
+                identity_tokens = [
+                    token
+                    for token in re.split(r"[^a-z0-9]+", identity)
+                    if len(token) >= 3 and token not in {"cli", "mcp", "plugin", "server"}
+                ]
+                if not identity_tokens:
+                    continue
+                identity_pattern = r"\b" + r"\s+".join(
+                    re.escape(token) for token in identity_tokens
+                ) + r"\b"
+                if re.search(identity_pattern, normalized):
+                    matched.add(str(name))
+                continue
             tokens = [
                 token
                 for token in re.split(r"[^a-z0-9-]+", normalized_name)
@@ -245,6 +278,20 @@ def _matched_capabilities(
             ):
                 matched.add(str(name))
     return tuple(sorted(item for item in matched if item))
+
+
+def is_contextual_follow_up(text: str, context: Sequence[str]) -> bool:
+    """Return whether ``text`` explicitly refers to the bounded prior context."""
+    normalized = _normalize(text).strip()
+    context_text = " ".join(str(item or "") for item in context).strip()
+    if len(context_text) > _CONTEXT_MAX_CHARS:
+        context_text = context_text[-_CONTEXT_MAX_CHARS:]
+    return bool(
+        _normalize(context_text)
+        and _LOOKUP_SHAPE_RE.search(normalized)
+        and _FOLLOW_UP_REFERENCE_RE.search(normalized)
+        and not _INSTRUCTIONAL_RE.search(normalized)
+    )
 
 
 def plan_turn(
@@ -333,12 +380,7 @@ def plan_turn(
     if len(context_text) > _CONTEXT_MAX_CHARS:
         context_text = context_text[-_CONTEXT_MAX_CHARS:]
     context_normalized = _normalize(context_text)
-    contextual_follow_up = bool(
-        context_normalized
-        and lookup
-        and _FOLLOW_UP_REFERENCE_RE.search(normalized)
-        and not instructional
-    )
+    contextual_follow_up = is_contextual_follow_up(text, context)
     if contextual_follow_up:
         inherited = False
         if _LOCAL_STATE_RE.search(context_normalized):
@@ -364,6 +406,8 @@ def plan_turn(
             context_text,
             capability_registry=capability_registry,
             tool_names=tool_names,
+            require_lookup_shape=False,
+            contextual_identity_only=True,
         )
         if contextual_required:
             required = tuple(sorted(set(required) | set(contextual_required)))
@@ -424,4 +468,10 @@ def plan_turn(
     )
 
 
-__all__ = ["TurnPath", "TurnPlan", "TurnReason", "plan_turn"]
+__all__ = [
+    "TurnPath",
+    "TurnPlan",
+    "TurnReason",
+    "is_contextual_follow_up",
+    "plan_turn",
+]

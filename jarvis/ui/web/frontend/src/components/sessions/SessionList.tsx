@@ -15,6 +15,7 @@ import { translate, useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 import type { SessionListItem } from "./types";
+import { VoiceModeBadge } from "./VoiceModeBadge";
 
 interface Props {
   sessions: SessionListItem[];
@@ -66,15 +67,18 @@ export function SessionList({ sessions, selectedId, onSelect, loading }: Props) 
                   <Mic className="h-3 w-3" />
                   {formatRelative(s.started_ms)}
                 </span>
-                {s.ended_ms === null ? (
-                  <Badge variant="default" className="animate-pulse">
-                    {t("sessions.running")}
-                  </Badge>
-                ) : (
-                  <Badge variant="secondary" className="text-[10px]">
-                    {hangupLabel(s.hangup_reason)}
-                  </Badge>
-                )}
+                <span className="flex shrink-0 items-center gap-1">
+                  <VoiceModeBadge mode={s.voice_mode} />
+                  {s.ended_ms === null ? (
+                    <Badge variant="default" className="animate-pulse">
+                      {t("sessions.running")}
+                    </Badge>
+                  ) : (
+                    <Badge variant="secondary" className="text-[10px]">
+                      {hangupLabel(s.hangup_reason)}
+                    </Badge>
+                  )}
+                </span>
               </div>
               <div className="line-clamp-2 text-foreground/90">
                 {s.preview || (

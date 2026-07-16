@@ -19,7 +19,7 @@ from typing import TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from jarvis.sessions.constants import SPOKEN_KINDS
+from jarvis.sessions.constants import SPOKEN_KINDS, VOICE_MODE_UNKNOWN, VOICE_MODES
 
 # BUG-008 (three episodes 2026-05-03 / -05 / -10): the Pydantic ``Literal``
 # broke the list-sessions API every time the pipeline introduced a new
@@ -68,7 +68,14 @@ KNOWN_VOICE_TIERS: frozenset[str] = frozenset(
 """Routing tier as in CLAUDE.md `Brain-Routing` and `Router-Discipline`."""
 
 VoiceTier: TypeAlias = str
-"""Deliberately ``str`` instead of ``Literal`` — see ``KNOWN_VOICE_TIERS``."""
+"""Open string so a future routing tier cannot break session APIs."""
+
+
+KNOWN_VOICE_MODES: frozenset[str] = frozenset(VOICE_MODES)
+"""Canonical session engine modes understood by the current UI."""
+
+VoiceMode: TypeAlias = str
+"""Open string so a future runtime value cannot break session APIs."""
 
 
 KNOWN_SPOKEN_KINDS: frozenset[str] = frozenset(SPOKEN_KINDS)
@@ -141,6 +148,7 @@ class VoiceSessionRow(BaseModel):
     providers_used: list[str] = Field(default_factory=list)
     language: str = "de"
     wake_keyword: str = ""
+    voice_mode: VoiceMode = VOICE_MODE_UNKNOWN
 
 
 class SessionListItem(VoiceSessionRow):
@@ -171,9 +179,11 @@ __all__ = [
     "KNOWN_HANGUP_REASONS",
     "KNOWN_SPOKEN_KINDS",
     "KNOWN_VOICE_TIERS",
+    "KNOWN_VOICE_MODES",
     "SessionDetail",
     "SessionListItem",
     "VoiceEventRow",
+    "VoiceMode",
     "VoiceSessionRow",
     "VoiceTier",
     "VoiceTurnRow",

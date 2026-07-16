@@ -267,6 +267,16 @@ class ClaudeAuthService:
     def status(self) -> ClaudeAuthStatus:
         binary = self._resolve_binary()
         if binary is None:
+            if self._api_key_present:
+                return ClaudeAuthStatus(
+                    installed=False,
+                    connected=True,
+                    mode="api_key",
+                    message="Connected via Anthropic API key; the Claude CLI is optional.",
+                    account_label="Anthropic API key",
+                    binary_path=self._binary_path,
+                    api_key_present=True,
+                )
             return ClaudeAuthStatus(
                 installed=False,
                 connected=False,

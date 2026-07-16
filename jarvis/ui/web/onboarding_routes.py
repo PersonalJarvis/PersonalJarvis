@@ -112,10 +112,37 @@ async def post_ack_wake_word() -> dict:
     return {"ok": True}
 
 
+def _schedule_fresh_restart(request: Request) -> bool:
+    """Restart the app in a fresh process right after onboarding completes.
+
+    The first launch happens straight out of the installer: the process the
+    user just walked through onboarding has been running since BEFORE the
+    language, wake word, and providers were configured. A relauncher restart
+    (``DesktopApp.request_restart()`` — the same detached helper the
+    self-update uses) re-initializes every subsystem from the now-complete
+    config, so the assistant never lingers half-warm. The completion marker
+    is persisted before this is called, so the fresh instance reads
+    completed=true and can never re-open the gate. Headless hosts have no
+    window — ``request_restart`` reports False and onboarding simply
+    completes in place. Best-effort: a restart failure never fails the
+    completion request.
+    """
+    desktop = getattr(request.app.state, "desktop_app", None)
+    fn = getattr(desktop, "request_restart", None)
+    if not callable(fn):
+        return False
+    try:
+        return bool(fn())
+    except Exception:  # noqa: BLE001 — completing onboarding must never 500 here
+        log.warning("post-onboarding fresh restart failed; staying up", exc_info=True)
+        return False
+
+
 @router.post("/complete")
-async def post_complete() -> dict:
+async def post_complete(request: Request) -> dict:
     st.mark_onboarding_complete(_path())
-    return {"ok": True}
+    restarting = _schedule_fresh_restart(request)
+    return {"ok": True, "restarting": restarting}
 
 
 __all__ = ["router"]

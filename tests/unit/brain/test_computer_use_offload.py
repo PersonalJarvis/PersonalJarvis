@@ -415,3 +415,120 @@ async def test_manager_retains_signed_mission_result_for_follow_up() -> None:
     assert "Jarvis-Agent mission result" in content
     assert "019f5ca2-e30f" in content
     assert "result_uri" in content
+
+
+# ---------------------------------------------------------------------------
+# Conversation context in the Computer-Use goal. The deterministic local-action
+# gate ships the RAW current utterance as the mission goal. A correction or
+# follow-up turn carries no task of its own — without the turns that defined the
+# task, the mission verifier passes against a vacuous goal. Live forensic
+# 2026-07-15 07:59: after a failed Discord-announcement mission the user said
+# "Ihr macht es doch mit Computer-Use."; that bare sentence became the whole  # i18n-allow
+# goal, the loop opened Discord's Friends view, and the verifier announced
+# success. The goal must lead with the latest instruction and carry a bounded
+# context block of the recent turns.
+# ---------------------------------------------------------------------------
+
+
+class _RecordingExecutor:
+    """tool_executor stand-in that records the harness dispatch arguments."""
+
+    def __init__(self) -> None:
+        self.args: dict | None = None
+
+    async def execute(self, tool, args, *, user_utterance, trace_id):  # noqa: ANN001
+        self.args = args
+        return SimpleNamespace(
+            success=True,
+            output={
+                "harness": "screenshot",
+                "exit_code": 0,
+                "stdout": "[cu] done at step 1.1 (verified: ok)",
+                "stderr": "",
+                "cost_usd": 0.0,
+                "duration_ms": 10,
+            },
+            error=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_cu_goal_carries_recent_conversation_context(monkeypatch) -> None:
+    """A delegated follow-up turn inherits the task from the turn history."""
+    from jarvis.brain.manager import _TURN_HISTORY_OVERRIDE
+    from jarvis.core.protocols import BrainMessage
+
+    bus = _FakeBus()
+    executor = _RecordingExecutor()
+    mgr = _make_manager(executor, bus)
+    utterance = "Ihr macht es doch mit Computer-Use."  # i18n-allow: German speech-input fixture
+    plan = LocalActionPlan(
+        mode=LocalActionMode.COMPUTER_USE, harness="computer-use", prompt=utterance
+    )
+    monkeypatch.setattr("jarvis.brain.manager.match_local_action", lambda _t: plan)
+
+    token = _TURN_HISTORY_OVERRIDE.set((
+        BrainMessage(
+            role="user",
+            content=(
+                "Öffne meinen Discord-Server Personal Jarvis und kündige an, "  # i18n-allow: German speech-input fixture
+                "dass übermorgen ein Live-Event stattfindet."  # i18n-allow: German speech-input fixture
+            ),
+        ),
+        BrainMessage(role="assistant", content="Alles klar, ich kümmere mich darum."),  # i18n-allow: German voice fixture
+    ))
+    try:
+        await mgr._run_local_action_fast_path(utterance)
+    finally:
+        _TURN_HISTORY_OVERRIDE.reset(token)
+    await asyncio.gather(*getattr(mgr, "_cu_background_tasks", set()))
+
+    prompt = (executor.args or {}).get("prompt", "")
+    assert prompt.startswith(utterance), prompt
+    assert "Personal Jarvis" in prompt, (
+        f"the goal must inherit the task from the recent turns: {prompt!r}"
+    )
+    assert "Live-Event" in prompt, prompt
+
+
+@pytest.mark.asyncio
+async def test_cu_goal_without_history_stays_bare(monkeypatch) -> None:
+    """A first-turn command has no context to add — the goal stays unchanged."""
+    bus = _FakeBus()
+    executor = _RecordingExecutor()
+    mgr = _make_manager(executor, bus)
+    plan = LocalActionPlan(
+        mode=LocalActionMode.COMPUTER_USE, harness="computer-use", prompt="open chrome"
+    )
+    monkeypatch.setattr("jarvis.brain.manager.match_local_action", lambda _t: plan)
+
+    await mgr._run_local_action_fast_path("öffne chrome")  # i18n-allow
+    await asyncio.gather(*getattr(mgr, "_cu_background_tasks", set()))
+
+    assert (executor.args or {}).get("prompt") == "open chrome"
+
+
+@pytest.mark.asyncio
+async def test_cu_goal_context_falls_back_to_live_history(monkeypatch) -> None:
+    """Classic-pipeline turns (no override) use the manager's own history."""
+    from jarvis.core.protocols import BrainMessage
+
+    bus = _FakeBus()
+    executor = _RecordingExecutor()
+    mgr = _make_manager(executor, bus)
+    mgr._history = [
+        BrainMessage(role="user", content="Open the Personal Jarvis server."),
+        BrainMessage(role="assistant", content="On it."),
+    ]
+    utterance = "Du bist nicht im richtigen Server."  # i18n-allow: German speech-input fixture
+    plan = LocalActionPlan(
+        mode=LocalActionMode.COMPUTER_USE, harness="computer-use", prompt=utterance
+    )
+    monkeypatch.setattr("jarvis.brain.manager.match_local_action", lambda _t: plan)
+
+    await mgr._run_local_action_fast_path(utterance)
+    await asyncio.gather(*getattr(mgr, "_cu_background_tasks", set()))
+
+    prompt = (executor.args or {}).get("prompt", "")
+    assert prompt.startswith(utterance)
+    assert "Personal Jarvis" in prompt, prompt

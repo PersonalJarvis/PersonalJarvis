@@ -131,6 +131,77 @@ def test_elliptical_follow_up_inherits_evidence_domain(
     assert plan.requires_evidence is True
 
 
+def test_plugin_location_follow_up_inherits_named_live_tool() -> None:
+    previous = (
+        "Please use my Gmail plugin and tell me which messages need attention.",
+    )
+
+    follow_up = "Wo liegt es? Ich habe es auch als Plugin installiert."  # i18n-allow
+    plan = plan_turn(
+        follow_up,
+        context=previous,
+        tool_names=("gmail", "streamline/query"),
+    )
+
+    assert plan.required_capabilities == ("gmail",)
+    assert TurnReason.CONNECTED_DATA in plan.reasons
+    assert TurnReason.UNCERTAIN in plan.reasons
+
+
+def test_plugin_action_follow_up_inherits_named_live_tool() -> None:
+    plan = plan_turn(
+        "Where is it? I installed it as a plugin.",
+        context=("Use Streamline to create a ticket for the incident.",),
+        tool_names=(
+            "jira/create_ticket",
+            "notion/create_page",
+            "streamline/query",
+        ),
+    )
+
+    assert plan.required_capabilities == ("streamline/query",)
+    assert TurnReason.UNCERTAIN in plan.reasons
+
+
+@pytest.mark.parametrize(
+    "follow_up",
+    [
+        "Woran liegt es? Ich habe es als Plugin installiert.",  # i18n-allow
+        "Warum ist es fehlgeschlagen?",  # i18n-allow
+    ],
+)
+def test_german_reason_follow_up_inherits_named_live_tool(follow_up: str) -> None:
+    plan = plan_turn(
+        follow_up,
+        context=("Please use my Gmail plugin and read the latest message.",),
+        tool_names=("gmail", "streamline/query"),
+    )
+
+    assert plan.required_capabilities == ("gmail",)
+    assert TurnReason.UNCERTAIN in plan.reasons
+
+
+@pytest.mark.parametrize(
+    ("tool_name", "previous"),
+    [
+        ("google-calendar/list_events", "Use Google Calendar to find the event."),
+        ("plugin-streamline/query", "Use Streamline to create a ticket."),
+        ("mcp.notebook/search", "Use Notebook to find the note."),
+    ],
+)
+def test_context_matches_hyphenated_or_prefixed_namespace_identity(
+    tool_name: str,
+    previous: str,
+) -> None:
+    plan = plan_turn(
+        "Where is it? I installed it as a plugin.",
+        context=(previous,),
+        tool_names=(tool_name, "jira/create_ticket"),
+    )
+
+    assert plan.required_capabilities == (tool_name,)
+
+
 def test_unrelated_lookup_does_not_inherit_old_evidence_domain() -> None:
     context = ("The previous turn asked about the user's private Wiki.",)
 

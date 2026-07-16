@@ -47,7 +47,20 @@ MANIFEST = REPO_ROOT / "scripts" / "ci" / "privacy_gate" / "references" / "pii-s
 EMAIL_PLACEHOLDER = "maintainer@example.com"
 
 # Text-only file suffixes we look inside. Binary/image docs are skipped.
-TEXT_SUFFIXES = {".md", ".markdown", ".html", ".htm", ".txt", ".py", ".toml", ".json", ".yml", ".yaml", ".tsv", ".csv"}
+TEXT_SUFFIXES = {
+    ".md",
+    ".markdown",
+    ".html",
+    ".htm",
+    ".txt",
+    ".py",
+    ".toml",
+    ".json",
+    ".yml",
+    ".yaml",
+    ".tsv",
+    ".csv",
+}
 
 
 def load_manifest() -> tuple[list[tuple[re.Pattern[str], str, str]], list[re.Pattern[str]]]:
@@ -137,7 +150,10 @@ def main() -> int:
     rules, emails = load_manifest()
 
     if args.paths:
-        targets = [(Path(p) if Path(p).is_absolute() else (REPO_ROOT / p)).resolve() for p in args.paths]
+        targets = [
+            (Path(p) if Path(p).is_absolute() else (REPO_ROOT / p)).resolve()
+            for p in args.paths
+        ]
     else:
         targets = tracked_docs()
 

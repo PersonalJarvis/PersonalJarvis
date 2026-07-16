@@ -54,7 +54,7 @@ def _spec_with_flag(flagged: bool) -> dict:
 def _invoke(spec: dict, args: list[str]):
     calls: list[tuple] = []
 
-    def runner(method, path, params, body):
+    def runner(method, path, params, body, *, timeout_s=None):
         calls.append((method, path))
         return {"ok": True}
 

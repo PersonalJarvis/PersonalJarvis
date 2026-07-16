@@ -19,6 +19,8 @@ from jarvis.cu.actuate.base import (
     ActuationUnavailable,
     Actuator,
     get_actuator,
+    verified_click,
+    verified_drag,
     verified_move,
 )
 
@@ -28,5 +30,7 @@ __all__ = [
     "Actuator",
     "LANDING_TOLERANCE",
     "get_actuator",
+    "verified_click",
+    "verified_drag",
     "verified_move",
 ]

@@ -19,6 +19,14 @@ import type {
   WikiHealthSnapshot,
 } from "@/lib/wikiApi";
 
+const { useWikiLiveMock } = vi.hoisted(() => ({
+  useWikiLiveMock: vi.fn(() => ({ connected: true, lastEventAt: null })),
+}));
+
+vi.mock("@/hooks/useWikiLive", () => ({
+  useWikiLive: useWikiLiveMock,
+}));
+
 function freshClient(): QueryClient {
   return new QueryClient({
     defaultOptions: {
@@ -162,12 +170,17 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
+beforeEach(() => {
+  useWikiLiveMock.mockClear();
+});
+
 describe("WikiView — empty state", () => {
   it("renders the empty-state card when the tree returns 0 pages", async () => {
     installFetchMock({
       "/api/wiki/tree": () => EMPTY_TREE,
     });
     renderWithClient(<WikiView />);
+    expect(useWikiLiveMock).toHaveBeenCalledTimes(1);
 
     await waitFor(() => {
       expect(screen.getByTestId("wiki-empty-state")).toBeDefined();
@@ -243,6 +256,26 @@ describe("WikiView — health strip", () => {
     indexed_pages: 1,
     vault_pages: 1,
     index_state: "ok",
+    capture_funnel: {
+      window_hours: 24,
+      total: 107,
+      started: 1,
+      filtered: 30,
+      empty: 46,
+      candidates: 31,
+      failed: 2,
+      facts: 44,
+      sessions_swept: 3,
+      stage2_pending: 4,
+      stage2_add: 4,
+      stage2_update: 5,
+      stage2_noop: 8,
+      stage2_invalidate: 1,
+      stage2_rejected: 2,
+      stage2_skipped: 1,
+      writes: 9,
+    },
+    capture_error: null,
   };
 
   const FAILED_HEALTH: WikiHealthSnapshot = {
@@ -263,6 +296,26 @@ describe("WikiView — health strip", () => {
     indexed_pages: 0,
     vault_pages: 1,
     index_state: "stale",
+    capture_funnel: {
+      window_hours: 24,
+      total: 0,
+      started: 0,
+      filtered: 0,
+      empty: 0,
+      candidates: 0,
+      failed: 0,
+      facts: 0,
+      sessions_swept: 0,
+      stage2_pending: 0,
+      stage2_add: 0,
+      stage2_update: 0,
+      stage2_noop: 0,
+      stage2_invalidate: 0,
+      stage2_rejected: 0,
+      stage2_skipped: 0,
+      writes: 0,
+    },
+    capture_error: null,
   };
 
   it("renders the vault path for a healthy snapshot", async () => {
@@ -283,6 +336,18 @@ describe("WikiView — health strip", () => {
     expect(
       screen.getByTestId("wiki-health-dot").getAttribute("data-visual"),
     ).toBe("green");
+    expect(screen.getByTestId("wiki-capture-funnel").textContent).toContain(
+      "Last 24h capture",
+    );
+    expect(screen.getByTestId("wiki-capture-reviewed").textContent).toContain("107");
+    expect(screen.getByTestId("wiki-capture-candidate-reviews").textContent).toContain(
+      "31",
+    );
+    expect(screen.getByTestId("wiki-capture-candidate-facts").textContent).toContain(
+      "44",
+    );
+    expect(screen.getByTestId("wiki-capture-writes").textContent).toContain("9");
+    expect(screen.getByTestId("wiki-capture-session-sweeps").textContent).toContain("3");
   });
 
   it("renders the error text for a failed last write, and the backlog count", async () => {

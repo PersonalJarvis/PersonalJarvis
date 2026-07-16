@@ -2,6 +2,8 @@
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 REPO = Path(__file__).resolve().parents[3]
 _spec = importlib.util.spec_from_file_location("installer", REPO / "install" / "installer.py")
 installer = importlib.util.module_from_spec(_spec)
@@ -46,7 +48,9 @@ def test_installer_prompts_only_inside_missing_prerequisite_flow() -> None:
     sh_end = sh.index("# --- prerequisite-bootstrap end")
     # Design amendment 2026-07-14: ONE more allowed prompt — the welcome gate
     # ("Would you like to install?") BEFORE phase 1. Nothing else may ask.
-    wg_begin = sh.index("# -------------------------------------------------------------- welcome gate")
+    wg_begin = sh.index(
+        "# -------------------------------------------------------------- welcome gate"
+    )
     wg_end = sh.index("# -------------------------------------------------------------- preflight")
     sh_outside = sh[:wg_begin] + sh[wg_end:sh_begin] + sh[sh_end:]
     assert "read -r" not in sh_outside
@@ -97,6 +101,59 @@ def test_headless_pip_plan_stays_base_floor(capsys) -> None:
     out = capsys.readouterr().out
     assert ".[full]" not in out
     assert ".[desktop]" not in out
+
+
+def test_full_profile_failure_stops_desktop_install(monkeypatch) -> None:
+    results = iter([0, 0, 1])
+    monkeypatch.setattr(installer, "run_quiet", lambda *args, **kwargs: next(results))
+
+    with pytest.raises(SystemExit, match="2"):
+        installer.step_pip_install(
+            with_desktop=True,
+            with_voice_local=False,
+            dry_run=False,
+        )
+
+
+def test_macos_launch_enters_through_application_bundle(monkeypatch, tmp_path) -> None:
+    launched: dict[str, object] = {}
+    bundle = tmp_path / "Personal Jarvis.app"
+    monkeypatch.setattr(installer.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        "jarvis.setup.macos_app_bundle.macos_app_bundle_path", lambda: bundle
+    )
+    monkeypatch.setattr(
+        "jarvis.setup.macos_app_bundle.macos_app_bundle_is_launchable", lambda _p: True
+    )
+    monkeypatch.setattr(
+        "jarvis.setup.macos_app_bundle.macos_launch_services_command",
+        lambda _p: ["/usr/bin/open", "-a", str(bundle)],
+    )
+    monkeypatch.setattr(
+        installer.subprocess,
+        "Popen",
+        lambda cmd, **kwargs: launched.update(cmd=cmd, kwargs=kwargs),
+    )
+
+    installer.step_launch(headless=False, dry_run=False)
+
+    assert launched["cmd"] == ["/usr/bin/open", "-a", str(bundle)]
+
+
+def test_linux_gui_gets_full_profile_and_app_menu_registration(
+    monkeypatch, capsys
+) -> None:
+    """A Linux desktop is a first-class app install, not the headless floor."""
+    monkeypatch.setattr(installer.sys, "platform", "linux")
+    monkeypatch.setenv("DISPLAY", ":99")
+
+    rc = installer.main(["--dry-run", "--no-launch"])
+    out = capsys.readouterr().out
+
+    assert rc == 0
+    assert ".[full]" in out
+    assert "repair desktop-shell registration" in out
+    assert 'app menu -> "Personal Jarvis"' in out
 
 
 def test_update_summary_promises_no_reonboarding(monkeypatch, capsys, tmp_path) -> None:

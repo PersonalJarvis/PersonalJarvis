@@ -44,8 +44,13 @@ class WikiHealth:
             }
 
     def record_chain_failure(self, detail: str) -> None:
+        from jarvis.core.redact import safe_preview
+
         with self._lock:
-            self._last_chain_failure = {"ts": time.time(), "detail": detail}
+            self._last_chain_failure = {
+                "ts": time.time(),
+                "detail": safe_preview(detail, max_chars=800),
+            }
 
     def record_index(
         self,

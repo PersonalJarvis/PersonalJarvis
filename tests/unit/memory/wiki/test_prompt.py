@@ -2,17 +2,19 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from jarvis.memory.wiki.prompt import (
+    build_consolidator_prompt,
     build_system_prompt,
     build_user_prompt,
     compute_vault_summary,
+    resolve_user_entity_slug,
     select_top_slugs,
 )
-
 
 # ---------------------------------------------------------------------
 # Small in-memory VaultIndex fake — only ``pages_by_type`` is used.
@@ -338,6 +340,121 @@ def test_system_prompt_tells_curator_to_prefer_writing_when_in_doubt() -> None:
     # this assertion together with the prompt.
     assert "when in doubt" in prompt
     assert "forgetting" in prompt or "un-forget" in prompt
+
+
+def test_system_prompt_requires_self_disclosure_for_topic_memory() -> None:
+    """A request topic is not evidence of a lasting user relationship."""
+    prompt = " ".join(build_system_prompt("schema body", vault_summary=None).split())
+
+    assert '"What are the benefits of Vitamin D?"' in prompt
+    assert '"Tell me about Monaco."' in prompt
+    assert "both require `[]`" in prompt
+    assert '"I own a yacht." and "I plan to attend Monaco."' in prompt
+    assert "after direct self-disclosure is established" in prompt
+
+
+def test_system_prompt_has_no_maintainer_specific_user_target() -> None:
+    """Generic curator guidance never bakes in one maintainer's profile slug."""
+    prompt = build_system_prompt("schema body", vault_summary=None).lower()
+    assert "entities/alex.md" not in prompt
+    assert "never infer a personal slug" in prompt
+
+
+# ---------------------------------------------------------------------
+# Stage-2 user-entity binding
+# ---------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        ("", "user"),
+        (None, "user"),
+        ("../../private", "user"),
+        ("Owner-Profile", "owner-profile"),
+    ],
+)
+def test_resolve_user_entity_slug_is_safe_and_neutral(
+    configured: object,
+    expected: str,
+) -> None:
+    assert resolve_user_entity_slug(configured) == expected
+
+
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [("", "user"), ("owner-profile", "owner-profile")],
+)
+def test_consolidator_prompt_binds_exact_user_subject_and_page(
+    configured: str,
+    expected: str,
+) -> None:
+    candidate = SimpleNamespace(
+        id=1,
+        fact="The speaker prefers dark mode.",
+        kind="preference",
+        subjects=(expected,),
+    )
+
+    system, user = build_consolidator_prompt(
+        [candidate],
+        {},
+        user_entity_slug=configured,
+    )
+
+    assert f'subject slug ["{expected}"]' in user
+    assert f"profile page entities/{expected}.md" in user
+    assert "never infer a name" in user
+    assert "alex" not in f"{system}\n{user}".lower()
+
+
+def test_consolidator_prompt_rechecks_question_derived_user_claims() -> None:
+    candidate = SimpleNamespace(
+        id=7,
+        fact="The user is interested in Vitamin D.",
+        kind="preference",
+        subjects=("user",),
+        evidence_turn_id="vitamin-turn",
+        evidence_excerpt=(
+            "Evidence user turn [vitamin-turn]: "
+            "What are the benefits of Vitamin D?"
+        ),
+    )
+
+    system, user = build_consolidator_prompt([candidate], {})
+
+    assert "evidence must explicitly assert or confirm that relationship" in system
+    assert '"What are the benefits of Vitamin D?"' in system
+    assert '"Tell me about Monaco."' in system
+    assert 'both examples require "noop"' in system
+    assert '"I own a yacht." and "I plan to attend Monaco."' in system
+    assert "What are the benefits of Vitamin D?" in user
+
+
+def test_consolidator_prompt_elevates_explicit_persistence_requests() -> None:
+    candidate = SimpleNamespace(
+        id=8,
+        fact="The user plans to travel to San Francisco tomorrow.",
+        kind="plan",
+        subjects=("user",),
+        evidence_turn_id="sf-turn",
+        evidence_excerpt=(
+            "Evidence user turn [sf-turn]: Kannst du bitte hinzufügen, dass "  # i18n-allow
+            "ich morgen nach San Francisco reisen möchte?"  # i18n-allow
+        ),
+    )
+
+    system, user = build_consolidator_prompt([candidate], {})
+
+    assert "Explicit persistence requests are binding" in system
+    assert "English, German, and Spanish" in system
+    assert 'MUST be "add" or "update"' in system
+    assert "exact fact already" in system
+    assert "unsupported by user evidence" in system
+    assert "commands with no separately asserted durable content" in system
+    assert "the one-shot action" in system
+    assert "request itself remains non-durable" in system
+    assert "San Francisco" in user
 
 
 # ---------------------------------------------------------------------

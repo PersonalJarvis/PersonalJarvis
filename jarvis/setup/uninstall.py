@@ -1,18 +1,20 @@
 """Personal Jarvis uninstaller — remove a local install cleanly for a re-test.
 
-A download leaves THREE things on a machine, and a plain folder-delete only
+A download leaves FOUR things on a machine, and a plain folder-delete only
 gets the first:
 
 1. **The install folder** (``~/.personal-jarvis``) — code, the Python venv,
    ``jarvis.toml``, ``data/`` and the ``.setup-complete`` marker.
-2. **A login-autostart entry** next to it (a Windows logon task / a macOS
+2. **Desktop-shell registration** (Windows Start menu + Installed Apps, a
+   macOS ``.app`` bundle, or a Linux application-menu entry).
+3. **A login-autostart entry** next to it (a Windows logon task / a macOS
    ``LaunchAgent`` / a Linux XDG ``.desktop``) — survives a folder delete and
    then points at nothing.
-3. **API keys in the OS keyring** (service ``personal-jarvis`` — Windows
+4. **API keys in the OS keyring** (service ``personal-jarvis`` — Windows
    Credential Manager / macOS Keychain / Linux Secret Service) — survive a
    folder delete, so a fresh install would show them as "already set".
 
-This module removes all three (with an explicit confirmation, a ``--dry-run``
+This module removes all four (with an explicit confirmation, a ``--dry-run``
 preview and per-item ``--keep-*`` opt-outs) so "download → test → wipe → re-test"
 is one command. It is intentionally cross-platform and has **no** heavy imports,
 so it runs on a headless VPS as happily as on a laptop.
@@ -171,6 +173,9 @@ def _print_plan(plan: UninstallPlan, *, keep_keys: bool, keep_folder: bool) -> N
         )
     else:
         lines.append("[brand]•[/] Login autostart: [muted]nothing to remove[/]")
+    lines.append(
+        "[brand]•[/] Remove the operating-system app launcher and registration"
+    )
     if not keep_keys:
         if plan.keyring_keys:
             lines.append(
@@ -192,6 +197,26 @@ def _confirm() -> bool:
 
 
 # ---------------------------------------------------------------- removal steps
+def _remove_desktop_registration() -> None:
+    try:
+        from jarvis.setup.desktop_integration import remove_desktop_integration
+
+        report = remove_desktop_integration()
+        if report.ok:
+            _console.print("    [ok]→ desktop app registration removed.[/]")
+        else:
+            detail = "; ".join(report.warnings)
+            _console.print(
+                f"    [bad]⚠ desktop app registration cleanup was incomplete: "
+                f"{escape(detail)}[/]"
+            )
+    except Exception as exc:  # noqa: BLE001 - never abort uninstall on shell cleanup
+        _console.print(
+            f"    [bad]⚠ could not remove desktop app registration: "
+            f"{escape(str(exc))}[/]"
+        )
+
+
 def _remove_autostart() -> None:
     try:
         from jarvis.autostart import make_autostart_manager
@@ -207,14 +232,6 @@ def _remove_autostart() -> None:
             _console.print("    [muted]→ login autostart not supported here — skipped.[/]")
     except Exception as exc:  # noqa: BLE001 — never abort the uninstall on this
         _console.print(f"    [bad]⚠ could not remove the autostart entry: {escape(str(exc))}[/]")
-    if sys.platform == "darwin":
-        try:
-            from jarvis.setup.macos_app_bundle import remove_macos_app_bundle
-
-            if remove_macos_app_bundle():
-                _console.print("    [ok]→ ~/Applications app bundle removed.[/]")
-        except Exception as exc:  # noqa: BLE001 — never abort the uninstall on this
-            _console.print(f"    [bad]⚠ could not remove the app bundle: {escape(str(exc))}[/]")
 
 
 def _remove_keys(keys: list[str]) -> int:
@@ -348,9 +365,10 @@ def run_uninstall(
     _console.print()
     _console.print(" [brand.bold]Removing…[/]")
 
-    # Order matters: pull the login entry and the keys FIRST (they live outside
-    # the folder), then remove the folder last — on Windows the folder step may
+    # Order matters: remove every external registration and the keys FIRST, then
+    # remove the folder last — on Windows the folder step may
     # end this process's ability to do further work if it self-deletes.
+    _remove_desktop_registration()
     _remove_autostart()
     if not keep_keys:
         _remove_keys(plan.keyring_keys)

@@ -17,16 +17,16 @@ from jarvis.ui.web.provider_spec import get_spec
 
 def test_gemini_live_adapter_credentials_match_canonical_family() -> None:
     assert GeminiLiveProvider.credential_candidates == PROVIDER_SECRET_CANDIDATES[
-        "gemini"
+        "gemini-live"
     ]
-    assert AUTH_PROVIDER_ALIASES["gemini-live"] == "gemini"
+    assert AUTH_PROVIDER_ALIASES["gemini-live"] == "gemini-live"
 
 
 def test_grok_realtime_adapter_credentials_match_canonical_family() -> None:
     assert GrokRealtimeProvider.credential_candidates == PROVIDER_SECRET_CANDIDATES[
-        "grok"
+        "grok-realtime"
     ]
-    assert AUTH_PROVIDER_ALIASES["grok-realtime"] == "grok"
+    assert AUTH_PROVIDER_ALIASES["grok-realtime"] == "grok-realtime"
 
 
 @pytest.mark.parametrize(

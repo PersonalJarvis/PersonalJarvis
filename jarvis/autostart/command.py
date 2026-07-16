@@ -80,14 +80,53 @@ def resolve_launch_spec(cfg: object | None = None) -> LaunchSpec:
     if autostart is not None:
         minimized = bool(getattr(autostart, "start_minimized", False))
 
+    args: tuple[str, ...] = ("-m", LAUNCHER_MODULE)
     if sys.platform == "win32":
         program = _detect_pythonw()
+    elif sys.platform == "darwin":
+        # LaunchServices keeps login startup under the same stable .app/TCC
+        # identity used by Spotlight and manual launches. Never fall back to a
+        # raw interpreter: that would create a second TCC identity and make
+        # grants appear to vanish. Missing bundles fail closed until repaired.
+        bundle = Path.home() / "Applications" / "Personal Jarvis.app"
+        program = "/usr/bin/open"
+        try:
+            from jarvis.setup.macos_app_bundle import (
+                macos_app_bundle_is_launchable,
+                macos_app_bundle_path,
+                macos_launch_services_command,
+            )
+
+            bundle = macos_app_bundle_path()
+            if not macos_app_bundle_is_launchable(bundle):
+                log.warning(
+                    "macOS app bundle is unavailable; autostart will fail closed "
+                    "until desktop integration repairs %s.",
+                    bundle,
+                )
+            command = macos_launch_services_command(
+                bundle,
+                background=minimized,
+                wait_for_exit=True,
+            )
+            program, *launch_args = command
+            args = tuple(launch_args)
+        except Exception as exc:  # noqa: BLE001 - stable-identity fallback
+            log.warning(
+                "Could not validate the macOS app bundle; autostart will use "
+                "the canonical LaunchServices path: %s",
+                exc,
+            )
+            launch_args = ["-W", "-a", str(bundle)]
+            if minimized:
+                launch_args.insert(0, "-g")
+            args = tuple(launch_args)
     else:
         program = sys.executable
 
     return LaunchSpec(
         program=program,
-        args=("-m", LAUNCHER_MODULE),
+        args=args,
         working_dir=str(PROJECT_ROOT),
         minimized=minimized,
     )

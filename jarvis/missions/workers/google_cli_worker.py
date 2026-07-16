@@ -234,7 +234,14 @@ class GoogleCliWorker:
         session_id = resume_session_id or str(uuid.uuid4())
         self.last_session_id = session_id
 
-        if cli is None:
+        # API billing needs no Google CLI. Resolve it before the binary guard so
+        # a headless/API-key-only installation can use the in-process-compatible
+        # Gemini worker instead of failing on an absent ``agy`` executable.
+        use_api_billing = not _oauth_login_present(Path(real_gemini_dir())) and bool(
+            env.get("GEMINI_API_KEY") or env.get("GOOGLE_API_KEY")
+        )
+
+        if cli is None and not use_api_billing:
             yield ClaudeSystemInit(
                 session_id=session_id,
                 model="antigravity/none",
@@ -258,17 +265,39 @@ class GoogleCliWorker:
         # Gemini API key is available, bill per token via the proven Gemini API
         # worker instead — same outcome the user asked for ("bill via the
         # API"), on the tested path rather than coercing agy to use a key.
-        use_api_billing = not _oauth_login_present(Path(real_gemini_dir())) and bool(
-            env.get("GEMINI_API_KEY") or env.get("GOOGLE_API_KEY")
-        )
-        if cli.kind != "agy" or use_api_billing:
-            # The Gemini CLI writes clean output to a pipe — reuse the proven worker.
+        if use_api_billing:
+            from .api_agent_worker import ApiAgentWorker
+
             logger.info(
-                "GoogleCliWorker[%s] -> GeminiWorker (%s)",
+                "GoogleCliWorker[%s] -> ApiAgentWorker(gemini) (API-key billing)",
                 worker_id,
-                "API-key billing, no OAuth login"
-                if use_api_billing
-                else f"resolver kind={cli.kind}",
+            )
+            api_worker = ApiAgentWorker(
+                "gemini", capability_inventory=self.capability_inventory
+            )
+            async for ev in api_worker.spawn(
+                prompt,
+                worktree=worktree,
+                env=env,
+                job=job,
+                worker_id=worker_id,
+                log_dir=log_dir,
+                model=model,
+                max_turns=max_turns,
+                resume_session_id=resume_session_id,
+                _broker_binding=broker_binding,
+                **_unused,
+            ):
+                yield ev
+            self.last_pid = api_worker.last_pid
+            self.last_session_id = api_worker.last_session_id
+            return
+
+        if cli is not None and cli.kind != "agy":
+            logger.info(
+                "GoogleCliWorker[%s] -> GeminiWorker (resolver kind=%s)",
+                worker_id,
+                cli.kind,
             )
             async for ev in self._gemini_fallback.spawn(
                 prompt,

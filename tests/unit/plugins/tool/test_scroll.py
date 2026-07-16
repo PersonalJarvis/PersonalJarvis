@@ -35,9 +35,25 @@ def captured(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, object]]:
     """
     calls: list[dict[str, object]] = []
 
-    def _fake(direction: str, amount: int, x: int | None, y: int | None) -> int:
+    def _fake(
+        direction: str,
+        amount: int,
+        x: int | None,
+        y: int | None,
+        *,
+        expected_window_signature: tuple[object, ...] | None = None,
+    ) -> int:
         notch = _notch_for(direction.lower(), amount)
-        calls.append({"direction": direction, "amount": amount, "x": x, "y": y, "notch": notch})
+        calls.append(
+            {
+                "direction": direction,
+                "amount": amount,
+                "x": x,
+                "y": y,
+                "notch": notch,
+                "expected_window_signature": expected_window_signature,
+            }
+        )
         return notch
 
     monkeypatch.setattr(scroll_mod, "_scroll_windows", _fake)
@@ -135,6 +151,65 @@ def test_notch_helper_direction_contract() -> None:
     assert _notch_for("down", 1) == -120
     assert _notch_for("right", 3) == 360
     assert _notch_for("left", 3) == -360
+
+
+def test_explicit_scroll_target_is_verified_before_wheel(monkeypatch) -> None:
+    from jarvis.plugins.tool.scroll import _scroll_with_verified_target
+
+    calls: list[tuple] = []
+
+    class _Actuator:
+        def move(self, x, y):
+            calls.append(("move", x, y))
+
+        def cursor_pos(self):
+            calls.append(("cursor",))
+            return (640, 480)
+
+        def scroll(self, direction, amount):
+            calls.append(("scroll", direction, amount))
+
+    monkeypatch.setattr("jarvis.cu.geometry.list_monitors", lambda: [])
+
+    _scroll_with_verified_target(_Actuator(), "down", 2, 640, 480)
+
+    assert calls == [
+        ("move", 640, 480),
+        ("cursor",),
+        ("scroll", "down", 2),
+    ]
+
+
+def test_scroll_refuses_wheel_after_foreground_changes_during_move(monkeypatch) -> None:
+    from jarvis.plugins.tool.scroll import _scroll_with_verified_target
+
+    calls: list[tuple] = []
+
+    class _Actuator:
+        def move(self, x, y):
+            calls.append(("move", x, y))
+
+        def cursor_pos(self):
+            calls.append(("cursor",))
+            return (640, 480)
+
+        def scroll(self, direction, amount):
+            calls.append(("scroll", direction, amount))
+
+    monkeypatch.setattr("jarvis.cu.geometry.list_monitors", lambda: [])
+    monkeypatch.setattr("jarvis.cu.target_guard.foreground_matches", lambda _: False)
+
+    with pytest.raises(RuntimeError, match="foreground window changed"):
+        _scroll_with_verified_target(
+            _Actuator(),
+            "down",
+            2,
+            640,
+            480,
+            expected_window_signature=("handle", 7, (0, 0, 800, 600)),
+        )
+
+    assert calls == [("move", 640, 480), ("cursor",)]
 
 
 def test_struct_size_is_40_on_windows() -> None:

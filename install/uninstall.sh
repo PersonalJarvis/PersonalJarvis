@@ -6,10 +6,11 @@
 #   bash ~/.personal-jarvis/install/uninstall.sh --dry-run   # preview only
 #   bash ~/.personal-jarvis/install/uninstall.sh --yes       # no prompt
 #
-# It removes three things a plain folder-delete would miss:
+# It removes four things a plain folder-delete would miss:
 #   1. the install folder (~/.personal-jarvis)
-#   2. the login-autostart entry (~/.config/autostart or ~/Library/LaunchAgents)
-#   3. the API keys saved in the OS keychain (service "personal-jarvis")
+#   2. the macOS app bundle or Linux application-menu entry
+#   3. the login-autostart entry (~/.config/autostart or ~/Library/LaunchAgents)
+#   4. the API keys saved in the OS keychain (service "personal-jarvis")
 #
 # Heavy logic lives in `python -m jarvis --uninstall` (cross-platform, tested).
 # This bootstrap runs that for the autostart + keys (it asks for confirmation),
@@ -44,19 +45,28 @@ if [ ! -d "$INSTALL_DIR" ]; then
     exit 0
 fi
 
-# 1 + 2 + 3: run the tested cleanup (autostart + keys), keeping the folder so we
-#            can delete it ourselves below. --keep-folder means the venv is not
-#            self-deleted while it is still running.
+# 2 + 3 + 4: run the tested cleanup (app registration, autostart, and keys),
+#            keeping the folder so we can delete it below. --keep-folder means
+#            the venv is not self-deleted while it is still running.
 RC=0
 if [ -x "$VENV_PYTHON" ]; then
     if "$VENV_PYTHON" -m jarvis --uninstall --keep-folder "$@"; then RC=0; else RC=$?; fi
 else
     err "Python environment missing — skipping autostart/key cleanup."
-    note "Removing the folder only; saved API keys may remain in your keychain."
+    note "The app registration and folder can still be removed; saved API keys may remain."
     if [ "$DRY_RUN" -eq 1 ]; then exit 0; fi
     printf 'Type '\''yes'\'' to delete %s: ' "$INSTALL_DIR"
     read -r ans
     [ "$ans" = "yes" ] || { note 'Cancelled.'; exit 1; }
+    case "$(uname -s)" in
+        Darwin)
+            rm -rf -- "$HOME/Applications/Personal Jarvis.app"
+            ;;
+        Linux)
+            rm -f -- "${XDG_DATA_HOME:-$HOME/.local/share}/applications/personal-jarvis.desktop"
+            ;;
+    esac
+    ok 'Removed the desktop app registration.'
     RC=0
 fi
 

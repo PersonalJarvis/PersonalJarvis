@@ -11,7 +11,18 @@
  * otherwise a single answer renders as two identical bubbles.
  */
 import { beforeEach, describe, expect, it } from "vitest";
-import { useEventStore, type ChatMessage } from "@/store/events";
+import {
+  initialSectionFromSearch,
+  useEventStore,
+  type ChatMessage,
+} from "@/store/events";
+
+describe("initial section deep links", () => {
+  it("opens Docs when a guide slug is present", () => {
+    expect(initialSectionFromSearch("?doc=voice-conversations")).toBe("docs");
+    expect(initialSectionFromSearch("")).toBe("chats");
+  });
+});
 
 function msg(
   id: string,

@@ -62,6 +62,39 @@ class Grabber(Protocol):
     def __call__(self, bbox: dict[str, int]) -> tuple[tuple[int, int], bytes]: ...
 
 
+def _require_macos_screen_recording_permission() -> None:
+    """Fail closed unless macOS currently permits screen capture.
+
+    The native state is probed before every grab, not only at mission start,
+    because a user can revoke Screen Recording while Jarvis is running.
+    """
+    from jarvis.platform import detect_platform  # noqa: PLC0415
+
+    if detect_platform() != "darwin":
+        return
+
+    from jarvis.platform.permissions import (  # noqa: PLC0415
+        PermissionId,
+        PermissionState,
+        get_system_permission_port,
+    )
+
+    port = get_system_permission_port()
+    if not port.runtime_access_granted(PermissionId.SCREEN_RECORDING):
+        state = port.state(PermissionId.SCREEN_RECORDING)
+        detail = (
+            state.value
+            if state is not PermissionState.GRANTED
+            else "grant belongs to an unstable app identity or needs restart"
+        )
+        raise RuntimeError(
+            "Cannot capture the screen on macOS because Screen Recording "
+            f"permission is not ready ({detail}). Open Personal Jarvis "
+            "> Settings > Permissions (or System Settings > Privacy & "
+            "Security > Screen Recording), grant access, then retry."
+        )
+
+
 def mss_grab(bbox: dict[str, int]) -> tuple[tuple[int, int], bytes]:
     """Default grabber via mss, inside the thread DPI pin."""
     import mss  # noqa: PLC0415
@@ -330,6 +363,7 @@ def capture_stable_frame(
     grab: Grabber | None = None,
     blob_dir: Path | None = None,
     sleep: Callable[[float], None] = time.sleep,
+    capture_guard: Callable[[], bool] | None = None,
 ) -> Frame:
     """Capture the monitor, waiting briefly for the UI to settle.
 
@@ -344,15 +378,30 @@ def capture_stable_frame(
     plus the encoded image size: the one central translation.
     """
     grabber = grab or grabber_for(monitor)
+
+    def guarded_grab() -> tuple[tuple[int, int], bytes]:
+        if capture_guard is not None and not capture_guard():
+            raise RuntimeError(
+                "foreground window changed before screen capture",
+            )
+        raw = grabber(monitor.bbox)
+        if capture_guard is not None and not capture_guard():
+            raise RuntimeError(
+                "foreground window changed during screen capture",
+            )
+        return raw
+
     deadline = time.monotonic() + max(0.0, stability_timeout_s)
-    current = grabber(monitor.bbox)
+    _require_macos_screen_recording_permission()
+    current = guarded_grab()
     stable = False
     while True:
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
         sleep(min(max(0.01, stability_interval_s), remaining))
-        nxt = grabber(monitor.bbox)
+        _require_macos_screen_recording_permission()
+        nxt = guarded_grab()
         if not frames_differ(current, nxt):
             current = nxt
             stable = True
@@ -403,11 +452,15 @@ def grab_region(
 ) -> tuple[tuple[int, int], bytes] | None:
     """One raw region grab for pre/post verification diffs.
 
-    Returns ``None`` on any failure (headless, transient GDI error) so
-    verification degrades to "cannot tell" instead of killing the action.
+    Returns ``None`` on capture failures (headless, transient GDI error, or a
+    revoked macOS grant) so pixel-effect verification can report "cannot
+    tell". The Computer-Use dispatcher independently rechecks Screen Recording
+    immediately before every action, so this degradation cannot permit blind
+    input after a revoked grant.
     """
     grabber = grab or mss_grab
     try:
+        _require_macos_screen_recording_permission()
         return grabber(bbox)
     except Exception:  # noqa: BLE001
         logger.debug("[cu] region grab failed (non-fatal)", exc_info=True)

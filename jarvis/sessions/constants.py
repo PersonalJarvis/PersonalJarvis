@@ -82,6 +82,26 @@ is intentionally stable for tests that assert against
 ``typing.get_args(HangupReason)``."""
 
 # ----------------------------------------------------------------------
+# Voice-session engine mode
+# ----------------------------------------------------------------------
+
+VOICE_MODE_UNKNOWN: Final[str] = "unknown"
+"""No persisted runtime evidence identifies the session's voice engine."""
+
+VOICE_MODE_PIPELINE: Final[str] = "pipeline"
+"""Classic STT -> Brain -> TTS voice pipeline."""
+
+VOICE_MODE_REALTIME: Final[str] = "realtime"
+"""Duplex realtime-provider voice session."""
+
+VOICE_MODES: Final[tuple[str, ...]] = (
+    VOICE_MODE_UNKNOWN,
+    VOICE_MODE_PIPELINE,
+    VOICE_MODE_REALTIME,
+)
+"""Canonical voice-mode values. Persistence remains open to future strings."""
+
+# ----------------------------------------------------------------------
 # Spoken-track kinds (SpeechSpoken.spoken_kind)
 # ----------------------------------------------------------------------
 #
@@ -191,4 +211,8 @@ __all__ = [
     "SPOKEN_KIND_UNAVAILABLE",
     "SPOKEN_KIND_WITHHELD",
     "SPOKEN_KINDS",
+    "VOICE_MODES",
+    "VOICE_MODE_PIPELINE",
+    "VOICE_MODE_REALTIME",
+    "VOICE_MODE_UNKNOWN",
 ]

@@ -65,7 +65,10 @@ export function SocialsView() {
       <div className="mx-auto w-full max-w-4xl p-6">
         {loading ? (
           <div className="flex items-center justify-center py-20 text-muted-foreground">
-            <Loader2 className="h-5 w-5 animate-spin" />
+            <Loader2
+              className="h-5 w-5 animate-spin motion-reduce:animate-none"
+              aria-hidden="true"
+            />
           </div>
         ) : error ? (
           <p className="py-20 text-center text-sm text-destructive">{error}</p>

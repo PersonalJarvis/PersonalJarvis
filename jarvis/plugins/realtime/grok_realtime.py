@@ -26,7 +26,7 @@ _OUTPUT_RATE = 24_000
 def _grok_session_payload(cfg: Any) -> dict[str, Any]:
     """Return xAI's OpenAI-compatible realtime session configuration."""
     payload = _session_payload(cfg)
-    payload["audio"]["input"]["transcription"] = {"model": "grok-transcribe"}
+    payload["audio"]["input"]["transcription"]["model"] = "grok-transcribe"
     return payload
 
 
@@ -38,6 +38,7 @@ class GrokRealtimeProvider:
     input_sample_rate = _INPUT_RATE
     output_sample_rate = _OUTPUT_RATE
     credential_candidates = (
+        ("realtime_grok_api_key", "JARVIS_REALTIME_GROK_API_KEY"),
         ("grok_api_key", "GROK_API_KEY"),
         ("xai_api_key", "XAI_API_KEY"),
     )
@@ -94,4 +95,3 @@ class GrokRealtimeProvider:
             await session.close()
             raise
         return session
-

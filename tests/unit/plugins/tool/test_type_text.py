@@ -78,6 +78,32 @@ async def test_empty_text_is_rejected(monkeypatch):
     assert res.success is False
 
 
+async def test_screenshot_bound_typing_refuses_changed_foreground(monkeypatch):
+    typed: list[str] = []
+
+    class _Actuator:
+        name = "fake-macos"
+
+        def type_text(self, text, *, delay_s=0.02):
+            typed.append(text)
+
+    monkeypatch.setattr(tt.os, "name", "posix")
+    monkeypatch.setattr("jarvis.cu.actuate.get_actuator", lambda: _Actuator())
+    monkeypatch.setattr("jarvis.cu.target_guard.foreground_matches", lambda _: False)
+
+    result = await TypeTextTool().execute(
+        {
+            "text": "secret target text",
+            "_expected_window_signature": ("handle", 7, (0, 0, 800, 600)),
+        },
+        _Ctx(),
+    )
+
+    assert result.success is False
+    assert "foreground window changed" in (result.error or "")
+    assert typed == []
+
+
 # ---------------------------------------------------------------------------
 # RC#1 regression (Google-Flights typing bug, 2026-06-22): the SendInput INPUT
 # union must be sized to its LARGEST member (MOUSEINPUT). If it only carries

@@ -26,6 +26,7 @@ from jarvis.safety.tool_executor import VOICE_CONFIRM_SENTINEL, ToolExecutor
 
 from .iteration_budget import IterationBudget
 from .streaming import StreamingAggregate, aggregate, aggregate_with_consumer
+from .tool_call_recovery import extract_leaked_tool_calls
 
 # Central backstop for tool-output bloat: no tool result may exceed this many
 # chars in the tool-role message fed back to the brain. Individual tools should
@@ -45,6 +46,15 @@ _DEADLINE_FINAL_DIRECTIVE = (
     "not call any more tools."
 )
 
+# A provider can repeat the exact same text-serialized call after receiving its
+# result. The action must remain exactly-once, but the turn must not end on an
+# empty ``tool_use`` round. Force one tool-less synthesis pass instead.
+_DUPLICATE_CALL_FINAL_DIRECTIVE = (
+    "[duplicate tool call suppressed] The exact requested tool call already "
+    "ran and its result is available above. Answer the user NOW from that "
+    "evidence. Do not call any more tools."
+)
+
 
 def _cap_tool_result_json(serialized: str) -> str:
     """Truncate an over-long serialized tool result, leaving an honest marker so
@@ -55,6 +65,15 @@ def _cap_tool_result_json(serialized: str) -> str:
     return (
         f"{kept}… [truncated: tool output was {len(serialized)} chars, "
         f"capped at {_MAX_TOOL_RESULT_CHARS}]"
+    )
+
+
+def _tool_call_signature(call: dict[str, Any]) -> tuple[str, str]:
+    """Canonical name/arguments fingerprint for same-round duplicate calls."""
+    arguments = call.get("input", {})
+    return (
+        str(call.get("name") or ""),
+        json.dumps(arguments, sort_keys=True, separators=(",", ":"), default=str),
     )
 
 
@@ -507,6 +526,7 @@ class ToolUseLoop:
         ack_attempted = False
         loop_started = time.monotonic()
         deadline_forced = False
+        seen_call_ids: set[str] = set()
 
         def _progress() -> None:
             # Stall-timeout heartbeat (see ``on_progress`` in the docstring).
@@ -542,6 +562,50 @@ class ToolUseLoop:
             # execution + next round so a slow-but-working turn is not cut off.
             _progress()
 
+            # Some providers occasionally serialize a function call into the
+            # response text instead of emitting a structured tool-call delta.
+            # Rehydrate only explicit call envelopes, then continue through the
+            # normal executor, risk, confirmation, telemetry, and synthesis
+            # path. This is shared by native, plugin, skill, and MCP tools.
+            if not deadline_forced and tools_payload:
+                recovered_calls = extract_leaked_tool_calls(agg.text)
+                if recovered_calls:
+                    structured_signatures = {
+                        _tool_call_signature(call) for call in agg.tool_calls
+                    }
+                    recovered_calls = [
+                        call
+                        for call in recovered_calls
+                        if _tool_call_signature(call) not in structured_signatures
+                    ]
+                    log.warning(
+                        "tool_use_loop: recovered %d text-serialized tool call(s): %s",
+                        len(recovered_calls),
+                        ", ".join(call["name"] for call in recovered_calls),
+                    )
+                    agg.tool_calls.extend(recovered_calls)
+                    agg.text = ""
+                    if agg.tool_calls:
+                        agg.finish_reason = "tool_use"
+
+            duplicate_only_round = False
+            if agg.tool_calls:
+                had_tool_calls = True
+                unique_calls: list[dict[str, Any]] = []
+                for call in agg.tool_calls:
+                    call_id = str(call.get("id") or "")
+                    if call_id and call_id in seen_call_ids:
+                        log.warning(
+                            "tool_use_loop: skipped duplicate tool-call id %s",
+                            call_id,
+                        )
+                        continue
+                    if call_id:
+                        seen_call_ids.add(call_id)
+                    unique_calls.append(call)
+                agg.tool_calls = unique_calls
+                duplicate_only_round = had_tool_calls and not unique_calls
+
             # Accumulate final text
             if agg.text:
                 final_agg.text += agg.text
@@ -554,6 +618,22 @@ class ToolUseLoop:
                 tokens_in=agg.usage.get("input_tokens", 0),
                 tokens_out=agg.usage.get("output_tokens", 0),
             )
+
+            # A repeated call was already executed in an earlier model round.
+            # Suppressing it is correct, but treating the now-empty call list
+            # as a completed answer would return silence. Give the provider one
+            # final tool-less round over the existing result instead.
+            if duplicate_only_round and not deadline_forced:
+                log.warning(
+                    "tool_use_loop: duplicate-only round; forcing final "
+                    "tool-less synthesis"
+                )
+                deadline_forced = True
+                tools_payload = []
+                current_messages.append(
+                    BrainMessage(role="user", content=_DUPLICATE_CALL_FINAL_DIRECTIVE)
+                )
+                continue
 
             # No tool calls → done
             if not agg.tool_calls:

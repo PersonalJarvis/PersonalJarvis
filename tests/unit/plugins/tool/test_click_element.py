@@ -7,7 +7,6 @@ it would have clicked.
 """
 from __future__ import annotations
 
-from typing import Any
 from uuid import uuid4
 
 import pytest
@@ -43,12 +42,26 @@ class _FakeVisionSource:
         )
 
 
+@pytest.fixture(autouse=True)
+def stable_foreground(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        "jarvis.plugins.tool.click_element._foreground_window_signature",
+        lambda: ("handle", 11, (0, 0, 800, 600)),
+    )
+
+
 @pytest.fixture
 def recorder(monkeypatch: pytest.MonkeyPatch) -> list[tuple[int, int, str, bool]]:
     """Patch _click_windows so the test runs cross-platform and records calls."""
     calls: list[tuple[int, int, str, bool]] = []
 
-    def _record(x: int, y: int, button: str, double: bool) -> None:
+    def _record(
+        x: int,
+        y: int,
+        button: str,
+        double: bool,
+        **_kwargs,
+    ) -> None:
         calls.append((x, y, button, double))
 
     monkeypatch.setattr(
@@ -164,3 +177,52 @@ async def test_posix_unavailable_backend_reports_actionable_message(
 
     assert result.success is False
     assert "desktop extras" in (result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_refuses_engine_capture_from_a_different_foreground_window(
+    monkeypatch: pytest.MonkeyPatch,
+    recorder: list[tuple[int, int, str, bool]],
+) -> None:
+    current = ("handle", 22, (0, 0, 800, 600))
+    captured = ("handle", 11, (0, 0, 800, 600))
+    monkeypatch.setattr(
+        "jarvis.plugins.tool.click_element._foreground_window_signature",
+        lambda: current,
+    )
+    tool = ClickElementTool(vision_source=_FakeVisionSource((
+        UIANode(role="Button", name="Save", bounds=(10, 20, 100, 40)),
+    )))
+
+    result = await tool.execute(
+        {"name": "save", "_expected_window_signature": captured},
+        _ctx(),
+    )
+
+    assert result.success is False
+    assert "foreground window changed" in (result.error or "")
+    assert recorder == []
+
+
+@pytest.mark.asyncio
+async def test_refuses_switch_during_async_ui_tree_observation(
+    monkeypatch: pytest.MonkeyPatch,
+    recorder: list[tuple[int, int, str, bool]],
+) -> None:
+    signatures = iter((
+        ("handle", 11, (0, 0, 800, 600)),
+        ("handle", 22, (0, 0, 800, 600)),
+    ))
+    monkeypatch.setattr(
+        "jarvis.plugins.tool.click_element._foreground_window_signature",
+        lambda: next(signatures),
+    )
+    tool = ClickElementTool(vision_source=_FakeVisionSource((
+        UIANode(role="Button", name="Save", bounds=(10, 20, 100, 40)),
+    )))
+
+    result = await tool.execute({"name": "save"}, _ctx())
+
+    assert result.success is False
+    assert "while its UI tree was being observed" in (result.error or "")
+    assert recorder == []

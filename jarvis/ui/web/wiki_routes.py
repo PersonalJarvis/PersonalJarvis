@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from datetime import UTC
 from pathlib import Path
 from typing import Any
@@ -45,7 +46,10 @@ from jarvis.memory.wiki.ingest_service import (
     MIN_INGEST_CHARS,
     ingest_wiki_text,
 )
-from jarvis.memory.wiki.integration import get_running_curator
+from jarvis.memory.wiki.integration import (
+    get_running_capture_runtime,
+    get_running_curator,
+)
 from jarvis.memory.wiki.page import MarkdownPageRepository
 from jarvis.memory.wiki.protocols import WikiPage
 from jarvis.memory.wiki.search import VaultSearch
@@ -95,6 +99,14 @@ class WikiIngestResponse(BaseModel):
     failed_validation: int
     blocked_sensitive_content: int
     pages_touched: list[str]
+
+
+class WikiBackfillRequest(BaseModel):
+    """Bounded, evidence-only Realtime session review request."""
+
+    days: int = Field(default=2, ge=1, le=30)
+    max_sessions: int = Field(default=20, ge=1, le=100)
+    dry_run: bool = True
 
 
 # ----------------------------------------------------------------------
@@ -536,6 +548,146 @@ async def ingest_wiki(payload: WikiIngestRequest) -> WikiIngestResponse:
     )
 
 
+@router.post(
+    "/backfill",
+    openapi_extra={
+        "x-jarvis-dangerous": True,
+        "x-jarvis-risk-tier": "ask",
+        # The route performs bounded Stage-1 and Stage-2 provider calls inline.
+        # Auto-generated CLI clients consume this instead of their 30s default.
+        "x-jarvis-timeout-seconds": 21_600,
+    },
+)
+async def backfill_wiki(
+    request: Request,
+    payload: WikiBackfillRequest,
+) -> dict[str, Any]:
+    """Review recent persisted Realtime sessions through the live Wiki pipeline."""
+    from jarvis.memory.wiki.backfill import backfill_realtime_sessions
+
+    runtime = get_running_capture_runtime()
+    store = getattr(request.app.state, "session_store", None)
+    if runtime is None:
+        raise HTTPException(status_code=503, detail="wiki capture runtime unavailable")
+    if store is None:
+        raise HTTPException(status_code=503, detail="voice session store unavailable")
+    if not payload.dry_run and runtime.scheduler is None:
+        raise HTTPException(status_code=503, detail="wiki Stage-2 consolidator unavailable")
+
+    result = await backfill_realtime_sessions(
+        store=store,
+        extractor=runtime.extractor,
+        days=payload.days,
+        max_sessions=payload.max_sessions,
+        dry_run=payload.dry_run,
+    )
+    response: dict[str, Any] = {
+        "ok": True,
+        **result.as_dict(),
+        "consolidation_runs": 0,
+        "consolidation_labels": [],
+        "consolidation_skip_reason": "",
+        "journal_backlog": runtime.journal.backlog_count(),
+    }
+    if payload.dry_run:
+        return response
+
+    review_keys = tuple(getattr(result, "review_keys", ()))
+    attempted_keys = tuple(getattr(result, "attempted_review_keys", ()))
+    attempted_key_set = set(attempted_keys)
+    preexisting_keys = tuple(key for key in review_keys if key not in attempted_key_set)
+    stage2 = runtime.journal.capture_decision_summary(review_keys)
+    preexisting_before = runtime.journal.capture_decision_summary(preexisting_keys)
+    consolidation_runs = 0
+    labels: list[str] = []
+    skip_reason = ""
+    from jarvis.memory.wiki.scheduler import TriggerSource
+
+    # Same-target candidates are deliberately serialized so each judge sees
+    # the preceding landed fact. Bound the work by the selected candidate
+    # count rather than a fixed 120-pass ceiling that could strand a large but
+    # valid backfill.
+    max_passes = min(2_000, max(1, int(stage2.get("candidate_rows", 0)) + 10))
+    for _ in range(max_passes):
+        if int(stage2.get("pending", 0)) <= 0:
+            break
+        scheduler_result = await runtime.scheduler.trigger(
+            TriggerSource.JOURNAL,
+            review_keys=review_keys,
+        )
+        label = str(getattr(scheduler_result, "curator_output_label", "") or "")
+        triggered = bool(getattr(scheduler_result, "triggered", False))
+        if triggered:
+            consolidation_runs += 1
+            labels.append(label)
+        else:
+            skip_reason = str(getattr(scheduler_result, "skip_reason", "unknown"))
+            break
+        stage2 = runtime.journal.capture_decision_summary(review_keys)
+        if label in {"judge-unavailable", "judge-truncated"} or label.startswith(
+            "journal-transient:"
+        ):
+            skip_reason = label
+            break
+
+    final_backlog = runtime.journal.backlog_count()
+    stage2 = runtime.journal.capture_decision_summary(review_keys)
+    remaining = int(stage2.get("pending", 0))
+    attempted_final = runtime.journal.capture_decision_summary(attempted_keys)
+    preexisting_final = runtime.journal.capture_decision_summary(preexisting_keys)
+    write_decisions = ("add", "update", "invalidate")
+    accepted_writes = sum(
+        int(attempted_final.get(decision, 0))
+        + max(
+            0,
+            int(preexisting_final.get(decision, 0))
+            - int(preexisting_before.get(decision, 0)),
+        )
+        for decision in write_decisions
+    )
+    response.update(
+        {
+            "consolidation_runs": consolidation_runs,
+            "consolidation_labels": labels,
+            "consolidation_skip_reason": skip_reason,
+            "journal_backlog": final_backlog,
+            "stage2": stage2,
+            "accepted_writes": accepted_writes,
+        }
+    )
+    extraction_failed = int(getattr(result, "sessions_failed", 0))
+    extraction_in_progress = int(getattr(result, "sessions_in_progress", 0))
+    rejected = int(stage2.get("rejected", 0))
+    skipped = int(stage2.get("skipped", 0))
+    if (
+        remaining > 0
+        or skip_reason
+        or extraction_failed
+        or extraction_in_progress
+        or rejected
+        or skipped
+    ):
+        response["ok"] = False
+        if extraction_failed:
+            code = "wiki-backfill-extraction-failed"
+        elif extraction_in_progress and not (remaining > 0 or skip_reason):
+            code = "wiki-backfill-already-running"
+        elif rejected:
+            code = "wiki-backfill-stage2-rejected"
+        elif skipped:
+            code = "wiki-backfill-stage2-skipped"
+        else:
+            code = "wiki-backfill-stage2-incomplete"
+        status_code = 422 if code == "wiki-backfill-stage2-rejected" else 503
+        if code == "wiki-backfill-already-running":
+            status_code = 409
+        raise HTTPException(
+            status_code=status_code,
+            detail={"code": code, **response},
+        )
+    return response
+
+
 # ----------------------------------------------------------------------
 # Internals
 # ----------------------------------------------------------------------
@@ -771,9 +923,30 @@ async def wiki_health(request: Request) -> dict[str, Any]:
     db_path = resolve_wiki_db_path(data_dir)
 
     def _persistent_state() -> dict[str, Any]:
+        capture_funnel = {
+            "window_hours": 24,
+            "total": 0,
+            "started": 0,
+            "filtered": 0,
+            "empty": 0,
+            "candidates": 0,
+            "failed": 0,
+            "facts": 0,
+            "sessions_swept": 0,
+            "stage2_pending": 0,
+            "stage2_add": 0,
+            "stage2_update": 0,
+            "stage2_noop": 0,
+            "stage2_invalidate": 0,
+            "stage2_rejected": 0,
+            "stage2_skipped": 0,
+            "writes": 0,
+        }
         state: dict[str, Any] = {
             "journal_backlog": 0,
             "last_write": None,
+            "capture_funnel": capture_funnel,
+            "capture_error": None,
         }
         if not db_path.exists():
             return state
@@ -800,8 +973,81 @@ async def wiki_health(request: Request) -> dict[str, Any]:
                         "error": None,
                         "source": str(row[2]),
                     }
+                since_ms = int(time.time() * 1000) - 24 * 60 * 60 * 1000
+                audit = conn.execute(
+                    """
+                    SELECT COUNT(*),
+                      SUM(CASE WHEN status = 'started' THEN 1 ELSE 0 END),
+                      SUM(CASE WHEN status = 'filtered' THEN 1 ELSE 0 END),
+                      SUM(CASE WHEN status = 'empty' THEN 1 ELSE 0 END),
+                      SUM(CASE WHEN status = 'candidates' THEN 1 ELSE 0 END),
+                      SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END),
+                      COALESCE(SUM(candidate_count), 0),
+                      COUNT(DISTINCT CASE
+                        WHEN REPLACE(source_kind, '_', '-') = 'session-sweep'
+                             AND session_id != '' THEN session_id
+                        ELSE NULL END)
+                    FROM wiki_extraction_audit WHERE updated_ms >= ?
+                    """,
+                    (since_ms,),
+                ).fetchone()
+                if audit is not None:
+                    keys = (
+                        "total",
+                        "started",
+                        "filtered",
+                        "empty",
+                        "candidates",
+                        "failed",
+                        "facts",
+                        "sessions_swept",
+                    )
+                    state["capture_funnel"] = {
+                        **capture_funnel,
+                        "window_hours": 24,
+                        **{
+                            key: int(value or 0)
+                            for key, value in zip(keys, audit, strict=True)
+                        },
+                    }
+                decisions = conn.execute(
+                    """
+                    SELECT
+                      SUM(CASE WHEN j.status = 'pending' THEN 1 ELSE 0 END),
+                      SUM(CASE WHEN j.status = 'consolidated' AND j.decision = 'add'
+                               THEN 1 ELSE 0 END),
+                      SUM(CASE WHEN j.status = 'consolidated' AND j.decision = 'update'
+                               THEN 1 ELSE 0 END),
+                      SUM(CASE WHEN j.status = 'consolidated' AND j.decision = 'noop'
+                               THEN 1 ELSE 0 END),
+                      SUM(CASE WHEN j.status = 'consolidated' AND j.decision = 'invalidate'
+                               THEN 1 ELSE 0 END),
+                      SUM(CASE WHEN j.status = 'rejected' THEN 1 ELSE 0 END),
+                      SUM(CASE WHEN j.status = 'skipped' THEN 1 ELSE 0 END)
+                    FROM wiki_candidate_journal AS j
+                    JOIN wiki_candidate_capture AS c ON c.candidate_id = j.id
+                    WHERE j.created_ms >= ?
+                    """,
+                    (since_ms,),
+                ).fetchone()
+                if decisions is not None:
+                    decision_keys = (
+                        "stage2_pending",
+                        "stage2_add",
+                        "stage2_update",
+                        "stage2_noop",
+                        "stage2_invalidate",
+                        "stage2_rejected",
+                        "stage2_skipped",
+                    )
+                    for key, value in zip(decision_keys, decisions, strict=True):
+                        state["capture_funnel"][key] = int(value or 0)
+                    state["capture_funnel"]["writes"] = sum(
+                        state["capture_funnel"][key]
+                        for key in ("stage2_add", "stage2_update", "stage2_invalidate")
+                    )
             except sqlite3.OperationalError:
-                pass
+                state["capture_error"] = "capture_store_unavailable"
         finally:
             conn.close()
         return state
@@ -813,6 +1059,8 @@ async def wiki_health(request: Request) -> dict[str, Any]:
     if snapshot["last_write"] is None and persistent["last_write"] is not None:
         snapshot["last_write"] = persistent["last_write"]
     snapshot["journal_backlog"] = persistent["journal_backlog"]
+    snapshot["capture_funnel"] = persistent["capture_funnel"]
+    snapshot["capture_error"] = persistent["capture_error"]
     snapshot.update(index_health)
 
     last_index = snapshot.get("last_index")

@@ -24,7 +24,9 @@ The five-step pipeline (executed inside one ``apply()`` call, in order):
    :meth:`PageRepository.parse`. Pages that come back with
    ``is_schema_valid=False`` (or that raise inside ``parse``) are rolled
    back individually from the snapshot taken in step 2. The other
-   pages stay applied — partial success is the expected mode.
+   pages stay applied — partial success is the default mode. Callers that
+   pass ``all_or_nothing=True`` instead get call-scoped atomicity: any
+   preflight refusal or post-write failure leaves every page unchanged.
 5. **Return** — :class:`WriteResult` summarising what landed, what was
    skipped, what was rolled back, plus the absolute path of the
    snapshot for forensics.
@@ -37,6 +39,7 @@ sentinel file.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import os
 import sqlite3
@@ -48,6 +51,7 @@ from pathlib import Path
 
 from .backup import (
     DEFAULT_MAX_BACKUPS,
+    EXCLUDED_VAULT_DIRS,
     BackupError,
     BackupManager,
 )
@@ -80,7 +84,18 @@ class _PendingWrite:
     arc_relpath: str                        # vault-relative POSIX path for restore()
     rename_from_path: Path | None
     rename_from_arc: str | None             # vault-relative POSIX path of the source
+    rename_from_pre_existed: bool
     pre_existed: bool                       # was the target file on disk before this call?
+
+
+@dataclass(frozen=True, slots=True)
+class _FileFingerprint:
+    """Identity of a confirmed writer-authored file state."""
+
+    size: int
+    mtime_ns: int
+    ctime_ns: int
+    digest: bytes
 
 
 class AtomicWriter:
@@ -130,6 +145,10 @@ class AtomicWriter:
         else:
             self._backups = backup_manager
         self._serial_lock = asyncio.Lock()
+        # The mtime guard must not mistake this writer's own successful write
+        # for an in-progress external edit on the next apply(). A fingerprint
+        # is retained only for schema-valid writes and must match exactly.
+        self._self_write_fingerprints: dict[Path, _FileFingerprint] = {}
         # Lazily opened sqlite3 connection for FTS5 upsert after writes.
         # check_same_thread=False: apply() runs in asyncio.to_thread, which
         # may use a different OS thread on each call.
@@ -152,16 +171,23 @@ class AtomicWriter:
         updates: list[PageUpdate],
         *,
         repo: PageRepository,
+        all_or_nothing: bool = False,
     ) -> WriteResult:
         """Run the five-step pipeline once for ``updates``.
 
         Returns a :class:`WriteResult` with three disjoint path sets:
         ``applied``, ``skipped_due_to_recent_edit``, ``failed_validation``.
         A single path appears in exactly one set. The ``backup_path``
-        field is the snapshot used for any rollback that fired.
+        field is the snapshot used for any rollback that fired. With
+        ``all_or_nothing=True``, the entire list is one transaction.
         """
         async with self._serial_lock:
-            return await asyncio.to_thread(self._apply_sync, updates, repo)
+            return await asyncio.to_thread(
+                self._apply_sync,
+                updates,
+                repo,
+                all_or_nothing,
+            )
 
     # ------------------------------------------------------------------
     # Pipeline (sync — runs in a worker thread to avoid blocking asyncio)
@@ -171,6 +197,7 @@ class AtomicWriter:
         self,
         updates: list[PageUpdate],
         repo: PageRepository,
+        all_or_nothing: bool = False,
     ) -> WriteResult:
         # ----- input normalisation ---------------------------------------
         # Defensive: deduplicate by target path, last-write-wins, and
@@ -257,8 +284,13 @@ class AtomicWriter:
                     recent = True
                     break
                 if (now - mtime) < self._lock_seconds:
+                    if self._matches_confirmed_self_write(candidate):
+                        continue
                     recent = True
                     break
+                # Once the normal lock window has elapsed, the fingerprint is
+                # no longer needed and must not mask a later external edit.
+                self._self_write_fingerprints.pop(candidate, None)
 
             if recent:
                 skipped.append(target)
@@ -272,8 +304,23 @@ class AtomicWriter:
                     arc_relpath=arc_relpath,
                     rename_from_path=rename_from_path,
                     rename_from_arc=rename_from_arc,
+                    rename_from_pre_existed=(
+                        rename_from_path is not None and rename_from_path.exists()
+                    ),
                     pre_existed=pre_existed,
                 )
+            )
+
+        # A transactional call never applies only the safe subset. Any
+        # deterministic preflight refusal aborts before the snapshot and before
+        # the first filesystem mutation.
+        if all_or_nothing and (skipped or blocked):
+            return WriteResult(
+                applied=[],
+                skipped_due_to_recent_edit=skipped,
+                failed_validation=[],
+                backup_path=Path(),
+                blocked_pii=blocked,
             )
 
         # Nothing survived the lock — no backup, no rotation, no writes.
@@ -287,6 +334,9 @@ class AtomicWriter:
                 backup_path=Path(),
                 blocked_pii=blocked,
             )
+
+        if all_or_nothing:
+            self._validate_transaction_restore_surface(pending)
 
         # ----- Step 2: single backup snapshot ----------------------------
         try:
@@ -304,6 +354,8 @@ class AtomicWriter:
         # Pages that left their indexed path and must be purged from FTS:
         # archived originals (moved into _archive/) collected here.
         archived_paths: list[Path] = []
+        mutated: list[_PendingWrite] = []
+        write_failed = False
         for pend in pending:
             self._assert_same_drive(pend.target_path)
             try:
@@ -320,22 +372,38 @@ class AtomicWriter:
                     pend.target_path,
                     exc,
                 )
+                if all_or_nothing:
+                    write_failed = True
+                    break
                 continue
+            mutated.append(pend)
             applied.append(pend.target_path)
             # Telemetry: count creates vs updates. ``rename`` and
             # ``archive`` collapse into the bucket that matches their
             # pre-existence on disk (the archive case is rare and the
             # rename case is conceptually an update of the new path).
-            if pend.pre_existed:
-                telemetry.inc("wiki_pages_updated")
-            else:
-                telemetry.inc("wiki_pages_created")
+            if not all_or_nothing:
+                if pend.pre_existed:
+                    telemetry.inc("wiki_pages_updated")
+                else:
+                    telemetry.inc("wiki_pages_created")
             if pend.update.operation != "archive":
                 written_paths.append(pend.target_path)
             else:
                 archived_paths.append(pend.target_path)
             if pend.rename_from_path is not None:
                 handled_renames.append((pend.rename_from_path, pend.target_path))
+
+        if all_or_nothing and write_failed:
+            self._rollback_transaction(mutated, backup_path)
+            self._rotate_backups()
+            return WriteResult(
+                applied=[],
+                skipped_due_to_recent_edit=skipped,
+                failed_validation=[],
+                backup_path=backup_path,
+                blocked_pii=blocked,
+            )
 
         # ----- Step 4: validate written pages via repo.parse -------------
         failed_validation: list[Path] = []
@@ -347,6 +415,9 @@ class AtomicWriter:
                 raw = path.read_text(encoding="utf-8")
             except OSError as exc:
                 log.error("atomic_writer: post-write read failed for %s — %s", path, exc)
+                if all_or_nothing:
+                    failed_validation.append(path)
+                    break
                 self._restore_from_backup(
                     path,
                     backup_path,
@@ -359,6 +430,9 @@ class AtomicWriter:
             is_valid = self._validate_via_repo(repo, raw, path)
 
             if not is_valid:
+                if all_or_nothing:
+                    failed_validation.append(path)
+                    break
                 # Pull this single page back from the snapshot. If the
                 # page is brand new (no archive member), remove it from
                 # disk entirely. Other already-applied pages stay.
@@ -370,11 +444,28 @@ class AtomicWriter:
                 applied.remove(path)
                 failed_validation.append(path)
 
+        if all_or_nothing and failed_validation:
+            self._rollback_transaction(mutated, backup_path)
+            self._rotate_backups()
+            return WriteResult(
+                applied=[],
+                skipped_due_to_recent_edit=skipped,
+                failed_validation=failed_validation,
+                backup_path=backup_path,
+                blocked_pii=blocked,
+            )
+
+        if all_or_nothing:
+            # Transaction telemetry describes durable commits, never temporary
+            # writes that were subsequently rolled back.
+            for pend in mutated:
+                if pend.pre_existed:
+                    telemetry.inc("wiki_pages_updated")
+                else:
+                    telemetry.inc("wiki_pages_created")
+
         # ----- Step 5: backup rotation (hygiene; failures never raise) ---
-        try:
-            self._backups.rotate()
-        except OSError as exc:  # pragma: no cover — defensive only
-            log.warning("atomic_writer: backup rotation failed: %s", exc)
+        self._rotate_backups()
 
         # ----- Step 6: FTS5 index maintenance (incremental, synchronous) -
         # Runs inside _serial_lock (inherited from the to_thread call in
@@ -397,6 +488,28 @@ class AtomicWriter:
         if purge_targets:
             self._fts_remove_paths(purge_targets)
 
+        # Commit self-write fingerprints only after on-disk validation. This
+        # lets a subsequent curator pass update the same page immediately,
+        # while any external content or metadata change still fails closed
+        # through the ordinary recent-edit guard.
+        applied_set = set(applied)
+        for pend in pending:
+            if pend.target_path not in applied_set:
+                continue
+            if pend.update.operation == "archive":
+                self._self_write_fingerprints.pop(pend.target_path, None)
+                continue
+            fingerprint = self._fingerprint(pend.target_path)
+            expected_digest = hashlib.sha256(
+                pend.update.new_body.encode("utf-8")
+            ).digest()
+            if fingerprint is not None and fingerprint.digest == expected_digest:
+                self._self_write_fingerprints[pend.target_path] = fingerprint
+            else:
+                self._self_write_fingerprints.pop(pend.target_path, None)
+            if pend.rename_from_path is not None:
+                self._self_write_fingerprints.pop(pend.rename_from_path, None)
+
         return WriteResult(
             applied=applied,
             skipped_due_to_recent_edit=skipped,
@@ -408,6 +521,170 @@ class AtomicWriter:
     # ------------------------------------------------------------------
     # Step helpers
     # ------------------------------------------------------------------
+
+    def _matches_confirmed_self_write(self, path: Path) -> bool:
+        """Return whether ``path`` still has its last confirmed self-write state."""
+        expected = self._self_write_fingerprints.get(path)
+        if expected is None:
+            return False
+        current = self._fingerprint(path)
+        if current == expected:
+            return True
+        # A mismatch is evidence of an intervening external change. Forget
+        # the stale exemption so every later check remains fail-closed.
+        self._self_write_fingerprints.pop(path, None)
+        return False
+
+    @staticmethod
+    def _fingerprint(path: Path) -> _FileFingerprint | None:
+        """Read a stable content-and-stat fingerprint, or fail closed."""
+        try:
+            before = path.stat()
+            content = path.read_bytes()
+            after = path.stat()
+        except OSError:
+            return None
+        before_state = (before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+        after_state = (after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+        if before_state != after_state or len(content) != after.st_size:
+            return None
+        return _FileFingerprint(
+            size=after.st_size,
+            mtime_ns=after.st_mtime_ns,
+            ctime_ns=after.st_ctime_ns,
+            digest=hashlib.sha256(content).digest(),
+        )
+
+    def _validate_transaction_restore_surface(
+        self,
+        pending: list[_PendingWrite],
+    ) -> None:
+        """Fail before writing when a transaction could not be fully restored.
+
+        The ordinary writer permits independent best-effort page outcomes. A
+        transaction has a stronger contract, so every pre-existing path it may
+        mutate must be present in the vault snapshot. Overlapping operations
+        are refused because their rollback ordering would otherwise be
+        ambiguous. Archive destinations must be new: ``_archive`` is excluded
+        from snapshots and an existing destination cannot be reconstructed.
+        """
+        claimed: set[Path] = set()
+        for pend in pending:
+            mutation_paths = [pend.target_path]
+            if pend.rename_from_path is not None:
+                mutation_paths.append(pend.rename_from_path)
+            if pend.update.operation == "archive":
+                archive_dest = self._archive_destination(pend)
+                if archive_dest.exists():
+                    raise AtomicWriteError(
+                        "transactional archive destination already exists and "
+                        f"cannot be restored from the vault snapshot: {archive_dest}"
+                    )
+                mutation_paths.append(archive_dest)
+
+            for path in mutation_paths:
+                if path in claimed:
+                    raise AtomicWriteError(
+                        f"transactional updates overlap at {path}; split them "
+                        "into ordered calls"
+                    )
+                claimed.add(path)
+
+            if pend.pre_existed and not self._is_snapshot_covered(pend.target_path):
+                raise AtomicWriteError(
+                    "transactional target is outside the snapshot restore surface: "
+                    f"{pend.target_path}"
+                )
+            if (
+                pend.rename_from_pre_existed
+                and pend.rename_from_path is not None
+                and not self._is_snapshot_covered(pend.rename_from_path)
+            ):
+                raise AtomicWriteError(
+                    "transactional rename source is outside the snapshot restore "
+                    f"surface: {pend.rename_from_path}"
+                )
+
+    def _is_snapshot_covered(self, path: Path) -> bool:
+        """Return whether ``BackupManager.snapshot`` includes ``path``."""
+        rel = path.resolve().relative_to(self._vault_root)
+        if not rel.parts:
+            return False
+        if rel.parts[0] in EXCLUDED_VAULT_DIRS:
+            return False
+        return not any(part.startswith(".") for part in rel.parts)
+
+    def _archive_destination(self, pend: _PendingWrite) -> Path:
+        return self._vault_root / "_archive" / pend.arc_relpath
+
+    def _rollback_transaction(
+        self,
+        mutated: list[_PendingWrite],
+        backup_path: Path,
+    ) -> None:
+        """Restore every mutation in ``mutated`` to its pre-call state.
+
+        Rollback is attempted for every path even after one restore fails. A
+        partial rollback raises :class:`AtomicWriteError` with the snapshot
+        path so operators never receive a false all-or-nothing success signal.
+        """
+        failed: list[Path] = []
+        fingerprint_paths: set[Path] = set()
+        for pend in reversed(mutated):
+            if pend.update.operation == "archive":
+                archive_dest = self._archive_destination(pend)
+                try:
+                    archive_dest.unlink(missing_ok=True)
+                except OSError as exc:
+                    log.error(
+                        "atomic_writer: transactional archive rollback failed "
+                        "to remove %s — %s",
+                        archive_dest,
+                        exc,
+                    )
+                    failed.append(archive_dest)
+                self._self_write_fingerprints.pop(archive_dest, None)
+
+            if not self._restore_from_backup(
+                pend.target_path,
+                backup_path,
+                pre_existed=pend.pre_existed,
+            ):
+                failed.append(pend.target_path)
+            fingerprint_paths.add(pend.target_path)
+
+            if pend.rename_from_path is not None:
+                if not self._restore_from_backup(
+                    pend.rename_from_path,
+                    backup_path,
+                    pre_existed=pend.rename_from_pre_existed,
+                ):
+                    failed.append(pend.rename_from_path)
+                fingerprint_paths.add(pend.rename_from_path)
+
+        # A restored state is writer-authored, so remember its exact identity.
+        # This prevents the 30-second human-edit lock from throttling an
+        # immediate retry while still failing closed on any later change.
+        for path in fingerprint_paths:
+            fingerprint = self._fingerprint(path)
+            if fingerprint is None:
+                self._self_write_fingerprints.pop(path, None)
+            else:
+                self._self_write_fingerprints[path] = fingerprint
+
+        if failed:
+            rendered = ", ".join(str(path) for path in failed)
+            raise AtomicWriteError(
+                "transaction rollback was incomplete for "
+                f"{rendered}; manual restore from {backup_path} is required"
+            )
+
+    def _rotate_backups(self) -> None:
+        """Rotate snapshots without changing a completed write outcome."""
+        try:
+            self._backups.rotate()
+        except OSError as exc:  # pragma: no cover — defensive only
+            log.warning("atomic_writer: backup rotation failed: %s", exc)
 
     def _assert_same_drive(self, target_path: Path) -> None:
         """Verify that the target lives on the vault drive.
@@ -537,7 +814,7 @@ class AtomicWriter:
         backup_path: Path,
         *,
         pre_existed: bool,
-    ) -> None:
+    ) -> bool:
         """Roll one page back to its pre-apply state.
 
         * If the page existed before this call, restore it from the
@@ -547,7 +824,8 @@ class AtomicWriter:
           file.
 
         Rollback never touches files that were not written in *this*
-        call — the caller passes the exact paths.
+        call — the caller passes the exact paths. Returns whether the
+        requested pre-write state was restored completely.
         """
         if not pre_existed:
             try:
@@ -558,7 +836,8 @@ class AtomicWriter:
                     path,
                     exc,
                 )
-            return
+                return False
+            return True
 
         arc_relpath = path.resolve().relative_to(self._vault_root).as_posix()
         try:
@@ -574,6 +853,8 @@ class AtomicWriter:
                 backup_path,
                 exc,
             )
+            return False
+        return True
 
     @staticmethod
     def _was_pre_existing(target: Path, pending: list[_PendingWrite]) -> bool:

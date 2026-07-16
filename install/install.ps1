@@ -489,6 +489,37 @@ Write-Phase '3/6' 'Python environment'
 $VenvPath = Join-Path $InstallDir '.venv'
 $VenvPython = Join-Path $VenvPath 'Scripts\python.exe'
 
+# Update runs: stop any Jarvis still running out of THIS install before we
+# touch its environment. A live app (often revived by the login autostart)
+# keeps serving stale, half-updated features while pip rewrites the venv
+# under it - the "app is already open but nothing works yet" field report
+# (2026-07-14; POSIX twin: the pkill block in install.sh). On Windows the
+# running pythonw.exe additionally holds venv DLLs open, which can make
+# pip's in-place upgrade fail. The installer relaunches a fresh instance
+# as its very last step. Best-effort: a lookup/stop failure never blocks
+# the install.
+if (Test-Path $VenvPython) {
+    try {
+        $venvPrefix = $VenvPath.TrimEnd('\') + '\'
+        $stale = @(Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" -ErrorAction Stop |
+            Where-Object {
+                $_.ExecutablePath -and
+                $_.ExecutablePath.StartsWith($venvPrefix, [System.StringComparison]::OrdinalIgnoreCase) -and
+                $_.ProcessId -ne $PID
+            })
+        if ($stale.Count -gt 0) {
+            foreach ($proc in $stale) {
+                try { Stop-Process -Id $proc.ProcessId -Force -ErrorAction Stop } catch {}
+            }
+            # Give the OS a beat to release file handles before pip writes.
+            Start-Sleep -Milliseconds 500
+            Write-Note 'stopped the running Jarvis app for the update'
+        }
+    } catch {
+        Write-Note 'could not check for a running Jarvis app - continuing'
+    }
+}
+
 if (-not (Test-Path $VenvPython)) {
     & $pythonExe -m venv $VenvPath
     if ($LASTEXITCODE -ne 0) { Write-Err 'venv creation failed.'; exit 1 }

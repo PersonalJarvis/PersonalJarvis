@@ -12,10 +12,10 @@ markdown content, not a snippet.  This tool fills that gap.
 
 Placement rule
 --------------
-Router-tier only.  Never include in any ``SUB_TOOLS`` frozenset — that
-constraint is enforced structurally by Welle 4 (only ``"router"`` exists
-as a tier) and re-stated here so future maintainers do not re-introduce
-a second tier without re-evaluating this placement.
+Router-visible. Jarvis-Agents may reach the live tool only through ADR-0025's
+mission-scoped supervisor broker. Never include it in any ``SUB_TOOLS``
+frozenset or direct worker tool set; the live vault object stays in the
+supervisor.
 
 Path-traversal safety
 ---------------------

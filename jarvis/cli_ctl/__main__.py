@@ -33,6 +33,7 @@ from jarvis.cli_ctl.commands import marketplace as marketplace_cmd
 from jarvis.cli_ctl.commands import mcps as mcps_cmd
 from jarvis.cli_ctl.commands import missions as missions_cmd
 from jarvis.cli_ctl.commands import outputs as outputs_cmd
+from jarvis.cli_ctl.commands import permissions as permissions_cmd
 from jarvis.cli_ctl.commands import sessions as sessions_cmd
 from jarvis.cli_ctl.commands import skills as skills_cmd
 from jarvis.cli_ctl.commands import socials as socials_cmd
@@ -112,6 +113,7 @@ app.add_typer(wiki_cmd.app, name="wiki")
 app.add_typer(sessions_cmd.app, name="sessions")
 app.add_typer(skills_cmd.app, name="skills")
 app.add_typer(outputs_cmd.app, name="outputs")
+app.add_typer(permissions_cmd.app, name="permissions")
 app.add_typer(board_cmd.app, name="board")
 app.add_typer(workflows_cmd.app, name="workflows")
 app.add_typer(conductor_cmd.app, name="conductor")
@@ -132,9 +134,15 @@ def _in_completion() -> bool:
     return any(k.endswith("_COMPLETE") for k in os.environ)
 
 
-def _dynamic_runner(method, path, params, body):
+def _dynamic_runner(method, path, params, body, *, timeout_s=None):
     with make_client() as client:
-        return client.request(method, path, params=params, json=body)
+        return client.request(
+            method,
+            path,
+            params=params,
+            json=body,
+            timeout_s=timeout_s,
+        )
 
 
 # Root options that consume the NEXT argv token as their value; skipped when

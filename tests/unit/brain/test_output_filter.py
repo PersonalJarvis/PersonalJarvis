@@ -446,6 +446,14 @@ def test_sub_agent_jargon_is_removed() -> None:
     assert "removed_engineering_jargon" in result.actions
 
 
+def test_official_jarvis_agent_label_is_preserved() -> None:
+    """The public product label is not the retired generic engineering term."""
+    text = "Ein Jarvis-Agent prüft das gründlich und meldet sich."
+    result = scrub_for_voice(text, language="de", ack_mode=True)
+    assert result.cleaned == text
+    assert "removed_engineering_jargon" not in result.actions
+
+
 def test_supervisor_agent_jargon_is_removed() -> None:
     """'Supervisor-Agent' as an engineering reveal is removed — probe drift 13."""
     text = "Dein persoenlicher Supervisor-Agent erledigt das."  # i18n-allow

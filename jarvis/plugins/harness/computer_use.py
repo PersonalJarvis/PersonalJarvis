@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 import time
 from collections.abc import AsyncIterator
 
@@ -31,15 +32,15 @@ _TIMEOUT_EXIT_CODE = 124
 
 
 def _resolve_run_cu_loop():
-    """Select the Computer-Use engine per ``[computer_use].engine`` (reversible).
+    """Resolve every live Computer-Use mission to the guarded v2 engine.
 
-    ``"v2"`` (default) -> the rebuilt perceive->act->verify engine
-    (``jarvis/cu/engine.py``). Legacy fallbacks stay selectable: ``"current"``
-    = the last maintained legacy loop, ``"june13"`` / ``"stable"`` = frozen
-    known-good snapshots. Read PER MISSION so a config flip applies on the
-    next mission (no restart needed). Logs the live engine — INFO for every
-    non-default choice so it is never ambiguous which version is running.
-    Never raises: a config-read problem falls back to the default engine.
+    ``"v2"`` is the only action-capable engine: it owns live permission,
+    monitor-topology and foreground-window guards. Historical ``current``,
+    ``june13`` and ``stable`` values remain readable for config compatibility
+    but route to v2; their frozen loops can still be imported by forensic tests
+    and must never dispatch live desktop input. Read per mission so config
+    recovery applies without restart. Never raises: a config-read problem also
+    falls back to v2.
     """
     try:
         from jarvis.core.config import load_config  # noqa: PLC0415
@@ -47,6 +48,15 @@ def _resolve_run_cu_loop():
         cu = getattr(load_config(), "computer_use", None)
         engine = str(getattr(cu, "engine", "v2") or "v2")
     except Exception:  # noqa: BLE001 — a config read must never break a mission
+        engine = "v2"
+    if engine != "v2":
+        _log.warning(
+            "[cu] ENGINE = %s is retired for live input because legacy loops "
+            "lack current permission, topology and foreground-window action "
+            "guards on %s; using the maintained v2 engine instead.",
+            engine,
+            sys.platform,
+        )
         engine = "v2"
     if engine == "v2":
         from jarvis.cu.engine import run_cu_loop as _loop  # noqa: PLC0415

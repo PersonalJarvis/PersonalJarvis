@@ -19,7 +19,7 @@ import pytest
 from jarvis.brain.manager import BrainManager
 from jarvis.core.bus import EventBus
 from jarvis.core.config import JarvisConfig
-from jarvis.core.protocols import ToolResult
+from jarvis.core.protocols import BrainMessage, ToolResult
 from jarvis.skills.registry import SkillRegistry
 from jarvis.skills.skill_context import SkillContext, set_skill_context
 
@@ -36,6 +36,12 @@ class _FakeRunSkillTool:
 
 class _FakeScreenshotTool:
     name = "screenshot"
+    schema: dict[str, Any] = {}
+
+
+class _FakeStreamlineTool:
+    name = "streamline/query"
+    description = "Read the latest Streamline item."
     schema: dict[str, Any] = {}
 
 
@@ -270,14 +276,39 @@ class _SpawnPathProbeManager(BrainManager):
     ) -> str | None:
         return None
 
+    def _check_unsupported_intent(self, user_text: str) -> str | None:
+        return None
+
     async def _force_spawn_worker(
         self, user_text: str, *, trace_id: Any = None, source_layer: Any = None
     ) -> str | None:
+        if not self._should_force_spawn(user_text, source_layer=source_layer):
+            return None
         self.spawn_calls.append(user_text)
         return "SPAWN_SENTINEL"
 
     def _build_fallback_chain(self, level: Any) -> list:
         return []  # force the provider-down exit — no LLM in unit tests
+
+
+class _ConcurrentSkillProbeManager(_SpawnPathProbeManager):
+    """Pause two skill turns after matching to expose cross-task state leaks."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._arrived = 0
+        self._both_arrived = asyncio.Event()
+
+    async def _maybe_dispatch_skill_mission(
+        self, user_text: str, *, trace_id: Any = None
+    ) -> str | None:
+        self._arrived += 1
+        if self._arrived >= 2:
+            self._both_arrived.set()
+        await self._both_arrived.wait()
+        skill = self._skill_turn_match
+        assert skill is not None
+        return f"{skill.name}:{self._skill_turn_source}"
 
 
 async def test_generate_drops_skill_match_on_explicit_spawn_trigger(
@@ -304,6 +335,241 @@ async def test_generate_drops_skill_match_on_explicit_spawn_trigger(
     assert m._skill_turn_match is None
     assert reply == "SPAWN_SENTINEL"
     assert len(m.spawn_calls) == 1
+
+
+async def test_realtime_history_keeps_plugin_skill_on_referential_follow_up(
+    tmp_path: Path,
+) -> None:
+    """The exact forensic follow-up remains on the connected Gmail surface."""
+    _write_skill(tmp_path, "plugin-gmail", "(gmail)")
+    registry = SkillRegistry(root=tmp_path)
+    registry.reload_sync()
+    set_skill_context(
+        SkillContext(registry=registry, runner=_StubRunner())  # type: ignore[arg-type]
+    )
+    executor = _RecordingExecutor()
+    manager = _SpawnPathProbeManager(
+        config=JarvisConfig(),
+        bus=EventBus(),
+        tools={"spawn_worker": _FakeSpawnTool(), "run-skill": _FakeRunSkillTool()},
+        tool_executor=executor,  # type: ignore[arg-type]
+    )
+    history = (
+        BrainMessage(
+            role="user",
+            content=(
+                "Kannst du bitte mein Gmail Plugin benutzen und sagen, welche "
+                "wichtigen Mails anstehen?"  # i18n-allow: German forensic speech-input fixture
+            ),
+        ),
+        BrainMessage(role="assistant", content="I did not find anything."),
+    )
+
+    follow_up = "Wo liegt es? Ich habe es auch als Plugin installiert."  # i18n-allow
+    reply = await manager.generate(
+        follow_up,
+        use_history=False,
+        history_override=history,
+    )
+
+    assert reply != "SPAWN_SENTINEL"
+    assert manager.spawn_calls == []
+    assert manager._skill_turn_match is not None
+    assert manager._skill_turn_match.name == "plugin-gmail"
+    assert manager._skill_turn_source == "continuation"
+
+
+async def test_realtime_follow_up_preserves_anchored_plugin_skill(
+    tmp_path: Path,
+) -> None:
+    """An exact trigger remains authoritative for a referential next turn."""
+    _write_skill(tmp_path, "plugin-gmail", "^check gmail$")
+    registry = SkillRegistry(root=tmp_path)
+    registry.reload_sync()
+    set_skill_context(
+        SkillContext(registry=registry, runner=_StubRunner())  # type: ignore[arg-type]
+    )
+    manager = _SpawnPathProbeManager(
+        config=JarvisConfig(),
+        bus=EventBus(),
+        tools={"spawn_worker": _FakeSpawnTool(), "run-skill": _FakeRunSkillTool()},
+        tool_executor=_RecordingExecutor(),  # type: ignore[arg-type]
+    )
+    history = (
+        BrainMessage(role="user", content="check gmail"),
+        BrainMessage(role="assistant", content="The lookup did not finish."),
+    )
+
+    reply = await manager.generate(
+        "Where is it? I installed it as a plugin.",
+        use_history=False,
+        history_override=history,
+    )
+
+    assert reply != "SPAWN_SENTINEL"
+    assert manager.spawn_calls == []
+    assert manager._skill_turn_match is not None
+    assert manager._skill_turn_match.name == "plugin-gmail"
+    assert manager._skill_turn_source == "continuation"
+
+
+@pytest.mark.parametrize(
+    "follow_up",
+    [
+        "Don't spawn a worker; where is it? It is installed as a plugin.",
+        "Where is it, and why did auto-spawn run for this plugin?",
+    ],
+)
+async def test_spawn_decline_or_feature_discussion_keeps_contextual_skill(
+    tmp_path: Path,
+    follow_up: str,
+) -> None:
+    _seed_plugin_skill(tmp_path, "plugin-gmail", "(gmail)")
+    manager = _SpawnPathProbeManager(
+        config=JarvisConfig(),
+        bus=EventBus(),
+        tools={"spawn_worker": _FakeSpawnTool(), "run-skill": _FakeRunSkillTool()},
+        tool_executor=_RecordingExecutor(),  # type: ignore[arg-type]
+    )
+    history = (
+        BrainMessage(role="user", content="Please check my Gmail plugin."),
+        BrainMessage(role="assistant", content="The lookup did not finish."),
+    )
+
+    reply = await manager.generate(
+        follow_up,
+        use_history=False,
+        history_override=history,
+    )
+
+    assert reply != "SPAWN_SENTINEL"
+    assert manager.spawn_calls == []
+    assert manager._skill_turn_match is not None
+    assert manager._skill_turn_match.name == "plugin-gmail"
+
+
+async def test_explicit_spawn_still_overrides_contextual_skill(tmp_path: Path) -> None:
+    _seed_plugin_skill(tmp_path, "plugin-gmail", "(gmail)")
+    manager = _SpawnPathProbeManager(
+        config=JarvisConfig(),
+        bus=EventBus(),
+        tools={"spawn_worker": _FakeSpawnTool(), "run-skill": _FakeRunSkillTool()},
+        tool_executor=_RecordingExecutor(),  # type: ignore[arg-type]
+    )
+    history = (
+        BrainMessage(role="user", content="Please check my Gmail plugin."),
+        BrainMessage(role="assistant", content="The lookup did not finish."),
+    )
+    follow_up = "Spawn a worker to investigate it; where is it?"
+
+    reply = await manager.generate(
+        follow_up,
+        use_history=False,
+        history_override=history,
+    )
+
+    assert reply == "SPAWN_SENTINEL"
+    assert manager._skill_turn_match is None
+    assert manager.spawn_calls == [follow_up]
+
+
+async def test_concurrent_realtime_turns_keep_skill_state_task_local(
+    tmp_path: Path,
+) -> None:
+    _write_skill(tmp_path, "plugin-gmail", "(gmail)")
+    _write_skill(tmp_path, "plugin-streamline", "(streamline)")
+    registry = SkillRegistry(root=tmp_path)
+    registry.reload_sync()
+    set_skill_context(
+        SkillContext(registry=registry, runner=_StubRunner())  # type: ignore[arg-type]
+    )
+    manager = _ConcurrentSkillProbeManager(
+        config=JarvisConfig(),
+        bus=EventBus(),
+        tools={"spawn_worker": _FakeSpawnTool(), "run-skill": _FakeRunSkillTool()},
+        tool_executor=_RecordingExecutor(),  # type: ignore[arg-type]
+    )
+    gmail_history = (
+        BrainMessage(role="user", content="Please check my Gmail plugin."),
+        BrainMessage(role="assistant", content="The lookup did not finish."),
+    )
+
+    gmail_result, streamline_result = await asyncio.gather(
+        manager.generate(
+            "Where is it? I installed it as a plugin.",
+            use_history=False,
+            history_override=gmail_history,
+        ),
+        manager.generate("Run Streamline.", use_history=False),
+    )
+
+    assert gmail_result == "plugin-gmail:continuation"
+    assert streamline_result == "plugin-streamline:match"
+
+
+async def test_realtime_history_keeps_cardless_namespaced_tool_inline() -> None:
+    """A cardless plugin/MCP remains visible and cannot be replaced by a mission."""
+    config = JarvisConfig()
+    config.brain.routing.force_spawn_mode = "permissive"
+    executor = _RecordingExecutor()
+    manager = _SpawnPathProbeManager(
+        config=config,
+        bus=EventBus(),
+        tools={
+            "spawn_worker": _FakeSpawnTool(),
+            "run-skill": _FakeRunSkillTool(),
+            "streamline/query": _FakeStreamlineTool(),
+        },
+        tool_executor=executor,  # type: ignore[arg-type]
+    )
+    history = (
+        BrainMessage(
+            role="user",
+            content="Use Streamline to create a ticket for the incident.",
+        ),
+        BrainMessage(role="assistant", content="The lookup did not finish."),
+    )
+    manager._history = list(history)
+    follow_up = "Where is it? Please check it again; it is installed as a plugin."
+
+    routing_text, live_tools = manager._contextual_routing_state(
+        follow_up, use_history=True,
+    )
+    assert live_tools == ("streamline/query",)
+    relevant_tools = manager._apply_plugin_relevance(routing_text, manager._tools)
+    assert "streamline/query" in relevant_tools
+
+    reply = await manager.generate(
+        follow_up,
+        use_history=False,
+        history_override=history,
+    )
+
+    assert reply != "SPAWN_SENTINEL"
+    assert manager.spawn_calls == []
+
+
+def test_unrelated_current_question_does_not_replay_prior_plugin_skill(
+    tmp_path: Path,
+) -> None:
+    _seed_plugin_skill(tmp_path, "plugin-gmail", "(gmail)")
+    manager = _make_manager()
+    manager._history = [
+        BrainMessage(
+            role="user",
+            content="Please list the important messages in my Gmail inbox.",
+        ),
+        BrainMessage(role="assistant", content="The Gmail lookup finished."),
+    ]
+    current = "What's my current weather?"
+
+    routing_text, live_tools = manager._contextual_routing_state(
+        current, use_history=True,
+    )
+
+    assert routing_text == current
+    assert live_tools == ()
+    assert manager._match_skill_for_turn(routing_text) is None
 
 
 # ----------------------------------------------------------------------

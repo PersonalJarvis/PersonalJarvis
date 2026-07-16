@@ -97,16 +97,16 @@ def _patch_engine(monkeypatch, value: str) -> None:
     )
 
 
-def test_selector_picks_june13_when_configured(monkeypatch):
+def test_selector_routes_june13_to_guarded_v2(monkeypatch):
     _patch_engine(monkeypatch, "june13")
     loop = harness._resolve_run_cu_loop()
-    assert loop.__module__ == "jarvis.harness.screenshot_only_loop_june13"
+    assert loop.__module__ == "jarvis.cu.engine"
 
 
-def test_selector_picks_current_when_configured(monkeypatch):
+def test_selector_routes_current_to_guarded_v2(monkeypatch):
     _patch_engine(monkeypatch, "current")
     loop = harness._resolve_run_cu_loop()
-    assert loop.__module__ == "jarvis.harness.screenshot_only_loop"
+    assert loop.__module__ == "jarvis.cu.engine"
 
 
 def test_selector_picks_v2_when_configured(monkeypatch):
@@ -115,11 +115,19 @@ def test_selector_picks_v2_when_configured(monkeypatch):
     assert loop.__module__ == "jarvis.cu.engine"
 
 
-def test_selector_picks_stable_when_configured(monkeypatch):
-    # The pre-Wave-1 frozen fallback the user flips to if the new work misbehaves.
+def test_selector_refuses_unguarded_legacy_engines_on_macos(monkeypatch):
+    _patch_engine(monkeypatch, "current")
+    monkeypatch.setattr(harness.sys, "platform", "darwin")
+
+    loop = harness._resolve_run_cu_loop()
+
+    assert loop.__module__ == "jarvis.cu.engine"
+
+
+def test_selector_routes_stable_to_guarded_v2(monkeypatch):
     _patch_engine(monkeypatch, "stable")
     loop = harness._resolve_run_cu_loop()
-    assert loop.__module__ == "jarvis.harness.screenshot_only_loop_stable"
+    assert loop.__module__ == "jarvis.cu.engine"
 
 
 def test_selector_falls_back_to_default_engine_on_config_error(monkeypatch):

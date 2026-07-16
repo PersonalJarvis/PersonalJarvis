@@ -910,6 +910,46 @@ async def test_isolated_dash_delta_keeps_realtime_audio_playing():
 
 
 @pytest.mark.asyncio
+async def test_split_filler_opener_keeps_realtime_answer_playing():
+    answer_audio = b"\x55\x66" * 8
+    events = [
+        RealtimeEvent(type="output_transcript_delta", text="Let me"),
+        RealtimeEvent(type="output_transcript_delta", text=" think"),
+        RealtimeEvent(
+            type="audio_delta",
+            audio=AudioChunk(
+                pcm=answer_audio,
+                sample_rate=24_000,
+                timestamp_ns=0,
+            ),
+        ),
+        RealtimeEvent(
+            type="output_transcript_delta",
+            text=", the benefits include stronger bones.",
+        ),
+        RealtimeEvent(type="turn_complete"),
+    ]
+    binaries: list[bytes] = []
+    jsons: list[dict] = []
+    sess = RealtimeVoiceSession(
+        session_id="streaming-filler-opener",
+        send_binary=lambda data: binaries.append(data) or asyncio.sleep(0),
+        send_json=lambda message: jsons.append(message) or asyncio.sleep(0),
+        provider=FakeProvider(events),
+        config=_cfg(),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    assert binaries == [answer_audio]
+    assert not any(item.get("type") == "tts_cancel" for item in jsons)
+    assert not any(item.get("type") == "error_spoken" for item in jsons)
+
+
+@pytest.mark.asyncio
 async def test_later_segment_leak_audio_not_emitted():
     # Regression test for the T4 ScrubHoldGate one-chunk-boundary residual:
     # push_audio's "cleared" branch bundles the release-triggering chunk with
@@ -1776,6 +1816,58 @@ async def test_delegate_mode_declares_single_action_function():
 
 
 @pytest.mark.asyncio
+async def test_delegate_directive_names_screen_control_and_forbids_capability_denial():
+    """The live model must know its on-screen reach and never deny it.
+
+    Live forensic 2026-07-15 07:59: asked why a screen action failed, the
+    model claimed it had no API access and offered to type via 'a script or
+    the keyboard' — inventing capability gaps instead of calling
+    jarvis_action. The directive must name Computer-Use-style screen control
+    explicitly and forbid claiming a missing tool/API/access for anything in
+    the user's world.
+    """
+    provider = FakeProvider([RealtimeEvent(type="turn_complete")])
+    sess = _session(provider, brain=FakeBrain())
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    instructions = provider.opened_with.instructions
+    assert "clicks, types, and navigates" in instructions
+    assert "Never tell the user that you lack" in instructions
+    declaration = next(
+        d for d in provider.opened_with.tools if d["name"] == "jarvis_action"
+    )
+    assert "click, type, and navigate" in declaration["description"]
+
+
+def test_delegate_history_keeps_a_task_five_exchanges_back():
+    """The window must survive a correction sequence plus announcements.
+
+    Live forensic 2026-07-15 08:00: after four correction turns and two
+    background-completion notes, the original announce request had just been
+    trimmed out of the 8-message window — the final mission posted a
+    placeholder announcement instead of the requested content.
+    """
+    sess = _session(FakeProvider([]), brain=FakeBrain())
+    sess._remember_delegate_turn(
+        "Announce the live event on my Personal Jarvis server.", "On it."
+    )
+    # One failure completion + four correction exchanges follow, mirroring
+    # the live session's shape.
+    sess._remember_delegate_turn("", "[Trusted background completion]\nIt failed.")
+    for index in range(4):
+        sess._remember_delegate_turn(f"correction {index}", f"reply {index}")
+    sess._remember_delegate_turn("", "[Trusted background completion]\nDone-ish.")
+
+    contents = [str(m.content) for m in sess._delegate_history]
+    assert any("Personal Jarvis" in c for c in contents), (
+        f"the original task must survive the correction sequence: {contents}"
+    )
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "utterance",
     [
@@ -2446,6 +2538,79 @@ async def test_slow_deterministic_delegate_speaks_a_bridge_line(monkeypatch):
         ("I'm still working on it.", "progress"),
         ("Stored on your page: note.", "reply"),
     ]
+    await sess.end(reason="test")
+
+
+class _StalledPromiseSession(FakeSession):
+    """Answer with an unbacked action promise, then never complete the turn.
+
+    Live forensic 2026-07-15 07:59: the promise-block guard interrupted a
+    response that was already complete on the wire, so no further
+    turn_complete arrived. The deterministic recovery then timed out waiting
+    for the provider boundary and refused the action outright — the user heard
+    a canned failure although the full final input transcript was in hand.
+    """
+
+    def __init__(self, *, released):
+        super().__init__([])
+        self._released = released
+
+    async def receive(self):
+        yield RealtimeEvent(
+            type="input_transcript",
+            text="That is not the right server.",
+            is_final=True,
+        )
+        yield RealtimeEvent(
+            type="output_transcript_delta",
+            text="I'll check and get back to you.",
+        )
+        await self._released.wait()
+
+
+class _StalledPromiseProvider(FakeProvider):
+    def __init__(self, *, released):
+        super().__init__([])
+        self._released = released
+
+    async def open_session(self, cfg):
+        self.opened_with = cfg
+        self.session = _StalledPromiseSession(released=self._released)
+        return self.session
+
+
+@pytest.mark.asyncio
+async def test_blocked_action_promise_still_dispatches_after_boundary_timeout(
+    monkeypatch,
+):
+    """The promise-block recovery must run the action, not refuse it.
+
+    The input transcript is final by construction on this path (the provider
+    already produced a response for it), so a missing provider boundary after
+    the interrupt may delay the dispatch but never veto it.
+    """
+    monkeypatch.setattr(
+        "jarvis.realtime.session._DELEGATE_INPUT_BOUNDARY_WAIT_S", 0.05
+    )
+    released = asyncio.Event()
+    brain = FakeBrain(replies=("Switched to the right server.",))
+    provider = _StalledPromiseProvider(released=released)
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    async with asyncio.timeout(2):
+        while not provider.session.text_inputs:
+            await asyncio.sleep(0.01)
+
+    assert brain.calls, "the recovery must dispatch the brain turn"
+    assert brain.calls[0][0] == "That is not the right server."
+    result = provider.session.text_inputs[-1]
+    assert "<trusted_action_result>" in result
+    assert "Switched to the right server." in result
+    assert "Result status: success" in result
+
+    released.set()
+    await sess.wait_finished()
     await sess.end(reason="test")
 
 

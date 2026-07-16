@@ -2,14 +2,14 @@ import { useEffect, useRef, useState } from "react";
 import { Check, Copy } from "lucide-react";
 
 import { cn } from "@/lib/utils";
+import { useT } from "@/i18n";
 
 /**
  * Shiki-based code block with copy button and language tag.
  *
- * Shiki is ESM-only and large (~150 KB). We lazy-load the highlighter
- * per CodeBlock mount; Shiki caches the language internally, so the second
- * mount is fast. If render-performance becomes a problem, we could switch
- * to a shared singleton — Tier-1 is pragmatic.
+ * Shiki is ESM-only and large, so each language is lazy-loaded only when a
+ * guide actually contains that kind of code. Highlighters are cached per
+ * canonical language; opening ordinary prose docs never downloads Shiki.
  *
  * If the language isn't recognized, fall back to ``txt`` without highlighting.
  */
@@ -17,7 +17,7 @@ type ShikiHighlighterApi = {
   codeToHtml: (code: string, opts: { lang: string; theme: string }) => string;
 };
 
-let highlighterPromise: Promise<ShikiHighlighterApi> | null = null;
+const highlighterPromises = new Map<string, Promise<ShikiHighlighterApi>>();
 
 const SUPPORTED_LANGS = [
   "bash", "shell", "sh", "powershell", "ps1",
@@ -27,15 +27,32 @@ const SUPPORTED_LANGS = [
   "sql", "diff", "markdown", "md",
 ];
 
-async function loadHighlighter(): Promise<ShikiHighlighterApi> {
-  if (highlighterPromise) return highlighterPromise;
-  highlighterPromise = import("shiki").then(async (shiki) => {
+const LANGUAGE_ALIASES: Record<string, string> = {
+  shell: "bash",
+  sh: "bash",
+  ps1: "powershell",
+  py: "python",
+  ts: "typescript",
+  js: "javascript",
+  yml: "yaml",
+  md: "markdown",
+};
+
+function canonicalLanguage(language: string): string {
+  return LANGUAGE_ALIASES[language] ?? language;
+}
+
+async function loadHighlighter(language: string): Promise<ShikiHighlighterApi> {
+  const cached = highlighterPromises.get(language);
+  if (cached) return cached;
+  const promise = import("shiki").then(async (shiki) => {
     return await shiki.createHighlighter({
       themes: ["github-dark-default"],
-      langs: SUPPORTED_LANGS,
+      langs: [language],
     });
   });
-  return highlighterPromise;
+  highlighterPromises.set(language, promise);
+  return promise;
 }
 
 interface CodeBlockProps {
@@ -44,6 +61,7 @@ interface CodeBlockProps {
 }
 
 export function CodeBlock({ language, code }: CodeBlockProps) {
+  const t = useT();
   const [html, setHtml] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const mountedRef = useRef(true);
@@ -57,23 +75,30 @@ export function CodeBlock({ language, code }: CodeBlockProps) {
 
   useEffect(() => {
     let cancelled = false;
-    const lang = SUPPORTED_LANGS.includes(language) ? language : "txt";
+    const lang = SUPPORTED_LANGS.includes(language)
+      ? canonicalLanguage(language)
+      : "txt";
     if (lang === "txt") {
       setHtml(null);
       return;
     }
-    void loadHighlighter().then((highlighter) => {
-      if (cancelled || !mountedRef.current) return;
-      try {
-        const out = highlighter.codeToHtml(code, {
-          lang,
-          theme: "github-dark-default",
-        });
-        setHtml(out);
-      } catch {
-        setHtml(null);
-      }
-    });
+    void loadHighlighter(lang)
+      .then((highlighter) => {
+        if (cancelled || !mountedRef.current) return;
+        try {
+          const out = highlighter.codeToHtml(code, {
+            lang,
+            theme: "github-dark-default",
+          });
+          setHtml(out);
+        } catch {
+          setHtml(null);
+        }
+      })
+      .catch(() => {
+        highlighterPromises.delete(lang);
+        if (!cancelled && mountedRef.current) setHtml(null);
+      });
     return () => {
       cancelled = true;
     };
@@ -103,13 +128,19 @@ export function CodeBlock({ language, code }: CodeBlockProps) {
             "hover:bg-muted hover:text-foreground hover:opacity-100",
             "group-hover:opacity-100",
           )}
-          title="Copy code"
+          title={t("docs_content.copy_code")}
+          aria-label={
+            copied ? t("docs_content.code_copied") : t("docs_content.copy_code")
+          }
         >
           {copied ? (
-            <Check className="h-3 w-3 text-emerald-400" />
+            <Check className="h-3 w-3 text-emerald-400" aria-hidden="true" />
           ) : (
-            <Copy className="h-3 w-3" />
+            <Copy className="h-3 w-3" aria-hidden="true" />
           )}
+          <span className="sr-only" aria-live="polite">
+            {copied ? t("docs_content.code_copied") : ""}
+          </span>
         </button>
       </div>
       {/* Body — either Shiki HTML or plain text */}

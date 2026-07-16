@@ -191,6 +191,12 @@ function UpdateButton() {
       if ((applyBody as { deps_warning?: string | null }).deps_warning) {
         pushToast("warning", t("topbar.update_deps_warning"));
       }
+      if (
+        (applyBody as { desktop_integration_warning?: string | null })
+          .desktop_integration_warning
+      ) {
+        pushToast("warning", t("topbar.update_desktop_warning"));
+      }
       // 2. Restart to load it — reuse the existing route + its mission guard.
       const url = force
         ? "/api/settings/restart-app?force=true"

@@ -103,7 +103,7 @@ async def test_upsert_passes_optional_fields_through() -> None:
     )
     call = store.upserts[0]
     assert call["email"] == "laura@example.com"
-    assert call["address"] == "Hauptstr. 1, Berlin"
+    assert call["address"] == {"street": "Hauptstr. 1, Berlin"}
     assert call["note"] == "colleague from work"
 
 

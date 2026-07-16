@@ -35,6 +35,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -72,6 +73,18 @@ _SHUTDOWN_TIMEOUT_S = 5.0
 _running_curator: Any = None
 
 
+@dataclass(frozen=True, slots=True)
+class WikiCaptureRuntime:
+    """Live Stage-1 services exposed to guarded API/CLI maintenance actions."""
+
+    extractor: Any
+    journal: Any
+    scheduler: Any
+
+
+_running_capture_runtime: WikiCaptureRuntime | None = None
+
+
 def get_running_curator() -> Any:
     """Return the live ``WikiCurator`` instance, or ``None`` if not bootstrapped."""
     return _running_curator
@@ -81,6 +94,16 @@ def _set_running_curator(curator: Any) -> None:
     """Set or clear the module-level curator registry.  Private helper."""
     global _running_curator
     _running_curator = curator
+
+
+def get_running_capture_runtime() -> WikiCaptureRuntime | None:
+    """Return the live extraction runtime, or ``None`` before Wiki bootstrap."""
+    return _running_capture_runtime
+
+
+def _set_running_capture_runtime(runtime: WikiCaptureRuntime | None) -> None:
+    global _running_capture_runtime
+    _running_capture_runtime = runtime
 
 
 # ---------------------------------------------------------------------------
@@ -98,16 +121,17 @@ class WikiIntegrationHandle:
 
     _unsubscribe_idle: Callable[[], None]
     _worker_stop: Callable[[], Awaitable[None]] | None
-    _task: "asyncio.Task[Any] | None" = field(default=None)
-    _telemetry_task: "asyncio.Task[Any] | None" = field(default=None)
+    _task: asyncio.Task[Any] | None = field(default=None)
+    _telemetry_task: asyncio.Task[Any] | None = field(default=None)
     # Spec A4: age-based journal flush loop. Same fire-and-forget
     # conventions as the hourly telemetry loop (started off the boot
     # critical path per AP-26, cancelled here on teardown).
-    _journal_age_flush_task: "asyncio.Task[Any] | None" = field(default=None)
+    _journal_age_flush_task: asyncio.Task[Any] | None = field(default=None)
     # The VoiceFactBridge attached during bootstrap. Declared as a field (not
     # monkey-patched) so shutdown() can stop it — otherwise its TranscriptFinal
     # / ResponseGenerated subscriptions leak on every teardown.
     _voice_bridge: Any = field(default=None)
+    _scheduler: Any = field(default=None)
     # Wave-2: the Stage-1 candidate journal (SQLite). Closed on shutdown so
     # the connection does not leak across test bootstraps.
     _journal: Any = field(default=None)
@@ -142,22 +166,38 @@ class WikiIntegrationHandle:
             self._contact_reconcile_task.cancel()
             self._contact_reconcile_task = None
 
-        # Stop the voice-fact bridge so its bus subscriptions are released.
+        # Stop the age-based producer before draining the bridge/scheduler.
+        if self._journal_age_flush_task is not None and not self._journal_age_flush_task.done():
+            self._journal_age_flush_task.cancel()
+            try:
+                await self._journal_age_flush_task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                pass
+        self._journal_age_flush_task = None
+
+        # Stop the voice-fact bridge and await cancellation so its extractor
+        # cannot append or finish an audit after the journal closes.
         if self._voice_bridge is not None:
             try:
-                self._voice_bridge.stop()
+                stop_and_wait = getattr(self._voice_bridge, "stop_and_wait", None)
+                if callable(stop_and_wait):
+                    await stop_and_wait(timeout_s=_SHUTDOWN_TIMEOUT_S)
+                else:
+                    self._voice_bridge.stop()
             except Exception:  # noqa: BLE001
                 log.debug("wiki_integration: voice_bridge.stop() failed; continuing teardown")
             self._voice_bridge = None
 
-        # Close the Stage-1 candidate journal (after the bridge stopped, so
-        # no in-flight extraction appends into a closed connection).
-        if self._journal is not None:
+        # A journal-pressure trigger is a separate scheduler task, not owned by
+        # the bridge. Drain/cancel it before closing the same SQLite journal.
+        if self._scheduler is not None:
             try:
-                self._journal.close()
+                shutdown = getattr(self._scheduler, "shutdown", None)
+                if callable(shutdown):
+                    await shutdown(timeout_s=_SHUTDOWN_TIMEOUT_S)
             except Exception:  # noqa: BLE001
-                log.debug("wiki_integration: journal.close() failed; continuing teardown")
-            self._journal = None
+                log.debug("wiki_integration: scheduler shutdown failed; continuing teardown")
+            self._scheduler = None
 
         # Stop the rollup worker (unsubscribes its own IdleEntered handler).
         if self._worker_stop is not None:
@@ -171,7 +211,7 @@ class WikiIntegrationHandle:
         if task is not None and not task.done():
             try:
                 await asyncio.wait_for(asyncio.shield(task), timeout=_SHUTDOWN_TIMEOUT_S)
-            except (TimeoutError, asyncio.TimeoutError):
+            except TimeoutError:
                 log.warning(
                     "wiki_integration: in-flight rollup did not finish in %ss — cancelling",
                     _SHUTDOWN_TIMEOUT_S,
@@ -179,7 +219,7 @@ class WikiIntegrationHandle:
                 task.cancel()
                 try:
                     await task
-                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
                     pass
             except asyncio.CancelledError:
                 pass
@@ -190,21 +230,21 @@ class WikiIntegrationHandle:
             self._telemetry_task.cancel()
             try:
                 await self._telemetry_task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
                 pass
         self._telemetry_task = None
 
-        # Cancel the age-based journal flush loop if started (spec A4).
-        if self._journal_age_flush_task is not None and not self._journal_age_flush_task.done():
-            self._journal_age_flush_task.cancel()
+        # Close Stage 1 only after every producer and Stage-2 drain is stopped.
+        if self._journal is not None:
             try:
-                await self._journal_age_flush_task
-            except (asyncio.CancelledError, Exception):  # noqa: BLE001
-                pass
-        self._journal_age_flush_task = None
+                self._journal.close()
+            except Exception:  # noqa: BLE001
+                log.debug("wiki_integration: journal.close() failed; continuing teardown")
+            self._journal = None
 
         # Clear the running-curator registry so a fresh bootstrap (e.g. in a
         # test that tears down and re-creates) does not see the stale one.
+        _set_running_capture_runtime(None)
         _set_running_curator(None)
 
         log.info("wiki_integration: shutdown complete")
@@ -217,13 +257,13 @@ class WikiIntegrationHandle:
 
 async def bootstrap_wiki_integration(
     *,
-    bus: "EventBus",
-    repo: "PageRepository",
+    bus: EventBus,
+    repo: PageRepository,
     vault_root: Path,
-    config: "WikiIntegrationConfig",
+    config: WikiIntegrationConfig,
     brain_caller: Callable[[str, str], Awaitable[str]] | None = None,
-    scheduler_factory: "Callable[..., CuratorScheduler] | None" = None,
-    voice_bridge_config: "VoiceBridgeConfig | None" = None,
+    scheduler_factory: Callable[..., CuratorScheduler] | None = None,
+    voice_bridge_config: VoiceBridgeConfig | None = None,
 ) -> WikiIntegrationHandle:
     """Wire ``SessionRollupWorker`` → (Scheduler →) ``WikiCurator`` and
     subscribe to ``IdleEntered``.
@@ -258,13 +298,15 @@ async def bootstrap_wiki_integration(
     """
     if not config.enabled:
         log.info("wiki_integration: disabled via config; skipping bootstrap")
+        _set_running_capture_runtime(None)
+        _set_running_curator(None)
         # Return a no-op handle so callers need no special-case branch.
         return WikiIntegrationHandle(
             _unsubscribe_idle=lambda: None,
             _worker_stop=None,
         )
 
-    vault_path = Path(vault_root).resolve()
+    vault_path = Path(vault_root).resolve()  # noqa: ASYNC240 - boot-only path setup
     log.info("wiki_integration: bootstrapping (vault=%s)", vault_path)
 
     # ------------------------------------------------------------------
@@ -288,7 +330,7 @@ async def bootstrap_wiki_integration(
     # preference; ``use_scheduler`` below only decides whether the (D2-
     # retired-by-default) session re-ingest pass routes through it.
     # ------------------------------------------------------------------
-    scheduler: "CuratorScheduler | None" = None
+    scheduler: CuratorScheduler | None = None
     if scheduler_factory is not None:
         try:
             scheduler = scheduler_factory(curator=curator)  # type: ignore[call-arg]
@@ -363,6 +405,7 @@ async def bootstrap_wiki_integration(
     handle = WikiIntegrationHandle(
         _unsubscribe_idle=lambda: None,   # replaced below
         _worker_stop=worker.stop if config.subscribe_idle else None,
+        _scheduler=scheduler,
     )
 
     if not wiki_write_enabled:
@@ -400,7 +443,7 @@ async def bootstrap_wiki_integration(
         def _unsubscribe() -> None:
             try:
                 bus.unsubscribe(IdleEntered, _on_idle_entered)
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110
                 log.debug("wiki_integration: unsubscribe failed; already detached")
 
         handle._unsubscribe_idle = _unsubscribe  # noqa: SLF001
@@ -443,11 +486,11 @@ async def bootstrap_wiki_integration(
                     getattr(
                         getattr(root_cfg, "wiki_scheduler", None),
                         "consolidate_after_candidates",
-                        # Fallback must match SchedulerConfig's own default (3,
-                        # spec A4). The old 8 here could resurrect the
+                        # Fallback must match SchedulerConfig's own default (1).
+                        # A larger fallback could resurrect a delayed
                         # pre-A4 threshold if the [wiki_scheduler] section were
                         # ever absent, silently undermining ambient capture.
-                        3,
+                        1,
                     )
                 )
                 extractor.attach_scheduler(scheduler, consolidate_after=threshold)
@@ -467,7 +510,7 @@ async def bootstrap_wiki_integration(
         if journal is not None:
             try:
                 journal.close()
-            except Exception:  # noqa: BLE001
+            except Exception:  # noqa: BLE001, S110
                 pass
             journal = None
         log.warning(
@@ -477,6 +520,7 @@ async def bootstrap_wiki_integration(
 
     # Wave-2 Stage 2: body-aware consolidator, drained via the scheduler's
     # JOURNAL trigger; refreshes the self-documentation page after each run.
+    capture_ready = False
     if journal is not None and scheduler is not None:
         try:
             from jarvis.memory.wiki.consolidator import Consolidator
@@ -506,6 +550,7 @@ async def bootstrap_wiki_integration(
                 on_run_complete=_refresh_self_doc,
             )
             scheduler.attach_consolidator(consolidator)
+            capture_ready = True
             log.info("wiki_integration: Stage-2 consolidator attached to scheduler")
             # C1: drain any backlog left over from the previous run so small
             # leftovers (< pressure threshold) consolidate without waiting
@@ -526,6 +571,22 @@ async def bootstrap_wiki_integration(
             log.warning(
                 "wiki_integration: Stage-2 consolidator unavailable (%s) — "
                 "journal entries stay pending", exc,
+            )
+
+    if extractor is not None and journal is not None and capture_ready:
+        _set_running_capture_runtime(
+            WikiCaptureRuntime(
+                extractor=extractor,
+                journal=journal,
+                scheduler=scheduler,
+            )
+        )
+    else:
+        _set_running_capture_runtime(None)
+        if extractor is not None:
+            log.warning(
+                "wiki_integration: Stage-2 unavailable; live bridge uses guarded "
+                "direct ingest instead of accumulating undrainable candidates"
             )
 
     # B7: make sure the self-documentation page exists from first boot.
@@ -567,7 +628,7 @@ async def bootstrap_wiki_integration(
             bus=bus,
             curator=curator,
             config=voice_bridge_config,
-            extractor=extractor,
+            extractor=extractor if capture_ready else None,
         )
         voice_bridge.start()
         handle._voice_bridge = voice_bridge  # noqa: SLF001
@@ -608,8 +669,8 @@ async def _flush_and_ingest(
     *,
     worker: Any,
     curator: Any,
-    scheduler: "CuratorScheduler | None",
-    config: "WikiIntegrationConfig",
+    scheduler: CuratorScheduler | None,
+    config: WikiIntegrationConfig,
 ) -> None:
     """Flush the rollup worker and forward the result to the curator.
 
@@ -683,7 +744,7 @@ async def _flush_and_ingest(
             log.warning("wiki_integration: curator.ingest() raised %s", exc)
 
 
-def _log_task_result(task: "asyncio.Task[Any]") -> None:
+def _log_task_result(task: asyncio.Task[Any]) -> None:
     """Log any unhandled exception from the background flush task."""
     if task.cancelled():
         log.debug("wiki_integration: flush task was cancelled")
@@ -710,6 +771,7 @@ def _ensure_schema_present(vault_root: Path, schema_path: Path) -> None:
     refusing to construct the wiki integration at all.
     """
     if schema_path.is_file():
+        _upgrade_entity_kind_contract(schema_path)
         return
     try:
         template = Path(__file__).resolve().parent / "templates" / "schema.md"
@@ -735,9 +797,29 @@ def _ensure_schema_present(vault_root: Path, schema_path: Path) -> None:
         )
 
 
+def _upgrade_entity_kind_contract(schema_path: Path) -> None:
+    """Upgrade the one canonical pre-asset entity-kind line atomically."""
+    old = "entity_kind: person | tool | repository | service | device"
+    new = (
+        "entity_kind: person | tool | repository | service | device | asset | "
+        "vehicle | place | organization"
+    )
+    try:
+        body = schema_path.read_text(encoding="utf-8")
+        if old not in body or new in body:
+            return
+        updated = body.replace(old, new, 1)
+        temp = schema_path.with_name(f".{schema_path.name}.upgrade.tmp")
+        temp.write_text(updated, encoding="utf-8")
+        os.replace(temp, schema_path)
+        log.info("wiki.integration: upgraded schema entity-kind contract")
+    except OSError as exc:
+        log.warning("wiki.integration: schema contract upgrade failed: %s", exc)
+
+
 def _build_curator(
     *,
-    repo: "PageRepository",
+    repo: PageRepository,
     vault_root: Path,
     brain_caller: Callable[[str, str], Awaitable[str]] | None,
     root_config: Any | None = None,
@@ -909,9 +991,9 @@ def _load_root_config() -> Any:
 
 def _build_rollup_worker(
     *,
-    repo: "PageRepository",
+    repo: PageRepository,
     vault_root: Path,
-    bus: "EventBus",
+    bus: EventBus,
     root_config: Any | None = None,
 ) -> Any:
     """Construct a :class:`~jarvis.memory.wiki.session_rollup.SessionRollupWorker`.

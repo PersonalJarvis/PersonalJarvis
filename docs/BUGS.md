@@ -4008,13 +4008,21 @@ Speech began 09:30:25 — 66 s after dispatch.
 - Data purge: the three poisoned fact lines removed from entities/alex.md
   (invented notebooks, SOUL.md/USER.md, people profiles).
 
-**Still open (class rule, tracked).** The Stage-1 fact extractor journals
-ASSISTANT claims about tool results as facts about the user's world — that
-is how every hallucinated answer becomes durable memory. BUG-054's boundary
-rule applies here too: answer content may enter memory only when backed by
-executed-tool evidence. Guards:
-``tests/unit/plugins/tool/test_wiki_list.py``,
-``tests/unit/brain/test_tool_use_loop_deadline.py``.
+**Memory-ingest follow-up (fixed 2026-07-15).** Realtime capture is now a
+grounded two-stage pipeline. Stage 1 may use assistant replies only to resolve
+references, but every candidate must cite an exact user turn and persists a
+bounded, secret-redacted USER-only evidence excerpt. Stage 2 sees that excerpt
+next to the candidate and must NOOP unsupported or assistant-only claims;
+captured legacy rows without user evidence are rejected and can be recreated
+from persisted transcripts through the policy-v3 backfill. Landed pages receive
+a deterministic session/turn source marker. Follow-up live backfill hardened
+three semantic gaps: one-off questions cannot manufacture a lasting user
+interest, new numeric claims must occur in evidence/current page, and an
+explicit remember/note/add-to-wiki request cannot silently become NOOP unless
+the fact is already present unchanged or lacks user evidence. Guards:
+``tests/unit/memory/wiki/test_extractor.py``,
+``tests/unit/memory/wiki/test_consolidator.py``,
+``tests/integration/memory/wiki/test_realtime_to_vault_e2e.py``.
 
 **Class rule.** A question about what EXISTS needs a deterministic
 enumeration tool; search + single-read cannot answer it groundedly, and a
@@ -4296,27 +4304,30 @@ nothing, Launchpad and /Applications showed nothing — relaunch required a
 terminal command. A pip-based install ships no ``.app`` bundle, and macOS
 only surfaces bundles.
 
-**Fix (2026-07-14).** New ``jarvis/setup/macos_app_bundle.py``:
-``ensure_macos_app_bundle`` writes a minimal per-user
-``~/Applications/Personal Jarvis.app`` (Info.plist + a two-line bash
-executable exec'ing the install venv's Python desktop launcher + a
-best-effort ``jarvis.icns`` via PIL/iconutil). Spotlight indexes
-``~/Applications``, so Cmd+Space finds it. Wired into the installer's
-finish step (``step_macos_app``), removed by the uninstaller, and the
-installer's "Start again" hint now names Spotlight on macOS (the old
-``python -m …`` hint did not even work without the venv on PATH). Bonus:
-a real bundle gives TCC an identity — the mic prompt names "Personal
-Jarvis" with an honest ``NSMicrophoneUsageDescription`` instead of being
-attributed to whichever terminal started the process.
+**Fix (2026-07-14, hardened 2026-07-15).**
+``jarvis/setup/macos_app_bundle.py`` installs
+``~/Applications/Personal Jarvis.app`` so Spotlight and Launchpad can find
+the managed source install. The first implementation used a bash executable
+that replaced itself with the venv Python. That was discoverable but did not
+provide a reliable ``NSBundle`` identity: TCC could still attach grants to
+Python or Terminal. The hardened installer now builds a native Mach-O py2app
+alias launcher, ad-hoc signs and verifies it, then launches a short identity
+probe through LaunchServices. Ordinary source updates preserve the valid
+bundle byte-for-byte so its local TCC identity does not churn. All manual,
+restart, updater, and login-autostart paths re-enter through that bundle.
+Developer-ID signing and notarization remain requirements for a separately
+distributed binary artifact; the source installer does not pretend its local
+ad-hoc signature is a notarized release.
 
-Guards: ``tests/unit/setup/test_macos_app_bundle.py`` (bundle layout,
-plist incl. mic usage string, venv-python launcher script, idempotency,
-off-darwin no-op, icon best-effort).
+Guards: ``tests/unit/setup/test_macos_app_bundle.py`` rejects shell launchers,
+checks native structure and privacy metadata, proves idempotent preservation,
+and covers the identity-probe contract. ``.github/workflows/macos-desktop.yml``
+builds and self-probes the real bundle on Intel and Apple-Silicon runners.
 
 **Class rule.** "Installed" is not "discoverable": every OS needs its
 native launch surface (Windows Start-Menu shortcut, macOS ``.app``
-bundle, Linux XDG ``.desktop``) or closing the app strands the user. The
-Linux ``.desktop`` entry is the remaining gap of this class.
+bundle, Linux XDG ``.desktop``) or closing the app strands the user. Managed
+desktop installs now register and remove all three surfaces.
 
 ## BUG-061: Base install bricked on Intel Macs — pinned onnxruntime has no x86_64 macOS wheels (HIGH, FIXED 2026-07-14)
 
@@ -4359,7 +4370,7 @@ platform markers and give the capability an honest degrade. Wheel
 matrices shrink over time — "it resolved when pinned" is not "it resolves
 everywhere forever".
 
-## BUG-062: Realtime speech audibly choppy + answers cut short on a speakers+mic laptop (HIGH, PARTIALLY FIXED 2026-07-14, deep-dive documented)
+## BUG-062: Realtime speech audibly choppy + answers cut short on a speakers+mic laptop (HIGH, FIXED 2026-07-15)
 
 **Symptom.** First real realtime-voice run (old Intel MacBook, CPU-only,
 built-in speakers + mic): the assistant's TRANSCRIPT is complete, but the
@@ -4390,13 +4401,93 @@ whisper-quiet barge-in no longer triggers. Guards:
 ``tests/unit/realtime/test_desktop.py`` (gate skips ONNX on quiet frames,
 loud speech still confirms; logic tests pin ``min_frame_rms=0.0``).
 
-**Follow-ups (need on-device validation, tracked).** (a) A realtime echo-
-suppression window analogous to the classic path, or an energy comparison
-against the currently playing output level; (b) offload the detector off
-the audio-critical loop; (c) a small time-based release floor in
+**Completion (2026-07-15).** A Windows voice-session forensic proved the
+remaining boundary: the output device reported 210 ms latency, playback
+drained, and the desktop adapter uploaded that physical speaker tail
+immediately. OpenAI transcribed it as a new user turn (``Mostly cloudy, with a
+high near``), cancelled the real answer, then remained in that phantom turn for
+29.4 s. Desktop realtime now keeps the existing local Barge-in/VAD detector
+armed for 500 ms after a normal playback drain. Echo remains local, while
+confirmed immediate user speech is forwarded with its buffered opening
+syllables. Cancellation by a real Barge-in does not arm the tail guard. Guard:
+``tests/unit/speech/test_realtime_mode.py::test_post_output_echo_tail_stays_local_and_preserves_immediate_user``.
+
+**Follow-ups (performance only).** (a) Offload the detector off the
+audio-critical loop; (b) add a small time-based release floor in
 ``ScrubHoldGate`` so audio is not strictly transcript-delta-clocked.
 
 **Class rule.** Half-duplex voice on open speakers MUST treat its own
 output as hostile input: any interrupt detector needs an energy floor or
 echo reference before it may cancel playback, and nothing compute-heavy
 belongs on the audio-critical loop per mic frame.
+
+## BUG-063: Realtime Computer-Use task needed 4 dispatches — context-free goals, boundary-timeout refusal, invented capability gaps (HIGH, FIXED 2026-07-15)
+
+**Symptom (voice session 2026-07-15 07:57).** "Open my Discord server, go to
+Personal Jarvis, and announce a live event the day after tomorrow" took four
+dispatches and two why-questions. In between the user heard a canned "that
+didn't work just now" with no action attempt, an invented explanation ("I have
+no API access", offering to type via "a script or the keyboard"), and a
+premature "Done." while Discord merely showed the Friends view. The final
+mission posted a placeholder announcement instead of the requested content.
+
+**Root causes (four, compounding).**
+
+1. **Context-free CU goal.** The deterministic local-action gate ships the RAW
+   current utterance as the mission goal (``plan.prompt=original``). A
+   correction / follow-up turn ("Ihr macht es doch mit Computer-Use") carries <!-- i18n-allow: quoted German speech input from the forensic -->
+   no task of its own, so the loop ran against a vacuous goal and the verifier
+   passed on trivial state (Friends view open → "Done").
+2. **Boundary-timeout refusal after a promise block.** The unbacked-action
+   guard interrupts the response that carried the promise; when that response
+   is already complete on the wire, no further ``turn_complete`` arrives, so
+   the deterministic delegate's 3 s input-boundary wait timed out and REFUSED
+   the action — a canned failure with zero LLM calls, although the final input
+   transcript was in hand.
+3. **No tool self-knowledge in the delegate directive.** Neither the
+   ``jarvis_action`` declaration nor the role directive named on-screen
+   control, so the live model invented capability gaps instead of re-calling
+   the function with the correction folded in.
+4. **History window too small for a correction sequence.** 8 delegate-history
+   messages were exhausted by 4 correction turns + 2 background-completion
+   notes; the original announce request was trimmed out exactly when the
+   recovery turn needed it → placeholder announcement content.
+
+**Fixes (2026-07-15).** (1) ``BrainManager._cu_goal_with_context`` appends a
+bounded recent-turns block (``_TURN_HISTORY_OVERRIDE`` → ``self._history``) to
+every gate-claimed CU goal. (2) ``_DelegateTurnState.input_final``: the
+promise-block recovery marks the input final, and a boundary timeout then
+delays the dispatch instead of vetoing it. (3) The delegate declaration +
+directive name click/type/navigate screen control and forbid claiming a
+missing tool/API/access for anything in the user's world. (4)
+``_DELEGATE_HISTORY_MAX_MESSAGES`` 8 → 20.
+
+**Guards.** ``tests/unit/brain/test_computer_use_offload.py`` (goal context:
+carried, bare-on-first-turn, live-history fallback);
+``tests/unit/realtime/test_session.py`` (promise-block recovery dispatches
+after boundary timeout; directive names screen control + forbids capability
+denial; history keeps a task five exchanges back).
+
+**Corrected finding (2026-07-15, follow-up forensic).** The first version of
+this entry claimed a text-only ``meta/llama-3.3-70b-instruct`` stepped the
+mission. Wrong: that came from the per-candidate speed-tune INFO line
+("[cu] nvidia: stepping with the fast vision model …"), which fired on every
+step for a chain CANDIDATE that never served a single call. The missions
+actually stepped on the openrouter Tool Model pin
+(``google/gemini-3.5-flash``, vision-capable) — the fast-chain head. Fixed:
+candidate swaps now log at DEBUG with "chain candidate" wording, and a
+change-triggered INFO line names the brain that actually serves
+("[cu] vision calls served by …"). Guard:
+``tests/unit/cu/test_brain_call_cu_provider.py::test_serving_brain_logged_once_per_identity``.
+Additionally the global Tool Model was never ACTIVATED ([brain.tool_model]
+unset → automatic selection); it is now pinned to the vision-capable
+``gemini`` provider, which the ``call_vision_brain`` hoist and the delegated
+``prefer_tool_model`` turns both lead with — Computer-Use and tool routing
+deterministically run on the user's Tool Model, in Realtime and Pipeline
+alike.
+
+**Class rule.** A deterministic action dispatched from a conversation must
+carry the conversation: any harness goal built from a single utterance is
+wrong for every follow-up, correction, and instrument-naming turn. And a
+recovery path that already holds the complete user text must never refuse to
+act because a provider wire event failed to arrive.

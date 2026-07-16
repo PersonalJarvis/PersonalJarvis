@@ -57,7 +57,8 @@ data/workspace/
 
 ### Entity page (`entities/<slug>.md`)
 
-Concrete singular things. One file per entity. Slug is kebab-case,
+Concrete singular things: people, tools, repositories, services, devices,
+owned assets or vehicles, places, and organizations. One file per entity. Slug is kebab-case,
 ASCII, derived from the entity's canonical name.
 
 Required frontmatter:
@@ -65,7 +66,7 @@ Required frontmatter:
 ```yaml
 ---
 type: entity
-entity_kind: person | tool | repository | service | device
+entity_kind: person | tool | repository | service | device | asset | vehicle | place | organization
 slug: <slug>
 aliases: [list, of, alt, names]
 created: YYYY-MM-DD
@@ -174,10 +175,11 @@ Rules for the curator:
 
 ## Wikilinks
 
-Use double-bracket syntax `[[entities/alex]]` or short form `[[alex]]`
-when the slug is globally unique. Aliased links `[[entities/alex|the user]]`
-are allowed but discouraged — prefer adding the alias to the entity's
-frontmatter and using the canonical short form.
+Use double-bracket syntax `[[entities/example-person]]` or short form
+`[[example-person]]` when the slug is globally unique. Aliased links
+`[[entities/example-person|the person]]` are allowed but discouraged — prefer
+adding the alias to the entity's frontmatter and using the canonical short
+form.
 
 A broken wikilink is a bug. The wiki curator MUST either create the
 missing page during the same ingest, or refuse the link and use plain

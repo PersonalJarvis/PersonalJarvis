@@ -12,9 +12,9 @@ Design contract (matches the platform seam, AD-5/AD-6/AD-13):
 * Every public function is best-effort and NEVER raises into a caller — a missing
   tool, a denied permission, a headless / Wayland session, or a native-call error
   degrades to an empty result, not an exception.
-* The Windows ctypes path is moved verbatim from ``switch_window`` (AD-7: behavior
-  unchanged); macOS (osascript) and Linux/X11 (wmctrl) are the cross-platform
-  siblings. Wayland and headless sessions degrade cleanly.
+* The Windows ctypes path is moved verbatim from ``switch_window`` (AD-7:
+  behavior unchanged); macOS uses Quartz/AppKit/Accessibility and Linux/X11
+  uses wmctrl. Wayland and headless sessions degrade cleanly.
 * ``is_app_running`` is conservative: it only reports a match when an app token
   (>=3 chars) clearly appears in a window title. When uncertain it returns
   ``None`` so the caller falls through to a normal launch — a false negative just
@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import logging
 import os
-import re
 import shutil
 import subprocess
 import time
@@ -36,6 +35,7 @@ from dataclasses import dataclass
 
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from jarvis.platform import detect_platform
+from jarvis.platform.macos_ax import decode_ax_point, decode_ax_size
 from jarvis.platform.probes import display_present, is_wayland
 
 log = logging.getLogger(__name__)
@@ -54,8 +54,9 @@ _TITLE_ALIASES: dict[str, tuple[str, ...]] = {
 class WindowInfo:
     """A single visible top-level window.
 
-    ``handle`` is an opaque platform handle (the Win32 ``hwnd`` on Windows,
-    ``None`` on macOS/Linux where the backends address windows by title).
+    ``handle`` is an opaque platform handle: Win32 ``hwnd``, macOS
+    ``CGWindowID``, or an X11 window id. A degraded title-only probe uses
+    ``None``.
     """
 
     title: str
@@ -246,128 +247,295 @@ def _foreground_title_windows() -> str:
 
 
 # ----------------------------------------------------------------------
-# macOS backend (osascript) — focus path moved verbatim from switch_window (AD-7)
+# macOS backend (Quartz/AppKit/AX; no System Events Automation grant)
 # ----------------------------------------------------------------------
 
 
-def _find_and_focus_macos(title_contains: str) -> tuple[bool, str]:
-    """Bring the first window whose title contains the substring to the front
-    via AppleScript / System Events (H2, DEEP-DIVE-AUDIT-2026-06-19).
+def _macos_window_title(entry: dict) -> str:
+    return str(entry.get("kCGWindowName") or entry.get("kCGWindowOwnerName") or "")
 
-    Needs the macOS Accessibility grant; without it osascript errors out, which
-    is reported as a clear onboarding message instead of a silent no-op. All
-    user-facing strings are English (Output-Language Policy).
+
+def _macos_window_pid(entry: dict) -> int:
+    try:
+        return int(entry.get("kCGWindowOwnerPID", 0) or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _macos_ax_attr(element: object, attribute: str) -> object | None:
+    try:
+        from ApplicationServices import (  # type: ignore[import-not-found] # noqa: PLC0415
+            AXUIElementCopyAttributeValue,
+        )
+
+        error, value = AXUIElementCopyAttributeValue(element, attribute, None)
+        return value if error == 0 else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _macos_entry_bounds(entry: dict) -> tuple[float, float, float, float] | None:
+    raw = entry.get("kCGWindowBounds") or {}
+    try:
+        rect = (
+            float(raw["X"]),
+            float(raw["Y"]),
+            float(raw["Width"]),
+            float(raw["Height"]),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+    return rect if rect[2] > 0 and rect[3] > 0 else None
+
+
+def _macos_ax_window_bounds(window: object) -> tuple[float, float, float, float] | None:
+    point = decode_ax_point(_macos_ax_attr(window, "AXPosition"))
+    size = decode_ax_size(_macos_ax_attr(window, "AXSize"))
+    if point is None or size is None or size[0] <= 0 or size[1] <= 0:
+        return None
+    return point[0], point[1], size[0], size[1]
+
+
+def _macos_rects_match(
+    first: tuple[float, float, float, float],
+    second: tuple[float, float, float, float],
+    *,
+    tolerance: float = 3.0,
+) -> bool:
+    return all(
+        abs(left - right) <= tolerance
+        for left, right in zip(first, second, strict=True)
+    )
+
+
+def _select_macos_ax_window(
+    windows: list[object],
+    entry: dict,
+    *,
+    title_contains: str | None = None,
+    title_equals: str | None = None,
+) -> object | None:
+    """Correlate a CGWindow entry to exactly one AX window.
+
+    CGWindowID is not exposed as a public AX attribute. Position and size are
+    therefore the strongest public correlation key. A unique title is a safe
+    fallback for minimized windows whose geometry is unavailable; duplicate
+    titles fail closed instead of focusing or resizing an arbitrary sibling.
     """
-    if shutil.which("osascript") is None:
-        return False, "osascript not found — cannot switch windows on this macOS host."
-    # Lowercase for case-insensitive matching (parity with the Linux path), then
-    # escape every AppleScript string-literal metacharacter — including newlines/
-    # tabs — so a crafted title cannot break out of the `contains "..."` literal
-    # and inject statements into the `tell` block (review HIGH).
-    needle = (
-        title_contains.lower()
-        .replace("\\", "\\\\")
-        .replace('"', '\\"')
-        .replace("\n", "\\n")
-        .replace("\r", "\\r")
-        .replace("\t", "\\t")
-    )
-    needle = re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", needle)  # strip other control chars
-    script = (
-        'tell application "System Events"\n'
-        "  repeat with proc in (every process whose visible is true)\n"
-        "    repeat with w in (every window of proc)\n"
-        f'      if (the lowercase of (name of w)) contains "{needle}" then\n'
-        "        set frontmost of proc to true\n"
-        '        perform action "AXRaise" of w\n'
-        "        return name of w\n"
-        "      end if\n"
-        "    end repeat\n"
-        "  end repeat\n"
-        "end tell\n"
-        'return ""\n'
-    )
-    proc = subprocess.run(
-        ["osascript", "-e", script],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=10,
-        creationflags=NO_WINDOW_CREATIONFLAGS,
-    )
-    if proc.returncode != 0:
-        err = (proc.stderr or "").strip()
-        if "not allowed assistive access" in err.lower() or "-1719" in err:
-            return False, (
-                "macOS Accessibility permission not granted — grant it in System "
-                "Settings > Privacy & Security > Accessibility so Jarvis can switch windows."
+    cg_bounds = _macos_entry_bounds(entry)
+    if cg_bounds is not None:
+        geometry_matches = [
+            window
+            for window in windows
+            if (
+                (ax_bounds := _macos_ax_window_bounds(window)) is not None
+                and _macos_rects_match(cg_bounds, ax_bounds)
             )
-        return False, f"osascript window switch failed: {err or proc.returncode}"
-    matched = (proc.stdout or "").strip()
-    if matched:
-        return True, matched
-    return False, f"No visible window with title containing '{title_contains}' found."
+        ]
+        if len(geometry_matches) == 1:
+            return geometry_matches[0]
+        if len(geometry_matches) > 1:
+            return None
+
+    contains = (title_contains or "").strip().casefold()
+    equals = (title_equals or "").strip().casefold()
+    title_matches: list[object] = []
+    for window in windows:
+        title = str(_macos_ax_attr(window, "AXTitle") or "").strip().casefold()
+        if (equals and title == equals) or (contains and contains in title):
+            title_matches.append(window)
+    if len(title_matches) == 1:
+        return title_matches[0]
+    if not title_matches and len(windows) == 1:
+        return windows[0]
+    return None
+
+
+def _find_and_focus_macos(title_contains: str) -> tuple[bool, str]:
+    """Activate and AX-raise a matching macOS window without AppleScript.
+
+    Quartz supplies the stable owner PID/window catalogue, AppKit activates
+    the owning process, and Accessibility raises the exact window. This avoids
+    the separate Automation permission that System Events requires.
+    """
+    needle = (title_contains or "").strip().casefold()
+    if not needle:
+        return False, "A non-empty window title is required."
+
+    matched_entry: dict | None = None
+    for entry in _quartz_window_list(on_screen_only=False):
+        try:
+            if int(entry.get("kCGWindowLayer", 0) or 0) != 0:
+                continue
+        except (TypeError, ValueError):
+            continue
+        if needle in _macos_window_title(entry).casefold():
+            matched_entry = entry
+            break
+    if matched_entry is None:
+        return False, f"No window with title containing '{title_contains}' found."
+
+    pid = _macos_window_pid(matched_entry)
+    if not pid:
+        return False, "The matching macOS window has no owning process identifier."
+
+    try:
+        from AppKit import (  # type: ignore[import-not-found] # noqa: PLC0415
+            NSApplicationActivateAllWindows,
+            NSApplicationActivateIgnoringOtherApps,
+            NSRunningApplication,
+        )
+        from ApplicationServices import (  # type: ignore[import-not-found] # noqa: PLC0415
+            AXUIElementCreateApplication,
+            AXUIElementPerformAction,
+            AXUIElementSetAttributeValue,
+        )
+    except (ImportError, ModuleNotFoundError) as exc:
+        return False, f"macOS window APIs are unavailable: {exc}"
+
+    from jarvis.platform.permissions import (  # noqa: PLC0415
+        PermissionId,
+        PermissionState,
+        get_system_permission_port,
+    )
+
+    permission_port = get_system_permission_port()
+    if not permission_port.runtime_access_granted(PermissionId.ACCESSIBILITY):
+        accessibility_state = permission_port.state(PermissionId.ACCESSIBILITY)
+        detail = (
+            accessibility_state.value
+            if accessibility_state is not PermissionState.GRANTED
+            else "grant belongs to an unstable app identity or needs restart"
+        )
+        return False, (
+            f"macOS Accessibility permission is not ready ({detail}) — grant it in System "
+            "Settings > Privacy & Security > Accessibility so Jarvis can switch windows."
+        )
+
+    app = NSRunningApplication.runningApplicationWithProcessIdentifier_(pid)
+    if app is None:
+        return False, "The matching macOS application exited before it could be focused."
+    options = NSApplicationActivateIgnoringOtherApps | NSApplicationActivateAllWindows
+    if not bool(app.activateWithOptions_(options)):
+        return False, "macOS refused to activate the matching application."
+
+    root = AXUIElementCreateApplication(pid)
+    windows = list(_macos_ax_attr(root, "AXWindows") or [])
+    owner_name = str(matched_entry.get("kCGWindowOwnerName") or "")
+    target_title = _macos_window_title(matched_entry)
+    target = _select_macos_ax_window(
+        windows,
+        matched_entry,
+        title_contains=needle if needle not in owner_name.casefold() else None,
+    )
+    if target is None:
+        return False, (
+            "The application activated, but its matching AX window was "
+            "unavailable or ambiguous."
+        )
+    target_title = str(_macos_ax_attr(target, "AXTitle") or target_title)
+
+    minimized = bool(_macos_ax_attr(target, "AXMinimized") or False)
+    restore_error = (
+        AXUIElementSetAttributeValue(target, "AXMinimized", False)
+        if minimized
+        else 0
+    )
+    raise_error = AXUIElementPerformAction(target, "AXRaise")
+    focus_error = AXUIElementSetAttributeValue(root, "AXFocusedWindow", target)
+    front_error = AXUIElementSetAttributeValue(root, "AXFrontmost", True)
+    if any(
+        error != 0
+        for error in (front_error, focus_error, restore_error, raise_error)
+    ):
+        return False, "macOS Accessibility refused to focus the matching window."
+    return True, target_title
 
 
 def _list_windows_macos() -> list[WindowInfo]:
-    """Titles of every visible window via System Events (best-effort)."""
-    if shutil.which("osascript") is None:
-        return []
-    script = (
-        'set out to ""\n'
-        'tell application "System Events"\n'
-        "  repeat with proc in (every process whose visible is true)\n"
-        "    repeat with w in (every window of proc)\n"
-        "      set out to out & (name of w) & linefeed\n"
-        "    end repeat\n"
-        "  end repeat\n"
-        "end tell\n"
-        "return out\n"
-    )
-    proc = subprocess.run(
-        ["osascript", "-e", script],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=10,
-        creationflags=NO_WINDOW_CREATIONFLAGS,
-    )
-    if proc.returncode != 0:
-        return []
-    return [
-        WindowInfo(title=line.strip())
-        for line in (proc.stdout or "").splitlines()
-        if line.strip()
-    ]
+    """Top-level normal-layer windows from Quartz, front-to-back."""
+    entries: list[dict] = []
+    for entry in _quartz_window_list(on_screen_only=False):
+        try:
+            if int(entry.get("kCGWindowLayer", 0) or 0) != 0:
+                continue
+            title = _macos_window_title(entry).strip()
+        except (TypeError, ValueError):
+            continue
+        if title:
+            entries.append(entry)
+
+    minimized_by_number: dict[int, bool] = {}
+    try:
+        from ApplicationServices import (  # type: ignore[import-not-found] # noqa: PLC0415
+            AXUIElementCreateApplication,
+        )
+
+        from jarvis.platform.permissions import (  # noqa: PLC0415
+            PermissionId,
+            get_system_permission_port,
+        )
+
+        port = get_system_permission_port()
+        if port.runtime_access_granted(PermissionId.ACCESSIBILITY):
+            ax_windows_by_pid: dict[int, list[object]] = {}
+            for entry in entries:
+                pid = _macos_window_pid(entry)
+                number = int(entry.get("kCGWindowNumber", 0) or 0)
+                if not pid or not number:
+                    continue
+                if pid not in ax_windows_by_pid:
+                    root = AXUIElementCreateApplication(pid)
+                    ax_windows_by_pid[pid] = list(
+                        _macos_ax_attr(root, "AXWindows") or [],
+                    )
+                ax_windows = ax_windows_by_pid[pid]
+                title_key = _macos_window_title(entry).strip().casefold()
+                target = _select_macos_ax_window(
+                    ax_windows,
+                    entry,
+                    title_equals=title_key,
+                )
+                if target is not None:
+                    native_minimized = _macos_ax_attr(target, "AXMinimized")
+                    if native_minimized is not None:
+                        minimized_by_number[number] = bool(native_minimized)
+    except Exception:  # noqa: BLE001 — minimized state is advisory
+        log.debug("macOS AX minimized-state lookup failed", exc_info=True)
+
+    result: list[WindowInfo] = []
+    for entry in entries:
+        try:
+            number = int(entry.get("kCGWindowNumber", 0) or 0)
+        except (TypeError, ValueError):
+            number = 0
+        result.append(WindowInfo(
+            title=_macos_window_title(entry).strip(),
+            minimized=minimized_by_number.get(number, False),
+            handle=number or None,
+        ))
+    return result
 
 
 def _foreground_title_macos() -> str:
-    if shutil.which("osascript") is None:
+    try:
+        from AppKit import NSWorkspace  # type: ignore[import-not-found] # noqa: PLC0415
+
+        app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        if app is None:
+            return ""
+        pid = int(app.processIdentifier())
+        for entry in _quartz_window_list():
+            if (
+                _macos_window_pid(entry) == pid
+                and int(entry.get("kCGWindowLayer", 0) or 0) == 0
+            ):
+                title = _macos_window_title(entry).strip()
+                if title:
+                    return title
+        return str(app.localizedName() or "")
+    except Exception:  # noqa: BLE001
         return ""
-    script = (
-        'tell application "System Events"\n'
-        "  set frontApp to first application process whose frontmost is true\n"
-        "  try\n"
-        "    return name of first window of frontApp\n"
-        "  on error\n"
-        "    return name of frontApp\n"
-        "  end try\n"
-        "end tell\n"
-    )
-    proc = subprocess.run(
-        ["osascript", "-e", script],
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=10,
-        creationflags=NO_WINDOW_CREATIONFLAGS,
-    )
-    if proc.returncode != 0:
-        return ""
-    return (proc.stdout or "").strip()
 
 
 # ----------------------------------------------------------------------
@@ -713,26 +881,27 @@ def _foreground_window_windows() -> WindowInfo | None:
     return WindowInfo(title=buf.value or "", handle=int(hwnd))
 
 
-def _quartz_window_list() -> list:
-    """On-screen window info dicts via Quartz, front-to-back; ``[]`` when the
-    framework is absent (base install without ``[desktop-macos]``) or the call
-    fails. Bounds and ids come in the CG global space (points, top-left
-    origin) — the SAME space Quartz mouse events and mss capture rects use,
-    so no extra conversion may ever be applied to them."""
+def _quartz_window_list(*, on_screen_only: bool = True) -> list:
+    """Quartz window info dicts, front-to-back, or ``[]`` when unavailable.
+
+    Foreground/capture callers use the default on-screen catalogue. Window
+    enumeration and switching request the all-windows catalogue so minimized
+    and other-Space windows can still be found and restored. Bounds and ids
+    use the same global point space as Quartz input and mss capture rects.
+    """
     try:
-        from Quartz import (  # noqa: PLC0415
-            CGWindowListCopyWindowInfo,
-            kCGNullWindowID,
-            kCGWindowListExcludeDesktopElements,
-            kCGWindowListOptionOnScreenOnly,
-        )
+        import Quartz  # type: ignore[import-not-found] # noqa: PLC0415
     except Exception:  # noqa: BLE001 — pyobjc not installed
         return []
     try:
-        return list(CGWindowListCopyWindowInfo(
-            kCGWindowListOptionOnScreenOnly
-            | kCGWindowListExcludeDesktopElements,
-            kCGNullWindowID,
+        scope = (
+            Quartz.kCGWindowListOptionOnScreenOnly
+            if on_screen_only
+            else getattr(Quartz, "kCGWindowListOptionAll", 0)
+        )
+        return list(Quartz.CGWindowListCopyWindowInfo(
+            scope | Quartz.kCGWindowListExcludeDesktopElements,
+            Quartz.kCGNullWindowID,
         ) or [])
     except Exception:  # noqa: BLE001 — permission / transient CG error
         log.debug("CGWindowListCopyWindowInfo failed", exc_info=True)
@@ -746,12 +915,22 @@ def _foreground_window_macos() -> WindowInfo | None:
     the first entry on layer 0 is the frontmost app window (status items,
     the Dock and overlays live on higher layers). ``kCGWindowName`` needs
     the Screen-Recording permission — without it the owning app's name still
-    identifies the window. Falls back to the osascript title (no handle)
-    when Quartz is unavailable.
+    identifies the window. Falls back to the native foreground-title probe
+    (without a handle) when Quartz is unavailable.
     """
+    front_pid = 0
+    try:
+        from AppKit import NSWorkspace  # type: ignore[import-not-found] # noqa: PLC0415
+
+        app = NSWorkspace.sharedWorkspace().frontmostApplication()
+        front_pid = int(app.processIdentifier()) if app is not None else 0
+    except Exception:  # noqa: BLE001
+        log.debug("frontmost macOS process lookup failed", exc_info=True)
     for entry in _quartz_window_list():
         try:
             if int(entry.get("kCGWindowLayer", 0) or 0) != 0:
+                continue
+            if front_pid and _macos_window_pid(entry) != front_pid:
                 continue
             number = int(entry.get("kCGWindowNumber", 0) or 0)
             title = str(
@@ -1061,11 +1240,91 @@ def _window_frame_rect_linux(win: WindowInfo) -> tuple[int, int, int, int] | Non
     return (left, top, width, height)
 
 
-def window_is_maximized(win: WindowInfo) -> bool | None:
-    """Whether the window is maximized; ``None`` when it cannot be read
-    (non-Windows today — callers must treat that as "don't touch")."""
+def _resolve_macos_ax_window(win: WindowInfo) -> tuple[object | None, str]:
+    """Resolve a Quartz ``WindowInfo`` to its owning native AX window."""
     try:
-        if detect_platform() != "win32" or not win.handle:
+        from AppKit import NSWorkspace  # type: ignore[import-not-found] # noqa: PLC0415
+        from ApplicationServices import (  # type: ignore[import-not-found] # noqa: PLC0415
+            AXUIElementCreateApplication,
+        )
+    except (ImportError, ModuleNotFoundError) as exc:
+        return None, f"macOS window APIs are unavailable: {exc}"
+
+    pid = 0
+    catalog_match = False
+    matched_entry: dict | None = None
+    title_key = (win.title or "").strip().casefold()
+    for entry in _quartz_window_list(on_screen_only=False):
+        try:
+            number = int(entry.get("kCGWindowNumber", 0) or 0)
+            title = _macos_window_title(entry).strip().casefold()
+        except (TypeError, ValueError):
+            continue
+        if (win.handle and number == int(win.handle)) or (
+            not win.handle and title_key and title == title_key
+        ):
+            catalog_match = True
+            pid = _macos_window_pid(entry)
+            matched_entry = entry
+            break
+    if win.handle and not catalog_match:
+        return None, "The requested macOS window no longer exists."
+    if not pid:
+        try:
+            app = NSWorkspace.sharedWorkspace().frontmostApplication()
+            pid = int(app.processIdentifier()) if app is not None else 0
+        except Exception:  # noqa: BLE001
+            pid = 0
+    if not pid:
+        return None, "The macOS window has no owning process identifier."
+
+    root = AXUIElementCreateApplication(pid)
+    windows = list(_macos_ax_attr(root, "AXWindows") or [])
+    target = (
+        _select_macos_ax_window(
+            windows,
+            matched_entry,
+            title_equals=title_key,
+        )
+        if matched_entry is not None
+        else None
+    )
+    if target is None and matched_entry is None and len(windows) == 1:
+        target = windows[0]
+    if target is None:
+        return None, "The matching macOS AX window is unavailable or ambiguous."
+    return target, ""
+
+
+def _window_is_maximized_macos(win: WindowInfo) -> bool | None:
+    from jarvis.platform.permissions import (  # noqa: PLC0415
+        PermissionId,
+        get_system_permission_port,
+    )
+
+    if not get_system_permission_port().runtime_access_granted(
+        PermissionId.ACCESSIBILITY,
+    ):
+        return None
+    target, _error = _resolve_macos_ax_window(win)
+    if target is None:
+        return None
+    full_screen = _macos_ax_attr(target, "AXFullScreen")
+    if full_screen is not None and bool(full_screen):
+        return True
+    zoomed = _macos_ax_attr(target, "AXZoomed")
+    if zoomed is not None:
+        return bool(zoomed)
+    return None if full_screen is None else bool(full_screen)
+
+
+def window_is_maximized(win: WindowInfo) -> bool | None:
+    """Whether the window is maximized; ``None`` when it cannot be read."""
+    try:
+        platform_name = detect_platform()
+        if platform_name == "darwin":
+            return _window_is_maximized_macos(win)
+        if platform_name != "win32" or not win.handle:
             return None
         import ctypes  # noqa: PLC0415
         from ctypes import wintypes  # noqa: PLC0415
@@ -1089,6 +1348,48 @@ def window_is_maximized(win: WindowInfo) -> bool | None:
     except Exception:  # noqa: BLE001
         log.debug("window_is_maximized failed", exc_info=True)
         return None
+
+
+def _maximize_window_macos(win: WindowInfo) -> tuple[bool, str]:
+    """Set the native AXZoomed attribute without Apple Events automation."""
+    from jarvis.platform.permissions import (  # noqa: PLC0415
+        PermissionId,
+        PermissionState,
+        get_system_permission_port,
+    )
+
+    port = get_system_permission_port()
+    if not port.runtime_access_granted(PermissionId.ACCESSIBILITY):
+        state = port.state(PermissionId.ACCESSIBILITY)
+        detail = (
+            state.value
+            if state is not PermissionState.GRANTED
+            else "grant belongs to an unstable app identity or needs restart"
+        )
+        return False, (
+            "macOS Accessibility permission is not ready "
+            f"({detail}); grant it in Personal Jarvis > Settings > "
+            "Permissions or System Settings > Privacy & Security > "
+            "Accessibility, then retry."
+        )
+
+    try:
+        from ApplicationServices import (  # type: ignore[import-not-found] # noqa: PLC0415
+            AXUIElementSetAttributeValue,
+        )
+    except (ImportError, ModuleNotFoundError) as exc:
+        return False, f"macOS window APIs are unavailable: {exc}"
+    target, error = _resolve_macos_ax_window(win)
+    if target is None:
+        return False, error
+
+    error = AXUIElementSetAttributeValue(target, "AXZoomed", True)
+    if error != 0:
+        return False, (
+            "macOS Accessibility could not zoom this window; it may be a "
+            "fixed-size dialog or not expose AXZoomed."
+        )
+    return True, f"zoomed '{(win.title or 'window')[:40]}' to fill its display"
 
 
 def maximize_window(win: WindowInfo) -> tuple[bool, str]:
@@ -1118,27 +1419,7 @@ def maximize_window(win: WindowInfo) -> tuple[bool, str]:
             user32.ShowWindow(hwnd, _SW_MAXIMIZE)
             return True, f"maximized '{(win.title or 'window')[:40]}'"
         if plat == "darwin":
-            if shutil.which("osascript") is None:
-                return False, "osascript not found"
-            # AXZoomed = the native green-button "fill the screen" zoom (NOT
-            # the separate macOS full-screen Space). Apps without the
-            # attribute error out -> honest failure, window untouched.
-            script = (
-                'tell application "System Events"\n'
-                "  set frontProc to first application process whose frontmost is true\n"
-                '  set value of attribute "AXZoomed" of front window of frontProc to true\n'
-                "end tell\n"
-            )
-            proc = subprocess.run(
-                ["osascript", "-e", script],
-                capture_output=True, text=True,
-                encoding="utf-8", errors="replace",
-                timeout=10,
-                creationflags=NO_WINDOW_CREATIONFLAGS,
-            )
-            if proc.returncode != 0:
-                return False, "could not zoom the front window (Accessibility?)"
-            return True, "zoomed the front window to fill the screen"
+            return _maximize_window_macos(win)
         if plat == "linux":
             if is_wayland() or not display_present():
                 return False, "cannot maximize on Wayland/headless"

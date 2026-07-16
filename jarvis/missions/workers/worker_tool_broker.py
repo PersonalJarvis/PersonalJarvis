@@ -42,14 +42,47 @@ _MAX_REQUEST_BYTES = 1024 * 1024
 
 _FORBIDDEN_EXACT = frozenset(
     {
+        "app-command",
+        "app_command",
+        "cli-jarvis",
+        "cli-jarvisctl",
+        "cli-jctl",
+        "computer-use",
+        "computer_use",
+        "click",
+        "click-element",
+        "click_element",
         "dispatch-with-review",
         "dispatch_with_review",
+        "drag",
+        "hotkey",
+        "jarvisctl",
+        "jctl",
+        "manage-mcp-server",
+        "manage_mcp_server",
+        "move-mouse",
+        "move_mouse",
         "multi-spawn",
         "multi_spawn",
+        "navigate",
+        "open-app",
+        "open_app",
+        "run-shell",
+        "run_shell",
         "run-skill",
         "run_skill",
+        "screen-snapshot",
+        "screen_snapshot",
+        "screenshot",
+        "scroll",
         "spawn-worker",
         "spawn_worker",
+        "switch-provider",
+        "switch-window",
+        "switch_provider",
+        "switch_window",
+        "type-text",
+        "type_text",
     }
 )
 _FORBIDDEN_NAME_FRAGMENTS = (
@@ -612,13 +645,22 @@ class WorkerToolBroker:
         if gateway is None:
             return None
 
+        from .capabilities import worker_app_command_allowed
+
+        requested_app_commands = tuple(dict.fromkeys(app_commands))
+        if any(
+            not worker_app_command_allowed(name)
+            for name in requested_app_commands
+        ):
+            return None
+
         scope = _BrokerScope(
             task_text=task_text,
             gateway=gateway,
             loop=loop,
             expires_at=time.monotonic() + max(1.0, float(ttl_s)),
             mcp_server_ids=tuple(dict.fromkeys(mcp_server_ids)),
-            app_commands=tuple(dict.fromkeys(app_commands)),
+            app_commands=requested_app_commands,
             native_tool_names=tuple(dict.fromkeys(native_tool_names)),
             mission_id=mission_id,
             worker_id=worker_id,

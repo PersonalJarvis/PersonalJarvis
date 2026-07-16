@@ -387,7 +387,15 @@ class WikiCuratorLLM:
         candidate_slugs = self._collect_candidate_slugs(vault, vault_summary)
         top_slugs = select_top_slugs(source_content, candidate_slugs)
 
-        system_prompt = build_system_prompt(schema_md, vault_summary)
+        system_prompt = build_system_prompt(
+            schema_md,
+            vault_summary,
+            user_entity_slug=getattr(
+                self._config.memory.wiki.session_rollup,
+                "user_entity_slug",
+                "",
+            ),
+        )
         user_prompt = build_user_prompt(source_label, source_content, top_slugs)
 
         request = BrainRequest(

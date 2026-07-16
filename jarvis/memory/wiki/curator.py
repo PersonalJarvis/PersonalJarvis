@@ -175,6 +175,7 @@ class WikiCurator:
         *,
         source_label: str,
         verb: str = "merge",
+        all_or_nothing: bool = False,
     ) -> WriteResult:
         """Apply pre-built updates through the full guarded write pipeline.
 
@@ -184,7 +185,9 @@ class WikiCurator:
         writes via the AtomicWriter (backup → secret guard → validate →
         rollback → FTS upsert), and chronicles applied writes in ``log.md``
         under ``verb`` (one of the schema.md log verbs — consolidation runs
-        use ``merge``).
+        use ``merge``). ``all_or_nothing=True`` makes this call one write
+        transaction: a lock conflict, secret block, write failure, or schema
+        failure leaves every page in its pre-call state.
         """
         # The LLM is taught (via schema.md) to emit vault-relative targets
         # like "entities/alex.md". Python's Path() treats that as a
@@ -208,7 +211,16 @@ class WikiCurator:
         # The writer takes the snapshot, applies each update via
         # tempfile+rename, re-validates each written page through repo,
         # and rolls back individual pages that fail validation.
-        result = await self._writer.apply(updates, repo=self._repo)
+        if all_or_nothing:
+            result = await self._writer.apply(
+                updates,
+                repo=self._repo,
+                all_or_nothing=True,
+            )
+        else:
+            # Keep the legacy call shape for injected writer implementations
+            # that predate the optional transaction keyword.
+            result = await self._writer.apply(updates, repo=self._repo)
 
         # ----- 3. log only when at least one write actually landed -----
         # No applied pages → nothing to chronicle. The empty case can
@@ -216,15 +228,25 @@ class WikiCurator:
         # every page failed validation; in both situations the writer
         # already logged the details internally.
         if result.applied:
-            await self._log.append_log_entry(
-                verb=verb,
-                subject=source_label,
-                pages_touched=[
-                    _wikilink_for(p, self._vault_root) for p in result.applied
-                ],
-                source=source_label,
-                summary=self._summarise(updates, result),
-            )
+            try:
+                await self._log.append_log_entry(
+                    verb=verb,
+                    subject=source_label,
+                    pages_touched=[
+                        _wikilink_for(p, self._vault_root) for p in result.applied
+                    ],
+                    source=source_label,
+                    summary=self._summarise(updates, result),
+                )
+            except Exception as exc:  # noqa: BLE001
+                # The page transaction has already landed. A secondary audit
+                # log failure must not make the journal retry and potentially
+                # duplicate the same fact; retain the authoritative writer
+                # result and surface the auxiliary failure in logs.
+                log.warning(
+                    "WikiCurator: page write succeeded but log append failed: %s",
+                    type(exc).__name__,
+                )
 
         return result
 

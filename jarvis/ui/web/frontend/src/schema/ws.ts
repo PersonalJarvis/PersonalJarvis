@@ -20,7 +20,6 @@ export const WSWelcome = z.object({
   type: z.literal("welcome"),
   session_id: z.string(),
   version: z.string().optional(),
-  token: z.string().nullable().optional(),
 });
 export type WSWelcomeT = z.infer<typeof WSWelcome>;
 

@@ -68,8 +68,13 @@ class _FakeWS:
         self.scope = {
             "app": SimpleNamespace(state=state),
             "client": (client_host, 50_000),
+            "headers": (
+                [(b"cookie", f"jarvis_session={token}".encode("ascii"))]
+                if token
+                else []
+            ),
         }
-        self.query_params = {"token": token} if token else {}
+        self.query_params = {}
         self.accepted = False
         self.sent_bytes: list[bytes] = []
         self.sent_json: list[dict] = []

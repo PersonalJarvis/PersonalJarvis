@@ -2,16 +2,15 @@
 enumeration / focus / already-running detection behind the platform seam.
 
 Seam-level only: the platform is forced via detect_platform/probes and the
-ctypes/osascript/wmctrl backends are faked or monkeypatched — this proves the
+ctypes/Quartz/AppKit/AX/wmctrl backends are faked or monkeypatched — this proves the
 dispatch + parsing + matching logic, NOT that real OS APIs behave as assumed on
 real hardware (SIGNOFF-LOG honesty).
 """
 from __future__ import annotations
 
 import subprocess
+import sys
 import types
-
-import pytest
 
 from jarvis.platform import window_state as ws
 from jarvis.platform.window_state import WindowInfo
@@ -19,6 +18,23 @@ from jarvis.platform.window_state import WindowInfo
 
 def _cp(returncode: int, stdout: str = "", stderr: str = ""):
     return types.SimpleNamespace(returncode=returncode, stdout=stdout, stderr=stderr)
+
+
+def _patch_macos_accessibility(monkeypatch, *, granted: bool) -> None:
+    from jarvis.platform.permissions import PermissionState
+
+    port = types.SimpleNamespace(
+        runtime_access_granted=lambda _permission_id: granted,
+        state=lambda _permission_id: (
+            PermissionState.GRANTED
+            if granted
+            else PermissionState.NOT_GRANTED
+        ),
+    )
+    monkeypatch.setattr(
+        "jarvis.platform.permissions.get_system_permission_port",
+        lambda: port,
+    )
 
 
 # --- WindowInfo basics ------------------------------------------------------
@@ -152,14 +168,65 @@ def test_list_windows_linux_parses_wmctrl(monkeypatch):
     assert "Terminal" in titles
 
 
-def test_list_windows_macos_parses_osascript(monkeypatch):
+def test_list_windows_macos_parses_quartz_catalog(monkeypatch):
     monkeypatch.setattr(ws, "detect_platform", lambda: "darwin")
-    monkeypatch.setattr("shutil.which", lambda n: f"/usr/bin/{n}")
-    # newline-separated window titles, one per line
-    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _cp(0, stdout="OBS\nSafari — Apple\n"))
+    monkeypatch.setattr(
+        ws,
+        "_quartz_window_list",
+        lambda **_kwargs: [
+            {"kCGWindowLayer": 0, "kCGWindowName": "OBS", "kCGWindowNumber": 1},
+            {
+                "kCGWindowLayer": 0,
+                "kCGWindowName": "Safari — Apple",
+                "kCGWindowNumber": 2,
+                "kCGWindowIsOnscreen": False,
+            },
+            {"kCGWindowLayer": 8, "kCGWindowName": "Overlay", "kCGWindowNumber": 3},
+        ],
+    )
     titles = [w.title for w in ws.list_windows()]
     assert "OBS" in titles
     assert "Safari — Apple" in titles
+    assert "Overlay" not in titles
+    safari = next(window for window in ws.list_windows() if window.title == "Safari — Apple")
+    assert safari.minimized is False, "another Space is not the same as minimized"
+
+
+def test_list_windows_macos_reads_ax_minimized_instead_of_onscreen_flag(monkeypatch):
+    monkeypatch.setattr(ws, "detect_platform", lambda: "darwin")
+    _patch_macos_accessibility(monkeypatch, granted=True)
+    monkeypatch.setattr(
+        ws,
+        "_quartz_window_list",
+        lambda **_kwargs: [{
+            "kCGWindowLayer": 0,
+            "kCGWindowName": "Hidden notes",
+            "kCGWindowOwnerPID": 42,
+            "kCGWindowNumber": 9,
+            "kCGWindowIsOnscreen": False,
+        }],
+    )
+    root = object()
+    window = object()
+
+    def copy_attr(element, attribute, _out):
+        if element is root and attribute == "AXWindows":
+            return 0, [window]
+        if element is window and attribute == "AXTitle":
+            return 0, "Hidden notes"
+        if element is window and attribute == "AXMinimized":
+            return 0, True
+        return 1, None
+
+    monkeypatch.setitem(sys.modules, "ApplicationServices", types.SimpleNamespace(
+        AXUIElementCreateApplication=lambda _pid: root,
+        AXUIElementCopyAttributeValue=copy_attr,
+    ))
+
+    windows = ws.list_windows()
+
+    assert len(windows) == 1
+    assert windows[0].minimized is True
 
 
 def test_list_windows_linux_decodes_non_utf8_locale_titles(monkeypatch):
@@ -184,18 +251,19 @@ def test_list_windows_linux_decodes_non_utf8_locale_titles(monkeypatch):
     assert any("café" in t for t in titles)
 
 
-def test_list_windows_macos_decodes_non_utf8_locale_titles(monkeypatch):
+def test_list_windows_macos_preserves_unicode_quartz_titles(monkeypatch):
     monkeypatch.setattr(ws, "detect_platform", lambda: "darwin")
-    monkeypatch.setattr("shutil.which", lambda n: f"/usr/bin/{n}")
-
-    def _fake_run(*args, **kwargs):
-        if kwargs.get("encoding") != "utf-8" or kwargs.get("errors") != "replace":
-            raise UnicodeDecodeError("cp1252", b"\xff\xfe", 0, 1, "invalid byte")
-        return _cp(0, stdout="Safäri — 日本語\n")  # i18n-allow: non-ASCII title fixture (encoding under test)
-
-    monkeypatch.setattr(subprocess, "run", _fake_run)
+    monkeypatch.setattr(
+        ws,
+        "_quartz_window_list",
+        lambda **_kwargs: [{
+            "kCGWindowLayer": 0,
+            "kCGWindowName": "Safäri — 日本語",  # i18n-allow: non-ASCII title fixture under test
+            "kCGWindowNumber": 1,
+        }],
+    )
     titles = [w.title for w in ws.list_windows()]
-    assert any("Safäri" in t for t in titles)  # i18n-allow: non-ASCII title fixture (encoding under test)
+    assert any("Safäri" in t for t in titles)  # i18n-allow: non-ASCII title fixture under test
 
 
 def test_list_windows_headless_linux_is_empty(monkeypatch):
@@ -234,19 +302,39 @@ def test_get_foreground_title_macos_empty_without_tool(monkeypatch):
     assert ws.get_foreground_title() == ""
 
 
-def test_get_foreground_title_macos_decodes_non_utf8_locale_title(monkeypatch):
-    # Same finding-8 contract as the list_windows tests above, for the
-    # single-title foreground read path.
+def test_get_foreground_title_macos_uses_frontmost_app_pid(monkeypatch):
     monkeypatch.setattr(ws, "detect_platform", lambda: "darwin")
-    monkeypatch.setattr("shutil.which", lambda n: f"/usr/bin/{n}")
 
-    def _fake_run(*args, **kwargs):
-        if kwargs.get("encoding") != "utf-8" or kwargs.get("errors") != "replace":
-            raise UnicodeDecodeError("cp1252", b"\xff\xfe", 0, 1, "invalid byte")
-        return _cp(0, stdout="Übersicht — Müller.txt")  # i18n-allow: umlaut title fixture (encoding under test)
+    class _App:
+        def processIdentifier(self):
+            return 42
 
-    monkeypatch.setattr(subprocess, "run", _fake_run)
-    assert ws.get_foreground_title() == "Übersicht — Müller.txt"  # i18n-allow: umlaut title fixture (encoding under test)
+        def localizedName(self):
+            return "Finder"
+
+    workspace = types.SimpleNamespace(frontmostApplication=lambda: _App())
+    appkit = types.SimpleNamespace(
+        NSWorkspace=types.SimpleNamespace(sharedWorkspace=lambda: workspace),
+    )
+    monkeypatch.setitem(sys.modules, "AppKit", appkit)
+    monkeypatch.setattr(
+        ws,
+        "_quartz_window_list",
+        lambda: [
+            {
+                "kCGWindowLayer": 0,
+                "kCGWindowOwnerPID": 7,
+                "kCGWindowName": "Wrong app",
+            },
+            {
+                "kCGWindowLayer": 0,
+                "kCGWindowOwnerPID": 42,
+                "kCGWindowName": "Overview — document.txt",
+            },
+        ],
+    )
+
+    assert ws.get_foreground_title() == "Overview — document.txt"
 
 
 def test_get_foreground_title_linux_decodes_non_utf8_locale_title(monkeypatch):
@@ -258,10 +346,16 @@ def test_get_foreground_title_linux_decodes_non_utf8_locale_title(monkeypatch):
     def _fake_run(*args, **kwargs):
         if kwargs.get("encoding") != "utf-8" or kwargs.get("errors") != "replace":
             raise UnicodeDecodeError("cp1252", b"\xff\xfe", 0, 1, "invalid byte")
-        return _cp(0, stdout="Übersicht — Müller.txt")  # i18n-allow: umlaut title fixture (encoding under test)
+        return _cp(
+            0,
+            stdout="Übersicht — Müller.txt",  # i18n-allow: umlaut title fixture
+        )
 
     monkeypatch.setattr(subprocess, "run", _fake_run)
-    assert ws.get_foreground_title() == "Übersicht — Müller.txt"  # i18n-allow: umlaut title fixture (encoding under test)
+    assert (
+        ws.get_foreground_title()
+        == "Übersicht — Müller.txt"  # i18n-allow: umlaut title fixture
+    )
 
 
 # --- raise_window (raise a known window via the hardened path) ---------------
@@ -271,7 +365,11 @@ def test_raise_window_windows_uses_handle(monkeypatch):
     monkeypatch.setattr(ws, "detect_platform", lambda: "win32")
     forced: list = []
     monkeypatch.setattr(ws, "_force_foreground_windows", lambda h: forced.append(h) or True)
-    monkeypatch.setattr(ws, "focus_window", lambda t: (_ for _ in ()).throw(AssertionError("title path used")))
+    monkeypatch.setattr(
+        ws,
+        "focus_window",
+        lambda t: (_ for _ in ()).throw(AssertionError("title path used")),
+    )
     ok, title = ws.raise_window(WindowInfo("WhatsApp", handle=777))
     assert ok is True
     assert title == "WhatsApp"
@@ -328,7 +426,11 @@ def test_raise_after_launch_windows_uses_hardened_path(monkeypatch):
         ws, "_force_foreground_windows", lambda h: (forced.append(h), True)[1]
     )
     # focus_window (title path) must NOT be used on Windows.
-    monkeypatch.setattr(ws, "focus_window", lambda t: (_ for _ in ()).throw(AssertionError("title path used on win32")))
+    monkeypatch.setattr(
+        ws,
+        "focus_window",
+        lambda t: (_ for _ in ()).throw(AssertionError("title path used on win32")),
+    )
 
     ok, title = ws.raise_after_launch("chrome", timeout_s=1.0, poll_s=0.001)
     assert ok is True
@@ -379,6 +481,175 @@ def test_raise_after_launch_never_raises(monkeypatch):
     monkeypatch.setattr(ws, "list_windows", boom)
     ok, _msg = ws.raise_after_launch("chrome", timeout_s=0.1, poll_s=0.001)
     assert ok is False
+
+
+# --- native macOS maximize -------------------------------------------------
+
+
+def test_maximize_window_macos_uses_native_axzoomed(monkeypatch):
+    monkeypatch.setattr(ws, "detect_platform", lambda: "darwin")
+    _patch_macos_accessibility(monkeypatch, granted=True)
+    monkeypatch.setattr(
+        ws,
+        "_quartz_window_list",
+        lambda **_kwargs: [{
+            "kCGWindowNumber": 77,
+            "kCGWindowOwnerPID": 42,
+            "kCGWindowOwnerName": "Editor",
+            "kCGWindowName": "notes.txt",
+        }],
+    )
+    root = object()
+    window = object()
+    writes: list[tuple[object, str, object]] = []
+
+    def copy_attr(element, attribute, _out):
+        if element is root and attribute == "AXWindows":
+            return 0, [window]
+        if element is window and attribute == "AXTitle":
+            return 0, "notes.txt"
+        return 1, None
+
+    services = types.SimpleNamespace(
+        AXIsProcessTrusted=lambda: True,
+        AXUIElementCreateApplication=lambda pid: root,
+        AXUIElementCopyAttributeValue=copy_attr,
+        AXUIElementSetAttributeValue=lambda element, attribute, value: (
+            writes.append((element, attribute, value)) or 0
+        ),
+    )
+    appkit = types.SimpleNamespace(NSWorkspace=object())
+    monkeypatch.setitem(sys.modules, "ApplicationServices", services)
+    monkeypatch.setitem(sys.modules, "AppKit", appkit)
+    monkeypatch.setattr(
+        subprocess,
+        "run",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            AssertionError("native macOS maximize must not invoke osascript"),
+        ),
+    )
+
+    ok, message = ws.maximize_window(WindowInfo("notes.txt", handle=77))
+
+    assert ok is True
+    assert "zoomed" in message
+    assert writes == [(window, "AXZoomed", True)]
+
+
+def test_normalize_window_macos_reads_and_sets_native_axzoomed(monkeypatch):
+    monkeypatch.setattr(ws, "detect_platform", lambda: "darwin")
+    _patch_macos_accessibility(monkeypatch, granted=True)
+    target_info = WindowInfo("notes.txt", handle=77)
+    monkeypatch.setattr(ws, "foreground_window", lambda: target_info)
+    monkeypatch.setattr(ws, "is_shell_window", lambda _window: False)
+    monkeypatch.setattr(
+        ws,
+        "_quartz_window_list",
+        lambda **_kwargs: [{
+            "kCGWindowNumber": 77,
+            "kCGWindowOwnerPID": 42,
+            "kCGWindowName": "notes.txt",
+        }],
+    )
+    root = object()
+    window = object()
+    writes: list[tuple[object, str, object]] = []
+
+    def copy_attr(element, attribute, _out):
+        if element is root and attribute == "AXWindows":
+            return 0, [window]
+        if element is window and attribute == "AXTitle":
+            return 0, "notes.txt"
+        if element is window and attribute == "AXZoomed":
+            return 0, False
+        return 1, None
+
+    services = types.SimpleNamespace(
+        AXIsProcessTrusted=lambda: True,
+        AXUIElementCreateApplication=lambda _pid: root,
+        AXUIElementCopyAttributeValue=copy_attr,
+        AXUIElementSetAttributeValue=lambda element, attribute, value: (
+            writes.append((element, attribute, value)) or 0
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "ApplicationServices", services)
+    monkeypatch.setitem(sys.modules, "AppKit", types.SimpleNamespace(NSWorkspace=object()))
+
+    ok, message = ws.normalize_foreground_window()
+
+    assert ok is True
+    assert "zoomed" in message
+    assert writes == [(window, "AXZoomed", True)]
+
+
+def test_macos_full_screen_counts_as_maximized(monkeypatch):
+    monkeypatch.setattr(ws, "detect_platform", lambda: "darwin")
+    _patch_macos_accessibility(monkeypatch, granted=True)
+    target = object()
+    monkeypatch.setattr(ws, "_resolve_macos_ax_window", lambda _win: (target, ""))
+    monkeypatch.setattr(
+        ws,
+        "_macos_ax_attr",
+        lambda element, attribute: (
+            True
+            if element is target and attribute == "AXFullScreen"
+            else False if element is target and attribute == "AXZoomed"
+            else None
+        ),
+    )
+
+    assert ws.window_is_maximized(WindowInfo("Full-screen document", handle=77)) is True
+
+
+def test_resolve_macos_ax_window_uses_bounds_for_duplicate_titles(monkeypatch):
+    first = object()
+    second = object()
+    root = object()
+    entry = {
+        "kCGWindowNumber": 77,
+        "kCGWindowOwnerPID": 42,
+        "kCGWindowName": "notes.txt",
+        "kCGWindowBounds": {"X": 400, "Y": 50, "Width": 800, "Height": 600},
+    }
+    monkeypatch.setattr(ws, "_quartz_window_list", lambda **_kwargs: [entry])
+
+    def copy_attr(element, attribute, _out):
+        values = {
+            (root, "AXWindows"): [first, second],
+            (first, "AXTitle"): "notes.txt",
+            (second, "AXTitle"): "notes.txt",
+            (first, "AXPosition"): (10, 20),
+            (first, "AXSize"): (300, 200),
+            (second, "AXPosition"): (400, 50),
+            (second, "AXSize"): (800, 600),
+        }
+        value = values.get((element, attribute))
+        return (0, value) if value is not None else (1, None)
+
+    monkeypatch.setitem(sys.modules, "ApplicationServices", types.SimpleNamespace(
+        AXUIElementCreateApplication=lambda _pid: root,
+        AXUIElementCopyAttributeValue=copy_attr,
+    ))
+    monkeypatch.setitem(sys.modules, "AppKit", types.SimpleNamespace(NSWorkspace=object()))
+
+    target, error = ws._resolve_macos_ax_window(
+        WindowInfo("notes.txt", handle=77),
+    )
+
+    assert error == ""
+    assert target is second
+
+
+def test_maximize_window_macos_fails_closed_without_accessibility(monkeypatch):
+    monkeypatch.setattr(ws, "detect_platform", lambda: "darwin")
+    _patch_macos_accessibility(monkeypatch, granted=False)
+    services = types.SimpleNamespace(AXIsProcessTrusted=lambda: False)
+    monkeypatch.setitem(sys.modules, "ApplicationServices", services)
+
+    ok, message = ws.maximize_window(WindowInfo("notes.txt", handle=77))
+
+    assert ok is False
+    assert "Accessibility" in message
 
 
 # --- real smoke on the host platform (non-deterministic, just must not crash)

@@ -160,8 +160,8 @@ class TestVocabularyWords:
         assert c.correct("open github and GITHUB") == "open GitHub and GitHub"
 
     def test_fuzzy_repairs_near_miss(self) -> None:
-        c = corrector_for(("Aethroc", []))
-        assert c.correct("write to Aethrok") == "write to Aethroc"
+        c = corrector_for(("Veltroc", []))
+        assert c.correct("write to Veltrok") == "write to Veltroc"
 
     def test_fuzzy_requires_same_first_letter(self) -> None:
         # "table" is distance 2 from "Fable" but starts differently — untouched.
@@ -188,10 +188,10 @@ class TestVocabularyWords:
         assert c.correct("write to nico müller") == "write to Nico Müller"  # i18n-allow: umlauted proper name under test
 
     def test_email_entry_matches_boundary(self) -> None:
-        c = corrector_for(("aethroc@example.com", []))
+        c = corrector_for(("veltroc@example.com", []))
         assert (
-            c.correct("send it to Aethroc@Example.com please")
-            == "send it to aethroc@example.com please"
+            c.correct("send it to Veltroc@Example.com please")
+            == "send it to veltroc@example.com please"
         )
 
     def test_empty_dictionary_is_noop(self) -> None:

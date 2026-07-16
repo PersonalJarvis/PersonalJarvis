@@ -44,7 +44,6 @@ class WSWelcome(BaseModel):
     type: Literal["welcome"] = "welcome"
     session_id: str
     version: str
-    token: str | None = None
 
 
 # ----------------------------------------------------------------------

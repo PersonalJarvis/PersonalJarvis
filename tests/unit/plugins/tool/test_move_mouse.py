@@ -48,6 +48,9 @@ async def test_posix_success_moves_via_probed_backend(
         def move(self, x: int, y: int) -> None:
             moves.append((x, y))
 
+        def cursor_pos(self) -> tuple[int, int]:
+            return moves[-1]
+
     monkeypatch.setattr(
         "jarvis.cu.actuate.base.get_actuator", lambda: _FakeActuator()
     )

@@ -37,6 +37,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from pathlib import Path
@@ -48,6 +49,8 @@ if TYPE_CHECKING:
     from jarvis.memory.wiki.lock import VaultLock
 
 log = logging.getLogger(__name__)
+
+_MAX_DEFERRED_DRAIN_PASSES = 20
 
 
 class TriggerSource(StrEnum):
@@ -194,6 +197,7 @@ class CuratorScheduler:
         source: TriggerSource,
         *,
         episode_paths: list[Path] | None = None,
+        review_keys: Sequence[str] | None = None,
     ) -> SchedulerResult:
         """Attempt to run the curator from the given *source*.
 
@@ -216,7 +220,31 @@ class CuratorScheduler:
             re-raised after the lock is released — callers must handle
             them).
         """
-        if source is TriggerSource.JOURNAL:
+        if source is TriggerSource.JOURNAL and review_keys is not None:
+            # Maintenance actions must not drain the global FIFO. They reuse
+            # the same vault lock but ask Stage 2 for only their capture rows.
+            # A live journal-pressure task may still be finishing candidates
+            # appended by this maintenance action. Wait for that in-process
+            # owner rather than racing its non-blocking file-lock acquire.
+            await self._wait_for_background_journal_run()
+            result = await self._do_trigger(
+                source,
+                episode_paths=None,
+                review_keys=tuple(review_keys),
+            )
+            if (
+                not result.triggered
+                and result.skip_reason == "locked"
+                and await self._wait_for_background_journal_run()
+            ):
+                # Close the small race where a background trigger starts after
+                # the first idle check but before the scoped lock acquire.
+                result = await self._do_trigger(
+                    source,
+                    episode_paths=None,
+                    review_keys=tuple(review_keys),
+                )
+        elif source is TriggerSource.JOURNAL:
             active = self._journal_drain_task
             if active is not None and not active.done():
                 self._journal_dirty = True
@@ -233,7 +261,11 @@ class CuratorScheduler:
                     if self._journal_drain_task is active and active.done():
                         self._journal_drain_task = None
         else:
-            result = await self._do_trigger(source, episode_paths=episode_paths)
+            result = await self._do_trigger(
+                source,
+                episode_paths=episode_paths,
+                review_keys=None,
+            )
         # Emit a single structured INFO line per call.
         log.info(
             "CuratorScheduler trigger: source=%s triggered=%s skip_reason=%r label=%r",
@@ -269,17 +301,80 @@ class CuratorScheduler:
         active.add_done_callback(_clear)
         return active
 
+    async def shutdown(self, *, timeout_s: float = 5.0) -> None:
+        """Drain or cancel journal work before the shared journal is closed."""
+        tasks = {
+            task
+            for task in (self._journal_fire_task, self._journal_drain_task)
+            if task is not None and not task.done()
+        }
+        if tasks:
+            _done, pending = await asyncio.wait(
+                tasks,
+                timeout=max(0.1, float(timeout_s)),
+            )
+            if pending:
+                log.warning(
+                    "CuratorScheduler: cancelling %d journal task(s) during shutdown",
+                    len(pending),
+                )
+                for task in pending:
+                    task.cancel()
+                await asyncio.gather(*pending, return_exceptions=True)
+        self._journal_fire_task = None
+        self._journal_drain_task = None
+        self._journal_dirty = False
+
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
 
+    async def _wait_for_background_journal_run(self) -> bool:
+        """Wait for one active in-process global journal drain, if present."""
+        current = asyncio.current_task()
+        active = next(
+            (
+                task
+                for task in (self._journal_fire_task, self._journal_drain_task)
+                if task is not None and task is not current and not task.done()
+            ),
+            None,
+        )
+        if active is None:
+            return False
+        try:
+            await asyncio.shield(active)
+        except Exception as exc:  # noqa: BLE001 - scoped retry still gets a chance
+            log.warning(
+                "CuratorScheduler: background journal run failed before scoped "
+                "maintenance retry: %s",
+                exc,
+            )
+        return True
+
     async def _drain_journal(self) -> SchedulerResult:
-        """Drain one batch and at most one coalesced follow-up at a time."""
-        result = await self._do_trigger(TriggerSource.JOURNAL, episode_paths=None)
-        while self._journal_dirty:
+        """Drain coalesced work and safely serialized same-target candidates."""
+        result = await self._do_trigger(
+            TriggerSource.JOURNAL,
+            episode_paths=None,
+            review_keys=None,
+        )
+        deferred_passes = 0
+        while True:
+            deferred = (
+                result.triggered
+                and result.curator_output_label.startswith("journal-deferred:")
+                and deferred_passes < _MAX_DEFERRED_DRAIN_PASSES
+            )
+            if not self._journal_dirty and not deferred:
+                break
+            if deferred:
+                deferred_passes += 1
             self._journal_dirty = False
             result = await self._do_trigger(
-                TriggerSource.JOURNAL, episode_paths=None
+                TriggerSource.JOURNAL,
+                episode_paths=None,
+                review_keys=None,
             )
         return result
 
@@ -288,6 +383,7 @@ class CuratorScheduler:
         source: TriggerSource,
         *,
         episode_paths: list[Path] | None,
+        review_keys: Sequence[str] | None,
     ) -> SchedulerResult:
         """Core logic — separated so ``trigger`` can log unconditionally."""
 
@@ -335,7 +431,12 @@ class CuratorScheduler:
             if source is TriggerSource.JOURNAL:
                 # Wave-2: drain one candidate batch through the body-aware
                 # Stage-2 consolidator (it does its own retrieval + writes).
-                source_label = await self._consolidator.run_once()
+                if review_keys is None:
+                    source_label = await self._consolidator.run_once()
+                else:
+                    source_label = await self._consolidator.run_once(
+                        review_keys=review_keys
+                    )
             else:
                 source_content = self._build_source_content(episode_paths)
                 await self._curator.ingest(source_content, source_label)

@@ -154,6 +154,75 @@ def test_subagent_switch_409_when_no_key(monkeypatch: pytest.MonkeyPatch) -> Non
     assert persisted == [], "must not persist a provider that has no key"
 
 
+def test_realtime_only_key_does_not_unlock_jarvis_agent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A key saved on Realtime must remain invisible to Jarvis-Agents."""
+    import jarvis.core.config as cfg_mod
+    import jarvis.core.config_writer as config_writer
+
+    monkeypatch.setattr(
+        cfg_mod,
+        "get_secret",
+        lambda key, *args, **kwargs: (
+            "realtime-only" if key == "realtime_openai_api_key" else None
+        ),
+    )
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda name: None)
+
+    cfg = load_config()
+    client = _client(cfg)
+    response = client.post(
+        "/api/jarvis-agent/switch",
+        json={"provider": "openai", "persist": True},
+    )
+
+    assert response.status_code == 409
+    row = next(
+        item
+        for item in client.get("/api/jarvis-agent/status").json()["mapping"]
+        if item["jarvis"] == "openai"
+    )
+    assert row["key_set"] is False
+    assert row["dedicated_key_set"] is False
+    assert row["credential_source"] == "none"
+
+
+def test_dedicated_jarvis_agent_key_unlocks_provider_without_brain_key(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import jarvis.core.config as cfg_mod
+    import jarvis.core.config_writer as config_writer
+
+    monkeypatch.setattr(
+        cfg_mod,
+        "get_secret",
+        lambda key, *args, **kwargs: (
+            "agent-only" if key == "jarvis_agent_openai_api_key" else None
+        ),
+    )
+    monkeypatch.setattr(config_writer, "set_worker_provider", lambda name: None)
+
+    cfg = load_config()
+    client = _client(cfg)
+    response = client.post(
+        "/api/jarvis-agent/switch",
+        json={"provider": "openai", "persist": True},
+    )
+
+    assert response.status_code == 200
+    row = next(
+        item
+        for item in client.get("/api/jarvis-agent/status").json()["mapping"]
+        if item["jarvis"] == "openai"
+    )
+    assert row["key_set"] is True
+    assert row["dedicated_key_set"] is True
+    assert row["shared_key_set"] is False
+    assert row["secret_key"] == "jarvis_agent_openai_api_key"
+    assert row["credential_source"] == "dedicated"
+
+
 def test_subagent_switch_updates_status_endpoint(monkeypatch: pytest.MonkeyPatch) -> None:
     """After a switch, /api/jarvis-agent/status reflects the new active provider."""
     import jarvis.core.config as cfg_mod
@@ -224,7 +293,11 @@ def test_subagent_switch_accepts_codex_oauth(monkeypatch: pytest.MonkeyPatch) ->
     import jarvis.core.config as cfg_mod
     import jarvis.core.config_writer as config_writer
 
-    monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _p: None)
+    monkeypatch.setattr(
+        cfg_mod,
+        "get_provider_secret",
+        lambda provider: "AIza-fake" if provider == "gemini" else None,
+    )
     monkeypatch.setattr(cfg_mod, "get_secret", lambda *_a, **_k: None)
     _patch_codex(monkeypatch, connected=True)
     calls: list[str] = []

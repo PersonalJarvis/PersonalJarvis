@@ -410,13 +410,12 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         label="OpenAI Realtime",
         tier="realtime",
         auth_mode="api_key",
-        secret_keys=("openai_api_key",),
+        secret_keys=("realtime_openai_api_key",),
         dashboard_url="https://platform.openai.com/api-keys",
         credential_help=(
-            "Uses your OpenAI API key (shared with the GPT brain / Whisper STT) "
-            "to power the realtime voice mode — one model that listens, thinks and "
-            "speaks over a single connection. Available in the browser and in the "
-            "desktop voice runtime; the desktop path is intentionally half-duplex."
+            "OpenAI API key dedicated to Realtime Voice. It is not reused by "
+            "Brain, STT, or Jarvis-Agents. Existing shared OpenAI credentials "
+            "remain a compatibility fallback until a dedicated key is saved."
         ),
     ),
     ProviderSpec(
@@ -424,12 +423,12 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         label="Gemini Live",
         tier="realtime",
         auth_mode="api_key",
-        secret_keys=("gemini_api_key",),
+        secret_keys=("realtime_gemini_api_key",),
         dashboard_url="https://aistudio.google.com/app/apikey",
         credential_help=(
-            "Google AI Studio key (AIza/AQ.), shared with the Gemini brain, to "
-            "power Google's Live realtime voice in the browser and desktop runtime. "
-            "This adapter currently uses API-key authentication."
+            "Google AI Studio key dedicated to Gemini Live. It is not reused by "
+            "the Gemini Brain or Jarvis-Agents. Existing shared Gemini credentials "
+            "remain a compatibility fallback until a dedicated key is saved."
         ),
     ),
     ProviderSpec(
@@ -437,13 +436,13 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         label="xAI Grok Realtime",
         tier="realtime",
         auth_mode="api_key",
-        secret_keys=("grok_api_key",),
+        secret_keys=("realtime_grok_api_key",),
         dashboard_url="https://console.x.ai/",
         signup_url="https://grok.com/",
         credential_help=(
-            "Uses your xAI API key (starts with xai-), shared with the Grok "
-            "brain and xAI Text to Speech, to power Grok's full-duplex Voice "
-            "Agent API. API usage is billed separately through the xAI Console."
+            "xAI API key dedicated to Grok Realtime Voice. It is not reused by "
+            "the Grok Brain, TTS, or Jarvis-Agents. Existing shared xAI credentials "
+            "remain a compatibility fallback until a dedicated key is saved."
         ),
     ),
 )

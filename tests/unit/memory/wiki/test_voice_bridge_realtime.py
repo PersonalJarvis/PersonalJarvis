@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -38,7 +39,7 @@ from jarvis.core.config import (
     VoiceBridgeConfig,
     WikiMemoryConfig,
 )
-from jarvis.core.events import VoiceTurnCompleted
+from jarvis.core.events import VoiceSessionEnded, VoiceTurnCompleted
 from jarvis.core.protocols import BrainDelta, BrainRequest
 from jarvis.memory.wiki.extractor import ConversationFactExtractor
 from jarvis.memory.wiki.journal import CandidateJournal
@@ -51,6 +52,7 @@ SHORT_FACT = "Lena lives in Hamburg."  # >= 12 ack chars, < 30 aggressive chars
 class FakeBrain:
     def __init__(self) -> None:
         self.call_count = 0
+        self.received_requests: list[BrainRequest] = []
 
     name = "fake-brain"
     context_window = 100_000
@@ -59,9 +61,20 @@ class FakeBrain:
 
     async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
         self.call_count += 1
+        self.received_requests.append(req)
+        prompt = req.messages[0].content
+        evidence_ids = re.findall(r"(?:FOCUS )?USER TURN \[([^\]]+)\]", prompt)
+        evidence = evidence_ids[-1] if evidence_ids else ""
         yield BrainDelta(
             content=json.dumps(
-                [{"fact": "Lena moved to Hamburg.", "kind": "person", "subjects": ["lena"]}]
+                [
+                    {
+                        "fact": "Lena moved to Hamburg.",
+                        "kind": "person",
+                        "subjects": ["lena"],
+                        "evidence_turn_id": evidence,
+                    }
+                ]
             )
         )
         yield BrainDelta(finish_reason="stop")
@@ -129,10 +142,12 @@ def _realtime_turn(
     jarvis_text: str,
     *,
     tier: str = "realtime",
+    session_id: str = "rt-session",
+    turn_id: str = "rt-turn-1",
 ) -> VoiceTurnCompleted:
     return VoiceTurnCompleted(
-        session_id="rt-session",
-        turn_id="rt-turn-1",
+        session_id=session_id,
+        turn_id=turn_id,
         user_text=user_text,
         jarvis_text=jarvis_text,
         tier=tier,
@@ -146,6 +161,12 @@ async def _drain(journal: CandidateJournal, *, timeout_s: float = 2.0) -> None:
     while time.monotonic() < deadline:
         if journal.backlog_count() > 0:
             return
+        await asyncio.sleep(0.02)
+
+
+async def _wait_for_calls(brain: FakeBrain, count: int, *, timeout_s: float = 2.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    while brain.call_count < count and time.monotonic() < deadline:  # noqa: ASYNC110
         await asyncio.sleep(0.02)
 
 
@@ -253,6 +274,7 @@ async def test_aggressive_path_is_rate_limited_across_realtime_turns(tmp_path: P
             _realtime_turn(
                 "My favourite restaurant is the little place at the harbour.",
                 "Sounds lovely!",
+                turn_id="rt-turn-2",
             )
         )
         await asyncio.sleep(0.2)
@@ -274,13 +296,94 @@ async def test_default_reviews_consecutive_realtime_turns(tmp_path: Path) -> Non
             _realtime_turn(
                 "My favourite restaurant is the little place at the harbour.",
                 "Sounds lovely!",
+                turn_id="rt-turn-2",
             )
         )
         deadline = time.monotonic() + 2.0
-        while journal.backlog_count() < 2 and time.monotonic() < deadline:
+        while journal.backlog_count() < 2 and time.monotonic() < deadline:  # noqa: ASYNC110
             await asyncio.sleep(0.02)
     finally:
         bridge.stop()
 
     assert journal.backlog_count() == 2
     assert brain.call_count == 2
+
+
+@pytest.mark.asyncio
+async def test_short_yacht_ownership_reaches_extractor_without_ack(tmp_path: Path) -> None:
+    bus, journal, _curator, bridge, brain = _stack(tmp_path)
+    try:
+        await bus.publish(_realtime_turn("I own a yacht.", "That sounds exciting."))
+        await _wait_for_calls(brain, 1)
+    finally:
+        bridge.stop()
+
+    assert brain.call_count == 1
+    assert journal.capture_summary()["candidates"] == 1
+
+
+@pytest.mark.asyncio
+async def test_same_text_in_different_turns_is_reviewed_twice(tmp_path: Path) -> None:
+    bus, journal, _curator, bridge, brain = _stack(tmp_path)
+    try:
+        await bus.publish(_realtime_turn(FACT_SENTENCE, "Okay.", turn_id="turn-a"))
+        await bus.publish(_realtime_turn(FACT_SENTENCE, "Okay.", turn_id="turn-b"))
+        await _wait_for_calls(brain, 2)
+    finally:
+        bridge.stop()
+
+    assert brain.call_count == 2
+    assert journal.backlog_count() == 2
+
+
+@pytest.mark.asyncio
+async def test_second_turn_receives_bounded_same_session_context(tmp_path: Path) -> None:
+    bus, _journal, _curator, bridge, brain = _stack(tmp_path)
+    try:
+        await bus.publish(
+            _realtime_turn(
+                "I own a yacht called Aurora.",
+                "Aurora is a beautiful name.",
+                turn_id="turn-a",
+            )
+        )
+        await _wait_for_calls(brain, 1)
+        await bus.publish(
+            _realtime_turn(
+                "It is currently moored in Kiel.",
+                "Understood.",
+                turn_id="turn-b",
+            )
+        )
+        await _wait_for_calls(brain, 2)
+    finally:
+        bridge.stop()
+
+    prompt = brain.received_requests[1].messages[0].content
+    assert "USER TURN [turn-a]" in prompt
+    assert "I own a yacht called Aurora." in prompt
+    assert "FOCUS USER TURN [turn-b]" in prompt
+    assert "ASSISTANT CONTEXT (never evidence)" in prompt
+
+
+@pytest.mark.asyncio
+async def test_session_end_runs_one_full_realtime_sweep(tmp_path: Path) -> None:
+    bus, journal, _curator, bridge, brain = _stack(tmp_path)
+    try:
+        await bus.publish(_realtime_turn(FACT_SENTENCE, "Okay.", turn_id="turn-a"))
+        await _wait_for_calls(brain, 1)
+        await bus.publish(
+            VoiceSessionEnded(session_id="rt-session", hangup_reason="hotkey")
+        )
+        await _wait_for_calls(brain, 2)
+        deadline = time.monotonic() + 2.0
+        while (  # noqa: ASYNC110 - polls a persisted counter with a hard deadline
+            journal.capture_summary()["sessions_swept"] < 1
+            and time.monotonic() < deadline
+        ):
+            await asyncio.sleep(0.02)
+    finally:
+        bridge.stop()
+
+    assert brain.call_count == 2
+    assert journal.capture_summary()["sessions_swept"] == 1

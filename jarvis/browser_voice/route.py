@@ -25,7 +25,7 @@ from jarvis.sessions.constants import (
     HANGUP_REALTIME_FALLBACK,
     HANGUP_WS_CLOSED,
 )
-from jarvis.ui.web.missions_auth import validate_token
+from jarvis.ui.web.surface_security import credentials_valid
 
 log = logging.getLogger("jarvis.browser_voice.route")
 
@@ -62,15 +62,14 @@ def _resolve_language(cfg: Any) -> str:
 
 
 def _browser_voice_authorized(ws: WebSocket) -> bool:
-    """Apply the shared mission-token policy to the browser voice socket.
+    """Apply the shared cookie/Bearer policy as route-level defense in depth.
 
     A peer address is not an authentication boundary: a hostile webpage can
     connect directly to a localhost WebSocket and still appear loopback to the
     server. Every client therefore needs a registered token before a
     tool-capable voice session is constructed.
     """
-    token = str(ws.query_params.get("token", "") or "")
-    return validate_token(token)
+    return credentials_valid(ws.scope)
 
 
 def _json_commits_semantic_turn(message: dict[str, Any]) -> bool:

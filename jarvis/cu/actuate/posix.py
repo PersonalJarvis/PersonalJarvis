@@ -15,10 +15,15 @@ there); this module only ever runs on X11 or macOS.
 from __future__ import annotations
 
 import logging
+import sys
 import time
 from typing import Any
 
-from jarvis.cu.actuate.base import ActuationUnavailable, Actuator
+from jarvis.cu.actuate.base import (
+    LANDING_TOLERANCE,
+    ActuationUnavailable,
+    Actuator,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -40,10 +45,10 @@ def _pynput_key_table(keyboard: Any) -> dict[str, Any]:
     names = {
         "ctrl": "ctrl", "control": "ctrl",
         "shift": "shift",
-        "alt": "alt", "menu": "alt",
+        "alt": "alt", "option": "alt", "menu": "alt",
         # "win" is the Super/Command key off-Windows.
         "win": "cmd", "windows": "cmd", "lwin": "cmd", "cmd": "cmd",
-        "command": "cmd", "super": "cmd",
+        "command": "cmd", "meta": "cmd", "super": "cmd",
         "esc": "esc", "escape": "esc",
         "enter": "enter", "return": "enter",
         "tab": "tab",
@@ -111,6 +116,16 @@ class PosixActuator(Actuator):
 
     def cursor_pos(self) -> tuple[int, int] | None:
         try:
+            if sys.platform == "darwin":
+                # Use the same Quartz global coordinate space as CGEventPost,
+                # CGDisplayBounds/mss and AX window geometry. pynput's macOS
+                # getter converts NSEvent coordinates through the main
+                # display's pixel height, which can diverge on Retina and
+                # vertically arranged multi-monitor desktops.
+                import Quartz  # type: ignore[import-not-found] # noqa: PLC0415
+
+                point = Quartz.CGEventGetLocation(Quartz.CGEventCreate(None))
+                return (int(point.x), int(point.y))
             if self._mouse is not None:
                 x, y = self._mouse.position
             else:
@@ -122,6 +137,17 @@ class PosixActuator(Actuator):
             return None
 
     def move(self, x: int, y: int) -> None:
+        if sys.platform == "darwin":
+            import Quartz  # type: ignore[import-not-found] # noqa: PLC0415
+
+            event = Quartz.CGEventCreateMouseEvent(
+                None,
+                Quartz.kCGEventMouseMoved,
+                (int(x), int(y)),
+                Quartz.kCGMouseButtonLeft,
+            )
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+            return
         if self._mouse is not None:
             self._mouse.position = (int(x), int(y))
         else:
@@ -130,31 +156,75 @@ class PosixActuator(Actuator):
     def click(
         self, x: int, y: int, *, button: str = "left", double: bool = False,
     ) -> None:
+        self.move(x, y)
+        self.click_at_cursor(
+            button=button,
+            double=double,
+            expected=(int(x), int(y)),
+        )
+
+    def click_at_cursor(
+        self,
+        *,
+        button: str = "left",
+        double: bool = False,
+        expected: tuple[int, int] | None = None,
+    ) -> None:
+        """Press and release at the current, already-verified cursor position."""
         b = button.lower()
         if b not in ("left", "right", "middle"):
             raise ValueError(
                 f"Unknown mouse button: {button!r}. Allowed: left/right/middle",
             )
-        self.move(x, y)
+        current = self.cursor_pos()
+        if current is None or (
+            expected is not None
+            and (
+                abs(current[0] - expected[0]) > LANDING_TOLERANCE
+                or abs(current[1] - expected[1]) > LANDING_TOLERANCE
+            )
+        ):
+            raise RuntimeError(
+                "cursor moved after landing verification; refusing to click",
+            )
+        if sys.platform == "darwin":
+            self._quartz_click(current, b, double=double)
+            return
         if self._mouse is not None:
             self._mouse.click(self._buttons[b], 2 if double else 1)
         else:
             self._pyautogui.click(
-                x=int(x), y=int(y), clicks=2 if double else 1, button=b,
+                clicks=2 if double else 1, button=b,
             )
 
     def drag(
         self, x1: int, y1: int, x2: int, y2: int, *, duration_s: float = 0.4,
     ) -> None:
+        self.move(x1, y1)
+        self.drag_from_cursor(x1, y1, x2, y2, duration_s=duration_s)
+
+    def drag_from_cursor(
+        self, x1: int, y1: int, x2: int, y2: int, *, duration_s: float = 0.4,
+    ) -> None:
+        """Drag from the current, already-verified position to ``(x2, y2)``."""
+        current = self.cursor_pos()
+        if current is None or (
+            abs(current[0] - int(x1)) > LANDING_TOLERANCE
+            or abs(current[1] - int(y1)) > LANDING_TOLERANCE
+        ):
+            raise RuntimeError(
+                "cursor moved after drag-start verification; refusing to drag",
+            )
+        if sys.platform == "darwin":
+            self._quartz_drag(current, (int(x2), int(y2)), duration_s)
+            return
         if self._mouse is None:
-            self._pyautogui.moveTo(int(x1), int(y1))
             self._pyautogui.dragTo(
                 int(x2), int(y2), duration=max(0.0, duration_s), button="left",
             )
             return
         steps = max(2, min(40, int(duration_s * 60)))
         pause = max(0.0, duration_s) / steps
-        self._mouse.position = (int(x1), int(y1))
         self._mouse.press(self._buttons["left"])
         try:
             for i in range(1, steps + 1):
@@ -181,6 +251,18 @@ class PosixActuator(Actuator):
             self.move(int(x), int(y))
         dx = n if d == "right" else -n if d == "left" else 0
         dy = n if d == "up" else -n if d == "down" else 0
+        if sys.platform == "darwin":
+            import Quartz  # type: ignore[import-not-found] # noqa: PLC0415
+
+            event = Quartz.CGEventCreateScrollWheelEvent(
+                None,
+                Quartz.kCGScrollEventUnitLine,
+                2,
+                dy,
+                dx,
+            )
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+            return
         if self._mouse is not None:
             self._mouse.scroll(dx, dy)
         elif dx:
@@ -194,7 +276,17 @@ class PosixActuator(Actuator):
 
         expanded = expand_combo_keys([str(k) for k in keys])
         if self._keyboard is None:
-            self._pyautogui.hotkey(*[k.lower() for k in expanded])
+            aliases = {"cmd", "command", "meta", "super", "win", "windows", "lwin"}
+            mapped: list[str] = []
+            for key in expanded:
+                normalized = key.strip().lower()
+                if normalized in aliases:
+                    mapped.append("command" if sys.platform == "darwin" else "winleft")
+                elif normalized == "option":
+                    mapped.append("alt")
+                else:
+                    mapped.append(normalized)
+            self._pyautogui.hotkey(*mapped)
             return
         resolved: list[Any] = []
         for k in expanded:
@@ -209,6 +301,84 @@ class PosixActuator(Actuator):
             self._keyboard.press(r)
         for r in reversed(resolved):
             self._keyboard.release(r)
+
+    @staticmethod
+    def _quartz_button_spec(quartz: Any, button: str) -> tuple[Any, Any, Any, Any]:
+        return {
+            "left": (
+                quartz.kCGEventLeftMouseDown,
+                quartz.kCGEventLeftMouseUp,
+                quartz.kCGEventLeftMouseDragged,
+                quartz.kCGMouseButtonLeft,
+            ),
+            "right": (
+                quartz.kCGEventRightMouseDown,
+                quartz.kCGEventRightMouseUp,
+                quartz.kCGEventRightMouseDragged,
+                quartz.kCGMouseButtonRight,
+            ),
+            "middle": (
+                quartz.kCGEventOtherMouseDown,
+                quartz.kCGEventOtherMouseUp,
+                quartz.kCGEventOtherMouseDragged,
+                quartz.kCGMouseButtonCenter,
+            ),
+        }[button]
+
+    @classmethod
+    def _quartz_click(
+        cls,
+        point: tuple[int, int],
+        button: str,
+        *,
+        double: bool,
+    ) -> None:
+        """Post macOS button events in Quartz global display coordinates."""
+        import Quartz  # type: ignore[import-not-found] # noqa: PLC0415
+
+        down, up, _dragged, button_id = cls._quartz_button_spec(Quartz, button)
+        for click_state in range(1, 3 if double else 2):
+            for event_type in (down, up):
+                event = Quartz.CGEventCreateMouseEvent(
+                    None, event_type, point, button_id,
+                )
+                Quartz.CGEventSetIntegerValueField(
+                    event,
+                    Quartz.kCGMouseEventClickState,
+                    click_state,
+                )
+                Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+
+    @classmethod
+    def _quartz_drag(
+        cls,
+        start: tuple[int, int],
+        end: tuple[int, int],
+        duration_s: float,
+    ) -> None:
+        """Post a left-button drag entirely in Quartz global coordinates."""
+        import Quartz  # type: ignore[import-not-found] # noqa: PLC0415
+
+        down, up, dragged, button_id = cls._quartz_button_spec(Quartz, "left")
+        press = Quartz.CGEventCreateMouseEvent(None, down, start, button_id)
+        Quartz.CGEventPost(Quartz.kCGHIDEventTap, press)
+        steps = max(2, min(40, int(max(0.0, duration_s) * 60)))
+        pause = max(0.0, duration_s) / steps
+        try:
+            for index in range(1, steps + 1):
+                point = (
+                    int(start[0] + (end[0] - start[0]) * index / steps),
+                    int(start[1] + (end[1] - start[1]) * index / steps),
+                )
+                event = Quartz.CGEventCreateMouseEvent(
+                    None, dragged, point, button_id,
+                )
+                Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+                if pause:
+                    time.sleep(pause)
+        finally:
+            release = Quartz.CGEventCreateMouseEvent(None, up, end, button_id)
+            Quartz.CGEventPost(Quartz.kCGHIDEventTap, release)
 
     def type_text(self, text: str, *, delay_s: float = 0.02) -> None:
         if self._keyboard is None:

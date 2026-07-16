@@ -6,6 +6,7 @@ fail-closed on an unknown running version, and the network check is fail-open.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -59,6 +60,12 @@ def test_is_newer_fail_closed_on_unknown() -> None:
     assert not u._is_newer("1.0.2", "unknown")
     assert not u._is_newer("1.0.2", "")
     assert not u._is_newer("", "1.0.1")
+
+
+def test_versions_equal_is_normalized_and_fail_closed() -> None:
+    assert u._versions_equal("1.0.2", "1.0.2")
+    assert u._versions_equal("1.0.2", "1.0.2+build.1") is False
+    assert not u._versions_equal("invalid", "invalid")
 
 
 def test_remote_is_official_accepts_only_exact_repo() -> None:
@@ -152,55 +159,168 @@ def test_apply_happy_path_pulls_and_signals_restart(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _patch_managed(monkeypatch, tmp_path)
+    (tmp_path / ".jarvis-managed-install").write_text(
+        '{"profile": "full"}\n', encoding="utf-8"
+    )
+    sentinel = tmp_path / "running-checkout.txt"
+    sentinel.write_text("old", encoding="utf-8")
     calls: list[list[str]] = []
+    monkeypatch.setattr(u, "_running_version", lambda: "1.0.1")
+    _patch_latest(
+        monkeypatch,
+        {
+            "version": "1.0.2",
+            "tag": "v1.0.2",
+            "notes": "",
+            "published_at": None,
+            "release_url": None,
+        },
+    )
 
     async def _fake_git(args, *, cwd, timeout_s=60.0):
         calls.append(args)
         return 0, "", ""
 
+    async def _fake_git_output(args, *, cwd, timeout_s=15.0):
+        calls.append(args)
+        if args == ["rev-parse", "HEAD"]:
+            return "a" * 40
+        if args == ["rev-parse", "FETCH_HEAD^{commit}"]:
+            return "b" * 40
+        if args == ["show", f"{'b' * 40}:jarvis/__init__.py"]:
+            return '__version__ = "1.0.2"'
+        return None
+
     monkeypatch.setattr(u, "_git", _fake_git)
-    monkeypatch.setattr(u, "_version_on_disk", lambda root: "1.0.2")
+    monkeypatch.setattr(u, "_git_output", _fake_git_output)
     body = client.post("/api/update/apply").json()
     assert body["ok"] is True
+    assert body["prepared"] is True
     assert body["restart_required"] is True
     assert body["version"] == "1.0.2"
-    assert ["fetch", "--depth", "1", "origin", "main"] in calls
-    assert ["reset", "--hard", "origin/main"] in calls
+    assert body["release_tag"] == "v1.0.2"
+    assert body["deps_pending"] is True
+    assert body["ui_bundle_pending"] is True
+    assert body["desktop_integration_pending"] is True
+    assert body["desktop_integration_ok"] is None
+    assert body["desktop_integration_warning"] is None
+    assert [
+        "fetch",
+        "--depth",
+        "1",
+        "origin",
+        "refs/tags/v1.0.2",
+    ] in calls
+    assert not any(call[:2] == ["reset", "--hard"] for call in calls)
+    assert sentinel.read_text(encoding="utf-8") == "old"
+
+    pending = json.loads(
+        (tmp_path / u._PENDING_UPDATE_NAME).read_text(encoding="utf-8")
+    )
+    assert pending["previous_revision"] == "a" * 40
+    assert pending["target_revision"] == "b" * 40
+    assert pending["profile"] == "full"
 
 
 def test_apply_git_fetch_failure_is_502(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _patch_managed(monkeypatch, tmp_path)
+    monkeypatch.setattr(u, "_running_version", lambda: "1.0.1")
+    _patch_latest(monkeypatch, {"version": "1.0.2", "tag": "v1.0.2"})
 
     async def _fake_git(args, *, cwd, timeout_s=60.0):
         return 1, "", "network down"
 
+    async def _fake_git_output(args, *, cwd, timeout_s=15.0):
+        return "a" * 40
+
     monkeypatch.setattr(u, "_git", _fake_git)
+    monkeypatch.setattr(u, "_git_output", _fake_git_output)
     assert client.post("/api/update/apply").status_code == 502
 
 
-def test_apply_refreshes_deps_only_when_lockfile_changes(
+def test_apply_preserves_headless_profile_for_deferred_installer(
     client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     _patch_managed(monkeypatch, tmp_path)
-    # _hash_file is called before and after the reset; return distinct values
-    # to simulate a changed requirements.txt.
-    states = iter(["hash-before", "hash-after"])
-    monkeypatch.setattr(u, "_hash_file", lambda path: next(states))
+    (tmp_path / ".jarvis-managed-install").write_text(
+        '{"profile": "headless"}\n', encoding="utf-8"
+    )
+    monkeypatch.setattr(u, "_running_version", lambda: "1.0.1")
+    _patch_latest(monkeypatch, {"version": "1.0.2", "tag": "v1.0.2"})
 
     async def _fake_git(args, *, cwd, timeout_s=60.0):
         return 0, "", ""
 
+    async def _fake_git_output(args, *, cwd, timeout_s=15.0):
+        if args == ["rev-parse", "HEAD"]:
+            return "1" * 40
+        if args == ["rev-parse", "FETCH_HEAD^{commit}"]:
+            return "2" * 40
+        if args == ["show", f"{'2' * 40}:jarvis/__init__.py"]:
+            return '__version__ = "1.0.2"'
+        return None
+
     monkeypatch.setattr(u, "_git", _fake_git)
-    monkeypatch.setattr(u, "_version_on_disk", lambda root: "1.0.2")
-    refreshed: dict[str, bool] = {}
-
-    async def _fake_refresh(root):
-        refreshed["called"] = True
-        return True, ""
-
-    monkeypatch.setattr(u, "_refresh_dependencies", _fake_refresh)
+    monkeypatch.setattr(u, "_git_output", _fake_git_output)
     body = client.post("/api/update/apply").json()
-    assert body["deps_refreshed"] is True
-    assert refreshed.get("called") is True
+    assert body["install_profile"] == "headless"
+    assert body["desktop_integration_pending"] is False
+    pending = json.loads(
+        (tmp_path / u._PENDING_UPDATE_NAME).read_text(encoding="utf-8")
+    )
+    assert pending["profile"] == "headless"
+
+
+def test_apply_refuses_when_no_new_release(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    _patch_managed(monkeypatch, tmp_path)
+    monkeypatch.setattr(u, "_running_version", lambda: "1.0.2")
+    _patch_latest(monkeypatch, {"version": "1.0.2", "tag": "v1.0.2"})
+
+    response = client.post("/api/update/apply")
+
+    assert response.status_code == 409
+    assert not (tmp_path / u._PENDING_UPDATE_NAME).exists()
+
+
+def test_pending_update_write_replaces_old_result(tmp_path: Path) -> None:
+    result = tmp_path / u._UPDATE_RESULT_NAME
+    result.write_text('{"ok": false}\n', encoding="utf-8")
+
+    u._write_pending_update(
+        tmp_path,
+        previous_revision="a" * 40,
+        target_revision="b" * 40,
+        profile="full",
+    )
+
+    assert not result.exists()
+    assert not (tmp_path / f"{u._PENDING_UPDATE_NAME}.tmp").exists()
+    payload = json.loads(
+        (tmp_path / u._PENDING_UPDATE_NAME).read_text(encoding="utf-8")
+    )
+    assert payload["schema"] == 1
+
+
+def test_legacy_marker_falls_back_to_desktop_profile(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / ".jarvis-managed-install").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(u.sys, "platform", "win32")
+    assert u._managed_install_profile(tmp_path) == "full"
+
+
+def test_legacy_linux_marker_distinguishes_desktop_from_headless(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    (tmp_path / ".jarvis-managed-install").write_text("{}\n", encoding="utf-8")
+    monkeypatch.setattr(u.sys, "platform", "linux")
+    monkeypatch.delenv("DISPLAY", raising=False)
+    monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
+    assert u._managed_install_profile(tmp_path) == "headless"
+
+    monkeypatch.setenv("WAYLAND_DISPLAY", "wayland-0")
+    assert u._managed_install_profile(tmp_path) == "full"

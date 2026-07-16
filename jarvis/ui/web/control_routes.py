@@ -43,7 +43,7 @@ from jarvis.core.self_mod import (
 from jarvis.core.self_mod.pending import PendingMutationStore
 from jarvis.ui.web.control_auth import (
     require_control_key,
-    require_control_key_or_loopback,
+    require_control_key_or_session,
 )
 
 log = logging.getLogger("jarvis.control")
@@ -370,21 +370,24 @@ async def delete_secret_value(key: str, request: Request) -> dict[str, Any]:
 
 
 # ----------------------------------------------------------------------
-# Control-API key reveal + rotate (loopback OR Bearer)
+# Control-API key reveal + rotate (authenticated UI session or Bearer)
 # ----------------------------------------------------------------------
 
 
-@router.get("/api-key", dependencies=[Depends(require_control_key_or_loopback)])
+@router.get("/api-key", dependencies=[Depends(require_control_key_or_session)])
 async def get_api_key(request: Request) -> dict[str, Any]:
     key = control_key.get_control_key()
-    # Audit every reveal (the loopback exemption means a same-host process can
-    # read the key without the Bearer — worth a trail on a shared VPS).
+    # Audit every reveal without logging either credential.
     client = getattr(request, "client", None)
     log.info("control: API key revealed to %s", getattr(client, "host", "unknown"))
     return {"key": key, "masked": control_key.mask_control_key(key)}
 
 
-@router.post("/api-key/rotate", dependencies=[Depends(require_control_key_or_loopback)], openapi_extra={"x-jarvis-dangerous": True})
+@router.post(
+    "/api-key/rotate",
+    dependencies=[Depends(require_control_key_or_session)],
+    openapi_extra={"x-jarvis-dangerous": True},
+)
 async def rotate_api_key(body: RotateBody) -> dict[str, Any]:
     if not body.confirm:
         raise HTTPException(

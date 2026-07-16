@@ -23,11 +23,12 @@ as robotic and repetitive. Strategy, in preference order:
    string, so the spawn confirmation always reaches TTS.
 
 Validation chain for any candidate (brain or LLM): keep the longest
-leading sentence run within :data:`_MAX_WORDS`; the language must match
-the user's turn; ``scrub_for_voice`` in ack mode; no completion claims
-("ist erledigt" / "is done" — the worker has not even started, AD-OE1
-promises only the handover); no internal component names (the voice
-scrubber would shred them into gap-toothed sentences anyway).
+leading sentence run within :data:`_MAX_WORDS`; require the public
+``Jarvis-Agent`` label; the language must match the user's turn;
+``scrub_for_voice`` in ack mode; no completion claims ("ist erledigt" /
+"is done" — the worker has not even started, AD-OE1 promises only the
+handover); no internal component names (the voice scrubber would shred
+them into gap-toothed sentences anyway).
 
 AD-OE2 note: the LLM call here is the same bounded flash-call category
 as the established pre-thinking ack-brain — timeout-capped, breaker
@@ -90,16 +91,19 @@ _DEFAULT_TIMEOUT_MS = 1500
 
 
 SPAWN_PERSONA_DE = """Du bist der persönliche Assistent des Nutzers. Die Anfrage des
-Nutzers wurde SOEBEN an einen Hintergrund-Helfer übergeben, das ist
+Nutzers wurde SOEBEN an einen Jarvis-Agent übergeben, das ist
 bereits geschehen, du sagst es nur noch natürlich an.
 
 DEINE AUFGABE, genau EINE kurze gesprochene Ansage (1-2 Sätze,
 zusammen maximal 20 Wörter), die:
 1. das KONKRETE Thema der Anfrage nennt (App, Datenobjekt, Ort,
    Person, z.B. "dein Gmail", "der Kalender", "die Flüge"),
-2. natürlich vermittelt, dass das eine GRÖSSERE Sache ist, jetzt im
-   Hintergrund läuft und deshalb einen Moment dauert,
-3. frisch für genau diese Anfrage formuliert ist.
+2. das exakte Produktwort "Jarvis-Agent" genau einmal enthält und
+   natürlich klarmacht, dass dieser Agent jetzt für die Aufgabe gestartet
+   oder hinzugezogen wurde,
+3. vermittelt, dass das eine GRÖSSERE Sache ist, jetzt im Hintergrund
+   läuft und deshalb einen Moment dauert,
+4. frisch für genau diese Anfrage formuliert ist.
 
 TON: warm und zugewandt, wie ein hilfsbereiter Mensch im Gespräch,
 nicht wie eine Statusmeldung. Du darfst die Mühe ruhig andeuten ("da
@@ -117,13 +121,14 @@ VERBOTEN:
 - Vollzugsmeldungen ("ist erledigt", "fertig", "habe ich gemacht"),
   die Arbeit beginnt gerade erst.
 - Interne Bauteil-Namen: "OpenClaw", "Sub-Agent", "Subagent",
-  "Mission", "Provider", "Subprocess", "Harness", "API".
+  "Mission", "Provider", "Subprocess", "Harness", "API". Der öffentliche
+  Produktname "Jarvis-Agent" ist dagegen PFLICHT.
 - Anreden wie "Sir", "Jawohl", "Sehr wohl", "Boss".
 - Rückfragen, Markdown, Anführungszeichen, mehr als zwei Sätze.
 
-ERLAUBT und erwünscht: natürliche Umschreibungen der Übergabe, z.B.
-"ich gebe das an meinen Helfer", "ich lasse das nebenher laufen",
-"ich hole mir kurz Unterstützung", "ein zweiter Kopf übernimmt das".
+Variiere frei, WO und WIE du "Jarvis-Agent" einbaust: starten,
+hinzuziehen, übernehmen lassen, mit der Recherche losschicken oder an die
+Aufgabe setzen. Verwende keine dieser Varianten als wiederkehrende Schablone.
 
 Falls der Input eine Zeile "[Task: ...]" enthält, ist das die bereits
 interpretierte Aufgabe, nutze sie als Themenquelle.
@@ -132,16 +137,18 @@ Output: NUR die Ansage, nichts anderes."""
 
 
 SPAWN_PERSONA_EN = """You are the user's personal assistant. The user's request has
-JUST been handed to a background helper, that already happened; you
+JUST been handed to a Jarvis-Agent, that already happened; you
 only announce it naturally.
 
 YOUR JOB, exactly ONE short spoken announcement (1-2 sentences,
 20 words max in total) that:
 1. names the CONCRETE topic of the request (app, data object, place,
    person, e.g. "your Gmail", "the calendar", "the flights"),
-2. naturally conveys that this is a BIGGER task, now runs in the
-   background and therefore takes a moment,
-3. is phrased freshly for this exact request.
+2. contains the exact public product term "Jarvis-Agent" exactly once and
+   naturally makes clear that this agent was just started or brought in,
+3. conveys that this is a BIGGER task, now runs in the background and
+   therefore takes a moment,
+4. is phrased freshly for this exact request.
 
 TONE: warm and human, like a helpful person in conversation, not a
 status line. You may hint at the effort ("I'll take a proper look at
@@ -158,14 +165,15 @@ FORBIDDEN:
 - Completion claims ("is done", "finished", "all set"), the work is
   only starting now.
 - Internal component names: "OpenClaw", "sub-agent", "subagent",
-  "mission", "provider", "subprocess", "harness", "API".
+  "mission", "provider", "subprocess", "harness", "API". The public
+  product term "Jarvis-Agent" is REQUIRED.
 - Honorifics like "Sir", "Boss", "Very well".
 - Counter-questions, markdown, quotation marks, more than two
   sentences.
 
-ALLOWED and encouraged: natural paraphrases of the handover, e.g.
-"I'm handing this to my helper", "I'll run this on the side",
-"I'm pulling in a second pair of hands".
+Freely vary WHERE and HOW you use "Jarvis-Agent": start one, bring one in,
+have one take over, send one researching, or put one on the task. Never use
+any of those variants as a recurring template.
 
 If the input contains a "[Task: ...]" line, that is the already
 interpreted task, use it as the topic source.
@@ -197,55 +205,58 @@ def get_spawn_persona(language: str) -> str:
 
 _FALLBACK_SPAWN: dict[str, tuple[str, ...]] = {
     "de": (
-        "Mach ich. Grössere Sache, die nehme ich mir im Hintergrund vor und melde mich.",
-        "Alles klar, das schaue ich mir in Ruhe an. Läuft jetzt nebenher, dauert einen Moment.",
-        "Okay, da gehe ich gründlich ran. Ich lasse es im Hintergrund laufen und sage Bescheid.",
-        "Übernehme ich. Das braucht etwas, ich kümmere mich nebenher und melde mich gleich.",
-        "Geht klar. Das ist ein grösseres Stück Arbeit, ich nehme es mir im Hintergrund vor.",
-        "Schon dabei. Das dauert einen Moment, ich will dir was Vernünftiges liefern.",
-        "Hab ich. Das ist etwas umfangreicher, ich melde mich, sobald ich was Belastbares habe.",
-        "Bin dran. Gib mir einen Moment, da steckt etwas mehr dahinter.",
+        "Mach ich. Dafür habe ich einen Jarvis-Agent gestartet; die grössere "
+        "Sache läuft jetzt im Hintergrund.",
+        "Alles klar, ein Jarvis-Agent schaut sich das in Ruhe an. Das dauert einen Moment.",
+        "Okay, da geht jetzt ein Jarvis-Agent gründlich ran und sagt dir danach Bescheid.",
+        "Ein Jarvis-Agent übernimmt das. Es braucht etwas, bis ein belastbares Ergebnis da ist.",
+        "Geht klar. Das grössere Stück Arbeit liegt jetzt bei einem Jarvis-Agent.",
+        "Schon angestossen: Ein Jarvis-Agent kümmert sich darum und braucht dafür einen Moment.",
+        "Hab ich. Ein Jarvis-Agent bearbeitet das umfangreichere Thema und "
+        "meldet sich mit Substanz.",
+        "Ein Jarvis-Agent ist jetzt dran. Gib ihm einen Moment, da steckt etwas mehr dahinter.",
     ),
     "en": (
-        "On it. This is a bigger one, so I'll work it in the background and report back.",
-        "Got it. I'll take a proper look at this; it runs on the side and may take a moment.",
-        "Okay, this needs some real digging. I'll handle it in the background and let you know.",
-        "I'm taking this on. It's a meatier task, so give me a moment and I'll come back to you.",
-        "Consider it picked up. A bit more involved, this one. I'll work it on the side for you.",
-        "Sure. This one takes a little time. I'd rather get it right, so I'm digging in now.",
-        "I'm on it. Slightly bigger job; I'll report back as soon as I have something solid.",
-        "Working on it now. There's a bit more to this, so it'll take a short moment.",
+        "On it. I've started a Jarvis-Agent for this bigger task; it'll report back when ready.",
+        "Got it. A Jarvis-Agent is taking a proper look, which may take a moment.",
+        "Okay, this needs real digging. A Jarvis-Agent is handling it in the background now.",
+        "A Jarvis-Agent is taking this on. It's a meatier task, so give it a moment.",
+        "Consider it picked up. A Jarvis-Agent now has this more involved piece of work.",
+        "Sure. A Jarvis-Agent is digging in now; getting it right will take a little time.",
+        "I've put a Jarvis-Agent on the bigger job. It'll return with something solid.",
+        "A Jarvis-Agent is working on it now. There's more to this, so it'll take a short moment.",
     ),
     "es": (
-        "Voy con ello. Es algo más grande, así que lo trabajo en segundo plano y te aviso.",
-        "Entendido. Le echo un buen vistazo; corre en segundo plano y puede tardar un momento.",
-        "Vale, esto necesita mirarse a fondo. Lo dejo en segundo plano y te digo algo.",
-        "Me encargo. Es una tarea con algo más de chicha, dame un momento y vuelvo contigo.",
-        "Lo cojo. Esto lleva algo más de trabajo, lo voy haciendo en segundo plano.",
-        "Claro. Esto necesita un poco de tiempo; prefiero hacerlo bien y me meto a fondo.",
-        "Estoy en ello. Es un poco más grande; te aviso en cuanto tenga algo sólido.",
-        "Trabajando en ello. Hay algo más detrás, así que tardará un momentito.",
+        "Voy con ello. He iniciado un Jarvis-Agent para esta tarea más grande; "
+        "te avisará al terminar.",
+        "Entendido. Un Jarvis-Agent le está echando un buen vistazo; puede tardar un momento.",
+        "Vale, esto necesita mirarse a fondo. Un Jarvis-Agent ya trabaja en segundo plano.",
+        "Un Jarvis-Agent se encarga. Es una tarea con más chicha, así que necesita un momento.",
+        "Lo tengo. Un Jarvis-Agent ha asumido este trabajo algo más amplio.",
+        "Claro. Un Jarvis-Agent ya está profundizando; hacerlo bien necesita un poco de tiempo.",
+        "He puesto un Jarvis-Agent con este tema más grande; volverá con algo sólido.",
+        "Un Jarvis-Agent ya trabaja en ello. Hay más detrás, así que tardará un momentito.",
     ),
 }
 
 _FALLBACK_ALREADY_RUNNING: dict[str, tuple[str, ...]] = {
     "de": (
-        "Bin schon dran, das läuft noch.",
-        "Läuft bereits. Einen Moment noch, bitte.",
-        "Schon in Arbeit, gleich gibt es etwas.",
-        "Geduld, der Auftrag läuft schon.",
+        "Ein Jarvis-Agent ist schon dran, das läuft noch.",
+        "Der Jarvis-Agent arbeitet bereits. Einen Moment noch, bitte.",
+        "Schon beim Jarvis-Agent in Arbeit, gleich gibt es etwas.",
+        "Geduld, der Jarvis-Agent bearbeitet den Auftrag bereits.",
     ),
     "en": (
-        "Already on it, that one is still running.",
-        "That job is already going, one moment.",
-        "Still working on that one, almost there.",
-        "Patience, that one is already in progress.",
+        "A Jarvis-Agent is already on it; that work is still running.",
+        "The Jarvis-Agent already has that job, one moment.",
+        "A Jarvis-Agent is still working on that one, almost there.",
+        "Patience, that task is already with a Jarvis-Agent.",
     ),
     "es": (
-        "Ya estoy con eso, sigue en marcha.",
-        "Eso ya está en marcha, un momento.",
-        "Sigo con ello, casi lo tengo.",
-        "Paciencia, eso ya está en proceso.",
+        "Un Jarvis-Agent ya está con eso; sigue en marcha.",
+        "El Jarvis-Agent ya tiene esa tarea, un momento.",
+        "Un Jarvis-Agent sigue trabajando en ello, casi está.",
+        "Paciencia, esa tarea ya está con un Jarvis-Agent.",
     ),
 }
 
@@ -310,6 +321,12 @@ _FORBIDDEN_VOCAB_RE = re.compile(
     r"|provider\w*|kontrollierer)\b",
     re.IGNORECASE,
 )
+
+# Every fresh spawn announcement must name the public product surface so the
+# user can distinguish a delegated background task from ordinary thinking.
+# The old generic "sub-agent" spellings stay forbidden by
+# ``_FORBIDDEN_VOCAB_RE``; the repository's canonical singular name is exact.
+_JARVIS_AGENT_RE = re.compile(r"\bJarvis-Agent\b", re.IGNORECASE)
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
 
@@ -462,6 +479,8 @@ class SpawnAnnouncementComposer:
             return None
         trimmed = _trim_to_sentences(text, _MAX_WORDS)
         if trimmed is None:
+            return None
+        if len(_JARVIS_AGENT_RE.findall(trimmed)) != 1:
             return None
         if _COMPLETION_CLAIM_RE.search(trimmed):
             return None

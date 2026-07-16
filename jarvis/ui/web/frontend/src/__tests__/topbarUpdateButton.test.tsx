@@ -3,7 +3,7 @@
  * install with an available update, shows the new version, and stays hidden on
  * an unmanaged checkout (the dev-tree safety guard surfaced in the UI).
  */
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TopBar } from "@/components/layout/TopBar";
@@ -23,7 +23,7 @@ function mockUpdateStatus(body: Record<string, unknown>): void {
 
 describe("TopBar update button", () => {
   beforeEach(() => {
-    useEventStore.setState({ assistantName: "Assistant" });
+    useEventStore.setState({ assistantName: "Assistant", toasts: [] });
   });
   afterEach(() => {
     cleanup();
@@ -71,5 +71,54 @@ describe("TopBar update button", () => {
     render(<TopBar />);
     await waitFor(() => expect(screen.getByText("Restart")).toBeTruthy());
     expect(screen.queryByText("Update available")).toBeNull();
+  });
+
+  it("warns when the update cannot fully repair desktop registration", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) => {
+        if (url.startsWith("/api/update/status")) {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              managed: true,
+              current: "1.0.6",
+              latest: "1.0.7",
+              update_available: true,
+              notes: null,
+            }),
+          };
+        }
+        if (url === "/api/update/apply") {
+          return {
+            ok: true,
+            status: 200,
+            json: async () => ({
+              ok: true,
+              desktop_integration_warning: "launcher repair failed",
+            }),
+          };
+        }
+        return { ok: true, status: 200, json: async () => ({ ok: true }) };
+      }),
+    );
+
+    render(<TopBar />);
+    fireEvent.click(
+      await screen.findByRole("button", { name: /update available/i }),
+    );
+
+    await waitFor(() => {
+      expect(
+        useEventStore
+          .getState()
+          .toasts.some(
+            (toast) =>
+              toast.kind === "warning" &&
+              toast.message.includes("operating system"),
+          ),
+      ).toBe(true);
+    });
   });
 });

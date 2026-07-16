@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import sys
 import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING
@@ -121,7 +122,21 @@ async def put_reply_language(body: ReplyLanguageBody, request: Request) -> dict[
         except Exception as exc:  # noqa: BLE001
             log.warning("reply-language persist failed (live switch still applied): %s", exc)
 
-    return {"ok": True, "language": lang, "persisted": persisted}
+    # Gemini fixes its system instruction at connect time, while other
+    # providers may already be generating the current turn. A controlled
+    # reconnect is the only provider-neutral way to make the new reply policy
+    # authoritative immediately for an active desktop Realtime call.
+    from jarvis.ui.web.voice_runtime import reconnect_realtime
+
+    session_restarted = reconnect_realtime(
+        request, reason=f"reply_language:{lang}"
+    )
+    return {
+        "ok": True,
+        "language": lang,
+        "persisted": persisted,
+        "session_restarted": session_restarted,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -508,6 +523,30 @@ def _config(request: Request):
     )
 
 
+def _local_microphone_capture_ready(request: Request) -> bool:
+    """Non-prompting runtime gate for local macOS microphone diagnostics."""
+    if sys.platform != "darwin":
+        return True
+    try:
+        from jarvis.platform.permissions import PermissionId, get_system_permission_port
+
+        port = getattr(request.app.state, "system_permission_port", None)
+        if port is None:
+            port = get_system_permission_port()
+        return bool(port.runtime_access_granted(PermissionId.MICROPHONE))
+    except Exception:  # noqa: BLE001 - protected diagnostics must fail closed
+        return False
+
+
+def _blocked_mic_level_result() -> dict[str, object]:
+    return {
+        "max_dbfs": -120.0,
+        "no_device": False,
+        "too_quiet": False,
+        "permission_required": True,
+    }
+
+
 def _local_whisper_available() -> bool:
     import importlib.util
 
@@ -868,6 +907,23 @@ async def wake_word_self_test(request: Request) -> dict[str, object]:
         language=language,
     )
 
+    if not _local_microphone_capture_ready(request):
+        return {
+            "ok": False,
+            "phrase": phrase,
+            "engine": plan.engine,
+            "language": language,
+            "wake_available": bool(plan.wake_available),
+            "degraded": bool(plan.degraded),
+            "phrase_in_vocab": None,
+            "max_dbfs": -120.0,
+            "mic_ok": False,
+            "no_device": False,
+            "permission_required": True,
+            "message": "Microphone access is not ready for Personal Jarvis.",
+            "hint": "Grant Microphone access in Settings > Permissions, then retry.",
+        }
+
     # Vocabulary check only makes sense for the grammar (vosk_kws) engine.
     phrase_in_vocab: bool | None = None
     if plan.engine == "vosk_kws":
@@ -888,6 +944,22 @@ async def wake_word_self_test(request: Request) -> dict[str, object]:
         max_dbfs = await measure_mic_dbfs(duration_s=2.0)
     except Exception:  # noqa: BLE001 — treat a failed measurement as no device
         max_dbfs = -120.0
+    if not _local_microphone_capture_ready(request):
+        return {
+            "ok": False,
+            "phrase": phrase,
+            "engine": plan.engine,
+            "language": language,
+            "wake_available": bool(plan.wake_available),
+            "degraded": bool(plan.degraded),
+            "phrase_in_vocab": phrase_in_vocab,
+            "max_dbfs": -120.0,
+            "mic_ok": False,
+            "no_device": False,
+            "permission_required": True,
+            "message": "Microphone access changed during the self-test.",
+            "hint": "Review Microphone access in Settings > Permissions, then retry.",
+        }
     mic_ok = max_dbfs > -40.0
     no_device = max_dbfs <= -119.9
 
@@ -922,13 +994,14 @@ async def wake_word_self_test(request: Request) -> dict[str, object]:
         "max_dbfs": max_dbfs,
         "mic_ok": mic_ok,
         "no_device": no_device,
+        "permission_required": False,
         "message": message,
         "hint": hint,
     }
 
 
 @router.get("/wake-word/mic-level")
-async def wake_mic_level() -> dict[str, object]:
+async def wake_mic_level(request: Request) -> dict[str, object]:
     """Live mic dBFS for the onboarding wake step (Task 7: mic + spoken-word
     verification before ``acknowledgeWakeWord``). Never 500s — a headless/no-mic
     host reports ``no_device=True`` rather than raising. Warn threshold −40 dBFS
@@ -937,14 +1010,19 @@ async def wake_mic_level() -> dict[str, object]:
     """
     from jarvis.speech.diagnose import measure_mic_dbfs
 
+    if not _local_microphone_capture_ready(request):
+        return _blocked_mic_level_result()
     try:
         max_dbfs = await measure_mic_dbfs(duration_s=3.0)
     except Exception:  # noqa: BLE001 — defensive guard: if measurement fails, treat as no device
         max_dbfs = -120.0
+    if not _local_microphone_capture_ready(request):
+        return _blocked_mic_level_result()
     return {
         "max_dbfs": max_dbfs,
         "no_device": max_dbfs <= -119.9,
         "too_quiet": -119.9 < max_dbfs < -40.0,
+        "permission_required": False,
     }
 
 

@@ -414,13 +414,13 @@ def test_pynput_backend_darwin_without_ax_grant_degrades(monkeypatch, caplog):
     # thread; without the Accessibility grant that native init can abort the
     # whole process (uncatchable — BUG-058 class). The backend must preflight
     # AXIsProcessTrusted and degrade instead of touching pynput at all.
-    import jarvis.platform.probes as probes
+    import jarvis.trigger.backends.pynput as pynput_backend
     from jarvis.trigger.backends.pynput import PynputBackend
 
     built: list = []
     _install_fake_pynput(monkeypatch, built)
     monkeypatch.setattr("sys.platform", "darwin")
-    monkeypatch.setattr(probes, "ax_permission_granted", lambda: False)
+    monkeypatch.setattr(pynput_backend, "_macos_hotkey_permissions_granted", lambda: False)
     backend = PynputBackend()
     with caplog.at_level(logging.WARNING):
         backend.start()
@@ -430,13 +430,17 @@ def test_pynput_backend_darwin_without_ax_grant_degrades(monkeypatch, caplog):
 
 def test_pynput_backend_darwin_unverifiable_grant_degrades(monkeypatch, caplog):
     # pyobjc absent -> probe returns None -> fail closed on darwin.
-    import jarvis.platform.probes as probes
+    import jarvis.trigger.backends.pynput as pynput_backend
     from jarvis.trigger.backends.pynput import PynputBackend
 
     built: list = []
     _install_fake_pynput(monkeypatch, built)
     monkeypatch.setattr("sys.platform", "darwin")
-    monkeypatch.setattr(probes, "ax_permission_granted", lambda: None)
+    monkeypatch.setattr(
+        pynput_backend,
+        "_macos_hotkey_permissions_granted",
+        lambda: False,
+    )
     backend = PynputBackend()
     with caplog.at_level(logging.WARNING):
         backend.start()
@@ -444,13 +448,13 @@ def test_pynput_backend_darwin_unverifiable_grant_degrades(monkeypatch, caplog):
 
 
 def test_pynput_backend_darwin_with_grant_starts_listener(monkeypatch):
-    import jarvis.platform.probes as probes
+    import jarvis.trigger.backends.pynput as pynput_backend
     from jarvis.trigger.backends.pynput import PynputBackend
 
     built: list = []
     _install_fake_pynput(monkeypatch, built)
     monkeypatch.setattr("sys.platform", "darwin")
-    monkeypatch.setattr(probes, "ax_permission_granted", lambda: True)
+    monkeypatch.setattr(pynput_backend, "_macos_hotkey_permissions_granted", lambda: True)
     backend = PynputBackend()
     backend.start()
     assert len(built) == 1  # grant present -> hotkeys arm normally
@@ -458,7 +462,7 @@ def test_pynput_backend_darwin_with_grant_starts_listener(monkeypatch):
 
 def test_pynput_backend_off_darwin_needs_no_probe(monkeypatch):
     # AD-7: the preflight is darwin-only; Linux/Windows never consult it.
-    import jarvis.platform.probes as probes
+    import jarvis.trigger.backends.pynput as pynput_backend
     from jarvis.trigger.backends.pynput import PynputBackend
 
     built: list = []
@@ -468,7 +472,33 @@ def test_pynput_backend_off_darwin_needs_no_probe(monkeypatch):
     def _boom() -> None:
         raise AssertionError("probe consulted off darwin")
 
-    monkeypatch.setattr(probes, "ax_permission_granted", _boom)
+    monkeypatch.setattr(pynput_backend, "_macos_hotkey_permissions_granted", _boom)
     backend = PynputBackend()
     backend.start()
     assert len(built) == 1
+
+
+def test_pynput_backend_revoked_permission_suppresses_live_callback(monkeypatch):
+    import jarvis.trigger.backends.pynput as pynput_backend
+    from jarvis.trigger.backends.pynput import PynputBackend
+
+    built: list = []
+    allowed = {"value": True}
+    _install_fake_pynput(monkeypatch, built)
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.setattr(
+        pynput_backend,
+        "_macos_hotkey_permissions_granted",
+        lambda: allowed["value"],
+    )
+    fired: list[str] = []
+    backend = PynputBackend()
+    backend.register([["control + j", lambda: fired.append("call"), None]])
+    backend.start()
+
+    allowed["value"] = False
+    backend._held.update({"ctrl", "j"})
+    backend._reconcile()
+
+    assert fired == []
+    assert backend._held == set()

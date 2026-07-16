@@ -20,6 +20,7 @@ import { SearchAddon } from "@xterm/addon-search";
 import "@xterm/xterm/css/xterm.css";
 import { AlertCircle, Terminal as TerminalIcon } from "lucide-react";
 import { useT } from "@/i18n";
+import { buildMissionSocketUrl, fetchMissionToken } from "@/lib/missionAuth";
 import {
   disposeTerminal,
   getTerminal,
@@ -34,11 +35,9 @@ interface PtyTerminalProps {
 }
 
 function buildPtyUrl(workerId: string): string {
-  const proto = window.location.protocol === "https:" ? "wss" : "ws";
-  const host = window.location.host;
-  const token = window.__JARVIS_TOKEN;
-  const query = token ? `?token=${encodeURIComponent(token)}` : "";
-  return `${proto}://${host}/api/missions/pty/${encodeURIComponent(workerId)}${query}`;
+  return buildMissionSocketUrl(
+    `/api/missions/pty/${encodeURIComponent(workerId)}`,
+  );
 }
 
 export function PtyTerminal({ workerId }: PtyTerminalProps) {
@@ -114,71 +113,87 @@ export function PtyTerminal({ workerId }: PtyTerminalProps) {
     window.addEventListener("resize", handleResize);
 
     let ws: WebSocket | null = null;
-    try {
-      ws = new WebSocket(buildPtyUrl(workerId));
-      ws.binaryType = "arraybuffer";
-      wsRef.current = ws;
+    let disposed = false;
+    const openSocket = (token: string) => {
+      try {
+        ws = new WebSocket(buildPtyUrl(workerId));
+        ws.binaryType = "arraybuffer";
+        wsRef.current = ws;
 
-      ws.addEventListener("open", () => {
-        setConnected(true);
-        setStreamError(null);
-      });
+        ws.addEventListener("open", () => {
+          ws?.send(JSON.stringify({ type: "hello", token }));
+          setConnected(true);
+          setStreamError(null);
+        });
 
-      ws.addEventListener("message", (ev) => {
-        const term = termRef.current;
-        if (!term) return;
-        let data: string;
-        let size = 0;
-        if (typeof ev.data === "string") {
-          data = ev.data;
-          size = data.length;
-        } else if (ev.data instanceof ArrayBuffer) {
-          const decoder = new TextDecoder();
-          data = decoder.decode(ev.data);
-          size = ev.data.byteLength;
-        } else {
-          return;
-        }
+        ws.addEventListener("message", (ev) => {
+          const term = termRef.current;
+          if (!term) return;
+          let data: string;
+          let size = 0;
+          if (typeof ev.data === "string") {
+            data = ev.data;
+            size = data.length;
+          } else if (ev.data instanceof ArrayBuffer) {
+            const decoder = new TextDecoder();
+            data = decoder.decode(ev.data);
+            size = ev.data.byteLength;
+          } else {
+            return;
+          }
 
-        bytesPendingRef.current += size;
-        if (
-          !pausedRef.current &&
-          bytesPendingRef.current > PAUSE_THRESHOLD
-        ) {
-          pausedRef.current = true;
-          sendControl("pause");
-        }
-
-        term.write(data, () => {
-          bytesPendingRef.current = Math.max(
-            0,
-            bytesPendingRef.current - size,
-          );
+          bytesPendingRef.current += size;
           if (
-            pausedRef.current &&
-            bytesPendingRef.current < RESUME_THRESHOLD
+            !pausedRef.current &&
+            bytesPendingRef.current > PAUSE_THRESHOLD
           ) {
-            pausedRef.current = false;
-            sendControl("resume");
+            pausedRef.current = true;
+            sendControl("pause");
+          }
+
+          term.write(data, () => {
+            bytesPendingRef.current = Math.max(
+              0,
+              bytesPendingRef.current - size,
+            );
+            if (
+              pausedRef.current &&
+              bytesPendingRef.current < RESUME_THRESHOLD
+            ) {
+              pausedRef.current = false;
+              sendControl("resume");
+            }
+          });
+        });
+
+        ws.addEventListener("error", () => {
+          setStreamError(t("pty_terminal.stream_unreachable"));
+        });
+
+        ws.addEventListener("close", (ev) => {
+          setConnected(false);
+          if (ev.code !== 1000 && ev.code !== 1001) {
+            setStreamError(`${t("pty_terminal.stream_disconnected")} (Code ${ev.code}).`);
           }
         });
-      });
+      } catch (e) {
+        setStreamError(`${t("pty_terminal.connect_failed")}: ${(e as Error).message}`);
+      }
+    };
 
-      ws.addEventListener("error", () => {
-        setStreamError(t("pty_terminal.stream_unreachable"));
-      });
-
-      ws.addEventListener("close", (ev) => {
-        setConnected(false);
-        if (ev.code !== 1000 && ev.code !== 1001) {
-          setStreamError(`${t("pty_terminal.stream_disconnected")} (Code ${ev.code}).`);
+    void fetchMissionToken()
+      .then((token) => {
+        if (!disposed) openSocket(token);
+      })
+      .catch((error: unknown) => {
+        if (!disposed) {
+          const message = error instanceof Error ? error.message : String(error);
+          setStreamError(`${t("pty_terminal.connect_failed")}: ${message}`);
         }
       });
-    } catch (e) {
-      setStreamError(`${t("pty_terminal.connect_failed")}: ${(e as Error).message}`);
-    }
 
     return () => {
+      disposed = true;
       window.removeEventListener("resize", handleResize);
       try {
         wsRef.current?.close(1000, "unmount");

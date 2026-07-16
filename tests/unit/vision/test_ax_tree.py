@@ -8,10 +8,13 @@ logic coverage below.
 
 from __future__ import annotations
 
+import sys
+import types
+
 import pytest
 
 from jarvis.core.protocols import Observation, VisionSource
-from jarvis.vision.ax_tree import AXTreeSource
+from jarvis.vision.ax_tree import AXTreeSource, _ax_flatten, _ax_point, _ax_size
 from tests.fakes.fake_ax_api import (
     FakeAXElement,
     build_fake_ax_traverser,
@@ -84,6 +87,120 @@ async def test_textfield_carries_value_and_automation_id() -> None:
     assert edit.automation_id == "search-box"
     assert edit.name == "hello"  # AXValue used as the name fallback
     assert edit.bounds == (10, 50, 200, 24)
+
+
+def test_axvalue_manual_wrapper_contract_decodes_position_and_size(monkeypatch) -> None:
+    class _GeneratedStruct:
+        """PyObjC-style sequence slots without Sequence ABC registration."""
+
+        def __init__(self, first: float, second: float) -> None:
+            self._items = (first, second)
+
+        def __len__(self) -> int:
+            return 2
+
+        def __getitem__(self, index: int) -> float:
+            return self._items[index]
+
+    position = object()
+    size = object()
+    module = types.SimpleNamespace(
+        kAXValueCGPointType=1,
+        kAXValueCGSizeType=2,
+        AXValueGetType=lambda value: 1 if value is position else 2,
+        AXValueGetValue=lambda value, kind, _out: (
+            (True, _GeneratedStruct(120.5, -40.25)) if value is position and kind == 1
+            else (True, _GeneratedStruct(800.0, 600.0)) if value is size and kind == 2
+            else (False, None)
+        ),
+    )
+    monkeypatch.setitem(sys.modules, "HIServices", module)
+
+    assert _ax_point(position) == (120, -40)
+    assert _ax_size(size) == (800, 600)
+
+
+@pytest.mark.skipif(sys.platform != "darwin", reason="requires macOS PyObjC")
+def test_real_pyobjc_axvalue_round_trip_without_tcc() -> None:
+    """Exercise the actual manual wrapper on both macOS CI architectures."""
+    import HIServices  # type: ignore[import-not-found]
+
+    from jarvis.platform.macos_ax import decode_ax_point, decode_ax_size
+
+    point_type = HIServices.kAXValueCGPointType
+    size_type = HIServices.kAXValueCGSizeType
+    position = HIServices.AXValueCreate(point_type, (120.5, -40.25))
+    size = HIServices.AXValueCreate(size_type, (800.0, 600.0))
+
+    point_ok, point = HIServices.AXValueGetValue(position, point_type, None)
+    size_ok, dimensions = HIServices.AXValueGetValue(size, size_type, None)
+
+    assert point_ok is True
+    assert point == (120.5, -40.25)
+    assert size_ok is True
+    assert dimensions == (800.0, 600.0)
+    assert decode_ax_point(position) == (120.5, -40.25)
+    assert decode_ax_size(size) == (800.0, 600.0)
+    assert _ax_point(position) == (120, -40)
+    assert _ax_size(size) == (800, 600)
+
+
+def test_ax_permission_uses_unified_runtime_identity_gate(monkeypatch) -> None:
+    from jarvis.platform.permissions import PermissionId
+
+    seen = []
+    port = types.SimpleNamespace(
+        runtime_access_granted=lambda permission: seen.append(permission) or False,
+    )
+    monkeypatch.setattr(
+        "jarvis.platform.permissions.get_system_permission_port",
+        lambda: port,
+    )
+
+    assert AXTreeSource._ax_is_process_trusted() is False
+    assert seen == [PermissionId.ACCESSIBILITY]
+
+
+def test_ax_permission_reprobes_live_revocation(monkeypatch) -> None:
+    outcomes = iter((True, False))
+    port = types.SimpleNamespace(
+        runtime_access_granted=lambda _permission: next(outcomes),
+    )
+    monkeypatch.setattr(
+        "jarvis.platform.permissions.get_system_permission_port",
+        lambda: port,
+    )
+
+    assert AXTreeSource._ax_is_process_trusted() is True
+    assert AXTreeSource._ax_is_process_trusted() is False
+
+
+def test_secure_ax_field_redacts_value_and_preserves_focus() -> None:
+    class _SecureField:
+        values = {
+            "AXRole": "AXTextField",
+            "AXSubrole": "AXSecureTextField",
+            "AXTitle": "Password",
+            "AXValue": "must-not-leak",
+            "AXPosition": {"x": 20, "y": 30},
+            "AXSize": {"w": 200, "h": 24},
+            "AXEnabled": True,
+            "AXFocused": True,
+            "AXChildren": [],
+        }
+
+        def copy_attribute_value(self, attribute):
+            return self.values.get(attribute)
+
+    nodes = []
+    _ax_flatten(
+        _SecureField(), depth=0, max_depth=2, parent_index=-1, out=nodes,
+    )
+
+    assert nodes[0].is_password is True
+    assert nodes[0].focused is True
+    assert nodes[0].value == ""
+    assert "must-not-leak" not in nodes[0].name
 
 
 @pytest.mark.asyncio

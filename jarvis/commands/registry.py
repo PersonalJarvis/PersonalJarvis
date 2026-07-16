@@ -50,6 +50,7 @@ class AppCommand:
     params: dict[str, Any] = field(default_factory=dict)  # JSON schema (object)
     path_params: tuple[str, ...] = ()  # args substituted into the path
     dangerous: bool = False    # True → requires explicit confirmation
+    worker_allowed: bool = False  # Explicit least-privilege Jarvis-Agent grant
     ui_section: str = "settings"  # sidebar section hosting the same action
     voice_aliases: dict[str, tuple[str, ...]] = field(default_factory=dict)
 
@@ -63,6 +64,7 @@ class AppCommand:
             "params": self.params,
             "path_params": list(self.path_params),
             "dangerous": self.dangerous,
+            "worker_allowed": self.worker_allowed,
             "ui_section": self.ui_section,
             "voice_aliases": {k: list(v) for k, v in self.voice_aliases.items()},
         }
@@ -238,6 +240,7 @@ def _build_registry() -> tuple[AppCommand, ...]:
             description="List all configured providers and which ones are active.",
             method="GET",
             path="/api/providers",
+            worker_allowed=True,
             ui_section="apikeys",
             voice_aliases={
                 "de": ("welche provider sind konfiguriert",),  # i18n-allow: input vocab
@@ -262,6 +265,7 @@ def _build_registry() -> tuple[AppCommand, ...]:
                 "required": ["provider_id"],
             },
             path_params=("provider_id",),
+            worker_allowed=True,
             ui_section="apikeys",
             voice_aliases={
                 "de": ("teste den openai-provider",),  # i18n-allow: input vocab
@@ -332,6 +336,7 @@ def _build_registry() -> tuple[AppCommand, ...]:
             description="Show the current wake word and wake-engine settings.",
             method="GET",
             path="/api/settings/wake-word",
+            worker_allowed=True,
             ui_section="settings",
             voice_aliases={
                 "de": ("wie lautet mein wake word",),  # i18n-allow: input vocab
@@ -394,6 +399,7 @@ def _build_registry() -> tuple[AppCommand, ...]:
             description="List available speaker and microphone devices.",
             method="GET",
             path="/api/settings/audio-devices",
+            worker_allowed=True,
             ui_section="settings",
             voice_aliases={
                 "de": ("welche audiogeräte gibt es",),  # i18n-allow: input vocab
@@ -411,6 +417,7 @@ def _build_registry() -> tuple[AppCommand, ...]:
             ),
             method="POST",
             path="/api/wiki/ingest",
+            worker_allowed=True,
             params={
                 "type": "object",
                 "properties": {
@@ -443,6 +450,7 @@ def _build_registry() -> tuple[AppCommand, ...]:
             ),
             method="GET",
             path="/api/sessions/latest-turn",
+            worker_allowed=True,
             params={
                 "type": "object",
                 "properties": {
@@ -467,6 +475,7 @@ def _build_registry() -> tuple[AppCommand, ...]:
             ),
             method="GET",
             path="/api/tools",
+            worker_allowed=True,
             params={"type": "object", "properties": {}},
             ui_section="settings",
             voice_aliases={
@@ -497,6 +506,7 @@ def _build_registry() -> tuple[AppCommand, ...]:
             description="List Jarvis-Agent missions and their status.",
             method="GET",
             path="/api/missions",
+            worker_allowed=True,
             ui_section="agents",
             voice_aliases={
                 "de": ("zeig mir die missionen",),  # i18n-allow: input vocab
@@ -514,6 +524,7 @@ def _build_registry() -> tuple[AppCommand, ...]:
             ),
             method="GET",
             path="/api/missions/{mission_id}/result",
+            worker_allowed=True,
             params={
                 "type": "object",
                 "properties": {
@@ -559,6 +570,7 @@ def _build_registry() -> tuple[AppCommand, ...]:
             description="List scheduled and running tasks.",
             method="GET",
             path="/api/tasks",
+            worker_allowed=True,
             ui_section="tasks",
             voice_aliases={
                 "de": ("zeig mir meine aufgaben",),  # i18n-allow: input vocab

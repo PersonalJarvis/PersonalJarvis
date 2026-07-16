@@ -12,11 +12,47 @@ from types import SimpleNamespace
 from jarvis.ui import relauncher
 
 
-def test_build_launch_command():
+def test_build_launch_command(monkeypatch):
+    monkeypatch.setattr(relauncher.sys, "platform", "linux")
     assert relauncher.build_launch_command("py.exe") == [
         "py.exe",
         "-m",
         "jarvis.ui.web.launcher",
+    ]
+
+
+def test_build_launch_command_uses_macos_bundle(monkeypatch, tmp_path):
+    import jarvis.setup.macos_app_bundle as bundle_module
+
+    bundle = tmp_path / "Personal Jarvis.app"
+    monkeypatch.setattr(relauncher.sys, "platform", "darwin")
+    monkeypatch.setattr(bundle_module, "macos_app_bundle_path", lambda: bundle)
+    monkeypatch.setattr(
+        bundle_module, "macos_app_bundle_is_launchable", lambda _bundle: True
+    )
+
+    assert relauncher.build_launch_command("python3") == [
+        "/usr/bin/open",
+        "-W",
+        "-a",
+        str(bundle),
+    ]
+
+
+def test_build_launch_command_fails_closed_without_macos_bundle(monkeypatch, tmp_path):
+    import jarvis.setup.macos_app_bundle as bundle_module
+
+    monkeypatch.setattr(relauncher.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        bundle_module,
+        "macos_app_bundle_path",
+        lambda: tmp_path / "missing.app",
+    )
+    assert relauncher.build_launch_command("python3") == [
+        "/usr/bin/open",
+        "-W",
+        "-a",
+        str(tmp_path / "missing.app"),
     ]
 
 

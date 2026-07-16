@@ -7,7 +7,7 @@ Protocol definitions: `jarvis.core.protocols.CancelToken` / `CostMeter`.
 """
 from __future__ import annotations
 
-from .cancel import CancelScope, CancelToken, KillSwitch
+from .cancel import CancelScope, CancelToken, KillSwitch, get_kill_switch
 from .cost import BudgetConfig, CooldownState, CostMeter, ModelPrice
 from .wiring import (
     DEFAULT_KILL_HOTKEY,
@@ -27,6 +27,7 @@ __all__ = [
     "CostMeter",
     "KillSwitch",
     "ModelPrice",
+    "get_kill_switch",
     "run_kill_hotkey_trigger",
     "voice_matches_kill_intent",
     "wire_kill_switch_on_bus",

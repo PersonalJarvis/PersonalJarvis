@@ -288,3 +288,25 @@ async def test_compound_screenshot_goal_uses_the_loop_not_the_fast_path(
 
     assert called["n"] == 0
     assert ctx.vision_engine.calls >= 1
+
+
+@pytest.mark.parametrize(
+    "module_name",
+    (
+        "jarvis.harness.screenshot_only_loop",
+        "jarvis.harness.screenshot_only_loop_stable",
+    ),
+)
+def test_legacy_save_screenshot_fails_closed_when_recording_is_denied(
+    monkeypatch: pytest.MonkeyPatch,
+    module_name: str,
+) -> None:
+    import importlib
+
+    module = importlib.import_module(module_name)
+    monkeypatch.setattr(
+        "jarvis.vision.screenshot.warn_if_screen_recording_denied",
+        lambda: True,
+    )
+
+    assert module._save_user_screenshot() is None

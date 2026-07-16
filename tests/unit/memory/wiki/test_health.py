@@ -34,6 +34,16 @@ def test_chain_failure_and_backlog_recorded():
     assert snap["journal_backlog"] == 5
 
 
+def test_chain_failure_detail_redacts_secrets():
+    h = WikiHealth()
+    secret = "sk-proj-" + "Q" * 32
+    h.record_chain_failure(f"openai failed with {secret}")
+
+    detail = h.snapshot()["last_chain_failure"]["detail"]
+    assert secret not in detail
+    assert "<redacted:openai_key>" in detail
+
+
 def test_snapshot_is_json_safe():
     import json
 

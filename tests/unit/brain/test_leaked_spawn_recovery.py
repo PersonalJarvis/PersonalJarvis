@@ -46,11 +46,11 @@ def test_extract_detects_leaked_spawn_variants() -> None:
         '```json\n[{"type":"tool_use","name":"spawn_worker",'
         '"input":{"action":"y"}}]\n```'
     ) == {"action": "y"}
-    # Prose-wrapped.
+    # Quoted/example JSON inside prose is not an executable provider envelope.
     assert _extract_leaked_spawn_call(
         'Klar! {"type":"tool_use","name":"spawn_worker",'
         '"input":{"target":"z"}} erledige ich.'
-    ) == {"target": "z"}
+    ) is None
 
 
 def test_extract_ignores_normal_text_and_other_tools() -> None:
@@ -98,6 +98,7 @@ async def test_recover_executes_leaked_spawn_and_returns_ack() -> None:
         leaked,
         user_text="erstelle mir eine Datei test-opus.md",
         trace_id=uuid4(),
+        allowed_tools=mgr._tools,
     )
     assert out == "Mach ich, ich kümmere mich im Hintergrund darum."  # i18n-allow
     # The leaked utterance is forwarded to the spawn tool.
@@ -113,6 +114,7 @@ async def test_recover_returns_none_for_normal_response() -> None:
         "Alles erledigt, ich habe das im Hintergrund übernommen.",  # i18n-allow
         user_text="erstelle mir eine Datei",
         trace_id=uuid4(),
+        allowed_tools=mgr._tools,
     )
     assert out is None
     assert "args" not in captured  # executor never called
@@ -191,6 +193,68 @@ def test_render_recovered_tool_output_never_emits_brace_prefixed_repr() -> None:
     assert not _looks_like_tool_use_leak(rendered)
 
 
+def test_render_recovered_tool_output_preserves_safe_message_fields() -> None:
+    """A successful connector result must not collapse into "nothing found"."""
+    rendered = _render_recovered_tool_output(
+        {
+            "id": "message-id-must-not-be-spoken",
+            "threadId": "thread-id-must-not-be-spoken",
+            "from": "alerts@example.com",
+            "subject": "Important account notice",
+            "date": "2026-07-15 10:45",
+            "snippet": "Please review the attached account notice.",
+            "body": "A very long private body that is intentionally omitted.",
+        }
+    )
+
+    assert "alerts@example.com" in rendered
+    assert "Important account notice" in rendered
+    assert "2026-07-15" in rendered
+    assert "Please review" not in rendered
+    assert "message-id-must-not-be-spoken" not in rendered
+    assert "very long private body" not in rendered
+    assert not _looks_like_tool_use_leak(rendered)
+
+
+def test_render_recovered_tool_output_fails_closed_for_unknown_private_fields() -> None:
+    rendered = _render_recovered_tool_output(
+        {
+            "messageId": "opaque-message-id",
+            "nextPageToken": "opaque-page-token",
+            "content": "FULL PRIVATE MESSAGE BODY",
+            "resultSizeEstimate": 201,
+        }
+    )
+
+    assert rendered == ""
+    assert _render_recovered_tool_output(
+        {"content": "FULL PRIVATE MESSAGE BODY"}
+    ) == ""
+
+
+@pytest.mark.parametrize("key", ["text", "answer", "message", "result"])
+def test_render_recovered_tool_output_keeps_compact_answer_fields(key: str) -> None:
+    assert _render_recovered_tool_output({key: "Connected tool answer."}) == (
+        "Connected tool answer."
+    )
+
+
+def test_render_recovered_output_redacts_credentials_and_caps_every_branch() -> None:
+    secret = "sk-" + "A" * 32
+
+    for output in (
+        f"answer {secret}",
+        {"subject": f"notice {secret}"},
+        {"results": [{"title": "Result", "snippet": f"value {secret}"}]},
+        {"exit_code": 0, "stdout": f"value {secret}" + "x" * 1_000},
+        {"answer": f"value {secret}"},
+    ):
+        rendered = _render_recovered_tool_output(output)
+        assert secret not in rendered
+        assert "<redacted:" in rendered
+        assert len(rendered) <= 600
+
+
 @pytest.mark.asyncio
 async def test_recover_leaked_search_web_speaks_answer_not_failure_phrase() -> None:
     captured: dict = {}
@@ -201,6 +265,7 @@ async def test_recover_leaked_search_web_speaks_answer_not_failure_phrase() -> N
     )
     out = await mgr._recover_leaked_tool(
         leaked, user_text="Was hältst du von exp.com?", trace_id=uuid4(),  # i18n-allow
+        allowed_tools=mgr._tools,
     )
     # The search actually ran with the leaked query.
     assert captured["args"]["query"] == "exp.com"
@@ -220,11 +285,32 @@ async def test_recover_leaked_search_web_empty_results_is_spoken_fallback() -> N
     leaked = '{"type":"tool_use","name":"search_web","input":{"query":"zzz"}}'
     out = await mgr._recover_leaked_tool(
         leaked, user_text="Was hältst du von zzz?", trace_id=uuid4(),  # i18n-allow
+        allowed_tools=mgr._tools,
     )
     assert out is not None
     assert not any(frag in out.lower() for frag in _FAILURE_FRAGMENTS)
     assert not _looks_like_tool_use_leak(out)
     assert out.strip()  # a real spoken sentence, never silence
+
+
+@pytest.mark.asyncio
+async def test_legacy_recovery_cannot_escape_turn_scoped_tool_surface() -> None:
+    captured: dict = {}
+    mgr = _manager_with_fake_tool(captured, name="search_web", output=_SEARCH_OUTPUT)
+    leaked = (
+        '{"type":"tool_use","name":"search_web",'
+        '"input":{"query":"exp.com"}}'
+    )
+
+    out = await mgr._recover_leaked_tool(
+        leaked,
+        user_text="Read the result.",
+        trace_id=uuid4(),
+        allowed_tools={},
+    )
+
+    assert out is None
+    assert "args" not in captured
 
 
 # ---------------------------------------------------------------------------
@@ -312,6 +398,7 @@ async def test_recover_leaked_cli_success_speaks_stdout_not_nothing_found() -> N
     )
     out = await mgr._recover_leaked_tool(
         leaked, user_text="nutze die Google Cloud CLI", trace_id=uuid4(),
+        allowed_tools=mgr._tools,
     )
     assert out is not None
     assert "n8n-wf-demo-611441" in out
@@ -339,6 +426,7 @@ async def test_recover_leaked_cli_failure_speaks_stderr_cause_not_bare_exit() ->
     )
     out = await mgr._recover_leaked_tool(
         leaked, user_text="wie viel Geld habe ich noch", trace_id=uuid4(),
+        allowed_tools=mgr._tools,
     )
     assert out is not None
     # Honest cause from stderr is surfaced (the API-disabled / permission line).

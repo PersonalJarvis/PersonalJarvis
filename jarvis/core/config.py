@@ -18,9 +18,11 @@ import secrets
 import sys
 import threading
 import tomllib
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any, Iterator, Literal, Mapping
 
 import yaml
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
@@ -149,7 +151,61 @@ PROVIDER_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
         ("grok_api_key", "GROK_API_KEY"),
         ("xai_api_key", "XAI_API_KEY"),
     ),
+    # Realtime owns dedicated slots. The generic family slots remain trailing
+    # read-only compatibility fallbacks for upgraded installations; a key saved
+    # from the Realtime card is therefore never visible to Brain or Jarvis-Agent
+    # resolution.
+    "openai-realtime": (
+        ("realtime_openai_api_key", "JARVIS_REALTIME_OPENAI_API_KEY"),
+        ("openai_api_key", "OPENAI_API_KEY"),
+    ),
+    "gemini-live": (
+        ("realtime_gemini_api_key", "JARVIS_REALTIME_GEMINI_API_KEY"),
+        ("gemini_api_key", "GEMINI_API_KEY"),
+        ("google_aistudio_api_key", "GOOGLE_AIStudio_API_KEY"),
+        ("google_api_key", "GOOGLE_API_KEY"),
+    ),
+    "grok-realtime": (
+        ("realtime_grok_api_key", "JARVIS_REALTIME_GROK_API_KEY"),
+        ("grok_api_key", "GROK_API_KEY"),
+        ("xai_api_key", "XAI_API_KEY"),
+    ),
 }
+
+# Jarvis-Agent API credentials are independently replaceable from the Agent
+# tab. Generic provider slots remain a final compatibility fallback so existing
+# installations keep working, but scoped Agent keys always win and are never
+# consumed by Brain or Realtime.
+JARVIS_AGENT_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
+    "claude-api": (
+        ("jarvis_agent_anthropic_api_key", "JARVIS_AGENT_ANTHROPIC_API_KEY"),
+        *PROVIDER_SECRET_CANDIDATES["claude-api"],
+    ),
+    "openai": (
+        ("jarvis_agent_openai_api_key", "JARVIS_AGENT_OPENAI_API_KEY"),
+        *PROVIDER_SECRET_CANDIDATES["openai"],
+    ),
+    "gemini": (
+        ("jarvis_agent_gemini_api_key", "JARVIS_AGENT_GEMINI_API_KEY"),
+        *PROVIDER_SECRET_CANDIDATES["gemini"],
+    ),
+    "openrouter": (
+        ("jarvis_agent_openrouter_api_key", "JARVIS_AGENT_OPENROUTER_API_KEY"),
+        *PROVIDER_SECRET_CANDIDATES["openrouter"],
+    ),
+    "grok": (
+        ("jarvis_agent_grok_api_key", "JARVIS_AGENT_GROK_API_KEY"),
+        *PROVIDER_SECRET_CANDIDATES["grok"],
+    ),
+    "nvidia": (
+        ("jarvis_agent_nvidia_api_key", "JARVIS_AGENT_NVIDIA_API_KEY"),
+        *PROVIDER_SECRET_CANDIDATES["nvidia"],
+    ),
+}
+
+_PROVIDER_SECRET_OVERRIDES: ContextVar[Mapping[str, str | None] | None] = ContextVar(
+    "provider_secret_overrides", default=None
+)
 
 
 # ----------------------------------------------------------------------
@@ -954,12 +1010,13 @@ class SessionRollupConfig(BaseModel):
         Outer ``asyncio.wait_for`` cap on the brain call.
 
     ``user_entity_slug``
-        Slug of the user's own entity page. Empty by default so a fresh
-        install carries no personal name; onboarding/profile resolves the
-        real slug at runtime. When set (and the page exists), every session
-        page links it in the ``## Related`` backbone footer, wiring each
-        session into the graph through the shared user hub instead of
-        floating as an island.
+        Slug of the user's own entity page. Empty or unsafe values resolve to
+        the neutral ``user`` slug in the conversation-memory pipeline, so a
+        fresh install uses ``entities/user.md`` and carries no personal name.
+        Onboarding may configure a safe slug later. When that page exists,
+        every session page links it in the ``## Related`` backbone footer,
+        wiring each session into the graph through the shared user hub instead
+        of floating as an island.
     """
 
     model_config = ConfigDict(extra="allow")
@@ -1044,7 +1101,9 @@ class VoiceBridgeConfig(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     aggressive_mode: bool = True
-    min_user_chars: int = 30
+    # Keep this aligned with ExtractorConfig.min_user_chars. Stage 2 remains
+    # the quality gate; a 12-character ownership statement can be durable.
+    min_user_chars: int = 12
     rate_limit_seconds: int = 0
 
 
@@ -1293,9 +1352,9 @@ class UIConfig(BaseModel):
     # --dev; the fields here simply hold the parameters.
     dev_mode: bool = False
     vite_dev_url: str = "http://localhost:5173"
-    # ENV variable that provides the session token for the WebView.
-    # Default: JARVIS_UI_TOKEN. The token is freshly generated at startup
-    # and pywebview injects it via evaluate_js into window.__JARVIS_TOKEN.
+    # ENV variable carrying the process-scoped UI bootstrap token. The native
+    # WebView exposes it once; AuthGate exchanges it for an unrelated HttpOnly
+    # session cookie and immediately clears the JavaScript value.
     auth_token_env: str = "JARVIS_UI_TOKEN"
     # On-screen overlay style: "jarvis_bar" (slim default), "mascot" (ghost
     # orb), or "none". The mascot remains fully selectable.
@@ -1604,14 +1663,13 @@ class ComputerUseConfig(BaseModel):
     model_config = {"extra": "allow"}
 
     enabled: bool = False
-    # Which Computer-Use engine runs (reversible switch). "v2" (default) = the
+    # Which Computer-Use engine runs. "v2" (default) = the
     # rebuilt perceive->act->verify engine (jarvis/cu/engine.py): per-frame
     # coordinate mapping, provider coordinate conventions, UI-idle capture,
-    # effect-checked actions and the idempotency ledger. Legacy engines stay
-    # available as fallbacks: "current" = the last maintained legacy loop,
-    # "june13" / "stable" = frozen known-good snapshots. The harness reads
-    # this per mission and logs which engine is live, so a flip applies on
-    # the next mission with no restart. Roll back any time with "current".
+    # effect-checked actions and the idempotency ledger. The historical
+    # "current", "june13" and "stable" values remain accepted for read-time
+    # config compatibility but route to v2: their frozen loops lack current
+    # permission, topology and foreground-window action guards.
     engine: Literal["v2", "current", "june13", "stable"] = "v2"
     # Coordinate space the vision model's click coordinates are parsed in
     # (CU v2 only). "auto" (default) resolves per provider: an explicit
@@ -2846,7 +2904,50 @@ def get_secret_any(candidates: tuple[tuple[str, str | None], ...]) -> str | None
 
 def get_provider_secret(provider: str) -> str | None:
     """Return the API key for a Brain provider, including accepted aliases."""
+    overrides = _PROVIDER_SECRET_OVERRIDES.get()
+    if overrides is not None and provider in overrides:
+        return overrides[provider]
     return get_secret_any(PROVIDER_SECRET_CANDIDATES.get(provider, ()))
+
+
+def get_jarvis_agent_secret(provider: str) -> str | None:
+    """Return the effective API key for one Jarvis-Agent provider.
+
+    A dedicated Agent slot wins. Generic provider credentials are read only as
+    an upgrade compatibility fallback; Realtime-only slots are never candidates.
+    OAuth-backed Agent providers keep resolving their login separately.
+    """
+    candidates = JARVIS_AGENT_SECRET_CANDIDATES.get(provider, ())
+    if not candidates:
+        return None
+    dedicated = get_secret_any((candidates[0],))
+    if dedicated:
+        return dedicated
+    return get_provider_secret(provider)
+
+
+def jarvis_agent_secret_slot(provider: str) -> tuple[str, str] | None:
+    """Return the dedicated ``(keyring slot, ENV name)`` for an Agent family."""
+    candidates = JARVIS_AGENT_SECRET_CANDIDATES.get(provider, ())
+    return candidates[0] if candidates else None
+
+
+@contextmanager
+def override_provider_secrets(
+    overrides: Mapping[str, str | None],
+) -> Iterator[None]:
+    """Task-local provider credentials for an in-process Agent or critic call.
+
+    ``ContextVar`` keeps concurrent workers isolated and avoids mutating process
+    environment variables. Normal Brain calls outside the scope are unchanged.
+    Team-proxy resolution also stays authoritative because it resolves before
+    :func:`get_provider_secret` is consulted.
+    """
+    token = _PROVIDER_SECRET_OVERRIDES.set(dict(overrides))
+    try:
+        yield
+    finally:
+        _PROVIDER_SECRET_OVERRIDES.reset(token)
 
 
 @dataclass(frozen=True, slots=True)

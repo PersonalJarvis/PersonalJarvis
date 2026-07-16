@@ -45,6 +45,7 @@ class JarvisClient:
         )
         self.base_url = base_url
         self.has_auth = bool(control_key)
+        self._connect_timeout = min(connect_timeout, timeout)
 
     def request(
         self,
@@ -53,11 +54,17 @@ class JarvisClient:
         *,
         params: dict[str, Any] | None = None,
         json: Any | None = None,
+        timeout_s: float | None = None,
     ) -> Any:
         try:
-            resp = self._client.request(
-                method.upper(), path, params=params, json=json
-            )
+            request_kwargs: dict[str, Any] = {"params": params, "json": json}
+            if timeout_s is not None:
+                bounded_timeout = max(0.1, float(timeout_s))
+                request_kwargs["timeout"] = httpx.Timeout(
+                    bounded_timeout,
+                    connect=min(self._connect_timeout, bounded_timeout),
+                )
+            resp = self._client.request(method.upper(), path, **request_kwargs)
         except (httpx.ConnectError, httpx.ConnectTimeout) as exc:
             # Deliberately terse: the CLI layers replace this with the
             # cause-specific doctor.unreachable_message (running-but-booting /

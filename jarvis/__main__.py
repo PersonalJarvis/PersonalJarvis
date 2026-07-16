@@ -421,6 +421,14 @@ async def _run_tray_app(debug: bool = False) -> int:
                 return
             if cmd.action == "pause":
                 tray.set_state(JarvisState.PAUSED)
+            elif cmd.action == "kill":
+                # Standalone tray mode runs no backend/bus, so there is no
+                # mission to stop — say so instead of swallowing the click
+                # (deep-dive 2026-07-15, C-02).
+                print(
+                    "Emergency stop: no backend is running in tray-only mode; "
+                    "nothing to stop."
+                )
             elif cmd.action == "resume":
                 tray.set_state(JarvisState.IDLE)
             elif cmd.action == "reload_config":

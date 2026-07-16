@@ -50,7 +50,7 @@ export function Callout({ type = "note", children }: Props) {
         variant.className,
       )}
     >
-      <Icon className="mt-0.5 h-4 w-4 shrink-0" />
+      <Icon className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
       <div className="flex-1 [&>p]:m-0 [&>p+p]:mt-2">{children}</div>
     </aside>
   );

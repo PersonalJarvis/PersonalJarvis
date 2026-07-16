@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+from jarvis.brain.tool_call_recovery import extract_leaked_tool_calls
 from jarvis.brain.tool_use_loop import _MAX_TOOL_RESULT_CHARS, ToolUseLoop
 from jarvis.core.protocols import BrainDelta, BrainRequest, ToolResult
 
@@ -126,6 +127,257 @@ async def test_how_to_question_blocks_side_effect_tool() -> None:
 class _GmailTool:
     name = "gmail/list_messages"
     schema: dict[str, Any] = {}
+
+
+class _NamedReadTool:
+    schema: dict[str, Any] = {}
+
+    def __init__(self, name: str) -> None:
+        self.name = name
+
+
+@pytest.mark.parametrize(
+    "serialized",
+    [
+        (
+            "For example, a provider might emit "
+            '{"type":"tool_use","name":"gmail","input":{}} in prose.'
+        ),
+        '{"type":"tool_use","name":"gmail","input":"{bad json"}',
+        '{"type":"tool_use","name":"gmail","input":["not","an","object"]}',
+        "```json\n{\"type\":\"tool_use\",\"name\":\"gmail\",\"input\":{}}",
+    ],
+)
+def test_leaked_call_recovery_rejects_untrusted_or_malformed_input(
+    serialized: str,
+) -> None:
+    assert extract_leaked_tool_calls(serialized) == []
+
+
+def test_leaked_call_recovery_accepts_one_strict_fenced_envelope() -> None:
+    calls = extract_leaked_tool_calls(
+        "```json\n"
+        '{"type":"tool_use","name":"gmail","input":{"action":"list"}}'
+        "\n```"
+    )
+
+    assert len(calls) == 1
+    assert calls[0]["name"] == "gmail"
+    assert calls[0]["input"] == {"action": "list"}
+
+
+class _ExecStructuredRead:
+    def __init__(self) -> None:
+        self.calls: list[tuple[Any, dict[str, Any]]] = []
+
+    async def execute(
+        self, tool: Any, args: dict[str, Any], **_: Any,
+    ) -> ToolResult:
+        self.calls.append((tool, args))
+        return ToolResult(
+            success=True,
+            output={
+                "from": "alerts@example.com",
+                "subject": "Account notice",
+                "snippet": "A grounded result from the connected service.",
+            },
+        )
+
+
+class _LeakedReadThenAnswerBrain:
+    """A provider emits a function call as text before normal synthesis."""
+
+    def __init__(self, tool_name: str) -> None:
+        self._tool_name = tool_name
+        self.requests: list[BrainRequest] = []
+
+    async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
+        self.requests.append(req)
+        if len(self.requests) == 1:
+            yield BrainDelta(
+                content=(
+                    '[{"type":"tool_use","name":"'
+                    f'{self._tool_name}","input":{{"item_id":"m1"}}}}]'
+                )
+            )
+            yield BrainDelta(finish_reason="stop")
+            return
+        yield BrainDelta(content="The connected service returned a grounded result.")
+        yield BrainDelta(finish_reason="stop")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "tool_name",
+    [
+        "gmail",
+        "streamline/query",
+        "mcp.notebook/search",
+    ],
+)
+async def test_text_leaked_read_call_rejoins_normal_tool_loop(
+    tool_name: str,
+) -> None:
+    """Native, plugin, and MCP calls share exactly-once leak recovery."""
+    brain = _LeakedReadThenAnswerBrain(tool_name)
+    executor = _ExecStructuredRead()
+    loop = ToolUseLoop(
+        brain,
+        {tool_name: _NamedReadTool(tool_name)},
+        executor,  # type: ignore[arg-type]
+    )
+
+    result = await loop.run(
+        [],
+        user_utterance="Read the latest connected item.",
+    )
+
+    assert len(executor.calls) == 1
+    assert executor.calls[0][1] == {"item_id": "m1"}
+    assert result.executed_tool_names == {tool_name}
+    assert result.text == "The connected service returned a grounded result."
+    assert len(brain.requests) == 2
+    assert any(message.role == "tool" for message in brain.requests[1].messages)
+
+
+class _StructuredThenLeakedGmailBrain:
+    """Exact incident shape: list call, leaked detail call, final answer."""
+
+    def __init__(self) -> None:
+        self.requests: list[BrainRequest] = []
+
+    async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
+        self.requests.append(req)
+        if len(self.requests) == 1:
+            yield BrainDelta(
+                tool_call={
+                    "id": "list-call",
+                    "name": "gmail",
+                    "input": {"action": "list_messages", "max_results": 10},
+                }
+            )
+            yield BrainDelta(finish_reason="tool_use")
+            return
+        if len(self.requests) == 2:
+            yield BrainDelta(
+                content=(
+                    '[{"type":"tool_use","name":"gmail","input":'
+                    '{"action":"get_message","message_id":"m1"}}]'
+                )
+            )
+            yield BrainDelta(finish_reason="stop")
+            return
+        yield BrainDelta(
+            content="The newest unread message is an important account notice."
+        )
+        yield BrainDelta(finish_reason="stop")
+
+
+@pytest.mark.asyncio
+async def test_structured_list_then_leaked_detail_call_synthesizes_once() -> None:
+    brain = _StructuredThenLeakedGmailBrain()
+    executor = _ExecStructuredRead()
+    loop = ToolUseLoop(
+        brain,
+        {"gmail": _NamedReadTool("gmail")},
+        executor,  # type: ignore[arg-type]
+    )
+
+    result = await loop.run([], user_utterance="Check my important Gmail messages.")
+
+    assert [args["action"] for _, args in executor.calls] == [
+        "list_messages",
+        "get_message",
+    ]
+    assert result.executed_tool_names == {"gmail"}
+    assert result.text == (
+        "The newest unread message is an important account notice."
+    )
+    assert len(brain.requests) == 3
+
+
+class _DuplicateEnvelopeBrain:
+    def __init__(self, *, with_structured_call: bool) -> None:
+        self._with_structured_call = with_structured_call
+        self.requests: list[BrainRequest] = []
+
+    async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
+        self.requests.append(req)
+        if len(self.requests) == 1:
+            leaked = (
+                '{"type":"tool_use","name":"gmail",'
+                '"input":{"action":"get_message","message_id":"m1"}}'
+            )
+            yield BrainDelta(content=f"[{leaked},{leaked}]")
+            if self._with_structured_call:
+                yield BrainDelta(
+                    tool_call={
+                        "id": "structured-call",
+                        "name": "gmail",
+                        "input": {"action": "get_message", "message_id": "m1"},
+                    }
+                )
+            yield BrainDelta(finish_reason="tool_use")
+            return
+        yield BrainDelta(content="One grounded answer.")
+        yield BrainDelta(finish_reason="stop")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("with_structured_call", [False, True])
+async def test_duplicate_leaked_envelopes_execute_exactly_once(
+    with_structured_call: bool,
+) -> None:
+    brain = _DuplicateEnvelopeBrain(with_structured_call=with_structured_call)
+    executor = _ExecStructuredRead()
+    loop = ToolUseLoop(
+        brain,
+        {"gmail": _NamedReadTool("gmail")},
+        executor,  # type: ignore[arg-type]
+    )
+
+    result = await loop.run([], user_utterance="Read message m1.")
+
+    assert len(executor.calls) == 1
+    assert result.text == "One grounded answer."
+    assert "tool_use" not in result.text
+
+
+class _RepeatedLeakAcrossRoundsBrain:
+    def __init__(self) -> None:
+        self.requests: list[BrainRequest] = []
+
+    async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
+        self.requests.append(req)
+        if len(self.requests) <= 2:
+            yield BrainDelta(
+                content=(
+                    '[{"type":"tool_use","name":"gmail","input":'
+                    '{"action":"get_message","message_id":"m1"}}]'
+                )
+            )
+            yield BrainDelta(finish_reason="tool_use")
+            return
+        yield BrainDelta(content="The result is available and grounded.")
+        yield BrainDelta(finish_reason="stop")
+
+
+@pytest.mark.asyncio
+async def test_duplicate_leak_across_rounds_executes_once_then_synthesizes() -> None:
+    brain = _RepeatedLeakAcrossRoundsBrain()
+    executor = _ExecStructuredRead()
+    loop = ToolUseLoop(
+        brain,
+        {"gmail": _NamedReadTool("gmail")},
+        executor,  # type: ignore[arg-type]
+    )
+
+    result = await loop.run([], user_utterance="Read message m1.")
+
+    assert len(executor.calls) == 1
+    assert len(brain.requests) == 3
+    assert brain.requests[-1].tools == ()
+    assert result.text == "The result is available and grounded."
 
 
 class _ExecOK:

@@ -54,6 +54,7 @@ from .workers.api_agent_worker import ApiAgentWorker
 from .workers.capabilities import (
     WorkerCapabilityInventory,
     restricted_worker_app_commands,
+    restricted_worker_knowledge_tools,
 )
 from .workers.claude_direct_worker import ClaudeDirectWorker
 from .workers.codex_direct_worker import CodexDirectWorker
@@ -316,7 +317,10 @@ def _assemble_worker_capability_inventory(task_text: str) -> WorkerCapabilityInv
     return WorkerCapabilityInventory.build(
         mcp_servers=_assemble_worker_mcp_servers(task_text=task_text),
         app_commands=restricted_worker_app_commands(),
-        native_tool_names=_connected_native_worker_tools(task_text),
+        native_tool_names=(
+            *restricted_worker_knowledge_tools(),
+            *_connected_native_worker_tools(task_text),
+        ),
         task_text=task_text,
     )
 
@@ -528,9 +532,9 @@ def _claude_cli_auth_viable() -> bool:
         token = read_live_claude_oauth_token()
         return not claude_auth_dead(current_fingerprint=credential_fingerprint(token))
     try:
-        from jarvis.core.config import get_secret
+        from jarvis.core.config import get_jarvis_agent_secret
 
-        key = get_secret("anthropic_api_key", env_fallback="ANTHROPIC_API_KEY")
+        key = get_jarvis_agent_secret("claude-api")
     except Exception:  # noqa: BLE001 — unreadable secret store => not viable
         return False
     if not key or key.startswith("sk-ant-oat"):
@@ -553,9 +557,9 @@ def _api_key_family_viable(provider: str) -> bool:
     worker already proved dead this session (fingerprinted) is skipped until
     it changes.
     """
-    from jarvis.core.config import get_provider_secret
+    from jarvis.core.config import get_jarvis_agent_secret
 
-    key = get_provider_secret(provider)
+    key = get_jarvis_agent_secret(provider)
     if not key:
         return False
     # A family a worker just proved quota-depleted / auth-dead is skipped
@@ -976,44 +980,40 @@ async def bootstrap_missions(
         gemini_key: str | None = None
         xai_key: str | None = None
         openrouter_key: str | None = None
+        live_provider = _live_subagent_provider(sub_jarvis_provider)
         try:
-            from jarvis.core.config import get_secret
+            from jarvis.core.config import get_jarvis_agent_secret, get_secret
 
             # Resolve the provider LIVE here too, so the injected key matches the
             # worker the factory will actually pick (both read the same current
             # persisted choice instead of the frozen boot snapshot).
-            live_provider = _live_subagent_provider(sub_jarvis_provider)
-
-            anthropic_key = get_secret("anthropic_api_key", env_fallback="ANTHROPIC_API_KEY")
+            if live_provider in {"claude", "claude-api"}:
+                anthropic_key = get_jarvis_agent_secret("claude-api")
             # Codex-as-subagent API-key path: prefer the dedicated Codex key slot
             # so OPENAI_API_KEY carries it (the OAuth path strips the key anyway —
             # see CodexDirectWorker._build_codex_env). Other subagents use the
             # general OpenAI key unchanged.
             if live_provider in CODEX_SUBAGENT_SLUGS:
                 openai_key = get_secret(
-                    "codex_openai_api_key", env_fallback="OPENAI_API_KEY"
-                ) or get_secret("openai_api_key", env_fallback="OPENAI_API_KEY")
-            else:
-                openai_key = get_secret("openai_api_key", env_fallback="OPENAI_API_KEY")
-            # Antigravity (Google subscription) deliberately runs OAuth-only: a
-            # configured Gemini API key must NOT be injected, or the CLI would
-            # bill the key instead of the subscription login. Other subagents
-            # keep the API-key path unchanged.
-            if live_provider in ANTIGRAVITY_SUBAGENT_SLUGS:
-                gemini_key = None
-            else:
-                gemini_key = get_secret(
-                    "gemini_api_key", env_fallback="GEMINI_API_KEY"
-                ) or get_secret("google_api_key", env_fallback="GOOGLE_API_KEY")
+                    "codex_openai_api_key", env_fallback="CODEX_OPENAI_API_KEY"
+                )
+            elif live_provider == "openai":
+                openai_key = get_jarvis_agent_secret("openai")
+            # GoogleCliWorker strips this key before the subscription/OAuth agy
+            # path, but needs it to cross to Gemini API billing when no OAuth
+            # login exists. Suppressing it here made key-only Antigravity look
+            # selectable and then fail at execution time.
+            if live_provider in {"gemini", "google", "antigravity"}:
+                gemini_key = get_jarvis_agent_secret("gemini")
             # Grok / xAI: Jarvis stores under ``grok_api_key`` in the
             # credential manager (ENV fallback ``GROK_API_KEY``); we set
             # both XAI_API_KEY + GROK_API_KEY on the worker side so
             # OpenClaw (XAI_API_KEY) and any legacy SDK (GROK_API_KEY)
             # both find it.
-            xai_key = get_secret("grok_api_key", env_fallback="GROK_API_KEY") or get_secret(
-                "xai_api_key", env_fallback="XAI_API_KEY"
-            )
-            openrouter_key = get_secret("openrouter_api_key", env_fallback="OPENROUTER_API_KEY")
+            if live_provider in {"grok", "xai"}:
+                xai_key = get_jarvis_agent_secret("grok")
+            if live_provider == "openrouter":
+                openrouter_key = get_jarvis_agent_secret("openrouter")
         except Exception as exc:  # noqa: BLE001
             logger.warning(
                 "missions: secret lookup failed (%s) — worker will hit authentication_failed",
@@ -1032,7 +1032,11 @@ async def bootstrap_missions(
         # manager / .env; pinned to an isolated CLAUDE_CONFIG_DIR the env token is
         # the only auth surface and a stale one 401s. A classic API key
         # (sk-ant-api03) is used verbatim when there is no live OAuth login.
-        live_oat = read_live_claude_oauth_token()
+        live_oat = (
+            read_live_claude_oauth_token()
+            if live_provider in {"claude", "claude-api"}
+            else None
+        )
         if live_oat:
             anthropic_key = live_oat
         elif anthropic_key and anthropic_key.startswith("sk-ant-oat"):
@@ -1207,9 +1211,9 @@ async def bootstrap_missions(
             # missing npm `gemini` CLI binary.
             import shutil
 
-            from jarvis.core.config import get_provider_secret
+            from jarvis.core.config import get_jarvis_agent_secret
 
-            if not (shutil.which("gemini") or shutil.which("gemini.cmd")) and get_provider_secret(
+            if not (shutil.which("gemini") or shutil.which("gemini.cmd")) and get_jarvis_agent_secret(
                 "gemini"
             ):
                 logger.info(

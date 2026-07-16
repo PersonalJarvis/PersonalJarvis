@@ -33,6 +33,7 @@ RESERVED_CONTROL_NAMES: frozenset[str] = frozenset(
         "sessions",
         "skills",
         "outputs",
+        "permissions",
         "board",
         "workflows",
         "conductor",

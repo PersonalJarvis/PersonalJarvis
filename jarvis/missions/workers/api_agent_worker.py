@@ -323,7 +323,14 @@ class ApiAgentWorker:
         try:
             if self.provider not in _BRAIN_BY_PROVIDER:
                 raise RuntimeError(f"no API-agent worker for provider {self.provider!r}")
-            brain = _build_brain(self.provider, resolved_model)
+            from jarvis.core.config import (
+                get_jarvis_agent_secret,
+                override_provider_secrets,
+            )
+
+            worker_key = get_jarvis_agent_secret(self.provider)
+            with override_provider_secrets({self.provider: worker_key}):
+                brain = _build_brain(self.provider, resolved_model)
         except Exception as exc:  # noqa: BLE001
             res = ClaudeResult(
                 subtype="error_during_execution",
@@ -396,11 +403,15 @@ class ApiAgentWorker:
                 text_parts: list[str] = []
                 tool_calls: list[dict[str, Any]] = []
                 try:
-                    async for delta in brain.complete(req):
-                        if delta.content:
-                            text_parts.append(delta.content)
-                        if delta.tool_call:
-                            tool_calls.append(delta.tool_call)
+                    # Override credential lookup only for this awaited provider
+                    # call. ContextVar isolation keeps concurrent Brain and
+                    # Jarvis-Agent tasks from observing one another's keys.
+                    with override_provider_secrets({self.provider: worker_key}):
+                        async for delta in brain.complete(req):
+                            if delta.content:
+                                text_parts.append(delta.content)
+                            if delta.tool_call:
+                                tool_calls.append(delta.tool_call)
                 except Exception as exc:  # noqa: BLE001
                     # The capability pre-gate (above) catches a model the brain
                     # ALREADY knows is tool-incapable. Some providers (OpenRouter
@@ -553,9 +564,11 @@ class ApiAgentWorker:
 
                 fp: str | None = None
                 try:
-                    from jarvis.core.config import get_provider_secret
+                    from jarvis.core.config import get_jarvis_agent_secret
 
-                    fp = credential_fingerprint(get_provider_secret(self.provider))
+                    fp = credential_fingerprint(
+                        get_jarvis_agent_secret(self.provider)
+                    )
                 except Exception:  # noqa: BLE001 — unreadable store => unbound cooldown
                     fp = None
                 mark_api_family_cooldown(self.provider, fingerprint=fp)

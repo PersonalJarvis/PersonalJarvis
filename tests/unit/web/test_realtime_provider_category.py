@@ -31,27 +31,27 @@ def _only_gemini_key(key: str, *_a, **_kw) -> str | None:
 # ---------------------------------------------------------------------------
 
 
-def test_openai_realtime_spec_is_realtime_tier_with_openai_key():
+def test_openai_realtime_spec_owns_a_dedicated_key():
     spec = get_spec("openai-realtime")
     assert spec is not None
     assert spec.tier == "realtime"
-    assert "openai_api_key" in spec.secret_keys
+    assert spec.secret_keys == ("realtime_openai_api_key",)
 
 
 def test_gemini_live_spec_present():
     spec = get_spec("gemini-live")
     assert spec is not None
     assert spec.tier == "realtime"
-    assert spec.secret_keys == ("gemini_api_key",)
+    assert spec.secret_keys == ("realtime_gemini_api_key",)
     assert spec.alt_credential is None
 
 
-def test_grok_realtime_spec_reuses_xai_key() -> None:
+def test_grok_realtime_spec_owns_a_dedicated_key() -> None:
     spec = get_spec("grok-realtime")
     assert spec is not None
     assert spec.label == "xAI Grok Realtime"
     assert spec.tier == "realtime"
-    assert spec.secret_keys == ("grok_api_key",)
+    assert spec.secret_keys == ("realtime_grok_api_key",)
     assert spec.dashboard_url == "https://console.x.ai/"
 
 

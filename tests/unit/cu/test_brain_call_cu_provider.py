@@ -160,3 +160,38 @@ async def test_blind_cu_provider_falls_back_through_vision_gate() -> None:
 
     assert reply.provider == "brain-primary"
     assert manager.brains["claude-api"].calls == 0
+
+
+async def test_serving_brain_logged_once_per_identity(caplog) -> None:
+    """The provider that ACTUALLY serves is logged — once per identity change.
+
+    Live forensic 2026-07-15: the per-candidate speed-tune line ("nvidia:
+    stepping with the fast vision model …") fired for a chain member that
+    never served a single call and was read as the stepping model, producing
+    a false "text-only model drove Computer-Use" diagnosis. The serving log
+    is the ground truth; repeating it on every step would only recreate the
+    noise, so it fires only when the serving identity changes.
+    """
+    import logging
+
+    import jarvis.cu.brain_call as brain_call
+
+    brain_call._serving_logged = None
+    manager = _FakeManager(cu_provider="")
+
+    with caplog.at_level(logging.INFO, logger="jarvis.cu.brain_call"):
+        await call_vision_brain(manager, build_prompt=_build_prompt, images=[])
+        await call_vision_brain(manager, build_prompt=_build_prompt, images=[])
+
+    serving = [r for r in caplog.records if "served by" in r.getMessage()]
+    assert len(serving) == 1, [r.getMessage() for r in serving]
+    assert "brain-primary" in serving[0].getMessage()
+
+    caplog.clear()
+    switched = _FakeManager(cu_provider="claude-api")
+    with caplog.at_level(logging.INFO, logger="jarvis.cu.brain_call"):
+        await call_vision_brain(switched, build_prompt=_build_prompt, images=[])
+
+    serving = [r for r in caplog.records if "served by" in r.getMessage()]
+    assert len(serving) == 1
+    assert "claude-api" in serving[0].getMessage()

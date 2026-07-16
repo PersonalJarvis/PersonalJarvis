@@ -28,6 +28,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from .constants import VOICE_MODE_UNKNOWN
 from .models import SessionListItem, VoiceEventRow, VoiceSessionRow, VoiceTurnRow
 
 log = logging.getLogger(__name__)
@@ -77,6 +78,47 @@ class SessionStore:
         Pattern adopted from ``jarvis/missions/event_store.py``.
         """
         assert self._conn is not None
+        session_columns = {
+            str(row["name"])
+            for row in self._conn.execute("PRAGMA table_info(voice_sessions)").fetchall()
+        }
+        if "voice_mode" not in session_columns:
+            self._conn.execute(
+                "ALTER TABLE voice_sessions "
+                "ADD COLUMN voice_mode TEXT NOT NULL DEFAULT 'unknown'"
+            )
+            log.info("SessionStore migration: added voice_sessions.voice_mode")
+
+        # Backfill only unresolved rows. The latest explicit runtime event wins,
+        # which makes a ListeningStarted after a successful realtime handshake
+        # a truthful classic-pipeline fallback. Older recorder versions did not
+        # always persist RealtimeSessionReady, so a realtime turn tier is the
+        # final evidence source. Everything else stays honestly unknown.
+        self._conn.execute(
+            """
+            UPDATE voice_sessions AS s
+            SET voice_mode = COALESCE(
+                (
+                    SELECT CASE e.kind
+                        WHEN 'RealtimeSessionReady' THEN 'realtime'
+                        WHEN 'ListeningStarted' THEN 'pipeline'
+                    END
+                    FROM voice_events AS e
+                    WHERE e.session_id = s.id
+                      AND e.kind IN ('RealtimeSessionReady', 'ListeningStarted')
+                    ORDER BY e.seq DESC
+                    LIMIT 1
+                ),
+                CASE WHEN EXISTS (
+                    SELECT 1
+                    FROM voice_turns AS t
+                    WHERE t.session_id = s.id AND t.tier = 'realtime'
+                ) THEN 'realtime' ELSE 'unknown' END
+            )
+            WHERE voice_mode IS NULL OR voice_mode IN ('', 'unknown')
+            """
+        )
+
         cur = self._conn.execute("PRAGMA table_info(voice_turns)")
         existing = {str(row["name"]) for row in cur.fetchall()}
         if "think_ms" not in existing:
@@ -117,23 +159,43 @@ class SessionStore:
         started_ms: int,
         wake_keyword: str = "",
         language: str = "de",
+        voice_mode: str = VOICE_MODE_UNKNOWN,
     ) -> None:
         """Create, or (on a recorder re-init) idempotently re-upsert.
 
-        ON CONFLICT: ``started_ms`` is preserved (the first wake wins),
-        only ``wake_keyword``/``language`` may get overwritten.
+        ON CONFLICT: ``started_ms`` is preserved (the first wake wins).
+        Identity metadata may be refreshed, but an unresolved default mode
+        never overwrites runtime evidence already recorded for the session.
         """
         with self._lock:
             self._c.execute(
                 """
                 INSERT INTO voice_sessions
-                    (id, started_ms, wake_keyword, language)
-                VALUES (?, ?, ?, ?)
+                    (id, started_ms, wake_keyword, language, voice_mode)
+                VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(id) DO UPDATE SET
                     wake_keyword = excluded.wake_keyword,
-                    language     = excluded.language
+                    language     = excluded.language,
+                    voice_mode   = CASE
+                        WHEN excluded.voice_mode != 'unknown'
+                        THEN excluded.voice_mode
+                        ELSE voice_sessions.voice_mode
+                    END
                 """,
-                (session_id, started_ms, wake_keyword, language),
+                (session_id, started_ms, wake_keyword, language, voice_mode),
+            )
+
+    def update_session_voice_mode(self, *, session_id: str, voice_mode: str) -> None:
+        """Persist runtime evidence for the effective voice engine.
+
+        The column deliberately accepts future strings. Current recorder callers
+        use only the canonical values from ``jarvis.sessions.constants``.
+        """
+        normalized = str(voice_mode or VOICE_MODE_UNKNOWN)
+        with self._lock:
+            self._c.execute(
+                "UPDATE voice_sessions SET voice_mode = ? WHERE id = ?",
+                (normalized, session_id),
             )
 
     def finalize_session(
@@ -288,7 +350,12 @@ class SessionStore:
 
     # --- Read-API -----------------------------------------------------
 
-    def list_sessions(self, *, limit: int = 100) -> list[SessionListItem]:
+    def list_sessions(
+        self,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[SessionListItem]:
         """Sessions by started_ms desc — newest first.
 
         ``preview`` is the first user utterance (the first turn row with
@@ -306,9 +373,9 @@ class SessionStore:
                         LIMIT 1) AS preview
                 FROM voice_sessions s
                 ORDER BY s.started_ms DESC
-                LIMIT ?
+                LIMIT ? OFFSET ?
                 """,
-                (limit,),
+                (limit, max(0, int(offset))),
             )
             rows = cur.fetchall()
         # Per-row validation in a try/except: a single invalid row (e.g.
@@ -337,6 +404,7 @@ class SessionStore:
                     providers_used=json.loads(r["providers_used"] or "[]"),
                     language=r["language"],
                     wake_keyword=r["wake_keyword"],
+                    voice_mode=r["voice_mode"] or VOICE_MODE_UNKNOWN,
                     duration_s=duration_s,
                     preview=_truncate(r["preview"] or "", 120),
                 )
@@ -570,6 +638,7 @@ def _row_to_session(r: sqlite3.Row) -> VoiceSessionRow:
         providers_used=json.loads(r["providers_used"] or "[]"),
         language=r["language"],
         wake_keyword=r["wake_keyword"],
+        voice_mode=r["voice_mode"] or VOICE_MODE_UNKNOWN,
     )
 
 

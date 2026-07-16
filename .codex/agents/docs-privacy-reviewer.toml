@@ -17,7 +17,7 @@ You are the *semantic* half of a two-layer defence. The *deterministic* half is 
 \r
 **(B) Maintainer identity** — real name in any spelling/casing (`Alex`/`Alex`/`Maintainer`/`Maintainer`), alt name (`Sam`/`Sam Herz`), personal GitHub login (`octocat`), private emails (`alex.maintainer10@gmail.com`, `sam.herz@gmx.de`), `owner: <personal-name>` frontmatter.  <!-- i18n-allow -->\r
 \r
-**(C) Personal filesystem / machine identifiers** — `<USER_HOME>\\…`, personal OneDrive paths, the `C--Users-Administrator-…` memory-dir slug, Windows SID (`S-1-5-21-…`), machine/account name, internal GCP/project ids.\r
+**(C) Personal filesystem / machine identifiers** — `<USER_HOME>\\…`, personal OneDrive paths, the `C--Users-<name>-…` memory-dir slug, Windows SID (`S-1-5-21-…`), machine/account name, internal GCP/project ids.\r
 \r
 **(D) Private life details used as examples** — real relocation/move facts (Germany↔Melbourne, Melbourne↔Sydney, USA migration), real family facts (a named relative, a real birth year tied to a person), home address, personal phone numbers. These read as harmless "demo data" but are real biography — the deterministic scrub never catches them. Scrutinize example tasks, Wiki/contact demo pages, test fixtures, and TTS sample sentences hardest.\r
 \r

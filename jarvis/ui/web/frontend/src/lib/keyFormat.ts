@@ -77,17 +77,26 @@ export function detectKeyFormat(value: string): KeyFormatHint | null {
 export function expectedKindForSecret(secretKey: string): KeyFormatKind | null {
   switch (secretKey) {
     case "gemini_api_key":
+    case "realtime_gemini_api_key":
+    case "jarvis_agent_gemini_api_key":
       return "google-aistudio";
     case "anthropic_api_key":
+    case "jarvis_agent_anthropic_api_key":
       return "anthropic";
     case "openai_api_key":
     case "codex_openai_api_key":
+    case "realtime_openai_api_key":
+    case "jarvis_agent_openai_api_key":
       return "openai";
     case "openrouter_api_key":
+    case "jarvis_agent_openrouter_api_key":
       return "openrouter";
     case "nvidia_api_key":
+    case "jarvis_agent_nvidia_api_key":
       return "nvidia";
     case "grok_api_key":
+    case "realtime_grok_api_key":
+    case "jarvis_agent_grok_api_key":
       return "xai";
     case "cartesia_api_key":
       return "cartesia";

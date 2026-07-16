@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
 import { ThemeProvider } from "./hooks/useTheme";
 import { ViewErrorBoundary } from "./components/ViewErrorBoundary";
+import { AuthGate } from "./components/AuthGate";
 import "./index.css";
 
 // When the frontend is rebuilt while a tab is open, the old main bundle still
@@ -39,7 +40,9 @@ ReactDOM.createRoot(document.getElementById("root")!).render(
           resetKey="root"
           onRecover={() => window.location.reload()}
         >
-          <App />
+          <AuthGate>
+            <App />
+          </AuthGate>
         </ViewErrorBoundary>
       </ThemeProvider>
     </QueryClientProvider>

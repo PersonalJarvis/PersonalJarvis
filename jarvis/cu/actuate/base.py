@@ -18,6 +18,7 @@ import abc
 import logging
 import os
 import sys
+from collections.abc import Callable
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,30 @@ logger = logging.getLogger(__name__)
 #: Max |cursor - target| in input units after a move before we refuse to act.
 #: 2 units absorbs sub-pixel rounding; a real mapping bug is off by 10s-100s.
 LANDING_TOLERANCE = 2
+
+# Platform-neutral vocabulary accepted at the tool boundary. Backends may map
+# aliases differently (``cmd`` is Command on macOS and Super on X11), but the
+# shared validation must not reject a key before the selected backend sees it.
+_NAMED_KEYS = frozenset({
+    "ctrl", "control", "shift", "alt", "option", "menu",
+    "win", "windows", "lwin", "rwin", "cmd", "command", "meta", "super",
+    "esc", "escape", "enter", "return", "tab", "space", "spacebar",
+    "backspace", "back", "delete", "del", "insert", "ins", "home", "end",
+    "pageup", "pgup", "pagedown", "pgdn", "left", "up", "right", "down",
+    "capslock",
+    *{f"f{i}" for i in range(1, 13)},
+    *{f"numpad{i}" for i in range(10)},
+    "multiply", "add", "subtract", "decimal", "divide",
+})
+
+
+def is_known_key_name(key: str) -> bool:
+    """Whether ``key`` belongs to the cross-platform Computer-Use vocabulary."""
+    normalized = str(key).strip().lower()
+    return bool(normalized) and (
+        normalized in _NAMED_KEYS
+        or (len(normalized) == 1 and normalized.isprintable())
+    )
 
 
 class ActuationUnavailable(RuntimeError):
@@ -93,8 +118,8 @@ def verified_move(
     """Move the cursor to ``(x, y)`` and verify it landed.
 
     One retry: transient focus/animation can eat the first positioning. When
-    the cursor position is unreadable the move is trusted (``landed=None``) —
-    refusing to act on an unreadable-but-working host would brick CU there.
+    an unreadable cursor is retried once and then refused: without read-back,
+    Computer-Use cannot prove where the following button event would land.
 
     The tiny sleep between inject and read is load-bearing: injected input
     passes through the OS input queue, so an immediate ``cursor_pos`` read
@@ -103,21 +128,55 @@ def verified_move(
     """
     import time  # noqa: PLC0415
 
+    # A virtual desktop is a bounding rectangle, but real displays can form an
+    # L-shape with dead gaps. Never move/click into such a gap when live display
+    # geometry is available; an empty list means headless/probe-unavailable and
+    # remains the backend capability check's responsibility.
+    try:
+        from jarvis.cu.geometry import (  # noqa: PLC0415
+            list_monitors,
+            point_on_physical_display,
+        )
+
+        monitors = list_monitors()
+        if monitors and not point_on_physical_display(x, y, monitors):
+            return ActResult(
+                ok=False,
+                detail=(
+                    f"target ({x},{y}) is outside every physical display — "
+                    "refusing to act in a virtual-desktop gap"
+                ),
+                landed=None,
+            )
+    except Exception:  # noqa: BLE001 — actuation backend remains authoritative
+        logger.debug("physical-display target validation failed", exc_info=True)
+
     last: tuple[int, int] | None = None
     for attempt in (1, 2):
         actuator.move(int(x), int(y))
         time.sleep(0.02)
         last = actuator.cursor_pos()
         if last is None:
-            return ActResult(
-                ok=True,
-                detail="cursor position unreadable — move unverified",
-                landed=None,
+            logger.debug(
+                "[cu] cursor unreadable after move to (%d,%d) (attempt %d)",
+                x,
+                y,
+                attempt,
             )
+            continue
         if abs(last[0] - int(x)) <= tolerance and abs(last[1] - int(y)) <= tolerance:
             return ActResult(ok=True, detail=f"landed at {last}", landed=last)
         logger.debug(
             "[cu] move to (%d,%d) landed at %s (attempt %d)", x, y, last, attempt,
+        )
+    if last is None:
+        return ActResult(
+            ok=False,
+            detail=(
+                "cursor position remained unreadable after two move attempts; "
+                "refusing to emit a pointer event"
+            ),
+            landed=None,
         )
     return ActResult(
         ok=False,
@@ -126,6 +185,146 @@ def verified_move(
             "coordinate-space mismatch (DPI/monitor mapping); refusing to act"
         ),
         landed=last,
+    )
+
+
+def verified_click(
+    actuator: Actuator,
+    x: int,
+    y: int,
+    *,
+    button: str = "left",
+    double: bool = False,
+    pre_action_check: Callable[[], bool] | None = None,
+) -> ActResult:
+    """Verify pointer landing before emitting any button-down event."""
+    landing = verified_move(actuator, x, y)
+    if not landing.ok:
+        return landing
+    click_at_cursor = getattr(actuator, "click_at_cursor", None)
+    if not callable(click_at_cursor):
+        return ActResult(
+            ok=False,
+            detail=(
+                "input backend lacks a safe at-cursor click primitive; "
+                "refusing an unverified second move"
+            ),
+            landed=landing.landed,
+        )
+    if pre_action_check is not None and not pre_action_check():
+        return ActResult(
+            ok=False,
+            detail=(
+                "foreground window changed during cursor movement; refusing "
+                "to press a mouse button"
+            ),
+            landed=landing.landed,
+        )
+    click_at_cursor(
+        button=button,
+        double=double,
+        expected=(int(x), int(y)),
+    )
+    return ActResult(ok=True, detail=landing.detail, landed=landing.landed)
+
+
+def verified_drag(
+    actuator: Actuator,
+    x1: int,
+    y1: int,
+    x2: int,
+    y2: int,
+    *,
+    duration_s: float = 0.4,
+    tolerance: int = LANDING_TOLERANCE,
+    pre_action_check: Callable[[], bool] | None = None,
+) -> ActResult:
+    """Refuse a drag unless its start lands, then verify its released endpoint."""
+    # Validate the destination before button-down. A virtual desktop's bounding
+    # rectangle can contain dead gaps between L-shaped displays; discovering
+    # that only after dragging would already have acted at an unsafe point.
+    try:
+        from jarvis.cu.geometry import (  # noqa: PLC0415
+            list_monitors,
+            point_on_physical_display,
+            segment_on_physical_displays,
+        )
+
+        monitors = list_monitors()
+        if monitors and not point_on_physical_display(x2, y2, monitors):
+            return ActResult(
+                ok=False,
+                detail=(
+                    f"drag destination ({x2},{y2}) is outside every physical "
+                    "display — refusing to drag into a virtual-desktop gap"
+                ),
+                landed=None,
+            )
+        if monitors and not segment_on_physical_displays(
+            x1, y1, x2, y2, monitors,
+        ):
+            return ActResult(
+                ok=False,
+                detail=(
+                    "drag path crosses a virtual-desktop gap; refusing to "
+                    "hold a mouse button across disconnected displays"
+                ),
+                landed=None,
+            )
+    except Exception:  # noqa: BLE001 — backend validation remains authoritative
+        logger.debug("drag destination display validation failed", exc_info=True)
+
+    start = verified_move(actuator, x1, y1, tolerance=tolerance)
+    if not start.ok:
+        return start
+    drag_from_cursor = getattr(actuator, "drag_from_cursor", None)
+    if not callable(drag_from_cursor):
+        return ActResult(
+            ok=False,
+            detail=(
+                "input backend lacks a safe at-cursor drag primitive; "
+                "refusing an unverified second start move"
+            ),
+            landed=start.landed,
+        )
+    if pre_action_check is not None and not pre_action_check():
+        return ActResult(
+            ok=False,
+            detail=(
+                "foreground window changed during drag positioning; refusing "
+                "to press a mouse button"
+            ),
+            landed=start.landed,
+        )
+    drag_from_cursor(
+        x1, y1, x2, y2, duration_s=max(0.0, duration_s),
+    )
+    import time  # noqa: PLC0415
+
+    end: tuple[int, int] | None = None
+    for _attempt in (1, 2):
+        # Quartz/SendInput posting is queued just like a plain move. Give the
+        # release endpoint a bounded chance to become visible before judging.
+        time.sleep(0.02)
+        end = actuator.cursor_pos()
+        if end is not None and (
+            abs(end[0] - int(x2)) <= tolerance
+            and abs(end[1] - int(y2)) <= tolerance
+        ):
+            return ActResult(ok=True, detail=f"drag ended at {end}", landed=end)
+    if end is None:
+        return ActResult(
+            ok=False,
+            detail="drag endpoint is unreadable, so its landing cannot be verified",
+            landed=None,
+        )
+    return ActResult(
+        ok=False,
+        detail=(
+            f"drag to ({x2},{y2}) landed at {end} — coordinate-space mismatch "
+            "(DPI/monitor mapping)"
+        ),
+        landed=end,
     )
 
 
@@ -149,6 +348,47 @@ _NO_BACKEND_MSG = (
 )
 
 
+def _require_macos_input_permissions() -> None:
+    """Fail closed unless macOS currently permits synthetic input.
+
+    TCC grants can be revoked while Jarvis is running, so this deliberately
+    creates a fresh permission port and probes both grants for every action.
+    No result is cached in the actuator layer.
+    """
+    if sys.platform != "darwin":
+        return
+
+    from jarvis.platform.permissions import (  # noqa: PLC0415
+        PermissionId,
+        PermissionState,
+        get_system_permission_port,
+    )
+
+    port = get_system_permission_port()
+    requirements = (
+        (PermissionId.ACCESSIBILITY, "Accessibility"),
+        (PermissionId.EVENT_POSTING, "Input Control"),
+    )
+    missing: list[str] = []
+    for permission_id, label in requirements:
+        if not port.runtime_access_granted(permission_id):
+            state = port.state(permission_id)
+            detail = (
+                state.value
+                if state is not PermissionState.GRANTED
+                else "grant belongs to an unstable app identity or needs restart"
+            )
+            missing.append(f"{label} ({detail})")
+    if missing:
+        joined = ", ".join(missing)
+        raise ActuationUnavailable(
+            "Cannot control the mouse or keyboard on macOS because these "
+            f"permissions are not granted: {joined}. Open Personal Jarvis "
+            "> Settings > Permissions (or System Settings > Privacy & "
+            "Security), grant the listed access, then retry."
+        )
+
+
 def get_actuator() -> Actuator:
     """Resolve the platform input backend by runtime capability.
 
@@ -156,6 +396,8 @@ def get_actuator() -> Actuator:
     when the host cannot receive synthetic input. Never returns a backend
     that is known-broken for the session type.
     """
+    _require_macos_input_permissions()
+
     if os.name == "nt":
         from jarvis.cu.actuate.windows import WindowsActuator  # noqa: PLC0415
 

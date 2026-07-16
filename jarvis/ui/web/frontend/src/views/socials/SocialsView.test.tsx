@@ -11,6 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 
 import { SocialsView } from "@/views/socials/SocialsView";
+import * as openExternal from "@/lib/openExternal";
 
 interface RouteResult {
   status?: number;
@@ -51,7 +52,7 @@ const DISCORD = {
   id: "d1",
   platform: "discord",
   label: "Discord",
-  url: "https://discord.gg/UPu6pFWrJ",
+  url: "https://discord.gg/x7USduHxbc",
   enabled: true,
   order: 0,
 };
@@ -79,20 +80,27 @@ afterEach(() => {
 
 describe("SocialsView (grouped, read-only)", () => {
   it("a single-link platform is a direct link; a multi-link platform is a button", async () => {
+    const openSpy = vi
+      .spyOn(openExternal, "openExternalUrl")
+      .mockResolvedValue(undefined);
     installFetchMock({
       "GET /api/socials": () => ({ body: { entries: [DISCORD, GITHUB_REPO, GITHUB_PROFILE] } }),
     });
     render(<SocialsView />);
 
     const discord = (await screen.findByRole("link", { name: /discord/i })) as HTMLAnchorElement;
-    expect(discord.href).toContain("discord.gg/UPu6pFWrJ");
-    expect(discord.target).toBe("_blank");
+    expect(discord.href).toContain("discord.gg/x7USduHxbc");
+    fireEvent.click(discord);
+    expect(openSpy).toHaveBeenCalledWith(DISCORD.url);
 
     expect(screen.queryByRole("link", { name: /github/i })).toBeNull();
     expect(screen.getByRole("button", { name: /github/i })).toBeTruthy();
   });
 
   it("clicking a multi-link platform opens a detail page listing all its links", async () => {
+    const openSpy = vi
+      .spyOn(openExternal, "openExternalUrl")
+      .mockResolvedValue(undefined);
     installFetchMock({
       "GET /api/socials": () => ({ body: { entries: [DISCORD, GITHUB_REPO, GITHUB_PROFILE] } }),
     });
@@ -104,8 +112,9 @@ describe("SocialsView (grouped, read-only)", () => {
     const profile = screen.getByRole("link", { name: /profile/i }) as HTMLAnchorElement;
     expect(repo.href).toContain("PersonalJarvis");
     expect(profile.href).toContain("github.com/PersonalJarvis");
-    expect(repo.target).toBe("_blank");
     expect(repo.rel).toContain("noopener");
+    fireEvent.click(repo);
+    expect(openSpy).toHaveBeenCalledWith(GITHUB_REPO.url);
   });
 
   it("is read-only: no add tile and no edit/delete controls (grid or detail)", async () => {

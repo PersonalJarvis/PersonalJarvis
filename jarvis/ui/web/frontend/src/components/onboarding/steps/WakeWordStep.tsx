@@ -12,6 +12,7 @@ interface MicLevelResult {
   max_dbfs: number;
   no_device: boolean;
   too_quiet: boolean;
+  permission_required?: boolean;
 }
 
 type MicCheckState = "idle" | "checking" | "done";
@@ -246,7 +247,9 @@ export function WakeWordStep({ onb, goNext }: StepProps) {
           <p className="text-xs text-amber-500">{t("onboarding.wake_word.mic_check.error")}</p>
         )}
         {micCheck.state === "done" && micCheck.result && (
-          micCheck.result.no_device ? (
+          micCheck.result.permission_required ? (
+            <p className="text-xs text-amber-500">{t("onboarding.wake_word.mic_check.permission_required")}</p>
+          ) : micCheck.result.no_device ? (
             <p className="text-xs text-muted-foreground">{t("onboarding.wake_word.mic_check.no_device")}</p>
           ) : micCheck.result.too_quiet ? (
             <p className="text-xs text-amber-500">{t("onboarding.wake_word.mic_check.too_quiet")}</p>

@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-e7c46e?style=for-the-badge&labelColor=242424" /></a>
-  <a href="https://discord.gg/UPu6pFWrJ"><img alt="Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white&labelColor=242424" /></a>
+  <a href="https://discord.gg/x7USduHxbc"><img alt="Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white&labelColor=242424" /></a>
   <a href="https://x.com/PersonalJarvis"><img alt="Follow @PersonalJarvis on X" src="https://img.shields.io/badge/Follow-%40PersonalJarvis-e7c46e?style=for-the-badge&logo=x&logoColor=white&labelColor=242424" /></a>
   <a href="https://personaljarvis.ai/"><img alt="Personal Jarvis website" src="https://img.shields.io/badge/Website-personaljarvis.ai-e7c46e?style=for-the-badge&labelColor=242424" /></a>
   <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-e7c46e?style=for-the-badge&logo=python&logoColor=e7c46e&labelColor=242424" />
@@ -269,11 +269,11 @@ Inside `jarvis/`, the layout mirrors the 8-layer model above — `jarvis/brain/`
 Come build with us — questions, ideas, and showcases all welcome.
 
 <p align="center">
-  <a href="https://discord.gg/UPu6pFWrJ"><img alt="Discord" src="https://img.shields.io/badge/Discord-join_the_server-FFD60A?style=for-the-badge&logo=discord&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
+  <a href="https://discord.gg/x7USduHxbc"><img alt="Discord" src="https://img.shields.io/badge/Discord-join_the_server-FFD60A?style=for-the-badge&logo=discord&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
   <a href="https://x.com/PersonalJarvis"><img alt="X" src="https://img.shields.io/badge/X-follow-FFD60A?style=for-the-badge&logo=x&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
 </p>
 
-- **Discord** — [discord.gg/UPu6pFWrJ](https://discord.gg/UPu6pFWrJ)
+- **Discord** — [discord.gg/x7USduHxbc](https://discord.gg/x7USduHxbc)
 - **X** — [@PersonalJarvis](https://x.com/PersonalJarvis) · [@Ruben_Herz](https://x.com/Ruben_Herz)
 - **Instagram** — [@personaljarvis](https://www.instagram.com/personaljarvis/)
 - **GitHub** — [PersonalJarvis/PersonalJarvis](https://github.com/PersonalJarvis/PersonalJarvis)
@@ -290,7 +290,7 @@ straight into provider costs, infrastructure, and development time.
 
 <p align="center">
   <i>This wall is empty — for now.</i><br/>
-  Want to be the first? Reach out on <a href="https://discord.gg/UPu6pFWrJ">Discord</a> or <a href="https://x.com/PersonalJarvis">X</a>.
+  Want to be the first? Reach out on <a href="https://discord.gg/x7USduHxbc">Discord</a> or <a href="https://x.com/PersonalJarvis">X</a>.
 </p>
 
 | Tier | You get |
@@ -301,7 +301,7 @@ straight into provider costs, infrastructure, and development time.
 | **Partner** | The above + a seat at the roadmap table |
 
 > Sponsorship is being set up. Want to talk before the page is live? Reach out on
-> [Discord](https://discord.gg/UPu6pFWrJ) or [X](https://x.com/PersonalJarvis).
+> [Discord](https://discord.gg/x7USduHxbc) or [X](https://x.com/PersonalJarvis).
 
 ## Contributing
 
@@ -336,5 +336,5 @@ to. Personal Jarvis is not affiliated with or endorsed by any of them — see
 
 <p align="center">
   <sub>Created by <b>Ruben Herz</b> · <a href="https://x.com/Ruben_Herz">@Ruben_Herz</a> · © 2026 · MIT</sub><br/>
-  <sub><a href="https://discord.gg/UPu6pFWrJ">Discord</a> · <a href="https://x.com/PersonalJarvis">X</a> · <a href="https://www.instagram.com/personaljarvis/">Instagram</a></sub>
+  <sub><a href="https://discord.gg/x7USduHxbc">Discord</a> · <a href="https://x.com/PersonalJarvis">X</a> · <a href="https://www.instagram.com/personaljarvis/">Instagram</a></sub>
 </p>

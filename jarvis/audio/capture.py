@@ -12,8 +12,9 @@ and performs a stateful CPU resample before yielding each chunk.
 from __future__ import annotations
 
 import asyncio
+import sys
 import time
-from collections.abc import AsyncIterator, Iterator, Sequence
+from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
@@ -36,6 +37,39 @@ SAMPLE_RATE = 16_000       # Whisper native rate
 CHANNELS = 1               # Mono is sufficient for speech
 BLOCKSIZE = 1600           # 100 ms blocks — compromise between latency and CPU overhead
 DTYPE = "int16"
+
+
+class MicrophoneAccessError(PermissionError):
+    """The current process is not allowed to open the local microphone."""
+
+
+def _macos_microphone_access_gate() -> Callable[[], bool] | None:
+    """Build an uncached, non-prompting TCC gate for a macOS capture.
+
+    Importing the native permission port is deliberately deferred so the base
+    audio module remains portable on Windows, Linux, and headless installs.
+    The returned port probes both the grant and app-bundle identity on every
+    call; it never invokes an Apple request API.
+    """
+    if sys.platform != "darwin":
+        return None
+    try:
+        from jarvis.platform.permissions import (  # noqa: PLC0415
+            PermissionId,
+            get_system_permission_port,
+        )
+
+        port = get_system_permission_port()
+    except Exception:  # noqa: BLE001 - protected capture must fail closed
+        return lambda: False
+
+    def _allowed() -> bool:
+        try:
+            return port.runtime_access_granted(PermissionId.MICROPHONE)
+        except Exception:  # noqa: BLE001 - a probe failure is not permission
+            return False
+
+    return _allowed
 
 # Queue depth for a REAL-TIME detection consumer (VAD endpointing, wake, barge).
 # ~0.6 s: shallow enough that on a CPU which can't process every frame in real
@@ -523,6 +557,7 @@ class MicrophoneCapture:
     # reliable detection is "no callback for X seconds".
     _STALL_THRESHOLD_S: float = 3.0
     _WATCHDOG_TICK_S: float = 1.0
+    _ACCESS_RECHECK_S: float = 0.25
 
     def __init__(
         self,
@@ -532,7 +567,11 @@ class MicrophoneCapture:
         channels: int = CHANNELS,
         max_queue_chunks: int = 20,
         device_priority: Sequence[str] | None = None,
+        access_gate: Callable[[], bool] | None = None,
     ) -> None:
+        self._access_gate = (
+            access_gate if access_gate is not None else _macos_microphone_access_gate()
+        )
         # User-configured mic-name priority ([audio].input_device_priority),
         # consulted BEFORE the generic _INPUT_PRIORITY default when resolving
         # "auto-headset". Empty = today's generic behavior.
@@ -584,6 +623,21 @@ class MicrophoneCapture:
         self._last_chunk_monotonic: float = 0.0
         self._watchdog_task: asyncio.Task | None = None
         self._restart_count: int = 0
+
+    def _require_microphone_access(self) -> None:
+        """Fail before a native open and whenever a live grant is revoked."""
+        gate = self._access_gate
+        if gate is None:
+            return
+        try:
+            allowed = bool(gate())
+        except Exception:  # noqa: BLE001 - protected capture must fail closed
+            allowed = False
+        if not allowed:
+            raise MicrophoneAccessError(
+                "Microphone capture requires a granted macOS permission under "
+                "the installed Personal Jarvis app identity."
+            )
 
     def _callback(self, indata, frames, time_info, status) -> None:
         """PortAudio callback — runs in the audio thread, NOT in the asyncio loop.
@@ -661,6 +715,7 @@ class MicrophoneCapture:
         Extracted from __aenter__ so the stall watchdog can reuse the same
         open logic for restarts.
         """
+        self._require_microphone_access()
         attempts: list[int | str | None] = [self._device]
         try:
             if isinstance(self._device, int):
@@ -687,6 +742,7 @@ class MicrophoneCapture:
         attempt_count = 0
         for attempt, capture_rate in _open_candidates():
             attempt_count += 1
+            self._require_microphone_access()
             try:
                 capture_blocksize = (
                     0
@@ -866,7 +922,20 @@ class MicrophoneCapture:
         only sees a brief audio gap and continues reading.
         """
         while not self._closed:
-            chunk = await self._queue.get()
+            self._require_microphone_access()
+            if self._access_gate is None:
+                chunk = await self._queue.get()
+            else:
+                try:
+                    chunk = await asyncio.wait_for(
+                        self._queue.get(), timeout=self._ACCESS_RECHECK_S
+                    )
+                except TimeoutError:
+                    # No audio frame is still a live interval: recheck TCC so a
+                    # revoke closes a stalled/silent stream without waiting for
+                    # PortAudio to produce another callback.
+                    continue
+            self._require_microphone_access()
             yield chunk
 
     @property

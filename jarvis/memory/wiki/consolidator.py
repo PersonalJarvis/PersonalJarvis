@@ -29,8 +29,11 @@ from __future__ import annotations
 import asyncio
 import datetime as _dt
 import logging
+import re
 import time
-from pathlib import Path
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 
 from jarvis.brain.provider_registry import BrainProviderRegistry
@@ -42,8 +45,12 @@ from jarvis.memory.wiki.curator_llm import (
     _resolve_provider_and_model,
     instantiate_curator_brain,
 )
-from jarvis.memory.wiki.journal import JournalRow
-from jarvis.memory.wiki.prompt import build_consolidator_prompt
+from jarvis.memory.wiki.intent import match_wiki_intent
+from jarvis.memory.wiki.journal import JournalRow, normalise_subjects
+from jarvis.memory.wiki.prompt import (
+    build_consolidator_prompt,
+    resolve_user_entity_slug,
+)
 from jarvis.memory.wiki.protocols import PageUpdate
 from jarvis.memory.wiki.telemetry import telemetry
 
@@ -59,6 +66,61 @@ log = logging.getLogger(__name__)
 # sessions (conversation facts are durable knowledge, not session digests)
 # and never _archive (frozen).
 _TARGET_DIRS = ("entities", "concepts", "projects")
+
+# Numeric claims are a small but damaging hallucination class: a page about an
+# RTX 5070 Ti was once embellished with unsupported "24 GB VRAM" prose.  Keep
+# the matcher deliberately lexical and deterministic so Stage 2 can reject the
+# response and try another provider without a second model call.
+_NUMERIC_VALUE_RE = re.compile(r"(?<!\d)\d+(?:[.,:/-]\d+)*(?:\s*%)?(?!\d)")
+_ORDERED_LIST_PREFIX_RE = re.compile(r"^\s*\d+[.)]\s+")
+_SCHEMA_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
+_SCHEMA_DATE_FIELDS = frozenset(
+    {"created", "updated", "started", "last_activity", "valid_until"}
+)
+_FOCUS_EVIDENCE_RE = re.compile(
+    r"^Evidence user turn \[[^\]\r\n]*\]:\s*(.+)$",
+    re.MULTILINE,
+)
+_MARKDOWN_FACT_PREFIX_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
+_UNSUPPORTED_EVIDENCE_REASON_RE = re.compile(
+    r"(?:unsupported by (?:the )?user evidence|"
+    r"not (?:directly )?supported by (?:the )?user evidence|"
+    r"user evidence (?:does not|doesn't|cannot) support)",
+    re.IGNORECASE,
+)
+_EXPLICIT_PERSISTENCE_CLAUSE_RE = re.compile(
+    r"(?:"
+    r"\b(?:remember|note(?:\s+down)?|save|record)\s+"
+    r"(?:(?:this|it)\s+)?that\b|"
+    r"\b(?:merk(?:e)?\s+dir|notier(?:e)?|speicher(?:e)?|"
+    r"halt(?:e)?\s+fest)\s*[,;:]?\s*dass\b|"
+    r"\b(?:fueg(?:e)?|füg(?:e)?)\b.{0,40}?\bhinzu\s*[,;:]?\s*dass\b|"  # i18n-allow: German persistence-clause input vocabulary
+    r"\bhinzuf(?:ue|ü)gen\s*[,;:]?\s*dass\b|"  # i18n-allow: German persistence-clause input vocabulary
+    r"\b(?:recuerda|anota|guarda|registra|añade|anade|agrega)\s*"
+    r"[,;:]?\s*que\b"
+    r")",
+    re.IGNORECASE,
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _BatchOutcome:
+    """Internal Stage-2 result without collapsing transient states."""
+
+    processed: int = 0
+    deferred: int = 0
+    transient: int = 0
+    unavailable: bool = False
+    truncated: bool = False
+
+    def merge(self, other: _BatchOutcome) -> _BatchOutcome:
+        return _BatchOutcome(
+            processed=self.processed + other.processed,
+            deferred=self.deferred + other.deferred,
+            transient=self.transient + other.transient,
+            unavailable=self.unavailable or other.unavailable,
+            truncated=self.truncated or other.truncated,
+        )
 
 
 class Consolidator:
@@ -97,28 +159,35 @@ class Consolidator:
     # public API
     # ------------------------------------------------------------------
 
-    async def run_once(self) -> str:
-        """Drain one batch. Returns a short label for the scheduler log."""
-        rows = self._journal.pending(limit=self._batch_limit)
+    async def run_once(self, *, review_keys: Sequence[str] | None = None) -> str:
+        """Drain one batch, optionally scoped to exact capture reviews."""
+        rows = self._journal.pending(
+            limit=self._batch_limit,
+            review_keys=review_keys,
+        )
         if not rows:
             return "journal-empty"
 
-        neighbours = self._collect_neighbours(rows)
-        decisions = await self._judge(rows, neighbours)
-        if decisions is None:
-            # Transient judge failure (timeout/unavailable): leave the rows
-            # pending so the next trigger retries the batch.
-            return "judge-unavailable"
-        if decisions == "truncated":
-            # Length-capped judge output: marking skipped prevents an
-            # endless retry loop over the same over-long batch.
+        # A captured row without persisted user evidence predates the grounded
+        # policy. It is unsafe to let Stage 2 guess, and a policy-v3 backfill can
+        # recreate it from the transcript. Direct/internal journal rows without
+        # a capture review retain their legacy path for compatibility.
+        ungrounded = [
+            row for row in rows if row.review_key and not row.evidence_excerpt
+        ]
+        if ungrounded:
             self._journal.mark(
-                [r.id for r in rows], status="skipped",
+                [row.id for row in ungrounded],
+                status="rejected",
             )
-            return "judge-truncated"
-
-        label = f"journal-batch:{len(rows)}"
-        await self._execute(rows, decisions, label)
+            telemetry.inc("wiki_consolidator_rejected_missing_evidence", len(ungrounded))
+            log.warning(
+                "Consolidator: rejected %d captured candidate(s) without "
+                "user evidence; policy-v3 backfill can review the source",
+                len(ungrounded),
+            )
+        grounded = [row for row in rows if row not in ungrounded]
+        outcome = await self._process_rows(grounded)
         telemetry.inc("wiki_consolidator_runs")
 
         if self._on_run_complete is not None:
@@ -128,7 +197,50 @@ class Consolidator:
                     await maybe
             except Exception as exc:  # noqa: BLE001
                 log.warning("Consolidator: on_run_complete hook failed: %s", exc)
-        return label
+
+        if outcome.truncated:
+            return "judge-truncated"
+        if outcome.unavailable:
+            return "judge-unavailable"
+        if outcome.transient:
+            return f"journal-transient:{outcome.transient}"
+        if outcome.deferred:
+            return f"journal-deferred:{outcome.deferred}"
+        if ungrounded and not grounded:
+            return f"journal-evidence-rejected:{len(ungrounded)}"
+        return f"journal-batch:{len(rows)}"
+
+    async def _process_rows(self, rows: list[JournalRow]) -> _BatchOutcome:
+        """Judge rows, bisecting capacity failures without losing candidates."""
+        if not rows:
+            return _BatchOutcome()
+        neighbours = self._collect_neighbours(rows)
+        decisions = await self._judge(rows, neighbours)
+        if decisions is None:
+            # Provider timeout/unavailability is not a content verdict. Keep
+            # every candidate pending for the next bounded trigger.
+            return _BatchOutcome(unavailable=True)
+        if decisions == "truncated":
+            if len(rows) == 1:
+                # A single overlong result remains observable and retryable;
+                # never convert an output cap into terminal data loss.
+                return _BatchOutcome(truncated=True)
+            midpoint = len(rows) // 2
+            left = await self._process_rows(rows[:midpoint])
+            right = await self._process_rows(rows[midpoint:])
+            return left.merge(right)
+
+        deferred, transient = await self._execute(
+            rows,
+            decisions,
+            f"journal-batch:{len(rows)}",
+            neighbours=neighbours,
+        )
+        return _BatchOutcome(
+            processed=len(rows) - deferred - transient,
+            deferred=deferred,
+            transient=transient,
+        )
 
     # ------------------------------------------------------------------
     # retrieval
@@ -145,20 +257,35 @@ class Consolidator:
         found: dict[str, str] = {}
 
         def _add(rel_path: str) -> None:
-            if rel_path in found or len(found) >= self._k_nearest * len(rows):
+            normalised = str(rel_path or "").replace("\\", "/")
+            rel = PurePosixPath(normalised)
+            parts = rel.parts
+            if (
+                rel.is_absolute()
+                or len(parts) != 2
+                or parts[0] not in _TARGET_DIRS
+                or parts[1].startswith(".")
+                or not parts[1].endswith(".md")
+                or normalise_subjects((parts[1][:-3],)) != (parts[1][:-3],)
+            ):
                 return
-            abs_path = self._vault_root / rel_path
+            safe_rel = rel.as_posix()
+            if safe_rel in found or len(found) >= self._k_nearest * len(rows):
+                return
             try:
+                abs_path = (self._vault_root / Path(*parts)).resolve()
+                abs_path.relative_to(self._vault_root)
                 if abs_path.is_file():
-                    found[rel_path] = abs_path.read_text(encoding="utf-8")
-            except OSError as exc:
-                log.debug("Consolidator: cannot read neighbour %s: %s", rel_path, exc)
+                    found[safe_rel] = abs_path.read_text(encoding="utf-8")
+            except (OSError, ValueError) as exc:
+                log.debug("Consolidator: cannot read neighbour %s: %s", safe_rel, exc)
 
         for row in rows:
             for subject in row.subjects:
-                slug = subject.strip().lower()
-                if not slug:
+                safe = normalise_subjects((subject,))
+                if not safe:
                     continue
+                slug = safe[0]
                 for directory in _TARGET_DIRS:
                     _add(f"{directory}/{slug}.md")
 
@@ -192,11 +319,12 @@ class Consolidator:
         self, rows: list[JournalRow], neighbours: dict[str, str],
     ) -> list[dict[str, Any]] | str | None:
         """One batched LLM call. Returns decisions, "truncated", or None."""
-        user_slug = str(
+        user_slug = resolve_user_entity_slug(
             getattr(
-                self._root_cfg.memory.wiki.session_rollup, "user_entity_slug", "",
+                self._root_cfg.memory.wiki.session_rollup,
+                "user_entity_slug",
+                "",
             )
-            or ""
         )
         system, user = build_consolidator_prompt(
             rows, neighbours, user_entity_slug=user_slug,
@@ -241,9 +369,13 @@ class Consolidator:
                 rejection_reasons.append(reason)
                 return reason
             try:
-                _extract_json_array(agg.text)
+                parsed = _extract_json_array(agg.text)
             except ValueError as exc:
                 reason = f"malformed JSON array: {exc}"
+                rejection_reasons.append(reason)
+                return reason
+            reason = self._validate_decisions(parsed, rows, neighbours=neighbours)
+            if reason is not None:
                 rejection_reasons.append(reason)
                 return reason
             return None
@@ -261,7 +393,7 @@ class Consolidator:
             if any(reason.startswith("truncated") for reason in rejection_reasons):
                 log.warning(
                     "Consolidator: every provider hit the output-token cap or failed "
-                    "after a truncated response; the batch will be skipped"
+                    "after a truncated response; the batch will be split or kept pending"
                 )
                 telemetry.inc("wiki_writes_blocked_truncated")
                 return "truncated"
@@ -272,7 +404,7 @@ class Consolidator:
             telemetry.inc("wiki_writes_blocked_truncated")
             log.warning(
                 "Consolidator: judge output hit the token cap "
-                "(finish_reason=%r, %d chars) — batch will be skipped",
+                "(finish_reason=%r, %d chars) — batch will be split or kept pending",
                 agg.finish_reason, len(agg.text or ""),
             )
             return "truncated"
@@ -299,16 +431,71 @@ class Consolidator:
         rows: list[JournalRow],
         decisions: list[dict[str, Any]],
         label: str,
-    ) -> None:
+        *,
+        neighbours: dict[str, str],
+    ) -> tuple[int, int]:
+        """Apply one judged batch and return ``(deferred, transient)`` counts."""
+        validation_error = self._validate_decisions(
+            decisions,
+            rows,
+            neighbours=neighbours,
+        )
+        if validation_error is not None:
+            # Provider output is untrusted.  This path is a final defensive
+            # guard in case a future caller bypasses ``_judge`` validation:
+            # never turn a partial/unusable response into a content verdict.
+            log.warning(
+                "Consolidator: refusing unusable decision batch (%s); "
+                "leaving every candidate pending",
+                validation_error,
+            )
+            return 0, len(rows)
+
         by_id = {row.id: row for row in rows}
+        row_order = {row.id: index for index, row in enumerate(rows)}
         judged_ids: set[int] = set()
-        updates: list[PageUpdate] = []
+        updates_by_candidate: dict[int, list[PageUpdate]] = {}
         # candidate id -> (decision or None when unwritable, target or None)
         write_plan: dict[int, tuple[str | None, str | None]] = {}
         noop_ids: list[int] = []
+        required_targets: dict[int, set[str]] = {}
         # Secondary invalidate targets (extra writes beyond a candidate's
         # primary decision); counted only after the write actually lands.
         secondary_invalidations: list[str] = []
+
+        # Never submit two independently generated full-page bodies for the
+        # same target in one AtomicWriter call: the later body was based on the
+        # same old page and can overwrite the earlier fact. Keep later
+        # candidates pending; the next pass judges them against the landed page.
+        targets_by_candidate: dict[int, list[str]] = {}
+        for item in decisions:
+            cid = item.get("candidate_id")
+            decision = item.get("decision")
+            if (
+                not isinstance(cid, int)
+                or cid not in by_id
+                or not isinstance(decision, str)
+                or decision not in CURATOR_DECISIONS
+                or decision == "noop"
+            ):
+                continue
+            target = self._safe_target(item.get("target"))
+            if target is not None:
+                targets_by_candidate.setdefault(cid, []).append(target)
+
+        claimed_targets: set[str] = set()
+        deferred_ids: set[int] = set()
+        duplicate_target_ids: set[int] = set()
+        for cid in sorted(targets_by_candidate, key=row_order.__getitem__):
+            targets = targets_by_candidate[cid]
+            unique = set(targets)
+            if len(unique) != len(targets):
+                duplicate_target_ids.add(cid)
+                continue
+            if unique & claimed_targets:
+                deferred_ids.add(cid)
+                continue
+            claimed_targets.update(unique)
 
         for item in decisions:
             cid = item.get("candidate_id")
@@ -316,6 +503,8 @@ class Consolidator:
             if not isinstance(cid, int) or cid not in by_id:
                 continue
             if not isinstance(decision, str) or decision not in CURATOR_DECISIONS:
+                continue
+            if cid in deferred_ids or cid in duplicate_target_ids:
                 continue
             # One PRIMARY decision per candidate; additional "invalidate"
             # items are allowed as secondary actions — a contradiction
@@ -344,7 +533,8 @@ class Consolidator:
                 if not isinstance(new_body, str) or not new_body.strip():
                     write_plan[cid] = (None, None)
                     continue
-                updates.append(
+                new_body = self._with_source_marker(new_body, by_id[cid])
+                updates_by_candidate.setdefault(cid, []).append(
                     PageUpdate(
                         target_path=Path(target),
                         operation="create" if decision == "add" else "update",
@@ -353,6 +543,7 @@ class Consolidator:
                     )
                 )
                 write_plan[cid] = (decision, target)
+                required_targets.setdefault(cid, set()).add(target)
             else:  # invalidate
                 superseded_by = str(item.get("superseded_by", "") or "").strip()
                 invalidated = self._build_invalidation(target, superseded_by)
@@ -360,7 +551,8 @@ class Consolidator:
                     if not is_secondary:
                         write_plan[cid] = (None, None)
                     continue
-                updates.append(invalidated)
+                updates_by_candidate.setdefault(cid, []).append(invalidated)
+                required_targets.setdefault(cid, set()).add(target)
                 if not is_secondary:
                     write_plan[cid] = ("invalidate", target)
                 else:
@@ -369,15 +561,25 @@ class Consolidator:
         # Apply all writes through the shared guarded pipeline.
         applied_rel: set[str] = set()
         rejected_rel: set[str] = set()
-        if updates:
+        recent_rel: set[str] = set()
+        for cid in sorted(updates_by_candidate, key=row_order.__getitem__):
+            # A contradiction can create/update one page and invalidate a
+            # second.  Those writes are one candidate-level transaction: a
+            # validation failure or edit lock on either page rolls back both.
             result = await self._curator.apply_external_updates(
-                updates, source_label=label, verb="merge",
+                updates_by_candidate[cid],
+                source_label=f"{label}:candidate:{cid}",
+                verb="merge",
+                all_or_nothing=True,
             )
-            applied_rel = {self._rel(p) for p in result.applied}
-            rejected_rel = {
+            applied_rel.update(self._rel(p) for p in result.applied)
+            rejected_rel.update(
                 self._rel(p)
                 for p in (*result.blocked_pii, *result.failed_validation)
-            }
+            )
+            recent_rel.update(
+                self._rel(p) for p in result.skipped_due_to_recent_edit
+            )
 
         # Secondary invalidations are counted on landed writes only — never
         # before the writer's verdict (a blocked/skipped page must not
@@ -386,8 +588,19 @@ class Consolidator:
             if target in applied_rel:
                 telemetry.inc("wiki_consolidator_invalidate")
 
-        # Close out every candidate with an explicit status.
+        transient_ids: set[int] = set()
+        # Close out every candidate unless it is intentionally deferred or hit
+        # a transient human-edit lock. Those states remain pending and visible.
         for cid in by_id:
+            if cid in deferred_ids:
+                continue
+            if cid in duplicate_target_ids:
+                self._journal.mark([cid], status="skipped")
+                log.warning(
+                    "Consolidator: candidate %d proposed the same target twice; skipped",
+                    cid,
+                )
+                continue
             if cid in noop_ids:
                 self._journal.mark([cid], status="consolidated", decision="noop")
                 telemetry.inc("wiki_consolidator_noop")
@@ -402,26 +615,68 @@ class Consolidator:
             if decision is None or target is None:
                 self._journal.mark([cid], status="skipped")
                 continue
-            if target in applied_rel:
+            required = required_targets.get(cid, {target})
+            if required and required.issubset(applied_rel):
                 self._journal.mark(
                     [cid], status="consolidated",
                     decision=decision,  # type: ignore[arg-type]
                     target_path=target,
                 )
                 telemetry.inc(f"wiki_consolidator_{decision}")
-            elif target in rejected_rel:
+            elif required & rejected_rel:
                 self._journal.mark([cid], status="rejected", target_path=target)
                 log.warning(
                     "Consolidator: write for candidate %d rejected "
                     "(secret guard / validation) — %s", cid, target,
                 )
+            elif required & recent_rel:
+                transient_ids.add(cid)
+                log.info(
+                    "Consolidator: candidate %d remains pending after a recent edit",
+                    cid,
+                )
             else:
-                # Recent-edit lock or another transient skip.
-                self._journal.mark([cid], status="skipped", target_path=target)
+                # An unexpected partial/no-write outcome is observable as a
+                # retryable pending row, not silently converted to a verdict.
+                transient_ids.add(cid)
+                log.warning(
+                    "Consolidator: candidate %d had no complete writer outcome; "
+                    "leaving it pending",
+                    cid,
+                )
+
+        return len(deferred_ids), len(transient_ids)
 
     # ------------------------------------------------------------------
     # helpers
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _with_source_marker(body: str, row: JournalRow) -> str:
+        """Attach deterministic transcript provenance to a proposed page body."""
+        turn_id = str(row.evidence_turn_id or "").strip()
+        session_id = str(row.session_id or "").strip()
+        if not turn_id:
+            return body
+        if session_id:
+            marker = (
+                f"- Realtime transcript: session `{session_id}`, "
+                f"turn `{turn_id}`."
+            )
+        else:
+            marker = f"- Conversation transcript: turn `{turn_id}`."
+        if marker in body:
+            return body
+
+        heading = "## Sources"
+        heading_at = body.find(heading)
+        if heading_at < 0:
+            return body.rstrip() + f"\n\n{heading}\n\n{marker}\n"
+        line_end = body.find("\n", heading_at + len(heading))
+        if line_end < 0:
+            return body.rstrip() + f"\n\n{marker}\n"
+        insert_at = line_end + 1
+        return body[:insert_at] + f"\n{marker}\n" + body[insert_at:]
 
     def _safe_target(self, raw: Any) -> str | None:
         """Normalise a judge-provided target to a vault-relative .md path."""
@@ -433,9 +688,285 @@ class Consolidator:
         parts = rel.split("/")
         if len(parts) != 2 or parts[0] not in _TARGET_DIRS:
             return None
-        if ".." in rel:
+        slug = parts[1][:-3]
+        if normalise_subjects((slug,)) != (slug,):
             return None
         return rel
+
+    def _validate_decisions(
+        self,
+        parsed: list[Any],
+        rows: Sequence[JournalRow],
+        *,
+        neighbours: dict[str, str],
+    ) -> str | None:
+        """Validate that a judge response is complete and safely writable.
+
+        A transport-successful JSON array is not necessarily a usable answer.
+        Reject the whole response (and let the provider chain try another
+        family) unless every candidate has exactly one valid primary decision.
+        Secondary actions are limited to distinct invalidations for the same
+        candidate.
+        """
+        expected = {row.id for row in rows}
+        by_id = {row.id: row for row in rows}
+        primary_seen: set[int] = set()
+        primary_decisions: dict[int, str] = {}
+        targets_seen: dict[int, set[str]] = {}
+
+        for item in parsed:
+            if not isinstance(item, dict):
+                return "decision array contains a non-object item"
+            cid = item.get("candidate_id")
+            if type(cid) is not int or cid not in expected:
+                return "decision array contains an unknown candidate_id"
+            decision = item.get("decision")
+            if not isinstance(decision, str) or decision not in CURATOR_DECISIONS:
+                return "decision array contains an invalid decision"
+
+            secondary = cid in primary_seen
+            if secondary:
+                if primary_decisions[cid] == "noop" or decision != "invalidate":
+                    return "candidate has more than one primary decision"
+            else:
+                primary_seen.add(cid)
+                primary_decisions[cid] = decision
+
+            if decision == "noop":
+                if secondary or any(
+                    item.get(field) for field in ("target", "new_body", "superseded_by")
+                ):
+                    return "noop decision contains write fields"
+                row = by_id[cid]
+                if self._has_explicit_persistence_request(row):
+                    reason = str(item.get("reason", "") or "").strip()
+                    exact_duplicate = self._fact_exists_unchanged(
+                        row.fact,
+                        neighbours.values(),
+                    )
+                    unsupported = bool(
+                        _UNSUPPORTED_EVIDENCE_REASON_RE.search(reason)
+                    )
+                    if not exact_duplicate and not unsupported:
+                        return (
+                            "explicit wiki persistence request cannot be noop "
+                            "without an exact duplicate or unsupported user evidence"
+                        )
+                continue
+
+            target = self._safe_target(item.get("target"))
+            if target is None:
+                return "write decision contains an unsafe target"
+            candidate_targets = targets_seen.setdefault(cid, set())
+            if target in candidate_targets:
+                return "candidate writes the same target more than once"
+            candidate_targets.add(target)
+            target_path = self._vault_root / target
+
+            if decision in ("add", "update"):
+                if secondary:
+                    return "secondary decision is not an invalidation"
+                body = item.get("new_body")
+                if not isinstance(body, str) or not body.strip():
+                    return "page decision is missing a full new_body"
+                if decision == "add" and target_path.exists():
+                    return "add decision targets an existing page"
+                if decision == "update":
+                    if not target_path.is_file():
+                        return "update decision targets a missing page"
+                    if not self._preserves_existing_page(target_path, body):
+                        return "update decision removes existing page content"
+                unsupported = self._unsupported_numeric_values(
+                    body,
+                    row=by_id[cid],
+                    existing_path=target_path if target_path.is_file() else None,
+                )
+                if unsupported:
+                    values = ", ".join(sorted(unsupported))
+                    return f"page decision contains unsupported numeric values: {values}"
+                continue
+
+            # INVALIDATE bodies are built mechanically, never accepted from
+            # model output.  The optional replacement reference must be a safe
+            # page slug before it can enter YAML frontmatter.
+            if not target_path.is_file():
+                return "invalidate decision targets a missing page"
+            if self._safe_superseded_slug(item.get("superseded_by", "")) is None:
+                return "invalidate decision contains an unsafe superseded_by"
+
+        if primary_seen != expected:
+            return "decision array does not cover every candidate"
+        return None
+
+    @staticmethod
+    def _has_explicit_persistence_request(row: JournalRow) -> bool:
+        """Recognise Wiki writes or a narrow multilingual fact-clause request."""
+        match = _FOCUS_EVIDENCE_RE.search(str(row.evidence_excerpt or ""))
+        if match is None:
+            return False
+        focus_text = match.group(1)
+        return (
+            match_wiki_intent(focus_text) is not None
+            or _EXPLICIT_PERSISTENCE_CLAUSE_RE.search(focus_text) is not None
+        )
+
+    def _fact_exists_unchanged(
+        self,
+        fact: str,
+        page_bodies: Iterable[str],
+    ) -> bool:
+        """Return whether one existing page contains the exact fact as a line."""
+
+        configured_user_slug = resolve_user_entity_slug(
+            getattr(
+                self._root_cfg.memory.wiki.session_rollup,
+                "user_entity_slug",
+                "",
+            )
+        ).replace("-", " ")
+        user_prefixes = ("the user", configured_user_slug.casefold())
+
+        def _normalise_line(value: str) -> str:
+            cleaned = _MARKDOWN_FACT_PREFIX_RE.sub("", value)
+            normalised = " ".join(cleaned.casefold().split()).rstrip(".!?")
+            for prefix in user_prefixes:
+                if prefix and normalised.startswith(f"{prefix} "):
+                    return normalised[len(prefix) + 1 :]
+            return normalised
+
+        needle = _normalise_line(str(fact or ""))
+        if not needle:
+            return False
+        return any(
+            _normalise_line(line) == needle
+            for body in page_bodies
+            for line in str(body).splitlines()
+        )
+
+    @classmethod
+    def _unsupported_numeric_values(
+        cls,
+        proposed: str,
+        *,
+        row: JournalRow,
+        existing_path: Path | None,
+    ) -> set[str]:
+        """Return model-added numeric values with no grounded source.
+
+        Candidate facts, their exact user-evidence excerpt, safe subject slugs,
+        and the current target page are authoritative.  ISO dates in the
+        schema's date frontmatter fields are bookkeeping rather than factual
+        prose and are allowed; the normal create/update path supplies today's
+        date there.  Markdown ordered-list indices are formatting, not claims.
+        """
+        grounded_text = "\n".join((row.fact, row.evidence_excerpt, *row.subjects))
+        grounded = cls._numeric_values(grounded_text)
+        today = _dt.date.today()
+        # The Stage-2 prompt explicitly supplies this temporal context.  The
+        # judge may safely render it as either an ISO date or a prose qualifier
+        # such as "as of July 2026" without requiring the user to repeat it.
+        grounded.update((today.isoformat(), str(today.year)))
+        if existing_path is not None:
+            try:
+                grounded.update(
+                    cls._numeric_values(existing_path.read_text(encoding="utf-8"))
+                )
+            except OSError:
+                # The independent existence/preservation checks reject an
+                # unreadable update.  Do not weaken this guard in the meantime.
+                pass
+        return cls._numeric_values(proposed, ignore_schema_dates=True) - grounded
+
+    @staticmethod
+    def _numeric_values(
+        text: str,
+        *,
+        ignore_schema_dates: bool = False,
+    ) -> set[str]:
+        """Extract exact numeric values while excluding non-claim syntax."""
+        values: set[str] = set()
+        in_frontmatter = False
+        for index, raw_line in enumerate(text.splitlines()):
+            stripped = raw_line.strip()
+            if stripped == "---":
+                if index == 0:
+                    in_frontmatter = True
+                elif in_frontmatter:
+                    in_frontmatter = False
+                continue
+            if ignore_schema_dates and in_frontmatter and ":" in raw_line:
+                key, raw_value = raw_line.split(":", 1)
+                date_value = raw_value.strip().strip('"\'')
+                if (
+                    key.strip() in _SCHEMA_DATE_FIELDS
+                    and _SCHEMA_DATE_RE.fullmatch(date_value)
+                ):
+                    continue
+            claim_text = _ORDERED_LIST_PREFIX_RE.sub("", raw_line)
+            values.update(
+                match.group(0).replace(" ", "")
+                for match in _NUMERIC_VALUE_RE.finditer(claim_text)
+            )
+        return values
+
+    @staticmethod
+    def _preserves_existing_page(path: Path, proposed: str) -> bool:
+        """Require update bodies to retain every meaningful existing line.
+
+        Stage 2 is an append/merge path; contradictions use INVALIDATE.  A
+        schema-valid full-page replacement may therefore change ``updated:``
+        metadata and add content, but it may not silently delete identity
+        metadata, headings, prose, facts, links, or source lines.
+        """
+        try:
+            current = path.read_text(encoding="utf-8")
+        except OSError:
+            return False
+
+        def _required_lines(raw: str) -> set[str]:
+            lines = raw.splitlines()
+            closing = -1
+            if lines and lines[0].strip() == "---":
+                for index, line in enumerate(lines[1:], start=1):
+                    if line.strip() == "---":
+                        closing = index
+                        break
+            required: set[str] = set()
+            for index, line in enumerate(lines):
+                normalised = " ".join(line.split())
+                if not normalised or normalised == "---":
+                    continue
+                if 0 < index < closing:
+                    if normalised.startswith(
+                        ("type:", "entity_kind:", "slug:", "created:")
+                    ):
+                        required.add(normalised)
+                    continue
+                if closing >= 0 and index <= closing:
+                    continue
+                required.add(normalised)
+            return required
+
+        proposed_lines = {" ".join(line.split()) for line in proposed.splitlines()}
+        return _required_lines(current).issubset(proposed_lines)
+
+    @staticmethod
+    def _safe_superseded_slug(raw: Any) -> str | None:
+        """Return a frontmatter-safe replacement slug, ``""``, or ``None``."""
+        if raw is None or raw == "":
+            return ""
+        if not isinstance(raw, str):
+            return None
+        value = raw.strip().replace("\\", "/")
+        parts = value.split("/")
+        if len(parts) == 1:
+            slug = parts[0]
+        elif len(parts) == 2 and parts[0] in _TARGET_DIRS:
+            slug = parts[1]
+        else:
+            return None
+        slug = slug.removesuffix(".md")
+        return slug if normalise_subjects((slug,)) == (slug,) else None
 
     def _build_invalidation(
         self, target_rel: str, superseded_by: str,
@@ -475,7 +1006,14 @@ class Consolidator:
             if not ln.startswith(("valid_until:", "superseded-by:"))
         ]
         fm.append(f"valid_until: {today}")
-        slug = superseded_by.split("/")[-1].removesuffix(".md").strip()
+        safe_slug = self._safe_superseded_slug(superseded_by)
+        if safe_slug is None:
+            log.warning(
+                "Consolidator: refused unsafe superseded_by for %s",
+                target_rel,
+            )
+            return None
+        slug = safe_slug
         if slug:
             fm.append(f'superseded-by: "[[{slug}]]"')
         new_raw = "\n".join(["---", *fm, *lines[closing:]])

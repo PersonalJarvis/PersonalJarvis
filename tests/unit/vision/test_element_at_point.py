@@ -40,7 +40,17 @@ def test_resolver_returns_injected_element() -> None:
 
 
 @pytest.mark.parametrize("cls", _OS_RESOLVERS)
-def test_resolver_swallows_query_errors(cls) -> None:
+def test_resolver_swallows_query_errors(cls, monkeypatch) -> None:
+    if cls is eap.AXPointerResolver:
+        monkeypatch.setattr(
+            "jarvis.platform.permissions.get_system_permission_port",
+            lambda: type(
+                "GrantedPermissionPort",
+                (),
+                {"runtime_access_granted": lambda self, permission: True},
+            )(),
+        )
+
     def boom(x: int, y: int) -> PointerElement:
         raise RuntimeError("native query failed")
 
@@ -48,7 +58,17 @@ def test_resolver_swallows_query_errors(cls) -> None:
 
 
 @pytest.mark.parametrize("cls", _OS_RESOLVERS)
-def test_resolver_passes_coords_to_query(cls) -> None:
+def test_resolver_passes_coords_to_query(cls, monkeypatch) -> None:
+    if cls is eap.AXPointerResolver:
+        monkeypatch.setattr(
+            "jarvis.platform.permissions.get_system_permission_port",
+            lambda: type(
+                "GrantedPermissionPort",
+                (),
+                {"runtime_access_granted": lambda self, permission: True},
+            )(),
+        )
+
     seen: dict[str, tuple[int, int]] = {}
 
     def q(x: int, y: int) -> None:
@@ -57,6 +77,52 @@ def test_resolver_passes_coords_to_query(cls) -> None:
 
     cls(query=q).at(42, 99)
     assert seen["xy"] == (42, 99)
+
+
+@pytest.mark.parametrize(
+    "blocked_reason",
+    ("unstable_identity", "pending_restart", "revoked_grant"),
+)
+def test_macos_resolver_fails_closed_when_runtime_access_is_blocked(
+    monkeypatch,
+    blocked_reason: str,
+) -> None:
+    calls: list[tuple[int, int]] = []
+    port = type(
+        "BlockedPermissionPort",
+        (),
+        {"runtime_access_granted": lambda self, permission: False},
+    )()
+    monkeypatch.setattr(
+        "jarvis.platform.permissions.get_system_permission_port",
+        lambda: port,
+    )
+
+    resolver = eap.AXPointerResolver(query=lambda x, y: calls.append((x, y)))
+
+    assert resolver.at(42, 99) is None, blocked_reason
+    assert calls == []
+
+
+def test_macos_resolver_queries_when_runtime_access_is_granted(monkeypatch) -> None:
+    sentinel = PointerElement(name="Allowed", role="Button", bounds=(1, 2, 3, 4))
+    seen: list[object] = []
+    port = type(
+        "GrantedPermissionPort",
+        (),
+        {
+            "runtime_access_granted": (
+                lambda self, permission: seen.append(permission) or True
+            ),
+        },
+    )()
+    monkeypatch.setattr(
+        "jarvis.platform.permissions.get_system_permission_port",
+        lambda: port,
+    )
+
+    assert eap.AXPointerResolver(query=lambda x, y: sentinel).at(4, 5) is sentinel
+    assert [permission.value for permission in seen] == ["accessibility"]
 
 
 def test_factory_windows(monkeypatch) -> None:

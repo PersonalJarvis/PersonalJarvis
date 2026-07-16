@@ -209,6 +209,7 @@ async def test_switch_antigravity_allowed_as_subagent(monkeypatch, no_keys):
 
     class _Status:
         connected = True
+        mode = "oauth-personal"
 
     class _FakeGoogleCliAuthService:
         def status(self):
@@ -235,6 +236,7 @@ async def test_switch_codex_allowed_as_subagent(monkeypatch, no_keys):
 
     class _Status:
         connected = True
+        installed = True
 
     class _FakeCodexAuthService:
         def status(self):

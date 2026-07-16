@@ -15,18 +15,30 @@ from jarvis.core.protocols import AudioChunk
 
 _HARD_LEAK_ACTIONS = frozenset(
     {
+        "removed_tool_json",
         "replaced_stacktrace",
         "replaced_raw_repr",
         "replaced_shell_command",
-        "replaced_with_fallback_residue",
     }
 )
 _RESIDUE_ACTION = "replaced_with_fallback_residue"
-_STREAM_SAFE_RESIDUE_ACTIONS = frozenset(
+_NON_BLOCKING_SCRUB_ACTIONS = frozenset(
     {
+        "removed_anrede_drift",  # i18n-allow: established telemetry action-name identifier (ADR-0010), not prose
+        "removed_background_action_narration",
         "removed_em_dash",
         "removed_engineering_jargon",
+        "removed_filler_opener",
+        "removed_self_reference",
+        "removed_source_artifacts",
+        "rephrased_echo",
+        "spelled_out_numbers",
+        "stripped_end_signal",
+        "stripped_markdown",
     }
+)
+_KNOWN_SCRUB_ACTIONS = (
+    _HARD_LEAK_ACTIONS | _NON_BLOCKING_SCRUB_ACTIONS | {_RESIDUE_ACTION}
 )
 _TRANSCRIPT_TAIL_MAX_CHARS = 4_096
 
@@ -97,6 +109,7 @@ class ScrubHoldGate:
             # utterance is not available yet, so this benign residue neither
             # authorizes buffered audio nor aborts the response. The next
             # meaningful delta decides.
+            self._cleared = False
             return text
         self._cleared = True
         if _is_stream_safe_residue(result):
@@ -210,12 +223,20 @@ def _is_stream_safe_residue(result: ScrubResult) -> bool:
         result.fallback_used
         and _RESIDUE_ACTION in actions
         and residue_sources
-        and residue_sources <= _STREAM_SAFE_RESIDUE_ACTIONS
+        and residue_sources <= _NON_BLOCKING_SCRUB_ACTIONS
     )
 
 
 def _is_hard_scrub_result(result: ScrubResult) -> bool:
-    """Classify leaks without treating isolated streaming punctuation as data."""
+    """Block only real or unclassified leaks, never presentation residue."""
+    actions = set(result.actions)
+    if actions - _KNOWN_SCRUB_ACTIONS:
+        # Every new scrub action must be classified explicitly. This preserves
+        # fail-closed security without conflating known style transforms with
+        # machine-data leaks.
+        return True
+    if _HARD_LEAK_ACTIONS & actions:
+        return True
     if _is_stream_safe_residue(result):
         return False
-    return bool(result.fallback_used or (_HARD_LEAK_ACTIONS & set(result.actions)))
+    return bool(result.fallback_used)

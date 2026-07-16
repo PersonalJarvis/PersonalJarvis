@@ -1782,13 +1782,19 @@ class CriticRunner:
         """
         try:
             from jarvis.brain.provider_registry import BrainProviderRegistry
+            from jarvis.core.config import (
+                get_jarvis_agent_secret,
+                override_provider_secrets,
+            )
             from jarvis.core.protocols import BrainMessage, BrainRequest
 
             cls = BrainProviderRegistry().get_class(provider)
-            try:
-                brain = cls(model) if model else cls()  # type: ignore[call-arg]
-            except TypeError:
-                brain = cls()  # type: ignore[call-arg]
+            worker_key = get_jarvis_agent_secret(provider)
+            with override_provider_secrets({provider: worker_key}):
+                try:
+                    brain = cls(model) if model else cls()  # type: ignore[call-arg]
+                except TypeError:
+                    brain = cls()  # type: ignore[call-arg]
 
             req = BrainRequest(
                 messages=(BrainMessage(role="user", content=prompt),),
@@ -1802,10 +1808,11 @@ class CriticRunner:
             )
             parts: list[str] = []
             async with asyncio.timeout(self._timeout):
-                async for delta in brain.complete(req):
-                    chunk = getattr(delta, "content", None)
-                    if chunk:
-                        parts.append(chunk)
+                with override_provider_secrets({provider: worker_key}):
+                    async for delta in brain.complete(req):
+                        chunk = getattr(delta, "content", None)
+                        if chunk:
+                            parts.append(chunk)
             return _parse_verdict_from_text(
                 "".join(parts), iteration=iteration, adversarial_reframe=adversarial_reframe,
             )

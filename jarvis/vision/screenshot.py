@@ -42,36 +42,39 @@ _DEFAULT_BLOB_DIR = Path("data") / "flight_recorder" / "blobs"
 # wallpaper with no error, so Computer-Use would click blind. Surface a clear
 # onboarding message at the capture site instead of failing silently.
 _SCREEN_RECORDING_MSG = (
-    "macOS Screen Recording permission not granted — grant it in System "
-    "Settings > Privacy & Security > Screen Recording so Jarvis can see the "
-    "screen; without it screenshots capture only the desktop wallpaper and "
-    "Computer-Use would click blind."
+    "macOS Screen Recording permission not granted — grant it in Personal "
+    "Jarvis > Settings > Permissions or System Settings > Privacy & Security "
+    "> Screen Recording; without it screenshots can contain only the desktop "
+    "wallpaper and Computer-Use would click blind."
 )
 _screen_recording_warned = False
 
 
 def warn_if_screen_recording_denied() -> bool:
-    """Log ``_SCREEN_RECORDING_MSG`` once per process if the macOS Screen
-    Recording grant is missing.
+    """Probe Screen Recording now and log once per blocked-state episode.
 
-    Returns ``True`` iff capture is expected to be blank (macOS + the grant is
-    explicitly denied). No-op returning ``False`` on Windows/Linux, when the
-    grant is present, or when it is unknown (``None`` — pyobjc absent): we never
-    nag on a state we cannot prove (AD-13 detect-and-degrade).
-
-    One-shot: once a denial has been seen the probe is not re-run, so the
-    TCC round-trip never happens at the CU frame rate (1-2 Hz) — subsequent
-    calls are a single boolean read.
+    The native result is deliberately uncached: macOS can revoke a TCC grant
+    while Jarvis is running. The boolean flag suppresses repeated log lines
+    only; it never suppresses a permission probe. Unknown/unavailable native
+    state fails closed on macOS and non-macOS reports ``NOT_REQUIRED``.
     """
     global _screen_recording_warned
-    if _screen_recording_warned:  # already warned once → still denied; skip the per-frame TCC probe
-        return True
-    from jarvis.platform.probes import screen_recording_granted  # noqa: PLC0415
+    from jarvis.platform.permissions import (  # noqa: PLC0415
+        PermissionId,
+        get_system_permission_port,
+    )
 
-    if screen_recording_granted() is False:
+    port = get_system_permission_port()
+    blocked = not port.runtime_access_granted(PermissionId.SCREEN_RECORDING)
+    if blocked:
+        state = port.state(PermissionId.SCREEN_RECORDING)
+        if not _screen_recording_warned:
+            logger.warning("%s Native state: %s.", _SCREEN_RECORDING_MSG, state.value)
         _screen_recording_warned = True
-        logger.warning(_SCREEN_RECORDING_MSG)
         return True
+    if _screen_recording_warned:
+        logger.info("macOS Screen Recording permission is available again.")
+    _screen_recording_warned = False
     return False
 
 
@@ -123,7 +126,7 @@ def select_capture_monitor(
 
     Strategies:
 
-    - ``"foreground"`` — foreground-window center -> monitor lookup.
+    - ``"foreground"`` — display with the largest foreground-window overlap.
       Fallback for a minimized/unfindable window: primary.
     - ``"primary"`` — explicitly the primary monitor (mss-typical ``[1]``).
     - ``"all"`` — virtual bounding box over all monitors (``[0]``).
@@ -172,39 +175,41 @@ def select_capture_monitor(
             )
             return primary
 
-        cx = rect[0] + rect[2] // 2
-        cy = rect[1] + rect[3] // 2
+        wl, wt, ww, wh = rect
 
-        for m in physical:
-            left, top = m["left"], m["top"]
-            right = left + m["width"]
-            bottom = top + m["height"]
-            if left <= cx < right and top <= cy < bottom:
-                if m is not primary:
-                    logger.info(
-                        "select_capture_monitor: foreground on %s "
-                        "(left=%d top=%d %dx%d) — capturing there "
-                        "instead of primary",
-                        m.get("name"),
-                        left,
-                        top,
-                        m["width"],
-                        m["height"],
-                    )
-                else:
-                    logger.debug(
-                        "select_capture_monitor: foreground on primary %s",
-                        m.get("name"),
-                    )
-                return m
+        def overlap_area(m: dict) -> int:
+            left = max(wl, int(m["left"]))
+            top = max(wt, int(m["top"]))
+            right = min(wl + ww, int(m["left"]) + int(m["width"]))
+            bottom = min(wt + wh, int(m["top"]) + int(m["height"]))
+            return max(0, right - left) * max(0, bottom - top)
 
-        # Foreground center lies outside all physical monitors
-        # (e.g. window minimized -> rect = -32000/-32000).
+        target = max(physical, key=overlap_area)
+        target_overlap = overlap_area(target)
+        if target_overlap > 0:
+            if target is not primary:
+                logger.info(
+                    "select_capture_monitor: largest foreground overlap is on %s "
+                    "(left=%d top=%d %dx%d) — capturing there instead of primary",
+                    target.get("name"),
+                    target["left"],
+                    target["top"],
+                    target["width"],
+                    target["height"],
+                )
+            else:
+                logger.debug(
+                    "select_capture_monitor: largest foreground overlap is primary %s",
+                    target.get("name"),
+                )
+            return target
+
+        # Foreground rectangle intersects no physical monitor (for example a
+        # minimized window at -32000/-32000 or a stale window geometry read).
         logger.debug(
-            "select_capture_monitor: foreground center (%d,%d) is on no "
-            "monitor — falling back to primary",
-            cx,
-            cy,
+            "select_capture_monitor: foreground rect %s is on no monitor — "
+            "falling back to primary",
+            rect,
         )
         return primary
     except Exception:  # noqa: BLE001
@@ -276,6 +281,8 @@ def capture_region(
     """
     from PIL import Image  # noqa: PLC0415
 
+    if warn_if_screen_recording_denied():
+        raise RuntimeError(_SCREEN_RECORDING_MSG)
     grabber = grab or _mss_grab
     size, rgb = grabber(bbox)
     img = Image.frombytes("RGB", size, rgb)
@@ -295,11 +302,10 @@ class ScreenshotSource:
 
     Monitor strategy (default: ``"foreground"``):
 
-    - ``"foreground"`` — follows the active window (GetForegroundWindow +
-      GetWindowRect → monitor lookup via the window's center point). This
-      way Jarvis sees what the user currently has in front of them, even on
-      multi-monitor setups. Fallback for a minimized/unfindable window:
-      the primary monitor.
+    - ``"foreground"`` — follows the active window and selects the display
+      with its largest window overlap. This remains correct for windows that
+      straddle displays or whose center lies in an L-shaped layout gap.
+      Fallback for a minimized/unfindable window: the primary monitor.
     - ``"primary"`` — the old hardcode (mss.monitors[1]). Only for
       regression tests / explicit single-monitor setups.
     - ``"all"`` — virtual bounding box over all monitors
@@ -449,10 +455,10 @@ class ScreenshotSource:
             # mss not installed — ImportError already raised above, unreachable.
             ScreenShotError = Exception  # type: ignore[assignment,misc]
 
-        # H1: on macOS without the Screen-Recording grant the grab below returns
-        # only the wallpaper with no error — tell the user once instead of
-        # letting Computer-Use click blind.
-        warn_if_screen_recording_denied()
+        # H1: macOS can return only wallpaper without an error when Screen
+        # Recording is missing. Probe on every capture and fail closed.
+        if warn_if_screen_recording_denied():
+            raise RuntimeError(_SCREEN_RECORDING_MSG)
 
         monitor_id: str = "unknown"
         try:

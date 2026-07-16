@@ -1,4 +1,15 @@
 {
+  "auth_gate": {
+    "checking": "Zugriff wird geprüft…",
+    "title": "Personal Jarvis entsperren",
+    "subtitle": "Gib den Control Key dieser Jarvis-Instanz ein.",
+    "control_key": "Control Key",
+    "placeholder": "Control Key einfügen",
+    "submit": "Entsperren",
+    "submitting": "Wird geprüft…",
+    "invalid": "Dieser Control Key wurde nicht akzeptiert.",
+    "unavailable": "Jarvis ist nicht erreichbar. Versuch es erneut."
+  },
   "file_toast": {
     "show_in_folder": "Im Ordner zeigen",
     "open": "Öffnen",
@@ -25,7 +36,8 @@
     "updating": "{name} wird aktualisiert…",
     "update_failed": "Update fehlgeschlagen",
     "update_hint": "Neue Version herunterladen und installieren",
-    "update_deps_warning": "Aktualisiert — einige Komponenten brauchen evtl. eine manuelle Neuinstallation"
+    "update_deps_warning": "Aktualisiert — einige Komponenten brauchen evtl. eine manuelle Neuinstallation",
+    "update_desktop_warning": "Aktualisiert — das Betriebssystem konnte den App-Starter nicht vollständig reparieren"
   },
   "nav": {
     "chats": "Chats",
@@ -106,7 +118,7 @@
   "socials": {
     "subtitle": "Links zu unserer Community und unseren Profilen.",
     "add": "Link hinzufügen",
-    "empty": "Noch keine Social-Links — füge den ersten hinzu.",
+    "empty": "Es sind keine Social-Links verfügbar.",
     "edit": "Bearbeiten",
     "delete": "Löschen",
     "open": "Öffnen",
@@ -175,7 +187,7 @@
     "added": "„{0}\" wurde ins Wörterbuch aufgenommen.",
     "saved": "Wörterbuch-Eintrag gespeichert.",
     "deleted": "„{0}\" wurde aus dem Wörterbuch entfernt.",
-    "applies_note": "Änderungen gelten ab deiner nächsten Äußerung — kein Neustart nötig.",
+    "applies_note": "Änderungen gelten ab der nächsten Pipeline-Transkription — kein Neustart nötig. Im Realtime-Modus werden Wörterbuchkorrekturen nicht verwendet.",
     "dialog_add_title": "Zum Wortschatz hinzufügen",
     "dialog_edit_title": "Wörterbuch-Eintrag bearbeiten",
     "correction_toggle": "Falsch Erkanntes korrigieren",
@@ -476,6 +488,12 @@
       "tools": "Tools",
       "errors": "Fehler"
     }
+  },
+  "voice_mode": {
+    "label": "Modus",
+    "realtime": "Realtime",
+    "pipeline": "Pipeline",
+    "unknown": "Unbekannt"
   },
   "sessions_view": {
     "title": "Transkription",
@@ -906,7 +924,7 @@
     "runtime_realtime": "Aktuelle Session: Realtime",
     "runtime_pipeline": "Aktuelle Session: Pipeline",
     "runtime_fallback_pipeline": "Die aktuelle Session ist auf die Pipeline zurückgefallen; Realtime bedient diesen Anruf nicht.",
-    "cat_brain_desc": "Das Modell, das Chat, Routing und Computer-Use antreibt.",
+    "cat_brain_desc": "Das Modell, das deine Chat- und Sprachantworten formuliert. Aktionen und Computer-Use übernimmt das separate Tool-Modell.",
     "cat_tts_desc": "Die Stimme, mit der Jarvis spricht.",
     "cat_stt_desc": "Wie Jarvis deine Sprache in Text umwandelt.",
     "cat_realtime_desc": "Vollduplex-Sprache-zu-Sprache über jeden eingerichteten Realtime-Provider, auf dem Desktop oder im Browser.",
@@ -1007,6 +1025,38 @@
     "effective": "Das Tool Model nutzt",
     "cleared": "Tool Model auf dein Hauptmodell zurückgesetzt",
     "vision_note": "Es werden nur Modelle angezeigt, die Bilder verstehen - Computer-Use liest den Bildschirm über Screenshots, ein reines Text-Modell kann es nicht steuern."
+  },
+  "permissions": {
+    "group_title": "Datenschutz-Berechtigungen",
+    "title": "macOS-Berechtigungen",
+    "description": "Erteile nur die Systemzugriffe, die für Sprache, Computer-Use, globale Kurzbefehle und Fenstersteuerung nötig sind. Jarvis verändert niemals die macOS-Datenschutzdatenbank.",
+    "loading": "Systemberechtigungen werden geprüft…",
+    "load_failed": "Der aktuelle Berechtigungsstatus konnte nicht gelesen werden.",
+    "refresh": "Erneut prüfen",
+    "not_required": "Auf diesem Betriebssystem sind keine zusätzlichen Desktop-Datenschutzberechtigungen nötig.",
+    "identity_warning": "Starte Personal Jarvis aus seinem App-Bundle, bevor du Zugriff erlaubst. macOS bindet Berechtigungen an die genaue App-Identität.",
+    "restart_required": "Starte Personal Jarvis neu, bevor du den neu erlaubten Zugriff verwendest.",
+    "restart_now": "Jetzt neu starten",
+    "restarting": "Neustart…",
+    "restart_failed": "Personal Jarvis konnte nicht neu starten. Beende und öffne es manuell erneut.",
+    "request": "Erlauben",
+    "open_settings": "Einstellungen öffnen",
+    "status": {
+      "granted": "Erlaubt",
+      "not_determined": "Nicht angefragt",
+      "denied": "Abgelehnt",
+      "restricted": "Eingeschränkt",
+      "not_granted": "Nicht erlaubt",
+      "unavailable": "Nicht verfügbar",
+      "not_required": "Nicht erforderlich"
+    },
+    "items": {
+      "microphone": { "title": "Mikrofon", "description": "Erforderlich für Aktivierungswort und lokale Spracheingabe." },
+      "screen_recording": { "title": "Bildschirmaufnahme", "description": "Erforderlich, damit Computer-Use alle verbundenen Bildschirme sehen kann." },
+      "accessibility": { "title": "Bedienungshilfen", "description": "Erforderlich für zuverlässige Klicks, Eingaben, Fokus und Fenstersteuerung." },
+      "input_monitoring": { "title": "Eingabeüberwachung", "description": "Erforderlich für globale Push-to-Talk- und Tastaturkurzbefehle." },
+      "event_posting": { "title": "Eingabesteuerung", "description": "Erforderlich, damit Computer-Use Maus- und Tastaturereignisse senden kann." }
+    }
   },
   "settings_view": {
     "silence_window": {
@@ -1114,7 +1164,7 @@
       "derived_name": "Dein Assistent heißt dann: {0}",
       "engine_options": {
         "auto": "Automatisch (empfohlen)",
-        "openwakeword": "openWakeWord (eingebaute Phrasen)",
+        "openwakeword": "openWakeWord (benutzerdefiniertes Modell)",
         "vosk_kws": "Keyword-Spotting (beliebige Phrase, überall gleich)",
         "stt_match": "STT-Abgleich (beliebige Phrase, braucht lokales Whisper)",
         "custom_onnx": "Eigenes ONNX-Modell"
@@ -1399,6 +1449,8 @@
     "search_modal_placeholder": "Docs durchsuchen…",
     "search_hint": "Tippe einen Begriff zum Suchen…",
     "search_loading": "Suche…",
+    "search_failed": "Die Suche konnte nicht geladen werden.",
+    "search_retry": "Erneut versuchen",
     "no_results": "Keine Treffer für \"{0}\"",
     "for_fulltext": "für die Volltextsuche.",
     "could_not_load": "Konnte Doc nicht laden.",
@@ -1552,6 +1604,13 @@
       "ui_label": "Oberflächensprache",
       "reply_label": "Antwortsprache"
     },
+    "permissions": {
+      "title": "Zugriff auf diesem Mac erlauben",
+      "body": "macOS lässt jede Funktion einzeln bestätigen. Nutze die Schaltflächen unten und kehre danach hierher zurück; der Status wird automatisch aktualisiert.",
+      "privacy_note": "Diese Abfragen kommen von macOS. Das Installationsprogramm kann sie nicht stillschweigend freigeben, und Personal Jarvis umgeht niemals die Systemeinstellungen.",
+      "continue": "Weiter",
+      "text_only": "Nur mit Text fortfahren"
+    },
     "wake_word": {
       "choice_title": "Wie möchtest du {name} aktivieren?",
       "choice_body": "Wähle, was zu deiner Arbeitsweise passt — du kannst das später in den Einstellungen ändern.",
@@ -1560,7 +1619,7 @@
       "mode_shortcut_title": "Tastenkombination",
       "mode_shortcut_body": "Kein Aktivierungswort — halte eine Taste gedrückt, um zu sprechen, lass los zum Senden (Push-to-Talk).",
       "back_to_choice": "Zurück",
-      "shortcut_note": "Du aktivierst {name} stattdessen über eine Tastenkombination statt über ein Aktivierungswort. Die genaue Taste kannst du jederzeit in den Einstellungen → Wake-Word festlegen.",
+      "shortcut_note": "Du aktivierst {name} stattdessen über eine Tastenkombination statt über ein Aktivierungswort. Die genaue Taste kannst du jederzeit unter Einstellungen → Sprach-Tastenkürzel festlegen.",
       "shortcut_cta": "Weiter",
       "title": "Wähle dein Aktivierungswort",
       "body": "Wähle das Wort, das deinen Assistenten aufweckt. \"Hey\" bleibt fest — den Rest bestimmst du.",
@@ -1585,6 +1644,7 @@
         "good": "Klingt gut — dein Mikrofon hat deine Stimme klar aufgenommen.",
         "too_quiet": "Das war sehr leise. Erhöhe die Mikrofonlautstärke oder rücke näher heran und versuche es erneut.",
         "no_device": "Kein Mikrofon erkannt — du kannst die Einrichtung trotzdem abschließen und das später in den Einstellungen beheben.",
+        "permission_required": "Erteile unter Berechtigungen zuerst den Mikrofonzugriff, bevor du diesen Check startest.",
         "error": "Das Mikrofon konnte gerade nicht geprüft werden."
       }
     },
@@ -1645,7 +1705,7 @@
     "reply_section": "Antwort-Sprache",
     "reply_hint": "In welcher Sprache {name} antwortet. Eigennamen, Code-Bezeichner und Fachbegriffe bleiben in ihrer Originalform.",
     "stt_section": "Erkennungssprache (Stimme)",
-    "stt_hint": "In welcher Sprache deine gesprochene Stimme erkannt und in Text umgewandelt wird. Automatisch erkennt von selbst, welche Sprache du sprichst.",
+    "stt_hint": "In welcher Sprache deine Stimme erkannt und in Text umgewandelt wird. Automatisch erkennt sie selbst. Beende nach einer Änderung jeden Realtime-Anruf und starte Jarvis für den Pipeline-Modus neu.",
     "options": {
       "auto": {
         "label": "Automatisch",
@@ -1809,7 +1869,12 @@
     "loading": "Lade Graph…",
     "load_error": "Graph konnte nicht geladen werden.",
     "reset_view_title": "Zoom auf alle Knoten zurücksetzen",
-    "center": "Zentrieren"
+    "center": "Zentrieren",
+    "relationship_graph": "Wiki-Beziehungsgraph",
+    "node_details": "{0} ({1}) · {2} {3}",
+    "backlink_one": "Backlink",
+    "backlink_many": "Backlinks",
+    "unresolved": "nicht aufgelöst"
   },
   "tree_sidebar": {
     "load_error": "Konnte das Wiki nicht laden.",
@@ -1889,11 +1954,43 @@
   },
   "docs_sidebar": {
     "title": "Dokumentation",
-    "error": "Fehler"
+    "error": "Fehler",
+    "indexing": "Lokaler Index wird erstellt…",
+    "retry": "Erneut versuchen",
+    "documents": "Dokumente",
+    "no_results": "Keine passenden Dokumente"
   },
   "docs_content": {
     "prev": "Vorher",
-    "next": "Nächstes"
+    "next": "Nächstes",
+    "breadcrumb": "Dokumentation",
+    "related_guides": "Verwandte Anleitungen",
+    "last_reviewed": "Zuletzt geprüft:",
+    "review_unavailable": "Prüfdatum nicht verfügbar",
+    "on_this_page": "Auf dieser Seite",
+    "copy_code": "Code kopieren",
+    "code_copied": "Code kopiert",
+    "skip_to_content": "Zum Dokumentationsinhalt springen"
+  },
+  "docs_overview": {
+    "eyebrow": "Dokumentation",
+    "title": "Personal Jarvis Docs",
+    "description": "Alles von der ersten Einrichtung bis zur Architektur hinter der Sprachsteuerung. Durchsuche die vollständige lokale Bibliothek oder öffne die neu gestaltete öffentliche Dokumentation.",
+    "online_docs": "Neu gestaltete Online-Docs öffnen",
+    "load_failed_title": "Die Dokumentation konnte nicht geladen werden",
+    "load_failed_description": "Der lokale Index wurde nicht rechtzeitig bereit. Versuch es erneut, ohne die App neu zu starten.",
+    "retry": "Erneut versuchen",
+    "empty_title": "Keine lokalen Dokumente gefunden",
+    "empty_description": "Die Online-Dokumentation ist weiterhin über die Schaltfläche oben erreichbar.",
+    "local_library": "In der lokalen Bibliothek starten",
+    "local_library_description": "Schneller Offline-Zugriff auf die Dokumentation dieser Installation.",
+    "indexing_title": "Deine Dokumentation wird vorbereitet",
+    "indexing_description": "Die lokale Markdown-Bibliothek wird gelesen und die Volltextsuche aufgebaut. Das dauert normalerweise nur einen Moment.",
+    "loading_page": "Dokument wird geladen…",
+    "browse_by_topic": "Nach Thema durchsuchen",
+    "browse_description": "Folge einem Lernpfad oder springe direkt zum benötigten Feature.",
+    "guide": "Anleitung",
+    "guides": "Anleitungen"
   },
   "docs_search_modal": {
     "navigate": "navigieren",
@@ -2225,6 +2322,22 @@
     "manual_c": "ablegen."
   },
   "wiki_health": {
+    "capture_aria": "Wiki-Erfassungsfunnel der letzten {0} Stunden",
+    "capture_window": "Erfassung letzte {0} h",
+    "capture_reviewed": "Geprüft",
+    "capture_candidate_reviews": "Prüfungen mit Kandidaten",
+    "capture_candidate_facts": "Kandidaten",
+    "capture_writes": "Schreibvorgänge",
+    "capture_noop": "Ohne Änderung",
+    "capture_rejected": "Abgelehnt",
+    "capture_skipped": "Übersprungen",
+    "capture_pending": "Ausstehend",
+    "capture_filtered": "Vorgefiltert",
+    "capture_empty": "Leer",
+    "capture_failed": "Fehlgeschlagen",
+    "capture_in_progress": "In Arbeit",
+    "capture_session_sweeps": "Sitzungsprüfungen",
+    "capture_store_unavailable": "Erfassungsdatenbank nicht verfügbar",
     "checking": "Wiki-Zustand wird geprüft…",
     "unavailable": "Wiki-Zustandsprüfung nicht verfügbar",
     "vault_prefix": "Vault: {0}",
@@ -2397,10 +2510,11 @@
   },
   "feedback": {
     "discord_cta_title": "Auf unserem Discord melden",
-    "discord_cta_subtitle": "Tritt #bug-reports bei und poste deinen Fehler, deine Idee oder Frage direkt.",
-    "discord_cta_button": "Discord öffnen",
+    "discord_cta_subtitle": "Öffne #report-a-bug und poste deinen Fehler, deine Idee oder Frage direkt.",
+    "discord_cta_button": "#report-a-bug öffnen",
+    "discord_join_button": "Zuerst Discord beitreten",
     "or_send_here": "oder hier direkt senden",
-    "subtitle": "Fehler melden, Ideen teilen oder eine Frage stellen — geht direkt in unseren Discord.",
+    "subtitle": "Öffne unseren Discord, um Fehler zu melden, Ideen zu teilen oder Fragen zu stellen.",
     "type_label": "Typ",
     "type_bug": "Bug",
     "type_idea": "Idee",

@@ -43,9 +43,9 @@ def _real_api_key_present() -> bool:
     API key flips the service into ``api_key`` mode.
     """
     try:
-        from jarvis.core.config import get_secret
+        from jarvis.core.config import get_jarvis_agent_secret
 
-        key = get_secret("anthropic_api_key", env_fallback="ANTHROPIC_API_KEY")
+        key = get_jarvis_agent_secret("claude-api")
     except Exception:  # noqa: BLE001
         return False
     return bool(key) and not str(key).startswith("sk-ant-oat")

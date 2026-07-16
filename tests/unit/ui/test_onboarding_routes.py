@@ -153,3 +153,67 @@ def test_schedule_shutdown_headless_falls_back_to_hard_exit(monkeypatch):
     req = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace()))
     onboarding_routes._schedule_app_shutdown(req)
     assert len(started) == 1  # armed exactly one delayed exit, nothing immediate
+
+
+# ---------------------------------------------------------------- complete → fresh restart
+# Maintainer request 2026-07-15: the first launch happens straight out of the
+# installer, so the process that hosted onboarding predates every configured
+# provider (language, wake word, API keys). Completing onboarding therefore
+# restarts the app fresh via the relauncher; hosts without a window (headless)
+# simply complete in place, and a restart failure never fails the request.
+
+
+def _client_with_desktop(desktop):
+    app = FastAPI()
+    app.include_router(onboarding_routes.router)
+    app.state.desktop_app = desktop
+    return TestClient(app)
+
+
+def test_complete_restarts_fresh_on_desktop(state_dir):
+    from types import SimpleNamespace
+
+    completed_when_restart_fired: list[bool] = []
+
+    def restart() -> bool:
+        # The completion marker must already be persisted when the restart
+        # fires, so the fresh instance can never re-open the gate.
+        completed_when_restart_fired.append(
+            onboarding_routes._safe_state_payload()["completed"]
+        )
+        return True
+
+    c = _client_with_desktop(SimpleNamespace(request_restart=restart))
+    r = c.post("/api/onboarding/complete")
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "restarting": True}
+    assert completed_when_restart_fired == [True]
+
+
+def test_complete_without_desktop_completes_in_place(client):
+    r = client.post("/api/onboarding/complete")
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "restarting": False}
+    assert client.get("/api/onboarding/state").json()["completed"] is True
+
+
+def test_complete_when_restart_reports_no_window(state_dir):
+    from types import SimpleNamespace
+
+    c = _client_with_desktop(SimpleNamespace(request_restart=lambda: False))
+    r = c.post("/api/onboarding/complete")
+    assert r.json() == {"ok": True, "restarting": False}
+    assert c.get("/api/onboarding/state").json()["completed"] is True
+
+
+def test_complete_survives_restart_failure(state_dir):
+    from types import SimpleNamespace
+
+    def boom() -> bool:
+        raise RuntimeError("relauncher spawn failed")
+
+    c = _client_with_desktop(SimpleNamespace(request_restart=boom))
+    r = c.post("/api/onboarding/complete")
+    assert r.status_code == 200
+    assert r.json() == {"ok": True, "restarting": False}
+    assert c.get("/api/onboarding/state").json()["completed"] is True

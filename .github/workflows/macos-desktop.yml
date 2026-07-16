@@ -1,0 +1,132 @@
+# Native macOS desktop verification on both supported processor families.
+# TCC dialogs require a signed, foreground GUI app and therefore cannot be
+# approved in CI. This workflow verifies the full dependency install, stable
+# bundle construction, permission fail-closed behavior, and Computer-Use math;
+# the release checklist retains one physical-Mac grant/click sign-off.
+
+name: macOS desktop
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/macos-desktop.yml"
+      - "install/**"
+      - "jarvis/cu/**"
+      - "jarvis/platform/**"
+      - "jarvis/setup/**"
+      - "jarvis/trigger/**"
+      - "jarvis/ui/**"
+      - "jarvis/vision/**"
+      - "pyproject.toml"
+      - "tests/**"
+      - "uv.lock"
+  workflow_dispatch:
+
+concurrency:
+  group: macos-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  desktop:
+    name: ${{ matrix.name }} / Python ${{ matrix.python }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Intel
+            runner: macos-15-intel
+            architecture: x86_64
+            python: "3.12"
+          - name: Apple Silicon
+            runner: macos-15
+            architecture: arm64
+            python: "3.13"
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 45
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Verify native architecture
+        shell: bash
+        run: |
+          python -c "import platform; actual=platform.machine(); expected='${{ matrix.architecture }}'; print(actual); assert actual == expected, (actual, expected)"
+
+      - name: Install the advertised full profile
+        shell: bash
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[full,dev]"
+
+      - name: Import native permission frameworks
+        run: python -c "import AVFoundation, ApplicationServices, AppKit, Foundation, HIServices, Quartz, ScreenCaptureKit"
+
+      - name: Verify headless TCC requests fail closed
+        shell: bash
+        run: |
+          python -c "from jarvis.platform.permissions import PermissionId, SystemPermissionPort; p=SystemPermissionPort(); s=p.snapshot(); assert s['platform']=='darwin'; op=p.request(PermissionId.MICROPHONE); assert not op.performed"
+
+      - name: Build and self-probe the native app identity
+        shell: bash
+        run: |
+          python - <<'PY'
+          import plistlib
+          import tempfile
+          from pathlib import Path
+
+          from jarvis.setup.macos_app_bundle import (
+              BUNDLE_ID,
+              ensure_macos_app_bundle,
+              macos_app_bundle_is_launchable,
+          )
+
+          with tempfile.TemporaryDirectory() as raw:
+              bundle = ensure_macos_app_bundle(
+                  install_dir=Path.cwd(),
+                  applications_dir=Path(raw),
+              )
+              assert bundle is not None
+              assert macos_app_bundle_is_launchable(bundle)
+              with (bundle / "Contents" / "Info.plist").open("rb") as stream:
+                  assert plistlib.load(stream)["CFBundleIdentifier"] == BUNDLE_ID
+          PY
+
+      - name: macOS permission, bundle, and Computer-Use tests
+        shell: bash
+        run: |
+          python -m pytest -q \
+            tests/unit/platform/test_permissions.py \
+            tests/unit/audio/test_capture_permission_gate.py \
+            tests/unit/ui/web/test_permissions_routes.py \
+            tests/unit/ui/test_desktop_macos_permission_gate.py \
+            tests/unit/setup/test_macos_app_bundle.py \
+            tests/unit/setup/test_desktop_integration.py \
+            tests/unit/autostart/test_macos.py \
+            tests/unit/autostart/test_command.py \
+            tests/unit/cu/test_geometry.py \
+            tests/unit/cu/test_actuate.py \
+            tests/unit/cu/test_capture.py \
+            tests/unit/cu/test_engine_loop.py \
+            tests/unit/cu/test_target_guard.py \
+            tests/unit/harness/test_action_registry.py \
+            tests/unit/platform/test_window_state.py \
+            tests/unit/platform/test_window_state_rects.py \
+            tests/unit/plugins/tool/test_click_foreground_guard.py \
+            tests/unit/plugins/tool/test_hotkey_tool.py \
+            tests/unit/plugins/tool/test_scroll.py \
+            tests/unit/plugins/tool/test_type_text.py \
+            tests/unit/vision/test_ax_tree.py \
+            tests/unit/vision/test_element_at_point.py \
+            tests/unit/vision/test_select_capture_monitor.py \
+            tests/unit/trigger/test_hotkey_backends.py

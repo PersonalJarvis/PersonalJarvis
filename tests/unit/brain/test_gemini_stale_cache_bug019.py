@@ -294,3 +294,51 @@ async def test_automatic_function_calling_is_disabled() -> None:
         "automatic_function_calling not set — Gemini will run its own tool loop"
     )
     assert getattr(afc, "disable", None) is True
+
+
+class _CumulativeUsageClient:
+    """Gemini repeats cumulative usage snapshots on multiple stream chunks."""
+
+    def __init__(self) -> None:
+        self.aio = SimpleNamespace(models=self)
+
+    async def generate_content_stream(
+        self,
+        *,
+        model: str,
+        contents: list[Any],
+        config: dict[str, Any],
+    ) -> AsyncIterator[Any]:
+        async def _stream() -> AsyncIterator[Any]:
+            for text, output_tokens in (("One", 1), (" two", 2), (" three", 3)):
+                yield SimpleNamespace(
+                    text=text,
+                    candidates=[],
+                    usage_metadata=SimpleNamespace(
+                        prompt_token_count=100,
+                        candidates_token_count=output_tokens,
+                        cached_content_token_count=40,
+                        thoughts_token_count=7,
+                        tool_use_prompt_token_count=5,
+                    ),
+                )
+
+        return _stream()
+
+
+@pytest.mark.asyncio
+async def test_cumulative_stream_usage_is_emitted_once_from_final_snapshot() -> None:
+    provider = GeminiBrain(model="gemini-3-flash-preview")
+    provider._client = _CumulativeUsageClient()  # type: ignore[assignment]
+    req = BrainRequest(messages=(BrainMessage(role="user", content="ping"),))
+
+    deltas = await _drain(provider.complete(req))
+    usage = [delta.usage for delta in deltas if delta.usage]
+
+    assert usage == [
+        {
+            "input_tokens": 65,
+            "output_tokens": 10,
+            "cache_hit_tokens": 40,
+        }
+    ]

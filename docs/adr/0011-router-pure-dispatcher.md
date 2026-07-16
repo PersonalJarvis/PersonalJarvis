@@ -967,8 +967,11 @@ instead of a probe-and-guess loop. Complementarily, `wiki-page-read`
 prepends a deterministic provenance warning when serving a `type: meta`
 page.
 
-The router remains a pure dispatcher: the tool is a direct safe-gated
-read, never a spawn, and never enters a worker tool set (AP-5/AP-14).
+The router remains a pure dispatcher: the tool is a direct safe-gated read,
+never a spawn. Jarvis-Agents may access it only through ADR-0025's
+mission-scoped supervisor broker; the live object and vault path remain in the
+supervisor, and it never enters a legacy worker tier or direct worker tool set
+(AP-5/AP-14).
 
 ### Regression guards
 

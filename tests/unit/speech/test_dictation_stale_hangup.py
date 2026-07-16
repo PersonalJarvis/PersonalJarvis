@@ -66,3 +66,13 @@ async def test_start_dictation_clears_stale_hangup() -> None:
         "start_dictation must clear a stale hangup so the session is not "
         "finalized on its first wait tick"
     )
+
+
+@pytest.mark.asyncio
+async def test_start_dictation_does_not_spawn_when_capture_gate_is_closed() -> None:
+    pipe = _make_idle_pipeline()
+    pipe._activation_gate = lambda: False
+
+    assert pipe.start_dictation() is False
+    assert pipe._dictation_task is None
+    assert pipe._hangup_event.is_set()

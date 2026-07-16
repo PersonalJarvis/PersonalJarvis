@@ -54,6 +54,7 @@ def client(tmp_path: Path) -> TestClient:
 def test_put_raw_writes_and_reloads(client: TestClient) -> None:
     raw = client.get("/api/profile/raw").json()
     assert raw["content"].startswith("---")
+    assert raw["path"] == "USER.md"
 
     new_content = raw["content"].replace("name: Alt", "name: Neu")
     res = client.put(
@@ -65,6 +66,7 @@ def test_put_raw_writes_and_reloads(client: TestClient) -> None:
     assert payload["ok"] is True
     assert payload["frontmatter_ok"] is True
     assert payload["reparsed"] is True
+    assert payload["path"] == "USER.md"
 
     # File on disk reflects the edit…
     assert client.get("/api/profile/raw").json()["content"] == new_content

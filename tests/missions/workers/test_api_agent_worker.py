@@ -115,6 +115,52 @@ async def test_worker_writes_file_and_emits_critic_readable_stream(
 
 
 @pytest.mark.asyncio
+async def test_worker_provider_call_uses_scoped_agent_key(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from jarvis.core import config as cfg
+
+    observed: list[str | None] = []
+
+    class _CredentialReadingBrain:
+        def can_call_tools(self) -> bool:
+            return True
+
+        async def complete(self, req):  # noqa: ANN001, ANN201
+            observed.append(cfg.get_provider_secret("openai"))
+            yield BrainDelta(content="done")
+
+    monkeypatch.setattr(
+        cfg,
+        "get_secret",
+        lambda key, *args, **kwargs: {
+            "jarvis_agent_openai_api_key": "agent-key",
+            "openai_api_key": "brain-key",
+            "realtime_openai_api_key": "realtime-key",
+        }.get(key),
+    )
+    monkeypatch.setattr(
+        "jarvis.missions.workers.api_agent_worker._build_brain",
+        lambda provider, model: _CredentialReadingBrain(),
+    )
+
+    events = await _drain(
+        ApiAgentWorker("openai"),
+        prompt="t",
+        worktree=tmp_path,
+        env={},
+        job=None,
+        worker_id="m::0",
+        log_dir=tmp_path / "_logs",
+        model="gpt-5.5",
+    )
+
+    assert events[-1].is_error is False
+    assert observed == ["agent-key"]
+    assert cfg.get_provider_secret("openai") == "brain-key"
+
+
+@pytest.mark.asyncio
 async def test_worker_run_command_is_async_and_mission_contained(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:

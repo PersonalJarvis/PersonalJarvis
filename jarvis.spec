@@ -41,6 +41,7 @@ if FRONTEND_DIST.exists():
 
 # Include the default configuration loaded by a fresh desktop installation.
 datas.append((str(PROJECT_ROOT / "jarvis.toml"), "."))
+datas.append((str(PROJECT_ROOT / "docs" / "product"), "docs/product"))
 
 # Include build-time desktop assets such as icons and chimes when present.
 assets_dir = PROJECT_ROOT / "assets"

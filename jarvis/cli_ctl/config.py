@@ -2,8 +2,7 @@
 
 A 'profile' is a (base_url, control_key) pair. Resolution is per-field:
   base_url:     JARVISCTL_BASE_URL -> config.json -> live session file -> default
-  control_key:  JARVISCTL_CONTROL_KEY -> config.json -> live session file ->
-                jarvis.core.control_key
+  control_key:  JARVISCTL_CONTROL_KEY -> config.json -> jarvis.core.control_key
 The live session file (written by the running desktop app, see
 ``jarvis.cli_ctl.discovery``) gives zero-config discovery of a locally running
 instance even on a non-default port. The local control_key fallback only helps
@@ -60,7 +59,6 @@ def resolve_profile() -> Profile:
     resolved_key = (
         os.environ.get("JARVISCTL_CONTROL_KEY")
         or data.get("control_key")
-        or (session.token if session else None)
         or _local_control_key()
     )
     return Profile(base_url=base_url, control_key=resolved_key)

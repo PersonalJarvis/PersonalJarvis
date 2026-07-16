@@ -1,0 +1,415 @@
+"""Unit coverage for the uncached macOS system-permission port."""
+
+from __future__ import annotations
+
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from jarvis.platform.permissions import (
+    EXPECTED_BUNDLE_ID,
+    PermissionId,
+    PermissionState,
+    SystemPermissionPort,
+)
+from jarvis.setup.macos_app_bundle import BUNDLE_ID
+
+
+class _Bundle:
+    def __init__(self, bundle_id: str | None = EXPECTED_BUNDLE_ID) -> None:
+        self._bundle_id = bundle_id
+
+    def bundleIdentifier(self) -> str | None:
+        return self._bundle_id
+
+    def bundlePath(self) -> str:
+        return str(Path.home() / "Applications" / "Personal Jarvis.app")
+
+
+class _RunningApp:
+    def __init__(self, *, active: bool = True, pid: int = 123) -> None:
+        self._active = active
+        self._pid = pid
+
+    def isActive(self) -> bool:
+        return self._active
+
+    def processIdentifier(self) -> int:
+        return self._pid
+
+
+class _Workspace:
+    def __init__(self, current: _RunningApp) -> None:
+        self.current = current
+        self.opened_urls: list[str] = []
+
+    def frontmostApplication(self) -> _RunningApp:
+        return self.current
+
+    def openURL_(self, url: str) -> bool:
+        self.opened_urls.append(url)
+        return True
+
+
+class _CaptureDevice:
+    status = 3
+    requests = 0
+
+    @classmethod
+    def authorizationStatusForMediaType_(cls, _media_type: str) -> int:
+        return cls.status
+
+    @classmethod
+    def requestAccessForMediaType_completionHandler_(cls, _media_type, callback):
+        cls.requests += 1
+        callback(True)
+
+
+def _native_modules(
+    *,
+    bundle_id: str | None = EXPECTED_BUNDLE_ID,
+    active: bool = True,
+) -> tuple[dict[str, object], dict[str, bool], _Workspace]:
+    current = _RunningApp(active=active)
+    workspace = _Workspace(current)
+    screen = {"granted": False, "requested": False}
+    event = {"listen": False, "post": False}
+    ax = {"trusted": True, "prompted": False}
+
+    def request_screen() -> bool:
+        screen["requested"] = True
+        screen["granted"] = True
+        return True
+
+    def request_listen() -> bool:
+        event["listen"] = True
+        return True
+
+    def request_post() -> bool:
+        event["post"] = True
+        return True
+
+    def request_ax(options: dict[str, bool]) -> bool:
+        ax["prompted"] = bool(options["prompt"])
+        return ax["trusted"]
+
+    modules = {
+        "Foundation": SimpleNamespace(
+            NSBundle=SimpleNamespace(mainBundle=lambda: _Bundle(bundle_id)),
+            NSURL=SimpleNamespace(URLWithString_=lambda value: value),
+        ),
+        "AppKit": SimpleNamespace(
+            NSWorkspace=SimpleNamespace(sharedWorkspace=lambda: workspace),
+            NSRunningApplication=SimpleNamespace(currentApplication=lambda: current),
+        ),
+        "AVFoundation": SimpleNamespace(
+            AVCaptureDevice=_CaptureDevice,
+            AVMediaTypeAudio="audio",
+            AVAuthorizationStatusNotDetermined=0,
+            AVAuthorizationStatusRestricted=1,
+            AVAuthorizationStatusDenied=2,
+            AVAuthorizationStatusAuthorized=3,
+        ),
+        "Quartz": SimpleNamespace(
+            CGPreflightScreenCaptureAccess=lambda: screen["granted"],
+            CGRequestScreenCaptureAccess=request_screen,
+            CGPreflightListenEventAccess=lambda: event["listen"],
+            CGRequestListenEventAccess=request_listen,
+            CGPreflightPostEventAccess=lambda: event["post"],
+            CGRequestPostEventAccess=request_post,
+        ),
+        "ApplicationServices": SimpleNamespace(
+            AXIsProcessTrusted=lambda: ax["trusted"],
+            AXIsProcessTrustedWithOptions=request_ax,
+            kAXTrustedCheckOptionPrompt="prompt",
+        ),
+    }
+    return modules, screen, workspace
+
+
+def _port(modules: dict[str, object]) -> SystemPermissionPort:
+    def load(name: str) -> object:
+        if name not in modules:
+            raise ModuleNotFoundError(name)
+        return modules[name]
+
+    return SystemPermissionPort(platform_name="darwin", module_loader=load)
+
+
+def _permission(snapshot: dict, permission_id: PermissionId) -> dict:
+    return next(item for item in snapshot["permissions"] if item["id"] == permission_id)
+
+
+def test_permission_bundle_id_matches_installed_app_identity() -> None:
+    assert EXPECTED_BUNDLE_ID == BUNDLE_ID
+
+
+def test_matching_bundle_id_at_noncanonical_path_is_not_stable(tmp_path: Path) -> None:
+    modules, _, _ = _native_modules()
+    copied_bundle = SimpleNamespace(
+        bundleIdentifier=lambda: EXPECTED_BUNDLE_ID,
+        bundlePath=lambda: str(tmp_path / "Personal Jarvis.app"),
+    )
+    modules["Foundation"].NSBundle = SimpleNamespace(
+        mainBundle=lambda: copied_bundle
+    )
+
+    assert _port(modules).snapshot()["app_identity"]["stable"] is False
+
+
+def test_non_macos_degrades_to_not_required_without_native_imports() -> None:
+    imports: list[str] = []
+    port = SystemPermissionPort(
+        platform_name="win32", module_loader=lambda name: imports.append(name)
+    )
+
+    snapshot = port.snapshot()
+
+    assert imports == []
+    assert snapshot["supported"] is False
+    assert {item["status"] for item in snapshot["permissions"]} == {PermissionState.NOT_REQUIRED}
+    assert all(feature["ready"] for feature in snapshot["features"].values())
+
+
+def test_snapshot_maps_native_states_and_feature_readiness() -> None:
+    _CaptureDevice.status = 3
+    modules, _, _ = _native_modules()
+
+    snapshot = _port(modules).snapshot()
+
+    assert snapshot["app_identity"]["stable"] is True
+    assert snapshot["app_identity"]["foreground"] is True
+    assert _permission(snapshot, PermissionId.MICROPHONE)["status"] == "granted"
+    assert _permission(snapshot, PermissionId.SCREEN_RECORDING)["status"] == ("not_granted")
+    assert snapshot["features"]["voice"] == {
+        "ready": True,
+        "missing": [],
+        "identity_ready": True,
+        "restart_required": False,
+    }
+    assert snapshot["features"]["computer_use"] == {
+        "ready": False,
+        "missing": ["screen_recording", "event_posting"],
+        "identity_ready": True,
+        "restart_required": False,
+    }
+
+
+def test_snapshot_is_uncached() -> None:
+    modules, screen, _ = _native_modules()
+    port = _port(modules)
+
+    assert _permission(port.snapshot(), PermissionId.SCREEN_RECORDING)["status"] == "not_granted"
+    screen["granted"] = True
+    assert _permission(port.snapshot(), PermissionId.SCREEN_RECORDING)["status"] == "granted"
+
+
+def test_state_probes_only_the_requested_permission() -> None:
+    _CaptureDevice.status = 3
+    modules, _, _ = _native_modules()
+    imports: list[str] = []
+
+    def load(name: str) -> object:
+        imports.append(name)
+        return modules[name]
+
+    port = SystemPermissionPort(platform_name="darwin", module_loader=load)
+
+    assert port.state("microphone") is PermissionState.GRANTED
+    assert imports == ["AVFoundation"]
+
+
+def test_runtime_access_requires_stable_identity_and_fresh_grant() -> None:
+    _CaptureDevice.status = 3
+    modules, _, _ = _native_modules()
+    stable = _port(modules)
+    unstable_modules, _, _ = _native_modules(bundle_id="org.python.python")
+
+    assert stable.runtime_access_granted(PermissionId.MICROPHONE) is True
+    assert (
+        _port(unstable_modules).runtime_access_granted(PermissionId.MICROPHONE)
+        is False
+    )
+    _CaptureDevice.status = 2
+    assert stable.runtime_access_granted(PermissionId.MICROPHONE) is False
+
+
+def test_runtime_access_blocks_pending_restart_even_after_native_grant() -> None:
+    modules, _, _ = _native_modules()
+    port = _port(modules)
+
+    result = port.request(PermissionId.SCREEN_RECORDING)
+
+    assert result.ok is True
+    assert port.state(PermissionId.SCREEN_RECORDING) is PermissionState.GRANTED
+    assert port.runtime_access_granted(PermissionId.SCREEN_RECORDING) is False
+
+
+def test_microphone_status_distinguishes_denied_and_restricted() -> None:
+    modules, _, _ = _native_modules()
+    port = _port(modules)
+
+    _CaptureDevice.status = 2
+    denied = _permission(port.snapshot(), PermissionId.MICROPHONE)
+    _CaptureDevice.status = 1
+    restricted = _permission(port.snapshot(), PermissionId.MICROPHONE)
+
+    assert denied["status"] == "denied"
+    assert denied["can_request"] is False
+    assert restricted["status"] == "restricted"
+    assert restricted["can_request"] is False
+
+
+def test_request_screen_capture_calls_native_api_and_requires_restart() -> None:
+    modules, screen, _ = _native_modules()
+
+    result = _port(modules).request(PermissionId.SCREEN_RECORDING)
+
+    assert result.ok is True
+    assert result.performed is True
+    assert result.restart_required is True
+    assert screen["requested"] is True
+    assert result.snapshot["restart_required"] is True
+    assert _permission(result.snapshot, PermissionId.SCREEN_RECORDING)["restart_required"] is True
+
+
+def test_restart_requirement_persists_until_the_process_restarts() -> None:
+    modules, _, _ = _native_modules()
+    port = _port(modules)
+
+    port.request(PermissionId.SCREEN_RECORDING)
+    later = port.snapshot()
+
+    assert later["restart_required"] is True
+    assert _permission(later, PermissionId.SCREEN_RECORDING)["restart_required"] is True
+
+
+def test_request_microphone_uses_avfoundation_callback_api() -> None:
+    _CaptureDevice.status = 0
+    _CaptureDevice.requests = 0
+    modules, _, _ = _native_modules()
+
+    result = _port(modules).request(PermissionId.MICROPHONE)
+
+    assert result.ok is True
+    assert result.performed is True
+    assert result.restart_required is False
+    assert _CaptureDevice.requests == 1
+
+
+def test_request_accessibility_uses_prompt_option() -> None:
+    modules, _, _ = _native_modules()
+    calls: list[dict[str, bool]] = []
+    modules["ApplicationServices"] = SimpleNamespace(
+        AXIsProcessTrusted=lambda: False,
+        AXIsProcessTrustedWithOptions=lambda options: calls.append(options),
+        kAXTrustedCheckOptionPrompt="prompt",
+    )
+
+    result = _port(modules).request(PermissionId.ACCESSIBILITY)
+
+    assert result.ok is True
+    assert result.performed is True
+    assert result.restart_required is True
+    assert result.snapshot["features"]["global_hotkeys"]["restart_required"] is True
+    assert result.snapshot["features"]["global_hotkeys"]["ready"] is False
+    assert calls == [{"prompt": True}]
+
+
+@pytest.mark.parametrize(
+    "permission_id,request_name",
+    [
+        (PermissionId.INPUT_MONITORING, "CGRequestListenEventAccess"),
+        (PermissionId.EVENT_POSTING, "CGRequestPostEventAccess"),
+    ],
+)
+def test_request_event_permissions_use_coregraphics(
+    permission_id: PermissionId, request_name: str
+) -> None:
+    modules, _, _ = _native_modules()
+    calls: list[str] = []
+    setattr(modules["Quartz"], request_name, lambda: calls.append(request_name))
+
+    result = _port(modules).request(permission_id)
+
+    assert result.ok is True
+    assert result.performed is True
+    assert calls == [request_name]
+
+
+def test_legacy_macos_event_posting_falls_back_to_accessibility_prompt() -> None:
+    modules, _, _ = _native_modules()
+    delattr(modules["Quartz"], "CGPreflightPostEventAccess")
+    delattr(modules["Quartz"], "CGRequestPostEventAccess")
+    calls: list[dict[str, bool]] = []
+    modules["ApplicationServices"] = SimpleNamespace(
+        AXIsProcessTrusted=lambda: False,
+        AXIsProcessTrustedWithOptions=lambda options: calls.append(options),
+        kAXTrustedCheckOptionPrompt="prompt",
+    )
+
+    result = _port(modules).request(PermissionId.EVENT_POSTING)
+
+    assert result.ok is True
+    assert result.performed is True
+    assert calls == [{"prompt": True}]
+
+
+def test_request_refuses_unstable_or_background_identity() -> None:
+    modules, screen, _ = _native_modules(bundle_id="org.python.python")
+    unstable = _port(modules).request(PermissionId.SCREEN_RECORDING)
+    modules, _, _ = _native_modules(active=False)
+    background = _port(modules).request(PermissionId.SCREEN_RECORDING)
+
+    assert unstable.ok is False
+    assert "Terminal or Python" in unstable.message
+    assert background.ok is False
+    assert "foreground" in background.message
+    assert screen["requested"] is False
+
+
+def test_dry_run_never_invokes_native_request() -> None:
+    modules, screen, _ = _native_modules()
+
+    result = _port(modules).request(PermissionId.SCREEN_RECORDING, dry_run=True)
+
+    assert result.ok is True
+    assert result.dry_run is True
+    assert result.performed is False
+    assert screen["requested"] is False
+
+
+def test_open_settings_uses_permission_specific_launchservices_url() -> None:
+    modules, _, workspace = _native_modules()
+
+    result = _port(modules).open_settings(PermissionId.INPUT_MONITORING)
+
+    assert result.ok is True
+    assert result.performed is True
+    assert workspace.opened_urls == [
+        "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent"
+    ]
+
+
+def test_missing_framework_reports_unavailable_without_raising() -> None:
+    modules, _, _ = _native_modules()
+    del modules["Quartz"]
+
+    snapshot = _port(modules).snapshot()
+
+    assert _permission(snapshot, PermissionId.SCREEN_RECORDING)["status"] == ("unavailable")
+    assert snapshot["features"]["computer_use"]["ready"] is False
+
+
+def test_broken_native_bridge_import_fails_closed() -> None:
+    def broken_loader(_name: str) -> object:
+        raise OSError("incompatible native framework")
+
+    port = SystemPermissionPort(platform_name="darwin", module_loader=broken_loader)
+
+    snapshot = port.snapshot()
+
+    assert snapshot["app_identity"]["stable"] is False
+    assert {item["status"] for item in snapshot["permissions"]} == {"unavailable"}
+    assert all(not feature["ready"] for feature in snapshot["features"].values())

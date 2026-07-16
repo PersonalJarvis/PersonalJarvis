@@ -21,7 +21,13 @@ import os
 from typing import Any
 
 from jarvis.core.protocols import ExecutionContext, ToolResult
-from jarvis.plugins.tool.click import _click_windows
+from jarvis.plugins.tool.click import (
+    _click_windows,
+    _window_signature_matches,
+)
+from jarvis.plugins.tool.click import (
+    _foreground_window_signature as _click_foreground_window_signature,
+)
 
 # Re-export ``_click_windows`` as a module global so tests can patch it via
 # ``monkeypatch.setattr("jarvis.plugins.tool.click_element._click_windows", ...)``.
@@ -29,6 +35,11 @@ __all__ = ["ClickElementTool", "_click_windows"]
 
 _VALID_BUTTONS = ("left", "right", "middle")
 _MAX_AVAILABLE_NAMES = 15
+
+
+def _foreground_window_signature() -> tuple[Any, ...]:
+    """Re-exported seam for tests; implementation is shared with raw click."""
+    return _click_foreground_window_signature()
 
 
 class ClickElementTool:
@@ -123,6 +134,36 @@ class ClickElementTool:
             )
 
         source = self._vision_source or make_ui_tree_source()
+        observed_signature = _foreground_window_signature()
+        if observed_signature[0] == "none":
+            return ToolResult(
+                success=False,
+                output=None,
+                error=(
+                    "Refusing click_element: the foreground window identity "
+                    "is unavailable."
+                ),
+            )
+        expected_raw = args.get("_expected_window_signature")
+        if expected_raw is not None:
+            if not isinstance(expected_raw, (list, tuple)):
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error="Refusing click_element: invalid captured-window identity.",
+                )
+            expected_signature = tuple(expected_raw)
+            if observed_signature != expected_signature:
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=(
+                        "Refusing click_element: the foreground window changed "
+                        "after the screenshot."
+                    ),
+                )
+        else:
+            expected_signature = observed_signature
         try:
             obs = await source.observe()
         except Exception as exc:  # noqa: BLE001
@@ -178,10 +219,31 @@ class ClickElementTool:
         cx = x + w // 2
         cy = y + h // 2
 
+        # Observation is asynchronous (AX/UIA can block). Bind the selected
+        # node to the window current before observation and, for CU, to the
+        # exact window captured by the engine. A same-labelled control in a
+        # newly focused app must never receive the stale click.
+        if _foreground_window_signature() != expected_signature:
+            return ToolResult(
+                success=False,
+                output=None,
+                error=(
+                    "Refusing click_element: the foreground window changed "
+                    "while its UI tree was being observed."
+                ),
+            )
+
         # 5. Click — native on Windows, pyautogui fallback elsewhere.
         if os.name == "nt":
             try:
-                await asyncio.to_thread(_click_windows, cx, cy, button, double)
+                await asyncio.to_thread(
+                    _click_windows,
+                    cx,
+                    cy,
+                    button,
+                    double,
+                    expected_window_signature=expected_signature,
+                )
             except (ValueError, OSError) as exc:
                 return ToolResult(
                     success=False,
@@ -192,16 +254,32 @@ class ClickElementTool:
             # Capability probe instead of a raw pyautogui import: Wayland /
             # headless / missing-deps hosts get the actionable
             # ActuationUnavailable message (§3 honest degradation).
-            from jarvis.cu.actuate.base import ActuationUnavailable, get_actuator
+            from jarvis.cu.actuate.base import (
+                ActuationUnavailable,
+                get_actuator,
+                verified_click,
+            )
 
             try:
                 actuator = get_actuator()
             except ActuationUnavailable as exc:
                 return ToolResult(success=False, output=None, error=str(exc))
             try:
-                await asyncio.to_thread(
-                    actuator.click, cx, cy, button=button, double=double
+                landing = await asyncio.to_thread(
+                    verified_click,
+                    actuator,
+                    cx,
+                    cy,
+                    button=button,
+                    double=double,
+                    pre_action_check=lambda: _window_signature_matches(
+                        expected_signature,
+                    ),
                 )
+                if not landing.ok:
+                    return ToolResult(
+                        success=False, output=None, error=landing.detail,
+                    )
             except Exception as exc:  # noqa: BLE001
                 return ToolResult(success=False, output=None, error=str(exc))
 

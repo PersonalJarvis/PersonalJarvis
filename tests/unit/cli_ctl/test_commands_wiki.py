@@ -71,3 +71,31 @@ def test_reindex(capture_api):
 def test_reindex_preview(capture_api):
     runner.invoke(app, ["wiki", "reindex", "--preview"])
     assert capture_api["calls"][-1]["query"]["dry_run"] == "true"
+
+
+def test_backfill_requires_confirmation_for_model_write(capture_api):
+    result = runner.invoke(app, ["wiki", "backfill"], input="n\n")
+    assert result.exit_code != 0
+    assert capture_api["calls"] == []
+
+
+def test_backfill_sends_bounded_request_with_yes(capture_api):
+    result = runner.invoke(
+        app,
+        ["wiki", "backfill", "--days", "3", "--max-sessions", "7", "--yes"],
+    )
+    assert result.exit_code == 0
+    call = capture_api["calls"][-1]
+    assert call["method"] == "POST"
+    assert call["path"] == "/api/wiki/backfill"
+    assert call["body"] == {
+        "days": 3,
+        "max_sessions": 7,
+        "dry_run": False,
+    }
+
+
+def test_backfill_preview_is_non_destructive(capture_api):
+    result = runner.invoke(app, ["wiki", "backfill", "--preview"])
+    assert result.exit_code == 0
+    assert capture_api["calls"][-1]["body"]["dry_run"] is True

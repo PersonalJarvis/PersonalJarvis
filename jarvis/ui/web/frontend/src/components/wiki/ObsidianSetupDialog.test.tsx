@@ -22,6 +22,7 @@ import {
 } from "@testing-library/react";
 
 import { ObsidianSetupDialog } from "@/components/wiki/ObsidianSetupDialog";
+import { useEventStore } from "@/store/events";
 import type { ObsidianStatus } from "@/types/setup";
 
 afterEach(() => {
@@ -41,7 +42,7 @@ const STATUS_NOT_INSTALLED: ObsidianStatus = {
   version: null,
   config_exists: false,
   vault_registered: false,
-  vault_path: "<USER_HOME>/wiki/obsidian-vault",
+  vault_path: "C:/Users/TestUser/wiki/obsidian-vault",
   recommended_action: "install_obsidian",
 };
 
@@ -50,7 +51,7 @@ const STATUS_NOT_REGISTERED: ObsidianStatus = {
   version: "1.7.4",
   config_exists: true,
   vault_registered: false,
-  vault_path: "<USER_HOME>/wiki/obsidian-vault",
+  vault_path: "C:/Users/TestUser/wiki/obsidian-vault",
   recommended_action: "register_vault",
 };
 
@@ -59,13 +60,13 @@ const STATUS_OK: ObsidianStatus = {
   version: "1.7.4",
   config_exists: true,
   vault_registered: true,
-  vault_path: "<USER_HOME>/wiki/obsidian-vault",
+  vault_path: "C:/Users/TestUser/wiki/obsidian-vault",
   recommended_action: "ok",
 };
 
 const VAULTS = [
-  { path: "<USER_HOME>/Notes", name: "Notes" },
-  { path: "<USER_HOME>/Work", name: "Work" },
+  { path: "C:/Users/TestUser/Notes", name: "Notes" },
+  { path: "C:/Users/TestUser/Work", name: "Work" },
 ];
 
 /**
@@ -202,7 +203,9 @@ describe("ObsidianSetupDialog", () => {
     expect(screen.queryByTestId("obsidian-setup-step-3")).toBeNull();
   });
 
-  it("clicking 'Register now' with 500 shows error + help link", async () => {
+  it("opens the matching in-app guide when registration fails", async () => {
+    const onClose = vi.fn();
+    useEventStore.setState({ activeSection: "memory" });
     const fetchImpl = vi.fn(async () =>
       jsonResponse(
         {
@@ -217,7 +220,7 @@ describe("ObsidianSetupDialog", () => {
     render(
       <ObsidianSetupDialog
         open
-        onClose={() => {}}
+        onClose={onClose}
         initialStatus={STATUS_NOT_REGISTERED}
         fetchImpl={fetchImpl}
       />,
@@ -228,7 +231,12 @@ describe("ObsidianSetupDialog", () => {
     });
     const errBox = screen.getByTestId("obsidian-setup-register-error");
     expect(errBox.textContent).toContain("disk full");
-    expect(screen.getByTestId("obsidian-setup-help-link")).toBeDefined();
+    fireEvent.click(screen.getByTestId("obsidian-setup-help-link"));
+    expect(useEventStore.getState().activeSection).toBe("docs");
+    expect(new URL(window.location.href).searchParams.get("doc")).toBe(
+      "connect-obsidian",
+    );
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 
   it("clicking 'Open in Obsidian' sets window.location.href to obsidian://...", () => {
@@ -338,7 +346,7 @@ describe("ObsidianSetupDialog", () => {
     it("renders both vault-choice options, 'existing' enabled once the vault list loads", async () => {
       const fetchImpl = makeVaultAwareFetch(VAULTS, {
         status: "added",
-        active_vault_root: "<USER_HOME>/wiki/obsidian-vault",
+        active_vault_root: "C:/Users/TestUser/wiki/obsidian-vault",
         restart_required: false,
       });
       render(
@@ -368,7 +376,7 @@ describe("ObsidianSetupDialog", () => {
     it("choosing 'existing' + a vault registers with mode=existing and shows the target path", async () => {
       const fetchImpl = makeVaultAwareFetch(VAULTS, {
         status: "added",
-        active_vault_root: "<USER_HOME>/Work/Jarvis",
+        active_vault_root: "C:/Users/TestUser/Work/Jarvis",
         restart_required: true,
       });
       render(
@@ -410,7 +418,7 @@ describe("ObsidianSetupDialog", () => {
         expect(screen.getByTestId("obsidian-setup-step-3")).toBeDefined();
       });
       const target = screen.getByTestId("obsidian-setup-active-vault-root");
-      expect(target.textContent).toContain("<USER_HOME>/Work/Jarvis");
+      expect(target.textContent).toContain("C:/Users/TestUser/Work/Jarvis");
       expect(screen.getByTestId("obsidian-setup-restart-hint")).toBeDefined();
     });
 
@@ -420,7 +428,7 @@ describe("ObsidianSetupDialog", () => {
       // separate-vault path from `initialStatus`.
       const fetchImpl = makeVaultAwareFetch(VAULTS, {
         status: "added",
-        active_vault_root: "<USER_HOME>/Work/Jarvis",
+        active_vault_root: "C:/Users/TestUser/Work/Jarvis",
         restart_required: true,
       });
       let lastHref: string | null = null;
@@ -465,7 +473,7 @@ describe("ObsidianSetupDialog", () => {
         fireEvent.click(screen.getByTestId("obsidian-setup-launch"));
         expect(lastHref).not.toBeNull();
         expect(lastHref!).toBe(
-          `obsidian://open?path=${encodeURIComponent("<USER_HOME>/Work/Jarvis")}`,
+          `obsidian://open?path=${encodeURIComponent("C:/Users/TestUser/Work/Jarvis")}`,
         );
       } finally {
         Object.defineProperty(window, "location", {
@@ -478,7 +486,7 @@ describe("ObsidianSetupDialog", () => {
     it("clicking 'Restart now' POSTs to the shared restart-app endpoint", async () => {
       const fetchImpl = makeVaultAwareFetch(VAULTS, {
         status: "added",
-        active_vault_root: "<USER_HOME>/Notes/Jarvis",
+        active_vault_root: "C:/Users/TestUser/Notes/Jarvis",
         restart_required: true,
       });
       render(
@@ -512,7 +520,7 @@ describe("ObsidianSetupDialog", () => {
       const fetchImpl = makeVaultAwareFetch(VAULTS, {
         status: "config_missing",
         error: "existing vault path not found",
-        active_vault_root: "<USER_HOME>/wiki/obsidian-vault",
+        active_vault_root: "C:/Users/TestUser/wiki/obsidian-vault",
         restart_required: false,
       });
       render(

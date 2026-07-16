@@ -8,8 +8,9 @@ with a dedicated delegation persona) and only then falls back to a small
 bilingual no-repeat pool. Guarantees under test:
 
 * never raises, never returns an empty string (AD-OE6 zero silent drops)
-* candidate/LLM output is validated: short, right language, no completion
-  claims, no internal component names, voice-scrubbed
+* candidate/LLM output is validated: short, right language, the public
+  ``Jarvis-Agent`` label is explicit, no completion claims, no internal
+  component names, voice-scrubbed
 * de + en both work; the language follows the user's turn
 * the fallback pool never repeats the same phrase back-to-back
 """
@@ -182,6 +183,18 @@ def test_pool_phrases_pass_own_validation_and_ban_old_template() -> None:
             assert "vom User beschriebenen Workflow" not in phrase
 
 
+def test_agent_status_pools_name_jarvis_agent_exactly_once() -> None:
+    """Spawn and duplicate-status fallbacks must identify the delegated actor.
+
+    The phrasing may rotate freely, but it must never leave the user guessing
+    whether Jarvis is merely thinking or has started a background agent.
+    """
+    for pool_by_language in (_FALLBACK_SPAWN, _FALLBACK_ALREADY_RUNNING):
+        for pool in pool_by_language.values():
+            for phrase in pool:
+                assert phrase.lower().count("jarvis-agent") == 1, phrase
+
+
 def test_es_pools_survive_voice_scrubbing() -> None:
     """The Spanish pools are returned deterministically (never through
     ``_validate`` — ``_detect_language`` only knows de/en/unknown), so guard the
@@ -229,7 +242,7 @@ _SUBSTANCE_CUES: dict[str, tuple[str, ...]] = {
     ),
     "es": (
         "más grande", "momento", "chicha", "más de trabajo", "poco de tiempo",
-        "a fondo", "algo más", "momentito", "buen vistazo", "sólido",
+        "a fondo", "algo más", "más amplio", "momentito", "buen vistazo", "sólido",
     ),
 }
 
@@ -267,7 +280,7 @@ def test_still_running_phrases_cover_all_languages() -> None:
 @pytest.mark.asyncio
 async def test_provider_text_is_used_when_valid() -> None:
     provider = _FakeProvider(
-        reply="Ich schaue gleich in dein Gmail und sage dir Bescheid."
+        reply="Ein Jarvis-Agent schaut gleich in dein Gmail und sagt dir Bescheid."
     )
     composer = _composer(provider)
     out = await composer.compose(
@@ -281,7 +294,7 @@ async def test_provider_text_is_used_when_valid() -> None:
 @pytest.mark.asyncio
 async def test_provider_gets_de_persona_for_german_turn() -> None:
     """Language unset → composer detects German from the utterance."""
-    provider = _FakeProvider(reply="Ich schaue gleich in dein Gmail rein.")
+    provider = _FakeProvider(reply="Ein Jarvis-Agent schaut gleich in dein Gmail rein.")
     composer = _composer(provider)
     await composer.compose(
         utterance="Schau bitte nach, ob die Rechnung schon da ist und was drinsteht."
@@ -291,7 +304,9 @@ async def test_provider_gets_de_persona_for_german_turn() -> None:
 
 @pytest.mark.asyncio
 async def test_provider_gets_en_persona_for_english_turn() -> None:
-    provider = _FakeProvider(reply="Checking your Gmail in the background now.")
+    provider = _FakeProvider(
+        reply="A Jarvis-Agent is checking your Gmail in the background now."
+    )
     composer = _composer(provider)
     await composer.compose(
         utterance="Check my Gmail for new mail.", language="en"
@@ -301,7 +316,9 @@ async def test_provider_gets_en_persona_for_english_turn() -> None:
 
 @pytest.mark.asyncio
 async def test_provider_content_includes_interpreted_action() -> None:
-    provider = _FakeProvider(reply="Ich prüfe gleich deine Gmail-Inbox.")
+    provider = _FakeProvider(
+        reply="Ein Jarvis-Agent prüft gleich deine Gmail-Inbox."
+    )
     composer = _composer(provider)
     await composer.compose(
         utterance="Schau da bitte mal rein.",
@@ -349,13 +366,13 @@ async def test_overlong_reply_is_trimmed_to_leading_sentences() -> None:
     """Two sentences, the second pushing past the word cap: keep sentence 1."""
     long_tail = " ".join(["und"] * 30)
     provider = _FakeProvider(
-        reply=f"Ich schaue kurz in dein Gmail. Danach {long_tail}."
+        reply=f"Ein Jarvis-Agent schaut kurz in dein Gmail. Danach {long_tail}."
     )
     composer = _composer(provider)
     out = await composer.compose(
         utterance="Schau in mein Gmail.", language="de"
     )
-    assert out == "Ich schaue kurz in dein Gmail."
+    assert out == "Ein Jarvis-Agent schaut kurz in dein Gmail."
 
 
 @pytest.mark.asyncio
@@ -457,7 +474,7 @@ async def test_fallback_provider_used_when_primary_exhausted() -> None:
     announcement to a generic stock line."""
     primary = _FakeProvider(reply=None)
     fallback = _FakeProvider(
-        reply="Ich gebe das Thema Gmail gerade an meinen Helfer weiter."
+        reply="Ein Jarvis-Agent übernimmt gerade das Thema Gmail."
     )
     composer = _composer_with_fallback(primary, fallback)
     out = await composer.compose(
@@ -472,35 +489,41 @@ async def test_fallback_provider_used_when_primary_exhausted() -> None:
 @pytest.mark.asyncio
 async def test_fallback_provider_used_when_primary_errors() -> None:
     primary = _FakeProvider(raises=True)
-    fallback = _FakeProvider(reply="Ich kümmere mich gleich um dein Gmail.")
+    fallback = _FakeProvider(
+        reply="Ein Jarvis-Agent kümmert sich gleich um dein Gmail."
+    )
     composer = _composer_with_fallback(primary, fallback)
     out = await composer.compose(
         utterance="Schau in mein Gmail.", language="de"
     )
-    assert out == "Ich kümmere mich gleich um dein Gmail."
+    assert out == "Ein Jarvis-Agent kümmert sich gleich um dein Gmail."
     assert len(fallback.calls) == 1
 
 
 @pytest.mark.asyncio
 async def test_fallback_provider_used_when_primary_times_out() -> None:
     primary = _FakeProvider(reply="Ich schaue in dein Gmail.", delay_s=0.5)
-    fallback = _FakeProvider(reply="Ich nehme mir dein Gmail gleich vor.")
+    fallback = _FakeProvider(
+        reply="Ein Jarvis-Agent nimmt sich dein Gmail gleich vor."
+    )
     composer = _composer_with_fallback(primary, fallback, timeout_ms=100)
     out = await composer.compose(
         utterance="Schau in mein Gmail.", language="de"
     )
-    assert out == "Ich nehme mir dein Gmail gleich vor."
+    assert out == "Ein Jarvis-Agent nimmt sich dein Gmail gleich vor."
 
 
 @pytest.mark.asyncio
 async def test_primary_success_skips_fallback() -> None:
-    primary = _FakeProvider(reply="Ich schaue gleich in dein Gmail.")
+    primary = _FakeProvider(
+        reply="Ein Jarvis-Agent schaut gleich in dein Gmail."
+    )
     fallback = _FakeProvider(reply="should never be reached")
     composer = _composer_with_fallback(primary, fallback)
     out = await composer.compose(
         utterance="Schau in mein Gmail.", language="de"
     )
-    assert out == "Ich schaue gleich in dein Gmail."
+    assert out == "Ein Jarvis-Agent schaut gleich in dein Gmail."
     assert fallback.calls == []
 
 
@@ -522,7 +545,9 @@ async def test_open_primary_breaker_still_consults_fallback() -> None:
     """An open primary breaker (dead provider already tripped it) must not kill
     the context-aware path — the failover is still consulted before the pool."""
     primary = _FakeProvider(reply="primary text")
-    fallback = _FakeProvider(reply="Ich nehme mir dein Gmail gleich vor.")
+    fallback = _FakeProvider(
+        reply="Ein Jarvis-Agent nimmt sich dein Gmail gleich vor."
+    )
     primary_breaker = CircuitBreaker(threshold=1, cooldown_s=60)
     await primary_breaker.record_failure()  # opens immediately at threshold=1
     composer = _composer_with_fallback(
@@ -532,7 +557,7 @@ async def test_open_primary_breaker_still_consults_fallback() -> None:
         utterance="Schau in mein Gmail.", language="de"
     )
     assert primary.calls == []  # primary skipped (breaker open)
-    assert out == "Ich nehme mir dein Gmail gleich vor."
+    assert out == "Ein Jarvis-Agent nimmt sich dein Gmail gleich vor."
     assert len(fallback.calls) == 1
 
 
@@ -548,7 +573,7 @@ async def test_valid_candidate_short_circuits_llm() -> None:
     out = await composer.compose(
         utterance="Schau in mein Gmail.",
         language="de",
-        candidate="Ich gehe gleich durch dein Gmail und melde mich.",
+        candidate="Ein Jarvis-Agent geht gleich durch dein Gmail und meldet sich.",
     )
     assert "Gmail" in out
     assert provider.calls == []
@@ -556,14 +581,34 @@ async def test_valid_candidate_short_circuits_llm() -> None:
 
 @pytest.mark.asyncio
 async def test_invalid_candidate_falls_through_to_llm() -> None:
-    provider = _FakeProvider(reply="Ich schaue gleich in dein Gmail rein.")
+    provider = _FakeProvider(
+        reply="Ein Jarvis-Agent schaut gleich in dein Gmail rein."
+    )
     composer = _composer(provider)
     out = await composer.compose(
         utterance="Schau in mein Gmail.",
         language="de",
         candidate="Erledigt.",  # completion claim — must be rejected
     )
-    assert out == "Ich schaue gleich in dein Gmail rein."
+    assert out == "Ein Jarvis-Agent schaut gleich in dein Gmail rein."
+    assert len(provider.calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_candidate_without_public_agent_label_is_rejected() -> None:
+    """Natural but ambiguous background wording must not bypass the contract."""
+    provider = _FakeProvider(
+        reply="Ein Jarvis-Agent schaut gründlich in dein Gmail."
+    )
+    composer = _composer(provider)
+
+    out = await composer.compose(
+        utterance="Schau in mein Gmail.",
+        language="de",
+        candidate="Ich kümmere mich im Hintergrund darum und melde mich.",
+    )
+
+    assert out == "Ein Jarvis-Agent schaut gründlich in dein Gmail."
     assert len(provider.calls) == 1
 
 

@@ -1951,6 +1951,12 @@ def _save_user_screenshot() -> Path | None:
     a capture error) so the caller falls through to the interactive loop with no
     regression."""
     try:
+        from jarvis.vision.screenshot import (  # noqa: PLC0415
+            warn_if_screen_recording_denied,
+        )
+
+        if warn_if_screen_recording_denied():
+            return None
         import mss  # noqa: PLC0415
         from PIL import Image  # noqa: PLC0415
 

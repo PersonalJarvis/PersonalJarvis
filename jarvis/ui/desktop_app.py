@@ -62,6 +62,27 @@ WINDOW_TITLE = "Personal Jarvis"
 _LOCK_ACQUIRE_TIMEOUT = 0.0
 
 
+def _local_voice_permission_granted(
+    *,
+    platform_name: str | None = None,
+    permission_port: Any | None = None,
+) -> bool:
+    """Return whether local voice may touch the microphone on this host."""
+    platform_name = platform_name or sys.platform
+    if platform_name != "darwin":
+        return True
+    from jarvis.platform.permissions import (
+        PermissionId,
+        get_system_permission_port,
+    )
+
+    port = permission_port or get_system_permission_port()
+    try:
+        return bool(port.runtime_access_granted(PermissionId.MICROPHONE))
+    except Exception:  # noqa: BLE001 - protected capture must fail closed
+        return False
+
+
 def _supported_call_kwargs(
     function: Callable[..., Any],
     kwargs: dict[str, Any],
@@ -320,6 +341,65 @@ def focus_existing_instance_robust() -> bool:
     return _bring_window_to_front_by_title(WINDOW_TITLE) or focused
 
 
+def _force_foreground_hwnd(hwnd: int, user32: Any, kernel32: Any) -> bool:
+    """Raise one HWND through Windows' foreground-lock restriction.
+
+    ``SetForegroundWindow`` commonly returns false when the request originates
+    from the desktop server thread rather than recent user input. Attaching the
+    caller's input queue to both the current foreground and target threads is
+    the supported recovery. Every attachment is detached in ``finally`` so a
+    failed focus attempt cannot poison keyboard routing.
+    """
+    user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+    if user32.SetForegroundWindow(hwnd):
+        user32.SetActiveWindow(hwnd)
+        if user32.GetForegroundWindow() == hwnd:
+            return True
+
+    current_thread = kernel32.GetCurrentThreadId()
+    foreground = user32.GetForegroundWindow()
+    foreground_thread = (
+        user32.GetWindowThreadProcessId(foreground, None) if foreground else 0
+    )
+    target_thread = user32.GetWindowThreadProcessId(hwnd, None)
+    attached_foreground = False
+    attached_target = False
+    try:
+        if foreground_thread and foreground_thread != current_thread:
+            attached_foreground = bool(
+                user32.AttachThreadInput(
+                    current_thread, foreground_thread, True
+                )
+            )
+        if target_thread and target_thread not in (
+            current_thread,
+            foreground_thread,
+        ):
+            attached_target = bool(
+                user32.AttachThreadInput(current_thread, target_thread, True)
+            )
+        user32.BringWindowToTop(hwnd)
+        user32.ShowWindow(hwnd, 9)  # SW_RESTORE
+        user32.SetForegroundWindow(hwnd)
+        user32.SetActiveWindow(hwnd)
+        if user32.GetForegroundWindow() == hwnd:
+            return True
+
+        # UIPI or another foreground transition can still reject activation.
+        # A short topmost pulse at least makes the already-visible window
+        # discoverable, then immediately restores its normal z-order policy.
+        flags = 0x0001 | 0x0002 | 0x0040  # NOMOVE | NOSIZE | SHOWWINDOW
+        user32.SetWindowPos(hwnd, -1, 0, 0, 0, 0, flags)  # HWND_TOPMOST
+        user32.SetWindowPos(hwnd, -2, 0, 0, 0, 0, flags)  # HWND_NOTOPMOST
+        user32.SetForegroundWindow(hwnd)
+        return user32.GetForegroundWindow() == hwnd
+    finally:
+        if attached_foreground:
+            user32.AttachThreadInput(current_thread, foreground_thread, False)
+        if attached_target:
+            user32.AttachThreadInput(current_thread, target_thread, False)
+
+
 def _bring_window_to_front_by_title(title: str) -> bool:
     """Win32 fallback for hidden/minimized pywebview windows.
 
@@ -352,6 +432,25 @@ def _bring_window_to_front_by_title(title: str) -> bool:
         user32.BringWindowToTop.argtypes = [wintypes.HWND]
         user32.SetForegroundWindow.argtypes = [wintypes.HWND]
         user32.SetActiveWindow.argtypes = [wintypes.HWND]
+        user32.GetWindowThreadProcessId.argtypes = [
+            wintypes.HWND,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+        user32.AttachThreadInput.argtypes = [
+            wintypes.DWORD,
+            wintypes.DWORD,
+            wintypes.BOOL,
+        ]
+        user32.SetWindowPos.argtypes = [
+            wintypes.HWND,
+            wintypes.HWND,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            ctypes.c_int,
+            wintypes.UINT,
+        ]
         hwnd = user32.FindWindowW(None, title)
         if not hwnd:
             return False
@@ -376,10 +475,7 @@ def _bring_window_to_front_by_title(title: str) -> bool:
             if width > 5000 or height > 5000:
                 width, height = 1280, 800
             user32.MoveWindow(hwnd, 80, 60, width, height, True)
-        user32.BringWindowToTop(hwnd)
-        user32.SetForegroundWindow(hwnd)
-        user32.SetActiveWindow(hwnd)
-        return True
+        return _force_foreground_hwnd(hwnd, user32, ctypes.windll.kernel32)
     except Exception:  # noqa: BLE001
         return False
 
@@ -860,7 +956,10 @@ class DesktopApp:
         else:
             from jarvis.ui.web.fast_bootstrap import FastBootstrap
 
-            bootstrap = FastBootstrap()
+            bootstrap = FastBootstrap(
+                session_token=self.session_token,
+                vite_dev_url=(self.cfg.ui.vite_dev_url if self.cfg.ui.dev_mode else None),
+            )
             loop.run_until_complete(
                 bootstrap.serve("127.0.0.1", self.cfg.ui.admin_api_port)
             )
@@ -1674,37 +1773,6 @@ class DesktopApp:
             # the deferred brain proxy — NONE of that chain. The user-perceived
             # "ready to talk to Jarvis" gate is the wake listener, not the full
             # backend, so it must not wait ~15-20 s for subsystems it never uses.
-            async def _start_overlay_bg() -> None:
-                try:
-                    # Phase 9.8: start the overlay subprocess when [overlay].enabled=true.
-                    # Optional package: when it is not installed, desktop boot still serves.
-                    from jarvis.overlay.integration import start_overlay
-
-                    await start_overlay(bus=server.bus)
-                except ModuleNotFoundError as exc:
-                    from loguru import logger as _overlay_logger
-                    if exc.name == "overlay":
-                        # Genuinely headless: the optional overlay package
-                        # itself isn't installed (cloud/VPS base install).
-                        _overlay_logger.debug(
-                            "Overlay bootstrap skipped: optional overlay package not installed."
-                        )
-                    else:
-                        # AP-23 W2-C: some OTHER dependency in the overlay
-                        # import chain is missing (e.g. `python-ulid`) — a
-                        # real, fixable gap, not "no overlay package". Name
-                        # it explicitly instead of collapsing into the same
-                        # silent "headless" bucket.
-                        _overlay_logger.opt(exception=exc).warning(
-                            "Overlay bootstrap skipped: overlay dependency {!r} missing.",
-                            exc.name,
-                        )
-                except Exception as exc:  # noqa: BLE001
-                    from loguru import logger as _overlay_logger
-                    _overlay_logger.opt(exception=exc).warning(
-                        "Overlay bootstrap failed."
-                    )
-
             def _log_speech_and_orb_done(task: asyncio.Task) -> None:
                 if task.cancelled():
                     return
@@ -1737,7 +1805,6 @@ class DesktopApp:
                 name="speech-and-orb",
             )
             speech_task.add_done_callback(_log_speech_and_orb_done)
-            loop.create_task(_start_overlay_bg(), name="overlay-bootstrap")
 
             # === 2) Everything else, BEHIND the live wake listener ==========
             # The heavy backend keeps its original internal order (server.start()
@@ -2279,6 +2346,32 @@ class DesktopApp:
             logger.info("Voice stack disabled via JARVIS_VOICE=0.")
             return
 
+        # macOS must never discover microphone permission by opening the device:
+        # that would throw an unmanaged TCC prompt before the guided onboarding
+        # step. Keep the pipeline alive but its activation gate closed until the
+        # user explicitly grants access. The probe is native and uncached, so a
+        # grant (or later revocation) applies without restarting the process.
+        permission_port: Any | None = None
+        if sys.platform == "darwin":
+            from jarvis.platform.permissions import get_system_permission_port
+
+            permission_port = get_system_permission_port()
+
+        def voice_activation_gate() -> bool:
+            return _local_voice_permission_granted(
+                platform_name=sys.platform,
+                permission_port=permission_port,
+            )
+
+        if sys.platform == "darwin":
+            if not voice_activation_gate():
+                from loguru import logger
+
+                logger.info(
+                    "Voice activation is parked until Microphone access is "
+                    "granted from the in-app macOS permission guide."
+                )
+
         # On-screen overlay in its own Tk daemon thread — the bus bridge reacts
         # to SystemStateChanged and drives whichever surface is selected.
         # Style is chosen by [ui].orb_style: "jarvis_bar" (slim default),
@@ -2680,7 +2773,7 @@ class DesktopApp:
                 output_device=self.cfg.audio.output_device or None,
                 config=self.cfg,
                 vision_provider=voice_vision,
-                activation_gate=lambda: True,
+                activation_gate=voice_activation_gate,
                 ack_brain=voice_ack_brain,
                 # Resolved custom-wake-word plan: drives the OWW model + the
                 # phrase matcher for the verifier + rolling-whisper.
@@ -3007,21 +3100,28 @@ class DesktopApp:
                 desktop._window.show()
                 desktop._window.restore()
                 desktop._window_visible = True
-                _bring_window_to_front_by_title(WINDOW_TITLE)
+                focused = _bring_window_to_front_by_title(WINDOW_TITLE)
                 # Restore the persistent bar if a prior minimise cleared it.
                 desktop._restore_overlay_for_visible_window()
-                return {"ok": True, "focused": True}
+                if focused:
+                    return {"ok": True, "focused": True}
+                return {
+                    "ok": False,
+                    "focused": False,
+                    "reason": "foreground_lock",
+                }
             except Exception as exc:  # noqa: BLE001
                 return {"ok": False, "reason": f"{type(exc).__name__}: {exc}"}
 
     # ---- WebView hooks -------------------------------------------------------
 
     def _inject_token(self, window: Any) -> None:
-        """Sets ``window.__JARVIS_TOKEN`` in the frontend via ``evaluate_js``.
+        """Offer the one-time process token to the UI session exchange.
 
-        Called by ``webview.start(func=..., args=...)`` once the window is
-        ready. Must be robust against reloads — the frontend reads the
-        token on its first WS connect.
+        The static shell is intentionally public and receives no credential.
+        This late WebView hook dispatches an event that ``AuthGate`` exchanges
+        once for an HttpOnly cookie and then clears; sockets never put either
+        token in a URL.
 
         This is also where the taskbar/titlebar icon gets set. pywebview
         does not expose an icon parameter on Windows — we go through the
@@ -3029,12 +3129,14 @@ class DesktopApp:
         single-instance lock).
         """
         token_literal = json.dumps(self.session_token)
-        js = f"window.__JARVIS_TOKEN = {token_literal};"
+        js = (
+            f"window.__JARVIS_TOKEN = {token_literal};"
+            "window.dispatchEvent(new Event('jarvis-token-ready'));"
+        )
         try:
             window.evaluate_js(js)
         except Exception:  # noqa: BLE001
-            # Not a fatal error — the frontend can fall back to fetching the
-            # token via the ``?token=`` URL or /api/ui/bootstrap.
+            # Not fatal: the local control key can still unlock AuthGate.
             pass
 
         try:
@@ -3046,6 +3148,40 @@ class DesktopApp:
             set_window_icon_by_title(WINDOW_TITLE, project_icon_path())
         except Exception:  # noqa: BLE001
             pass
+
+        # Repair shell registration only after the first webview paint. This is
+        # deliberately off the boot-critical path (AP-26), and it is the bridge
+        # that upgrades old installations: the v1.0.7 updater itself did not run
+        # installer finalizers, but its restart loads this new boot hook.
+        self._start_desktop_integration_repair()
+
+    def _start_desktop_integration_repair(self) -> None:
+        """Repair the managed install's launcher/app bundle in the background."""
+
+        if getattr(self, "_desktop_integration_repair_started", False):
+            return
+        self._desktop_integration_repair_started = True
+
+        def _repair() -> None:
+            from loguru import logger as _log
+
+            try:
+                from jarvis.setup.desktop_integration import ensure_desktop_integration
+
+                report = ensure_desktop_integration()
+                if report.attempted and not report.ok:
+                    _log.warning(
+                        "Desktop registration repair incomplete: {}",
+                        "; ".join(report.warnings),
+                    )
+            except Exception:  # noqa: BLE001 - registration never blocks the app
+                _log.opt(exception=True).debug("Desktop registration repair failed")
+
+        threading.Thread(
+            target=_repair,
+            name="jarvis-desktop-registration",
+            daemon=True,
+        ).start()
 
     # ---- Backend-ready check --------------------------------------------------
 
@@ -3330,6 +3466,13 @@ class DesktopApp:
                 action = cmd.action
                 if action == "open_ui":
                     self._safe_window_show()
+                elif action == "kill":
+                    # Emergency stop (deep-dive 2026-07-15, C-02): this arm was
+                    # missing entirely — the advertised tray "Emergency stop"
+                    # was silently swallowed here. Publish KillRequested on the
+                    # backend bus (the same bus the CU context's KillSwitch is
+                    # bound to) from this non-async pystray bridge thread.
+                    self._publish_kill_requested_threadsafe()
                 elif action == "quit":
                     self._user_requested_quit = True
                     try:
@@ -3342,6 +3485,33 @@ class DesktopApp:
         threading.Thread(
             target=_bridge_loop, name="jarvis-tray-bridge", daemon=True
         ).start()
+
+    def _publish_kill_requested_threadsafe(self) -> None:
+        """Publish ``KillRequested(source="tray")`` from a non-async thread.
+
+        Best-effort and never raises: during early boot the backend loop or
+        the server bus may not exist yet — then there is nothing running that
+        could be stopped, and we log honestly instead of crashing the tray.
+        """
+        from loguru import logger
+
+        loop = self._backend_loop
+        bus = getattr(self._server, "bus", None) if self._server is not None else None
+        if loop is None or loop.is_closed() or bus is None:
+            logger.warning(
+                "Emergency stop pressed, but the backend bus is not up yet — "
+                "nothing is running that could be stopped."
+            )
+            return
+        try:
+            from jarvis.core.events import KillRequested  # noqa: PLC0415
+
+            asyncio.run_coroutine_threadsafe(
+                bus.publish(KillRequested(source="tray")), loop
+            )
+            logger.info("Emergency stop: KillRequested(source=tray) published.")
+        except Exception:  # noqa: BLE001 — the tray must survive a failed kill
+            logger.opt(exception=True).warning("Emergency stop publish failed.")
 
     async def _on_show_window_requested(self, _event: object) -> None:
         """Bus subscriber for ``ShowWindowRequested`` (overlay right-click).
@@ -3642,12 +3812,6 @@ class DesktopApp:
                     _logger.warning("PTY-Cleanup failed: {}", exc)
             try:
                 asyncio.run_coroutine_threadsafe(_pty_cleanup(), loop).result(timeout=2.0)
-            except Exception:  # noqa: BLE001
-                pass
-            # Phase 9.8: stop the overlay subprocess BEFORE server.stop().
-            try:
-                from jarvis.overlay.integration import stop_overlay
-                asyncio.run_coroutine_threadsafe(stop_overlay(), loop).result(timeout=2.0)
             except Exception:  # noqa: BLE001
                 pass
             # Stop the serve-first bootstrap (it owns the listening socket).

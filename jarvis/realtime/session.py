@@ -23,7 +23,7 @@ from jarvis.brain.output_filter import scrub_for_voice
 from jarvis.brain.turn_planner import TurnPlan, plan_turn
 from jarvis.core.protocols import AudioChunk, BrainMessage
 from jarvis.core.redact import safe_preview
-from jarvis.core.turn_language import resolve_output_language
+from jarvis.core.turn_language import normalize_language_tag, resolve_output_language
 from jarvis.realtime.audio import StreamingPcm16Resampler
 from jarvis.realtime.protocol import RealtimeSessionConfig
 from jarvis.realtime.scrub_gate import ScrubHoldGate
@@ -77,17 +77,24 @@ _DELEGATE_NATIVE_BOUNDARY_WAIT_S = 1.0
 # end. Keep the classic speech-pipeline acknowledgement timing unchanged; this
 # longer threshold belongs only to the realtime provider bridge.
 _DELEGATE_BRIDGE_DELAY_S = 6.0
-_DELEGATE_HISTORY_MAX_MESSAGES = 8
+# 20 messages, not 8: a failed screen action typically costs the user several
+# correction turns, and each background completion adds a context note. With 8,
+# the original task was trimmed out exactly when the recovery turn needed it
+# (live forensic 2026-07-15 08:00: the final mission posted a placeholder
+# announcement because the announce request had just left the window).
+_DELEGATE_HISTORY_MAX_MESSAGES = 20
 _DELEGATE_HISTORY_MAX_CHARS = 1_200
 _DELEGATE_DECLARATION: dict[str, Any] = {
     "name": "jarvis_action",
     "description": (
         "Execute an action for the user through the Jarvis action system: "
-        "open apps or views, change settings, control the computer, manage "
-        "files, start background research or coding missions, read or write "
-        "the user's private Wiki memory, and inspect the current MCP, CLI, "
-        "tool, integration, configuration, or system state. Also call this "
-        "to relay the user's answer to a pending confirmation question."
+        "open apps or views, change settings, control the computer on screen "
+        "(click, type, and navigate inside any application window until the "
+        "task is finished), manage files, start background research or coding "
+        "missions, read or write the user's private Wiki memory, and inspect "
+        "the current MCP, CLI, tool, integration, configuration, or system "
+        "state. Also call this to relay the user's answer to a pending "
+        "confirmation question."
     ),
     "parameters": {
         "type": "object",
@@ -115,6 +122,13 @@ _DELEGATE_ROLE_DIRECTIVE = (
     "cannot see any of it yourself, so guessing is always wrong. Answer from "
     "your own knowledge only for general world knowledge and ordinary social "
     "chat. "
+    "The action system physically operates the user's computer on screen: it "
+    "opens apps and clicks, types, and navigates inside any application "
+    "window until a multi-step task is finished end to end. Never tell the "
+    "user that you lack a tool, an API, access, or permission for something "
+    "in their world, and never propose manual workarounds, scripts, or "
+    "keyboard tricks instead of acting — call jarvis_action (again, with the "
+    "user's correction folded in) and let the action system do it. "
     "Never announce that you are going to look something up, check, read, "
     "fetch, open, save, enter, or do anything: either call jarvis_action in the "
     "same response, or do not say it at all. An announcement without a function "
@@ -284,6 +298,10 @@ class _DelegateTurnState:
     bridge_transcript_parts: list[str] = field(default_factory=list)
     bridge_audio_chunks: list[Any] = field(default_factory=list)
     wait_for_provider_boundary: bool = False
+    # True when the dispatching path KNOWS the input transcript is complete
+    # (e.g. the provider already produced a response for it). A missing
+    # provider boundary may then delay the dispatch but never veto it.
+    input_final: bool = False
     input_boundary_ready: asyncio.Event = field(default_factory=asyncio.Event)
     provider_ready: asyncio.Event = field(default_factory=asyncio.Event)
     result_ready: asyncio.Event = field(default_factory=asyncio.Event)
@@ -325,6 +343,7 @@ _TOOL_ROLE_DIRECTIVE = (
 def _session_instructions(
     language: str,
     *,
+    input_language: str = "auto",
     provider: str = "",
     model: str = "",
     language_is_pinned: bool = True,
@@ -334,6 +353,19 @@ def _session_instructions(
 
     persona = load_effective_persona_prompt().strip()
     language_name = _LANGUAGE_NAMES.get(language, "the user's language")
+    input_language_name = _LANGUAGE_NAMES.get(input_language)
+    if input_language_name:
+        input_directive = (
+            f"Interpret the user's spoken audio as {input_language_name}. "
+            "Do not infer a different input language from the persona, prior "
+            "turns, or the reply language."
+        )
+    else:
+        input_directive = (
+            "Detect the language of every substantive spoken turn from its "
+            "current audio. Do not assume the input language from the persona "
+            "or from an earlier turn."
+        )
     if language_is_pinned:
         language_directive = f"Reply only in {language_name} for this turn."
     else:
@@ -346,6 +378,7 @@ def _session_instructions(
         persona,
         tool_directive,
         _REALTIME_SAFETY_APPENDIX,
+        input_directive,
         (
             "Runtime identity: this voice session is using the Realtime engine"
             + (f", provider {provider}" if provider else "")
@@ -427,6 +460,12 @@ class RealtimeVoiceSession:
         ).strip().lower()
         self._stt_language = getattr(
             getattr(self._config, "stt", None), "language", "unknown"
+        )
+        normalized_input_language = normalize_language_tag(self._stt_language)
+        self._input_language = (
+            normalized_input_language
+            if normalized_input_language in _LANGUAGE_NAMES
+            else "auto"
         )
         self._language = self._resolve_lang(text="")
         self._brain = brain
@@ -653,12 +692,14 @@ class RealtimeVoiceSession:
             session_config = RealtimeSessionConfig(
                 instructions=_session_instructions(
                     self._language,
+                    input_language=self._input_language,
                     provider=str(getattr(provider, "name", "") or ""),
                     model=model,
                     language_is_pinned=self._language_is_pinned,
                     tool_directive=self._tool_directive(),
                 ),
                 language=self._language,
+                input_language=self._input_language,
                 language_is_pinned=self._language_is_pinned,
                 model=model,
                 voice=voice,
@@ -983,6 +1024,7 @@ class RealtimeVoiceSession:
                         update_kwargs: dict[str, Any] = {
                             "instructions": _session_instructions(
                                 new_language,
+                                input_language=self._input_language,
                                 provider=self.active_provider,
                                 model=self._active_model,
                                 language_is_pinned=True,
@@ -1515,6 +1557,13 @@ class RealtimeVoiceSession:
                 _DelegateTurnState(deterministic=True),
             )
             turn_state.wait_for_provider_boundary = True
+            # The provider already produced a response for this input, so the
+            # transcript is final by construction. When the interrupt lands on
+            # an already-completed response, no further turn_complete arrives
+            # and the boundary wait times out — that must delay the dispatch,
+            # never veto it (live forensic 2026-07-15 07:59: the recovery
+            # spoke a canned failure without ever dispatching the action).
+            turn_state.input_final = True
             try:
                 await self._session.interrupt()
             except Exception:  # noqa: BLE001, S110 — provider may already be done
@@ -2628,7 +2677,13 @@ class RealtimeVoiceSession:
                         timeout=_DELEGATE_INPUT_BOUNDARY_WAIT_S,
                     )
                 except TimeoutError:
-                    boundary_ready = False
+                    # The refusal below protects against acting on a PARTIAL
+                    # input transcript. When the dispatching path marked the
+                    # input final, the missing provider boundary is only a
+                    # wire artifact (an interrupt that landed on an
+                    # already-completed response) — proceed; result delivery
+                    # still waits for its own provider boundary.
+                    boundary_ready = turn_state.input_final
             else:
                 # A manual-response provider may already have queued a native
                 # function call or cancelled output behind the final input

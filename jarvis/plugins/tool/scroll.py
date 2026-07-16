@@ -1,8 +1,8 @@
-"""scroll tool: simulates mouse-wheel scrolling at the current (or a given) cursor position.
+"""scroll tool: scroll at the current cursor position or a verified target.
 
-Win32-native via ``SendInput`` with ``MOUSEEVENTF_WHEEL`` / ``MOUSEEVENTF_HWHEEL``.
-Falls back to ``pyautogui.scroll`` / ``pyautogui.hscroll`` when Win32 is not available,
-so the tests run on Linux/Mac even though real scrolling only works on Windows.
+Windows uses native ``SendInput``; macOS uses native Quartz wheel events; X11
+uses the available pynput/pyautogui desktop backend. Wayland, headless hosts,
+and missing desktop extras degrade with an actionable error.
 
 This is the missing scroll primitive for computer-use: without it, lists (contacts,
 chats, file pickers) cannot be scrolled.
@@ -40,7 +40,38 @@ def _notch_for(direction: str, amount: int) -> int:
     return magnitude
 
 
-def _scroll_windows(direction: str, amount: int, x: int | None, y: int | None) -> int:
+def _scroll_with_verified_target(
+    actuator: Any,
+    direction: str,
+    amount: int,
+    x: int | None,
+    y: int | None,
+    *,
+    expected_window_signature: tuple[Any, ...] | None = None,
+) -> None:
+    """Land on an explicit scroll target before emitting the wheel event."""
+    if x is not None and y is not None:
+        from jarvis.cu.actuate import verified_move  # noqa: PLC0415
+
+        landing = verified_move(actuator, int(x), int(y))
+        if not landing.ok:
+            raise RuntimeError(landing.detail)
+    if expected_window_signature is not None:
+        from jarvis.cu.target_guard import foreground_matches  # noqa: PLC0415
+
+        if not foreground_matches(expected_window_signature):
+            raise RuntimeError("foreground window changed after the screenshot")
+    actuator.scroll(direction, amount)
+
+
+def _scroll_windows(
+    direction: str,
+    amount: int,
+    x: int | None,
+    y: int | None,
+    *,
+    expected_window_signature: tuple[Any, ...] | None = None,
+) -> int:
     """Scroll via Win32 ``SendInput``; returns the signed wheel delta transmitted.
 
     Delegates to the shared CU v2 Windows backend. If both ``x`` and ``y``
@@ -59,15 +90,36 @@ def _scroll_windows(direction: str, amount: int, x: int | None, y: int | None) -
 
     from jarvis.cu.actuate.windows import WindowsActuator  # noqa: PLC0415
 
-    WindowsActuator().scroll(direction_l, amount, x=x, y=y)
+    _scroll_with_verified_target(
+        WindowsActuator(),
+        direction_l,
+        amount,
+        x,
+        y,
+        expected_window_signature=expected_window_signature,
+    )
     return _notch_for(direction_l, amount)
 
 
-def _scroll_posix(direction: str, amount: int, x: int | None, y: int | None) -> int:
+def _scroll_posix(
+    direction: str,
+    amount: int,
+    x: int | None,
+    y: int | None,
+    *,
+    expected_window_signature: tuple[Any, ...] | None = None,
+) -> int:
     """Cross-platform scroll via the actuate backend (pynput preferred)."""
     from jarvis.cu.actuate import get_actuator
 
-    get_actuator().scroll(direction.lower(), amount, x=x, y=y)
+    _scroll_with_verified_target(
+        get_actuator(),
+        direction.lower(),
+        amount,
+        x,
+        y,
+        expected_window_signature=expected_window_signature,
+    )
     return _notch_for(direction.lower(), amount)
 
 
@@ -140,14 +192,32 @@ class ScrollTool:
                     error="x and y must be integer coordinates",
                 )
 
+        expected_raw = args.get("_expected_window_signature")
+        if expected_raw is not None and not isinstance(expected_raw, (list, tuple)):
+            return ToolResult(
+                success=False,
+                output=None,
+                error="Refusing scroll: invalid captured-window identity.",
+            )
+        expected_signature = (
+            tuple(expected_raw) if expected_raw is not None else None
+        )
+
         if os.name == "nt":
             try:
-                await asyncio.to_thread(_scroll_windows, direction, amount, x, y)
+                await asyncio.to_thread(
+                    _scroll_windows,
+                    direction,
+                    amount,
+                    x,
+                    y,
+                    expected_window_signature=expected_signature,
+                )
                 return ToolResult(
                     success=True,
                     output=f"Scrolled {direction} by {amount}",
                 )
-            except (ValueError, OSError) as exc:
+            except (ValueError, OSError, RuntimeError) as exc:
                 return ToolResult(
                     success=False,
                     output=None,
@@ -157,7 +227,14 @@ class ScrollTool:
         from jarvis.cu.actuate import ActuationUnavailable
 
         try:
-            await asyncio.to_thread(_scroll_posix, direction, amount, x, y)
+            await asyncio.to_thread(
+                _scroll_posix,
+                direction,
+                amount,
+                x,
+                y,
+                expected_window_signature=expected_signature,
+            )
             return ToolResult(
                 success=True,
                 output=f"Scrolled {direction} by {amount}",

@@ -7,10 +7,11 @@ import { RunTurnCard } from "@/components/runs/RunTurnCard";
 import { OutcomeBadge } from "@/components/runs/OutcomeBadge";
 import { FeatureBadges } from "@/components/runs/FeatureBadges";
 import { MetricsPanel } from "@/components/runs/MetricsPanel";
-import { useT } from "@/i18n";
+import { useT, useUiLanguage } from "@/i18n";
 
 export function RunDetail({ sessionId }: { sessionId: string }) {
   const t = useT();
+  const locale = localeForUiLanguage(useUiLanguage());
   const { data: run, isLoading } = useRunDetail(sessionId);
   const [showMetrics, setShowMetrics] = useState(false);
   if (isLoading || !run) {
@@ -35,8 +36,8 @@ export function RunDetail({ sessionId }: { sessionId: string }) {
             <div className="flex items-center gap-2">
               <OutcomeBadge outcome={run.outcome} />
               <span className="font-mono text-xs text-muted-foreground">
-                {started.toLocaleString("de")}
-                {ended && ` — ${ended.toLocaleTimeString("de")}`}
+                {started.toLocaleString(locale)}
+                {ended && ` — ${ended.toLocaleTimeString(locale)}`}
               </span>
             </div>
             <div className="flex flex-wrap items-center gap-1.5">
@@ -49,7 +50,7 @@ export function RunDetail({ sessionId }: { sessionId: string }) {
               )}
               {tokens > 0 && (
                 <Badge variant="outline" className="text-[10px]">
-                  {tokens.toLocaleString("de")} tok
+                  {tokens.toLocaleString(locale)} tok
                 </Badge>
               )}
               {run.session.hangup_reason && (
@@ -93,6 +94,12 @@ export function RunDetail({ sessionId }: { sessionId: string }) {
       </div>
     </div>
   );
+}
+
+function localeForUiLanguage(language: string): string {
+  if (language === "de") return "de-DE";
+  if (language === "es") return "es-ES";
+  return "en-US";
 }
 
 function LatencyChip({ status }: { status: string }) {

@@ -2,6 +2,7 @@ import { ChevronRight, ExternalLink } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
+import { openExternalUrl } from "@/lib/openExternal";
 import { BrandIcon } from "./BrandIcon";
 import { BRANDS, platformLabel } from "./brands";
 import type { SocialEntry } from "./api";
@@ -59,9 +60,15 @@ export function SocialTile({
     return (
       <a
         href={single.url}
-        target="_blank"
+        onClick={(event) => {
+          event.preventDefault();
+          void openExternalUrl(single.url);
+        }}
         rel="noopener noreferrer"
-        className={cn(shell, "focus:outline-none")}
+        className={cn(
+          shell,
+          "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        )}
       >
         {glow}
         {inner}
@@ -75,7 +82,10 @@ export function SocialTile({
       type="button"
       onClick={() => onOpenDetail(group.platform)}
       aria-label={`${name}, ${group.entries.length} ${t("socials.links")}`}
-      className={cn(shell, "text-left")}
+      className={cn(
+        shell,
+        "text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+      )}
     >
       {glow}
       {inner}

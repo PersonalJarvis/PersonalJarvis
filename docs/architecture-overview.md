@@ -240,4 +240,23 @@ This project has an auto-memory at `~/.claude/projects/<your-claude-project-dir>
 
 The Knowledge Wiki is the long-term memory tier (B0/B1/B5/B7/B8/B9 live). Three router-tier tools: `wiki-recall` (search), `wiki-page-read` (read by vault path), `wiki-ingest` (deterministic save-fact). Vault root configured in `[wiki_integration].vault_root`; default `wiki/obsidian-vault/`. Telemetry snapshot at `GET /api/wiki/telemetry`. Trigger contract in ADR-0014.
 
+Realtime and chat memory use a durable two-stage path. A recall-biased extractor
+reviews each eligible user turn in the background and performs an overlapping,
+chunked whole-session sweep at session end. Candidates carry an exact user-turn
+ID plus a bounded, secret-redacted user-only evidence excerpt in
+`data/jarvis.db`; assistant text can resolve a reference but is never evidence.
+The body-aware consolidator is the binding cleanliness gate: it compares that
+evidence with complete related pages, then chooses ADD, UPDATE, NOOP, or
+INVALIDATE through the guarded AtomicWriter. Same-target candidates are
+serialized, token-capped batches are bisected, transient edit conflicts remain
+pending, and successful pages receive deterministic session/turn provenance.
+Topic questions cannot become user-interest claims without an explicit
+self-disclosure, even when a provider proposes one. Stage 2 also rejects new
+numeric values absent from the candidate, exact evidence, or existing page.
+An explicit remember/note/add-to-wiki request makes its supported fact binding:
+a NOOP is valid only for an unchanged duplicate or unsupported evidence; the
+control command itself is never stored as knowledge.
+`POST /api/wiki/backfill` safely re-reviews recent persisted Realtime sessions
+under policy-v3 review keys without draining unrelated journal rows.
+
 The legacy Curator-Merger is soft-disabled since 2026-05-17 (`[memory.legacy_curator] enabled = false`, gated in `jarvis/brain/factory.py`). The `data/workspace/` snapshot stays on disk and ~35 reader sites keep rendering it — but no new writes land there. Hart-Cut (migrate snapshot to `wiki/obsidian-vault/`, refactor readers, delete `jarvis/memory/curator/`) remains open.

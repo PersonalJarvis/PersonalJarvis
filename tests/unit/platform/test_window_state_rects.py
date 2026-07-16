@@ -175,6 +175,131 @@ def test_grab_window_macos_degrades_without_frameworks(monkeypatch):
                               "width": 100, "height": 100}) is None
 
 
+def _install_fake_sck(monkeypatch, *, supports_shadow_suppression: bool):
+    calls: dict[str, object] = {"capture_count": 0}
+    target = types.SimpleNamespace(
+        windowID=lambda: 7,
+        frame=lambda: types.SimpleNamespace(
+            size=types.SimpleNamespace(width=100.0, height=50.0),
+        ),
+    )
+    content = types.SimpleNamespace(windows=lambda: [target])
+
+    class _ShareableContent:
+        @staticmethod
+        def getShareableContentWithCompletionHandler_(handler):
+            handler(content, None)
+
+    class _Filter:
+        @classmethod
+        def alloc(cls):
+            return cls()
+
+        def initWithDesktopIndependentWindow_(self, window):
+            calls["target"] = window
+            return self
+
+        @staticmethod
+        def pointPixelScale():
+            return 2.0
+
+    class _ConfigurationBase:
+        @classmethod
+        def alloc(cls):
+            return cls()
+
+        def init(self):
+            calls["config"] = self
+            return self
+
+        def setWidth_(self, value):
+            calls["width"] = value
+
+        def setHeight_(self, value):
+            calls["height"] = value
+
+        def setShowsCursor_(self, value):
+            calls["shows_cursor"] = value
+
+    if supports_shadow_suppression:
+        class _Configuration(_ConfigurationBase):
+            def setIgnoreShadowsSingleWindow_(self, value):
+                calls["ignore_shadows"] = value
+    else:
+        class _Configuration(_ConfigurationBase):
+            pass
+
+    class _ScreenshotManager:
+        @staticmethod
+        def captureImageWithFilter_configuration_completionHandler_(
+            sc_filter,
+            config,
+            handler,
+        ):
+            calls["capture_count"] = int(calls["capture_count"]) + 1
+            calls["captured_config"] = config
+            handler(object(), None)
+
+    sck = types.ModuleType("ScreenCaptureKit")
+    sck.SCShareableContent = _ShareableContent
+    sck.SCContentFilter = _Filter
+    sck.SCStreamConfiguration = _Configuration
+    sck.SCScreenshotManager = _ScreenshotManager
+    monkeypatch.setitem(sys.modules, "ScreenCaptureKit", sck)
+
+    class _BitmapRep:
+        @classmethod
+        def alloc(cls):
+            return cls()
+
+        def initWithCGImage_(self, image):
+            return self
+
+        @staticmethod
+        def representationUsingType_properties_(image_type, properties):
+            return b"fake-png"
+
+    appkit = types.ModuleType("AppKit")
+    appkit.NSBitmapImageRep = _BitmapRep
+    monkeypatch.setitem(sys.modules, "AppKit", appkit)
+
+    class _Image:
+        width = 200
+        height = 100
+
+        def convert(self, mode):
+            return self
+
+        @staticmethod
+        def tobytes():
+            return b"rgb"
+
+    monkeypatch.setattr("PIL.Image.open", lambda stream: _Image())
+    return calls
+
+
+def test_macos_window_capture_disables_shadow_framing(monkeypatch):
+    from jarvis.platform import window_capture as wc
+
+    calls = _install_fake_sck(monkeypatch, supports_shadow_suppression=True)
+
+    assert wc._grab_window_macos(7) == ((200, 100), b"rgb")
+    assert calls["ignore_shadows"] is True
+    assert calls["width"] == 200
+    assert calls["height"] == 100
+    assert calls["shows_cursor"] is False
+    assert calls["capture_count"] == 1
+
+
+def test_macos_window_capture_falls_back_without_shadow_suppression(monkeypatch):
+    from jarvis.platform import window_capture as wc
+
+    calls = _install_fake_sck(monkeypatch, supports_shadow_suppression=False)
+
+    assert wc._grab_window_macos(7) is None
+    assert calls["capture_count"] == 0
+
+
 def test_grab_window_never_raises(monkeypatch):
     from jarvis.platform import window_capture as wc
 

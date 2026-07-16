@@ -2,7 +2,7 @@
 
 **Date:** 2026-04-22
 **Plan reference:** `.claude/plans/also-er-muss-auch-lexical-pond.md` §9-Phase-5, §20 (builder pattern)  <!-- i18n-allow -->
-**Mandate:** `Aufgaben/internal-research-notes.md`
+**Mandate:** Private research note
 **Author context:** Code scan of phases 0–4, no changes made.
 
 ---

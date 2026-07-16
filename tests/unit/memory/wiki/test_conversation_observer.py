@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -47,6 +48,7 @@ class FakeBrain:
     def __init__(self, *, sleep_s: float = 0.0) -> None:
         self.sleep_s = sleep_s
         self.call_count = 0
+        self.completed = asyncio.Event()
 
     name = "fake-brain"
     context_window = 100_000
@@ -57,12 +59,25 @@ class FakeBrain:
         self.call_count += 1
         if self.sleep_s:
             await asyncio.sleep(self.sleep_s)
+        prompt = req.messages[-1].content
+        assert isinstance(prompt, str)
+        focus_match = re.search(r"FOCUS USER TURN \[([^\]]+)]", prompt)
+        assert focus_match is not None
+        evidence_turn_id = focus_match.group(1)
         yield BrainDelta(
             content=json.dumps(
-                [{"fact": "Lena moved to Hamburg.", "kind": "person", "subjects": ["lena"]}]
+                [
+                    {
+                        "fact": "Lena moved to Hamburg.",
+                        "kind": "person",
+                        "subjects": ["lena"],
+                        "evidence_turn_id": evidence_turn_id,
+                    }
+                ]
             )
         )
         yield BrainDelta(finish_reason="stop")
+        self.completed.set()
 
     def estimate_cost(self, req: BrainRequest) -> float:  # pragma: no cover
         return 0.0
@@ -166,21 +181,40 @@ async def test_same_text_via_both_paths_journaled_once(tmp_path: Path) -> None:
     """Voice turns surface as TranscriptFinal AND MessageSent — one journal entry."""
     bus, journal, _curator, bridge, brain = _stack(tmp_path)
     try:
-        # First delivery: voice path.
+        # Both transport signals arrive before the one response that closes
+        # the turn. The MessageSent mirror must not replace the pending voice
+        # identity or start a second extraction.
         await bus.publish(TranscriptFinal(
             transcript=Transcript(text=FACT_SENTENCE, language="en", confidence=0.95),
         ))
-        await bus.publish(ResponseGenerated(text="Noted.", language="en"))
-        await _drain(journal)
-        # Second delivery of the SAME text: the server's chat mirror.
         await bus.publish(MessageSent(thread_id="t1", role="user", text=FACT_SENTENCE))
         await bus.publish(ResponseGenerated(text="Noted.", language="en"))
-        await asyncio.sleep(0.2)
+        await _drain(journal)
     finally:
         bridge.stop()
 
-    assert journal.backlog_count() == 1, "duplicate turn must be deduped by hash"
+    assert journal.backlog_count() == 1, "one transport-mirrored turn is one review"
     assert brain.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_same_text_in_a_later_turn_is_reviewed_again(tmp_path: Path) -> None:
+    """Transport dedupe must not suppress a genuinely repeated later turn."""
+    bus, journal, _curator, bridge, brain = _stack(tmp_path)
+    try:
+        for index in range(2):
+            brain.completed.clear()
+            await bus.publish(
+                MessageSent(thread_id="t1", role="user", text=FACT_SENTENCE)
+            )
+            await bus.publish(ResponseGenerated(text="Noted.", language="en"))
+            await asyncio.wait_for(brain.completed.wait(), timeout=2.0)
+            assert brain.call_count == index + 1
+    finally:
+        bridge.stop()
+
+    assert journal.backlog_count() == 2
+    assert brain.call_count == 2
 
 
 @pytest.mark.asyncio

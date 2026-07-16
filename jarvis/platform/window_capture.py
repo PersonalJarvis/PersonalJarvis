@@ -139,6 +139,20 @@ def _grab_window_macos(window_id: int) -> tuple[tuple[int, int], bytes] | None:
     config.setWidth_(max(1, round(frame.size.width * scale)))
     config.setHeight_(max(1, round(frame.size.height * scale)))
     config.setShowsCursor_(False)
+    # A framed single-window image can include drop-shadow pixels outside the
+    # SCWindow frame. The coordinate mapper is anchored to that frame, so
+    # accepting shadow padding would shift every inferred target. macOS 14+
+    # exposes this selector; if the runtime bridge cannot provide it, fall
+    # back to the frame-rect capture path instead of using ambiguous pixels.
+    ignore_shadows = getattr(config, "setIgnoreShadowsSingleWindow_", None)
+    if not callable(ignore_shadows):
+        log.debug("SCK cannot disable single-window shadows; using rect fallback")
+        return None
+    try:
+        ignore_shadows(True)
+    except Exception:  # noqa: BLE001 - unsafe framing must fail closed
+        log.debug("SCK single-window shadow suppression failed", exc_info=True)
+        return None
 
     image_box: dict[str, Any] = {}
     image_ready = threading.Event()

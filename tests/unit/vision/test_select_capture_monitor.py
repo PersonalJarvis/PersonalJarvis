@@ -55,6 +55,32 @@ def test_foreground_strategy_follows_the_window_monitor(monkeypatch) -> None:
     assert select_capture_monitor(_MONITORS, strategy="foreground") is _LEFT
 
 
+def test_foreground_uses_largest_overlap_when_window_center_is_in_gap(
+    monkeypatch,
+) -> None:
+    from jarvis.platform.window_state import WindowInfo
+
+    # L-shaped layout: the window center is in dead space, but most of the
+    # window is on the left display.
+    virtual = _mon(0, 0, 2200, 1800)
+    left = _mon(0, 800, 1000, 1000)
+    upper = _mon(1000, 0, 1200, 800)
+    monkeypatch.setattr(
+        "jarvis.platform.window_state.foreground_window",
+        lambda: WindowInfo(title="App", handle=9),
+    )
+    monkeypatch.setattr(
+        "jarvis.platform.window_state.window_frame_rect",
+        lambda _window: (700, 600, 800, 600),
+    )
+
+    selected = select_capture_monitor(
+        [virtual, left, upper], strategy="foreground",
+    )
+
+    assert selected is left
+
+
 def test_explicit_is_primary_flag_still_wins() -> None:
     flagged = {**_LEFT, "is_primary": True}
     mons = [_VIRTUAL, flagged, _MAIN]

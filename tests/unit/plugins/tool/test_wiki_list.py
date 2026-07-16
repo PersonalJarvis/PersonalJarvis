@@ -9,7 +9,8 @@ content — pure hallucination. A deterministic listing answers the
 question in ONE round and is ground truth by construction.
 
 Hard-negatives:
-  1. ``wiki-list`` MUST be in ROUTER_TOOLS (and never in any worker set).
+  1. ``wiki-list`` MUST be in ROUTER_TOOLS; workers may reach it only through
+     the mission-scoped supervisor broker.
   2. The listing MUST reflect the real filesystem — files that exist are
      present, files that do not exist are absent.
   3. Meta/contract pages (``type: meta`` frontmatter) MUST be flagged so

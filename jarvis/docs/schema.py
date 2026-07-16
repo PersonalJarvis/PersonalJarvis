@@ -9,6 +9,7 @@ filename, ``slug`` from the normalised path).
 ``Doc`` is a frozen dataclass — immutability is consistent with the ``Skill``
 architecture (flight-recorder replay capable).
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -25,6 +26,7 @@ from jarvis.core.events import Event
 # Enums
 # ----------------------------------------------------------------------
 
+
 class DocDiataxis(str, Enum):
     """Diataxis quadrant + ADR + Troubleshooting + special case Unclassified.
 
@@ -32,6 +34,7 @@ class DocDiataxis(str, Enum):
     The UI groups them in a separate section and marks them as migration
     candidates.
     """
+
     TUTORIAL = "tutorial"
     HOWTO = "howto"
     REFERENCE = "reference"
@@ -43,6 +46,7 @@ class DocDiataxis(str, Enum):
 
 class DocStatus(str, Enum):
     """Lifecycle state of a doc."""
+
     DRAFT = "draft"
     ACTIVE = "active"
     DEPRECATED = "deprecated"
@@ -55,6 +59,7 @@ DocAudience = Literal["developer", "operator", "end-user"]
 # Frontmatter-Model
 # ----------------------------------------------------------------------
 
+
 class DocFrontmatter(BaseModel):
     """YAML frontmatter of a Jarvis doc.
 
@@ -62,6 +67,7 @@ class DocFrontmatter(BaseModel):
     frontmatter-schema.md``. Intentionally tolerant — ``extra="ignore"``
     absorbs fields not modelled here (e.g. ADR-specific ``adr_status``).
     """
+
     model_config = ConfigDict(frozen=True, extra="ignore")
 
     title: str
@@ -72,6 +78,10 @@ class DocFrontmatter(BaseModel):
     last_reviewed: date | None = None
     phase: str = "-"
     audience: DocAudience = "developer"
+    summary: str = ""
+    section: str = "Other"
+    section_order: int = 999
+    order: int = 999
     tags: list[str] = Field(default_factory=list)
     related: list[str] = Field(default_factory=list)
     deprecates: str | None = None
@@ -86,6 +96,11 @@ class DocFrontmatter(BaseModel):
         if not v:
             raise ValueError("must not be empty")
         return v
+
+    @field_validator("summary", "section")
+    @classmethod
+    def _strip_reader_metadata(cls, v: str) -> str:
+        return v.strip()
 
     @field_validator("phase", mode="before")
     @classmethod
@@ -112,6 +127,7 @@ class DocFrontmatter(BaseModel):
 # Doc-Container
 # ----------------------------------------------------------------------
 
+
 @dataclass(frozen=True, slots=True)
 class Doc:
     """A loaded Markdown file.
@@ -121,6 +137,7 @@ class Doc:
     ``error`` marks parse problems — the file is still shown in the UI, with
     a diagnostic banner.
     """
+
     path: Path
     frontmatter: DocFrontmatter
     body: str
@@ -146,6 +163,7 @@ class Doc:
 # Bus-Events
 # ----------------------------------------------------------------------
 
+
 @dataclass(frozen=True, slots=True)
 class DocIndexReloaded(Event):
     """Emitted when the ``DocRegistry`` has finished re-indexing.
@@ -153,6 +171,7 @@ class DocIndexReloaded(Event):
     Frontend subscribers invalidate their react-query cache. Follows the
     same pattern as ``SkillRegistryReloaded`` in ``jarvis/skills/schema.py``.
     """
+
     total: int = 0
     by_diataxis: dict[str, int] = field(default_factory=dict)
     errors: int = 0
