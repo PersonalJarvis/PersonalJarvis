@@ -55,10 +55,8 @@ if hasattr(sys.stdout, "reconfigure"):
     sys.stderr.reconfigure(encoding="utf-8", errors="replace")
 
 try:
-    from rich import box as rich_box
     from rich.console import Console
     from rich.markup import escape as rich_escape
-    from rich.panel import Panel
     from rich.theme import Theme
 except ImportError:  # pragma: no cover - Stage 1 installs rich; failure here is a bug
     print("ERROR: rich is not installed. The Stage-1 bootstrap should have done this.")
@@ -618,72 +616,55 @@ def step_launch(*, headless: bool, dry_run: bool) -> None:
 
 
 def step_summary(*, no_launch: bool, update: bool, headless: bool) -> None:
-    """The finale: one rounded deep-gold box around a short, calm summary.
+    """The finale: a clack-style note box HANGING off the journey gutter.
 
-    Boxed finale by maintainer request 2026-07-16 (clack-style connected
-    journey), superseding the flat two-rule finale of design 2026-07-09.
+    ``◇  Title ──╮`` header, deep-gold borders, ``├──╯`` foot — the left rail
+    runs THROUGH the box and on to step_launch's ``└`` outro, so the journey
+    never visually breaks (maintainer request 2026-07-16; supersedes both the
+    flat two-rule finale of 2026-07-09 and the free-standing Panel draft).
     """
-    lines: list[str] = [f"[muted]Installed to[/]  {repo_root()}"]
+    rows: list[tuple[str, str, str]] = [("Installed to", str(repo_root()), "muted")]
     if sys.platform == "win32":
-        lines.append(
-            "[muted]Start again[/]   [brand]Windows search -> \"Personal Jarvis\"[/]"
-        )
+        rows.append(("Start again", 'Windows search -> "Personal Jarvis"', "brand"))
     elif sys.platform == "darwin":
-        lines.append(
-            "[muted]Start again[/]   [brand]Spotlight → \"Personal Jarvis\"[/] "
-            "[muted](app in ~/Applications)[/]"
-        )
-        lines.append(
-            "[muted]Permissions[/]   [muted]macOS asks on first launch - approve "
-            "each prompt[/]"
-        )
+        rows.append(("Start again", 'Spotlight → "Personal Jarvis" (app in ~/Applications)', "brand"))
+        rows.append(("Permissions", "macOS asks on first launch - approve each prompt", "muted"))
     elif sys.platform.startswith("linux") and not (headless or is_headless_linux()):
-        lines.append(
-            "[muted]Start again[/]   [brand]app menu -> \"Personal Jarvis\"[/]"
-        )
+        rows.append(("Start again", 'app menu -> "Personal Jarvis"', "brand"))
     else:
-        lines.append(
-            "[muted]Start again[/]   [brand].venv/bin/python -m jarvis.ui.web.launcher[/]"
-        )
-        lines.append("[muted]              (in the install folder)[/]")
-    lines.append(
-        "[muted]Update[/]        [muted]re-run the same install one-liner - "
-        "it updates in place[/]"
-    )
+        rows.append(("Start again", ".venv/bin/python -m jarvis.ui.web.launcher", "brand"))
+        rows.append(("", "(in the install folder)", "muted"))
+    rows.append(("Update", "re-run the same install one-liner - it updates in place", "muted"))
     if update:
-        lines.append(
-            "[muted]Next[/]          [muted]your setup and settings are kept - "
-            "no re-onboarding[/]"
-        )
+        rows.append(("Next", "your setup and settings are kept - no re-onboarding", "muted"))
     elif headless or is_headless_linux():
-        lines.append(
-            f"[muted]Next[/]          [muted]open http://localhost:{_resolved_admin_port()} "
-            "in your browser -[/]"
-        )
-        lines.append(
-            "[muted]              the one-time setup guide (language, wake word,[/]"
-        )
-        lines.append("[muted]              API keys) runs there, once[/]")
+        rows.append(("Next", f"open http://localhost:{_resolved_admin_port()} in your browser -", "muted"))
+        rows.append(("", "the one-time setup guide (language, wake word,", "muted"))
+        rows.append(("", "API keys) runs there, once", "muted"))
     else:
-        lines.append(
-            "[muted]Next[/]          [muted]the app opens with a one-time setup guide[/]"
-        )
-        lines.append(
-            "[muted]              (language, wake word, API keys) - it never "
-            "shows again[/]"
-        )
+        rows.append(("Next", "the app opens with a one-time setup guide", "muted"))
+        rows.append(("", "(language, wake word, API keys) - it never shows again", "muted"))
+
+    title = f"Personal Jarvis is {'updated' if update else 'ready'}"
+    key_w = 13
+    # Widths are computed on the PLAIN text (markup added only when printing),
+    # so the right border always lines up.
+    plain = [f"{key:<{key_w}} {value}" for key, value, _ in rows]
+    inner_w = max(max(len(p) for p in plain), len(title) + 3)
+    # Header total width must equal the body's: 6 fixed header chars
+    # (diamond, gaps, corner) vs inner_w + 7 body columns.
+    top_dashes = "─" * max(inner_w + 1 - len(title), 2)
     console.print(GUTTER)
-    console.print(
-        Panel(
-            "\n".join(lines),
-            box=rich_box.ROUNDED,
-            border_style="brand.deep",
-            title=f"[ok.bold]✓ Personal Jarvis is {'updated' if update else 'ready'}[/]",
-            title_align="left",
-            padding=(0, 2),
-            expand=False,
+    console.print(f"[ok]◇[/]  [ok.bold]{title}[/]  [brand.deep]{top_dashes}╮[/]")
+    console.print(f"[brand.deep]│[/]{' ' * (inner_w + 5)}[brand.deep]│[/]")
+    for (key, value, vstyle), p in zip(rows, plain):
+        pad = " " * (inner_w - len(p))
+        console.print(
+            f"[brand.deep]│[/]  [muted]{key:<{key_w}}[/] "
+            f"[{vstyle}]{rich_escape(value)}[/]{pad}   [brand.deep]│[/]"
         )
-    )
+    console.print(f"[brand.deep]│[/]{' ' * (inner_w + 5)}[brand.deep]│[/]")
+    console.print(f"[brand.deep]├{'─' * (inner_w + 5)}╯[/]")
 
 
 # ---------------------------------------------------------------- entry
