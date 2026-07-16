@@ -206,16 +206,40 @@ plugins (OAuth + MCP), AND credential STORAGE itself. Every one must:
   (`config._ensure_keyring_backend`). A save/connect must never 500 on a host
   without a Secret Service.
 
+### OS feature parity — macOS and Linux are first-class (BINDING)
+
+**Every feature ships working on ALL THREE OSes — Windows, macOS, and Linux
+(desktop AND headless server) — in the SAME change, never as a "later"
+follow-up.** The maintainer's Windows box is one install target among three,
+never the yardstick. Concretely:
+
+- A feature that needs an OS-specific backend (window control, screenshots,
+  input injection, hotkeys, app launching, audio, autostart, notifications)
+  implements **per-OS backends behind ONE capability probe** — e.g. Win32/UIA
+  on Windows, AppleScript/Quartz/AXUIElement on macOS, xdotool/AT-SPI/D-Bus on
+  Linux. Checking `sys.platform == "win32"` and silently doing nothing
+  elsewhere is a defect, not a gate.
+- Where a backend is genuinely impossible (no display on a headless server),
+  the feature degrades to a **clearly-messaged English no-op** — never a
+  crash, never a silent absence the user can't diagnose.
+- A Windows-only implementation may land ONLY with (a) the capability gate +
+  honest degradation above, AND (b) a tracked parity-gap entry in
+  [`docs/os-parity.md`](docs/os-parity.md) so the gap is a visible backlog
+  item, not folklore.
+
 **Definition of done (NON-NEGOTIABLE).** A change touching config,
 credentials, a provider/integration, or OS-specific code is NOT done until you
-verify (test or honest manual trace) the THREE non-maintainer paths:
+verify (test or honest manual trace) the FOUR non-maintainer paths:
 
 1. **Fresh install, ONE arbitrary key** — a downloader whose only credential
    is for a DIFFERENT provider reaches a working path (chat + voice +
    Jarvis-Agent + the touched feature), entirely in-app.
 2. **Headless Linux** — base `pip install` + boot + the feature work on
    `python:3.11-slim`; local-only parts degrade to a logged no-op.
-3. **Cross-family fallback** — when the configured provider/integration is
+3. **macOS** — the touched feature works on a Mac (test or honest manual
+   trace: no Windows-only import, path, or API on its code path), or degrades
+   there with an honest message + a `docs/os-parity.md` entry.
+4. **Cross-family fallback** — when the configured provider/integration is
    absent or dead, the path crosses to whatever the user actually has, or
    degrades honestly.
 
