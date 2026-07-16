@@ -97,6 +97,30 @@ _UNIVERSAL_ACTION_VERBS: frozenset[str] = frozenset({
     "such", "suche", "sucht", "search", "find", "finde",
 })
 
+# German deverbal NOUNS collide with catalogue verbs after case-folding:
+# "Frage" -> "frag"/"frage", "Antwort" -> "antwort", "Suche" -> "such".
+# "Du, ich hab mal eine ganz generelle Frage, wie viel Geld hat Elon Musk?"
+# is a question ANNOUNCEMENT, yet the verb sweep read the noun as an
+# imperative, has_action_intent returned True, and the strict-mode
+# force-spawn gate dispatched a full background worker for a one-search
+# knowledge question (live bug 2026-07-16, voice session 11:49).
+#
+# A noun occurrence is deterministically recognisable in German: it directly
+# follows a (feminine) determiner, optionally with intensifiers / inflected
+# attributive adjectives in between ("eine ganz generelle Frage", "die kurze  # i18n-allow: bug quote
+# Antwort", "noch 'ne Frage"). Such spans are masked out BEFORE the verb
+# sweep. A genuine imperative never follows a determiner ("Frag Anna, ob …",
+# "… und frag sie") and still matches. Interior words must carry a German
+# attributive-adjective ending or be a known intensifier, so an object
+# phrase like "eine Mail an Anna schicken" can never be swallowed.
+_DEVERBAL_NOUN_SPAN_RE = re.compile(
+    r"\b(?:'?ne|eine|meine|deine|seine|ihre|unsere|keine|die|diese|welche|"  # i18n-allow: speech input
+    r"(?:so|noch)\s+(?:'?ne|eine))"  # i18n-allow: German speech-input matching data
+    r"(?:\s+(?:ganz|sehr|echt|wirklich|mal|noch|total|ziemlich|relativ|"  # i18n-allow: speech input
+    r"[a-z0-9-]+(?:e|en|er|es)))*"
+    r"\s+(?:frage|fragen|antwort|antworten|suche)\b"  # i18n-allow: speech input
+)
+
 
 # ---------------------------------------------------------------------------
 # Core dataclass
@@ -250,7 +274,10 @@ class CapabilityRegistry:
         Smalltalk / Q&A utterances ("wie spaet ist es", "was ist Python")
         match neither and return False.
         """
-        normalised = _normalize(utterance)
+        # Mask determiner-led deverbal nouns ("eine ganz generelle Frage",
+        # "die Antwort") so they cannot impersonate their verb stems in the
+        # sweeps below — see _DEVERBAL_NOUN_SPAN_RE for the live bug.
+        normalised = _DEVERBAL_NOUN_SPAN_RE.sub(" ", _normalize(utterance))
         # (a) universal catalogue — covers email/calendar/order/etc. even
         # when no capability is registered for them.
         for v in _UNIVERSAL_ACTION_VERBS:

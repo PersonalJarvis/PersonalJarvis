@@ -1205,6 +1205,12 @@ def test_instructional_questions_do_not_force_spawn(utterance: str) -> None:
         "Ich hab da mal eine Frage: was hältst du davon?",
         # filler particle "halt" collides with the action verb "halt"
         "Ich hab mir das halt echt überlegt, was meinst du dazu?",
+        # Live bug 2026-07-16 (voice session 11:49): adjectives between the
+        # article and "Frage" blinded the opener guard, the noun tripped
+        # has_action_intent, and a one-search knowledge question dispatched a
+        # full Opus mission ("Da kümmert sich gerade ein Jarvis Agent drum").
+        "Du, ich hab mal eine ganz generelle Frage, wie viel Geld ähm hat "
+        "eigentlich Elon Musk gerade aktuell?",
     ],
 )
 def test_opinion_advice_questions_do_not_force_spawn(utterance: str) -> None:
@@ -1278,6 +1284,62 @@ def test_opinion_advice_predicate_ignores_commands(utterance: str) -> None:
     assert _is_opinion_advice_question(utterance) is False, (
         f"action command {utterance!r} wrongly matched the opinion-question guard"
     )
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # Verb-noun collisions the noun masking does NOT cover ("Buch" ->
+        # catalogue verb "buch", "Post" -> "post" after a masculine
+        # determiner): the question form itself must stand the generic-work
+        # force-spawn down.
+        "Kannst du mir sagen, was in dem Buch steht?",
+        "Wer hat diesen Post geschrieben?",
+    ],
+)
+def test_question_form_never_reaches_generic_work_spawn(utterance: str) -> None:
+    """A turn in QUESTION form is conversation — the strict-mode generic-work
+    path (has_action_intent + no capability) must never force-spawn it (live
+    bug 2026-07-16, voice session 11:49: a plain knowledge question dispatched
+    a full worker). Explicit triggers and artifact builds are checked before
+    this stand-down and still spawn."""
+    from jarvis.core.capabilities import get_registry
+    from jarvis.core.capabilities_seed import seed_registry
+
+    reg = get_registry()
+    snapshot = dict(reg._caps)  # noqa: SLF001 — test fixture state restore
+    seed_registry(reg)
+    try:
+        manager, _executor = _manager_with_spawn(force_spawn_mode="strict")
+        assert manager._should_force_spawn(utterance) is False, (
+            f"question-form turn {utterance!r} wrongly force-spawned a worker"
+        )
+    finally:
+        reg._caps.clear()  # noqa: SLF001
+        reg._caps.update(snapshot)  # noqa: SLF001
+
+
+def test_explicit_trigger_question_still_spawns() -> None:
+    """Naming the vehicle stays unambiguous even in question form — the AD-S9
+    hoist runs BEFORE the question-form stand-down (user mandate 2026-06-15)."""
+    from jarvis.core.capabilities import get_registry
+    from jarvis.core.capabilities_seed import seed_registry
+
+    reg = get_registry()
+    snapshot = dict(reg._caps)  # noqa: SLF001 — test fixture state restore
+    seed_registry(reg)
+    try:
+        manager, _executor = _manager_with_spawn(force_spawn_mode="strict")
+        utterance = (
+            "Kannst du einen Subagenten spawnen, der recherchiert, wie viel "
+            "Geld Elon Musk gerade hat?"
+        )
+        assert manager._should_force_spawn(utterance) is True, (
+            "an explicitly named vehicle must spawn even in question form"
+        )
+    finally:
+        reg._caps.clear()  # noqa: SLF001
+        reg._caps.update(snapshot)  # noqa: SLF001
 
 
 @pytest.mark.parametrize(

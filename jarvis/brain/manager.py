@@ -891,8 +891,12 @@ _OPINION_ADVICE_QUESTION_RE = re.compile(
     # decision help (DE)
     r"|soll(?:te)?\s+ich\b[^?]*\boder\b"
     r"|was\s+(?:ist|w[äa]re|waere)\s+(?:besser|kl[üu]ger|klueger|sinnvoller)\b"
-    # conversational question opener (DE)
-    r"|ich\s+(?:hab|habe|h[äa]tte|haette)\s+(?:da\s+)?(?:mal\s+)?(?:noch\s+)?(?:'?ne|eine)\s+frage"
+    # conversational question opener (DE). Adjectives/intensifiers between the
+    # article and "Frage" must not blind the guard: "ich hab mal eine GANZ
+    # GENERELLE Frage, wie viel Geld hat Elon Musk?" slipped past the rigid
+    # "eine frage" form and force-spawned a worker for a one-search knowledge
+    # question (live bug 2026-07-16, voice session 11:49).
+    r"|ich\s+(?:hab|habe|h[äa]tte|haette)\s+(?:da\s+)?(?:mal\s+)?(?:noch\s+)?(?:'?ne|eine)\s+(?:[\w-]+\s+){0,3}?frage"
     r"|kann\s+ich\s+dich\s+(?:mal\s+)?(?:was|etwas)\s+fragen"
     # advice / opinion (EN)
     r"|what\s+(?:would|do)\s+you\s+(?:recommend|suggest|advise|think)\b"
@@ -900,12 +904,12 @@ _OPINION_ADVICE_QUESTION_RE = re.compile(
     r"|should\s+i\b[^?]*\bor\b"
     r"|(?:what(?:'s|\s+is)\s+)?your\s+(?:opinion|advice|take|recommendation)\b"
     r"|do\s+you\s+think\b"
-    r"|i\s+(?:have|'ve\s+got|got)\s+a\s+question\b"
+    r"|i\s+(?:have|'ve\s+got|got)\s+a\s+(?:[\w-]+\s+){0,3}?question\b"
     r"|can\s+i\s+ask\s+you\b"
     # advice / opinion (ES)
     r"|qu[ée]\s+(?:me\s+)?(?:recomiendas|aconsejas|sugieres)\b"
     r"|qu[ée]\s+(?:opinas|piensas|crees)\b"
-    r"|tengo\s+una\s+pregunta\b"
+    r"|tengo\s+una\s+(?:[\w-]+\s+){0,3}?pregunta\b"
     r"|deber[íi]a\s+"
     r")",
     re.IGNORECASE,
@@ -5336,6 +5340,27 @@ class BrainManager:
             # a build verb, so a pure answer ("write a short summary") stays inline.
             if self._research_wants_artifact(t):
                 return True
+            # A turn in QUESTION form is conversation: the user asks, Jarvis
+            # answers inline (search_web stays available). The generic-work
+            # path rests on has_action_intent, whose verb catalogue collides
+            # with everyday nouns ("Frage" -> "frag", "Buch" -> "buch"), so a
+            # plain knowledge question could still be classified as generic
+            # sub-agent work and force-spawn a full worker (live bug
+            # 2026-07-16, voice session 11:49: "…ganz generelle Frage, wie
+            # viel Geld hat Elon Musk gerade aktuell?" dispatched an Opus
+            # mission for a one-search answer; user mandate: a Jarvis-Agent
+            # needs a command or an explicitly named vehicle, never a
+            # question). Explicit triggers returned True above (AD-S9) and
+            # artifact builds returned just before this, so a question that
+            # genuinely commissions heavy work still spawns; a working
+            # question ("Kannst du X fixen?") keeps LLM discretion — the
+            # spawn tools stay in its surface on action-intent turns.
+            if _is_plain_knowledge_question(t):
+                log.info(
+                    "force-spawn skipped: question-form turn — generic-work "
+                    "path needs a command, answering inline"
+                )
+                return False
             return self._is_generic_subagent_work(t)
         if verb_re.search(t):
             return True

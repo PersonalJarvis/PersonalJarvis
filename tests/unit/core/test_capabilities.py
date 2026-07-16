@@ -460,3 +460,30 @@ class TestSeedRegistry:
         assert self.reg.has_action_intent(
             "wie ist das Wetter?"  # i18n-allow
         ) is False
+
+    def test_has_action_intent_deverbal_noun_is_not_a_command(self) -> None:
+        """Determiner-led deverbal nouns ('eine ganz generelle Frage', 'die  # i18n-allow: bug quote
+        Antwort') must not impersonate their verb stems ('frag', 'antwort'):
+        the collision classified a plain knowledge question as generic
+        sub-agent work and force-spawned a full background worker (live bug
+        2026-07-16, voice session 11:49)."""
+        assert self.reg.has_action_intent(
+            "Du, ich hab mal eine ganz generelle Frage, wie viel Geld ähm "  # i18n-allow: bug quote
+            "hat eigentlich Elon Musk gerade aktuell?"
+        ) is False
+        assert self.reg.has_action_intent(
+            "Was ist die Antwort auf das Leben?"  # i18n-allow: noun collision under test
+        ) is False
+        assert self.reg.has_action_intent(
+            "Ich hätte da noch eine kurze Frage zu dem Thema."  # i18n-allow: under test
+        ) is False
+
+    def test_has_action_intent_keeps_genuine_ask_imperatives(self) -> None:
+        """A real imperative never follows a determiner — masking the noun
+        spans must not lose genuine ask/send commands."""
+        assert self.reg.has_action_intent(
+            "Frag Anna, ob sie morgen Zeit hat."  # i18n-allow: imperative under test
+        ) is True
+        assert self.reg.has_action_intent(
+            "Schick eine Mail an Anna und frag sie, ob es morgen passt."  # i18n-allow: imperative under test
+        ) is True
