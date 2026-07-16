@@ -50,12 +50,12 @@ from jarvis.cu.indicator.win32 import exclude_from_capture, harden_window
 _EDGE_RGB = (255, 229, 0)
 _SOFT_RGB = (231, 196, 110)
 
-_GLOW_MIN_PX = 28
-_GLOW_MAX_PX = 90
+_GLOW_MIN_PX = 32
+_GLOW_MAX_PX = 110
 _EDGE_LINE_PX = 3
 
 _PULSE_PERIOD_MS = 2400
-_PULSE_FLOOR = 0.55  # breathing dims to 55 %, never fully out
+_PULSE_FLOOR = 0.62  # breathing dims to 62 %, never fully out
 _FADE_MS = 300
 
 
@@ -106,14 +106,14 @@ class _GlowWindow(QWidget):
         h = self.height()
         if w <= 0 or h <= 0:
             return
-        glow = max(_GLOW_MIN_PX, min(_GLOW_MAX_PX, int(min(w, h) * 0.05)))
+        glow = max(_GLOW_MIN_PX, min(_GLOW_MAX_PX, int(min(w, h) * 0.06)))
 
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setPen(Qt.PenStyle.NoPen)
 
-        edge = QColor(*_EDGE_RGB, 190)
-        soft = QColor(*_SOFT_RGB, 110)
+        edge = QColor(*_EDGE_RGB, 205)
+        soft = QColor(*_SOFT_RGB, 135)
         clear = QColor(*_SOFT_RGB, 0)
 
         def _edge_gradient(x1: float, y1: float, x2: float, y2: float):
