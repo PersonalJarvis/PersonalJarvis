@@ -33,6 +33,15 @@ _log = logging.getLogger(__name__)
 _TIMEOUT_EXIT_CODE = 124
 _CANCEL_EXIT_CODE = 130
 
+# Global desktop actuation lock (deep-dive 2026-07-15, H-10). There is ONE
+# physical mouse/keyboard/foreground focus: two missions with DIFFERENT goals
+# used to run concurrently (the tool only dedupes IDENTICAL goals) and raced
+# each other's pointer moves and foreground guards. Every launch route (voice,
+# LLM tool, scheduled task) funnels through this harness, so serializing here
+# covers them all. A queued mission waits honoring its own deadline and
+# cancellation; the wait is logged so "nothing happens" is diagnosable.
+_DESKTOP_LOCK = asyncio.Lock()
+
 
 async def _publish_cu_control(bus, event) -> None:
     """Publish a control-indicator event; a publish failure must never
@@ -172,18 +181,59 @@ class ComputerUseHarness:
             # registry is a SET — concurrent CU missions each register so a
             # single hangup cancels them ALL (BUG-CU-CONCURRENT-CANCEL).
             register_active_cu_token(token)
-            # Control-indicator contract (jarvis.cu.indicator): Started fires
-            # once the token is registered — i.e. the moment this mission may
-            # actually drive mouse/keyboard — and Ended ALWAYS fires in the
-            # finally below, on every exit path.
             mission_id = uuid.uuid4().hex[:12]
-            await _publish_cu_control(
-                ctx.bus, CUControlStarted(mission_id=mission_id)
-            )
             end_reason = "finished"
-            run_cu_loop = _resolve_run_cu_loop()
-            stream = run_cu_loop(task, ctx, cancel_token=token)
+            control_started = False
+            lock_acquired = False
+            stream = None
             try:
+                # H-10: ONE mission drives the desktop at a time. Waiting in
+                # short slices keeps the queue responsive to the mission's own
+                # deadline and to cancellation (hangup / Emergency Stop).
+                if _DESKTOP_LOCK.locked():
+                    _log.info(
+                        "[cu] desktop busy — mission queued behind the "
+                        "active one",
+                    )
+                while not lock_acquired:
+                    if token.is_cancelled():
+                        end_reason = "cancelled"
+                        yield HarnessResult(
+                            stderr="[cu] cancelled while waiting for the desktop\n",
+                            exit_code=_CANCEL_EXIT_CODE,
+                            is_final=True,
+                        )
+                        return
+                    remaining_s = deadline - time.monotonic()
+                    if remaining_s <= 0:
+                        end_reason = "timeout"
+                        yield HarnessResult(
+                            stderr=(
+                                f"[cu] timeout after {timeout_s:.3g}s waiting "
+                                "for the desktop (another mission was active)\n"
+                            ),
+                            exit_code=_TIMEOUT_EXIT_CODE,
+                            is_final=True,
+                        )
+                        return
+                    try:
+                        await asyncio.wait_for(
+                            _DESKTOP_LOCK.acquire(),
+                            timeout=min(0.25, remaining_s),
+                        )
+                        lock_acquired = True
+                    except TimeoutError:
+                        continue
+                # Control-indicator contract (jarvis.cu.indicator): Started
+                # fires the moment this mission may actually drive
+                # mouse/keyboard (token registered AND desktop lock held);
+                # Ended ALWAYS fires in the finally below, on every exit path.
+                await _publish_cu_control(
+                    ctx.bus, CUControlStarted(mission_id=mission_id)
+                )
+                control_started = True
+                run_cu_loop = _resolve_run_cu_loop()
+                stream = run_cu_loop(task, ctx, cancel_token=token)
                 while True:
                     remaining_s = deadline - time.monotonic()
                     if remaining_s <= 0:
@@ -213,17 +263,21 @@ class ComputerUseHarness:
                     is_final=True,
                 )
             finally:
-                await stream.aclose()
+                if stream is not None:
+                    await stream.aclose()
+                if lock_acquired:
+                    _DESKTOP_LOCK.release()
                 self._active_token = None
                 # Remove only THIS mission's token — a concurrently-running
                 # sibling stays registered and cancelable (BUG-CU-CONCURRENT-
                 # CANCEL: clearing the whole registry here orphaned the sibling
                 # so a later hangup found no token at all).
                 unregister_active_cu_token(token)
-                await _publish_cu_control(
-                    ctx.bus,
-                    CUControlEnded(mission_id=mission_id, reason=end_reason),
-                )
+                if control_started:
+                    await _publish_cu_control(
+                        ctx.bus,
+                        CUControlEnded(mission_id=mission_id, reason=end_reason),
+                    )
 
     async def cancel(self) -> None:
         """Aborts the running invoke.
