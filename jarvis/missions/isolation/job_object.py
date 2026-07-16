@@ -338,10 +338,15 @@ class _PosixProcessGroupJobObject:
     any handled orchestrator exception, all of which used to leak the tree.
 
     Honest limitation: a *hard* ``SIGKILL`` of the orchestrator process itself
-    bypasses ``close()``, so it cannot reap there — the groups are reparented to
-    init and survive (the one case the kernel-level Job Object covers and this does
-    not). A future Linux-only ``PR_SET_PDEATHSIG`` preexec hook would close that
-    gap; macOS has no direct equivalent.
+    bypasses ``close()``, so it cannot reap there — the groups would be reparented
+    to init and survive (the one case the kernel-level Job Object covers and this
+    class alone does not). On Linux this is now covered separately: every worker
+    is spawned via ``create_worker_subprocess``
+    (``jarvis/missions/workers/process_utils.py``), which arms
+    ``PR_SET_PDEATHSIG`` in a ``preexec_fn`` so the kernel itself SIGKILLs the
+    worker leader the instant its parent dies, independent of this class's
+    ``close()`` path. macOS still has no equivalent (a future launchd/kqueue
+    ``EVFILT_PROC`` watcher would be the path there).
     """
 
     def __init__(

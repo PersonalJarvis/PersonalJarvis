@@ -12,11 +12,17 @@ POSIX syscalls (``os.killpg``/``os.getpgid``, ``SIGKILL``) do not exist on the
 Windows test host, so the POSIX job object takes injectable ``getpgid``/``killpg``
 callables, and the spawn-contract test monkeypatches ``sys.platform`` + a fake
 ``create_subprocess_exec`` — the same pattern as ``test_spawn_breakaway_fallback``.
+
+The P-10 gap (a hard SIGKILL of the orchestrator reparents the worker tree to
+init because the job object above can only reap via an orderly ``close()``) is
+closed on Linux by arming ``PR_SET_PDEATHSIG`` at spawn time in
+``create_worker_subprocess`` — see the ``preexec_fn`` tests below.
 """
 from __future__ import annotations
 
 import asyncio
 import signal
+import sys
 
 import pytest
 
@@ -177,6 +183,108 @@ async def test_worker_spawn_no_new_session_on_windows(
         "Windows uses the Job Object for containment; start_new_session is a "
         "POSIX-only concept and must not be passed there"
     )
+
+
+# --- P-10: PR_SET_PDEATHSIG hardening on Linux only --------------------------
+
+
+async def test_worker_spawn_passes_no_preexec_fn_on_macos(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Only Linux gets the prctl hardening — macOS has no PR_SET_PDEATHSIG."""
+    seen: dict[str, object] = {}
+
+    async def _fake_exec(*_a, **kw):  # noqa: ANN002, ANN003
+        seen.update(kw)
+        return object()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(pu.sys, "platform", "darwin")
+
+    await pu.create_worker_subprocess(["x"], cwd=".", env={})
+    assert "preexec_fn" not in seen, "macOS has no PR_SET_PDEATHSIG equivalent"
+
+
+async def test_worker_spawn_passes_no_preexec_fn_on_windows(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seen: dict[str, object] = {}
+
+    async def _fake_exec(*_a, creationflags: int = 0, **kw):  # noqa: ANN002, ANN003
+        seen.update(kw)
+        return object()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(pu.sys, "platform", "win32")
+    monkeypatch.setattr(pu, "worker_creationflags", lambda: 0x08000000)
+
+    await pu.create_worker_subprocess(["x"], cwd=".", env={})
+    assert "preexec_fn" not in seen
+
+
+async def test_worker_spawn_passes_no_preexec_fn_when_prctl_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Even on Linux, a missing/unresolvable prctl must degrade silently."""
+    seen: dict[str, object] = {}
+
+    async def _fake_exec(*_a, **kw):  # noqa: ANN002, ANN003
+        seen.update(kw)
+        return object()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(pu.sys, "platform", "linux")
+    monkeypatch.setattr(pu, "_resolve_linux_prctl", lambda: None)
+
+    proc = await pu.create_worker_subprocess(["x"], cwd=".", env={})
+    assert proc is not None
+    assert "preexec_fn" not in seen
+
+
+async def test_worker_spawn_passes_preexec_fn_on_linux_when_prctl_available(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On Linux with a resolvable prctl, the spawn gets a PDEATHSIG preexec_fn."""
+    seen: dict[str, object] = {}
+    prctl_calls: list[tuple[int, int]] = []
+
+    def _fake_prctl(option: int, sig: int) -> int:
+        prctl_calls.append((option, sig))
+        return 0
+
+    async def _fake_exec(*_a, **kw):  # noqa: ANN002, ANN003
+        seen.update(kw)
+        return object()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", _fake_exec)
+    monkeypatch.setattr(pu.sys, "platform", "linux")
+    monkeypatch.setattr(pu, "_resolve_linux_prctl", lambda: _fake_prctl)
+
+    await pu.create_worker_subprocess(["x"], cwd=".", env={})
+
+    preexec = seen.get("preexec_fn")
+    assert callable(preexec), "Linux spawn with a working prctl must set preexec_fn"
+    # Simulate the fork-time call the real subprocess machinery would make.
+    preexec()
+    assert prctl_calls == [(pu._PR_SET_PDEATHSIG, pu._SIGKILL)]
+
+
+def test_linux_pdeathsig_preexec_fn_never_raises() -> None:
+    """The preexec_fn must swallow prctl failures — it must never abort a spawn."""
+
+    def _boom(*_a, **_k):  # noqa: ANN002, ANN003
+        raise OSError("simulated prctl failure")
+
+    preexec = pu._linux_pdeathsig_preexec_fn(_boom)
+    preexec()  # must not raise
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="prctl is Linux-only")
+def test_resolve_linux_prctl_returns_callable_on_real_linux() -> None:
+    """On a real Linux host, libc.prctl must resolve to a callable."""
+    prctl = pu._resolve_linux_prctl()
+    assert prctl is not None
+    assert callable(prctl)
 
 
 # --- Bootstrap wiring: the mission job factory must reap on POSIX -----------
