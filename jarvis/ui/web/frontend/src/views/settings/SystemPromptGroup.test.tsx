@@ -56,10 +56,17 @@ describe("SystemPromptGroup", () => {
     const editor = await waitFor(
       () => screen.getByTestId("system-prompt-editor") as HTMLTextAreaElement,
     );
-    fireEvent.change(editor, { target: { value: "You are NOVA, a custom assistant." } });
-
     const save = screen.getByText("Save prompt").closest("button")!;
-    await waitFor(() => expect(save.hasAttribute("disabled")).toBe(false));
+    // A late-resolving initial GET re-syncs the draft from the server value
+    // and un-dirties the editor after a single change event (timing-dependent
+    // — reproduces on slow CI runners). Re-issue the edit inside waitFor
+    // until the dirty state sticks and the button is enabled.
+    await waitFor(() => {
+      fireEvent.change(editor, {
+        target: { value: "You are NOVA, a custom assistant." },
+      });
+      expect(save.hasAttribute("disabled")).toBe(false);
+    });
     fireEvent.click(save);
 
     await waitFor(() => {
