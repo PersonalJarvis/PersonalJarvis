@@ -39,7 +39,7 @@ experiences today.
 
 | # | Impact | Area | Gap | Evidence | Behavior off-Windows |
 |---|---|---|---|---|---|
-| P-01 | Medium | Orb/UI | macOS has no floating orb — tray-only surface (deliberate: Aqua-Tk worker-thread root natively aborts the process, BUG-057) | `jarvis/overlay/surface.py:177-229` | Tray icon color feedback instead of a floating orb; all voice features still work |
+| P-01 | Medium | Orb/UI | macOS has no floating mascot orb — Aqua-Tk is main-thread-only (BUG-057). The Jarvis BAR works on macOS since v1.0.8 via an own-process Tk host (`jarvis/ui/jarvisbar/host.py`, 2026-07-14); the mascot orb has no such host yet | `jarvis/overlay/surface.py:177-229`, `jarvis/ui/desktop_app.py:2032-2073` | `overlay_style=jarvis_bar`: bar shows (after voice-usable releases the startup gate; needs tkinter in the running Python). Mascot styles: no-op surface |
 | P-02 | Low | Awareness | Idle detection has no Wayland backend (Windows GetLastInputInfo, macOS Quartz, Linux X11 `xprintidle` all exist since 2026-07-16); Wayland exposes no global idle time without portal support | `jarvis/awareness/watchers/idle.py` | Wayland: one honest log line, watcher does not start |
 | P-03 | Low | Awareness | Window-focus watcher has no Wayland backend (Windows event hook, macOS NSWorkspace, Linux X11 polling all exist since 2026-07-16); Wayland hides the foreground window by design | `jarvis/awareness/watchers/window.py` | Wayland: one honest log line, watcher does not start |
 | P-04 | Medium | CU typing | Linux non-ASCII typing (umlauts, CJK, emoji) requires `xdotool`; pyautogui silently drops those chars without it | `jarvis/cu/actuate/posix.py:387-438` | With `xdotool` (installer provisions it since 2026-07-15): fine. Without: warning + silent char loss |
