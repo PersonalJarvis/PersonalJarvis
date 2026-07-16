@@ -2,12 +2,14 @@
 // JSON-only WSClient: this socket carries raw mono PCM16 in both directions.
 
 import { LevelMeter } from "./levelMeter";
+import { mintWsTicket } from "./ws";
 import pcmWorkletUrl from "./pcm-worklet.ts?worker&url";
 
-export function buildAudioSocketUrl(): string {
+export function buildAudioSocketUrl(ticket?: string | null): string {
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
   const host = window.location.host;
-  return `${proto}://${host}/ws/audio`;
+  const base = `${proto}://${host}/ws/audio`;
+  return ticket ? `${base}?ticket=${encodeURIComponent(ticket)}` : base;
 }
 
 export type RealtimeStatusPayload = Record<string, unknown>;
@@ -252,7 +254,12 @@ export class RealtimeAudioClient {
       this.captureSink.connect(this.ctx.destination);
       this.playbackNode.connect(this.ctx.destination);
 
-      this.ws = new WebSocket(buildAudioSocketUrl());
+      // Proactive one-time ticket: WebKit engines do not attach the HttpOnly
+      // session cookie to a WS handshake (BUG-065). Minting over plain HTTP
+      // first works on every engine; on a mint failure (e.g. older backend)
+      // fall back to the cookie-only handshake, which Chromium still accepts.
+      const ticket = await mintWsTicket();
+      this.ws = new WebSocket(buildAudioSocketUrl(ticket));
       this.ws.binaryType = "arraybuffer";
       this.captureNode.port.onmessage = (event) => {
         const data = event.data as ArrayBuffer | { type?: string; rms?: number };

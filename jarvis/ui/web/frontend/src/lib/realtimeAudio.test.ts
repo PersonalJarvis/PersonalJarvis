@@ -31,6 +31,15 @@ describe("realtime audio client", () => {
     expect(buildAudioSocketUrl()).toBe("ws://localhost:47821/ws/audio");
   });
 
+  it("carries a one-time handshake ticket when one was minted (BUG-065)", () => {
+    // The long-lived session token must still never appear in a socket URL;
+    // only the consumable short-TTL ticket may ride along for WebKit engines.
+    expect(buildAudioSocketUrl("one-time-abc")).toBe(
+      "wss://app.example/ws/audio?ticket=one-time-abc",
+    );
+    expect(buildAudioSocketUrl(null)).toBe("wss://app.example/ws/audio");
+  });
+
   it("rejects browser microphone capture outside a secure context", () => {
     vi.stubGlobal("window", { isSecureContext: false });
 

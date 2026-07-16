@@ -119,4 +119,101 @@ describe("WSClient", () => {
       vi.useRealTimers();
     }
   });
+
+  // 4401 = the boundary rejected the handshake credential. WebKit engines do
+  // not attach the HttpOnly session cookie to WS handshakes (BUG-065), so the
+  // client must prove its session over plain HTTP and retry with the ticket.
+  describe("4401 one-time-ticket retry (WebKit cookie-less handshake)", () => {
+    const originalFetch = globalThis.fetch;
+
+    afterEach(() => {
+      (globalThis as any).fetch = originalFetch;
+    });
+
+    it("mints a ticket, reports authRetryPending, and reconnects with ?ticket=", async () => {
+      vi.useFakeTimers();
+      const fetchMock = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ ticket: "one-time-abc", expires_in: 60 }),
+      });
+      (globalThis as any).fetch = fetchMock;
+      try {
+        const onClose = vi.fn();
+        const client = new WSClient({ onClose });
+        client.connect();
+        const first = MockWebSocket.last;
+
+        first!.fire("close", { code: 4401 });
+        await vi.advanceTimersByTimeAsync(500);
+
+        expect(fetchMock).toHaveBeenCalledWith(
+          "/api/ui/ws-ticket",
+          expect.objectContaining({ method: "POST", credentials: "same-origin" }),
+        );
+        expect(onClose).toHaveBeenCalledWith(4401, { authRetryPending: true });
+        expect(MockWebSocket.last).not.toBe(first);
+        expect(MockWebSocket.last!.url).toBe(
+          "ws://localhost:5173/ws?ticket=one-time-abc",
+        );
+
+        // The ticket is single-use: a later ordinary close reconnects bare.
+        MockWebSocket.last!.fire("close", { code: 1013 });
+        await vi.advanceTimersByTimeAsync(500);
+        expect(MockWebSocket.last!.url).toBe("ws://localhost:5173/ws");
+        client.close();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("stops fast-retrying after persistent 4401s and reports honest offline", async () => {
+      vi.useFakeTimers();
+      (globalThis as any).fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ ticket: "one-time-abc", expires_in: 60 }),
+      });
+      try {
+        const onClose = vi.fn();
+        const client = new WSClient({ onClose });
+        client.connect();
+
+        // Three consecutive 4401s stay within the fast-retry budget...
+        for (let i = 0; i < 3; i += 1) {
+          MockWebSocket.last!.fire("close", { code: 4401 });
+          await vi.advanceTimersByTimeAsync(500);
+          expect(onClose).toHaveBeenLastCalledWith(4401, { authRetryPending: true });
+        }
+        // ...the fourth means fresh tickets are not unlocking the socket:
+        // report the honest offline state (escalating backoff takes over).
+        MockWebSocket.last!.fire("close", { code: 4401 });
+        await vi.advanceTimersByTimeAsync(0);
+        expect(onClose).toHaveBeenLastCalledWith(4401, { authRetryPending: false });
+        client.close();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("reports a dead session honestly when the mint fails", async () => {
+      vi.useFakeTimers();
+      (globalThis as any).fetch = vi.fn().mockResolvedValue({ ok: false });
+      try {
+        const onClose = vi.fn();
+        const client = new WSClient({ onClose });
+        client.connect();
+        const first = MockWebSocket.last;
+
+        first!.fire("close", { code: 4401 });
+        await vi.advanceTimersByTimeAsync(500);
+
+        expect(onClose).toHaveBeenCalledWith(4401, { authRetryPending: false });
+        // Falls back to the normal reconnect path, without a ticket.
+        expect(MockWebSocket.last).not.toBe(first);
+        expect(MockWebSocket.last!.url).toBe("ws://localhost:5173/ws");
+        client.close();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
 });

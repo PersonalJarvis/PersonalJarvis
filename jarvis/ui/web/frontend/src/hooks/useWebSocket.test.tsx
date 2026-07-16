@@ -5,7 +5,7 @@
  * useWebSocket → WSClient → store path (via a MockWebSocket) and asserts that a
  * VoiceBootStatus frame flips `voiceReady` in the store.
  */
-import { cleanup, render } from "@testing-library/react";
+import { cleanup, render, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -195,5 +195,35 @@ describe("useWebSocket connection state (welcome-gated + warming)", () => {
     expect(useEventStore.getState().connected).toBe(false);
     MockWebSocket.last!.fire("close", { code: 1006 });
     expect(useEventStore.getState().wsWarming).toBe(false);
+  });
+
+  // 4401 = credential rejected at the handshake. On WebKit engines this is
+  // the normal cookie-less handshake (BUG-065): while the client re-proves
+  // its session via the one-time ticket, the UI must keep the "starting"
+  // state instead of flashing OFFLINE; a failed mint (dead session) must
+  // still surface the honest offline state.
+  it("keeps warming through a 4401 ticket retry, drops it when the mint fails", async () => {
+    const originalFetch = globalThis.fetch;
+    try {
+      (globalThis as unknown as { fetch: unknown }).fetch = vi.fn().mockResolvedValue({
+        ok: true,
+        json: () => Promise.resolve({ ticket: "one-time-abc", expires_in: 60 }),
+      });
+      render(<Harness />);
+      await Promise.resolve();
+
+      useEventStore.setState({ wsWarming: false });
+      MockWebSocket.last!.fire("close", { code: 4401 });
+      await waitFor(() => expect(useEventStore.getState().wsWarming).toBe(true));
+      expect(useEventStore.getState().connected).toBe(false);
+
+      (globalThis as unknown as { fetch: unknown }).fetch = vi
+        .fn()
+        .mockResolvedValue({ ok: false });
+      MockWebSocket.last!.fire("close", { code: 4401 });
+      await waitFor(() => expect(useEventStore.getState().wsWarming).toBe(false));
+    } finally {
+      (globalThis as unknown as { fetch: unknown }).fetch = originalFetch;
+    }
   });
 });

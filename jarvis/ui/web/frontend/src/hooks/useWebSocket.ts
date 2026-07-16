@@ -52,9 +52,14 @@ export function useWebSocket(): void {
       // socket open must NOT mark connected — the fast-boot bootstrap also
       // opens then closes with 1013 without ever sending a welcome frame.
       onOpen: () => {},
-      onClose: (code) => {
+      onClose: (code, info) => {
         // 1013 = bootstrap "try again later" → backend still warming, not down.
-        setWarming(code === 1013);
+        // A 4401 with a successful ticket mint (WebKit cookie-less handshake,
+        // BUG-065) is equally transient: the next attempt already carries a
+        // fresh credential, so keep the "starting" state instead of flashing
+        // OFFLINE. A 4401 whose mint failed means the session is dead — that
+        // one falls through to the honest offline state.
+        setWarming(code === 1013 || Boolean(info?.authRetryPending));
         setConnected(false);
       },
       onMessage: (raw) => {
