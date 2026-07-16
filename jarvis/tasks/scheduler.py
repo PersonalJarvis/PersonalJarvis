@@ -105,6 +105,9 @@ class TaskScheduler:
         self._fired_dedup: dict[tuple[str, str], None] = {}
         # Pending runner tasks, so we can clean up on cancel.
         self._runner_tasks: set[asyncio.Task[Any]] = set()
+        # Per-run cancel tokens (H-03): cancel_task() fires the token of a
+        # RUNNING task so its harness action stops; cleared in _safe_run.
+        self._running_tokens: dict[str, Any] = {}
 
     # ------------------------------------------------------------------
     # Runner wiring (DI — the runner can be set after construction)
@@ -138,15 +141,21 @@ class TaskScheduler:
     async def cancel_task(self, task_id: str, reason: str = "user_cancel") -> bool:
         """Marks a task as ``cancelled`` if it isn't already terminal.
 
-        Also removes it from the in-memory structures. Running runners are
-        NOT interrupted directly — that's what the kill-switch path is for.
-        The use case here is: "task was scheduled, user hits X."
+        Also removes it from the in-memory structures. A RUNNING task's
+        per-run cancel token is fired too (deep-dive 2026-07-15, H-03): the
+        runner races its harness stream against that token and stops the
+        harness itself, so cancelling a running Computer-Use task no longer
+        leaves desktop automation clicking until its own timeout. The global
+        kill switch remains the emergency path for everything at once.
         """
         task = await self._store.get(task_id)
         if task is None:
             return False
         if task["state"] in ("completed", "failed", "cancelled", "interrupted"):
             return False
+        running_token = self._running_tokens.get(task_id)
+        if running_token is not None:
+            running_token.cancel(reason)
         # Remove from heap (linear scan, small enough — a typical queue is < 100).
         self._heap = [(due, tid) for (due, tid) in self._heap if tid != task_id]
         heapq.heapify(self._heap)
@@ -408,13 +417,28 @@ class TaskScheduler:
     async def _safe_run(
         self, task_id: str, trigger_event: dict[str, Any] | None = None
     ) -> None:
+        # Per-run cancel token (deep-dive 2026-07-15, H-03): production runs
+        # used to pass NO token, so the runner's cancel probes were no-ops and
+        # a running harness action was unstoppable except via the global kill
+        # switch. cancel_task() fires this token for a single running task.
+        from jarvis.control.cancel import CancelToken  # noqa: PLC0415
+
+        token = CancelToken()
+        self._running_tokens[task_id] = token
         try:
-            await self._runner.run(task_id, trigger_event=trigger_event)  # type: ignore[union-attr]
+            await self._runner.run(  # type: ignore[union-attr]
+                task_id, token, trigger_event=trigger_event,
+            )
         except Exception as exc:  # noqa: BLE001
             log.exception("TaskRunner crashed task=%s: %s", task_id, exc)
+        finally:
+            self._running_tokens.pop(task_id, None)
 
     async def shutdown(self) -> None:
-        """Waits for runner tasks to finish (with a timeout). The caller must stop the loop first."""
+        """Waits for runner tasks to finish (with a timeout).
+
+        The caller must stop the loop first.
+        """
         tasks = list(self._runner_tasks)
         if not tasks:
             return

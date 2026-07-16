@@ -2618,9 +2618,18 @@ class WebServer:
         # write/full auto-approve those ask-tier calls for their own turn.
         auto_approver = TaskAutoApprover(self.bus)
 
+        # Harness dispatch (deep-dive 2026-07-15, H-02): the UI offers
+        # scheduled Computer-Use actions (taskSpec.ts thenKind "computer_use"
+        # -> harness_dispatch), but this runner shipped without a
+        # HarnessManager, so every such task failed at runtime with
+        # "HarnessManager not configured". The manager is cheap to construct
+        # (entry-point class scan; instances build lazily on first dispatch).
+        from jarvis.harness.manager import HarnessManager
+
         runner = TaskRunner(
             store=store,
             bus=self.bus,
+            harness_manager=HarnessManager(bus=self.bus),
             agent_brain=agent_brain,
             auto_approver=auto_approver,
         )

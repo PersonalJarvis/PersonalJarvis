@@ -299,3 +299,122 @@ async def test_runner_emits_task_started(store: TaskStore, bus: EventBus) -> Non
 
 async def _append(target: list[Any], evt: Any) -> None:
     target.append(evt)
+
+
+# ----------------------------------------------------------------------
+# Computer-Use authorization + cancel propagation
+# (deep-dive 2026-07-15, H-02/H-03)
+# ----------------------------------------------------------------------
+
+class HangingHarness:
+    """Harness whose stream never yields until cancelled — models a running
+    Computer-Use mission that produces no chunks for minutes."""
+
+    def __init__(self) -> None:
+        self.cancelled = False
+        import asyncio
+        self._release = asyncio.Event()
+
+    async def cancel(self) -> None:
+        self.cancelled = True
+        self._release.set()
+
+
+class HangingHarnessManager:
+    """dispatch() blocks forever; exposes get() so the runner can cancel."""
+
+    def __init__(self) -> None:
+        self.harness = HangingHarness()
+        self.dispatched: list[tuple[str, Any]] = []
+
+    def get(self, name: str) -> Any:
+        return self.harness
+
+    async def dispatch(self, name: str, task: Any):
+        self.dispatched.append((name, task))
+        harness = self.harness
+
+        async def gen():
+            await harness._release.wait()
+            if False:  # pragma: no cover — keep this an async generator
+                yield None
+        return gen()
+
+
+async def test_cu_dispatch_without_allow_flag_fails_closed(
+    store: TaskStore, bus: EventBus
+) -> None:
+    """A dispatch to the CU harness without allow_computer_use must fail
+    BEFORE anything reaches the harness (the flag used to be write-only)."""
+    hm = FakeHarnessManager()
+    runner = TaskRunner(store=store, bus=bus, harness_manager=hm)
+    spec = TaskSpec(
+        title="unauthorized cu",
+        trigger=TriggerAfterDelay(delay_seconds=1.0),
+        action=HarnessDispatchAction(
+            harness="screenshot", prompt="click something",
+            allow_computer_use=False,
+        ),
+    )
+    tid = await store.insert(spec)
+    await runner.run(tid)
+
+    task = await store.get(tid)
+    assert task is not None
+    assert task["state"] == "failed"
+    assert "allow_computer_use" in (task["last_error"] or "")
+    assert hm.dispatched == []  # never reached the harness
+
+
+async def test_cu_dispatch_with_allow_flag_runs(
+    store: TaskStore, bus: EventBus
+) -> None:
+    hm = FakeHarnessManager()
+    runner = TaskRunner(store=store, bus=bus, harness_manager=hm)
+    spec = TaskSpec(
+        title="authorized cu",
+        trigger=TriggerAfterDelay(delay_seconds=1.0),
+        action=HarnessDispatchAction(
+            harness="screenshot", prompt="open the browser",
+            allow_computer_use=True,
+        ),
+    )
+    tid = await store.insert(spec)
+    await runner.run(tid)
+
+    task = await store.get(tid)
+    assert task is not None
+    assert task["state"] == "completed"
+    assert len(hm.dispatched) == 1
+
+
+async def test_cancel_mid_stream_stops_the_harness(
+    store: TaskStore, bus: EventBus
+) -> None:
+    """Cancelling a running task must reach INTO the harness (H-03): the old
+    per-chunk probe never fired on a chunkless stream, and the harness was
+    never told to stop."""
+    import asyncio
+
+    hm = HangingHarnessManager()
+    runner = TaskRunner(store=store, bus=bus, harness_manager=hm)
+    spec = TaskSpec(
+        title="cancel me",
+        trigger=TriggerAfterDelay(delay_seconds=1.0),
+        action=HarnessDispatchAction(
+            harness="screenshot", prompt="long mission",
+            allow_computer_use=True,
+        ),
+    )
+    tid = await store.insert(spec)
+
+    token = CancelToken()
+    run_task = asyncio.create_task(runner.run(tid, token))
+    await asyncio.sleep(0.05)  # the stream is now pending with no chunks
+    token.cancel("user_cancel")
+    await asyncio.wait_for(run_task, timeout=2.0)
+
+    task = await store.get(tid)
+    assert task is not None
+    assert task["state"] == "cancelled"
+    assert hm.harness.cancelled  # the stop reached the harness itself

@@ -28,6 +28,8 @@ cancelled()`` before every step. If set, it aborts and sets the state to
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 import time
 from collections.abc import Iterable
@@ -270,6 +272,18 @@ class TaskRunner:
         # test environments
         from jarvis.core.protocols import HarnessTask
 
+        # Authorization gate (deep-dive 2026-07-15, H-03): allow_computer_use
+        # used to be write-only — nothing anywhere read it, so a task could
+        # drive the desktop regardless of the flag. Enforce it at the one
+        # place the flag originates: a dispatch targeting the Computer-Use
+        # harness without the grant fails before anything touches the screen.
+        if not action.allow_computer_use and _targets_computer_use(action.harness):
+            raise RuntimeError(
+                "this task dispatches to the Computer-Use harness but "
+                "allow_computer_use is false — re-create the task with "
+                "desktop control allowed to authorize it"
+            )
+
         # Interpolate {field} placeholders from the triggering event so a CU goal
         # like "open {result_uri} in the browser" resolves to the finished
         # mission's artifact. No-op for time-based tasks (empty ctx).
@@ -287,24 +301,97 @@ class TaskRunner:
                              source_layer="tasks.runner")
         )
 
-        async for result in await _aiter_safe(self._harness.dispatch(action.harness, task)):
-            self._check_cancel(cancel_token)
-            payload: dict[str, Any] = {
-                "stdout": getattr(result, "stdout", ""),
-                "stderr": getattr(result, "stderr", ""),
-                "exit_code": getattr(result, "exit_code", 0),
-                "is_final": getattr(result, "is_final", False),
-            }
-            seq = await self._store.append_step(task_id, "log", payload)
-            await self._bus.publish(
-                TaskStepRecorded(task_id=task_id, seq=seq, kind="log",
-                                 source_layer="tasks.runner")
-            )
-            if payload["is_final"] and int(payload["exit_code"]) != 0:
-                raise RuntimeError(
-                    f"Harness '{action.harness}' exit_code={payload['exit_code']}: "
-                    f"{payload['stderr']!s}"
+        stream = await _aiter_safe(self._harness.dispatch(action.harness, task))
+        try:
+            while True:
+                result = await self._next_chunk(stream, cancel_token)
+                if result is _STREAM_END:
+                    break
+                payload: dict[str, Any] = {
+                    "stdout": getattr(result, "stdout", ""),
+                    "stderr": getattr(result, "stderr", ""),
+                    "exit_code": getattr(result, "exit_code", 0),
+                    "is_final": getattr(result, "is_final", False),
+                }
+                seq = await self._store.append_step(task_id, "log", payload)
+                await self._bus.publish(
+                    TaskStepRecorded(task_id=task_id, seq=seq, kind="log",
+                                     source_layer="tasks.runner")
                 )
+                if payload["is_final"] and int(payload["exit_code"]) != 0:
+                    raise RuntimeError(
+                        f"Harness '{action.harness}' exit_code={payload['exit_code']}: "
+                        f"{payload['stderr']!s}"
+                    )
+        except _Cancelled:
+            # H-03: abandoning the stream is not enough — a Computer-Use
+            # mission keeps driving the desktop. Stop the harness itself.
+            await self._cancel_harness(action.harness)
+            raise
+        finally:
+            aclose = getattr(stream, "aclose", None)
+            if callable(aclose):
+                with contextlib.suppress(Exception):
+                    await aclose()
+
+    @staticmethod
+    async def _next_chunk(stream: Any, cancel_token: CancelToken | None) -> Any:
+        """Next stream item, racing the task's cancel token (H-03).
+
+        The old per-chunk cancel probe only ran BETWEEN items — a Computer-Use
+        mission can yield nothing for minutes, so a cancelled task kept
+        clicking until its own timeout. Returns :data:`_STREAM_END` when the
+        stream is exhausted; raises :class:`_Cancelled` the moment the token
+        fires, even mid-item.
+        """
+        if cancel_token is None:
+            try:
+                return await anext(stream)
+            except StopAsyncIteration:
+                return _STREAM_END
+        if cancel_token.is_cancelled():
+            raise _Cancelled(cancel_token.reason or "cancelled")
+        next_item = asyncio.ensure_future(anext(stream))
+        cancelled = asyncio.ensure_future(cancel_token.wait_until_cancelled())
+        try:
+            done, _pending = await asyncio.wait(
+                {next_item, cancelled}, return_when=asyncio.FIRST_COMPLETED,
+            )
+        finally:
+            for pending_task in (next_item, cancelled):
+                if not pending_task.done():
+                    pending_task.cancel()
+        with contextlib.suppress(BaseException):
+            await cancelled
+        if next_item in done:
+            try:
+                return next_item.result()
+            except StopAsyncIteration:
+                return _STREAM_END
+        with contextlib.suppress(BaseException):
+            await next_item
+        raise _Cancelled(cancel_token.reason or "cancelled")
+
+    async def _cancel_harness(self, name: str) -> None:
+        """Best-effort: tell the running harness instance itself to stop.
+
+        Never raises and never masks the caller's :class:`_Cancelled` — a
+        harness without a ``cancel()`` (or a failing one) degrades to the old
+        abandon-the-stream behavior.
+        """
+        getter = getattr(self._harness, "get", None)
+        if not callable(getter):
+            return
+        try:
+            harness = getter(name)
+        except Exception:  # noqa: BLE001 — unknown/unbuilt harness: nothing runs
+            return
+        cancel = getattr(harness, "cancel", None)
+        if callable(cancel):
+            try:
+                await cancel()
+            except Exception:  # noqa: BLE001 — best-effort stop
+                log.debug("harness %r cancel failed", name, exc_info=True)
 
     async def _run_speak(
         self,
@@ -508,6 +595,23 @@ class TaskRunner:
 
 class _Cancelled(RuntimeError):
     """Internal sentinel for cancel paths."""
+
+
+#: Sentinel returned by ``_next_chunk`` when the harness stream is exhausted.
+_STREAM_END = object()
+
+
+def _targets_computer_use(harness_name: str) -> bool:
+    """True when a dispatch targets the Computer-Use harness.
+
+    The canonical harness name lives in the local action gate (single home
+    for the literal); the fallback keeps minimal test environments working.
+    """
+    try:
+        from jarvis.brain.local_action_gate import HARNESS_NAME  # noqa: PLC0415
+    except Exception:  # noqa: BLE001 — gate module unavailable (minimal env)
+        return harness_name == "screenshot"
+    return harness_name == HARNESS_NAME
 
 
 class _SafeDict(dict):

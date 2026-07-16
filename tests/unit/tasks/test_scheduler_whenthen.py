@@ -26,7 +26,11 @@ class CapturingRunner:
         self.calls: list[tuple[str, dict[str, Any] | None]] = []
 
     async def run(
-        self, task_id: str, *, trigger_event: dict[str, Any] | None = None
+        self,
+        task_id: str,
+        cancel_token: Any = None,
+        *,
+        trigger_event: dict[str, Any] | None = None,
     ) -> None:
         self.calls.append((task_id, trigger_event))
 

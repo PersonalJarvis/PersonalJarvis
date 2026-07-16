@@ -261,3 +261,47 @@ def test_filter_expr_rejects_dangerous_input() -> None:
     assert _match_filter(evt, "role == 'user' and text == 'hi'") is True
     assert _match_filter(evt, "role == 'user' or text == 'bye'") is True
     assert _match_filter(evt, "not role == 'admin'") is True
+
+
+# ----------------------------------------------------------------------
+# Running-task cancellation (deep-dive 2026-07-15, H-03)
+# ----------------------------------------------------------------------
+
+async def test_cancel_task_fires_the_running_runs_token(
+    store: TaskStore, bus: EventBus
+) -> None:
+    """cancel_task() on a RUNNING task must fire that run's cancel token —
+    production used to pass no token at all, so a running harness action
+    (e.g. a Computer-Use mission) was unstoppable per-task."""
+
+    class BlockingRunner:
+        def __init__(self) -> None:
+            self.token: Any = None
+            self.started = asyncio.Event()
+
+        async def run(self, task_id: str, cancel_token: Any = None, **_kw: Any) -> None:
+            self.token = cancel_token
+            self.started.set()
+            # Behave like the real runner: wait until cancelled.
+            await cancel_token.wait_until_cancelled()
+
+    blocking = BlockingRunner()
+    scheduler = TaskScheduler(store=store, bus=bus, runner=blocking)
+
+    spec = TaskSpec(
+        title="long harness run",
+        trigger=TriggerAfterDelay(delay_seconds=0.01),
+        action=SpeakAction(text="x"),
+    )
+    tid = await scheduler.schedule(spec)
+    await scheduler._dispatch_runner(tid)
+    await asyncio.wait_for(blocking.started.wait(), timeout=2.0)
+
+    assert blocking.token is not None
+    assert not blocking.token.is_cancelled()
+
+    ok = await scheduler.cancel_task(tid, reason="user_cancel")
+    assert ok is True
+    assert blocking.token.is_cancelled()
+    assert blocking.token.reason == "user_cancel"
+    await scheduler.shutdown()
