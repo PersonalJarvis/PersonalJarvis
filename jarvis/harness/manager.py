@@ -96,11 +96,24 @@ class HarnessManager:
             await self._bus.publish(HarnessDispatched(harness=name, task=task))
 
         last: HarnessResult | None = None
-        async for result in harness.invoke(task):
-            last = result
-            if self._bus is not None and not result.is_final:
-                await self._bus.publish(HarnessProgress(harness=name, result=result))
-            yield result
+        stream = harness.invoke(task)
+        try:
+            async for result in stream:
+                last = result
+                if self._bus is not None and not result.is_final:
+                    await self._bus.publish(
+                        HarnessProgress(harness=name, result=result)
+                    )
+                yield result
+        finally:
+            # A consumer that abandons this dispatch mid-stream (break, outer
+            # cancellation, GC of the dispatch generator) must still unwind
+            # the harness's own finally deterministically — the CU harness
+            # releases the desktop lock, its cancel-token registration, and
+            # the screen indicator (CUControlEnded) there. Without this,
+            # cleanup would wait on the async-generator GC finalizer with no
+            # timing guarantee.
+            await stream.aclose()
 
         if self._bus is not None and last is not None and last.is_final:
             await self._bus.publish(HarnessCompleted(harness=name, result=last))

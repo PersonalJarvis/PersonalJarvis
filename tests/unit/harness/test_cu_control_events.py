@@ -143,6 +143,65 @@ async def test_timeout_reports_timeout_and_still_ends(
     assert [ev.reason for ev in rec.ended] == ["timeout"]
 
 
+async def test_abandoned_stream_still_publishes_ended(
+    bus: EventBus, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A consumer that aborts the invoke stream mid-mission (break /
+    aclose / GC of the outer generator) must still get CUControlEnded —
+    otherwise the yellow border stays lit and Escape stays armed."""
+    rec = _Recorder(bus)
+    monkeypatch.setattr(
+        cu_mod,
+        "_resolve_run_cu_loop",
+        lambda: _stub_loop(
+            HarnessResult(stdout="progress", exit_code=0, is_final=False),
+            HarnessResult(stdout="done", exit_code=0, is_final=True),
+        ),
+    )
+    harness = ComputerUseHarness(context=_ctx(bus))
+    stream = harness.invoke(HarnessTask(prompt="x", timeout_s=5))
+    first = await anext(stream)
+    assert first.is_final is False
+    await stream.aclose()  # consumer walks away mid-mission
+
+    assert len(rec.started) == 1
+    assert len(rec.ended) == 1, (
+        "CUControlEnded must fire deterministically on an abandoned stream"
+    )
+    assert rec.started[0].mission_id == rec.ended[0].mission_id
+
+
+async def test_manager_dispatch_closes_harness_stream_on_break(
+    bus: EventBus, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """HarnessManager.dispatch must aclose() the inner harness stream when
+    its own consumer breaks early, so the CU finally never waits on GC."""
+    from jarvis.harness.manager import HarnessManager
+
+    rec = _Recorder(bus)
+    monkeypatch.setattr(
+        cu_mod,
+        "_resolve_run_cu_loop",
+        lambda: _stub_loop(
+            HarnessResult(stdout="progress", exit_code=0, is_final=False),
+            HarnessResult(stdout="done", exit_code=0, is_final=True),
+        ),
+    )
+    manager = HarnessManager(bus=bus)
+    # Seed the instance directly — entry-point discovery would build the
+    # real harness against the global (unset) context.
+    manager._loaded = True
+    manager._classes["screenshot"] = ComputerUseHarness
+    manager._instances["screenshot"] = ComputerUseHarness(context=_ctx(bus))
+    stream = manager.dispatch("screenshot", HarnessTask(prompt="x", timeout_s=5))
+    async for _result in stream:
+        break  # abandon after the first chunk
+    await stream.aclose()
+
+    assert len(rec.started) == 1
+    assert len(rec.ended) == 1
+
+
 async def test_concurrent_missions_pair_up(
     bus: EventBus, monkeypatch: pytest.MonkeyPatch
 ) -> None:

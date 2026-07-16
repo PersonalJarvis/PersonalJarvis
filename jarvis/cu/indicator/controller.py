@@ -30,7 +30,7 @@ import queue
 import subprocess
 import sys
 import threading
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from typing import Any
 
 from jarvis.cu.indicator import capture_guard, protocol, self_input
@@ -152,8 +152,10 @@ class CUIndicatorController:
             return
         self._send(protocol.CMD_HIDE)
         self._send(protocol.CMD_QUIT)
-        proc, self._proc = self._proc, None
-        await asyncio.to_thread(self._reap, proc)
+        with self._stdin_lock:
+            proc, self._proc = self._proc, None
+        if proc is not None:
+            await asyncio.to_thread(self._reap, proc)
 
     @staticmethod
     def _border_capability() -> tuple[bool, str]:
@@ -217,18 +219,28 @@ class CUIndicatorController:
             assert proc.stdout is not None
             for line in proc.stdout:
                 ack = protocol.decode_ack(line)
-                if ack is not None:
+                # Only the capture guard ever WAITS on an ack, and only for
+                # blank/unblank — queueing the rest (show/hide/quit) would
+                # grow the queue unboundedly on Windows, where the guard is
+                # never registered (capture-affinity covers it).
+                if ack in (protocol.CMD_BLANK, protocol.CMD_UNBLANK):
                     self._acks.put(ack)
         except Exception:  # noqa: BLE001
             log.debug("[cu-indicator] ack pipe closed", exc_info=True)
 
     def _send(self, cmd: str, **fields: Any) -> bool:
-        """Fire-and-forget command write; a dead pipe disables the sidecar."""
-        proc = self._proc
-        if proc is None or proc.stdin is None or proc.poll() is not None:
-            return False
+        """Fire-and-forget command write; a dead pipe disables the sidecar.
+
+        ``_stdin_lock`` guards the whole check-then-write sequence: ``_proc``
+        is touched from the event loop, the capture-guard worker thread, and
+        the ``to_thread`` spawn/reap workers, so the handle swap must be an
+        explicit invariant rather than GIL luck.
+        """
         try:
             with self._stdin_lock:
+                proc = self._proc
+                if proc is None or proc.stdin is None or proc.poll() is not None:
+                    return False
                 proc.stdin.write(protocol.encode_command(cmd, **fields))
                 proc.stdin.flush()
             return True
@@ -237,7 +249,8 @@ class CUIndicatorController:
                 "[cu-indicator] sidecar pipe broke — border disabled for the "
                 "rest of this mission."
             )
-            self._proc = None
+            with self._stdin_lock:
+                self._proc = None
             capture_guard.unregister_hook()
             return False
 
@@ -250,6 +263,12 @@ class CUIndicatorController:
                 proc.wait(timeout=1.0)
             except Exception:  # noqa: BLE001
                 log.debug("[cu-indicator] sidecar reap failed", exc_info=True)
+        # Deterministic handle accounting on long-running installs — do not
+        # leave the pipe FDs to GC timing.
+        for pipe in (proc.stdin, proc.stdout):
+            if pipe is not None:
+                with suppress(Exception):
+                    pipe.close()
 
     # ----------------------------------------------------------- capture guard
     @contextmanager
