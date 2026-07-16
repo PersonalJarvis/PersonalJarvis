@@ -4752,3 +4752,61 @@ two. Persist and display from ONE accumulated source of truth, never from
 raw wire chunks; treat every provider "done" signal as carrying a REASON that
 must be read; and never let a suppression/safety path discard the only answer
 a committed user turn will ever get without a salvage check.
+
+## BUG-067: Computer-Use aborts every mission — a thinking-by-default model eats the 320-token action budget and the JSON reply arrives truncated (HIGH, FIXED 2026-07-16)
+
+**Symptoms (voice session 2026-07-16 10:37 + every CU mission that
+morning).** "Bediene meinen Computer → Discord-Announcement" answered <!-- i18n-allow: quoted German maintainer trigger phrase -->
+"Ich konnte keine gueltige Bildschirm-Antwort bekommen und habe gestoppt." <!-- i18n-allow: quoted German runtime phrase under forensic analysis -->
+Log per step: `[cu] unparseable model reply (step N): unterminated JSON in
+the model reply` (or `no JSON object/array`), three strikes → exit 2. Four
+missions failed identically between 08:06 and 10:37; the last good run was
+2026-07-15 19:55 on the SAME model. The maintainer suspected the newly
+shipped CU screen indicator (landed 20:59 that evening) — pure time
+correlation, the indicator was innocent (on Windows its windows carry
+`WDA_EXCLUDEFROMCAPTURE` and never enter the frame).
+
+**Root cause (reproduced 1:1 against the live API).** The CU step call caps
+`max_tokens=320` (`_DECIDE_MAX_TOKENS`) — sized for a small JSON action.
+`gemini-3.5-flash` (a PREVIEW alias) turned thinking-by-default server-side
+overnight, and Gemini counts internal "thoughts" against `max_output_tokens`:
+the repro showed `thoughts=304, candidates=12, finish=MAX_TOKENS`, visible
+text `{"action": "open_app", "name": "` — exactly "unterminated JSON". With
+`thinking_budget=0` the same call answered cleanly in 15 tokens. No layer
+requested minimal reasoning and no layer read `finish_reason`, so a
+budget-starved reply was indistinguishable from a garbage reply and burned
+the LLM-failure budget.
+
+**Fixes (all provider-agnostic, all OSes).**
+1. `BrainRequest.reasoning_effort: "none" | None` — a capability hint, not a
+   provider switch (`core/protocols.py`). CU sets it on every vision call
+   (`cu/brain_call.py`).
+2. `GeminiBrain` maps the hint to `thinking_config(thinking_budget=0)`; an
+   explicit constructor budget wins; a thinking-mandatory model that 400s
+   ("only works in thinking mode") is retried ONCE without the field —
+   capability recovery, no model-name pin (AP-21)
+   (`plugins/brain/gemini.py`).
+3. Truncation net for every provider WITHOUT a thinking knob: when a reply
+   is length-truncated (`is_length_truncated`) and holds no complete JSON,
+   `_try` retries ONCE on the same provider with `max(2048, 4×max_tokens)`;
+   the early-stop aggregator still cuts at the JSON boundary, so the higher
+   ceiling costs nothing on success (`cu/brain_call.py`).
+4. Drive-by (found during the deep-dive, macOS/Linux only):
+   `indicator/capture_guard.py` resumed its generator into a second `yield`
+   when the unblank hook raised — `@contextmanager` turns that into
+   `RuntimeError: generator didn't stop`, killing the frame grab the guard
+   exists to protect. Rewritten to enter/exit the hook manually, fail-open.
+
+**Guards.** `tests/unit/cu/test_brain_call_truncation_retry.py` (retry
+matrix + reasoning hint), `tests/unit/brain/test_gemini_reasoning_effort.py`
+(mapping, precedence, 400-recovery), extended
+`tests/unit/cu/indicator/test_capture_guard.py` (double-yield regression).
+
+**Lesson.** Any fixed small `max_tokens` on a structured-output call is a
+time bomb once the serving model can spend that budget on internal
+reasoning — and a PREVIEW model alias can start doing so overnight with no
+code change on our side. Structured-output calls must (a) request minimal
+reasoning as a capability hint and (b) treat `finish_reason=length` as its
+own recoverable failure class (retry with headroom), never as generic model
+garbage. When a regression correlates with a feature landing, check what
+ELSE changed in the window — including the SERVER side of a pinned alias.
