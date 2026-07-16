@@ -4622,6 +4622,37 @@ re-arming forever. Guards:
 `test_grok_generic_cancellation_failed_error_is_recoverable`,
 `test_second_stray_after_unheeded_rearm_rebuilds_the_transport`.
 
+**Recurrence #3, 2026-07-16 10:51 — a swallowed `response.done` disarms EVERY
+idle-gated defense at once (session `1fd3fa38`, first live run WITH the
+recurrence-#2 fixes).** Turn 2 ("Hey", again VAD-truncated) was transcribed,
+the orchestrator requested its native reply, and 360 ms later the user's
+continued speech triggered the local barge-in (`realtime_cancel
+reason=barge_in`), which drops provider output without a wire
+`response.cancel`. The server never sent that response's `response.done`, so
+`_response_idle` stayed CLEAR for the rest of the call — and every deaf-wedge
+defense gates on idle ("with a response in flight no transcript is owed"):
+the stray auto-response at +3 s was suppressed instead of adopted (idle
+check), the transcript deadline never armed (idle check), the rebuild never
+fired (idle check). One swallowed lifecycle event silently turned the entire
+BUG-064 defense stack off; the session sat mute until manual hang-up.
+
+**Fix (same adapter).** Response-lifecycle liveness: `_last_response_activity`
+is stamped by every `response.*` event and every outgoing `response.create`.
+While `_response_idle` is clear, total response-event silence for
+`_RESPONSE_STALL_S` (8 s — a healthy in-flight response streams events every
+few tens of milliseconds) declares the lifecycle dead and rebuilds the
+transport in place (microphone pump is the guaranteed trigger). The rebuild
+resets `_response_idle`, so a hung `_create_response` waiter also unblocks
+onto the fresh transport. Guard:
+`test_accepted_response_without_done_stalls_and_rebuilds`.
+
+**Class rule (extends the BUG-064 lesson).** Any defense gated on "a response
+is in flight" inherits a new failure mode: the response that never finishes.
+A lifecycle flag that only the SERVER can clear needs its own liveness
+watchdog, otherwise one swallowed terminal event freezes every dependent
+defense simultaneously — and the freeze is invisible because each defense
+individually looks correctly disarmed.
+
 ## BUG-065: macOS/Linux desktop shows a permanent OFFLINE — WebKit drops the HttpOnly session cookie from WebSocket handshakes (HIGH, FIXED 2026-07-16)
 
 **Symptom (real Mac hardware, 2026-07-15).** During and after boot the macOS
@@ -4810,3 +4841,64 @@ reasoning as a capability hint and (b) treat `finish_reason=length` as its
 own recoverable failure class (retry with headroom), never as generic model
 garbage. When a regression correlates with a feature landing, check what
 ELSE changed in the window — including the SERVER side of a pinned alias.
+
+
+## BUG-068: Realtime delegate turn dies silently — a silent Gemini vetoes the dispatch, then a phantom `interrupted` edge kills the failure readback too (HIGH, FIXED 2026-07-16)
+
+**Symptoms (voice session 2026-07-16 10:26, gemini-live).** Turn 2 ("Was ist <!-- i18n-allow: quoted German user utterance under forensic analysis -->
+morgen für ein Tag?") produced no spoken answer at all: the transcript view <!-- i18n-allow: continuation of the quoted German utterance above -->
+recorded the canned reply "Das hat gerade nicht geklappt." with spoken time <!-- i18n-allow: quoted German runtime phrase under forensic analysis -->
+"--", the bar showed THINKING for ~4 s and then fell back to LISTENING
+without a word. The brain never ran (no dispatch logs). The identical
+question one turn later worked (the provider natively called
+`jarvis_action`).
+
+**Root cause — two independent defects in the deterministic delegate.**
+1. *Boundary-timeout veto.* The local-evidence dispatch waits
+   `_DELEGATE_INPUT_BOUNDARY_WAIT_S` for the provider to confirm the input
+   boundary (held turn_complete / native tool call). Gemini stayed
+   completely silent for turn 2 (no response, no tool call, no boundary —
+   it had just been barged-in mid-reply), and the timeout fallback read
+   `turn_state.input_final`, which the local-evidence path never sets. The
+   dispatch was VETOED: the brain never saw a perfectly complete, stable
+   transcript, and the canned failure phrase became the turn's reply.
+2. *Phantom `interrupted` kills the readback.* 16 ms after the failure
+   result was injected (`send_realtime_input(text=...)`), a spontaneous
+   `interrupted` edge arrived (Gemini server VAD; its only barge-in signal —
+   the adapter never emits `speech_started`). The endpoint protection
+   (`_pending_delegate_needs_endpoint_protection`) deferred only
+   `speech_started`, so the `interrupted` edge closed the turn immediately:
+   ResponseGenerated recorded the never-spoken reply, the turn state fell to
+   LISTENING, and `_drop_provider_output_until_new_response = True` swallowed
+   the provider readback of that very reply. For Gemini the protection was
+   structurally dead.
+
+**Fixes (jarvis/realtime/session.py).**
+1. `_await_stable_input_boundary`: a missing provider boundary DELAYS the
+   dispatch but can no longer veto it — after a full wait window in which
+   the accumulated input transcript did not grow, the utterance is final by
+   local evidence and the brain dispatches on the stable snapshot; a still-
+   growing transcript re-arms the window (max
+   `_DELEGATE_INPUT_BOUNDARY_MAX_ROUNDS`). The canned-refusal branch is gone.
+2. The endpoint-protection deferral now covers `interrupted` as well, plus a
+   new `_delegate_readback_awaits_first_audio()` window (result delivered,
+   zero PCM audible yet): an unconfirmed VAD edge during any silent span of
+   a delegated action is deferred and confirms itself only through a final
+   input transcript (the existing deferred-split path).
+3. Observability for audible mid-reply holes (same session, turn 3 had a
+   ~1 s gap mid-sentence with no attributable log line): `_emit_audio` now
+   logs stalls >= 400 ms with the scrub-gate hold time (late transcript vs.
+   silent provider) and detects embedded-silence runs inside provider PCM;
+   `ScrubHoldGate` exposes `pending_audio_ms` / `last_hold_ms`.
+
+**Guards.** `tests/unit/realtime/test_delegate_endpointing.py`
+(`test_silent_provider_boundary_timeout_dispatches_instead_of_refusing`,
+`test_phantom_interrupted_edge_defers_while_delegate_pending`,
+`test_phantom_interrupted_after_delivery_keeps_the_readback`).
+
+**Lesson.** A safety wait may DELAY an action on missing evidence, never
+convert missing evidence into a guaranteed failure — "provider said nothing"
+and "input incomplete" are different states, and only the second may block.
+And every provider-edge policy must be checked per adapter vocabulary: a
+guard keyed to an event type one adapter never emits is a guard that does
+not exist for that adapter.

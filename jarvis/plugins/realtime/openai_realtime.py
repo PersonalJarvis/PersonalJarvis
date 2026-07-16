@@ -47,6 +47,16 @@ _TRANSCRIPT_OVERDUE_S = 6.0
 # response.create crossing the server's), not deafness — only arm the
 # transcript deadline when the last transcript is comfortably in the past.
 _SUPPRESS_ARM_MIN_QUIET_S = 2.0
+# BUG-064 recurrence #3 (grok-realtime 2026-07-16 10:51, session 1fd3fa38):
+# the client accepted its own requested response, a local barge-in dropped its
+# output, and the server never sent that response's ``response.done`` — so
+# ``_response_idle`` stayed CLEAR forever. Every deaf-wedge defense gates on
+# idle ("with a response in flight no transcript is owed"), so adoption, the
+# transcript deadline, and the transport rebuild were ALL disarmed at once and
+# the session sat silent until manual hang-up. A healthy in-flight response
+# streams events every few tens of milliseconds; one that produces NO
+# response event at all for this long is dead, and the transport is rebuilt.
+_RESPONSE_STALL_S = 8.0
 # Benign response-lifecycle races (BUG-053/BUG-056): both sides of the same
 # boundary. ``conversation_already_has_active_response`` = our response.create
 # arrived while one was still running; ``response_cancel_not_active`` = our
@@ -244,6 +254,13 @@ class _OpenAIRealtimeSession:
         # time.monotonic() ticks at ~16 ms, so two adjacent events can carry
         # the SAME timestamp and an ordering comparison silently lies.
         self._transcript_heard_since_rearm = True
+        # Last moment the server showed ANY response-lifecycle sign of life
+        # (any ``response.*`` event, or our own response.create going out).
+        # While ``_response_idle`` is clear this is the liveness signal that
+        # detects a response whose ``response.done`` the server swallowed
+        # (BUG-064 recurrence #3) — without it a stuck lifecycle disarms
+        # every idle-gated deaf-wedge defense at once.
+        self._last_response_activity = time.monotonic()
         self._last_item_id = ""
         self._response_had_tool_calls = False
         self._tool_response_done_seen = False
@@ -348,6 +365,11 @@ class _OpenAIRealtimeSession:
 
     async def _dispatch_event(self, event: Any) -> AsyncIterator[_ProviderEvent]:
         event_type = str(getattr(event, "type", "") or "")
+        if event_type.startswith("response."):
+            # Any response event — accepted or not — is proof the response
+            # pipeline is alive; only its total absence marks a stalled
+            # lifecycle (BUG-064 recurrence #3).
+            self._last_response_activity = time.monotonic()
         if event_type == "response.created":
             await self._handle_response_created(event)
             return
@@ -569,6 +591,7 @@ class _OpenAIRealtimeSession:
         async with self._response_create_lock:
             await self._response_idle.wait()
             self._response_idle.clear()
+            self._last_response_activity = time.monotonic()
             marker = uuid4().hex
             self._pending_response_markers.add(marker)
             response: dict[str, Any] = {
@@ -670,12 +693,10 @@ class _OpenAIRealtimeSession:
                 not self._transcript_heard_since_rearm
                 and time.monotonic() - self._last_contract_rearm >= _CONTRACT_REARM_COOLDOWN_S
             ):
-                log.warning(
-                    "OpenAI Realtime unsolicited response after an unheeded "
-                    "contract re-arm (no input transcript since) — rebuilding "
-                    "the transport now"
+                self._begin_rebuild(
+                    "unsolicited response after an unheeded contract re-arm "
+                    "(no input transcript since)"
                 )
-                self._begin_rebuild()
                 return
             # BUG-064: under the manual-response contract an unsolicited
             # response should be impossible — its arrival means the server
@@ -758,16 +779,42 @@ class _OpenAIRealtimeSession:
             return False
         return time.monotonic() >= self._transcript_deadline
 
+    def _response_lifecycle_stalled(self) -> bool:
+        """A response marked in flight that emits no events at all is dead.
+
+        BUG-064 recurrence #3 (grok-realtime 2026-07-16 10:51): the server
+        never sent ``response.done`` for an accepted response whose output a
+        local barge-in had dropped, so ``_response_idle`` stayed clear and
+        every idle-gated defense (adoption, transcript deadline, rebuild)
+        was disarmed at once. A healthy in-flight response streams events
+        continuously; total silence for ``_RESPONSE_STALL_S`` is proof the
+        lifecycle will never finish on this transport.
+        """
+        if self._closed or self._session_contract is None:
+            return False
+        if self._response_idle.is_set():
+            return False
+        return time.monotonic() - self._last_response_activity >= _RESPONSE_STALL_S
+
     def _maybe_begin_rebuild(self) -> None:
+        if self._response_lifecycle_stalled():
+            self._begin_rebuild(
+                "in-flight response produced no response event for "
+                f"{_RESPONSE_STALL_S:.0f} s — response.done is not coming"
+            )
+            return
         if not self._transcript_overdue():
             return
-        self._begin_rebuild()
+        self._begin_rebuild(
+            "input transcript overdue for a heard user turn despite a session-contract re-arm"
+        )
 
-    def _begin_rebuild(self) -> None:
+    def _begin_rebuild(self, reason: str) -> None:
         if self._closed or self._session_contract is None:
             return
         if self._rebuild_task is not None and not self._rebuild_task.done():
             return
+        log.warning("OpenAI Realtime transport rebuild triggered: %s", reason)
         self._transcript_deadline = None
         self._rebuild_task = asyncio.create_task(
             self._rebuild_transport(),
@@ -856,6 +903,7 @@ class _OpenAIRealtimeSession:
         self._transcript_deadline = None
         self._last_contract_rearm = float("-inf")
         self._transcript_heard_since_rearm = True
+        self._last_response_activity = time.monotonic()
         self._server_heard_user_since_response = False
         self._auto_adopted_unanswered_input = False
         self._response_idle.set()

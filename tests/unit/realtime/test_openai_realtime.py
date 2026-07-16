@@ -22,9 +22,7 @@ class _FakeConn:
         self.response_creates = 0
         self.response_create_payloads: list[dict[str, Any]] = []
         self.response_cancels: list[str] = []
-        self.conversation = SimpleNamespace(
-            item=SimpleNamespace(create=self._create_item)
-        )
+        self.conversation = SimpleNamespace(item=SimpleNamespace(create=self._create_item))
         self.response = SimpleNamespace(
             create=self._create_response,
             cancel=self._cancel_response,
@@ -88,9 +86,7 @@ class _FakeRealtimeAPI:
         if len(self.connect_calls) > 1:
             if self.connect_error is not None:
                 raise self.connect_error
-            self.last_conn = (
-                self.extra_conns.pop(0) if self.extra_conns else _FakeConn()
-            )
+            self.last_conn = self.extra_conns.pop(0) if self.extra_conns else _FakeConn()
         return _FakeConnectCM(self.last_conn)
 
 
@@ -151,9 +147,7 @@ async def test_every_selectable_model_uses_the_valid_ga_session_schema(
         "type": "audio/pcm",
         "rate": 24_000,
     }
-    assert payload["audio"]["input"]["transcription"]["model"] == (
-        "gpt-4o-mini-transcribe"
-    )
+    assert payload["audio"]["input"]["transcription"]["model"] == ("gpt-4o-mini-transcribe")
     assert "language" not in payload["audio"]["input"]["transcription"]
     assert payload["audio"]["input"]["turn_detection"]["create_response"] is False
     assert payload["audio"]["input"]["turn_detection"]["interrupt_response"] is False
@@ -169,9 +163,7 @@ async def test_text_update_creates_tool_free_audio_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     holder = _patch_openai_client(monkeypatch)
-    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
-        RealtimeSessionConfig()
-    )
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(RealtimeSessionConfig())
     conn = holder["client"].realtime.last_conn
 
     await session.send_text("Deliver the completed mission update.")
@@ -200,15 +192,11 @@ async def test_unsolicited_second_response_is_cancelled_without_replaying_audio(
 ) -> None:
     """One manual request may emit exactly one audible response lifecycle."""
     holder = _patch_openai_client(monkeypatch)
-    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
-        RealtimeSessionConfig()
-    )
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(RealtimeSessionConfig())
     conn = holder["client"].realtime.last_conn
 
     await session.request_response()
-    marker = conn.response_create_payloads[0]["response"]["metadata"][
-        "jarvis_request_id"
-    ]
+    marker = conn.response_create_payloads[0]["response"]["metadata"]["jarvis_request_id"]
     conn._events = iter(
         [
             SimpleNamespace(
@@ -269,15 +257,11 @@ async def test_automatic_response_race_consumes_only_one_manual_allowance(
 ) -> None:
     """An unmarked VAD response racing response.create must not yield two replies."""
     holder = _patch_openai_client(monkeypatch)
-    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
-        RealtimeSessionConfig()
-    )
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(RealtimeSessionConfig())
     conn = holder["client"].realtime.last_conn
 
     await session.request_response()
-    marker = conn.response_create_payloads[0]["response"]["metadata"][
-        "jarvis_request_id"
-    ]
+    marker = conn.response_create_payloads[0]["response"]["metadata"]["jarvis_request_id"]
     conn._events = iter(
         [
             SimpleNamespace(
@@ -328,15 +312,11 @@ async def test_interrupt_invalidates_late_events_from_cancelled_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     holder = _patch_openai_client(monkeypatch)
-    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
-        RealtimeSessionConfig()
-    )
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(RealtimeSessionConfig())
     conn = holder["client"].realtime.last_conn
 
     await session.request_response()
-    old_marker = conn.response_create_payloads[0]["response"]["metadata"][
-        "jarvis_request_id"
-    ]
+    old_marker = conn.response_create_payloads[0]["response"]["metadata"]["jarvis_request_id"]
     await session._handle_response_created(
         SimpleNamespace(
             type="response.created",
@@ -348,9 +328,7 @@ async def test_interrupt_invalidates_late_events_from_cancelled_response(
     )
     await session.interrupt()
     await session.request_response()
-    new_marker = conn.response_create_payloads[1]["response"]["metadata"][
-        "jarvis_request_id"
-    ]
+    new_marker = conn.response_create_payloads[1]["response"]["metadata"]["jarvis_request_id"]
     conn._events = iter(
         [
             SimpleNamespace(
@@ -397,20 +375,14 @@ async def test_interrupt_invalidates_pending_response_before_created_event(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     holder = _patch_openai_client(monkeypatch)
-    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
-        RealtimeSessionConfig()
-    )
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(RealtimeSessionConfig())
     conn = holder["client"].realtime.last_conn
 
     await session.request_response()
-    old_marker = conn.response_create_payloads[0]["response"]["metadata"][
-        "jarvis_request_id"
-    ]
+    old_marker = conn.response_create_payloads[0]["response"]["metadata"]["jarvis_request_id"]
     await session.interrupt()
     await session.request_response()
-    new_marker = conn.response_create_payloads[1]["response"]["metadata"][
-        "jarvis_request_id"
-    ]
+    new_marker = conn.response_create_payloads[1]["response"]["metadata"]["jarvis_request_id"]
     conn._events = iter(
         [
             SimpleNamespace(
@@ -493,9 +465,7 @@ async def test_handshake_error_rejects_session(monkeypatch: pytest.MonkeyPatch) 
     monkeypatch.setattr(openai, "AsyncOpenAI", _make_error_client)
 
     with pytest.raises(RuntimeError, match="bad_schema"):
-        await OpenAIRealtimeProvider(api_key="test-key").open_session(
-            RealtimeSessionConfig()
-        )
+        await OpenAIRealtimeProvider(api_key="test-key").open_session(RealtimeSessionConfig())
     assert holder_factory["client"].closed is True
 
 
@@ -513,9 +483,7 @@ async def test_runtime_errors_preserve_provider_recoverability(
     recoverable: bool,
 ) -> None:
     holder = _patch_openai_client(monkeypatch)
-    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
-        RealtimeSessionConfig()
-    )
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(RealtimeSessionConfig())
     conn = holder["client"].realtime.last_conn
     conn._events = iter(
         [
@@ -540,15 +508,11 @@ async def test_failed_response_done_is_reported_before_turn_completion(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     holder = _patch_openai_client(monkeypatch)
-    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
-        RealtimeSessionConfig()
-    )
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(RealtimeSessionConfig())
     conn = holder["client"].realtime.last_conn
 
     await session.request_response()
-    marker = conn.response_create_payloads[0]["response"]["metadata"][
-        "jarvis_request_id"
-    ]
+    marker = conn.response_create_payloads[0]["response"]["metadata"]["jarvis_request_id"]
     conn._events = iter(
         [
             SimpleNamespace(
@@ -589,15 +553,11 @@ async def test_response_requests_wait_for_the_active_response_boundary(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     holder = _patch_openai_client(monkeypatch)
-    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
-        RealtimeSessionConfig()
-    )
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(RealtimeSessionConfig())
     conn = holder["client"].realtime.last_conn
 
     await session.send_text("First trusted update")
-    first_marker = conn.response_create_payloads[0]["response"]["metadata"][
-        "jarvis_request_id"
-    ]
+    first_marker = conn.response_create_payloads[0]["response"]["metadata"]["jarvis_request_id"]
     second = asyncio.create_task(session.send_text("Second trusted update"))
     await asyncio.sleep(0)
 
@@ -639,9 +599,7 @@ async def test_transcription_failure_is_a_final_input_event(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     holder = _patch_openai_client(monkeypatch)
-    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
-        RealtimeSessionConfig()
-    )
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(RealtimeSessionConfig())
     conn = holder["client"].realtime.last_conn
     conn._events = iter(
         [
@@ -672,9 +630,7 @@ async def test_completed_transcription_preserves_input_item_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     holder = _patch_openai_client(monkeypatch)
-    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
-        RealtimeSessionConfig()
-    )
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(RealtimeSessionConfig())
     conn = holder["client"].realtime.last_conn
     conn._events = iter(
         [
@@ -720,9 +676,7 @@ async def test_tools_are_declared_mapped_and_answered(monkeypatch: pytest.Monkey
         "type": "function",
         "name": "open_app",
     }
-    marker = conn.response_create_payloads[0]["response"]["metadata"][
-        "jarvis_request_id"
-    ]
+    marker = conn.response_create_payloads[0]["response"]["metadata"]["jarvis_request_id"]
     conn._events = iter(
         [
             SimpleNamespace(
@@ -783,9 +737,7 @@ async def test_live_session_update_replaces_tool_declarations(
     monkeypatch: pytest.MonkeyPatch,
 ):
     holder = _patch_openai_client(monkeypatch)
-    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
-        RealtimeSessionConfig()
-    )
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(RealtimeSessionConfig())
     declaration = {
         "name": "new_tool",
         "description": "A newly connected tool.",
@@ -810,9 +762,7 @@ async def test_response_cancel_not_active_error_is_recoverable(
     session pump warns and continues instead of ending the call (live
     incidents 09:04 barge-in and 15:13 scrub-cancel, both 2026-07-14)."""
     holder = _patch_openai_client(monkeypatch)
-    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
-        RealtimeSessionConfig()
-    )
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(RealtimeSessionConfig())
     conn = holder["client"].realtime.last_conn
     conn._events = iter(
         [
@@ -844,9 +794,7 @@ async def test_unsolicited_response_after_heard_user_turn_is_adopted(
     It must be adopted — audible, uncancelled — while the contract is still
     re-armed for the following turns."""
     holder = _patch_openai_client(monkeypatch)
-    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
-        RealtimeSessionConfig()
-    )
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(RealtimeSessionConfig())
     conn = holder["client"].realtime.last_conn
     conn._events = iter(
         [
@@ -888,9 +836,7 @@ async def test_delayed_transcript_after_adoption_does_not_double_speak(
     request would speak a second, independent answer to the same utterance —
     it must be skipped exactly once."""
     holder = _patch_openai_client(monkeypatch)
-    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
-        RealtimeSessionConfig()
-    )
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(RealtimeSessionConfig())
     conn = holder["client"].realtime.last_conn
     conn._events = iter(
         [
@@ -932,9 +878,7 @@ async def test_second_unsolicited_response_without_new_speech_is_still_cancelled
     unsolicited response WITHOUT new speech evidence is a true stray and keeps
     the BUG-064 suppression (no double-speak)."""
     holder = _patch_openai_client(monkeypatch)
-    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
-        RealtimeSessionConfig()
-    )
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(RealtimeSessionConfig())
     conn = holder["client"].realtime.last_conn
     conn._events = iter(
         [
@@ -976,9 +920,7 @@ async def test_unsolicited_response_rearms_the_full_session_contract(
     FULL session payload so transcription and ``create_response: false`` are
     restored."""
     holder = _patch_openai_client(monkeypatch)
-    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
-        RealtimeSessionConfig()
-    )
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(RealtimeSessionConfig())
     conn = holder["client"].realtime.last_conn
     conn._events = iter(
         [
@@ -1013,9 +955,7 @@ async def test_contract_rearm_is_throttled_within_a_burst(
     """BUG-064: a burst of unsolicited responses re-arms the contract once per
     cooldown window; every response in the burst is still cancelled."""
     holder = _patch_openai_client(monkeypatch)
-    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
-        RealtimeSessionConfig()
-    )
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(RealtimeSessionConfig())
     conn = holder["client"].realtime.last_conn
     conn._events = iter(
         [
@@ -1056,9 +996,7 @@ async def test_contract_rearm_carries_live_instruction_and_tool_updates(
         "description": "A tool connected mid-session.",
         "parameters": {"type": "object", "properties": {}},
     }
-    await session.update_session(
-        instructions="Turn-updated instructions.", tools=(declaration,)
-    )
+    await session.update_session(instructions="Turn-updated instructions.", tools=(declaration,))
     conn._events = iter(
         [
             SimpleNamespace(
@@ -1086,9 +1024,7 @@ async def test_interrupt_skips_wire_cancel_when_no_response_active(
     lifecycle is active, ``interrupt()`` must not put ``response.cancel`` on
     the wire at all — that request can only ever produce the benign error."""
     holder = _patch_openai_client(monkeypatch)
-    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
-        RealtimeSessionConfig()
-    )
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(RealtimeSessionConfig())
     conn = holder["client"].realtime.last_conn
 
     await session.interrupt()
@@ -1104,9 +1040,7 @@ async def test_interrupt_still_cancels_while_response_active(
     """The skip above must never eat a REAL cancellation: with a response
     lifecycle in flight, interrupt() still sends response.cancel."""
     holder = _patch_openai_client(monkeypatch)
-    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
-        RealtimeSessionConfig()
-    )
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(RealtimeSessionConfig())
     conn = holder["client"].realtime.last_conn
 
     await session.request_response()
@@ -1183,13 +1117,9 @@ async def test_committed_turn_arms_and_transcript_clears_the_deadline(
     arriving transcript proves the server hears and must disarm the rebuild
     deadline so healthy sessions never reconnect."""
     holder = _patch_openai_client(monkeypatch)
-    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
-        RealtimeSessionConfig()
-    )
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(RealtimeSessionConfig())
     conn = holder["client"].realtime.last_conn
-    conn._events = iter(
-        [SimpleNamespace(type="input_audio_buffer.committed", item_id="item-1")]
-    )
+    conn._events = iter([SimpleNamespace(type="input_audio_buffer.committed", item_id="item-1")])
     session._events = conn.__aiter__()
 
     assert [event async for event in session.receive()] == []
@@ -1222,9 +1152,7 @@ async def test_suppressed_duplicate_right_after_a_transcript_does_not_arm(
     input transcript arrived. That suppression must NOT arm the transcript
     deadline — the session demonstrably hears."""
     holder = _patch_openai_client(monkeypatch)
-    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
-        RealtimeSessionConfig()
-    )
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(RealtimeSessionConfig())
     conn = holder["client"].realtime.last_conn
     conn._events = iter(
         [
@@ -1258,9 +1186,7 @@ async def test_failed_transport_rebuild_closes_the_session(
     deaf call open."""
     holder = _patch_openai_client(monkeypatch)
     monkeypatch.setattr(openai_realtime, "_TRANSCRIPT_OVERDUE_S", 0.0)
-    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
-        RealtimeSessionConfig()
-    )
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(RealtimeSessionConfig())
     api = holder["client"].realtime
     api.connect_error = RuntimeError("reconnect refused")
     conn1 = api.last_conn
@@ -1292,9 +1218,7 @@ async def test_grok_generic_cancellation_failed_error_is_recoverable(
     cannot recognize it. The message shape must be matched — labeling this
     error terminal ended a healthy live call with hangup_reason=error."""
     holder = _patch_openai_client(monkeypatch)
-    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
-        RealtimeSessionConfig()
-    )
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(RealtimeSessionConfig())
     conn = holder["client"].realtime.last_conn
     conn._events = iter(
         [
@@ -1378,4 +1302,67 @@ async def test_second_stray_after_unheeded_rearm_rebuilds_the_transport(
     assert conn1.response_cancels == ["resp-stray-1", "resp-stray-2"]
     assert api.connect_calls == ["gpt-realtime", "gpt-realtime"]
     assert session._conn is conn2
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_accepted_response_without_done_stalls_and_rebuilds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUG-064 recurrence #3 (grok-realtime 2026-07-16 10:51, session
+    1fd3fa38): the server never sent ``response.done`` for an accepted
+    response whose output a local barge-in had dropped, so ``_response_idle``
+    stayed clear forever — and every idle-gated defense (adoption, transcript
+    deadline, transport rebuild) was disarmed at once while the session sat
+    silent until manual hang-up. A response lifecycle that emits no event at
+    all for ``_RESPONSE_STALL_S`` must be declared dead and the transport
+    rebuilt; the microphone pump is the guaranteed trigger because a fully
+    silent server delivers no events to react to."""
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig(model="gpt-realtime")
+    )
+    api = holder["client"].realtime
+    conn1 = api.last_conn
+    conn2 = _FakeConn()
+    conn2._events = iter(
+        [
+            SimpleNamespace(type="session.updated"),
+            SimpleNamespace(
+                type="conversation.item.input_audio_transcription.completed",
+                item_id="post-rebuild-1",
+                transcript="Heard again",
+            ),
+        ]
+    )
+    api.extra_conns.append(conn2)
+
+    await session.request_response()
+    conn1._events = iter(
+        [
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(id="resp-hung", metadata=None),
+            ),
+        ]
+    )
+    session._events = conn1.__aiter__()
+
+    assert [event async for event in session.receive()] == []
+    assert not session._response_idle.is_set()
+
+    # The healthy 8 s threshold protected the accept flow above; from here
+    # the stalled clock has run out.
+    monkeypatch.setattr(openai_realtime, "_RESPONSE_STALL_S", 0.0)
+    await session.send_audio(SimpleNamespace(sample_rate=24000, pcm=b"\x00\x01"))
+    assert session._rebuild_task is not None
+    await session._rebuild_task
+
+    assert session._conn is conn2
+    assert session._response_idle.is_set()
+    assert api.connect_calls == ["gpt-realtime", "gpt-realtime"]
+
+    events = [event async for event in session.receive()]
+    assert [event.type for event in events] == ["input_transcript"]
+    assert events[0].text == "Heard again"
     await session.close()
