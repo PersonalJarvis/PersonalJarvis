@@ -4653,6 +4653,35 @@ watchdog, otherwise one swallowed terminal event freezes every dependent
 defense simultaneously — and the freeze is invisible because each defense
 individually looks correctly disarmed.
 
+**Recurrence #4, 2026-07-16 11:23 — the wedge feeds the watchdogs (session
+`a69d2318`, first live run WITH the recurrence-#3 stall watchdog).** Turn 1
+("Wie viel Geld hat", VAD-truncated mid-sentence) was cancelled by the local <!-- i18n-allow: quoted German user utterance under forensic analysis -->
+barge-in; the requested response's lifecycle hung again (idle clear). This
+time BOTH remaining defenses were disarmed by the wedge's own emissions:
+(1) the deaf server emitted transcription FAILED events, which
+`_note_input_transcript()` counted as "re-arm heeded" — so the
+stray-after-unheeded-re-arm escalation saw a healed session and re-armed
+forever; (2) the server auto-created stray responses every ~7.8 s — just
+under `_RESPONSE_STALL_S` (8 s) — and every stray stamped
+`_last_response_activity`, keeping the dead lifecycle looking alive. The
+session sat mute 16 s until manual hang-up.
+
+**Fixes (same adapter).** (1) A failed transcript settles the per-turn
+contract debt (deadline cleared) but no longer marks a re-arm as heeded —
+only a COMPLETED transcript proves the transcription side works
+(`_note_input_transcript(restored_hearing=False)` on failed). (2) Only an
+ACCEPTED response's events stamp the stall clock; unsolicited strays are
+wedge symptoms, not liveness. Accept/adopt paths stamp explicitly. Guards:
+`test_failed_transcription_does_not_mark_rearm_as_heeded`,
+`test_unsolicited_stray_does_not_feed_the_stall_watchdog`.
+
+**Class rule (final form).** When a server is misbehaving, its OWN emissions
+must never count as evidence of health for any watchdog that exists to catch
+that misbehavior — classify every inbound signal as symptom or proof-of-cure
+FIRST, and let only proof-of-cure reset a defense. A wedge that emits
+symptoms on a timer will otherwise starve every timeout-based defense
+forever.
+
 ## BUG-065: macOS/Linux desktop shows a permanent OFFLINE — WebKit drops the HttpOnly session cookie from WebSocket handshakes (HIGH, FIXED 2026-07-16)
 
 **Symptom (real Mac hardware, 2026-07-15).** During and after boot the macOS

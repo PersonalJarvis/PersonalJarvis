@@ -1366,3 +1366,125 @@ async def test_accepted_response_without_done_stalls_and_rebuilds(
     assert [event.type for event in events] == ["input_transcript"]
     assert events[0].text == "Heard again"
     await session.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_transcription_does_not_mark_rearm_as_heeded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUG-064 recurrence #4 (grok-realtime 2026-07-16 11:23, session
+    a69d2318): the deaf server emitted transcription FAILED events, which
+    counted as "the re-arm restored hearing" — so the
+    stray-after-unheeded-re-arm escalation never fired and the session
+    re-armed forever until manual hang-up. A failed transcript settles the
+    per-turn contract debt but proves nothing about the transcription side:
+    only a COMPLETED transcript may mark a re-arm as heeded."""
+    holder = _patch_openai_client(monkeypatch)
+    monkeypatch.setattr(openai_realtime, "_CONTRACT_REARM_COOLDOWN_S", 0.0)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig(model="gpt-realtime")
+    )
+    api = holder["client"].realtime
+    conn1 = api.last_conn
+    conn2 = _FakeConn()
+    conn2._events = iter(
+        [
+            SimpleNamespace(type="session.updated"),
+            SimpleNamespace(
+                type="conversation.item.input_audio_transcription.completed",
+                item_id="post-rebuild-1",
+                transcript="Heard again",
+            ),
+        ]
+    )
+    api.extra_conns.append(conn2)
+    conn1._events = iter(
+        [
+            SimpleNamespace(
+                type="conversation.item.input_audio_transcription.completed",
+                item_id="item-1",
+                transcript="How much money does",
+            ),
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(id="resp-stray-1", metadata=None),
+            ),
+            SimpleNamespace(
+                type="conversation.item.input_audio_transcription.failed",
+                item_id="item-2",
+                error=SimpleNamespace(code="", message="transcription failed"),
+            ),
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(id="resp-stray-2", metadata=None),
+            ),
+        ]
+    )
+    session._events = conn1.__aiter__()
+
+    events = [event async for event in session.receive()]
+
+    assert [event.type for event in events] == [
+        "input_transcript",
+        "input_transcript",
+        "error",
+        "input_transcript",
+    ]
+    assert "rebuilt" in str(events[2].error)
+    assert events[3].text == "Heard again"
+    assert conn1.response_cancels == ["resp-stray-1", "resp-stray-2"]
+    assert api.connect_calls == ["gpt-realtime", "gpt-realtime"]
+    assert session._conn is conn2
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_unsolicited_stray_does_not_feed_the_stall_watchdog(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUG-064 recurrence #4 (grok-realtime 2026-07-16 11:23): the wedged
+    server auto-created stray responses every ~7.8 s — just under the 8 s
+    stall threshold — and every stray stamped the response-liveness clock,
+    keeping a dead in-flight lifecycle looking alive forever. Only events of
+    an ACCEPTED response may feed the stall watchdog."""
+    holder = _patch_openai_client(monkeypatch)
+    monkeypatch.setattr(openai_realtime, "_RESPONSE_STALL_S", float("inf"))
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(RealtimeSessionConfig())
+    conn = holder["client"].realtime.last_conn
+
+    await session.request_response()
+    conn._events = iter(
+        [
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(id="resp-live", metadata=None),
+            ),
+        ]
+    )
+    session._events = conn.__aiter__()
+    assert [event async for event in session.receive()] == []
+    assert not session._response_idle.is_set()
+
+    sentinel = 123.0
+    session._last_response_activity = sentinel
+    conn._events = iter(
+        [
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(id="resp-stray", metadata=None),
+            ),
+            SimpleNamespace(
+                type="response.output_audio.delta",
+                response_id="resp-stray",
+                item_id="item-stray",
+                delta="AAA=",
+            ),
+        ]
+    )
+    session._events = conn.__aiter__()
+    assert [event async for event in session.receive()] == []
+
+    assert session._last_response_activity == sentinel
+    assert session._rebuild_task is None
+    assert conn.response_cancels == ["resp-stray"]
+    await session.close()

@@ -365,16 +365,18 @@ class _OpenAIRealtimeSession:
 
     async def _dispatch_event(self, event: Any) -> AsyncIterator[_ProviderEvent]:
         event_type = str(getattr(event, "type", "") or "")
-        if event_type.startswith("response."):
-            # Any response event — accepted or not — is proof the response
-            # pipeline is alive; only its total absence marks a stalled
-            # lifecycle (BUG-064 recurrence #3).
-            self._last_response_activity = time.monotonic()
         if event_type == "response.created":
             await self._handle_response_created(event)
             return
-        if event_type.startswith("response.") and not self._response_is_accepted(event):
-            return
+        if event_type.startswith("response."):
+            if not self._response_is_accepted(event):
+                return
+            # Only an ACCEPTED response's events are liveness for the
+            # lifecycle we are waiting on. Unsolicited strays must not feed
+            # this clock: the wedged Grok server auto-created strays every
+            # ~7.8 s (2026-07-16 11:23), keeping a dead lifecycle looking
+            # alive just under the 8 s stall threshold forever.
+            self._last_response_activity = time.monotonic()
         if event_type == "response.output_audio.delta":
             self._last_item_id = str(getattr(event, "item_id", "") or "")
             yield _ProviderEvent(
@@ -401,7 +403,12 @@ class _OpenAIRealtimeSession:
             # The model still has the committed audio in conversation
             # context. Let the orchestrator fail open to a spoken response,
             # while withholding tools because no auditable text exists.
-            self._note_input_transcript()
+            # A FAILED transcript settles the per-turn contract debt but is
+            # NOT proof the transcription side works again — treating it as
+            # restored hearing kept re-arming a deaf Grok session forever
+            # (2026-07-16 11:23: the wedge emitted failed events, so the
+            # stray-after-unheeded-re-arm escalation never fired).
+            self._note_input_transcript(restored_hearing=False)
             yield _ProviderEvent(
                 type="input_transcript",
                 text="",
@@ -663,6 +670,7 @@ class _OpenAIRealtimeSession:
                 )
                 self._response_idle.clear()
                 self._accepted_response_ids.add(response_id)
+                self._last_response_activity = time.monotonic()
                 self._server_heard_user_since_response = False
                 self._auto_adopted_unanswered_input = True
                 await self._rearm_session_contract()
@@ -721,6 +729,7 @@ class _OpenAIRealtimeSession:
             )
             return
         self._accepted_response_ids.add(response_id)
+        self._last_response_activity = time.monotonic()
         # This lifecycle now answers the pending user turn; only NEW speech
         # evidence may qualify a later unsolicited response for adoption.
         self._server_heard_user_since_response = False
@@ -753,11 +762,17 @@ class _OpenAIRealtimeSession:
                 exc_info=True,
             )
 
-    def _note_input_transcript(self) -> None:
-        """Any input transcript proves the server can still hear."""
+    def _note_input_transcript(self, *, restored_hearing: bool = True) -> None:
+        """An input transcript settles the per-turn contract debt.
+
+        Only a COMPLETED transcript additionally proves the transcription
+        side works (``restored_hearing``); a failed one merely shows the
+        event pipeline is alive while the session may still be deaf.
+        """
         self._last_transcript_at = time.monotonic()
         self._transcript_deadline = None
-        self._transcript_heard_since_rearm = True
+        if restored_hearing:
+            self._transcript_heard_since_rearm = True
         # The manual flow answers transcribed turns itself; a crossing
         # auto-response is now a duplicate, not a salvageable answer.
         self._server_heard_user_since_response = False
