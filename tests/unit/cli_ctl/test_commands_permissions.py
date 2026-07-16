@@ -23,7 +23,14 @@ def test_request_requires_yes(capture_api):
     assert capture_api["calls"] == []
 
 
-def test_request_with_yes_uses_permission_path(capture_api):
+def test_request_with_yes_uses_permission_path(monkeypatch, capture_api):
+    # Stub the macOS app activation: on a real Mac (incl. the CI runner) the
+    # unstubbed helper honestly aborts when no installed app bundle exists,
+    # which is not what THIS test is about (it pins the API path).
+    monkeypatch.setattr(
+        "jarvis.cli_ctl.commands.permissions._activate_macos_app_for_tcc",
+        lambda: None,
+    )
     result = runner.invoke(
         app, ["permissions", "request", "screen_recording", "--yes"]
     )
@@ -48,7 +55,12 @@ def test_request_activates_app_after_confirmation(monkeypatch, capture_api):
     assert calls == ["activate"]
 
 
-def test_open_settings_with_yes_uses_permission_path(capture_api):
+def test_open_settings_with_yes_uses_permission_path(monkeypatch, capture_api):
+    # Same macOS-proofing as test_request_with_yes_uses_permission_path.
+    monkeypatch.setattr(
+        "jarvis.cli_ctl.commands.permissions._activate_macos_app_for_tcc",
+        lambda: None,
+    )
     result = runner.invoke(
         app, ["permissions", "open-settings", "accessibility", "--yes"]
     )
