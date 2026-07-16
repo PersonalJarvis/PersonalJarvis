@@ -23,6 +23,7 @@ from jarvis.cli_ctl.commands import board as board_cmd
 from jarvis.cli_ctl.commands import brain as brain_cmd
 from jarvis.cli_ctl.commands import clis as clis_cmd
 from jarvis.cli_ctl.commands import commands as commands_cmd
+from jarvis.cli_ctl.commands import computer_use as computer_use_cmd
 from jarvis.cli_ctl.commands import conductor as conductor_cmd
 from jarvis.cli_ctl.commands import config as config_cmd
 from jarvis.cli_ctl.commands import contacts as contacts_cmd
@@ -107,6 +108,7 @@ app.add_typer(system_cmd.app, name="system")
 app.add_typer(tasks_cmd.app, name="tasks")
 app.add_typer(brain_cmd.app, name="brain")
 app.add_typer(commands_cmd.app, name="commands")
+app.add_typer(computer_use_cmd.app, name="computer-use")
 app.add_typer(config_cmd.app, name="config")
 app.add_typer(missions_cmd.app, name="missions")
 app.add_typer(wiki_cmd.app, name="wiki")

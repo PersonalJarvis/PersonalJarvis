@@ -270,6 +270,7 @@ class WebServer:
         from .claude_routes import router as claude_router
         from .cli_routes import router as cli_router
         from .commands_routes import router as commands_router
+        from .computer_use_routes import router as computer_use_router
         from .contacts_routes import router as contacts_router
         from .control_routes import router as control_router
         from .diagnostics_routes import router as diagnostics_router
@@ -413,6 +414,10 @@ class WebServer:
         app.include_router(missions_router)
         app.include_router(missions_ws_router)
         app.include_router(missions_pty_router)
+        # Computer-Use run control (deep-dive 2026-07-15, H-09): start/list/
+        # inspect/cancel desktop goals — auto-exposed as `jarvis api
+        # computer-use <op>` by the dynamic CLI layer.
+        app.include_router(computer_use_router)
         # Phase B9 — Obsidian Setup Wizard (detect install + register vault).
         app.include_router(setup_router)
         # First-time onboarding guide (/api/onboarding/*).

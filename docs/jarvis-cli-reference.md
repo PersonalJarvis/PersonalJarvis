@@ -43,6 +43,14 @@ _Generated from the curated command tree by `scripts/ci/gen_cli_reference.py` �
 - `jarvis commands list` — List every registry command (id, endpoint, params, danger, UI section).
 - `jarvis commands show <command_id>` — Show one command's full definition (params schema, voice aliases).
 
+## computer-use
+
+- `jarvis computer-use cancel <mission_id> --yes --dry-run` — Cancel one active run.
+- `jarvis computer-use cancel-all --yes --dry-run` — Cancel every active run (queued and running).
+- `jarvis computer-use list --limit` — List active and recent Computer-Use runs.
+- `jarvis computer-use show <mission_id>` — Show one run: status, goal, exit code, final output.
+- `jarvis computer-use start <goal> --timeout-s --yes --dry-run` — Start a desktop goal in the background; prints the mission id.
+
 ## conductor
 
 - `jarvis conductor add --def --yes --dry-run` — Add a job from a Job JSON document.
