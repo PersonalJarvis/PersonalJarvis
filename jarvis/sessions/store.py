@@ -137,6 +137,17 @@ class SessionStore:
                 "ADD COLUMN awaiting_confirmation INTEGER NOT NULL DEFAULT 0"
             )
             log.info("SessionStore migration: added voice_turns.awaiting_confirmation")
+        if "voice_name" not in existing:
+            self._conn.execute(
+                "ALTER TABLE voice_turns ADD COLUMN voice_name TEXT NOT NULL DEFAULT ''"
+            )
+            log.info("SessionStore migration: added voice_turns.voice_name")
+        if "voice_provider" not in existing:
+            self._conn.execute(
+                "ALTER TABLE voice_turns "
+                "ADD COLUMN voice_provider TEXT NOT NULL DEFAULT ''"
+            )
+            log.info("SessionStore migration: added voice_turns.voice_provider")
 
     def close(self) -> None:
         with self._lock:
@@ -279,6 +290,8 @@ class SessionStore:
         think_ms: int = 0,
         speak_ms: int = 0,
         awaiting_confirmation: bool = False,
+        voice_name: str = "",
+        voice_provider: str = "",
     ) -> None:
         with self._lock:
             self._c.execute(
@@ -299,6 +312,8 @@ class SessionStore:
                     think_ms              = ?,
                     speak_ms              = ?,
                     awaiting_confirmation = ?,
+                    voice_name            = ?,
+                    voice_provider        = ?,
                     tool_calls_json       = ?
                 WHERE id = ?
                 """,
@@ -318,6 +333,8 @@ class SessionStore:
                     think_ms,
                     speak_ms,
                     1 if awaiting_confirmation else 0,
+                    voice_name,
+                    voice_provider,
                     json.dumps(tool_calls),
                     turn_id,
                 ),
@@ -666,8 +683,19 @@ def _row_to_turn(r: sqlite3.Row) -> VoiceTurnRow:
         # 1 -> True). Keep _safe_col's contract at 0/1 — a sentinel like -1 would
         # break the bool() mapping here.
         awaiting_confirmation=bool(_safe_col(r, "awaiting_confirmation", 0)),
+        voice_name=_safe_text_col(r, "voice_name"),
+        voice_provider=_safe_text_col(r, "voice_provider"),
         tool_calls=json.loads(r["tool_calls_json"] or "[]"),
     )
+
+
+def _safe_text_col(r: sqlite3.Row, name: str) -> str:
+    """Text twin of _safe_col for columns added by a not-yet-run migration."""
+    try:
+        v = r[name]
+        return str(v) if v is not None else ""
+    except (KeyError, IndexError):
+        return ""
 
 
 def _safe_col(r: sqlite3.Row, name: str, default: int) -> int:

@@ -125,6 +125,28 @@ async def test_wrapper_without_pin_keeps_provider_default():
     assert fallback.synth_calls[0][1] is None
 
 
+@pytest.mark.asyncio
+async def test_wrapper_reports_the_voice_that_actually_spoke():
+    # Healthy primary → the wrapper reports the primary's resolved voice.
+    primary = _FakeTTS("primary", chunks=1)
+    primary.last_voice = "Charon"
+    fallback = _FakeTTS("fallback", chunks=1)
+    fallback.last_voice = "leo"
+    wrapper = FallbackTTS(primary, fallback, fallback_voice="leo")
+    [c async for c in wrapper.synthesize("Hallo.", language_code="de-DE")]
+    assert wrapper.last_voice == "Charon"
+    assert wrapper.last_voice_provider == "primary"
+
+    # Primary dead → the wrapper reports the fallback's voice, not the
+    # primary's — this is what makes the per-turn transcript label honest.
+    dead = _FakeTTS("primary", raise_before=True)
+    dead.last_voice = "Charon"
+    wrapper = FallbackTTS(dead, fallback, fallback_voice="leo")
+    [c async for c in wrapper.synthesize("Hallo.", language_code="de-DE")]
+    assert wrapper.last_voice == "leo"
+    assert wrapper.last_voice_provider == "fallback"
+
+
 # --- Factory wiring -------------------------------------------------------------
 
 class _Cfg:

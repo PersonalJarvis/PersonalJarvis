@@ -9419,12 +9419,23 @@ class SpeechPipeline:
         if bus is None:
             return
         try:
+            # Which voice actually spoke: every classic-path phrase renders
+            # through self._tts, whose providers record their resolved voice
+            # per utterance (last_voice protocol, 2026-07-17). Read after
+            # playback so a fallback takeover reports the TAKEOVER voice.
+            tts = getattr(self, "_tts", None)
+            voice = getattr(tts, "last_voice", None)
+            voice_provider = getattr(tts, "last_voice_provider", None) or getattr(
+                tts, "name", None
+            )
             event = SpeechSpoken(
                 source_layer="speech.pipeline",
                 text=text,
                 language=(language or "de"),
                 spoken_kind=kind,
                 detail=(detail or None),
+                voice=voice,
+                voice_provider=voice_provider if voice else None,
             )
             asyncio.create_task(bus.publish(event))  # noqa: RUF006 — fire-and-forget
         except Exception:  # noqa: BLE001 — telemetry must never break the turn

@@ -686,6 +686,7 @@ class RealtimeVoiceSession:
         self._failed = asyncio.Event()
         self._failure_detail = ""
         self._active_model = ""
+        self._active_voice = ""
         self._turn_id = ""
         self._turn_trace_id = None
         self._latency_tracker: Any = None
@@ -913,6 +914,8 @@ class RealtimeVoiceSession:
             self._provider = provider
             self._session = session
             self._active_model = model
+            # Retained for the per-turn "which voice spoke" transcript label.
+            self._active_voice = voice
             self._input_sample_rate = input_rate
             self._in_resampler = StreamingPcm16Resampler(
                 self.browser_sample_rate, input_rate
@@ -1801,7 +1804,7 @@ class RealtimeVoiceSession:
         The stored ``last_reply`` is raw Brain output; the normal path only
         speaks it after the provider re-renders it through the scrub gate.
         Every direct-to-surface fallback must apply the same regex scrub
-        (ADR-0010, AP-11) before the text reaches TTS â€” the sibling
+        (ADR-0010, AP-11) before the text reaches TTS — the sibling
         ``_direct_tool_fallback_text`` already follows this contract.
         """
         raw = str(getattr(delegate_state, "last_reply", "") or "").strip()
@@ -1819,7 +1822,7 @@ class RealtimeVoiceSession:
         """Cancel one unsafe provider response and emit one honest fallback."""
         if self._scrub_cancelled_for_turn:
             # A second cancel in the same turn is a silent no-op by design
-            # (one fallback per turn) â€” but it must be diagnosable, or a
+            # (one fallback per turn) — but it must be diagnosable, or a
             # caller that staged a trusted reply here loses it without a
             # trace (BUG-069 review; BUG-056 pattern).
             log.debug(
@@ -2380,6 +2383,10 @@ class RealtimeVoiceSession:
                                 text=answer,
                                 language=self._language,
                                 spoken_kind=SPOKEN_KIND_REPLY,
+                                # The session itself rendered this audio (guard
+                                # above) — its handshake voice is the speaker.
+                                voice=self._active_voice or None,
+                                voice_provider=self.active_provider,
                             )
                         )
                     await self._bus.publish(
@@ -2397,6 +2404,21 @@ class RealtimeVoiceSession:
                             model=self._active_model,
                             latency_total_ms=latency_total_ms,
                             tool_calls=tuple(sorted(self._executed_tool_names)),
+                            # Only claim the session voice when the session
+                            # actually rendered audio; a surface-TTS readback
+                            # (provider produced no audio) reports its own
+                            # voice through SpeechSpoken, which wins in the
+                            # recorder.
+                            voice=(
+                                (self._active_voice or None)
+                                if self._output_samples_sent > 0
+                                else None
+                            ),
+                            voice_provider=(
+                                self.active_provider
+                                if self._output_samples_sent > 0
+                                else None
+                            ),
                         )
                     )
             except Exception:  # noqa: BLE001, S110

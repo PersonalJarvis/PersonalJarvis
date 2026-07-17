@@ -57,6 +57,11 @@ CREATE TABLE IF NOT EXISTS voice_turns (
     -- question, not a settled answer. Also added via _apply_migrations for
     -- pre-existing DBs (the idempotent PRAGMA-guard makes both paths safe).
     awaiting_confirmation INTEGER NOT NULL DEFAULT 0,
+    -- Which voice actually spoke the reply ("Fenrir", "Charon") and the
+    -- speaking family ("gemini-live", "openrouter"). Empty = unknown. Also
+    -- added via _apply_migrations for pre-existing DBs.
+    voice_name         TEXT NOT NULL DEFAULT '',
+    voice_provider     TEXT NOT NULL DEFAULT '',
     tool_calls_json    TEXT NOT NULL DEFAULT '[]'  -- JSON array of tool-name strings
 );
 

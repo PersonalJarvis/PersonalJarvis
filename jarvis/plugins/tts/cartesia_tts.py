@@ -75,6 +75,9 @@ class CartesiaTTS:
     """
 
     name = "cartesia"
+    # Which voice actually spoke last (fed to the per-turn transcript label).
+    last_voice: str | None = None
+    last_voice_provider: str | None = None
     supports_streaming = True  # pseudo via sentence-chunking
 
     def __init__(
@@ -188,6 +191,9 @@ class CartesiaTTS:
             return
 
         voice_id = self._resolve_voice(text, voice, language_code)
+        self.last_voice = voice_id
+        self.last_voice_provider = self.name
+
         log = logging.getLogger("jarvis.tts.cartesia")
 
         if self._quota_blocked_until and time.monotonic() < self._quota_blocked_until:
@@ -373,6 +379,10 @@ class CartesiaTTS:
                 if aclose is not None:
                     await aclose()
             if produced:
+                self.last_voice = getattr(fb, "last_voice", None)
+                self.last_voice_provider = getattr(
+                    fb, "last_voice_provider", None
+                ) or getattr(fb, "name", None)
                 return
 
         if not self._allow_sapi5_fallback:

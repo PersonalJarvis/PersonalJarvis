@@ -98,6 +98,9 @@ class InworldTTS:
     """
 
     name = "inworld"
+    # Which voice actually spoke last (fed to the per-turn transcript label).
+    last_voice: str | None = None
+    last_voice_provider: str | None = None
     supports_streaming = True  # pseudo via sentence-chunking (true NDJSON = follow-up)
 
     def __init__(
@@ -185,6 +188,9 @@ class InworldTTS:
             return
 
         voice_id = self._resolve_voice(text, voice, language_code)
+        self.last_voice = voice_id
+        self.last_voice_provider = self.name
+
         log = logging.getLogger("jarvis.tts.inworld")
 
         if self._quota_blocked_until and time.monotonic() < self._quota_blocked_until:
@@ -363,6 +369,10 @@ class InworldTTS:
                 if aclose is not None:
                     await aclose()
             if produced:
+                self.last_voice = getattr(fb, "last_voice", None)
+                self.last_voice_provider = getattr(
+                    fb, "last_voice_provider", None
+                ) or getattr(fb, "name", None)
                 return
 
         if not self._allow_sapi5_fallback:
@@ -375,6 +385,8 @@ class InworldTTS:
             return
 
         log.warning("SAPI5 emergency active (config opt-in).")
+        self.last_voice = None
+        self.last_voice_provider = "sapi5"
         pcm = await asyncio.to_thread(_sapi5_synthesize, text, language_code or "de-DE")
         if pcm:
             yield AudioChunk(

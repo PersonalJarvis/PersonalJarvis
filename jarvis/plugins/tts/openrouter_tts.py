@@ -67,6 +67,9 @@ class OpenRouterTTS:
     """
 
     name = "openrouter"
+    # Which voice actually spoke last (fed to the per-turn transcript label).
+    last_voice: str | None = None
+    last_voice_provider: str | None = None
     supports_streaming = True
 
     def __init__(
@@ -270,6 +273,9 @@ class OpenRouterTTS:
         await self._ensure_client()
 
         resolved_voice = self._resolve_voice(voice, language_code)
+        self.last_voice = resolved_voice
+        self.last_voice_provider = self.name
+
         payload: dict[str, Any] = {
             "model": self._model,
             "input": text[:_MAX_CHARS_PER_REQUEST],

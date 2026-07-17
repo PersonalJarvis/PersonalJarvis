@@ -51,6 +51,25 @@ class FallbackTTS:
         # Surface the primary's identity so callers/logs see the active voice.
         self.name = getattr(primary, "name", "fallback-tts")
         self.supports_streaming = bool(getattr(primary, "supports_streaming", True))
+        # Which wrapped provider produced the LAST utterance — feeds the
+        # per-turn "which voice actually spoke" transcript label.
+        self._last_speaker: Any = primary
+
+    @property
+    def last_voice(self) -> str | None:
+        """Voice name of the last utterance (from whichever provider spoke)."""
+        voice = getattr(self._last_speaker, "last_voice", None)
+        if voice is None and self._last_speaker is self._fallback:
+            return self._fallback_voice
+        return voice
+
+    @property
+    def last_voice_provider(self) -> str | None:
+        """Family name of the provider that actually spoke last."""
+        speaker = self._last_speaker
+        return getattr(speaker, "last_voice_provider", None) or getattr(
+            speaker, "name", None
+        )
 
     @property
     def primary(self) -> Any:
@@ -91,6 +110,7 @@ class FallbackTTS:
             return
 
         produced = 0
+        self._last_speaker = self._primary
         try:
             async for chunk in self._primary.synthesize(
                 text, voice=voice, language_code=language_code
@@ -137,6 +157,7 @@ class FallbackTTS:
         masculine→feminine mid-conversation. Without a match the fallback
         resolves its own default voice, as before.
         """
+        self._last_speaker = self._fallback
         try:
             async for chunk in self._fallback.synthesize(
                 text, voice=self._fallback_voice, language_code=language_code

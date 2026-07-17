@@ -97,6 +97,9 @@ class GrokVoiceTTS:
     """
 
     name = "grok-voice"
+    # Which voice actually spoke last (fed to the per-turn transcript label).
+    last_voice: str | None = None
+    last_voice_provider: str | None = None
     supports_streaming = True  # pseudo via sentence-chunking
 
     def __init__(
@@ -196,6 +199,8 @@ class GrokVoiceTTS:
 
         voice = voice or self._default_voice
         log = logging.getLogger("jarvis.tts.grok-voice")
+        self.last_voice = voice
+        self.last_voice_provider = self.name
 
         # Cooldown active? First Gemini, then SAPI5 — never stay silent.
         if self._quota_blocked_until and time.monotonic() < self._quota_blocked_until:
@@ -387,6 +392,10 @@ class GrokVoiceTTS:
                 if aclose is not None:
                     await aclose()
             if produced:
+                self.last_voice = getattr(fb, "last_voice", None)
+                self.last_voice_provider = getattr(
+                    fb, "last_voice_provider", None
+                ) or getattr(fb, "name", None)
                 return
 
         if not self._allow_sapi5_fallback:

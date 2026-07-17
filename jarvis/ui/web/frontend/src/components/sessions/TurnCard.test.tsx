@@ -32,6 +32,8 @@ function turn(over: Partial<VoiceTurnRow> = {}): VoiceTurnRow {
     speak_ms: 0,
     tool_calls: [],
     awaiting_confirmation: false,
+    voice_name: "",
+    voice_provider: "",
     ...over,
   };
 }
@@ -208,6 +210,24 @@ describe("TurnCard spoken track", () => {
       />,
     );
     expect(screen.queryByText("Awaiting confirmation")).toBeNull();
+  });
+
+  it("shows which voice actually spoke when the turn recorded one", () => {
+    render(
+      <TurnCard
+        turn={turn({
+          jarvis_text: "Servus!", // i18n-allow: German voice fixture
+          voice_name: "Fenrir",
+          voice_provider: "gemini-live",
+        })}
+      />,
+    );
+    expect(screen.getByText("Fenrir · gemini-live")).toBeTruthy();
+  });
+
+  it("shows no voice badge when the speaking voice is unknown", () => {
+    render(<TurnCard turn={turn({ jarvis_text: "Hallo." })} />); // i18n-allow: German voice fixture
+    expect(screen.queryByText(/gemini-live/)).toBeNull();
   });
 
   it("marks a pending confirmation in the copied plain text", () => {

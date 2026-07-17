@@ -67,6 +67,7 @@ from jarvis.core.events import (
 
 from .constants import (
     SPOKEN_KIND_COMPLETION,
+    SPOKEN_KIND_REPLY,
     SPOKEN_KIND_SUBAGENT,
     VOICE_MODE_PIPELINE,
     VOICE_MODE_REALTIME,
@@ -137,6 +138,11 @@ class _TurnState:
     cost_usd: float = 0.0
     latency_total_ms: int = 0
     tool_calls: list[str] = field(default_factory=list)
+    # Which voice actually spoke the audible reply ("Fenrir", "Charon", …) and
+    # the speaking family ("gemini-live", "openrouter"). Adopted from the
+    # authoritative SpeechSpoken track; VoiceTurnCompleted only fills a blank.
+    voice_name: str = ""
+    voice_provider: str = ""
     # Stage boundaries for think/speak latency calculation. The first thinking
     # segment begins at TranscriptFinal (classic) or final TranscriptionUpdate
     # (Realtime); later THINKING transitions reuse transcript_final_ms as the
@@ -297,8 +303,29 @@ class SessionRecorder:
                 self._state.current_turn.cost_usd += event.cost_estimate_usd
         elif isinstance(event, SystemStateChanged):
             self._on_system_state(event)
+        elif isinstance(event, SpeechSpoken):
+            self._on_speech_spoken(event)
 
         self._maybe_append_raw(event, kind)
+
+    def _on_speech_spoken(self, event: SpeechSpoken) -> None:
+        """Adopt the speaking voice onto the open turn.
+
+        ``SpeechSpoken`` is the authoritative audible track, so a voice it
+        names beats the session-level claim in ``VoiceTurnCompleted`` — that is
+        what makes a surface-TTS readback inside a realtime session honest
+        (the surface voice spoke, not the session voice). The reply phrase
+        wins over supplemental phrases; a supplemental phrase only fills a
+        blank.
+        """
+        assert self._state is not None
+        t = self._state.current_turn
+        voice = getattr(event, "voice", None)
+        if t is None or not voice:
+            return
+        if event.spoken_kind == SPOKEN_KIND_REPLY or not t.voice_name:
+            t.voice_name = str(voice)
+            t.voice_provider = str(getattr(event, "voice_provider", None) or "")
 
     # -----------------------------------------------------------------
     # Session lifecycle
@@ -445,6 +472,11 @@ class SessionRecorder:
             for tc in event.tool_calls:
                 if tc not in t.tool_calls:
                     t.tool_calls.append(tc)
+        # The audible SpeechSpoken track wins; the session-level claim only
+        # fills a blank (see _on_speech_spoken).
+        if getattr(event, "voice", None) and not t.voice_name:
+            t.voice_name = str(event.voice)
+            t.voice_provider = str(getattr(event, "voice_provider", None) or "")
         self._finalize_current_turn(end_ms=event.timestamp_ns // 1_000_000)
 
     def _ensure_turn_open(self, ts_ms: int) -> None:
@@ -505,6 +537,8 @@ class SessionRecorder:
             think_ms=t.think_ms,
             speak_ms=t.speak_ms,
             awaiting_confirmation=t.awaiting_confirmation,
+            voice_name=t.voice_name,
+            voice_provider=t.voice_provider,
         )
         # Bump aggregates
         self._state.turn_count += 1
@@ -872,6 +906,11 @@ def _payload_for(event: Event) -> dict[str, Any]:
         # …). ``text`` + ``language`` are already whitelisted above, so a
         # persisted SpeechSpoken row carries {text, language, spoken_kind}.
         "spoken_kind",
+        # SpeechSpoken / VoiceTurnCompleted: which voice actually spoke
+        # ("Fenrir", "Charon") and the speaking family ("gemini-live",
+        # "openrouter") — user request 2026-07-17.
+        "voice",
+        "voice_provider",
         # SpeechSpoken: optional technical diagnostic NOT spoken aloud (e.g. a
         # failed Computer-Use exit code + harness reason). LatencySpan also
         # carries a ``detail`` attribute and IS a recorded kind since the Run

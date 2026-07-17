@@ -184,7 +184,16 @@ def format_session_markdown(
 
         outputs = _jarvis_outputs_for_turn(t, events_map.get(t.id, []))
         if outputs:
-            lines.append(f"**🔊 Jarvis sagte** _(de={t.jarvis_lang})_")
+            # Which voice actually spoke (user request 2026-07-17) — small
+            # print next to the spoken block; the speaker can differ from the
+            # brain provider (e.g. a surface-TTS readback in a realtime turn).
+            voice_note = ""
+            if getattr(t, "voice_name", ""):
+                spoken_by = t.voice_name
+                if getattr(t, "voice_provider", ""):
+                    spoken_by += f" @ {t.voice_provider}"
+                voice_note = f" · _Stimme: `{spoken_by}`_"
+            lines.append(f"**🔊 Jarvis sagte** _(de={t.jarvis_lang})_{voice_note}")
             lines.append("")
             for output in outputs:
                 if output.is_reply and t.awaiting_confirmation:

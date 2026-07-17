@@ -117,6 +117,9 @@ class GeminiFlashTTS:
     """TTS provider for Google's Gemini 3.1 Flash TTS (AI-Studio API key)."""
 
     name = "gemini-flash-tts"
+    # Which voice actually spoke last (fed to the per-turn transcript label).
+    last_voice: str | None = None
+    last_voice_provider: str | None = None
     supports_streaming = True  # pseudo-streaming via sentence-chunking
 
     def __init__(
@@ -334,6 +337,8 @@ class GeminiFlashTTS:
         """
         self._ensure_client()
         voice = voice or self._default_voice
+        self.last_voice = voice
+        self.last_voice_provider = self.name
         # Per-turn pronunciation pin: the pipeline resolves this turn's language
         # (resolve_output_language) and passes ``language_code`` here. It is
         # threaded down to the GenerateContentConfig so the model stops

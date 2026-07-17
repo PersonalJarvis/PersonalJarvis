@@ -298,6 +298,14 @@ class SpeechSpoken(Event):
     # view surfaces this for debugging (user request 2026-06-16). None for the
     # common case: a plain canned phrase has no diagnostic.
     detail: str | None = None
+    # Which voice actually spoke this text (user request 2026-07-17): the
+    # resolved voice name ("Fenrir", "Charon", "leo", an ElevenLabs voice id)
+    # and the speaking family ("gemini-live", "openrouter", "grok-voice").
+    # None when the speaking layer cannot tell — consumers must treat that as
+    # unknown, never guess from the brain provider (the speaker can differ,
+    # e.g. a surface-TTS readback inside a realtime session).
+    voice: str | None = None
+    voice_provider: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -1137,6 +1145,10 @@ class VoiceTurnCompleted(Event):
     cost_usd: float = 0.0
     latency_total_ms: int = 0
     tool_calls: tuple[str, ...] = ()
+    # Voice that actually spoke the reply (name + speaking family), when the
+    # publisher knows it. See SpeechSpoken.voice for the semantics.
+    voice: str | None = None
+    voice_provider: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

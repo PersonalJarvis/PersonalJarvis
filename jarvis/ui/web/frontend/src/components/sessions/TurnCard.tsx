@@ -233,6 +233,20 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
               <Badge variant="secondary" className="ml-1 text-[9px]">
                 {turn.jarvis_lang}
               </Badge>
+              {turn.voice_name && (
+                <Badge
+                  variant="outline"
+                  className="ml-1 font-mono text-[9px] normal-case text-muted-foreground"
+                  title={
+                    turn.voice_provider
+                      ? `Voice: ${turn.voice_name} (${turn.voice_provider})`
+                      : `Voice: ${turn.voice_name}`
+                  }
+                >
+                  {turn.voice_name}
+                  {turn.voice_provider ? ` · ${turn.voice_provider}` : ""}
+                </Badge>
+              )}
               {turn.awaiting_confirmation && (
                 <Badge
                   variant="outline"

@@ -110,6 +110,12 @@ export interface VoiceTurnRow {
   // (finish_reason="voice_confirm_pending"): the reply is a pending yes/no
   // question, not a settled answer, so the transcript labels it distinctly.
   awaiting_confirmation: boolean;
+  // Which voice actually spoke the reply ("Fenrir", "Charon") and the
+  // speaking family ("gemini-live", "openrouter"). Empty = unknown — show
+  // nothing rather than guess (the speaker can differ from the brain
+  // provider, e.g. a surface-TTS readback inside a realtime turn).
+  voice_name: string;
+  voice_provider: string;
 }
 
 export interface VoiceSessionRow {

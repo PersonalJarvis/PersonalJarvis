@@ -130,6 +130,13 @@ class VoiceTurnRow(BaseModel):
     # (finish_reason="voice_confirm_pending"): the reply is a pending yes/no
     # question, not a normal answer, so the transcript labels it distinctly.
     awaiting_confirmation: bool = False
+    # Which voice actually spoke the reply ("Fenrir", "Charon", an ElevenLabs
+    # voice id) and the speaking family ("gemini-live", "openrouter",
+    # "grok-voice"). Empty when the speaking layer could not tell — the UI
+    # must show nothing rather than guess (the speaker can differ from the
+    # brain provider, e.g. a surface-TTS readback inside a realtime session).
+    voice_name: str = ""
+    voice_provider: str = ""
 
 
 class VoiceSessionRow(BaseModel):
