@@ -12,6 +12,7 @@ where the Google SDK dependency graph has no installable wheel.
 """
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import os
@@ -102,39 +103,97 @@ def _is_thinking_config_rejected_error(exc: Exception) -> bool:
     return "budget" in msg or "invalid" in msg or "thinking mode" in msg
 
 
-def _to_gemini_contents(messages: tuple[BrainMessage, ...]) -> list[dict[str, Any]]:
+def _to_gemini_contents(
+    messages: tuple[BrainMessage, ...],
+    tool_name_map: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
     """BrainMessages → Gemini contents array. Role mapping: assistant→model.
 
     Multimodal: `BrainMessage.images` are appended as `inline_data` parts
     (`{"inline_data": {"mime_type": ..., "data": ...}}`) — only for user
     messages, since Gemini doesn't accept model-role images as input.
+
+    Tool history rides NATIVELY (2026-07-17): an assistant ``tool_use`` part
+    becomes a ``functionCall`` part and a tool result a clean
+    ``functionResponse`` — never JSON-dumped prose. The old text fallback fed
+    the model its OWN prior calls as JSON text, so from round 2 of a tool
+    loop it mimicked that format and "called" tools in plain text (the leak
+    the ``extract_leaked_tool_calls`` recovery has to repair — observed on
+    every delegated research turn). ``tool_name_map`` (original → wire name)
+    keeps history names consistent with the sanitized declarations.
     """
+    name_map = tool_name_map or {}
     contents: list[dict[str, Any]] = []
     for m in messages:
         if m.role == "system":
             continue  # system goes via system_instruction
         role = "user" if m.role in ("user", "tool") else "model"
         if m.role == "tool":
-            # FunctionResponse
+            # FunctionResponse. The tool loop wraps results in an
+            # Anthropic-style envelope list — unwrap to the payload text so
+            # the model sees the result, not a serialized wrapper.
+            payload = m.content
+            result_text: str
+            if isinstance(payload, list):
+                inner = [
+                    str(part.get("content", ""))
+                    for part in payload
+                    if isinstance(part, dict) and part.get("type") == "tool_result"
+                ]
+                result_text = (
+                    "\n".join(t for t in inner if t)
+                    or json.dumps(payload, default=str)
+                )
+            else:
+                result_text = str(payload)
+            tool_name = m.name or ""
             contents.append({
                 "role": "user",
                 "parts": [{
                     "functionResponse": {
-                        "name": m.name or "",
-                        "response": {"result": str(m.content)},
+                        "name": name_map.get(tool_name, tool_name),
+                        "response": {"result": result_text},
                     }
                 }],
             })
             continue
-        text = m.content if isinstance(m.content, str) else json.dumps(m.content, default=str)
 
-        # Multimodal only makes sense on the user role — images are appended to
-        # the text part. If text is empty, we leave the text part out.
         # `getattr` for backwards-compat (Protocol pre-Wave-1-B1 had no images).
         images = getattr(m, "images", ()) or ()
         parts: list[dict[str, Any]] = []
-        if text:
-            parts.append({"text": text})
+        if isinstance(m.content, str):
+            if m.content:
+                parts.append({"text": m.content})
+        else:
+            for part in m.content:
+                if not isinstance(part, dict):
+                    parts.append({"text": str(part)})
+                elif part.get("type") == "text":
+                    if part.get("text"):
+                        parts.append({"text": str(part["text"])})
+                elif (
+                    part.get("type") == "tool_use"
+                    and role == "model"
+                    and isinstance(part.get("thought_signature"), str)
+                    and part["thought_signature"]
+                ):
+                    # Native replay is only VALID with the original
+                    # thought_signature: Gemini 3 thinking models 400 on a
+                    # replayed functionCall part without it. The stream loop
+                    # captures it (base64) on every native call, so this
+                    # covers all Gemini-originated calls.
+                    call_name = str(part.get("name", ""))
+                    call_args = part.get("input")
+                    parts.append({
+                        "functionCall": {
+                            "name": name_map.get(call_name, call_name),
+                            "args": call_args if isinstance(call_args, dict) else {},
+                        },
+                        "thought_signature": part["thought_signature"],
+                    })
+                else:
+                    # Unknown block type: keep the previous lossless behavior.
+                    parts.append({"text": json.dumps(part, default=str)})
         if m.role == "user" and images:
             for img in images:
                 parts.append({
@@ -586,7 +645,6 @@ class GeminiBrain:
                 yield delta
             return
 
-        contents = _to_gemini_contents(req.messages)
         system_parts: list[str] = [m.content for m in req.messages
                                    if m.role == "system" and isinstance(m.content, str)]
         if req.system:
@@ -599,6 +657,9 @@ class GeminiBrain:
         system_text = "\n\n".join(system_parts) if system_parts else ""
         # One pass builds both the outbound declarations and the name map.
         tools_payload, _tool_name_map = _build_gemini_tool_declarations(req.tools)
+        # Contents AFTER the name map exists: prior tool calls/results in the
+        # history must carry the same sanitized names as the declarations.
+        contents = _to_gemini_contents(req.messages, _tool_name_map)
         # Inbound resolution: Gemini calls back the SANITIZED name; the tool
         # executor only knows the original. Invert the forward map (empty when
         # there are no tools). See _build_gemini_tool_declarations.
@@ -801,11 +862,25 @@ class GeminiBrain:
                             if hasattr(args, "items"):
                                 args = dict(args)
                             yielded_delta = True
-                            yield BrainDelta(tool_call={
+                            call: dict[str, Any] = {
                                 "id": f"gemini_{uuid4().hex[:8]}",
                                 "name": tool_name_reverse.get(name, name),
                                 "input": args,
-                            })
+                            }
+                            # Gemini 3 thinking models stamp each functionCall
+                            # part with a thought_signature and REQUIRE it back
+                            # verbatim when the call is replayed in history
+                            # (400 INVALID_ARGUMENT otherwise). Carry it on the
+                            # provider-neutral call dict; other providers'
+                            # converters simply never read the key.
+                            signature = getattr(part, "thought_signature", None)
+                            if signature:
+                                call["thought_signature"] = (
+                                    base64.b64encode(signature).decode("ascii")
+                                    if isinstance(signature, (bytes, bytearray))
+                                    else str(signature)
+                                )
+                            yield BrainDelta(tool_call=call)
                         finish = getattr(cand, "finish_reason", None)
                         if finish:
                             yielded_delta = True

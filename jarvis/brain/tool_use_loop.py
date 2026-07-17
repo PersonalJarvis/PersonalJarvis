@@ -721,12 +721,19 @@ class ToolUseLoop:
             if agg.text:
                 assistant_content.append({"type": "text", "text": agg.text})
             for tc in agg.tool_calls:
-                assistant_content.append({
+                tool_use_part: dict[str, Any] = {
                     "type": "tool_use",
                     "id": tc.get("id", f"call_{uuid4().hex[:8]}"),
                     "name": tc.get("name", ""),
                     "input": tc.get("input", {}),
-                })
+                }
+                # Gemini 3 thinking models require their functionCall
+                # thought_signature back VERBATIM when the call is replayed
+                # in history (400 INVALID_ARGUMENT otherwise). Providers that
+                # never emit the key are unaffected.
+                if tc.get("thought_signature"):
+                    tool_use_part["thought_signature"] = tc["thought_signature"]
+                assistant_content.append(tool_use_part)
             current_messages.append(BrainMessage(
                 role="assistant",
                 content=assistant_content if assistant_content else agg.text,
