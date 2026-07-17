@@ -71,13 +71,16 @@ def test_factory_selects_global_hotkeys_on_windows(patch_platform):
     assert isinstance(backend, GlobalHotkeysBackend)
 
 
-def test_factory_selects_pynput_on_macos_with_hotkey(patch_platform):
+def test_factory_selects_quartz_on_macos_with_hotkey(patch_platform):
+    """macOS gets the TSM-free Quartz tap backend, never pynput (BUG-065)."""
     from jarvis.trigger.backends import make_hotkey_backend
     from jarvis.trigger.backends.pynput import PynputBackend
+    from jarvis.trigger.backends.quartz import QuartzHotkeyBackend
 
     patch_platform("darwin", has_hotkey=True)
     backend = make_hotkey_backend()
-    assert isinstance(backend, PynputBackend)
+    assert isinstance(backend, QuartzHotkeyBackend)
+    assert not isinstance(backend, PynputBackend)
 
 
 def test_factory_selects_pynput_on_linux_x11(patch_platform):
@@ -455,9 +458,50 @@ def test_pynput_backend_darwin_with_grant_starts_listener(monkeypatch):
     _install_fake_pynput(monkeypatch, built)
     monkeypatch.setattr("sys.platform", "darwin")
     monkeypatch.setattr(pynput_backend, "_macos_hotkey_permissions_granted", lambda: True)
+    monkeypatch.setattr(pynput_backend, "_macos_layout_guard_ready", lambda: True)
     backend = PynputBackend()
     backend.start()
     assert len(built) == 1  # grant present -> hotkeys arm normally
+
+
+def test_pynput_backend_darwin_without_layout_snapshot_degrades(monkeypatch, caplog):
+    # BUG-065: macOS 15 kills the process (uncatchable SIGILL) when pynput's
+    # listener thread calls the TIS keyboard-layout APIs off the main thread.
+    # With no main-thread layout snapshot the backend must degrade — no
+    # Listener at all — instead of letting the OS abort the app.
+    import jarvis.trigger.backends.pynput as pynput_backend
+    from jarvis.trigger.backends.pynput import PynputBackend
+
+    built: list = []
+    _install_fake_pynput(monkeypatch, built)
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.setattr(pynput_backend, "_macos_hotkey_permissions_granted", lambda: True)
+    monkeypatch.setattr(pynput_backend, "_macos_layout_guard_ready", lambda: False)
+    backend = PynputBackend()
+    with caplog.at_level(logging.WARNING):
+        backend.start()
+    assert built == []
+    assert "keyboard-layout" in caplog.text
+
+
+def test_pynput_backend_darwin_layout_guard_crash_degrades(monkeypatch, caplog):
+    # A raising guard must never propagate out of start() (AD-6).
+    import jarvis.trigger.backends.pynput as pynput_backend
+    from jarvis.trigger.backends.pynput import PynputBackend
+
+    built: list = []
+    _install_fake_pynput(monkeypatch, built)
+    monkeypatch.setattr("sys.platform", "darwin")
+    monkeypatch.setattr(pynput_backend, "_macos_hotkey_permissions_granted", lambda: True)
+
+    def _boom() -> bool:
+        raise RuntimeError("guard exploded")
+
+    monkeypatch.setattr(pynput_backend, "_macos_layout_guard_ready", _boom)
+    backend = PynputBackend()
+    with caplog.at_level(logging.WARNING):
+        backend.start()
+    assert built == []
 
 
 def test_pynput_backend_off_darwin_needs_no_probe(monkeypatch):
@@ -491,6 +535,7 @@ def test_pynput_backend_revoked_permission_suppresses_live_callback(monkeypatch)
         "_macos_hotkey_permissions_granted",
         lambda: allowed["value"],
     )
+    monkeypatch.setattr(pynput_backend, "_macos_layout_guard_ready", lambda: True)
     fired: list[str] = []
     backend = PynputBackend()
     backend.register([["control + j", lambda: fired.append("call"), None]])

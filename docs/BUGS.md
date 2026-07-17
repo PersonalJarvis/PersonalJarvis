@@ -5445,3 +5445,48 @@ stubs against the RUNTIME the install actually uses, probed at build time.
 And an installer must never reduce a failed subprocess to its exit code:
 persist and print the captured stderr, or the next such bug is again
 undiagnosable in the field.
+
+---
+
+## BUG-065: pynput's darwin keyboard listener aborts the whole app with SIGILL on macOS 15 — hotkeys replaced with a TSM-free Quartz tap backend (HIGH, FIXED 2026-07-17)
+
+**Symptom.** During the first real Intel-Mac onboarding (macOS 15.7), the
+desktop app died twice within seconds of the hotkey trigger arming — a native
+``EXC_BAD_INSTRUCTION`` / ``SIGILL`` crash, not a Python traceback. Crash
+reports show ``dispatch_assert_queue_fail`` under
+``TSMGetInputSourceProperty`` called via ctypes from a worker thread.
+
+**Root cause.** pynput's darwin keyboard listener resolves the keyboard
+layout through HIToolbox Text Services Manager calls
+(``TISCopyCurrentKeyboardInputSource`` / ``TSMGetInputSourceProperty``)
+inside its own listener thread (``pynput/_util/darwin.py::keycode_context``,
+entered by ``keyboard/_darwin.py::Listener._run``). Modern macOS asserts
+that TSM runs on the main dispatch queue and aborts the process —
+uncatchable from Python. The BUG-058 permission preflight gated the tap
+correctly, but once Accessibility + Input Monitoring were GRANTED the
+listener started and the TSM assertion killed the app. The main thread
+belongs to pywebview, so the listener can never be hosted there: pynput's
+keyboard listener is structurally unusable in this process on macOS 15.
+
+**Fix (2026-07-17).** New ``jarvis/trigger/backends/quartz.py``
+(``QuartzHotkeyBackend``): a listen-only ``CGEventTap`` on a dedicated
+CFRunLoop thread (taps are legal off the main thread), matching chords by
+PHYSICAL key — a fixed ANSI virtual-keycode table plus the CGEventFlags
+modifier word. No TIS/TSM call anywhere. Same combo vocabulary, edge
+semantics, permission fail-closed gate, and ``received_any_event()`` as the
+pynput backend; ``make_hotkey_backend`` selects it on darwin while Linux-X11
+keeps ``PynputBackend`` and Windows stays byte-identical (AD-7). Documented
+trade-offs: letters match ANSI key positions on exotic layouts;
+``right_control`` folds into ``ctrl``.
+
+Guards: ``tests/unit/trigger/test_quartz_backend.py`` (edge semantics,
+fail-closed permission gate, degrade without Quartz, keycode-table coverage)
+and the factory-selection test in ``test_hotkey_backends.py``.
+
+**Class rule.** On macOS, ANY third-party library that touches AppKit,
+HIToolbox, or TSM from a background thread is a process-abort risk that a
+permission gate cannot catch — the assertion fires AFTER permissions are
+granted. Before hosting such a library off the main thread, read its native
+call path; if it needs main-queue services the process cannot provide, build
+the narrow native path in-repo (Quartz-only, keycode-level) instead of
+wrapping the crash in try/except that can never catch a SIGILL.
