@@ -1,7 +1,7 @@
 """AudioDuckController — mutes other apps' audio for the duration of a session.
 
 Subscribes ``VoiceSessionStarted`` (mute others) / ``VoiceSessionEnded``
-(restore). The blocking pycaw/COM work runs in ``asyncio.to_thread`` with
+(restore). The blocking backend work runs in ``asyncio.to_thread`` with
 ``CoInitialize`` so it never touches the event loop. Our own PID is excluded
 from the mute sweep, which automatically protects Jarvis's own TTS voice.
 """
@@ -82,6 +82,12 @@ class AudioDuckController:
             log.debug("in-memory ducking.enabled update skipped", exc_info=True)
         if not enabled:
             await self._restore_locked()
+            return
+        # Best-effort backend prewarm (macOS: fires the one-time Automation
+        # TCC consent prompt at enable time instead of mid-session).
+        pre = getattr(self._ducker, "prewarm", None)
+        if callable(pre):
+            await self._run(pre)
 
     async def restore(self) -> None:
         """Force-restore (live path: turning the toggle off)."""
@@ -159,4 +165,4 @@ class AudioDuckController:
 
 def make_audio_duck_controller(bus: Any, cfg: Any) -> AudioDuckController:
     """Construct a controller with the platform-appropriate ducker backend."""
-    return AudioDuckController(bus=bus, cfg=cfg, ducker=make_audio_ducker())
+    return AudioDuckController(bus=bus, cfg=cfg, ducker=make_audio_ducker(cfg))

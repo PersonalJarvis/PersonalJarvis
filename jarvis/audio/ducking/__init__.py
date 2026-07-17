@@ -1,8 +1,10 @@
 """Audio ducking — "Mute music while dictating".
 
-Mutes other apps' audio sessions for the duration of a voice session and
-restores them afterwards. Windows-only (pycaw); a logged no-op elsewhere so the
-base headless install boots unaffected.
+Lowers other apps' audio for the duration of a voice session and restores it
+afterwards. Windows: per-app session mute via pycaw. macOS: AppleScript volume
+duck of the known players (Music, Spotify) with an opt-in master-output
+fallback. A logged no-op elsewhere so the base headless install boots
+unaffected.
 """
 from __future__ import annotations
 

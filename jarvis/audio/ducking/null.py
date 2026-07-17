@@ -1,4 +1,4 @@
-"""No-op ducker (non-Windows / pycaw absent)."""
+"""No-op ducker (no platform ducking backend available on this host)."""
 from __future__ import annotations
 
 import logging

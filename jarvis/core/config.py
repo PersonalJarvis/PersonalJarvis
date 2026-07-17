@@ -1395,10 +1395,12 @@ class UIConfig(BaseModel):
 class DuckingConfig(BaseModel):
     """Audio ducking — "Mute music while dictating" (Taskbar section).
 
-    When ``enabled``, the audio-duck controller mutes every OTHER app's audio
-    session for the duration of a voice session (excluding Jarvis's own PID, so
-    the TTS voice is never muted) and restores them when the session ends.
-    Windows-only (pycaw); a graceful no-op elsewhere. Default off (opt-in).
+    When ``enabled``, the audio-duck controller lowers every OTHER app's audio
+    for the duration of a voice session and restores it when the session ends.
+    Windows: per-app session mute via pycaw (excluding Jarvis's own PID, so the
+    TTS voice is never muted). macOS: AppleScript volume duck of the known
+    players (Music, Spotify) plus an opt-in master-output fallback. A graceful
+    no-op elsewhere. Default off (opt-in).
     """
 
     model_config = ConfigDict(extra="allow")
@@ -1406,8 +1408,14 @@ class DuckingConfig(BaseModel):
     enabled: bool = False
     # Grace before restoring other apps' volume (lets the TTS tail finish).
     restore_delay_ms: int = 400
-    # App process names never to mute (e.g. "Discord.exe"). Empty = mute all others.
+    # App names never to mute — Windows process names ("Discord.exe") or plain
+    # app names ("Spotify"). Empty = mute all others.
     never_mute: list[str] = Field(default_factory=list)
+    # Volume other apps are ducked to (0 = full duck/mute of the app volume).
+    duck_volume_percent: int = Field(default=0, ge=0, le=100)
+    # macOS only: when no known player was ducked, lower the MASTER output
+    # volume instead. Opt-in — the master volume also lowers Jarvis's own TTS.
+    macos_master_fallback: bool = False
 
 
 class AutostartConfig(BaseModel):
