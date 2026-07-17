@@ -687,7 +687,7 @@ class BrainRoutingConfig(BaseModel):
     # jarvis.missions.init._assemble_worker_mcp_servers.
     worker_mcp_relevance_filter: bool = True
 
-    # Heavy-research force-spawn (live bug 2026-06-14, the Berlin→Melbourne
+    # Heavy-research force-spawn (live bug 2026-06-14, a long-haul trip-research
     # turn): a multi-step research/analysis request must be OFFLOADED to a
     # background mission, not run inline on the deep brain where it blows the
     # ~20 s voice budget and gets beheaded. Conjunctive gate (precision over
@@ -2108,7 +2108,7 @@ class VoiceConfig(BaseModel):
     # stall window, so its suppression floor must track the ceiling — clamping it
     # to the 30 s stall window (as min_timeout_phrase_s does) would make a real
     # ~20 s abort fall under the floor and stay silent (live bug 2026-06-14: the
-    # Berlin→Melbourne research turn). None → the pipeline derives it as a
+    # long-haul trip-research turn). None → the pipeline derives it as a
     # fraction of the no-first-frame ceiling. Any set value is clamped to <= the
     # ceiling so it can never invert and re-introduce guaranteed silence.
     no_first_frame_phrase_floor_s: float | None = None
