@@ -113,7 +113,7 @@ does NOT weaken the English-artifact rule). Supported languages are equal —
 
 ---
 
-## 2. GitHub — ONE public repo + mandatory privacy gate (BINDING)
+## 2. GitHub — ONE public repo, standard flow, fail-closed credential protection (BINDING)
 
 **ONE project repo: the public flagship
 `https://github.com/PersonalJarvis/PersonalJarvis`** (PascalCase). EVERY
@@ -122,48 +122,48 @@ repo. <!-- i18n-allow: quoted German maintainer trigger phrase --> The
 lowercase `personal-jarvis` (remote `origin`) is a **silent local backup**
 only, never the deliverable. Never ask "which repo".
 
-**Why the gate exists:** public history is world-readable forever. One leaked
-API key, real name, personal path (`C:\Users\<name>\...`), private email,
-internal project id, or Windows SID is permanent — deleting it later does NOT
-un-publish it (it survives in clones, forks, caches). So every push is rebuilt
-as a **depersonalized snapshot** through the gate below, in order,
-**fail-closed** — any uncertainty at any step STOPS the push:
+**Standard professional flow (maintainer directive 2026-07-17).** The former
+depersonalization/snapshot gate is RETIRED: the maintainer explicitly does
+not require name/path/PII scrubbing. The public repo carries the ONE shared
+git history; every machine (Windows dev box, the test Mac, test machines)
+pushes and pulls it normally — no rebuilt snapshot copies, no separate
+histories. What remains is credential protection, **fail-closed**:
 
-1. **Tracked-files-only export** — `.gitignore` is the first cut for free:
-   `data/`, `.env`, `jarvis.toml`, the Vault, key material are never candidates.
-2. **Distribution denylist** — strips tracked-but-non-public files: internal
-   dev docs, scratch/experiment scripts, signing keys, red-team notes.
-3. **Deterministic PII scrub** — masks the maintainer's real name, personal
-   paths, machine/user identifiers, internal project ids across every staged
-   file.
-4. **Mandatory sub-agent privacy review** — reads the ENTIRE staged snapshot
-   and reports anything the regex scanners could miss. **Additive-only:** it
-   can ADD a blocking finding but never clear a deterministic one. One finding
-   STOPS.
-5. **Deterministic secret/PII scan** — final regex sweep tuned to real
-   credential shapes/lengths (catches a real key, not every hex string),
-   fail-closed.
-6. **Human review** — explicit maintainer go-ahead before any byte crosses
-   the network. No silent auto-publish.
+1. **`.gitignore` is the first line** — `data/`, `.env`, `jarvis.toml`, the
+   Vault, and key material are never tracked.
+2. **Never commit credentials** — real API keys, tokens, private keys
+   (including `*.key.enc`, AP-29), passphrases. `check_no_private_keys.py`
+   and the deterministic secret sweep stay wired in pre-commit + pre-push.
+3. **GitHub secret scanning + push protection + validity checks are ON**
+   (enabled 2026-07-17). Never disable them. A blocked push means a real
+   finding: stop and fix — never bypass or allowlist around it.
+4. **Trademark/brand review is a human release checkpoint** — product
+   naming, logos, third-party assets. No scanner clears it; flag concerns to
+   the maintainer instead of shipping them.
 
-**Isolation:** the push runs from a **separate clean clone**, never your live
-working tree, so raw un-scrubbed state cannot leak through. Backstop: the
-pre-push guard (`scripts/ci/guard_no_raw_public_push.py` +
-`privacy_pre_push.py`, via `.githooks/pre-push`, `core.hooksPath=.githooks`)
-HARD-BLOCKS any raw push to the public repo — it already caught a real
-Windows-SID leak (blocked, then purged with filter-repo). Never remove or
-weaken it. Engine: `scripts/ci/privacy_gate/`.
+**Transition to the shared history (delete this block once done):** before
+the FIRST direct push of local `main` to the public repo: (a) purge
+`install/keys/offline-ceremony.key.enc` + `install/keys/pq-mldsa65.key.enc`
+from local history (`git filter-repo --invert-paths`) — they were never
+public and must not become so; (b) force-push the unified, filtered `main`
+as the new public history; (c) retool `.githooks/pre-push` from raw-push
+blocking (`guard_no_raw_public_push.py` / `privacy_pre_push.py`) to
+credential-scan-only. Until (a)–(c) land, do NOT raw-push to the public
+repo — full history verified key-clean otherwise (gitleaks, 2026-07-17).
 
-**Two volumes, same gate:** *Discreet (DEFAULT)* — "push", "sichere den
-Stand", "update GitHub" → clean snapshot, **no bump / tag / release**.
-*Release (explicit only)* — "Mach ein Release", "Publish release" → the gate
-**plus** a SemVer bump + git tag + CHANGELOG entry. <!-- i18n-allow: quoted German maintainer trigger phrases -->
-When ambiguous, default to discreet.
+**Two volumes:** *Update (DEFAULT)* — "push", "sichere den Stand", "update
+GitHub" → normal push, **no bump / tag / release**. *Release (explicit
+only)* — "Mach ein Release", "mach eine neue Version" <!-- i18n-allow: quoted German maintainer trigger phrases -->
+→ SemVer bump + git tag + CHANGELOG entry.
+A release always ships the ENTIRE current local state — reconcile with
+`public/main` first and never knowingly ship a release lacking local fixes
+without saying so. When ambiguous, default to update.
 
-**Guardrails:** **Do not PUSH unless the maintainer asks** (local auto-commit
-is fine, governed by §9). `save-to-github` and `github-version` MUST NOT run
-here — they push raw state and bypass this gate. Doctrine:
-[`CLOUD.md`](CLOUD.md).
+**Guardrails:** **Do not PUSH unless the maintainer asks** (local
+auto-commit is fine, governed by §9). Releases are cut from the dev machine
+line — a session on another machine ports its work back to `main` instead of
+cutting its own releases (the 2026-07-17 two-line divergence cost a day).
+Doctrine: [`CLOUD.md`](CLOUD.md).
 
 ---
 
@@ -622,7 +622,7 @@ project level so every contributor and agent here follows the same workflow.)*
 - **Use meaningful Conventional-Commit messages** (`feat:`, `fix:`,
   `refactor:`, `docs:`, `chore:`).
 - **Never push to the remote automatically** — push only when the maintainer
-  explicitly says so (a public push still runs the §2 privacy gate).
+  explicitly says so (a public push still honors §2's credential protection).
 - **Never commit secrets, `.env` files, keys, tokens, or credentials.** If
   any appear untracked, STOP, flag them, and do not commit them.
 - **Never `git add -A` / `git add .`** without first scanning the staged set
