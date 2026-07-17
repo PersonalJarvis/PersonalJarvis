@@ -2,11 +2,12 @@
  * Component tests for the "Personal recommendation" panel in the voice-engine
  * header band (RecommendedSetupPanel).
  *
- * The panel is a presentation-only hint (AP-21): it lists the maintainer's
- * pick for Realtime / Tool Model / Jarvis-Agents, and each row navigates to
- * the tab it names. Navigation is VIEW-only — opening the Realtime tab set
- * from a recommendation row must never persist `[voice].mode` (only the
- * key-gated segmented switch does that).
+ * The panel is a presentation-only hint (AP-21) for the REALTIME tab set: it
+ * lists the maintainer's pick for Realtime / Tool Model / Jarvis-Agents, so it
+ * renders ONLY while the Realtime tab set is being viewed (maintainer feedback
+ * 2026-07-17: next to the Pipeline tabs it would point at tabs that are not on
+ * screen). Each row navigates to the tab it names — VIEW-only navigation that
+ * must never persist `[voice].mode` (only the key-gated segmented switch does).
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
@@ -52,13 +53,24 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
+/** Switch the VIEW to the Realtime tab set via the engine segment. */
+function openRealtimeView() {
+  fireEvent.click(screen.getByRole("button", { name: /^realtime/i }));
+}
+
 function panel() {
   return within(screen.getByTestId("recommended-setup-panel"));
 }
 
 describe("ApiKeysView recommended-setup panel", () => {
-  it("lists the three maintainer picks", () => {
+  it("stays hidden while the Pipeline tab set is viewed", () => {
     render(<ApiKeysView />);
+    expect(screen.queryByTestId("recommended-setup-panel")).toBeNull();
+  });
+
+  it("lists the three maintainer picks once the Realtime tab set is viewed", () => {
+    render(<ApiKeysView />);
+    openRealtimeView();
     expect(panel().getByText("OpenAI Realtime")).toBeTruthy();
     expect(panel().getByText("Gemini 3.5 Flash")).toBeTruthy();
     expect(panel().getByText("ChatGPT or Claude Max subscription")).toBeTruthy();
@@ -66,6 +78,7 @@ describe("ApiKeysView recommended-setup panel", () => {
 
   it("keeps the segment buttons uniquely addressable (no /^realtime/i collision)", () => {
     render(<ApiKeysView />);
+    openRealtimeView();
     // The two-mode tests select the engine segment via /^realtime/i; the
     // recommendation rows must not shadow that accessible name.
     expect(screen.getAllByRole("button", { name: /^realtime/i })).toHaveLength(1);
@@ -73,9 +86,10 @@ describe("ApiKeysView recommended-setup panel", () => {
 
   it("opens the Tool Model tab from its recommendation row", () => {
     render(<ApiKeysView />);
-    fireEvent.click(
-      panel().getByRole("button", { name: /personal recommendation: tool model/i }),
-    );
+    openRealtimeView();
+    // Rows are addressed by stable testids, not their labels — the tab labels
+    // are i18n strings other work renames (e.g. Jarvis-Agents -> {name}-Agents).
+    fireEvent.click(screen.getByTestId("reco-row-computer-use"));
     expect(
       (screen.getByRole("tab", { name: /tool model/i }) as HTMLElement).getAttribute(
         "aria-selected",
@@ -83,34 +97,35 @@ describe("ApiKeysView recommended-setup panel", () => {
     ).toBe("true");
   });
 
-  it("opens the Jarvis-Agents tab from its recommendation row", () => {
+  it("opens the agents tab from its recommendation row", () => {
     render(<ApiKeysView />);
-    fireEvent.click(
-      panel().getByRole("button", { name: /personal recommendation: jarvis-agents/i }),
-    );
+    openRealtimeView();
+    fireEvent.click(screen.getByTestId("reco-row-subagents"));
+    // Label-agnostic: both "Jarvis-Agents" and a "{name}-Agents" rebrand end
+    // in "Agents", and no other tab does.
     expect(
-      (screen.getByRole("tab", { name: /jarvis-agents/i }) as HTMLElement).getAttribute(
+      (screen.getByRole("tab", { name: /agents$/i }) as HTMLElement).getAttribute(
         "aria-selected",
       ),
     ).toBe("true");
   });
 
-  it("opens the Realtime tab set from its row WITHOUT persisting voice mode", () => {
+  it("returns to the Realtime tab from its row WITHOUT persisting voice mode", () => {
     render(<ApiKeysView />);
-    // Pipeline is the default view: no Realtime tab yet.
-    expect(screen.queryByRole("tab", { name: /realtime/i })).toBeNull();
+    openRealtimeView();
+    // Wander off to another tab of the realtime set first.
+    fireEvent.click(screen.getByRole("tab", { name: /tool model/i }));
+    putVoiceMode.mockClear();
 
-    fireEvent.click(
-      panel().getByRole("button", { name: /personal recommendation: realtime/i }),
-    );
+    fireEvent.click(screen.getByTestId("reco-row-realtime"));
 
-    // The view switched to the Realtime tab set with the Realtime tab selected…
+    // The Realtime tab is selected again…
     expect(
       (screen.getByRole("tab", { name: /realtime/i }) as HTMLElement).getAttribute(
         "aria-selected",
       ),
     ).toBe("true");
-    // …but `[voice].mode` stays untouched — only the segmented switch persists.
+    // …and `[voice].mode` stays untouched — only the segmented switch persists.
     expect(putVoiceMode).not.toHaveBeenCalled();
   });
 });

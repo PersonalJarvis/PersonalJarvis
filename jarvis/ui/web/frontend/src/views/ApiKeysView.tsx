@@ -382,7 +382,9 @@ function EngineModeSwitch({
           </p>
         </div>
 
-        <RecommendedSetupPanel onOpenTab={onOpenRecommendedTab} />
+        {mode === "realtime" && (
+          <RecommendedSetupPanel onOpenTab={onOpenRecommendedTab} />
+        )}
 
         <div className="shrink-0">
           {/* Two equal segments over one sliding thumb: the thumb tracks the
@@ -499,15 +501,18 @@ function EngineModeSwitch({
 }
 
 /**
- * The maintainer's personal pick for the three provider slots users ask about
- * most, shown in the voice-engine header band where it is visible in BOTH tab
- * sets. Same contract as the per-card "Recommended" badges fed by
- * provider_spec.py: a presentation hint only — it never gates behavior and
- * never branches a code path on a provider name (AP-21). Each row is a button
- * that jumps straight to the tab it names, so the guidance sits one click
- * from the place it applies. The rows carry an explicit aria-label starting
- * with the panel title so their accessible names never collide with the
- * Pipeline|Realtime segment buttons (tests match those via /^realtime/i).
+ * The maintainer's personal pick for the three provider slots of the REALTIME
+ * tab set, shown in the voice-engine header band only while that tab set is
+ * being viewed — the picks name Realtime-mode tabs, so surfacing them next to
+ * the Pipeline tabs would point at tabs that are not even on screen
+ * (maintainer feedback 2026-07-17). Same contract as the per-card
+ * "Recommended" badges fed by provider_spec.py: a presentation hint only — it
+ * never gates behavior and never branches a code path on a provider name
+ * (AP-21). Each row is a button that jumps straight to the tab it names, so
+ * the guidance sits one click from the place it applies. The rows carry an
+ * explicit aria-label starting with the panel title so their accessible names
+ * never collide with the Pipeline|Realtime segment buttons (tests match those
+ * via /^realtime/i).
  */
 function RecommendedSetupPanel({
   onOpenTab,
@@ -561,6 +566,7 @@ function RecommendedSetupPanel({
               <button
                 type="button"
                 onClick={() => onOpenTab(row.tab)}
+                data-testid={`reco-row-${row.tab}`}
                 aria-label={`${t("apikeys_view.reco_title")}: ${row.label} — ${row.pick}`}
                 className="flex w-full items-start gap-2 rounded-lg px-1.5 py-1 text-left text-xs leading-snug transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
@@ -1135,6 +1141,7 @@ function ProviderCard({
   const t = useT();
   const [activating, setActivating] = useState(false);
   const pushToast = useEventStore((s) => s.pushToast);
+  const assistantName = useEventStore((s) => s.assistantName);
   // The card only escalates to red for a real "set up but failing" error — the
   // amber "needs setup" case stays on the tab + the open/ready badge so a fresh,
   // half-configured screen doesn't paint cards red.
@@ -1153,7 +1160,10 @@ function ProviderCard({
   async function activate(assumeConfigured = false) {
     if (descriptor.active) return;
     if (!isBrainSwitchable) {
-      pushToast("warning", `${descriptor.label} is only available for Jarvis-Agents.`);
+      pushToast(
+        "warning",
+        `${descriptor.label} is only available for ${agentsBrand(assistantName)}.`,
+      );
       return;
     }
     if (isCodex && !descriptor.codex_brain_ready) {
@@ -1266,7 +1276,7 @@ function ProviderCard({
         descriptor.active
           ? t("apikeys_view.active_tooltip")
           : !isBrainSwitchable
-            ? "Available for Jarvis-Agents only"
+            ? `Available for ${agentsBrand(assistantName)} only`
           : descriptor.configured
             ? t("apikeys_view.click_to_activate")
             : descriptor.auth_mode === "codex"
@@ -1345,7 +1355,7 @@ function ProviderCard({
           disabled={!isBrainSwitchable || (isCodex && !descriptor.codex_brain_ready)}
           disabledReason={
             !isBrainSwitchable
-              ? "Available for Jarvis-Agents only"
+              ? `Available for ${agentsBrand(assistantName)} only`
               : isCodex && !descriptor.codex_brain_ready
                 ? t("apikeys_codex.brain_needs_openai_key")
                 : undefined
@@ -1378,7 +1388,7 @@ function ProviderCard({
 
       {!isBrainSwitchable && (
         <p className="rounded-md border border-amber-500/25 bg-amber-500/10 px-3 py-2 text-[11px] leading-relaxed text-amber-700">
-          Jarvis-Agent only. This provider cannot be used as the main Brain or
+          {agentBrand(assistantName)} only. This provider cannot be used as the main Brain or
           Computer-Use planner because it does not receive screenshots.
         </p>
       )}
