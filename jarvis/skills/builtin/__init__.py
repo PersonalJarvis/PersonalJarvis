@@ -37,6 +37,7 @@ _PLUGIN_PAIRED_SKILLS: tuple[str, ...] = (
     "plugin-asana",
     "plugin-supabase",
     "plugin-cloudflare",
+    "plugin-google_calendar",
     "plugin-google_drive",
     "plugin-vercel",
 )

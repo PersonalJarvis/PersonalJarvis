@@ -292,6 +292,7 @@ class SkillRegistry:
         skills = self._apply_state_overrides(discover_skills(self.root))
         with self._thread_lock:
             self._skills = {s.name: s for s in skills}
+        self._sync_paired_capabilities()
         self._emit_reloaded()
 
     async def reload(self) -> None:
@@ -303,7 +304,29 @@ class SkillRegistry:
             skills = self._apply_state_overrides(skills)
             with self._thread_lock:
                 self._skills = {s.name: s for s in skills}
+        self._sync_paired_capabilities()
         self._emit_reloaded()
+
+    def _sync_paired_capabilities(self) -> None:
+        """Mirror the paired-skill capabilities after every (re)load.
+
+        The boot registers paired capabilities when the skill context is set,
+        but since the serve-first fast boot the disk scan is deferred — that
+        registration ran against an EMPTY registry and nothing repaired the
+        capability surface afterwards, so the evidence gate refused connected
+        plugin domains for the whole session (live 2026-07-17). Hooking the
+        sync into the registry's own reload covers every load source with one
+        code path: the deferred boot scan, the watchdog hot reload, and the
+        explicit reload_sync callers. Best-effort by design — a capability
+        fault must never break a skill reload.
+        """
+        try:
+            from jarvis.core.capabilities import get_registry
+            from jarvis.skills.plugin_coupling import sync_paired_capabilities
+
+            sync_paired_capabilities(get_registry(), self.list())
+        except Exception:  # noqa: BLE001
+            log.debug("paired-capability sync failed", exc_info=True)
 
     def _emit_reloaded(self) -> None:
         if self.bus is None:

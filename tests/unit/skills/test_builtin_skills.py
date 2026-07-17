@@ -104,6 +104,28 @@ def test_expected_builtin_count() -> None:
     assert len(set(BUILTIN_SKILL_NAMES)) == len(BUILTIN_SKILL_NAMES), "duplicate skill name"
 
 
+def test_every_bundled_plugin_skill_is_shipped() -> None:
+    """Every plugin-* directory under builtin/ must be in BUILTIN_SKILL_NAMES.
+
+    ensure_user_skills_dir() only copies LISTED skills into the user skills
+    dir — an unlisted bundle directory is never loaded, its paired capability
+    never registers, and the evidence gate refuses the plugin's domain although
+    the plugin is connected. Live 2026-07-17: plugin-google_calendar existed on
+    disk but was missing from the list, so a connected Google Calendar was
+    answered with the deterministic "no calendar access" refusal.
+    """
+    from jarvis.skills.builtin import BUILTIN_SKILLS_DIR
+
+    bundled = {
+        p.parent.name
+        for p in BUILTIN_SKILLS_DIR.glob("plugin-*/SKILL.md")
+    }
+    unlisted = bundled - set(BUILTIN_SKILL_NAMES)
+    assert not unlisted, (
+        f"bundled plugin skill(s) missing from BUILTIN_SKILL_NAMES: {unlisted}"
+    )
+
+
 def test_control_api_specifics() -> None:
     """The shipped Control-API skill is documentation for coding agents.
 

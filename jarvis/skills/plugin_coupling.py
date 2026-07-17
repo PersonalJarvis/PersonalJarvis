@@ -74,3 +74,44 @@ def register_paired_capabilities(
             n += 1
     log.info("plugin_coupling: registered %d paired capabilities", n)
     return n
+
+
+def sync_paired_capabilities(
+    registry: CapabilityRegistry, skills: list[Skill]
+) -> int:
+    """Replace the whole paired-capability set with the given skills'. Returns count.
+
+    Called after every SkillRegistry (re)load. The one-shot registration at
+    boot is timing-fragile: since the serve-first fast boot (2026-06-22) the
+    registry's disk scan is DEFERRED, so ``set_skill_context`` registered the
+    paired capabilities from a still-EMPTY skill list ("registered 0 paired
+    capabilities" on every boot) and nothing ever re-registered them after the
+    scan landed. The evidence gate then found no capability for the email /
+    calendar domains and spoke its deterministic "no access" refusal although
+    the plugins were connected and healthy (live 2026-07-17 voice session).
+
+    Unlike ``register_paired_capabilities`` this also WITHDRAWS orphans —
+    paired capabilities whose skill vanished or left a live state since the
+    last load — via the shared ``PAIRED_CAP_PREFIX`` namespace, so a hot
+    reload after a skill edit converges instead of only ever growing the set.
+    """
+    stale = {
+        cap.id
+        for cap in registry.all()
+        if cap.id.startswith(PAIRED_CAP_PREFIX)
+    }
+    n = 0
+    for skill in skills:
+        cap = capability_from_skill(skill)
+        if cap is not None:
+            registry.register(cap)
+            stale.discard(cap.id)
+            n += 1
+    for cap_id in stale:
+        registry.deregister(cap_id)
+    log.info(
+        "plugin_coupling: synced %d paired capabilities (%d withdrawn)",
+        n,
+        len(stale),
+    )
+    return n
