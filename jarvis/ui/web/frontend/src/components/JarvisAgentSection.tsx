@@ -832,7 +832,14 @@ function CodexConnectionCard({
       subtitle={detail}
       warning={
         <div className="space-y-2" data-agent-card-control>
-          {row?.secret_key && (
+          {/* The OpenAI key is the ALTERNATIVE way in (per-token billing), not
+              a requirement of the ChatGPT login. Showing it unconditionally on
+              this subscription card read as "the subscription needs an OpenAI
+              API key" (user report 2026-07-17), so render it only while the
+              login is absent — or when a key is actually stored, so it stays
+              replaceable/deletable. Mirrors the Claude/Antigravity siblings,
+              whose subscription cards carry no key field. */}
+          {row?.secret_key && (!connected || row.dedicated_key_set) && (
             <ApiKeyForm
               secretKey={row.secret_key}
               dashboardUrl={row.dashboard_url}

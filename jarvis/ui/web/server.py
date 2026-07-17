@@ -1054,9 +1054,13 @@ class WebServer:
                     ),
                     "secret_key": "codex_openai_api_key",
                     "dashboard_url": "https://platform.openai.com/api-keys",
+                    # Framed as the ALTERNATIVE to the ChatGPT login — the old
+                    # wording made the subscription card look like it required
+                    # an OpenAI API key (user report 2026-07-17).
                     "credential_help": (
-                        "Dedicated OpenAI key for the Codex Jarvis-Agent. "
-                        "It is not used by Brain or Realtime."
+                        "No ChatGPT login? Paste an OpenAI API key instead — "
+                        "Codex then bills per token. Not used by Brain or "
+                        "Realtime."
                     ),
                     "is_active_brain": primary == "openai-codex",
                     # ChatGPT subscription OAuth OR an OpenAI API key.
