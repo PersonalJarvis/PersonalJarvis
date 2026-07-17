@@ -52,6 +52,8 @@ import {
 } from "@/components/missions/store";
 import { useMissionWebSocket } from "@/components/missions/useMissionWebSocket";
 import { useT } from "@/i18n";
+import { agentBrand } from "@/lib/agentBrand";
+import { useEventStore } from "@/store/events";
 import type { MissionPlanReady } from "@/types/missions";
 
 const PtyTerminal = lazy(() =>
@@ -62,6 +64,7 @@ const PtyTerminal = lazy(() =>
 
 export function MissionsView() {
   const t = useT();
+  const assistantName = useEventStore((s) => s.assistantName);
   useMissionWebSocket();
 
   const setMissions = useMissionsStore((s) => s.setMissions);
@@ -182,7 +185,7 @@ export function MissionsView() {
                 </TabsTrigger>
                 <TabsTrigger value="openclaw" className="gap-1.5">
                   <Cpu className="h-3.5 w-3.5" />
-                  Jarvis-Agent
+                  {agentBrand(assistantName)}
                 </TabsTrigger>
                 <TabsTrigger
                   value="approvals"

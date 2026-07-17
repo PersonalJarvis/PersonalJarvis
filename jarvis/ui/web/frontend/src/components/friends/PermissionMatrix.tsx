@@ -1,5 +1,7 @@
 // === F-FRIENDS [F4] · feature/friends-section · ruben-2026-05-01 ===
+import { agentBrand } from "@/lib/agentBrand";
 import { cn } from "@/lib/utils";
+import { useEventStore } from "@/store/events";
 import type { StatusProfile } from "@/hooks/useFriends";
 
 /**
@@ -9,10 +11,16 @@ import type { StatusProfile } from "@/hooks/useFriends";
  * is called on change. ``disabled`` makes all radios visually and
  * functionally inactive (e.g. during the mutation call).
  */
-const PROFILES: { value: StatusProfile; label: string; subline: string }[] = [
+const profiles = (
+  assistantName: string,
+): { value: StatusProfile; label: string; subline: string }[] => [
   { value: "minimal", label: "minimal", subline: "Online/offline only" },
   { value: "standard", label: "standard", subline: "+ mission title" },
-  { value: "detailed", label: "detailed", subline: "+ Jarvis-Agent summary" },
+  {
+    value: "detailed",
+    label: "detailed",
+    subline: `+ ${agentBrand(assistantName)} summary`,
+  },
 ];
 
 export function PermissionMatrix({
@@ -26,6 +34,7 @@ export function PermissionMatrix({
   onChange: (profile: StatusProfile) => void;
   disabled?: boolean;
 }) {
+  const assistantName = useEventStore((s) => s.assistantName);
   const groupName = `permission-${friendId}`;
   return (
     <div
@@ -33,7 +42,7 @@ export function PermissionMatrix({
       aria-label="Sharing-Profile"
       className="grid gap-2 sm:grid-cols-3"
     >
-      {PROFILES.map((p) => {
+      {profiles(assistantName).map((p) => {
         const isActive = p.value === current;
         return (
           <label

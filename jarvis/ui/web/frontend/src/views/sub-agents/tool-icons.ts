@@ -29,6 +29,8 @@ import {
   Youtube,
 } from "lucide-react";
 
+import { agentBrandNow } from "@/lib/agentBrand";
+
 export interface ToolAppearance {
   Icon: LucideIcon;
   label: string;
@@ -75,7 +77,7 @@ export function getToolAppearance(
     if (matches(args, "openclaw")) {
       return {
         Icon: Code2,
-        label: "Jarvis-Agent",
+        label: agentBrandNow(),
         bg: "bg-orange-950",
         ring: "ring-orange-500",
         iconColor: "text-orange-300",
@@ -113,7 +115,7 @@ export function getToolAppearance(
   if (tool === "spawn_openclaw" || tool === "spawn-openclaw") {
     return {
       Icon: Brain,
-      label: "Jarvis-Agent",
+      label: agentBrandNow(),
       bg: "bg-violet-950",
       ring: "ring-violet-500",
       iconColor: "text-violet-300",

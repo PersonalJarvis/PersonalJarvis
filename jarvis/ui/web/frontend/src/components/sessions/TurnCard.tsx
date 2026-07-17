@@ -20,6 +20,7 @@ import { useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { agentBrand } from "@/lib/agentBrand";
 import { robustCopy, saveOrDownload } from "@/lib/clipboard";
 import { useCapabilities } from "@/hooks/useCapabilities";
 import { useEventStore } from "@/store/events";
@@ -30,7 +31,9 @@ import type { VoiceSpokenLine, VoiceTurnRow } from "./types";
 // Human-readable label per SpeechSpoken spoken_kind. Mirror of
 // jarvis/sessions/constants.py SPOKEN_KINDS — every kind needs an entry
 // (parity: tests/unit/sessions/test_spoken_kind_parity.py). An unknown kind
-// falls back to the kind string itself so it still renders.
+// falls back to the kind string itself so it still renders. The `subagent`
+// entry here is the name-free fallback; the display path overlays the
+// wake-word-derived agent brand via spokenKindLabels(assistantName).
 export const SPOKEN_KIND_LABEL: Record<string, string> = {
   reply: "Reply",
   clarify: "Clarifying question",
@@ -39,7 +42,7 @@ export const SPOKEN_KIND_LABEL: Record<string, string> = {
   stt_unavailable: "Couldn't hear you",
   privacy: "Privacy",
   completion: "Background result",
-  subagent: "Jarvis-Agent / Output",
+  subagent: "Agent / Output",
   action_done: "Action confirmed",
   backchannel: "Backchannel",
   announcement: "Announcement",
@@ -48,6 +51,15 @@ export const SPOKEN_KIND_LABEL: Record<string, string> = {
   withheld: "Answer withheld (safety)",
   other: "Spoken",
 };
+
+// The agent brand follows the wake-word-derived assistant name (2026-07-17
+// rebrand): "Ruben" -> "Ruben-Agent / Output", for ANY configured wake word.
+export function spokenKindLabels(assistantName: string): Record<string, string> {
+  return {
+    ...SPOKEN_KIND_LABEL,
+    subagent: `${agentBrand(assistantName)} / Output`,
+  };
+}
 
 interface Props {
   turn: VoiceTurnRow;
@@ -68,24 +80,19 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
   const audibleReply = confirmedReplies.length
     ? confirmedReplies.map((line) => line.text).join(" ")
     : turn.jarvis_text;
-  // The Jarvis-Agents brand label is fixed: it names the system, not the
-  // configured assistant, so it does not follow the assistant name.
-  const kindLabel: Record<string, string> = {
-    ...SPOKEN_KIND_LABEL,
-    subagent: "Jarvis-Agent / Output",
-  };
+  const kindLabel = spokenKindLabels(assistantName);
 
   const copyTurn = useCallback(async () => {
-    const text = formatTurnPlain(turn, spoken, visibleTurnNumber);
+    const text = formatTurnPlain(turn, spoken, visibleTurnNumber, kindLabel);
     const ok = await robustCopy(text);
     pushToast(
       ok ? "success" : "error",
       ok ? `${t("turn_card.turn")} ${visibleTurnNumber} ${t("turn_card.copied")}` : t("turn_card.copy_failed"),
     );
-  }, [turn, spoken, visibleTurnNumber, pushToast, t]);
+  }, [turn, spoken, visibleTurnNumber, pushToast, t, kindLabel]);
 
   const downloadTurn = useCallback(async () => {
-    const text = formatTurnPlain(turn, spoken);
+    const text = formatTurnPlain(turn, spoken, undefined, kindLabel);
     const stamp = new Date(turn.started_ms);
     const pad = (n: number): string => String(n).padStart(2, "0");
     const filename =
@@ -104,7 +111,7 @@ export function TurnCard({ turn, displayNumber, spoken = [] }: Props) {
         : `${t("turn_card.downloaded_as")} ${filename}`,
       savedPath ? { filePath: savedPath, filename } : undefined,
     );
-  }, [turn, spoken, pushToast, t, native]);
+  }, [turn, spoken, pushToast, t, native, kindLabel]);
 
   const startedAt = new Date(turn.started_ms).toLocaleTimeString("de", {
     hour: "2-digit",
@@ -349,6 +356,9 @@ export function formatTurnPlain(
   turn: VoiceTurnRow,
   spoken: VoiceSpokenLine[] = [],
   displayNumber: number = turn.idx + 1,
+  // Callers with store access pass spokenKindLabels(assistantName); the
+  // default keeps the export usable without a React context (neutral name).
+  kindLabel: Record<string, string> = spokenKindLabels(""),
 ): string {
   const lines: string[] = [];
   lines.push(`--- Turn ${displayNumber} ---`);
@@ -384,7 +394,7 @@ export function formatTurnPlain(
       jarvisLines.push({ ts_ms: s.ts_ms, lines: [`[JARVIS] ${s.text}`] });
       continue;
     }
-    const label = (SPOKEN_KIND_LABEL[s.spoken_kind] ?? s.spoken_kind).toUpperCase();
+    const label = (kindLabel[s.spoken_kind] ?? s.spoken_kind).toUpperCase();
     // The technical detail is deliberately excluded from the transcript copy —
     // it lives in the Run Inspector, not in what was said (user request 2026-06-22).
     jarvisLines.push({ ts_ms: s.ts_ms, lines: [`[SPOKEN: ${label}] ${s.text}`] });

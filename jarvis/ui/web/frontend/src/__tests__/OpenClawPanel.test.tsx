@@ -7,16 +7,24 @@
  *  - Renders all columns (Model, Cost, State-Dir, Logfile, Reattach-Status)
  *  - Reattach-status badge shows correct data-attribute (live/killed/ended)
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 
 import { JarvisAgentPanel } from "@/components/missions/JarvisAgentPanel";
 import { useMissionsStore } from "@/components/missions/store";
+import { useEventStore } from "@/store/events";
 import type { OpenClawWorkerSnapshot } from "@/types/missions";
+
+// A different arbitrary name than the sibling test file on purpose: the brand
+// must follow ANY wake-word-derived assistant name, not one blessed value.
+beforeEach(() => {
+  useEventStore.setState({ assistantName: "Harald" });
+});
 
 afterEach(() => {
   cleanup();
   useMissionsStore.getState().reset();
+  useEventStore.setState({ assistantName: "Assistant" });
 });
 
 function makeWorker(overrides: Partial<OpenClawWorkerSnapshot> = {}): OpenClawWorkerSnapshot {
@@ -42,7 +50,7 @@ describe("JarvisAgentPanel", () => {
   it("shows the empty state when no mission is selected", () => {
     render(<JarvisAgentPanel />);
     expect(
-      screen.getByText("Select a mission to see Jarvis-Agent workers."),
+      screen.getByText("Select a mission to see Harald-Agent workers."),
     ).toBeDefined();
   });
 
@@ -53,7 +61,7 @@ describe("JarvisAgentPanel", () => {
     });
     render(<JarvisAgentPanel />);
     expect(
-      screen.getByText("No Jarvis-Agent workers in this mission."),
+      screen.getByText("No Harald-Agent workers in this mission."),
     ).toBeDefined();
   });
 

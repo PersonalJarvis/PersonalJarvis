@@ -217,7 +217,7 @@ describe("ApiKeysView - Codex is subagent-only", () => {
     installFetchMock(routesFor(codexDescriptor()));
     render(<ApiKeysView />);
     // Codex lives in the "Subagents" category tab now; open it first.
-    fireEvent.click(screen.getByRole("tab", { name: /jarvis-agents/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /-agents$/i }));
 
     // The redesign shortens the card title to just "OpenAI Codex"; the
     // subscription-vs-API billing now lives in the billing badge, not the title.
@@ -231,7 +231,7 @@ describe("ApiKeysView - Codex is subagent-only", () => {
     const { calls } = installFetchMock(routesFor(codexDescriptor()));
     render(<ApiKeysView />);
     // Codex lives in the "Subagents" category tab now; open it first.
-    fireEvent.click(screen.getByRole("tab", { name: /jarvis-agents/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /-agents$/i }));
 
     await waitFor(() => screen.getByRole("radio"));
     fireEvent.click(screen.getByRole("radio"));
@@ -253,7 +253,7 @@ describe("ApiKeysView - Codex is subagent-only", () => {
     const { calls } = installFetchMock(routesFor(codexDescriptorNotConnected()));
     render(<ApiKeysView />);
     // Codex lives in the "Subagents" category tab now; open it first.
-    fireEvent.click(screen.getByRole("tab", { name: /jarvis-agents/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /-agents$/i }));
 
     const connect = await waitFor(() => screen.getByText("Connect"));
     fireEvent.click(connect);
@@ -271,7 +271,7 @@ describe("ApiKeysView - Codex is subagent-only", () => {
     const { calls } = installFetchMock(routesFor(codexDescriptor()));
     render(<ApiKeysView />);
     // Codex lives in the "Subagents" category tab now; open it first.
-    fireEvent.click(screen.getByRole("tab", { name: /jarvis-agents/i }));
+    fireEvent.click(screen.getByRole("tab", { name: /-agents$/i }));
 
     const disconnect = await waitFor(() => screen.getByText("Disconnect"));
     fireEvent.click(disconnect);

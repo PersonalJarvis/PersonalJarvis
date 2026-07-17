@@ -2,13 +2,23 @@
  * The Transcription turn card uses playback-confirmed replies as its primary
  * assistant text and keeps status phrases/readbacks on a supplemental track.
  */
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { cleanup, render, screen } from "@testing-library/react";
 
+import { useEventStore } from "@/store/events";
 import { TurnCard, formatTurnPlain } from "./TurnCard";
 import type { VoiceSpokenLine, VoiceTurnRow } from "./types";
 
-afterEach(cleanup);
+// Arbitrary wake-word-derived name: the subagent label must brand itself with
+// whatever assistant name is configured, never a fixed product name.
+beforeEach(() => {
+  useEventStore.setState({ assistantName: "Athena" });
+});
+
+afterEach(() => {
+  cleanup();
+  useEventStore.setState({ assistantName: "Assistant" });
+});
 
 function turn(over: Partial<VoiceTurnRow> = {}): VoiceTurnRow {
   return {
@@ -168,8 +178,9 @@ describe("TurnCard spoken track", () => {
         ]}
       />,
     );
-    // Attributed label, not the generic "Background result".
-    expect(screen.getByText("Jarvis-Agent / Output")).toBeTruthy();
+    // Attributed label, not the generic "Background result" — branded with the
+    // configured assistant name.
+    expect(screen.getByText("Athena-Agent / Output")).toBeTruthy();
     // The line block is tinted violet (agent) — visibly distinct from the sky
     // tint used by every other spoken kind.
     const line = container.querySelector('[data-spoken-kind="subagent"]');

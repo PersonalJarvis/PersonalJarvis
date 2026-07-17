@@ -7,6 +7,8 @@
  */
 import { create } from "zustand";
 
+import { agentBrandNow } from "@/lib/agentBrand";
+
 export type NodeKind = "router" | "jarvis_agent" | "harness" | "tool_call";
 export type NodeStatus = "running" | "completed" | "failed";
 
@@ -166,7 +168,7 @@ export const useSubAgentStore = create<SubAgentStore>((set, get) => ({
           const model = safeString(payloadObj.model);
           upsert(traceId, {
             kind: "jarvis_agent",
-            name: `Jarvis-Agent (${model || provider || "unknown"})`,
+            name: `${agentBrandNow()} (${model || provider || "unknown"})`,
             status: "running",
             parent_trace_id: parentTraceId,
             provider: provider || null,

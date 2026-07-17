@@ -22,7 +22,7 @@
   },
   "jarvis_dock": {
     "aria": "{name} — zieh eine Mission hierher, um darüber zu sprechen",
-    "hint": "Zieh ein Jarvis-Agent-Ergebnis hierher, um es ins Gespräch zu holen",
+    "hint": "Zieh ein {name}-Agent-Ergebnis hierher, um es ins Gespräch zu holen",
     "drop_here": "Zum Besprechen ablegen",
     "drop_active": "Ablegen, um {name} zu briefen",
     "dropped": "Zur Unterhaltung hinzugefügt"
@@ -44,7 +44,7 @@
   },
   "nav": {
     "chats": "Chats",
-    "agents": "Jarvis-Agents",
+    "agents": "{name}-Agents",
     "extensions": "Skills, Plugins & MCPs",
     "skills": "Skills",
     "plugins": "Plugins",
@@ -246,7 +246,7 @@
     "thinking_aria": "Dein Assistent denkt nach",
     "thinking_label": "denkt nach…",
     "empty_title": "Bereit für Befehle",
-    "empty_subtitle": "Sag dein Wake-Word oder schreibe unten deine Nachricht. Dein Assistent dirigiert Jarvis-Agents, ruft Tools auf und gibt dir eine Stimme zurück.",
+    "empty_subtitle": "Sag dein Wake-Word oder schreibe unten deine Nachricht. Dein Assistent dirigiert {name}-Agents, ruft Tools auf und gibt dir eine Stimme zurück.",
     "warming_title": "Macht sich bereit",
     "warming_subtitle": "Dein Assistent startet gerade. Gleich kannst du sprechen, tippen geht schon jetzt.",
     "examples": {
@@ -292,7 +292,7 @@
     "step_cu_settle": "Wartet auf den Bildschirm"
   },
   "subagents_view": {
-    "title": "Jarvis-Agents",
+    "title": "{name}-Agents",
     "stat_active": "aktiv",
     "stat_total": "gesamt",
     "clear": "Leeren",
@@ -300,11 +300,11 @@
     "board_title": "Abfahrtstafel",
     "active_label": "Aktiv",
     "standby_label": "Standby",
-    "col_agent": "Jarvis-Agent",
+    "col_agent": "{name}-Agent",
     "col_target": "Ziel",
     "col_status": "Status",
     "col_cost": "Kosten",
-    "agents_traveling": "Jarvis-Agent(s) unterwegs",
+    "agents_traveling": "{name}-Agent(s) unterwegs",
     "last_departure": "letzte Abfahrt",
     "last_departure_ago": "letzte Abfahrt vor {0}",
     "status": {
@@ -903,14 +903,14 @@
     "tier_stt": "Voice-Input (STT)",
     "tier_realtime": "Realtime-Sprache",
     "tier_computer_use": "Tool-Model-Provider",
-    "tier_subagent": "Jarvis-Agent (Heavy-Tasks)",
+    "tier_subagent": "{name}-Agent (Heavy-Tasks)",
     "tier_telephony": "Telefonie",
     "tab_brain": "Brain",
     "tab_tts": "Sprachausgabe",
     "tab_stt": "Spracheingabe",
     "tab_realtime": "Realtime",
     "tab_computer_use": "Tool Model",
-    "tab_subagents": "Jarvis-Agents",
+    "tab_subagents": "{name}-Agents",
     "tab_advanced": "Erweitert",
     "tab_jarvis_key": "{name} Key",
     "jarvis_key_title": "{name} Key",
@@ -935,7 +935,7 @@
     "cat_stt_desc": "Wie Jarvis deine Sprache in Text umwandelt.",
     "cat_realtime_desc": "Vollduplex-Sprache-zu-Sprache über jeden eingerichteten Realtime-Provider, auf dem Desktop oder im Browser.",
     "cat_computer_use_desc": "Das Tool Model führt deine Aktionen aus: Es routet Sprachbefehle, plant Computer-Use auf deinem Bildschirm, startet Hintergrund-Agenten und steuert die App — unabhängig von deinem Chat-Brain.",
-    "cat_subagents_title": "Jarvis-Agents",
+    "cat_subagents_title": "{name}-Agents",
     "cat_subagents_desc": "Wähle, welcher Provider schwere Hintergrund-Aufgaben übernimmt.",
     "advanced_title": "Zugang & Integrationen",
     "advanced_desc": "Optionale Extras: der Team-Key-Proxy, Telefonie und der Wissens-Wiki-Provider.",
@@ -1408,7 +1408,7 @@
   },
   "outputs_view": {
     "title": "Outputs",
-    "subtitle": "Dateien, die {name} oder Jarvis-Agents für dich geschrieben haben.",
+    "subtitle": "Dateien, die {name} oder {name}-Agents für dich geschrieben haben.",
     "empty": "Noch keine Outputs.",
     "open": "Öffnen",
     "delete": "Löschen",
@@ -1421,7 +1421,7 @@
     "rerun_confirm": "Erneut ausführen",
     "continuation_running": "Fortgesetzt · läuft",
     "list_load_error": "Outputs nicht geladen",
-    "empty_sessions": "Noch keine Jarvis-Agent-Sessions. Starte einen Jarvis-Agent-Task.",
+    "empty_sessions": "Noch keine {name}-Agent-Sessions. Starte einen {name}-Agent-Task.",
     "select_session": "Wähle eine Session.",
     "loading_plan": "Lade Plan…",
     "plan_load_error": "Plan konnte nicht geladen werden",
@@ -1510,7 +1510,7 @@
     "how_step2": "Abgleichen: Ein Richter-Durchgang vergleicht jeden Kandidaten mit den vorhandenen Wiki-Seiten und entscheidet: neue Seite anlegen, bestehende aktualisieren oder verwerfen.",
     "how_step3": "Nachlesen: Am Ende einer Live-Sprachsitzung wird das komplette Transkript noch einmal durchgesehen, damit nichts verloren geht.",
     "how_model_note": "Alle Schritte laufen über den Provider und das Modell, die du hier wählst — wählst du z. B. Codex, führt wirklich Codex den Lauf aus. Leer gelassen übernimmt der Brain-Provider mit seinem günstigen, schnellen Modell. Ist der gewählte Provider gerade nicht erreichbar, springt automatisch ein anderer eingerichteter Provider ein, damit das Gedächtnis weiterläuft.",
-    "option_agent_suffix": "Jarvis-Agent",
+    "option_agent_suffix": "{name}-Agent",
     "option_no_key": "kein Schlüssel hinterlegt",
     "model_reset": "Zurück auf den günstigen Standard",
     "resolved_label": "Nächster Lauf verwendet:",
@@ -1518,14 +1518,14 @@
     "resolved_fallback_warning": "Für diesen Provider sind keine Zugangsdaten hinterlegt — der Lauf weicht automatisch auf einen anderen eingerichteten Provider aus."
   },
   "subagent_model": {
-    "description": "Jarvis-Agents (schwere Hintergrund-Worker) können auf einem eigenen Modell laufen, getrennt vom Chat-Brain. Lass das Feld leer, um das stärkste Modell des aktiven Jarvis-Agent-Providers zu nutzen.",
-    "model_label": "Jarvis-Agent-Modell (optional)",
+    "description": "{name}-Agents (schwere Hintergrund-Worker) können auf einem eigenen Modell laufen, getrennt vom Chat-Brain. Lass das Feld leer, um das stärkste Modell des aktiven {name}-Agent-Providers zu nutzen.",
+    "model_label": "{name}-Agent-Modell (optional)",
     "model_placeholder": "Leer lassen für das Standard-Modell des Providers",
-    "model_hint": "Leer bedeutet das Deep-Modell des aktiven Jarvis-Agent-Providers.",
+    "model_hint": "Leer bedeutet das Deep-Modell des aktiven {name}-Agent-Providers.",
     "apply": "Übernehmen",
     "applying": "Übernehme…",
-    "saved": "Jarvis-Agent-Modell gespeichert.",
-    "saved_restart": "Jarvis-Agent-Modell gespeichert — gilt ab der nächsten Mission."
+    "saved": "{name}-Agent-Modell gespeichert.",
+    "saved_restart": "{name}-Agent-Modell gespeichert — gilt ab der nächsten Mission."
   },
   "cli_connect": {
     "is_connected": "{0} ist verbunden",
@@ -1564,7 +1564,7 @@
     "status_loading": "Codex-Status wird geladen",
     "needs_codex_full": "{0}: erst Codex verbinden oder API-Key speichern, dann aktivieren.",
     "needs_key_full": "{0}: erst API-Key speichern, dann aktivieren.",
-    "runs_as_subagent_hint": "Mit deinem ChatGPT-Login arbeitet Codex als Jarvis-Agent (Hintergrund-Arbeiter). Nach dem Verbinden unten in der Jarvis-Agent-Liste aktivieren. Ein denkendes Hirn braucht den separaten OpenAI-API-Key-Provider.",
+    "runs_as_subagent_hint": "Mit deinem ChatGPT-Login arbeitet Codex als {name}-Agent (Hintergrund-Arbeiter). Nach dem Verbinden unten in der {name}-Agent-Liste aktivieren. Ein denkendes Hirn braucht den separaten OpenAI-API-Key-Provider.",
     "brain_needs_openai_key": "Codex als Hirn braucht einen OpenAI-API-Key — das ChatGPT-Login treibt nur den Codex-Arbeiter. Trag einen OpenAI-Key ein (z. B. beim OpenAI-Provider), dann kannst du Codex hier auswählen.",
     "brain_key_hint": "Um Codex auch als Hirn zu nutzen, trag einen OpenAI-API-Key ein (kostenpflichtig, getrennt vom ChatGPT-Login — der treibt nur den Arbeiter). Nach dem Speichern entsperrt sich der „Als aktiv\"-Schalter oben."
   },
@@ -2059,8 +2059,8 @@
     "empty": "Noch keine Critic-Verdicts für diese Mission."
   },
   "openclaw_panel": {
-    "select_mission": "Mission auswählen, um Jarvis-Agent-Worker zu sehen.",
-    "no_workers": "Keine Jarvis-Agent-Worker in dieser Mission.",
+    "select_mission": "Mission auswählen, um {name}-Agent-Worker zu sehen.",
+    "no_workers": "Keine {name}-Agent-Worker in dieser Mission.",
     "not_available": "(nicht verfügbar)",
     "copy_path": "Pfad kopieren",
     "file_link_copies_path": "file://-Link (Pfad wird kopiert)",
@@ -2290,8 +2290,8 @@
     "profile_minimal_desc": "Friend sieht: Voice-Session aktiv ja/nein, Dauer. Keine Inhalte.",
     "profile_standard_subline": "+ Mission-Titel",
     "profile_standard_desc": "Friend sieht zusätzlich: Welche Missions/Tasks gerade laufen, Erfolg, Dauer.",
-    "profile_detailed_subline": "+ Jarvis-Agent-Summary",
-    "profile_detailed_desc": "Friend sieht zusätzlich: Signierte Jarvis-Agent-Summaries (KEINE Utterances)."
+    "profile_detailed_subline": "+ {name}-Agent-Summary",
+    "profile_detailed_desc": "Friend sieht zusätzlich: Signierte {name}-Agent-Summaries (KEINE Utterances)."
   },
   "tools_canvas": {
     "back_tooltip": "Zurück zur Agents-Übersicht",
@@ -2300,7 +2300,7 @@
     "duration": "Dauer",
     "empty": "(leer)",
     "no_tools_yet": "hat noch keine Tools aufgerufen.",
-    "no_tools_explainer": "Sobald der Jarvis-Agent-Worker ein Tool triggert (z. B. dispatch_to_harness, run_shell, screenshot), erscheint es hier als Icon-Node."
+    "no_tools_explainer": "Sobald der {name}-Agent-Worker ein Tool triggert (z. B. dispatch_to_harness, run_shell, screenshot), erscheint es hier als Icon-Node."
   },
   "use_web_socket": {
     "jarvis_opened": "{name} öffnete"
@@ -2331,7 +2331,7 @@
   "permission_matrix": {
     "subline_minimal": "Nur online/offline",
     "subline_standard": "+ Mission-Titel",
-    "subline_detailed": "+ Jarvis-Agent-Summary",
+    "subline_detailed": "+ {name}-Agent-Summary",
     "aria_label": "Sharing-Profil"
   },
   "self_mod_view": {
@@ -2537,10 +2537,10 @@
     "connection_lost": "Verbindung weg …"
   },
   "agents_view": {
-    "subtitle": "Laufende Jarvis-Agents — Rolle, Status, Output.",
+    "subtitle": "Laufende {name}-Agents — Rolle, Status, Output.",
     "empty_title": "Keine aktiven Agents",
     "empty_body_a": "Wenn",
-    "empty_body_b": "einen Jarvis-Agent startet, erscheint er hier als Live-Kachel mit Streaming-Output und Kill-Button.",
+    "empty_body_b": "einen {name}-Agent startet, erscheint er hier als Live-Kachel mit Streaming-Output und Kill-Button.",
     "phase4_notice": "Wird mit Phase 4 (Harness-Integration) aktiviert."
   },
   "friends_view": {

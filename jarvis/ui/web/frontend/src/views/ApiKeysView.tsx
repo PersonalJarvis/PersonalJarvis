@@ -37,6 +37,7 @@ import {
 } from "@/hooks/useProviders";
 import { useEventStore } from "@/store/events";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
+import { agentBrand, agentsBrand } from "@/lib/agentBrand";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 

@@ -1,18 +1,22 @@
 import type { LucideIcon } from "lucide-react";
 import { Bot, Monitor, Sparkles, Terminal } from "lucide-react";
 
+import { agentBrand } from "@/lib/agentBrand";
+import { useEventStore } from "@/store/events";
+
 // Specific agent/feature markers get a named, icon-led badge; everything else
 // (CLI/tool names) gets a neutral monospace chip. This is the "which agents /
-// tools / CLIs ran" overview — Computer-Use, Sub-Agent and Skill are called out
-// by name.
-const AGENT_META: Record<string, { label: string; Icon: LucideIcon; cls: string }> = {
+// tools / CLIs ran" overview — Computer-Use, the agent system and Skill are
+// called out by name. The sub_agent label is resolved per render: it carries
+// the wake-word-derived assistant name ("Ruben" -> "Ruben-Agent").
+const AGENT_META: Record<string, { label: string | null; Icon: LucideIcon; cls: string }> = {
   computer_use: {
     label: "Computer-Use",
     Icon: Monitor,
     cls: "bg-sky-400/10 text-sky-300 ring-sky-400/25",
   },
   sub_agent: {
-    label: "Jarvis-Agent",
+    label: null, // dynamic: agentBrand(assistantName)
     Icon: Bot,
     cls: "bg-violet-400/10 text-violet-300 ring-violet-400/25",
   },
@@ -32,6 +36,7 @@ export function FeatureBadges({
   max?: number;
   size?: "sm" | "xs";
 }) {
+  const assistantName = useEventStore((s) => s.assistantName);
   if (!tags.length) return null;
   const shown = max ? tags.slice(0, max) : tags;
   const rest = tags.length - shown.length;
@@ -50,7 +55,7 @@ export function FeatureBadges({
               className={`inline-flex items-center gap-1 rounded-full font-medium ring-1 ring-inset ${pad} ${m.cls}`}
             >
               <Icon className={icon} strokeWidth={2.25} />
-              {m.label}
+              {m.label ?? agentBrand(assistantName)}
             </span>
           );
         }

@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { ArrowUp, Bot, CreditCard, Laptop, Lock, LogIn, LogOut, Sparkles, Terminal, type LucideIcon } from "lucide-react";
+import { agentBrandNow, useAgentBrand } from "@/lib/agentBrand";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
@@ -33,7 +34,8 @@ import { ApiKeyForm } from "@/components/ApiKeyForm";
  * `POST /api/jarvis-agent/switch` (3-layer persist). This is its own section
  * rather than a fourth `ProviderTier` because the status payload differs.
  * The endpoint path and the JSON keys below are the server contract; the
- * user-facing UI never says anything but "Jarvis-Agent".
+ * user-facing UI brands the agent system with the wake-word-derived assistant
+ * name ("Ruben" -> "Ruben-Agent") via agentBrand — never a hardcoded name.
  */
 
 interface SubagentMappingRow {
@@ -787,7 +789,7 @@ function CodexConnectionCard({
       // poll until the CLI reports connected; then the card flips to selectable
       // on its own — no manual reload needed.
       void pollStatusUntilConnected("/api/codex/status", onChanged).then((ok) => {
-        if (ok) pushToast("success", "Codex connected — now selectable as a Jarvis-Agent");
+        if (ok) pushToast("success", `Codex connected — now selectable as a ${agentBrandNow()}`);
       });
     } catch (e) {
       pushToast("error", (e as Error).message);
@@ -877,6 +879,7 @@ function AntigravityConnectionCard({
   onChanged: () => void | Promise<void>;
 }) {
   const pushToast = useEventStore((s) => s.pushToast);
+  const brand = useAgentBrand();
   const [pending, setPending] = useState(false);
   const { activating, activate } = useSubagentActivate(row, onChanged);
   const connected = Boolean(status?.connected && status.mode === "oauth-personal");
@@ -889,7 +892,7 @@ function AntigravityConnectionCard({
       ? `Connected as ${status.user_email}`
       : status?.message || "Connected"
     : apiKeyReady
-      ? "Gemini Jarvis-Agent API key ready (billed per token)"
+      ? `Gemini ${brand} API key ready (billed per token)`
     : status?.message || "Google login not connected";
 
   async function connect() {
@@ -901,7 +904,9 @@ function AntigravityConnectionCard({
       // Same as Codex: the Google sign-in completes asynchronously, so poll
       // until agy reports connected and the card unlocks on its own.
       void pollStatusUntilConnected("/api/antigravity/status", onChanged).then((ok) => {
-        if (ok) pushToast("success", "Antigravity connected — now selectable as a Jarvis-Agent");
+        if (ok) {
+          pushToast("success", `Antigravity connected — now selectable as a ${agentBrandNow()}`);
+        }
       });
     } catch (e) {
       pushToast("error", (e as Error).message);
@@ -1000,7 +1005,7 @@ function ClaudeConnectionCard({
       // The sign-in finishes asynchronously in the spawned console, so poll
       // until the CLI reports connected; the card then unlocks on its own.
       void pollStatusUntilConnected("/api/claude/status", onChanged).then((ok) => {
-        if (ok) pushToast("success", "Claude connected — now selectable as a Jarvis-Agent");
+        if (ok) pushToast("success", `Claude connected — now selectable as a ${agentBrandNow()}`);
       });
     } catch (e) {
       pushToast("error", (e as Error).message);
@@ -1082,6 +1087,7 @@ function ClaudeApiCard({
   onChanged: () => void | Promise<void>;
 }) {
   const { activating, activate } = useSubagentActivate(row, onChanged);
+  const brand = useAgentBrand();
   // OAuth unlocks the subscription sibling only. This API card reflects an
   // actual API key, so a Claude Max login cannot paint it falsely ready.
   const keySet = Boolean(row?.api_key_set);
@@ -1112,10 +1118,10 @@ function ClaudeApiCard({
       onClick={handleCardActivate}
       tooltip={
         isActive
-          ? "This Jarvis-Agent provider is active"
+          ? `This ${brand} provider is active`
           : keySet
-            ? "Activate this Jarvis-Agent provider"
-            : "Save a dedicated Claude Jarvis-Agent key first"
+            ? `Activate this ${brand} provider`
+            : `Save a dedicated Claude ${brand} key first`
       }
       badge={<StatusPill state={isActive ? "active" : keySet ? "ready" : "open"} />}
       subtitle="API key · billed per token"
@@ -1174,7 +1180,7 @@ function useSubagentActivate(
           ? `${label}: connect the ChatGPT login first.`
           : row.jarvis === "antigravity"
             ? `${label}: connect the Google login first.`
-            : `${label}: save a key on its Jarvis-Agent card first.`,
+            : `${label}: save a key on its ${agentBrandNow()} card first.`,
       );
       return;
     }
@@ -1187,7 +1193,7 @@ function useSubagentActivate(
     try {
       const result = await switchSubagentProvider(row.jarvis);
       const note = result.restart_required ? " (active from next restart)" : "";
-      pushToast("success", `Jarvis-Agent → ${label}${note}`);
+      pushToast("success", `${agentBrandNow()} → ${label}${note}`);
       window.dispatchEvent(new CustomEvent("jarvis:agent-switched"));
       await onSwitched();
     } catch (e) {
@@ -1221,6 +1227,7 @@ function SubagentProviderCard({
   onSwitched: () => void | Promise<void>;
 }) {
   const label = PROVIDER_LABELS[row.jarvis] ?? row.jarvis;
+  const brand = useAgentBrand();
   const { activating, activate } = useSubagentActivate(row, onSwitched);
 
   // Click anywhere on the card activates — except on the radio/label (which
@@ -1248,9 +1255,9 @@ function SubagentProviderCard({
       onClick={handleCardActivate}
       tooltip={
         row.is_active_brain
-          ? "This Jarvis-Agent provider is active"
+          ? `This ${brand} provider is active`
           : row.key_set
-            ? "Activate this Jarvis-Agent provider"
+            ? `Activate this ${brand} provider`
             : "Set an API key first"
       }
       badge={
@@ -1260,10 +1267,10 @@ function SubagentProviderCard({
       }
       subtitle={
         row.dedicated_key_set
-          ? "Dedicated Jarvis-Agent key configured"
+          ? `Dedicated ${brand} key configured`
           : row.shared_key_set
             ? "Using the shared Brain key as a compatibility fallback"
-            : "Set a dedicated key for this Jarvis-Agent"
+            : `Set a dedicated key for this ${brand}`
       }
       warning={
         <div className="space-y-2" data-agent-card-control>
@@ -1320,11 +1327,12 @@ function SubagentActiveControl({
    */
   active?: boolean;
 }) {
+  const brand = useAgentBrand();
   const isActive = active ?? row.is_active_brain;
   const labelTitle = isActive
-    ? "This Jarvis-Agent provider is active"
+    ? `This ${brand} provider is active`
     : row.key_set
-      ? "Activate this Jarvis-Agent provider"
+      ? `Activate this ${brand} provider`
       : "Set an API key first";
 
   return (
