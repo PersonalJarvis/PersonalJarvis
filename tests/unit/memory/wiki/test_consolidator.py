@@ -15,6 +15,7 @@ import os
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -728,6 +729,102 @@ async def test_numeric_value_already_in_existing_page_remains_valid(stack) -> No
     content = page.read_text(encoding="utf-8")
     assert "16 GB VRAM" in content
     assert "installed in the desktop" in content
+
+
+@pytest.mark.asyncio
+async def test_range_rendering_of_grounded_endpoints_is_accepted(stack) -> None:
+    """"5 to 6 million" evidence grounds a "5-6 million" page rendering.
+
+    Live 2026-07-17: the guard parsed "5-6" as ONE unknown value and burned
+    the whole provider chain on a correct answer.
+    """
+    vault_root, _curator, journal = stack
+    journal.append(
+        [
+            CandidateFact(
+                fact=(
+                    "The user's company pays 5 to 6 million euros in "
+                    "holiday pay."
+                ),
+                subjects=("user-company",),
+                evidence_turn_id="cost-turn",
+                evidence_excerpt=(
+                    "Evidence user turn [cost-turn]: holiday pay costs us "
+                    "5 to 6 million euros a year."
+                ),
+            )
+        ],
+        source_label="voice:range-grounding",
+        turn_hash="range-grounding",
+    )
+    cid = journal.pending()[0].id
+    today = dt.date.today().isoformat()
+    body = (
+        "---\n"
+        "type: entity\n"
+        "entity_kind: organization\n"
+        "slug: user-company\n"
+        "aliases: [the user's company]\n"
+        f"created: {today}\n"
+        f"updated: {today}\n"
+        "---\n\n"
+        "# User Company\n\n"
+        "## Summary\n\nThe user's company.\n\n"
+        "## Facts\n\n- Holiday pay costs 5-6 million euros a year.\n\n"
+        "## Relationships\n\n- Owned by the user.\n\n"
+        "## Sources\n\n- conversation\n"
+    )
+    brain = FakeBrain(
+        [
+            _judge_json(
+                [
+                    {
+                        "candidate_id": cid,
+                        "decision": "add",
+                        "target": "entities/user-company.md",
+                        "new_body": body,
+                        "reason": "new organization",
+                    }
+                ]
+            )
+        ]
+    )
+
+    label = await _consolidator(stack, brain).run_once()
+
+    assert label == "journal-batch:1"
+    content = (
+        vault_root / "entities" / "user-company.md"
+    ).read_text(encoding="utf-8")
+    assert "5-6 million euros" in content
+
+
+def test_numeric_guard_accepts_locale_decimal_equivalence() -> None:
+    row = SimpleNamespace(
+        fact="The user is 1,80 m tall.",
+        evidence_excerpt="Evidence user turn [t1]: I am 1,80 m tall.",
+        subjects=("user",),
+    )
+    unsupported = Consolidator._unsupported_numeric_values(
+        "## Facts\n\n- Height: 1.80 m.\n",
+        row=row,
+        existing_path=None,
+    )
+    assert unsupported == set()
+
+
+def test_numeric_guard_still_rejects_new_precision() -> None:
+    row = SimpleNamespace(
+        fact="Costs are 5 to 6 million euros.",
+        evidence_excerpt="Evidence user turn [t1]: 5 to 6 million euros.",
+        subjects=(),
+    )
+    unsupported = Consolidator._unsupported_numeric_values(
+        "## Facts\n\n- Costs 5.6 million euros.\n",
+        row=row,
+        existing_path=None,
+    )
+    assert unsupported == {"5.6"}
 
 
 @pytest.mark.asyncio

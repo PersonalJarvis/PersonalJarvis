@@ -974,8 +974,11 @@ class WikiCuratorConfig(BaseModel):
     model: str = ""                     # "" = provider default model
     max_input_tokens: int = 8000
     # Headroom for a complete proposal; the streaming truncation guard
-    # rejects any residual length-capped generation.
-    max_output_tokens: int = 4000
+    # rejects any residual length-capped generation. The Stage-2 judge
+    # returns FULL page bodies per add/update, so a batched response
+    # needs several thousand tokens (live 2026-07-17: 4000 truncated on
+    # every provider and stalled the whole chain).
+    max_output_tokens: int = 8000
     timeout_s: float = 90.0
 
 

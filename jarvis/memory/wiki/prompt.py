@@ -487,7 +487,15 @@ Decision semantics:
   enough to store (smalltalk, transient bodily/status chatter, weather,
   assistant-only claims, commands with no separately asserted durable content,
   or unsupported guesses).
-  Stage 1 is deliberately recall-biased; you are the binding cleanliness gate.
+  "Already known" is strict: the fact appears in equivalent form on the page
+  where it belongs. A named durable entity (asset, vehicle, person,
+  organization, place) that only appears as a line on ANOTHER page — for
+  example the user's profile — is NOT already known; "add" its own entity
+  page and cross-link it instead of choosing "noop".
+  For an evidence-supported durable fact, prefer "add" or "update" over
+  "noop": the user can edit or archive an over-eager page, but cannot
+  recover a fact the wiki never stored. You are the binding cleanliness
+  gate for durability and evidence, not a brake on wiki growth.
   Provide only "candidate_id", "decision", "reason".
 - "invalidate": the fact CONTRADICTS a shown page so that page (or
   statement) is now outdated. Provide "target" (the superseded page) and
@@ -518,7 +526,10 @@ Linking rules:
   use them verbatim and never infer a personal name.
 - Create an entity page for a durable, individually identifiable owned asset
   or vehicle. Ownership can identify it even before a proper name is known
-  (for example, the user's yacht). Link it bidirectionally to its owner.
+  (for example, the user's yacht). Link it bidirectionally to its owner. A
+  mention on the owner's profile page does not replace the entity page: when
+  the profile already carries the fact but the entity page is missing, "add"
+  the entity page in this batch.
 - Never write credentials or secrets. No prose outside the JSON array.
 """
 

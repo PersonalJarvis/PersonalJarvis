@@ -135,7 +135,12 @@ class Consolidator:
         search: VaultSearch | None,
         vault_root: Path,
         registry: BrainProviderRegistry | None = None,
-        batch_limit: int = 20,
+        # A judged batch answers with FULL page bodies per add/update, so
+        # 20 candidates cannot fit any sane output budget — every provider
+        # truncated and the bisection retry burned the whole chain first
+        # (live 2026-07-17). Eight keeps the response inside
+        # ``[memory.wiki.curator] max_output_tokens`` on the first attempt.
+        batch_limit: int = 8,
         k_nearest: int = 4,
         on_run_complete: Any = None,
     ) -> None:
@@ -875,7 +880,37 @@ class Consolidator:
                 # The independent existence/preservation checks reject an
                 # unreadable update.  Do not weaken this guard in the meantime.
                 pass
-        return cls._numeric_values(proposed, ignore_schema_dates=True) - grounded
+        return {
+            value
+            for value in cls._numeric_values(proposed, ignore_schema_dates=True)
+            if not cls._numeric_value_grounded(value, grounded)
+        }
+
+    @staticmethod
+    def _numeric_value_grounded(value: str, grounded: set[str]) -> bool:
+        """Exact match, decimal-comma/dot equivalence, or a grounded range.
+
+        Two renderings carry no new numeric claim and must not be rejected
+        (live 2026-07-17: "5 to 6 million euros" evidence, "5-6" proposal —
+        the whole provider chain burned on a correct answer):
+
+        * locale decimal separators — "1,80" and "1.80" are the same value;
+        * hyphen ranges whose every endpoint is individually grounded —
+          "5-6" from grounded "5" and "6".
+
+        Everything else (new digits, new precision such as "5.6" from
+        grounded 5 and 6) stays rejected.
+        """
+        if value in grounded:
+            return True
+        canonical_grounded = {v.replace(",", ".") for v in grounded}
+        if value.replace(",", ".") in canonical_grounded:
+            return True
+        endpoints = value.rstrip("%").split("-")
+        return len(endpoints) > 1 and all(
+            part and part.replace(",", ".") in canonical_grounded
+            for part in endpoints
+        )
 
     @staticmethod
     def _numeric_values(
