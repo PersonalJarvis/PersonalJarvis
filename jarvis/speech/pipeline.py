@@ -6469,6 +6469,17 @@ class SpeechPipeline:
                     pass
             if session is not None:
                 await session.end(reason=reason)
+            if reason != "shutdown":
+                # A provider failure tears the session down while already
+                # scrub-cleared PCM can still sit in the local playback queue.
+                # Drain it (bounded) instead of hard-stopping so the spoken
+                # reply keeps every word that was already safe to say.
+                # User-initiated stops (hangup/barge-in) have cancel()ed the
+                # queue earlier, which makes this a fast no-op for them.
+                try:
+                    await asyncio.wait_for(playback.finish_turn(), timeout=15.0)
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110 - teardown
+                    pass
             await playback.close()
 
     async def _ptt_session(
@@ -9341,13 +9352,13 @@ class SpeechPipeline:
                 #     heartbeat (_mark_brain_progress, pinged on every tool-use-
                 #     loop round AND every streamed token; the SAME signal the
                 #     brain stall guard trusts). Live bug 2026-06-14 14:21 + 14:24
-                #     ("weather in Melbourne"): a NON-desktop tool loop (geocode +
+                #     (a weather question): a NON-desktop tool loop (geocode +
                 #     DuckDuckGo + open-meteo, ~20 s of real work) emits no CU
                 #     step, so before this the 20 s ceiling beheaded the working
                 #     turn and the user heard "that took too long" + a hang-up.
                 #   • ``_brain_thinking_heartbeat`` — the PRE-first-token think
                 #     pulse from _run_brain_with_stall_guard. Live bug 2026-06-14
-                #     16:17 ("Reise … Melbourne"): the deep brain built an
+                #     16:17 (a trip-research turn): the deep brain built an
                 #     18k-token cache then thought silently with no on_progress
                 #     and no token, so the two heartbeats above never moved and
                 #     the 20 s ceiling beheaded a working brain.

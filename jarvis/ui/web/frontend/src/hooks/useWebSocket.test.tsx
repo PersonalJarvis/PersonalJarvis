@@ -119,6 +119,45 @@ describe("useWebSocket VoiceBootStatus handling", () => {
     expect(useEventStore.getState().voiceReady).toBe(false);
   });
 
+  it("clears the live transcript at voice-session boundaries", async () => {
+    // Live incidents 2026-07-15/16: the sidebar transcript box has no other
+    // reset path, so the last utterance survived into READY/IDLE and the next
+    // session, masquerading as a frozen live transcript ("Was").
+    render(<Harness />);
+    await Promise.resolve();
+
+    MockWebSocket.last!.deliver(
+      envelope("TranscriptionUpdate", { text: "Was", is_final: true }),
+    );
+    expect(useEventStore.getState().transcription).toBe("Was");
+
+    // Session ends → the stale utterance must not survive into IDLE.
+    MockWebSocket.last!.deliver(
+      envelope("SystemStateChanged", { new_state: "IDLE", previous: "LISTENING" }),
+    );
+    expect(useEventStore.getState().transcription).toBe("");
+
+    // Mid-session transitions must NOT clear the live transcript.
+    MockWebSocket.last!.deliver(
+      envelope("SystemStateChanged", { new_state: "LISTENING", previous: "IDLE" }),
+    );
+    MockWebSocket.last!.deliver(
+      envelope("TranscriptionUpdate", {
+        text: "Was ist morgen für ein Tag?", // i18n-allow: live-incident transcript under test
+        is_final: true,
+      }),
+    );
+    MockWebSocket.last!.deliver(
+      envelope("SystemStateChanged", {
+        new_state: "THINKING",
+        previous: "LISTENING",
+      }),
+    );
+    expect(useEventStore.getState().transcription).toBe(
+      "Was ist morgen für ein Tag?", // i18n-allow: live-incident transcript under test
+    );
+  });
+
   it("surfaces a mission tool approval request globally without arguments", async () => {
     render(<Harness />);
     await Promise.resolve();

@@ -1150,14 +1150,28 @@ class RealtimeVoiceSession:
                             self._last_user_text
                         )
                     if transcript:
+                        # Publish the accumulated per-turn snapshot, never the
+                        # raw chunk: providers flag transcript fragments final
+                        # per CHUNK (Gemini per server-content message, OpenAI/
+                        # xAI per committed audio item), while every downstream
+                        # consumer (orb bubble, desktop TranscriptionView,
+                        # SessionRecorder) mirrors TranscriptionUpdate 1:1 as a
+                        # whole-utterance snapshot — a raw chunk freezes those
+                        # surfaces on a single fragment of the sentence.
+                        if event.is_final:
+                            snapshot = self._last_user_text or transcript
+                        else:
+                            snapshot = " ".join(
+                                (*self._user_transcript_parts, transcript)
+                            ).strip()
                         await self._publish_transcription(
-                            transcript, bool(event.is_final)
+                            snapshot, bool(event.is_final)
                         )
                         await self._send_json(
                             {
                                 "type": "transcript",
                                 "role": "user",
-                                "text": transcript,
+                                "text": snapshot,
                                 "is_final": bool(event.is_final),
                             }
                         )
@@ -1567,12 +1581,57 @@ class RealtimeVoiceSession:
                             {"type": "provider_warning", "error": message}
                         )
                         continue
+                    # A terminal provider failure can strike while the tail of
+                    # the current reply is still held by the scrub gate.
+                    # Release the transcript-cleared remainder (same sequence
+                    # as the turn_complete branch) so the spoken answer is not
+                    # chopped harder than the transport failure requires;
+                    # audio without a cleared transcript stays withheld
+                    # (fail-closed).
+                    final_chunks = self._gate.finalize()
+                    if self._gate.hard_leak_pending():
+                        await self._cancel_unsafe_output(
+                            reason="output transcript missing at provider error",
+                            interrupt_provider=False,
+                        )
+                    for chunk in final_chunks:
+                        await self._emit_audio(chunk)
+                    self._gate.drain()
                     self._failure_detail = message
                     self._failed.set()
                     await self._send_json(
                         {"type": "provider_error", "error": message}
                     )
                     break
+            else:
+                # The provider iterator ended without an exception and without
+                # a terminal break (hangup/error). At an idle turn boundary
+                # that is a benign transport end. MID-TURN it is a silent
+                # transport death (the Gemini SDK's receive() can simply
+                # vanish): without this branch the session never reaches the
+                # error path — no failed flag, no provider_error for the
+                # browser surface, and the transcript-cleared audio tail held
+                # by the scrub gate is dropped.
+                if self._output_active or self._response_requested_for_turn:
+                    final_chunks = self._gate.finalize()
+                    if self._gate.hard_leak_pending():
+                        await self._cancel_unsafe_output(
+                            reason="output transcript missing at provider stream end",
+                            interrupt_provider=False,
+                        )
+                    for chunk in final_chunks:
+                        await self._emit_audio(chunk)
+                    self._gate.drain()
+                    message = "provider stream ended mid-turn without a boundary"
+                    self._failure_detail = message
+                    self._failed.set()
+                    log.warning("realtime[%s] %s", self.session_id, message)
+                    await self._publish_error(
+                        "RealtimeProviderStreamEnd", message, recoverable=True
+                    )
+                    await self._send_json(
+                        {"type": "provider_error", "error": message}
+                    )
         except asyncio.CancelledError:
             raise
         except Exception as exc:  # noqa: BLE001 — AP-20: pump error is terminal
@@ -2896,34 +2955,24 @@ class RealtimeVoiceSession:
             if not self._delegate_turn_is_active(turn_id, turn_state):
                 return
             user_text = turn_state.user_text
-            if boundary_ready:
-                reply = (
-                    await asyncio.wait_for(
-                        self._dispatch_brain_turn(user_text),
-                        timeout=_DELEGATE_TIMEOUT_S,
-                    )
-                    or ""
-                ).strip()
-                if reply:
-                    turn_state.last_reply = reply
-                    result: dict[str, Any] = {
-                        "success": True,
-                        "spoken_reply": reply,
-                    }
-                    succeeded = True
-                else:
-                    result = {
-                        "success": False,
-                        "error": "The delegated action returned no grounded result.",
-                    }
-                    succeeded = False
+            reply = (
+                await asyncio.wait_for(
+                    self._dispatch_brain_turn(user_text),
+                    timeout=_DELEGATE_TIMEOUT_S,
+                )
+                or ""
+            ).strip()
+            if reply:
+                turn_state.last_reply = reply
+                result: dict[str, Any] = {
+                    "success": True,
+                    "spoken_reply": reply,
+                }
+                succeeded = True
             else:
                 result = {
                     "success": False,
-                    "error": (
-                        "The complete spoken request could not be determined "
-                        "safely, so no action was executed."
-                    ),
+                    "error": "The delegated action returned no grounded result.",
                 }
                 succeeded = False
         except TimeoutError:

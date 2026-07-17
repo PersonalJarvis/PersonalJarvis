@@ -74,6 +74,100 @@ async def test_receive_maps_audio_transcripts_interrupt_and_completion():
 
 
 @pytest.mark.asyncio
+async def test_go_away_is_recoverable_and_keeps_the_stream_flowing() -> None:
+    """GoAway is Gemini's courteous pre-disconnect notice, not a wire error.
+    Surfacing it as terminal used to end the session with reason=error while
+    the current reply was still being spoken (live incident 2026-07-15 17:40),
+    dropping the buffered audio tail."""
+    messages = [
+        _fake_message(go_away=SimpleNamespace(time_left=3_000)),
+        _fake_message(
+            server_content=SimpleNamespace(
+                output_transcription=SimpleNamespace(text="still speaking"),
+                input_transcription=None,
+                interrupted=False,
+                turn_complete=True,
+            )
+        ),
+    ]
+
+    receive_calls = 0
+
+    async def fake_receive():
+        nonlocal receive_calls
+        receive_calls += 1
+        if receive_calls == 1:
+            for message in messages:
+                yield message
+
+    fake_session = SimpleNamespace(receive=fake_receive)
+    session = _GeminiLiveSession(
+        session=fake_session,
+        connection_cm=SimpleNamespace(),
+        client=SimpleNamespace(),
+        session_id="s-go-away",
+    )
+
+    events = [event async for event in session.receive()]
+
+    errors = [event for event in events if event.type == "error"]
+    assert len(errors) == 1
+    assert errors[0].recoverable is True
+    assert "reconnect" in (errors[0].error or "")
+    # The notice must not terminate the stream: the reply that follows it is
+    # still delivered.
+    assert [event.type for event in events][-2:] == [
+        "output_transcript_delta",
+        "turn_complete",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_abnormal_turn_complete_reason_is_logged(caplog) -> None:
+    """Every named TurnCompleteReason except UNSPECIFIED is an abnormal stop
+    (safety filter, rejection, regeneration limit). Discarding it made a
+    server-truncated spoken reply indistinguishable from a complete one."""
+    messages = [
+        _fake_message(
+            server_content=SimpleNamespace(
+                output_transcription=SimpleNamespace(text="partial answer"),
+                input_transcription=None,
+                interrupted=False,
+                turn_complete=True,
+                turn_complete_reason=SimpleNamespace(
+                    name="MAX_REGENERATION_REACHED"
+                ),
+            )
+        ),
+    ]
+
+    receive_calls = 0
+
+    async def fake_receive():
+        nonlocal receive_calls
+        receive_calls += 1
+        if receive_calls == 1:
+            for message in messages:
+                yield message
+
+    fake_session = SimpleNamespace(receive=fake_receive)
+    session = _GeminiLiveSession(
+        session=fake_session,
+        connection_cm=SimpleNamespace(),
+        client=SimpleNamespace(),
+        session_id="s-reason",
+    )
+
+    with caplog.at_level("WARNING"):
+        events = [event async for event in session.receive()]
+
+    assert [event.type for event in events][-1] == "turn_complete"
+    assert any(
+        "MAX_REGENERATION_REACHED" in record.message for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
 async def test_receive_reenters_sdk_iterator_for_a_second_user_turn() -> None:
     sdk_turns = [
         [

@@ -796,9 +796,20 @@ class OrbBusBridge:
         # (LISTENING, USER_SPEAKING, WAITING_FOR_FINAL_TRANSCRIPT,
         # WAITING_FOR_COMPLETION). Outside this window (THINKING/SPEAKING/
         # IDLE) the bubble must NOT be repainted with stale user text —
-        # the brain has already taken over.
+        # the brain has already taken over. ONE exception: the FINAL
+        # transcript of the turn being answered right now. Realtime providers
+        # deliver (chunks of) the final user transcript concurrently with the
+        # flip to THINKING; dropping those froze the bubble on the first
+        # fragment ("Was" instead of the whole question). While no reply text
+        # exists yet, the authoritative user text is never stale.
         if self._last_state not in _USER_SIDE_BUBBLE_STATES:
-            return
+            late_final_ok = (
+                bool(getattr(event, "is_final", False))
+                and self._last_state == "THINKING"
+                and not self._last_response_text
+            )
+            if not late_final_ok:
+                return
         if _is_transcript_boilerplate(event.text):
             log.info(
                 "OrbBridge suppressed STT boilerplate transcript: %r",

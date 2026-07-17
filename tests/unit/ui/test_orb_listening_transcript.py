@@ -82,6 +82,53 @@ async def test_transcription_update_refreshes_large_bubble_only_while_listening(
     assert ("show_listening_transcript", "Soll nicht sichtbar sein") not in orb.calls  # i18n-allow
 
 
+async def test_final_transcript_during_thinking_still_repaints_the_user_bubble() -> None:
+    """Realtime providers deliver (chunks of) the FINAL user transcript
+    concurrently with the flip to THINKING. Dropping those froze the bubble on
+    the first fragment ("Was" instead of the whole question — live incidents
+    2026-07-15/16). While no reply text exists yet, the authoritative final
+    user text is never stale and must repaint."""
+    orb = _FakeOrb()
+    bridge = OrbBusBridge(bus=_FakeBus(), orb=orb, idle_animations_enabled=False)  # type: ignore[arg-type]
+
+    await bridge._on_state(  # noqa: SLF001
+        SystemStateChanged(new_state="LISTENING", previous="IDLE")
+    )
+    await bridge._on_transcription_update(  # noqa: SLF001
+        TranscriptionUpdate(text="Was", is_final=True)
+    )
+    await bridge._on_state(  # noqa: SLF001
+        SystemStateChanged(new_state="THINKING", previous="LISTENING")
+    )
+    orb.calls.clear()
+
+    await bridge._on_transcription_update(  # noqa: SLF001
+        TranscriptionUpdate(
+            text="Was ist morgen für ein Tag?",  # i18n-allow: live-incident transcript under test
+            is_final=True,
+        )
+    )
+
+    assert (
+        "show_listening_transcript",
+        "Was ist morgen für ein Tag?",  # i18n-allow: live-incident transcript under test
+    ) in orb.calls
+
+    # A PARTIAL during THINKING keeps being ignored (stale user-side noise) …
+    orb.calls.clear()
+    await bridge._on_transcription_update(  # noqa: SLF001
+        TranscriptionUpdate(text="stale partial", is_final=False)
+    )
+    assert orb.calls == []
+
+    # … and once the reply text exists, even a FINAL must not repaint.
+    bridge._last_response_text = "Tomorrow is Thursday."  # noqa: SLF001
+    await bridge._on_transcription_update(  # noqa: SLF001
+        TranscriptionUpdate(text="late final", is_final=True)
+    )
+    assert orb.calls == []
+
+
 def test_transcript_bubble_height_grows_by_visible_line_count() -> None:
     line_height = 20
 

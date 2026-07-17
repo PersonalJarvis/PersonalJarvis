@@ -122,10 +122,22 @@ export function useWebSocket(): void {
         }
 
         if (env.event_name === "SystemStateChanged") {
-          const state = (env.payload as { new_state?: unknown }).new_state;
+          const p = env.payload as { new_state?: unknown; previous?: unknown };
+          const state = p.new_state;
           if (typeof state === "string") {
             const lower = state.toLowerCase();
             if (isVoiceState(lower)) setVoice(lower);
+            // The live-transcript box has no other reset path: without this,
+            // the last utterance of a session survives into READY/IDLE and the
+            // next session, masquerading as a frozen live transcript (live
+            // incidents 2026-07-15/16: a stale "Was" sat in the sidebar long
+            // after its session ended). Clear at every session boundary —
+            // entering IDLE (session over) and leaving IDLE (fresh session).
+            const previous =
+              typeof p.previous === "string" ? p.previous.toLowerCase() : "";
+            if (lower === "idle" || previous === "idle") {
+              setTranscription("", true);
+            }
           }
         }
 

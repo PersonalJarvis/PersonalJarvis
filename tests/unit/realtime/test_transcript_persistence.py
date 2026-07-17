@@ -53,7 +53,12 @@ def _provider_events(provider_name: str) -> tuple[list[RealtimeEvent], str, list
                 type="input_transcript", text="the settings view", is_final=True
             ),
         ]
-        raw_parts = ["Please open", "the settings view"]
+        # Providers flag transcript fragments final per CHUNK. Every published
+        # TranscriptionUpdate must carry the accumulated whole-utterance
+        # snapshot, never the raw chunk — downstream surfaces (orb bubble,
+        # TranscriptionView, SessionRecorder) mirror the event 1:1 and would
+        # otherwise freeze on a single fragment of the sentence.
+        expected_snapshots = ["Please open", "Please open the settings view"]
     else:
         user_events = [
             RealtimeEvent(
@@ -62,7 +67,7 @@ def _provider_events(provider_name: str) -> tuple[list[RealtimeEvent], str, list
                 is_final=True,
             )
         ]
-        raw_parts = ["Please open the settings view"]
+        expected_snapshots = ["Please open the settings view"]
     return (
         [
             *user_events,
@@ -81,7 +86,7 @@ def _provider_events(provider_name: str) -> tuple[list[RealtimeEvent], str, list
             RealtimeEvent(type="turn_complete"),
         ],
         "Please open the settings view",
-        raw_parts,
+        expected_snapshots,
     )
 
 
@@ -188,7 +193,7 @@ async def test_every_realtime_surface_provider_and_tool_mode_persists_complete_t
     provider_name: str,
     tool_mode: str,
 ) -> None:
-    events, expected_user, raw_parts = _provider_events(provider_name)
+    events, expected_user, expected_snapshots = _provider_events(provider_name)
     if tool_mode == "delegate":
         output_index = next(
             index
@@ -235,7 +240,7 @@ async def test_every_realtime_surface_provider_and_tool_mode_persists_complete_t
             for event in store.get_events("matrix-session")
             if event.kind == "TranscriptionUpdate"
         ]
-        assert transcription_events == raw_parts
+        assert transcription_events == expected_snapshots
 
         tool_names = [tool["name"] for tool in provider.opened_with.tools]
         if tool_mode == "delegate":
@@ -519,6 +524,147 @@ async def test_barge_in_finalizes_previous_turn_before_next_user_transcript(
             assert provider.session.interrupts == 0
         else:
             assert provider.session.interrupts >= 1
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_terminal_provider_error_still_plays_gate_held_audio_tail(
+    tmp_path,
+) -> None:
+    """A terminal provider failure mid-reply must not swallow the tail audio
+    that the scrub gate already holds under a cleared transcript. Live
+    incident 2026-07-15 17:40 (gemini-live): the reply text was fully stored
+    while the spoken audio stopped mid-answer when the transport died."""
+    tail_pcm = b"\xaa\x00" * 8
+    provider = FakeRealtimeProvider(
+        "gemini-live",
+        [
+            RealtimeEvent(
+                type="input_transcript", text="What day is tomorrow?", is_final=True
+            ),
+            RealtimeEvent(
+                type="output_transcript_delta", text="Tomorrow is Thursday."
+            ),
+            # First delta consumes the transcript clearance credit...
+            RealtimeEvent(
+                type="audio_delta",
+                audio=AudioChunk(
+                    pcm=b"\x01\x00" * 8, sample_rate=24_000, timestamp_ns=0
+                ),
+            ),
+            # ...so this tail chunk stays buffered inside the scrub gate.
+            RealtimeEvent(
+                type="audio_delta",
+                audio=AudioChunk(pcm=tail_pcm, sample_rate=24_000, timestamp_ns=0),
+            ),
+            RealtimeEvent(type="error", error="simulated transport death"),
+        ],
+    )
+    store = SessionStore(tmp_path / "sessions.db")
+    store.open()
+    played: list[bytes] = []
+
+    async def send_binary(data: bytes) -> None:
+        played.append(bytes(data))
+
+    async def send_json(_message: dict[str, Any]) -> None:
+        return None
+
+    try:
+        bus = EventBus()
+        SessionRecorder(store).attach(bus)
+        session = RealtimeVoiceSession(
+            session_id="tail-audio-session",
+            send_binary=send_binary,
+            send_json=send_json,
+            providers=[provider],
+            config=_config("gemini-live", "direct"),
+            bus=bus,
+            surface="browser",
+            tool_bridge=FakeRealtimeToolBridge(),
+        )
+        await session.handle_control({"type": "audio_start", "sample_rate": 48_000})
+        await session.wait_finished()
+        assert session.failed is True
+        await session.end(reason="error")
+
+        assert any(tail_pcm in chunk for chunk in played), (
+            "the transcript-cleared tail audio was dropped on the error path"
+        )
+        turns = store.get_turns("tail-audio-session")
+        assert len(turns) == 1
+        assert turns[0].jarvis_text == "Tomorrow is Thursday."
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_silent_stream_end_mid_turn_fails_the_session_and_plays_the_tail(
+    tmp_path,
+) -> None:
+    """The Gemini SDK's receive() can end without an exception and without a
+    turn boundary. Mid-turn that is a silent transport death: the session must
+    reach the same fail-closed path as an explicit provider error — failed
+    flag set, provider_error surfaced, transcript-cleared tail audio played —
+    instead of hanging as active with the tail dropped."""
+    tail_pcm = b"\xbb\x00" * 8
+    provider = FakeRealtimeProvider(
+        "gemini-live",
+        [
+            RealtimeEvent(
+                type="input_transcript", text="What day is tomorrow?", is_final=True
+            ),
+            RealtimeEvent(
+                type="output_transcript_delta", text="Tomorrow is Thursday."
+            ),
+            RealtimeEvent(
+                type="audio_delta",
+                audio=AudioChunk(
+                    pcm=b"\x01\x00" * 8, sample_rate=24_000, timestamp_ns=0
+                ),
+            ),
+            RealtimeEvent(
+                type="audio_delta",
+                audio=AudioChunk(pcm=tail_pcm, sample_rate=24_000, timestamp_ns=0),
+            ),
+            # No error event, no turn_complete: the iterator just ends.
+        ],
+    )
+    store = SessionStore(tmp_path / "sessions.db")
+    store.open()
+    played: list[bytes] = []
+    statuses: list[dict[str, Any]] = []
+
+    async def send_binary(data: bytes) -> None:
+        played.append(bytes(data))
+
+    async def send_json(message: dict[str, Any]) -> None:
+        statuses.append(dict(message))
+
+    try:
+        bus = EventBus()
+        SessionRecorder(store).attach(bus)
+        session = RealtimeVoiceSession(
+            session_id="silent-stream-end",
+            send_binary=send_binary,
+            send_json=send_json,
+            providers=[provider],
+            config=_config("gemini-live", "direct"),
+            bus=bus,
+            surface="browser",
+            tool_bridge=FakeRealtimeToolBridge(),
+        )
+        await session.handle_control({"type": "audio_start", "sample_rate": 48_000})
+        await session.wait_finished()
+
+        assert session.failed is True
+        assert any(m.get("type") == "provider_error" for m in statuses)
+        assert any(tail_pcm in chunk for chunk in played), (
+            "the transcript-cleared tail audio was dropped on the silent "
+            "stream-end path"
+        )
+        await session.end(reason="error")
     finally:
         store.close()
 

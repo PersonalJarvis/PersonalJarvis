@@ -36,6 +36,7 @@ class _ProviderEvent:
     is_final: bool = False
     ms_played: int | None = None
     error: str | None = None
+    recoverable: bool = False
     item_id: str | None = None
     call_id: str | None = None
     tool_name: str | None = None
@@ -152,6 +153,26 @@ class _GeminiLiveSession:
 
                     if bool(getattr(content, "turn_complete", False)):
                         turn_boundary_seen = True
+                        # Every named TurnCompleteReason except UNSPECIFIED is
+                        # an ABNORMAL stop (safety filter, response rejection,
+                        # regeneration limit, ...). A natural end leaves the
+                        # field unset. Discarding it made a server-truncated
+                        # spoken reply indistinguishable from a complete one
+                        # (live incident 2026-07-15 17:40: ~10% of the answer
+                        # was never spoken, turn_complete looked clean).
+                        reason = getattr(content, "turn_complete_reason", None)
+                        reason_name = str(
+                            getattr(reason, "name", None) or reason or ""
+                        )
+                        if reason_name and reason_name != (
+                            "TURN_COMPLETE_REASON_UNSPECIFIED"
+                        ):
+                            log.warning(
+                                "Gemini Live ended the turn abnormally: "
+                                "turn_complete_reason=%s — the spoken reply "
+                                "may have been cut short by the server",
+                                reason_name,
+                            )
                         if not function_calls:
                             yield _ProviderEvent(type="turn_complete")
 
@@ -161,8 +182,17 @@ class _GeminiLiveSession:
                     suffix = (
                         f" (time_left={retry_ms})" if retry_ms is not None else ""
                     )
+                    # GoAway is Gemini's courteous pre-disconnect notice tied
+                    # to Live-API session limits, not a wire failure. Treating
+                    # it as terminal used to end the session with reason=error
+                    # while the current reply was still being spoken, dropping
+                    # the buffered tail. Surface it as recoverable; if the
+                    # transport really closes, the pump observes that end
+                    # separately.
                     yield _ProviderEvent(
-                        type="error", error=f"Gemini Live requested reconnect{suffix}"
+                        type="error",
+                        error=f"Gemini Live requested reconnect{suffix}",
+                        recoverable=True,
                     )
 
             # An iterator that vanishes without a model-turn boundary signals a
