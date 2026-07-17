@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -712,7 +713,10 @@ def _app_token(app_name: str) -> str:
     if not name:
         return ""
     if ("\\" in name) or ("/" in name) or name.lower().endswith(".exe"):
-        base = os.path.basename(name)
+        # Split on BOTH separators: a Windows-style path must resolve to its
+        # basename on macOS/Linux too (os.path.basename only splits the
+        # host's own separator, leaving the full path as a dead token).
+        base = re.split(r"[\\/]", name)[-1]
         stem = base.rsplit(".", 1)[0] if "." in base else base
         name = stem or name
     return name.strip()

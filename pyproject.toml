@@ -616,4 +616,5 @@ markers = [
     "eval: Phase-8.6 Eval-Harness — Golden-Query-Suite (manuell via `pytest -m eval`).",
     "slow: Lang laufende Tests (Eval, E2E) — vom Standard-Run via `pytest -m 'not slow'` ausgeschlossen.",
     "integration: Integration tests that spawn real subprocesses or hit live external services (e.g. Codex CLI ChatGPT OAuth). Self-skip when prerequisites are missing; run explicitly via `pytest -m integration`.",
+    "real_tcc_gate: opts a Computer-Use test back into the real macOS Screen-Recording gate that tests/unit/cu/conftest.py neutralizes by default.",
 ]

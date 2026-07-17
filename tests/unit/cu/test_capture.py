@@ -81,6 +81,7 @@ def test_stable_screen_returns_after_one_regrab():
     assert frame.jpeg[:2] == b"\xff\xd8"  # JPEG magic
 
 
+@pytest.mark.real_tcc_gate
 def test_macos_screen_recording_denial_stops_before_grab(monkeypatch):
     from jarvis.platform.permissions import PermissionState
 
@@ -110,6 +111,7 @@ def test_macos_screen_recording_denial_stops_before_grab(monkeypatch):
     assert calls == {"grab": 0, "probe": 1}
 
 
+@pytest.mark.real_tcc_gate
 def test_macos_screen_recording_is_rechecked_before_each_grab(monkeypatch):
     from jarvis.platform.permissions import PermissionState
 

@@ -299,6 +299,10 @@ def test_get_foreground_title_never_raises(monkeypatch):
 def test_get_foreground_title_macos_empty_without_tool(monkeypatch):
     monkeypatch.setattr(ws, "detect_platform", lambda: "darwin")
     monkeypatch.setattr("shutil.which", lambda n: None)
+    # Block the native backends so the degrade path is exercised even on a
+    # real macOS host where pyobjc is installed.
+    monkeypatch.setitem(sys.modules, "AppKit", None)
+    monkeypatch.setitem(sys.modules, "Quartz", None)
     assert ws.get_foreground_title() == ""
 
 

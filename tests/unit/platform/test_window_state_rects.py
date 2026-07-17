@@ -62,6 +62,9 @@ def test_macos_frame_rect_resolves_by_window_number(monkeypatch):
 
 def test_macos_foreground_window_is_first_normal_layer_window(monkeypatch):
     monkeypatch.setattr(ws, "detect_platform", lambda: "darwin")
+    # Block real AppKit so the frontmost-pid probe stays neutral and the fake
+    # Quartz list decides the result on macOS hosts too.
+    monkeypatch.setitem(sys.modules, "AppKit", None)
     monkeypatch.setitem(
         sys.modules, "Quartz", _fake_quartz([_OVERLAY, _MAIL_WINDOW]),
     )
