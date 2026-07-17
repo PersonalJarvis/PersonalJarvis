@@ -39,6 +39,14 @@ _WEATHER_CALL_TIMEOUT_S: Final[float] = _TIMEOUT_S / 2
 _GEOCODE_URL: Final[str] = "https://geocoding-api.open-meteo.com/v1/search"
 _FORECAST_URL: Final[str] = "https://api.open-meteo.com/v1/forecast"
 
+# Concurrent query variants per call (BUG-072 follow-up). Three phrasings
+# cover a research question; more only dilutes the merged snippet budget.
+_MAX_QUERY_VARIANTS: Final[int] = 3
+# Ceiling for the merged result list across all variants — keeps the tool
+# result within the loop's payload cap while still carrying more evidence
+# than a single-query call.
+_MAX_MERGED_RESULTS: Final[int] = 8
+
 # How the brain must consume a non-empty result set. Live forensic 2026-06-28
 # (voice session, Turn 4 "wie viele Punkte brauche ich fuer eine 1"): the brain  # i18n-allow
 # (Gemini) concatenated the raw DuckDuckGo hits — titles, snippets, dates, URLs,
@@ -134,6 +142,45 @@ def _condition_text(code: object) -> str:
         return "unknown conditions"
 
 
+def _merge_outcomes(outcomes: list[Any]) -> Any:
+    """Merge per-variant search outcomes into one, deduplicated by URL.
+
+    Results interleave across variants (first hit of each variant first) so
+    one variant cannot crowd out the others' evidence. Status is honest:
+    ``ok`` when anything was found, ``empty`` when at least one backend
+    reached its index, ``unavailable`` only when none did.
+    """
+    from jarvis.plugins.tool.search_backends import SearchOutcome
+
+    if len(outcomes) == 1:
+        return outcomes[0]
+    merged: list[dict[str, Any]] = []
+    seen_urls: set[str] = set()
+    for rank in range(max(len(o.results) for o in outcomes) if outcomes else 0):
+        for outcome in outcomes:
+            if rank >= len(outcome.results):
+                continue
+            result = outcome.results[rank]
+            url = str(result.get("url", "")).strip().lower()
+            if url and url in seen_urls:
+                continue
+            if url:
+                seen_urls.add(url)
+            merged.append(result)
+    merged = merged[:_MAX_MERGED_RESULTS]
+    if any(o.status == "ok" and o.results for o in outcomes):
+        status = "ok" if merged else "empty"
+    elif any(o.status == "empty" for o in outcomes):
+        status = "empty"
+    else:
+        status = "unavailable"
+    backend = next(
+        (o.backend for o in outcomes if o.status == "ok" and o.results),
+        outcomes[0].backend if outcomes else "none",
+    )
+    return SearchOutcome(results=merged, backend=backend, status=status)
+
+
 async def _weather_results(query: str, client: Any) -> list[dict[str, Any]] | None:
     """Open-Meteo lookup: geocode the location in *query*, fetch a 3-day
     forecast, return it as one search-result snippet. ``None`` = not
@@ -227,6 +274,9 @@ class SearchWebTool:
         "from your own knowledge, without searching. "
         "For weather questions, put the location in the query (e.g. 'weather "
         "Berlin tomorrow'). "
+        "For research questions, pass 2-3 DIFFERENT phrasings via 'queries' "
+        "in ONE call (fetched concurrently) instead of searching again in a "
+        "later round — one call should gather all the evidence you need. "
         "DO NOT USE for actions on connected systems (use cli_* or MCP tools "
         "for that) — 'my X' or 'start X' is NEVER search intent."
     )
@@ -234,6 +284,16 @@ class SearchWebTool:
         "type": "object",
         "properties": {
             "query": {"type": "string", "description": "Search query"},
+            "queries": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Up to 3 query variants fetched CONCURRENTLY in this one "
+                    "call (different phrasings/languages of the same research "
+                    "question). Preferred over issuing a second search in a "
+                    "later round."
+                ),
+            },
             "max_results": {"type": "integer", "default": 5},
         },
         "required": ["query"],
@@ -242,8 +302,22 @@ class SearchWebTool:
     async def execute(self, args: dict[str, Any], ctx: ExecutionContext) -> ToolResult:
         query = (args.get("query") or "").strip()
         max_results = int(args.get("max_results", 5))
-        if not query:
+        # Query variants (2026-07-17, BUG-072 follow-up): a research question
+        # used to cost TWO sequential model rounds because the first search's
+        # evidence was thin and the model refined its query in the next round
+        # — a full provider round-trip per refinement. Variants passed in ONE
+        # call run concurrently under the same voice deadline, so the model
+        # gathers all evidence in a single round.
+        raw_variants = args.get("queries")
+        variants: list[str] = []
+        for candidate in ([query] + list(raw_variants or []))[: _MAX_QUERY_VARIANTS + 1]:
+            text = str(candidate or "").strip()
+            if text and text.lower() not in {v.lower() for v in variants}:
+                variants.append(text)
+        variants = variants[:_MAX_QUERY_VARIANTS]
+        if not variants:
             return ToolResult(success=False, output=None, error="query missing")
+        query = variants[0]
 
         try:
             import httpx
@@ -274,12 +348,16 @@ class SearchWebTool:
                 )
 
         # General web search: real DuckDuckGo web search, with the DDG
-        # Instant-Answer box as a cheap encyclopedic fallback. Bounded by the
-        # same single voice-path deadline as the weather path.
+        # Instant-Answer box as a cheap encyclopedic fallback. All query
+        # variants run CONCURRENTLY and share the single voice-path deadline,
+        # so three variants cost the same wall time as one.
         try:
             async with asyncio.timeout(_TIMEOUT_S):
                 async with httpx.AsyncClient(timeout=_TIMEOUT_S) as client:
-                    outcome = await run_search(query, max_results, client=client)
+                    outcomes = await asyncio.gather(*[
+                        run_search(variant, max_results, client=client)
+                        for variant in variants
+                    ])
         except Exception:  # noqa: BLE001 — incl. TimeoutError: never sink the turn
             return ToolResult(
                 success=True,
@@ -294,12 +372,15 @@ class SearchWebTool:
                 },
             )
 
+        outcome = _merge_outcomes(outcomes)
         output: dict[str, Any] = {
             "query": query,
             "results": outcome.results,
             "backend": outcome.backend,
             "status": outcome.status,
         }
+        if len(variants) > 1:
+            output["queries"] = variants
         if outcome.status == "unavailable":
             output["detail"] = (
                 "Web search is temporarily unavailable. Tell the user the search "

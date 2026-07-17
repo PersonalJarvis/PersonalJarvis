@@ -407,6 +407,10 @@ _DELEGATE_VOICE_DIRECTIVE = (
     "calls in ONE round instead of one per round; never re-issue a tool call "
     "(or a rephrasing of it) whose result you already have; as soon as the "
     "gathered evidence answers the question, stop calling tools and answer. "
+    "For web research: put your 2-3 query variants into ONE search_web call "
+    "(its 'queries' parameter) and ANSWER from that first round of results — "
+    "a good spoken answer NOW beats a perfect one after more digging; search "
+    "again only if the first results are genuinely unusable. "
     "Keep the final answer concise and speakable."
 )
 
