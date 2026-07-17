@@ -296,7 +296,14 @@ async def test_unsafe_output_cancel_stops_playback_and_returns_to_listening(
 ) -> None:
     pipe = _pipe()
     fallback_pcm = b"\x06\x00" * 32
-    pipe._tts = _FakeTTS(fallback_pcm)
+    # Strict mode separation: the audible emergency phrase comes from the
+    # REALTIME-scoped TTS; the pipeline [tts] instance must stay untouched.
+    pipe._tts = _FakeTTS(b"\x0f\x00" * 32)
+    surface_tts = _FakeTTS(fallback_pcm)
+    monkeypatch.setattr(
+        "jarvis.plugins.tts.build_realtime_surface_tts",
+        lambda _cfg, _provider: surface_tts,
+    )
     cancel_delivered = asyncio.Event()
     built: dict[str, object] = {}
 
@@ -330,7 +337,8 @@ async def test_unsafe_output_cancel_stops_playback_and_returns_to_listening(
 
     assert pipe._player.stopped >= 1
     assert fallback_pcm in pipe._player.pcm
-    assert pipe._tts.calls == [("An error occurred.", "en-US")]
+    assert surface_tts.calls == [("An error occurred.", "en-US")]
+    assert pipe._tts.calls == []
     assert pipe._test_states[-2:] == [
         pipeline_mod.TurnTakingState.JARVIS_SPEAKING,
         pipeline_mod.TurnTakingState.LISTENING,
@@ -358,10 +366,9 @@ async def test_error_spoken_renders_through_realtime_scoped_surface_tts(
     resolved: dict[str, object] = {}
     spoken_delivered = asyncio.Event()
 
-    def _scoped_surface_tts(cfg, provider, base):
+    def _scoped_surface_tts(cfg, provider):
         resolved["cfg"] = cfg
         resolved["provider"] = provider
-        resolved["base"] = base
         return surface_tts
 
     monkeypatch.setattr(
@@ -390,13 +397,58 @@ async def test_error_spoken_renders_through_realtime_scoped_surface_tts(
     await asyncio.wait_for(spoken_delivered.wait(), timeout=0.5)
     await asyncio.sleep(0)
 
-    # The resolver received the active realtime provider + the pipeline TTS as
-    # the last-resort base, and the scoped instance did ALL the speaking.
+    # The resolver received the active realtime provider, and the scoped
+    # instance did ALL the speaking — the pipeline [tts] stayed untouched.
     assert resolved["provider"] == "fake-live"
-    assert resolved["base"] is pipeline_tts
     assert [text for text, _lang in surface_tts.calls] == ["The grounded reply."]
     assert pipeline_tts.calls == []
     assert surface_pcm in pipe._player.pcm
+
+    pipe._hangup_event.set()
+    assert await asyncio.wait_for(task, timeout=0.5) == HANGUP_HOTKEY
+
+
+@pytest.mark.asyncio
+async def test_error_spoken_without_realtime_scoped_tts_never_borrows_pipeline_voice(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """STRICT mode separation (maintainer mandate 2026-07-17): a realtime
+    provider without a same-family TTS sibling keeps the emergency re-render
+    TEXT-ONLY. The pipeline's [tts] instance is never a last resort — its
+    credentials belong to a different, independent mode."""
+    pipe = _pipe()
+    pipeline_tts = _FakeTTS(b"\x07\x00" * 32)
+    pipe._tts = pipeline_tts
+    spoken_delivered = asyncio.Event()
+
+    class _ErrorSpokenSession(_HandshakeOnlyRealtimeSession):
+        async def handle_control(self, message) -> None:
+            await super().handle_control(message)
+            await self._send_json(
+                {
+                    "type": "error_spoken",
+                    "text": "The grounded reply.",
+                    "language": "en",
+                }
+            )
+            spoken_delivered.set()
+
+    def _build(**kwargs):
+        return _ErrorSpokenSession(kwargs["send_binary"], kwargs["send_json"])
+
+    # No build_realtime_surface_tts mock: the REAL resolver runs and finds no
+    # TTS sibling for the unmapped "fake-live" family.
+    monkeypatch.setattr("jarvis.realtime.factory.build_realtime_session", _build)
+    monkeypatch.setattr(pipeline_mod, "MicrophoneCapture", lambda **_kwargs: _SilentMic())
+
+    task = asyncio.create_task(pipe._active_realtime_session())
+    await asyncio.wait_for(spoken_delivered.wait(), timeout=0.5)
+    await asyncio.sleep(0)
+
+    assert pipeline_tts.calls == []
+    assert pipe._player.pcm == []
+    # No JARVIS_SPEAKING flash for an unspoken turn.
+    assert pipeline_mod.TurnTakingState.JARVIS_SPEAKING not in pipe._test_states
 
     pipe._hangup_event.set()
     assert await asyncio.wait_for(task, timeout=0.5) == HANGUP_HOTKEY
@@ -448,7 +500,7 @@ async def test_error_spoken_voice_hint_is_capability_gated(
 
     monkeypatch.setattr(
         "jarvis.plugins.tts.build_realtime_surface_tts",
-        lambda _cfg, _provider, _base: surface_tts,
+        lambda _cfg, _provider: surface_tts,
     )
 
     class _VoiceHintSession(_HandshakeOnlyRealtimeSession):

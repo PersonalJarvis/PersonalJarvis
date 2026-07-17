@@ -6200,23 +6200,39 @@ class SpeechPipeline:
                 )
                 scrubbed = scrub_for_voice(text, language=language)
                 cleaned = scrubbed.cleaned.strip()
-                if cleaned and not getattr(self, "_muted", False):
+                surface_tts = (
+                    self._resolve_realtime_surface_tts(
+                        self._active_realtime_provider
+                    )
+                    if cleaned and not getattr(self, "_muted", False)
+                    else None
+                )
+                if cleaned and surface_tts is None and not getattr(self, "_muted", False):
+                    # STRICT mode separation (maintainer mandate 2026-07-17):
+                    # a realtime session must never spend pipeline credentials
+                    # or speak with the pipeline's [tts] voice — not even as a
+                    # last resort. Without a realtime-scoped TTS the reply
+                    # stays TEXT-ONLY (the transcript already carries it);
+                    # this log line is the honest audible-gap marker.
+                    log.warning(
+                        "Realtime surface fallback has no realtime-scoped TTS "
+                        "for provider %r — keeping the turn text-only instead "
+                        "of borrowing the pipeline voice (mode separation).",
+                        self._active_realtime_provider,
+                    )
+                if cleaned and surface_tts is not None:
                     # Realtime has already failed to render this grounded text.
-                    # Re-render through a REALTIME-scoped TTS (same provider
-                    # family + realtime credential slots + session voice; the
-                    # classic pipeline chain only as last resort — mode
-                    # separation 2026-07-17) on the same AudioPlayer as an
-                    # independent last mile. The existing mic pump and local
-                    # barge detector remain active, so this does not open a
-                    # second microphone or replay the user's request.
+                    # Re-render through the REALTIME-scoped TTS (same provider
+                    # family + realtime credential slots + session voice —
+                    # strict mode separation 2026-07-17) on the same
+                    # AudioPlayer as an independent last mile. The existing mic
+                    # pump and local barge detector remain active, so this does
+                    # not open a second microphone or replay the user's request.
                     await playback.cancel()
                     speaking = True
                     barge_detector.start_output()
                     await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
                     try:
-                        surface_tts = self._resolve_realtime_surface_tts(
-                            self._active_realtime_provider
-                        )
                         # Voice-identity continuity: the realtime session names
                         # the voice it was speaking with, so this last mile does
                         # not flip speakers mid-conversation (Fenrir→Charon,
@@ -9447,30 +9463,28 @@ class SpeechPipeline:
                 self._abort_playback_device()
                 return set()
 
-    def _resolve_realtime_surface_tts(self, provider: str) -> Any:
+    def _resolve_realtime_surface_tts(self, provider: str) -> Any | None:
         """TTS for re-rendering a realtime turn locally (mode separation).
 
-        Prefers the active realtime provider's own TTS family, keyed through
-        the realtime credential slots and speaking the session voice; the
-        classic pipeline chain stays wired underneath as the cross-family
-        last resort (AD-OE6). Cached per (provider, pipeline TTS instance) so
-        a live TTS switch via ``set_tts`` naturally invalidates it. Any
-        resolution failure returns the pipeline TTS — never raises.
+        STRICT separation (maintainer mandate 2026-07-17): resolves ONLY the
+        active realtime provider's own TTS family, keyed through the realtime
+        credential slots and speaking the session voice. The pipeline ``[tts]``
+        instance is never a candidate — ``None`` means "keep the turn
+        text-only". Cached per provider; never raises.
         """
-        base = getattr(self, "_tts", None)
         key = (provider or "").strip().lower()
-        if not key or base is None:
-            return base
+        if not key:
+            return None
         cached = getattr(self, "_realtime_surface_tts_cache", None)
-        if cached is not None and cached[0] == key and cached[1] is base:
-            return cached[2]
+        if cached is not None and cached[0] == key:
+            return cached[1]
         try:
             from jarvis.plugins.tts import build_realtime_surface_tts
 
-            built = build_realtime_surface_tts(self._config, key, base)
-        except Exception:  # noqa: BLE001 — the emergency voice must never break
-            built = base
-        self._realtime_surface_tts_cache = (key, base, built)
+            built = build_realtime_surface_tts(self._config, key)
+        except Exception:  # noqa: BLE001 — the emergency voice must never break the turn
+            built = None
+        self._realtime_surface_tts_cache = (key, built)
         return built
 
     def _emit_spoken(

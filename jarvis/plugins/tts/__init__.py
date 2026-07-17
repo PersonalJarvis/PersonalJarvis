@@ -260,36 +260,38 @@ def resolve_keyed_fallback(
 # The desktop surface re-renders a realtime turn locally when the live provider
 # fails to deliver audio (scrub-gate cancel, text-only completion). That
 # emergency voice must sound like the SESSION and resolve through the REALTIME
-# credential slots — never jump straight to the pipeline's separately
-# configured [tts] provider (live incident 2026-07-17 10:04: a gemini-live
-# session's re-render spoke as "Charon @ openrouter" because the pipeline
-# primary was openrouter-tts). Realtime families absent here have no native
-# TTS sibling installed; their surface fallback stays on the key-aware
-# pipeline chain.
+# credential slots — never through the pipeline's separately configured [tts]
+# provider (live incident 2026-07-17 10:04: a gemini-live session's re-render
+# spoke as "Charon @ openrouter" because the pipeline primary was
+# openrouter-tts). Realtime families absent here have no native TTS sibling
+# installed; their emergency re-render stays TEXT-ONLY — the maintainer
+# mandate (2026-07-17) is STRICT mode independence: a realtime session must
+# work with only realtime keys and must never spend pipeline credentials,
+# not even as a last resort.
 _REALTIME_SURFACE_TTS_FAMILY: dict[str, str] = {
     "gemini-live": "gemini-flash-tts",
 }
 
 
-def build_realtime_surface_tts(
-    cfg: Any, realtime_provider: str, pipeline_tts: Any
-) -> Any:
+def build_realtime_surface_tts(cfg: Any, realtime_provider: str) -> Any | None:
     """TTS for re-rendering a REALTIME turn locally (the surface fallback).
 
-    Mode separation: prefer a TTS of the SAME provider family as the active
-    realtime session — keyed through the realtime credential slots
+    STRICT mode separation (maintainer mandate 2026-07-17): the emergency
+    voice is a TTS of the SAME provider family as the active realtime
+    session — keyed through the realtime credential slots
     (``PROVIDER_SECRET_CANDIDATES[<realtime id>]``, dedicated realtime slot
-    first) and speaking the session's configured voice — over the pipeline's
-    separately configured ``[tts]`` chain. The pipeline chain stays wired as
-    the cross-family last resort so a dead or keyless family still degrades
-    honestly instead of going mute (AD-OE6 zero-silent-drops, AP-22).
+    first) and speaking the session's configured voice. Realtime and
+    pipeline are independent modes: each must work with only its own keys,
+    so the pipeline ``[tts]`` chain is NEVER a candidate here.
 
-    Never raises: any resolution problem returns ``pipeline_tts`` unchanged.
+    Returns ``None`` when the realtime family has no TTS sibling or no
+    usable key — the caller then keeps the turn text-only with an honest
+    log instead of borrowing the pipeline voice. Never raises.
     """
     provider_id = (realtime_provider or "").strip().lower()
     family = _REALTIME_SURFACE_TTS_FAMILY.get(provider_id)
     if not family:
-        return pipeline_tts
+        return None
     try:
         from jarvis.core.config import get_provider_secret
 
@@ -297,10 +299,11 @@ def build_realtime_surface_tts(
         if not api_key:
             log.info(
                 "Realtime surface TTS: no key for realtime provider %r — "
-                "using the pipeline TTS chain.",
+                "the emergency re-render stays text-only (strict mode "
+                "separation).",
                 provider_id,
             )
-            return pipeline_tts
+            return None
 
         providers = getattr(getattr(cfg, "brain", None), "providers", None)
         provider_cfg = (
@@ -316,7 +319,7 @@ def build_realtime_surface_tts(
             # catalog, so the session voice usually carries over verbatim;
             # an unknown voice falls back to the plugin default.
             voice = session_voice if session_voice in _GEMINI_VOICES else "Charon"
-            primary: Any = GeminiFlashTTS(
+            surface: Any = GeminiFlashTTS(
                 default_voice=voice,
                 language_code=getattr(tts_cfg, "language_code", None) or "de-DE",
                 allow_sapi5_fallback=bool(
@@ -326,23 +329,21 @@ def build_realtime_surface_tts(
                 api_key=api_key,
             )
         else:  # pragma: no cover — map entries always name a buildable family
-            return pipeline_tts
-
-        from jarvis.plugins.tts.fallback_tts import FallbackTTS
+            return None
 
         log.info(
             "Realtime surface TTS: same-family %r (voice %r) serves realtime "
-            "provider %r; the pipeline chain remains the last resort.",
+            "provider %r (strict mode separation — no pipeline voice).",
             family, voice, provider_id,
         )
-        return FallbackTTS(primary, pipeline_tts)
-    except Exception as exc:  # noqa: BLE001 — resolution must never mute the fallback
+        return surface
+    except Exception as exc:  # noqa: BLE001 — an unbuildable emergency voice must not crash the turn
         log.warning(
-            "Realtime surface TTS resolution failed (%s) — using the pipeline "
-            "TTS chain.",
+            "Realtime surface TTS resolution failed (%s) — the emergency "
+            "re-render stays text-only (strict mode separation).",
             exc,
         )
-        return pipeline_tts
+        return None
 
 
 def _effective_primary_voice(family: str, tts_cfg: Any) -> str | None:
