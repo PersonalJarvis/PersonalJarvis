@@ -1,6 +1,7 @@
 {
   "auth_gate": {
     "checking": "Zugriff wird geprüft…",
+    "starting": "Wird gestartet…",
     "title": "Personal Jarvis entsperren",
     "subtitle": "Gib den Control Key dieser Jarvis-Instanz ein.",
     "control_key": "Control Key",

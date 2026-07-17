@@ -188,6 +188,25 @@ def run_one(python: str, timeout: float, mode: str = "legacy", voice: bool = Fal
                         if "<!doctype html" in body or "<div id=" in body or "<html" in body:
                             result["wall_ms"] = (time.perf_counter() - t_spawn) * 1000.0
                             health_ok.set()
+                            # A real desktop window acknowledges its first paint
+                            # (POST /api/ui/shell-painted after two animation
+                            # frames), which releases the backend's heavy-init
+                            # gate. This GUI-free harness has no window, so
+                            # WITHOUT the ack every run silently pays the full
+                            # 12 s paint-timeout fallback — inflating every TTU
+                            # anchor and false-failing the boot-budget gate.
+                            # Ack right after the shell HTML is served: the
+                            # closest honest stand-in for the window's paint.
+                            try:
+                                req = urllib.request.Request(
+                                    f"http://127.0.0.1:{port}/api/ui/shell-painted",
+                                    data=b"",
+                                    method="POST",
+                                )
+                                with urllib.request.urlopen(req, timeout=2.0):  # noqa: S310
+                                    pass
+                            except Exception:  # noqa: BLE001 — ack is best-effort
+                                pass
                             return
             except Exception:  # noqa: BLE001
                 pass

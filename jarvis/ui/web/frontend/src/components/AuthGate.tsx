@@ -49,9 +49,41 @@ export function AuthGate({ children }: AuthGateProps) {
   const t = useT();
   const started = useRef(false);
   const [state, setState] = useState<GateState>("checking");
+  const [backendWarming, setBackendWarming] = useState(false);
   const [controlKey, setControlKey] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [errorKey, setErrorKey] = useState<string | null>(null);
+
+  // While the access probe is pending, poll the (always instantly answered)
+  // health endpoint. During a cold boot the serve-first bootstrap HOLDS every
+  // /api/* request until the real backend registers — which can take a while —
+  // so without this the gate shows "Checking access…" for the entire warm-up
+  // and the boot looks stuck on an access check that is actually fine. Health
+  // answers `warming: true` from the first millisecond, letting the gate show
+  // an honest "starting up" instead. Polling starts after a beat so the normal
+  // already-warm path (config answers in milliseconds) never pays a request.
+  useEffect(() => {
+    if (state !== "checking") return;
+    let cancelled = false;
+    const probe = async () => {
+      try {
+        const res = await fetch("/api/health", {
+          cache: "no-store",
+          credentials: "same-origin",
+        });
+        if (!res.ok || cancelled) return;
+        const body = (await res.json()) as { warming?: boolean };
+        if (!cancelled) setBackendWarming(body?.warming === true);
+      } catch {
+        // Offline/unreachable — the /api/config probe owns that outcome.
+      }
+    };
+    const timer = window.setInterval(() => void probe(), 1000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [state]);
 
   useEffect(() => {
     if (started.current) return;
@@ -124,9 +156,15 @@ export function AuthGate({ children }: AuthGateProps) {
   if (state === "checking") {
     return (
       <main className="flex min-h-screen items-center justify-center bg-background text-foreground">
-        <span className="text-sm text-muted-foreground" role="status">
-          {t("auth_gate.checking")}
-        </span>
+        <div className="flex flex-col items-center gap-4">
+          <div
+            aria-hidden="true"
+            className="h-9 w-9 animate-spin rounded-full border-[3px] border-primary/20 border-t-primary"
+          />
+          <span className="text-sm text-muted-foreground" role="status">
+            {t(backendWarming ? "auth_gate.starting" : "auth_gate.checking")}
+          </span>
+        </div>
       </main>
     );
   }

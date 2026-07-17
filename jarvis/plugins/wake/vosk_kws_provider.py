@@ -470,6 +470,9 @@ class VoskKwsProvider:
         self._target_peak = float(target_peak)
         self._max_gain = float(max_gain)
         self._models: dict[str, Any] = {}
+        # Set once ``start()`` has attempted every model load — the honest
+        # "warm" floor even when a broken model directory never loads.
+        self._load_attempted = False
         # Pre-warmed ONE-SHOT verify recognizers, keyed (model_path, kind).
         # Why: a fresh KaldiRecognizer's FIRST decode pays ~400ms lazy init
         # on top of ~100ms construction (measured 2026-07-11: fresh verify
@@ -636,6 +639,25 @@ class VoskKwsProvider:
         self._kick_replenish()
         return recs
 
+    @property
+    def is_warm(self) -> bool:
+        """True once every configured model directory has finished loading.
+
+        Consumed by the desktop wake-model priority gate: the heavy backend
+        boot storm (brain/MCP/mission init) is held until the ACTIVE wake
+        engine is warm so the model load runs uncontended. Gating on the
+        utterance STT instead let the storm start mid-load and stretched a
+        few-second Vosk model load to 30+ s (live forensic 2026-07-17).
+
+        A broken model directory must not wedge the gate: once ``start()``
+        has ATTEMPTED every load, warm is honest-true even if a load failed
+        (detection continues on the working models; the gate's job — an
+        uncontended load window — is over either way).
+        """
+        if self._load_attempted:
+            return True
+        return all(path in self._models for path in self._model_paths)
+
     async def start(self) -> None:
         """Pre-load every model and FILL the prewarmed recognizer stock.
 
@@ -644,13 +666,22 @@ class VoskKwsProvider:
         first-decode init), and unlike the throwaways they are kept and
         consumed by the first real detect/verify. Fail-closed: errors must
         never break boot — takers fall back to cold builds.
+
+        The per-language models load CONCURRENTLY: each is an independent
+        Kaldi object (no shared engine, AP-24-safe) and the load is mostly
+        native disk/CPU work, so overlapping them cuts multi-language boot
+        from the sum of the loads to the slowest one (live forensic
+        2026-07-17: en 34 s + de 24 s sequential under a boot storm).
         """
-        for path in self._model_paths:
+        async def _load_one(path: str) -> None:
             try:
                 await asyncio.to_thread(self._ensure_model, path)
             except Exception as exc:  # noqa: BLE001 — a broken model must not
                 # brick the working ones; _fresh_recs skips it too.
                 log.warning("vosk-kws: model %s failed to load (%s).", path, exc)
+
+        await asyncio.gather(*(_load_one(path) for path in self._model_paths))
+        self._load_attempted = True
         await asyncio.to_thread(self._replenish_stock)
 
     async def stop(self) -> None:
@@ -667,6 +698,7 @@ class VoskKwsProvider:
         with self._stock_lock:
             self._rec_stock.clear()
         self._models.clear()
+        self._load_attempted = False
         self._ring.clear()
         self._ring_len = 0
 

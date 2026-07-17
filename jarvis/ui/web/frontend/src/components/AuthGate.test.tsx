@@ -16,7 +16,39 @@ describe("AuthGate", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
+    vi.useRealTimers();
     window.__JARVIS_TOKEN = undefined;
+  });
+
+  it("shows an honest starting state while the backend is still warming", async () => {
+    vi.useFakeTimers();
+    // The serve-first bootstrap HOLDS /api/config during warm-up — model that
+    // with a never-resolving promise; only /api/health answers (warming: true).
+    const held = new Promise<Response>(() => {});
+    const fetchMock = vi.fn((url: unknown) => {
+      if (url === "/api/health") {
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: () => Promise.resolve({ ok: true, warming: true }),
+        } as unknown as Response);
+      }
+      return held;
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<AuthGate><div>Application</div></AuthGate>);
+    expect(screen.getByText("Checking access…")).toBeTruthy();
+
+    await act(async () => {
+      vi.advanceTimersByTime(1100);
+    });
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(screen.getByText("Starting up…")).toBeTruthy();
+    expect(screen.queryByText("Application")).toBeNull();
   });
 
   it("renders the application when the session cookie is authorized", async () => {

@@ -1,6 +1,7 @@
 {
   "auth_gate": {
     "checking": "Comprobando el acceso…",
+    "starting": "Iniciando…",
     "title": "Desbloquear Personal Jarvis",
     "subtitle": "Introduce la clave de control de esta instancia de Jarvis.",
     "control_key": "Clave de control",

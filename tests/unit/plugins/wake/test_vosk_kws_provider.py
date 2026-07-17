@@ -235,6 +235,29 @@ async def _run_detect(provider: VoskKwsProvider, chunks: list[AudioChunk]) -> li
     return fired
 
 
+# --- warm-up / start ------------------------------------------------------------
+
+
+async def test_start_loads_all_models_concurrently_and_reports_warm(fake_vosk) -> None:
+    """``is_warm`` is the desktop wake-model priority gate's signal: it must be
+    False until ``start()`` has loaded (or at least attempted) EVERY configured
+    per-language model, and True afterwards — gating the heavy backend on the
+    utterance STT instead let the boot storm start mid-load and stretched a
+    few-second Vosk load to 30+ s per model (live forensic 2026-07-17)."""
+    provider = VoskKwsProvider(
+        phrase="Hey Nova",
+        model_path="models/en",
+        model_paths=("models/en", "models/de"),
+    )
+    assert provider.is_warm is False
+    await provider.start()
+    assert set(fake_vosk["models"]) == {"models/en", "models/de"}
+    assert provider.is_warm is True
+    # A detector swap tears warm state down with the models.
+    await provider.stop()
+    assert provider.is_warm is False
+
+
 # --- detection loop -------------------------------------------------------------
 
 

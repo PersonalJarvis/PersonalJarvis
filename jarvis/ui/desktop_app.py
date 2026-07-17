@@ -2907,6 +2907,18 @@ class DesktopApp:
             # immediately if there is no local wake model (e.g. the OWW path), so
             # the backend never waits needlessly.
             def _wake_model_is_loaded() -> bool:
+                # Prefer the ACTIVE wake detector's own warm signal. The
+                # any-word vosk_kws engine loads one Kaldi model per installed
+                # language inside ``wake.start()`` — the STT-based probes below
+                # know nothing about it, so the gate used to release while
+                # those loads were still running and the heavy backend storm
+                # stretched a few-second load to 30+ s per model (live
+                # forensic 2026-07-17: en 34 s + de 24 s, voice ready at ~2 min).
+                detector_warm = getattr(
+                    getattr(pipeline, "_wake", None), "is_warm", None
+                )
+                if detector_warm is not None:
+                    return bool(detector_warm)
                 ww = getattr(pipeline, "_whisper_wake", None)
                 base_stt = getattr(ww, "_stt", None) if ww is not None else stt
                 if base_stt is None:

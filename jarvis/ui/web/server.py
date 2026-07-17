@@ -517,7 +517,7 @@ class WebServer:
         if self._voice_ready:
             return
         logger.warning(
-            "Voice-ready watchdog fired after %.0fs — the speech pipeline never "
+            "Voice-ready watchdog fired after {:.0f}s — the speech pipeline never "
             "signalled ready (a construction crash or a wedged warm-up load). "
             "Force-releasing the UI from 'starting up'; voice may be offline until "
             "restart.",
