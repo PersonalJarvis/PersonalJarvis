@@ -251,15 +251,32 @@ with the VPS path. Doctrine: [`CLOUD.md`](CLOUD.md) +
 
 ---
 
-## 4. Naming — the agent/mission system is "Jarvis-Agents"
+## 4. Naming — internal system "Jarvis-Agents", user-visible brand is DYNAMIC (BINDING)
 
-The internal agent/mission/harness system is named **Jarvis-Agents** (singular
-**Jarvis-Agent**) everywhere a human or LLM could read it — UI labels, docs,
-comments, new code identifiers, log/voice text. No other names. **Glossary:**
-formerly "Subagents" / "Sub-Agent" / "sub_jarvis" / "SubJarvis" and "OpenClaw"
-/ "openclaw", renamed repo-wide 2026-06-30. Surviving old-name occurrences are
-intentional: the external `openclaw` npm worker binary (it owns that name),
-read-time back-compat config aliases (new `[brain.worker]` /
+**Two layers, never mix them up (2026-07-17 rebrand):**
+
+1. **Internal name** — the agent/mission/harness system is named
+   **Jarvis-Agents** (singular **Jarvis-Agent**) in everything that is NOT
+   end-user-visible: code identifiers, file/class names, docs, comments,
+   commit messages, log lines, i18n KEYS, API paths. No other internal names.
+2. **User-visible brand** — every surface an END USER sees or hears (UI
+   labels, spoken TTS output, transcript labels, API `detail`/`label` strings
+   the UI displays, tool-schema prose the router brain converts into speech)
+   derives the name from the configured wake word: wake word "Hey Ruben" →
+   **"Ruben-Agent(s)"**, "Harald" → "Harald-Agent(s)" — for ANY wake word,
+   with the neutral **"Assistant-Agent"** fallback when none is set. NEVER
+   hardcode "Jarvis-Agent" (or any fixed name) in a user-visible string.
+   Plumbing: i18n token `{name}-Agent` in locale values;
+   `agentBrand`/`useAgentBrand` (`src/lib/agentBrand.ts`) in TS;
+   `agent_brand`/`agent_brand_from_name`
+   (`jarvis/brain/assistant_name.py`) in Python. Tests must pin an arbitrary
+   brand (e.g. "Nova-Agent") and must NEVER assert against the host's live
+   wake-word config.
+
+**Glossary:** formerly "Subagents" / "Sub-Agent" / "sub_jarvis" / "SubJarvis"
+and "OpenClaw" / "openclaw", renamed repo-wide 2026-06-30. Surviving old-name
+occurrences are intentional: the external `openclaw` npm worker binary (it
+owns that name), read-time back-compat config aliases (new `[brain.worker]` /
 `[harness.jarvis_agent]` still accept old `[brain.sub_jarvis]` /
 `[harness.openclaw]`), and historical migration notes.
 
