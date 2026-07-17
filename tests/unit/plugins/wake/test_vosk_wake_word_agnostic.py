@@ -208,6 +208,23 @@ def _loud_window(seconds: float = 2.0) -> np.ndarray:
     return (rng.standard_normal(int(16_000 * seconds)) * 0.15).astype(np.float32)
 
 
+def _stub_take(grammar: dict, free: dict, competition: dict | None = None):
+    """A ``_take_verify_rec`` stand-in routing by recognizer kind.
+
+    ``competition`` defaults to the grammar decode — the common genuine case
+    where the phrase also wins against the "<prefix> [unk]" competitor.
+    """
+
+    def _take(model_path, kind):  # noqa: ANN001
+        if kind == "grammar":
+            return _StubRec(grammar)
+        if kind == "competition":
+            return _StubRec(competition if competition is not None else grammar)
+        return _StubRec(free)
+
+    return _take
+
+
 def test_verify_fires_on_a_wake_the_free_ear_could_not_spell(monkeypatch) -> None:
     """The live BUG: 'Hey Ruben' heard as 'herum' was thrown away."""
     p = VoskKwsProvider("Hey Ruben", model_path="fake", keyword="ruben")
@@ -221,10 +238,7 @@ def test_verify_fires_on_a_wake_the_free_ear_could_not_spell(monkeypatch) -> Non
     }
     free = {"text": "herum", "result": [_w("herum", 0.40, 1.02, conf=0.6)]}
 
-    def _take(model_path, kind):  # noqa: ANN001
-        return _StubRec(grammar if kind == "grammar" else free)
-
-    monkeypatch.setattr(p, "_take_verify_rec", _take)
+    monkeypatch.setattr(p, "_take_verify_rec", _stub_take(grammar, free))
     assert p._verify_window(_loud_window(), fail_open=True) is True
 
 
@@ -250,8 +264,113 @@ def test_verify_still_rejects_room_speech_forced_onto_the_phrase(monkeypatch) ->
         ],
     }
 
+    monkeypatch.setattr(p, "_take_verify_rec", _stub_take(grammar, free))
+    assert p._verify_window(_loud_window(), fail_open=True) is False
+
+
+# --- shape acceptances must WIN the acoustic competition (2026-07-17) --------
+
+
+_ATLAS_GRAMMAR = {
+    "text": "hey atlas",
+    "result": [
+        {"word": "hey", "start": 0.40, "end": 0.62, "conf": 1.0},
+        {"word": "atlas", "start": 0.62, "end": 1.05, "conf": 1.0},
+    ],
+}
+# The free ear heard a name-shaped SOMETHING it could not spell — exactly the
+# output a call of a DIFFERENT name produces too.
+_ATLAS_FREE = {
+    "text": "hey holden",
+    "result": [
+        _w("hey", 0.40, 0.62, conf=0.9),
+        _w("holden", 0.62, 1.05, conf=0.6),
+    ],
+}
+
+
+def test_a_shape_acceptance_that_loses_the_competition_does_not_fire(
+    monkeypatch,
+) -> None:
+    """LIVE false wake (2026-07-17): 'hey nova' fired (shape) for 'Hey Jarvis'.
+
+    The forced grammar had no way to say "hey + some OTHER word". Once the
+    competitor grammar hears exactly that, the shape acceptance must fall.
+    """
+    p = VoskKwsProvider("Hey Atlas", model_path="fake", keyword="atlas")
+    competition = {"text": "hey [unk]", "result": []}
+
+    monkeypatch.setattr(
+        p, "_take_verify_rec", _stub_take(_ATLAS_GRAMMAR, _ATLAS_FREE, competition)
+    )
+    assert p._verify_window(_loud_window(), fail_open=True) is False
+    assert p.stats()["suppressed_shape_competition"] == 1
+
+
+def test_a_shape_acceptance_that_wins_the_competition_still_fires(
+    monkeypatch,
+) -> None:
+    """A genuine garbled wake keeps firing: the phrase wins its own audio."""
+    p = VoskKwsProvider("Hey Atlas", model_path="fake", keyword="atlas")
+
+    monkeypatch.setattr(
+        p, "_take_verify_rec", _stub_take(_ATLAS_GRAMMAR, _ATLAS_FREE)
+    )
+    assert p._verify_window(_loud_window(), fail_open=True) is True
+
+
+def test_the_spelling_path_never_consults_the_competition(monkeypatch) -> None:
+    """A free ear that SPELLED the phrase fires even when the competitor
+    grammar would disagree — the spelling path stays accept-only (AP-27)."""
+    p = VoskKwsProvider("Hey Atlas", model_path="fake", keyword="atlas")
+    free = {
+        "text": "hey atlas",
+        "result": [
+            _w("hey", 0.40, 0.62, conf=0.9),
+            _w("atlas", 0.62, 1.05, conf=0.8),
+        ],
+    }
+    competition = {"text": "hey [unk]", "result": []}
+
+    monkeypatch.setattr(
+        p, "_take_verify_rec", _stub_take(_ATLAS_GRAMMAR, free, competition)
+    )
+    assert p._verify_window(_loud_window(), fail_open=True) is True
+
+
+def test_a_broken_competition_pass_fails_open(monkeypatch) -> None:
+    """The extra check must never make the detector deaf."""
+    p = VoskKwsProvider("Hey Atlas", model_path="fake", keyword="atlas")
+
+    class _Boom:
+        def AcceptWaveform(self, pcm: bytes) -> bool:  # noqa: N802 - vosk API
+            raise RuntimeError("competition recognizer broke")
+
+        def FinalResult(self) -> str:  # noqa: N802 - vosk API
+            raise RuntimeError("competition recognizer broke")
+
     def _take(model_path, kind):  # noqa: ANN001
-        return _StubRec(grammar if kind == "grammar" else free)
+        if kind == "competition":
+            return _Boom()
+        return _StubRec(_ATLAS_GRAMMAR if kind == "grammar" else _ATLAS_FREE)
 
     monkeypatch.setattr(p, "_take_verify_rec", _take)
-    assert p._verify_window(_loud_window(), fail_open=True) is False
+    assert p._verify_window(_loud_window(), fail_open=True) is True
+
+
+def test_an_unprefixed_phrase_has_no_competition_to_lose() -> None:
+    """"Computer" offers no prefix anchor — the check always stands."""
+    p = VoskKwsProvider("Computer", model_path="fake", keyword="computer")
+    assert p._competition_grammar is None
+    assert p._shape_competition_ok(b"", None) is True
+
+
+def test_the_competition_grammar_derives_from_the_configured_phrase() -> None:
+    """Any prefixed phrase gets its own "<prefix> [unk]" competitor."""
+    p = VoskKwsProvider("Hallo Vega", model_path="fake", keyword="vega")
+    assert p._competition_grammar is not None
+    assert json.loads(p._competition_grammar) == [
+        "hallo vega",
+        "hallo [unk]",
+        "[unk]",
+    ]

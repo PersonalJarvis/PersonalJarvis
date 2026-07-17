@@ -25,8 +25,12 @@ Two-stage detection, AP-27-safe:
    must contain a real wake prefix immediately followed by a sound-close core.
    This keeps ASR spelling/splitting tolerance (for example, "joe avis" for
    "Jarvis") without letting a high-confidence grammar hallucination turn
-   unrelated room speech into a wake. Infrastructure errors fail OPEN so a
-   broken confirm cannot eat a real wake.
+   unrelated room speech into a wake. A shape-only acceptance (the free ear
+   could not spell the word but what it heard looks like a wake call) must
+   additionally win the acoustic competition against an explicit
+   "<prefix> [unk]" grammar alternative, or a call of a DIFFERENT name fires
+   too (live 2026-07-17). Infrastructure errors fail OPEN so a broken confirm
+   cannot eat a real wake.
 
 A raw-energy gate (word-agnostic RMS at the match site, AP-27) rejects
 near-silent candidates before the confirm. The detector never emits
@@ -189,6 +193,33 @@ _SHAPE_MIN_CORE_BODY_S = 0.20
 # exactly what ``sound_confirm``'s core_sizes tolerance already accepts, so the
 # split case is covered by the spelling path and must not be paid for twice.
 _SHAPE_TOKEN_SLACK = 0
+
+# --- acoustic competition for the SHAPE path (live forensic 2026-07-17) -----
+# The shape gate accepts anything that LOOKS like a wake call — which a call of
+# a DIFFERENT name also does. Live: "hey nova" confirmed (shape) for the phrase
+# "Hey Jarvis", "hey ruben" for "Hey Nova": every "<prefix> <other name>" call
+# has exactly the shape of a genuine wake, so shape alone cannot separate them
+# — and per AP-27 no spelling rule may reject either (measured again on this
+# corpus: the free-decode confidences of adversarial calls are indistinguishable
+# from genuine garbles, 0.45–0.88 both).
+#
+# What DOES separate them, without ever reading a spelling, is an ACOUSTIC
+# competition: re-score the window with a grammar that offers, next to the
+# configured phrase, an explicit "<prefix> [unk]" alternative. The decoder then
+# chooses whether the name slot is better explained by the configured wake word
+# or by ANY other word. A shape-only acceptance must win that competition; the
+# spelling path stays accept-only and never consults it (a free ear that wrote
+# the phrase down is stronger evidence than the competition is).
+#
+# Replay-calibrated on 918 real captured windows embedded in live-like ring
+# context (2026-07-17, three phrases x foreign-name calls + ambient): kills
+# every shape-path foreign-name fire (2 -> 0) at a 1-2 % genuine-recall cost,
+# where gating the WHOLE verify on the competition (not just the shape path)
+# cost 13 % of genuine "Hey Ruben" calls — that variant was rejected.
+# Only a PREFIXED phrase has this competition: an unprefixed phrase ("Computer")
+# already competes against the bare "[unk]" in the normal re-score grammar and
+# offers no prefix anchor to build the alternative from.
+_COMPETITION_KIND = "competition"
 
 # Ring buffer length for the confirm pass — long enough to hold the full
 # spoken phrase plus lead-in at the moment the partial trigger fires.
@@ -461,6 +492,16 @@ class VoskKwsProvider:
             _PREFIXED_CORE_RATIO if has_prefix else _UNPREFIXED_CORE_RATIO
         )
         self._confirm_ratio = max(float(confirm_ratio), structural_floor)
+        # Acoustic-competition grammar for shape-only acceptances: the phrase
+        # must beat an explicit "<prefix> [unk]" alternative (None for an
+        # unprefixed phrase — its normal re-score already competes with the
+        # bare "[unk]" and there is no prefix anchor to build this from).
+        raw_tokens = [t for t in self._phrase.lower().split() if t]
+        self._competition_grammar: str | None = None
+        if has_prefix and raw_tokens:
+            self._competition_grammar = json.dumps(
+                [self._phrase.lower(), f"{raw_tokens[0]} [unk]", "[unk]"]
+            )
         self._match_min_rms = float(match_min_rms)
         self._cooldown_s = float(cooldown_s)
         self._rejected_candidate_backoff_s = max(
@@ -521,6 +562,7 @@ class VoskKwsProvider:
         self._stat_fired = 0
         self._stat_early_shown = 0
         self._stat_early_retracted = 0
+        self._stat_suppressed_shape_competition = 0
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -560,6 +602,16 @@ class VoskKwsProvider:
 
         if kind == "grammar":
             rec = self._new_grammar_rec(path)
+        elif kind == _COMPETITION_KIND:
+            if self._competition_grammar is None:  # unprefixed phrase
+                rec = self._new_grammar_rec(path)
+            else:
+                rec = KaldiRecognizer(
+                    self._ensure_model(path),
+                    self._sample_rate,
+                    self._competition_grammar,
+                )
+                rec.SetWords(True)
         else:
             rec = KaldiRecognizer(self._ensure_model(path), self._sample_rate)
             rec.SetWords(True)
@@ -590,8 +642,11 @@ class VoskKwsProvider:
 
     def _replenish_stock(self) -> None:
         """Top the prewarmed stock back up to target (worker thread only)."""
+        kinds = ("grammar", "free") if self._competition_grammar is None else (
+            "grammar", "free", _COMPETITION_KIND,
+        )
         for path in self._model_paths:
-            for kind in ("grammar", "free"):
+            for kind in kinds:
                 key = (path, kind)
                 while True:
                     with self._stock_lock:
@@ -714,6 +769,9 @@ class VoskKwsProvider:
             "fired": self._stat_fired,
             "early_shown": self._stat_early_shown,
             "early_retracted": self._stat_early_retracted,
+            "suppressed_shape_competition": (
+                self._stat_suppressed_shape_competition
+            ),
         }
 
     # -- early candidate (visual-only) ----------------------------------------
@@ -974,10 +1032,19 @@ class VoskKwsProvider:
         # because the wake word is out-of-vocabulary for the very decoder being
         # asked to write it down. (b) can never depend on the phrase's
         # spelling, so it holds for every wake word in every language.
+        #
+        # (b) alone was the PRECISION trap one level up (live 2026-07-17): a
+        # call of a DIFFERENT name has exactly the shape of a wake call, so
+        # "hey nova" fired for "Hey Jarvis". A shape-only acceptance therefore
+        # must additionally WIN the acoustic competition — a purely acoustic
+        # judgement that never reads a spelling, so (a)'s recall contract is
+        # untouched: a free ear that spelled the phrase still fires instantly.
         ok = sound_confirm(free_local, self._phrase, ratio=self._confirm_ratio)
         by_shape = False
-        if not ok:
-            ok = by_shape = candidate_shape_ok(local_words, self._phrase)
+        if not ok and candidate_shape_ok(local_words, self._phrase):
+            ok = by_shape = self._shape_competition_ok(pcm, model_path)
+            if not ok:
+                self._stat_suppressed_shape_competition += 1
         log_method = log.info if ok else log.debug
         log_method(
             "vosk-kws: verify %s (%s) — free ear heard %r at the candidate span "
@@ -989,6 +1056,56 @@ class VoskKwsProvider:
             self._phrase,
         )
         return ok
+
+    def _shape_competition_ok(self, pcm: bytes, model_path: str | None) -> bool:
+        """Must the shape-only acceptance stand? Purely acoustic, fail-OPEN.
+
+        Re-scores the window with a grammar that offers the configured phrase
+        AND an explicit "<prefix> [unk]" competitor: the decoder itself decides
+        whether the name slot is better explained by the configured wake word
+        or by any other word. The window already passed the normal re-score,
+        the energy gate, and the shape gate — this only breaks the tie the
+        forced no-alternative grammar could not express (replay-calibrated
+        2026-07-17: kills every shape-path foreign-name fire at a 1-2 %
+        genuine-recall cost; see the _COMPETITION_KIND note).
+
+        An unprefixed phrase has no competitor to offer — it always stands.
+        Infrastructure errors accept (a broken extra check must never make the
+        detector deaf; the spelling path never consults this at all).
+        """
+        if self._competition_grammar is None:
+            return True
+        try:
+            rec = self._take_verify_rec(model_path, _COMPETITION_KIND)
+            rec.AcceptWaveform(pcm)
+            res = json.loads(rec.FinalResult())
+            if self._phrase.lower() not in res.get("text", ""):
+                log.debug(
+                    "vosk-kws: shape acceptance lost the acoustic competition "
+                    "— competitor grammar heard %r, not %r",
+                    res.get("text", "")[:60],
+                    self._phrase,
+                )
+                return False
+            words = [
+                w for w in res.get("result", [])
+                if w.get("word") in self._grammar_words
+            ]
+            conf = min((w.get("conf", 0.0) for w in words), default=0.0)
+            if conf < self._min_final_conf:
+                log.debug(
+                    "vosk-kws: shape acceptance lost the acoustic competition "
+                    "— re-heard %r only at conf %.2f",
+                    self._phrase,
+                    conf,
+                )
+                return False
+            return True
+        except Exception as exc:  # noqa: BLE001 — extra check fails open
+            log.warning(
+                "vosk-kws: shape competition errored (%s) — accepting.", exc
+            )
+            return True
 
     # -- detection loop --------------------------------------------------------
 
