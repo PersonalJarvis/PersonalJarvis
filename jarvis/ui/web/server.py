@@ -941,8 +941,11 @@ class WebServer:
                 get_secret,
                 jarvis_agent_secret_slot,
             )
+            from jarvis.brain.assistant_name import agent_brand
             from jarvis.ui.web.provider_spec import get_spec
 
+            # Display brand follows the wake-word-derived assistant name.
+            brand = agent_brand(cfg)
             mapping_rows = []
             for mapping in MAPPINGS:
                 slot = jarvis_agent_secret_slot(mapping.jarvis)
@@ -1003,10 +1006,10 @@ class WebServer:
                         "secret_key": secret_key,
                         "dashboard_url": spec.dashboard_url if spec else None,
                         "credential_help": (
-                            f"Dedicated Jarvis-Agent key for {spec.label}. "
+                            f"Dedicated {brand} key for {spec.label}. "
                             "It is not used by Brain or Realtime."
                             if spec
-                            else "Dedicated Jarvis-Agent API key."
+                            else f"Dedicated {brand} API key."
                         ),
                         "is_active_brain": mapping.jarvis == primary,
                         "billing": row_billing,
