@@ -1071,6 +1071,19 @@
       "accessibility": { "title": "Accessibility", "description": "Required for reliable clicks, typing, focus, and window control." },
       "input_monitoring": { "title": "Input Monitoring", "description": "Required for global push-to-talk and keyboard shortcuts." },
       "event_posting": { "title": "Input control", "description": "Required for Computer-Use to send mouse and keyboard events." }
+    },
+    "banner": {
+      "title": "Action needed: macOS permissions are missing",
+      "impact": "Not working right now: {0}",
+      "hint": "Use the buttons to allow access — macOS opens the right System Settings page for each permission. {name} re-checks automatically.",
+      "collapse": "Hide details",
+      "expand": "Show details"
+    },
+    "features": {
+      "voice": "Voice & wake word",
+      "computer_use": "Computer-Use",
+      "global_hotkeys": "Global shortcuts",
+      "window_control": "Window control"
     }
   },
   "settings_view": {

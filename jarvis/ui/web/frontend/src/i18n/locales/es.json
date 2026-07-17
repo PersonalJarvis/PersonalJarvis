@@ -1070,6 +1070,19 @@
       "accessibility": { "title": "Accesibilidad", "description": "Necesario para clics, escritura, enfoque y control de ventanas fiables." },
       "input_monitoring": { "title": "Monitorización de entrada", "description": "Necesario para pulsar para hablar y atajos de teclado globales." },
       "event_posting": { "title": "Control de entrada", "description": "Necesario para que Computer-Use envíe eventos de ratón y teclado." }
+    },
+    "banner": {
+      "title": "Acción necesaria: faltan permisos de macOS",
+      "impact": "Ahora mismo no funciona: {0}",
+      "hint": "Permite el acceso con los botones: macOS abre directamente la página correcta de Ajustes del Sistema para cada permiso. {name} vuelve a comprobarlo automáticamente.",
+      "collapse": "Ocultar detalles",
+      "expand": "Mostrar detalles"
+    },
+    "features": {
+      "voice": "Voz y palabra de activación",
+      "computer_use": "Computer-Use",
+      "global_hotkeys": "Atajos globales",
+      "window_control": "Control de ventanas"
     }
   },
   "settings_view": {

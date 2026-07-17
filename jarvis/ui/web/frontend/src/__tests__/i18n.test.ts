@@ -57,6 +57,28 @@ describe("wiki_provider namespace parity (all locales share the same keys)", () 
   }
 });
 
+describe("permissions namespace parity (all locales share the same nested keys)", () => {
+  const flatten = (obj: Record<string, unknown>, prefix = ""): string[] =>
+    Object.entries(obj).flatMap(([key, value]) =>
+      value && typeof value === "object"
+        ? flatten(value as Record<string, unknown>, `${prefix}${key}.`)
+        : [`${prefix}${key}`],
+    );
+  const keysFor = (loc: unknown) =>
+    flatten((loc as { permissions?: Record<string, unknown> }).permissions ?? {}).sort();
+  const reference = keysFor(en);
+
+  it("en: has a non-empty permissions namespace", () => {
+    expect(reference.length).toBeGreaterThan(0);
+  });
+
+  for (const [name, loc] of Object.entries(LOCALES)) {
+    it(`${name}: permissions keys match en exactly`, () => {
+      expect(keysFor(loc)).toEqual(reference);
+    });
+  }
+});
+
 describe("settings_view languages group (folded-in section)", () => {
   for (const [name, loc] of Object.entries(LOCALES)) {
     it(`${name}: has a languages group title for the Settings panel`, () => {

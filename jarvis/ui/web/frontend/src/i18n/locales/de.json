@@ -1070,6 +1070,19 @@
       "accessibility": { "title": "Bedienungshilfen", "description": "Erforderlich für zuverlässige Klicks, Eingaben, Fokus und Fenstersteuerung." },
       "input_monitoring": { "title": "Eingabeüberwachung", "description": "Erforderlich für globale Push-to-Talk- und Tastaturkurzbefehle." },
       "event_posting": { "title": "Eingabesteuerung", "description": "Erforderlich, damit Computer-Use Maus- und Tastaturereignisse senden kann." }
+    },
+    "banner": {
+      "title": "Aktion nötig: macOS-Berechtigungen fehlen",
+      "impact": "Funktioniert gerade nicht: {0}",
+      "hint": "Erlaube den Zugriff über die Buttons — macOS öffnet für jede Berechtigung direkt die richtige Seite der Systemeinstellungen. {name} prüft automatisch nach.",
+      "collapse": "Details ausblenden",
+      "expand": "Details anzeigen"
+    },
+    "features": {
+      "voice": "Sprache & Aktivierungswort",
+      "computer_use": "Computer-Use",
+      "global_hotkeys": "Globale Kurzbefehle",
+      "window_control": "Fenstersteuerung"
     }
   },
   "settings_view": {

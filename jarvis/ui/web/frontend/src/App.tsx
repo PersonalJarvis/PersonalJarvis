@@ -4,6 +4,7 @@ import { useVoiceStatus } from "@/hooks/useVoiceStatus";
 import { useAssistantNameSeed } from "@/hooks/useAssistantNameSeed";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TopBar } from "@/components/layout/TopBar";
+import { PermissionsAlertBanner } from "@/components/layout/PermissionsAlertBanner";
 import { VoiceWarmingBanner } from "@/components/layout/VoiceWarmingBanner";
 import { MainView } from "@/components/layout/MainView";
 import { ToastLayer } from "@/components/ToastLayer";
@@ -28,6 +29,9 @@ export default function App() {
       <Sidebar />
 
       <main className="relative z-10 flex min-w-0 flex-1 flex-col">
+        {/* App-wide macOS permission alert — topmost so a missing grant is
+            impossible to miss on any view. No-op on other platforms. */}
+        <PermissionsAlertBanner />
         <TopBar />
         <VoiceWarmingBanner />
         <div className="min-h-0 flex-1">
