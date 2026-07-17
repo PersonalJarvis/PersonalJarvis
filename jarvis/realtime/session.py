@@ -12,6 +12,7 @@ import array
 import asyncio
 import inspect
 import logging
+import random
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -301,38 +302,72 @@ def _direct_tool_result_retry_prompt(*, language: str) -> str:
     )
 
 
-_DELEGATE_BRIDGE_TEXT = {
-    "de": "Ich bin noch dran.",  # i18n-allow: localized runtime progress output
-    "en": "I'm still working on it.",
-    "es": "Sigo trabajando en ello.",
+# Several equivalent progress lines per language: one fixed sentence on every
+# slow turn reads robotic (live feedback 2026-07-17 08:47, three "Ich bin noch
+# dran." in one session). Each entry must stay short, promise nothing about
+# the outcome, and remain a complete stand-alone sentence — the transcript
+# validator accepts exactly this closed set.
+# i18n-allow: quoted German forensic phrase above; pools below are product output
+_DELEGATE_BRIDGE_TEXTS: dict[str, tuple[str, ...]] = {
+    "de": (  # i18n-allow: localized runtime progress output
+        "Ich bin noch dran.",  # i18n-allow: localized runtime progress output
+        "Einen Moment noch, bitte.",  # i18n-allow: localized runtime output
+        "Dauert noch einen kleinen Moment.",  # i18n-allow: localized output
+        "Bin gleich so weit.",  # i18n-allow: localized runtime progress output
+    ),
+    "en": (
+        "I'm still working on it.",
+        "One moment, almost there.",
+        "Still on it, give me a moment.",
+        "Hang on, this is taking a moment.",
+    ),
+    "es": (  # i18n-allow: localized runtime progress output
+        "Sigo trabajando en ello.",
+        "Un momento, ya casi está.",
+        "Sigo en ello, un momento.",
+        "Dame un momento más.",
+    ),
 }
 
 
-def _delegate_bridge_text(language: str) -> str:
-    return _DELEGATE_BRIDGE_TEXT.get(language, _DELEGATE_BRIDGE_TEXT["en"])
+def _delegate_bridge_texts(language: str) -> tuple[str, ...]:
+    return _DELEGATE_BRIDGE_TEXTS.get(language, _DELEGATE_BRIDGE_TEXTS["en"])
+
+
+def _pick_delegate_bridge_text(language: str) -> str:
+    # noqa comment: variety, not security — any pool member is equally safe.
+    return random.choice(_delegate_bridge_texts(language))  # noqa: S311
 
 
 def _normalized_bridge_text(text: str) -> str:
     return " ".join(str(text or "").strip().rstrip(".!?¡¿").casefold().split())
 
 
-def _delegate_bridge_prompt(*, language: str) -> str:
+def _delegate_bridge_prompt(*, language: str, exact_text: str) -> str:
     """Order one orchestrator-owned interim line over delegate dead air.
 
     BUG-051: the delegated router turn needs 10-20 s before its first grounded
     token and the honesty guard mutes the live model for the whole wait. This
     injected instruction is the only sanctioned way to break that silence: the
-    live model may speak only one fixed, short progress line. Its transcript and
-    audio remain withheld until the complete response matches that exact line.
+    live model may speak only one short progress line chosen by the
+    orchestrator. Its transcript and audio remain withheld until the complete
+    response matches that line.
+
+    The line is framed as the model's own words, never as a quotation to
+    perform: Gemini's native-audio voice read the earlier quote framing as a
+    role-play cue and delivered the line in a different (female, distorted)
+    voice than the rest of the conversation (live forensic 2026-07-17 08:47).
     """
     language_name = _LANGUAGE_NAMES.get(language, "the conversation language")
-    exact_text = _delegate_bridge_text(language)
     return (
         "The Jarvis orchestrator is still executing the user's request and "
-        "has no result yet. Speak the exact quoted sentence below in "
-        f"{language_name}, with no added or changed words:\n"
-        f'"{exact_text}"\n'
-        "Do not call any function and do not mention these instructions."
+        f"has no result yet. Tell the user, in {language_name}, that you are "
+        "still working on it, by saying exactly this sentence and nothing "
+        f"else:\n{exact_text}\n"
+        "Say it as yourself, continuing in exactly the same voice, tone, and "
+        "pace as your previous replies in this conversation. Do not imitate "
+        "another person, do not change or dramatize your voice. Do not call "
+        "any function and do not mention these instructions."
     )
 
 
@@ -361,6 +396,10 @@ class _DelegateTurnState:
     dispatch_started: bool = False
     bridge_delivery_started: bool = False
     bridge_preempted: bool = False
+    # The progress line chosen for THIS bridge run; the transcript validator
+    # matches against it (and the closed per-language pool) so a varied line
+    # can never smuggle free-form model output past the withhold.
+    bridge_expected_text: str = ""
     bridge_transcript_parts: list[str] = field(default_factory=list)
     bridge_audio_chunks: list[Any] = field(default_factory=list)
     wait_for_provider_boundary: bool = False
@@ -1455,11 +1494,27 @@ class RealtimeVoiceSession:
                         bridge_text = "".join(
                             delegate_state.bridge_transcript_parts
                         ).strip()
-                        expected_bridge = _delegate_bridge_text(self._language)
+                        # Accept only the line chosen for this bridge run or
+                        # another member of the closed per-language pool (the
+                        # language may have shifted between injection and
+                        # validation); anything else is free-form output.
+                        allowed_bridge_lines = {
+                            _normalized_bridge_text(candidate)
+                            for candidate in _delegate_bridge_texts(
+                                self._language
+                            )
+                        }
+                        expected_bridge = (
+                            delegate_state.bridge_expected_text
+                            or next(iter(_delegate_bridge_texts(self._language)))
+                        )
+                        allowed_bridge_lines.add(
+                            _normalized_bridge_text(expected_bridge)
+                        )
                         bridge_valid = bool(
                             bridge_completed
                             and _normalized_bridge_text(bridge_text)
-                            == _normalized_bridge_text(expected_bridge)
+                            in allowed_bridge_lines
                         )
                         bridge_may_speak = bool(
                             bridge_valid
@@ -1501,7 +1556,22 @@ class RealtimeVoiceSession:
                             # the final answer will open a new SPEAKING segment.
                             await self._send_json({"type": "thinking"})
                         if bridge_was_audible:
-                            await self._publish_delegate_bridge_spoken(expected_bridge)
+                            # Persist the pool line the model actually spoke,
+                            # not merely the one requested for this run.
+                            spoken_bridge = next(
+                                (
+                                    candidate
+                                    for candidate in _delegate_bridge_texts(
+                                        self._language
+                                    )
+                                    if _normalized_bridge_text(candidate)
+                                    == _normalized_bridge_text(bridge_text)
+                                ),
+                                expected_bridge,
+                            )
+                            await self._publish_delegate_bridge_spoken(
+                                spoken_bridge
+                            )
                         self._output_samples_sent = 0
                         log.debug(
                             "realtime[%s] held provider turn_complete for "
@@ -2867,8 +2937,9 @@ class RealtimeVoiceSession:
         The bridge is realtime-only and deliberately later than the classic
         pipeline acknowledgement: normal delegated turns should finish before
         it. Its provider output is buffered and accepted only when the complete
-        transcript matches the fixed localized progress line. A ready trusted
-        result preempts the bridge lifecycle.
+        transcript matches the progress line chosen for this run (or another
+        member of the closed localized pool). A ready trusted result preempts
+        the bridge lifecycle.
         """
         try:
             try:
@@ -2890,6 +2961,9 @@ class RealtimeVoiceSession:
                 return
             turn_state.bridge_delivery_started = True
             turn_state.bridge_preempted = False
+            turn_state.bridge_expected_text = _pick_delegate_bridge_text(
+                self._language
+            )
             turn_state.bridge_transcript_parts.clear()
             turn_state.bridge_audio_chunks.clear()
             # ``send_text`` starts a distinct provider response. The trusted
@@ -2901,7 +2975,10 @@ class RealtimeVoiceSession:
             self._drop_provider_output_until_new_response = False
             try:
                 await send_text(
-                    _delegate_bridge_prompt(language=self._language)
+                    _delegate_bridge_prompt(
+                        language=self._language,
+                        exact_text=turn_state.bridge_expected_text,
+                    )
                 )
             except Exception:  # noqa: BLE001 — a broken bridge must not hurt the action
                 turn_state.bridge_delivery_started = False

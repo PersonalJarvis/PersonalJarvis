@@ -2542,10 +2542,18 @@ async def test_turn_after_a_pending_action_may_not_claim_an_outcome():
 class _SlowDelegateBridgeSession(FakeSession):
     """Slow delegate: expose the dead-air window between dispatch and result."""
 
-    def __init__(self, events, *, bridge_sent, result_delivered):
+    def __init__(
+        self,
+        events,
+        *,
+        bridge_sent,
+        result_delivered,
+        bridge_line="I'm still working on it.",
+    ):
         super().__init__(events)
         self._bridge_sent = bridge_sent
         self._result_delivered = result_delivered
+        self._bridge_line = bridge_line
 
     async def receive(self):
         yield RealtimeEvent(
@@ -2556,7 +2564,7 @@ class _SlowDelegateBridgeSession(FakeSession):
         await self._bridge_sent.wait()
         yield RealtimeEvent(
             type="output_transcript_delta",
-            text="I'm still working on it.",
+            text=self._bridge_line,
         )
         yield RealtimeEvent(
             type="audio_delta",
@@ -2593,10 +2601,17 @@ class _SlowDelegateBridgeSession(FakeSession):
 
 
 class _SlowDelegateBridgeProvider(FakeProvider):
-    def __init__(self, *, bridge_sent, result_delivered):
+    def __init__(
+        self,
+        *,
+        bridge_sent,
+        result_delivered,
+        bridge_line="I'm still working on it.",
+    ):
         super().__init__([])
         self._bridge_sent = bridge_sent
         self._result_delivered = result_delivered
+        self._bridge_line = bridge_line
 
     async def open_session(self, cfg):
         self.opened_with = cfg
@@ -2604,6 +2619,7 @@ class _SlowDelegateBridgeProvider(FakeProvider):
             [],
             bridge_sent=self._bridge_sent,
             result_delivered=self._result_delivered,
+            bridge_line=self._bridge_line,
         )
         return self.session
 
@@ -2612,6 +2628,11 @@ class _SlowDelegateBridgeProvider(FakeProvider):
 async def test_slow_deterministic_delegate_speaks_a_bridge_line(monkeypatch):
     """BUG-051: dead air between dispatch and result gets one interim line."""
     monkeypatch.setattr("jarvis.realtime.session._DELEGATE_BRIDGE_DELAY_S", 0.05)
+    # Pin the varied progress-line pick to the line the fake session speaks.
+    monkeypatch.setattr(
+        "jarvis.realtime.session._pick_delegate_bridge_text",
+        lambda language: "I'm still working on it.",
+    )
     gate = asyncio.Event()
     bridge_sent = asyncio.Event()
     result_delivered = asyncio.Event()
@@ -2643,7 +2664,11 @@ async def test_slow_deterministic_delegate_speaks_a_bridge_line(monkeypatch):
 
     bridge = provider.session.text_inputs[0]
     assert "<trusted_action_result>" not in bridge
-    assert '"I\'m still working on it."' in bridge
+    assert "I'm still working on it." in bridge
+    # The line is framed as the model's own words, never a quote to perform
+    # (a quoted line flipped Gemini's native voice, forensic 2026-07-17).
+    assert '"I\'m still working on it."' not in bridge
+    assert "same voice" in bridge
     assert "Write this to my wiki." not in bridge
     # While the bridge response is live, provider output must flow.
     assert sess._must_withhold_provider_output() is False
@@ -2664,6 +2689,64 @@ async def test_slow_deterministic_delegate_speaks_a_bridge_line(monkeypatch):
     spoken = [event for event in bus.events if isinstance(event, SpeechSpoken)]
     assert [(event.text, event.spoken_kind) for event in spoken] == [
         ("I'm still working on it.", "progress"),
+        ("Stored on your page: note.", "reply"),
+    ]
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_varied_bridge_line_passes_validation_and_is_persisted(monkeypatch):
+    """A non-default pool line must clear the withhold and reach the record.
+
+    Live feedback 2026-07-17 08:47: the single fixed "Ich bin noch dran."
+    line read robotic. The progress line now varies per bridge run; the
+    validator accepts exactly the closed localized pool.
+    """  # i18n-allow: quoted German forensic phrase
+    varied_line = "One moment, almost there."
+    monkeypatch.setattr("jarvis.realtime.session._DELEGATE_BRIDGE_DELAY_S", 0.05)
+    monkeypatch.setattr(
+        "jarvis.realtime.session._pick_delegate_bridge_text",
+        lambda language: varied_line,
+    )
+    gate = asyncio.Event()
+    bridge_sent = asyncio.Event()
+    result_delivered = asyncio.Event()
+    brain = FakeBrain(replies=("Stored on your page: note.",), gate=gate)
+    provider = _SlowDelegateBridgeProvider(
+        bridge_sent=bridge_sent,
+        result_delivered=result_delivered,
+        bridge_line=varied_line,
+    )
+    thinking_sent = asyncio.Event()
+
+    class _StatusMessages(list[dict]):
+        def append(self, message: dict) -> None:
+            super().append(message)
+            if message == {"type": "thinking"}:
+                thinking_sent.set()
+
+    jsons = _StatusMessages()
+    binaries: list[bytes] = []
+    bus = FakeBus()
+    sess = _session(
+        provider,
+        brain=brain,
+        jsons=jsons,
+        binaries=binaries,
+        bus=bus,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(bridge_sent.wait(), timeout=2)
+    assert varied_line in provider.session.text_inputs[0]
+
+    await asyncio.wait_for(thinking_sent.wait(), timeout=2)
+    gate.set()
+    await asyncio.wait_for(result_delivered.wait(), timeout=2)
+    await sess.wait_finished()
+    spoken = [event for event in bus.events if isinstance(event, SpeechSpoken)]
+    assert [(event.text, event.spoken_kind) for event in spoken] == [
+        (varied_line, "progress"),
         ("Stored on your page: note.", "reply"),
     ]
     await sess.end(reason="test")
