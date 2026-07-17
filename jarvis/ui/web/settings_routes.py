@@ -1905,6 +1905,23 @@ def _wiki_curator_cfg(request: Request) -> WikiCuratorConfig | None:
     return getattr(wiki, "curator", None)
 
 
+def _wiki_ready_providers(request: Request, names: set[str]) -> set[str]:
+    """Providers the wiki fallback chain treats as credential-ready.
+
+    Mirrors the runtime chain's own eligibility check
+    (``credential_ready_wiki_providers``), so the UI's "ready" flag can never
+    disagree with what a maintenance run will actually do. Fail-open: a probe
+    error must not break the settings page (the chain is fail-open too).
+    """
+    try:
+        from jarvis.memory.wiki.provider_chain import credential_ready_wiki_providers
+
+        return credential_ready_wiki_providers(available=names, config=_config(request))
+    except Exception:  # noqa: BLE001
+        log.debug("wiki provider readiness probe failed", exc_info=True)
+        return set(names)
+
+
 def _available_brain_providers(request: Request) -> list[dict[str, object]]:
     """Selectable (provider, models) pairs for the Wiki picker.
 
@@ -1913,8 +1930,16 @@ def _available_brain_providers(request: Request) -> list[dict[str, object]]:
     Each provider lists its cheap router model first, then its deep model, so
     the UI can offer "cheap default" plus an upgrade. The provider's own
     [brain.providers.<name>].model override (if set) is surfaced too.
+
+    Each row also carries ``kind`` ("agent" for the OAuth-CLI Jarvis-Agent
+    providers such as Codex/Antigravity, "api" otherwise) and ``ready``
+    (whether the wiki chain sees a usable credential), so the picker can label
+    agent providers and warn about keyless ones. The frontend fetches the full
+    per-provider model catalog separately via GET /api/providers/{id}/models;
+    ``models`` here stays the small tier-default list for older consumers.
     """
     from jarvis.brain.manager import TIER_DEFAULTS_BY_PROVIDER
+    from jarvis.ui.web.provider_spec import get_spec
 
     names: list[str] = []
     brain = getattr(request.app.state, "brain", None)
@@ -1928,6 +1953,7 @@ def _available_brain_providers(request: Request) -> list[dict[str, object]]:
 
     cfg = _config(request)
     providers_cfg = getattr(getattr(cfg, "brain", None), "providers", {}) or {}
+    ready = _wiki_ready_providers(request, set(names))
 
     out: list[dict[str, object]] = []
     for name in names:
@@ -1941,8 +1967,47 @@ def _available_brain_providers(request: Request) -> list[dict[str, object]]:
         override = getattr(providers_cfg.get(name), "model", "") if providers_cfg else ""
         if override and override not in models:
             models.insert(0, override)
-        out.append({"provider": name, "models": models})
+        spec = get_spec(name)
+        kind = (
+            "agent"
+            if getattr(spec, "auth_mode", "") in ("codex", "antigravity")
+            else "api"
+        )
+        out.append(
+            {"provider": name, "models": models, "kind": kind, "ready": name in ready}
+        )
     return out
+
+
+def _wiki_resolved_state(request: Request) -> dict[str, object]:
+    """What the NEXT wiki maintenance run will actually use.
+
+    Resolves through the SAME helper the runtime uses
+    (``curator_llm._resolve_provider_and_model``: provider "" → brain.primary,
+    model "" → that provider's cheap router-tier model), so the UI line "next
+    run uses X · Y" is a statement of fact, not a guess. ``ready`` mirrors the
+    chain's credential check — False means the key-aware fallback will cross to
+    another provider instead of running the configured one.
+    """
+    cfg = _config(request)
+    curator = _wiki_curator_cfg(request)
+    provider = ""
+    model = ""
+    try:
+        from jarvis.memory.wiki.curator_llm import _resolve_provider_and_model
+
+        if curator is not None and cfg is not None:
+            resolved_provider, resolved_model = _resolve_provider_and_model(curator, cfg)
+            provider = resolved_provider or ""
+            model = resolved_model or ""
+    except Exception:  # noqa: BLE001 — degrade to the raw config pair, never 500
+        log.debug("wiki resolved-state helper failed", exc_info=True)
+        provider = (getattr(curator, "provider", "") or "").strip() or getattr(
+            getattr(cfg, "brain", None), "primary", ""
+        )
+        model = (getattr(curator, "model", "") or "").strip()
+    ready = bool(provider) and provider in _wiki_ready_providers(request, {provider})
+    return {"provider": provider, "model": model, "ready": ready}
 
 
 @router.get("/wiki-provider")
@@ -1955,10 +2020,17 @@ async def get_wiki_provider(request: Request) -> dict[str, object]:
     pin.
     """
     curator = _wiki_curator_cfg(request)
+    # Credential probes walk keyring/env/.env — keep them off the event loop.
+    available, resolved = await asyncio.to_thread(
+        lambda: (_available_brain_providers(request), _wiki_resolved_state(request))
+    )
+    cfg = _config(request)
     return {
         "provider": getattr(curator, "provider", "") or "",
         "model": getattr(curator, "model", "") or "",
-        "available": _available_brain_providers(request),
+        "available": available,
+        "resolved": resolved,
+        "brain_primary": getattr(getattr(cfg, "brain", None), "primary", "") or "",
     }
 
 
@@ -1969,7 +2041,8 @@ async def put_wiki_provider(body: WikiProviderBody, request: Request) -> dict[st
 
     # Resolve the selectable matrix ONCE: reused for validation below and for
     # the response body (avoids a second BrainManager round-trip per PUT).
-    available = _available_brain_providers(request)
+    # Off-thread: the readiness column probes keyring/env credentials.
+    available = await asyncio.to_thread(_available_brain_providers, request)
 
     # Validate the provider against the selectable matrix. An empty provider is
     # valid and means "follow brain.primary" (resolved later by the curator).
@@ -2033,11 +2106,17 @@ async def put_wiki_provider(body: WikiProviderBody, request: Request) -> dict[st
         except Exception as exc:  # noqa: BLE001 — never fail the save on a live hiccup
             log.warning("wiki-provider live-apply failed (persisted; applies next ingest): %s", exc)
 
+    # Recompute AFTER the in-memory update so the response reflects the pick
+    # the way the next maintenance run will actually resolve it.
+    resolved = await asyncio.to_thread(_wiki_resolved_state, request)
+    cfg = _config(request)
     return {
         "ok": True,
         "provider": provider,
         "model": model,
         "available": available,
+        "resolved": resolved,
+        "brain_primary": getattr(getattr(cfg, "brain", None), "primary", "") or "",
         "persisted": persisted,
         "applied_live": applied_live,
         # The curator re-resolves on the next ingest; when not live-applied it

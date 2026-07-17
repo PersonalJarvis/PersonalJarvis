@@ -960,6 +960,13 @@
     "guide_realtime_body": "OpenAI: GPT Realtime (der Anbieter-Standard) klingt am natürlichsten; GPT Realtime Mini ist die günstige Wahl. Google: Gemini 3.1 Flash Live ist das aktuelle Live-Flaggschiff. „Anbieter-Standard“ löst immer auf das empfohlene Modell auf — du kannst es einfach so lassen.",
     "guide_computer_use_title": "Welcher Provider soll das Tool Model antreiben?",
     "guide_computer_use_body": "Das Tool Model übernimmt jede Aktion, die Jarvis für dich ausführt — auch Computer-Use, das Screenshots deines Bildschirms liest und deshalb ein Modell braucht, das Bilder versteht; die Auswahl blendet reine Text-Modelle aus. Im Zweifel: beim Haupt-Brain-Provider und seinem Standard-Modell bleiben.",
+    "reco_title": "Persönliche Empfehlung",
+    "reco_realtime_pick": "OpenAI Realtime",
+    "reco_realtime_why": "Gemini Live ist genauso in Ordnung, beides funktioniert.",
+    "reco_computer_use_pick": "Gemini 3.5 Flash",
+    "reco_computer_use_why": "die schnellste Latenz für Tool-Aufrufe.",
+    "reco_subagents_pick": "ChatGPT- oder Claude-Max-Subscription",
+    "reco_subagents_why": "Flatrate für schwere Hintergrundarbeit.",
     "mode_status_unknown": "Der Engine-Status ist noch nicht geladen - der Schalter wird frei, sobald das Backend antwortet. Bleibt das so, starte die App neu."
   },
   "apikeys_test": {
@@ -1496,7 +1503,19 @@
     "apply": "Übernehmen",
     "applying": "Übernehme…",
     "loading": "Wiki-Einstellungen werden geladen…",
-    "load_error": "Konnte die Wiki-Provider-Einstellungen nicht laden."
+    "load_error": "Konnte die Wiki-Provider-Einstellungen nicht laden.",
+    "how_title": "Wie funktioniert das?",
+    "how_intro": "Jarvis pflegt sein Langzeitgedächtnis automatisch. Jeder Pflege-Lauf hat drei Schritte:",
+    "how_step1": "Mitlesen: Während jedes Gesprächs liest ein günstiges Modell still mit und notiert Fakten-Kandidaten, die es sich zu merken lohnt (Vorlieben, Namen, Projekte, Termine).",
+    "how_step2": "Abgleichen: Ein Richter-Durchgang vergleicht jeden Kandidaten mit den vorhandenen Wiki-Seiten und entscheidet: neue Seite anlegen, bestehende aktualisieren oder verwerfen.",
+    "how_step3": "Nachlesen: Am Ende einer Live-Sprachsitzung wird das komplette Transkript noch einmal durchgesehen, damit nichts verloren geht.",
+    "how_model_note": "Alle Schritte laufen über den Provider und das Modell, die du hier wählst — wählst du z. B. Codex, führt wirklich Codex den Lauf aus. Leer gelassen übernimmt der Brain-Provider mit seinem günstigen, schnellen Modell. Ist der gewählte Provider gerade nicht erreichbar, springt automatisch ein anderer eingerichteter Provider ein, damit das Gedächtnis weiterläuft.",
+    "option_agent_suffix": "Jarvis-Agent",
+    "option_no_key": "kein Schlüssel hinterlegt",
+    "model_reset": "Zurück auf den günstigen Standard",
+    "resolved_label": "Nächster Lauf verwendet:",
+    "provider_default_model": "Provider-Standard",
+    "resolved_fallback_warning": "Für diesen Provider sind keine Zugangsdaten hinterlegt — der Lauf weicht automatisch auf einen anderen eingerichteten Provider aus."
   },
   "subagent_model": {
     "description": "Jarvis-Agents (schwere Hintergrund-Worker) können auf einem eigenen Modell laufen, getrennt vom Chat-Brain. Lass das Feld leer, um das stärkste Modell des aktiven Jarvis-Agent-Providers zu nutzen.",

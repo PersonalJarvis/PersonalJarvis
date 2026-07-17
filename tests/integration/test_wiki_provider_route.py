@@ -96,6 +96,42 @@ def test_get_returns_current_config_and_available(server: WebServer) -> None:
         # Cheap/fast router model is listed first for each provider.
         gemini = next(r for r in body["available"] if r["provider"] == "gemini")
         assert gemini["models"][0] == "gemini-3-flash-preview"
+        # Every row carries the picker metadata: kind (api|agent) + readiness.
+        for row in body["available"]:
+            assert row["kind"] in ("api", "agent")
+            assert isinstance(row["ready"], bool)
+        assert gemini["kind"] == "api"
+
+
+def test_get_reports_what_the_next_run_actually_uses(server: WebServer) -> None:
+    """`resolved` mirrors curator_llm._resolve_provider_and_model, not a guess."""
+    with TestClient(server.app) as client:
+        resp = client.get("/api/settings/wiki-provider")
+        assert resp.status_code == 200
+        body = resp.json()
+        cfg = server.app.state.config
+        # Fresh config (provider="") → the next run follows brain.primary.
+        assert body["brain_primary"] == cfg.brain.primary
+        resolved = body["resolved"]
+        assert resolved["provider"] == cfg.brain.primary
+        # Model resolves to the provider's cheap router default (a concrete id
+        # or "" when the provider has none); readiness is env-dependent → bool.
+        assert isinstance(resolved["model"], str)
+        assert isinstance(resolved["ready"], bool)
+
+
+def test_put_response_resolves_the_new_pick(server: WebServer) -> None:
+    """After a PUT the resolved block reflects the just-saved pair."""
+    with TestClient(server.app) as client:
+        resp = client.put(
+            "/api/settings/wiki-provider",
+            json={"provider": "grok", "model": "grok-4.3"},
+        )
+        assert resp.status_code == 200
+        resolved = resp.json()["resolved"]
+        assert resolved["provider"] == "grok"
+        # An explicit model always wins over the cheap router default.
+        assert resolved["model"] == "grok-4.3"
 
 
 def test_put_persists_by_default(

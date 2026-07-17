@@ -14,12 +14,33 @@ import { useCallback, useEffect, useState } from "react";
 export interface WikiProviderOption {
   provider: string;
   models: string[];
+  /** "agent" = OAuth-CLI Jarvis-Agent provider (Codex/Antigravity), "api" otherwise. */
+  kind?: "api" | "agent";
+  /** Whether the wiki fallback chain sees a usable credential for this provider. */
+  ready?: boolean;
+}
+
+/**
+ * What the NEXT maintenance run will actually use — resolved by the backend
+ * through the same helper the runtime uses, so this is fact, not a guess.
+ * `ready: false` means the key-aware chain will cross to another provider.
+ */
+export interface WikiResolvedState {
+  provider: string;
+  model: string;
+  ready: boolean;
 }
 
 export interface WikiProviderState {
   provider: string;
   model: string;
   available: WikiProviderOption[];
+  resolved?: WikiResolvedState;
+  brain_primary?: string;
+  // PUT-only echo fields (the save response reuses this shape).
+  persisted?: boolean;
+  applied_live?: boolean;
+  restart_required?: boolean;
 }
 
 const ENDPOINT = "/api/settings/wiki-provider";

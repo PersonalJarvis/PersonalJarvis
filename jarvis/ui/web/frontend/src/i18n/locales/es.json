@@ -960,6 +960,13 @@
     "guide_realtime_body": "OpenAI: GPT Realtime (el predeterminado del proveedor) suena más natural; GPT Realtime Mini es la opción económica. Google: Gemini 3.1 Flash Live es el buque insignia actual de Live. «Predeterminado del proveedor» siempre resuelve al modelo recomendado, así que puedes dejarlo tal cual.",
     "guide_computer_use_title": "¿Qué proveedor debería impulsar el Tool Model?",
     "guide_computer_use_body": "El Tool Model se encarga de cada acción que Jarvis realiza por ti — incluido Computer-Use, que lee capturas de tu pantalla y necesita un modelo que entienda imágenes; el selector oculta los modelos de solo texto. En caso de duda, quédate con tu proveedor Brain principal y su modelo predeterminado.",
+    "reco_title": "Recomendación personal",
+    "reco_realtime_pick": "OpenAI Realtime",
+    "reco_realtime_why": "Gemini Live también vale, cualquiera funciona.",
+    "reco_computer_use_pick": "Gemini 3.5 Flash",
+    "reco_computer_use_why": "la latencia más rápida para herramientas.",
+    "reco_subagents_pick": "Suscripción de ChatGPT o Claude Max",
+    "reco_subagents_why": "tarifa plana para el trabajo pesado en segundo plano.",
     "mode_status_unknown": "El estado del motor aún no se ha cargado: el selector se desbloquea en cuanto el backend responda. Si persiste, reinicia la aplicación."
   },
   "apikeys_test": {
@@ -1496,7 +1503,19 @@
     "apply": "Aplicar",
     "applying": "Aplicando…",
     "loading": "Cargando ajustes del Wiki…",
-    "load_error": "No se pudieron cargar los ajustes del proveedor del Wiki."
+    "load_error": "No se pudieron cargar los ajustes del proveedor del Wiki.",
+    "how_title": "¿Cómo funciona?",
+    "how_intro": "Jarvis mantiene su memoria a largo plazo automáticamente. Cada pasada de mantenimiento tiene tres pasos:",
+    "how_step1": "Leer: durante cada conversación, un modelo económico lee en silencio y anota hechos candidatos que vale la pena recordar (preferencias, nombres, proyectos, fechas).",
+    "how_step2": "Conciliar: una pasada de juez compara cada candidato con las páginas existentes del wiki y decide: crear una página nueva, actualizar una existente o descartar.",
+    "how_step3": "Repasar: al terminar una sesión de voz en vivo, se revisa una vez más la transcripción completa para que nada se pierda.",
+    "how_model_note": "Cada paso usa el proveedor y el modelo que elijas aquí — si eliges Codex, es realmente Codex quien ejecuta la pasada. Si lo dejas vacío, el proveedor del cerebro toma el relevo con su modelo rápido y económico. Si el proveedor elegido no está disponible, otro proveedor configurado entra automáticamente para que la memoria siga funcionando.",
+    "option_agent_suffix": "Jarvis-Agent",
+    "option_no_key": "sin clave configurada",
+    "model_reset": "Volver al predeterminado barato",
+    "resolved_label": "La próxima pasada usará:",
+    "provider_default_model": "predeterminado del proveedor",
+    "resolved_fallback_warning": "No hay credenciales configuradas para este proveedor — la pasada recurre automáticamente a otro proveedor configurado."
   },
   "subagent_model": {
     "description": "Los Jarvis-Agents (workers pesados en segundo plano) pueden ejecutarse con su propio modelo, separado de la IA del chat. Deja el campo vacío para usar el modelo más potente del proveedor de Jarvis-Agents activo.",

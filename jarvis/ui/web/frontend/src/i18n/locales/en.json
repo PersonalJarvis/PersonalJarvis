@@ -961,6 +961,13 @@
     "guide_realtime_body": "OpenAI: GPT Realtime (the provider default) sounds the most natural; GPT Realtime Mini is the budget pick. Google: Gemini 3.1 Flash Live is the current Live flagship. \"Provider default\" always resolves to the recommended model, so you can simply leave it.",
     "guide_computer_use_title": "Which provider should power the Tool Model?",
     "guide_computer_use_body": "The Tool Model handles every action Jarvis takes for you — including Computer-Use, which reads screenshots of your screen, so it needs a model that understands images; the picker hides text-only models. If unsure, keep your main Brain provider and its default model.",
+    "reco_title": "Personal recommendation",
+    "reco_realtime_pick": "OpenAI Realtime",
+    "reco_realtime_why": "Gemini Live is fine too, either works.",
+    "reco_computer_use_pick": "Gemini 3.5 Flash",
+    "reco_computer_use_why": "the snappiest tool latency.",
+    "reco_subagents_pick": "ChatGPT or Claude Max subscription",
+    "reco_subagents_why": "flat rate for heavy background work.",
     "mode_status_unknown": "Engine status has not loaded yet - the switch unlocks as soon as the backend answers. If this persists, restart the app."
   },
   "apikeys_test": {
@@ -1497,7 +1504,19 @@
     "apply": "Apply",
     "applying": "Applying…",
     "loading": "Loading Wiki settings…",
-    "load_error": "Could not load the Wiki provider settings."
+    "load_error": "Could not load the Wiki provider settings.",
+    "how_title": "How does this work?",
+    "how_intro": "Jarvis maintains its long-term memory automatically. Every maintenance run has three steps:",
+    "how_step1": "Read along: during every conversation a cheap model silently reads along and notes candidate facts worth remembering (preferences, names, projects, dates).",
+    "how_step2": "Reconcile: a judge pass compares each candidate against the existing wiki pages and decides: create a new page, update an existing one, or discard.",
+    "how_step3": "Sweep: when a live voice session ends, the full transcript is reviewed once more so nothing slips through.",
+    "how_model_note": "Every step runs on the provider and model you pick here — pick Codex, and Codex really performs the run. Left empty, the brain's provider takes over with its cheap, fast model. If the chosen provider is unreachable, another configured provider steps in automatically so memory keeps working.",
+    "option_agent_suffix": "Jarvis-Agent",
+    "option_no_key": "no key configured",
+    "model_reset": "Back to the cheap default",
+    "resolved_label": "Next run uses:",
+    "provider_default_model": "provider default",
+    "resolved_fallback_warning": "No credentials are configured for this provider — the run automatically falls back to another configured provider."
   },
   "subagent_model": {
     "description": "Jarvis-Agents (heavy background workers) can run on their own model, separate from the chat brain. Leave the field empty to use the active Jarvis-Agent provider's strongest model.",
