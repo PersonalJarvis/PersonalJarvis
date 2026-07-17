@@ -170,6 +170,35 @@ def key_to_alpha(img: Image.Image) -> Image.Image:
     return Image.fromarray(np.dstack((arr, alpha)), "RGBA")
 
 
+def apply_macos_clear_backing() -> None:
+    """Make every NSWindow of THIS process paint a clear backing (BUG-075).
+
+    Tk 8.6 aqua turned the ``systemTransparent`` background into true
+    per-pixel transparency; Tk 9 (bundled by uv's python-build-standalone)
+    paints it as an opaque appearance color instead — the surface showed a
+    solid grey box around its artwork. A non-opaque window backing with a
+    clear background is the native, Tk-version-independent equivalent.
+    Runs only inside the overlay host process, whose every window wants a
+    clear backing. Safe post-BUG-067: Tk owns ``NSApp`` before any window
+    exists here. Best-effort, never raises.
+    """
+    if sys.platform != "darwin":
+        return
+    try:
+        from AppKit import NSApp, NSColor  # type: ignore[import-not-found] # noqa: PLC0415
+
+        for win in NSApp.windows():
+            win.setOpaque_(False)
+            win.setBackgroundColor_(NSColor.clearColor())
+            win.setHasShadow_(False)
+    except Exception:  # noqa: BLE001 — cosmetic; the grey box is the degrade
+        import logging  # noqa: PLC0415
+
+        logging.getLogger("jarvis.orb").debug(
+            "macOS clear-backing pass skipped", exc_info=True
+        )
+
+
 _GWL_EXSTYLE = -20
 _WS_EX_APPWINDOW = 0x00040000
 _WS_EX_TOOLWINDOW = 0x00000080
@@ -968,6 +997,11 @@ class OrbCommentBubble:
             borderwidth=0,
         )
         canvas.pack(fill="both", expand=True)
+        if self._mac_transparent:
+            # New Toplevel = new NSWindow — give it the clear backing too
+            # (BUG-075).
+            top.update_idletasks()
+            apply_macos_clear_backing()
 
         self._top = top
         self._canvas = canvas
@@ -1462,6 +1496,11 @@ class OrbOverlay:
             borderwidth=0,
         )
         self._canvas.pack(fill="both", expand=True)
+        if self._mac_transparent:
+            # Tk 9 needs the native backing cleared too (BUG-075); flush
+            # geometry so the NSWindow exists before the AppKit pass.
+            self._root.update_idletasks()
+            apply_macos_clear_backing()
 
         # Drag + interaction bindings. Tk dispatch:
         #   <Button-1> → drag-start (always fires, even on a double-click)

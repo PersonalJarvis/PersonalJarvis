@@ -5336,3 +5336,35 @@ path; Linux/Windows byte-identical. Verified live: the host reaches
 framework to touch `NSApplication`. Never call a pyobjc/AppKit API before
 the first `Tk()` in Tk-hosting subprocesses — and treat "works with Tk 8.6"
 as unproven for Tk 9.
+
+---
+
+## BUG-075: solid grey box around the bar/mascot on macOS — Tk 9 no longer maps systemTransparent to a clear backing (MEDIUM, FIXED 2026-07-17)
+
+> Shipped in the 2026-07-17 public-repo (Mac session) commits as "BUG-069";
+> renumbered on integration — the local register had already assigned BUG-069
+> to an unrelated realtime-speech bug.
+
+**Symptom.** The JarvisBar rendered inside an opaque grey rectangle on the
+freshly installed Mac (screenshot from the maintainer's first live session).
+
+**Root cause.** The Aqua-Tk transparency recipe (`wm attributes -transparent`
++ `systemTransparent` background) is a Tk 8.6 behavior. Tk 9 — bundled by
+uv's python-build-standalone, i.e. every fresh macOS install — accepts both
+calls without error but paints `systemTransparent` as an opaque appearance
+color, so the window backing shows as a grey box around the RGBA artwork.
+Silent break: no TclError, so the key-color fallback never fired.
+
+**Fix (2026-07-17).** After the Tk window exists, the overlay clears the
+native backing itself via pyobjc (`NSWindow.setOpaque_(False)` +
+`clearColor` background + no shadow) — the Tk-version-independent
+equivalent of what Tk 8.6 did internally. Applied in the bar
+(`jarvis/ui/jarvisbar/overlay.py::_apply_macos_clear_backing`), the orb
+main window, and the comment bubble (`ui/orb/overlay.py::
+apply_macos_clear_backing`); darwin-only, best-effort, the grey box is the
+degrade. Safe post-BUG-074 (Tk owns NSApp before any window exists in the
+host).
+
+**Class rule.** Aqua-Tk cosmetics verified on Tk 8.6 are unproven on Tk 9 —
+and the failure mode is silent (no TclError). Where the effect matters,
+assert it natively via AppKit instead of trusting a Tk color name.

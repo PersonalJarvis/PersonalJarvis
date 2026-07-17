@@ -177,6 +177,35 @@ def _primary_work_area() -> tuple[int, int, int, int] | None:
         return None
 
 
+def _apply_macos_clear_backing() -> None:
+    """Make every NSWindow of THIS process paint a clear backing (BUG-075).
+
+    Tk 8.6 aqua turned the ``systemTransparent`` background into true
+    per-pixel transparency; Tk 9 (bundled by uv's python-build-standalone,
+    i.e. every fresh macOS install) paints it as an opaque appearance color
+    instead — the bar showed a solid grey box around the pill. Setting the
+    window backing non-opaque with a clear background is the native,
+    Tk-version-independent way to get the same effect; the RGBA frames the
+    renderer already produces then composite correctly.
+
+    Applied to ALL windows deliberately: this runs only inside the overlay
+    host process, whose every window (bar, mascot, comment bubble) wants a
+    clear backing. Safe post-BUG-067: Tk owns ``NSApp`` by the time any
+    window exists. Best-effort, never raises.
+    """
+    if sys.platform != "darwin":
+        return
+    try:
+        from AppKit import NSApp, NSColor  # type: ignore[import-not-found] # noqa: PLC0415
+
+        for win in NSApp.windows():
+            win.setOpaque_(False)
+            win.setBackgroundColor_(NSColor.clearColor())
+            win.setHasShadow_(False)
+    except Exception:  # noqa: BLE001 — cosmetic; the grey box is the degrade
+        log.debug("macOS clear-backing pass skipped", exc_info=True)
+
+
 def _create_hidden_tk_root(tk: Any) -> Any:
     """Create a Tk root without mapping its platform-default backing window.
 
@@ -601,6 +630,11 @@ class JarvisBarOverlay:
             borderwidth=0,
         )
         self._canvas.pack(fill="both", expand=True)
+        if self._mac_transparent:
+            # Tk 9 needs the native backing cleared too (BUG-075); the window
+            # must exist first, so flush geometry before the AppKit pass.
+            root.update_idletasks()
+            _apply_macos_clear_backing()
         self._canvas.bind("<ButtonPress-1>", self._on_press)
         self._canvas.bind("<B1-Motion>", self._on_motion)
         self._canvas.bind("<ButtonRelease-1>", self._on_release)
