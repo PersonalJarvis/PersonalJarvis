@@ -109,3 +109,25 @@ class TestPublicGetter:
 
     def test_get_default_returns_none_for_unknown_tier(self):
         assert get_tier_default_model("unknown_tier", "gemini") is None
+
+
+class TestPluginDefaultParity:
+    """The plugin's emergency ``DEFAULT_MODEL`` must never drift from the
+    curated router-tier default.
+
+    Live macOS fresh-install bug 2026-07-17: with no model configured anywhere,
+    the health probe collapsed into ``GeminiBrain``'s hardcoded default, which
+    was still the retired stable alias ``gemini-3-flash`` — Google's API only
+    serves the ``-preview`` id, so every fresh install's Tool Model tab went
+    red with a 404 while the maintainer's pinned config masked it (AP-23).
+    """
+
+    def test_gemini_plugin_default_matches_router_tier_default(self):
+        from jarvis.plugins.brain.gemini import DEFAULT_MODEL
+
+        assert DEFAULT_MODEL == get_tier_default_model("router", "gemini")
+
+    def test_openai_plugin_default_matches_router_tier_default(self):
+        from jarvis.plugins.brain.openai import DEFAULT_MODEL
+
+        assert DEFAULT_MODEL == get_tier_default_model("router", "openai")

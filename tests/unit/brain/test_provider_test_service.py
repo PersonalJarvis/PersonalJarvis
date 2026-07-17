@@ -58,6 +58,55 @@ def test_brain_probe_ok_is_ok() -> None:
     assert res.latency_ms == pytest.approx(1234.0)
 
 
+def test_brain_probe_uses_tier_default_when_no_model_configured() -> None:
+    """Fresh install: no model configured anywhere → the probe must receive the
+    curated router-tier default, never "" (which would collapse into the
+    plugin's hardcoded DEFAULT_MODEL — the macOS Tool-Model 404, AP-23)."""
+    seen: list[str] = []
+
+    async def probe(_p, m):
+        seen.append(m)
+        return HealthResult(provider="gemini", model=m, ok=True)
+
+    fresh_cfg = SimpleNamespace(brain=SimpleNamespace(providers={}))
+    res = _run(run_provider_test(get_spec("gemini"), fresh_cfg, present=True, brain_probe=probe))
+    assert res.status == "ok"
+    from jarvis.brain.manager import get_tier_default_model
+
+    assert seen == [get_tier_default_model("router", "gemini")]
+
+
+def test_brain_probe_configured_model_wins_over_tier_default() -> None:
+    seen: list[str] = []
+
+    async def probe(_p, m):
+        seen.append(m)
+        return HealthResult(provider="gemini", model=m, ok=True)
+
+    res = _run(run_provider_test(get_spec("gemini"), _cfg(), present=True, brain_probe=probe))
+    assert res.status == "ok"
+    assert seen == ["gemini-3.5-flash"]
+
+
+def test_brain_probe_explicit_model_override_wins() -> None:
+    """A tier with its own pin (Tool Model) probes THAT model, not the
+    provider's general brain model."""
+    seen: list[str] = []
+
+    async def probe(_p, m):
+        seen.append(m)
+        return HealthResult(provider="gemini", model=m, ok=True)
+
+    res = _run(
+        run_provider_test(
+            get_spec("gemini"), _cfg(), present=True, brain_probe=probe,
+            model="gemini-3.1-pro-preview",
+        )
+    )
+    assert res.status == "ok"
+    assert seen == ["gemini-3.1-pro-preview"]
+
+
 def test_brain_probe_bad_key_is_bad_key() -> None:
     async def probe(_p, _m):
         return HealthResult(

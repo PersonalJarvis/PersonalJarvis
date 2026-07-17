@@ -148,7 +148,7 @@ def no_real_provider_test(monkeypatch: pytest.MonkeyPatch) -> None:
     hermetic and fast."""
     from jarvis.brain import provider_test as _pt
 
-    async def _fake_run(spec: Any, cfg: Any) -> _FakeTestResult:  # noqa: ANN401
+    async def _fake_run(spec: Any, cfg: Any, **kwargs: Any) -> _FakeTestResult:  # noqa: ANN401
         return _FakeTestResult("ok", "")
 
     monkeypatch.setattr(_pt, "run_provider_test", _fake_run)
@@ -239,7 +239,7 @@ async def test_section_health_switch_cancels_old_provider_without_misattribution
     nvidia_started = asyncio.Event()
     nvidia_cancelled = asyncio.Event()
 
-    async def _probe(spec: Any, cfg: Any) -> _FakeTestResult:  # noqa: ANN401
+    async def _probe(spec: Any, cfg: Any, **kwargs: Any) -> _FakeTestResult:  # noqa: ANN401
         if spec.id == "nvidia":
             nvidia_started.set()
             try:
@@ -292,7 +292,7 @@ async def test_section_health_model_switch_cancels_old_probe_for_same_provider(
     old_started = asyncio.Event()
     old_cancelled = asyncio.Event()
 
-    async def _probe(spec: Any, cfg: Any) -> _FakeTestResult:  # noqa: ANN401
+    async def _probe(spec: Any, cfg: Any, **kwargs: Any) -> _FakeTestResult:  # noqa: ANN401
         selected_model = cfg.brain.providers["openrouter"].model
         if spec.id == "openrouter" and selected_model == "slow-model":
             old_started.set()
@@ -324,6 +324,42 @@ async def test_section_health_model_switch_cancels_old_probe_for_same_provider(
     assert new_response.sections["brain"].subject_id == "openrouter"
     assert new_response.sections["brain"].status == "ok"
     assert old_response.sections["brain"].status == "ok"
+
+
+def test_section_health_computer_use_probes_the_tool_model_pin(
+    server_with_brain: WebServer,
+    secret_store: _InMemorySecretStore,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The Tool Model tab must test the model that tier actually runs.
+
+    Live macOS fresh-install bug 2026-07-17: the computer-use section probed
+    the provider's general brain model ("" on a fresh install), which collapsed
+    into the plugin's hardcoded default — a retired id that 404'd, painting the
+    Tool Model tab red although the runtime resolution was healthy (AP-23).
+    """
+    from jarvis.brain import provider_test as provider_test_module
+    from jarvis.core.config import BrainProviderConfig, BrainTierConfig
+
+    secret_store.data["gemini_api_key"] = "AIza-test"
+    server_with_brain.cfg.brain.tool_model = BrainTierConfig(provider="gemini")
+    server_with_brain.cfg.brain.providers["gemini"] = BrainProviderConfig(
+        model="general-brain-model", tool_model="pinned-tool-model"
+    )
+
+    seen: dict[str, Any] = {}
+
+    async def _probe(spec: Any, cfg: Any, **kwargs: Any) -> _FakeTestResult:  # noqa: ANN401
+        seen[spec.id] = kwargs.get("model")
+        return _FakeTestResult("ok", "")
+
+    monkeypatch.setattr(provider_test_module, "run_provider_test", _probe)
+
+    with TestClient(server_with_brain.app) as client:
+        body = client.get("/api/providers/section-health?refresh=true").json()
+
+    assert body["sections"]["computer-use"]["subject_id"] == "gemini"
+    assert seen["gemini"] == "pinned-tool-model"
 
 
 def test_list_providers_exposes_credential_help_and_billing(

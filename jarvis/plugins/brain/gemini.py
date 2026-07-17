@@ -27,7 +27,12 @@ from ._openai_base import CLIENT_TIMEOUT, stream_complete
 
 log = logging.getLogger(__name__)
 
-DEFAULT_MODEL = "gemini-3-flash"
+# Emergency anchor when no model is configured anywhere. MUST be an id the
+# public Generative Language API actually serves: the stable alias
+# "gemini-3-flash" is NOT listed (404 NOT_FOUND on generateContent) — only the
+# -preview id exists. Keep in sync with TIER_DEFAULTS_BY_PROVIDER["router"]
+# ["gemini"] (jarvis/brain/manager.py); a parity test guards this.
+DEFAULT_MODEL = "gemini-3-flash-preview"
 OPENAI_COMPAT_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
 
 _TRANSPORT_NATIVE = "native"

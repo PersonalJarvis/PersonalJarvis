@@ -85,7 +85,7 @@ async def test_every_catalog_provider_health_is_bound_to_its_exact_id(
 
     monkeypatch.setattr(provider_routes, "_is_credential_present", lambda *args: True)
 
-    async def _probe(selected, cfg):
+    async def _probe(selected, cfg, **kwargs):
         return SimpleNamespace(status="ok", detail="")
 
     monkeypatch.setattr(provider_test, "run_provider_test", _probe)

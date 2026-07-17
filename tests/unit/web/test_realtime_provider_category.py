@@ -224,7 +224,7 @@ def test_realtime_switch_unknown_provider_is_404(monkeypatch):
 def test_section_health_includes_realtime_key(monkeypatch):
     from jarvis.brain import provider_test as _pt
 
-    async def _fake_run(spec, cfg):
+    async def _fake_run(spec, cfg, **kwargs):
         from types import SimpleNamespace
 
         return SimpleNamespace(status="ok", detail="")
@@ -242,7 +242,7 @@ def test_section_health_includes_realtime_key(monkeypatch):
 def test_section_health_realtime_needs_setup_without_key(monkeypatch):
     from jarvis.brain import provider_test as _pt
 
-    async def _fake_run(spec, cfg):
+    async def _fake_run(spec, cfg, **kwargs):
         from types import SimpleNamespace
 
         return SimpleNamespace(status="ok", detail="")

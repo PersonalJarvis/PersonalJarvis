@@ -190,14 +190,32 @@ def _is_credential_present(spec: Any) -> bool:
 
 
 def _resolve_brain_model(cfg: Any, provider: str) -> str:
-    """Best-effort lookup of the configured model for a brain provider."""
+    """The model the runtime would actually run for a brain provider.
+
+    Mirrors the manager's resolution order (explicit config override, then the
+    router-tier frontier default). Falling through to "" here would hand the
+    probe to the plugin's hardcoded ``DEFAULT_MODEL`` — which can drift from the
+    curated tier default and made a fresh install's health check 404 on a model
+    id the real dispatch path never uses (AP-23 class).
+    """
+    model = ""
     try:
         providers = getattr(getattr(cfg, "brain", None), "providers", None)
         if isinstance(providers, dict):
             pc = providers.get(provider)
         else:
             pc = getattr(providers, provider, None)
-        return getattr(pc, "model", "") or ""
+        model = getattr(pc, "model", "") or ""
+    except Exception:  # noqa: BLE001
+        model = ""
+    if model:
+        return model
+    try:
+        # Lazy: manager imports this module (BILLING_LIMIT_MARKERS), so a
+        # module-level import here would be a cycle.
+        from jarvis.brain.manager import get_tier_default_model
+
+        return get_tier_default_model("router", provider) or ""
     except Exception:  # noqa: BLE001
         return ""
 
@@ -304,12 +322,17 @@ async def run_provider_test(
     codex_status: Callable[[], Any] | None = None,
     antigravity_status: Callable[[], Any] | None = None,
     timeout_s: float = 60.0,
+    model: str | None = None,
 ) -> ProviderTestResult:
     """Run a REAL minimal call against ``spec``'s provider and classify it.
 
     The network-touching seams (``brain_probe`` / ``make_tts`` / ``make_stt`` /
     ``codex_status``) default to the production wiring and are injectable so the
     dispatch logic is unit-testable without hitting a live provider.
+
+    ``model`` (brain tier only) probes that exact model instead of the
+    provider's configured/default one — used by tiers with their own model pin
+    (e.g. the Tool Model), so the health verdict matches what that tier runs.
 
     ``timeout_s`` bounds the wait for the FIRST byte/delta, not a dead endpoint
     (the SDK ``connect`` timeout, ~5s, catches those). It must clear the slowest
@@ -400,8 +423,8 @@ async def run_provider_test(
             )
 
     if spec.tier == "brain":
-        model = _resolve_brain_model(cfg, provider)
-        hr = await brain_probe(provider, model)
+        probe_model = model or _resolve_brain_model(cfg, provider)
+        hr = await brain_probe(provider, probe_model)
         if getattr(hr, "ok", False):
             return ProviderTestResult(provider, OK, "", getattr(hr, "duration_ms", 0.0))
         err = getattr(hr, "error", None)

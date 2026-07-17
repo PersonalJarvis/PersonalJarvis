@@ -722,12 +722,18 @@ class SectionHealthResponse(BaseModel):
     cached: bool = False
 
 
-async def _tier_section_health(cfg: Any, spec: ProviderSpec | None) -> SectionHealth:
+async def _tier_section_health(
+    cfg: Any, spec: ProviderSpec | None, *, model: str | None = None
+) -> SectionHealth:
     """Health of one provider tier, derived from its ACTIVE provider only.
 
     A tier is only as healthy as the single provider currently powering it —
     deliberately NOT "does any provider here lack a key" (that would paint every
     tab red, since unused providers are normally left empty).
+
+    ``model`` probes that exact model for a brain-tier spec — used by sections
+    whose tier carries its own model pin (Tool Model), so the dot reflects what
+    that tier actually runs, not the general brain model.
     """
     if spec is None:
         return SectionHealth(
@@ -760,7 +766,7 @@ async def _tier_section_health(cfg: Any, spec: ProviderSpec | None) -> SectionHe
             subject_id=spec.id,
         )
     try:
-        result = await _provider_test.run_provider_test(spec, cfg)
+        result = await _provider_test.run_provider_test(spec, cfg, model=model)
     except Exception as exc:  # noqa: BLE001
         log.warning("section-health test for %s failed: %s", spec.id, exc)
         return SectionHealth(
@@ -1165,8 +1171,13 @@ async def _compute_section_health(
 
     checks = {
         "brain": _tier_section_health(cfg, get_spec(subjects["brain"] or "")),
+        # The Tool Model tier has its own model pin (tool_model → cu_model);
+        # probe THAT model, not the general brain model. An unset pin falls
+        # through to run_provider_test's own resolution (model → tier default).
         "computer-use": _tier_section_health(
-            cfg, get_spec(subjects["computer-use"] or "")
+            cfg,
+            get_spec(subjects["computer-use"] or ""),
+            model=_provider_cu_model(cfg, subjects["computer-use"] or "") or None,
         ),
         "tts": _tier_section_health(cfg, get_spec(subjects["tts"] or "")),
         "stt": _tier_section_health(cfg, get_spec(subjects["stt"] or "")),
