@@ -42,10 +42,12 @@ import { useT } from "@/i18n";
 
 // The view is organised around exactly five primary categories — Brain, Voice
 // Output (TTS), Voice Input (STT), Realtime and Subagents — surfaced as a
-// segmented tab bar. Everything else (Control-API key, team key proxy,
-// telephony, Wiki) lives in a clearly separated, de-emphasized "Advanced" tab
-// so it never competes with the five core categories.
-type CategoryKey = ProviderTier | "subagents" | "advanced";
+// segmented tab bar. The per-install Control Key gets its OWN de-emphasized
+// tab ("jarvis-key", labelled "<Name> Key" after the configured wake word) so
+// a user hunting for the key the lock screen asks about finds a section named
+// like their assistant. Everything else (team key proxy, telephony, Wiki)
+// lives in the "Advanced" tab so it never competes with the core categories.
+type CategoryKey = ProviderTier | "subagents" | "jarvis-key" | "advanced";
 
 // The top-level engine mode. Feature A supersedes design D1 ("view-only"):
 // the switch now decides which tab set is shown AND persists `[voice].mode`
@@ -66,9 +68,16 @@ const PIPELINE_TABS: CategoryKey[] = [
   "tts",
   "stt",
   "subagents",
+  "jarvis-key",
   "advanced",
 ];
-const REALTIME_TABS: CategoryKey[] = ["realtime", "computer-use", "subagents", "advanced"];
+const REALTIME_TABS: CategoryKey[] = [
+  "realtime",
+  "computer-use",
+  "subagents",
+  "jarvis-key",
+  "advanced",
+];
 
 type LucideIcon = typeof Brain;
 
@@ -250,6 +259,7 @@ export function ApiKeysView() {
           />
         )}
         {active === "subagents" && <SubagentCategory />}
+        {active === "jarvis-key" && <JarvisKeyCategory />}
         {active === "advanced" && <AdvancedCategory />}
         </div>
       </div>
@@ -489,7 +499,8 @@ function CategoryTabs({
   tabs: CategoryKey[];
 }) {
   const t = useT();
-  const tabMeta: Record<Exclude<CategoryKey, "advanced">, { label: string; icon: LucideIcon }> = {
+  type CoreTab = Exclude<CategoryKey, "advanced" | "jarvis-key">;
+  const tabMeta: Record<CoreTab, { label: string; icon: LucideIcon }> = {
     brain: { label: t("apikeys_view.tab_brain"), icon: Brain },
     tts: { label: t("apikeys_view.tab_tts"), icon: Volume2 },
     stt: { label: t("apikeys_view.tab_stt"), icon: Mic },
@@ -498,8 +509,9 @@ function CategoryTabs({
     subagents: { label: t("apikeys_view.tab_subagents"), icon: Bot },
   };
   const coreTabs = tabs.filter(
-    (key): key is Exclude<CategoryKey, "advanced"> => key !== "advanced",
+    (key): key is CoreTab => key !== "advanced" && key !== "jarvis-key",
   );
+  const showJarvisKey = tabs.includes("jarvis-key");
   const showAdvanced = tabs.includes("advanced");
   return (
     <div className="border-b border-border px-6 py-3">
@@ -516,21 +528,31 @@ function CategoryTabs({
             />
           ))}
         </div>
+        {(showJarvisKey || showAdvanced) && (
+          <span
+            className="mx-1 hidden h-6 w-px bg-border/70 sm:block"
+            aria-hidden="true"
+          />
+        )}
+        {showJarvisKey && (
+          <TabButton
+            icon={KeyRound}
+            label={t("apikeys_view.tab_jarvis_key")}
+            selected={active === "jarvis-key"}
+            onClick={() => onSelect("jarvis-key")}
+            health={health["jarvis-key"]}
+            muted
+          />
+        )}
         {showAdvanced && (
-          <>
-            <span
-              className="mx-1 hidden h-6 w-px bg-border/70 sm:block"
-              aria-hidden="true"
-            />
-            <TabButton
-              icon={SlidersHorizontal}
-              label={t("apikeys_view.tab_advanced")}
-              selected={active === "advanced"}
-              onClick={() => onSelect("advanced")}
-              health={health.advanced}
-              muted
-            />
-          </>
+          <TabButton
+            icon={SlidersHorizontal}
+            label={t("apikeys_view.tab_advanced")}
+            selected={active === "advanced"}
+            onClick={() => onSelect("advanced")}
+            health={health.advanced}
+            muted
+          />
         )}
       </div>
     </div>
@@ -863,10 +885,33 @@ function SubagentCategory() {
 }
 
 /**
+ * The dedicated "<Name> Key" category — the per-install Control Key that
+ * unlocks the browser UI and authenticates local agents. The tab and hero are
+ * named after the configured wake word via the i18n `{name}` token ("Hannes"
+ * -> "Hannes Key"), so the section the lock screen points at carries the name
+ * the user actually knows their assistant by.
+ */
+function JarvisKeyCategory() {
+  const t = useT();
+  return (
+    <div role="tabpanel">
+      <CategoryHero
+        icon={KeyRound}
+        title={t("apikeys_view.jarvis_key_title")}
+        description={t("apikeys_view.jarvis_key_desc")}
+      />
+      <div className="space-y-4">
+        <JarvisApiGroup />
+      </div>
+    </div>
+  );
+}
+
+/**
  * The de-emphasized "Advanced" category — everything that is NOT one of the four
- * core provider categories: the local Control-API key, the team key proxy,
- * telephony, and the knowledge-Wiki provider. Each block keeps its own labelled
- * sub-section header, so the zone reads as a clearly separated list of optional
+ * core provider categories: the team key proxy, telephony, and the
+ * knowledge-Wiki provider. Each block keeps its own labelled sub-section
+ * header, so the zone reads as a clearly separated list of optional
  * integrations rather than competing with the four primary categories.
  */
 function AdvancedCategory() {
@@ -879,11 +924,9 @@ function AdvancedCategory() {
         description={t("apikeys_view.advanced_desc")}
       />
       <div className="space-y-4">
-        {/* Jarvis access — the local Control-API key (lets local coding agents
-            drive Jarvis over HTTP) and the optional Team key proxy. Both are
-            credential / key-routing management, so they live with the provider
-            keys rather than in the behaviour-focused Settings view. */}
-        <JarvisApiGroup />
+        {/* Team key proxy — credential / key-routing management, so it lives
+            with the provider keys rather than in the behaviour-focused
+            Settings view. */}
         <TeamProxyGroup />
         {/* Telephony — the former standalone screen, embedded as a section (own
             data source /api/telephony/*). */}

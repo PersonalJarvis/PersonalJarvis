@@ -10,7 +10,7 @@
     "invalid": "Dieser Control Key wurde nicht akzeptiert.",
     "unavailable": "Jarvis ist nicht erreichbar. Versuch es erneut.",
     "where_title": "Wo finde ich den Control Key?",
-    "where_hint": "Er wurde dir nie zugeschickt — er wird bei der Installation automatisch für diese Jarvis-Instanz erzeugt. Öffne Jarvis auf dem Computer, auf dem es installiert ist: Unter API-Keys → Zugang & Integrationen kannst du ihn anzeigen, kopieren oder durch einen eigenen ersetzen.",
+    "where_hint": "Er wurde dir nie zugeschickt — er wird bei der Installation automatisch für diese Jarvis-Instanz erzeugt. Öffne Jarvis auf dem Computer, auf dem es installiert ist: Unter API-Keys gibt es eine eigene Key-Sektion, benannt nach deinem Assistenten (z. B. „Nico Key“) — dort kannst du ihn anzeigen, kopieren oder durch einen eigenen ersetzen.",
     "where_hint_server": "Auf einem Server ohne Oberfläche steht er in der Datei .control_api_key im Jarvis-Datenordner."
   },
   "file_toast": {
@@ -912,6 +912,9 @@
     "tab_computer_use": "Tool Model",
     "tab_subagents": "Jarvis-Agents",
     "tab_advanced": "Erweitert",
+    "tab_jarvis_key": "{name} Key",
+    "jarvis_key_title": "{name} Key",
+    "jarvis_key_desc": "Der eine Schlüssel, der diese Installation schützt — er entsperrt {name} im Browser und weist lokale Agenten aus.",
     "mode_pipeline": "Pipeline",
     "mode_realtime": "Realtime",
     "mode_active_badge": "Aktiv",
@@ -935,7 +938,7 @@
     "cat_subagents_title": "Jarvis-Agents",
     "cat_subagents_desc": "Wähle, welcher Provider schwere Hintergrund-Aufgaben übernimmt.",
     "advanced_title": "Zugang & Integrationen",
-    "advanced_desc": "Optionale Extras: Control-API-Zugang, der Team-Key-Proxy, Telefonie und der Wissens-Wiki-Provider.",
+    "advanced_desc": "Optionale Extras: der Team-Key-Proxy, Telefonie und der Wissens-Wiki-Provider.",
     "no_providers_in_tier": "In dieser Kategorie sind keine Provider verfügbar.",
     "model_picker_activate_hint": "Aktiviere diesen Provider, um seine Stimme oder sein Modell zu wählen.",
     "active_tooltip": "Bereits aktiv",

@@ -10,7 +10,7 @@
     "invalid": "La clave de control no ha sido aceptada.",
     "unavailable": "No se pudo conectar con Jarvis. Inténtalo de nuevo.",
     "where_title": "¿Dónde encuentro la clave de control?",
-    "where_hint": "Nunca se te envió — se genera automáticamente para esta instalación de Jarvis. Abre Jarvis en el ordenador donde está instalado: en Claves API → Acceso e integraciones puedes mostrarla, copiarla o sustituirla por una propia.",
+    "where_hint": "Nunca se te envió — se genera automáticamente para esta instalación de Jarvis. Abre Jarvis en el ordenador donde está instalado: en Claves API hay una sección propia con el nombre de tu asistente (p. ej. \"Nico Key\") donde puedes mostrarla, copiarla o sustituirla por una propia.",
     "where_hint_server": "En un servidor sin interfaz está en el archivo .control_api_key dentro de la carpeta de datos de Jarvis."
   },
   "file_toast": {
@@ -912,6 +912,9 @@
     "tab_computer_use": "Tool Model",
     "tab_subagents": "Jarvis-Agents",
     "tab_advanced": "Avanzado",
+    "tab_jarvis_key": "{name} Key",
+    "jarvis_key_title": "{name} Key",
+    "jarvis_key_desc": "La única clave que protege esta instalación: desbloquea {name} en el navegador y autentica a los agentes locales.",
     "mode_pipeline": "Pipeline",
     "mode_realtime": "Tiempo real",
     "mode_active_badge": "Activo",
@@ -935,7 +938,7 @@
     "cat_subagents_title": "Jarvis-Agents",
     "cat_subagents_desc": "Elige qué proveedor ejecuta las tareas pesadas en segundo plano.",
     "advanced_title": "Acceso e integraciones",
-    "advanced_desc": "Extras opcionales: acceso a la API de control, el proxy de claves de equipo, telefonía y el proveedor del Wiki de conocimiento.",
+    "advanced_desc": "Extras opcionales: el proxy de claves de equipo, telefonía y el proveedor del Wiki de conocimiento.",
     "no_providers_in_tier": "No hay proveedores disponibles en esta categoría.",
     "model_picker_activate_hint": "Activa este proveedor para elegir su voz o modelo.",
     "active_tooltip": "Ya activo",

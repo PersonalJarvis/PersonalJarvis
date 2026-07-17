@@ -75,6 +75,9 @@ describe("ApiKeysView two-mode", () => {
     expect(screen.getByRole("tab", { name: /voice output/i })).toBeTruthy();
     expect(screen.getByRole("tab", { name: /voice input/i })).toBeTruthy();
     expect(screen.getByRole("tab", { name: /jarvis-agents/i })).toBeTruthy();
+    // The dedicated key tab is named after the assistant ({name} token; the
+    // uncached test default resolves to "Assistant").
+    expect(screen.getByRole("tab", { name: /assistant key/i })).toBeTruthy();
     expect(screen.getByRole("tab", { name: /advanced/i })).toBeTruthy();
     expect(screen.queryByRole("tab", { name: /realtime/i })).toBeNull();
   });
@@ -124,6 +127,7 @@ describe("ApiKeysView two-mode", () => {
 
     expect(screen.getByRole("tab", { name: /realtime/i })).toBeTruthy();
     expect(screen.getByRole("tab", { name: /jarvis-agents/i })).toBeTruthy();
+    expect(screen.getByRole("tab", { name: /assistant key/i })).toBeTruthy();
     expect(screen.getByRole("tab", { name: /advanced/i })).toBeTruthy();
     expect(screen.queryByRole("tab", { name: /^brain$/i })).toBeNull();
     expect(screen.queryByRole("tab", { name: /voice output/i })).toBeNull();

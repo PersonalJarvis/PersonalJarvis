@@ -10,7 +10,7 @@
     "invalid": "That Control Key was not accepted.",
     "unavailable": "Could not reach Jarvis. Try again.",
     "where_title": "Where do I find the Control Key?",
-    "where_hint": "It was never sent to you — it is generated automatically for this Jarvis install. Open Jarvis on the computer it is installed on: under API Keys → Access & Integrations you can show it, copy it, or replace it with one of your own.",
+    "where_hint": "It was never sent to you — it is generated automatically for this Jarvis install. Open Jarvis on the computer it is installed on: under API Keys there is a dedicated key section named after your assistant (e.g. \"Nico Key\") where you can show it, copy it, or replace it with one of your own.",
     "where_hint_server": "On a headless server it is stored in the .control_api_key file inside the Jarvis data folder."
   },
   "file_toast": {
@@ -912,6 +912,9 @@
     "tab_computer_use": "Tool Model",
     "tab_subagents": "Jarvis-Agents",
     "tab_advanced": "Advanced",
+    "tab_jarvis_key": "{name} Key",
+    "jarvis_key_title": "{name} Key",
+    "jarvis_key_desc": "The one key that protects this install — it unlocks {name} in the browser and authenticates local agents.",
     "mode_pipeline": "Pipeline",
     "mode_realtime": "Realtime",
     "mode_active_badge": "Active",
@@ -935,7 +938,7 @@
     "cat_subagents_title": "Jarvis-Agents",
     "cat_subagents_desc": "Choose which provider runs heavy background tasks.",
     "advanced_title": "Access & Integrations",
-    "advanced_desc": "Optional extras: control-API access, the team key proxy, telephony, and the knowledge Wiki provider.",
+    "advanced_desc": "Optional extras: the team key proxy, telephony, and the knowledge Wiki provider.",
     "no_providers_in_tier": "No providers available in this category.",
     "model_picker_activate_hint": "Activate this provider to choose its voice or model.",
     "active_tooltip": "Already active",
