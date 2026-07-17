@@ -5,8 +5,10 @@ Higher-quality .ico files can later be placed under assets/icons/.
 
 Threading: pystray runs on its own thread (not asyncio-capable).
 It communicates with the event loop via a thread-safe queue.
-macOS: AppKit forbids that worker thread (main-thread-only UI), so start()
-is a logged no-op there until the icon is hosted on the main thread.
+macOS: AppKit forbids that worker thread (main-thread-only UI). A main-thread
+start() hosts the icon on the pywebview NSApplication via run_detached();
+off-main callers keep the logged no-op (BUG-056). Icon mutations from worker
+threads are marshaled to the main thread via PyObjCTools.AppHelper.callAfter.
 """
 from __future__ import annotations
 
@@ -99,6 +101,9 @@ class JarvisTray:
         self._icon: Any = None
         self._thread: threading.Thread | None = None
         self._command_queue: queue.Queue[TrayCommand] = queue.Queue()
+        # True when the darwin icon runs detached on the AppKit main thread;
+        # icon mutations must then be marshaled via _call_on_main (BUG-056).
+        self._darwin_detached = False
 
     def _build_menu(self) -> Any:
         from pystray import Menu, MenuItem  # type: ignore[import-untyped]
@@ -159,18 +164,47 @@ class JarvisTray:
             return
         if sys.platform == "darwin":
             # pystray's darwin backend builds an NSStatusItem in Icon.__init__;
-            # AppKit allows UI objects on the MAIN thread only. Created from
-            # this worker thread, the first real-Mac boot died with a native
-            # AppKit assertion (NSInternalInconsistencyException → process
-            # abort, "Python quit unexpectedly") that no try/except can catch.
-            # Degrade to a logged no-op (AD-6): the desktop window + Dock icon
-            # remain. A real menu-bar icon needs main-thread hosting
-            # (pystray run_detached + the pywebview NSApplication) — tracked
-            # in docs/plans/cross-platform-mac-linux/FIX-TRACKER.md.
-            log.info(
-                "Tray not started: macOS allows status items on the main "
-                "thread only — running without a menu-bar icon."
-            )
+            # AppKit allows UI objects on the MAIN thread only. Created from a
+            # worker thread, the first real-Mac boot died with a native AppKit
+            # assertion (NSInternalInconsistencyException → process abort,
+            # "Python quit unexpectedly") that no try/except can catch
+            # (BUG-056). Main-thread callers host the icon detached on the
+            # shared NSApplication; off-main callers keep the logged no-op
+            # floor (AD-6) — the desktop window + Dock icon remain.
+            if threading.current_thread() is not threading.main_thread():
+                log.info(
+                    "Tray not started: macOS allows status items on the main "
+                    "thread only — running without a menu-bar icon."
+                )
+                return
+            if self._darwin_detached and self._icon is not None:
+                # Already hosted detached — a second start() must not build a
+                # duplicate status item (the thread guard above only covers
+                # the worker-thread backends).
+                return
+            try:
+                from AppKit import NSApplication  # type: ignore[import-not-found]
+                from pystray import Icon  # type: ignore[import-untyped]
+
+                nsapp = NSApplication.sharedApplication()
+                icon_image = _make_icon(self._state)
+                self._icon = Icon(
+                    "jarvis",
+                    icon=icon_image,
+                    title="Jarvis — idle",
+                    menu=self._build_menu(),
+                    darwin_nsapplication=nsapp,
+                )
+                self._icon.run_detached()
+                self._darwin_detached = True
+            except Exception:  # noqa: BLE001 — a broken menu-bar host must not crash boot (AD-6)
+                log.warning(
+                    "Tray not started: macOS menu-bar icon could not be "
+                    "created — running without a menu-bar icon.",
+                    exc_info=True,
+                )
+                self._icon = None
+                self._darwin_detached = False
             return
         if not display_present():
             # Headless, or a Linux/Wayland session without an AppIndicator /
@@ -185,13 +219,37 @@ class JarvisTray:
         self._thread = threading.Thread(target=self._run, name="jarvis-tray", daemon=True)
         self._thread.start()
 
+    def _call_on_main(self, fn: Callable[[], None]) -> None:
+        """Runs fn on the AppKit main thread for the detached darwin icon.
+
+        macOS drives the NSStatusItem behind the icon on the main thread only
+        (BUG-056), so mutations from worker threads are marshaled through
+        PyObjCTools.AppHelper.callAfter. Everywhere else (and as a last
+        resort when the marshal itself is unavailable) fn runs directly.
+        """
+        if not self._darwin_detached:
+            fn()
+            return
+        try:
+            from PyObjCTools import AppHelper  # type: ignore[import-not-found]
+
+            AppHelper.callAfter(fn)
+        except Exception:  # noqa: BLE001 — AD-6: degrade to a direct call
+            fn()
+
     def stop(self) -> None:
         if self._icon is not None:
-            try:
-                self._icon.stop()
-            except Exception:  # noqa: BLE001
-                pass
+            icon = self._icon
+
+            def _do_stop() -> None:
+                try:
+                    icon.stop()
+                except Exception:  # noqa: BLE001
+                    pass
+
+            self._call_on_main(_do_stop)
         self._icon = None
+        self._darwin_detached = False
 
     def set_state(self, state: JarvisState) -> None:
         """Thread-safe state update — re-renders the icon and tooltip."""
@@ -200,19 +258,29 @@ class JarvisTray:
         self._state = state
         if self._icon is None:
             return
-        try:
-            self._icon.icon = _make_icon(state)
-            self._icon.title = f"Jarvis — {state.value}"
-        except Exception:  # noqa: BLE001
-            pass
+        icon = self._icon
+
+        def _apply() -> None:
+            try:
+                icon.icon = _make_icon(state)
+                icon.title = f"Jarvis — {state.value}"
+            except Exception:  # noqa: BLE001
+                pass
+
+        self._call_on_main(_apply)
 
     def set_error(self, message: str) -> None:
         self.set_state(JarvisState.ERROR)
         if self._icon is not None:
-            try:
-                self._icon.title = f"Jarvis — Error: {message[:60]}"
-            except Exception:  # noqa: BLE001
-                pass
+            icon = self._icon
+
+            def _apply() -> None:
+                try:
+                    icon.title = f"Jarvis — Error: {message[:60]}"
+                except Exception:  # noqa: BLE001
+                    pass
+
+            self._call_on_main(_apply)
 
     async def command_stream(self) -> asyncio.Queue[TrayCommand]:
         """Async bridge: yields tray commands as an asyncio queue.

@@ -37,6 +37,10 @@ _HOST_MODULE = "jarvis.ui.jarvisbar.host"
 class SubprocessBarOverlay:
     """Surface proxy driving a bar hosted in its own companion process."""
 
+    # Overridable per surface so a host's pump threads are identifiable.
+    _EVENTS_THREAD_NAME = "jarvisbar-host-events"
+    _STDERR_THREAD_NAME = "jarvisbar-host-stderr"
+
     def __init__(
         self,
         persistent: bool = True,
@@ -84,26 +88,18 @@ class SubprocessBarOverlay:
             self._proc = None
             return
 
-        init: dict[str, Any] = {
-            "op": "init",
-            "persistent": self._persistent_flag,
-            "accent": self._accent,
-            "startup_gated": self._startup_gated,
-        }
-        if self._opacity is not None:
-            init["opacity"] = float(self._opacity)
-        self._write_line(init)
+        self._write_line(self._init_payload())
 
         threading.Thread(
             target=self._pump_events,
             args=(self._proc.stdout,),
-            name="jarvisbar-host-events",
+            name=self._EVENTS_THREAD_NAME,
             daemon=True,
         ).start()
         threading.Thread(
             target=self._pump_stderr,
             args=(self._proc.stderr,),
-            name="jarvisbar-host-stderr",
+            name=self._STDERR_THREAD_NAME,
             daemon=True,
         ).start()
 
@@ -129,6 +125,18 @@ class SubprocessBarOverlay:
             except Exception:  # noqa: BLE001
                 log.debug("JarvisBar host kill failed", exc_info=True)
         self._proc = None
+
+    def _init_payload(self) -> dict[str, Any]:
+        """First protocol line sent to the freshly spawned host."""
+        init: dict[str, Any] = {
+            "op": "init",
+            "persistent": self._persistent_flag,
+            "accent": self._accent,
+            "startup_gated": self._startup_gated,
+        }
+        if self._opacity is not None:
+            init["opacity"] = float(self._opacity)
+        return init
 
     # ------------------------------------------------------------------ #
     # Surface API consumed by OrbBusBridge                               #
@@ -276,3 +284,56 @@ class SubprocessBarOverlay:
                     log.info("bar host: %s", text)
         except Exception:  # noqa: BLE001
             log.debug("bar host stderr pump failed", exc_info=True)
+
+
+class SubprocessMascotOverlay(SubprocessBarOverlay):
+    """Surface proxy driving the mascot ``OrbOverlay`` in the same host.
+
+    Same spawn / ready / EOF-degrade plumbing as the bar proxy — the host
+    process picks the surface from the init line's ``"surface"`` key. Unlike
+    the bar (which draws no text bubble and no mouth), the mascot renders
+    all of them, so the text/mouth/animation ops are FORWARDED over stdio
+    instead of no-opped locally.
+    """
+
+    _EVENTS_THREAD_NAME = "orb-host-events"
+    _STDERR_THREAD_NAME = "orb-host-stderr"
+
+    def __init__(self, mascot_path: str | None = None) -> None:
+        super().__init__()
+        self._mascot_path = mascot_path
+
+    def _init_payload(self) -> dict[str, Any]:
+        return {
+            "op": "init",
+            "surface": "mascot",
+            "mascot_path": self._mascot_path,
+        }
+
+    # The mascot draws the comment bubble and the mouth — forward the ops the
+    # bar proxy no-ops locally (wire shapes match host.dispatch()).
+    def play_animation(self, name: str, **params: Any) -> None:
+        self._send({"op": "play_animation", "name": str(name), "params": params})
+
+    def stop_animation(self, name: str) -> None:
+        self._send({"op": "stop_animation", "name": str(name)})
+
+    def show_listening_transcript(
+        self, text: str = "", duration_ms: int = 30000
+    ) -> None:
+        self._send(
+            {
+                "op": "show_listening_transcript",
+                "text": str(text),
+                "duration_ms": int(duration_ms),
+            }
+        )
+
+    def hide_comment(self) -> None:
+        self._send({"op": "hide_comment"})
+
+    def start_mouth_animation(self, duration_ms: int = 60000) -> None:
+        self._send({"op": "start_mouth_animation", "duration_ms": int(duration_ms)})
+
+    def stop_mouth_animation(self) -> None:
+        self._send({"op": "stop_mouth_animation"})

@@ -103,6 +103,64 @@ def test_dispatch_stop_returns_false_and_unknown_is_tolerated() -> None:
     assert host.dispatch(bar, {"op": "definitely-not-a-real-op"}) is True
 
 
+class _SparseSurface:
+    """A surface missing several ops (like the mascot OrbOverlay)."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple] = []
+
+    def show(self, mode: str = "listen") -> None:
+        self.calls.append(("show", mode))
+
+    def stop(self) -> None:
+        self.calls.append(("stop",))
+
+
+def test_dispatch_missing_surface_method_is_a_noop() -> None:
+    surface = _SparseSurface()
+    # OrbOverlay lacks e.g. set_muted/release_startup_gate/reassert_z_order —
+    # a missing method must degrade to a no-op, never raise.
+    assert host.dispatch(surface, {"op": "set_muted", "muted": True}) is True
+    assert host.dispatch(surface, {"op": "release_startup_gate"}) is True
+    assert host.dispatch(surface, {"op": "reassert_z_order"}) is True
+    assert surface.calls == []
+
+
+def test_reader_loop_survives_ops_the_surface_lacks() -> None:
+    surface = _SparseSurface()
+    stream = io.StringIO(
+        '{"op": "set_muted", "muted": true}\n{"op": "show", "mode": "idle"}\n'
+    )
+    host.reader_loop(surface, stream)
+    assert ("show", "idle") in surface.calls
+    assert surface.calls[-1] == ("stop",)
+
+
+def test_build_surface_mascot_builds_an_orb_overlay(monkeypatch) -> None:
+    from ui.orb.overlay import OrbOverlay
+
+    monkeypatch.delenv("JARVIS_BAR_HOST_FAKE", raising=False)
+    monkeypatch.setattr(host, "_hide_dock_icon", lambda: None)
+    surface = host._build_surface(
+        {"op": "init", "surface": "mascot", "mascot_path": None}
+    )
+    assert isinstance(surface, OrbOverlay)
+
+
+def test_build_surface_defaults_to_the_jarvis_bar(monkeypatch) -> None:
+    """Regression: an init line without "surface" still builds the bar."""
+    from jarvis.ui.jarvisbar.overlay import JarvisBarOverlay
+
+    monkeypatch.delenv("JARVIS_BAR_HOST_FAKE", raising=False)
+    monkeypatch.setattr(host, "_hide_dock_icon", lambda: None)
+    surface = host._build_surface(
+        {"op": "init", "persistent": False, "accent": "#123456"}
+    )
+    assert isinstance(surface, JarvisBarOverlay)
+    assert surface._persistent is False
+    assert surface._accent == "#123456"
+
+
 def test_reader_loop_survives_junk_and_stops_bar_on_eof() -> None:
     bar = _RecordingBar()
     stream = io.StringIO(
@@ -153,16 +211,73 @@ def test_host_process_round_trip_with_echo_bar() -> None:
     try:
         assert proc.stdin is not None and proc.stdout is not None
         proc.stdin.write('{"op": "init", "persistent": true}\n')
+        proc.stdin.flush()
+        # Wait for the ready handshake before sending ops — otherwise the
+        # stop below can end the host before the daemon ready-announce
+        # thread ever gets to emit its event.
+        ready = json.loads(proc.stdout.readline())
+        assert ready.get("event") == "ready"
         proc.stdin.write('{"op": "show", "mode": "listen"}\n')
         proc.stdin.write('{"op": "stop"}\n')
         proc.stdin.flush()
         out, _err = proc.communicate(timeout=30)
         events = [json.loads(line) for line in out.splitlines() if line.strip()]
-        kinds = [e.get("event") for e in events]
-        assert "ready" in kinds
         echoed = [e for e in events if e.get("event") == "op"]
         assert any(
             e.get("op") == "show" and e.get("args") == ["listen"] for e in echoed
+        )
+        assert proc.returncode == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
+@pytest.mark.integration
+def test_host_process_round_trip_with_mascot_surface() -> None:
+    """Real subprocess, surface "mascot": forwarded ops reach the surface."""
+    env = dict(os.environ)
+    env["JARVIS_BAR_HOST_FAKE"] = "1"
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "jarvis.ui.jarvisbar.host"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf-8",
+        env=env,
+        cwd=os.getcwd(),
+    )
+    try:
+        assert proc.stdin is not None and proc.stdout is not None
+        proc.stdin.write(
+            '{"op": "init", "surface": "mascot", "mascot_path": "assets/m.png"}\n'
+        )
+        proc.stdin.flush()
+        # Wait for the ready handshake before sending ops — otherwise the
+        # stop below can end the host before the daemon ready-announce
+        # thread ever gets to emit its event.
+        ready = json.loads(proc.stdout.readline())
+        assert ready.get("event") == "ready"
+        proc.stdin.write(
+            '{"op": "play_animation", "name": "wave", "params": {"x": 1}}\n'
+        )
+        proc.stdin.write(
+            '{"op": "show_listening_transcript", "text": "hi", "duration_ms": 9}\n'
+        )
+        proc.stdin.write('{"op": "stop"}\n')
+        proc.stdin.flush()
+        out, _err = proc.communicate(timeout=30)
+        events = [json.loads(line) for line in out.splitlines() if line.strip()]
+        echoed = [e for e in events if e.get("event") == "op"]
+        assert any(
+            e.get("op") == "play_animation"
+            and e.get("args") == ["wave"]
+            and e.get("kwargs") == {"x": 1}
+            for e in echoed
+        )
+        assert any(
+            e.get("op") == "show_listening_transcript"
+            and e.get("args") == ["hi", 9]
+            for e in echoed
         )
         assert proc.returncode == 0
     finally:

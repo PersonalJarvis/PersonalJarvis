@@ -2034,10 +2034,10 @@ class DesktopApp:
             # AppKit) is main-thread-only on macOS, so an in-process bar or
             # mascot Tk root here aborts the WHOLE process natively — the
             # second macOS first-boot crash (BUG-057; the first was the
-            # BUG-056 tray). The bar therefore lives in its own companion
-            # process whose MAIN thread owns the Tk mainloop
-            # (jarvis.ui.jarvisbar.host), remote-driven over stdio. The
-            # mascot orb has no host yet and stays a no-op surface.
+            # BUG-056 tray). Both surfaces therefore live in their own
+            # companion process whose MAIN thread owns the Tk mainloop
+            # (jarvis.ui.jarvisbar.host), remote-driven over stdio; the init
+            # line's "surface" key selects bar vs. mascot.
             from loguru import logger
 
             if style == "jarvis_bar":
@@ -2062,14 +2062,28 @@ class DesktopApp:
                         "macOS JarvisBar host failed to start — falling back "
                         "to the no-op surface."
                     )
+            elif style != "none":
+                try:
+                    from jarvis.ui.jarvisbar.subprocess_overlay import (
+                        SubprocessMascotOverlay,
+                    )
+
+                    surface = SubprocessMascotOverlay(
+                        mascot_path=self.cfg.ui.orb_mascot_path or None,
+                    )
+                    surface.start_in_thread()
+                    logger.info(
+                        "Mascot orb hosted out-of-process on macOS "
+                        "(jarvis.ui.jarvisbar.host)."
+                    )
+                    return surface
+                except Exception:  # noqa: BLE001 — cosmetic; never block boot
+                    logger.opt(exception=True).warning(
+                        "macOS mascot host failed to start — falling back "
+                        "to the no-op surface."
+                    )
             from jarvis.ui.jarvisbar import NullOverlay
 
-            if style not in ("jarvis_bar", "none"):
-                logger.info(
-                    "On-screen mascot disabled on macOS (style={}): Tk windows "
-                    "are main-thread-only there — using the no-op surface.",
-                    style,
-                )
             return NullOverlay()
         if style == "none":
             from jarvis.ui.jarvisbar import NullOverlay

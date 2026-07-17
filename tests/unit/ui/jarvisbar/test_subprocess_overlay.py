@@ -12,7 +12,10 @@ import json
 import threading
 
 from jarvis.ui.jarvisbar import subprocess_overlay as mod
-from jarvis.ui.jarvisbar.subprocess_overlay import SubprocessBarOverlay
+from jarvis.ui.jarvisbar.subprocess_overlay import (
+    SubprocessBarOverlay,
+    SubprocessMascotOverlay,
+)
 
 
 class _FakeStdin:
@@ -190,3 +193,88 @@ def test_surface_contract_exposes_every_bridge_method() -> None:
         assert getattr(SubprocessBarOverlay, name, None) is not None, name
     # Same reset-path contract as NullOverlay: no _root instance attribute.
     assert not hasattr(SubprocessBarOverlay(), "_root")
+
+
+# --------------------------------------------------------------------- #
+# SubprocessMascotOverlay — the mascot flavor of the same host proxy    #
+# --------------------------------------------------------------------- #
+def _started_mascot(
+    monkeypatch, **kwargs
+) -> tuple[SubprocessMascotOverlay, _FakePopen]:
+    monkeypatch.setattr(mod.subprocess, "Popen", _FakePopen)
+    surface = SubprocessMascotOverlay(**kwargs)
+    surface.start_in_thread(timeout=2.0)
+    proc = _FakePopen.last
+    assert proc is not None
+    return surface, proc
+
+
+def test_mascot_init_line_declares_surface_and_mascot_path(monkeypatch) -> None:
+    surface, proc = _started_mascot(monkeypatch, mascot_path="assets/m.png")
+    init = proc.sent()[0]
+    assert init == {"op": "init", "surface": "mascot", "mascot_path": "assets/m.png"}
+    assert surface._ready.is_set()  # scripted ready event consumed
+
+
+def test_bar_init_payload_is_unchanged_by_the_mascot_variant(monkeypatch) -> None:
+    """Regression: the bar proxy's init line keeps its exact pre-mascot shape."""
+    surface, proc = _started_proxy(
+        monkeypatch, persistent=True, accent="#e7c46e", startup_gated=False
+    )
+    assert proc.sent()[0] == {
+        "op": "init",
+        "persistent": True,
+        "accent": "#e7c46e",
+        "startup_gated": False,
+    }
+    assert not isinstance(surface, SubprocessMascotOverlay)
+
+
+def test_mascot_forwards_text_and_mouth_ops_over_the_wire(monkeypatch) -> None:
+    surface, proc = _started_mascot(monkeypatch)
+    surface.play_animation("wave", x=1)
+    surface.stop_animation("wave")
+    surface.show_listening_transcript("hi", 5)
+    surface.hide_comment()
+    surface.start_mouth_animation(5)
+    surface.stop_mouth_animation()
+    sent = proc.sent()[1:]
+    assert sent == [
+        {"op": "play_animation", "name": "wave", "params": {"x": 1}},
+        {"op": "stop_animation", "name": "wave"},
+        {"op": "show_listening_transcript", "text": "hi", "duration_ms": 5},
+        {"op": "hide_comment"},
+        {"op": "start_mouth_animation", "duration_ms": 5},
+        {"op": "stop_mouth_animation"},
+    ]
+
+
+def test_mascot_pump_threads_use_orb_host_names(monkeypatch) -> None:
+    names: list[str | None] = []
+    real_thread = mod.threading.Thread
+
+    class _NamedThread(real_thread):  # type: ignore[misc, valid-type]
+        def __init__(self, *args, **kwargs) -> None:
+            names.append(kwargs.get("name"))
+            super().__init__(*args, **kwargs)
+
+    monkeypatch.setattr(mod.threading, "Thread", _NamedThread)
+    _started_mascot(monkeypatch)
+    assert names == ["orb-host-events", "orb-host-stderr"]
+
+
+def test_mascot_dead_host_degrades_to_noop_without_raising(monkeypatch) -> None:
+    surface, proc = _started_mascot(monkeypatch)
+    proc._returncode = 1  # the host died
+    surface.play_animation("wave")  # must not raise
+    surface.show_listening_transcript("hi", 5)
+    assert proc.sent()[1:] == []  # nothing reached the wire
+
+
+def test_mascot_surface_contract_matches_the_bar_proxy() -> None:
+    from tests.unit.ui.jarvisbar.test_surface_contract import REQUIRED
+
+    for name in REQUIRED:
+        assert getattr(SubprocessMascotOverlay, name, None) is not None, name
+    # Same reset-path contract as NullOverlay: no _root instance attribute.
+    assert not hasattr(SubprocessMascotOverlay(), "_root")

@@ -14,6 +14,9 @@ Protocol (UTF-8, one JSON object per line):
   ``{"op": "init", "persistent": ..., "accent": ..., "startup_gated": ...}``
   (optional ``opacity``); every further line is a surface command mirroring
   the ``OrbBusBridge`` surface API (``show``, ``hide``, ``set_level``, ...).
+  An optional ``"surface"`` key selects what the host renders:
+  ``"jarvis_bar"`` (default) or ``"mascot"`` (the OrbOverlay mascot, with an
+  optional ``"mascot_path"`` passthrough).
   stdin EOF means the parent died or shut down → the host stops the bar and
   exits, so no ownerless bar can linger on the user's desktop.
 - child → parent (stdout): events — ``{"event": "ready"}`` once the Tk root
@@ -57,60 +60,83 @@ def emit(event: str, **payload: Any) -> None:
 _STDOUT_LOCK = threading.Lock()
 
 
-def dispatch(bar: Any, msg: dict[str, Any]) -> bool:
-    """Apply one parent command to the bar. Returns ``False`` for ``stop``.
+def _call(surface: Any, name: str, *args: Any, **kwargs: Any) -> None:
+    """Invoke ``surface.<name>(...)`` if present; a missing method is a no-op.
 
-    Every method called here is documented thread-safe on the bar (enqueue
-    onto the Tk UI queue or an atomic write), so the stdin reader thread may
-    call them directly.
+    The host now fronts more than one surface class (JarvisBarOverlay has
+    every op; the mascot OrbOverlay lacks a few bar-only ones), so an op the
+    current surface does not implement degrades to a debug-logged no-op.
+    """
+    method = getattr(surface, name, None)
+    if method is None:
+        log.debug("bar-host: surface has no %r — op ignored", name)
+        return
+    method(*args, **kwargs)
+
+
+def dispatch(surface: Any, msg: dict[str, Any]) -> bool:
+    """Apply one parent command to the surface. Returns ``False`` for ``stop``.
+
+    Every method called here is documented thread-safe on the surface
+    (enqueue onto the Tk UI queue or an atomic write), so the stdin reader
+    thread may call them directly.
     """
     op = msg.get("op")
     if op == "stop":
         return False
     if op == "show":
-        bar.show(str(msg.get("mode", "listen")))
+        _call(surface, "show", str(msg.get("mode", "listen")))
     elif op == "hide":
-        bar.hide()
+        _call(surface, "hide")
     elif op == "set_level":
-        bar.set_level(float(msg.get("level", 0.0)))
+        _call(surface, "set_level", float(msg.get("level", 0.0)))
     elif op == "set_muted":
-        bar.set_muted(bool(msg.get("muted", False)))
+        _call(surface, "set_muted", bool(msg.get("muted", False)))
     elif op == "set_persistent":
         # Live flag flip — the same plain attribute write the in-process
         # set_bar_persistent path performs (no Tk marshal needed).
-        bar._persistent = bool(msg.get("enabled", True))  # noqa: SLF001
+        surface._persistent = bool(msg.get("enabled", True))  # noqa: SLF001
     elif op == "release_startup_gate":
-        bar.release_startup_gate()
+        _call(surface, "release_startup_gate")
     elif op == "reassert_z_order":
-        bar.reassert_z_order()
+        _call(surface, "reassert_z_order")
     elif op == "play_animation":
-        bar.play_animation(str(msg.get("name", "")), **dict(msg.get("params") or {}))
+        _call(
+            surface,
+            "play_animation",
+            str(msg.get("name", "")),
+            **dict(msg.get("params") or {}),
+        )
     elif op == "stop_animation":
-        bar.stop_animation(str(msg.get("name", "")))
+        _call(surface, "stop_animation", str(msg.get("name", "")))
     elif op == "show_listening_transcript":
-        bar.show_listening_transcript(
-            str(msg.get("text", "")), int(msg.get("duration_ms", 30000))
+        _call(
+            surface,
+            "show_listening_transcript",
+            str(msg.get("text", "")),
+            int(msg.get("duration_ms", 30000)),
         )
     elif op == "hide_comment":
-        bar.hide_comment()
+        _call(surface, "hide_comment")
     elif op == "start_mouth_animation":
-        bar.start_mouth_animation(int(msg.get("duration_ms", 60000)))
+        _call(surface, "start_mouth_animation", int(msg.get("duration_ms", 60000)))
     elif op == "stop_mouth_animation":
-        bar.stop_mouth_animation()
+        _call(surface, "stop_mouth_animation")
     elif op == "reset_position":
-        bar._on_reset_double_click()  # noqa: SLF001 — the double-click reset seam
+        # The double-click reset seam.
+        _call(surface, "_on_reset_double_click")
     else:
         log.warning("bar-host: unknown op %r", op)
     return True
 
 
 def reader_loop(
-    bar: Any,
+    surface: Any,
     stream: TextIO,
     *,
     hard_exit: Callable[[int], Any] | None = None,
 ) -> None:
-    """Drain parent commands until EOF or ``stop``, then stop the bar.
+    """Drain parent commands until EOF or ``stop``, then stop the surface.
 
     ``hard_exit`` (production: ``os._exit``) is the anti-linger backstop for
     a Tk mainloop that refuses to unwind; injectable so tests never arm it.
@@ -126,23 +152,23 @@ def reader_loop(
                 log.warning("bar-host: dropping non-JSON line: %.120r", line)
                 continue
             try:
-                if not dispatch(bar, msg):
+                if not dispatch(surface, msg):
                     break
             except Exception:  # noqa: BLE001 — one bad command must not kill the bar
                 log.exception("bar-host command failed: %r", msg.get("op"))
     finally:
-        # EOF = the parent died or closed us deliberately; either way the bar
-        # has no owner anymore. Arm the anti-linger backstop BEFORE stopping
-        # the bar: stop() lets the main thread's mainloop return immediately,
-        # and starting a thread while the interpreter is already shutting
-        # down is a fatal error (0xC0000409 on Windows).
+        # EOF = the parent died or closed us deliberately; either way the
+        # surface has no owner anymore. Arm the anti-linger backstop BEFORE
+        # stopping the surface: stop() lets the main thread's mainloop return
+        # immediately, and starting a thread while the interpreter is already
+        # shutting down is a fatal error (0xC0000409 on Windows).
         if hard_exit is not None:
             killer = threading.Timer(HARD_EXIT_GRACE_S, hard_exit, args=(0,))
             killer.daemon = True
             killer.start()
         # stop() marshals destroy onto the Tk thread.
         try:
-            bar.stop()
+            surface.stop()
         except Exception:  # noqa: BLE001
             log.debug("bar-host stop failed", exc_info=True)
 
@@ -197,11 +223,53 @@ def _hide_dock_icon() -> None:
         log.debug("Dock-icon hide skipped (pyobjc unavailable?)", exc_info=True)
 
 
-def _build_bar(cfg: dict[str, Any]) -> Any:
+def _import_orb_overlay() -> Any:
+    """Import the mascot ``OrbOverlay`` — wheel-robust.
+
+    The top-level ``ui`` package ships with the source tree but not the
+    wheel; when ``import ui`` fails, retry with the ``jarvis`` package's
+    parent directory (the source checkout root) on ``sys.path``. A final
+    failure exits the host non-zero with an honest stderr line so the
+    parent can degrade.
+    """
+    try:
+        import ui  # noqa: F401
+    except ImportError:
+        try:
+            from pathlib import Path
+
+            import jarvis
+
+            root = str(Path(jarvis.__file__).resolve().parent.parent)
+            if root not in sys.path:
+                sys.path.insert(0, root)
+        except Exception:  # noqa: BLE001 — the import below reports the failure
+            log.debug("mascot-host: sys.path fallback failed", exc_info=True)
+    try:
+        from ui.orb.overlay import OrbOverlay
+    except Exception as exc:  # noqa: BLE001
+        log.error(
+            "mascot-host: cannot import OrbOverlay (%s) — exiting so the "
+            "parent can degrade",
+            exc,
+        )
+        raise SystemExit(3) from exc
+    return OrbOverlay
+
+
+def _build_surface(cfg: dict[str, Any]) -> Any:
     if os.environ.get("JARVIS_BAR_HOST_FAKE") == "1":
         return _EchoBar()
     if sys.platform == "darwin":
         _hide_dock_icon()
+    if str(cfg.get("surface", "jarvis_bar")) == "mascot":
+        orb_overlay_cls = _import_orb_overlay()
+        return orb_overlay_cls(
+            sticky=False,
+            mic_reactive=False,
+            style="mascot",
+            mascot_path=cfg.get("mascot_path") or None,
+        )
     from jarvis.ui.jarvisbar.overlay import JarvisBarOverlay
 
     kwargs = {
@@ -232,25 +300,27 @@ def main() -> int:
         log.error("bar-host: invalid init line %.200r — exiting", init_raw)
         return 2
 
-    bar = _build_bar(cfg)
-    bar.set_on_mute_toggle(lambda: emit("mute_toggle"))
-    bar.set_feedback_publisher(
+    surface = _build_surface(cfg)
+    surface.set_on_mute_toggle(lambda: emit("mute_toggle"))
+    surface.set_feedback_publisher(
         lambda kind, payload: emit("feedback", kind=kind, payload=payload)
     )
-    bar.set_on_show_window(lambda: emit("show_window"))
+    surface.set_on_show_window(lambda: emit("show_window"))
 
     def _announce_ready() -> None:
-        if bar._started.wait(timeout=READY_TIMEOUT_S):  # noqa: SLF001
+        if surface._started.wait(timeout=READY_TIMEOUT_S):  # noqa: SLF001
             emit("ready")
         else:
-            log.error("bar-host: bar did not initialize within %ss", READY_TIMEOUT_S)
+            log.error(
+                "bar-host: surface did not initialize within %ss", READY_TIMEOUT_S
+            )
 
     threading.Thread(
         target=_announce_ready, name="barhost-ready", daemon=True
     ).start()
     threading.Thread(
         target=reader_loop,
-        args=(bar, sys.stdin),
+        args=(surface, sys.stdin),
         kwargs={"hard_exit": os._exit},
         name="barhost-stdin",
         daemon=True,
@@ -258,7 +328,7 @@ def main() -> int:
 
     # THE point of this process: the Tk mainloop runs on the MAIN thread, the
     # only thread Aqua-Tk accepts on macOS.
-    bar.start()
+    surface.start()
     return 0
 
 

@@ -150,9 +150,25 @@ TRANSCRIPT_MAX_VISIBLE_LINES = 4
 # Min on-screen time so fast LISTENING→THINKING bounces are still readable.
 BUBBLE_MIN_SHOW_S = 1.1
 
-# Magenta als Color-Key — Tkinter macht diese Farbe pixel-perfect transparent
+# Magenta color key — Tkinter renders this color pixel-perfect transparent
 COLOR_KEY_HEX = "#FF00FF"
 COLOR_KEY_RGB = np.array([255, 0, 255], dtype=np.uint8)
+
+
+def key_to_alpha(img: Image.Image) -> Image.Image:
+    """RGB frame → RGBA with the magenta color key mapped to full transparency.
+
+    Windows keys the magenta out natively (layered-window color key); macOS
+    has no color-key concept, so the Tk surface there shows RGBA frames on a
+    ``-transparent`` root instead. Exact-match keying mirrors the Windows
+    contract: only pure ``COLOR_KEY_RGB`` pixels vanish.
+    """
+    arr = np.asarray(img, dtype=np.uint8)
+    alpha = np.where(
+        (arr == COLOR_KEY_RGB).all(axis=-1), 0, 255
+    ).astype(np.uint8)
+    return Image.fromarray(np.dstack((arr, alpha)), "RGBA")
+
 
 _GWL_EXSTYLE = -20
 _WS_EX_APPWINDOW = 0x00040000
@@ -922,12 +938,35 @@ class OrbCommentBubble:
         top = tk.Toplevel(self._parent)
         top.overrideredirect(True)
         top.wm_attributes("-topmost", True)
-        top.wm_attributes("-transparentcolor", COLOR_KEY_HEX)
-        top.configure(bg=COLOR_KEY_HEX)
+        # Same per-platform transparency split as the main orb root: macOS
+        # has no color key, so the bubble Toplevel itself goes transparent;
+        # a TclError degrades to an opaque (key-coloured) bubble.
+        self._mac_transparent = False
+        if sys.platform == "darwin":
+            try:
+                top.wm_attributes("-transparent", True)
+                top.configure(bg="systemTransparent")
+                self._mac_transparent = True
+            except tk.TclError:
+                import logging
+
+                logging.getLogger("jarvis.orb").warning(
+                    "macOS -transparent unsupported — the comment bubble "
+                    "renders opaque"
+                )
+                top.configure(bg=COLOR_KEY_HEX)
+        else:
+            top.wm_attributes("-transparentcolor", COLOR_KEY_HEX)
+            top.configure(bg=COLOR_KEY_HEX)
         _hide_tk_window_from_task_switcher(top)
         top.withdraw()
 
-        canvas = tk.Canvas(top, bg=COLOR_KEY_HEX, highlightthickness=0, borderwidth=0)
+        canvas = tk.Canvas(
+            top,
+            bg="systemTransparent" if self._mac_transparent else COLOR_KEY_HEX,
+            highlightthickness=0,
+            borderwidth=0,
+        )
         canvas.pack(fill="both", expand=True)
 
         self._top = top
@@ -1303,8 +1342,28 @@ class OrbOverlay:
         self._root.title("JarvisOrb")
         self._root.overrideredirect(True)  # Frameless, no drop shadow
         self._root.wm_attributes("-topmost", True)
-        self._root.wm_attributes("-transparentcolor", COLOR_KEY_HEX)
-        self._root.configure(bg=COLOR_KEY_HEX)
+        # Per-pixel transparency, per platform: Windows keys out the magenta
+        # color key on the layered window; macOS has no color key, so there
+        # the WINDOW itself becomes transparent (Aqua-Tk's "-transparent" +
+        # the systemTransparent background) and every frame carries a real
+        # alpha channel instead (key_to_alpha in the frame loop).
+        self._mac_transparent = False
+        if sys.platform == "darwin":
+            try:
+                self._root.wm_attributes("-transparent", True)
+                self._root.configure(bg="systemTransparent")
+                self._mac_transparent = True
+            except tk.TclError:
+                import logging
+
+                logging.getLogger("jarvis.orb").warning(
+                    "macOS -transparent unsupported — the mascot will show "
+                    "its key colour"
+                )
+                self._root.configure(bg=COLOR_KEY_HEX)
+        else:
+            self._root.wm_attributes("-transparentcolor", COLOR_KEY_HEX)
+            self._root.configure(bg=COLOR_KEY_HEX)
         # Apply the Jarvis icon BEFORE hiding from the task switcher: Windows
         # caches the taskbar entry on first show, so even a brief flash with
         # the default pythonw icon sticks. Belt-and-suspenders: stable AppID
@@ -1398,7 +1457,7 @@ class OrbOverlay:
             self._root,
             width=WIN_W,
             height=WIN_H,
-            bg=COLOR_KEY_HEX,
+            bg="systemTransparent" if self._mac_transparent else COLOR_KEY_HEX,
             highlightthickness=0,
             borderwidth=0,
         )
@@ -2225,6 +2284,10 @@ class OrbOverlay:
             return
         t = time.perf_counter() - self._t0
         img = self._renderer.render(t, self._mode, self._ext_level)
+        if self._mac_transparent:
+            # macOS has no color key — the frame carries a real alpha
+            # channel instead (magenta → fully transparent).
+            img = key_to_alpha(img)
 
         # The PhotoImage must be kept as self._photo — otherwise Tkinter
         # garbage-collects the image before it gets rendered.
