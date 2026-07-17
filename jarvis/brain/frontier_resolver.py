@@ -229,10 +229,20 @@ class FrontierResolver:
                     f"?key={api_key}",
                 )
                 resp.raise_for_status()
-                # Gemini-Format: models[].name = "models/gemini-3-flash"
+                # Gemini-Format: models[].name = "models/gemini-3-flash".
+                # Capability gate: only ids the API declares as generateContent-
+                # capable may win the auto-pick. Google has listed ids that 404
+                # on every chat call (the 2026-04 "gemini-3-flash" incident:
+                # listed as a clean stable name, so the GA-over-preview ranking
+                # picked it — and every fresh install ran a dead model).
+                from jarvis.brain.model_catalog import (
+                    gemini_entry_serves_generate_content,
+                )
+
                 return [
                     m["name"].removeprefix("models/")
                     for m in resp.json().get("models", [])
+                    if gemini_entry_serves_generate_content(m)
                 ]
 
             raise ValueError(f"Unsupported provider: {provider}")

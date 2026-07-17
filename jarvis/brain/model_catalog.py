@@ -464,6 +464,13 @@ def parse_models_response(provider: str, payload: dict) -> list[ModelInfo]:
             raw = (m.get("name") or "").removeprefix("models/").strip()
             if not raw:
                 continue
+            # Capability gate: ListModels also returns ids that CANNOT serve
+            # generateContent (embeddings, Imagen/Veo/Lyria, Live/bidi audio —
+            # and historically "gemini-3-flash", listed yet 404 on every call).
+            # Offering those in the brain picker guarantees a broken pick, so
+            # drop them on the DECLARED capability, never the name (AP-21).
+            if not gemini_entry_serves_generate_content(m):
+                continue
             label = (m.get("displayName") or "").strip() or raw
             out.append(ModelInfo(id=raw, label=label, output_modalities=_output_modalities(m)))
         return out
@@ -482,6 +489,25 @@ def parse_models_response(provider: str, payload: dict) -> list[ModelInfo]:
             supported_parameters=_supported_parameters(m),
         ))
     return out
+
+
+def gemini_entry_serves_generate_content(entry: dict) -> bool:
+    """True when a Gemini ListModels entry can serve ``generateContent``.
+
+    Google's ListModels declares each model's callable methods
+    (``supportedGenerationMethods``, ``supportedActions`` on newer API
+    revisions). A model listed WITHOUT ``generateContent`` 404s on every chat
+    call — the exact failure the picker/resolver must never offer ("models/…
+    is not found … or is not supported for generateContent"). Fail-open: an
+    entry that declares nothing is kept, so a payload/mock without the field
+    never empties the catalog.
+    """
+    methods = entry.get("supportedGenerationMethods")
+    if not isinstance(methods, list):
+        methods = entry.get("supportedActions")
+    if not isinstance(methods, list):
+        return True
+    return "generateContent" in {str(x) for x in methods}
 
 
 def _input_modalities(entry: dict) -> tuple[str, ...] | None:

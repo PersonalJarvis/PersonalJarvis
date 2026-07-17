@@ -247,6 +247,86 @@ class TestResolveLatest:
         assert resolver._cache["gemini"]["fast"].model_id == "gemini-3-flash"
 
 
+# ----------------------------------------------------------------------
+# _fetch_models — Gemini capability gate (supportedGenerationMethods)
+# ----------------------------------------------------------------------
+
+class TestFetchModelsGeminiCapabilityGate:
+    """Guard for the 2026-04 incident: Google LISTED "gemini-3-flash" as a
+    clean stable id while every generateContent call 404'd — the GA-over-
+    preview ranking then picked the dead model on every fresh install. The
+    fetch must drop ids the API declares as not generateContent-capable."""
+
+    @staticmethod
+    def _resolver(tmp_path: Path, payload: dict) -> FrontierResolver:
+        class _Resp:
+            status_code = 200
+
+            def json(self) -> dict:
+                return payload
+
+            def raise_for_status(self) -> None:
+                return None
+
+        class _Client:
+            async def __aenter__(self) -> "_Client":
+                return self
+
+            async def __aexit__(self, *exc: object) -> bool:
+                return False
+
+            async def get(self, url: str, **kwargs: object) -> _Resp:
+                return _Resp()
+
+        return FrontierResolver(
+            cache_path=tmp_path / "c.json", http_client_factory=_Client,
+        )
+
+    @pytest.mark.asyncio
+    async def test_listed_id_without_generate_content_is_dropped(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setattr(
+            "jarvis.brain.frontier_resolver.cfg.get_provider_secret",
+            lambda provider: "test-key",
+        )
+        payload = {
+            "models": [
+                {
+                    "name": "models/gemini-3-flash",
+                    "supportedGenerationMethods": ["countTokens"],
+                },
+                {
+                    "name": "models/gemini-3-flash-preview",
+                    "supportedGenerationMethods": ["generateContent", "countTokens"],
+                },
+                {
+                    "name": "models/gemini-embedding-001",
+                    "supportedGenerationMethods": ["embedContent"],
+                },
+            ]
+        }
+        resolver = self._resolver(tmp_path, payload)
+        models = await resolver._fetch_models("gemini")
+        assert models == ["gemini-3-flash-preview"]
+        # End-to-end: the dead "stable" id can no longer beat the servable
+        # preview id in the GA-over-preview ranking.
+        assert _pick_gemini(models, "fast") == "gemini-3-flash-preview"
+
+    @pytest.mark.asyncio
+    async def test_entries_without_method_declaration_are_kept(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # Fail-open: no declared methods must never empty the roster.
+        monkeypatch.setattr(
+            "jarvis.brain.frontier_resolver.cfg.get_provider_secret",
+            lambda provider: "test-key",
+        )
+        payload = {"models": [{"name": "models/gemini-3.5-flash"}]}
+        resolver = self._resolver(tmp_path, payload)
+        assert await resolver._fetch_models("gemini") == ["gemini-3.5-flash"]
+
+
 # Synthetic exception type for the HTTP failure test.
 class httpx_RequestError(Exception):
     pass

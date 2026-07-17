@@ -149,6 +149,54 @@ class TestParseModelsResponse:
         # No displayName → label falls back to the id.
         assert ModelInfo(id="gemini-3.1-pro-preview", label="gemini-3.1-pro-preview") in models
 
+    def test_gemini_drops_entries_not_capable_of_generate_content(self) -> None:
+        # Guard for the 2026-04 incident: ListModels carried "gemini-3-flash"
+        # while generateContent 404'd on it — the picker must never offer an
+        # id whose entry declares it cannot serve generateContent.
+        payload = {
+            "models": [
+                {
+                    "name": "models/gemini-3-flash-preview",
+                    "supportedGenerationMethods": ["generateContent", "countTokens"],
+                },
+                {
+                    "name": "models/gemini-3-flash",
+                    "supportedGenerationMethods": ["countTokens"],
+                },
+                {
+                    "name": "models/gemini-embedding-001",
+                    "supportedGenerationMethods": ["embedContent", "countTokens"],
+                },
+                {
+                    "name": "models/veo-3.1-generate-preview",
+                    "supportedGenerationMethods": ["predictLongRunning"],
+                },
+                {
+                    "name": "models/gemini-3.1-flash-live-preview",
+                    "supportedGenerationMethods": ["bidiGenerateContent"],
+                },
+            ]
+        }
+        ids = [m.id for m in parse_models_response("gemini", payload)]
+        assert ids == ["gemini-3-flash-preview"]
+
+    def test_gemini_supported_actions_variant_is_honored(self) -> None:
+        # Newer API revisions rename the field to supportedActions.
+        payload = {
+            "models": [
+                {"name": "models/gemini-4-flash", "supportedActions": ["generateContent"]},
+                {"name": "models/gemini-4-embed", "supportedActions": ["embedContent"]},
+            ]
+        }
+        ids = [m.id for m in parse_models_response("gemini", payload)]
+        assert ids == ["gemini-4-flash"]
+
+    def test_gemini_entries_without_method_declaration_are_kept(self) -> None:
+        # Fail-open: a payload/mock without the field must not empty the list.
+        payload = {"models": [{"name": "models/gemini-3.5-flash"}]}
+        ids = [m.id for m in parse_models_response("gemini", payload)]
+        assert ids == ["gemini-3.5-flash"]
+
     def test_openrouter_uses_human_name_as_label(self) -> None:
         payload = {
             "data": [
