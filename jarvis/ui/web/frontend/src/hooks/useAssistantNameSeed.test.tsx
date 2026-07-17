@@ -80,6 +80,87 @@ describe("useAssistantNameSeed mount seed", () => {
     expect(useEventStore.getState().assistantName).toBe("Assistant");
   });
 
+  it("retries after a failed boot fetch and seeds once the backend is up", async () => {
+    // The autostart race: the app mounts while the backend is still binding,
+    // the first fetch throws, a later retry succeeds. The neutral fallback
+    // must not stick until a manual reload.
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => {
+          calls += 1;
+          if (calls === 1) throw new Error("backend not up yet");
+          return {
+            ok: true,
+            json: async () => ({ resolved: "Nova", default: "Assistant" }),
+          };
+        }) as unknown as typeof fetch,
+      );
+
+      render(<Harness />);
+      // Let the first (failing) fetch settle and schedule its retry.
+      await vi.advanceTimersByTimeAsync(0);
+      expect(useEventStore.getState().assistantName).toBe("Assistant");
+
+      // First backoff step is 1s — advancing past it fires the retry.
+      await vi.advanceTimersByTimeAsync(1_100);
+      expect(useEventStore.getState().assistantName).toBe("Nova");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("retries after a non-OK warmup response (503) instead of giving up", async () => {
+    vi.useFakeTimers();
+    try {
+      let calls = 0;
+      vi.stubGlobal(
+        "fetch",
+        vi.fn(async () => {
+          calls += 1;
+          if (calls === 1) return { ok: false, status: 503 };
+          return {
+            ok: true,
+            json: async () => ({ resolved: "Nova", default: "Assistant" }),
+          };
+        }) as unknown as typeof fetch,
+      );
+
+      render(<Harness />);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(useEventStore.getState().assistantName).toBe("Assistant");
+
+      await vi.advanceTimersByTimeAsync(1_100);
+      expect(useEventStore.getState().assistantName).toBe("Nova");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("never caches the neutral fallback name in localStorage", async () => {
+    // A resolved "Assistant" (no wake word configured, or a warmup artifact)
+    // must not be persisted: an empty cache already yields the fallback, and
+    // persisting it would poison later boots that DO have a real name.
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ resolved: "Assistant", default: "Assistant" }),
+      })) as unknown as typeof fetch,
+    );
+
+    render(<Harness />);
+    await waitFor(() =>
+      expect((fetch as unknown as ReturnType<typeof vi.fn>).mock.calls.length).toBeGreaterThan(0),
+    );
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(localStorage.getItem("jarvis.assistantName")).toBeNull();
+  });
+
   it("ignores an empty resolved value (does not blank the wordmark)", async () => {
     vi.stubGlobal(
       "fetch",

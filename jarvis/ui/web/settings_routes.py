@@ -1262,6 +1262,14 @@ async def get_assistant_name(request: Request) -> dict[str, object]:
     from jarvis.brain.assistant_name import DEFAULT_ASSISTANT_NAME, resolve_assistant_name
 
     cfg = _config(request)
+    if cfg is None:
+        # No config on app.state means the server is still warming up (or a
+        # degraded boot). Answering the neutral fallback here would be a lie
+        # the frontend persists into its localStorage name cache — every
+        # surface would then show "Assistant" until a successful re-fetch.
+        # 503 tells the seed hook to retry instead (mirrors the sessions/runs
+        # routes' warmup behavior).
+        raise HTTPException(status_code=503, detail="Configuration not loaded yet")
     return {
         "resolved": resolve_assistant_name(cfg),
         "default": DEFAULT_ASSISTANT_NAME,

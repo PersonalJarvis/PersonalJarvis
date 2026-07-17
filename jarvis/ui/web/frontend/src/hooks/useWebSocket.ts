@@ -84,6 +84,13 @@ export function useWebSocket(): void {
               // Offline / headless: keep the current value; the live
               // VoiceBootStatus event still updates it if/when it arrives.
             });
+          // Re-seed the assistant name on EVERY (re)connect for the same
+          // reason: under autostart the mount-seed fetch can race a backend
+          // that is not serving yet, leaving the neutral "Assistant" brand
+          // stuck on every surface until a reload. The welcome frame is the
+          // authoritative "backend is up" signal — useAssistantNameSeed
+          // listens for this event and re-fetches the resolved name.
+          window.dispatchEvent(new CustomEvent("jarvis:assistant-name-changed"));
           return;
         }
 
