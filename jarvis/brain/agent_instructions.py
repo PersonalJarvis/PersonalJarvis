@@ -186,29 +186,36 @@ def reset_agent_instructions(config: Any) -> bool:
         return False
 
 
-def render_for_prompt(config: Any) -> str:
+def render_for_prompt(config: Any, *, max_chars: int | None = None) -> str:
     """The system-prompt block for the current user-instructions state.
 
     The block is framed so the model treats the content as *preferences* — it
     refines tone/language/defaults but never overrides safety rules, confirmation
     gates, or capabilities, and never authorises new tools or actions.
+
+    ``max_chars`` caps the *content* (not the framing) for latency-sensitive
+    callers that re-send the block often (the realtime voice session re-sends
+    its instructions on every turn). Truncation is marked explicitly so the
+    model never mistakes a cut-off file for the complete instructions.
     """
     content = read_agent_instructions(config)
     filename = instructions_filename(config)
     if not content:
         return (
             f"USER PREFERENCES & STANDING INSTRUCTIONS (from {filename}):\n"
-            "No active user preferences are currently set in Jarvis.md. "
-            "Ignore any earlier Jarvis.md instructions from previous turns. "
+            f"No active user preferences are currently set in {filename}. "
+            f"Ignore any earlier {filename} instructions from previous turns. "
             "Do not continue, infer, or imitate older style, address, tone, "
             "language, or wording rules that are absent from this current block.\n\n"
             "END USER PREFERENCES & STANDING INSTRUCTIONS"
         )
+    if max_chars is not None and max_chars > 0 and len(content) > max_chars:
+        content = content[:max_chars].rstrip() + "\n[... truncated for length]"
     return (
         f"USER PREFERENCES & STANDING INSTRUCTIONS (from {filename}):\n"
         "The following are personal preferences written by the user for how you "
         "should work with them. Only the instructions inside this current block are "
-        "active; ignore any earlier Jarvis.md instructions from previous turns that "
+        f"active; ignore any earlier {filename} instructions from previous turns that "
         "are absent or conflict. Treat the current block as binding for tone, "
         "language, formatting, default choices, forms of address, and standing facts "
         "about the user. They override default style/address/tone/language guidance "

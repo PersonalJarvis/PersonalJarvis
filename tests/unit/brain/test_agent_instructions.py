@@ -94,7 +94,10 @@ def test_render_for_prompt_without_file_emits_current_empty_state():
     block = agent_instructions.render_for_prompt(cfg)
     assert "Ruben.md" in block
     assert "No active user preferences are currently set" in block
-    assert "Ignore any earlier Jarvis.md instructions" in block
+    # The stale-style guard must reference the assistant's ACTUAL file name,
+    # never a hardcoded product name (the file is Ruben.md here, not Jarvis.md).
+    assert "Ignore any earlier Ruben.md instructions" in block
+    assert "Jarvis.md" not in block
     assert "END USER PREFERENCES & STANDING INSTRUCTIONS" in block
 
 
@@ -150,6 +153,26 @@ def test_render_for_prompt_wraps_content_with_filename_and_guardrail():
     assert "override default style" in block.lower()
     # The block must frame the content as preferences that never override safety.
     assert "never override" in block.lower()
+
+
+def test_render_for_prompt_max_chars_passes_short_content_untouched():
+    cfg = make_config(name="Ruben")
+    agent_instructions.save_agent_instructions(cfg, "Speak with a Bavarian accent.")
+    block = agent_instructions.render_for_prompt(cfg, max_chars=4000)
+    assert "Speak with a Bavarian accent." in block
+    assert "truncated" not in block
+
+
+def test_render_for_prompt_max_chars_truncates_with_explicit_marker():
+    cfg = make_config(name="Ruben")
+    agent_instructions.save_agent_instructions(cfg, "x" * 500)
+    block = agent_instructions.render_for_prompt(cfg, max_chars=100)
+    assert "x" * 100 in block
+    assert "x" * 101 not in block
+    # Truncation must be marked so the model never mistakes a cut-off file
+    # for the complete instructions.
+    assert "[... truncated for length]" in block
+    assert "END USER PREFERENCES & STANDING INSTRUCTIONS" in block
 
 
 # --------------------------------------------------------------------------- #
