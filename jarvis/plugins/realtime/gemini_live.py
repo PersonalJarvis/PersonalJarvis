@@ -50,6 +50,13 @@ class _GeminiLiveSession:
     # next input transcript. Output observed after that boundary belongs to
     # the new automatic response generation.
     isolates_response_generations = True
+    # Gemini's server drops the Live WebSocket on its own schedule: session
+    # limits (GoAway), and abrupt ``1006 abnormal closure`` closes — observed
+    # live 2026-07-17 10:44 right after a long surface-TTS fallback during
+    # which no traffic flowed, which used to end the whole call with
+    # reason=error (BUG-071). This adapter has no in-protocol resume, so the
+    # orchestrator may reopen a fresh session in place and continue the call.
+    rebuild_on_transport_death = True
 
     def __init__(
         self,

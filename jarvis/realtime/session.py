@@ -106,6 +106,19 @@ _EMBEDDED_SILENCE_LOG_MS = 400.0
 # full scale — comfortably above the AP-27 silence-ghost RMS empirics, far
 # below any audible speech).
 _EMBEDDED_SILENCE_PEAK = 200
+# In-place transport rebuild (BUG-071). A provider server may drop the duplex
+# WebSocket at any time mid-call (live incident 2026-07-17 10:44: Gemini Live
+# closed with ``1006 abnormal closure`` right as a 69 s surface-TTS fallback
+# finished, and the whole call hung up with reason=error although the user
+# never asked to end it). When the dead provider session declares
+# ``rebuild_on_transport_death = True``, the pump reopens the provider chain
+# in place instead of failing the session — the BUG-064 class rule applied
+# transport-neutrally. The budget is rate-based, not a per-session cap: a
+# healthy long call may legitimately outlive several provider-side session
+# limits, while a flapping transport dies fast and must fail honestly instead
+# of reconnect-storming.
+_TRANSPORT_REBUILD_WINDOW_S = 120.0
+_TRANSPORT_REBUILD_MAX_PER_WINDOW = 3
 
 
 def _pcm16_peak(pcm: bytes) -> int:
@@ -768,6 +781,9 @@ class RealtimeVoiceSession:
         self._last_audio_emit_monotonic = 0.0
         self._last_audio_emit_turn = ""
         self._embedded_silence_ms = 0.0
+        # Monotonic timestamps of in-place transport rebuilds (BUG-071),
+        # pruned to the rolling _TRANSPORT_REBUILD_WINDOW_S budget window.
+        self._transport_rebuild_times: list[float] = []
 
     def _resolve_lang(self, *, text: str) -> str:
         brain = getattr(self._config, "brain", None)
@@ -1017,6 +1033,18 @@ class RealtimeVoiceSession:
                 recoverable=True,
             )
             raise RuntimeError(message) from exc
+        except Exception:  # noqa: BLE001 — a dead transport drops the frame
+            # A send onto a just-died socket must not kill the caller: the
+            # desktop microphone pump turns a raise here straight into a
+            # session end with reason=error, while the receive pump is about
+            # to observe the same death and — for rebuild-capable providers —
+            # reopen the transport in place (BUG-071). The frame is lost
+            # either way; the transport is already gone.
+            log.debug(
+                "realtime[%s] dropped a microphone frame on a dead transport",
+                self.session_id,
+                exc_info=True,
+            )
 
     @property
     def is_active(self) -> bool:
@@ -1146,6 +1174,35 @@ class RealtimeVoiceSession:
         return True
 
     async def _pump(self) -> None:
+        """Consume provider events; rebuild a dead transport in place.
+
+        One inner pass runs one provider transport to its end. A deliberate
+        end (voice hangup, terminal provider error event) finishes the pump.
+        A transport DEATH — the receive iterator raising, or ending without a
+        boundary — is recoverable when the dead session opted in via
+        ``rebuild_on_transport_death`` (BUG-071): the provider chain is
+        reopened in place and the call continues, instead of the surface
+        ending the whole session with reason=error.
+        """
+        while True:
+            rebuild_detail = await self._pump_transport_once()
+            if rebuild_detail is None or self._ended or self._hangup_reason:
+                return
+            if self._end_after_turn:
+                # The user already asked to end the call (end_call was
+                # acknowledged); a dead transport cannot speak the goodbye.
+                # End as the requested hangup, not as an error.
+                await self._finish_with_hangup()
+                return
+            if not await self._rebuild_transport(detail=rebuild_detail):
+                return
+
+    async def _pump_transport_once(self) -> str | None:
+        """Run one provider transport to its end.
+
+        Returns ``None`` for a deliberate or terminal end, or a short detail
+        string when the transport died and an in-place rebuild may proceed.
+        """
         try:
             async for event in self._session.receive():
                 if event.type == "input_transcript":
@@ -1818,33 +1875,167 @@ class RealtimeVoiceSession:
                         await self._emit_audio(chunk)
                     self._gate.drain()
                     message = "provider stream ended mid-turn without a boundary"
-                    self._failure_detail = message
-                    self._failed.set()
                     log.warning("realtime[%s] %s", self.session_id, message)
                     await self._publish_error(
                         "RealtimeProviderStreamEnd", message, recoverable=True
                     )
+                    if self._transport_death_is_rebuildable():
+                        return message
+                    self._failure_detail = message
+                    self._failed.set()
                     await self._send_json(
                         {"type": "provider_error", "error": message}
                     )
+                elif self._transport_death_is_rebuildable():
+                    # A benign idle-boundary end still ends the CALL on the
+                    # desktop surface (a committed turn forbids the classic
+                    # replay fallback, so the pipeline hangs up with
+                    # reason=error). A rebuild-capable provider — e.g. Gemini
+                    # closing at its Live-API session limit — is reopened
+                    # instead (BUG-071).
+                    return "provider stream ended at an idle turn boundary"
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001 — AP-20: pump error is terminal
+        except Exception as exc:  # noqa: BLE001 — AP-20: never re-read a dead transport
             message = safe_preview(exc, max_chars=800) or "Realtime receive loop ended"
-            self._failure_detail = message
-            self._failed.set()
             log.warning("realtime[%s] pump ended", self.session_id, exc_info=True)
             await self._publish_error(
                 type(exc).__name__,
                 message,
                 recoverable=True,
             )
+            if self._transport_death_is_rebuildable():
+                return message
+            self._failure_detail = message
+            self._failed.set()
             try:
                 await self._send_json(
                     {"type": "provider_error", "error": message}
                 )
             except Exception:  # noqa: BLE001, S110
                 pass
+        return None
+
+    def _transport_death_is_rebuildable(self) -> bool:
+        """Whether the just-died transport may be rebuilt in place (BUG-071).
+
+        Opt-in per provider session — a capability attribute, never a
+        provider name (AP-21): adapters that self-heal internally (the
+        openai_realtime BUG-064 stack declares terminal deliberately) keep
+        today's terminal semantics. A deliberate end (session ended, voice
+        hangup) or an already-failed session (e.g. the microphone send
+        timeout marked it dead) is never rebuilt; the acknowledged-end_call
+        case is converted to a hangup by the pump loop.
+        """
+        return (
+            bool(getattr(self._session, "rebuild_on_transport_death", False))
+            and not self._ended
+            and not self._hangup_reason
+            and not self._failed.is_set()
+        )
+
+    async def _rebuild_transport(self, *, detail: str) -> bool:
+        """Reopen the duplex transport in place after it died mid-call.
+
+        A provider's server can drop the WebSocket at any moment (live
+        incident 2026-07-17 10:44: Gemini closed with ``1006 abnormal
+        closure`` right as a 69 s surface-TTS fallback finished, and the call
+        ended with reason=error although the user never hung up). The BUG-064
+        class rule applies transport-neutrally: rebuild the transport in
+        place; the surfaces see one fresh ``audio_ready`` instead of a
+        session end. In-provider conversation history is lost — strictly
+        better than a dead call; the orchestrator-side delegate history
+        survives and keeps follow-up questions grounded.
+        """
+        now = time.monotonic()
+        self._transport_rebuild_times = [
+            stamp
+            for stamp in self._transport_rebuild_times
+            if now - stamp < _TRANSPORT_REBUILD_WINDOW_S
+        ]
+        if len(self._transport_rebuild_times) >= _TRANSPORT_REBUILD_MAX_PER_WINDOW:
+            await self._fail_terminally(
+                "realtime transport keeps dying "
+                f"({_TRANSPORT_REBUILD_MAX_PER_WINDOW} rebuilds in "
+                f"{_TRANSPORT_REBUILD_WINDOW_S:.0f} s); giving up: {detail}"
+            )
+            return False
+        self._transport_rebuild_times.append(now)
+        old_session, self._session = self._session, None
+        if old_session is not None:
+            try:
+                await old_session.close()
+            except Exception:  # noqa: BLE001, S110 — the transport is already dead
+                pass
+        # Freeze whatever the dead transport left of the open turn into the
+        # persisted record, then reset per-turn output state. Microphone
+        # frames arriving during the fresh handshake are dropped by
+        # handle_audio_frame's session-None guard, so nothing races it.
+        self._cancel_tool_transcript_wait()
+        if self._pending_tool_events:
+            log.warning(
+                "realtime[%s] dropped %d pending tool call(s) whose transport "
+                "died before their input transcripts arrived",
+                self.session_id,
+                len(self._pending_tool_events),
+            )
+            self._pending_tool_events = []
+        await self._publish_turn_completed()
+        self._gate = ScrubHoldGate(self._language)
+        self._output_active = False
+        self._output_samples_sent = 0
+        self._response_requested_for_turn = False
+        self._user_speech_active = False
+        self._drop_provider_output_until_new_response = False
+        self._drop_provider_output_until_user_turn = False
+        log.warning(
+            "realtime[%s] transport died mid-call (%s) — rebuilding the "
+            "provider session in place (%d/%d in the current %.0f s window)",
+            self.session_id,
+            detail,
+            len(self._transport_rebuild_times),
+            _TRANSPORT_REBUILD_MAX_PER_WINDOW,
+            _TRANSPORT_REBUILD_WINDOW_S,
+        )
+        try:
+            await self._open()
+        except Exception as exc:  # noqa: BLE001 — no provider family reachable
+            await self._fail_terminally(
+                "realtime transport rebuild failed: "
+                f"{type(exc).__name__}: {safe_preview(exc, max_chars=400)}"
+            )
+            return False
+        # The fresh transport may resolve to a different provider, model, or
+        # sample rates — re-announce so playback and surface labels follow.
+        try:
+            await self._send_json(
+                {
+                    "type": "audio_ready",
+                    "provider": self.active_provider,
+                    "model": self._active_model,
+                    "input_sample_rate": self._input_sample_rate,
+                    "output_sample_rate": int(
+                        getattr(self._provider, "output_sample_rate", 24_000)
+                        or 24_000
+                    ),
+                }
+            )
+        except Exception:  # noqa: BLE001, S110 — surface refresh is best-effort
+            pass
+        return True
+
+    async def _fail_terminally(self, message: str) -> None:
+        """Mark the duplex stream dead and tell every surface honestly."""
+        self._failure_detail = message
+        self._failed.set()
+        log.warning("realtime[%s] %s", self.session_id, message)
+        await self._publish_error(
+            "RealtimeTransportDead", message, recoverable=False
+        )
+        try:
+            await self._send_json({"type": "provider_error", "error": message})
+        except Exception:  # noqa: BLE001, S110 — surface may already be gone
+            pass
 
     def _scrubbed_trusted_reply(self, delegate_state: Any) -> str:
         """Scrub-clean the delegate's trusted reply for direct surface speech.

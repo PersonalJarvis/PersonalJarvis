@@ -5120,3 +5120,77 @@ turn category whose only correct answer is known in advance belongs to
 the orchestrator, not the model. And: any path that discards work the
 user asked for — even legitimately, on hangup — must say so in the log,
 or the next forensic starts from nothing.
+
+## BUG-071: Random auto-hangup mid-call — the provider drops the Live WebSocket and the whole session ends with "error" (HIGH, FIXED 2026-07-17)
+
+**Symptom (maintainer report + live session 2026-07-17 10:42,
+gemini-live).** The call hangs up by itself. The user said no hang-up word,
+did not close the app, and touched nothing — the session just ends. The
+exported transcript shows `Beendet durch: Fehler` <!-- i18n-allow: quoted German session-export field under test -->
+with a completely normal conversation above it. Intermittent: most runs are
+fine, some die.
+
+**Evidence (data/jarvis_desktop.log, session 5e553e27, 10:42-10:44).**
+Turn 2's reply tripped the scrub-gate abort (`output transcript exceeded
+safe audio buffer`, 10:43:15) and the trusted answer was correctly re-spoken
+through the realtime-scoped surface TTS for ~69 s. During that playback the
+half-duplex echo guard uploads no microphone audio and the interrupted
+provider streams nothing, so the Live WebSocket sat fully idle both ways —
+and Google closed it: `pump ended` + `provider_error: 1006 None. abnormal
+closure [internal]` at 10:44:24, the exact second playback finished. The
+desktop pipeline then refused the classic-replay fallback (a committed turn
+makes replaying the capture buffer unsafe — that guard is correct) and ended
+the call with `reason=error`.
+
+**Root cause (jarvis/realtime/session.py).** The receive pump treated EVERY
+transport end as terminal: one `async for` pass over `session.receive()`;
+an exception or a silent iterator end set `_failed` and finished the pump,
+and the desktop surface translates a finished pump after a committed turn
+into a hang-up. A provider-side WebSocket drop — which Gemini does on its
+own schedule (session limits/GoAway, abrupt 1006 closes, idle timeouts) —
+therefore ended the whole call, even though the session object could simply
+have opened a new transport. The BUG-064 transport-rebuild lesson existed
+only INSIDE the openai adapter; gemini-live (SDK-managed socket, no
+in-protocol resume) had no equivalent, and the orchestrator had none either.
+
+**Fix (capability-gated in-place transport rebuild, orchestrator level).**
+`RealtimeVoiceSession._pump` is now a reconnect loop over
+`_pump_transport_once()`. When a transport dies — receive raising, or the
+iterator ending without a boundary, mid-turn or idle — and the dead session
+declares `rebuild_on_transport_death = True` (a capability attribute, never
+a provider name — AP-21; `_GeminiLiveSession` sets it), the orchestrator
+closes the dead session, freezes the open turn into the persisted record,
+resets per-turn output state, re-runs `_open()` (the key-aware provider
+chain — a dead family crosses to the next, AP-22 for free), and re-announces
+`audio_ready` so playback and surface labels follow the possibly-new
+provider/rates. Mid-turn deaths still release the transcript-cleared audio
+tail first. In-provider conversation history is lost — strictly better than
+a dead call; the orchestrator-side delegate history survives. Deliberate
+ends never rebuild: session end, voice hangup, and an acknowledged
+`end_call` (a death there converts to the requested hangup, not an error).
+The budget is rate-based (3 rebuilds per rolling 120 s), so a long call
+outliving several provider session limits keeps healing while a flapping
+transport fails honestly with one terminal `provider_error`. Sessions
+without the capability (openai_realtime self-heals internally and declares
+terminal deliberately; test doubles) keep the old terminal semantics
+exactly. `handle_audio_frame` additionally drops a microphone frame whose
+send hits the just-died socket instead of raising — a raise there killed
+the desktop mic pump, which is its own path into `reason=error`.
+
+**Guards.** `tests/unit/realtime/test_session.py`
+(`test_transport_death_rebuilds_the_session_in_place`,
+`test_transport_death_without_capability_keeps_terminal_semantics`,
+`test_transport_rebuild_storm_fails_honestly`,
+`test_idle_stream_end_with_capability_rebuilds_instead_of_ending`,
+`test_mid_turn_stream_end_with_capability_salvages_then_rebuilds`,
+`test_transport_death_after_end_call_converts_to_hangup`).
+
+**Lesson (BUG-064 class rule, final form).** A duplex provider's transport
+WILL die mid-call for reasons no client controls; the session and the
+transport are different lifetimes, and only the adapter knows whether a
+fresh transport can continue the session. Ending the call because a socket
+closed is answering the wrong question. And the trigger chain matters: a
+long LOCAL fallback playback starves the provider socket of traffic in both
+directions — every recovery path that takes the voice surface away from the
+provider for tens of seconds must assume the provider connection may not
+survive the silence.

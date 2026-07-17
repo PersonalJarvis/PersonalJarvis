@@ -4546,3 +4546,299 @@ async def test_session_end_names_the_delegated_request_it_cancels(caplog):
     ]
     assert len(lost) == 1
     assert "travel plan" in lost[0].getMessage()
+
+
+# ---------------------------------------------------------------------------
+# BUG-071: in-place transport rebuild after a mid-call provider death
+# ---------------------------------------------------------------------------
+
+
+class DyingSession(FakeSession):
+    """Yield the scripted events, then die like a dropped WebSocket."""
+
+    rebuild_on_transport_death = True
+
+    def __init__(self, events, error="1006 None. abnormal closure [internal]"):
+        super().__init__(events)
+        self._error = error
+
+    async def receive(self):
+        for ev in self._events:
+            yield ev
+            await asyncio.sleep(0)
+        raise RuntimeError(self._error)
+
+
+class EndingSession(FakeSession):
+    """Yield the scripted events, then end the iterator cleanly (a graceful
+    server close, e.g. Gemini's Live-API session limit)."""
+
+    rebuild_on_transport_death = True
+
+
+class StayOpenSession(FakeSession):
+    """Yield the scripted events, then stay open like a healthy live call."""
+
+    rebuild_on_transport_death = True
+
+    def __init__(self, events):
+        super().__init__(events)
+        self._released = asyncio.Event()
+
+    async def receive(self):
+        for ev in self._events:
+            yield ev
+            await asyncio.sleep(0)
+        await self._released.wait()
+
+    async def close(self):
+        await super().close()
+        self._released.set()
+
+
+class RebuildingProvider(FakeProvider):
+    """Serve a scripted sequence of session objects, one per open_session."""
+
+    def __init__(self, session_factories):
+        super().__init__([])
+        self._session_factories = list(session_factories)
+        self.open_calls = 0
+        self.sessions = []
+
+    async def open_session(self, cfg):
+        self.opened_with = cfg
+        self.open_calls += 1
+        factory = self._session_factories[
+            min(self.open_calls - 1, len(self._session_factories) - 1)
+        ]
+        self.session = factory()
+        self.sessions.append(self.session)
+        return self.session
+
+
+async def _wait_until(predicate):
+    async with asyncio.timeout(2):
+        while not predicate():
+            await asyncio.sleep(0.01)
+
+
+@pytest.mark.asyncio
+async def test_transport_death_rebuilds_the_session_in_place():
+    """BUG-071: Gemini dropped the Live WebSocket (1006 abnormal closure)
+    mid-call and the whole call ended with reason=error although the user
+    never hung up. A provider session that declares
+    rebuild_on_transport_death gets a fresh transport in place; the surfaces
+    see one new audio_ready, never a session end."""
+    provider = RebuildingProvider(
+        [
+            lambda: DyingSession(
+                [
+                    RealtimeEvent(
+                        type="input_transcript", text="hello", is_final=True
+                    ),
+                    RealtimeEvent(type="turn_complete"),
+                ]
+            ),
+            lambda: StayOpenSession(
+                [
+                    RealtimeEvent(
+                        type="input_transcript",
+                        text="still there?",
+                        is_final=True,
+                    ),
+                    RealtimeEvent(type="turn_complete"),
+                ]
+            ),
+        ]
+    )
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="rebuild-inplace",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda m: jsons.append(m) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    # The rebuilt transport must serve real turns, not merely exist.
+    await _wait_until(
+        lambda: len(provider.sessions) == 2
+        and provider.sessions[1].response_requests >= 1
+    )
+
+    assert provider.open_calls == 2
+    assert not sess.failed
+    assert [m for m in jsons if m.get("type") == "provider_error"] == []
+    assert len([m for m in jsons if m.get("type") == "audio_ready"]) == 2
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_transport_death_without_capability_keeps_terminal_semantics():
+    """Adapters that self-heal internally (openai_realtime's BUG-064 stack)
+    or declare nothing keep today's contract: a dead receive loop fails the
+    session honestly instead of being rebuilt behind their back."""
+
+    class TerminalDyingSession(FakeSession):
+        async def receive(self):
+            for ev in self._events:
+                yield ev
+                await asyncio.sleep(0)
+            raise RuntimeError("socket vanished")
+
+    class TerminalProvider(FakeProvider):
+        async def open_session(self, cfg):
+            self.opened_with = cfg
+            self.session = TerminalDyingSession(self._events)
+            return self.session
+
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="terminal-death",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda m: jsons.append(m) or asyncio.sleep(0),
+        provider=TerminalProvider([]),
+        config=_cfg(),
+        bus=None,
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(sess.wait_finished(), timeout=5)
+
+    assert sess.failed
+    assert any(m.get("type") == "provider_error" for m in jsons)
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_transport_rebuild_storm_fails_honestly():
+    """A flapping transport must not reconnect-storm: after the rolling
+    budget is spent, the session fails terminally with one honest error."""
+    from jarvis.realtime import session as session_mod
+
+    provider = RebuildingProvider([lambda: DyingSession([])])
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="rebuild-storm",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda m: jsons.append(m) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(sess.wait_finished(), timeout=5)
+
+    assert sess.failed
+    assert "keeps dying" in sess.failure_detail
+    assert provider.open_calls == 1 + session_mod._TRANSPORT_REBUILD_MAX_PER_WINDOW
+    errors = [m for m in jsons if m.get("type") == "provider_error"]
+    assert len(errors) == 1
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_idle_stream_end_with_capability_rebuilds_instead_of_ending():
+    """A graceful provider close at an idle boundary (Live-API session limit)
+    still ends the whole CALL on the desktop surface, so a rebuild-capable
+    provider is reopened instead of hanging up with reason=error."""
+    provider = RebuildingProvider(
+        [
+            lambda: EndingSession(
+                [
+                    RealtimeEvent(
+                        type="input_transcript", text="hi", is_final=True
+                    ),
+                    RealtimeEvent(type="turn_complete"),
+                ]
+            ),
+            lambda: StayOpenSession([]),
+        ]
+    )
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="rebuild-idle-end",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda m: jsons.append(m) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await _wait_until(lambda: provider.open_calls == 2)
+
+    assert not sess.failed
+    assert [m for m in jsons if m.get("type") == "provider_error"] == []
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_mid_turn_stream_end_with_capability_salvages_then_rebuilds():
+    """A transport dying mid-reply still releases the transcript-cleared
+    audio tail before the rebuild — the fix must not chop the answer harder
+    than the transport failure requires."""
+    provider = RebuildingProvider(
+        [
+            lambda: EndingSession(
+                [
+                    RealtimeEvent(
+                        type="input_transcript", text="hi", is_final=True
+                    ),
+                    RealtimeEvent(
+                        type="output_transcript_delta", text="Hi there."
+                    ),
+                    RealtimeEvent(
+                        type="audio_delta",
+                        audio=AudioChunk(
+                            pcm=b"\x01\x02" * 8,
+                            sample_rate=24000,
+                            timestamp_ns=0,
+                        ),
+                    ),
+                ]
+            ),
+            lambda: StayOpenSession([]),
+        ]
+    )
+    binaries, jsons = [], []
+    sess = RealtimeVoiceSession(
+        session_id="rebuild-mid-turn",
+        send_binary=lambda b: binaries.append(b) or asyncio.sleep(0),
+        send_json=lambda m: jsons.append(m) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await _wait_until(lambda: provider.open_calls == 2)
+
+    assert not sess.failed
+    assert binaries  # the cleared audio tail was salvaged, not dropped
+    assert [m for m in jsons if m.get("type") == "provider_error"] == []
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_transport_death_after_end_call_converts_to_hangup():
+    """The user already asked to end the call (end_call acknowledged); a
+    dead transport cannot speak the goodbye. The session must end as the
+    requested hangup — never as an error, never through a rebuild."""
+    provider = RebuildingProvider([lambda: DyingSession([])])
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="rebuild-end-after-turn",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda m: jsons.append(m) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+    sess._end_after_turn = True
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(sess.wait_finished(), timeout=5)
+
+    assert sess.hangup_reason == "voice_pattern"
+    assert not sess.failed
+    assert provider.open_calls == 1
+    assert any(m.get("type") == "hangup" for m in jsons)
+    await sess.end(reason="test")
