@@ -44,6 +44,14 @@ jobs:
             runner: macos-15
             architecture: arm64
             python: "3.13"
+          # BUG-060 regression row: the stub launcher must also link against
+          # a NON-framework interpreter (uv's python-build-standalone), the
+          # layout py2app never supported.
+          - name: Intel standalone (uv)
+            runner: macos-15-intel
+            architecture: x86_64
+            python: "3.12"
+            python-source: uv-standalone
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
 
@@ -57,6 +65,24 @@ jobs:
         uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: ${{ matrix.python }}
+
+      # The venv created below shadows the setup-python interpreter on PATH,
+      # so every later `python` invocation in this job runs the uv-managed
+      # standalone (non-framework) build.
+      - name: Provision a standalone (non-framework) Python via uv
+        if: matrix.python-source == 'uv-standalone'
+        shell: bash
+        run: |
+          python -m pip install uv
+          uv python install ${{ matrix.python }}
+          uv venv --seed --python ${{ matrix.python }} "$HOME/standalone-venv"
+          echo "$HOME/standalone-venv/bin" >> "$GITHUB_PATH"
+
+      - name: Assert the interpreter is a non-framework build
+        if: matrix.python-source == 'uv-standalone'
+        shell: bash
+        run: |
+          python -c "import sysconfig,sys; sys.exit(0 if (sysconfig.get_config_var('PYTHONFRAMEWORK') or '')=='' else 1)"
 
       - name: Verify native architecture
         shell: bash

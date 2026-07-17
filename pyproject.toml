@@ -61,7 +61,8 @@ dependencies = [
     # 3.11-3.13; other operating systems use the current CPU line. The portable
     # energy VAD is the explicit macOS 3.14 fallback.
     # arm64-only on macOS: no Intel-mac onnxruntime wheels anymore (BUG-061);
-    # Silero VAD degrades to WebRTC VAD on Intel Macs.
+    # Silero VAD degrades to WebRTC VAD there (ships in [local-voice]/[full]);
+    # bare base installs degrade to portable energy endpointing.
     "onnxruntime>=1.17,<1.24; sys_platform == 'darwin' and python_version < '3.14' and platform_machine == 'arm64'",
     "onnxruntime>=1.17; sys_platform != 'darwin'",
     # Any-word wake keyword spotting (vosk_kws engine, design spec 2026-07-05):
@@ -254,11 +255,14 @@ desktop = [
 # (``apt install python3-pyatspi gir1.2-atspi-2.0``), surfaced via the
 # ``capabilities.has_ax_tree`` runtime probe — it is NEVER a pip dependency.
 desktop-macos = [
-    # Builds the managed-install alias bundle around a native Mach-O launcher.
-    # A shell CFBundleExecutable that execs external Python has no stable TCC
-    # identity; py2app keeps the interpreter inside the app process while the
-    # source/dependencies remain in the installer-managed checkout.
-    "py2app>=0.28.10; sys_platform == 'darwin'",
+    # The managed-install app bundle keeps a native Mach-O launcher: a shell
+    # CFBundleExecutable that execs external Python has no stable TCC
+    # identity. The launcher is compiled at install time from the in-repo
+    # stub (jarvis/setup/macos_stub_launcher.c, shipped as package data) with
+    # the Xcode Command Line Tools' clang, keeping the interpreter inside the
+    # app process while source/dependencies remain in the managed checkout —
+    # py2app is no longer a dependency, and the stub also links against
+    # non-framework (uv standalone) interpreters that py2app never supported.
     "pyobjc-framework-Quartz>=10; sys_platform == 'darwin'",
     "pyobjc-framework-ApplicationServices>=10; sys_platform == 'darwin'",
     "pyobjc-framework-Accessibility>=10; sys_platform == 'darwin'",
@@ -570,6 +574,9 @@ jarvis = [
     # "skills/builtin/**/*" so a stray local __pycache__ never rides along.
     "skills/builtin/**/*.md",
     "skills/builtin/**/*.txt",
+    # In-repo C source for the macOS stub launcher, compiled at install time
+    # by jarvis/setup/macos_app_bundle.py (BUG-060 stable TCC identity).
+    "setup/*.c",
 ]
 
 [tool.setuptools.data-files]

@@ -307,16 +307,19 @@ def ensure_desktop_integration(
             warnings.append("could not register Personal Jarvis in Installed Apps")
     elif plat == "macos":
         try:
-            from jarvis.setup.macos_app_bundle import ensure_macos_app_bundle
+            from jarvis.setup import macos_app_bundle
 
-            bundle = ensure_macos_app_bundle(
+            bundle = macos_app_bundle.ensure_macos_app_bundle(
                 install_dir=root,
                 applications_dir=macos_applications_dir,
             )
             if bundle is not None:
                 artifacts.append("applications_bundle")
             else:
-                warnings.append("could not create the macOS application bundle")
+                reason = macos_app_bundle.last_error() or "unknown error"
+                warnings.append(
+                    f"could not create the macOS application bundle: {reason}"
+                )
         except Exception as exc:  # noqa: BLE001
             warnings.append(f"could not create the macOS application bundle: {exc}")
     elif plat == "linux":
@@ -421,6 +424,9 @@ def remove_desktop_integration(
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Route log.warning detail to stderr so the installer can surface the real
+    # failure reason; the --json contract stays: JSON is the last stdout line.
+    logging.basicConfig(level=logging.INFO, stream=sys.stderr)
     parser = argparse.ArgumentParser(description="Repair Personal Jarvis desktop registration")
     parser.add_argument("--install-dir", type=Path, default=None)
     parser.add_argument("--remove", action="store_true")

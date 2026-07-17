@@ -1,9 +1,10 @@
 """Native-bundle entry point for installer-managed macOS applications.
 
-py2app's alias launcher embeds the active Python runtime in the Mach-O app
-process and then executes this source file in place. Keeping the code outside
-the bundle lets normal source updates apply without rebuilding or changing the
-TCC identity of the installed application.
+The compiled stub launcher (``macos_stub_launcher.c``) embeds the active
+Python runtime in the Mach-O app process and then executes this source file
+in place. Keeping the code outside the bundle lets normal source updates
+apply without rebuilding or changing the TCC identity of the installed
+application.
 """
 
 from __future__ import annotations
@@ -39,7 +40,7 @@ def _write_identity_probe(destination: Path) -> int:
         }
         destination.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
     except Exception as exc:  # noqa: BLE001 - the installer treats this as failure
-        payload = {"error": type(exc).__name__}
+        payload = {"error": type(exc).__name__, "detail": str(exc)[:500]}
         destination.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
         return 2
     return 0

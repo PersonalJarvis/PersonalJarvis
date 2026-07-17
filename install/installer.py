@@ -500,6 +500,24 @@ def step_worker_cli(*, dry_run: bool) -> None:
         note("Jarvis-Agent worker CLI install failed - it can be added later in-app")
 
 
+def _write_desktop_integration_log(result: object) -> Path | None:
+    """Persist the registration subprocess output; return the path or None."""
+    log_path = repo_root() / "data" / "logs" / "install-desktop-integration.log"
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(
+            "--- stdout ---\n"
+            + (getattr(result, "stdout", "") or "")
+            + "\n--- stderr ---\n"
+            + (getattr(result, "stderr", "") or "")
+            + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        return None
+    return log_path
+
+
 def step_desktop_integration(*, enabled: bool, dry_run: bool) -> bool:
     """Register the managed install with the current desktop shell."""
     if not enabled:
@@ -507,6 +525,8 @@ def step_desktop_integration(*, enabled: bool, dry_run: bool) -> bool:
     if dry_run:
         console.print("[muted]│    (dry-run) repair desktop-shell registration[/]")
         return True
+    result = None
+    report = {}
     try:
         result = run_captured(
             [
@@ -527,9 +547,9 @@ def step_desktop_integration(*, enabled: bool, dry_run: bool) -> bool:
         report = json.loads(output[-1]) if output else {}
     except (OSError, subprocess.TimeoutExpired):
         report = {}
-        result = None
     except (json.JSONDecodeError, TypeError, ValueError):
         report = {}
+    log_path = _write_desktop_integration_log(result)
     if (
         result is not None
         and result.returncode == 0
@@ -542,6 +562,17 @@ def step_desktop_integration(*, enabled: bool, dry_run: bool) -> bool:
         "[bad]│  ✗ desktop app registration failed — installation stopped. "
         "The app must have a stable launcher identity.[/]"
     )
+    warnings = report.get("warnings") if isinstance(report, dict) else None
+    for warning in warnings or []:
+        note(f"warning: {rich_escape(str(warning))}")
+    stderr_tail = (getattr(result, "stderr", "") or "").strip().splitlines()[-15:]
+    if stderr_tail:
+        note("stderr tail:")
+        for line in stderr_tail:
+            note(rich_escape(line))
+    if log_path is not None:
+        note(f"full log: {log_path}")
+    note("tip: re-running the installer with '--headless' installs without a desktop app")
     return False
 
 

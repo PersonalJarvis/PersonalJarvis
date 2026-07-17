@@ -3,9 +3,11 @@
 The bundle's main executable must remain a Mach-O process. A shell launcher
 that ``exec``s an external virtual-environment Python loses its ``NSBundle``
 identity and causes TCC grants to attach to Python or a terminal instead of
-Personal Jarvis. The managed installer therefore uses py2app's alias mode: its
-native bootstrap embeds the active Python runtime in the app process while the
-source and dependencies remain in the managed checkout.
+Personal Jarvis. The managed installer therefore compiles the in-repo stub
+launcher (``macos_stub_launcher.c``): it embeds the active Python runtime in
+the app process and runs the managed entry script, so it works with framework
+AND non-framework interpreters (for example uv-managed standalone builds)
+while the source and dependencies remain in the managed checkout.
 
 The locally generated app is ad-hoc signed and is preserved byte-for-byte on
 ordinary source updates so its local TCC identity does not churn. Public binary
@@ -20,6 +22,7 @@ import logging
 import os
 import platform
 import plistlib
+import re
 import shutil
 import stat
 import subprocess
@@ -48,9 +51,23 @@ _MACHO_MAGICS = frozenset(
     }
 )
 
+# The reason the most recent ensure_macos_app_bundle call returned None, so
+# callers can surface the real failure instead of a generic warning.
+_LAST_ERROR: str | None = None
+
+
+def last_error() -> str | None:
+    """Return why the last ensure_macos_app_bundle call failed, if it did."""
+    return _LAST_ERROR
+
+
 _MIC_USAGE = "Personal Jarvis listens on this microphone for your wake word and voice commands."
 _SCREEN_CAPTURE_USAGE = (
     "Personal Jarvis captures the screen only when you ask it to see or control applications."
+)
+_APPLE_EVENTS_USAGE = (
+    "Personal Jarvis lowers Music/Spotify volume while you dictate and "
+    "restores it afterwards."
 )
 
 
@@ -233,6 +250,7 @@ def _bundle_plist() -> dict[str, object]:
         "CFBundleVersion": _version(),
         "JarvisBundleFormatVersion": _BUNDLE_FORMAT_VERSION,
         "LSMinimumSystemVersion": "11.0",
+        "NSAppleEventsUsageDescription": _APPLE_EVENTS_USAGE,
         "NSHighResolutionCapable": True,
         "NSMicrophoneUsageDescription": _MIC_USAGE,
         "NSScreenCaptureUsageDescription": _SCREEN_CAPTURE_USAGE,
@@ -265,51 +283,201 @@ def _write_cross_platform_fixture_bundle(bundle: Path) -> Path:
     return bundle
 
 
-def _build_py2app_alias(install_root: Path, work_dir: Path) -> Path:
-    """Build a native alias launcher with the managed virtual environment."""
+_LINK_INFO_SCRIPT = (
+    "import json, platform, sys, sysconfig\n"
+    "data = {name: sysconfig.get_config_var(name) or '' for name in "
+    "('PYTHONFRAMEWORK', 'LDLIBRARY', 'LIBDIR', 'PYTHONFRAMEWORKPREFIX')}\n"
+    "data['base_prefix'] = sys.base_prefix\n"
+    "data['include'] = sysconfig.get_paths()['include']\n"
+    "data['machine'] = platform.machine()\n"
+    "print(json.dumps(data))\n"
+)
+
+
+def _runtime_link_info(venv_python: Path) -> dict:
+    """Ask the managed venv interpreter how its runtime library is laid out."""
+    try:
+        result = subprocess.run(
+            [str(venv_python), "-B", "-c", _LINK_INFO_SCRIPT],
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=60,
+            check=False,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(
+            f"could not query the venv interpreter {venv_python}: {exc}"
+        ) from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "unknown interpreter error").strip()
+        raise RuntimeError(f"venv runtime introspection failed: {detail[-1200:]}")
+    try:
+        return json.loads(result.stdout.strip().splitlines()[-1])
+    except (ValueError, IndexError) as exc:
+        raise RuntimeError(
+            f"venv runtime introspection returned invalid JSON: {exc}"
+        ) from exc
+
+
+# A fully versioned uv/python-build-standalone prefix directory name, for
+# example ``cpython-3.12.13-macos-aarch64-none``. Group "head" keeps the
+# implementation and major.minor; "tail" keeps the platform suffix.
+_VERSIONED_PREFIX_RE = re.compile(r"^(?P<head>[^-]+-\d+\.\d+)\.\d+(?P<tail>-.*)?$")
+
+
+def _prefer_unversioned_runtime(dylib: Path, base_prefix: Path | None) -> Path:
+    """Prefer an unversioned sibling runtime dir when one holds the dylib.
+
+    uv keeps a ``cpython-3.12-...`` alias beside the fully versioned
+    ``cpython-3.12.13-...`` install. Linking (and rpath-ing) against the
+    alias keeps the bundle working across uv patch upgrades that replace the
+    versioned directory.
+    """
+    if base_prefix is None:
+        return dylib
+    match = _VERSIONED_PREFIX_RE.match(base_prefix.name)
+    if match is None:
+        return dylib
+    try:
+        relative = dylib.relative_to(base_prefix)
+    except ValueError:
+        return dylib
+    candidate = base_prefix.with_name(match.group("head") + (match.group("tail") or ""))
+    sibling = candidate / relative
+    try:
+        if sibling.is_file():
+            return sibling
+    except OSError:
+        return dylib
+    return dylib
+
+
+def _resolve_runtime_dylib(info: dict) -> Path:
+    """Locate the runtime libpython/framework dylib to link the stub against."""
+    ldlibrary = str(info.get("LDLIBRARY") or "")
+    if not ldlibrary:
+        raise RuntimeError("the venv interpreter reported no LDLIBRARY config variable")
+    roots = [
+        Path(str(root))
+        for root in (info.get("LIBDIR"), info.get("PYTHONFRAMEWORKPREFIX"))
+        if root
+    ]
+    base_prefix = str(info.get("base_prefix") or "")
+    if base_prefix:
+        roots.append(Path(base_prefix) / "lib")
+    candidates = [root / ldlibrary for root in roots]
+    for candidate in candidates:
+        if candidate.is_file():
+            return _prefer_unversioned_runtime(
+                candidate, Path(base_prefix) if base_prefix else None
+            )
+    listing = ", ".join(str(candidate) for candidate in candidates) or "(none)"
+    raise RuntimeError(f"no linkable Python runtime library found; tried: {listing}")
+
+
+def _compile_stub(
+    stub_c: Path,
+    dylib: Path,
+    include_dir: Path,
+    machine: str,
+    defines: list[str],
+    out_path: Path,
+) -> None:
+    """Compile the in-repo stub launcher into the bundle's Mach-O executable."""
+    command = [
+        "/usr/bin/xcrun",
+        "clang",
+        "-O2",
+        "-Wall",
+        "-arch",
+        machine,
+        "-I",
+        str(include_dir),
+        str(stub_c),
+        str(dylib),
+        f"-Wl,-rpath,{dylib.parent}",
+        *defines,
+        "-o",
+        str(out_path),
+    ]
+    hint = "install the Xcode Command Line Tools (xcode-select --install)"
+    try:
+        result = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=300,
+            check=False,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+        )
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"clang is not available ({exc}); {hint}") from exc
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"stub launcher compilation failed: {exc}; {hint}") from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "unknown clang error").strip()
+        raise RuntimeError(
+            f"stub launcher compilation failed: {detail[-1200:]}; {hint}"
+        )
+
+
+def _build_native_bundle(install_root: Path, work_dir: Path) -> Path:
+    """Compile the stub launcher and lay out the app bundle in ``work_dir``."""
     entry = install_root / "jarvis" / "setup" / "macos_launcher_entry.py"
     if not entry.is_file():
         raise FileNotFoundError(f"macOS launcher entry is missing: {entry}")
+    stub_c = Path(__file__).resolve().parent / "macos_stub_launcher.c"
+    if not stub_c.is_file():
+        raise FileNotFoundError(f"macOS stub launcher source is missing: {stub_c}")
 
-    resources = work_dir / "resources"
-    resources.mkdir()
-    options: dict[str, object] = {
-        "argv_emulation": False,
-        "plist": _bundle_plist(),
-    }
+    # Deliberately NOT resolve()d: the venv interpreter is a symlink chain to
+    # the base runtime, and CPython's venv detection looks for pyvenv.cfg next
+    # to the UNRESOLVED executable path. Resolving it would point the embedded
+    # interpreter at the base install and lose the venv's site-packages.
+    venv_python = _venv_python(install_root)
+    info = _runtime_link_info(venv_python)
+    dylib = _resolve_runtime_dylib(info)
+    machine = str(info.get("machine") or "") or platform.machine()
+
+    bundle = work_dir / APP_DIR_NAME
+    macos_dir = bundle / "Contents" / "MacOS"
+    resources = bundle / "Contents" / "Resources"
+    macos_dir.mkdir(parents=True)
+    resources.mkdir(parents=True)
+
+    executable_name = "PersonalJarvis"
+    plist = _bundle_plist()
+    plist["CFBundleExecutable"] = executable_name
     icon_stem = _try_build_icns(resources)
     if icon_stem is not None:
-        options["iconfile"] = str(resources / f"{icon_stem}.icns")
+        plist["CFBundleIconFile"] = icon_stem
 
-    setup_source = (
-        "from setuptools import setup\n\n"
-        "setup(\n"
-        f"    name={APP_NAME!r},\n"
-        f"    version={_version()!r},\n"
-        f"    app={[str(entry)]!r},\n"
-        f"    options={{'py2app': {options!r}}},\n"
-        ")\n"
+    executable = macos_dir / executable_name
+    # The paths become C string literals via -D macros; subprocess passes each
+    # define as one argv element, so spaces in paths survive verbatim.
+    defines = [
+        f'-DJARVIS_VENV_PYTHON="{venv_python}"',
+        f'-DJARVIS_ENTRY_SCRIPT="{entry}"',
+    ]
+    _compile_stub(
+        stub_c,
+        dylib,
+        Path(str(info.get("include") or "")),
+        machine,
+        defines,
+        executable,
     )
-    setup_path = work_dir / "setup.py"
-    setup_path.write_text(setup_source, encoding="utf-8")
-    result = subprocess.run(
-        [str(_venv_python(install_root)), str(setup_path), "py2app", "--alias"],
-        cwd=work_dir,
-        capture_output=True,
-        text=True,
-        encoding="utf-8",
-        errors="replace",
-        timeout=300,
-        check=False,
-        creationflags=NO_WINDOW_CREATIONFLAGS,
+    executable.chmod(
+        executable.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
     )
-    if result.returncode != 0:
-        detail = (result.stderr or result.stdout or "unknown py2app error").strip()
-        raise RuntimeError(f"py2app alias build failed: {detail[-1200:]}")
-    candidates = tuple((work_dir / "dist").glob("*.app"))
-    if len(candidates) != 1:
-        raise RuntimeError(f"py2app produced {len(candidates)} application bundles; expected one")
-    return candidates[0]
+    with (bundle / "Contents" / "Info.plist").open("wb") as stream:
+        plistlib.dump(plist, stream)
+    return bundle
 
 
 def _sign_bundle(bundle: Path) -> None:
@@ -331,8 +499,17 @@ def _sign_bundle(bundle: Path) -> None:
         )
 
 
-def _runtime_identity_valid(bundle: Path, *, install_root: Path) -> bool:
-    """Verify native identity and imports against the managed checkout."""
+def _runtime_identity_valid(
+    bundle: Path,
+    *,
+    install_root: Path,
+    diagnostics: list[str] | None = None,
+) -> bool:
+    """Verify native identity and imports against the managed checkout.
+
+    When ``diagnostics`` is given, human-readable probe evidence is appended
+    to it so failed checks can surface the real cause to the installer.
+    """
     if sys.platform != "darwin":
         return True
     descriptor, raw_probe = tempfile.mkstemp(prefix="jarvis-bundle-probe-", suffix=".json")
@@ -353,9 +530,19 @@ def _runtime_identity_valid(bundle: Path, *, install_root: Path) -> bool:
             check=False,
             creationflags=NO_WINDOW_CREATIONFLAGS,
         )
+        if diagnostics is not None:
+            stderr_tail = (result.stderr or "").strip()[-500:]
+            diagnostics.append(
+                f"open returncode {result.returncode}, "
+                f"stderr tail: {stderr_tail or '(empty)'}"
+            )
         if result.returncode != 0 or not probe.is_file():
+            if diagnostics is not None and not probe.is_file():
+                diagnostics.append("probe file was not written")
             return False
         payload = json.loads(probe.read_text(encoding="utf-8"))
+        if diagnostics is not None:
+            diagnostics.append(f"probe payload: {payload!r}")
         expected_bundle = bundle.resolve()
         reported_bundle = Path(str(payload.get("bundle_path", ""))).resolve()
         executable = Path(str(payload.get("executable", ""))).resolve()
@@ -375,7 +562,9 @@ def _runtime_identity_valid(bundle: Path, *, install_root: Path) -> bool:
             == f"{sys.version_info.major}.{sys.version_info.minor}"
             and payload.get("machine") == platform.machine()
         )
-    except (OSError, ValueError, json.JSONDecodeError, subprocess.TimeoutExpired):
+    except (OSError, ValueError, json.JSONDecodeError, subprocess.TimeoutExpired) as exc:
+        if diagnostics is not None:
+            diagnostics.append(f"identity probe failed: {type(exc).__name__}: {exc}")
         return False
     finally:
         probe.unlink(missing_ok=True)
@@ -408,9 +597,9 @@ def _install_native_bundle(install_root: Path, bundle: Path) -> Path:
     """Build beside the destination and replace it atomically with rollback."""
     parent = bundle.parent
     parent.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix=".jarvis-py2app-", dir=parent) as raw_work:
+    with tempfile.TemporaryDirectory(prefix=".jarvis-native-", dir=parent) as raw_work:
         work = Path(raw_work)
-        built = _build_py2app_alias(install_root, work)
+        built = _build_native_bundle(install_root, work)
         _sign_bundle(built)
         previous = work / "previous.app"
         if bundle.exists() or bundle.is_symlink():
@@ -418,9 +607,19 @@ def _install_native_bundle(install_root: Path, bundle: Path) -> Path:
         try:
             built.rename(bundle)
             if not macos_app_bundle_is_launchable(bundle):
-                raise RuntimeError("the installed macOS application bundle is invalid")
-            if not _runtime_identity_valid(bundle, install_root=install_root):
-                raise RuntimeError("the installed app reported an unexpected runtime identity")
+                raise RuntimeError(
+                    "the installed macOS application bundle failed the launchable "
+                    f"check (native executable, metadata, or signature): {bundle}"
+                )
+            diagnostics: list[str] = []
+            if not _runtime_identity_valid(
+                bundle, install_root=install_root, diagnostics=diagnostics
+            ):
+                detail = "; ".join(diagnostics) or "no probe diagnostics captured"
+                raise RuntimeError(
+                    "the installed app reported an unexpected runtime identity "
+                    f"({detail})"
+                )
         except Exception:
             _remove_path(bundle)
             if previous.exists() or previous.is_symlink():
@@ -440,6 +639,8 @@ def ensure_macos_app_bundle(
     updates cannot churn its local TCC identity. Off macOS, this is a no-op
     unless a caller explicitly injects an applications directory for tests.
     """
+    global _LAST_ERROR
+    _LAST_ERROR = None
     if applications_dir is None:
         if sys.platform != "darwin":
             log.info("App bundle skipped: only macOS uses .app bundles.")
@@ -463,6 +664,7 @@ def ensure_macos_app_bundle(
         log.info("Native macOS app bundle installed: %s", installed)
         return installed
     except Exception as exc:  # noqa: BLE001 - installer consumes the None result
+        _LAST_ERROR = f"{type(exc).__name__}: {exc}"
         log.warning("macOS app bundle could not be written: %s", exc)
         return None
 
@@ -490,6 +692,7 @@ __all__ = [
     "APP_NAME",
     "BUNDLE_ID",
     "ensure_macos_app_bundle",
+    "last_error",
     "macos_app_bundle_is_launchable",
     "macos_app_bundle_path",
     "macos_launch_services_command",

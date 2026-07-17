@@ -84,11 +84,22 @@ def test_headless_linux_does_not_create_desktop_artifacts(
     assert report.skipped_reason == "headless Linux session"
 
 
-def test_macos_managed_install_gets_real_app_bundle(tmp_path: Path) -> None:
+def test_macos_managed_install_gets_real_app_bundle(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     root = _managed_root(tmp_path)
     (root / ".venv" / "bin").mkdir(parents=True)
     (root / ".venv" / "bin" / "python").write_text("", encoding="utf-8")
     apps = tmp_path / "Applications"
+
+    # Force the deterministic cross-platform fixture bundle on every host: the
+    # fixture root has no real venv interpreter, so the native clang build can
+    # never succeed against it. The REAL darwin build + LaunchServices probe is
+    # covered by the dedicated "Build and self-probe" step in
+    # .github/workflows/macos-desktop.yml and tests/unit/setup/test_macos_app_bundle.py.
+    from jarvis.setup import macos_app_bundle as mab
+
+    monkeypatch.setattr(mab.sys, "platform", "linux")
 
     report = di.ensure_desktop_integration(
         install_dir=root,
@@ -99,6 +110,55 @@ def test_macos_managed_install_gets_real_app_bundle(tmp_path: Path) -> None:
     assert report.ok is True
     assert report.artifacts == ("applications_bundle",)
     assert (apps / "Personal Jarvis.app" / "Contents" / "Info.plist").is_file()
+
+
+def test_macos_bundle_failure_warning_carries_recorded_reason(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import jarvis.setup.macos_app_bundle as mab
+
+    root = _managed_root(tmp_path)
+
+    def _fail(**_kwargs: object) -> None:
+        monkeypatch.setattr(
+            mab, "_LAST_ERROR", "RuntimeError: py2app alias build failed: boom"
+        )
+        return None
+
+    monkeypatch.setattr(mab, "ensure_macos_app_bundle", _fail)
+
+    report = di.ensure_desktop_integration(
+        install_dir=root,
+        platform="darwin",
+        macos_applications_dir=tmp_path / "Applications",
+    )
+
+    assert report.ok is False
+    assert report.warnings == (
+        "could not create the macOS application bundle: "
+        "RuntimeError: py2app alias build failed: boom",
+    )
+
+
+def test_macos_bundle_failure_without_recorded_reason_says_unknown(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import jarvis.setup.macos_app_bundle as mab
+
+    root = _managed_root(tmp_path)
+    monkeypatch.setattr(mab, "_LAST_ERROR", None)
+    monkeypatch.setattr(mab, "ensure_macos_app_bundle", lambda **_kwargs: None)
+
+    report = di.ensure_desktop_integration(
+        install_dir=root,
+        platform="darwin",
+        macos_applications_dir=tmp_path / "Applications",
+    )
+
+    assert report.ok is False
+    assert report.warnings == (
+        "could not create the macOS application bundle: unknown error",
+    )
 
 
 def test_linux_uninstall_removes_application_entry(tmp_path: Path) -> None:

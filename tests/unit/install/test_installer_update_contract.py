@@ -122,7 +122,72 @@ def test_desktop_registration_failure_is_install_failure(
         lambda *args, **kwargs: SimpleNamespace(
             returncode=1,
             stdout='{"ok": false, "attempted": true}',
+            stderr="",
         ),
     )
 
     assert installer.step_desktop_integration(enabled=True, dry_run=False) is False
+
+
+def test_desktop_registration_failure_surfaces_diagnostics(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys
+) -> None:
+    monkeypatch.setattr(installer, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(installer, "venv_python", lambda: tmp_path / "python")
+    stderr = "\n".join(f"stderr-line-{index}" for index in range(20))
+    report = json.dumps(
+        {
+            "ok": False,
+            "attempted": True,
+            "warnings": ["bundle identity probe failed"],
+        }
+    )
+    monkeypatch.setattr(
+        installer.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=1,
+            stdout=report,
+            stderr=stderr,
+        ),
+    )
+
+    assert installer.step_desktop_integration(enabled=True, dry_run=False) is False
+
+    out = capsys.readouterr().out
+    assert "bundle identity probe failed" in out
+    assert "stderr-line-19" in out
+    assert "stderr-line-5" in out
+    # Only the last ~15 stderr lines are echoed to the console.
+    assert "stderr-line-4" not in out
+    assert "--headless" in out
+    # The full path may be folded across lines by the console width.
+    assert "full log:" in out
+    log_path = tmp_path / "data" / "logs" / "install-desktop-integration.log"
+    text = log_path.read_text(encoding="utf-8")
+    assert "stderr-line-0" in text
+    assert "bundle identity probe failed" in text
+
+
+def test_desktop_registration_success_still_writes_full_log(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setattr(installer, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(installer, "venv_python", lambda: tmp_path / "python")
+    monkeypatch.setattr(
+        installer.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout='{"ok": true, "attempted": true}',
+            stderr="probe chatter\n",
+        ),
+    )
+
+    assert installer.step_desktop_integration(enabled=True, dry_run=False) is True
+
+    text = (
+        tmp_path / "data" / "logs" / "install-desktop-integration.log"
+    ).read_text(encoding="utf-8")
+    assert '{"ok": true, "attempted": true}' in text
+    assert "probe chatter" in text
