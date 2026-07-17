@@ -5256,3 +5256,47 @@ calls). Cap reasoning at the REQUEST level (config-level caps drift onto
 the wrong provider entry), key caches on every legitimately-varying axis,
 and never feed a model a serialized imitation of its own native call
 format — it will copy it.
+
+## BUG-073: In-app local-speech install always fails with "No module named pip" — uv-created venvs ship without pip (HIGH, FIXED 2026-07-17)
+
+**Symptom (maintainer report 2026-07-17).** Enabling the local speech pack
+from the wake-word settings fails every time with
+`pip exited 1: <venv>/Scripts/pythonw.exe: No module named pip`, on the
+maintainer's Windows box AND on the real-Mac test run. The UI's generic
+hint ("usually no prebuilt package for this Python/system") pointed at the
+wrong cause.
+
+**Root cause.** `install_pip_package` runs `sys.executable -m pip install`
+unconditionally — but environments created by `uv venv` deliberately omit
+the pip module (uv installs from outside the env), so the invocation dies
+before it can install anything. Both affected machines run uv-created
+venvs (`pyvenv.cfg`: `uv = 0.11.19`). The official `install.ps1/.sh` path
+uses `python -m venv` (pip included), which is why the wizard never hit it;
+any uv-based setup — increasingly the ecosystem default — was structurally
+broken for every in-app install, violating the §3 "recoverable in-app"
+contract.
+
+**Fix (jarvis/setup/dependencies.py).** The pip attempt stays the primary
+path (environments with pip pay zero extra subprocess calls). On the exact
+`No module named pip` failure a recovery chain runs: (1)
+`<python> -m ensurepip --upgrade` — the stdlib bootstrap installs pip INTO
+the environment, a permanent repair — then the pip install is retried;
+(2) if ensurepip cannot help, `uv pip install --python <sys.executable>`
+with the on-PATH uv binary (near-certain to exist given a uv-created
+venv), propagating `--only-binary`; (3) otherwise an actionable failure
+message naming the manual `ensurepip` command. `classify_pip_failure`
+additionally learned uv's empirically-captured wordings for the no-wheel
+("No solution found when resolving", "has no usable wheels") and network
+("Failed to fetch", "error sending request") diagnoses so the BUG-059
+honest-diagnosis contract holds on the uv path too.
+
+**Guards.** `tests/unit/setup/test_install_without_pip.py` (bootstrap
+chain, uv fallback + flag propagation, actionable no-recovery message,
+single-subprocess happy path, uv wording classification).
+
+**Lesson.** "python -m pip" is NOT a universal invariant of a Python
+environment — uv-created venvs (and stripped system Pythons) don't have
+it. Any runtime code that shells out to pip must treat "No module named
+pip" as a repairable state (ensurepip / uv fallback), not a terminal
+error, or every in-app install silently bricks for the growing uv-managed
+install base.

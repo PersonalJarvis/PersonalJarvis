@@ -246,6 +246,9 @@ def install_npm_package(package: str, *, timeout_s: float = 300.0) -> tuple[bool
 # Marker substrings for classify_pip_failure, matched case-insensitively.
 # Network first would be wrong: a source-build log can mention retries, so the
 # more specific build/no-wheel signatures win before network generalities.
+# Covers BOTH pip and uv wordings — the no-pip fallback path (BUG-073) may
+# install via ``uv pip install``, whose resolver phrases the same failures
+# differently (captured empirically from uv 0.11).
 _PIP_NO_WHEEL_MARKERS = (
     "failed to build",
     "getting requirements to build wheel",
@@ -254,6 +257,10 @@ _PIP_NO_WHEEL_MARKERS = (
     "could not find a version that satisfies",
     "microsoft visual c++",
     "fatal error:",
+    # uv resolver wordings
+    "no solution found when resolving",
+    "has no usable wheels",
+    "building from source is disabled",
 )
 _PIP_NETWORK_MARKERS = (
     "newconnectionerror",
@@ -263,17 +270,22 @@ _PIP_NETWORK_MARKERS = (
     "network is unreachable",
     "proxyerror",
     "ssl: certificate",
+    # uv network wordings
+    "failed to fetch",
+    "error sending request",
+    "request failed after",
 )
 
 
 def classify_pip_failure(stderr: str) -> str | None:
-    """Turn pip's stderr tail into an honest one-line diagnosis, or ``None``.
+    """Turn the installer's stderr tail into an honest one-line diagnosis.
 
     BUG-059: on the first real-Mac onboarding a missing cp314/macOS wheel for
     ``av`` sent pip into an FFmpeg SOURCE build that no end user can satisfy —
     and the UI blamed the internet connection. A missing prebuilt wheel (or
     the source build it triggers) must be named as such; only genuine network
-    signatures may point at the network.
+    signatures may point at the network. Returns ``None`` when neither
+    signature class matches.
     """
     s = (stderr or "").lower()
     if any(marker in s for marker in _PIP_NO_WHEEL_MARKERS):
@@ -292,29 +304,16 @@ def classify_pip_failure(stderr: str) -> str | None:
     return None
 
 
-def install_pip_package(
-    package: str, *, timeout_s: float = 600.0, only_binary: bool = False
-) -> tuple[bool, str]:
-    """Best-effort ``<python> -m pip install <package>`` into the RUNNING
-    interpreter. Never raises. Returns ``(ok, message)``.
+_ENSUREPIP_TIMEOUT_S: Final[float] = 180.0
 
-    Used to pull an opt-in runtime extra from inside the app (e.g.
-    ``faster-whisper`` for the any-phrase local wake path), so a user never has
-    to drop to a shell — the CLAUDE.md §3 "recoverable in-app" contract. Runs
-    against ``sys.executable`` so the package lands in the same environment the
-    app imports from, and passes ``NO_WINDOW_CREATIONFLAGS`` so a ``pythonw.exe``
-    host does not flash a console (AP-1). Cross-platform: ``python -m pip`` is
-    the one install invocation that behaves identically on Windows/macOS/Linux.
-    A frozen/no-pip interpreter fails cleanly with a message instead of raising.
+# The exact failure a pip-less interpreter prints for ``<python> -m pip``;
+# uv-created venvs omit pip by design, so this is a repairable state, not a
+# terminal one (BUG-073).
+_NO_PIP_MARKER: Final[str] = "no module named pip"
 
-    ``only_binary=True`` adds ``--only-binary=:all:`` — for end-user-facing
-    installs of native packages, so pip fails fast with the honest no-wheel
-    diagnosis instead of attempting a source build (FFmpeg/toolchain) that no
-    end user can satisfy (BUG-059).
-    """
-    if not sys.executable:
-        return False, "no Python interpreter available to run pip"
 
+def _pip_install_cmd(package: str, *, only_binary: bool) -> list[str]:
+    """Build the ``<python> -m pip install`` argv for ``package``."""
     cmd = [
         sys.executable, "-m", "pip", "install",
         "--disable-pip-version-check",
@@ -322,7 +321,17 @@ def install_pip_package(
     if only_binary:
         cmd += ["--only-binary", ":all:"]
     cmd.append(package)
+    return cmd
 
+
+def _run_installer(
+    cmd: list[str], *, timeout_s: float, flavor: str
+) -> tuple[bool, str]:
+    """Run one install command. Never raises. Returns ``(ok, message)``.
+
+    ``flavor`` names the tool ("pip" / "uv") in failure messages so the UI
+    detail is honest about which installer actually ran.
+    """
     logger.info("install_pip_package: %s", " ".join(cmd))
     try:
         result = subprocess.run(  # noqa: S603 -- args are controlled, not user input
@@ -333,19 +342,112 @@ def install_pip_package(
             creationflags=NO_WINDOW_CREATIONFLAGS,
         )
     except subprocess.TimeoutExpired:
-        return False, f"pip install timed out after {timeout_s:.0f}s"
+        return False, f"{flavor} install timed out after {timeout_s:.0f}s"
     except OSError as exc:
-        return False, f"pip spawn failed: {exc}"
+        return False, f"{flavor} spawn failed: {exc}"
 
     if result.returncode != 0:
-        # The tail of stderr carries pip's actual reason (resolver conflict,
-        # no matching wheel for the platform, network error).
+        # The tail of stderr carries the installer's actual reason (resolver
+        # conflict, no matching wheel for the platform, network error).
         stderr = (result.stderr or "").strip()[-600:]
-        raw = f"pip exited {result.returncode}: {stderr or 'no stderr'}"
+        raw = f"{flavor} exited {result.returncode}: {stderr or 'no stderr'}"
         diagnosis = classify_pip_failure(stderr)
         return False, f"{diagnosis} [{raw}]" if diagnosis else raw
 
     return True, (result.stdout or "").strip()[-400:] or "install reported success"
+
+
+def _install_without_pip(
+    package: str, *, timeout_s: float, only_binary: bool, pip_error: str
+) -> tuple[bool, str]:
+    """Recover an in-app install when the environment has NO pip module.
+
+    BUG-073: environments created by ``uv venv`` ship without pip by design,
+    so ``<python> -m pip`` dies with "No module named pip" before it can
+    install anything — hit on both the maintainer's Windows box and the
+    first real-Mac test run. Recovery order:
+
+    1. ``<python> -m ensurepip --upgrade`` (stdlib) installs pip INTO the
+       environment — a permanent repair — then the pip install is retried.
+    2. When ensurepip cannot help (some system Pythons strip it), fall back
+       to ``uv pip install --python <python>`` with the uv binary on PATH —
+       near-certain to exist given a uv-created venv.
+    3. Otherwise fail with an actionable message naming both escapes.
+    """
+    logger.info("pip module missing; bootstrapping via ensurepip")
+    try:
+        bootstrap = subprocess.run(  # noqa: S603 -- args are controlled
+            [sys.executable, "-m", "ensurepip", "--upgrade"],
+            capture_output=True,
+            text=True,
+            timeout=_ENSUREPIP_TIMEOUT_S,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+        )
+        bootstrapped = bootstrap.returncode == 0
+    except (subprocess.TimeoutExpired, OSError) as exc:
+        logger.debug("ensurepip bootstrap failed: %s", exc)
+        bootstrapped = False
+
+    if bootstrapped:
+        ok, message = _run_installer(
+            _pip_install_cmd(package, only_binary=only_binary),
+            timeout_s=timeout_s,
+            flavor="pip",
+        )
+        if ok or _NO_PIP_MARKER not in message.lower():
+            return ok, message
+
+    uv_path = _resolve_binary("uv")
+    if uv_path is not None:
+        cmd = [uv_path, "pip", "install", "--python", sys.executable]
+        if only_binary:
+            cmd += ["--only-binary", ":all:"]
+        cmd.append(package)
+        return _run_installer(cmd, timeout_s=timeout_s, flavor="uv")
+
+    return False, (
+        "This Python environment was created without pip (uv does this by "
+        "design) and could not be repaired automatically: ensurepip is "
+        "unavailable and no uv binary is on PATH. Run "
+        f'`"{sys.executable}" -m ensurepip --upgrade` once, then retry. '
+        f"[{pip_error}]"
+    )
+
+
+def install_pip_package(
+    package: str, *, timeout_s: float = 600.0, only_binary: bool = False
+) -> tuple[bool, str]:
+    """Best-effort install of ``package`` into the RUNNING interpreter's
+    environment. Never raises. Returns ``(ok, message)``.
+
+    Used to pull an opt-in runtime extra from inside the app (e.g.
+    ``faster-whisper`` for the any-phrase local wake path), so a user never has
+    to drop to a shell — the CLAUDE.md §3 "recoverable in-app" contract. Runs
+    against ``sys.executable`` so the package lands in the same environment the
+    app imports from, and passes ``NO_WINDOW_CREATIONFLAGS`` so a ``pythonw.exe``
+    host does not flash a console (AP-1). Cross-platform: ``python -m pip`` is
+    the primary invocation on Windows/macOS/Linux; an environment with no pip
+    module at all (uv-created venvs omit it — BUG-073) is repaired via
+    ensurepip or served through ``uv pip install`` instead of failing.
+
+    ``only_binary=True`` adds ``--only-binary=:all:`` — for end-user-facing
+    installs of native packages, so the installer fails fast with the honest
+    no-wheel diagnosis instead of attempting a source build (FFmpeg/toolchain)
+    that no end user can satisfy (BUG-059).
+    """
+    if not sys.executable:
+        return False, "no Python interpreter available to run pip"
+
+    ok, message = _run_installer(
+        _pip_install_cmd(package, only_binary=only_binary),
+        timeout_s=timeout_s,
+        flavor="pip",
+    )
+    if ok or _NO_PIP_MARKER not in message.lower():
+        return ok, message
+    return _install_without_pip(
+        package, timeout_s=timeout_s, only_binary=only_binary, pip_error=message
+    )
 
 
 def install_claude_cli() -> tuple[bool, DependencyStatus]:
