@@ -57,6 +57,12 @@ type CategoryKey = ProviderTier | "subagents" | "jarvis-key" | "advanced";
 // unreachable engine. See `EngineModeSwitch` below for the exact rule.
 type VoiceEngineMode = "pipeline" | "realtime";
 
+// The three provider slots the maintainer's setup recommendation speaks about
+// (RecommendedSetupPanel). All three are ordinary CategoryKeys; "realtime"
+// additionally requires the Realtime tab set, so opening it switches the VIEW
+// mode (never the persisted `[voice].mode`).
+type RecommendationTab = "realtime" | "computer-use" | "subagents";
+
 // Realtime replaces STT+Brain+TTS with one full-duplex model, so those three
 // tiers don't apply in Realtime mode — that's the whole reason for the split.
 // "computer-use" is GLOBAL (not mode-specific — Computer-Use is one engine for
@@ -194,6 +200,14 @@ export function ApiKeysView() {
 
   const modeTabs = engineMode === "realtime" ? REALTIME_TABS : PIPELINE_TABS;
 
+  // A recommendation row navigates to the tab it talks about. This is VIEW
+  // navigation only: opening the Realtime tab set here never persists
+  // `[voice].mode` (only the segmented switch does that, key-gated).
+  function openRecommendedTab(tab: RecommendationTab) {
+    if (tab === "realtime") setEngineMode("realtime");
+    setActive(tab);
+  }
+
   return (
     <div className="flex h-full flex-col">
       <ViewHeader
@@ -214,6 +228,7 @@ export function ApiKeysView() {
         transitioning={transitioning}
         onSelect={setEngineMode}
         onSetVoiceMode={setVoiceMode}
+        onOpenRecommendedTab={openRecommendedTab}
       />
 
       <CategoryTabs active={active} onSelect={setActive} health={health} tabs={modeTabs} />
@@ -301,6 +316,7 @@ function EngineModeSwitch({
   transitioning,
   onSelect,
   onSetVoiceMode,
+  onOpenRecommendedTab,
 }: {
   mode: VoiceEngineMode;
   /** The live `[voice].mode` value — determines the filled/active segment. */
@@ -320,6 +336,8 @@ function EngineModeSwitch({
   onSelect: (mode: VoiceEngineMode) => void;
   /** Persists `[voice].mode` — gated per the rule above. */
   onSetVoiceMode: (mode: string) => void;
+  /** Opens the tab a recommendation row names (view navigation only). */
+  onOpenRecommendedTab: (tab: RecommendationTab) => void;
 }) {
   const t = useT();
   // Realtime leads as the recommended default. Pipeline follows with an
@@ -363,6 +381,8 @@ function EngineModeSwitch({
             {t("apikeys_view.voice_engine_desc")}
           </p>
         </div>
+
+        <RecommendedSetupPanel onOpenTab={onOpenRecommendedTab} />
 
         <div className="shrink-0">
           {/* Two equal segments over one sliding thumb: the thumb tracks the
@@ -474,6 +494,90 @@ function EngineModeSwitch({
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * The maintainer's personal pick for the three provider slots users ask about
+ * most, shown in the voice-engine header band where it is visible in BOTH tab
+ * sets. Same contract as the per-card "Recommended" badges fed by
+ * provider_spec.py: a presentation hint only — it never gates behavior and
+ * never branches a code path on a provider name (AP-21). Each row is a button
+ * that jumps straight to the tab it names, so the guidance sits one click
+ * from the place it applies. The rows carry an explicit aria-label starting
+ * with the panel title so their accessible names never collide with the
+ * Pipeline|Realtime segment buttons (tests match those via /^realtime/i).
+ */
+function RecommendedSetupPanel({
+  onOpenTab,
+}: {
+  onOpenTab: (tab: RecommendationTab) => void;
+}) {
+  const t = useT();
+  const rows: {
+    tab: RecommendationTab;
+    icon: LucideIcon;
+    label: string;
+    pick: string;
+    why: string;
+  }[] = [
+    {
+      tab: "realtime",
+      icon: Radio,
+      label: t("apikeys_view.tab_realtime"),
+      pick: t("apikeys_view.reco_realtime_pick"),
+      why: t("apikeys_view.reco_realtime_why"),
+    },
+    {
+      tab: "computer-use",
+      icon: Terminal,
+      label: t("apikeys_view.tab_computer_use"),
+      pick: t("apikeys_view.reco_computer_use_pick"),
+      why: t("apikeys_view.reco_computer_use_why"),
+    },
+    {
+      tab: "subagents",
+      icon: Bot,
+      label: t("apikeys_view.tab_subagents"),
+      pick: t("apikeys_view.reco_subagents_pick"),
+      why: t("apikeys_view.reco_subagents_why"),
+    },
+  ];
+  return (
+    <div
+      data-testid="recommended-setup-panel"
+      className="min-w-0 max-w-xl flex-1 basis-80 rounded-xl border border-primary/25 bg-primary/[0.05] px-4 py-2.5"
+    >
+      <p className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+        <Sparkles aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-primary" />
+        {t("apikeys_view.reco_title")}
+      </p>
+      <ul className="mt-1.5 space-y-0.5">
+        {rows.map((row) => {
+          const Icon = row.icon;
+          return (
+            <li key={row.tab}>
+              <button
+                type="button"
+                onClick={() => onOpenTab(row.tab)}
+                aria-label={`${t("apikeys_view.reco_title")}: ${row.label} — ${row.pick}`}
+                className="flex w-full items-start gap-2 rounded-lg px-1.5 py-1 text-left text-xs leading-snug transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <Icon
+                  aria-hidden="true"
+                  className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary/80"
+                />
+                <span className="min-w-0">
+                  <span className="text-muted-foreground">{row.label}: </span>
+                  <span className="font-medium text-foreground">{row.pick}</span>
+                  <span className="text-muted-foreground"> — {row.why}</span>
+                </span>
+              </button>
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }
