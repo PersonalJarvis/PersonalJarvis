@@ -5300,3 +5300,39 @@ it. Any runtime code that shells out to pip must treat "No module named
 pip" as a repairable state (ensurepip / uv fallback), not a terminal
 error, or every in-app install silently bricks for the growing uv-managed
 install base.
+
+---
+
+## BUG-074: JarvisBar/mascot host died instantly on macOS — pyobjc NSApplication before Tk 9 init (HIGH, FIXED 2026-07-17)
+
+> Shipped in the 2026-07-17 public-repo (Mac session) commits as "BUG-067";
+> renumbered on integration — the local register had already assigned BUG-067
+> to an unrelated Computer-Use bug.
+
+**Symptom.** On the freshly installed Intel Mac the bar never appeared;
+`jarvis_desktop.log` repeated "JarvisBar host not ready within 3.0s" /
+"JarvisBar host process is gone". Running the host by hand showed a native
+abort (SIGABRT) inside `libtcl9tk9.0`: `-[NSApplication macOSVersion]:
+unrecognized selector`.
+
+**Root cause.** The host hid its Dock icon via pyobjc
+(`NSApplication.sharedApplication().setActivationPolicy_(1)`) BEFORE creating
+the Tk root. Tk 9's aqua backend calls selectors that only exist on Tk's own
+`TKApplication` subclass of NSApplication; when pyobjc has already
+instantiated a plain `NSApplication` as `NSApp`, `Tk()` aborts natively.
+Tk 8.6 tolerated this order — but uv's python-build-standalone CPython (the
+interpreter the installer provisions on Intel Macs / Python-3.14 systems)
+bundles **Tk 9.0**, so every fresh macOS install hit it. Reproduced
+minimally: `AppKit.NSApplication.sharedApplication()` then `tkinter.Tk()`
+crashes; `Tk()` first, AppKit second works.
+
+**Fix (2026-07-17).** `_hide_dock_icon()` now creates a withdrawn bootstrap
+`tkinter.Tk()` root FIRST (kept alive for the host's lifetime) so Tk owns
+`NSApp`, then applies the accessory activation policy. darwin-only code
+path; Linux/Windows byte-identical. Verified live: the host reaches
+`{"event": "ready"}` and the Tk mainloop keeps running.
+
+**Class rule.** In any process that will run Aqua-Tk, Tk must be the first
+framework to touch `NSApplication`. Never call a pyobjc/AppKit API before
+the first `Tk()` in Tk-hosting subprocesses — and treat "works with Tk 8.6"
+as unproven for Tk 9.

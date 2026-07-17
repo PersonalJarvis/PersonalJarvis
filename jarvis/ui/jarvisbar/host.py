@@ -207,12 +207,37 @@ class _EchoBar:
         return _echo
 
 
+# Keeps the bootstrap Tk interpreter alive for the host's lifetime — Tk aqua
+# teardown is fragile, and NSApp must stay Tk's own TKApplication.
+_TK_BOOTSTRAP_ROOT: Any = None
+
+
 def _hide_dock_icon() -> None:
     """Best-effort: run as a Dock-less accessory app (macOS only).
 
     Without this the bar host would add a second python rocket to the Dock.
     pyobjc may be absent — purely cosmetic, never blocks the bar.
+
+    ORDER IS LOAD-BEARING (BUG-074): Tk MUST initialize before any pyobjc
+    ``NSApplication.sharedApplication()`` call in this process. Tk 9's aqua
+    backend calls selectors that only exist on Tk's own ``TKApplication``
+    subclass; if a plain ``NSApplication`` already owns ``NSApp`` (because
+    pyobjc created it first), ``Tk()`` aborts natively with
+    ``-[NSApplication macOSVersion]: unrecognized selector`` — the bar host
+    dies before it can signal ready. uv's python-build-standalone CPython
+    bundles Tk 9, so this is the default fresh-install constellation on
+    macOS. A withdrawn bootstrap root created here makes Tk the one that
+    instantiates ``NSApp``; the later overlay root joins the same process
+    safely.
     """
+    global _TK_BOOTSTRAP_ROOT
+    try:
+        import tkinter  # noqa: PLC0415
+
+        _TK_BOOTSTRAP_ROOT = tkinter.Tk()
+        _TK_BOOTSTRAP_ROOT.withdraw()
+    except Exception:  # noqa: BLE001 — headless/no-Tk hosts degrade downstream
+        log.debug("Tk bootstrap root failed (no display?)", exc_info=True)
     try:
         from AppKit import NSApplication  # type: ignore[import-not-found]
 
