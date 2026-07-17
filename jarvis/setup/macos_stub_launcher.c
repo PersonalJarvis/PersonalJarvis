@@ -29,7 +29,7 @@ int main(int argc, char *argv[]) {
     /* Finder-launched apps inherit no locale, which would make CPython
      * decode paths and argv as ASCII. Mirror py2app's fix: force UTF-8.
      *
-     * ONLY LC_CTYPE — never LC_ALL (BUG-068): a plain `python` binary leaves
+     * ONLY LC_CTYPE — never LC_ALL (BUG-079): a plain `python` binary leaves
      * LC_NUMERIC in the "C" locale, and native libraries rely on that when
      * they format numbers. setlocale(LC_ALL, "") on a German macOS put
      * LC_NUMERIC=de_DE into the whole process and libvosk then emitted

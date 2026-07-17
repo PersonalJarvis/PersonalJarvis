@@ -72,7 +72,7 @@ def test_factory_selects_global_hotkeys_on_windows(patch_platform):
 
 
 def test_factory_selects_quartz_on_macos_with_hotkey(patch_platform):
-    """macOS gets the TSM-free Quartz tap backend, never pynput (BUG-065)."""
+    """macOS gets the TSM-free Quartz tap backend, never pynput (BUG-077)."""
     from jarvis.trigger.backends import make_hotkey_backend
     from jarvis.trigger.backends.pynput import PynputBackend
     from jarvis.trigger.backends.quartz import QuartzHotkeyBackend
@@ -465,7 +465,7 @@ def test_pynput_backend_darwin_with_grant_starts_listener(monkeypatch):
 
 
 def test_pynput_backend_darwin_without_layout_snapshot_degrades(monkeypatch, caplog):
-    # BUG-065: macOS 15 kills the process (uncatchable SIGILL) when pynput's
+    # BUG-077: macOS 15 kills the process (uncatchable SIGILL) when pynput's
     # listener thread calls the TIS keyboard-layout APIs off the main thread.
     # With no main-thread layout snapshot the backend must degrade — no
     # Listener at all — instead of letting the OS abort the app.

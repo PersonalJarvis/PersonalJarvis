@@ -52,7 +52,7 @@ def _macos_hotkey_permissions_granted() -> bool:
 
 
 def _macos_layout_guard_ready() -> bool:
-    """Prime + install the TIS main-thread layout guard (BUG-065).
+    """Prime + install the TIS main-thread layout guard (BUG-077).
 
     macOS 15 kills the process with an uncatchable SIGILL when pynput's
     listener thread calls the TIS keyboard-layout APIs off the main thread.
@@ -235,7 +235,7 @@ class PynputBackend:
                 return
             self._permission_check = _macos_hotkey_permissions_granted
 
-            # BUG-065: pynput's listener thread calls the TIS keyboard-layout
+            # BUG-077: pynput's listener thread calls the TIS keyboard-layout
             # APIs (HIToolbox) as it starts; on macOS 15 an off-main-thread
             # TIS call is an uncatchable process kill (SIGILL, "Personal
             # Jarvis quit unexpectedly"). Only start the listener once a

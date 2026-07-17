@@ -78,7 +78,7 @@ def make_hotkey_backend() -> HotkeyBackend:
 
     * ``win32`` → ``GlobalHotkeysBackend`` (relocated Windows logic, AD-7).
     * else if ``capabilities.has_hotkey`` → ``QuartzHotkeyBackend`` on macOS
-      (TSM-free event tap, BUG-065) or ``PynputBackend`` on Linux-X11.
+      (TSM-free event tap, BUG-077) or ``PynputBackend`` on Linux-X11.
     * else → ``NoopBackend`` (Wayland or no ``pynput``; logged-once no-op, AD-8).
 
     Never raises and never returns ``GlobalHotkeysBackend`` off Windows — the
@@ -101,7 +101,7 @@ def make_hotkey_backend() -> HotkeyBackend:
             # pynput's darwin keyboard listener resolves the keyboard layout
             # via HIToolbox TSM calls from its listener thread; modern macOS
             # asserts those run on the main queue and aborts the process with
-            # an uncatchable SIGILL (BUG-065). The Quartz tap backend matches
+            # an uncatchable SIGILL (BUG-077). The Quartz tap backend matches
             # by physical keycode and never touches TSM.
             from jarvis.trigger.backends.quartz import QuartzHotkeyBackend
 

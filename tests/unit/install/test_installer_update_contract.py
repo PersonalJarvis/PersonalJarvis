@@ -196,7 +196,7 @@ def test_desktop_registration_success_still_writes_full_log(
 def test_macos_launch_survives_missing_editable_import(
     monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    """BUG-066: on a FRESH install the installer process predates the editable
+    """BUG-078: on a FRESH install the installer process predates the editable
     install, so ``import jarvis`` fails in-process (.pth hooks only load at
     interpreter startup). step_launch must fall back to launching by app name
     instead of crashing after a fully successful install."""

@@ -1,4 +1,4 @@
-"""macOS keyboard-layout (TIS) main-thread guard (BUG-065).
+"""macOS keyboard-layout (TIS) main-thread guard (BUG-077).
 
 macOS 15 enforces that the Text Input Source Services APIs
 (``TISCopyCurrentKeyboardInputSource`` / ``TSMGetInputSourceProperty``,
@@ -194,7 +194,7 @@ def install_pynput_layout_guard() -> bool:
             raise RuntimeError(
                 "macOS keyboard layout was not captured on the main thread; "
                 "refusing to call the TIS APIs off-main (the OS would kill "
-                "the process with SIGILL, BUG-065)."
+                "the process with SIGILL, BUG-077)."
             )
         yield cached
 

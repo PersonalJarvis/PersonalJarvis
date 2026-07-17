@@ -1,4 +1,4 @@
-"""macOS hotkey backend via a Quartz ``CGEventTap`` (AD-8, BUG-065).
+"""macOS hotkey backend via a Quartz ``CGEventTap`` (AD-8, BUG-077).
 
 Why not pynput on macOS: pynput's darwin keyboard listener resolves the
 keyboard layout through the HIToolbox Text Services Manager

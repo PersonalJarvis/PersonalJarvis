@@ -5448,7 +5448,9 @@ undiagnosable in the field.
 
 ---
 
-## BUG-065: pynput's darwin keyboard listener aborts the whole app with SIGILL on macOS 15 — hotkeys replaced with a TSM-free Quartz tap backend (HIGH, FIXED 2026-07-17)
+## BUG-077: pynput's darwin keyboard listener aborts the whole app with SIGILL on macOS 15 — hotkeys replaced with a TSM-free Quartz tap backend (HIGH, FIXED 2026-07-17)
+
+<!-- Ported from the public Mac line (numbered BUG-065 there). -->
 
 **Symptom.** During the first real Intel-Mac onboarding (macOS 15.7), the
 desktop app died twice within seconds of the hotkey trigger arming — a native
@@ -5514,7 +5516,9 @@ wrapping the crash in try/except that can never catch a SIGILL.
 
 ---
 
-## BUG-066: fresh macOS install crashed at the final launch step — editable .pth invisible to the already-running installer (MEDIUM, FIXED 2026-07-17)
+## BUG-078: fresh macOS install crashed at the final launch step — editable .pth invisible to the already-running installer (MEDIUM, FIXED 2026-07-17)
+
+<!-- Ported from the public Mac line (numbered BUG-066 there). -->
 
 **Symptom.** A fully successful fresh install (all six phases green, bundle
 registered) ended in `ModuleNotFoundError: No module named 'jarvis'` from

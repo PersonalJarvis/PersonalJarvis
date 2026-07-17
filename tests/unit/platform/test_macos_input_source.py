@@ -1,4 +1,4 @@
-"""Tests for the macOS TIS main-thread layout guard (BUG-065).
+"""Tests for the macOS TIS main-thread layout guard (BUG-077).
 
 macOS 15 kills the process with an uncatchable SIGILL when the TIS
 keyboard-layout APIs run off the main thread — which is where pynput calls

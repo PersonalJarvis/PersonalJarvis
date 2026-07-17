@@ -1,6 +1,6 @@
 """QuartzHotkeyBackend contract: TSM-free chord matching + fail-closed gates.
 
-BUG-065: pynput's darwin keyboard listener dies with an uncatchable SIGILL on
+BUG-077: pynput's darwin keyboard listener dies with an uncatchable SIGILL on
 modern macOS (HIToolbox TSM calls off the main queue). The Quartz backend
 matches physical keycodes + modifier flags and must never import pynput's
 listener machinery. These tests drive the chord matcher directly and pin the
