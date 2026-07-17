@@ -68,6 +68,66 @@ def build_launch_command(executable: str) -> list[str]:
     return fallback
 
 
+def _read_windows_user_jarvis_env() -> dict[str, str] | None:
+    """The ``JARVIS__*`` config overrides persisted in the user's CURRENT
+    Windows environment (HKCU\\Environment), or ``None`` when unavailable.
+
+    ``None`` (non-Windows host, unreadable registry) means "no fresher source
+    than the inherited environment exists" — the caller keeps it unchanged.
+    POSIX hosts have no persisted user-env registry to re-read; their inherited
+    environment is already the freshest source, so this is an honest no-op.
+    """
+    if sys.platform != "win32":
+        return None
+    try:
+        import winreg
+
+        persisted: dict[str, str] = {}
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, "Environment") as key:
+            index = 0
+            while True:
+                try:
+                    name, value, _kind = winreg.EnumValue(key, index)
+                except OSError:
+                    break
+                index += 1
+                if isinstance(name, str) and name.upper().startswith("JARVIS__"):
+                    persisted[name] = str(value)
+        return persisted
+    except OSError:
+        return None
+
+
+def fresh_user_env(
+    base: dict[str, str] | None = None, *, _read_persisted=_read_windows_user_jarvis_env
+) -> dict[str, str]:
+    """Environment for the NEW launcher, with ``JARVIS__*`` overrides re-read
+    from the user's currently persisted environment.
+
+    Without this, the restart chain FOSSILIZES the env config layer: each
+    restarted process inherits the ``JARVIS__*`` values captured when the
+    first tray process started, so a config fix that updates all three pinned
+    layers (jarvis.toml + config-soll.json + user env) keeps being overridden  # i18n-allow: config-soll.json is a filename
+    by the stale inherited copy on every ``restart-app`` — live case
+    2026-07-17: the TTS voice pin kept resurrecting a replaced voice. Only
+    ``JARVIS__*`` keys (the pydantic config-override namespace) are refreshed;
+    everything else stays inherited.
+    """
+    env = dict(os.environ if base is None else base)
+    persisted = _read_persisted()
+    if persisted is None:
+        return env
+    # Drop every inherited JARVIS__* key first (Windows env names are
+    # case-insensitive, so spelling variants must not survive alongside the
+    # refreshed names), then lay down the persisted set verbatim.
+    for stale in [
+        k for k in env if k.upper().startswith("JARVIS__") and k not in persisted
+    ]:
+        del env[stale]
+    env.update(persisted)
+    return env
+
+
 def detached_creationflags() -> int:
     """Windows creationflags that make a child outlive its parent, windowless.
 
@@ -454,6 +514,9 @@ def main(
     cwd = argv[1]
 
     kwargs: dict[str, object] = {"cwd": cwd, "close_fds": True}
+    # Fresh JARVIS__* overrides for the new instance — never the dying
+    # process's fossilized copy (see fresh_user_env).
+    kwargs["env"] = fresh_user_env()
     if sys.platform == "win32":
         kwargs["creationflags"] = detached_creationflags()
     else:
