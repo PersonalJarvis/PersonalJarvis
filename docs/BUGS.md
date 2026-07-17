@@ -4063,12 +4063,15 @@ four call sites (``__main__.py`` tray app, ``desktop_app.py``,
 Dock icon remain the macOS surface. Guard:
 ``tests/unit/ui/test_tray.py::test_tray_start_is_noop_on_macos``.
 
-**Follow-up (needs real Mac hardware).** A real macOS menu-bar icon
-requires main-thread hosting: ``pystray.Icon(...,
-darwin_nsapplication=<pywebview's NSApplication>)`` + ``run_detached()``,
-with the icon constructed on the main thread (e.g. PyObjC
-``performSelectorOnMainThread``). Tracked in
-``docs/plans/cross-platform-mac-linux/FIX-TRACKER.md``.
+**Follow-up (implemented 2026-07-17).** The real macOS menu-bar icon
+shipped exactly along the sketched path: ``JarvisTray.start()`` hosts the
+icon on the pywebview ``NSApplication`` via ``pystray.Icon(...,
+darwin_nsapplication=...)`` + ``run_detached()``, constructed on the AppKit
+main thread; every later mutation from a worker thread (menu rebuild,
+tooltip, stop) is marshaled onto the main thread via
+``PyObjCTools.AppHelper.callAfter``. The 2026-07-14 logged no-op remains the
+degrade path when no main-thread NSApplication is available (e.g. headless).
+Tracked in ``docs/plans/cross-platform-mac-linux/FIX-TRACKER.md``.
 
 **Class rule.** ANY AppKit/UI object on macOS (status items, windows,
 menus) must be created and driven on the main thread; a worker-thread
@@ -4180,9 +4183,13 @@ the tray floor. macOS keeps the desktop window + Dock icon. Guards:
 windows-still-spawns test),
 ``tests/overlay/test_overlay_surface.py::test_factory_selects_tray_floor_on_macos``.
 
-**Follow-up (needs real Mac hardware).** A visible macOS bar/orb needs a
-main-thread or own-process host — same follow-up as the BUG-056 menu-bar
-icon, tracked in the cross-platform FIX-TRACKER.
+**Follow-up (implemented 2026-07-17).** The bar/orb got the own-process
+host: the mascot/orb now renders inside the jarvisbar subprocess host as
+``SubprocessMascotOverlay`` (``jarvis/ui/jarvisbar/subprocess_overlay.py``),
+so its Tk root lives on the subprocess's own main thread and never touches a
+worker thread in the backend process; ``OrbOverlay`` additionally gained
+macOS Aqua-Tk alpha transparency (a ``-transparent`` root instead of the
+Windows magenta color key). Tracked in the cross-platform FIX-TRACKER.
 
 **Class rule.** BUG-056 generalizes: on macOS EVERY UI toolkit in the
 process (AppKit, Aqua-Tk, pystray) is main-thread-only, and the "Python
@@ -4363,6 +4370,19 @@ marker now carries the same ``platform_machine == 'arm64'`` condition
 (wake degrades to vosk_kws there). Lesson: after gating a dependency,
 re-resolve for the affected platform — direct markers do not stop
 transitive pulls.
+
+**Follow-up (2026-07-17).** Two corrections. (a) The "Silero VAD degrades
+to WebRTC VAD" claim above was aspirational until now: the runtime imported
+``webrtcvad`` nowhere and actually fell straight through to the bare energy
+RMS floor. The WebRTC middle tier is now wired in ``jarvis/audio/vad.py``
+(Silero ONNX → WebRTC VAD → RMS energy), so an onnxruntime-less Mac gets a
+real VAD instead of energy-only endpointing. (b) NO-GO decision recorded on
+re-adding an older onnxruntime pin for darwin-x86_64: a pin whose wheel
+matrix is frozen in the past is the exact recurrence class this entry
+documents, and wake already defaults to ``vosk_kws``, which is fully
+functional on Intel Macs. Revisit trigger: field reports that WebRTC-tier
+endpointing is insufficient, or concrete demand for ``custom_onnx`` wake on
+Intel.
 
 **Class rule.** A pinned dependency whose wheel matrix has DROPPED a
 platform must never sit unconditionally in the base lock: gate it with
@@ -5368,3 +5388,60 @@ host).
 **Class rule.** Aqua-Tk cosmetics verified on Tk 8.6 are unproven on Tk 9 —
 and the failure mode is silent (no TclError). Where the effect matters,
 assert it natively via AppKit instead of trusting a Tk color name.
+
+## BUG-076: macOS app bundle unlaunchable on non-framework (uv standalone) Python — installer exit 4 with the real error discarded (HIGH, FIXED 2026-07-17)
+
+<!-- Ported from the public Mac line, where this entry was numbered BUG-064.
+     Renumbered: local BUG-064 is the Grok realtime deafness bug (the two
+     registers assigned 063..069 independently after the 2026-07-14 cut). -->
+
+**Symptom.** Fresh managed install on an Intel Mac (and on any system where
+install.sh's uv bootstrap provisions Python): the installer aborts with a
+bare exit code 4 at the desktop-integration step. No error text names what
+actually failed — the terminal shows only the failure itself, so the bundle
+build looked like an opaque hard stop.
+
+**Root cause (two layers).**
+
+1. **py2app requires a framework Python.** The BUG-060 hardened bundle used
+   a py2app alias stub as its native Mach-O launcher; that stub resolves the
+   interpreter through the ``Python.framework`` layout at launch time.
+   install.sh's uv bootstrap (taken on Intel Macs and on systems whose
+   system Python is 3.14) provisions a python-build-standalone CPython —
+   a NON-framework interpreter the py2app stub can never launch. The
+   LaunchServices identity probe (BUG-060's own guard) correctly detected
+   the unlaunchable bundle and rolled it back — the guard worked; the
+   foundation under it was wrong for a whole interpreter class.
+2. **The real error was discarded.** ``install/installer.py`` ran the
+   desktop-integration subprocess and, on failure, surfaced only the exit
+   code — the captured stderr carrying the actual probe/build diagnosis was
+   thrown away, so the visible symptom was "exit 4" instead of the cause.
+
+**Fix (2026-07-17).**
+
+- The bundle's native launcher is now an in-repo compiled C stub
+  (``jarvis/setup/macos_stub_launcher.c``), replacing py2app entirely:
+  ``_resolve_runtime_dylib`` locates the exact runtime libpython/framework
+  dylib of the active interpreter (framework AND standalone layouts) and
+  ``_build_native_bundle`` compiles + links the stub against it, so the
+  bundle launches on whatever Python actually runs the install. The py2app
+  dependency is removed.
+- ``install/installer.py`` writes the full integration output to
+  ``data/logs/install-desktop-integration.log`` and prints the stderr tail
+  on failure — the diagnosis is never swallowed again.
+
+Guards: new CI matrix row "Intel standalone (uv)" in
+``.github/workflows/macos-desktop.yml`` builds + self-probes the bundle on a
+uv-provisioned non-framework Python;
+``tests/unit/setup/test_macos_app_bundle.py`` covers
+``_resolve_runtime_dylib`` (framework, standalone, and unversioned uv-sibling
+layouts) and ``_build_native_bundle``;
+``tests/unit/install/test_installer_update_contract.py`` covers the log +
+stderr-tail surfacing.
+
+**Class rule.** A launcher that hardcodes one interpreter layout is broken
+for every other layout the installer itself can provision — build native
+stubs against the RUNTIME the install actually uses, probed at build time.
+And an installer must never reduce a failed subprocess to its exit code:
+persist and print the captured stderr, or the next such bug is again
+undiagnosable in the field.

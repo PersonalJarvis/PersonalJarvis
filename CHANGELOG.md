@@ -7,6 +7,44 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **macOS installer no longer dies with a bare exit code on uv-provisioned
+  Pythons.** The app bundle's native launcher is now an in-repo compiled C
+  stub linked against the exact Python runtime in use — replacing the py2app
+  alias stub, which only worked on framework Pythons and left Intel Macs
+  (uv standalone bootstrap) with an unlaunchable bundle. Desktop-integration
+  failures now write `data/logs/install-desktop-integration.log` and print
+  the actual error instead of discarding it (BUG-064).
+- **Voice endpointing degrades honestly without onnxruntime.** The WebRTC VAD
+  fallback tier is now actually wired (Silero ONNX → WebRTC VAD → RMS energy);
+  previously the middle tier was documented but never imported, so
+  onnxruntime-less systems (e.g. Intel Macs) silently fell back to bare
+  energy endpointing (BUG-061 follow-up).
+- **The installer's speech-model report is honest** — it reflects which
+  models/runtimes are actually usable on the machine instead of assuming the
+  full stack, and can always be produced without raising.
+- **Windows-only dev scripts refuse to run on other platforms** with a
+  one-line message instead of an ImportError traceback.
+
+### Added
+
+- **Real macOS menu-bar icon.** The tray icon is hosted on the AppKit main
+  thread (pystray `darwin_nsapplication` + `run_detached`), completing the
+  BUG-056 follow-up — macOS gets the same tray surface as Windows/Linux.
+- **Mascot/orb on macOS.** The mascot/orb overlay now renders in its own
+  subprocess host (BUG-057 follow-up), with Aqua-Tk alpha transparency.
+- **macOS audio ducking.** Music and Spotify are ducked via AppleScript for
+  the duration of a voice session and restored afterwards, with an opt-in
+  master-volume fallback.
+
+### Removed
+
+- The stale root-level `install.sh` (legacy clone-then-run script). The one
+  advertised one-line installer remains `install/install.sh`.
+
 ## [1.0.10] — 2026-07-16
 
 ### Fixed
