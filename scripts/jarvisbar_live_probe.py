@@ -11,6 +11,12 @@ import sys
 import time
 from pathlib import Path
 
+if sys.platform != "win32":
+    sys.exit(
+        "jarvisbar_live_probe.py drives Windows-only APIs (ctypes.windll / "
+        "layered-window capture); run it on Windows."
+    )
+
 # Per-monitor DPI awareness BEFORE Tk boots, so the window coordinates Tk
 # reports match the physical pixels ImageGrab captures (display scaling).
 ctypes.windll.shcore.SetProcessDpiAwareness(2)

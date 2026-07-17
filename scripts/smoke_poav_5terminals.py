@@ -30,6 +30,12 @@ try:
 except Exception:
     pass
 
+if sys.platform != "win32":
+    sys.exit(
+        "smoke_poav_5terminals.py drives Windows-only APIs (win32gui / "
+        "Windows Terminal); run it on Windows."
+    )
+
 import argparse
 import asyncio
 import time
