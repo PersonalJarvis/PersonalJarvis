@@ -191,3 +191,30 @@ def test_desktop_registration_success_still_writes_full_log(
     ).read_text(encoding="utf-8")
     assert '{"ok": true, "attempted": true}' in text
     assert "probe chatter" in text
+
+
+def test_macos_launch_survives_missing_editable_import(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """BUG-066: on a FRESH install the installer process predates the editable
+    install, so ``import jarvis`` fails in-process (.pth hooks only load at
+    interpreter startup). step_launch must fall back to launching by app name
+    instead of crashing after a fully successful install."""
+    monkeypatch.setattr(installer.sys, "platform", "darwin")
+    monkeypatch.setattr(installer, "is_headless_linux", lambda: False)
+    # Force the in-process import to fail even though the dev venv has jarvis.
+    import builtins
+
+    real_import = builtins.__import__
+
+    def _no_jarvis(name, *args, **kwargs):
+        if name.startswith("jarvis"):
+            raise ModuleNotFoundError("No module named 'jarvis'")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "__import__", _no_jarvis)
+
+    installer.step_launch(headless=False, dry_run=True)
+
+    out = capsys.readouterr().out
+    assert "/usr/bin/open -a Personal Jarvis" in out

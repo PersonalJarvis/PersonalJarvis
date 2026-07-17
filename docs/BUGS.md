@@ -5511,3 +5511,29 @@ granted. Before hosting such a library off the main thread, read its native
 call path; if it needs main-queue services the process cannot provide, build
 the narrow native path in-repo (Quartz-only, keycode-level) instead of
 wrapping the crash in try/except that can never catch a SIGILL.
+
+---
+
+## BUG-066: fresh macOS install crashed at the final launch step — editable .pth invisible to the already-running installer (MEDIUM, FIXED 2026-07-17)
+
+**Symptom.** A fully successful fresh install (all six phases green, bundle
+registered) ended in `ModuleNotFoundError: No module named 'jarvis'` from
+`step_launch` (`install/installer.py`). Update runs never hit it.
+
+**Root cause.** The installer process starts before phase 4 runs
+`pip install -e .`. Editable installs are wired through a `.pth` finder hook
+that the interpreter only processes at STARTUP, so the long-running installer
+process could not `import jarvis` in-process on a fresh install. On update
+runs the hook already existed at startup — which is why the crash was
+fresh-install-only and invisible on every developer machine.
+
+**Fix (2026-07-17).** `_rescan_venv_site_packages()` (`site.addsitedir` on
+the venv's purelib + `importlib.invalidate_caches`) runs before the darwin
+launch imports; if the import still fails the launch degrades to
+`/usr/bin/open -a "Personal Jarvis"` (LaunchServices by name — BUG-060
+conform) instead of failing a completed install. Guard:
+`tests/unit/install/test_installer_update_contract.py::test_macos_launch_survives_missing_editable_import`.
+
+**Class rule.** A long-running installer process must never assume it can
+import what it just installed — re-scan site-packages first, and never let a
+post-install nicety (auto-launch) turn a completed install into a failure.

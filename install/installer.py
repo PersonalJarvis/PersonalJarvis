@@ -638,6 +638,24 @@ def _resolved_admin_port() -> int:
             return 47821
 
 
+def _rescan_venv_site_packages() -> None:
+    """Make packages installed by THIS run importable in THIS process.
+
+    The installer process starts before phase 4 runs ``pip install -e .``, and
+    editable installs work through a ``.pth`` finder hook that the interpreter
+    only processes at startup — so a fresh install could never ``import
+    jarvis`` in-process (update runs could, the hook already existed at
+    startup, which is why only fresh installs crashed at launch).
+    ``site.addsitedir`` re-processes the venv's ``.pth`` files now.
+    """
+    import importlib
+    import site
+    import sysconfig
+
+    site.addsitedir(sysconfig.get_paths()["purelib"])
+    importlib.invalidate_caches()
+
+
 def step_launch(*, headless: bool, dry_run: bool) -> None:
     if headless or is_headless_linux():
         cmd = [str(venv_python()), "-m", "jarvis.ui.web.launcher", "--headless"]
@@ -646,21 +664,29 @@ def step_launch(*, headless: bool, dry_run: bool) -> None:
         cmd = [str(repo_root() / "run.bat")]
         msg = "the Desktop App"
     elif sys.platform == "darwin":
-        from jarvis.setup.macos_app_bundle import (
-            macos_app_bundle_is_launchable,
-            macos_app_bundle_path,
-            macos_launch_services_command,
-        )
-
-        bundle = macos_app_bundle_path()
-        if not macos_app_bundle_is_launchable(bundle):
-            console.print(
-                "[bad]│    Could not launch: the installed macOS app bundle is missing "
-                "or invalid.[/]"
+        try:
+            _rescan_venv_site_packages()
+            from jarvis.setup.macos_app_bundle import (
+                macos_app_bundle_is_launchable,
+                macos_app_bundle_path,
+                macos_launch_services_command,
             )
-            sys.exit(4)
-        cmd = macos_launch_services_command(bundle)
-        msg = "the Desktop App"
+        except Exception:  # noqa: BLE001 — a hint-import must never fail the install
+            # The install itself is complete; launch through LaunchServices
+            # by app name instead of failing the whole run. Ported from the Mac
+            # line (BUG-066 there; the local register merged it as BUG-078).
+            cmd = ["/usr/bin/open", "-a", "Personal Jarvis"]
+            msg = "the Desktop App"
+        else:
+            bundle = macos_app_bundle_path()
+            if not macos_app_bundle_is_launchable(bundle):
+                console.print(
+                    "[bad]│    Could not launch: the installed macOS app bundle is missing "
+                    "or invalid.[/]"
+                )
+                sys.exit(4)
+            cmd = macos_launch_services_command(bundle)
+            msg = "the Desktop App"
     else:
         cmd = [str(venv_python()), "-m", "jarvis.ui.web.launcher"]
         msg = "the Desktop App"
