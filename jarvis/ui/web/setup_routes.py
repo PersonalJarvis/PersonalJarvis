@@ -10,9 +10,11 @@ Endpoints powering the Desktop App's "Obsidian" setup card:
   (spec A6).
 * ``POST /api/setup/obsidian/register``  — register a vault for Jarvis's
   wiki. ``mode="separate"`` (default, backward compatible) registers the
-  Jarvis-owned vault in ``obsidian.json``, mirroring
+  Jarvis-owned vault in ``obsidian.json`` — creating a fresh index when
+  Obsidian was installed but never launched — mirroring
   :class:`jarvis.setup.obsidian.RegisterResult` semantics: ``added`` and
-  ``already_registered`` => 200, ``config_missing`` => 409,
+  ``already_registered`` => 200, ``config_missing`` => 409 (defensive
+  only; the separate-mode writer bootstraps a missing config instead),
   ``rolled_back`` => 500. ``mode="existing"`` instead repoints
   ``[wiki_integration].vault_root`` INTO ``<existing_vault>/Jarvis`` so
   every wiki write stays contained inside the user's own vault.
@@ -319,9 +321,11 @@ def obsidian_register(
     Status mapping:
       * ``added``               -> HTTP 200
       * ``already_registered``  -> HTTP 200 (``separate`` mode only)
-      * ``config_missing``      -> HTTP 409 for ``separate`` (Obsidian was
-        never started); HTTP 200 for ``existing`` (the given path does not
-        exist — a user-input error the UI shows inline, not a server fault)
+      * ``config_missing``      -> HTTP 409 for ``separate`` (defensive:
+        the writer now bootstraps a missing ``obsidian.json`` itself, so
+        this branch only fires on a future regression); HTTP 200 for
+        ``existing`` (the given path does not exist — a user-input error
+        the UI shows inline, not a server fault)
       * ``rolled_back``         -> HTTP 500 (write failure, restored)
 
     Unexpected exceptions are translated to HTTP 500 with a

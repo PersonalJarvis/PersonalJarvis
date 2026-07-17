@@ -252,7 +252,8 @@ def test_register_already_registered(
 def test_register_config_missing_returns_409(
     monkeypatch: pytest.MonkeyPatch, client_factory
 ) -> None:
-    """obsidian.json missing -> 409 so the UI can ask the user to launch Obsidian."""
+    """A writer-reported config_missing still maps to 409 (defensive: the
+    writer itself now bootstraps a missing obsidian.json instead)."""
     _, client, _vault = client_factory()
 
     monkeypatch.setattr(

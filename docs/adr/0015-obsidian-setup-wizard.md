@@ -45,6 +45,34 @@ the whole onboarding flow.
 The B9 onboarding wizard is a small, narrowly-scoped feature governed
 by six contracts.
 
+### 2026-07-17 fresh-install amendment (bootstrap on missing config)
+
+A field report from a fresh macOS install showed the wizard dead-ending:
+Obsidian was installed but had never been launched, so
+`~/Library/Application Support/obsidian/obsidian.json` did not exist and
+`register_vault()` refused with `config_missing` — the dialog could only
+ask the user to "open Obsidian once and close it, then click again". On
+the maintainer's machine (Obsidian long since launched) this path never
+fires, which is exactly the §3 "maintainer config as baseline" trap: every
+brand-new machine on every OS starts in the config-missing state.
+
+`register_vault()` now bootstraps a missing `obsidian.json` instead of
+refusing: it creates the config directory and writes a minimal index
+containing only the Jarvis vault entry, through the same tempfile +
+`fsync` + `os.replace` pipeline (no backup — there is no original to back
+up; on verification failure the created file is removed again). Obsidian
+adopts a pre-existing `obsidian.json` on first launch, so bootstrapping
+the index is equivalent to registering into an existing one.
+
+The "always-on auto-register" rejection below still stands: the write
+still happens only on the explicit **Register now** click, never from the
+read-only status probe. `config_missing` remains in the result model for
+the HTTP surface (the existing-vault mode reuses it for user-input
+errors), and the 409 route mapping stays as a defensive branch.
+Additionally, vault-path comparison is now case-insensitive on macOS as
+well as Windows — the APFS default volume is case-insensitive, so
+differing stored case must not report "not registered".
+
 ### 2026-07-12 reliability amendment
 
 Vault registration is based on reachability, not string equality. A

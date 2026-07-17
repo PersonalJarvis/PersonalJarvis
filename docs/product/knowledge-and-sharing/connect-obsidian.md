@@ -26,10 +26,13 @@ turn Jarvis backups into a device-to-device backup plan.
 
 ## Before You Start
 
-- Install Obsidian from the [official Obsidian download page](https://obsidian.md/download),
-  then open it at least once so it can create its local vault list.
+- Install Obsidian from the [official Obsidian download page](https://obsidian.md/download).
+  You do not need to open it first — when Obsidian has never been launched,
+  Jarvis creates the local vault list during registration and Obsidian adopts
+  it on its first start.
 - If you want to use an existing vault, open or create that vault in Obsidian
-  before starting the Jarvis connection. Close Obsidian before registration so
+  before starting the Jarvis connection (the existing-vault picker can only
+  offer vaults Obsidian already knows). Close Obsidian before registration so
   both apps do not try to update its local vault list at the same time.
 - Decide who should back up the folder. Jarvis keeps limited recovery snapshots
   around its own writes, but you still need your normal backup or version-history
@@ -192,7 +195,7 @@ backup service is working.
 |---|---|---|
 | **Obsidian: not installed** after installation | Jarvis did not find the app in a common location, or setup has not refreshed | Start Obsidian once, return to the setup dialog, and retry. A custom install may require using Jarvis without the external-editor launch. |
 | **Use my existing vault** is unavailable | Obsidian's local vault list is missing or has no readable registered vault | Open the desired vault in Obsidian, close Obsidian, then reopen the Jarvis setup dialog. |
-| Registration asks you to open Obsidian first | Obsidian has not created its local vault-list file | Open Obsidian once, close it, and select **Register now** again. |
+| Registration asks you to open Obsidian first | The vault-list write failed unexpectedly (Jarvis normally creates the list itself when Obsidian has never been launched) | Open Obsidian once, close it, and select **Register now** again. |
 | Registration reports a rollback or unclear status | The local vault-list file could not be read, updated, or verified safely | Stop retrying, confirm Obsidian still opens normally, and keep the recovery copy. Follow the main troubleshooting guide before any manual restore. |
 | Obsidian opens, but Jarvis shows old search results | The files and the derived search index are out of step, or the watcher was unavailable | Confirm the health strip names the expected vault, select **Rebuild index**, and try the search again. |
 | An existing-vault connection shows no older notes | Jarvis intentionally reads only the nested `Jarvis` folder | Move or copy only the notes you deliberately want Jarvis to use, after backing them up and reviewing their privacy. |

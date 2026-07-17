@@ -321,12 +321,14 @@ def _normalize_for_compare(path: Path, platform: str | None = None) -> str:
       normalise (the expected vault path may not yet exist on disk).
     * Strip trailing backslashes and forward slashes — both Obsidian and
       Python sometimes emit a trailing separator on directory paths.
-    * Lowercase the whole string (Windows file system is case-insensitive
-      and this is a pure Windows feature).
+    * Lowercase the whole string on Windows AND macOS — NTFS and the APFS
+      default volume are both case-insensitive, so ``/Users/Casey`` and
+      ``/users/casey`` name the same directory there. Linux stays
+      case-sensitive.
     """
     plat = platform if platform is not None else sys.platform
     raw = str(path)
-    windows_style = plat == "win32" or (
+    case_insensitive = plat in ("win32", "darwin") or (
         len(raw) >= 3 and raw[1] == ":" and raw[2] in ("\\", "/")
     )
     try:
@@ -337,7 +339,7 @@ def _normalize_for_compare(path: Path, platform: str | None = None) -> str:
     s = str(resolved)
     while s.endswith(("\\", "/")):
         s = s[:-1]
-    return s.lower() if windows_style else s
+    return s.lower() if case_insensitive else s
 
 
 def is_vault_registered(vaults: list[VaultEntry], expected_vault_path: Path) -> bool:
@@ -389,11 +391,15 @@ class RegisterResult(BaseModel):
     ``status`` values:
         * ``"added"`` — vault was newly registered (or would have been, in
           dry-run mode). ``vault_uuid`` is populated; ``backup_path`` is
-          populated unless this was a dry-run.
+          populated unless this was a dry-run or a config bootstrap (a
+          freshly created ``obsidian.json`` has no original to back up).
         * ``"already_registered"`` — the vault was already present in
           ``obsidian.json``; no write happened.
-        * ``"config_missing"`` — ``obsidian.json`` does not exist. The
-          caller should ask the user to start Obsidian once first.
+        * ``"config_missing"`` — kept for the HTTP surface: the
+          ``mode="existing"`` route reuses it for user-input errors.
+          :func:`register_vault` itself no longer returns it — a missing
+          ``obsidian.json`` (Obsidian installed but never launched) is
+          bootstrapped instead of refused.
         * ``"rolled_back"`` — write attempt failed (pre-validate, post-
           write verification, or unexpected exception). The original
           ``obsidian.json`` was restored from backup when possible.
@@ -427,6 +433,67 @@ def _next_backup_path(config_path: Path) -> Path:
         counter += 1
 
 
+def _bootstrap_config_with_vault(
+    cfg_path: Path,
+    vault_path: Path,
+) -> RegisterResult:
+    """Create a fresh ``obsidian.json`` containing only the Jarvis vault.
+
+    Runs when Obsidian is installed but has never been launched on this
+    machine, so its config file does not exist yet (the normal state of a
+    brand-new install on any OS). Obsidian adopts a pre-existing
+    ``obsidian.json`` on first launch and shows the vault in its picker,
+    so bootstrapping the index is equivalent to registering into an
+    existing one. Same atomic pipeline as :func:`register_vault` minus the
+    backup step — there is no original file to back up. On any failure the
+    freshly created file is removed again so the "config never existed"
+    state is restored exactly.
+    """
+    new_uuid = secrets.token_hex(8)
+    tempfile_path: Path | None = None
+    try:
+        cfg_path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "vaults": {
+                new_uuid: {
+                    "path": str(vault_path.resolve()),
+                    "ts": int(time.time() * 1000),
+                    "open": False,
+                }
+            }
+        }
+        tempfile_path = cfg_path.with_suffix(f".json.tmp-{secrets.token_hex(4)}")
+        with open(tempfile_path, "w", encoding="utf-8", newline="") as fp:
+            json.dump(data, fp, indent=2, ensure_ascii=False)
+            fp.flush()
+            os.fsync(fp.fileno())
+        os.replace(tempfile_path, cfg_path)
+        tempfile_path = None  # successfully consumed
+
+        verify_state = read_obsidian_vaults(config_path=cfg_path)
+        if not is_vault_registered(verify_state.vaults, vault_path):
+            try:
+                cfg_path.unlink()
+            except OSError:
+                logger.debug("Could not remove bootstrapped config: %s", cfg_path)
+            return RegisterResult(
+                status="rolled_back",
+                error="post-write verification failed",
+            )
+
+        return RegisterResult(status="added", vault_uuid=new_uuid, backup_path=None)
+
+    except Exception as exc:  # noqa: BLE001 — we must always return a result
+        return RegisterResult(status="rolled_back", error=str(exc))
+
+    finally:
+        if tempfile_path is not None and tempfile_path.exists():
+            try:
+                tempfile_path.unlink()
+            except OSError:
+                logger.debug("Could not clean up tempfile: %s", tempfile_path)
+
+
 def register_vault(
     vault_path: Path,
     *,
@@ -438,7 +505,10 @@ def register_vault(
     Pipeline (every step is mandatory — no shortcuts):
 
     1. Default ``config_path`` to ``%APPDATA%\\obsidian\\obsidian.json``.
-    2. If the file does not exist → return ``status="config_missing"``.
+    2. If the file does not exist (Obsidian installed but never launched),
+       bootstrap it via :func:`_bootstrap_config_with_vault` and return its
+       result. ``dry_run=True`` short-circuits with ``status="added"``
+       without touching disk.
     3. Parse the JSON via :func:`read_obsidian_vaults`. On parse error
        return ``status="rolled_back"`` with the error message.
     4. If the vault is already registered → return
@@ -471,9 +541,17 @@ def register_vault(
     """
     cfg_path = config_path if config_path is not None else _default_obsidian_config_path()
 
-    # Step 2: config presence gate.
+    # Step 2: config bootstrap. A missing obsidian.json means Obsidian has
+    # never been launched on this machine — the normal state of a fresh
+    # install. Refusing here used to dead-end the setup wizard ("open
+    # Obsidian once, then click again"); Obsidian adopts a pre-created
+    # index on first launch, so we create it instead. The write is still
+    # user-consented: this function only runs from the explicit register
+    # action (wizard click / CLI), never from a status poll (ADR-0015).
     if not cfg_path.exists():
-        return RegisterResult(status="config_missing")
+        if dry_run:
+            return RegisterResult(status="added", vault_uuid=secrets.token_hex(8))
+        return _bootstrap_config_with_vault(cfg_path, vault_path)
 
     # Step 3: parse existing state.
     try:

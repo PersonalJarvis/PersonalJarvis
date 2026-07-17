@@ -31,19 +31,66 @@ def _write_cfg(cfg_path: Path, payload: dict) -> None:
 
 
 # ---------------------------------------------------------------------------
-# (a) config_missing
+# (a) missing config → bootstrap
 # ---------------------------------------------------------------------------
-def test_register_vault_config_missing(tmp_path: Path) -> None:
-    """No obsidian.json on disk → status=config_missing, no side effects."""
-    cfg = tmp_path / "obsidian" / "obsidian.json"  # never created
+def test_register_vault_bootstraps_missing_config(tmp_path: Path) -> None:
+    """No obsidian.json on disk (Obsidian never launched) → the register
+    click creates a fresh index containing the vault, status=added."""
+    cfg = tmp_path / "obsidian" / "obsidian.json"  # dir + file do not exist
     vault = tmp_path / "Vault"
+    vault.mkdir()
 
     result = register_vault(vault, config_path=cfg)
 
     assert isinstance(result, RegisterResult)
-    assert result.status == "config_missing"
-    assert result.vault_uuid is None
+    assert result.status == "added"
+    assert result.vault_uuid is not None
+    # A bootstrapped config has no original to back up.
     assert result.backup_path is None
+    data = json.loads(cfg.read_text(encoding="utf-8"))
+    entry = data["vaults"][result.vault_uuid]
+    assert Path(entry["path"]).resolve() == vault.resolve()
+    assert entry["open"] is False
+    # Registering again is idempotent against the bootstrapped file.
+    second = register_vault(vault, config_path=cfg)
+    assert second.status == "already_registered"
+
+
+def test_register_vault_missing_config_dry_run_touches_nothing(
+    tmp_path: Path,
+) -> None:
+    """dry_run with a missing obsidian.json previews success without
+    creating the file (parity with the existing-config dry-run contract)."""
+    cfg = tmp_path / "obsidian" / "obsidian.json"
+    vault = tmp_path / "Vault"
+    vault.mkdir()
+
+    result = register_vault(vault, config_path=cfg, dry_run=True)
+
+    assert result.status == "added"
+    assert result.vault_uuid is not None
+    assert not cfg.exists()
+    assert not cfg.parent.exists()
+
+
+def test_register_vault_bootstrap_failure_rolls_back(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A failed bootstrap write reports rolled_back and leaves no file."""
+    cfg = tmp_path / "obsidian" / "obsidian.json"
+    vault = tmp_path / "Vault"
+    vault.mkdir()
+
+    def _boom(*_a, **_kw):  # type: ignore[no-untyped-def]
+        raise OSError("disk full")
+
+    monkeypatch.setattr(mod.json, "dump", _boom)
+
+    result = register_vault(vault, config_path=cfg)
+
+    assert result.status == "rolled_back"
+    assert result.error is not None
+    assert "disk full" in result.error
     assert not cfg.exists()
 
 
@@ -191,7 +238,7 @@ def test_register_vault_write_failure_rolls_back(
     original_bytes = cfg.read_bytes()
 
     def _boom(*_a, **_kw):  # type: ignore[no-untyped-def]
-        raise IOError("disk full")
+        raise OSError("disk full")
 
     monkeypatch.setattr(mod.json, "dump", _boom)
 

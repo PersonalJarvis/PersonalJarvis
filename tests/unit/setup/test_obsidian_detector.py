@@ -344,6 +344,22 @@ def test_is_vault_registered_empty_vault_list() -> None:
     assert is_vault_registered([], Path(r"C:\anything")) is False
 
 
+def test_normalize_for_compare_case_insensitive_on_macos() -> None:
+    """macOS default APFS volumes are case-insensitive: differing case must
+    normalise identically on darwin, but stay distinct on Linux."""
+    from jarvis.setup.obsidian import _normalize_for_compare
+
+    upper = Path("/Users/Casey/.personal-jarvis/wiki/obsidian-vault")
+    lower = Path("/users/casey/.personal-jarvis/wiki/obsidian-vault")
+
+    assert _normalize_for_compare(upper, platform="darwin") == (
+        _normalize_for_compare(lower, platform="darwin")
+    )
+    assert _normalize_for_compare(upper, platform="linux") != (
+        _normalize_for_compare(lower, platform="linux")
+    )
+
+
 def test_is_vault_registered_for_subdirectory_of_registered_vault(
     tmp_path: Path,
 ) -> None:
