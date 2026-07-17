@@ -4240,3 +4240,106 @@ async def test_scrub_cancel_records_spoken_fallback_on_the_spoken_track():
     assert spoken[0].spoken_kind == "withheld"
     assert spoken[0].detail == reason
     assert spoken[0].text == sess._gate.fallback_phrase()
+
+
+# ---------------------------------------------------------------------------
+# User agent-instructions (the Ruben.md-equivalent file) in the realtime path
+# ---------------------------------------------------------------------------
+
+
+def test_session_instructions_place_preferences_between_persona_and_directives(
+    monkeypatch,
+):
+    """The user's standing-instructions block must sit right after the persona
+    and before the operational directives, so it frames the whole spoken output."""
+    from jarvis.brain import persona_loader
+    from jarvis.realtime import session as session_mod
+
+    monkeypatch.setattr(
+        persona_loader, "load_effective_persona_prompt", lambda: "PERSONA_MARKER"
+    )
+    text = session_mod._session_instructions(
+        "de",
+        preferences="PREFS_MARKER",
+        tool_directive="TOOL_MARKER",
+    )
+    assert "PREFS_MARKER" in text
+    assert (
+        text.index("PERSONA_MARKER")
+        < text.index("PREFS_MARKER")
+        < text.index("TOOL_MARKER")
+    )
+
+
+def test_preferences_block_renders_the_user_file_with_the_realtime_cap(monkeypatch):
+    from jarvis.brain import agent_instructions
+    from jarvis.realtime import session as session_mod
+
+    seen = {}
+
+    def fake_render(config, *, max_chars=None):
+        seen["config"] = config
+        seen["max_chars"] = max_chars
+        return "RENDERED_PREFS"
+
+    monkeypatch.setattr(agent_instructions, "render_for_prompt", fake_render)
+    cfg = _cfg()
+    assert session_mod._preferences_block(cfg) == "RENDERED_PREFS"
+    assert seen["config"] is cfg
+    assert seen["max_chars"] == session_mod._PREFERENCES_MAX_CHARS
+
+
+def test_preferences_block_degrades_to_empty_on_a_read_fault(monkeypatch):
+    from jarvis.brain import agent_instructions
+    from jarvis.realtime import session as session_mod
+
+    def broken_render(config, *, max_chars=None):
+        raise RuntimeError("disk on fire")
+
+    monkeypatch.setattr(agent_instructions, "render_for_prompt", broken_render)
+    assert session_mod._preferences_block(_cfg()) == ""
+
+
+@pytest.mark.asyncio
+async def test_open_carries_user_agent_instructions_into_session_instructions(
+    monkeypatch, tmp_path
+):
+    """Regression: the realtime engine speaks directly to the user, so the
+    user's agent-instructions file must reach the provider's session
+    instructions. It previously reached only the classic deep brain, so voice
+    preferences (tone, dialect, address) applied on delegated turns but were
+    silently ignored on every direct realtime reply."""
+    from jarvis.brain import agent_instructions
+    from jarvis.core import config as core_config
+
+    monkeypatch.setattr(core_config, "DATA_DIR", tmp_path)
+    cfg = _cfg()
+    agent_instructions.save_agent_instructions(
+        cfg, "Always speak with a Bavarian accent."
+    )
+
+    provider = FakeProvider(
+        [
+            RealtimeEvent(type="input_transcript", text="hello", is_final=True),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = RealtimeVoiceSession(
+        session_id="s-prefs",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=provider,
+        config=cfg,
+        bus=None,
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    opened = provider.opened_with.instructions
+    assert "Always speak with a Bavarian accent." in opened
+    assert "USER PREFERENCES & STANDING INSTRUCTIONS" in opened
+    # The per-turn session update must re-read the file too — an edit applies
+    # on the next message, exactly as the Settings view promises.
+    updated = provider.session.session_updates[-1]["instructions"]
+    assert "Always speak with a Bavarian accent." in updated

@@ -453,6 +453,33 @@ _TOOL_ROLE_DIRECTIVE = (
 )
 
 
+# Cap for the user agent-instructions content inside the realtime session
+# instructions. The block is re-sent with every per-turn session update, so a
+# pathologically large file must never bloat that hot path; typical files are
+# a few hundred characters and pass through untouched.
+_PREFERENCES_MAX_CHARS = 4000
+
+
+def _preferences_block(config: Any) -> str:
+    """The user's standing-instructions block (``Ruben.md`` equivalent).
+
+    The realtime engine speaks directly to the user, so it must honor the same
+    user-editable agent-instructions file as the classic deep brain — otherwise
+    tone/language/address preferences apply only on delegated turns and the
+    voice flips style mid-conversation. Read fresh per call so an edit applies
+    on the next turn (the UI promises "no restart needed"); degrade to ``""``
+    so a read fault never blocks the session handshake.
+    """
+    try:
+        from jarvis.brain import agent_instructions
+
+        return agent_instructions.render_for_prompt(
+            config, max_chars=_PREFERENCES_MAX_CHARS
+        )
+    except Exception:  # noqa: BLE001 — never break the voice session on a prefs fault
+        return ""
+
+
 def _session_instructions(
     language: str,
     *,
@@ -461,6 +488,7 @@ def _session_instructions(
     model: str = "",
     language_is_pinned: bool = True,
     tool_directive: str = "",
+    preferences: str = "",
 ) -> str:
     from jarvis.brain.persona_loader import load_effective_persona_prompt
 
@@ -489,6 +517,11 @@ def _session_instructions(
         )
     parts = [
         persona,
+        # The user's own standing instructions come right after the persona and
+        # before every operational directive: they refine who the assistant is
+        # for THIS user (tone, dialect, address, defaults) and must frame the
+        # whole spoken output, while safety and tool rules below stay above them.
+        preferences,
         tool_directive,
         _REALTIME_SAFETY_APPENDIX,
         input_directive,
@@ -819,6 +852,7 @@ class RealtimeVoiceSession:
                     model=model,
                     language_is_pinned=self._language_is_pinned,
                     tool_directive=self._tool_directive(),
+                    preferences=_preferences_block(self._config),
                 ),
                 language=self._language,
                 input_language=self._input_language,
@@ -1165,6 +1199,7 @@ class RealtimeVoiceSession:
                                         not turn_plan.requires_orchestrator
                                     ),
                                 ),
+                                preferences=_preferences_block(self._config),
                             ),
                             "language": new_language,
                         }
