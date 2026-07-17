@@ -50,6 +50,10 @@ _TOOL_HISTORY_EXTRA_CONTENT = {
 # when ``[performance].gemini_context_cache = true``. The cache holds the
 # system prompt + tools; vision frames stay non-cached (they vary per turn).
 _ENV_CONTEXT_CACHE = "JARVIS_GEMINI_CONTEXT_CACHE"
+# How many distinct (system, tools) cache variants one brain instance keeps.
+# The voice manager produces a small recurring set per session (full tool set,
+# screen-tool-gated set, tools-stripped deadline round) — 4 covers them all.
+_MAX_CACHE_SLOTS = 4
 # Minimum cache size: Gemini caches have a token floor (>= ~4096 tokens
 # depending on the model). For smaller prefixes the API either rejects it or
 # the cache isn't worth it — then we skip it and fall back to the direct path.
@@ -444,11 +448,18 @@ class GeminiBrain:
         self._thinking_budget = thinking_budget
         # Latency-Sprint-2: context-cache name (lazily created on the first
         # call with system+tools). Key: (system_hash, tools_hash) → cache_name.
-        # Only one entry per instance, because system+tools are constant for
-        # a running voice session. On change (e.g. a tool reload), the cache
-        # is discarded via ``invalidate_cache()``.
+        # ``_cached_content_name``/``_cache_signature`` hold the most recently
+        # used slot (BUG-019 recovery pokes exactly these two attributes).
         self._cached_content_name: str | None = None
         self._cache_signature: tuple[str, str] | None = None
+        # 2026-07-17: a single slot re-created the (expensive, ~1.5 s) server
+        # cache on EVERY delegated voice turn, because the manager legitimately
+        # varies the tool set per utterance (screen-tool gating) and the
+        # deadline-forced final round strips tools entirely — two or three
+        # recurring (system, tools) variants kept evicting each other. A small
+        # multi-slot map lets each recurring variant keep its own server-side
+        # cache; insertion-ordered, oldest evicted beyond the cap.
+        self._cache_slots: dict[tuple[str, str], str] = {}
 
     def _ensure_client(self) -> Any:
         if self._client is None:
@@ -499,6 +510,13 @@ class GeminiBrain:
         )
         if self._cache_signature == sig and self._cached_content_name:
             return self._cached_content_name
+        slot_hit = self._cache_slots.get(sig)
+        if slot_hit:
+            # A recurring (system, tools) variant — reuse its server cache and
+            # promote it to the most-recently-used marker pair.
+            self._cached_content_name = slot_hit
+            self._cache_signature = sig
+            return slot_hit
 
         # Estimate the minimum size (heuristic: 1 token ~ 4 chars).
         approx_tokens = (len(system_text) + len(json.dumps(tools_payload or []))) // 4
@@ -521,6 +539,10 @@ class GeminiBrain:
             )
             self._cached_content_name = getattr(cache, "name", None)
             self._cache_signature = sig
+            if self._cached_content_name:
+                self._cache_slots[sig] = self._cached_content_name
+                while len(self._cache_slots) > _MAX_CACHE_SLOTS:
+                    self._cache_slots.pop(next(iter(self._cache_slots)))
             log.info("Gemini context cache created: %s (tokens ~%d)",
                      self._cached_content_name, approx_tokens)
             return self._cached_content_name
@@ -546,6 +568,10 @@ class GeminiBrain:
         """
         self._cached_content_name = None
         self._cache_signature = None
+        # A stale-cache 403 usually means the server evicted by TTL — sibling
+        # slots created around the same time are just as dead. Dropping them
+        # all trades a few lazy re-creations for never re-sending a dead id.
+        self._cache_slots.clear()
 
     async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
         client = self._ensure_client()

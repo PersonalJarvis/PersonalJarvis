@@ -394,6 +394,21 @@ _DELEGATE_DEADLINE_S: float = 20.0
 # Computer-Use calls (jarvis/cu/brain_call.py); providers without a
 # reasoning knob ignore the hint (AP-21: capability hint, no provider pin).
 _DELEGATE_REASONING_EFFORT: Literal["none"] = "none"
+# Appended to the system prompt of DELEGATED voice turns only. Live 2026-07-17
+# (turn af736681): the tool loop spent 5 sequential rounds on one question —
+# three near-identical wiki-recall calls, then wiki-list, then wiki-page-read —
+# and ran the 20 s deadline out. Every round is a full provider round-trip, so
+# round count IS the latency. Static text (byte-stable across turns) so the
+# delegated prefix keeps its own provider prompt-cache entry.
+_DELEGATE_VOICE_DIRECTIVE = (
+    "DELEGATED VOICE TURN — SPEED CONTRACT: the user is waiting in a live "
+    "voice call, and every model round costs seconds. Finish in as few "
+    "rounds as possible: batch ALL independent lookups as multiple function "
+    "calls in ONE round instead of one per round; never re-issue a tool call "
+    "(or a rephrasing of it) whose result you already have; as soon as the "
+    "gathered evidence answers the question, stop calling tools and answer. "
+    "Keep the final answer concise and speakable."
+)
 
 
 def _resolve_tier_model(
@@ -2643,6 +2658,7 @@ class BrainManager:
         max_turns: int | None = None,
         deadline_s: float | None = None,
         reasoning_effort: Literal["none"] | None = None,
+        delegated_voice: bool = False,
     ) -> BrainDispatcher:
         """Builds the dispatcher with an optional tool override.
 
@@ -2659,6 +2675,11 @@ class BrainManager:
         of the turn. Delegated realtime voice turns pass ``"none"`` so a
         thinking-by-default model never burns seconds of internal reasoning
         per tool-loop round — see ``_DELEGATE_REASONING_EFFORT``.
+
+        ``delegated_voice`` (2026-07-17): appends the static speed contract
+        (``_DELEGATE_VOICE_DIRECTIVE``) — batch lookups, no repeats, answer
+        as soon as evidence suffices — to the system prompt of delegated
+        voice turns only, so classic chat prompts stay byte-identical.
         """
         tools = tools_override if tools_override is not None else self._tools
         system_prompt = self._build_system_prompt()
@@ -2668,6 +2689,8 @@ class BrainManager:
         cards = self._plugin_usage_cards_block(tools)
         if cards:
             system_prompt = f"{system_prompt}\n\n{cards}"
+        if delegated_voice:
+            system_prompt = f"{system_prompt}\n\n{_DELEGATE_VOICE_DIRECTIVE}"
         kwargs: dict[str, Any] = {}
         if max_turns is not None:
             kwargs["max_turns"] = max_turns
@@ -7965,6 +7988,7 @@ class BrainManager:
                     "max_turns": _DELEGATE_MAX_TURNS,
                     "deadline_s": _DELEGATE_DEADLINE_S,
                     "reasoning_effort": _DELEGATE_REASONING_EFFORT,
+                    "delegated_voice": True,
                 }
                 if prefer_tool_model
                 else {}
