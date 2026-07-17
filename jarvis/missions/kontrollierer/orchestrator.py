@@ -2623,7 +2623,7 @@ class Kontrollierer:
             untracked = [rel for rel in untracked if _is_deliverable_path(rel)]
             # Drop generator/build scripts whose only purpose is to emit a
             # sibling DOCUMENT deliverable that survives in the set (e.g. a
-            # generate_guide.py that writes melbourne_guide.html as an embedded
+            # generate_guide.py that writes city_guide.html as an embedded
             # literal). The script is process scratch the user did not ask for —
             # live forensic 2026-06-22 (mission_019ef099): a "make me one HTML
             # file" mission shipped the HTML PLUS its Python generator, which the

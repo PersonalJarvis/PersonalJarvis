@@ -166,7 +166,7 @@ def main() -> int:
     report["cases"].append(mission_case(
         "mission_answer", "Which city would you recommend for a trip to Australia?"))
     report["cases"].append(mission_case(
-        "mission_impossible", "Book me a trip from Melbourne to Tokyo."))
+        "mission_impossible", "Book me a trip from Lisbon to Tokyo."))
 
     # --- Provider switch ---
     sw1 = run_probe("Wechsel zu Grok.", secs=40, idle=15)

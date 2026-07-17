@@ -1208,7 +1208,7 @@ def informational_file_answer(diff_text: str, *, prompt: str) -> str | None:
 # NOTHING, and its final answer says it cannot do the task, retrying is futile —
 # the worker already decided it lacks the capability. Surfacing the honest
 # refusal once beats burning three critic loops into ``critic_loop_exhausted``
-# (live mission 019ec674, 2026-06-14: "book me a trip from Melbourne to Tokyo").
+# (live mission 2026-06-14: "book me a trip" — a real-world booking request).
 # Anchored to an explicit inability + object. Bare substrings like "i can't",
 # "i cannot", "i can not", "no access to", "that's outside" were REMOVED — they
 # false-match success-with-caveat answers ("I implemented it; I can't guarantee

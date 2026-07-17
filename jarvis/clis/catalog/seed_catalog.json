@@ -2111,7 +2111,7 @@
         "jarvisctl brain subagent-switch openai",
         "jarvisctl --json missions list",
         "jarvisctl config get brain.primary",
-        "jarvisctl wiki recall \"melbourne visa\""
+        "jarvisctl wiki recall \"insurance policy\""
       ],
       "icon": "terminal",
       "category": "self",

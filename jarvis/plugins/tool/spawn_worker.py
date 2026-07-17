@@ -469,7 +469,7 @@ class SpawnWorkerTool:
 
         # Context-bleed guard (forensic 2026-06-20): under a full provider
         # collapse the turn ran on a degraded fallback model fed a long prior
-        # context, which echoed a PREVIOUS request ("emigrate to Melbourne")
+        # context, which echoed a PREVIOUS request (a relocation-research ask)
         # into the spawn args although the user had just said "Mask it up" — the
         # worker then built an entirely foreign task. ``ctx.user_utterance`` is
         # the verbatim transcribed turn: the ground truth for what was just

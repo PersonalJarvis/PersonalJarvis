@@ -3879,7 +3879,7 @@ class BrainManager:
         """True iff the utterance is HEAVY multi-step research/analysis that must
         be OFFLOADED to a background mission, not answered inline on the deep
         brain (where it blows the ~20 s voice budget and is beheaded — live bug
-        2026-06-14, the Berlin→Melbourne turn).
+        2026-06-14, a long-haul trip-research turn).
 
         Conjunctive gate (precision over recall): a research/analysis VERB must
         be present AND a heaviness signal — a horizon/multi-step/requirements
@@ -5320,8 +5320,8 @@ class BrainManager:
             # (a file / report) the critic can verify. The inline brain is
             # protected from the no-first-frame TTS ceiling by
             # _brain_thinking_heartbeat, so inline research no longer beheads the
-            # voice turn — the reason this offload existed (Berlin→Melbourne) is
-            # separately fixed. An EXPLICIT mission phrase ("sub-agent"/"deep
+            # voice turn — the reason this offload existed (the long-haul
+            # trip-research turn) is separately fixed. An EXPLICIT mission phrase ("sub-agent"/"deep
             # dive"/"umfassende"/...) already returned True above (AD-S9 trigger).
             if self._is_heavy_research(t):
                 return self._research_wants_artifact(t)
@@ -5332,7 +5332,7 @@ class BrainManager:
             # tool-incapable talker (Codex/Antigravity subscription CLI) cannot
             # spawn via an LLM tool_call, so the deterministic gate is its only
             # spawn path. Live bug 2026-06-21: "build me an HTML file for my
-            # Melbourne vacation" fell to the Antigravity deep brain, which (no
+            # vacation" fell to the Antigravity deep brain, which (no
             # tools) only asked permission instead of building. NOT a Computer-Use
             # trigger: a build verb is not a screen action — "open/show the file"
             # stays Computer-Use via match_local_action; a bare question is caught

@@ -164,7 +164,7 @@ def is_deliverable_path(rel: str, *, managed_files: frozenset[str] = frozenset()
 # spot a script whose only purpose is to emit ANOTHER deliverable.
 #
 # Live forensic 2026-06-22 (mission_019ef099): the user asked by voice for "one
-# HTML file" and the worker shipped melbourne_guide.html PLUS generate_guide.py
+# HTML file" and the worker shipped city_guide.html PLUS generate_guide.py
 # — a Python script that embeds the whole page as a string literal and writes
 # the sibling .html — PLUS a hero image. The user opened the .py in a browser,
 # saw "only code", and wanted that process scratch gone ("just the main thing").
@@ -245,7 +245,7 @@ def find_generator_scripts(
 
     A generator script is one whose sole purpose is to emit ANOTHER document
     deliverable that is itself in *rels* (e.g. a ``generate_guide.py`` that
-    writes ``melbourne_guide.html``). Such a script is process scratch, not the
+    writes ``city_guide.html``). Such a script is process scratch, not the
     artifact the user asked for.
 
     *read_text* maps a worktree-relative path to its text content (injected so

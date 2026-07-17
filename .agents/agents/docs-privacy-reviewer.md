@@ -30,7 +30,7 @@ You are the *semantic* half of a two-layer defence. The *deterministic* half is 
 
 **(C) Personal filesystem / machine identifiers** — `C:\Users\Administrator\…`, personal OneDrive paths, the `C--Users-Administrator-…` memory-dir slug, Windows SID (`S-1-5-21-…`), machine/account name, internal GCP/project ids.
 
-**(D) Private life details used as examples** — real relocation/move facts (Germany↔Melbourne, Melbourne↔Sydney, USA migration), real family facts (a named relative, a real birth year tied to a person), home address, personal phone numbers. These read as harmless "demo data" but are real biography — the deterministic scrub never catches them. Scrutinize example tasks, Wiki/contact demo pages, test fixtures, and TTS sample sentences hardest.
+**(D) Private life details used as examples** — real relocation/move facts (specific city-to-city moves, emigration or visa status), real family facts (a named relative, a real birth year tied to a person), home address, personal phone numbers. These read as harmless "demo data" but are real biography — the deterministic scrub never catches them. Scrutinize example tasks, Wiki/contact demo pages, test fixtures, and TTS sample sentences hardest.
 
 ## What is NOT a finding (do not raise)
 

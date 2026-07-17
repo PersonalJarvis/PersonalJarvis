@@ -76,7 +76,7 @@ jarvis missions dispatch "summarize today's PRs" --yes
 jarvis --json missions show <id>
 
 # Knowledge + history + outputs
-jarvis --json wiki recall "melbourne visa"
+jarvis --json wiki recall "insurance policy"
 jarvis --json sessions list
 jarvis --json outputs list
 

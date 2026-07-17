@@ -357,10 +357,11 @@ _CU_DIAGNOSTIC_RE = re.compile(
 #: rather than answering the user in plain language. Such a proof is an internal
 #: evidence artifact (the spirit of ADR-0009 — the voice readback speaks only a
 #: clean summary, never the raw signed observation), so it must never be spoken
-#: verbatim. Live bug 2026-06-21 (Melbourne HTML turn): a "look at my screen and
-#: tell me which app is open" mission read out the full structural dump, INCLUDING
-#: the verbatim content of an unrelated parallel Claude-Code AskUserQuestion box
-#: ("Eine Detail-Erkenntnis ... Der Melbourne-Guide rendert ..."). A genuine  # i18n-allow  # i18n-allow
+#: verbatim. Live bug 2026-06-21 (travel-guide HTML turn): a "look at my screen
+#: and tell me which app is open" mission read out the full structural dump,
+#: INCLUDING the verbatim content of an unrelated parallel Claude-Code
+#: AskUserQuestion box ("Eine Detail-Erkenntnis ... Der Guide rendert ...").  # i18n-allow
+#: A genuine
 #: content answer ("the browser is open showing tab 'Gmail'", "newest messages:
 #: Alice 'hi'") carries none of these structural markers and is still forwarded.
 _CU_VERIFIER_DUMP_RE = re.compile(
