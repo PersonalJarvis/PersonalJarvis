@@ -438,7 +438,9 @@ def test_build_native_bundle_layout_and_clang_invocation(
     info = plistlib.loads((bundle / "Contents" / "Info.plist").read_bytes())
     assert info["CFBundleExecutable"] == "PersonalJarvis"
     assert info["CFBundleIdentifier"] == "com.personal-jarvis.desktop"
-    assert info["JarvisBundleFormatVersion"] == 1
+    from jarvis.setup.macos_app_bundle import _BUNDLE_FORMAT_VERSION
+
+    assert info["JarvisBundleFormatVersion"] == _BUNDLE_FORMAT_VERSION
     assert "dictate" in info["NSAppleEventsUsageDescription"].lower()
     executable = bundle / "Contents" / "MacOS" / "PersonalJarvis"
     assert executable.read_bytes()[:4] == b"\xcf\xfa\xed\xfe"

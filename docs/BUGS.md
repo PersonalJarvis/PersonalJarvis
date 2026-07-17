@@ -5537,3 +5537,44 @@ conform) instead of failing a completed install. Guard:
 **Class rule.** A long-running installer process must never assume it can
 import what it just installed — re-scan site-packages first, and never let a
 post-install nicety (auto-launch) turn a completed install into a failure.
+
+---
+
+## BUG-079: wake stack crash-looped on a German macOS — the stub launcher's LC_ALL leaked a de_DE LC_NUMERIC into libvosk (HIGH, FIXED 2026-07-17)
+
+<!-- Ported from the public Mac line, where this entry was numbered BUG-068.
+     Renumbered: local BUG-068 is a realtime bug (the two registers assigned
+     063..069 independently after the 2026-07-14 cut). The Tk-9 JarvisBar
+     entry the Mac line filed as BUG-067 already lives here as BUG-074. -->
+
+**Symptom.** On the freshly installed German-locale Mac, "Wake loop failed:
+Expecting property name enclosed in double quotes" every ~20-40 s — wake
+effectively deaf. Only reproducible with REAL speech audio; synthetic noise
+produced empty results and parsed fine.
+
+**Root cause.** The BUG-076 stub launcher (macOS non-framework launcher)
+called ``setlocale(LC_ALL, "")`` (copied from py2app's UTF-8 bootstrap). On a
+German macOS that sets ``LC_NUMERIC=de_DE`` for the whole process; libvosk
+formats its result JSON with printf-family calls, so every word confidence
+became ``"conf" : 1,000000`` — a comma decimal separator, i.e. malformed
+JSON. A plain ``python`` binary never does this (CPython only touches
+LC_CTYPE), which is why no other launch path ever showed it. Diagnosed via
+the parse-guard hardening shipped with this same fix: it logged the raw
+payload with the commas.
+
+**Fix (2026-07-17).**
+- ``macos_stub_launcher.c`` sets only ``setlocale(LC_CTYPE, "")`` — UTF-8
+  path/argv decoding is preserved, LC_NUMERIC stays "C" like a normal
+  Python process.
+- ``_BUNDLE_FORMAT_VERSION`` bumped to 2 so existing bundles rebuild with
+  the corrected stub on their next ensure pass.
+- Defense in depth: ``jarvis/plugins/wake/vosk_kws_provider.py`` parses all
+  recognizer JSON through ``_parse_recognizer_json`` — a malformed payload
+  is a logged no-hit (first occurrence carries the raw payload), never a
+  wake-loop kill. Guard: ``tests/unit/plugins/wake/test_vosk_result_parse_hardening.py``.
+
+**Class rule.** Never ``setlocale(LC_ALL, ...)`` in a launcher that embeds
+Python — mirror CPython and touch only LC_CTYPE; every native library that
+prints numbers breaks under a comma-decimal LC_NUMERIC. And any JSON built
+by native code is untrusted input to the Python side: parse it behind a
+degrade-to-no-op guard that preserves the raw payload.

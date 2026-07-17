@@ -81,6 +81,40 @@ from jarvis.speech.wake_constants import (
 
 log = logging.getLogger("jarvis.wake.vosk")
 
+# One-shot latch so a native JSON glitch is diagnosable without log-spamming
+# a busy wake loop (the parse runs many times per second).
+_MALFORMED_RESULT_LOGGED = False
+
+
+def _parse_recognizer_json(raw: str, *, where: str) -> dict:
+    """Parse a KaldiRecognizer JSON payload; malformed output is a no-hit.
+
+    libvosk builds its result JSON in native code. A malformed payload
+    (observed in the field on macOS 2026-07-17: one bad ``Result()`` put the
+    whole parallel wake stack into a crash-loop, "Wake loop failed:
+    Expecting property name…" every ~20 s — wake effectively deaf) must
+    degrade to "heard nothing" instead of raising out of the wake loop
+    (AD-6). The first occurrence logs the raw payload so the native cause
+    stays diagnosable.
+    """
+    global _MALFORMED_RESULT_LOGGED
+    try:
+        parsed = json.loads(raw)
+    except (json.JSONDecodeError, TypeError) as exc:
+        if not _MALFORMED_RESULT_LOGGED:
+            _MALFORMED_RESULT_LOGGED = True
+            log.warning(
+                "vosk-kws: recognizer returned malformed JSON at %s (%s); "
+                "treating as no-hit. Raw payload: %r",
+                where,
+                exc,
+                raw[:400] if isinstance(raw, str) else raw,
+            )
+        else:
+            log.debug("vosk-kws: malformed recognizer JSON at %s (%s)", where, exc)
+        return {}
+    return parsed if isinstance(parsed, dict) else {}
+
 # Minimum per-word grammar confidence for the verify RE-SCORE over the ring
 # window. This is the precision anchor (live forensic 2026-07-06, "Hey Ruben"
 # fired on plain room speech): genuine wakes re-score at ~1.0 (spike
@@ -852,7 +886,7 @@ class VoskKwsProvider:
     def _grammar_hit(self, rec: Any, pcm: bytes) -> tuple[bool, float] | None:
         """Feed one chunk; return (is_final, min_conf) on a phrase hit else None."""
         if rec.AcceptWaveform(pcm):
-            res = json.loads(rec.Result())
+            res = _parse_recognizer_json(rec.Result(), where="grammar_hit.Result")
             text = res.get("text", "")
             if self._phrase.lower() in text:
                 words = [
@@ -862,7 +896,9 @@ class VoskKwsProvider:
                 conf = min((w.get("conf", 0.0) for w in words), default=0.0)
                 return (True, conf)
             return None
-        partial = json.loads(rec.PartialResult()).get("partial", "")
+        partial = _parse_recognizer_json(
+            rec.PartialResult(), where="grammar_hit.PartialResult"
+        ).get("partial", "")
         if partial and self._phrase.lower() in partial:
             return (False, 1.0)  # partials carry no conf; the confirm decides
         return None
@@ -961,12 +997,16 @@ class VoskKwsProvider:
             def _grammar_pass() -> dict:
                 g = self._take_verify_rec(model_path, "grammar")
                 g.AcceptWaveform(pcm)
-                return json.loads(g.FinalResult())
+                return _parse_recognizer_json(
+                    g.FinalResult(), where="verify.grammar_final"
+                )
 
             def _free_pass() -> dict:
                 f = self._take_verify_rec(model_path, "free")
                 f.AcceptWaveform(pcm)
-                return json.loads(f.FinalResult())
+                return _parse_recognizer_json(
+                    f.FinalResult(), where="verify.free_final"
+                )
 
             with ThreadPoolExecutor(max_workers=2) as pool:
                 grammar_future = pool.submit(_grammar_pass)

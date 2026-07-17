@@ -37,7 +37,10 @@ log = logging.getLogger(__name__)
 APP_NAME = "Personal Jarvis"
 APP_DIR_NAME = f"{APP_NAME}.app"
 BUNDLE_ID = "com.personal-jarvis.desktop"
-_BUNDLE_FORMAT_VERSION = 1
+# 2: stub launcher sets only LC_CTYPE (BUG-068 — LC_ALL leaked a de_DE
+# LC_NUMERIC into native libs; libvosk then emitted malformed JSON). Bumping
+# forces existing bundles through a rebuild on the next ensure pass.
+_BUNDLE_FORMAT_VERSION = 2
 _MACHO_MAGICS = frozenset(
     {
         b"\xfe\xed\xfa\xce",
