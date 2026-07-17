@@ -38,9 +38,16 @@ class FallbackTTS:
     the wrapped providers and never imports concrete plugin types.
     """
 
-    def __init__(self, primary: Any, fallback: Any) -> None:
+    def __init__(
+        self, primary: Any, fallback: Any, fallback_voice: str | None = None
+    ) -> None:
         self._primary = primary
         self._fallback = fallback
+        # Voice-profile continuity (2026-07-17): the curated voice of the
+        # fallback FAMILY that matches the primary's active voice profile
+        # (masculine/feminine), computed by the factory. None → the fallback
+        # resolves its own default, exactly as before.
+        self._fallback_voice = (fallback_voice or "").strip() or None
         # Surface the primary's identity so callers/logs see the active voice.
         self.name = getattr(primary, "name", "fallback-tts")
         self.supports_streaming = bool(getattr(primary, "supports_streaming", True))
@@ -122,14 +129,17 @@ class FallbackTTS:
     ) -> AsyncIterator[Any]:
         """Stream from the fallback provider.
 
-        ``voice`` is intentionally NOT forwarded: the primary's voice name
-        (e.g. Gemini "Charon") is invalid for a different provider (e.g. Grok
-        expects "leo") and would trigger an HTTP 400. The fallback resolves its
-        own default voice instead.
+        The primary's ``voice`` is never forwarded raw: its name (e.g. Gemini
+        "Charon") is invalid for a different provider (e.g. Grok expects
+        "leo") and would trigger an HTTP 400. Instead the factory pre-computes
+        ``fallback_voice`` — the fallback family's curated voice matching the
+        primary's voice PROFILE — so the takeover doesn't audibly flip e.g.
+        masculine→feminine mid-conversation. Without a match the fallback
+        resolves its own default voice, as before.
         """
         try:
             async for chunk in self._fallback.synthesize(
-                text, voice=None, language_code=language_code
+                text, voice=self._fallback_voice, language_code=language_code
             ):
                 yield chunk
         except Exception as exc:  # noqa: BLE001

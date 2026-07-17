@@ -26,14 +26,84 @@ from dataclasses import dataclass, field
 # personality-named voices (Gemini "Charon", Grok "leo") are all multilingual.
 MULTILINGUAL = "multi"
 
+# Voice-profile genders. Only confidently documented voices are tagged; an
+# unknown voice maps to "" so every consumer degrades to today's behavior
+# (fail-safe: no profile → no cross-provider voice matching).
+MASCULINE = "m"
+FEMININE = "f"
+
+# Curated gender register across ALL families (single flat map — voice ids are
+# unique across the vendors we ship). Sources: Google speech-generation voice
+# docs (30 Gemini voices), xAI TTS guide (the five classic Grok voices — the
+# 21 newer ones stay untagged until documented), Inworld voice roster, the
+# five curated ElevenLabs prebuilt voices (ids), OpenAI gpt-realtime (cedar/
+# marin — realtime-only, referenced for cross-path continuity), and the
+# OpenRouter speech-model default voices we curate.
+_VOICE_GENDERS: dict[str, str] = {
+    # Gemini / google TTS + Live (masculine)
+    "Puck": MASCULINE, "Charon": MASCULINE, "Fenrir": MASCULINE,
+    "Orus": MASCULINE, "Enceladus": MASCULINE, "Iapetus": MASCULINE,
+    "Umbriel": MASCULINE, "Algieba": MASCULINE, "Algenib": MASCULINE,
+    "Rasalgethi": MASCULINE, "Alnilam": MASCULINE, "Schedar": MASCULINE,
+    "Achird": MASCULINE, "Zubenelgenubi": MASCULINE, "Sadachbia": MASCULINE,
+    "Sadaltager": MASCULINE,
+    # Gemini / google TTS + Live (feminine)
+    "Zephyr": FEMININE, "Kore": FEMININE, "Leda": FEMININE, "Aoede": FEMININE,
+    "Callirrhoe": FEMININE, "Autonoe": FEMININE, "Despina": FEMININE,
+    "Erinome": FEMININE, "Laomedeia": FEMININE, "Achernar": FEMININE,
+    "Gacrux": FEMININE, "Pulcherrima": FEMININE, "Vindemiatrix": FEMININE,
+    "Sulafat": FEMININE,
+    # Grok Voice (xAI) — classic roster only
+    "leo": MASCULINE, "rex": MASCULINE, "sal": MASCULINE,
+    "ara": FEMININE, "eve": FEMININE,
+    # Inworld
+    "Josef": MASCULINE, "Dennis": MASCULINE, "Diego": MASCULINE,
+    "Johanna": FEMININE, "Ashley": FEMININE, "Lupita": FEMININE,
+    # ElevenLabs curated prebuilt voices (ids; all masculine)
+    "onwK4e9ZLuTAKqWW03F9": MASCULINE,  # Daniel
+    "JBFqnCBsd6RMkjVDRZzb": MASCULINE,  # George
+    "IKne3meq5aSn9XLyUdCD": MASCULINE,  # Charlie
+    "nPczCjzI2devNBz1zQrb": MASCULINE,  # Brian
+    "pNInz6obpgDQGcFmaJgB": MASCULINE,  # Adam
+    # OpenAI gpt-realtime (realtime path; for cross-path profile continuity)
+    "cedar": MASCULINE, "marin": FEMININE,
+    # OpenRouter curated speech-model defaults outside the vendor families
+    "af_bella": FEMININE,          # Kokoro ("af" = adult female roster)
+    "tara": FEMININE,              # Orpheus default
+    "en_paul_neutral": MASCULINE,  # Voxtral default
+}
+
+
+def voice_gender(voice_id: str | None) -> str | None:
+    """Gender of a known voice id (:data:`MASCULINE`/:data:`FEMININE`), else
+    ``None``. Case-insensitive fallback covers ad-hoc user spellings."""
+    vid = (voice_id or "").strip()
+    if not vid:
+        return None
+    g = _VOICE_GENDERS.get(vid)
+    if g:
+        return g
+    lowered = vid.lower()
+    for known, gender in _VOICE_GENDERS.items():
+        if known.lower() == lowered:
+            return gender
+    return None
+
 
 @dataclass(frozen=True)
 class VoiceEntry:
-    """One vetted voice: its id and the ISO-639-1 language it speaks (or
-    :data:`MULTILINGUAL` for a language-agnostic voice)."""
+    """One vetted voice: its id, the ISO-639-1 language it speaks (or
+    :data:`MULTILINGUAL` for a language-agnostic voice), and its curated
+    gender ("m"/"f", or "" when not confidently documented)."""
 
     id: str
     language: str = MULTILINGUAL
+    gender: str = ""
+
+
+def _v(voice_id: str, language: str = MULTILINGUAL) -> VoiceEntry:
+    """Catalog constructor that auto-attaches the curated gender tag."""
+    return VoiceEntry(voice_id, language, _VOICE_GENDERS.get(voice_id, ""))
 
 
 @dataclass(frozen=True)
@@ -78,12 +148,12 @@ _CATALOG: tuple[ModelEntry, ...] = (
         latency_class="realtime",
         streaming=True,
         voices=(
-            VoiceEntry("Josef", "de"),
-            VoiceEntry("Johanna", "de"),
-            VoiceEntry("Dennis", "en"),
-            VoiceEntry("Ashley", "en"),
-            VoiceEntry("Diego", "es"),
-            VoiceEntry("Lupita", "es"),
+            _v("Josef", "de"),
+            _v("Johanna", "de"),
+            _v("Dennis", "en"),
+            _v("Ashley", "en"),
+            _v("Diego", "es"),
+            _v("Lupita", "es"),
         ),
     ),
     ModelEntry(
@@ -102,7 +172,7 @@ _CATALOG: tuple[ModelEntry, ...] = (
         latency_class="standard",  # ~300-500 ms, chunked (no true WS streaming)
         streaming=True,
         voices=tuple(
-            VoiceEntry(v)
+            _v(v)
             for v in (
                 "Charon", "Kore", "Orus", "Iapetus", "Rasalgethi", "Algenib",
                 "Algieba", "Fenrir", "Aoede", "Zephyr", "Puck", "Leda",
@@ -121,11 +191,11 @@ _CATALOG: tuple[ModelEntry, ...] = (
         latency_class="realtime",
         streaming=True,
         voices=(
-            VoiceEntry("onwK4e9ZLuTAKqWW03F9"),  # Daniel
-            VoiceEntry("JBFqnCBsd6RMkjVDRZzb"),  # George
-            VoiceEntry("IKne3meq5aSn9XLyUdCD"),  # Charlie
-            VoiceEntry("nPczCjzI2devNBz1zQrb"),  # Brian
-            VoiceEntry("pNInz6obpgDQGcFmaJgB"),  # Adam
+            _v("onwK4e9ZLuTAKqWW03F9"),  # Daniel
+            _v("JBFqnCBsd6RMkjVDRZzb"),  # George
+            _v("IKne3meq5aSn9XLyUdCD"),  # Charlie
+            _v("nPczCjzI2devNBz1zQrb"),  # Brian
+            _v("pNInz6obpgDQGcFmaJgB"),  # Adam
         ),
     ),
     ModelEntry(
@@ -136,7 +206,7 @@ _CATALOG: tuple[ModelEntry, ...] = (
         latency_class="realtime",
         streaming=True,
         voices=tuple(
-            VoiceEntry(v)
+            _v(v)
             for v in (
                 "leo", "rex", "sal", "ara", "eve", "carina", "zagan", "helix",
                 "orion", "luna", "iris", "altair", "zenith", "perseus",
@@ -239,6 +309,52 @@ def allowed_voices(
     if not short:
         return list(m.voices)
     return [v for v in m.voices if v.language in (short, MULTILINGUAL)]
+
+
+# OpenRouter serves other vendors' speech models; map the vendor prefix to the
+# native catalog family so voice-profile continuity works through the gateway.
+_OPENROUTER_VENDOR_FAMILY: dict[str, str] = {
+    "google/": "gemini-flash-tts",
+    "x-ai/": "grok-voice",
+}
+
+
+def continuity_voice(
+    family: str, gender: str, model_id: str | None = None
+) -> str | None:
+    """The curated voice of ``family`` that continues a given voice profile.
+
+    Used when a DIFFERENT provider has to take over mid-conversation (provider
+    fallback, cross-family key crossing, realtime→surface handover): instead of
+    the taking-over family's arbitrary default voice — which audibly flips e.g.
+    masculine→feminine and reads as "Jarvis suddenly changed voice" — the
+    caller asks for the first curated voice matching the active profile.
+
+    Only language-agnostic (multilingual) voices qualify: a fallback voice is
+    pinned once per wrapper and must be able to speak whatever language the
+    turn resolves to. Returns ``None`` when the family curates no matching
+    voice (caller keeps today's provider-default behavior).
+    """
+    fam = (family or "").strip().lower()
+    if fam == "openrouter":
+        mid = model_id or ""
+        fam = next(
+            (
+                mapped
+                for prefix, mapped in _OPENROUTER_VENDOR_FAMILY.items()
+                if mid.startswith(prefix)
+            ),
+            "",
+        )
+        if not fam:
+            return None
+    for m in _CATALOG:
+        if m.family != fam or m.status != "allowed":
+            continue
+        for v in m.voices:
+            if v.gender == gender and v.language == MULTILINGUAL:
+                return v.id
+    return None
 
 
 def allowed_openrouter_model_ids(model_ids: list[str]) -> list[str]:

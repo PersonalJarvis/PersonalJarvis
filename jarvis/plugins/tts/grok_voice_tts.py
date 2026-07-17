@@ -369,6 +369,7 @@ class GrokVoiceTTS:
             self.name,
             allow_sapi5=self._allow_sapi5_fallback,
             language_code=language_code,
+            reference_voice=self._default_voice,
         )
         if fb is not None:
             produced = False

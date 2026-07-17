@@ -14,15 +14,21 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+from jarvis.plugins.tts.curated_catalog import allowed_voices as _curated_voices
+
 log = logging.getLogger("jarvis.tts.factory")
 
 # Voices belonging to each respective provider — prevents e.g. a
 # Gemini voice ("Charon") from landing in the Grok plugin and triggering HTTP 400.
-_GEMINI_VOICES = frozenset({
-    "Charon", "Orus", "Iapetus", "Rasalgethi", "Algenib",
-    "Algieba", "Kore", "Fenrir", "Aoede",
-})
-_GROK_VOICES = frozenset({"leo", "rex", "sal", "ara", "eve"})
+# Derived from the curated catalog (the single source of truth) so a voice the
+# picker legitimately offers (e.g. Gemini "Puck", Grok "luna") is never force-
+# rewritten to the family default by the factory whitelist lagging behind.
+_GEMINI_VOICES = frozenset(
+    v.id for v in _curated_voices("gemini-flash-tts", "gemini-3.1-flash-tts-preview")
+)
+_GROK_VOICES = frozenset(
+    v.id for v in _curated_voices("grok-voice", "grok-voice-tts-1.0")
+)
 
 # Accepted spellings → canonical provider name, mirroring the `if provider in (...)`
 # groups in ``_build_provider`` so the credential probe + cross-family order key
@@ -192,6 +198,7 @@ def resolve_keyed_fallback(
     *,
     allow_sapi5: bool = False,
     language_code: str | None = None,
+    reference_voice: str | None = None,
 ) -> Any | None:
     """Build the first cross-family TTS provider (≠ ``exclude_family``) that has
     a usable key on this host — so a plugin's INTERNAL runtime fallback never
@@ -204,17 +211,37 @@ def resolve_keyed_fallback(
     premium first, OpenRouter last), skipping the failed family and any keyless
     one. Returns a built provider, or ``None`` when NO other family has a key
     (the caller then degrades to the opt-in SAPI5 exit or an honest mute).
+
+    ``reference_voice`` is the failing provider's ACTIVE voice: when given and
+    its profile is known, the crossed-to family speaks with its curated voice
+    of the SAME profile (masculine/feminine) instead of its unrelated default,
+    so the mid-session takeover doesn't audibly change who is speaking.
     """
     from jarvis.core.config import TTSConfig
+    from jarvis.plugins.tts.curated_catalog import continuity_voice, voice_gender
 
+    ref_gender = voice_gender(reference_voice)
     exclude = _canonical_tts_name(exclude_family)
     for cand in _TTS_CROSS_FAMILY_ORDER:
         if cand == exclude:
             continue
+        voice_kwargs: dict[str, str] = {}
+        if ref_gender:
+            model_id = None
+            if cand == "openrouter":
+                # The candidate view carries no model, so OpenRouterTTS will
+                # use its default model — match the voice against that one.
+                from jarvis.plugins.tts.openrouter_speech_models import DEFAULT_MODEL
+
+                model_id = DEFAULT_MODEL
+            matched = continuity_voice(cand, ref_gender, model_id=model_id)
+            if matched:
+                voice_kwargs = {"voice_de": matched, "voice_en": matched}
         cfg_view = TTSConfig(
             provider=cand,
             language_code=language_code or "auto",
             allow_sapi5_fallback=allow_sapi5,
+            **voice_kwargs,
         )
         if not _tts_has_credential(cand, cfg_view):
             continue
@@ -227,6 +254,90 @@ def resolve_keyed_fallback(
             )
             continue
     return None
+
+
+def _effective_primary_voice(family: str, tts_cfg: Any) -> str | None:
+    """Best-effort offline prediction of the voice ``family`` will speak with.
+
+    Mirrors each family's builder/plugin voice resolution (config voice when
+    valid for the family, else the family default) WITHOUT building the
+    provider. Used to derive the active voice PROFILE for fallback continuity.
+    Returns ``None`` for families whose voice cannot be predicted offline
+    (Cartesia ids, unknown third-party providers) — callers then skip the
+    profile matching (today's behavior).
+    """
+    voice_de = (getattr(tts_cfg, "voice_de", None) or "").strip()
+    if family == "grok-voice":
+        try:
+            from jarvis.plugins.tts.grok_voice_tts import DEFAULT_VOICES, GROK_VOICE_LEO
+        except ImportError:
+            return None
+        return voice_de if voice_de in DEFAULT_VOICES else GROK_VOICE_LEO
+    if family == "gemini-flash-tts":
+        return voice_de if voice_de in _GEMINI_VOICES else "Charon"
+    if family == "elevenlabs":
+        try:
+            from jarvis.plugins.tts.elevenlabs_tts import JARVIS_VOICE_DANIEL
+        except ImportError:
+            return None
+        cleaned = _without_foreign_voice(tts_cfg, "elevenlabs")
+        return (getattr(cleaned, "voice_de", None) or "").strip() or JARVIS_VOICE_DANIEL
+    if family == "openrouter":
+        try:
+            from jarvis.plugins.tts.openrouter_speech_models import (
+                MODEL_DEFAULT_VOICE,
+                MODEL_VOICES,
+                coerce_speech_model,
+            )
+        except ImportError:
+            return None
+        mid = coerce_speech_model(getattr(tts_cfg, "model", None))
+        if voice_de and voice_de in MODEL_VOICES.get(mid, ()):
+            return voice_de
+        return MODEL_DEFAULT_VOICE.get(mid)
+    if family == "inworld":
+        extras = getattr(tts_cfg, "model_extra", None) or {}
+        iw = extras.get("inworld") if isinstance(extras, dict) else None
+        iw = iw if isinstance(iw, dict) else {}
+        configured = (iw.get("voice_de") or "").strip()
+        if configured:
+            return configured
+        try:
+            from jarvis.plugins.tts.inworld_tts import DEFAULT_VOICE_DE
+        except ImportError:
+            return None
+        return DEFAULT_VOICE_DE
+    return None
+
+
+def _continuity_fallback_voice(
+    primary_name: str, primary_cfg: Any, fallback_name: str, fallback_cfg: Any
+) -> str | None:
+    """Voice the ``FallbackTTS`` wrapper should pin on the fallback provider so
+    a mid-conversation takeover keeps the ACTIVE voice profile (the audible
+    masculine/feminine character), instead of flipping to the fallback family's
+    unrelated default voice.
+
+    Returns ``None`` when the primary's profile is unknown, or when the
+    fallback's own voice resolution already matches it (an explicitly chosen,
+    profile-consistent fallback voice is respected, never overridden).
+    """
+    from jarvis.plugins.tts.curated_catalog import continuity_voice, voice_gender
+
+    ref_voice = _effective_primary_voice(_canonical_tts_name(primary_name), primary_cfg)
+    ref_gender = voice_gender(ref_voice)
+    if not ref_gender:
+        return None
+    fb_family = _canonical_tts_name(fallback_name)
+    native = _effective_primary_voice(fb_family, fallback_cfg)
+    if native is not None and voice_gender(native) == ref_gender:
+        return None
+    model_id = None
+    if fb_family == "openrouter":
+        from jarvis.plugins.tts.openrouter_speech_models import coerce_speech_model
+
+        model_id = coerce_speech_model(getattr(fallback_cfg, "model", None))
+    return continuity_voice(fb_family, ref_gender, model_id=model_id)
 
 
 def _resolve_voice_for_provider(
@@ -302,8 +413,18 @@ def build_tts_from_config(tts_cfg: Any) -> Any:
 
     from jarvis.plugins.tts.fallback_tts import FallbackTTS
 
-    log.info("TTS fallback active: primary=%r → fallback=%r", primary_name, fallback_name)
-    return FallbackTTS(primary, secondary)
+    # Voice-profile continuity (2026-07-17): pin the fallback family's curated
+    # voice matching the primary's active profile, so a mid-conversation
+    # takeover never audibly flips masculine↔feminine ("Jarvis suddenly has a
+    # different voice"). None → the fallback keeps its own resolution.
+    fallback_voice = _continuity_fallback_voice(
+        primary_name, primary_cfg, fallback_name, tts_cfg
+    )
+    log.info(
+        "TTS fallback active: primary=%r → fallback=%r (continuity voice: %s)",
+        primary_name, fallback_name, fallback_voice or "provider default",
+    )
+    return FallbackTTS(primary, secondary, fallback_voice=fallback_voice)
 
 
 def _build_provider(tts_cfg: Any, provider: str) -> Any:

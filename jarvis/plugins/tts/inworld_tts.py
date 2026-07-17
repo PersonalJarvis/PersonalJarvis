@@ -345,6 +345,7 @@ class InworldTTS:
             self.name,
             allow_sapi5=self._allow_sapi5_fallback,
             language_code=language_code,
+            reference_voice=self._resolve_voice(text, None, language_code),
         )
         if fb is not None:
             produced = False
