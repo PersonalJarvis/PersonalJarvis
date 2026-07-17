@@ -18,9 +18,20 @@ class _Cfg:
     stt = _Stt()
 
 
-def _patch_bundled(monkeypatch, *, wake: bool = True, vad: bool = True) -> None:
+def _patch_bundled(
+    monkeypatch,
+    *,
+    wake: bool = True,
+    vad: bool = True,
+    wake_runtime: bool = True,
+    silero_runtime: bool = True,
+    webrtc: bool = True,
+) -> None:
     monkeypatch.setattr(mr, "_wake_backbone_present", lambda: wake)
     monkeypatch.setattr(mr, "_vad_present", lambda: vad)
+    monkeypatch.setattr(mr, "_neural_wake_runtime_available", lambda: wake_runtime)
+    monkeypatch.setattr(mr, "_silero_runtime_available", lambda: silero_runtime)
+    monkeypatch.setattr(mr, "_webrtc_vad_available", lambda: webrtc)
     monkeypatch.setattr(mr, "_wake_language", lambda _cfg: "de")
 
 
@@ -107,9 +118,8 @@ def test_probe_failure_reads_as_absent_never_raises(monkeypatch) -> None:
     def _boom() -> bool:
         raise RuntimeError("probe exploded")
 
+    _patch_bundled(monkeypatch)
     monkeypatch.setattr(mr, "_wake_backbone_present", _boom)
-    monkeypatch.setattr(mr, "_vad_present", lambda: True)
-    monkeypatch.setattr(mr, "_wake_language", lambda _cfg: "de")
     monkeypatch.setattr(mr, "_vosk_present", lambda *_a, **_kw: True)
     monkeypatch.setattr(mr, "_faster_whisper_available", lambda: False)
 
@@ -117,3 +127,81 @@ def test_probe_failure_reads_as_absent_never_raises(monkeypatch) -> None:
 
     wake = next(i for i in items if "wake word" in i.label)
     assert wake.present is False
+
+
+def test_intel_mac_degrade_is_complete_with_honest_details(monkeypatch) -> None:
+    # Assets shipped but no neural runtimes (e.g. Intel Mac): the install is
+    # COMPLETE — wake degrades to vosk_kws, VAD degrades to WebRTC VAD.
+    _patch_bundled(monkeypatch, wake_runtime=False, silero_runtime=False, webrtc=True)
+    monkeypatch.setattr(mr, "_vosk_present", lambda *_a, **_kw: True)
+    monkeypatch.setattr(mr, "_faster_whisper_available", lambda: False)
+
+    items = mr.voice_model_report(_Cfg())
+
+    assert mr.report_complete(items) is True
+    wake = next(i for i in items if "wake word" in i.label)
+    vad = next(i for i in items if "end-of-speech" in i.label)
+    assert wake.present is True and "vosk_kws" in wake.detail
+    assert vad.present is True and "WebRTC VAD" in vad.detail
+    text = "\n".join(mr.format_report(items))
+    assert "✗" not in text  # degraded tiers render check-marks, never crosses
+
+
+def test_no_neural_runtime_and_no_webrtc_degrades_to_energy(monkeypatch) -> None:
+    _patch_bundled(monkeypatch, silero_runtime=False, webrtc=False)
+    monkeypatch.setattr(mr, "_vosk_present", lambda *_a, **_kw: True)
+    monkeypatch.setattr(mr, "_faster_whisper_available", lambda: False)
+
+    items = mr.voice_model_report(_Cfg())
+
+    vad = next(i for i in items if "end-of-speech" in i.label)
+    assert vad.present is True and "energy" in vad.detail
+    assert mr.report_complete(items) is True
+
+
+def test_asset_missing_with_runtime_available_stays_incomplete(monkeypatch) -> None:
+    # Regression: a runnable platform with a dropped asset is a REAL failure.
+    _patch_bundled(monkeypatch, wake=False, vad=False)
+    monkeypatch.setattr(mr, "_vosk_present", lambda *_a, **_kw: True)
+    monkeypatch.setattr(mr, "_faster_whisper_available", lambda: False)
+
+    items = mr.voice_model_report(_Cfg())
+
+    assert mr.report_complete(items) is False
+    wake = next(i for i in items if "wake word" in i.label)
+    vad = next(i for i in items if "end-of-speech" in i.label)
+    assert wake.present is False and "MISSING" in wake.detail
+    assert vad.present is False and "MISSING" in vad.detail
+
+
+def test_asset_missing_without_runtime_is_platform_degrade_not_failure(monkeypatch) -> None:
+    # No runtime means the asset is unusable anyway — the degrade tier carries
+    # the voice path, so the install must NOT read incomplete.
+    _patch_bundled(monkeypatch, wake=False, vad=False, wake_runtime=False, silero_runtime=False)
+    monkeypatch.setattr(mr, "_vosk_present", lambda *_a, **_kw: True)
+    monkeypatch.setattr(mr, "_faster_whisper_available", lambda: False)
+
+    items = mr.voice_model_report(_Cfg())
+
+    assert mr.report_complete(items) is True
+
+
+def test_runtime_probe_failure_reads_as_degraded_never_raises(monkeypatch) -> None:
+    # A crashing runtime probe reads as "runtime unavailable" -> honest degrade.
+    def _boom() -> bool:
+        raise RuntimeError("probe exploded")
+
+    _patch_bundled(monkeypatch)
+    monkeypatch.setattr(mr, "_neural_wake_runtime_available", _boom)
+    monkeypatch.setattr(mr, "_silero_runtime_available", _boom)
+    monkeypatch.setattr(mr, "_webrtc_vad_available", _boom)
+    monkeypatch.setattr(mr, "_vosk_present", lambda *_a, **_kw: True)
+    monkeypatch.setattr(mr, "_faster_whisper_available", lambda: False)
+
+    items = mr.voice_model_report(_Cfg())  # must not raise
+
+    wake = next(i for i in items if "wake word" in i.label)
+    vad = next(i for i in items if "end-of-speech" in i.label)
+    assert wake.present is True and "vosk_kws" in wake.detail
+    assert vad.present is True and "energy" in vad.detail  # webrtc probe crashed too
+    assert mr.report_complete(items) is True

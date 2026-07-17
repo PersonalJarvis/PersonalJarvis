@@ -161,8 +161,14 @@ def test_ensure_model_loads_from_bundle_without_the_package(monkeypatch) -> None
 
 
 def test_missing_onnxruntime_uses_portable_energy_endpointing(monkeypatch) -> None:
-    """An unsupported native runtime must not disable voice capture."""
+    """An unsupported native runtime must not disable voice capture.
+
+    ``webrtcvad`` is blocked too: the middle tier ships in ``[local-voice]`` /
+    ``[full]``, so whether it is importable here is environment-dependent, and
+    this test pins the bare-base energy floor.
+    """
     monkeypatch.setitem(sys.modules, "onnxruntime", None)
+    monkeypatch.setitem(sys.modules, "webrtcvad", None)
 
     ep = SileroEndpointer(min_speech_rms=0.002)
     ep._ensure_model()
@@ -173,8 +179,13 @@ def test_missing_onnxruntime_uses_portable_energy_endpointing(monkeypatch) -> No
     assert ep._prob(np.full(512, 0.01, dtype=np.float32)) == 1.0
 
 
-def test_failed_native_inference_switches_to_energy_endpointing() -> None:
-    """A runtime that loads but fails later must degrade in the same turn."""
+def test_failed_native_inference_switches_to_energy_endpointing(monkeypatch) -> None:
+    """A runtime that loads but fails later must degrade in the same turn.
+
+    ``webrtcvad`` is blocked so the degrade chain lands on the energy floor
+    regardless of whether the optional middle tier is installed here.
+    """
+    monkeypatch.setitem(sys.modules, "webrtcvad", None)
 
     class _BrokenSession:
         def run(self, *_args, **_kwargs):
@@ -194,6 +205,7 @@ def test_failed_native_inference_switches_to_energy_endpointing() -> None:
 async def test_energy_fallback_captures_and_ends_an_utterance(monkeypatch) -> None:
     """The fallback must drive the complete endpoint state machine."""
     monkeypatch.setitem(sys.modules, "onnxruntime", None)
+    monkeypatch.setitem(sys.modules, "webrtcvad", None)
     ep = SileroEndpointer(
         silence_ms=96,
         min_speech_ms=64,

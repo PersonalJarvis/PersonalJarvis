@@ -1,8 +1,16 @@
-"""Voice Activity Detection via Silero-VAD.
+"""Voice Activity Detection via Silero-VAD with a three-tier fallback chain.
 
 Silero-VAD is a ~2 MB PyTorch model that operates on 16 kHz audio frames of
 exactly 512 samples (32 ms) and delivers a speech probability (0.0-1.0) per
 frame. Significantly more precise than WebRTC-VAD in noisy/music environments.
+
+The per-frame speech score degrades through three tiers so voice capture never
+bricks on a platform without a working native runtime:
+
+  1. Silero ONNX (bundled model on base CPU onnxruntime) — the default.
+  2. WebRTC VAD (``webrtcvad``, ships in ``[local-voice]``/``[full]``) when
+     the ONNX runtime cannot load or execute.
+  3. Portable RMS energy endpointing when neither engine is available.
 
 Used in "endpointing" mode: once a silence phase of `silence_ms` duration is
 detected after active speech, the utterance is considered complete and the
@@ -28,6 +36,13 @@ from jarvis.core.protocols import AudioChunk
 
 VAD_SAMPLE_RATE = 16_000
 VAD_FRAME_SAMPLES = 512       # fixed requirement from Silero
+
+# WebRTC VAD middle tier: aggressiveness 0 (permissive) .. 3 (strict). 2 keeps
+# recall high enough for endpointing while filtering steady ambient noise.
+_WEBRTC_AGGRESSIVENESS = 2
+# webrtcvad accepts only 10/20/30 ms frames at 16 kHz; 480 samples (30 ms) is
+# the largest slice that fits inside every 512-sample Silero frame.
+_WEBRTC_FRAME_SAMPLES = 480
 
 # Upper bound on the adaptive patience grant, expressed as a multiple of the
 # user-configured base silence window. A long dictation / delegation widens the
@@ -98,12 +113,15 @@ class SileroEndpointer:
         self._cancel_hysteresis_frames = max(1, cancel_hysteresis_ms // 32)
         # Torch-free Silero VAD: when ONNX Runtime is available, the bundled
         # model runs on its CPU provider with numpy-managed recurrent state.
-        # Platforms without a compatible ONNX Runtime wheel keep working via
-        # portable RMS-based endpointing instead of losing the whole voice
-        # path. Lazy: the preferred model is created on first use.
+        # Platforms without a compatible ONNX Runtime wheel degrade through a
+        # three-tier chain instead of losing the whole voice path: WebRTC VAD
+        # (when the [local-voice]/[full] extra ships it), then portable
+        # RMS-based energy endpointing as the floor. Lazy: the preferred
+        # engine is created on first use.
         self._session = None
         self._vad_state = None  # np.ndarray [2,1,128] float32, carried per frame
         self._vad_context = None  # np.ndarray [1,64] float32, carried per frame
+        self._webrtc = None  # webrtcvad.Vad instance for the middle tier
         self._energy_only = False
 
         self._min_speech_rms = min_speech_rms
@@ -194,7 +212,11 @@ class SileroEndpointer:
         return self._silence_frames + self._extra_silence_frames
 
     def _ensure_model(self) -> None:
-        if self._session is not None or getattr(self, "_energy_only", False):
+        if (
+            self._session is not None
+            or getattr(self, "_webrtc", None) is not None
+            or getattr(self, "_energy_only", False)
+        ):
             return
         try:
             import os
@@ -233,17 +255,36 @@ class SileroEndpointer:
             self._vad_state = np.zeros((2, 1, 128), dtype=np.float32)
             self._vad_context = np.zeros((1, 64), dtype=np.float32)
         except Exception as exc:
-            self._enable_energy_fallback(exc)
+            self._enable_degraded_fallback(exc)
 
-    def _enable_energy_fallback(self, exc: Exception) -> None:
-        """Keep endpointing available when the optional native engine fails."""
+    def _enable_degraded_fallback(self, exc: Exception) -> None:
+        """Drop from Silero to the best remaining tier (WebRTC, then energy)."""
         self._session = None
         self._vad_state = None
         self._vad_context = None
+        try:
+            import webrtcvad
+
+            self._webrtc = webrtcvad.Vad(_WEBRTC_AGGRESSIVENESS)
+            log.warning(
+                "Silero ONNX VAD is unavailable; using WebRTC VAD endpointing "
+                "for this session (%s: %s)",
+                type(exc).__name__,
+                exc,
+            )
+        except Exception:
+            self._enable_energy_fallback(exc)
+
+    def _enable_energy_fallback(self, exc: Exception) -> None:
+        """Keep endpointing available when every optional native engine fails."""
+        self._session = None
+        self._vad_state = None
+        self._vad_context = None
+        self._webrtc = None
         self._energy_only = True
         log.warning(
-            "Silero ONNX VAD is unavailable; using portable CPU energy "
-            "endpointing for this session (%s: %s)",
+            "Silero ONNX VAD and WebRTC VAD are unavailable; using portable "
+            "CPU energy endpointing for this session (%s: %s)",
             type(exc).__name__,
             exc,
         )
@@ -254,16 +295,29 @@ class SileroEndpointer:
         minimum = float(getattr(self, "_min_speech_rms", 0.002))
         return 1.0 if rms >= minimum else 0.0
 
+    def _webrtc_prob(self, frame: np.ndarray) -> float:
+        """Binary speech score from the WebRTC VAD middle tier."""
+        try:
+            samples = np.asarray(frame, dtype=np.float32).reshape(-1)
+            buf = _float32_to_int16_bytes(samples[:_WEBRTC_FRAME_SAMPLES])
+            return 1.0 if self._webrtc.is_speech(buf, VAD_SAMPLE_RATE) else 0.0
+        except Exception as exc:
+            self._enable_energy_fallback(exc)
+            return self._energy_prob(frame)
+
     def _prob(self, frame: np.ndarray) -> float:
         """Per-frame speech probability (must be exactly 512 float32 samples).
 
         Prefer the bundled Silero ONNX model on the CPU. If its optional native
-        runtime cannot load or execute on this platform, fall back to a portable
-        RMS score. The surrounding state machine still supplies relative-noise
-        calibration, hysteresis, silence timing, and the maximum-duration cap.
+        runtime cannot load or execute on this platform, fall back to WebRTC
+        VAD when available, and finally to a portable RMS score. The
+        surrounding state machine still supplies relative-noise calibration,
+        hysteresis, silence timing, and the maximum-duration cap.
         """
         self._ensure_model()
         x = np.ascontiguousarray(frame, dtype=np.float32).reshape(1, -1)  # [1,512]
+        if getattr(self, "_webrtc", None) is not None:
+            return self._webrtc_prob(x)
         if getattr(self, "_energy_only", False):
             return self._energy_prob(x)
         assert self._session is not None
@@ -281,7 +335,9 @@ class SileroEndpointer:
             self._vad_context = x_full[:, -64:]
             return float(np.asarray(out).reshape(-1)[0])
         except Exception as exc:
-            self._enable_energy_fallback(exc)
+            self._enable_degraded_fallback(exc)
+            if getattr(self, "_webrtc", None) is not None:
+                return self._webrtc_prob(x)
             return self._energy_prob(x)
 
     async def utterances(

@@ -83,6 +83,24 @@ def _faster_whisper_available() -> bool:
     return importlib.util.find_spec("faster_whisper") is not None
 
 
+def _neural_wake_runtime_available() -> bool:
+    """True when the neural wake path (openWakeWord on onnxruntime) can run here."""
+    return (
+        importlib.util.find_spec("onnxruntime") is not None
+        and importlib.util.find_spec("openwakeword") is not None
+    )
+
+
+def _silero_runtime_available() -> bool:
+    """True when onnxruntime is importable, i.e. the Silero VAD model can run here."""
+    return importlib.util.find_spec("onnxruntime") is not None
+
+
+def _webrtc_vad_available() -> bool:
+    """True when the webrtcvad fallback tier is importable."""
+    return importlib.util.find_spec("webrtcvad") is not None
+
+
 def _whisper_cached(name: str) -> bool:
     """True when faster-whisper model ``name`` is already in the local HF cache.
 
@@ -131,30 +149,44 @@ def voice_model_report(cfg: Any | None = None, *, data_dir: str | None = None) -
     items: list[ModelStatus] = []
 
     # 1. Neural wake-word backbone — bundled in-repo, core path.
+    # Decision matrix: a required item FAILS only when the platform COULD run
+    # the neural path but the asset file is missing (partial download); a
+    # platform that cannot run it degrades to the vosk_kws tier — an honest
+    # PASS, never an install failure.
     wake_ok = bool(_safe(_wake_backbone_present, False))
-    items.append(
-        ModelStatus(
-            "wake word (neural)",
-            wake_ok,
+    wake_runtime = bool(_safe(_neural_wake_runtime_available, False))
+    if wake_runtime:
+        wake_present = wake_ok
+        wake_detail = (
             "bundled with the app"
             if wake_ok
-            else "MISSING from the package - partial download? re-run the installer",
-            required=True,
+            else "MISSING from the package - partial download? re-run the installer"
         )
-    )
+    else:
+        wake_present = True
+        wake_detail = "vosk_kws keyword spotting (neural wake runtime unavailable on this platform)"
+    items.append(ModelStatus("wake word (neural)", wake_present, wake_detail, required=True))
 
     # 2. End-of-speech detection (Silero VAD) — bundled in-repo, core path.
+    # Same matrix: without onnxruntime the runtime falls back to WebRTC VAD or
+    # the portable energy endpointer (jarvis/audio/vad.py tiers) — a PASS.
     vad_ok = bool(_safe(_vad_present, False))
-    items.append(
-        ModelStatus(
-            "end-of-speech detection",
-            vad_ok,
+    silero_runtime = bool(_safe(_silero_runtime_available, False))
+    if silero_runtime:
+        vad_present = vad_ok
+        vad_detail = (
             "bundled with the app"
             if vad_ok
-            else "MISSING from the package - partial download? re-run the installer",
-            required=True,
+            else "MISSING from the package - partial download? re-run the installer"
         )
-    )
+    else:
+        vad_present = True
+        vad_detail = (
+            "WebRTC VAD (neural runtime unavailable on this platform)"
+            if bool(_safe(_webrtc_vad_available, False))
+            else "portable energy endpointing (neural runtime unavailable on this platform)"
+        )
+    items.append(ModelStatus("end-of-speech detection", vad_present, vad_detail, required=True))
 
     # 3. Custom-wake model (Vosk, per language) — downloaded once, optional.
     lang = _safe(lambda: _wake_language(cfg), None) if cfg is not None else None
