@@ -47,15 +47,17 @@
   },
   "brain.providers.gemini": {
     "model": "gemini-3.5-flash",
-    "deep_model": "gemini-3.1-pro-preview"
+    "deep_model": "gemini-3.1-pro-preview",
+    "tool_model": "gemini-3.5-flash",
+    "cu_model": "gemini-3.5-flash"
   },
   "brain.providers.claude-api": {
     "model": "claude-haiku-4-5-20251001",
     "deep_model": "claude-opus-4-8"
   },
   "brain.worker": {
-    "provider": "claude-api",
-    "model": "claude-opus-4-8",
+    "provider": "openai-codex",
+    "model": "gemini-3.1-pro-preview",
     "fallback_provider": "gemini",
     "fallback_model": "gemini-3.1-pro-preview",
     "fallback_provider_2": "gemini",
@@ -106,5 +108,11 @@
   },
   "brain.tool_model": {
     "provider": "gemini"
+  },
+  "brain.computer_use": {
+    "provider": "grok"
+  },
+  "brain.providers.grok-realtime": {
+    "voice": "lux"
   }
 }
