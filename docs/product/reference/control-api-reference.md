@@ -94,15 +94,20 @@ interface.
 
 The outer security boundary accepts a valid Control key or app session for most
 protected `/api/*` requests. Most `/api/control/*` routes then apply a narrower
-route guard and require the Control key specifically. Key reveal and rotation
-are the exception: an authenticated app session may use them so the in-app key
-card can work.
+route guard and require the Control key specifically. Key reveal, rotation, and
+replacement are the exception: an authenticated app session may use them so the
+in-app key panel can work.
 
-Open **API Keys & Providers > Advanced**, then choose the API card named for
-your assistant. There you can view the masked key, copy it into a trusted secret
-manager, or regenerate it. Regeneration immediately invalidates the previous
-Control key, so every CLI profile and integration using the old value must be
-updated.
+Open **API Keys & Providers**, then choose the dedicated key tab named for
+your assistant (for example **Nico Key**). There you can view the masked key,
+copy it into a trusted secret manager, replace it with a key you choose (at
+least 12 characters; letters, digits, and `. _ ~ -`), or regenerate a random
+one behind a confirmation dialog. Replacement and regeneration immediately
+invalidate the previous Control key, so every CLI profile and integration
+using the old value must be updated. Over HTTP the same actions are
+`GET /api/control/api-key`, `PUT /api/control/api-key`
+(`{value, confirm: true}`), and `POST /api/control/api-key/rotate`
+(`{confirm: true}`).
 
 ## Follow the Request Lifecycle
 

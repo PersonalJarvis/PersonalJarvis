@@ -1,7 +1,7 @@
 version: 1
 language: en
 content_root: docs/product
-page_count: 42
+page_count: 43
 navigation_principle: reader-journey
 authoring_contract:
   audience: People using Personal Jarvis, including readers with no software background.
@@ -712,7 +712,7 @@ pages:
     related:
       - providers-and-api-keys
       - privacy-and-local-data
-      - mcp-connections
+      - control-key
       - troubleshooting
     reader_level: beginner
     maturity: stable
@@ -778,6 +778,28 @@ pages:
       - providers-and-api-keys
       - audio-and-wake-word
       - platform-support
+    reader_level: beginner
+    maturity: stable
+
+  - section: Privacy, safety, and support
+    section_order: 6
+    order: 6
+    slug: control-key
+    file: docs/product/privacy-safety-and-support/control-key.md
+    title: "Your Assistant's Key (Control Key)"
+    diataxis: howto
+    summary: Find, use, replace, and regenerate the one key that unlocks Jarvis in a browser and authenticates local agents.
+    authoritative_sources:
+      - jarvis/core/control_key.py
+      - jarvis/ui/web/control_routes.py
+      - jarvis/ui/web/surface_security.py
+      - jarvis/ui/web/frontend/src/views/settings/JarvisApiGroup.tsx
+      - jarvis/ui/web/frontend/src/components/AuthGate.tsx
+    related:
+      - credentials-and-secrets
+      - control-api-reference
+      - providers-and-api-keys
+      - troubleshooting
     reader_level: beginner
     maturity: stable
 

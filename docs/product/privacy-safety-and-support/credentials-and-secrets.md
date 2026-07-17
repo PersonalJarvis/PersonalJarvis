@@ -12,7 +12,7 @@ last_reviewed: 2026-07-15
 phase: "-"
 audience: end-user
 tags: [credentials, secrets, api-keys, tokens, privacy, security]
-related: [providers-and-api-keys, privacy-and-local-data, mcp-connections, troubleshooting]
+related: [providers-and-api-keys, privacy-and-local-data, control-key, troubleshooting]
 ---
 
 Credentials are private values that let Jarvis use an account or service on
@@ -40,7 +40,7 @@ at the service that issued the credential.
 | Plugin or messaging channel | **Plugins > Connect**, including the browser sign-in or protected token field | Plugin descriptions, feedback, screenshots, or source files |
 | Command-line tool | **CLIs**, open the tool, then use **Connect** or **Set API Key** | A shell command, command history, or a custom command definition |
 | Phone service | **API Keys & Providers > Advanced > Telephony** | Greeting text, call scripts, logs, or phone-call transcripts |
-| Jarvis Control API | **API Keys & Providers > Advanced**, on the API card named for your assistant | Chat, docs, issue reports, or an untrusted client |
+| Jarvis Control API | **API Keys & Providers**, on the dedicated key tab named for your assistant (see [Your Assistant's Key](control-key)) | Chat, docs, issue reports, or an untrusted client |
 | Manual MCP server | Use a protected plugin connection when one is available | A literal value in `mcp.json`, including its environment and header fields |
 
 > [!warning] A chat box and a password box may look similar, but they have
@@ -101,8 +101,9 @@ The normal path is short:
    connection uses it for its own authenticated request.
 5. **The UI receives status, not the secret.** Provider cards show whether a
    credential is set. The Control API key is the deliberate exception: its
-   panel can reveal or copy the full value and can regenerate it, which
-   immediately invalidates the previous Control API key.
+   panel can reveal or copy the full value, replace it with a key you choose,
+   or regenerate it — replacement and regeneration immediately invalidate the
+   previous Control API key.
 
 If no usable operating-system store exists, or it is locked when you save,
 Jarvis falls back to a restricted file in its data directory. This keeps
