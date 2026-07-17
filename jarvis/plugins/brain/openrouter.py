@@ -73,7 +73,36 @@ class OpenRouterBrain:
 
     async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
         client = self._ensure_client()
-        async for delta in stream_complete(client, self._model, req):
+        extra_body: dict[str, Any] | None = None
+        if getattr(req, "reasoning_effort", None) == "none":
+            # OpenRouter's unified ``reasoning`` parameter: ask the gateway to
+            # disable internal reasoning for this call. Gatewayed
+            # thinking-by-default models (e.g. google/gemini-*-flash) otherwise
+            # spend seconds of thought on every tool-loop round — the exact
+            # latency the caller opted out of with ``reasoning_effort="none"``.
+            # The gateway normalizes the field per model; models without a
+            # reasoning knob are unaffected.
+            extra_body = {"reasoning": {"enabled": False}}
+        if extra_body is None:
+            async for delta in stream_complete(client, self._model, req):
+                yield delta
+            return
+        stream = stream_complete(client, self._model, req, extra_body=extra_body)
+        try:
+            first = await anext(stream)
+        except StopAsyncIteration:
+            return
+        except Exception as exc:  # noqa: BLE001 — inspect, fall back, or re-raise
+            # Fail open: a latency hint must never brick a turn. If the model
+            # (or an exotic upstream) rejects the reasoning parameter itself,
+            # retry once without it; unrelated errors propagate unchanged.
+            if "reasoning" not in str(exc).lower():
+                raise
+            async for delta in stream_complete(client, self._model, req):
+                yield delta
+            return
+        yield first
+        async for delta in stream:
             yield delta
 
     def estimate_cost(self, req: BrainRequest) -> float:

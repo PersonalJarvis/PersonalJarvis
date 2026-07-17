@@ -381,6 +381,19 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
 # Classic chat turns keep the dispatcher defaults (15 rounds, no deadline).
 _DELEGATE_MAX_TURNS: int = 6
 _DELEGATE_DEADLINE_S: float = 20.0
+# Delegated rounds ask the provider to skip internal "thinking" entirely.
+# Live 2026-07-17 (FlightRecorder p50 15-18 s, worst 33 s): the hoisted Tool
+# Model (Gemini Flash) ran every one of its 3-6 sequential rounds with the
+# SDK-default dynamic thinking over a ~53k-token context, so plain questions
+# ran the 20 s deadline out. The router-tier factory caps thinking only on
+# the tier's OWN provider entry — a live provider switch (e.g. router →
+# openrouter) parks that cap on the wrong entry and the hoisted Tool Model
+# escapes it. Passing the per-request hint here covers the delegated turn
+# deterministically, independent of which provider entry carries the cap.
+# Same doctrine as the router thinking cap (BUG-LATENCY 2026-05-24) and the
+# Computer-Use calls (jarvis/cu/brain_call.py); providers without a
+# reasoning knob ignore the hint (AP-21: capability hint, no provider pin).
+_DELEGATE_REASONING_EFFORT: Literal["none"] = "none"
 
 
 def _resolve_tier_model(
@@ -2629,6 +2642,7 @@ class BrainManager:
         tools_override: dict[str, Tool] | None = None,
         max_turns: int | None = None,
         deadline_s: float | None = None,
+        reasoning_effort: Literal["none"] | None = None,
     ) -> BrainDispatcher:
         """Builds the dispatcher with an optional tool override.
 
@@ -2640,6 +2654,11 @@ class BrainManager:
         ``max_turns`` / ``deadline_s`` (2026-07-14): per-turn loop bounds for
         delegated realtime voice turns — see ``_DELEGATE_MAX_TURNS`` /
         ``_DELEGATE_DEADLINE_S``. ``None`` keeps the dispatcher defaults.
+
+        ``reasoning_effort`` (2026-07-17): forwarded onto every BrainRequest
+        of the turn. Delegated realtime voice turns pass ``"none"`` so a
+        thinking-by-default model never burns seconds of internal reasoning
+        per tool-loop round — see ``_DELEGATE_REASONING_EFFORT``.
         """
         tools = tools_override if tools_override is not None else self._tools
         system_prompt = self._build_system_prompt()
@@ -2659,6 +2678,7 @@ class BrainManager:
             system_prompt=system_prompt,
             max_tokens=self._config.brain.max_tokens,
             deadline_s=deadline_s,
+            reasoning_effort=reasoning_effort,
             **kwargs,
         )
 
@@ -7944,6 +7964,7 @@ class BrainManager:
                 {
                     "max_turns": _DELEGATE_MAX_TURNS,
                     "deadline_s": _DELEGATE_DEADLINE_S,
+                    "reasoning_effort": _DELEGATE_REASONING_EFFORT,
                 }
                 if prefer_tool_model
                 else {}

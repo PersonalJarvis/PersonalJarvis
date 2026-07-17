@@ -17,7 +17,7 @@ import logging
 import re
 import time
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from jarvis.core.protocols import Brain, BrainMessage, BrainRequest, ImageBlock, Tool
@@ -389,6 +389,7 @@ class ToolUseLoop:
         budget: IterationBudget | None = None,
         max_tokens: int = 8192,
         deadline_s: float | None = None,
+        reasoning_effort: Literal["none"] | None = None,
     ) -> None:
         self._brain = brain
         self._tools = tools
@@ -416,6 +417,15 @@ class ToolUseLoop:
         # always hears a grounded answer instead of more tool churn.
         # ``None`` (default) = unbounded, previous behavior.
         self._deadline_s = deadline_s
+        # Forwarded onto every per-round BrainRequest. Delegated realtime
+        # voice turns pass "none": a thinking-by-default model (Gemini Flash)
+        # otherwise spends seconds of internal reasoning on EVERY round of a
+        # multi-round tool loop — live 2026-07-17: 3-6 rounds over a ~53k-token
+        # context ran the 20 s deadline out on plain questions. Same rationale
+        # as the router-tier thinking cap and the Computer-Use calls
+        # (jarvis/cu/brain_call.py); providers without a reasoning knob ignore
+        # the hint (capability hint, never a provider pin — AP-21).
+        self._reasoning_effort = reasoning_effort
 
     def _resolve_tool(self, requested: str) -> tuple[Tool | None, str]:
         """Look up a model-requested tool name, tolerating separator/case drift.
@@ -547,6 +557,7 @@ class ToolUseLoop:
                 system=self._system_prompt,
                 max_tokens=self._max_tokens,
                 stream=True,
+                reasoning_effort=self._reasoning_effort,
             )
             stream = self._brain.complete(req)
             if text_consumer is not None:

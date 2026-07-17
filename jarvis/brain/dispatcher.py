@@ -12,7 +12,7 @@ that is the responsibility of `BrainManager` (so we can switch between providers
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Awaitable, Callable
-from typing import Any
+from typing import Any, Literal
 from uuid import UUID, uuid4
 
 from jarvis.core.protocols import Brain, BrainMessage, BrainRequest, ImageBlock, Tool
@@ -37,6 +37,7 @@ class BrainDispatcher:
         max_tokens_total: int = 50_000,
         max_tokens: int = 8192,
         deadline_s: float | None = None,
+        reasoning_effort: Literal["none"] | None = None,
     ) -> None:
         self._brain = brain
         self._tools = tools or {}
@@ -52,6 +53,10 @@ class BrainDispatcher:
         # Optional wall-clock bound for the tool-use loop (voice turns).
         # See ToolUseLoop.deadline_s; ``None`` = unbounded (default).
         self._deadline_s = deadline_s
+        # Per-request internal-reasoning hint forwarded onto every
+        # BrainRequest this dispatcher issues (see ToolUseLoop.reasoning_effort
+        # and BrainRequest.reasoning_effort). ``None`` = provider default.
+        self._reasoning_effort = reasoning_effort
 
     @property
     def brain(self) -> Brain:
@@ -68,6 +73,7 @@ class BrainDispatcher:
             max_tokens_total=self._max_tokens_total,
             max_tokens=self._max_tokens,
             deadline_s=self._deadline_s,
+            reasoning_effort=self._reasoning_effort,
         )
 
     def set_tools(self, tools: dict[str, Tool]) -> None:
@@ -134,6 +140,7 @@ class BrainDispatcher:
                 ),
                 max_tokens=self._max_tokens,
                 deadline_s=self._deadline_s,
+                reasoning_effort=self._reasoning_effort,
             )
             return await loop.run(
                 messages,
@@ -155,6 +162,7 @@ class BrainDispatcher:
             system=self._system_prompt,
             max_tokens=self._max_tokens,
             stream=True,
+            reasoning_effort=self._reasoning_effort,
         )
         if text_consumer is not None:
             def _delta_progress(_delta: object) -> None:
