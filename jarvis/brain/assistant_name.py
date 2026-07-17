@@ -27,6 +27,25 @@ DEFAULT_ASSISTANT_NAME = "Assistant"
 # special-case or contradict.
 
 
+def agent_brand_from_name(assistant_name: str) -> str:
+    """Return the public agent-system display brand for ``assistant_name``.
+
+    2026-07-17 rebrand: the user-visible name of the agent system follows the
+    wake-word-derived assistant name — "Ruben" -> "Ruben-Agent", "Athena" ->
+    "Athena-Agent" — for ANY configured wake word, never a hardcoded product
+    name. Internal identifiers keep the "Jarvis-Agents" system name; only
+    display/spoken surfaces use this brand. TS mirror:
+    ``jarvis/ui/web/frontend/src/lib/agentBrand.ts``.
+    """
+    name = (assistant_name or "").strip() or DEFAULT_ASSISTANT_NAME
+    return f"{name}-Agent"
+
+
+def agent_brand(config: Any) -> str:
+    """Return the agent-system display brand resolved from ``config``."""
+    return agent_brand_from_name(resolve_assistant_name(config))
+
+
 def resolve_assistant_name(config: Any) -> str:
     """Return the assistant's display name from ``config`` (see module docstring)."""
     # 1. Derive from the wake phrase (prefix stripped, title-cased).

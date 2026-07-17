@@ -63,6 +63,24 @@ def _tid(uuid_or_str: UUID | str | None) -> str | None:
     return str(uuid_or_str).replace("-", "")
 
 
+def _agent_display_name() -> str:
+    """Public display name for an agent node — the wake-word-derived brand.
+
+    "Ruben" -> "Ruben-Agent", for ANY configured wake word (2026-07-17
+    rebrand); resolution failures fall back to the neutral "Assistant-Agent".
+    Read per node creation so a wake-word change applies without a restart.
+    """
+    try:
+        from jarvis.brain.assistant_name import agent_brand
+        from jarvis.core.config import load_config
+
+        return agent_brand(load_config())
+    except Exception:  # noqa: BLE001 — a config hiccup must not drop the node
+        from jarvis.brain.assistant_name import agent_brand_from_name
+
+        return agent_brand_from_name("")
+
+
 @dataclass
 class AgentNode:
     """A node in the sub-agent tree (delivered 1:1 as JSON to the UI)."""
@@ -179,11 +197,12 @@ class JarvisAgentRegistry:
         if tid is None:
             return
         parent_tid = _tid(e.parent_trace_id)
-        # User-facing name is the neutral role only. provider/model are kept as
-        # structured fields (below) for internal aggregation, but never baked
-        # into the display name — the Jarvis-Agent board must not surface the
-        # underlying engine or model. `kind` stays the internal routing tag.
-        name = "Jarvis-Agent"
+        # User-facing name is the role only, branded with the wake-word-derived
+        # assistant name. provider/model are kept as structured fields (below)
+        # for internal aggregation, but never baked into the display name — the
+        # agent board must not surface the underlying engine or model. `kind`
+        # stays the internal routing tag.
+        name = _agent_display_name()
         self._nodes[tid] = AgentNode(
             trace_id=tid, kind="jarvis_agent", name=name, status="running",
             parent_trace_id=parent_tid,
@@ -367,9 +386,10 @@ class JarvisAgentRegistry:
             self._nodes[tid] = AgentNode(
                 trace_id=tid,
                 kind="jarvis_agent",
-                # Neutral role label only — no engine/provider/model/language in
-                # the name. The prompt (what it is doing) rides `utterance`.
-                name="Jarvis-Agent",
+                # Role label branded with the wake-word-derived assistant name —
+                # no engine/provider/model/language in the name. The prompt
+                # (what it is doing) rides `utterance`.
+                name=_agent_display_name(),
                 status="running",
                 started_ns=ts_ns,
                 utterance=payload.prompt,

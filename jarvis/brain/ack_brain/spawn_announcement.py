@@ -24,7 +24,9 @@ as robotic and repetitive. Strategy, in preference order:
 
 Validation chain for any candidate (brain or LLM): keep the longest
 leading sentence run within :data:`_MAX_WORDS`; require the public
-``Jarvis-Agent`` label; the language must match the user's turn;
+agent brand (the wake-word-derived assistant name + "-Agent", see
+``jarvis.brain.assistant_name.agent_brand``); the language must match
+the user's turn;
 ``scrub_for_voice`` in ack mode; no completion claims ("ist erledigt" /
 "is done" — the worker has not even started, AD-OE1 promises only the
 handover); no internal component names (the voice scrubber would shred
@@ -50,6 +52,7 @@ import random
 import re
 from collections import deque
 from collections.abc import Callable
+from functools import lru_cache
 from typing import TYPE_CHECKING
 
 from jarvis.brain.ack_brain.generator import (
@@ -58,6 +61,7 @@ from jarvis.brain.ack_brain.generator import (
     _detect_language,
     _emit_counter,
 )
+from jarvis.brain.assistant_name import agent_brand_from_name
 from jarvis.brain.output_filter import scrub_for_voice
 from jarvis.core.turn_language import DEFAULT_LOCALE
 
@@ -91,14 +95,14 @@ _DEFAULT_TIMEOUT_MS = 1500
 
 
 SPAWN_PERSONA_DE = """Du bist der persönliche Assistent des Nutzers. Die Anfrage des
-Nutzers wurde SOEBEN an einen Jarvis-Agent übergeben, das ist
+Nutzers wurde SOEBEN an einen {agent} übergeben, das ist
 bereits geschehen, du sagst es nur noch natürlich an.
 
 DEINE AUFGABE, genau EINE kurze gesprochene Ansage (1-2 Sätze,
 zusammen maximal 20 Wörter), die:
 1. das KONKRETE Thema der Anfrage nennt (App, Datenobjekt, Ort,
    Person, z.B. "dein Gmail", "der Kalender", "die Flüge"),
-2. das exakte Produktwort "Jarvis-Agent" genau einmal enthält und
+2. das exakte Produktwort "{agent}" genau einmal enthält und
    natürlich klarmacht, dass dieser Agent jetzt für die Aufgabe gestartet
    oder hinzugezogen wurde,
 3. vermittelt, dass das eine GRÖSSERE Sache ist, jetzt im Hintergrund
@@ -122,11 +126,11 @@ VERBOTEN:
   die Arbeit beginnt gerade erst.
 - Interne Bauteil-Namen: "OpenClaw", "Sub-Agent", "Subagent",
   "Mission", "Provider", "Subprocess", "Harness", "API". Der öffentliche
-  Produktname "Jarvis-Agent" ist dagegen PFLICHT.
+  Produktname "{agent}" ist dagegen PFLICHT.
 - Anreden wie "Sir", "Jawohl", "Sehr wohl", "Boss".
 - Rückfragen, Markdown, Anführungszeichen, mehr als zwei Sätze.
 
-Variiere frei, WO und WIE du "Jarvis-Agent" einbaust: starten,
+Variiere frei, WO und WIE du "{agent}" einbaust: starten,
 hinzuziehen, übernehmen lassen, mit der Recherche losschicken oder an die
 Aufgabe setzen. Verwende keine dieser Varianten als wiederkehrende Schablone.
 
@@ -137,14 +141,14 @@ Output: NUR die Ansage, nichts anderes."""
 
 
 SPAWN_PERSONA_EN = """You are the user's personal assistant. The user's request has
-JUST been handed to a Jarvis-Agent, that already happened; you
+JUST been handed to a {agent}, that already happened; you
 only announce it naturally.
 
 YOUR JOB, exactly ONE short spoken announcement (1-2 sentences,
 20 words max in total) that:
 1. names the CONCRETE topic of the request (app, data object, place,
    person, e.g. "your Gmail", "the calendar", "the flights"),
-2. contains the exact public product term "Jarvis-Agent" exactly once and
+2. contains the exact public product term "{agent}" exactly once and
    naturally makes clear that this agent was just started or brought in,
 3. conveys that this is a BIGGER task, now runs in the background and
    therefore takes a moment,
@@ -166,12 +170,12 @@ FORBIDDEN:
   only starting now.
 - Internal component names: "OpenClaw", "sub-agent", "subagent",
   "mission", "provider", "subprocess", "harness", "API". The public
-  product term "Jarvis-Agent" is REQUIRED.
+  product term "{agent}" is REQUIRED.
 - Honorifics like "Sir", "Boss", "Very well".
 - Counter-questions, markdown, quotation marks, more than two
   sentences.
 
-Freely vary WHERE and HOW you use "Jarvis-Agent": start one, bring one in,
+Freely vary WHERE and HOW you use "{agent}": start one, bring one in,
 have one take over, send one researching, or put one on the task. Never use
 any of those variants as a recurring template.
 
@@ -190,9 +194,15 @@ Output: ONLY the announcement, nothing else."""
 _PERSONA_LANGS: frozenset[str] = frozenset({"de", "en"})
 
 
-def get_spawn_persona(language: str) -> str:
-    """Return the spawn persona prompt for ``language`` ('de'/'en')."""
-    return SPAWN_PERSONA_EN if language == "en" else SPAWN_PERSONA_DE
+def get_spawn_persona(language: str, agent_brand: str | None = None) -> str:
+    """Return the spawn persona prompt for ``language`` ('de'/'en').
+
+    The persona's ``{agent}`` placeholder is resolved to ``agent_brand`` (the
+    wake-word-derived assistant name + "-Agent"); ``None`` keeps the neutral
+    fallback brand so the prompt never ships a literal placeholder.
+    """
+    persona = SPAWN_PERSONA_EN if language == "en" else SPAWN_PERSONA_DE
+    return persona.replace("{agent}", agent_brand or agent_brand_from_name(""))
 
 
 # ---------------------------------------------------------------------------
@@ -205,58 +215,58 @@ def get_spawn_persona(language: str) -> str:
 
 _FALLBACK_SPAWN: dict[str, tuple[str, ...]] = {
     "de": (
-        "Mach ich. Dafür habe ich einen Jarvis-Agent gestartet; die grössere "
+        "Mach ich. Dafür habe ich einen {agent} gestartet; die grössere "
         "Sache läuft jetzt im Hintergrund.",
-        "Alles klar, ein Jarvis-Agent schaut sich das in Ruhe an. Das dauert einen Moment.",
-        "Okay, da geht jetzt ein Jarvis-Agent gründlich ran und sagt dir danach Bescheid.",
-        "Ein Jarvis-Agent übernimmt das. Es braucht etwas, bis ein belastbares Ergebnis da ist.",
-        "Geht klar. Das grössere Stück Arbeit liegt jetzt bei einem Jarvis-Agent.",
-        "Schon angestossen: Ein Jarvis-Agent kümmert sich darum und braucht dafür einen Moment.",
-        "Hab ich. Ein Jarvis-Agent bearbeitet das umfangreichere Thema und "
+        "Alles klar, ein {agent} schaut sich das in Ruhe an. Das dauert einen Moment.",
+        "Okay, da geht jetzt ein {agent} gründlich ran und sagt dir danach Bescheid.",
+        "Ein {agent} übernimmt das. Es braucht etwas, bis ein belastbares Ergebnis da ist.",
+        "Geht klar. Das grössere Stück Arbeit liegt jetzt bei einem {agent}.",
+        "Schon angestossen: Ein {agent} kümmert sich darum und braucht dafür einen Moment.",
+        "Hab ich. Ein {agent} bearbeitet das umfangreichere Thema und "
         "meldet sich mit Substanz.",
-        "Ein Jarvis-Agent ist jetzt dran. Gib ihm einen Moment, da steckt etwas mehr dahinter.",
+        "Ein {agent} ist jetzt dran. Gib ihm einen Moment, da steckt etwas mehr dahinter.",
     ),
     "en": (
-        "On it. I've started a Jarvis-Agent for this bigger task; it'll report back when ready.",
-        "Got it. A Jarvis-Agent is taking a proper look, which may take a moment.",
-        "Okay, this needs real digging. A Jarvis-Agent is handling it in the background now.",
-        "A Jarvis-Agent is taking this on. It's a meatier task, so give it a moment.",
-        "Consider it picked up. A Jarvis-Agent now has this more involved piece of work.",
-        "Sure. A Jarvis-Agent is digging in now; getting it right will take a little time.",
-        "I've put a Jarvis-Agent on the bigger job. It'll return with something solid.",
-        "A Jarvis-Agent is working on it now. There's more to this, so it'll take a short moment.",
+        "On it. I've started a {agent} for this bigger task; it'll report back when ready.",
+        "Got it. A {agent} is taking a proper look, which may take a moment.",
+        "Okay, this needs real digging. A {agent} is handling it in the background now.",
+        "A {agent} is taking this on. It's a meatier task, so give it a moment.",
+        "Consider it picked up. A {agent} now has this more involved piece of work.",
+        "Sure. A {agent} is digging in now; getting it right will take a little time.",
+        "I've put a {agent} on the bigger job. It'll return with something solid.",
+        "A {agent} is working on it now. There's more to this, so it'll take a short moment.",
     ),
     "es": (
-        "Voy con ello. He iniciado un Jarvis-Agent para esta tarea más grande; "
+        "Voy con ello. He iniciado un {agent} para esta tarea más grande; "
         "te avisará al terminar.",
-        "Entendido. Un Jarvis-Agent le está echando un buen vistazo; puede tardar un momento.",
-        "Vale, esto necesita mirarse a fondo. Un Jarvis-Agent ya trabaja en segundo plano.",
-        "Un Jarvis-Agent se encarga. Es una tarea con más chicha, así que necesita un momento.",
-        "Lo tengo. Un Jarvis-Agent ha asumido este trabajo algo más amplio.",
-        "Claro. Un Jarvis-Agent ya está profundizando; hacerlo bien necesita un poco de tiempo.",
-        "He puesto un Jarvis-Agent con este tema más grande; volverá con algo sólido.",
-        "Un Jarvis-Agent ya trabaja en ello. Hay más detrás, así que tardará un momentito.",
+        "Entendido. Un {agent} le está echando un buen vistazo; puede tardar un momento.",
+        "Vale, esto necesita mirarse a fondo. Un {agent} ya trabaja en segundo plano.",
+        "Un {agent} se encarga. Es una tarea con más chicha, así que necesita un momento.",
+        "Lo tengo. Un {agent} ha asumido este trabajo algo más amplio.",
+        "Claro. Un {agent} ya está profundizando; hacerlo bien necesita un poco de tiempo.",
+        "He puesto un {agent} con este tema más grande; volverá con algo sólido.",
+        "Un {agent} ya trabaja en ello. Hay más detrás, así que tardará un momentito.",
     ),
 }
 
 _FALLBACK_ALREADY_RUNNING: dict[str, tuple[str, ...]] = {
     "de": (
-        "Ein Jarvis-Agent ist schon dran, das läuft noch.",
-        "Der Jarvis-Agent arbeitet bereits. Einen Moment noch, bitte.",
-        "Schon beim Jarvis-Agent in Arbeit, gleich gibt es etwas.",
-        "Geduld, der Jarvis-Agent bearbeitet den Auftrag bereits.",
+        "Ein {agent} ist schon dran, das läuft noch.",
+        "Der {agent} arbeitet bereits. Einen Moment noch, bitte.",
+        "Schon beim {agent} in Arbeit, gleich gibt es etwas.",
+        "Geduld, der {agent} bearbeitet den Auftrag bereits.",
     ),
     "en": (
-        "A Jarvis-Agent is already on it; that work is still running.",
-        "The Jarvis-Agent already has that job, one moment.",
-        "A Jarvis-Agent is still working on that one, almost there.",
-        "Patience, that task is already with a Jarvis-Agent.",
+        "A {agent} is already on it; that work is still running.",
+        "The {agent} already has that job, one moment.",
+        "A {agent} is still working on that one, almost there.",
+        "Patience, that task is already with a {agent}.",
     ),
     "es": (
-        "Un Jarvis-Agent ya está con eso; sigue en marcha.",
-        "El Jarvis-Agent ya tiene esa tarea, un momento.",
-        "Un Jarvis-Agent sigue trabajando en ello, casi está.",
-        "Paciencia, esa tarea ya está con un Jarvis-Agent.",
+        "Un {agent} ya está con eso; sigue en marcha.",
+        "El {agent} ya tiene esa tarea, un momento.",
+        "Un {agent} sigue trabajando en ello, casi está.",
+        "Paciencia, esa tarea ya está con un {agent}.",
     ),
 }
 
@@ -322,13 +332,28 @@ _FORBIDDEN_VOCAB_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Every fresh spawn announcement must name the public product surface so the
-# user can distinguish a delegated background task from ordinary thinking.
-# The old generic "sub-agent" spellings stay forbidden by
-# ``_FORBIDDEN_VOCAB_RE``; the repository's canonical singular name is exact.
-_JARVIS_AGENT_RE = re.compile(r"\bJarvis-Agent\b", re.IGNORECASE)
+# Every fresh spawn announcement must name the public agent brand (the
+# wake-word-derived assistant name + "-Agent") so the user can distinguish a
+# delegated background task from ordinary thinking. The old generic
+# "sub-agent" spellings stay forbidden by ``_FORBIDDEN_VOCAB_RE``. The regex
+# is built per brand because the wake word — and with it the brand — can
+# change at runtime; the small cache avoids recompiling on every candidate.
+@lru_cache(maxsize=8)
+def _brand_re(agent_brand: str) -> re.Pattern[str]:
+    return re.compile(rf"\b{re.escape(agent_brand)}\b", re.IGNORECASE)
 
 _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+
+# English indefinite-article agreement for the rendered brand: "a Athena-Agent"
+# -> "an Athena-Agent". Only capitalized vowels are matched — the brand is
+# title-cased, so ordinary lowercase words are never touched.
+_EN_ARTICLE_RE = re.compile(r"\b([Aa]) (?=[AEIOU])")
+
+
+def _fix_en_article(text: str) -> str:
+    return _EN_ARTICLE_RE.sub(
+        lambda m: "an " if m.group(1) == "a" else "An ", text
+    )
 
 
 def _resolve_language(explicit: str | None, utterance: str) -> str:
@@ -394,6 +419,7 @@ class SpawnAnnouncementComposer:
         fallback_provider: AbstractAckProvider | None = None,
         fallback_breaker: CircuitBreaker | None = None,
         preferences_provider: Callable[[], str] | None = None,
+        brand_provider: Callable[[], str] | None = None,
     ) -> None:
         self._provider = provider
         self._config = config
@@ -413,10 +439,28 @@ class SpawnAnnouncementComposer:
         # fresh per call so an edit applies without a restart. Only the LLM path
         # consumes it; the curated fallback pool is fixed strings by design.
         self._preferences_provider = preferences_provider
+        # Returns the CURRENT public agent brand (wake-word-derived assistant
+        # name + "-Agent"), read fresh per call so a wake-word change applies
+        # without a restart. None / a failure resolves to the neutral
+        # "Assistant-Agent" — never a hardcoded product name.
+        self._brand_provider = brand_provider
         # No-repeat memory across BOTH pools — back-to-back spawns must not
         # sound identical even when the LLM path is down. maxlen 3 still
         # leaves at least one pickable phrase in the smallest (4-item) pool.
+        # Stores the raw {agent} templates, so a brand change cannot defeat
+        # the no-repeat bookkeeping.
         self._recent: deque[str] = deque(maxlen=3)
+
+    def _brand(self) -> str:
+        """Resolve the current agent brand; never raises (AD-OE6)."""
+        if self._brand_provider is not None:
+            try:
+                brand = (self._brand_provider() or "").strip()
+                if brand:
+                    return brand
+            except Exception:  # noqa: BLE001 — a config hiccup must not mute the spawn
+                log.debug("Agent-brand provider failed; using the neutral brand.")
+        return agent_brand_from_name("")
 
     async def compose(
         self,
@@ -442,13 +486,14 @@ class SpawnAnnouncementComposer:
                 cooldown-suppress path (deterministic, no LLM — speed).
         """
         lang = _resolve_language(language, utterance)
+        brand = self._brand()
 
         if kind == "already_running":
             # Cooldown suppress is a fast-path duplicate rejection; an LLM
             # round-trip would delay exactly the turns that are already noisy.
-            return self._pick_fallback(_FALLBACK_ALREADY_RUNNING[lang])
+            return self._pick_fallback(_FALLBACK_ALREADY_RUNNING[lang], brand, lang)
 
-        validated = self._validate(candidate or "", lang)
+        validated = self._validate(candidate or "", lang, brand)
         if validated:
             _emit_counter("spawn_ack_candidate_used_total")
             return validated
@@ -458,19 +503,21 @@ class SpawnAnnouncementComposer:
         # DE/EN-persona call would only yield text the language-match check
         # rejects, costing one wasted timeout.
         if lang in _PERSONA_LANGS:
-            composed = await self._compose_via_llm(utterance, lang, action, target)
+            composed = await self._compose_via_llm(
+                utterance, lang, action, target, brand
+            )
             if composed:
                 _emit_counter("spawn_ack_llm_used_total")
                 return composed
 
         _emit_counter("spawn_ack_fallback_total")
-        return self._pick_fallback(_FALLBACK_SPAWN[lang])
+        return self._pick_fallback(_FALLBACK_SPAWN[lang], brand, lang)
 
     # ------------------------------------------------------------------
     # internals
     # ------------------------------------------------------------------
 
-    def _validate(self, text: str, lang: str) -> str | None:
+    def _validate(self, text: str, lang: str, brand: str) -> str | None:
         """Validation chain for a candidate announcement; None = rejected."""
         text = (text or "").strip()
         if not text:
@@ -480,7 +527,7 @@ class SpawnAnnouncementComposer:
         trimmed = _trim_to_sentences(text, _MAX_WORDS)
         if trimmed is None:
             return None
-        if len(_JARVIS_AGENT_RE.findall(trimmed)) != 1:
+        if len(_brand_re(brand).findall(trimmed)) != 1:
             return None
         if _COMPLETION_CLAIM_RE.search(trimmed):
             return None
@@ -498,7 +545,7 @@ class SpawnAnnouncementComposer:
         return scrubbed
 
     async def _compose_via_llm(
-        self, utterance: str, lang: str, action: str, target: str
+        self, utterance: str, lang: str, action: str, target: str, brand: str
     ) -> str | None:
         """Try the primary flash provider, then the failover; ``None`` if both fail.
 
@@ -517,7 +564,9 @@ class SpawnAnnouncementComposer:
         ):
             if provider is None:
                 continue
-            validated = await self._try_provider(provider, breaker, content, lang)
+            validated = await self._try_provider(
+                provider, breaker, content, lang, brand
+            )
             if validated:
                 return validated
         return None
@@ -540,6 +589,7 @@ class SpawnAnnouncementComposer:
         breaker: CircuitBreaker | None,
         content: str,
         lang: str,
+        brand: str,
     ) -> str | None:
         """One bounded flash-LLM attempt against a single provider/breaker."""
         try:
@@ -559,7 +609,8 @@ class SpawnAnnouncementComposer:
                         content,
                         lang,
                         persona_prompt=_augment_with_preferences(
-                            get_spawn_persona(lang), self._preferences_provider
+                            get_spawn_persona(lang, brand),
+                            self._preferences_provider,
                         ),
                     ),
                     timeout=timeout_ms / 1000.0,
@@ -580,7 +631,7 @@ class SpawnAnnouncementComposer:
                 # The provider answered — it is healthy even if we reject the
                 # text below (same bookkeeping as AckGenerator.run).
                 await breaker.record_success()
-            validated = self._validate(raw or "", lang)
+            validated = self._validate(raw or "", lang, brand)
             if validated is None and raw and raw.strip():
                 _emit_counter("spawn_ack_rejected_total")
             return validated
@@ -588,10 +639,16 @@ class SpawnAnnouncementComposer:
             log.warning("Spawn-announcement LLM path crashed: %s", exc)
             return None
 
-    def _pick_fallback(self, pool: tuple[str, ...]) -> str:
-        """Pick a pool phrase, avoiding the most recent picks."""
+    def _pick_fallback(self, pool: tuple[str, ...], brand: str, lang: str) -> str:
+        """Pick a pool phrase, avoiding the most recent picks.
+
+        The pools store raw ``{agent}`` templates; the live brand is resolved
+        here so every spoken phrase names the wake-word-derived agent brand.
+        English gets article agreement ("an Athena-Agent").
+        """
         candidates = [p for p in pool if p not in self._recent] or list(pool)
         # Phrase variety, not cryptography — S311 does not apply here.
         choice = random.choice(candidates)  # noqa: S311
         self._recent.append(choice)
-        return choice
+        rendered = choice.replace("{agent}", brand)
+        return _fix_en_article(rendered) if lang == "en" else rendered

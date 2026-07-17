@@ -195,8 +195,10 @@ ACHIEVEMENTS: list[AchievementSpec] = [
     ),
     AchievementSpec(
         id="openclaw_summoner",
-        title="Jarvis-Agent Summoner",
-        description="First successful Jarvis-Agent spawn.",
+        # Name-free wording on purpose: unlocked titles are persisted, so they
+        # must not freeze a wake-word-derived brand (2026-07-17 rebrand).
+        title="Agent Summoner",
+        description="First successful background-agent spawn.",
         tier="mastery",
         evaluator=_eval_openclaw_summoner,
     ),
@@ -231,7 +233,7 @@ ACHIEVEMENTS: list[AchievementSpec] = [
     AchievementSpec(
         id="ten_x_engineer",
         title="10x Engineer",
-        description="Over 10 Jarvis-Agent hours in the last 7 days.",
+        description="Over 10 background-agent hours in the last 7 days.",
         tier="mastery",
         evaluator=_eval_ten_x_engineer,
     ),

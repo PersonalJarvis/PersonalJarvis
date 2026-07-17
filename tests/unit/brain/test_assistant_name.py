@@ -76,3 +76,23 @@ def test_falls_back_on_none_config():
 
 def test_whitespace_only_phrase_falls_back():
     assert resolve_assistant_name(_cfg(wake_phrase="   ")) == DEFAULT_ASSISTANT_NAME
+
+
+# ----------------------------------------------------------------------
+# Agent brand (2026-07-17 rebrand) — "<AssistantName>-Agent", any wake word
+# ----------------------------------------------------------------------
+
+def test_agent_brand_follows_any_wake_word():
+    from jarvis.brain.assistant_name import agent_brand
+
+    assert agent_brand(_cfg(wake_phrase="Hey Ruben")) == "Ruben-Agent"
+    assert agent_brand(_cfg(wake_phrase="Harald")) == "Harald-Agent"
+    assert agent_brand(_cfg(wake_phrase="ok athena")) == "Athena-Agent"
+
+
+def test_agent_brand_neutral_fallback_is_never_a_product_name():
+    from jarvis.brain.assistant_name import agent_brand, agent_brand_from_name
+
+    assert agent_brand(None) == f"{DEFAULT_ASSISTANT_NAME}-Agent"
+    assert agent_brand_from_name("") == f"{DEFAULT_ASSISTANT_NAME}-Agent"
+    assert "Jarvis" not in agent_brand_from_name("  ")

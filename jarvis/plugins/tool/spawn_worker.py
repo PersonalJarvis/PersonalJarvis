@@ -30,6 +30,7 @@ UI/Telemetrie erhalten — der Mission-Decomposer nutzt sie nicht direkt
 from __future__ import annotations
 
 import asyncio
+import copy
 import logging
 import re
 import time
@@ -364,7 +365,7 @@ class SpawnWorkerTool:
                     "exact request: name the concrete topic and naturally "
                     "convey that it runs on the side and may take a moment. "
                     "It MUST contain the exact public product term "
-                    "'Jarvis-Agent' exactly once and make clear that one was "
+                    "'{agent}' exactly once and make clear that one was "
                     "just started or brought in. Vary how and where that fact "
                     "is expressed; do not use a fixed sentence template. "
                     "NEVER a generic stock phrase, never claim the task is "
@@ -391,6 +392,7 @@ class SpawnWorkerTool:
         kontrollierer: Any | None = None,
         kontrollierer_resolver: KontrollierersResolver | None = None,
         announcer: Any | None = None,
+        agent_brand: str | None = None,
     ) -> None:
         """Wires the tool to a MissionManager directly or via lazy resolver.
 
@@ -409,6 +411,11 @@ class SpawnWorkerTool:
         ``jarvis.brain.factory.build_spawn_announcer``). When omitted, a
         fallback-only :class:`SpawnAnnouncementComposer` is used so the
         spoken confirmation is guaranteed even without the flash-LLM.
+
+        ``agent_brand`` is the public agent-system display brand rendered
+        into the ``spoken_ack`` schema contract (wake-word-derived assistant
+        name + "-Agent"). ``None`` resolves it from the live config; tests
+        pass an explicit brand so they never depend on the host's config.
         """
         if manager is None and manager_resolver is None:
             raise ValueError(
@@ -422,6 +429,29 @@ class SpawnWorkerTool:
         self._announcer = (
             announcer if announcer is not None else SpawnAnnouncementComposer()
         )
+        # Render the agent brand (wake-word-derived assistant name + "-Agent")
+        # into the spoken_ack contract, per instance so the class attribute
+        # stays a template. Rendered once per brain build; the composer
+        # validates against the LIVE brand per call, so a mid-session
+        # wake-word change degrades gracefully (stale candidate rejected ->
+        # the flash-LLM/pool recomposes with the fresh brand).
+        brand = agent_brand
+        if not brand:
+            try:
+                from jarvis.brain.assistant_name import agent_brand as _resolve_brand
+                from jarvis.core.config import load_config
+
+                brand = _resolve_brand(load_config())
+            except Exception:  # noqa: BLE001 — schema rendering must not break wiring
+                from jarvis.brain.assistant_name import agent_brand_from_name
+
+                brand = agent_brand_from_name("")
+        schema = copy.deepcopy(type(self).schema)
+        spoken_ack = schema["properties"]["spoken_ack"]
+        spoken_ack["description"] = spoken_ack["description"].replace(
+            "{agent}", brand
+        )
+        self.schema = schema
         # Cooldown LIVENESS gate (2026-05-27 hardening audit). Two pieces of
         # state, both reset on tool instantiation so a brain rebuild starts
         # clean:

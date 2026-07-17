@@ -29,10 +29,19 @@ import jarvis.plugins.tool.spawn_worker as spawn_worker_module
 from jarvis.brain.ack_brain.spawn_announcement import (
     _FALLBACK_ALREADY_RUNNING,
     _FALLBACK_SPAWN,
+    _fix_en_article,
 )
 from jarvis.core.bus import EventBus
 from jarvis.core.protocols import ExecutionContext
 from jarvis.plugins.tool.spawn_worker import SpawnWorkerTool
+
+
+def _rendered(pool: tuple[str, ...]) -> set[str]:
+    """Pool templates as spoken with the NEUTRAL brand (no brand provider is
+    wired on a bare default announcer — never a trademarked product name)."""
+    return {
+        _fix_en_article(p.replace("{agent}", "Assistant-Agent")) for p in pool
+    }
 
 
 class _FakeMissionManager:
@@ -177,7 +186,7 @@ async def test_default_announcer_yields_fallback_pool_phrase_de() -> None:
     )
     await _drain_background_tasks()
 
-    assert result.output in _FALLBACK_SPAWN["de"]
+    assert result.output in _rendered(_FALLBACK_SPAWN["de"])
 
 
 @pytest.mark.asyncio
@@ -194,7 +203,7 @@ async def test_default_announcer_yields_fallback_pool_phrase_en() -> None:
     )
     await _drain_background_tasks()
 
-    assert result.output in _FALLBACK_SPAWN["en"]
+    assert result.output in _rendered(_FALLBACK_SPAWN["en"])
 
 
 @pytest.mark.asyncio
@@ -208,7 +217,7 @@ async def test_default_announcer_cooldown_phrase_is_bilingual() -> None:
         _ctx(),
     )
 
-    assert result.output in _FALLBACK_ALREADY_RUNNING["en"]
+    assert result.output in _rendered(_FALLBACK_ALREADY_RUNNING["en"])
 
 
 @pytest.mark.asyncio
@@ -418,6 +427,22 @@ def test_schema_offers_spoken_ack_and_language() -> None:
     assert "language" in props
     # Optional fields — the force-spawn path calls without them.
     assert SpawnWorkerTool.schema["required"] == ["utterance", "action"]
+    # The CLASS attribute is the template; instances render the live brand.
     description = props["spoken_ack"]["description"]
     assert "stock phrase" in description
-    assert "'Jarvis-Agent' exactly once" in description
+    assert "'{agent}' exactly once" in description
+
+
+def test_instance_schema_renders_the_wake_word_brand() -> None:
+    """The rendered spoken_ack contract names the CONFIGURED brand — for ANY
+    wake-word-derived name, never a fixed product name or a raw placeholder."""
+    tool = SpawnWorkerTool(
+        bus=EventBus(), manager=_FakeMissionManager(), agent_brand="Nova-Agent"
+    )
+    description = tool.schema["properties"]["spoken_ack"]["description"]
+    assert "'Nova-Agent' exactly once" in description
+    assert "{agent}" not in description
+    # The class template must stay unrendered (shared across instances).
+    assert "'{agent}' exactly once" in (
+        SpawnWorkerTool.schema["properties"]["spoken_ack"]["description"]
+    )

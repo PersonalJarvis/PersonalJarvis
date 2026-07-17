@@ -888,12 +888,16 @@ def _jarvis_agent_section_health(cfg: Any) -> SectionHealth:
     2026-07-07 it distinguishes degraded (fallback carries) from error
     (nothing reachable).
     """
+    from jarvis.brain.assistant_name import agent_brand
+
+    # Display brand follows the wake-word-derived assistant name (2026-07-17).
+    brand = agent_brand(cfg)
     provider = _selected_jarvis_agent_provider(cfg)
     if provider is None:
         return SectionHealth(
             status=_section_health.NEEDS_SETUP,
             reason="no_active",
-            detail="No Jarvis-Agent worker selected",
+            detail=f"No {brand} worker selected",
             subject_id=None,
         )
     spec = get_spec(provider)
@@ -904,7 +908,7 @@ def _jarvis_agent_section_health(cfg: Any) -> SectionHealth:
         return SectionHealth(
             status=_section_health.OK,
             reason="ok",
-            detail=f"Jarvis-Agent worker: {label}",
+            detail=f"{brand} worker: {label}",
             subject_id=provider,
         )
     # The selected worker cannot run right now. Distinguish "a fallback
@@ -921,7 +925,7 @@ def _jarvis_agent_section_health(cfg: Any) -> SectionHealth:
             status=_section_health.NEEDS_SETUP,
             reason="degraded",
             detail=(
-                f"Jarvis-Agent worker '{label}' is unavailable — missions run on "
+                f"{brand} worker '{label}' is unavailable — missions run on "
                 f"{families[0]} until it is reconnected"
             ),
             subject_id=provider,
@@ -930,7 +934,7 @@ def _jarvis_agent_section_health(cfg: Any) -> SectionHealth:
         status=_section_health.ERROR,
         reason="no_provider",
         detail=(
-            f"No Jarvis-Agent provider is reachable — missions will fail. "
+            f"No {brand} provider is reachable — missions will fail. "
             f"Reconnect '{label}' or add an API key."
         ),
         subject_id=provider,

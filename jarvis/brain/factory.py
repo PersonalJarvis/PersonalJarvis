@@ -1911,6 +1911,15 @@ def build_spawn_announcer(jcfg: Any | None = None) -> Any:
         SpawnAnnouncementComposer,
     )
 
+    def _live_agent_brand() -> str:
+        # Read fresh per spawn so a wake-word change re-brands the spoken
+        # announcement without a restart; resolution never raises upstream
+        # (the composer falls back to the neutral brand on any failure).
+        from jarvis.brain.assistant_name import agent_brand
+        from jarvis.core.config import load_config
+
+        return agent_brand(load_config())
+
     try:
         if jcfg is None:
             from jarvis.core.config import load_config
@@ -1924,13 +1933,13 @@ def build_spawn_announcer(jcfg: Any | None = None) -> Any:
             log.info(
                 "Spawn-Announcer: flash path disabled — fallback pool only."
             )
-            return SpawnAnnouncementComposer()
+            return SpawnAnnouncementComposer(brand_provider=_live_agent_brand)
 
         from jarvis.brain.ack_brain import CircuitBreaker
 
         provider = _build_flash_provider(jcfg, ack_cfg)
         if provider is None:
-            return SpawnAnnouncementComposer()
+            return SpawnAnnouncementComposer(brand_provider=_live_agent_brand)
         breaker = CircuitBreaker(
             threshold=ack_cfg.circuit_breaker_threshold,
             cooldown_s=ack_cfg.circuit_breaker_cooldown_s,
@@ -1950,12 +1959,13 @@ def build_spawn_announcer(jcfg: Any | None = None) -> Any:
             fallback_provider=fb_provider,
             fallback_breaker=fb_breaker,
             preferences_provider=_flash_preferences_provider(jcfg),
+            brand_provider=_live_agent_brand,
         )
     except Exception as exc:  # noqa: BLE001
         log.warning(
             "build_spawn_announcer() failed: %s — fallback pool only.", exc
         )
-        return SpawnAnnouncementComposer()
+        return SpawnAnnouncementComposer(brand_provider=_live_agent_brand)
 
 
 def build_readback_composer(jcfg: Any | None = None) -> Any:

@@ -202,7 +202,7 @@ def _tool_incapable_message(model: str, provider: str, *, detail: str = "") -> s
     msg = (
         f"worker model {model!r} (provider {provider!r}) cannot call tools, "
         "and missions deliver work exclusively through tool calls. Pick a "
-        "tool-capable model under Settings -> Jarvis-Agents (brain.worker), "
+        "tool-capable model under Settings -> Agents (brain.worker), "
         "then retry the mission."
     )
     if detail:

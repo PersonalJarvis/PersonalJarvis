@@ -6362,11 +6362,22 @@ class BrainManager:
                 outcome_text = getattr(event, "text", "") or ""
                 context_label = "on-screen-action"
             elif kind == "subagent":
+                # Label with the wake-word-derived brand: the model quotes this
+                # context in spoken answers, so a fixed product name would leak.
+                try:
+                    from jarvis.brain.assistant_name import agent_brand
+                    from jarvis.core.config import load_config
+
+                    brand = agent_brand(load_config())
+                except Exception:  # noqa: BLE001 — labeling must not break the mirror
+                    from jarvis.brain.assistant_name import agent_brand_from_name
+
+                    brand = agent_brand_from_name("")
                 outcome_text = (
-                    "Jarvis-Agent mission result: "
+                    f"{brand} mission result: "
                     f"{getattr(event, 'text', '') or ''}"
                 )
-                context_label = "Jarvis-Agent mission"
+                context_label = f"{brand} mission"
             else:
                 return
             self._append_cu_outcome_to_history(

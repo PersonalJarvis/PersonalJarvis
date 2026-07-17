@@ -396,9 +396,16 @@ async def test_manager_ignores_non_cu_tool_completion() -> None:
 
 
 @pytest.mark.asyncio
-async def test_manager_retains_signed_mission_result_for_follow_up() -> None:
+async def test_manager_retains_signed_mission_result_for_follow_up(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from jarvis.core.events import AnnouncementRequested
 
+    # Deterministic brand: the history label follows the wake-word-derived
+    # assistant name for ANY configured value — never the host's live config.
+    monkeypatch.setattr(
+        "jarvis.brain.assistant_name.agent_brand", lambda _cfg: "Nova-Agent"
+    )
     mgr = _make_manager(_SlowHarnessExecutor(), _FakeBus())
     await mgr._on_cu_tool_completion(AnnouncementRequested(
         text="The research report is ready.",
@@ -412,7 +419,7 @@ async def test_manager_retains_signed_mission_result_for_follow_up() -> None:
 
     assert mgr._history
     content = str(mgr._history[-1].content)
-    assert "Jarvis-Agent mission result" in content
+    assert "Nova-Agent mission result" in content
     assert "019f5ca2-e30f" in content
     assert "result_uri" in content
 

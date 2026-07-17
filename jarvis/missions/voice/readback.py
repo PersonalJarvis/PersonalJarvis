@@ -193,13 +193,13 @@ FAILURE_REASON_PHRASES: Final[dict[str, dict[str, str]]] = {
         "empty_diff": "Es wurden keine Dateien geschrieben.",  # i18n-allow
         "critic_unavailable": "Der Prüfer ist abgestürzt, die Arbeit liegt im Worktree.",  # i18n-allow
         "worktree_setup_failed": "Ich konnte keinen Arbeitsbereich anlegen.",  # i18n-allow
-        "git_missing": "Jarvis-Agents brauchen eine Git-Installation im PATH.",  # i18n-allow
+        "git_missing": "{agents} brauchen eine Git-Installation im PATH.",  # i18n-allow
         "git_not_a_repository": (
-            "Jarvis-Agents brauchen einen Git-Checkout, bitte über den "  # i18n-allow
+            "{agents} brauchen einen Git-Checkout, bitte über den "  # i18n-allow
             "Git-Installer installieren, nicht als ZIP."  # i18n-allow
         ),
         "source_checkout_unavailable": (
-            "Diese Jarvis-Agent-Aufgabe braucht den "  # i18n-allow: German TTS
+            "Diese {agent}-Aufgabe braucht den "  # i18n-allow: German TTS
             "Quellcode-Checkout, der in dieser "  # i18n-allow: German TTS
             "Installation nicht verfügbar ist."  # i18n-allow: German TTS
         ),
@@ -227,13 +227,13 @@ FAILURE_REASON_PHRASES: Final[dict[str, dict[str, str]]] = {
             "The reviewer crashed; the work is preserved in the worktree."
         ),
         "worktree_setup_failed": "I could not create a workspace.",
-        "git_missing": "Jarvis-Agents require git to be installed and on PATH.",
+        "git_missing": "{agents} require git to be installed and on PATH.",
         "git_not_a_repository": (
-            "Jarvis-Agents require a git checkout (install via the "
+            "{agents} require a git checkout (install via the "
             "git-based installer, not a ZIP download)."
         ),
         "source_checkout_unavailable": (
-            "This Jarvis-Agent task requires the source checkout, which is "
+            "This {agent} task requires the source checkout, which is "
             "not available in this installation."
         ),
         "provider_auth": "The AI provider sign-in is invalid or expired.",
@@ -246,18 +246,41 @@ FAILURE_REASON_PHRASES: Final[dict[str, dict[str, str]]] = {
     # rest of the table is de/en pending a broader translation pass; a missing
     # key here falls back via ``.get(language, {})``.
     "es": {
-        "git_missing": "Jarvis-Agents necesitan que git esté instalado y en el PATH.",  # i18n-allow: Spanish TTS product-surface phrase
+        "git_missing": "{agents} necesitan que git esté instalado y en el PATH.",  # i18n-allow: Spanish TTS product-surface phrase
         "git_not_a_repository": (
-            "Jarvis-Agents necesitan una copia de git (instala con el "  # i18n-allow: Spanish TTS product-surface phrase
+            "{agents} necesitan una copia de git (instala con el "  # i18n-allow: Spanish TTS product-surface phrase
             "instalador de git, no con una descarga ZIP)."  # i18n-allow: Spanish TTS product-surface phrase
         ),
         "source_checkout_unavailable": (
-            "Esta tarea de Jarvis-Agent necesita el "  # i18n-allow: Spanish TTS
+            "Esta tarea de {agent} necesita el "  # i18n-allow: Spanish TTS
             "repositorio del código fuente, que no está "  # i18n-allow: Spanish TTS
             "disponible en esta instalación."  # i18n-allow: Spanish TTS
         ),
     },
 }
+
+
+def render_agent_brand(phrase: str) -> str:
+    """Resolve the ``{agent}``/``{agents}`` placeholders to the live brand.
+
+    The public agent-system name follows the wake-word-derived assistant name
+    ("Ruben" -> "Ruben-Agent") for ANY configured wake word (2026-07-17
+    rebrand). Read fresh per call so a wake-word change applies without a
+    restart; any resolution failure falls back to the neutral
+    "Assistant-Agent" — a spoken phrase must never carry a raw placeholder.
+    """
+    if "{agent" not in phrase:
+        return phrase
+    try:
+        from jarvis.brain.assistant_name import agent_brand
+        from jarvis.core.config import load_config
+
+        brand = agent_brand(load_config())
+    except Exception:  # noqa: BLE001 — never break a voice readback on config trouble
+        from jarvis.brain.assistant_name import agent_brand_from_name
+
+        brand = agent_brand_from_name("")
+    return phrase.replace("{agents}", f"{brand}s").replace("{agent}", brand)
 
 
 def failure_phrase_key(reason: str, error_class: str | None) -> str:
@@ -377,7 +400,9 @@ class MissionReadback:
             return self.render_crash_recovery(language=language)
         if short_reason == "interrupted":
             phrase = FAILURE_REASON_PHRASES.get(language, {}).get("interrupted", "")
-            return _truncate(phrase) if phrase else self.render_crash_recovery(language=language)
+            if phrase:
+                return _truncate(render_agent_brand(phrase))
+            return self.render_crash_recovery(language=language)
         template = self._pick("failed", language)
         if not template:
             return ""
@@ -385,6 +410,8 @@ class MissionReadback:
         # raw snake_case token is never spoken. Shared with the announcer via
         # FAILURE_REASON_PHRASES. Unmapped reasons fall back to the raw text.
         mapped = FAILURE_REASON_PHRASES.get(language, {}).get(short_reason)
+        if mapped:
+            mapped = render_agent_brand(mapped)
         safe_reason = mapped if mapped else (reason or "unbekannter Fehler").strip()  # i18n-allow: German TTS fallback phrase
         max_insert = MAX_VOICE_CHARS - len(template) + len("{reason}")
         if len(safe_reason) > max_insert:

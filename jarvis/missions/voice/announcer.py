@@ -37,7 +37,11 @@ from typing import TYPE_CHECKING, Literal
 from jarvis.brain.output_filter import scrub_for_voice
 from jarvis.core.bus import EventBus
 from jarvis.core.events import AnnouncementRequested
-from jarvis.missions.voice.readback import FAILURE_REASON_PHRASES, failure_phrase_key
+from jarvis.missions.voice.readback import (
+    FAILURE_REASON_PHRASES,
+    failure_phrase_key,
+    render_agent_brand,
+)
 from jarvis.voice.contextual_readback import render_readback
 
 if TYPE_CHECKING:
@@ -289,10 +293,10 @@ class MissionAnnouncer:
             en_map = FAILURE_REASON_PHRASES["en"]
             if lang == "de":
                 tail = de_map.get(short_reason, f"Grund: {reason}" if reason else "")  # i18n-allow
-                text = f"Die Mission ist fehlgeschlagen. {tail}".rstrip()  # i18n-allow: real German TTS voice output
+                text = f"Die Mission ist fehlgeschlagen. {render_agent_brand(tail)}".rstrip()  # i18n-allow: real German TTS voice output
             else:
                 tail = en_map.get(short_reason, f"Reason: {reason}" if reason else "")
-                text = f"The mission failed. {tail}".rstrip()
+                text = f"The mission failed. {render_agent_brand(tail)}".rstrip()
             # AD-OE5 (2026-05-29): "speak ONLY at the next turn-boundary, never
             # interrupt mid-utterance". A failed background mission must NOT
             # barge in over current speech — combined with the silent spawn-ACK

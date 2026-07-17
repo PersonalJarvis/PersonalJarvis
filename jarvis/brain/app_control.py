@@ -569,6 +569,10 @@ def _switch_stt(provider: str, *, cfg: Any, persist: bool, old: str | None) -> d
 async def _switch_subagent(
     provider: str, *, cfg: Any, persist: bool, old: str | None
 ) -> dict[str, Any]:
+    from jarvis.brain.assistant_name import agent_brand
+
+    # Spoken/displayed brand follows the wake-word-derived assistant name.
+    brand = agent_brand(cfg)
     try:
         from jarvis.missions.worker_runtime.provider_map import (
             ANTIGRAVITY_SUBAGENT_CANONICAL,
@@ -611,7 +615,7 @@ async def _switch_subagent(
                 "error_kind": "subagent_unavailable",
                 "error": (
                     "Codex CLI is not installed. Install it or select the OpenAI "
-                    "Jarvis-Agent provider for key-only execution."
+                    f"{brand} provider for key-only execution."
                 ),
             }
         if not (codex_connected or has_key):
@@ -660,7 +664,7 @@ async def _switch_subagent(
                 "error": (
                     "Antigravity is not connected — sign in with Google "
                     "(install agy or the Gemini CLI and log in) or save a "
-                    "Jarvis-Agent Gemini key, then switch the Agent."
+                    f"{brand} Gemini key, then switch the Agent."
                 ),
             }
         persisted = (
@@ -712,8 +716,8 @@ async def _switch_subagent(
             "ok": False,
             "error_kind": "missing_credential",
             "error": (
-                f"{canon} has no Jarvis-Agent credential. Save a key on its "
-                "Jarvis-Agent card first, then switch the Agent."
+                f"{canon} has no {brand} credential. Save a key on its "
+                f"{brand} card first, then switch the Agent."
             ),
         }
 

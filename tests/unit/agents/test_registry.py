@@ -49,8 +49,17 @@ def registry(bus: EventBus) -> JarvisAgentRegistry:
 
 @pytest.mark.asyncio
 async def test_openclaw_task_started_creates_running_node(
-    bus: EventBus, registry: JarvisAgentRegistry
+    bus: EventBus,
+    registry: JarvisAgentRegistry,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Deterministic brand: the node name follows the wake-word-derived
+    # assistant name for ANY configured value — never the host's live config
+    # (a test keyed to the maintainer's own wake word would be the exact
+    # anti-pattern this feature exists to prevent).
+    monkeypatch.setattr(
+        "jarvis.agents.registry._agent_display_name", lambda: "Nova-Agent"
+    )
     tid = uuid4()
     await bus.publish(
         JarvisAgentTaskStarted(
@@ -71,10 +80,10 @@ async def test_openclaw_task_started_creates_running_node(
     assert node.context_hints == ["Port 8000", "single file"]
     assert node.provider == "gemini"
     assert node.model == "opus"
-    # The display name is the neutral role only — engine/provider/model must
-    # never leak into it (Sub-Agents board hygiene). provider/model stay as
+    # The display name is the branded role only — engine/provider/model must
+    # never leak into it (agents-board hygiene). provider/model stay as
     # structured fields above for internal aggregation.
-    assert node.name == "Jarvis-Agent"
+    assert node.name == "Nova-Agent"
     assert "opus" not in node.name
     assert "OpenClaw" not in node.name
 

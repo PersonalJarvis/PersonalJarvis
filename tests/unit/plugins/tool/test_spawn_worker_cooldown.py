@@ -26,7 +26,10 @@ from uuid import uuid4
 
 import pytest
 
-from jarvis.brain.ack_brain.spawn_announcement import _FALLBACK_ALREADY_RUNNING
+from jarvis.brain.ack_brain.spawn_announcement import (
+    _FALLBACK_ALREADY_RUNNING,
+    _fix_en_article,
+)
 from jarvis.core.bus import EventBus
 from jarvis.core.protocols import ExecutionContext
 from jarvis.plugins.tool.spawn_worker import (
@@ -38,11 +41,16 @@ from jarvis.plugins.tool.spawn_worker import (
 # deterministic "already_running" mode — de/en/es pools, no LLM. All three
 # supported languages are included so a Spanish suppress ACK never false-fails
 # the pool assertions (the composer's _resolve_language can return "es").
-_SUPPRESS_POOL = (
-    set(_FALLBACK_ALREADY_RUNNING["de"])
-    | set(_FALLBACK_ALREADY_RUNNING["en"])
-    | set(_FALLBACK_ALREADY_RUNNING["es"])
-)
+# The pools are {agent} templates; a bare default announcer speaks them with
+# the NEUTRAL brand (no brand provider wired -> "Assistant-Agent").
+_SUPPRESS_POOL = {
+    _fix_en_article(p.replace("{agent}", "Assistant-Agent"))
+    for p in (
+        _FALLBACK_ALREADY_RUNNING["de"]
+        + _FALLBACK_ALREADY_RUNNING["en"]
+        + _FALLBACK_ALREADY_RUNNING["es"]
+    )
+}
 
 
 class _FakeMissionManager:
