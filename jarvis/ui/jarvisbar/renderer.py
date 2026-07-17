@@ -18,7 +18,7 @@ Gold only appears during activity; idle dots stay muted.
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import numpy as np
 from PIL import Image, ImageDraw
@@ -63,35 +63,87 @@ _IDLE_H = 0.7  # standby pill is slimmer (less "fat") than the active height
 _SW = _SCALE * _W  # combined horizontal factor
 _SH = _SCALE * _H  # combined vertical factor
 
+# --- screen-adaptive display scale (Wispr-style relative sizing) -------------
+# The pill sizes below were tuned on a desktop monitor and are RAW pixels
+# (Tk points on macOS). On a small laptop screen (a 14" MacBook is ~1512 Tk
+# points wide) the same fixed size occupies nearly twice the relative width
+# and reads as clunky. ``DISPLAY_SCALE`` adapts the whole geometry to the
+# screen the bar actually lives on: 1.0 (the maintainer-approved look) on
+# anything at least REFERENCE_SCREEN_W x REFERENCE_SCREEN_H, proportionally
+# smaller below that, never under MIN_DISPLAY_SCALE so the controls stay
+# clickable. Scaling happens at RENDER time — the frame is drawn crisply at
+# the scaled size. This is NOT the blurry DPI bitmap upscaling that was
+# explicitly rejected (see overlay.start()'s DPI notes); the DPI strategy
+# there is untouched.
+REFERENCE_SCREEN_W = 1920
+REFERENCE_SCREEN_H = 1080
+MIN_DISPLAY_SCALE = 0.55
+DISPLAY_SCALE = 1.0
+
+
+def compute_display_scale(screen_w: int, screen_h: int) -> float:
+    """Scale factor for the screen the bar lives on (pure, unit-testable).
+
+    Never enlarges beyond 1.0 (big monitors keep the approved look); shrinks
+    proportionally on screens smaller than the reference in either axis;
+    clamps at ``MIN_DISPLAY_SCALE``. Invalid input degrades to 1.0.
+    """
+    try:
+        sw, sh = int(screen_w), int(screen_h)
+    except (TypeError, ValueError):
+        return 1.0
+    if sw <= 0 or sh <= 0:
+        return 1.0
+    s = min(1.0, sw / REFERENCE_SCREEN_W, sh / REFERENCE_SCREEN_H)
+    return max(MIN_DISPLAY_SCALE, round(s, 3))
+
+
 # Three pill sizes (width, height), eased between as the state changes:
 # - COLLAPSED: the slim idle standby pill (unchanged).
 # - OPEN:      the hover pill that reveals the X / dictation-square controls.
 # - ACTIVE:    the conversation pill — DOUBLE the open size, shown the whole
 #              time a voice session is live (listen/speak/think). This is the
 #              "make the bar much bigger while talking" feature.
-COLLAPSED_W = round(168 * _SW * _IDLE_W)  # standby pill (no dots, slightly longer)
-COLLAPSED_H = round(30 * _SH * _IDLE_H)  # standby pill (slim)
-OPEN_W = round(284 * _SW)  # hover/controls pill (the former "expanded" size)
-OPEN_H = round(52 * _SH)
 # Conversation pill: 2x the open pill, then trimmed so it doesn't read as bulky.
 # Width loses 15% off EACH side (→ 0.70 of 2x = 30% narrower); height loses 5%
 # off top AND bottom (→ 0.90 of 2x = 10% shorter). The pill stays centred, so
 # the idle bar keeps its middle resting spot.
 _ACTIVE_SIDE_TRIM = 0.15  # fraction removed from each side of the 2x width
 _ACTIVE_VERT_TRIM = 0.05  # fraction removed from top and bottom of the 2x height
-ACTIVE_W = round(2 * OPEN_W * (1.0 - 2 * _ACTIVE_SIDE_TRIM))  # 2x * 0.70
-ACTIVE_H = round(2 * OPEN_H * (1.0 - 2 * _ACTIVE_VERT_TRIM))  # 2x * 0.90
 
 # The pill is anchored by its BOTTOM edge this many px above the window bottom,
 # so the idle pill keeps its usual resting spot and the active pill grows
-# UPWARD (never down into the taskbar). Tune to nudge the resting height.
-_BOTTOM_PAD = 10
+# UPWARD (never down into the taskbar). Tune _BASE_BOTTOM_PAD to nudge the
+# resting height.
+_BASE_BOTTOM_PAD = 10
 
-# The fixed Tk window must contain the largest (ACTIVE) pill + its 2px outline
-# and the flanking hover controls. overlay.py reads these dynamically, so the
-# window auto-resizes when the pill sizes change.
-WIN_W = ACTIVE_W + 12
-WIN_H = ACTIVE_H + _BOTTOM_PAD + 4
+
+def apply_display_scale(scale: float) -> None:
+    """Recompute every derived geometry constant for ``scale``.
+
+    Called once by ``overlay.start()`` (one bar per process) before any
+    window geometry or renderer state derives from these values; module load
+    applies 1.0, which reproduces the historical constants byte-identically.
+    ``overlay.py`` reads the module attributes dynamically, so the window
+    follows the recomputed sizes.
+    """
+    global DISPLAY_SCALE, COLLAPSED_W, COLLAPSED_H, OPEN_W, OPEN_H
+    global ACTIVE_W, ACTIVE_H, _BOTTOM_PAD, WIN_W, WIN_H
+    DISPLAY_SCALE = s = max(MIN_DISPLAY_SCALE, min(1.0, float(scale)))
+    COLLAPSED_W = round(168 * _SW * _IDLE_W * s)  # standby pill (slightly longer)
+    COLLAPSED_H = round(30 * _SH * _IDLE_H * s)  # standby pill (slim)
+    OPEN_W = round(284 * _SW * s)  # hover/controls pill (the former "expanded")
+    OPEN_H = round(52 * _SH * s)
+    ACTIVE_W = round(2 * OPEN_W * (1.0 - 2 * _ACTIVE_SIDE_TRIM))  # 2x * 0.70
+    ACTIVE_H = round(2 * OPEN_H * (1.0 - 2 * _ACTIVE_VERT_TRIM))  # 2x * 0.90
+    _BOTTOM_PAD = max(4, round(_BASE_BOTTOM_PAD * s))
+    # The fixed Tk window must contain the largest (ACTIVE) pill + its 2px
+    # outline and the flanking hover controls.
+    WIN_W = ACTIVE_W + 12
+    WIN_H = ACTIVE_H + _BOTTOM_PAD + 4
+
+
+apply_display_scale(1.0)
 
 N_BARS = 10  # slim strokes, count matched to Wispr (was 15 = too many)
 # Inner animation geometry is expressed as fractions of the LIVE pill size, so
@@ -406,9 +458,13 @@ def orbit_trail(
 
 @dataclass
 class _RenderState:
+    # default_factory (not a plain default): the collapsed size must be read
+    # at INSTANTIATION time, after apply_display_scale() may have rescaled
+    # the module geometry — a plain default would freeze the import-time value.
     display_level: float = 0.0
-    pw: float = float(COLLAPSED_W)  # live pill width, eased toward the target
-    ph: float = float(COLLAPSED_H)  # live pill height, eased toward the target
+    # live pill width/height, eased toward the target
+    pw: float = field(default_factory=lambda: float(COLLAPSED_W))
+    ph: float = field(default_factory=lambda: float(COLLAPSED_H))
 
 
 class JarvisBarRenderer:

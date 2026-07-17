@@ -565,13 +565,35 @@ class JarvisBarOverlay:
             log.debug("jarvisbar DPI-awareness setup skipped", exc_info=True)
 
         self._tk_thread_id = threading.get_ident()
-        self._renderer = renderer.JarvisBarRenderer(accent=self._accent)
 
         # Some window managers map Tk's default-size root eagerly. Hide it
         # before assigning ``self._root`` or applying any styles so that stale
         # backing surface can never flash at the top-left on a later wake.
         root = _create_hidden_tk_root(tk)
         self._root = root
+
+        # Screen-adaptive geometry (Wispr-style): shrink the whole bar on
+        # small screens (a 14" laptop) while big monitors keep the approved
+        # 1.0 look. Must run BEFORE the renderer and any window geometry are
+        # derived from the module constants. Tk reports points on macOS and
+        # physical pixels on a DPI-aware Windows/X11 — both are the right
+        # basis for "how much of this screen would the bar occupy".
+        try:
+            renderer.apply_display_scale(
+                renderer.compute_display_scale(
+                    int(root.winfo_screenwidth()), int(root.winfo_screenheight())
+                )
+            )
+            if renderer.DISPLAY_SCALE != 1.0:
+                log.info(
+                    "jarvisbar display scale %.3f for screen %sx%s",
+                    renderer.DISPLAY_SCALE,
+                    root.winfo_screenwidth(),
+                    root.winfo_screenheight(),
+                )
+        except Exception:  # noqa: BLE001 — sizing is cosmetic; 1.0 is the degrade
+            log.debug("jarvisbar display-scale probe failed", exc_info=True)
+        self._renderer = renderer.JarvisBarRenderer(accent=self._accent)
         root.title("JarvisBar")
         # Give the bar the Jarvis mascot icon on every OS. Tk otherwise inherits
         # the interpreter's process icon (pythonw.exe → Python logo on Windows,
