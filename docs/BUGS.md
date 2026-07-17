@@ -5194,3 +5194,65 @@ long LOCAL fallback playback starves the provider socket of traffic in both
 directions — every recovery path that takes the voice surface away from the
 provider for tens of seconds must assume the provider connection may not
 survive the silence.
+
+## BUG-072: Delegated realtime turns take 20-30 s — thinking on every tool round, per-turn cache churn, and text-leaked tool calls stack up (HIGH, FIXED 2026-07-17)
+
+**Symptom (maintainer report 2026-07-17).** Every routed voice action or
+research question ("Was gibt es aktuell für Bugatti Divos in Europa?") <!-- i18n-allow: quoted German maintainer utterance -->
+takes 20-30 s to come back, while the same question typed into the model
+vendor's own chat UI answers in ~2 s. FlightRecorder ground truth for the
+day: delegate span p50 15-18 s, p90 22 s, worst 33.2 s; turns regularly ran
+into the 20 s `_DELEGATE_DEADLINE_S` and were force-finalized.
+
+**Evidence (data/flight_recorder/2026-07-17.jsonl + jarvis_desktop.log,
+turn af736681 10:21).** Five sequential tool rounds (wiki-recall ×3 →
+wiki-list → wiki-page-read) over a ~53k-token context; a fresh Gemini
+context cache created mid-turn (~1.5 s) plus a SECOND cache for the
+deadline-forced tools-stripped round; rounds 4-5 arrived as
+`tool_use_loop: recovered 1 text-serialized tool call(s)`.
+
+**Root causes.**
+1. **Thinking on every round.** The tool loop's per-round `BrainRequest`
+   never set `reasoning_effort`, and the router-tier factory caps
+   `thinking_budget=0` only on the tier's OWN provider entry — after a live
+   provider switch the cap sits on the wrong entry and the hoisted Tool
+   Model (thinking-by-default Gemini Flash) reasons for seconds per round.
+2. **Single-slot context cache.** The manager legitimately varies the tool
+   set per utterance (screen-tool gating) and the deadline round strips
+   tools; each flap between the recurring (system, tools) variants
+   re-created the server-side cache.
+3. **Self-teaching text leak.** `_to_gemini_contents` JSON-dumped assistant
+   tool_use turns into plain text, so from round 2 the model saw its own
+   prior calls as prose and mimicked the format — every later call went
+   through the lossy leak-recovery parser. Native replay in turn requires
+   the Gemini 3 `thought_signature` contract (400 without it).
+4. **Round-count blindness.** Nothing told the delegated model that rounds
+   are seconds: independent lookups ran one per round and near-duplicate
+   searches re-ran.
+
+**Fixes (commits ed1f40af, d42bbb43, 174e626e).** Delegated dispatch passes
+`reasoning_effort="none"` through dispatcher and loop onto every round
+(Gemini maps it to thinking_budget=0 with the thinking-mandatory retry;
+OpenRouter maps it to the gateway reasoning parameter, fail-open); the
+Gemini context cache keeps a bounded multi-slot map per (system, tools)
+variant; tool history replays natively with captured thought signatures
+(signature-less calls keep the proven text form); delegated system prompts
+append a static speed contract (batch lookups into one round, never repeat,
+answer once evidence suffices).
+
+**Measured (end-to-end delegated dispatch, gemini-3.5-flash, live key).**
+Research question 17.7 s → 12.5 s brain-side with zero leak recoveries;
+weather question 5.2 s → 4.5 s; single delegate-shaped round 3.32 s →
+2.13 s. Live per-turn re-verification pending the next voice sessions via
+FlightRecorder.
+
+**Guards.** `tests/unit/brain/test_tool_use_loop_reasoning_effort.py`,
+`test_openrouter_reasoning_effort.py`, `test_gemini_cache_slots.py`,
+`test_delegate_voice_directive.py`, `test_gemini_native_tool_history.py`.
+
+**Lesson.** On a conversational voice path, latency is a stack of per-round
+multipliers: internal reasoning × round count × (cache misses + leaked
+calls). Cap reasoning at the REQUEST level (config-level caps drift onto
+the wrong provider entry), key caches on every legitimately-varying axis,
+and never feed a model a serialized imitation of its own native call
+format — it will copy it.
