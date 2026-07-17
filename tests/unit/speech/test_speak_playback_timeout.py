@@ -572,7 +572,7 @@ def test_min_timeout_phrase_floor_below_window_passes_through() -> None:
 # ---------------------------------------------------------------------------
 # Per-site floor: the no-first-frame path fires at the SHORTER TTS ceiling
 # (20 s), not the brain stall window (30 s). Live bug 2026-06-14 16:17 (the
-# Berlin→Melbourne research turn): the floor was clamped to the 30 s brain
+# long-haul trip-research turn): the floor was clamped to the 30 s brain
 # stall window, so a real 20.83 s no-first-frame abort was < floor → suppressed
 # → the user heard NOTHING and the orb fell to LISTENING. A no-first-frame
 # abort can only happen at the 20 s ceiling, so its legitimate floor must track
@@ -634,7 +634,7 @@ def test_no_first_frame_phrase_floor_clamped_to_ceiling() -> None:
 # tens of seconds before emitting its first token (large context cache + tool
 # planning) WITHOUT calling on_progress — so neither _brain_last_progress nor
 # _long_tool_last_activity advances and the 20 s no-first-frame ceiling beheads
-# a working brain. Live bug 2026-06-14 16:17 (Berlin→Melbourne research):
+# a working brain. Live bug 2026-06-14 16:17 (long-haul trip research):
 # Gemini built an 18k-token cache, thought silently ~17 s, ceiling fired
 # (since_progress_s=20.19). The stall guard pings a DEDICATED
 # _brain_thinking_heartbeat while the brain has not yet spoken; the ceiling

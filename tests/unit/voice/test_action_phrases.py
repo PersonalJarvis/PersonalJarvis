@@ -374,7 +374,7 @@ class TestCuSuccessReadback:
         """The read-goal verifier sometimes PROVES done by describing the UI
         structurally instead of answering the user. Such a dump is an internal
         evidence artifact — it must NOT be spoken verbatim. Live bug 2026-06-21
-        (Melbourne HTML turn): "look at my screen and tell me which app is open"
+        (travel-guide HTML turn): "look at my screen and tell me which app is open"
         read out the full structural dump, including the verbatim content of an
         unrelated parallel Claude-Code AskUserQuestion box.
         """
@@ -383,7 +383,7 @@ class TestCuSuccessReadback:
         stdout = (
             "[cu] done at step 2.1 (verified: Foreground window (right, orange "
             "border, on top): title 'Eine Detail-Erkenntnis (deine Entscheidung)', "
-            "content starts 'Der Melbourne-Guide rendert unter der strengen "
+            "content starts 'Der Staedte-Guide rendert unter der strengen "
             "Sicherheits-CSP inhaltlich und optisch vollstaendig. Nur ein kleines "
             "inline-<script>...' followed by bullet points on CSP, JS, and 'Die "
             "Aenderungen sind uncommitted...'. Bottom status bar: 'Personal "

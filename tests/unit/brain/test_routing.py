@@ -2751,7 +2751,7 @@ def test_call_by_name_resolves_to_call_contact_capability(utterance: str) -> Non
 
 
 # ---------------------------------------------------------------------------
-# Heavy-research force-spawn (live bug 2026-06-14, the Berlin→Melbourne turn):
+# Heavy-research force-spawn (live bug 2026-06-14, a long-haul trip-research turn):
 # a multi-step research/analysis request must OFFLOAD to a background mission
 # instead of running inline on the deep brain (where it blew the ~20 s voice
 # budget and was beheaded → silence). Conjunctive gate: a research/analysis
@@ -2763,7 +2763,7 @@ _HEAVY_RESEARCH_SHOULD_SPAWN = [
     # The live failure (two research verbs + horizon marker + length).
     (
         "Ich möchte, dass du mir dabei hilfst, zu recherchieren, was ich für "
-        "eine Reise von Berlin nach Melbourne brauche, und analysiere auch den "
+        "eine Reise von Lissabon nach Tokio brauche, und analysiere auch den "
         "Wetterbericht der nächsten zwei Wochen."
     ),
     # Two verbs (analysieren + vergleichen) → multi-clause.
@@ -2944,7 +2944,7 @@ def test_heavy_research_force_spawns_only_when_it_builds_an_artifact() -> None:
     search_web tool.
 
     Reverses the WS3a contract (2026-06-14): that offloaded the answer-only
-    Berlin->Melbourne prompt to a mission to dodge the ~20s no-first-frame voice
+    long-haul trip-research prompt to a mission to dodge the ~20s no-first-frame voice
     ceiling. That ceiling is now re-armed from `_brain_thinking_heartbeat`, so
     inline research no longer beheads the turn — and the Worker->Critic pipeline
     can't grade an answer-only research turn anyway (empty-diff veto ->
