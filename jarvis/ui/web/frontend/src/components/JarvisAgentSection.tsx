@@ -229,6 +229,10 @@ export function JarvisAgentSection({
 
       <BridgeStatusStrip status={bridge} />
 
+      {/* The model pin sits right under the status strip — it is the setting
+          users come back for, so it must not hide below the provider cards. */}
+      <SubagentModelCard status={bridge} onSaved={reload} />
+
       {/* Scoped Agent keys are managed here. Older shared Brain keys remain a
           compatibility fallback and are labelled honestly on the relevant card. */}
       <p className="flex items-start gap-2 px-1 text-[11px] leading-relaxed text-muted-foreground">
@@ -296,8 +300,6 @@ export function JarvisAgentSection({
           ))}
         </div>
       </div>
-
-      <SubagentModelCard status={bridge} onSaved={reload} />
     </section>
   );
 }
