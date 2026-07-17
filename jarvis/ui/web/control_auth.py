@@ -21,7 +21,7 @@ from fastapi import HTTPException, Request, status
 from jarvis.core import control_key as ck
 
 from .missions_auth import validate_token
-from .surface_security import COOKIE_NAME
+from .surface_security import COOKIE_NAME, open_access_granted
 
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "::1", "localhost"})
 _UNAUTHORIZED = {
@@ -52,9 +52,17 @@ async def require_control_key(request: Request) -> None:
 
 
 async def require_control_key_or_session(request: Request) -> None:
-    """Allow a control Bearer or an authenticated HttpOnly UI session."""
+    """Allow a control Bearer, an authenticated UI session, or local open access.
+
+    Open access mirrors the outer boundary (``surface_security``): when the
+    optional browser lock is off, a loopback-to-loopback UI has no session
+    cookie at all, yet must still reach the key panel — otherwise the user
+    could never see the key they would need to turn the lock ON.
+    """
     session_token = request.cookies.get(COOKIE_NAME, "")
     if validate_token(session_token) or ck.verify_control_key(_bearer_token(request)):
+        return
+    if open_access_granted(request.scope):
         return
     raise HTTPException(**_UNAUTHORIZED)
 

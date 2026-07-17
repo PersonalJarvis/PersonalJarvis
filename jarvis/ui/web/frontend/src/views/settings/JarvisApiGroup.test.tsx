@@ -12,11 +12,23 @@ vi.mock("@/lib/clipboard", () => ({
 
 afterEach(() => vi.restoreAllMocks());
 
-function stubKeyFetch() {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn().mockResolvedValue({ ok: true, json: async () => ({ key: KEY, masked: MASKED }) }),
-  );
+/** URL-aware fetch stub: the component now issues TWO mount-time GETs (the
+ * key itself + the browser-lock state), so ordered `mockResolvedValueOnce`
+ * chains would race. `extra` may claim a call (e.g. the rotate POST) first. */
+function stubKeyFetch(
+  extra?: (url: string, opts?: RequestInit) => unknown,
+  browserLockEnabled = false,
+) {
+  const mock = vi.fn().mockImplementation(async (url: string, opts?: RequestInit) => {
+    const custom = extra?.(url, opts);
+    if (custom) return custom;
+    if (url === "/api/settings/browser-login") {
+      return { ok: true, json: async () => ({ enabled: browserLockEnabled }) };
+    }
+    return { ok: true, json: async () => ({ key: KEY, masked: MASKED }) };
+  });
+  vi.stubGlobal("fetch", mock);
+  return mock;
 }
 
 describe("JarvisApiGroup", () => {
@@ -49,14 +61,14 @@ describe("JarvisApiGroup", () => {
   });
 
   it("rotates only after the confirmation dialog is accepted", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ key: KEY, masked: MASKED }) })
-      .mockResolvedValueOnce({
-        ok: true,
-        json: async () => ({ ok: true, key: "jctl_rotated9999", masked: "jctl_…9999" }),
-      });
-    vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = stubKeyFetch((_url, opts) =>
+      opts?.method === "POST"
+        ? {
+            ok: true,
+            json: async () => ({ ok: true, key: "jctl_rotated9999", masked: "jctl_…9999" }),
+          }
+        : undefined,
+    );
     render(<JarvisApiGroup />);
     await waitFor(() => screen.getByText(MASKED));
 
@@ -74,11 +86,11 @@ describe("JarvisApiGroup", () => {
   });
 
   it("sets a user-chosen key via PUT after both entries match", async () => {
-    const fetchMock = vi
-      .fn()
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ key: KEY, masked: MASKED }) })
-      .mockResolvedValueOnce({ ok: true, json: async () => ({ ok: true, masked: "…tery" }) });
-    vi.stubGlobal("fetch", fetchMock);
+    const fetchMock = stubKeyFetch((url, opts) =>
+      url === "/api/control/api-key" && opts?.method === "PUT"
+        ? { ok: true, json: async () => ({ ok: true, masked: "…tery" }) }
+        : undefined,
+    );
     render(<JarvisApiGroup />);
     await waitFor(() => screen.getByText(MASKED));
 
@@ -123,5 +135,74 @@ describe("JarvisApiGroup", () => {
       expect(screen.getByText("At least 12 characters are required.")).toBeTruthy(),
     );
     expect(fetchMock.mock.calls.length).toBe(callsBefore);
+  });
+
+  it("turning the browser lock ON asks for confirmation before the PUT", async () => {
+    const fetchMock = stubKeyFetch((url, opts) =>
+      url === "/api/settings/browser-login" && opts?.method === "PUT"
+        ? {
+            ok: true,
+            json: async () => ({
+              ok: true,
+              enabled: true,
+              persisted: true,
+              applied_live: true,
+              session_minted: true,
+            }),
+          }
+        : undefined,
+    );
+    render(<JarvisApiGroup />);
+    await waitFor(() => screen.getByText(MASKED));
+
+    fireEvent.click(screen.getByRole("switch"));
+    // The dialog must appear WITHOUT any PUT having fired yet.
+    expect(
+      screen.getByRole("heading", { name: /require the control key in the browser\?/i }),
+    ).toBeTruthy();
+    expect(fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT")).toBeUndefined();
+
+    fireEvent.click(screen.getByRole("button", { name: /require the key/i }));
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT");
+      expect(put).toBeTruthy();
+      expect(put?.[0]).toBe("/api/settings/browser-login");
+      expect(JSON.parse(put?.[1]?.body as string)).toMatchObject({ enabled: true });
+    });
+  });
+
+  it("turning the browser lock OFF PUTs immediately, no dialog", async () => {
+    const fetchMock = stubKeyFetch(
+      (url, opts) =>
+        url === "/api/settings/browser-login" && opts?.method === "PUT"
+          ? {
+              ok: true,
+              json: async () => ({
+                ok: true,
+                enabled: false,
+                persisted: true,
+                applied_live: true,
+                session_minted: false,
+              }),
+            }
+          : undefined,
+      true,
+    );
+    render(<JarvisApiGroup />);
+    await waitFor(() => screen.getByText(MASKED));
+    await waitFor(() =>
+      expect(screen.getByRole("switch").getAttribute("aria-checked")).toBe("true"),
+    );
+
+    fireEvent.click(screen.getByRole("switch"));
+    await waitFor(() => {
+      const put = fetchMock.mock.calls.find(([, opts]) => opts?.method === "PUT");
+      expect(put).toBeTruthy();
+      expect(put?.[0]).toBe("/api/settings/browser-login");
+      expect(JSON.parse(put?.[1]?.body as string)).toMatchObject({ enabled: false });
+    });
+    expect(
+      screen.queryByRole("heading", { name: /require the control key in the browser\?/i }),
+    ).toBeNull();
   });
 });

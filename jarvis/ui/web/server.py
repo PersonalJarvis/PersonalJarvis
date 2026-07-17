@@ -50,7 +50,7 @@ from .schema import (
     WSWelcome,
     event_to_ws_envelope,
 )
-from .surface_security import SurfaceSecurity
+from .surface_security import SurfaceSecurity, set_browser_login_required
 
 if TYPE_CHECKING:
     import uvicorn
@@ -209,6 +209,20 @@ class WebServer:
         # The security boundary must wrap every router and both HTTP and WS.
         # It is added after CORS so Starlette places it outside the CORS layer:
         # hostile Host/Origin values never reach route code or preflight logic.
+        # Seed the browser-lock flag from the loaded config so the boundary's
+        # lazy raw-TOML read never disagrees with what the app actually loaded
+        # (JARVIS_CONFIG overrides, in-memory test configs, wizard defaults).
+        _browser_lock_on = bool(
+            getattr(getattr(self.cfg, "ui", None), "require_browser_login", False)
+        )
+        set_browser_login_required(_browser_lock_on)
+        if not _browser_lock_on:
+            logger.info(
+                "Browser lock is off (the default): loopback requests are served "
+                "without a credential. Anything relaying this port to a network "
+                "re-exposes the instance — turn on 'Ask for the key in the "
+                "browser' before forwarding it."
+            )
         app.add_middleware(
             SurfaceSecurity,
             vite_dev_url=vite_dev_url,

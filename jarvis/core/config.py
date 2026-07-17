@@ -1356,6 +1356,15 @@ class UIConfig(BaseModel):
     # WebView exposes it once; AuthGate exchanges it for an unrelated HttpOnly
     # session cookie and immediately clears the JavaScript value.
     auth_token_env: str = "JARVIS_UI_TOKEN"
+    # Optional browser lock: when True, opening the UI in a browser on THIS
+    # machine (loopback) asks for the Control Key. Off by default — the local
+    # user walks straight in. Non-loopback access (LAN, VPS, reverse proxy)
+    # still requires the key regardless of this flag; forwarded requests are
+    # detected via relay-indicator headers, but a headerless L4 tunnel on the
+    # same machine looks local — whoever forwards the port must turn this ON
+    # (see surface_security.open_access_granted). Toggled live from
+    # Settings → API Keys → Control Key.
+    require_browser_login: bool = False
     # On-screen overlay style: "jarvis_bar" (slim default), "mascot" (ghost
     # orb), or "none". The mascot remains fully selectable.
     orb_style: str = "jarvis_bar"

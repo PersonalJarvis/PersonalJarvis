@@ -776,3 +776,193 @@ def test_non_loopback_plain_ws_ticket_presentation_is_rejected() -> None:
 
     assert exc_info.value.code == 4403
     assert inner.scopes == []
+
+
+# ---------------------------------------------------------------------------
+# Optional browser lock — OFF (the product default): loopback-to-loopback
+# requests are authorized without any credential; everything non-loopback
+# keeps demanding the Control Key. The suite-wide conftest fixture pins the
+# lock ON, so these tests flip it OFF explicitly and rely on its reset.
+# ---------------------------------------------------------------------------
+
+
+def test_browser_lock_off_grants_loopback_http_without_credential() -> None:
+    surface_security.set_browser_login_required(False)
+    client, inner = _client()
+
+    response = client.get("/api/config", headers=_headers())
+
+    assert response.status_code == 200
+    assert len(inner.scopes) == 1
+
+
+def test_browser_lock_off_ignores_invalid_credentials_on_loopback() -> None:
+    # Open access trusts the machine's user by decision, not by token: a
+    # stale key in a local tool must not lock the local user out.
+    surface_security.set_browser_login_required(False)
+    client, inner = _client()
+
+    response = client.get(
+        "/api/config", headers=_headers(token="jctl_stale")  # noqa: S106 — synthetic stale key
+    )
+
+    assert response.status_code == 200
+    assert len(inner.scopes) == 1
+
+
+def test_browser_lock_off_unsafe_method_keeps_csrf_origin_gate() -> None:
+    surface_security.set_browser_login_required(False)
+    client, inner = _client()
+
+    origin_less = client.post("/api/chat", headers=_headers(origin=None), json={})
+    assert origin_less.status_code == 403
+    assert inner.scopes == []
+
+    same_origin = client.post("/api/chat", headers=_headers(), json={})
+    assert same_origin.status_code == 200
+    assert len(inner.scopes) == 1
+
+
+def test_browser_lock_off_never_opens_non_loopback() -> None:
+    surface_security.set_browser_login_required(False)
+    public_url = "http://jarvis.example"
+    client, inner = _client(
+        base_url=public_url,
+        peer=("203.0.113.9", 50_000),
+        public_urls=(public_url,),
+    )
+
+    response = client.get(
+        "/api/config", headers=_headers(origin=public_url, host="jarvis.example")
+    )
+
+    assert response.status_code == 401
+    assert inner.scopes == []
+
+
+@pytest.mark.parametrize(
+    "relay_header",
+    [
+        ("X-Forwarded-For", "203.0.113.9"),
+        ("Forwarded", "for=203.0.113.9"),
+        ("Via", "1.1 relay"),
+        ("X-Real-IP", "203.0.113.9"),
+    ],
+)
+def test_browser_lock_off_relayed_loopback_is_rejected(
+    relay_header: tuple[str, str],
+) -> None:
+    # A tunnel/proxy on the same machine connects from 127.0.0.1 and lets the
+    # remote caller choose the Host header (e.g. "127.0.0.1"). Any forwarding
+    # indicator proves the peer socket belongs to a relay, so open access must
+    # refuse and demand the key.
+    surface_security.set_browser_login_required(False)
+    client, inner = _client()
+
+    name, value = relay_header
+    headers = _headers()
+    headers[name] = value
+    response = client.get("/api/config", headers=headers)
+
+    assert response.status_code == 401
+    assert inner.scopes == []
+
+
+def test_browser_lock_off_reverse_proxy_public_host_stays_locked() -> None:
+    # A same-host reverse proxy connects from 127.0.0.1 but forwards a public
+    # Host header — both ends must be loopback for open access to grant.
+    surface_security.set_browser_login_required(False)
+    public_url = "http://jarvis.example"
+    client, inner = _client(
+        base_url=public_url,
+        peer=("127.0.0.1", 50_000),
+        public_urls=(public_url,),
+    )
+
+    response = client.get(
+        "/api/config", headers=_headers(origin=public_url, host="jarvis.example")
+    )
+
+    assert response.status_code == 401
+    assert inner.scopes == []
+
+
+def test_browser_lock_off_grants_loopback_websocket_with_origin() -> None:
+    surface_security.set_browser_login_required(False)
+    client, inner = _client()
+
+    with client.websocket_connect("/ws", headers=_headers()) as websocket:
+        assert websocket.receive_json() == {"type": "probe"}
+
+    assert len(inner.scopes) == 1
+    # Route-level defense-in-depth re-checks must agree with the boundary.
+    assert credentials_valid(inner.scopes[0]) is True
+
+
+def test_browser_lock_off_websocket_without_origin_is_rejected() -> None:
+    # A browser always attaches an Origin to a WS handshake; an origin-less
+    # socket is not a browser and must present a real credential instead.
+    surface_security.set_browser_login_required(False)
+    client, inner = _client()
+
+    with client.websocket_connect(
+        "/ws", headers=_headers(origin=None)
+    ) as websocket:
+        with pytest.raises(WebSocketDisconnect) as exc_info:
+            websocket.receive_json()
+
+    assert exc_info.value.code == 4403
+    assert inner.scopes == []
+
+
+def test_browser_lock_on_keeps_loopback_locked() -> None:
+    surface_security.set_browser_login_required(True)
+    client, inner = _client()
+
+    response = client.get("/api/config", headers=_headers())
+
+    assert response.status_code == 401
+    assert inner.scopes == []
+
+
+# ---------------------------------------------------------------------------
+# Lazy raw-TOML seed: before any explicit seed, the boundary derives the flag
+# from ``[ui].require_browser_login`` without importing the config graph.
+# ---------------------------------------------------------------------------
+
+
+def _seed_from_toml(tmp_path, monkeypatch, content: str | None) -> bool:
+    if content is None:
+        monkeypatch.setenv("JARVIS_CONFIG", str(tmp_path / "missing.toml"))
+    else:
+        config_file = tmp_path / "jarvis.toml"
+        config_file.write_bytes(content.encode("utf-8"))
+        monkeypatch.setenv("JARVIS_CONFIG", str(config_file))
+    surface_security.reset_browser_login_required()
+    return surface_security.browser_login_required()
+
+
+def test_toml_seed_field_true_requires_login(tmp_path, monkeypatch) -> None:
+    assert _seed_from_toml(
+        tmp_path, monkeypatch, "[ui]\nrequire_browser_login = true\n"
+    ) is True
+
+
+def test_toml_seed_field_absent_defaults_open(tmp_path, monkeypatch) -> None:
+    assert _seed_from_toml(tmp_path, monkeypatch, "[ui]\ndev_mode = false\n") is False
+
+
+def test_toml_seed_missing_file_defaults_open(tmp_path, monkeypatch) -> None:
+    assert _seed_from_toml(tmp_path, monkeypatch, None) is False
+
+
+def test_toml_seed_unreadable_file_fails_closed(tmp_path, monkeypatch) -> None:
+    assert _seed_from_toml(tmp_path, monkeypatch, "not [valid toml ==") is True
+
+
+def test_toml_seed_tolerates_utf8_bom(tmp_path, monkeypatch) -> None:
+    config_file = tmp_path / "jarvis.toml"
+    config_file.write_bytes(b"\xef\xbb\xbf[ui]\nrequire_browser_login = true\n")
+    monkeypatch.setenv("JARVIS_CONFIG", str(config_file))
+    surface_security.reset_browser_login_required()
+    assert surface_security.browser_login_required() is True

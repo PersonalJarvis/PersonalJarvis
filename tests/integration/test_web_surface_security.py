@@ -33,6 +33,9 @@ def web_server(monkeypatch: pytest.MonkeyPatch) -> WebServer:
     cfg = JarvisConfig()
     cfg.ui.dev_mode = True
     cfg.ui.vite_dev_url = "http://localhost:5173"
+    # These tests assert the LOCKED boundary; the product default is open on
+    # loopback, which would let the credential-free requests below through.
+    cfg.ui.require_browser_login = True
     monkeypatch.setenv(cfg.ui.auth_token_env, _SESSION_TOKEN)
     monkeypatch.setattr(control_key, "get_control_key", lambda: _CONTROL_KEY)
     server = WebServer(cfg, bus=EventBus())
@@ -57,6 +60,7 @@ def test_production_server_does_not_trust_the_vite_development_origin(
     cfg = JarvisConfig()
     cfg.ui.dev_mode = False
     cfg.ui.vite_dev_url = "http://localhost:5173"
+    cfg.ui.require_browser_login = True
     monkeypatch.setattr(control_key, "get_control_key", lambda: _CONTROL_KEY)
     server = WebServer(cfg, bus=EventBus())
 

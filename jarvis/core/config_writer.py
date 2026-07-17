@@ -734,6 +734,15 @@ def set_sound_effects(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> Non
     _patch_table(path, "ui", "sound_effects", bool(enabled))
 
 
+def set_require_browser_login(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist ``[ui] require_browser_login`` (the optional browser lock).
+
+    TOML-only (not drift-guarded); the Settings route applies it live by
+    updating the shared ``surface_security`` boundary flag in the same request.
+    """
+    _patch_table(path, "ui", "require_browser_login", bool(enabled))
+
+
 def set_team_proxy(
     enabled: bool,
     url: str,

@@ -28,6 +28,29 @@ Every Personal Jarvis installation protects itself with one private key, the
 The desktop app itself never asks for the key: it proves it belongs to the
 installation through a private startup handshake.
 
+## The Browser Lock Is Optional (Off by Default)
+
+Out of the box, a browser **on the computer Jarvis runs on** walks straight
+into the interface — no lock screen, no key. Access from anywhere else
+(another device on your network, a server reached over the internet) always
+requires the Control Key, no matter how this switch is set. Network exposure
+is never opt-out.
+
+To require the key on this computer too — for example on a shared machine —
+turn on **Ask for the key in the browser** in the key section (see
+[Find the Key](#find-the-key) below). The confirmation dialog offers to copy
+the key first, and the browser you enable it from stays signed in, so you
+cannot lock yourself out in the same breath. Turning the switch off again
+removes the lock screen for this computer only.
+
+One honest limitation: requests arriving through a proxy or forwarding
+service are recognized and still asked for the key, but a plain
+port-forwarding tunnel running **on the Jarvis machine itself** (an SSH
+tunnel, `socat`, a raw TCP relay) is indistinguishable from a local browser.
+If you forward the Jarvis port to a network in any way, turn the browser lock
+**on** first — the forwarded side is then protected by the key like any other
+remote access.
+
 ## You Already Have a Key
 
 Nobody sends you a Control Key, and there is no account behind it. The moment
@@ -52,6 +75,9 @@ The lock screen in the browser points to this same place, so anyone who hits
 it can find their way here.
 
 ## Unlock Jarvis in a Browser
+
+The lock screen appears when you connect from another device, or on the
+install computer itself once **Ask for the key in the browser** is turned on.
 
 1. Open the Jarvis address in the browser. The lock screen appears.
 2. Paste the Control Key and select **Unlock**.
@@ -120,15 +146,18 @@ a trusted password manager.
 1. Open **API Keys & Providers** and select the key tab named after your
    assistant.
 2. Select **Show**, then **Copy**.
-3. Open the Jarvis address in a private browser window. The lock screen
-   appears.
-4. Paste the key and select **Unlock**. The interface loads, which proves the
-   stored key and the unlock exchange both work.
+3. Open the Jarvis address in a private browser window. On the install
+   computer the interface loads directly unless **Ask for the key in the
+   browser** is on; from another device the lock screen always appears.
+4. If the lock screen appears, paste the key and select **Unlock**. The
+   interface loads, which proves the stored key and the unlock exchange both
+   work.
 
 ## Troubleshooting
 
 | What you see | What it usually means | What to do |
 |---|---|---|
+| No lock screen appears on the install computer | Expected — the browser lock is off by default; local browsers walk straight in | Turn on **Ask for the key in the browser** in the key section if you want the lock |
 | The lock screen rejects your key | The key was regenerated or replaced since you copied it | Read the current key in the key section on the install computer and try again |
 | You never received a key | Expected — keys are generated locally, not sent | Follow [Find the Key](#find-the-key) above |
 | **Setting the key failed** | Neither the OS credential store nor the fallback file accepted the new value | Unlock the credential store, check that Jarvis can write to its data directory, and retry; the old key stays active until a new one is stored |

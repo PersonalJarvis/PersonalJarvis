@@ -64,6 +64,26 @@ def _authenticated_test_clients(request, monkeypatch):  # noqa: ANN001
 
 
 @pytest.fixture(autouse=True)
+def _browser_lock_pinned_on():
+    """Pin the optional browser lock ON for every test, deterministic.
+
+    The production default is OFF (loopback walks in without a credential),
+    which would silently pass requests in any suite that uses a loopback
+    client peer — and the lazy raw-TOML seed would otherwise read the host
+    machine's real ``jarvis.toml``. Tests that exercise the open-access mode
+    flip the flag explicitly and rely on this fixture's teardown reset.
+    """
+    from jarvis.ui.web.surface_security import (
+        reset_browser_login_required,
+        set_browser_login_required,
+    )
+
+    set_browser_login_required(True)
+    yield
+    reset_browser_login_required()
+
+
+@pytest.fixture(autouse=True)
 def _reset_bus():
     """Reset the global default bus before and after each test."""
     reset_default_bus()

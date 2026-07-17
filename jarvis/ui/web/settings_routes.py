@@ -31,7 +31,7 @@ import threading
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from pydantic import BaseModel, Field, model_validator
 
 from jarvis.brain.manager import SUPPORTED_REPLY_LANGUAGES
@@ -1882,6 +1882,77 @@ async def put_sound_effects(body: BoolToggleBody, request: Request) -> dict[str,
         "enabled": enabled,
         "persisted": persisted,
         "applied_live": applied_live,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Optional browser lock ("ask for the Control Key in a browser"). Off by
+# default: the local (loopback) user walks straight into the UI; non-loopback
+# access always requires the key regardless. Lives next to the Control Key
+# panel in Settings → API Keys. Applies live via the shared boundary flag in
+# ``surface_security`` — no restart.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/browser-login")
+async def get_browser_login(request: Request) -> dict[str, object]:
+    cfg = _config(request)
+    ui = getattr(cfg, "ui", None)
+    return {"enabled": bool(getattr(ui, "require_browser_login", False))}
+
+
+@router.put("/browser-login")
+async def put_browser_login(
+    body: BoolToggleBody, request: Request, response: Response
+) -> dict[str, object]:
+    """Toggle the browser lock live and persist it to ``[ui]``.
+
+    When the lock is turned ON by a caller that entered through open access
+    (no session cookie — the normal case on loopback), a fresh HttpOnly
+    session is minted onto the response so the very browser that enabled the
+    lock stays signed in instead of instantly locking itself out.
+    """
+    from jarvis.ui.web import missions_auth, surface_security
+
+    enabled = bool(body.enabled)
+    cfg = _config(request)
+    ui = getattr(cfg, "ui", None)
+    if ui is not None:
+        try:
+            ui.require_browser_login = enabled  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001
+            log.debug("in-memory require_browser_login update skipped: %s", exc)
+    surface_security.set_browser_login_required(enabled)
+    persisted = False
+    try:
+        from jarvis.core import config_writer
+
+        config_writer.set_require_browser_login(enabled)
+        persisted = True
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "require_browser_login persist failed (live apply still active): %s", exc
+        )
+    session_minted = False
+    if enabled:
+        current = request.cookies.get(surface_security.COOKIE_NAME, "")
+        if not missions_auth.validate_token(current):
+            token = missions_auth.issue_token()
+            response.set_cookie(
+                surface_security.COOKIE_NAME,
+                token,
+                path="/",
+                httponly=True,
+                samesite="strict",
+                secure=request.url.scheme == "https",
+            )
+            session_minted = True
+    return {
+        "ok": True,
+        "enabled": enabled,
+        "persisted": persisted,
+        "applied_live": True,
+        "session_minted": session_minted,
     }
 
 

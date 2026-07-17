@@ -38,11 +38,81 @@ Receive = Callable[[], Awaitable[dict[str, Any]]]
 Send = Callable[[dict[str, Any]], Awaitable[None]]
 ASGIApp = Callable[[Scope, Receive, Send], Awaitable[None]]
 CredentialValidator = Callable[[str], bool]
-AuthKind = Literal["control", "session"]
+AuthKind = Literal["control", "session", "open"]
 Origin = tuple[str, str, int | None]
 
 _BOOTSTRAP_TOKEN_LOCK = threading.Lock()
 _BOOTSTRAP_TOKENS: set[str] = set()
+
+
+# ---------------------------------------------------------------------------
+# Optional browser lock — "ask for the Control Key in a browser".
+#
+# OFF by default: a request whose Host header AND client peer are BOTH
+# loopback — and that carries no forwarding-indicator header — is authorized
+# without any credential, so opening the UI on the very machine Jarvis runs on
+# never shows the lock screen. The Control Key stays mandatory for every
+# non-loopback caller (LAN, VPS, reverse proxy) regardless of this flag; the
+# one caveat is a headerless L4 relay on the same machine, which no request
+# inspection can detect (see open_access_granted). The flag is shared
+# module-globally (like the WS ticket store) so the fast-boot boundary, the
+# full app's boundary, and the live Settings toggle agree within one process.
+# ---------------------------------------------------------------------------
+_BROWSER_LOGIN_LOCK = threading.Lock()
+_BROWSER_LOGIN_REQUIRED: bool | None = None
+
+
+def _read_browser_login_required_from_config() -> bool:
+    """Raw ``[ui].require_browser_login`` read (no ``load_config``).
+
+    Dependency-light on purpose (stdlib ``tomllib`` only) so the fast-boot
+    boundary can answer before the heavy config graph imports. A missing file
+    or field means the schema default (``False`` — no browser lock); an
+    unreadable file fails closed (``True``) until the real config load seeds
+    the value via :func:`set_browser_login_required`.
+    """
+    import tomllib
+
+    path = os.environ.get("JARVIS_CONFIG")
+    if not path:
+        repo_root = os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        )
+        path = os.path.join(repo_root, "jarvis.toml")
+    if not os.path.exists(path):
+        return False
+    try:
+        with open(path, "rb") as fh:
+            raw = fh.read()
+        # The atomic config writer tolerates a UTF-8 BOM (AP-7); tomllib does not.
+        data = tomllib.loads(raw.removeprefix(b"\xef\xbb\xbf").decode("utf-8"))
+    except Exception:
+        return True
+    value = data.get("ui", {}).get("require_browser_login")
+    return value if isinstance(value, bool) else False
+
+
+def browser_login_required() -> bool:
+    """Whether a loopback browser must present the Control Key (lazy-seeded)."""
+    global _BROWSER_LOGIN_REQUIRED
+    with _BROWSER_LOGIN_LOCK:
+        if _BROWSER_LOGIN_REQUIRED is None:
+            _BROWSER_LOGIN_REQUIRED = _read_browser_login_required_from_config()
+        return _BROWSER_LOGIN_REQUIRED
+
+
+def set_browser_login_required(required: bool) -> None:
+    """Seed/override the browser-lock flag (config load + live Settings toggle)."""
+    global _BROWSER_LOGIN_REQUIRED
+    with _BROWSER_LOGIN_LOCK:
+        _BROWSER_LOGIN_REQUIRED = bool(required)
+
+
+def reset_browser_login_required() -> None:
+    """Test hook: forget the cached flag so the next read re-derives it."""
+    global _BROWSER_LOGIN_REQUIRED
+    with _BROWSER_LOGIN_LOCK:
+        _BROWSER_LOGIN_REQUIRED = None
 
 
 def _register_bootstrap_tokens(tokens: Iterable[str]) -> None:
@@ -362,15 +432,13 @@ def scope_origin_is_trusted(
     )
 
 
-def is_secure_or_loopback(scope: Scope) -> bool:
-    """True for HTTPS/WSS or a direct loopback-client-to-loopback-Host request.
+def is_loopback_request(scope: Scope) -> bool:
+    """True for a direct loopback-client-to-loopback-Host request.
 
     Requiring both loopback endpoints avoids treating a public request forwarded
     by a same-host reverse proxy as local merely because the proxy's peer socket
     is ``127.0.0.1``.
     """
-    if str(scope.get("scheme", "")).lower() in {"https", "wss"}:
-        return True
     authority = _scope_authority(scope)
     if authority is None:
         return False
@@ -387,6 +455,57 @@ def is_secure_or_loopback(scope: Scope) -> bool:
         return ipaddress.ip_address(client_host).is_loopback
     except ValueError:
         return client_host == "localhost"
+
+
+def is_secure_or_loopback(scope: Scope) -> bool:
+    """True for HTTPS/WSS or a direct loopback-client-to-loopback-Host request."""
+    if str(scope.get("scheme", "")).lower() in {"https", "wss"}:
+        return True
+    return is_loopback_request(scope)
+
+
+# Headers a forwarding intermediary (HTTP reverse proxy, CDN edge, tunnel
+# agent) stamps onto relayed requests. Their presence proves the loopback
+# peer socket belongs to a relay, not to the local user's own client — open
+# access must then refuse, or a remote caller behind the relay could claim
+# ``Host: 127.0.0.1`` and look local.
+_RELAY_INDICATOR_HEADERS = (
+    "forwarded",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-real-ip",
+    "via",
+    "cf-connecting-ip",
+    "true-client-ip",
+    "fly-client-ip",
+)
+
+
+def _relay_indicator_present(scope: Scope) -> bool:
+    for name in _RELAY_INDICATOR_HEADERS:
+        if _headers(scope, name):
+            return True
+    return False
+
+
+def open_access_granted(scope: Scope) -> bool:
+    """True when the optional browser lock is OFF and the request is local.
+
+    "Local" means BOTH ends are loopback (see :func:`is_loopback_request`)
+    AND the request carries no forwarding-indicator header — so a LAN, VPS,
+    or well-behaved reverse-proxy surface never opens. Honest limitation: a
+    raw TCP relay that adds no headers (``ssh -L``, ``socat``, an L4 tunnel)
+    is indistinguishable from a local client at this layer; whoever forwards
+    the Jarvis port to a network re-exposes the instance and must turn the
+    browser lock ON (documented in the Control-Key guide). When open access
+    grants, the validity of any credential the caller happens to present is
+    irrelevant — the machine's own user is trusted by decision, not by token.
+    """
+    return (
+        not browser_login_required()
+        and is_loopback_request(scope)
+        and not _relay_indicator_present(scope)
+    )
 
 
 def build_set_cookie_header(token: str, secure: bool) -> str:
@@ -486,6 +605,8 @@ def credentials_valid(scope: Scope) -> bool:
     already consumed and cannot be checked twice.
     """
     if scope.get(WS_TICKET_SCOPE_KEY) is True:
+        return True
+    if open_access_granted(scope):
         return True
     bearer_present, bearer = _presented_bearer(scope)
     if bearer_present:
@@ -978,10 +1099,16 @@ class SurfaceSecurity:
                 return
 
             auth_kind = self._authenticate(scope)
+            if auth_kind is None and open_access_granted(scope):
+                auth_kind = "open"
             if auth_kind is None:
                 await reject_unauthorized(scope, send, receive)
                 return
-            if auth_kind == "session" and method in _UNSAFE_HTTP_METHODS:
+            # Cookie- and open-access requests are browser-shaped, so unsafe
+            # methods keep the CSRF defense: a browser always attaches Origin
+            # to POST/PUT/PATCH/DELETE. A local non-browser tool that sends no
+            # Origin must present the control key instead (Bearer is exempt).
+            if auth_kind in ("session", "open") and method in _UNSAFE_HTTP_METHODS:
                 if not self.origin_is_trusted(scope, required=True):
                     await reject_origin(scope, send, receive)
                     return
@@ -1026,10 +1153,14 @@ class SurfaceSecurity:
             return
 
         auth_kind = self._authenticate(scope)
+        if auth_kind is None and open_access_granted(scope):
+            auth_kind = "open"
         if auth_kind is None:
             await reject_unauthorized(scope, send, receive)
             return
-        if auth_kind == "session" and not self.origin_is_trusted(scope, required=True):
+        if auth_kind in ("session", "open") and not self.origin_is_trusted(
+            scope, required=True
+        ):
             await reject_origin(scope, send, receive)
             return
         await self.app(scope, receive, send)
@@ -1040,13 +1171,18 @@ __all__ = [
     "SurfaceSecurity",
     "WS_TICKET_SCOPE_KEY",
     "append_session_cookie",
+    "browser_login_required",
     "build_set_cookie_header",
     "credentials_valid",
+    "is_loopback_request",
     "is_secure_or_loopback",
+    "open_access_granted",
     "reject_host",
     "reject_origin",
     "reject_unauthorized",
+    "reset_browser_login_required",
     "reset_ws_tickets",
     "scope_host_is_trusted",
     "scope_origin_is_trusted",
+    "set_browser_login_required",
 ]

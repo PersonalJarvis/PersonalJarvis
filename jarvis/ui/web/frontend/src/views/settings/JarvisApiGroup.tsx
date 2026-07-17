@@ -6,10 +6,13 @@ import {
   EyeOff,
   KeyRound,
   Loader2,
+  Lock,
   PencilLine,
   RefreshCw,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
+import { useBrowserLock } from "@/hooks/useBrowserLock";
 import { useJarvisApi } from "@/hooks/useJarvisApi";
 import { robustCopy } from "@/lib/clipboard";
 import { useEventStore } from "@/store/events";
@@ -38,10 +41,13 @@ const CUSTOM_KEY_RE = /^[A-Za-z0-9._~-]+$/;
 export function JarvisApiGroup() {
   const t = useT();
   const { data, loading, error, rotate, setKey } = useJarvisApi();
+  const browserLock = useBrowserLock();
   const pushToast = useEventStore((s) => s.pushToast);
   const [revealed, setRevealed] = useState(false);
   const [busy, setBusy] = useState(false);
   const [confirmRotate, setConfirmRotate] = useState(false);
+  const [confirmLock, setConfirmLock] = useState(false);
+  const [lockBusy, setLockBusy] = useState(false);
   const [formOpen, setFormOpen] = useState(false);
   const [newKey, setNewKey] = useState("");
   const [repeatKey, setRepeatKey] = useState("");
@@ -52,13 +58,44 @@ export function JarvisApiGroup() {
   const display = revealed ? key : (data?.masked ?? "…");
 
   useEffect(() => {
-    if (!confirmRotate) return;
+    if (!confirmRotate && !confirmLock) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setConfirmRotate(false);
+      if (e.key === "Escape") {
+        setConfirmRotate(false);
+        setConfirmLock(false);
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [confirmRotate]);
+  }, [confirmRotate, confirmLock]);
+
+  async function applyBrowserLock(next: boolean) {
+    setLockBusy(true);
+    try {
+      await browserLock.setEnabled(next);
+      setConfirmLock(false);
+      pushToast(
+        "success",
+        next
+          ? t("settings_view.jarvis_api.browser_lock_on_toast")
+          : t("settings_view.jarvis_api.browser_lock_off_toast"),
+      );
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setLockBusy(false);
+    }
+  }
+
+  function onToggleBrowserLock(next: boolean) {
+    if (next) {
+      // Turning the lock ON means the key is needed from now on — make the
+      // user consciously confirm (and ideally copy the key) first.
+      setConfirmLock(true);
+      return;
+    }
+    void applyBrowserLock(false);
+  }
 
   async function onCopy() {
     if (!key) return;
@@ -162,6 +199,23 @@ export function JarvisApiGroup() {
           {t("settings_view.jarvis_api.unlock_hint")}
         </p>
 
+        <div className="flex items-start gap-3 rounded-lg border border-border bg-card/60 p-4">
+          <Lock className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+          <div className="min-w-0 flex-1">
+            <div className="text-sm font-medium">
+              {t("settings_view.jarvis_api.browser_lock_title")}
+            </div>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              {t("settings_view.jarvis_api.browser_lock_description")}
+            </p>
+          </div>
+          <Switch
+            checked={browserLock.enabled ?? false}
+            disabled={browserLock.loading || lockBusy}
+            onCheckedChange={onToggleBrowserLock}
+          />
+        </div>
+
         <div className="flex items-center gap-2">
           <Button
             size="sm"
@@ -241,6 +295,62 @@ export function JarvisApiGroup() {
 
         {error && <p className="text-xs text-destructive">{error}</p>}
       </div>
+
+      {confirmLock && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm"
+          onClick={(e) => {
+            if (e.target === e.currentTarget) setConfirmLock(false);
+          }}
+        >
+          <div className="card-outline mx-4 w-full max-w-md rounded-xl border border-border bg-card p-5 shadow-2xl">
+            <div className="flex items-start gap-3">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-primary/40 bg-primary/10">
+                <Lock className="h-5 w-5 text-primary" />
+              </div>
+              <div className="min-w-0 flex-1">
+                <h3 className="text-base font-semibold">
+                  {t("settings_view.jarvis_api.browser_lock_confirm_title")}
+                </h3>
+                <p className="mt-1 text-sm text-muted-foreground">
+                  {t("settings_view.jarvis_api.browser_lock_confirm_body")}
+                </p>
+              </div>
+            </div>
+            <div className="mt-5 flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                disabled={lockBusy}
+                onClick={() => setConfirmLock(false)}
+              >
+                {t("common.cancel")}
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={lockBusy || !key}
+                onClick={onCopy}
+              >
+                <Copy className="mr-1.5 h-4 w-4" />
+                {t("settings_view.jarvis_api.copy_button")}
+              </Button>
+              <Button
+                size="sm"
+                disabled={lockBusy}
+                onClick={() => void applyBrowserLock(true)}
+              >
+                {lockBusy ? (
+                  <Loader2 className="mr-1.5 h-4 w-4 animate-spin" />
+                ) : (
+                  <Lock className="mr-1.5 h-4 w-4" />
+                )}
+                {t("settings_view.jarvis_api.browser_lock_confirm_button")}
+              </Button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {confirmRotate && (
         <div

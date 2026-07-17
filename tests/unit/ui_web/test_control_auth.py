@@ -35,6 +35,13 @@ class _FakeRequest:
         self.cookies = {}
         if session_token is not None:
             self.cookies[ca.COOKIE_NAME] = session_token
+        # Mirror the ASGI scope a real starlette Request carries; the
+        # open-access check inspects Host header + client peer on it.
+        self.scope = {
+            "type": "http",
+            "headers": [(b"host", host.encode("ascii"))],
+            "client": (host, 50_000),
+        }
 
 
 @pytest.fixture
@@ -98,6 +105,24 @@ async def test_session_guard_accepts_registered_ui_session(stored_key) -> None:
         await ca.require_control_key_or_session(_FakeRequest(session_token=token))
     finally:
         revoke_token(token)
+
+
+async def test_session_guard_grants_loopback_when_browser_lock_off(stored_key) -> None:
+    # Browser lock OFF (the product default): the loopback UI has no session
+    # cookie, yet must reach the key panel — otherwise the user could never
+    # see the key needed to turn the lock ON.
+    from jarvis.ui.web.surface_security import set_browser_login_required
+
+    set_browser_login_required(False)
+    await ca.require_control_key_or_session(_FakeRequest(host="127.0.0.1"))
+
+
+async def test_session_guard_still_denies_remote_when_browser_lock_off(stored_key) -> None:
+    from jarvis.ui.web.surface_security import set_browser_login_required
+
+    set_browser_login_required(False)
+    with pytest.raises(HTTPException):
+        await ca.require_control_key_or_session(_FakeRequest(host="203.0.113.7"))
 
 
 # --- assert_bind_safe (fail-closed) ---
