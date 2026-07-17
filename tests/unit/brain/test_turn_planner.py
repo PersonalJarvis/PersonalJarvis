@@ -322,6 +322,61 @@ def test_guarded_non_action_words_stay_native(utterance: str) -> None:
 @pytest.mark.parametrize(
     "utterance",
     [
+        # Live forensic 2026-07-17 08:36/08:47: every one of these
+        # conversational turns was force-delegated through the router brain
+        # and cost 12-21 s of silence. First-person deliberation, opinion
+        # questions, why-rants, and assistant-dayplan smalltalk must stay on
+        # the native realtime model.
+        (
+            "Kann ich dagegen irgendwas rechtlich machen? "  # i18n-allow
+            "Ich habe vor, eine Klage einzureichen."  # i18n-allow: forensic fixture
+        ),
+        "Muss ich jetzt alle Verträge ändern?",  # i18n-allow: forensic fixture
+        (
+            "Soll ich es einfach kaufen oder einen Profi dahinschicken, "  # i18n-allow
+            "der das für mich abwickelt?"  # i18n-allow: forensic fixture
+        ),
+        "Was willst du mir empfehlen, konkret?",  # i18n-allow: forensic fixture
+        (
+            "Wieso kriegen meine Mitarbeiter auf meine Kosten "  # i18n-allow
+            "einen freien Tag?"  # i18n-allow: forensic fixture
+        ),
+        (
+            "Wo glaubst du, kann ich den Wagen am besten unterstellen? "  # i18n-allow
+            "Meine Garage ist schon voll."  # i18n-allow: forensic fixture
+        ),
+        "Was machst du morgen genau?",  # i18n-allow: forensic fixture
+        "Should I just buy it or send a professional instead?",
+        "What do you think I should do about my employees?",
+    ],
+)
+def test_deliberation_opinion_and_smalltalk_stay_native(utterance: str) -> None:
+    assert plan_turn(utterance).path is TurnPath.NATIVE_REALTIME
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # Counter-proofs: explicit tasking, personal-fact recall, connected
+        # objects, and mission status keep delegating even when a modal or
+        # possessive appears in the sentence.
+        "Kannst du bitte die Datei vom Desktop löschen?",  # i18n-allow: fixture
+        "Ich möchte, dass du mir einen Termin für Montag anlegst.",  # i18n-allow
+        "Wie heißt meine Frau?",  # i18n-allow: German speech-input fixture
+        "Soll ich die E-Mail an Anna jetzt schicken?",  # i18n-allow: fixture
+        "Woran arbeitest du gerade?",  # i18n-allow: German speech-input fixture
+        "Who is my best friend?",
+    ],
+)
+def test_tasking_recall_and_connected_turns_still_use_orchestrator(
+    utterance: str,
+) -> None:
+    assert plan_turn(utterance).path is TurnPath.ORCHESTRATOR
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
         # One canonical spoken form per capability class that previously
         # stayed native (per-action reachability matrix, 2026-07-13).
         "Wie ist Christophs Telefonnummer?",  # i18n-allow: German fixture

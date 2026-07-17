@@ -177,6 +177,70 @@ _ACTION_FALLBACK_RE = re.compile(
     r"reproduc\w*|reanud\w*|apag\w*|enciend\w*|agend\w*|"
     r"reserv\w*|usa\w*|habla\w*|prueba\w*)\b"  # i18n-allow: multilingual speech-input matching data
 )
+# --- Conversational-turn suppressors (live forensic 2026-07-17 08:36/08:47) --
+# A realtime delegation costs 12-34 s of silence (router-brain full generation
+# + live-model re-rendering), so WEAK evidence signals must not force it on
+# plain conversation. These suppressors remove only the weak reasons (action
+# fallback verb, bare possessive pronoun, temporal marker, the trailing "?"
+# uncertainty rule); strong evidence (Wiki/settings/tools, connected domains,
+# contact details, missions, skills, capability matches, context inheritance)
+# always still delegates.
+#
+# First-person modal deliberation: the USER is weighing their own next step
+# ("Kann ich dagegen rechtlich was machen?",  # i18n-allow: forensic quote
+# "Soll ich es einfach kaufen?",  # i18n-allow: forensic quote
+# "Muss ich alle Verträge ändern?").  # i18n-allow: forensic quote
+# The answer is advice, not an action — the quoted verbs
+# ("machen", "kaufen", "ändern") must not read as a command  # i18n-allow
+# to Jarvis.
+_DELIBERATION_RE = re.compile(
+    r"\b(?:kann|koennt\w*|soll\w*|muss|muesst\w*|darf|duerft\w*) ich\b|"  # i18n-allow: speech input
+    r"\bich (?:kann|koennte|soll|sollte|muss|muesste|darf|duerfte)\b|"  # i18n-allow: speech input
+    r"\b(?:should|shall|can|could|must|may|might) i\b|"
+    r"\b(?:debo|deberia|puedo|podria)\b"  # i18n-allow: multilingual speech-input matching data
+)
+# Explicit tasking of the assistant overrides the deliberation reading:
+# "Kannst du ...", "Ich möchte, dass du ...", "please open ...".  # i18n-allow
+_ASSISTANT_TASKING_RE = re.compile(
+    r"\b(?:kannst|koenntest|wuerdest|willst|magst|sollst) du\b|"  # i18n-allow: speech input
+    r"\bdass du\b|\bdu (?:mir|mal|bitte|kurz|jetzt)\b|\bbitte\b|"  # i18n-allow: speech input
+    r"\b(?:can|could|would|will) you\b|\bplease\b|"
+    r"\bpuedes\b|\bpodrias\b|\bpor favor\b"  # i18n-allow: multilingual speech-input matching data
+)
+# Opinion/advice questions directed at the assistant's judgment: the user
+# wants a recommendation or a view, never stored evidence ("Was willst du
+# mir empfehlen?", "wo glaubst du kann ich am besten ...").  # i18n-allow
+_OPINION_RE = re.compile(
+    r"\b(?:glaubst|denkst|meinst|findest|haeltst|raetst) du\b|"  # i18n-allow: speech input
+    r"\bempfiehl\w*\b|\bempfehl\w*\b|\bdeiner meinung\b|"  # i18n-allow: speech input
+    r"\bdo you think\b|\bwhat do you think\b|\byour opinion\b|"
+    r"\bwould you recommend\b|\bwhat (?:do|would) you recommend\b|"
+    r"\bcrees que\b|\bque (?:opinas|piensas)\b|\brecomiend\w*\b|"
+    r"\brecomendar\w*\b"  # i18n-allow: multilingual speech-input matching data
+)
+# Why-questions ask for an explanation or a rant partner, not a data fetch;
+# a bare possessive inside one ("Wieso kriegen meine Mitarbeiter frei?") is
+# the user's life, not their stored data. Context inheritance for follow-ups
+# ("Warum ist es fehlgeschlagen?") runs separately, untouched.  # i18n-allow
+_WHY_RE = re.compile(
+    # i18n-allow: multilingual speech-input matching data
+    r"\b(?:wieso|warum|weshalb|why|por que)\b"
+)
+# Smalltalk about the assistant's (future) day: "Was machst du morgen?".
+# Its span is removed before the weak action/current scans so "machst" and
+# "morgen" cannot delegate; "Woran arbeitest du?" (mission status) is a
+# separate LOCAL_STATE idiom and stays.  # i18n-allow: quoted German utterance
+_ASSISTANT_DAYPLAN_RE = re.compile(
+    # i18n-allow: multilingual speech-input matching data
+    r"\bwas machst du\b"
+    r"(?:[^.?!]{0,24}?\b(?:heute|morgen|jetzt|gerade|so)\b)?|"
+    r"\bwas hast du [^.?!]{0,20}\bvor\b|"
+    r"\bwhat are you (?:doing|up to)\b"
+    r"(?:[^.?!]{0,24}?\b(?:today|tomorrow|now)\b)?|"
+    r"\bque (?:haces|estas haciendo)\b"
+    r"(?:[^.?!]{0,24}?\b(?:hoy|manana|ahora)\b)?"
+)
+
 _FOLLOW_UP_REFERENCE_RE = re.compile(
     r"\b(?:that|there|those|them|inside|what else|findings?|results?|"
     r"what (?:did|have) (?:you|it) (?:find|found)|found out|"
@@ -343,7 +407,22 @@ def plan_turn(
     if required:
         reasons.add(TurnReason.CAPABILITY)
 
-    action_intent = bool(_ACTION_FALLBACK_RE.search(normalized))
+    # Weak conversational suppressors: see the block comment above their
+    # vocabularies. Each one dampens ONLY the weak signals computed below;
+    # every strong evidence category further down is deliberately untouched,
+    # and the realtime model keeps the action tool declared either way, so a
+    # suppressed turn can still act when the model insists.
+    deliberative = bool(_DELIBERATION_RE.search(normalized)) and not bool(
+        _ASSISTANT_TASKING_RE.search(normalized)
+    )
+    opinion = bool(_OPINION_RE.search(normalized))
+    why_question = bool(_WHY_RE.search(normalized))
+    # Remove the assistant-dayplan idiom span so its own words ("machst",
+    # "morgen") cannot feed the weak action/current scans below.
+    # i18n-allow: names the German idiom tokens under suppression
+    weak_scan_text = _ASSISTANT_DAYPLAN_RE.sub(" ", normalized)
+
+    action_intent = bool(_ACTION_FALLBACK_RE.search(weak_scan_text))
     if capability_registry is not None:
         try:
             action_intent = action_intent or bool(
@@ -355,9 +434,13 @@ def plan_turn(
     lookup = bool(_LOOKUP_SHAPE_RE.search(normalized))
     private = bool(_OWNERSHIP_RE.search(normalized))
 
-    if action_intent and not instructional:
+    if action_intent and not instructional and not (deliberative or opinion):
         reasons.add(TurnReason.ACTION)
-    if private and (lookup or action_intent):
+    if (
+        private
+        and (lookup or action_intent)
+        and not (deliberative or opinion or why_question)
+    ):
         reasons.add(TurnReason.PRIVATE_DATA)
     if _LOCAL_STATE_RE.search(normalized) and not definition:
         reasons.add(TurnReason.LOCAL_STATE)
@@ -377,7 +460,15 @@ def plan_turn(
     # phone number?" is a contact lookup, never a definition.
     if _CONTACT_DETAIL_RE.search(normalized) and (lookup or action_intent):
         reasons.add(TurnReason.CONNECTED_DATA)
-    if _CURRENT_RE.search(normalized) and (lookup or normalized.endswith("?")):
+    # Inside a deliberation/opinion turn a time word ("jetzt", "morgen") is
+    # part of the user's story, not a freshness request — and the model can
+    # still call the action tool itself when it truly needs live data.
+    # i18n-allow: names the German filler tokens under suppression
+    if (
+        _CURRENT_RE.search(weak_scan_text)
+        and (lookup or normalized.endswith("?"))
+        and not (deliberative or opinion)
+    ):
         reasons.add(TurnReason.CURRENT_DATA)
     if _MISSION_RE.search(normalized) and not definition:
         reasons.add(TurnReason.MISSION)
@@ -457,8 +548,15 @@ def plan_turn(
         reasons.add(TurnReason.CONNECTED_DATA)
 
     # Questions that clearly request fresh or private evidence but are phrased
-    # outside the known lookup vocabulary fail toward the orchestrator.
-    if (private or _CURRENT_RE.search(normalized)) and normalized.endswith("?") and not definition:
+    # outside the known lookup vocabulary fail toward the orchestrator — except
+    # deliberation/opinion/why turns, where the possessive or time word is part
+    # of the user's story, not an evidence request.
+    if (
+        (private or _CURRENT_RE.search(weak_scan_text))
+        and normalized.endswith("?")
+        and not definition
+        and not (deliberative or opinion or why_question)
+    ):
         reasons.add(TurnReason.UNCERTAIN)
 
     if not reasons:
