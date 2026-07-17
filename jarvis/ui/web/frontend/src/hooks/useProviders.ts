@@ -1019,3 +1019,43 @@ export async function saveRealtimeOptions(
   return body as RealtimeOptionsSaveResult;
 }
 
+/**
+ * Synthesises a short spoken sample of a realtime provider's voice and
+ * returns it as a playable `audio/wav` blob. Mirrors
+ * POST /api/providers/{id}/realtime-voice-preview. `model` matters only where
+ * the sampler runs through a realtime session (openai-realtime); `""` uses
+ * the adapter default. Throws with the backend's message on any failure
+ * (no key / quota / transport).
+ */
+export async function fetchRealtimeVoicePreview(opts: {
+  providerId: string;
+  voice: string;
+  language: "de" | "en" | "es";
+  model?: string;
+}): Promise<Blob> {
+  const res = await fetch(
+    `/api/providers/${encodeURIComponent(opts.providerId)}/realtime-voice-preview`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        voice: opts.voice,
+        language: opts.language,
+        model: opts.model ?? "",
+      }),
+    },
+  );
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}));
+    const detail = (body as { detail?: unknown }).detail;
+    throw new Error(
+      typeof detail === "string" && detail
+        ? detail
+        : detail && typeof detail === "object" && "message" in detail
+          ? String((detail as { message: unknown }).message)
+          : `HTTP ${res.status}`,
+    );
+  }
+  return await res.blob();
+}
+

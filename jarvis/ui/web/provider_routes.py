@@ -1861,6 +1861,247 @@ async def set_realtime_options(
     )
 
 
+# ── POST /providers/{id}/realtime-voice-preview ────────────────────────────
+# Speak a short sample with one of a realtime provider's voices so the user
+# can HEAR a voice before pinning it — same product contract as the TTS
+# voice picker's POST /tts/preview below, but per realtime provider.
+
+# Ceiling for one preview synthesis. Generous: the OpenAI path opens a real
+# realtime session (handshake + generation), Gemini may cross its sibling
+# bridge on a 429 — but the route must always answer so the play button's
+# spinner resolves.
+_REALTIME_PREVIEW_TIMEOUT_S = 30.0
+
+# BCP-47 pronunciation pins for the sample languages. Gemini's prebuilt
+# voices are language-agnostic; an unpinned call auto-detects per word and
+# can code-switch mid-sentence, so the sample pins the language it speaks.
+_REALTIME_PREVIEW_LANG_CODES = {"de": "de-DE", "en": "en-US", "es": "es-ES"}
+
+
+async def _gemini_live_voice_sample(
+    api_key: str, *, model: str, voice: str, text: str, language: str
+) -> tuple[bytes, int]:
+    """Sample a Gemini Live voice via the Gemini TTS family.
+
+    The Live API serves the same 30 prebuilt voices (Puck, Charon, Kore, …)
+    as the Gemini TTS models, so a cheap ``generate_content`` call renders the
+    identical voice without opening a duplex Live session. ``model`` (the
+    pinned LIVE model) deliberately plays no role here — voices, not models,
+    are what the sample demonstrates.
+    """
+    del model
+    from jarvis.plugins.tts.gemini_flash_tts import GEMINI_TTS_SAMPLE_RATE, GeminiFlashTTS
+
+    tts = GeminiFlashTTS(
+        api_key=api_key,
+        # One generation = one coherent voice take; no OS fallback voice may
+        # ever impersonate the sampled voice.
+        chunk_by_sentence=False,
+        allow_sapi5_fallback=False,
+    )
+    pcm = bytearray()
+    sample_rate = GEMINI_TTS_SAMPLE_RATE
+    async for chunk in tts.synthesize(
+        text, voice=voice, language_code=_REALTIME_PREVIEW_LANG_CODES.get(language)
+    ):
+        pcm += bytes(chunk.pcm)
+        sample_rate = chunk.sample_rate
+    return bytes(pcm), sample_rate
+
+
+async def _openai_realtime_voice_sample(
+    api_key: str, *, model: str, voice: str, text: str, language: str
+) -> tuple[bytes, int]:
+    """Sample an OpenAI Realtime voice via a one-shot realtime session.
+
+    Marin and Cedar exist ONLY in the Realtime API (no ``/v1/audio/speech``
+    counterpart), so the sample opens the same duplex channel a live call
+    uses — which also makes it exactly what a call will sound like. No
+    microphone audio is sent; the session closes after one spoken response.
+    """
+    del language  # the sample text itself carries the language
+    import base64
+
+    from openai import AsyncOpenAI  # lazy (AP-26)
+
+    output_rate = 24_000
+    client = AsyncOpenAI(api_key=api_key)
+    pcm = bytearray()
+    try:
+        async with client.realtime.connect(model=model or "gpt-realtime") as conn:
+            # Mirrors the GA session shape of the live adapter
+            # (jarvis/plugins/realtime/openai_realtime.py::_session_payload),
+            # minus transcription/tools: manual-response mode so the server
+            # never speaks on its own.
+            await conn.session.update(
+                session={
+                    "type": "realtime",
+                    "instructions": (
+                        "You generate voice samples. When asked to speak, say "
+                        "the requested text verbatim and nothing else."
+                    ),
+                    "output_modalities": ["audio"],
+                    "audio": {
+                        "input": {
+                            "format": {"type": "audio/pcm", "rate": output_rate},
+                            "turn_detection": {
+                                "type": "server_vad",
+                                "create_response": False,
+                                "interrupt_response": False,
+                            },
+                        },
+                        "output": {
+                            "format": {"type": "audio/pcm", "rate": output_rate},
+                            "voice": voice,
+                        },
+                    },
+                }
+            )
+            # Request the response only after the server confirmed the session
+            # (voice included) — a response generated before the update lands
+            # would speak the DEFAULT voice, silently mislabeling the sample.
+            response_requested = False
+            async for event in conn:
+                event_type = str(getattr(event, "type", "") or "")
+                if event_type == "session.updated" and not response_requested:
+                    response_requested = True
+                    await conn.response.create(
+                        response={
+                            "instructions": (
+                                "Say exactly the following, in a natural tone, "
+                                f"and nothing else: {text}"
+                            )
+                        }
+                    )
+                elif event_type == "response.output_audio.delta":
+                    pcm += base64.b64decode(getattr(event, "delta", "") or "")
+                elif event_type == "response.done":
+                    response = getattr(event, "response", None)
+                    status = str(getattr(response, "status", "") or "")
+                    if status and status != "completed" and not pcm:
+                        details = getattr(response, "status_details", None)
+                        raise RuntimeError(
+                            f"the provider ended the sample as '{status}'"
+                            + (f" ({details})" if details else "")
+                        )
+                    break
+                elif event_type == "error":
+                    error = getattr(event, "error", None)
+                    message = str(getattr(error, "message", "") or error or "unknown error")
+                    raise RuntimeError(message)
+    finally:
+        close = getattr(client, "close", None)
+        if close is not None:
+            result = close()
+            if hasattr(result, "__await__"):
+                await result
+    return bytes(pcm), output_rate
+
+
+# Keyed like REALTIME_MODELS/REALTIME_VOICES: adding a realtime provider means
+# adding its catalog entries AND its sampler here (the parity test guards it).
+_REALTIME_PREVIEW_SAMPLERS: dict[str, Any] = {
+    "gemini-live": _gemini_live_voice_sample,
+    "openai-realtime": _openai_realtime_voice_sample,
+}
+
+
+class RealtimeVoicePreviewBody(BaseModel):
+    voice: str = Field(default="", max_length=200)
+    # The sample language to speak ("de" | "en" | "es"). Falls back to English.
+    language: str = Field(default="en", max_length=16)
+    # The realtime model to sample through where the sampler needs one
+    # (openai-realtime); "" = the adapter default. Validated when non-empty.
+    model: str = Field(default="", max_length=200)
+
+
+@router.post("/providers/{provider_id}/realtime-voice-preview")
+async def realtime_voice_preview(
+    provider_id: str, body: RealtimeVoicePreviewBody
+) -> Response:
+    """Speak a SHORT sample with one of a realtime provider's voices.
+
+    Returns ``audio/wav`` (24 kHz mono s16le in a WAV container) so the voice
+    picker can play it directly — the same response contract as
+    ``POST /tts/preview``. The sample is generated with the credential stored
+    for THIS provider. Any failure (no key / quota / transport) is a clean
+    4xx/5xx JSON error the picker can toast — never a page-breaking 500.
+    """
+    _require_realtime_provider(provider_id)
+    from jarvis.brain.model_catalog import REALTIME_MODELS, REALTIME_VOICES
+
+    voice = body.voice.strip()
+    if not voice:
+        raise HTTPException(status_code=400, detail="A voice id is required.")
+    _validate_realtime_option(
+        provider_id=provider_id,
+        field="voice",
+        value=voice,
+        allowed={option.id for option in REALTIME_VOICES.get(provider_id, ())},
+    )
+    model = body.model.strip()
+    _validate_realtime_option(
+        provider_id=provider_id,
+        field="model",
+        value=model,
+        allowed={option.id for option in REALTIME_MODELS.get(provider_id, ())},
+    )
+    sampler = _REALTIME_PREVIEW_SAMPLERS.get(provider_id)
+    if sampler is None:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Voice preview is not available for provider '{provider_id}'.",
+        )
+
+    api_key = cfg_mod.get_provider_secret(provider_id)
+    if not api_key:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Provider '{provider_id}' has no configured credentials. "
+                "Add its API key first."
+            ),
+        )
+
+    lang = (body.language or _TTS_PREVIEW_DEFAULT_LANG).lower().split("-", 1)[0]
+    sample = _TTS_PREVIEW_SAMPLES.get(lang, _TTS_PREVIEW_SAMPLES[_TTS_PREVIEW_DEFAULT_LANG])
+
+    try:
+        pcm, sample_rate = await asyncio.wait_for(
+            sampler(api_key, model=model, voice=voice, text=sample, language=lang),
+            timeout=_REALTIME_PREVIEW_TIMEOUT_S,
+        )
+    except HTTPException:
+        raise
+    except TimeoutError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"Voice preview timed out after {_REALTIME_PREVIEW_TIMEOUT_S:.0f}s — "
+                "the provider did not answer."
+            ),
+        ) from exc
+    except Exception as exc:  # noqa: BLE001 — never 500 the page
+        raise HTTPException(
+            status_code=502, detail=f"Voice preview failed: {exc}"
+        ) from exc
+
+    if not pcm:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                "Voice preview produced no audio — check the provider's API key "
+                "and quota."
+            ),
+        )
+    wav = _pcm_to_wav(pcm, sample_rate=sample_rate, channels=1)
+    return Response(
+        content=wav,
+        media_type="audio/wav",
+        headers={"Cache-Control": "no-store"},
+    )
+
+
 @router.get("/codex/status")
 async def codex_status(request: Request) -> dict[str, Any]:
     return CodexAuthService(_codex_binary_path(request)).status().to_dict()
@@ -2193,11 +2434,17 @@ _VOICE_PICKER_PROVIDER = "openrouter-tts"
 # Every supported runtime-output language has an entry (never a de/en-only
 # table — AP-21 / runtime-language doctrine).
 _TTS_PREVIEW_SAMPLES: dict[str, str] = {
+    # The German sentence is deliberately NOT a literal translation of the
+    # English one: Gemini's AI-Studio TTS safety filter deterministically
+    # blocked the former mirror-translation ("So klingt meine Stimme, wenn
+    # ich für dich spreche und dir zuhöre") as PROHIBITED_CONTENT — 0/2 runs  # i18n-allow: forensic quote of the blocked German sample
+    # passed, voice-independent, while EN/ES passed (probe 2026-07-17). This
+    # wording passed 4/4 runs across three voices.
     "de": (
-        "Hallo! Ich bin dein "  # i18n-allow: German TTS preview output.
+        "Guten Tag! Ich bin dein "  # i18n-allow: German TTS preview output.
         "persönlicher Assistent. "  # i18n-allow
-        "So klingt meine Stimme, "  # i18n-allow
-        "wenn ich für dich spreche und dir zuhöre."  # i18n-allow
+        "So klingt meine Stimme. "  # i18n-allow
+        "Ich freue mich, dir bei deinen Aufgaben zu helfen."  # i18n-allow
     ),
     "en": (
         "Hi there! I am your personal assistant. "

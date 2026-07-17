@@ -413,8 +413,9 @@ function VoicePicker({
   );
 }
 
-/** A small play / stop button with a loading spinner while the audio fetches. */
-function PreviewButton({
+/** A small play / stop button with a loading spinner while the audio fetches.
+ * Shared with the realtime voice picker (RealtimeOptionsControl). */
+export function PreviewButton({
   active,
   loading,
   onClick,
