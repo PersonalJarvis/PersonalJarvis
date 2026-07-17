@@ -40,7 +40,14 @@ from jarvis.speech.hangup import HANGUP_RE
 
 log = logging.getLogger(__name__)
 
-_MAX_UNSCRUBBED_AUDIO_MS = 5_000
+# Give up on a response only when transcription is truly dead. The old 5 s
+# bound sat below Gemini's routine 5-7 s output-transcription lag and aborted
+# REAL answers mid-sentence with the generic failure phrase (live forensic
+# 2026-07-17 08:30, BUG-069). 15 s covers the observed lag with 2x margin;
+# it is deliberately not larger because this bound is also the ceiling on how
+# much never-transcribed PCM finalize() could flush at a turn boundary whose
+# transcription died mid-turn. Memory cost is trivial either way.
+_MAX_UNSCRUBBED_AUDIO_MS = 15_000
 _PROVIDER_HANDSHAKE_TOTAL_TIMEOUT_S = 12.0
 _AUDIO_SEND_TIMEOUT_S = 2.0
 _TOOL_TRANSCRIPT_WAIT_S = 3.0
@@ -1329,10 +1336,14 @@ class RealtimeVoiceSession:
                         if (
                             delegate_state is not None
                             and delegate_state.delivery_started
+                            # A cancel this turn already spoke; marking the
+                            # reply as delivered before a no-op cancel would
+                            # silently lose it (BUG-069 review).
+                            and not self._scrub_cancelled_for_turn
                         ):
-                            trusted_reply = str(
-                                delegate_state.last_reply or ""
-                            ).strip()
+                            trusted_reply = self._scrubbed_trusted_reply(
+                                delegate_state
+                            )
                             if trusted_reply:
                                 delegate_state.surface_fallback_spoken = True
                         await self._cancel_unsafe_output(
@@ -1516,7 +1527,8 @@ class RealtimeVoiceSession:
                         # TTS path; never rerun the user request or its tools.
                         fallback_text = (
                             "".join(self._output_transcript).strip()
-                            or delegate_state.last_reply
+                            or self._scrubbed_trusted_reply(delegate_state)
+                            or self._gate.fallback_phrase()
                         )
                         if not self._output_transcript:
                             self._output_transcript.append(fallback_text)
@@ -1542,9 +1554,36 @@ class RealtimeVoiceSession:
                         )
                     final_chunks = self._gate.finalize()
                     if self._gate.hard_leak_pending():
+                        # Same rendering-failure contract as the pending-buffer
+                        # trip above: a delegate readback whose transcription
+                        # never arrived is OUR already-delivered brain reply,
+                        # not a leak. Speak the trusted text instead of the
+                        # generic failure phrase (live incident 2026-07-16
+                        # 11:24 reached this path once the unscrubbed-audio
+                        # bound stopped tripping first, BUG-069).
+                        trusted_reply = ""
+                        if (
+                            delegate_state is not None
+                            and delegate_state.delivery_started
+                            and not delegate_state.surface_fallback_spoken
+                            # A cancel this turn already spoke; marking the
+                            # reply as delivered before a no-op cancel would
+                            # silently lose it (BUG-069 review).
+                            and not self._scrub_cancelled_for_turn
+                            and self._output_samples_sent == 0
+                        ):
+                            trusted_reply = self._scrubbed_trusted_reply(
+                                delegate_state
+                            )
+                            if trusted_reply:
+                                delegate_state.surface_fallback_spoken = True
+                                self._drop_provider_output_until_user_turn = (
+                                    True
+                                )
                         await self._cancel_unsafe_output(
                             reason="output transcript missing at turn completion",
                             interrupt_provider=False,
+                            fallback_text=trusted_reply or None,
                         )
                     for chunk in final_chunks:
                         await self._emit_audio(chunk)
@@ -1651,6 +1690,20 @@ class RealtimeVoiceSession:
             except Exception:  # noqa: BLE001, S110
                 pass
 
+    def _scrubbed_trusted_reply(self, delegate_state: Any) -> str:
+        """Scrub-clean the delegate's trusted reply for direct surface speech.
+
+        The stored ``last_reply`` is raw Brain output; the normal path only
+        speaks it after the provider re-renders it through the scrub gate.
+        Every direct-to-surface fallback must apply the same regex scrub
+        (ADR-0010, AP-11) before the text reaches TTS â€” the sibling
+        ``_direct_tool_fallback_text`` already follows this contract.
+        """
+        raw = str(getattr(delegate_state, "last_reply", "") or "").strip()
+        if not raw:
+            return ""
+        return scrub_for_voice(raw, language=self._language).cleaned.strip()
+
     async def _cancel_unsafe_output(
         self,
         *,
@@ -1660,6 +1713,17 @@ class RealtimeVoiceSession:
     ) -> None:
         """Cancel one unsafe provider response and emit one honest fallback."""
         if self._scrub_cancelled_for_turn:
+            # A second cancel in the same turn is a silent no-op by design
+            # (one fallback per turn) â€” but it must be diagnosable, or a
+            # caller that staged a trusted reply here loses it without a
+            # trace (BUG-069 review; BUG-056 pattern).
+            log.debug(
+                "realtime[%s] suppressed a second scrub cancel this turn "
+                "(reason: %s, staged fallback dropped: %s)",
+                self.session_id,
+                reason,
+                bool(fallback_text),
+            )
             return
         self._scrub_cancelled_for_turn = True
         self._drop_provider_output_until_new_response = True

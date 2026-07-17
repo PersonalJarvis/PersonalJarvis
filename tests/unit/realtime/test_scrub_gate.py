@@ -67,9 +67,13 @@ async def test_leading_streaming_dash_waits_for_meaningful_transcript():
 
 @pytest.mark.asyncio
 async def test_split_filler_opener_can_complete_a_substantive_reply():
-    """A temporary ``Let me think`` prefix must not abort streamed output."""
+    """A temporary ``Let me think`` prefix must not abort streamed output.
+
+    The 2000 ms chunk exceeds what the few prefix chars fund, so it must
+    buffer until the substantive continuation arrives — never abort.
+    """
     gate = ScrubHoldGate(language="en")
-    buffered = _chunk(8)
+    buffered = _chunk(48_000)
 
     display = [await gate.feed_transcript("Let me")]
     display.append(await gate.feed_transcript(" think"))
@@ -247,13 +251,14 @@ async def test_scrub_is_regex_only_no_llm(monkeypatch):
 
 @pytest.mark.asyncio
 async def test_later_segment_leak_is_caught_after_a_clean_first_segment():
-    """_cleared must be one-shot: a later segment's audio still gets held.
+    """Audio beyond the vetted coverage budget still gets held.
 
-    Regression for the sticky-_cleared defect: after the first clean
-    transcript in a turn released `_cleared = True` and never reset it, so
-    every later push_audio() released immediately without buffering — audio
-    for a later segment (which may contain a hard leak) could reach the
-    speaker before its own transcript was scrubbed.
+    Regression for the sticky-_cleared defect, updated for the BUG-069
+    coverage budget: a short clean first segment funds only its own
+    estimated spoken duration, so a later segment's audio that outruns that
+    budget (and whose own transcript may be a hard leak) must buffer until
+    its transcript is scrubbed — and must be dropped when that transcript
+    turns out to be a stacktrace.
     """
     gate = ScrubHoldGate(language="en")
 
@@ -264,9 +269,9 @@ async def test_later_segment_leak_is_caught_after_a_clean_first_segment():
     out1 = await gate.push_audio(_chunk(4))
     assert out1  # segment 1 audio released
 
-    # Segment 2: audio arrives before ITS transcript. If _cleared were still
-    # sticky from segment 1, this would release immediately (the bug).
-    out2 = await gate.push_audio(_chunk(4))
+    # Segment 2: 2000 ms of audio arrives before ITS transcript — far more
+    # than the 24-char first segment can fund. It must buffer, not release.
+    out2 = await gate.push_audio(_chunk(48_000))
     assert out2 == []  # must be buffered, not released
 
     # Segment 2's transcript turns out to be a hard leak (a real stacktrace).
@@ -310,7 +315,9 @@ async def test_missing_transcript_fails_closed_instead_of_releasing_audio():
 async def test_clean_transcript_covers_buffered_tail_at_response_boundary():
     gate = ScrubHoldGate(language="en")
     first = _chunk(4)
-    tail = _chunk(8)
+    # 2000 ms — beyond what the 25-char transcript's coverage budget funds,
+    # so it must wait for the response boundary.
+    tail = _chunk(48_000)
 
     await gate.feed_transcript("A complete safe response.")
     assert await gate.push_audio(first) == [first]
@@ -329,6 +336,80 @@ async def test_untranscribed_audio_buffer_is_bounded_by_audio_duration():
     assert gate.fail_if_pending_exceeds(50) is True
     assert gate.hard_leak_pending() is True
     assert gate.finalize() == []
+
+@pytest.mark.asyncio
+async def test_en_bloc_upfront_transcript_keeps_audio_flowing():
+    """BUG-069 core fix: an up-front whole-reply transcript funds ALL audio.
+
+    A Gemini Live probe (2026-07-17) delivered the entire reply transcript as
+    ONE delta alongside the first audio chunk, then streamed audio only. The
+    pre-budget gate released exactly one chunk per transcript delta, so every
+    later chunk starved until turn end — the audible word-splitting stutter
+    and 5-7 s mid-reply holes. With the coverage budget, each chunk must flow
+    the moment it arrives.
+    """
+    gate = ScrubHoldGate(language="en")
+    transcript = (
+        "A perfectly ordinary answer about the weather today, spoken in "
+        "several unhurried sentences that together run far longer than the "
+        "audio pushed below, arriving complete before nearly all its audio."
+    )
+
+    await gate.feed_transcript(transcript)
+    assert gate.release_available() == []  # nothing buffered yet
+
+    for _ in range(10):
+        chunk = _chunk(9_600)  # 400 ms at 24 kHz — a realistic Gemini chunk
+        assert await gate.push_audio(chunk) == [chunk]
+    assert gate.pending_audio_ms == 0.0
+
+
+@pytest.mark.asyncio
+async def test_budget_exhaustion_buffers_audio_beyond_vetted_text():
+    """Fail-closed core: audio outrunning the vetted text still buffers."""
+    gate = ScrubHoldGate(language="en")
+
+    await gate.feed_transcript("Okay.")  # funds ~275 ms
+    first = _chunk(9_600)  # 400 ms
+    assert await gate.push_audio(first) == [first]  # clean-delta release
+
+    second = _chunk(9_600)
+    assert await gate.push_audio(second) == []  # budget spent: buffer
+
+    await gate.feed_transcript(" The rest of the sentence arrives late.")
+    assert gate.release_available() == [second]
+
+
+@pytest.mark.asyncio
+async def test_clean_delta_credit_still_releases_one_chunk_beyond_budget():
+    """The budget redesign must never be stricter than the old gate.
+
+    When a clean delta arrives with nothing buffered, the pre-budget gate
+    preserved its credit and released exactly one later chunk regardless of
+    size. That parity must survive: the first chunk after such a delta flows
+    even though the tiny transcript cannot fund its duration — and only one.
+    """
+    gate = ScrubHoldGate(language="en")
+
+    await gate.feed_transcript("Hi.")  # funds only ~165 ms
+    assert gate.release_available() == []  # nothing buffered: credit survives
+
+    first = _chunk(9_600)  # 400 ms — larger than the funded estimate
+    assert await gate.push_audio(first) == [first]  # legacy credit release
+    assert await gate.push_audio(_chunk(9_600)) == []  # credit is one-shot
+
+
+@pytest.mark.asyncio
+async def test_residue_only_transcript_never_activates_the_budget():
+    """A turn whose aggregate transcript is still residue funds nothing."""
+    gate = ScrubHoldGate(language="en")
+
+    await gate.feed_transcript("Great question.")  # residue: filler opener
+    assert await gate.push_audio(_chunk(9_600)) == []
+
+    await gate.feed_transcript(" Bones need calcium and daily movement.")
+    assert gate.release_available()  # aggregate turned clean: audio flows
+
 
 @pytest.mark.asyncio
 async def test_hard_leak_exposes_detector_actions_for_diagnosis():

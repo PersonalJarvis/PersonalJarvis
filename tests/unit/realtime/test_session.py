@@ -957,8 +957,11 @@ async def test_later_segment_leak_audio_not_emitted():
     # could ride along before its own transcript is scrubbed. The session
     # must flush release_available() right after sending a clean transcript
     # so the gate's _cleared flag never spans into the next segment's audio.
+    # The leak segment carries 1500 ms of PCM â€” beyond what the 23-char clean
+    # first sentence funds under the BUG-069 coverage budget, so it must stay
+    # buffered until its own (leaking) transcript arrives and drops it.
     a1 = b"\x11\x22" * 8
-    a2 = b"\x33\x44" * 8
+    a2 = b"\x33\x44" * 36_000
     events = [
         RealtimeEvent(
             type="audio_delta", audio=AudioChunk(pcm=a1, sample_rate=24000, timestamp_ns=0)
@@ -2004,15 +2007,16 @@ async def test_scrub_trip_during_delegate_readback_speaks_trusted_reply():
     """A tripped transcript hold re-speaks the delivered reply, not an error.
 
     Gemini renders an injected trusted result faster than real time while its
-    output transcription lags; once >5 s of PCM sat unclaimed the scrub gate
-    cancelled the readback and the user heard a generic error AFTER waiting
-    through the whole delegated action (live incident 2026-07-16 11:24). The
-    reply text is our own already-delivered brain output, so the surface TTS
-    must speak it instead.
+    output transcription lags entirely (live incident 2026-07-16 11:24). With
+    no transcript delta the whole turn, the gate fails closed at
+    turn_complete (BUG-069: the mid-turn buffer cap no longer trips first) â€”
+    and that path used to speak a generic error AFTER the user waited through
+    the whole delegated action. The reply text is our own already-delivered
+    brain output, so the surface TTS must speak it instead.
     """
     reply = "The delegated answer the user must still hear."
-    # 3 s of 24 kHz 16-bit PCM per chunk; the second chunk pushes the
-    # unclaimed buffer past the 5 s scrub cap without any transcript delta.
+    # 3 s of 24 kHz 16-bit PCM per chunk â€” audio arrives, its transcript
+    # never does, and the turn ends normally.
     three_seconds = AudioChunk(
         pcm=b"\x01\x02" * 72_000, sample_rate=24_000, timestamp_ns=0
     )

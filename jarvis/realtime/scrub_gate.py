@@ -6,14 +6,32 @@ decoded audio delta and release it only once its transcript region has passed
 ``scrub_for_voice``. A hard leak (stacktrace / raw repr / shell command) drops
 the buffered audio and signals the session to cancel + speak the fallback.
 Regex-only, no LLM (AP-11).
+
+Release accounting is a COVERAGE BUDGET, not a per-delta credit. Providers do
+not pace their output transcription against their audio: a Gemini Live probe
+(2026-07-17) delivered the ENTIRE reply transcript as one delta alongside the
+first audio chunk, and live sessions have shown the opposite — transcription
+falling 5-7 s behind the audio. The previous design released exactly one
+audio push per transcript delta, so an up-front en-bloc transcript starved
+every later chunk until turn end: the audible word-splitting stutter and
+multi-second mid-reply holes of BUG-069. Now each clean transcript char funds
+``_COVERAGE_MS_PER_CHAR`` of audio, cumulatively per response. The rate is
+deliberately FASTER than any real speaking voice (~18 chars/s vs a real
+12-17), so the budget systematically underestimates the true spoken duration
+of the vetted text — released audio therefore always stays inside the span
+the scrubber has already cleared. Audio beyond that span still buffers,
+fail-closed, exactly as before.
 """
 
 from __future__ import annotations
 
+import logging
 import time
 
 from jarvis.brain.output_filter import FALLBACK_PHRASES, ScrubResult, scrub_for_voice
 from jarvis.core.protocols import AudioChunk
+
+log = logging.getLogger(__name__)
 
 _HARD_LEAK_ACTIONS = frozenset(
     {
@@ -43,6 +61,14 @@ _KNOWN_SCRUB_ACTIONS = (
     _HARD_LEAK_ACTIONS | _NON_BLOCKING_SCRUB_ACTIONS | {_RESIDUE_ACTION}
 )
 _TRANSCRIPT_TAIL_MAX_CHARS = 4_096
+# How much audio one vetted transcript char funds. 55 ms/char is ~18 chars/s
+# — faster than any real TTS voice speaks (measured Gemini Live German:
+# ~14 chars/s, i.e. ~70 ms/char) — so the budget UNDERESTIMATES the spoken
+# duration of already-scrubbed text and released audio cannot outrun it.
+_COVERAGE_MS_PER_CHAR = 55.0
+# A finalize() tail this far beyond the coverage estimate cannot be explained
+# by the deliberate underestimation alone; log it as a transcription stall.
+_FINALIZE_EXCESS_LOG_MS = 5_000.0
 
 
 class ScrubHoldGate:
@@ -61,6 +87,14 @@ class ScrubHoldGate:
         self._transcript_seen = False
         self._transcript_tail = ""
         self._hard_leak_actions: tuple[str, ...] = ()
+        # Coverage budget (BUG-069): audio released so far vs. the estimated
+        # spoken duration of every transcript char the scrubber has vetted.
+        # ``_coverage_active`` stays False until the AGGREGATE transcript has
+        # been clean at least once — a turn that opens with residue (a lone
+        # dash, a filler opener) must not fund any release.
+        self._released_ms = 0.0
+        self._covered_chars = 0
+        self._coverage_active = False
         # Hold-time telemetry: how long the batch released last waited for its
         # clearing transcript. Lets the session attribute an audible mid-reply
         # hole to a late transcript delta instead of a silent provider
@@ -129,9 +163,15 @@ class ScrubHoldGate:
             # protected compound as its own transcript delta. The complete
             # utterance is not available yet, so this benign residue neither
             # authorizes buffered audio nor aborts the response. The next
-            # meaningful delta decides.
+            # meaningful delta decides. Its chars still count toward coverage
+            # (they are part of the spoken text and keep being re-checked via
+            # the aggregate), but the budget stays dormant until the aggregate
+            # has been clean once.
+            self._covered_chars += len(text)
             self._cleared = False
             return text
+        self._covered_chars += len(text)
+        self._coverage_active = True
         self._cleared = True
         if _is_stream_safe_residue(result):
             # Preserve the provider's boundary verbatim. Replacing this one
@@ -149,7 +189,19 @@ class ScrubHoldGate:
         return _restore_edge_whitespace(text, result.cleaned)
 
     async def push_audio(self, chunk: AudioChunk) -> list[AudioChunk]:
-        """Buffer or release an audio delta. Returns chunks safe to play now."""
+        """Buffer or release an audio delta. Returns chunks safe to play now.
+
+        Release order of precedence:
+        1. A clean transcript delta clears everything buffered before it plus
+           this chunk (audio received before the delta belongs to text up to
+           that delta on a co-timed stream) — the pre-budget behavior,
+           unchanged.
+        2. The coverage budget: this chunk flows immediately while cumulative
+           released audio stays inside the estimated spoken duration of all
+           vetted transcript chars. This is what keeps playback continuous
+           when a provider sends its transcript up-front en bloc (BUG-069).
+        Anything else buffers, fail-closed.
+        """
         if self._hard_leak:
             return []
         if self._cleared:
@@ -157,13 +209,29 @@ class ScrubHoldGate:
             self._pending = []
             self._pending_audio_ms = 0.0
             self._cleared = False
+            self._released_ms += _duration_ms(out)
             self._consume_hold_clock()
             return out
+        chunk_ms = _duration_ms((chunk,))
+        if self._coverage_active:
+            # Evaluate the WHOLE backlog plus this chunk so a budget that
+            # grew since the backlog formed can un-stick it (FIFO preserved:
+            # either everything flows or everything keeps buffering).
+            total_ms = self._pending_audio_ms + chunk_ms
+            if (
+                self._released_ms + total_ms
+                <= self._covered_chars * _COVERAGE_MS_PER_CHAR
+            ):
+                out = self._pending + [chunk]
+                self._pending = []
+                self._pending_audio_ms = 0.0
+                self._released_ms += total_ms
+                self._consume_hold_clock()
+                return out
         if not self._pending and self._pending_since is None:
             self._pending_since = time.monotonic()
         self._pending.append(chunk)
-        sample_rate = max(1, int(chunk.sample_rate or 0))
-        self._pending_audio_ms += (len(chunk.pcm) / 2) * 1_000 / sample_rate
+        self._pending_audio_ms += chunk_ms
         return []
 
     def release_available(self) -> list[AudioChunk]:
@@ -179,6 +247,7 @@ class ScrubHoldGate:
         self._pending = []
         self._pending_audio_ms = 0.0
         self._cleared = False
+        self._released_ms += _duration_ms(out)
         self._consume_hold_clock()
         return out
 
@@ -211,13 +280,37 @@ class ScrubHoldGate:
         return True
 
     def finalize(self) -> list[AudioChunk]:
-        """Release the clean transcript-covered tail at the response boundary."""
+        """Release the clean transcript-covered tail at the response boundary.
+
+        Trust basis: at a genuine response boundary every transcript delta of
+        the turn has arrived and passed the aggregate scrub, so the buffered
+        tail is covered by vetted text. The coverage estimate deliberately
+        UNDERESTIMATES spoken duration, so a legitimate tail routinely sits
+        somewhat above the budget — never drop it for that. But a tail far
+        beyond the estimate means transcription lagged or died mid-turn;
+        log it so the next incident names this producer (BUG-069 review).
+        """
         if self.fail_closed() or self._hard_leak:
             return []
         out = self._pending
         self._pending = []
         self._pending_audio_ms = 0.0
         self._cleared = False
+        tail_ms = _duration_ms(out)
+        excess_ms = (
+            self._released_ms
+            + tail_ms
+            - self._covered_chars * _COVERAGE_MS_PER_CHAR
+        )
+        if out and excess_ms > _FINALIZE_EXCESS_LOG_MS:
+            log.info(
+                "scrub gate released a %d ms tail at the response boundary, "
+                "%d ms beyond the vetted-text coverage estimate — the "
+                "provider transcription lagged or stopped mid-turn",
+                int(tail_ms),
+                int(excess_ms),
+            )
+        self._released_ms += tail_ms
         self._consume_hold_clock()
         return out
 
@@ -232,6 +325,18 @@ class ScrubHoldGate:
         self._hard_leak_actions = ()
         self._pending_since = None
         self.last_hold_ms = 0.0
+        self._released_ms = 0.0
+        self._covered_chars = 0
+        self._coverage_active = False
+
+
+def _duration_ms(chunks: tuple[AudioChunk, ...] | list[AudioChunk]) -> float:
+    """Total playback duration of 16-bit mono PCM chunks in milliseconds."""
+    total = 0.0
+    for chunk in chunks:
+        sample_rate = max(1, int(chunk.sample_rate or 0))
+        total += (len(chunk.pcm) / 2) * 1_000.0 / sample_rate
+    return total
 
 
 def _restore_edge_whitespace(original: str, cleaned: str) -> str:

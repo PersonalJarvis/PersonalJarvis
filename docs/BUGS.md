@@ -4960,3 +4960,95 @@ and "input incomplete" are different states, and only the second may block.
 And every provider-edge policy must be checked per adapter vocabulary: a
 guard keyed to an event type one adapter never emits is a guard that does
 not exist for that adapter.
+
+## BUG-069: Realtime speech chopped mid-word — the scrub gate's one-release-per-transcript-delta credit starves audio (HIGH, FIXED 2026-07-17)
+
+**Symptom (maintainer report + live session 2026-07-17 08:30, gemini-live).**
+Spoken replies sound chopped: a word is cut mid-syllable ("Win … ter"), the
+voice goes silent for seconds mid-sentence, then the rest of the answer
+plays; occasionally an answer aborts entirely into the generic failure
+phrase. Worst near the start of a reply. This is the general form of
+BUG-068's "Bug 2" (the ~1 s audible hole), whose instrumentation was built
+exactly for this recurrence.
+
+**Evidence.** The `_note_audio_flow` probe (added for BUG-068) attributed
+both stalls of the 08:30 session on its first real occurrence:
+`mid-reply audio stalled 5264 ms … (scrub-gate hold 5250 ms)` and
+`stalled 7046 ms … (hold 6953 ms)` — "the transcript needed to clear this
+audio arrived late". Not a silent provider, not a playback underrun: OUR
+scrub gate held decoded audio while waiting for provider transcription.
+A direct Gemini Live probe (scratch script, one text turn, timestamped
+events) then showed the provider-side cadence: the ENTIRE 514-char reply
+transcript arrived as ONE `output_transcription` delta alongside the first
+audio chunk, followed by a pure audio stream. Live sessions have also shown
+the opposite skew (output transcription >5 s BEHIND the audio, incident
+2026-07-16 11:24). Conclusion: no realtime provider paces its transcript
+deltas against its audio deltas — any gate release policy keyed to delta
+ARRIVAL COUNT instead of vetted text QUANTITY starves.
+
+**Root cause (jarvis/realtime/scrub_gate.py).** The ADR-0010 audio-hold
+gate released audio per-delta: a clean transcript delta set a one-shot
+`_cleared` flag which released everything buffered plus exactly ONE
+subsequent chunk, then closed again. With Gemini's en-bloc up-front
+transcript that meant: first chunk plays, every later chunk buffers until
+the next transcript delta — which never comes until turn end (or comes
+seconds late). The audible result is precisely the reported word-splitting
+(release boundary falls mid-word) and the multi-second holes. The
+secondary abort: `_MAX_UNSCRUBBED_AUDIO_MS = 5_000` sat BELOW Gemini's
+routine transcription lag, so a healthy answer whose transcript ran >5 s
+behind was dropped wholesale and replaced by the failure phrase
+("manchmal bricht es einfach ab"). <!-- i18n-allow: quoted German maintainer report -->
+
+**Fixes.**
+1. *Coverage budget (scrub_gate.py).* Release accounting now counts vetted
+   text QUANTITY: every transcript char that passed `scrub_for_voice` funds
+   `_COVERAGE_MS_PER_CHAR = 55.0` ms of audio; a chunk flows immediately
+   while cumulative `released_ms + chunk_ms` stays inside that budget. The
+   rate is deliberately FASTER than any real voice (~18 chars/s vs a
+   measured ~14), so the budget UNDERESTIMATES the spoken duration of the
+   vetted text — released audio cannot outrun the span the scrubber
+   already cleared. The legacy behavior is preserved verbatim as the floor:
+   a clean delta still clears everything buffered before it plus one
+   subsequent chunk; residue-only aggregates still fund nothing
+   (`_coverage_active`); hard leaks still drop everything; audio with no
+   transcript at all still fails closed. Cross-platform pure integer math,
+   no LLM (AP-11), no I/O.
+2. *Stall abort threshold (session.py).* `_MAX_UNSCRUBBED_AUDIO_MS`
+   5 000 → 15 000: covers the observed 5-7 s lag with 2x margin; memory
+   cost is trivial (~1 MB PCM). Deliberately not larger — this bound is
+   also the ceiling on how much never-transcribed PCM `finalize()` could
+   flush at a turn boundary whose transcription died mid-turn, and
+   `finalize()` now logs any tail released far beyond the coverage
+   estimate so that scenario names itself in the log.
+3. *Trusted-reply fallback at turn completion (session.py).* With the 5 s
+   trip no longer firing first, a delegate readback whose transcription
+   never arrives now reaches the turn-complete fail-closed path — which
+   used to speak the generic failure phrase over OUR OWN already-delivered
+   brain reply. That path now hands the trusted reply text to the surface
+   TTS (same contract as the pending-buffer trip: `surface_fallback_spoken`
+   dedupe + withheld late provider rendering). Review hardening: all three
+   direct-to-surface fallback sites now pass the raw Brain reply through
+   `scrub_for_voice` before it reaches TTS (ADR-0010 — the normal path
+   only ever speaks it via the provider re-render through the gate), and
+   the delivered-flags are set only when the cancel will actually speak
+   (a second cancel in one turn is a logged no-op, not a silent reply
+   loss).
+
+**Guards.** `tests/unit/realtime/test_scrub_gate.py`
+(`test_en_bloc_upfront_transcript_keeps_audio_flowing`,
+`test_budget_exhaustion_buffers_audio_beyond_vetted_text`,
+`test_clean_delta_credit_still_releases_one_chunk_beyond_budget`,
+`test_residue_only_transcript_never_activates_the_budget`, plus the
+updated later-segment-leak and response-boundary tests);
+`tests/unit/realtime/test_session.py`
+(`test_later_segment_leak_audio_not_emitted`,
+`test_scrub_trip_during_delegate_readback_speaks_trusted_reply`).
+
+**Lesson.** A gate between two streams that the producer does not pace
+against each other must meter by QUANTITY (how much content has been
+vetted), never by event ARRIVAL (how many vetting messages have been
+seen). Arrival-keyed credits encode an interleaving assumption no provider
+guarantees — and every violation of that assumption is audible. Second
+lesson, again: safety bounds sized to "normal" provider behavior
+(5 s of pending audio) become answer-killers the day the provider is
+routinely slower; bound on resource cost, not on optimism.
