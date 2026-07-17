@@ -40,10 +40,14 @@ def _isolate_data_dir(tmp_path, monkeypatch: pytest.MonkeyPatch):
 
 
 def test_empty_preferences_state_without_a_file() -> None:
-    prompt = _manager()._build_system_prompt()
+    m = _manager()
+    prompt = m._build_system_prompt()
     assert "USER PREFERENCES & STANDING INSTRUCTIONS" in prompt
     assert "No active user preferences are currently set" in prompt
-    assert "Ignore any earlier Jarvis.md instructions" in prompt
+    # The filename is brand-derived (wake word "Ruben" → Ruben.md), so derive
+    # the expectation the same way — never assert the host's live brand.
+    filename = agent_instructions.instructions_filename(m._config)
+    assert f"Ignore any earlier {filename} instructions" in prompt
 
 
 def test_agent_instructions_injected_with_filename_and_guardrail() -> None:

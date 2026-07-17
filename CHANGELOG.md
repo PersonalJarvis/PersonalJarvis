@@ -19,7 +19,7 @@ versioning per [SemVer](https://semver.org/lang/de/).
   main-thread keyboard-layout snapshot is captured at boot so any remaining
   pynput keyboard path (e.g. `keyboard.Controller()` in Computer-Use
   actuation) reuses it instead of touching TSM off-main — degrading to the
-  pyautogui fallback, never crashing (BUG-065).
+  pyautogui fallback, never crashing (BUG-077).
 
 - **macOS installer no longer dies with a bare exit code on uv-provisioned
   Pythons.** The app bundle's native launcher is now an in-repo compiled C
@@ -27,7 +27,7 @@ versioning per [SemVer](https://semver.org/lang/de/).
   alias stub, which only worked on framework Pythons and left Intel Macs
   (uv standalone bootstrap) with an unlaunchable bundle. Desktop-integration
   failures now write `data/logs/install-desktop-integration.log` and print
-  the actual error instead of discarding it (BUG-064).
+  the actual error instead of discarding it (BUG-076).
 - **Voice endpointing degrades honestly without onnxruntime.** The WebRTC VAD
   fallback tier is now actually wired (Silero ONNX → WebRTC VAD → RMS energy);
   previously the middle tier was documented but never imported, so
