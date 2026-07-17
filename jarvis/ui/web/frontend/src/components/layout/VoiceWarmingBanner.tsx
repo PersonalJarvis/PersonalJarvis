@@ -13,7 +13,9 @@ import { cn } from "@/lib/utils";
  * once the wake model can really hear (see jarvis/speech/pipeline.py). This
  * banner surfaces that gap PROMINENTLY (not just a sidebar dot) so users don't
  * speak too early and think the system is broken:
- *   - while warming  -> amber "Jarvis is starting up / getting ready to listen"
+ *   - while warming  -> amber "{name} is starting up / getting ready to listen"
+ *     (the `{name}` i18n token resolves to the configured assistant name,
+ *     falling back to the neutral "Assistant" — never a hardcoded brand)
  *   - on becoming ready -> a brief green "Ready — you can speak now" confirmation
  */
 export function VoiceWarmingBanner() {

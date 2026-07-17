@@ -245,9 +245,9 @@ class FastBootstrap:
         kind = scope["type"]
         if kind == "http":
             body = (
-                b"Jarvis backend failed to start."
+                b"The assistant backend failed to start."
                 if unavailable
-                else b"Jarvis is starting up. Please retry."
+                else b"The assistant is starting up. Please retry."
             )
             await send(
                 {
