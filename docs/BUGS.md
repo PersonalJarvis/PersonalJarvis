@@ -5483,6 +5483,27 @@ Guards: ``tests/unit/trigger/test_quartz_backend.py`` (edge semantics,
 fail-closed permission gate, degrade without Quartz, keycode-table coverage)
 and the factory-selection test in ``test_hotkey_backends.py``.
 
+**Follow-up — the same TSM hole in ``keyboard.Controller`` (2026-07-17).**
+The Quartz backend removed pynput from the darwin *hotkey* path, but
+``pynput.keyboard.Controller()`` (Computer-Use keyboard actuation,
+``jarvis/cu/actuate/posix.py``) builds its keycode map through the identical
+``keycode_context()`` TIS calls on whatever thread constructs it — the
+backend thread — so the first CU type/press action could still SIGILL the
+app. Closed by ``jarvis/platform/macos_input_source.py``: the desktop boot
+chokepoint (``run_window_only``, provably main-thread) snapshots the tiny
+immutable ``(keyboard_type, layout_data)`` tuple via raw ctypes
+(microseconds, AP-26-clean), and ``ensure_pynput_layout_guard()`` patches
+pynput's ``keycode_context`` so off-main callers reuse that snapshot and
+never touch TIS; with no snapshot available the patched call raises an
+ordinary ``RuntimeError`` — the posix actuator's existing except-clause then
+drops to the pyautogui fallback instead of the OS killing the process. The
+``PynputBackend`` darwin branch (unreachable via the factory since the
+Quartz fix, but constructible directly) now also refuses to start its
+listener without a main-thread snapshot. Guards:
+``tests/unit/platform/test_macos_input_source.py`` (off-main never touches
+TIS, cache reuse, no-snapshot raise, main-thread pass-through) and the
+degrade tests in ``test_hotkey_backends.py``.
+
 **Class rule.** On macOS, ANY third-party library that touches AppKit,
 HIToolbox, or TSM from a background thread is a process-abort risk that a
 permission gate cannot catch — the assertion fires AFTER permissions are

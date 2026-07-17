@@ -50,6 +50,21 @@ def _macos_hotkey_permissions_granted() -> bool:
 
     return get_system_permission_port().runtime_feature_ready("global_hotkeys")
 
+
+def _macos_layout_guard_ready() -> bool:
+    """Prime + install the TIS main-thread layout guard (BUG-065).
+
+    macOS 15 kills the process with an uncatchable SIGILL when pynput's
+    listener thread calls the TIS keyboard-layout APIs off the main thread.
+    ``True`` only when a main-thread layout snapshot exists and pynput is
+    patched to use it, i.e. the listener is safe to start.
+    """
+    from jarvis.platform.macos_input_source import (  # noqa: PLC0415
+        ensure_pynput_layout_guard,
+    )
+
+    return ensure_pynput_layout_guard()
+
 # global-hotkeys modifier token -> canonical pynput modifier name (the attribute
 # on ``pynput.keyboard.Key``). Anything not here is a literal key (e.g. "j") or
 # an F-key (e.g. "f1", which is also a ``Key`` attribute).
@@ -219,6 +234,28 @@ class PynputBackend:
                 self._listener = None
                 return
             self._permission_check = _macos_hotkey_permissions_granted
+
+            # BUG-065: pynput's listener thread calls the TIS keyboard-layout
+            # APIs (HIToolbox) as it starts; on macOS 15 an off-main-thread
+            # TIS call is an uncatchable process kill (SIGILL, "Personal
+            # Jarvis quit unexpectedly"). Only start the listener once a
+            # main-thread layout snapshot is cached and pynput is patched to
+            # reuse it; otherwise degrade — voice still works via wake word.
+            guard_ready = False
+            try:
+                guard_ready = _macos_layout_guard_ready()
+            except Exception:  # noqa: BLE001 — the guard must never crash the trigger
+                guard_ready = False
+            if not guard_ready:
+                log.warning(
+                    "Global hotkeys disabled on macOS: the keyboard-layout "
+                    "snapshot could not be captured on the main thread, and "
+                    "starting the listener without it would crash the app "
+                    "(TIS main-thread assertion). Voice still works via the "
+                    "wake word; restarting Jarvis re-attempts the snapshot.",
+                )
+                self._listener = None
+                return
 
         try:
             listener = keyboard.Listener(

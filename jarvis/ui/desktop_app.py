@@ -3254,6 +3254,18 @@ class DesktopApp:
     def run_window_only(self) -> int:
         """The main-thread pywebview window. Assumes the backend thread is
         already running (started by :meth:`run` or the fast-boot launcher)."""
+        if sys.platform == "darwin":
+            # BUG-065: snapshot the keyboard layout HERE — the one chokepoint
+            # every desktop boot path runs on the main thread — so pynput
+            # (global hotkeys, CU keyboard actuation) never has to call the
+            # TIS APIs from a worker thread. On macOS 15 an off-main TIS call
+            # is an uncatchable process kill (SIGILL). Microseconds, ctypes
+            # only — no heavy import (AP-26).
+            from jarvis.platform.macos_input_source import (
+                prime_keyboard_layout_cache,
+            )
+
+            prime_keyboard_layout_cache()
         # Hide an *accidental* console. When the app is launched by the
         # console-subsystem ``python.exe`` (a scheduled task / shortcut / double
         # click that resolved to python.exe instead of the windowless

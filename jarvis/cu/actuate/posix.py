@@ -85,6 +85,18 @@ class PosixActuator(Actuator):
         try:
             from pynput import keyboard, mouse  # noqa: PLC0415
 
+            if sys.platform == "darwin":
+                # BUG-065: ``keyboard.Controller()`` builds its keycode map
+                # via the TIS APIs, and on macOS 15 an off-main-thread TIS
+                # call kills the whole process (SIGILL). The guard makes the
+                # constructor reuse the main-thread layout snapshot — or
+                # raise an ordinary exception that drops us to the pyautogui
+                # fallback below instead of crashing the app.
+                from jarvis.platform.macos_input_source import (  # noqa: PLC0415
+                    ensure_pynput_layout_guard,
+                )
+
+                ensure_pynput_layout_guard()
             self._mouse = mouse.Controller()
             self._keyboard = keyboard.Controller()
             self._keys = _pynput_key_table(keyboard)

@@ -11,6 +11,16 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ### Fixed
 
+- **macOS 15 no longer kills the app when hotkeys arm or Computer-Use types
+  ("Personal Jarvis quit unexpectedly", SIGILL).** pynput resolved the
+  keyboard layout through HIToolbox TSM calls on background threads, which
+  modern macOS aborts with an uncatchable illegal-instruction trap. Two-layer
+  fix: global hotkeys now use a TSM-free Quartz event-tap backend, and a
+  main-thread keyboard-layout snapshot is captured at boot so any remaining
+  pynput keyboard path (e.g. `keyboard.Controller()` in Computer-Use
+  actuation) reuses it instead of touching TSM off-main — degrading to the
+  pyautogui fallback, never crashing (BUG-065).
+
 - **macOS installer no longer dies with a bare exit code on uv-provisioned
   Pythons.** The app bundle's native launcher is now an in-repo compiled C
   stub linked against the exact Python runtime in use — replacing the py2app
