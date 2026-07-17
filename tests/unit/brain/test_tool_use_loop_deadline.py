@@ -105,20 +105,36 @@ async def test_deadline_forces_one_final_toolless_round() -> None:
 
 
 @pytest.mark.asyncio
-async def test_no_deadline_keeps_budget_behavior() -> None:
+async def test_budget_exhaustion_forces_one_final_toolless_round() -> None:
+    """Round-budget exhaustion mirrors the deadline: one grounded final round.
+
+    Live 2026-07-17: a delegated voice turn had two fully loaded Gmail
+    messages in hand when round 6 hit the cap — the old hard break discarded
+    the evidence, the turn returned empty text, and the user heard "the
+    plugins did not work" although every call had succeeded.
+    """
     brain = _GreedyBrain()
+    executor = _ExecOK()
     loop = ToolUseLoop(
         brain,
         {"wiki-list": _ListTool()},
-        _ExecOK(),  # type: ignore[arg-type]
+        executor,  # type: ignore[arg-type]
         budget=IterationBudget(max_turns=3),
     )
 
     result = await loop.run([], user_utterance="what is in my wiki")
 
-    assert result.finish_reason == "budget_exceeded"
-    # Every round still offered tools — no forced tool-less round happened.
-    assert all(req.tools for req in brain.requests)
+    # Rounds 1-3 spend the budget, then exactly ONE forced final round.
+    assert len(brain.requests) == 4
+    # The forced round must offer NO tools …
+    assert not brain.requests[3].tools
+    # … and carry the budget answer-now directive.
+    joined = " ".join(
+        str(getattr(m, "content", "")) for m in brain.requests[3].messages
+    )
+    assert "round budget exhausted" in joined.lower()
+    # The user hears a real answer grounded in the executed tool evidence.
+    assert "wiki" in result.text.lower()
 
 
 @pytest.mark.asyncio

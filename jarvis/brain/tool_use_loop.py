@@ -46,6 +46,20 @@ _DEADLINE_FINAL_DIRECTIVE = (
     "not call any more tools."
 )
 
+# Directive appended for the budget-forced final round (see IterationBudget).
+# Exhausting the round budget used to hard-break the loop and DISCARD every
+# executed tool result: live 2026-07-17, a delegated voice turn had two fully
+# loaded Gmail messages in hand when round 6 hit the cap — the turn returned
+# empty text and the user heard "the plugins did not work" although every
+# call had succeeded. Mirror the deadline path instead: one last tool-less
+# synthesis round over the evidence that is already in the conversation.
+_BUDGET_FINAL_DIRECTIVE = (
+    "[round budget exhausted] Answer the user NOW in one or two spoken "
+    "sentences using ONLY the tool evidence gathered above. If the evidence "
+    "is incomplete, say honestly what you could and could not verify. Do "
+    "not call any more tools."
+)
+
 # A provider can repeat the exact same text-serialized call after receiving its
 # result. The action must remain exactly-once, but the turn must not end on an
 # empty ``tool_use`` round. Force one tool-less synthesis pass instead.
@@ -661,11 +675,24 @@ class ToolUseLoop:
                 )
                 break
 
-            # Budget exhausted → abort
+            # Budget exhausted before executing this round's calls → skip them
+            # and force ONE final tool-less answer round over the evidence
+            # already gathered (see _BUDGET_FINAL_DIRECTIVE). The unexecuted
+            # calls are deliberately NOT appended to the history, so the
+            # provider never waits for tool results that will not come.
             if self._budget.exceeded():
-                log.warning("IterationBudget exhausted: %s", self._budget.snapshot())
+                log.warning(
+                    "IterationBudget exhausted: %s — forcing a final "
+                    "tool-less answer round",
+                    self._budget.snapshot(),
+                )
                 final_agg.finish_reason = "budget_exceeded"
-                break
+                deadline_forced = True
+                tools_payload = []
+                current_messages.append(
+                    BrainMessage(role="user", content=_BUDGET_FINAL_DIRECTIVE)
+                )
+                continue
 
             # Pre-execution acknowledgment (perceived-latency pattern). Fires
             # exactly once per turn, on the first iteration that has tool
@@ -1045,14 +1072,26 @@ class ToolUseLoop:
                     user_utterance, reply_language
                 )
 
-            # Budget check after execution
+            # Budget check after execution: the results of this round are
+            # already in the history — force ONE final tool-less answer round
+            # over them instead of discarding the evidence with a hard break.
             if self._budget.exceeded():
+                log.warning(
+                    "tool_use_loop: iteration budget exhausted after %d "
+                    "round(s) — forcing a final tool-less answer round",
+                    self._budget.turns_used,
+                )
                 final_agg.finish_reason = "budget_exceeded"
-                break
+                deadline_forced = True
+                tools_payload = []
+                current_messages.append(BrainMessage(
+                    role="user",
+                    content=_BUDGET_FINAL_DIRECTIVE,
+                ))
 
             # Wall-clock deadline check after execution: force ONE final
             # tool-less answer round from the evidence gathered so far.
-            if (
+            elif (
                 self._deadline_s is not None
                 and time.monotonic() - loop_started >= self._deadline_s
             ):
