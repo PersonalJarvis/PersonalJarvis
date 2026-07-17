@@ -99,6 +99,19 @@ class FallbackTTS:
                     label, getattr(tts, "name", "?"), exc,
                 )
 
+    def list_voices(self, language: str | None = None) -> list[str]:
+        """Voices of the ACTIVE primary — the provider a passed ``voice`` hits.
+
+        Completes the ``TTSProvider`` protocol for this wrapper; callers use
+        it to capability-gate a per-utterance voice hint. The fallback's
+        catalogue is irrelevant here because ``_synthesize_fallback`` never
+        forwards the caller's voice.
+        """
+        try:
+            return list(self._primary.list_voices(language) or [])
+        except Exception:  # noqa: BLE001 — an unlistable catalogue means "no match"
+            return []
+
     async def synthesize(
         self,
         text: str,

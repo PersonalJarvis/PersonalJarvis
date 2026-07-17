@@ -1553,11 +1553,7 @@ class RealtimeVoiceSession:
                                 self.session_id,
                             )
                             await self._send_json(
-                                {
-                                    "type": "error_spoken",
-                                    "text": text_only_answer,
-                                    "language": self._language,
-                                }
+                                self._surface_speech_message(text_only_answer)
                             )
                     if await self._recover_empty_provider_turn():
                         continue
@@ -1710,11 +1706,7 @@ class RealtimeVoiceSession:
                         delegate_state.surface_fallback_spoken = True
                         self._drop_provider_output_until_user_turn = True
                         await self._send_json(
-                            {
-                                "type": "error_spoken",
-                                "text": fallback_text,
-                                "language": self._language,
-                            }
+                            self._surface_speech_message(fallback_text)
                         )
                     final_chunks = self._gate.finalize()
                     if self._gate.hard_leak_pending():
@@ -1868,6 +1860,25 @@ class RealtimeVoiceSession:
             return ""
         return scrub_for_voice(raw, language=self._language).cleaned.strip()
 
+    def _surface_speech_message(self, text: str) -> dict[str, Any]:
+        """Build one ``error_spoken`` payload for the surface's classic TTS.
+
+        The session's active realtime voice rides along as a hint so the
+        classic last mile can keep the call's voice identity (live forensic
+        2026-07-17 10:04: Fenrir's aborted readback was re-spoken by Charon).
+        The pipeline capability-gates the hint against the configured TTS's
+        ``list_voices()``, so a foreign voice name never reaches a provider
+        that would reject it.
+        """
+        message: dict[str, Any] = {
+            "type": "error_spoken",
+            "text": text,
+            "language": self._language,
+        }
+        if self._active_voice:
+            message["voice"] = self._active_voice
+        return message
+
     async def _cancel_unsafe_output(
         self,
         *,
@@ -1916,14 +1927,17 @@ class RealtimeVoiceSession:
         self._output_active = False
         self._output_samples_sent = 0
         spoken_fallback = fallback_text or self._gate.fallback_phrase()
+        # The turn's answer is what the user actually hears. Keeping the
+        # aborted partial provider transcript here poisoned the NEXT turn:
+        # ResponseGenerated / VoiceTurnCompleted / the delegate history all
+        # carried a half sentence ("…Im Kalender"), so the follow-up turn no
+        # longer knew what was really said and contradicted it (live forensic
+        # 2026-07-17 10:04). Late provider output cannot re-append after this:
+        # _drop_provider_output_until_new_response withholds it upstream.
+        self._output_transcript.clear()
+        self._output_transcript.append(spoken_fallback)
         try:
-            await self._send_json(
-                {
-                    "type": "error_spoken",
-                    "text": spoken_fallback,
-                    "language": self._language,
-                }
-            )
+            await self._send_json(self._surface_speech_message(spoken_fallback))
         except Exception:  # noqa: BLE001, S110 — surface may already be gone
             pass
         # Keep the transcript honest (BUG-056): the 15:13 session recorded a
@@ -2208,13 +2222,7 @@ class RealtimeVoiceSession:
             if self._input_turn_observed:
                 fallback_text = self._gate.fallback_phrase()
                 self._output_transcript.append(fallback_text)
-                await self._send_json(
-                    {
-                        "type": "error_spoken",
-                        "text": fallback_text,
-                        "language": self._language,
-                    }
-                )
+                await self._send_json(self._surface_speech_message(fallback_text))
             return False
 
         if self._direct_tool_results:
@@ -2262,24 +2270,12 @@ class RealtimeVoiceSession:
 
             fallback_text = action_phrase("cu_done", self._language)
             self._output_transcript.append(fallback_text)
-            await self._send_json(
-                {
-                    "type": "error_spoken",
-                    "text": fallback_text,
-                    "language": self._language,
-                }
-            )
+            await self._send_json(self._surface_speech_message(fallback_text))
             return False
         if self._brain is None:
             fallback_text = self._gate.fallback_phrase()
             self._output_transcript.append(fallback_text)
-            await self._send_json(
-                {
-                    "type": "error_spoken",
-                    "text": fallback_text,
-                    "language": self._language,
-                }
-            )
+            await self._send_json(self._surface_speech_message(fallback_text))
             return False
 
         self._delegate_required_for_turn = True
@@ -2865,13 +2861,7 @@ class RealtimeVoiceSession:
             "running — answering with the deterministic progress line",
             self.session_id,
         )
-        await self._send_json(
-            {
-                "type": "error_spoken",
-                "text": status_text,
-                "language": self._language,
-            }
-        )
+        await self._send_json(self._surface_speech_message(status_text))
 
     async def _handle_tool_call(self, event: Any) -> None:
         if self._session is None:
@@ -3346,11 +3336,7 @@ class RealtimeVoiceSession:
                 exc_info=True,
             )
             await self._send_json(
-                {
-                    "type": "error_spoken",
-                    "text": turn_state.last_reply,
-                    "language": self._language,
-                }
+                self._surface_speech_message(turn_state.last_reply)
             )
             return
         await self._verify_delegate_readback(turn_id, turn_state)
@@ -3405,13 +3391,7 @@ class RealtimeVoiceSession:
             self.session_id,
             _DELEGATE_READBACK_WAIT_S,
         )
-        await self._send_json(
-            {
-                "type": "error_spoken",
-                "text": reply,
-                "language": self._language,
-            }
-        )
+        await self._send_json(self._surface_speech_message(reply))
 
     def _start_delegate(
         self,

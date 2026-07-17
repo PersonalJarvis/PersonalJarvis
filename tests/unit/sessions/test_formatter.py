@@ -364,3 +364,68 @@ def test_spoken_track_is_grouped_under_its_own_turn() -> None:
     turn2_section = out.split("## Turn 2")[1]
     assert "Bin noch dran." in turn2_section
     assert "Bin noch dran." not in out.split("## Turn 2")[0]
+
+
+# --- Withheld twin of a spoken reply (scrub-cancel fallback) ----------------
+
+
+def test_plain_folds_withheld_twin_into_the_spoken_reply() -> None:
+    # A scrub cancel documents the withheld provider rendering AND hands the
+    # same text to the surface TTS, which confirms it as a reply — two events,
+    # one utterance (live forensic 2026-07-17 10:04). The plain transcript
+    # must not read as Jarvis repeating itself verbatim.
+    answer = "Morgen schaut es entspannt aus, dein Kalender ist frei."
+    turns = [_turn(0, "Was kann ich morgen machen?", answer)]
+    events = [
+        _spoken("turn-0", answer, "reply", ts_ms=1_717_780_005_000),
+        _spoken(
+            "turn-0",
+            answer,
+            "withheld",
+            ts_ms=1_717_780_005_005,
+            detail="output transcript exceeded safe audio buffer",
+        ),
+    ]
+
+    out = format_session_plain(_session(), turns, events)
+
+    assert out.count(f"Jarvis: {answer}") == 1
+
+
+def test_markdown_keeps_the_abort_detail_when_folding_the_withheld_twin() -> None:
+    answer = "Morgen schaut es entspannt aus, dein Kalender ist frei."
+    turns = [_turn(0, "Was kann ich morgen machen?", answer)]
+    events = [
+        _spoken("turn-0", answer, "reply", ts_ms=1_717_780_005_000),
+        _spoken(
+            "turn-0",
+            answer,
+            "withheld",
+            ts_ms=1_717_780_005_005,
+            detail="output transcript exceeded safe audio buffer",
+        ),
+    ]
+
+    out = format_session_markdown(_session(), turns, events)
+
+    assert out.count(answer) == 1
+    # The forensic abort reason survives on the surviving reply line.
+    assert "output transcript exceeded safe audio buffer" in out
+
+
+def test_withheld_event_without_a_spoken_twin_still_renders() -> None:
+    # When the surface never confirmed a fallback playback, the withheld event
+    # is the only honest record of the aborted answer — it must stay visible.
+    turns = [_turn(0, "Was kann ich morgen machen?", "")]
+    events = [
+        _spoken(
+            "turn-0",
+            "Der Anfang der Antwort, der abgebrochen wurde.",
+            "withheld",
+            detail="unsafe output transcript (detectors: secret)",
+        ),
+    ]
+
+    out = format_session_plain(_session(), turns, events)
+
+    assert "Jarvis: Der Anfang der Antwort, der abgebrochen wurde." in out

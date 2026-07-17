@@ -4242,6 +4242,72 @@ async def test_scrub_cancel_records_spoken_fallback_on_the_spoken_track():
     assert spoken[0].text == sess._gate.fallback_phrase()
 
 
+@pytest.mark.asyncio
+async def test_scrub_cancel_replaces_the_partial_transcript_with_the_spoken_fallback():
+    """The turn's answer is what the user actually hears. Live forensic
+    2026-07-17 10:04: the aborted provider rendering left a half sentence
+    ("…Im Kalender") as the turn text, so the NEXT turn's delegate history no
+    longer knew what was really said and contradicted it. The cancel must
+    replace the partial transcript with the spoken fallback."""
+    provider = FakeProvider([])
+    sess = RealtimeVoiceSession(
+        session_id="scrub-cancel-transcript",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        surface="desktop",
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    sess._output_transcript.append("Tomorrow looks relaxed. Your calendar")
+
+    full_reply = (
+        "Tomorrow looks relaxed. Your calendar only holds blocked slots, "
+        "no real appointments."
+    )
+    await sess._cancel_unsafe_output(
+        reason="output transcript exceeded safe audio buffer",
+        fallback_text=full_reply,
+    )
+
+    assert "".join(sess._output_transcript) == full_reply
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_scrub_cancel_fallback_carries_the_active_voice_hint():
+    """Voice-identity continuity (live forensic 2026-07-17 10:04: Fenrir's
+    aborted readback was re-spoken by Charon): the surface fallback names the
+    session's active voice so the pipeline TTS can keep speaking with it."""
+    provider = FakeProvider([])
+    sent: list[dict] = []
+
+    def _capture_json(message):
+        sent.append(message)
+        return asyncio.sleep(0)
+
+    sess = RealtimeVoiceSession(
+        session_id="scrub-cancel-voice-hint",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=_capture_json,
+        provider=provider,
+        config=_cfg(),
+        surface="desktop",
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    sess._active_voice = "Fenrir"
+
+    await sess._cancel_unsafe_output(
+        reason="output transcript exceeded safe audio buffer",
+        fallback_text="Full grounded reply.",
+    )
+
+    fallbacks = [m for m in sent if m.get("type") == "error_spoken"]
+    assert fallbacks and fallbacks[-1]["text"] == "Full grounded reply."
+    assert fallbacks[-1]["voice"] == "Fenrir"
+    await sess.end(reason="test")
+
+
 # ---------------------------------------------------------------------------
 # User agent-instructions (the Ruben.md-equivalent file) in the realtime path
 # ---------------------------------------------------------------------------

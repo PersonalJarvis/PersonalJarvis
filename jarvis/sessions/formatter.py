@@ -22,9 +22,10 @@ Copy-Paste-Konsum gedacht.
 from __future__ import annotations
 
 from collections.abc import Iterable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 
+from .constants import SPOKEN_KIND_WITHHELD
 from .models import VoiceEventRow, VoiceSessionRow, VoiceTurnRow
 
 
@@ -109,7 +110,36 @@ def _jarvis_outputs_for_turn(
             )
         )
 
-    return sorted(items, key=lambda it: (it.ts_ms, it.seq))
+    return sorted(_fold_withheld_twins(items), key=lambda it: (it.ts_ms, it.seq))
+
+
+def _fold_withheld_twins(items: list[_JarvisOutput]) -> list[_JarvisOutput]:
+    """Drop a ``withheld`` documentation event whose text a reply re-spoke.
+
+    A scrub cancel publishes the withheld provider rendering AND hands the same
+    text to the surface TTS, which confirms it as a real reply — two events,
+    one utterance (live forensic 2026-07-17 10:04). Rendering both makes the
+    transcript read as Jarvis repeating itself verbatim. The audible reply
+    wins; the twin's abort detail is folded onto it so the markdown export
+    keeps the forensic trace. A withheld event with no spoken twin still
+    renders — it is then the only honest record of what the user heard.
+    """
+    reply_texts = {it.text for it in items if it.is_reply}
+    folded_details: dict[str, str] = {}
+    kept: list[_JarvisOutput] = []
+    for it in items:
+        if not it.is_reply and it.kind == SPOKEN_KIND_WITHHELD and it.text in reply_texts:
+            if it.detail:
+                folded_details.setdefault(it.text, it.detail)
+            continue
+        kept.append(it)
+    result: list[_JarvisOutput] = []
+    for it in kept:
+        if it.is_reply and it.detail is None and it.text in folded_details:
+            result.append(replace(it, detail=folded_details.pop(it.text)))
+        else:
+            result.append(it)
+    return result
 
 
 def format_session_markdown(
