@@ -66,6 +66,7 @@ def _session(**over: object) -> VoiceSessionRow:
         providers_used=["gemini"],
         language="de",
         wake_keyword="hey_jarvis",
+        voice_mode="realtime",
     )
     base.update(over)
     return VoiceSessionRow(**base)  # type: ignore[arg-type]
@@ -140,6 +141,16 @@ def test_plain_has_no_developer_tags() -> None:
     out = format_session_plain(_session(), _example_turns())
     for tag in ("[USER]", "[JARVIS]", "[BRAIN]", "[TOOLS]"):
         assert tag not in out
+
+
+def test_markdown_and_plain_include_the_effective_voice_mode() -> None:
+    session = _session(voice_mode="pipeline")
+
+    markdown = format_session_markdown(session, _example_turns())
+    plain = format_session_plain(session, _example_turns())
+
+    assert "- **Modus:** Pipeline" in markdown
+    assert "Modus: Pipeline" in plain.splitlines()[0]
 
 
 def test_markdown_labels_awaiting_confirmation_reply() -> None:

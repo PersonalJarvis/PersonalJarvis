@@ -13,6 +13,7 @@ def _seed_session(store: SessionStore) -> None:
         started_ms=1_000,
         wake_keyword="hey_jarvis",
         language="de",
+        voice_mode="pipeline",
     )
     store.upsert_turn(turn_id="t1", session_id="s1", idx=0, started_ms=1_000)
     store.finalize_turn(
@@ -73,10 +74,35 @@ def test_save_session_to_downloads_uses_events_for_plain_export(tmp_path, monkey
         assert res.status_code == 200
         saved = tmp_path / "Downloads" / res.json()["filename"]
         content = saved.read_text(encoding="utf-8")
+        assert "Modus: Pipeline" in content.splitlines()[0]
         assert "Jarvis: Preamble first." in content
         assert content.index("Jarvis: Preamble first.") < content.index(
             "Jarvis: Final answer."
         )
+    finally:
+        store.close()
+
+
+def test_copy_exports_include_the_effective_voice_mode(tmp_path) -> None:
+    store = SessionStore(tmp_path / "sessions.db")
+    store.open()
+    try:
+        _seed_session(store)
+        app = FastAPI()
+        app.include_router(sessions_routes.router)
+        app.state.session_store = store
+
+        with TestClient(app) as client:
+            markdown = client.get("/api/sessions/s1/export?format=markdown")
+            plain = client.get("/api/sessions/s1/export?format=plain")
+            json_export = client.get("/api/sessions/s1/export?format=json")
+
+        assert markdown.status_code == 200
+        assert "- **Modus:** Pipeline" in markdown.text
+        assert plain.status_code == 200
+        assert "Modus: Pipeline" in plain.text.splitlines()[0]
+        assert json_export.status_code == 200
+        assert json_export.json()["session"]["voice_mode"] == "pipeline"
     finally:
         store.close()
 

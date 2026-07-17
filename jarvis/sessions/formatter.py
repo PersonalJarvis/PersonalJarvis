@@ -158,6 +158,7 @@ def format_session_markdown(
     lines.append(f"# Voice-Session — {started}")
     lines.append("")
     lines.append(f"- **Dauer:** {duration}")
+    lines.append(f"- **Modus:** {_pretty_voice_mode(session.voice_mode)}")
     lines.append(f"- **Turns:** {session.turn_count}")
     lines.append(f"- **Sprache:** {session.language}")
     if session.wake_keyword:
@@ -282,7 +283,10 @@ def format_session_plain(
     lines: list[str] = []
 
     # --- Schlanke Kopfzeile: "Voice-Session · 07.06.2026, 19:24 · 1 min 42 s"
-    header_bits = [_fmt_dt_human(session.started_ms)]
+    header_bits = [
+        _fmt_dt_human(session.started_ms),
+        f"Modus: {_pretty_voice_mode(session.voice_mode)}",
+    ]
     duration = _fmt_duration(session.started_ms, session.ended_ms)
     if duration:
         header_bits.append(duration)
@@ -363,6 +367,10 @@ _HANGUP_LABELS = {
 
 def _pretty_hangup(reason: str) -> str:
     return _HANGUP_LABELS.get(reason, reason or "unbekannt")
+
+
+def _pretty_voice_mode(mode: str) -> str:
+    return (mode or "unknown").replace("_", " ").title()
 
 
 __all__ = ["format_session_markdown", "format_session_plain"]
