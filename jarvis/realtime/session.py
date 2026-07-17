@@ -13,6 +13,7 @@ import asyncio
 import inspect
 import logging
 import random
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -237,6 +238,52 @@ _LATE_DELEGATE_POLL_S = 0.15
 # matches no planner category on its own. Only answers up to this token count
 # are pulled back to the orchestrator; a longer utterance is a new topic.
 _DELEGATE_ANSWER_MAX_TOKENS = 6
+
+# While a delegated action still runs, the wait is silent (or worse: a scrub
+# hold has just cut a running answer mid-sentence). A user speaking a bare
+# "hello? are you there?" into that silence is probing whether the assistant
+# is alive — not opening a new topic. Left to the provider, that probe gets a
+# freestyle reply: live forensic 2026-07-17 09:23 — the model greeted like a
+# brand-new conversation while the real answer was still being computed, and
+# the user hung up before it landed. The pending-action prompt directive
+# already forbids this, but prompt compliance is not a correctness boundary
+# (BUG-047 class rule), so the orchestrator answers this one turn itself.
+# Closed speech-recognition input vocabulary (matching data, not prose), all
+# supported languages equal. A miss is safe: the turn simply stays native.
+_PRESENCE_CHECK_MAX_WORDS = 5
+_PRESENCE_CHECK_RE = re.compile(
+    r"^(?:(?:ja|yes|s[ií]|und|and|y)\s+)?"  # i18n-allow: input vocabulary
+    # i18n-allow: input vocabulary
+    r"(?P<greeting>(?:(?:hallo|hello|hola|hey|hi|huhu|servus|moin)\s*)+)?"
+    r"(?P<core>"
+    r"bist\s+du\s+(?:noch\s+)?(?:da|dran)"  # i18n-allow: input vocabulary
+    r"|h(?:ö|oe)rst\s+du\s+mich(?:\s+noch)?"  # i18n-allow: input vocabulary
+    r"|are\s+you\s+(?:still\s+)?there"
+    r"|(?:you\s+)?still\s+there"
+    r"|(?:can\s+you\s+(?:still\s+)?|do\s+you\s+)hear\s+me"
+    r"|(?:sigues|est[áa]s)\s+ah[ií]"  # i18n-allow: input vocabulary
+    r"|me\s+(?:oyes|escuchas)(?:\s+todav[ií]a)?"  # i18n-allow: input vocabulary
+    r")?$"
+)
+
+
+def _is_presence_check(text: str) -> bool:
+    """Return True for a bare are-you-still-there probe (closed vocabulary).
+
+    Deliberately strict: a lone filler ("ja", "yes") is an answer, not a
+    probe, and anything beyond the tiny word bound is a real utterance the
+    provider must handle. At least one greeting or one core phrase must be
+    present for a match.
+    """
+    normalized = " ".join(
+        re.sub(r"[^\w\s]", " ", str(text or "").casefold()).split()
+    )
+    if not normalized or len(normalized.split()) > _PRESENCE_CHECK_MAX_WORDS:
+        return False
+    match = _PRESENCE_CHECK_RE.fullmatch(normalized)
+    return match is not None and bool(
+        match.group("greeting") or match.group("core")
+    )
 
 
 def _requires_jarvis_action(text: str) -> bool:
@@ -1304,6 +1351,15 @@ class RealtimeVoiceSession:
                         and self._delegate_required_for_turn
                     ):
                         self._start_deterministic_delegate(self._last_user_text)
+                    if (
+                        event.is_final
+                        and input_observed
+                        and not self._delegate_required_for_turn
+                        and not self._response_requested_for_turn
+                        and self._has_pending_delegate_from_earlier_turn()
+                        and _is_presence_check(self._last_user_text)
+                    ):
+                        await self._speak_pending_action_status()
                     if (
                         event.is_final
                         and input_observed
@@ -2784,6 +2840,39 @@ class RealtimeVoiceSession:
             return False
         return True
 
+    async def _speak_pending_action_status(self) -> None:
+        """Answer a bare presence check deterministically while an action runs.
+
+        A thin are-you-there probe spoken into the silent wait for a
+        still-running delegated action needs exactly one honest answer: still
+        working on it. The provider cannot be trusted to give it (live
+        forensic 2026-07-17 09:23: it greeted like a fresh conversation
+        instead), so the orchestrator speaks a progress line from the closed
+        bridge pool through the surface TTS and drops the provider's
+        freestyle response for this turn. The late-result flush still
+        delivers the real answer once the session is at rest — both drop
+        flags are cleared by that injection path.
+        """
+        status_text = _pick_delegate_bridge_text(self._language)
+        self._response_requested_for_turn = True
+        self._drop_provider_output_until_user_turn = True
+        # Recording the line as this turn's output keeps the exported
+        # transcript honest and keeps the empty-turn recovery from
+        # re-dispatching the interjection as a brain turn.
+        self._output_transcript.append(status_text)
+        log.info(
+            "realtime[%s] presence check while an earlier action is still "
+            "running — answering with the deterministic progress line",
+            self.session_id,
+        )
+        await self._send_json(
+            {
+                "type": "error_spoken",
+                "text": status_text,
+                "language": self._language,
+            }
+        )
+
     async def _handle_tool_call(self, event: Any) -> None:
         if self._session is None:
             return
@@ -3669,6 +3758,22 @@ class RealtimeVoiceSession:
         if self._end_call_timer is not None and not self._end_call_timer.done():
             self._end_call_timer.cancel()
         self._end_call_timer = None
+        for turn_id, tasks in tuple(self._delegate_tasks_by_turn.items()):
+            if not any(not task.done() for task in tasks):
+                continue
+            # The cancel below kills the in-flight brain turn: the user hung
+            # up before its answer existed, and nothing will ever speak it
+            # (live forensic 2026-07-17 09:23: a hangup 31 s into a delegated
+            # answer discarded it without a trace). Name the lost request so
+            # the loss is diagnosable from the log.
+            state = self._delegate_turns.get(turn_id)
+            request = str(getattr(state, "user_text", "") or "")
+            log.warning(
+                "realtime[%s] session ended while a delegated action was "
+                "still running; its answer was never produced: %s",
+                self.session_id,
+                safe_preview(request, max_chars=200) or "<unknown request>",
+            )
         for task in tuple(self._delegate_tasks):
             if not task.done():
                 task.cancel()

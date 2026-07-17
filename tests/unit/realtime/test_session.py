@@ -957,7 +957,7 @@ async def test_later_segment_leak_audio_not_emitted():
     # could ride along before its own transcript is scrubbed. The session
     # must flush release_available() right after sending a clean transcript
     # so the gate's _cleared flag never spans into the next segment's audio.
-    # The leak segment carries 1500 ms of PCM â€” beyond what the 23-char clean
+    # The leak segment carries 1500 ms of PCM — beyond what the 23-char clean
     # first sentence funds under the BUG-069 coverage budget, so it must stay
     # buffered until its own (leaking) transcript arrives and drops it.
     a1 = b"\x11\x22" * 8
@@ -2009,13 +2009,13 @@ async def test_scrub_trip_during_delegate_readback_speaks_trusted_reply():
     Gemini renders an injected trusted result faster than real time while its
     output transcription lags entirely (live incident 2026-07-16 11:24). With
     no transcript delta the whole turn, the gate fails closed at
-    turn_complete (BUG-069: the mid-turn buffer cap no longer trips first) â€”
+    turn_complete (BUG-069: the mid-turn buffer cap no longer trips first) —
     and that path used to speak a generic error AFTER the user waited through
     the whole delegated action. The reply text is our own already-delivered
     brain output, so the surface TTS must speak it instead.
     """
     reply = "The delegated answer the user must still hear."
-    # 3 s of 24 kHz 16-bit PCM per chunk â€” audio arrives, its transcript
+    # 3 s of 24 kHz 16-bit PCM per chunk — audio arrives, its transcript
     # never does, and the turn ends normally.
     three_seconds = AudioChunk(
         pcm=b"\x01\x02" * 72_000, sample_rate=24_000, timestamp_ns=0
@@ -4343,3 +4343,140 @@ async def test_open_carries_user_agent_instructions_into_session_instructions(
     # on the next message, exactly as the Settings view promises.
     updated = provider.session.session_updates[-1]["instructions"]
     assert "Always speak with a Bavarian accent." in updated
+
+
+@pytest.mark.asyncio
+async def test_presence_check_vocabulary_matches_probes_only():
+    from jarvis.realtime.session import _is_presence_check
+
+    # i18n-allow: German/Spanish speech-input fixtures (matching data)
+    assert _is_presence_check("Ja, hallo.")
+    assert _is_presence_check("Hallo?")
+    assert _is_presence_check("hallo hallo")
+    assert _is_presence_check("Bist du noch da?")
+    assert _is_presence_check("Hey, bist du noch dran?")
+    assert _is_presence_check("Hörst du mich?")  # i18n-allow: fixture
+    assert _is_presence_check("Hello? Are you there?")
+    assert _is_presence_check("can you hear me")
+    assert _is_presence_check("Hola, ¿sigues ahí?")
+
+    # A lone filler is an answer to an open question, never a probe.
+    assert not _is_presence_check("Ja.")
+    assert not _is_presence_check("yes")
+    # Substantive turns must stay with the provider.
+    # i18n-allow: German speech-input fixtures (matching data) below
+    assert not _is_presence_check("Kann ich die einfach so kaufen?")  # i18n-allow: fixture
+    assert not _is_presence_check("hallo kannst du mir das wetter sagen")  # i18n-allow: fixture
+    assert not _is_presence_check("are you there tomorrow morning as well")
+    assert not _is_presence_check("")
+
+
+@pytest.mark.asyncio
+async def test_presence_check_during_pending_action_gets_status_line_not_provider():
+    """A bare "hello?" into a running action gets the deterministic line.
+
+    Live forensic 2026-07-17 09:23: a scrub hold silenced the running answer,
+    the user probed with a bare greeting, and the provider replied with a
+    fresh-conversation greeting while the delegated answer was still being
+    computed. The orchestrator must own that turn: progress line through the
+    surface TTS, no provider response, no second brain dispatch.
+    """
+    from jarvis.realtime.session import _DELEGATE_BRIDGE_TEXTS
+
+    gate = asyncio.Event()  # never set: the delegated action outlives the test
+    brain = FakeBrain(gate=gate)
+    jsons = []
+    # The live shape (2026-07-17 09:23): the provider itself called
+    # jarvis_action, the user barged into the silent wait, and only then did
+    # the probe's final transcript arrive on a fresh turn.
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="Can I just buy it like that?",
+                is_final=True,
+            ),
+            RealtimeEvent(
+                type="tool_call",
+                call_id="call-1",
+                tool_name="jarvis_action",
+                tool_args={"request": "Can I just buy it like that?"},
+            ),
+            RealtimeEvent(type="interrupted"),
+            RealtimeEvent(
+                type="input_transcript",
+                text="Ja, hallo.",  # i18n-allow: German speech-input fixture
+                is_final=True,
+            ),
+        ]
+    )
+    sess = _session(provider, brain=brain, jsons=jsons)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await asyncio.sleep(0.05)
+
+    spoken = [m for m in jsons if m.get("type") == "error_spoken"]
+    assert len(spoken) == 1
+    pool = {text for texts in _DELEGATE_BRIDGE_TEXTS.values() for text in texts}
+    assert spoken[0]["text"] in pool
+    # The probe itself never becomes a provider response or a brain turn:
+    # the single request belongs to the first (native) turn.
+    assert provider.session.response_requests == 1
+    assert all("hallo" not in call[0] for call in brain.calls)
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_presence_check_without_pending_action_stays_native():
+    jsons = []
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="Ja, hallo.",  # i18n-allow: German speech-input fixture
+                is_final=True,
+            ),
+        ]
+    )
+    sess = _session(provider, brain=FakeBrain(), jsons=jsons)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+
+    assert [m for m in jsons if m.get("type") == "error_spoken"] == []
+    assert provider.session.required_tools == [None]
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_session_end_names_the_delegated_request_it_cancels(caplog):
+    """A hangup mid-action must leave a trace of the answer it discarded."""
+    import logging as _logging
+
+    gate = asyncio.Event()  # never set: the delegated action never finishes
+    brain = FakeBrain(gate=gate)
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="Write the travel plan to my wiki.",
+                is_final=True,
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    with caplog.at_level(_logging.WARNING, logger="jarvis.realtime.session"):
+        await sess.end(reason="hotkey")
+
+    lost = [
+        record
+        for record in caplog.records
+        if "still running" in record.getMessage()
+    ]
+    assert len(lost) == 1
+    assert "travel plan" in lost[0].getMessage()

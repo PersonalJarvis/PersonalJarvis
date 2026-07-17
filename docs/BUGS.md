@@ -5052,3 +5052,71 @@ guarantees — and every violation of that assumption is audible. Second
 lesson, again: safety bounds sized to "normal" provider behavior
 (5 s of pending audio) become answer-killers the day the provider is
 routinely slower; bound on resource cost, not on optimism.
+
+## BUG-070: User probes the silent wait ("hello?") — the provider greets like a fresh conversation while the delegated answer is still being computed (HIGH, FIXED 2026-07-17)
+
+**Symptom (maintainer report + live session 2026-07-17 09:21, gemini-live).**
+Mid-conversation, the answer to a follow-up question starts and dies after
+two words; the user probes the silence with a bare greeting, and the
+assistant replies with a fresh-conversation greeting as if the whole
+exchange never happened. The user hangs up; the real answer never arrives
+in any form. The exported transcript shows: user question → two-word
+assistant fragment → user "hello?" probe → context-free greeting.
+
+**Evidence (data/jarvis_desktop.log, session 9ef10423, 09:23:26-09:23:57).**
+The provider called `jarvis_action` for the user's question (`delegate
+call: dispatching user turn to the router brain`, 09:23:26) and kept
+speaking natively; the scrub gate released only the first words because
+the provider's output transcription ran >10 s behind its audio (the
+BUG-069 lag mode — an earlier reply in the same session logged
+`mid-reply audio stalled 14718 ms … scrub-gate hold 14671 ms`). Into that
+hole the user said a bare greeting; the barge-in killed the native reply;
+the provider answered the probe with a fresh greeting (no delegate
+dispatch logged — 5 ms turn). The router-brain answer was still in flight
+when the user hung up at 09:23:57; `end()` cancelled the delegate task
+with no log line — the answer vanished without a trace.
+
+**Root causes (jarvis/realtime/session.py).**
+1. A thin presence probe ("hello?", "are you still there?") spoken while
+   an earlier turn's delegated action is still executing was handled by
+   the provider like any other turn. `_DELEGATE_PENDING_DIRECTIVE`
+   already tells the model to say it is still working, but prompt
+   compliance is not a correctness boundary (BUG-047 class rule), and the
+   live model demonstrably greeted instead.
+2. `end()` cancelled still-running delegate tasks silently: a hangup
+   during a slow delegated answer discarded the request with no evidence
+   in the log (the queued-late-result and flush paths log their losses;
+   the still-running case logged nothing).
+
+**Fixes.**
+1. *Deterministic presence-check status line.* A final user transcript
+   that (a) matches a closed multilingual presence-probe vocabulary
+   (`_is_presence_check`: de/en/es greetings and are-you-there cores,
+   ≤ 5 words, a lone filler like "ja"/"yes" deliberately excluded) while
+   (b) an earlier turn's delegate task is still running
+   (`_has_pending_delegate_from_earlier_turn`) and (c) the turn itself
+   requires no orchestrator dispatch, is answered by the ORCHESTRATOR:
+   one progress line from the closed bridge pool through the surface TTS
+   (`error_spoken`), the provider's freestyle response for that turn is
+   dropped (`_drop_provider_output_until_user_turn`), and no provider
+   response is requested. The late-result flush still speaks the real
+   answer once the session is at rest — its injection path clears both
+   drop flags. A probe with no pending action stays fully native.
+2. *Named loss on hangup.* `end()` now logs one WARNING per turn whose
+   delegate task is still running at session end, naming the user request
+   whose answer is being cancelled.
+
+**Guards.** `tests/unit/realtime/test_session.py`
+(`test_presence_check_vocabulary_matches_probes_only`,
+`test_presence_check_during_pending_action_gets_status_line_not_provider`,
+`test_presence_check_without_pending_action_stays_native`,
+`test_session_end_names_the_delegated_request_it_cancels`).
+
+**Lesson.** When a slow background action leaves the voice channel
+silent, the user WILL speak into that silence to test for life — and that
+probe is the one turn where a freestyle model answer is guaranteed to be
+wrong (it either invents an outcome or resets the conversation). Every
+turn category whose only correct answer is known in advance belongs to
+the orchestrator, not the model. And: any path that discards work the
+user asked for — even legitimately, on hangup — must say so in the log,
+or the next forensic starts from nothing.
