@@ -8,7 +8,6 @@ from __future__ import annotations
 from types import SimpleNamespace
 
 import httpx
-import pytest
 from fastapi import FastAPI
 
 from jarvis.core.bus import EventBus
@@ -55,7 +54,7 @@ def _fake_session_store():
     ]
 
     return SimpleNamespace(
-        list_sessions=lambda *, limit=100: list(sessions),
+        list_sessions=lambda *, limit=100, include_empty=True: list(sessions),
         get_session=lambda cid: sessions[0] if cid == "v1" else None,
         get_turns=lambda cid: list(turns) if cid == "v1" else [],
     )

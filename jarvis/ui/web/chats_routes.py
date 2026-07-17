@@ -248,7 +248,7 @@ async def list_conversations(
     ]
     if session_store is not None:
         try:
-            for s in session_store.list_sessions(limit=limit):
+            for s in session_store.list_sessions(limit=limit, include_empty=False):
                 items.append(_voice_session_to_summary(s))
         except Exception as exc:  # noqa: BLE001 — voice list must never 500 the page
             log.warning("voice session list failed, showing text-only: %s", exc)

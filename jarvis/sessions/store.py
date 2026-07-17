@@ -372,11 +372,16 @@ class SessionStore:
         *,
         limit: int = 100,
         offset: int = 0,
+        include_empty: bool = True,
     ) -> list[SessionListItem]:
         """Sessions by started_ms desc — newest first.
 
         ``preview`` is the first user utterance (the first turn row with
-        a non-empty ``user_text``).
+        a non-empty ``user_text``). Set ``include_empty=False`` for
+        conversation-history surfaces: finished attempts without any persisted
+        user or assistant transcript stay available to diagnostics, but do not
+        crowd out real conversations. Open sessions remain visible while they
+        wait for their first turn.
         """
         with self._lock:
             cur = self._c.execute(
@@ -389,10 +394,21 @@ class SessionStore:
                         ORDER BY t.idx ASC
                         LIMIT 1) AS preview
                 FROM voice_sessions s
+                WHERE ? = 1
+                   OR s.ended_ms IS NULL
+                   OR EXISTS (
+                        SELECT 1
+                        FROM voice_turns meaningful
+                        WHERE meaningful.session_id = s.id
+                          AND (
+                              TRIM(COALESCE(meaningful.user_text, '')) != ''
+                              OR TRIM(COALESCE(meaningful.jarvis_text, '')) != ''
+                          )
+                   )
                 ORDER BY s.started_ms DESC
                 LIMIT ? OFFSET ?
                 """,
-                (limit, max(0, int(offset))),
+                (1 if include_empty else 0, limit, max(0, int(offset))),
             )
             rows = cur.fetchall()
         # Per-row validation in a try/except: a single invalid row (e.g.

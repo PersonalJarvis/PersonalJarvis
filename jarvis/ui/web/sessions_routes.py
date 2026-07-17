@@ -70,14 +70,20 @@ def _require_store(request: Request) -> SessionStore:
 async def list_sessions(
     request: Request,
     limit: int = Query(default=100, ge=1, le=500),
+    include_empty: bool = Query(
+        default=False,
+        description="Include finished voice attempts without transcript content.",
+    ),
 ) -> list[SessionListItem]:
-    """List of all voice sessions, newest first.
+    """List transcript-bearing and currently running voice sessions, newest first.
 
     The frontend calls this on tab switch to "Transcription" as well as
-    after a ``VoiceSessionEnded`` WS event (refetch).
+    after a ``VoiceSessionEnded`` WS event (refetch). Empty completed attempts
+    remain queryable for diagnostics through ``include_empty=true`` and their
+    direct detail URL.
     """
     store = _require_store(request)
-    return store.list_sessions(limit=limit)
+    return store.list_sessions(limit=limit, include_empty=include_empty)
 
 
 @router.get("/latest-turn", response_model=VoiceTurnRow)

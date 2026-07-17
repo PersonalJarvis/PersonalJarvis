@@ -12,6 +12,7 @@ import { useEventStore } from "@/store/events";
 import { ViewHeader } from "@/views/ChatsView";
 import { SessionDetail } from "@/components/sessions/SessionDetail";
 import { SessionList } from "@/components/sessions/SessionList";
+import { resolveSelectedSessionId } from "@/components/sessions/sessionSelection";
 import { useSessionDetail, useSessions } from "@/hooks/useSessions";
 import { useT } from "@/i18n";
 
@@ -21,23 +22,16 @@ export function SessionsView() {
   const sessionsQuery = useSessions();
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
-  // On the first successful load, auto-select the newest **finished**
-  // session. Rationale: ``list_sessions`` (store.py) also lists sessions
-  // still in progress (``ended_ms === null``) — those show up at the very
-  // top because they have the most recent ``started_ms``. If we
-  // auto-selected one of those, the user would see an *empty* detail pane
-  // when switching tabs during an ongoing voice session and think "my last
-  // transcript is gone". We prefer the newest session with
-  // ``ended_ms !== null`` (= fully finished, with aggregates);
-  // only when there is no finished session do we fall back to the first
-  // list item.
+  // Keep selection aligned with the visible list. A running attempt can be
+  // selected and then disappear after hangup when the API confirms that it
+  // contains no transcript. In that case, move to the newest finished
+  // transcript instead of leaving an invisible row selected in the detail
+  // pane. Initial selection follows the same rule.
   useEffect(() => {
-    if (selectedId !== null) return;
     const list = sessionsQuery.data;
-    if (!list || list.length === 0) return;
-    const lastFinished = list.find((s) => s.ended_ms !== null);
-    setSelectedId((lastFinished ?? list[0]).id);
-  }, [sessionsQuery.data, selectedId]);
+    if (!list) return;
+    setSelectedId((currentId) => resolveSelectedSessionId(list, currentId));
+  }, [sessionsQuery.data]);
 
   const detailQuery = useSessionDetail(selectedId);
 
