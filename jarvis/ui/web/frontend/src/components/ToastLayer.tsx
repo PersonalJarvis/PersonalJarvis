@@ -41,7 +41,10 @@ export function ToastLayer() {
   const dismiss = useEventStore((s) => s.dismissToast);
 
   return (
-    <div className="pointer-events-none fixed right-4 top-4 z-50 flex w-[320px] flex-col gap-2">
+    // z-[60]: the onboarding gate overlays the whole app at z-50 and renders
+    // later in the DOM; toasts (e.g. failed permission requests during
+    // first-run setup) must stay visible above it.
+    <div className="pointer-events-none fixed right-4 top-4 z-[60] flex w-[320px] flex-col gap-2">
       {toasts.map((toast) => {
         const Icon = ICON_FOR_KIND[toast.kind];
         // A saved-file toast in the desktop shell is a native drag handle: press

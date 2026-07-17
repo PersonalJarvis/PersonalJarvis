@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -128,13 +129,18 @@ def _native_modules(
     return modules, screen, workspace
 
 
-def _port(modules: dict[str, object]) -> SystemPermissionPort:
+def _port(
+    modules: dict[str, object],
+    iohid_check: Callable[[int], int | None] = lambda _type: None,
+) -> SystemPermissionPort:
     def load(name: str) -> object:
         if name not in modules:
             raise ModuleNotFoundError(name)
         return modules[name]
 
-    return SystemPermissionPort(platform_name="darwin", module_loader=load)
+    # iohid_check defaults to "unavailable" so unit runs stay hermetic even on
+    # a real Mac, where the default probe would read the machine's TCC state.
+    return SystemPermissionPort(platform_name="darwin", module_loader=load, iohid_check=iohid_check)
 
 
 def _permission(snapshot: dict, permission_id: PermissionId) -> dict:
@@ -151,9 +157,7 @@ def test_matching_bundle_id_at_noncanonical_path_is_not_stable(tmp_path: Path) -
         bundleIdentifier=lambda: EXPECTED_BUNDLE_ID,
         bundlePath=lambda: str(tmp_path / "Personal Jarvis.app"),
     )
-    modules["Foundation"].NSBundle = SimpleNamespace(
-        mainBundle=lambda: copied_bundle
-    )
+    modules["Foundation"].NSBundle = SimpleNamespace(mainBundle=lambda: copied_bundle)
 
     assert _port(modules).snapshot()["app_identity"]["stable"] is False
 
@@ -188,9 +192,11 @@ def test_snapshot_maps_native_states_and_feature_readiness() -> None:
         "identity_ready": True,
         "restart_required": False,
     }
+    # event_posting is granted through the trusted Accessibility fixture, so
+    # only the screen-recording grant is still missing for Computer-Use.
     assert snapshot["features"]["computer_use"] == {
         "ready": False,
-        "missing": ["screen_recording", "event_posting"],
+        "missing": ["screen_recording"],
         "identity_ready": True,
         "restart_required": False,
     }
@@ -227,10 +233,7 @@ def test_runtime_access_requires_stable_identity_and_fresh_grant() -> None:
     unstable_modules, _, _ = _native_modules(bundle_id="org.python.python")
 
     assert stable.runtime_access_granted(PermissionId.MICROPHONE) is True
-    assert (
-        _port(unstable_modules).runtime_access_granted(PermissionId.MICROPHONE)
-        is False
-    )
+    assert _port(unstable_modules).runtime_access_granted(PermissionId.MICROPHONE) is False
     _CaptureDevice.status = 2
     assert stable.runtime_access_granted(PermissionId.MICROPHONE) is False
 
@@ -330,12 +333,81 @@ def test_request_event_permissions_use_coregraphics(
     modules, _, _ = _native_modules()
     calls: list[str] = []
     setattr(modules["Quartz"], request_name, lambda: calls.append(request_name))
+    # Untrusted Accessibility keeps event_posting requestable: a trusted AX
+    # grant already implies event posting and would short-circuit to granted.
+    modules["ApplicationServices"] = SimpleNamespace(
+        AXIsProcessTrusted=lambda: False,
+        AXIsProcessTrustedWithOptions=lambda _options: False,
+        kAXTrustedCheckOptionPrompt="prompt",
+    )
 
     result = _port(modules).request(permission_id)
 
     assert result.ok is True
     assert result.performed is True
     assert calls == [request_name]
+
+
+_IOHID_POST = 0  # kIOHIDRequestTypePostEvent
+_IOHID_LISTEN = 1  # kIOHIDRequestTypeListenEvent
+
+
+def test_input_monitoring_denied_hides_request_and_keeps_settings() -> None:
+    # macOS never re-prompts once the TCC state is determined; a visible
+    # "request" button would silently do nothing (the dead Allow button).
+    modules, _, _ = _native_modules()
+
+    snapshot = _port(modules, iohid_check=lambda t: 1 if t == _IOHID_LISTEN else None).snapshot()
+
+    item = _permission(snapshot, PermissionId.INPUT_MONITORING)
+    assert item["status"] == "denied"
+    assert item["can_request"] is False
+    assert item["can_open_settings"] is True
+
+
+def test_input_monitoring_not_determined_still_offers_the_prompt() -> None:
+    modules, _, _ = _native_modules()
+
+    snapshot = _port(modules, iohid_check=lambda t: 2 if t == _IOHID_LISTEN else None).snapshot()
+
+    item = _permission(snapshot, PermissionId.INPUT_MONITORING)
+    assert item["status"] == "not_determined"
+    assert item["can_request"] is True
+
+
+def test_input_monitoring_falls_back_to_boolean_preflight_without_iohid() -> None:
+    modules, _, _ = _native_modules()
+
+    item = _permission(_port(modules).snapshot(), PermissionId.INPUT_MONITORING)
+
+    assert item["status"] == "not_granted"
+
+
+def test_event_posting_follows_live_accessibility_grant() -> None:
+    # The Accessibility grant authorizes event posting and updates live; it
+    # must win over a stale per-process HID verdict so the row flips as soon
+    # as the user grants Accessibility.
+    modules, _, _ = _native_modules()
+
+    snapshot = _port(modules, iohid_check=lambda _t: 1).snapshot()
+
+    assert _permission(snapshot, PermissionId.EVENT_POSTING)["status"] == "granted"
+
+
+def test_event_posting_tristate_when_accessibility_untrusted() -> None:
+    modules, _, _ = _native_modules()
+    modules["ApplicationServices"] = SimpleNamespace(
+        AXIsProcessTrusted=lambda: False,
+        AXIsProcessTrustedWithOptions=lambda _options: False,
+        kAXTrustedCheckOptionPrompt="prompt",
+    )
+
+    snapshot = _port(modules, iohid_check=lambda t: 1 if t == _IOHID_POST else None).snapshot()
+
+    item = _permission(snapshot, PermissionId.EVENT_POSTING)
+    assert item["status"] == "denied"
+    assert item["can_request"] is False
+    assert item["can_open_settings"] is True
 
 
 def test_legacy_macos_event_posting_falls_back_to_accessibility_prompt() -> None:
@@ -406,7 +478,11 @@ def test_broken_native_bridge_import_fails_closed() -> None:
     def broken_loader(_name: str) -> object:
         raise OSError("incompatible native framework")
 
-    port = SystemPermissionPort(platform_name="darwin", module_loader=broken_loader)
+    port = SystemPermissionPort(
+        platform_name="darwin",
+        module_loader=broken_loader,
+        iohid_check=lambda _type: None,
+    )
 
     snapshot = port.snapshot()
 

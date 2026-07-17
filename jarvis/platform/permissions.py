@@ -87,6 +87,37 @@ _SETTINGS_URLS: dict[PermissionId, str] = {
     ),
 }
 
+# IOKit HID access constants (IOHIDCheckAccess, macOS 10.15+). The header
+# declares both enums as CF_ENUM(uint64_t); the raw values are stable ABI.
+_IOHID_REQUEST_POST_EVENT = 0  # kIOHIDRequestTypePostEvent
+_IOHID_REQUEST_LISTEN_EVENT = 1  # kIOHIDRequestTypeListenEvent
+_IOHID_ACCESS_STATES: dict[int, PermissionState] = {
+    0: PermissionState.GRANTED,  # kIOHIDAccessTypeGranted
+    1: PermissionState.DENIED,  # kIOHIDAccessTypeDenied
+    2: PermissionState.NOT_DETERMINED,  # kIOHIDAccessTypeUnknown
+}
+
+
+def _default_iohid_check(request_type: int) -> int | None:
+    """Query IOKit's tri-state HID access check; ``None`` when unavailable.
+
+    macOS shows the Input Monitoring / event-posting prompt only while the
+    TCC state is still undetermined. The boolean ``CGPreflight*`` calls fold
+    "never asked" and "denied" into one value, so only this tri-state probe
+    lets the UI know when a request would silently do nothing.
+    """
+    try:
+        import ctypes
+
+        iokit = ctypes.CDLL("/System/Library/Frameworks/IOKit.framework/IOKit")
+        check = iokit.IOHIDCheckAccess
+        check.restype = ctypes.c_uint64
+        check.argtypes = [ctypes.c_uint64]
+        return int(check(request_type))
+    except Exception:  # noqa: BLE001 - a missing native bridge falls back
+        return None
+
+
 _READY_STATES = frozenset({PermissionState.GRANTED, PermissionState.NOT_REQUIRED})
 _RESTART_AFTER_CHANGE = frozenset(
     {
@@ -151,9 +182,11 @@ class SystemPermissionPort:
         *,
         platform_name: PlatformName | None = None,
         module_loader: Callable[[str], Any] = importlib.import_module,
+        iohid_check: Callable[[int], int | None] = _default_iohid_check,
     ) -> None:
         self._platform_name = platform_name
         self._module_loader = module_loader
+        self._iohid_check = iohid_check
         # This is operation state, not a cached permission probe. The set lives
         # only for the current process and therefore clears exactly when the
         # required app restart has happened.
@@ -208,11 +241,7 @@ class SystemPermissionPort:
                 canonical_path = Path(bundle_path).resolve() == expected_path.resolve()
             except (OSError, ValueError):
                 canonical_path = False
-        stable = (
-            bundle_id == EXPECTED_BUNDLE_ID
-            and launched_as_bundle
-            and canonical_path
-        )
+        stable = bundle_id == EXPECTED_BUNDLE_ID and launched_as_bundle and canonical_path
         foreground = False
         headless = True
         appkit = self._load("AppKit")
@@ -271,6 +300,16 @@ class SystemPermissionPort:
         except Exception:  # noqa: BLE001 - native probes never crash callers
             return PermissionState.UNAVAILABLE
 
+    def _iohid_state(self, request_type: int) -> PermissionState | None:
+        """Tri-state TCC probe that separates "denied" from "not asked yet"."""
+        try:
+            raw = self._iohid_check(request_type)
+        except Exception:  # noqa: BLE001 - native probes never crash callers
+            return None
+        if raw is None:
+            return None
+        return _IOHID_ACCESS_STATES.get(int(raw))
+
     def _state(self, permission_id: PermissionId) -> PermissionState:
         if self.platform != "darwin":
             return PermissionState.NOT_REQUIRED
@@ -281,13 +320,30 @@ class SystemPermissionPort:
         if permission_id is PermissionId.ACCESSIBILITY:
             return self._boolean_state("ApplicationServices", "AXIsProcessTrusted")
         if permission_id is PermissionId.INPUT_MONITORING:
+            # macOS shows the Input Monitoring prompt only while the state is
+            # still undetermined (an app that ever created an event listener
+            # is auto-registered as denied). Without the tri-state the UI
+            # offers a request that would silently do nothing.
+            state = self._iohid_state(_IOHID_REQUEST_LISTEN_EVENT)
+            if state is not None:
+                return state
             return self._boolean_state("Quartz", "CGPreflightListenEventAccess")
+        # Event posting: the Accessibility grant authorizes posting input
+        # events on macOS and there is no second prompt for it. AX reads the
+        # live TCC value, unlike the CGPreflight result that is frozen per
+        # process, so a mid-session Accessibility grant flips this row too.
+        ax_state = self._boolean_state("ApplicationServices", "AXIsProcessTrusted")
+        if ax_state is PermissionState.GRANTED:
+            return PermissionState.GRANTED
+        state = self._iohid_state(_IOHID_REQUEST_POST_EVENT)
+        if state is not None:
+            return state
         quartz = self._load("Quartz")
         if callable(getattr(quartz, "CGPreflightPostEventAccess", None)):
             return self._boolean_state("Quartz", "CGPreflightPostEventAccess")
         # Older supported macOS releases protect CGEvent posting through the
         # Accessibility grant and do not expose the separate PostEvent API.
-        return self._boolean_state("ApplicationServices", "AXIsProcessTrusted")
+        return ax_state
 
     def state(self, permission_id: PermissionId | str) -> PermissionState:
         """Probe one permission directly without constructing a full snapshot."""
@@ -312,8 +368,7 @@ class SystemPermissionPort:
             return all(self._state(item) in _READY_STATES for item in requirements)
         identity, _headless = self._app_identity()
         return identity.stable and all(
-            item not in self._restart_required
-            and self._state(item) is PermissionState.GRANTED
+            item not in self._restart_required and self._state(item) is PermissionState.GRANTED
             for item in requirements
         )
 
@@ -403,8 +458,7 @@ class SystemPermissionPort:
             ]
             identity_ready = self.platform != "darwin" or identity.stable
             restart_required = any(
-                permission_id in self._restart_required
-                for permission_id in requirements
+                permission_id in self._restart_required for permission_id in requirements
             )
             features[feature] = {
                 "ready": not missing and identity_ready and not restart_required,
@@ -541,6 +595,7 @@ class SystemPermissionPort:
             ),
             after,
         )
+
     def _open_settings(self, permission_id: PermissionId) -> bool:
         appkit = self._load("AppKit")
         foundation = self._load("Foundation")
@@ -596,9 +651,7 @@ class SystemPermissionPort:
                 "System Settings opened. Restart Personal Jarvis after changing access."
                 if restart
                 else (
-                    "System Settings opened."
-                    if opened
-                    else "System Settings could not be opened."
+                    "System Settings opened." if opened else "System Settings could not be opened."
                 )
             ),
             after,
