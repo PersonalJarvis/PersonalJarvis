@@ -6202,8 +6202,11 @@ class SpeechPipeline:
                 cleaned = scrubbed.cleaned.strip()
                 if cleaned and not getattr(self, "_muted", False):
                     # Realtime has already failed to render this grounded text.
-                    # Use the configured classic TTS + the same AudioPlayer as
-                    # an independent last mile. The existing mic pump and local
+                    # Re-render through a REALTIME-scoped TTS (same provider
+                    # family + realtime credential slots + session voice; the
+                    # classic pipeline chain only as last resort — mode
+                    # separation 2026-07-17) on the same AudioPlayer as an
+                    # independent last mile. The existing mic pump and local
                     # barge detector remain active, so this does not open a
                     # second microphone or replay the user's request.
                     await playback.cancel()
@@ -6211,17 +6214,62 @@ class SpeechPipeline:
                     barge_detector.start_output()
                     await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
                     try:
+                        surface_tts = self._resolve_realtime_surface_tts(
+                            self._active_realtime_provider
+                        )
+                        # Voice-identity continuity: the realtime session names
+                        # the voice it was speaking with, so this last mile does
+                        # not flip speakers mid-conversation (Fenrir→Charon,
+                        # live forensic 2026-07-17 10:04). Honored only when the
+                        # resolved TTS actually offers that voice — a capability
+                        # check, never a provider pin (AP-21); no match keeps
+                        # the TTS's own configured voice exactly as before.
+                        voice_hint = (
+                            str(message.get("voice", "") or "").strip() or None
+                        )
+                        if voice_hint:
+                            try:
+                                list_voices = getattr(
+                                    surface_tts, "list_voices", None
+                                )
+                                known = (
+                                    set(list_voices() or [])
+                                    if callable(list_voices)
+                                    else set()
+                                )
+                            except Exception:  # noqa: BLE001 -- a hint must never block speech
+                                known = set()
+                            if voice_hint not in known:
+                                voice_hint = None
                         lang_code = self._bcp47(language)
+                        # Pass ``voice`` only when a validated hint exists:
+                        # protocol-compatible TTS doubles/legacy providers
+                        # without that kwarg must keep their language_code
+                        # instead of dropping to the bare-text retry.
+                        synth_kwargs: dict[str, Any] = {
+                            "language_code": lang_code,
+                        }
+                        if voice_hint:
+                            synth_kwargs["voice"] = voice_hint
                         try:
-                            chunks = self._tts.synthesize(
-                                cleaned,
-                                language_code=lang_code,
+                            chunks = surface_tts.synthesize(
+                                cleaned, **synth_kwargs
                             )
                         except TypeError:
-                            chunks = self._tts.synthesize(cleaned)
+                            try:
+                                chunks = surface_tts.synthesize(
+                                    cleaned, language_code=lang_code
+                                )
+                            except TypeError:
+                                chunks = surface_tts.synthesize(cleaned)
                         playback_result = await self._player.play_chunks(chunks)
                         if self._playback_confirmed(playback_result):
-                            self._emit_spoken(cleaned, language, SPOKEN_KIND_REPLY)
+                            self._emit_spoken(
+                                cleaned,
+                                language,
+                                SPOKEN_KIND_REPLY,
+                                tts=surface_tts,
+                            )
                     except Exception as exc:  # noqa: BLE001 -- final voice fallback
                         log.warning(
                             "Realtime surface TTS fallback failed: %s",
@@ -9399,12 +9447,39 @@ class SpeechPipeline:
                 self._abort_playback_device()
                 return set()
 
+    def _resolve_realtime_surface_tts(self, provider: str) -> Any:
+        """TTS for re-rendering a realtime turn locally (mode separation).
+
+        Prefers the active realtime provider's own TTS family, keyed through
+        the realtime credential slots and speaking the session voice; the
+        classic pipeline chain stays wired underneath as the cross-family
+        last resort (AD-OE6). Cached per (provider, pipeline TTS instance) so
+        a live TTS switch via ``set_tts`` naturally invalidates it. Any
+        resolution failure returns the pipeline TTS — never raises.
+        """
+        base = getattr(self, "_tts", None)
+        key = (provider or "").strip().lower()
+        if not key or base is None:
+            return base
+        cached = getattr(self, "_realtime_surface_tts_cache", None)
+        if cached is not None and cached[0] == key and cached[1] is base:
+            return cached[2]
+        try:
+            from jarvis.plugins.tts import build_realtime_surface_tts
+
+            built = build_realtime_surface_tts(self._config, key, base)
+        except Exception:  # noqa: BLE001 — the emergency voice must never break
+            built = base
+        self._realtime_surface_tts_cache = (key, base, built)
+        return built
+
     def _emit_spoken(
         self,
         text: str,
         language: str | None,
         kind: str,
         detail: str | None = None,
+        tts: Any | None = None,
     ) -> None:
         """Publish one playback-confirmed phrase to the audible transcript.
 
@@ -9423,7 +9498,10 @@ class SpeechPipeline:
             # through self._tts, whose providers record their resolved voice
             # per utterance (last_voice protocol, 2026-07-17). Read after
             # playback so a fallback takeover reports the TAKEOVER voice.
-            tts = getattr(self, "_tts", None)
+            # A caller that rendered through a DIFFERENT instance (realtime
+            # surface fallback) passes it in so the label stays honest.
+            if tts is None:
+                tts = getattr(self, "_tts", None)
             voice = getattr(tts, "last_voice", None)
             voice_provider = getattr(tts, "last_voice_provider", None) or getattr(
                 tts, "name", None

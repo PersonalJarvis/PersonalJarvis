@@ -342,6 +342,146 @@ async def test_unsafe_output_cancel_stops_playback_and_returns_to_listening(
 
 
 @pytest.mark.asyncio
+async def test_error_spoken_renders_through_realtime_scoped_surface_tts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Mode separation (2026-07-17): the realtime emergency re-render resolves
+    a REALTIME-scoped surface TTS for the active provider instead of blindly
+    speaking through the pipeline's separately configured [tts] instance, and
+    the spoken-voice label is read from the instance that actually spoke."""
+    pipe = _pipe()
+    pipeline_pcm = b"\x07\x00" * 32
+    surface_pcm = b"\x08\x00" * 32
+    pipeline_tts = _FakeTTS(pipeline_pcm)
+    surface_tts = _FakeTTS(surface_pcm)
+    pipe._tts = pipeline_tts
+    resolved: dict[str, object] = {}
+    spoken_delivered = asyncio.Event()
+
+    def _scoped_surface_tts(cfg, provider, base):
+        resolved["cfg"] = cfg
+        resolved["provider"] = provider
+        resolved["base"] = base
+        return surface_tts
+
+    monkeypatch.setattr(
+        "jarvis.plugins.tts.build_realtime_surface_tts", _scoped_surface_tts
+    )
+
+    class _ErrorSpokenSession(_HandshakeOnlyRealtimeSession):
+        async def handle_control(self, message) -> None:
+            await super().handle_control(message)
+            await self._send_json(
+                {
+                    "type": "error_spoken",
+                    "text": "The grounded reply.",
+                    "language": "en",
+                }
+            )
+            spoken_delivered.set()
+
+    def _build(**kwargs):
+        return _ErrorSpokenSession(kwargs["send_binary"], kwargs["send_json"])
+
+    monkeypatch.setattr("jarvis.realtime.factory.build_realtime_session", _build)
+    monkeypatch.setattr(pipeline_mod, "MicrophoneCapture", lambda **_kwargs: _SilentMic())
+
+    task = asyncio.create_task(pipe._active_realtime_session())
+    await asyncio.wait_for(spoken_delivered.wait(), timeout=0.5)
+    await asyncio.sleep(0)
+
+    # The resolver received the active realtime provider + the pipeline TTS as
+    # the last-resort base, and the scoped instance did ALL the speaking.
+    assert resolved["provider"] == "fake-live"
+    assert resolved["base"] is pipeline_tts
+    assert [text for text, _lang in surface_tts.calls] == ["The grounded reply."]
+    assert pipeline_tts.calls == []
+    assert surface_pcm in pipe._player.pcm
+
+    pipe._hangup_event.set()
+    assert await asyncio.wait_for(task, timeout=0.5) == HANGUP_HOTKEY
+
+
+class _VoiceAwareTTS(_FakeTTS):
+    """A surface TTS that supports per-utterance voice pinning + listing."""
+
+    def __init__(self, pcm: bytes, voices: list[str]) -> None:
+        super().__init__(pcm)
+        self.voices = voices
+        self.voice_calls: list[str | None] = []
+
+    def list_voices(self, language: str | None = None) -> list[str]:
+        return list(self.voices)
+
+    def synthesize(
+        self,
+        text: str,
+        *,
+        voice: str | None = None,
+        language_code: str | None = None,
+    ):
+        self.voice_calls.append(voice)
+        return super().synthesize(text, language_code=language_code)
+
+
+@pytest.mark.parametrize(
+    ("catalogue", "expected_voice"),
+    [
+        (["Fenrir", "Charon"], "Fenrir"),  # hint offered -> voice continuity
+        (["leo"], None),  # foreign catalogue -> provider's own default
+    ],
+)
+@pytest.mark.asyncio
+async def test_error_spoken_voice_hint_is_capability_gated(
+    monkeypatch: pytest.MonkeyPatch,
+    catalogue: list[str],
+    expected_voice: str | None,
+) -> None:
+    """Voice-identity continuity (live forensic 2026-07-17 10:04: Fenrir's
+    aborted readback re-spoken by Charon): the realtime session's voice hint is
+    honored when the resolved surface TTS offers that voice, and silently
+    dropped when it does not — a capability check, never a provider pin."""
+    pipe = _pipe()
+    pipe._tts = _FakeTTS(b"\x07\x00" * 32)
+    surface_tts = _VoiceAwareTTS(b"\x08\x00" * 32, catalogue)
+    spoken_delivered = asyncio.Event()
+
+    monkeypatch.setattr(
+        "jarvis.plugins.tts.build_realtime_surface_tts",
+        lambda _cfg, _provider, _base: surface_tts,
+    )
+
+    class _VoiceHintSession(_HandshakeOnlyRealtimeSession):
+        async def handle_control(self, message) -> None:
+            await super().handle_control(message)
+            await self._send_json(
+                {
+                    "type": "error_spoken",
+                    "text": "The grounded reply.",
+                    "language": "en",
+                    "voice": "Fenrir",
+                }
+            )
+            spoken_delivered.set()
+
+    def _build(**kwargs):
+        return _VoiceHintSession(kwargs["send_binary"], kwargs["send_json"])
+
+    monkeypatch.setattr("jarvis.realtime.factory.build_realtime_session", _build)
+    monkeypatch.setattr(pipeline_mod, "MicrophoneCapture", lambda **_kwargs: _SilentMic())
+
+    task = asyncio.create_task(pipe._active_realtime_session())
+    await asyncio.wait_for(spoken_delivered.wait(), timeout=0.5)
+    await asyncio.sleep(0)
+
+    assert surface_tts.voice_calls == [expected_voice]
+    assert [text for text, _lang in surface_tts.calls] == ["The grounded reply."]
+
+    pipe._hangup_event.set()
+    assert await asyncio.wait_for(task, timeout=0.5) == HANGUP_HOTKEY
+
+
+@pytest.mark.asyncio
 async def test_desktop_cpu_barge_in_cancels_and_forwards_user_preroll(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

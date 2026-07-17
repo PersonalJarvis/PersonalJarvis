@@ -138,7 +138,13 @@ class GeminiFlashTTS:
         vertex_project: str | None = None,
         vertex_location: str = "us-central1",
         service_account_path: str | None = None,
+        api_key: str | None = None,
     ) -> None:
+        # An explicitly injected key wins over the environment lookup. The
+        # realtime surface fallback resolves the REALTIME credential slots
+        # (realtime_gemini_api_key first) and passes the key in here, so a
+        # realtime-scoped key never has to enter the generic pipeline lookup.
+        self._api_key = (api_key or "").strip() or None
         self._model_name = model
         self._default_voice = default_voice
         self._language_code = language_code
@@ -193,9 +199,12 @@ class GeminiFlashTTS:
     def _resolve_api_key(self) -> str:
         """Key lookup with .env alias support.
 
+        An injected constructor key (realtime surface fallback) wins. Otherwise:
         `.env` uses `GOOGLE_AIStudio_API_KEY` (user-specific), but google-genai
         looks for `GEMINI_API_KEY` / `GOOGLE_API_KEY`. We bridge that.
         """
+        if self._api_key:
+            return self._api_key
         for env_var in ("GEMINI_API_KEY", "GOOGLE_AIStudio_API_KEY", "GOOGLE_API_KEY"):
             val = cfg.get_secret(env_var.lower(), env_fallback=env_var)
             if val:

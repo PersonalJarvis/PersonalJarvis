@@ -256,6 +256,95 @@ def resolve_keyed_fallback(
     return None
 
 
+# Same-family surface TTS per REALTIME provider (mode separation, 2026-07-17).
+# The desktop surface re-renders a realtime turn locally when the live provider
+# fails to deliver audio (scrub-gate cancel, text-only completion). That
+# emergency voice must sound like the SESSION and resolve through the REALTIME
+# credential slots — never jump straight to the pipeline's separately
+# configured [tts] provider (live incident 2026-07-17 10:04: a gemini-live
+# session's re-render spoke as "Charon @ openrouter" because the pipeline
+# primary was openrouter-tts). Realtime families absent here have no native
+# TTS sibling installed; their surface fallback stays on the key-aware
+# pipeline chain.
+_REALTIME_SURFACE_TTS_FAMILY: dict[str, str] = {
+    "gemini-live": "gemini-flash-tts",
+}
+
+
+def build_realtime_surface_tts(
+    cfg: Any, realtime_provider: str, pipeline_tts: Any
+) -> Any:
+    """TTS for re-rendering a REALTIME turn locally (the surface fallback).
+
+    Mode separation: prefer a TTS of the SAME provider family as the active
+    realtime session — keyed through the realtime credential slots
+    (``PROVIDER_SECRET_CANDIDATES[<realtime id>]``, dedicated realtime slot
+    first) and speaking the session's configured voice — over the pipeline's
+    separately configured ``[tts]`` chain. The pipeline chain stays wired as
+    the cross-family last resort so a dead or keyless family still degrades
+    honestly instead of going mute (AD-OE6 zero-silent-drops, AP-22).
+
+    Never raises: any resolution problem returns ``pipeline_tts`` unchanged.
+    """
+    provider_id = (realtime_provider or "").strip().lower()
+    family = _REALTIME_SURFACE_TTS_FAMILY.get(provider_id)
+    if not family:
+        return pipeline_tts
+    try:
+        from jarvis.core.config import get_provider_secret
+
+        api_key = get_provider_secret(provider_id)
+        if not api_key:
+            log.info(
+                "Realtime surface TTS: no key for realtime provider %r — "
+                "using the pipeline TTS chain.",
+                provider_id,
+            )
+            return pipeline_tts
+
+        providers = getattr(getattr(cfg, "brain", None), "providers", None)
+        provider_cfg = (
+            providers.get(provider_id) if isinstance(providers, dict) else None
+        )
+        session_voice = str(getattr(provider_cfg, "voice", "") or "").strip()
+        tts_cfg = getattr(cfg, "tts", None)
+
+        if family == "gemini-flash-tts":
+            from jarvis.plugins.tts.gemini_flash_tts import GeminiFlashTTS
+
+            # The Live API and Gemini Flash TTS share one prebuilt-voice
+            # catalog, so the session voice usually carries over verbatim;
+            # an unknown voice falls back to the plugin default.
+            voice = session_voice if session_voice in _GEMINI_VOICES else "Charon"
+            primary: Any = GeminiFlashTTS(
+                default_voice=voice,
+                language_code=getattr(tts_cfg, "language_code", None) or "de-DE",
+                allow_sapi5_fallback=bool(
+                    getattr(tts_cfg, "allow_sapi5_fallback", False)
+                ),
+                streaming=bool(getattr(tts_cfg, "streaming", False)),
+                api_key=api_key,
+            )
+        else:  # pragma: no cover — map entries always name a buildable family
+            return pipeline_tts
+
+        from jarvis.plugins.tts.fallback_tts import FallbackTTS
+
+        log.info(
+            "Realtime surface TTS: same-family %r (voice %r) serves realtime "
+            "provider %r; the pipeline chain remains the last resort.",
+            family, voice, provider_id,
+        )
+        return FallbackTTS(primary, pipeline_tts)
+    except Exception as exc:  # noqa: BLE001 — resolution must never mute the fallback
+        log.warning(
+            "Realtime surface TTS resolution failed (%s) — using the pipeline "
+            "TTS chain.",
+            exc,
+        )
+        return pipeline_tts
+
+
 def _effective_primary_voice(family: str, tts_cfg: Any) -> str | None:
     """Best-effort offline prediction of the voice ``family`` will speak with.
 
