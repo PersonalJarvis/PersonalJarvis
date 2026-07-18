@@ -22,6 +22,13 @@ versioning per [SemVer](https://semver.org/lang/de/).
   pushes are now blocked automatically when the shipped web UI references
   files that were never added to the repository — the failure previously
   produced a permanently blank window on every fresh install.
+- **macOS: Keychain access is a first-class permission.** The permissions
+  view now surfaces it with guidance instead of leaving credential saves to
+  fail silently.
+- **Wiki memory keeps up with realtime voice.** Conversations held in
+  realtime mode are swept into the wiki by an evidence-safe background
+  backfill, and a profile update can create its missing topic page in the
+  same batch.
 
 ### Changed
 
@@ -53,6 +60,17 @@ versioning per [SemVer](https://semver.org/lang/de/).
   follow-up).
 - Dependency security floors: `mcp>=1.28.1`, `json-repair` declared
   explicitly; the Windows-ARM64 `cryptography` exposure is documented.
+- **Realtime voice sessions survive connection rebuilds intact.** A rebuilt
+  provider transport now inherits the running call's transcript and keeps
+  one voice identity across every native rendering order; the frozen turn
+  is mirrored to the surface, and the session-end event fires from every
+  surface, not only the browser (BUG-085/086/088).
+- **Wiki capture got failure-proof.** Recently-failed providers are demoted
+  to the end of the fallback chain, a slug collision no longer demotes
+  valid links (old demotion scars self-heal), and a failing companion
+  topic page no longer blocks the primary fact.
+- **macOS uninstall no longer triggers a Keychain password-prompt storm**
+  during credential removal.
 
 ## [1.0.12] — 2026-07-18
 
