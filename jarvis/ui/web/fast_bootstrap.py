@@ -38,6 +38,35 @@ from .surface_security import SurfaceSecurity
 # instead of a black screen.
 _DEFAULT_DIST_DIR = Path(__file__).resolve().parent / "dist"
 
+# File extensions the frontend build actually ships. A request for one of
+# these that misses on disk must NEVER fall back to the SPA index.html: an
+# <img>/<script>/<link> that receives HTML with a 200 renders as permanently
+# broken (the browser caches the "success"), which is exactly what happened
+# to the sidebar logo during a mid-rebuild dist window. Shared with the real
+# app's SPA fallback in server.py.
+ASSET_SUFFIXES = frozenset(
+    {
+        ".css",
+        ".gif",
+        ".ico",
+        ".jpeg",
+        ".jpg",
+        ".js",
+        ".json",
+        ".map",
+        ".mjs",
+        ".png",
+        ".svg",
+        ".ttf",
+        ".txt",
+        ".wasm",
+        ".webmanifest",
+        ".webp",
+        ".woff",
+        ".woff2",
+    }
+)
+
 
 class FastBootstrap:
     """Hold-and-delegate ASGI bootstrap server. See module docstring."""
@@ -347,6 +376,12 @@ class FastBootstrap:
                     return target
             except (OSError, ValueError):
                 pass
+            # A missing asset file (image/script/font) must not degrade to the
+            # SPA index: returning None makes the caller HOLD the request until
+            # the real app answers it honestly (file or 404) instead of feeding
+            # HTML to an <img> tag. See ASSET_SUFFIXES.
+            if Path(rel).suffix.lower() in ASSET_SUFFIXES:
+                return None
         return index if index.is_file() else None
 
     # ---- lifecycle ---------------------------------------------------------

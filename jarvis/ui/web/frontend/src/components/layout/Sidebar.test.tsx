@@ -155,6 +155,29 @@ describe("Sidebar header avatar", () => {
     expect(avatar).not.toBeNull();
     expect(avatar?.getAttribute("data-variant")).toBe("logo");
   });
+
+  test("retries a failed logo load with a cache-busted URL (self-healing)", () => {
+    // A load that fails once (backend restarting, dist mid-rebuild) must not
+    // stick as the browser's broken-image glyph forever: after an error the
+    // <img> re-requests the logo under a cache-busting query.
+    vi.useFakeTimers();
+    try {
+      const { container } = renderSidebar();
+      const logo = container.querySelector(
+        '[data-testid="sidebar-style-avatar"] img',
+      ) as HTMLImageElement;
+      expect(logo.getAttribute("src")).toBe("/jarvis-logo.png");
+
+      act(() => {
+        logo.dispatchEvent(new Event("error"));
+        vi.runAllTimers();
+      });
+
+      expect(logo.getAttribute("src")).toBe("/jarvis-logo.png?retry=1");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("Sidebar brain footer", () => {

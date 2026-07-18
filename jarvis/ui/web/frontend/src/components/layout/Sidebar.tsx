@@ -28,7 +28,7 @@ import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { useSectionHealth } from "@/hooks/useProviders";
 import { usePluginAttention } from "@/hooks/usePluginAttention";
 import { cn } from "@/lib/utils";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useT } from "@/i18n";
 import { BrowserRealtimeControl } from "@/components/voice/BrowserRealtimeControl";
 
@@ -53,6 +53,12 @@ function resolveNavLabel(t: (key: string) => string, item: NavItem): string {
   const resolved = t(item.labelKey);
   return resolved === item.labelKey && item.fallbackLabel ? item.fallbackLabel : resolved;
 }
+
+// A logo request that fails once (backend restarting, dist mid-rebuild) would
+// otherwise stick as the browser's broken-image glyph forever — an <img> never
+// retries on its own. Bounded cache-busted retries let it heal itself.
+const LOGO_RETRY_MAX = 5;
+const LOGO_RETRY_BASE_MS = 1500;
 
 // Sidebar nav, clustered into logical groups separated by a thin divider:
 //   1) daily tools   2) content & data   3) configuration   4) social links.
@@ -219,6 +225,8 @@ export function Sidebar() {
       : voiceMode.activeModel ?? ""
     : brainModel;
 
+  const [logoRetry, setLogoRetry] = useState(0);
+
   return (
     <aside className="flex h-full w-[280px] shrink-0 flex-col border-r border-border bg-card/40 backdrop-blur">
       <div className="border-b border-border px-4 py-4">
@@ -232,11 +240,23 @@ export function Sidebar() {
             className="flex h-11 w-11 shrink-0 items-center justify-center"
           >
             <img
-              src="/jarvis-logo.png"
+              src={
+                logoRetry === 0
+                  ? "/jarvis-logo.png"
+                  : `/jarvis-logo.png?retry=${logoRetry}`
+              }
               width={40}
               height={40}
               alt="Personal Jarvis"
               className="shrink-0"
+              onError={() => {
+                if (logoRetry < LOGO_RETRY_MAX) {
+                  window.setTimeout(
+                    () => setLogoRetry((n) => n + 1),
+                    (logoRetry + 1) * LOGO_RETRY_BASE_MS,
+                  );
+                }
+              }}
             />
           </span>
           <div className="flex min-w-0 flex-1 flex-col">

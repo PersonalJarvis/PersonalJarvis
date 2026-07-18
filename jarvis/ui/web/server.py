@@ -15,7 +15,7 @@ from __future__ import annotations
 import asyncio
 import os
 import time
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
@@ -44,6 +44,7 @@ from jarvis.core.events import (
 from jarvis.core.registry import list_all_plugins
 from jarvis.terminal import PtyManager, discover_shells, get_shell
 
+from .fast_bootstrap import ASSET_SUFFIXES
 from .schema import (
     WSCommand,
     WSMessageIn,
@@ -1693,6 +1694,12 @@ class WebServer:
                     return FileResponse(str(target))
             except (OSError, ValueError):
                 pass
+            # A missing asset (image/script/font) gets an honest 404, never the
+            # SPA index: an <img> that receives HTML with a 200 renders as a
+            # permanently broken image — the browser treats the load as a
+            # success and never retries (sidebar-logo regression, 2026-07-18).
+            if PurePosixPath(full_path).suffix.lower() in ASSET_SUFFIXES:
+                return JSONResponse({"detail": "Not Found"}, status_code=404)
             return self._spa_index_response()
 
     def _spa_index_response(self) -> FileResponse | HTMLResponse:

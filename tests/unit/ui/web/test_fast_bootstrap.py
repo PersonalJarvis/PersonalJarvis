@@ -230,6 +230,22 @@ async def test_spa_fallback_serves_index_for_unknown_route(tmp_path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_missing_asset_is_held_never_answered_with_index_html(tmp_path) -> None:
+    # An asset extension the build ships (.png/.js/...) that misses on disk —
+    # the mid-rebuild dist window — must NOT get the SPA index.html fallback:
+    # an <img> that receives HTML with a 200 renders as a permanently broken
+    # image and the browser never retries (2026-07-18 sidebar-logo regression).
+    # Holding lets the real app answer honestly (file or 404) once ready.
+    bs = FastBootstrap(
+        dist_dir=_seed_dist(tmp_path), hold_timeout=0.05, session_token=_TOKEN
+    )
+    cookie = await _exchange(bs)
+    sent = await _drive(bs.app, _http("/jarvis-logo.png", cookie=cookie))
+    assert _status(sent) == 503  # held → warming timeout, never index.html 200
+    assert b"<div id=root>" not in _body(sent)
+
+
+@pytest.mark.asyncio
 async def test_api_request_is_still_held_not_served_as_static(tmp_path) -> None:
     # /api/* must NOT be served as static — it is the dynamic surface and must
     # be held until the real app is ready.
