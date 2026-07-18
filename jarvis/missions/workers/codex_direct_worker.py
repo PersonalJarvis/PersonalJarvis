@@ -566,7 +566,7 @@ class CodexDirectWorker:
         # Normalize Anthropic-flavoured aliases ("sonnet", "claude-...",
         # ...) to empty so codex uses its ChatGPT-subscription default.
         # See _normalize_model_for_codex docstring + the 2026-05-18 audit
-        # at docs/openclaw-spawn-failure-analysis-2026-05-18.md.
+        # at docs/jarvis-agents-spawn-failure-analysis-2026-05-18.md.
         effective_model = _normalize_model_for_codex(model) or None
         cmd = _build_codex_direct_cmd(
             worktree=worktree,

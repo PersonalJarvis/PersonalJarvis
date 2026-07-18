@@ -26,7 +26,7 @@ ack stops feeling like a butler-style acknowledgment and starts
 feeling like dead filler. The driver reported it as
 "the little acknowledgment is annoying when the right answer comes immediately".
 
-**2. BUG-017 (Gemini account 403) makes the force-spawn-openclaw
+**2. BUG-017 (Gemini account 403) makes the force-spawn-worker
 path inviable on every non-Claude/non-Gemini primary.**
 `jarvis/missions/init.py::_worker_factory` returns `GeminiWorker`
 for every `brain.primary != "claude-api"`, and `GeminiWorker`
@@ -78,7 +78,7 @@ trade after a live A/B in the same session.
 
 ### Gate 2 — Force-spawn skip on non-viable worker provider
 
-`jarvis/brain/manager.py::_should_force_openclaw` returns `False`
+`jarvis/brain/manager.py::_should_force_spawn` returns `False`
 when `cfg.brain.primary` is not in `{"claude-api", "gemini"}`,
 regardless of whether the action-verb heuristic or the
 external-system-marker heuristic matches. The Router-Brain then
@@ -158,7 +158,7 @@ gate). Live-reproduced and verified in P6 voice runs on 2026-05-13.
   replacement)
 - `jarvis/brain/ack_brain/config.py::AckBrainConfig`
   (`suppress_if_brain_faster_than_ms` field)
-- `jarvis/brain/manager.py::_should_force_openclaw`
+- `jarvis/brain/manager.py::_should_force_spawn`
   (provider-viability gate)
 - `jarvis/speech/pipeline.py` (suppress-window polling loop)
 - ADR-0011 (Router-Discipline — defines which path the inline

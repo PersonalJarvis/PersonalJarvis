@@ -1153,8 +1153,8 @@ class DesktopApp:
                 mission_manager = getattr(server.app.state, "mission_manager", None)
                 if mission_manager is not None:
                     brain.set_mission_command_handlers(
-                        status_fn=mission_manager.openclaw_status,
-                        cancel_fn=mission_manager.openclaw_cancel,
+                        status_fn=mission_manager.jarvis_agent_status,
+                        cancel_fn=mission_manager.jarvis_agent_cancel,
                     )
                     from loguru import logger as _bootlog
                     _bootlog.info(
@@ -1164,7 +1164,7 @@ class DesktopApp:
             except AttributeError:
                 from loguru import logger as _bootlog
                 _bootlog.warning(
-                    "MissionManager is missing openclaw_status/-_cancel — status/"
+                    "MissionManager is missing jarvis_agent_status/-_cancel — status/"
                     "cancel voice patterns fall back to the normal spawn path."
                 )
             except Exception as exc:  # noqa: BLE001
@@ -2489,7 +2489,7 @@ class DesktopApp:
             # Mini tool registry for the SkillRunner — loads every plugin
             # tool that can be instantiated without args. Tools with
             # complex dependencies (dispatch-to-harness, spawn-worker) are
-            # skipped; those are OpenClaw specialties anyway, not meant for
+            # skipped; those are Jarvis-Agent specialties anyway, not meant for
             # skill bodies. ``remember`` and friends all fit this schema.
             from importlib.metadata import entry_points as _eps
 

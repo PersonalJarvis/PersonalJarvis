@@ -42,7 +42,7 @@ class CancelToken:
 Every long-running operation (brain stream, vision observe, task runner, CU loop) receives a token via `ExecutionContext.cancel_token`. Before every `async for chunk in …`, `if token.is_cancelled(): break` is checked.
 
 ### Layer 3 — Subprocess kill
-On `cancel()`, all subprocess harnesses get: first `process.terminate()` (SIGTERM equivalent on Windows), 500ms grace, then `taskkill /T /F /PID <pid>` (kills the process tree, including child processes of openclaw/codex).
+On `cancel()`, all subprocess harnesses get: first `process.terminate()` (SIGTERM equivalent on Windows), 500ms grace, then `taskkill /T /F /PID <pid>` (kills the process tree, including child processes of the Jarvis-Agent worker (external `openclaw` CLI)/codex).
 
 ### Time budget (should be <2s)
 - t+0ms: hotkey fires → KillRequested published

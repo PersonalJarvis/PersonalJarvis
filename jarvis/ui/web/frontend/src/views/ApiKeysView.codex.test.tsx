@@ -123,7 +123,7 @@ function codexDescriptorNotConnected() {
   });
 }
 
-const OPENCLAW_CODEX = {
+const JARVIS_AGENT_CODEX = {
   configured: true,
   enabled: false,
   binary_path: "",
@@ -182,7 +182,7 @@ function routesFor(
 ): Record<string, () => RouteResult> {
   return {
     "/api/providers": () => ({ body: { providers: [provider] } }),
-    "/api/jarvis-agent/status": () => ({ body: OPENCLAW_CODEX }),
+    "/api/jarvis-agent/status": () => ({ body: JARVIS_AGENT_CODEX }),
     "/api/codex/status": () => ({
       body: provider.codex_status ?? {},
     }),

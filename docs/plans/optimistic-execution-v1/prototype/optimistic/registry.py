@@ -88,7 +88,7 @@ SMALLTALK_TRIGGERS: tuple[str, ...] = (  # i18n-allow: speech input vocabulary D
 
 # Action-verb markers — an unknown command containing one of these is treated as
 # a SMART task (worker spawn) rather than smalltalk. Mirrors the production
-# force-spawn heuristic in BrainManager._should_force_openclaw.
+# force-spawn heuristic in BrainManager._should_force_spawn.
 ACTION_VERBS: tuple[str, ...] = (  # i18n-allow: speech input vocabulary DE
     "lies",
     "baue",

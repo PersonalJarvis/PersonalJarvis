@@ -421,8 +421,8 @@ class WorktreeManager:
             )
 
     # BUG-LIVE-05 (2026-05-14) — Retry delays for the Windows file-
-    # handle race in `git worktree remove`. The OpenClaw subprocess
-    # may still hold one of its trajectory / SQLite handles for a
+    # handle race in `git worktree remove`. The Jarvis-Agent worker
+    # subprocess may still hold one of its trajectory / SQLite handles for a
     # few hundred milliseconds after the parent yields control back
     # to the orchestrator. A short, exponentially-spaced retry loop
     # turns the noisy 80% case into a clean removal without paying
@@ -445,8 +445,8 @@ class WorktreeManager:
 
         BUG-LIVE-05: on Windows, `git worktree remove` frequently fails
         with `error: failed to delete '...': Permission denied` right
-        after a worker subprocess exits — the OpenClaw process is gone
-        but a few SQLite WAL / trajectory file handles are still being
+        after a worker subprocess exits — the Jarvis-Agent worker process
+        is gone but a few SQLite WAL / trajectory file handles are still being
         flushed by the OS. A short retry loop (50/100/200 ms) catches
         this transient state without paying the cost of the full
         `shutil.rmtree` fallback. The fallback path is preserved as a
@@ -765,7 +765,7 @@ class WorktreeManager:
         Without this, repos containing files with deep nested paths cause
         ``git worktree add`` to fail with ``Filename too long`` while only
         surfacing exit code 128 to the caller — which previously made every
-        OpenClaw mission report ``MissionFailed`` with no diagnostic.
+        Jarvis-Agent mission report ``MissionFailed`` with no diagnostic.
 
         On ``CalledProcessError`` the stderr/stdout from git are logged
         before re-raising so the underlying reason (path-length, lock,

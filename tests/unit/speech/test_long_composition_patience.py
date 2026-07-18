@@ -3,7 +3,7 @@
 Root cause (deep dive 2026-06-16): a long spoken prompt was chopped into ~12
 turns because the 1.5 s silence window is too short for composing, and the
 existing patience only widened on narrow delegation keywords (sub-agent / spawn
-/ delegate / openclaw). A prompt full of "Agents" / "Agent Team" never matched,
+/ delegate / openclaw legacy alias). A prompt full of "Agents" / "Agent Team" never matched,
 so the window stayed 1.5 s and cut at every thinking pause. These tests pin a
 vocabulary-independent trigger: a long partial extends the window, while a short
 command stays snappy.

@@ -1,8 +1,8 @@
 """Regression test: ``SubprocessHarness.invoke()`` is concurrency-safe.
 
-Bug 2026-04-29: ``multi_spawn`` with 3 parallel openclaw calls failed
+Bug 2026-04-29: ``multi_spawn`` with 3 parallel Jarvis-Agent calls failed
 deterministically in production in <10ms. Root cause: ``HarnessManager.get()``
-caches ONE ``OpenClawHarness`` instance; concurrent ``invoke()`` calls on
+caches ONE cached harness instance; concurrent ``invoke()`` calls on
 the same instance raced on ``self._process`` and ``self._cancelled``.
 
 Fix: invocation-local variables + ``self._active_processes: set`` for

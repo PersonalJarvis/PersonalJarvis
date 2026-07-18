@@ -3,6 +3,8 @@
 **Date**: 2026-04-21
 **Plan reference**: §17.2, §9-Phase-4
 
+> **Historical:** this note documents the original Phase-4 `dispatch_to_harness` mechanism, since superseded. The `openclaw` harness plugin it describes no longer exists (`jarvis/plugins/harness/` has no `openclaw.py` today); heavy work now runs through `spawn-worker` → Mission Manager. The exact `openclaw agent ...` CLI syntax quoted below still describes the real external `openclaw` binary.
+
 ---
 
 ## What Works Now
@@ -10,13 +12,13 @@
 Your brain can **let real Jarvis-Agents do the work**:
 
 ```
-User (Voice): "Jarvis, frag OpenClaw ob der Build durchläuft" <!-- i18n-allow -->
+User (Voice): "Jarvis, frag den Jarvis-Agent ob der Build durchläuft" <!-- i18n-allow -->
    ↓
 BrainManager (Phase 2) → detects tool-use intent
    ↓
-dispatch_to_harness(harness="openclaw", prompt="Check build")
+dispatch_to_harness(harness="openclaw", prompt="Check build")  # mechanism now inert; renamed jarvis_agent
    ↓
-HarnessManager → openclaw harness → subprocess: openclaw agent --output-format stream-json ...
+HarnessManager → Jarvis-Agent harness → subprocess: the external openclaw agent --output-format stream-json ...
    ↓
 stream-JSON parsed → HarnessResult events to the bus → WebChannel → UI
    ↓
@@ -29,14 +31,14 @@ TTS speaks
 
 **Live verified**:
 ```
-$ python -c "… OpenClawHarness.invoke(HarnessTask(prompt='Sag pong')) …"
+$ python -c "… JarvisAgentHarness.invoke(HarnessTask(prompt='Sag pong')) …"  # class since removed
 Health: True
 FINAL exit=0 duration=14922ms cost=$0.0
 Last 500 chars of stdout:
 pong
 ```
 
-Real OpenClaw CLI call against your subscription: ✅ pong.
+Real Jarvis-Agent (openclaw) CLI call against your subscription: ✅ pong.
 
 ## Tests
 
@@ -54,7 +56,7 @@ jarvis/harness/
   manager.py         (155 LOC)                # discovery, health, dispatch, parallel
 
 jarvis/plugins/harness/
-  openclaw.py     (100 LOC)                # openclaw agent --output-format stream-json
+  openclaw.py (removed) (100 LOC)          # was: the external openclaw agent --output-format stream-json
   codex.py            (55 LOC)                # codex exec --json
   python_script.py    (35 LOC)                # python -c / python file.py
   mcp_remote.py      (110 LOC)                # wraps jarvis/mcp/client.py as a harness
@@ -81,7 +83,7 @@ tests/
 
 | Plugin | Status | Invocation |
 |---|---|---|
-| `openclaw` | ✅ live verified | `openclaw agent --output-format stream-json --include-partial-messages --max-turns 10 <prompt>` |
+| `openclaw` (plugin removed; historical roster entry) | ✅ live verified at the time | `openclaw agent --output-format stream-json --include-partial-messages --max-turns 10 <prompt>` |
 | `codex` | ✅ binary found, SDK flow | `codex exec --json --sandbox workspace-write <prompt>` |
 | `python-script` | ✅ live verified | `python -X utf8 -c <code>` or `python <@file.py>` |
 | `mcp-remote` | ✅ wrapper around the Phase-1c MCPClient | uses `BOOTSTRAP_SERVERS` |
@@ -95,7 +97,7 @@ Start:
 python -m jarvis.mcp.server --transport stdio
 ```
 
-Register in OpenClaw:
+Register in the Jarvis-Agent CLI:
 ```bash
 claude mcp add jarvis python -m jarvis.mcp.server
 ```
@@ -108,7 +110,7 @@ Exposed capabilities:
 - Resource `jarvis://core-memory/persona` — persona + user facts as text
 - Resource `jarvis://core-memory/all` — core memory as JSON
 
-**Loop detection**: the `JARVIS_MCP_DEPTH` env var is incremented on each server start. From `max_call_depth = 3` (from `jarvis.toml`) onward, the server rejects further tool calls — this prevents `dispatch_to_harness → openclaw → jarvis-mcp → dispatch_to_harness → …` infinite loops.
+**Loop detection**: the `JARVIS_MCP_DEPTH` env var is incremented on each server start. From `max_call_depth = 3` (from `jarvis.toml`) onward, the server rejects further tool calls — this prevents `dispatch_to_harness → jarvis-agent → jarvis-mcp → dispatch_to_harness → …` infinite loops.
 
 ## Safety Integration
 
@@ -116,7 +118,7 @@ The `dispatch_to_harness` tool has `risk_tier = "monitor"`. The user can downgra
 
 ```toml
 commands = [
-    "dispatch_to_harness openclaw *",     # auto-approve OpenClaw
+    "dispatch_to_harness openclaw *",     # auto-approve Jarvis-Agent (mechanism now inert)
     "dispatch_to_harness python-script *",   # auto-approve Python scripts
 ]
 ```

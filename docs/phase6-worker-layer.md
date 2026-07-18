@@ -6,9 +6,11 @@
 **Branch:** `phase6-self-healing`
 **Status:** **BUILT** — `jarvis/missions/isolation/` (T1) + `jarvis/missions/workers/` (T2) are live, smoke tests green.
 
+> **Superseded:** this note documents the original Prompt-2 design (`OpenClawWorker`, now retired). The live worker layer has since moved to `jarvis/missions/workers/{provider_chain,claude_direct_worker,codex_direct_worker,gemini_worker,google_cli_worker}.py`; treat the class/file names below as historical.
+
 ## What is wired up here?
 
-An **out-of-process worker subprocess** (`openclaw agent` or `codex exec --json`) runs in its own `git worktree`, embedded in a Windows Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. The NDJSON stdout pipe is parsed into typed Pydantic events and streamed to the orchestrator as an `AsyncIterator`.
+An **out-of-process worker subprocess** (the external `openclaw agent` CLI or `codex exec --json`) runs in its own `git worktree`, embedded in a Windows Job Object with `JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE`. The NDJSON stdout pipe is parsed into typed Pydantic events and streamed to the orchestrator as an `AsyncIterator`.
 
 Phase 6 is **additive** to Phase 5 — the Phase-5 `SubJarvisManager` (`jarvis/brain/sub_jarvis.py`) stays untouched. The new mission pipeline (Prompt 1+) only dispatches to the worker layer for ask/multi-step/repair/refactor.
 
@@ -24,7 +26,7 @@ Phase 6 is **additive** to Phase 5 — the Phase-5 `SubJarvisManager` (`jarvis/b
         │   1. WorktreeManager.create(mission, task)           │
         │      → sub-agents-outputs/<run>/tasks/<NN>/workspace │
         │   2. async with WindowsJobObject('mission-id') as J  │
-        │   3. OpenClawWorker().spawn(prompt, ...)           │
+        │   3. OpenClawWorker().spawn(prompt, ...) (retired)  │
         │      → asyncio.create_subprocess_exec (no shell, no  │
         │        PTY) with CREATE_BREAKAWAY_FROM_JOB           │
         │   4. J.assign(proc.pid)  ← critical moment           │
@@ -70,14 +72,14 @@ Phase 6 is **additive** to Phase 5 — the Phase-5 `SubJarvisManager` (`jarvis/b
 | File | Purpose |
 |---|---|
 | `base.py` | `WorkerProtocol` (runtime_checkable) + `SpawnedWorker` (frozen dataclass). Structural contracts like the Phase-0 plugins. |
-| `openclaw_worker.py` | `OpenClawWorker` — wraps `openclaw agent ... --output-format stream-json --bare`. Spawns with `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB`, immediately calls `job.assign(pid)`. |
+| `openclaw_worker.py` (retired; see superseded note above) | `OpenClawWorker` — wrapped the external `openclaw agent ... --output-format stream-json --bare` CLI. Spawned with `CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP | CREATE_BREAKAWAY_FROM_JOB`, immediately called `job.assign(pid)`. |
 | `codex_worker.py` | `CodexWorker` — wraps `codex exec --json --sandbox workspace-write --ask-for-approval never`. Per-worker `CODEX_HOME=<run>/.codex`. |
 | `stream_consumer.py` | `read_ndjson_stream()` — async line-buffered reader with tee to `<log_dir>/stream.jsonl`. Parsers `parse_claude_stream_json` and `parse_codex_stream_json` return Pydantic v2 events. |
 | `supervisor.py` | `WorkerSupervisor` — done/stuck/waiting detection with 5 signals (process-exit, `result` event, `api_retry` event, 90 s idle timeout, 900 s hard cap). |
 
 ## Concrete command lines
 
-**Jarvis-Agent Worker** (see `_build_claude_cmd` in `openclaw_worker.py:63`):
+**Jarvis-Agent Worker** (historical; see `_build_claude_cmd` in the retired `openclaw_worker.py:63`, superseded by `jarvis/missions/workers/provider_chain.py`):
 
 ```bash
 openclaw agent "<prompt>" \
@@ -111,7 +113,7 @@ codex exec --json \
 - **`claude.cmd` shim on Windows:** `shutil.which("claude")` returns the shim path on Windows (`%USERPROFILE%/.local/bin/claude.cmd` or `claude` without the `.cmd` suffix). `asyncio.create_subprocess_exec` must receive the **exact** executable name — if the PATH lookup returns a `.cmd` wrapper, we are protected against Windows process-resolver quirks because `create_subprocess_exec` itself does a PATH lookup.
 - **Long-path cap (200 chars):** worktrees live under `<repo_parent>/sub-agents-outputs/<YYYYMMDDTHHMMSS>__<slug>__<uuid8>/tasks/<NN>__<task>/workspace/`. That fits just under `MAX_PATH=260` with ~60 chars of headroom for file paths. `WorktreeManager.create()` raises `ValueError` on violation.
 - **Codex-Auth:** the Codex CLI needs `codex login` once, manually, before the first worker spawn. The worker itself reads `CODEX_HOME/auth.json` — we do not copy or symlink the user auth automatically (privacy tradeoff). If `codex` is missing from PATH, the mission plan falls back to Claude-only (TODO Prompt 3).
-- **No PTY:** `openclaw agent` and `codex exec --json` work over pipes — no need for `pywinpty`. Saves 3 MB of Rust dep + a class of bugs (research doc decision point #1).
+- **No PTY:** the external `openclaw agent` CLI and `codex exec --json` work over pipes — no need for `pywinpty`. Saves 3 MB of Rust dep + a class of bugs (research doc decision point #1).
 - **`CREATE_BREAKAWAY_FROM_JOB` is mandatory** on Win32, otherwise `AssignProcessToJobObject` is rejected with `ERROR_ACCESS_DENIED`. The job inheritance from the orchestrator (which is itself not a job member) would otherwise kick in.
 
 ## Smoke Tests

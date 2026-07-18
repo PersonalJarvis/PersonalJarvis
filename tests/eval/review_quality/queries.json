@@ -115,7 +115,7 @@
     {
       "id": "res-001",
       "bucket": "research",
-      "task": "Fasse die letzten 5 Closed Issues im Repo 'openclaw/openclaw' zusammen, gruppiert nach Label (bug/feature/question). Liefer jedes Issue mit Titel + URL + 1-Zeilen-Kurzfassung.",
+      "task": "Fasse die letzten 5 Closed Issues im Repo 'microsoft/vscode' zusammen, gruppiert nach Label (bug/feature/question). Liefer jedes Issue mit Titel + URL + 1-Zeilen-Kurzfassung.",
       "rubric_id": "research",
       "expected_status": "pass",
       "expected_max_iterations": 3,

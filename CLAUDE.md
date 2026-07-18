@@ -263,12 +263,19 @@ with the VPS path. Doctrine: [`CLOUD.md`](CLOUD.md) +
    brand (e.g. "Nova-Agent") and must NEVER assert against the host's live
    wake-word config.
 
-**Glossary:** formerly "Subagents" / "Sub-Agent" / "sub_jarvis" / "SubJarvis"
-and "OpenClaw" / "openclaw", renamed repo-wide 2026-06-30. Surviving old-name
-occurrences are intentional: the external `openclaw` npm worker binary (it
-owns that name), read-time back-compat config aliases (new `[brain.worker]` /
-`[harness.jarvis_agent]` still accept old `[brain.sub_jarvis]` /
-`[harness.openclaw]`), and historical migration notes.
+**Glossary:** the retired internal codenames ("Subagents" / "Sub-Agent" /
+"sub_jarvis" / "SubJarvis" and the old bridge codename) were renamed
+repo-wide 2026-06-30 and swept out of all prose, docs, and identifiers on
+2026-07-18 (maintainer directive). The old bridge codename may survive ONLY
+where it is functional, never as the name of OUR system: (a) the external
+`openclaw` npm worker binary — an outside project that owns that name;
+invocation strings, env vars, and install commands stay literal; (b)
+read-time back-compat aliases that keep old user installs booting (new
+`[brain.worker]` / `[harness.jarvis_agent]` still accept old
+`[brain.sub_jarvis]` / `[harness.openclaw]`; legacy on-disk
+`openclaw_state` dirs are still recognized), plus the tests pinning those
+aliases. Do not reintroduce the codename anywhere else — and do not "clean
+up" these aliases or literal binary strings either.
 
 ---
 

@@ -355,7 +355,7 @@ SKILLS oben — bei moeglichem Skill-Treffer gewinnt run-skill).
 VERBOTEN:
 - Lang reasonen wo die Aufgabe hingehoert. Eine Utterance = eine Kategorie.
 - Selber einen echten Brocken (Build, Refactor, grosser Bericht) im Chat
-  abarbeiten. Das ist OpenClaw-Job.
+  abarbeiten. Das ist Jarvis-Agent-Job.
 - Einen Brocken-Spawn fuer eine simple Frage. News/Wissen/Lookup = search_web.
 - Den Nutzer fragen "soll ich delegieren?". Du entscheidest.
 
@@ -439,7 +439,7 @@ Wenn du spawn_worker aufrufst, uebergib IMMER diese vier Argumente:
 
 Die Sprachansage wird daraus automatisch eine kurze, neutrale Bestaetigung
 (z.B. "Einen Augenblick, Ruben."). Es wird KEINE Mechanik genannt
-("Sub-Agent", "delegiere", "OpenClaw", "spawn") und KEINE "Sir"-Anrede.
+("Sub-Agent", "delegiere", "Jarvis-Agent", "spawn") und KEINE "Sir"-Anrede.
 Mandat-A1: ausschliesslich "Ruben". Audit F-AUDIT-1 (2026-04-29).
 """
 

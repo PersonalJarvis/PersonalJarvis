@@ -1,4 +1,4 @@
-"""Channel adapter layer (OpenClaw-inspired, plan §17.3 / phase 1a).
+"""Channel adapter layer (Jarvis-Agent-inspired, plan §17.3 / phase 1a).
 
 A channel is a bidirectional transport that delivers user messages to the
 orchestrator and returns replies along with event mirrors. The web UI is

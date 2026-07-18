@@ -8,8 +8,9 @@ Root cause (evidence, not guess): ``BrainManager._should_force_spawn`` hoists an
 ``force_spawn_phrases`` match to an immediate ``True`` BEFORE the LLM router ever
 sees the turn. That phrase list mixes two semantically different things:
 
-* **vehicle names** (``subagent`` / ``spawn`` / ``openclaw`` / ``delegate``) —
-  the user named the worker. Unambiguous; absolute priority (mandate 2026-06-15).
+* **vehicle names** (``subagent`` / ``spawn`` / ``jarvis-agent`` / ``openclaw``
+  legacy alias / ``delegate``) — the user named the worker. Unambiguous;
+  absolute priority (mandate 2026-06-15).
 * **depth markers** (``deep dive`` / ``gründlich`` / ``umfassend`` / …) — these  # i18n-allow
   describe thoroughness, NOT a vehicle, and OVERLAP with computer-use requests.
 

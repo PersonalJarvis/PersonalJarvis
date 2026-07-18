@@ -1,4 +1,4 @@
-"""The OpenClaw background-completed readback ("Done." / "That didn't work.")
+"""The Jarvis-Agent background-completed readback ("Done." / "That didn't work.")
 must follow the resolved conversation language, not a hardcoded German literal.
 
 Forensic 2026-06-23 family: announcement emitters bypassed the resolver. This

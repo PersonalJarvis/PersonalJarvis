@@ -68,7 +68,7 @@ async def test_prompt_is_sent_when_constructor_param_is_set() -> None:
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     stt = GroqWhisperAPI(
         api_key="test-key",
-        prompt="Jarvis, OpenClaw, Mission-Manager, Subagent.",
+        prompt="Jarvis, Jarvis-Agent, Mission-Manager, Subagent.",
         http_client=client,
     )
     try:
@@ -78,7 +78,7 @@ async def test_prompt_is_sent_when_constructor_param_is_set() -> None:
 
     value = _extract_form_field(captured["content"], "prompt")
     assert value is not None, "prompt field must appear in the multipart body"
-    assert "Jarvis" in value and "OpenClaw" in value
+    assert "Jarvis" in value and "Jarvis-Agent" in value
 
 
 @pytest.mark.asyncio

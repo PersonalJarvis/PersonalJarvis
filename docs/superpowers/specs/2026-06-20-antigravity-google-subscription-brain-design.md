@@ -96,7 +96,7 @@ The email is read from `~/.gemini/google_accounts.json.active` (already confirme
 ### 5.4 Jarvis-Agent (heavy worker) backend
 
 The Jarvis-Agent path wants a CLI that *can act* (write files, run commands), so it uses **`--approval-mode yolo`** (or `auto_edit`) instead of `plan`, inside the existing Phase-6 worktree + Job-Object isolation (no change to isolation invariants). Wiring:
-* Add an `antigravity` row to the Jarvis-Agent provider mapping (`/api/openclaw/status` → `SubagentMappingRow`), `key_set` driven by `GoogleCliAuthService.status().connected` (not by an API-key slot).
+* Add an `antigravity` row to the Jarvis-Agent provider mapping (`/api/jarvis-agent/status` → `SubagentMappingRow`), `key_set` driven by `GoogleCliAuthService.status().connected` (not by an API-key slot).
 * A `GoogleCliWorker` (mirror of `CodexWorker`, `jarvis/missions/workers/`) drives `<argv_prefix> -p … --approval-mode yolo -o stream-json` and streams `WorkerProgress`.
 * `PROVIDER_LABELS` in `SubagentSection.tsx` gets `"antigravity" → "Antigravity (Google-Abo)"`.
 

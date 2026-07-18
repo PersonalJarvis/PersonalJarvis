@@ -12,7 +12,7 @@ Agent C done.
   hardcoded block when `jarvis.core.capabilities` not yet deployed.  Both paths
   now append the bilingual "do not invent tools" hard rule.
 - `jarvis/brain/manager.py`: added `_check_unsupported_intent()` sibling check
-  before `_force_spawn_openclaw`; emits deterministic DE/EN refusal when
+  before `_should_force_spawn`; emits deterministic DE/EN refusal when
   `has_action_intent=True and resolve_intent=None and not smalltalk`.
   No LLM call (AP-11 compliant).
 - `jarvis/brain/ack_brain/persona_prompt.py`: extended forbidden-vocabulary list

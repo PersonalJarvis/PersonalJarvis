@@ -1308,9 +1308,9 @@ class Kontrollierer:
             log_dir.mkdir(parents=True, exist_ok=True)
 
             try:
-                # BUG-LIVE-03 (2026-05-14): never reuse OpenClaw session-id
+                # BUG-LIVE-03 (2026-05-14): never reuse the `openclaw` session-id
                 # across critic iterations. Live repro mission_019e2605
-                # showed that OpenClaw 2026.5.7 prefers the failover chain
+                # showed that `openclaw` 2026.5.7 prefers the failover chain
                 # persisted in the session-state file over the explicit
                 # `--model` CLI flag on resume — so iter1 silently retried
                 # `openai/gpt-5.5` instead of `xai/grok-4.3` and died with

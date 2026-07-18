@@ -1,7 +1,7 @@
-"""SkillAuthoringRunner — orchestrates the OpenClaw-Author spawn + validation loop.
+"""SkillAuthoringRunner — orchestrates the Jarvis-Agent-Author spawn + validation loop.
 
 Welle-4 migration: the spawn path used to be called ``Sub-Jarvis``. After the
-OpenClaw-bridge migration (see docs/openclaw-bridge.md §11, R-6), the
+Jarvis-Agent-bridge migration (see docs/jarvis-agents-bridge.md §11, R-6), the
 spawn callback is bound to the ``MissionManager`` — the ``SpawnCallback``
 signature (``str -> Awaitable[str]``) stays backward-compatible and can
 implement either a direct brain call or a mission dispatch + result read.
@@ -10,13 +10,13 @@ Plan-§7.5 pipeline:
 1. Slug generation (kebab-case from suggested_name or LLM-derived)
 2. Clash check against user_skills_dir
 3. Staging-dir creation (tempfile.mkdtemp)
-4. OpenClaw-Author spawn with a task description
+4. Jarvis-Agent-Author spawn with a task description
 5. Validation loop ≤3 iterations
 6. Success path: draft_writer copies to user_skills_dir with forced state=draft
 7. SkillRegistry watcher detects it + the UI shows a warn badge
 
 Plan-§AP-6: no auto-activation. Plan-§AP-7: skill authoring NEVER in the
-main-Jarvis path — only OpenClaw-Author (frontier worker via Mission-Manager).
+main-Jarvis path — only Jarvis-Agent-Author (frontier worker via Mission-Manager).
 """
 from __future__ import annotations
 
@@ -73,17 +73,18 @@ class AuthoringFailure:
     validation_errors: tuple[str, ...] = field(default_factory=tuple)
 
 
-# Spawn callback: dependency-injected, so tests can mock the OpenClaw-Author
+# Spawn callback: dependency-injected, so tests can mock the Jarvis-Agent-Author
 # call (plan constraint: NEVER real API calls in tests).
 SpawnCallback = Callable[[str], "asyncio.Future[str] | str"]
 
 
 # ----------------------------------------------------------------------
-# System prompt for OpenClaw-Author (Plan-§7.5)
+# System prompt for Jarvis-Agent-Author (Plan-§7.5)
 # ----------------------------------------------------------------------
 
 
-OPENCLAW_AUTHOR_SYSTEM_PROMPT = """You are OpenClaw-Author (Opus 4.7), a skill-authoring specialist.
+JARVIS_AGENT_AUTHOR_SYSTEM_PROMPT = """\
+You are Jarvis-Agent-Author (Opus 4.7), a skill-authoring specialist.
 
 The user wants to create a new skill. You return ONLY a single JSON
 object that exactly matches the `SkillDraft` schema. No surrounding
@@ -122,7 +123,7 @@ Format example (JSON):
 
 
 class SkillAuthoringRunner:
-    """Plan-§7.5 authoring pipeline (OpenClaw-Author spawn + validation loop)."""
+    """Plan-§7.5 authoring pipeline (Jarvis-Agent-Author spawn + validation loop)."""
 
     def __init__(
         self,
@@ -165,13 +166,13 @@ class SkillAuthoringRunner:
             except TimeoutError:
                 self._record_audit(
                     error_kind="author_timeout",
-                    message=f"OpenClaw-Author spawn timeout after {self._timeout_seconds}s",
+                    message=f"Jarvis-Agent-Author spawn timeout after {self._timeout_seconds}s",
                     iterations=iteration,
                     intent=intent,
                 )
                 return AuthoringFailure(
                     error_kind="timeout",
-                    message="OpenClaw-Author-Spawn timeout",
+                    message="Jarvis-Agent-Author-Spawn timeout",
                     iterations=iteration,
                 )
 
@@ -301,9 +302,9 @@ class SkillAuthoringRunner:
         )
 
     def _parse_draft(self, response: str) -> SkillDraft:
-        """Extracts JSON from the OpenClaw-Author response.
+        """Extracts JSON from the Jarvis-Agent-Author response.
 
-        OpenClaw-Author should deliver pure JSON; we tolerate an
+        Jarvis-Agent-Author should deliver pure JSON; we tolerate an
         enclosing ```json…``` for Markdown bias.
         """
         import json
@@ -321,9 +322,9 @@ class SkillAuthoringRunner:
         try:
             data = json.loads(cleaned)
         except json.JSONDecodeError as exc:
-            raise ValueError(f"OpenClaw-Author response is not valid JSON: {exc}") from exc
+            raise ValueError(f"Jarvis-Agent-Author response is not valid JSON: {exc}") from exc
         if not isinstance(data, dict):
-            raise ValueError("OpenClaw-Author response must be a JSON object")
+            raise ValueError("Jarvis-Agent-Author response must be a JSON object")
         return SkillDraft.model_validate(data)
 
     def _record_audit(
@@ -353,7 +354,7 @@ class SkillAuthoringRunner:
             self._audit.record(
                 AuditEvent(
                     source=AuditSource.VOICE,
-                    requested_by=AuditActor.OPENCLAW,
+                    requested_by=AuditActor.JARVIS_AGENT,
                     path=f"skills.{slug or 'unknown'}",
                     old_value=None,
                     new_value=draft_path,

@@ -91,7 +91,7 @@ Du darfst AUSSCHLIESSLICH folgendes ausgeben:
 ERLAUBT in deinem Satz:
 dein eigener Name, Marken-Namen (Spotify, Discord, GitHub, Outlook,
 …), sachliche Themen-Wörter (Kalender, Termin, Flüge, Wetter, …).
-NIE "OpenClaw", "Sub-Agent" oder andere interne Bauteil-Namen nennen.
+NIE "Sub-Agent", "Worker", "Harness" oder andere interne Bauteil-Namen nennen.
 
 Output: Genau ein Satz mit konkretem Themenbezug, ODER leerer String.
 Kein Markdown, kein Kommentar, kein Begleitsatz."""
@@ -159,7 +159,7 @@ You may ONLY output one of the following:
 ALLOWED in your sentence:
 your own name, brand names (Spotify, Discord, GitHub,
 Outlook, …), topical nouns (calendar, meeting, flights, weather, …).
-NEVER say "OpenClaw", "sub-agent" or other internal component names.
+NEVER say "sub-agent", "worker", "harness" or other internal component names.
 
 Output: Exactly one sentence with concrete topical reference, OR an
 empty string. No markdown, no comments, no accompanying text."""
@@ -226,7 +226,7 @@ SOLO puedes producir una de estas opciones:
 PERMITIDO en tu frase:
 tu propio nombre, marcas (Spotify, Discord, GitHub, Outlook, …),
 palabras temáticas (calendario, cita, vuelos, tiempo, …). NUNCA digas
-"OpenClaw", "Sub-Agent" ni otros nombres de componentes internos.
+"Sub-Agent", "worker", "harness" ni otros nombres de componentes internos.
 
 Salida: Exactamente una frase con referencia concreta al tema, O una
 cadena vacía. Sin markdown, sin comentarios, sin frase de acompañamiento."""

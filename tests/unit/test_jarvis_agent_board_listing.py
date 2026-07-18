@@ -1,7 +1,8 @@
 """Empirical proof that a dispatched mission surfaces on the Sub-Agents board.
 
-Locks the post-Welle-4 wiring: ``spawn_openclaw`` dispatches a Mission, the
-MissionManager publishes Phase-6 ``EventEnvelope``s on its ``MissionBus``, and
+Locks the post-Welle-4 wiring: the spawn tool (``spawn_worker``, formerly
+``spawn_openclaw``) dispatches a Mission, the MissionManager publishes
+Phase-6 ``EventEnvelope``s on its ``MissionBus``, and
 the ``JarvisAgentRegistry`` (bridged via :meth:`attach_mission_bus`) must translate
 them into ``AgentNode``s that ``GET /api/sub-agents/tree`` serves.
 
@@ -36,7 +37,7 @@ async def _settle() -> None:
     await asyncio.sleep(0)
 
 
-def _openclaw_node(registry: JarvisAgentRegistry) -> dict:
+def _jarvis_agent_node(registry: JarvisAgentRegistry) -> dict:
     nodes = [n for n in registry.to_json()["all"].values() if n["kind"] == "jarvis_agent"]
     assert len(nodes) == 1, registry.to_json()
     return nodes[0]
@@ -61,7 +62,7 @@ async def test_dispatched_mission_appears_in_tree() -> None:
 
         tree = registry.to_json()
         assert tree["count"] == 1, tree
-        node = _openclaw_node(registry)
+        node = _jarvis_agent_node(registry)
         assert node["status"] == "running"
     finally:
         registry.clear()
@@ -100,7 +101,7 @@ async def test_worker_spawn_and_approval_update_node() -> None:
         await _settle()
 
         tree = registry.to_json()
-        # one mission (openclaw) node + one worker (harness) node
+        # one mission (jarvis_agent) node + one worker (harness) node
         assert tree["count"] == 2, tree
 
         await bus.publish(
@@ -120,7 +121,7 @@ async def test_worker_spawn_and_approval_update_node() -> None:
         )
         await _settle()
 
-        node = _openclaw_node(registry)
+        node = _jarvis_agent_node(registry)
         assert node["status"] == "completed"
     finally:
         registry.clear()
@@ -151,7 +152,7 @@ async def test_failed_mission_marks_node_failed() -> None:
         )
         await _settle()
 
-        node = _openclaw_node(registry)
+        node = _jarvis_agent_node(registry)
         assert node["status"] == "failed"
         assert node["error"] == "boom"
     finally:

@@ -3012,8 +3012,9 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
         }
 
     # Antigravity (Google subscription) is a DIRECT worker over the OAuth Google
-    # CLI — no OpenClaw slug, no API key. Mirror of the codex branch: gate on the
-    # OAuth login being present, then persist the "antigravity" slug.
+    # CLI — no Jarvis-Agent worker-harness slug, no API key. Mirror of the
+    # codex branch: gate on the OAuth login being present, then persist the
+    # "antigravity" slug.
     from jarvis.missions.worker_runtime.provider_map import (
         ANTIGRAVITY_SUBAGENT_CANONICAL,
         ANTIGRAVITY_SUBAGENT_SLUGS,

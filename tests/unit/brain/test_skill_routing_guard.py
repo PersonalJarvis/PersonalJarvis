@@ -234,7 +234,7 @@ def test_turn_hint_none_without_match() -> None:
 
 def test_explicit_spawn_trigger_beats_skill_match(tmp_path: Path) -> None:
     """AD-S9: when the user explicitly names the execution vehicle
-    ("Sub-Agent", "OpenClaw", "spawne", "deep dive", …), the force-spawn wins
+    ("Sub-Agent", "Jarvis-Agent", "spawne", "deep dive", …), the force-spawn wins
     over a topical skill match. Live bug 2026-06-10 14:34: "spawne einen
     Sub-Agent … Gmail …" matched the gmail pairing skill, AD-S3 disarmed
     force-spawn, the turn ran inline and died mute — no mission, no ACK,

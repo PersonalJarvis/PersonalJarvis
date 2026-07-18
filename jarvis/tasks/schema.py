@@ -82,7 +82,7 @@ TRIGGER_TYPES: tuple[str, ...] = ("after_delay", "at_time", "on_event", "every")
 # ---------------------------------------------------------------------
 
 class HarnessDispatchAction(BaseModel):
-    """Dispatches to a harness (openclaw, computer-use, ...)."""
+    """Dispatches to a harness (jarvis_agent, computer-use, ...)."""
     model_config = ConfigDict(frozen=True, extra="forbid")
     kind: Literal["harness_dispatch"] = "harness_dispatch"
     harness: str = Field(min_length=1, max_length=64)

@@ -73,8 +73,8 @@ describe("Board active-time metric stays honestly labeled", () => {
 /**
  * The "work hours" metric (board_view.stats.hours_saved + the
  * most_hours_saved_in_a_day record) is the summed wall-clock RUN TIME of
- * Sub-Jarvis (OpenClaw) background tasks — jarvis/board/aggregator.py adds
- * payload.duration_s / 3600 per OpenClawTaskCompleted. That is how long the
+ * Sub-Jarvis (Jarvis-Agent) background tasks — jarvis/board/aggregator.py adds
+ * payload.duration_s / 3600 per JarvisAgentTaskCompleted. That is how long the
  * sub-agent worked, NOT a measured amount of time the user saved. It used to
  * be labeled "hours saved" / "time-saver day", an unprovable benefit claim.
  */

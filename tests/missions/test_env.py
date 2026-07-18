@@ -113,9 +113,9 @@ def test_plugin_skills_pre_seed_never_materialises_plain_directory(
     """2026-05-17 (CRIT-3 from audit-team 10): the pre-seed used to
     materialise a plain *directory* at
     ``<MISSION_STATE_DIR>/plugin-skills/browser-automation/`` so
-    OpenClaw's first-spawn symlink would short-circuit on EEXIST.
+    the openclaw worker's first-spawn symlink would short-circuit on EEXIST.
     Live forensics (Audit-2 + Audit-6) then showed that trade actually
-    swapped EPERM for EINVAL because OpenClaw later does
+    swapped EPERM for EINVAL because the openclaw worker later does
     ``readlink()`` on the same path and a directory is not a symbolic
     link. The kernel's EINVAL fired ~12×/hour and crashed the very
     Critic spawn we tried to protect.
@@ -170,16 +170,16 @@ def test_plugin_skills_pre_seed_is_idempotent(tmp_path: Path) -> None:
             )
 
 
-def test_openclaw_state_dir_is_run_dir_subpath(tmp_path: Path) -> None:
+def test_worker_state_dir_is_run_dir_subpath(tmp_path: Path) -> None:
     """Regression: `MISSION_STATE_DIR` must sit directly under `run_dir`
     (the mission root), not under any deeper `tasks/<id>/logs/` path. The
-    SubJarvisWorker materializes `openclaw.json` here, and the OpenClaw CLI
+    SubJarvisWorker materializes `openclaw.json` here, and the openclaw CLI
     reads `agents.defaults.workspace` from that file to redirect file_write
     tools into the per-mission git worktree. If the state-dir is one level
-    too deep, OpenClaw can't find the config, falls back to its global
-    default workspace (`~/.openclaw/workspace`), and `_capture_diff` of the
-    actual worktree returns empty — the mission is then rejected as a
-    no-op. The previous derivation `log_dir.parent` produced exactly that
+    too deep, the openclaw worker can't find the config, falls back to its
+    global default workspace (`~/.openclaw/workspace`), and `_capture_diff`
+    of the actual worktree returns empty — the mission is then rejected as
+    a no-op. The previous derivation `log_dir.parent` produced exactly that
     one-level-too-deep path."""
     run_dir = tmp_path / "missions" / "run-001"
     with patch.dict("os.environ", {}, clear=True):
@@ -227,27 +227,27 @@ def test_does_not_inherit_anthropic_key_from_parent_env(tmp_path: Path) -> None:
     assert "ANTHROPIC_API_KEY" not in env
 
 
-# --- _seed_openclaw_plugin_skills (CRIT-3 from 2026-05-17 audit) -----------
+# --- _seed_jarvis_agent_plugin_skills (CRIT-3 from 2026-05-17 audit) -----------
 #
 # Before the 2026-05-17 fix, this helper materialised a plain *directory*
-# at <state_dir>/plugin-skills/browser-automation/. OpenClaw then called
-# os.readlink() against that path and got EINVAL because a directory is
-# not a symbolic link. The "fix" against EPERM had become its own bug.
+# at <state_dir>/plugin-skills/browser-automation/. The openclaw worker then
+# called os.readlink() against that path and got EINVAL because a directory
+# is not a symbolic link. The "fix" against EPERM had become its own bug.
 # Now the helper either creates a real symlink (Developer Mode user) or
-# leaves the path missing (default user) so OpenClaw's own EPERM branch
-# runs consistently.
+# leaves the path missing (default user) so the openclaw worker's own EPERM
+# branch runs consistently.
 
 
 def test_seed_does_nothing_when_no_source_available(
     tmp_path: Path, monkeypatch
 ) -> None:
-    """No npm-installed OpenClaw source on disk -> helper is a no-op."""
+    """No npm-installed openclaw source on disk -> helper is a no-op."""
     from jarvis.missions.isolation import env as env_mod
 
     state_dir = tmp_path / "state"
     # Empty candidate list -> nothing to point a symlink at.
-    monkeypatch.setattr(env_mod, "_OPENCLAW_BROWSER_SKILL_CANDIDATES", ())
-    env_mod._seed_openclaw_plugin_skills(state_dir)
+    monkeypatch.setattr(env_mod, "_JARVIS_AGENT_BROWSER_SKILL_CANDIDATES", ())
+    env_mod._seed_jarvis_agent_plugin_skills(state_dir)
 
     target = state_dir / "plugin-skills" / "browser-automation"
     assert not target.exists(), (
@@ -259,23 +259,23 @@ def test_seed_creates_real_symlink_when_privilege_available(
     tmp_path: Path, monkeypatch
 ) -> None:
     """With a usable source and a working os.symlink, the target ends up
-    as a symlink (not a directory) -- the exact thing OpenClaw's
+    as a symlink (not a directory) -- the exact thing the openclaw worker's
     readlink() call expects."""
     from jarvis.missions.isolation import env as env_mod
     import os
 
     # Synthesise a fake source dir layout: <source>/SKILL.md
-    source = tmp_path / "fake_openclaw" / "skills" / "browser-automation"
+    source = tmp_path / "fake_worker_cli" / "skills" / "browser-automation"
     source.mkdir(parents=True)
     (source / "SKILL.md").write_text("# real skill\n", encoding="utf-8")
 
     monkeypatch.setattr(
-        env_mod, "_OPENCLAW_BROWSER_SKILL_CANDIDATES", (str(source),),
+        env_mod, "_JARVIS_AGENT_BROWSER_SKILL_CANDIDATES", (str(source),),
     )
 
     state_dir = tmp_path / "state"
     try:
-        env_mod._seed_openclaw_plugin_skills(state_dir)
+        env_mod._seed_jarvis_agent_plugin_skills(state_dir)
     except OSError:
         pytest.skip("os.symlink unsupported in this environment")
 
@@ -298,16 +298,16 @@ def test_seed_eperm_keeps_target_missing(
 ) -> None:
     """When os.symlink raises EPERM/EACCES (default Windows user), the
     helper must NOT fall back to creating a directory -- that was the
-    EINVAL trap. Target stays missing so OpenClaw sees the same
+    EINVAL trap. Target stays missing so the openclaw worker sees the same
     file-not-found state it would see without our intervention."""
     from jarvis.missions.isolation import env as env_mod
     import os
 
-    source = tmp_path / "fake_openclaw"
+    source = tmp_path / "fake_worker_cli"
     source.mkdir()
     (source / "SKILL.md").write_text("# real\n", encoding="utf-8")
     monkeypatch.setattr(
-        env_mod, "_OPENCLAW_BROWSER_SKILL_CANDIDATES", (str(source),),
+        env_mod, "_JARVIS_AGENT_BROWSER_SKILL_CANDIDATES", (str(source),),
     )
 
     def boom(*args, **kwargs):
@@ -315,12 +315,12 @@ def test_seed_eperm_keeps_target_missing(
     monkeypatch.setattr(os, "symlink", boom)
 
     state_dir = tmp_path / "state"
-    env_mod._seed_openclaw_plugin_skills(state_dir)
+    env_mod._seed_jarvis_agent_plugin_skills(state_dir)
 
     target = state_dir / "plugin-skills" / "browser-automation"
     # The CRIT-3 contract: must NOT materialise a directory just because
     # the symlink failed. Anything that materialises here re-introduces
-    # the EINVAL trap on OpenClaw's later readlink().
+    # the EINVAL trap on the openclaw worker's later readlink().
     assert not target.exists(), (
         f"EPERM path must leave target missing; got {target} "
         f"as_dir={target.is_dir() if target.exists() else 'n/a'}"
@@ -338,12 +338,12 @@ def test_seed_idempotent_existing_symlink_is_left_alone(
     source.mkdir()
     (source / "SKILL.md").write_text("# real\n", encoding="utf-8")
     monkeypatch.setattr(
-        env_mod, "_OPENCLAW_BROWSER_SKILL_CANDIDATES", (str(source),),
+        env_mod, "_JARVIS_AGENT_BROWSER_SKILL_CANDIDATES", (str(source),),
     )
 
     state_dir = tmp_path / "state"
     try:
-        env_mod._seed_openclaw_plugin_skills(state_dir)
+        env_mod._seed_jarvis_agent_plugin_skills(state_dir)
     except OSError:
         pytest.skip("os.symlink unsupported")
 
@@ -353,7 +353,7 @@ def test_seed_idempotent_existing_symlink_is_left_alone(
     first_link = os.readlink(target)
 
     # Second call -- must be a no-op.
-    env_mod._seed_openclaw_plugin_skills(state_dir)
+    env_mod._seed_jarvis_agent_plugin_skills(state_dir)
     assert target.is_symlink(), "second call must not destroy the symlink"
     assert os.readlink(target) == first_link, (
         "symlink target changed across calls"
@@ -373,7 +373,7 @@ def test_seed_cleans_up_stale_directory_from_old_buggy_runs(
     source.mkdir()
     (source / "SKILL.md").write_text("# real\n", encoding="utf-8")
     monkeypatch.setattr(
-        env_mod, "_OPENCLAW_BROWSER_SKILL_CANDIDATES", (str(source),),
+        env_mod, "_JARVIS_AGENT_BROWSER_SKILL_CANDIDATES", (str(source),),
     )
 
     state_dir = tmp_path / "state"
@@ -381,7 +381,7 @@ def test_seed_cleans_up_stale_directory_from_old_buggy_runs(
     stale.mkdir(parents=True)
     (stale / "leftover.txt").write_text("from old buggy run\n", encoding="utf-8")
 
-    env_mod._seed_openclaw_plugin_skills(state_dir)
+    env_mod._seed_jarvis_agent_plugin_skills(state_dir)
 
     # Either the stale dir is gone (cleaned + symlink succeeded) or it
     # is gone (cleaned + symlink failed -- still better than leaving
@@ -493,13 +493,13 @@ def test_isolated_claude_config_has_no_hooks_or_plugins(tmp_path: Path) -> None:
 def test_oauth_token_also_set_as_claude_code_oauth_token(tmp_path: Path) -> None:
     """With an isolated CLAUDE_CONFIG_DIR, `claude --print` authenticates via
     CLAUDE_CODE_OAUTH_TOKEN (the headless OAuth env var). ANTHROPIC_OAUTH_TOKEN
-    stays set for OpenClaw/other consumers, but it alone is NOT enough — the
-    worker would otherwise fail with "Not logged in"."""
+    stays set for the openclaw worker/other consumers, but it alone is NOT
+    enough — the worker would otherwise fail with "Not logged in"."""
     oat = "sk-ant-oat01-deadbeef-cafe-1234567890"
     with patch.dict("os.environ", {}, clear=True):
         env = build_worker_env(run_dir=tmp_path, anthropic_api_key=oat)
     assert env.get("CLAUDE_CODE_OAUTH_TOKEN") == oat
-    # Keep the legacy slot too (existing contract / OpenClaw).
+    # Keep the legacy slot too (existing contract / the openclaw worker).
     assert env.get("ANTHROPIC_OAUTH_TOKEN") == oat
     assert "ANTHROPIC_API_KEY" not in env
 

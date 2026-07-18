@@ -8,7 +8,7 @@ domain: phase-spezifisch
 phase: 6+generic
 must_read:
   - AGENTS.md
-when_to_use: Adversarial JSON verdict for jarvis-worker output during development — paranoid, before generated code reaches the user. NOT for OpenClaw production output (the Phase-6 Critic-Loop exists for that, not this subagent).
+when_to_use: Adversarial JSON verdict for jarvis-worker output during development — paranoid, before generated code reaches the user. NOT for Jarvis-Agent production output (the Phase-6 Critic-Loop exists for that, not this subagent).
 ---
 
 You are the adversarial reviewer of last resort for Personal Jarvis.

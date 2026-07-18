@@ -1,4 +1,4 @@
-"""One-shot builder for the Personal-Jarvis OpenClaw/ChatGPT visualisation.
+"""One-shot builder for the Personal-Jarvis Jarvis-Agent/ChatGPT visualisation.
 
 NOT a templating generator — every element is spelled out explicitly with
 its own text, coordinates and colour. The helpers only fill in the boring
@@ -111,7 +111,7 @@ def code_box(eid_base, x, y, w, h, code_lines, *, title=None):
 # Hero band
 rect("hero_bg", 0, 0, 4600, 250, stroke=C["ink"], bg="#f8f9fa", sw=3)
 text("hero_title", 60, 50,
-     "PERSONAL JARVIS — OpenClaw Mission-Engine & ChatGPT-Migration",
+     "PERSONAL JARVIS — Jarvis-Agent Mission-Engine & ChatGPT-Migration",
      size=58, color=C["ink"], bold_family=True)
 text("hero_sub", 62, 135,
      "What was built: Voice → Force-Spawn → Mission-Manager → Worker/Critic-Loop → APPROVED → Voice-Readback   ·   plus the ChatGPT/Codex migration (Welle 6) and 18+ live bugs",
@@ -154,7 +154,7 @@ arrow("sf_loop", 1900, sy + 80, 0, 60, stroke=C["red_s"], sw=2,
 text("sf_loop_t", 1560, sy + 150, "revise → next iteration (≤3)", size=13, color=C["red_s"])
 
 # ===========================================================================
-# SECTION 2 — MAIN 15-STEP OpenClaw FLOW (hero, vertical lane A)
+# SECTION 2 — MAIN 15-STEP JARVIS-AGENT FLOW (hero, vertical lane A)
 # ===========================================================================
 mx = 60            # lane-A left
 mw = 560           # step rect width
@@ -162,7 +162,7 @@ ex = 660           # evidence box left
 ey0 = 560          # first step y
 step_h = 110
 gap = 95
-text("flow_h", mx, ey0 - 40, "② DIE OpenClaw-LOGIK — Spawn bis APPROVED (file:line)",
+text("flow_h", mx, ey0 - 40, "② DIE JARVIS-AGENT-LOGIK — Spawn bis APPROVED (file:line)",
      size=24, color=C["ink"], bold_family=True)
 
 steps = [

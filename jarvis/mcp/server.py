@@ -1,6 +1,6 @@
 """Jarvis as an MCP server.
 
-External MCP clients (OpenClaw CLI, Cursor, VSCode Extension) can use
+External MCP clients (the external `openclaw` CLI, Cursor, VSCode Extension) can use
 Jarvis-internal capabilities:
 
 Tools:
@@ -14,7 +14,7 @@ Resources:
   - jarvis://core-memory/persona     — live dump of the persona block
   - jarvis://core-memory/all         — full core-memory JSON
 
-Registration in OpenClaw:
+Registration in the external `openclaw` CLI:
   claude mcp add jarvis python -m jarvis.mcp.server
 
 Loop detection:

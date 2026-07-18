@@ -2,7 +2,7 @@
 
 Wave-4 migration: there used to be two tiers, ``router`` and ``sub_jarvis``,
 and ``SUB_TOOLS`` was the tool list for the sub tier. The Sub-Jarvis tier
-was replaced by the OpenClaw bridge (see docs/openclaw-bridge.md §11)
+was replaced by the Jarvis-Agents bridge (see docs/jarvis-agents-bridge.md §11)
 — only ``router`` remains; ``SUB_TOOLS`` has been deleted.
 
 Verifies:

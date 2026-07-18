@@ -20,7 +20,7 @@ REVIEWER_FILE = AGENTS_DIR / "jarvis-reviewer.md"
 def _split_frontmatter(text: str) -> tuple[dict, str]:
     """Splits the YAML frontmatter from the Markdown body.
 
-    Expects the usual Pandoc/MkDocs/OpenClaw format:
+    Expects the usual Pandoc/MkDocs/Jarvis-Agent format:
         ---
         key: value
         ---

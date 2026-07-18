@@ -1,7 +1,7 @@
 """Central app directory convention.
 
 Personal Jarvis writes user data (skills, memory, logs, session file) to a
-single canonical location — analogous to OpenClaw's ``~/.claude/``. On Windows
+single canonical location — analogous to Claude Code's ``~/.claude/``. On Windows
 this is ``%LOCALAPPDATA%\\Jarvis``; when the ENV variable is absent (portable
 scripts, tests) we fall back to ``~/.jarvis/``.
 

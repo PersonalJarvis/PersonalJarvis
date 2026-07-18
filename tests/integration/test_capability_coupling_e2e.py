@@ -13,7 +13,7 @@ Hard-negatives (must produce UNSUPPORTED + zero phantom TTS):
 
 Hard-positives (must NOT trigger UNSUPPORTED — false-negative guard):
     6. "Öffne Chrome" → local_action.open_app  # i18n-allow
-    7. "Lies die Datei foo.txt" → harness.openclaw  # i18n-allow
+    7. "Lies die Datei foo.txt" → harness.python-script  # i18n-allow
     8. "Wie spät ist es?" → smalltalk, gate inactive  # i18n-allow
     9. "Such im Web nach Python 3.13" → UNSUPPORTED when no web-search tool
        is registered (catches the manager.py:774 prompt-claim drift).
@@ -147,13 +147,13 @@ def test_hard_positive_local_action_not_unsupported(
     )
 
 
-def test_hard_positive_file_ops_resolves_to_openclaw(
+def test_hard_positive_file_ops_resolves_to_file_capability(
     seeded_registry: CapabilityRegistry,
 ) -> None:
-    """'Lies die Datei foo.txt' must resolve to the openclaw harness."""
+    """'Lies die Datei foo.txt' must resolve to a file-capable harness."""
     cap = seeded_registry.resolve_intent("Lies die Datei foo.txt")  # i18n-allow
     assert cap is not None, "Expected a capability match for file-read"
-    assert "openclaw" in cap.id or "file" in cap.id or cap.source == "harness", (
+    assert "file" in cap.id or cap.source == "harness", (
         f"Expected a file-capable harness/tool, got {cap!r}"
     )
 

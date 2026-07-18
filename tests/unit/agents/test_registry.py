@@ -1,11 +1,11 @@
 """Unit tests for jarvis.agents.registry.JarvisAgentRegistry.
 
 Covers:
-- Event ingestion per event type (9 types: OpenClawTask*, BrainTurn*, ToolCall*,
+- Event ingestion per event type (9 types: JarvisAgentTask*, BrainTurn*, ToolCall*,
   Harness* — the latter two as combined pairs).
 - Parent-child linking via ``parent_trace_id``.
 - Heuristic parent linking for HarnessDispatched (newest running
-  OpenClaw worker).
+  Jarvis-Agent worker).
 - tree() vs. snapshot() vs. to_json().
 - TTL-based removal after completion.
 - Tolerant behavior on orphan events (parent not yet registered).
@@ -48,7 +48,7 @@ def registry(bus: EventBus) -> JarvisAgentRegistry:
 # ────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_openclaw_task_started_creates_running_node(
+async def test_jarvis_agent_task_started_creates_running_node(
     bus: EventBus,
     registry: JarvisAgentRegistry,
     monkeypatch: pytest.MonkeyPatch,
@@ -85,11 +85,11 @@ async def test_openclaw_task_started_creates_running_node(
     # structured fields above for internal aggregation.
     assert node.name == "Nova-Agent"
     assert "opus" not in node.name
-    assert "OpenClaw" not in node.name
+    assert "Jarvis-Agent" not in node.name
 
 
 @pytest.mark.asyncio
-async def test_openclaw_task_completed_marks_success_with_metrics(
+async def test_jarvis_agent_task_completed_marks_success_with_metrics(
     bus: EventBus, registry: JarvisAgentRegistry
 ) -> None:
     tid = uuid4()
@@ -112,7 +112,7 @@ async def test_openclaw_task_completed_marks_success_with_metrics(
 
 
 @pytest.mark.asyncio
-async def test_openclaw_task_failed_marks_failed_with_error(
+async def test_jarvis_agent_task_failed_marks_failed_with_error(
     bus: EventBus, registry: JarvisAgentRegistry
 ) -> None:
     tid = uuid4()
@@ -147,7 +147,7 @@ async def test_review_triggered_updates_iteration_counter(
 # ────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_brain_turn_tokens_aggregate_into_newest_openclaw(
+async def test_brain_turn_tokens_aggregate_into_newest_jarvis_agent(
     bus: EventBus, registry: JarvisAgentRegistry
 ) -> None:
     sj = uuid4()
@@ -224,7 +224,7 @@ async def test_tool_call_completed_updates_matching_entry(
 # ────────────────────────────────────────────────────────────────
 
 @pytest.mark.asyncio
-async def test_harness_dispatched_links_to_newest_running_openclaw(
+async def test_harness_dispatched_links_to_newest_running_jarvis_agent(
     bus: EventBus, registry: JarvisAgentRegistry
 ) -> None:
     sj = uuid4()
@@ -342,7 +342,7 @@ async def test_orphan_child_tolerated_without_parent(
 @pytest.mark.asyncio
 async def test_agent_node_default_fields_are_empty() -> None:
     """Regression guard: AgentNode defaults are JSON-safe and empty."""
-    node = AgentNode(trace_id="x", kind="openclaw", name="test")
+    node = AgentNode(trace_id="x", kind="jarvis_agent", name="test")
     assert node.context_hints == []
     assert node.prompts == []
     assert node.tool_calls == []
@@ -355,10 +355,10 @@ async def test_agent_node_default_fields_are_empty() -> None:
 
 
 @pytest.mark.asyncio
-async def test_mission_bus_bridge_creates_openclaw_node(
+async def test_mission_bus_bridge_creates_jarvis_agent_node(
     registry: JarvisAgentRegistry,
 ) -> None:
-    """attach_mission_bus: MissionDispatched -> AgentNode of kind=openclaw."""
+    """attach_mission_bus: MissionDispatched -> AgentNode of kind=jarvis_agent."""
     from jarvis.missions.event_bus import MissionBus
     from jarvis.missions.events import (
         EventEnvelope,

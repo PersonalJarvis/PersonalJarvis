@@ -6,7 +6,7 @@ makes NO brain call and NO IO — just a synchronous read on
 
 When the main Jarvis uses it: for utterances like "what am I doing right
 now?" or "which file am I in?" — the answer is already in the awareness
-state and doesn't need an LLM roundtrip or an OpenClaw spawn.
+state and doesn't need an LLM roundtrip or a Jarvis-Agent spawn.
 """
 from __future__ import annotations
 

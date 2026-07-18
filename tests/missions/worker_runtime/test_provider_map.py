@@ -1,6 +1,6 @@
 """Tests for jarvis.missions.worker_runtime.provider_map.
 
-Source of truth: docs/openclaw-bridge.md AD-6 Amendment table.
+Source of truth: docs/jarvis-agents-bridge.md AD-6 Amendment table.
 When the table changes, update BOTH — the doc is authoritative.
 """
 from __future__ import annotations
@@ -31,7 +31,7 @@ from jarvis.missions.worker_runtime.provider_map import (
         # 2026-05-17 — claude-api now routes through the worker's claude-cli
         # backend (OAuth, Claude Max subscription) instead of `anthropic`
         # (paid Messages API with extra-usage requirement). See
-        # provider_map.MAPPINGS docstring + docs/openclaw-bridge.md AD-6.
+        # provider_map.MAPPINGS docstring + docs/jarvis-agents-bridge.md AD-6.
         ("claude-api", "claude-cli"),
         ("openai", "openai"),
         ("openrouter", "openrouter"),
@@ -192,8 +192,8 @@ def test_ad6_table_is_complete() -> None:
 
     Grok uses the documented ``grok->xai`` row. ``nvidia`` (NVIDIA NIM) is an
     OpenAI-compatible API brain that, like ``openai``/``openrouter``, runs on the
-    in-process ApiAgentWorker (not the OpenClaw CLI harness); its row exists so it
-    is a selectable Jarvis-Agent in the API-Keys view."""
+    in-process ApiAgentWorker (not the Jarvis-Agent CLI worker harness); its row
+    exists so it is a selectable Jarvis-Agent in the API-Keys view."""
     expected_jarvis_slugs = {
         "gemini",
         "claude-api",
@@ -204,7 +204,7 @@ def test_ad6_table_is_complete() -> None:
     }
     actual = {m.jarvis for m in MAPPINGS}
     assert actual == expected_jarvis_slugs, (
-        "AD-6 Amendment table drifted — please keep docs/openclaw-bridge.md "
+        "AD-6 Amendment table drifted — please keep docs/jarvis-agents-bridge.md "
         "and MAPPINGS in sync."
     )
 

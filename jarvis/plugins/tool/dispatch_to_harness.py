@@ -1,6 +1,6 @@
 """dispatch_to_harness tool: callable by the brain, delegates to a harness.
 
-The brain can spawn OpenClaw / Codex / Python-Script / MCP-Remote via a tool
+The brain can spawn a Jarvis-Agent worker / Codex / Python-Script / MCP-Remote via a tool
 call. Output is accumulated, trimmed to `max_output_chars`, and returned as
 `ToolResult.output` — the brain sees it in the next turn as a
 `role="tool"` message and can then summarize it.
@@ -30,7 +30,7 @@ class DispatchToHarnessTool:
     # NOT an LLM-visible router tool (removed from ROUTER_TOOLS 2026-06-28). This
     # class powers the INTERNAL local-action / computer-use fast path, called
     # programmatically with a registered harness name. The description lists only
-    # harnesses that actually exist as entry-points — there is no ``openclaw``
+    # harnesses that actually exist as entry-points — there is no ``jarvis-agent``
     # or ``codex`` harness (heavy sub-agent work is the spawn_worker tool).
     description: str = (
         "Internal: invoke a registered sub-agent harness "

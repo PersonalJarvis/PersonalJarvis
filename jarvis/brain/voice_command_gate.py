@@ -1,7 +1,7 @@
 """VoiceCommandGate — strict pattern matcher for meta-commands.
 
 The router LLM must NOT decide on its own to switch providers or cancel
-running OpenClaw tasks. That is the responsibility of this gate, which
+running Jarvis-Agent tasks. That is the responsibility of this gate, which
 checks the utterance with strict regex patterns BEFORE it reaches the
 router LLM.
 

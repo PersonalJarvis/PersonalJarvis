@@ -5,7 +5,7 @@ Plan reference: §6.3 (spawn CLI), §AD-9 (filesystem IPC), §AD-10 (`--bare`),
 
 Both spawners use the existing `HarnessManager` for subprocess lifecycle
 (stream drain, timeout, cancellation). The spawners are the only place
-where `OpenClaw` fields of `HarnessTask` are set — pipeline and tests
+where `jarvis_agent` fields of `HarnessTask` are set — pipeline and tests
 remain harness-agnostic.
 
 `WorkerSpawner.spawn()` and `ReviewerSpawner.spawn()` match the signatures

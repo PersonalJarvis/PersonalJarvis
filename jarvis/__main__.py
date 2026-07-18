@@ -210,7 +210,7 @@ def _cmd_phase5_doctor() -> int:
 
 def _cmd_doctor() -> int:
     """Completeness self-check — what is registered & ready vs. advertised but
-    missing. Generalises the phantom-openclaw forensic (2026-06-28): a fresh
+    missing. Generalises the phantom-jarvis-agent forensic (2026-06-28): a fresh
     download can *look* complete while one dead reference makes a working feature
     appear "not installed". Exits non-zero only on a hard failure.
     """

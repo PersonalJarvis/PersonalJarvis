@@ -61,17 +61,17 @@ def test_select_top_slugs_zero_overlap_returns_empty() -> None:
 def test_select_top_slugs_ranks_by_overlap_then_alpha() -> None:
     """Higher overlap wins; ties break alphabetically for deterministic output."""
 
-    source = "ruben pushes the awareness layer for the openclaw bridge"
+    source = "ruben pushes the awareness layer for the jarvis-agent bridge"
     candidates = [
         "ruben-luetke",
         "awareness-layer",
-        "openclaw-bridge",
+        "jarvis-agent-bridge",
         "phase-6",
         "kontrollierer",
     ]
     ranked = select_top_slugs(source, candidates)
     assert "awareness-layer" in ranked
-    assert "openclaw-bridge" in ranked
+    assert "jarvis-agent-bridge" in ranked
     assert "ruben-luetke" in ranked
     assert "kontrollierer" not in ranked
 
@@ -88,10 +88,10 @@ def test_select_top_slugs_respects_limit() -> None:
 def test_select_top_slugs_ignores_stopwords() -> None:
     """Common DE/EN function words don't dominate the ranking."""
 
-    source = "der und die das the and the openclaw bridge"  # i18n-allow: German/English stopword mix, content under test
-    candidates = ["der-thing", "openclaw-bridge"]
+    source = "der und die das the and the jarvis-agent bridge"  # i18n-allow: German/English stopword mix, content under test
+    candidates = ["der-thing", "jarvis-agent-bridge"]
     result = select_top_slugs(source, candidates)
-    assert result and result[0] == "openclaw-bridge"
+    assert result and result[0] == "jarvis-agent-bridge"
 
 
 # ---------------------------------------------------------------------
@@ -238,10 +238,10 @@ def test_build_user_prompt_includes_top_slugs() -> None:
     """The keyword-overlap shortlist is rendered as bullet hints."""
 
     prompt = build_user_prompt(
-        "source-label", "some content", top_slugs=["ruben-luetke", "openclaw-bridge"],
+        "source-label", "some content", top_slugs=["ruben-luetke", "jarvis-agent-bridge"],
     )
     assert "- ruben-luetke" in prompt
-    assert "- openclaw-bridge" in prompt
+    assert "- jarvis-agent-bridge" in prompt
 
 
 def test_build_user_prompt_handles_no_top_slugs() -> None:

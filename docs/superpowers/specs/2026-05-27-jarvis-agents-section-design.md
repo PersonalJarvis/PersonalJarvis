@@ -8,7 +8,7 @@
 
 ## 1. Motivation
 
-Today every Jarvis-Agent mission (`spawn_openclaw`) runs hardcoded on Claude Opus 4.7 via Max-subscription OAuth (`ClaudeDirectWorker`). The user wants to switch the underlying worker LLM at runtime through the UI — same way TTS providers are switched today — without having to edit `jarvis.toml` by hand.
+Today every Jarvis-Agent mission (`spawn_worker`) runs hardcoded on Claude Opus 4.7 via Max-subscription OAuth (`ClaudeDirectWorker`). The user wants to switch the underlying worker LLM at runtime through the UI — same way TTS providers are switched today — without having to edit `jarvis.toml` by hand.
 
 The new section makes this explicit: *one* active worker provider, configurable in the UI, with a per-card health-test that proves the provider can actually run a real Jarvis-Agent mission end-to-end.
 
@@ -152,7 +152,7 @@ The `worker_override` field is plumbed through `Mission` and read inside `_make_
 Two cooldowns, distinct:
 
 1. **Test-button cooldown** (60s per provider, server-side, in-memory). Lives in `jarvis/ui/web/subagent_routes.py`. Resets on process restart — that's acceptable because the test is cheap and a restart implies the user wants fresh state.
-2. **Spawn cooldown** (existing 30s, `spawn_openclaw.py`, see commit `eab15ec`). Unchanged. Tests inherit it? **No** — test missions use `source_actor="subagent_test"` and bypass the spawn-tool entirely (they go through `MissionManager.dispatch` directly), so the spawn cooldown does not apply.
+2. **Spawn cooldown** (existing 30s, `spawn_worker.py`, see commit `eab15ec`). Unchanged. Tests inherit it? **No** — test missions use `source_actor="subagent_test"` and bypass the spawn-tool entirely (they go through `MissionManager.dispatch` directly), so the spawn cooldown does not apply.
 
 ## 4. Data Flow
 
@@ -324,7 +324,7 @@ Three sequential phases, each independently shippable, each with green tests at 
 
 - This design does **not** change anything about the brain-tier router. The brain still runs on whatever `[brain].primary` says (today: Gemini). Jarvis-Agents is its own tier.
 - It does **not** introduce a new harness; the four workers are all existing-pattern subprocess workers (or in the case of Grok, the standard streaming HTTP pattern from `gemini_worker.py`).
-- It does **not** change the existing 30s spawn-cooldown in `spawn_openclaw.py`. That is a separate gate for the voice path.
+- It does **not** change the existing 30s spawn-cooldown in `spawn_worker.py`. That is a separate gate for the voice path.
 
 ---
 

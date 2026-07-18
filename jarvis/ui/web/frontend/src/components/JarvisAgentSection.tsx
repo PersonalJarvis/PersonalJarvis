@@ -90,8 +90,8 @@ const PROVIDER_LABELS: Record<string, string> = {
   openrouter: "OpenRouter",
   grok: "xAI Grok",
   nvidia: "NVIDIA NIM",
-  // Codex is a direct worker (ChatGPT subscription / OpenAI key), not an
-  // OpenClaw-routed provider — surfaced as its own selectable subagent row.
+  // Codex is a direct worker (ChatGPT subscription / OpenAI key), not a
+  // Jarvis-Agent-routed provider — surfaced as its own selectable subagent row.
   "openai-codex": "OpenAI Codex",
   // Antigravity drives the Google subscription CLI as a direct worker (OAuth, no
   // API key), the Google sibling of Codex.
@@ -1411,7 +1411,7 @@ function SubagentProviderCard({
 
 /**
  * Radio-based active toggle, mirroring `ActiveControl` in `ApiKeysView`.
- * Source of truth stays `row.is_active_brain` from `/api/openclaw/status`;
+ * Source of truth stays `row.is_active_brain` from `/api/jarvis-agent/status`;
  * the radio reflects the server state and is not held locally.
  * `name="active-subagent"` gives native single-select across the cards.
  * The radio is NOT disabled when the key is missing — instead `activate()`

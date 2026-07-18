@@ -323,7 +323,8 @@ class TestSeedRegistry:
             "tool.run-shell",
             "tool.screen-snapshot",
             # NB: tool.dispatch-to-harness removed 2026-06-28 (no longer an
-            # LLM-visible router tool — phantom-openclaw routing fix).
+            # LLM-visible router tool — phantom-vehicle routing fix; the dead
+            # 'openclaw' capability id was still being advertised).
             "tool.spawn-worker",
             "tool.awareness-snapshot",
             "tool.awareness-recall",
@@ -383,13 +384,14 @@ class TestSeedRegistry:
             "harness.open-interpreter",
         }.isdisjoint(ids)
 
-    def test_no_capability_advertises_openclaw(self) -> None:
+    def test_no_capability_advertises_legacy_harness_name(self) -> None:
         """No seeded capability may advertise the phantom 'openclaw' vehicle.
 
-        OpenClaw is unregistered (Welle-4 removal). Advertising it in a router
-        tool's verbs/objects/description mis-routed "start a subagent" turns
-        toward a vehicle that cannot run (forensic 2026-06-28). Heavy sub-agent
-        work is tool.spawn-worker.
+        The legacy 'openclaw' internal name is unregistered (Welle-4 removal,
+        superseded by Jarvis-Agents). Advertising it in a router tool's
+        verbs/objects/description mis-routed "start a subagent" turns toward
+        a vehicle that cannot run (forensic 2026-06-28). Heavy sub-agent work
+        is tool.spawn-worker.
         """
         for cap in self.reg.all():
             haystack = " ".join(

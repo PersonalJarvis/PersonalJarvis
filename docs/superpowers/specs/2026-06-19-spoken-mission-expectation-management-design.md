@@ -100,11 +100,11 @@ Two spoken improvements, both off the latency-critical answer path:
 Turn → router force-spawns → spawn_worker.execute()
   ├─ dispatch mission
   └─ compose() → sharpened opening announcement (topic + substance + warmth)  [tool output → spoken reply]
-OpenClawAnnouncement(action,target) → _on_spawn_announcement → _schedule_spawn_watchdog()
+JarvisAgentAnnouncement(action,target) → _on_spawn_announcement → _schedule_spawn_watchdog()
   → bounded recurring heartbeat (de/en/es, varied, VAD-gated, ≤ max_count)
 Mission result → MissionAnnouncer → AnnouncementRequested(kind="completion")
   → _on_announcement: speak result AND cancel pending heartbeats
-Crash path → OpenClawBackgroundCompleted → _on_background_completed (FIFO cancel)  [unchanged]
+Crash path → JarvisAgentBackgroundCompleted → _on_background_completed (FIFO cancel)  [unchanged]
 ```
 
 ## Edge cases

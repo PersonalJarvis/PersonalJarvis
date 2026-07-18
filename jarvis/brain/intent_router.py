@@ -17,7 +17,7 @@ Goal: no extra LLM-call latency for routing. Heuristic-based:
   debug, refactor, überlege, zusammenfass, etc.  # i18n-allow
   Heuristic: long, many subclauses, multiple aspects, question word + depth
 
-- **CODE** (OpenClaw Heavy-Worker): explicit coding tasks
+- **CODE** (Jarvis-Agent Heavy-Worker): explicit coding tasks
   Keywords: code, implementier, fix bug, review pr, git commit, test
 
 On ambiguity → DEEP (the user must not think Jarvis is dumb).
@@ -75,7 +75,7 @@ _DEEP_PATTERNS = [
     r"\bplan\b.*\?", r"\bwhy\b.*\?",
 ]
 
-# Coding tasks are routed to the OpenClaw heavy worker.
+# Coding tasks are routed to the Jarvis-Agent heavy worker.
 _CODE_PATTERNS = [
     r"\bcode\b.*(für|for|write|schreib)",  # i18n-allow
     r"\bimplementier\b", r"\bimplement\b",

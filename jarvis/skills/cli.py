@@ -202,7 +202,7 @@ async def _skill_run(name: str) -> int:
 
 
 def _import_claude_skills(src: str) -> int:
-    """Reads OpenClaw skills (.md), fills in missing frontmatter defaults,
+    """Reads Claude Code skills (.md), fills in missing frontmatter defaults,
     copies them to ``user_skills_dir()/<name>/SKILL.md``.
     """
     from jarvis.core.paths import user_skills_dir
@@ -234,7 +234,7 @@ def _import_claude_skills(src: str) -> int:
         imported += 1
         print(f"  imported: {rel} -> {out}")
 
-    print(f"Imported {imported} OpenClaw skills (skipped {skipped} existing).")
+    print(f"Imported {imported} Claude Code skills (skipped {skipped} existing).")
     print(f"Destination: {dst_dir}")
     return 0
 
@@ -250,9 +250,9 @@ def _ensure_frontmatter(text: str, default_name: str) -> str:
         'schema_version: "1"\n'
         f"name: {default_name}\n"
         'version: "0.1.0"\n'
-        "description: Imported from OpenClaw skills.\n"
+        "description: Imported from Claude Code skills.\n"
         "category: imported\n"
-        "author: openclaw-import\n"
+        "author: claude-skills-import\n"
         "triggers: []\n"
         "requires_tools: []\n"
         "risk_policy:\n"
@@ -333,14 +333,14 @@ def main(argv: list[str] | None = None) -> int:
         type=str,
         metavar="PATH",
         dest="import_claude_skills",
-        help="Import OpenClaw skills from a directory",
+        help="Import Claude Code skills from a directory",
     )
     # Phase 7.5: draft skill management (Plan §7.5 voice output + UI in Phase 7.6).
     group.add_argument(
         "--list-drafts",
         action="store_true",
         dest="list_drafts",
-        help="List all OpenClaw-authored drafts (state=draft).",
+        help="List all imported/AI-authored drafts (state=draft).",
     )
     group.add_argument(
         "--promote",

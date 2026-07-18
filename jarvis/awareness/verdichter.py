@@ -46,7 +46,7 @@ def _ts(item: dict[str, Any]) -> int:
 
 
 class Verdichter:
-    """Direct Brain call (no OpenClaw spawn).
+    """Direct Brain call (no Jarvis-Agent spawn).
 
     Stateless — no bus subscription, no internal counters. One instance
     is constructed in ``factory.py`` and passed to the ``StoryTracker``.

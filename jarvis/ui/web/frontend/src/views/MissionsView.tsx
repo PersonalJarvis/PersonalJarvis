@@ -183,7 +183,7 @@ export function MissionsView() {
                   <MapIcon className="h-3.5 w-3.5" />
                   Plan
                 </TabsTrigger>
-                <TabsTrigger value="openclaw" className="gap-1.5">
+                <TabsTrigger value="jarvis-agent" className="gap-1.5">
                   <Cpu className="h-3.5 w-3.5" />
                   {agentBrand(assistantName)}
                 </TabsTrigger>
@@ -215,7 +215,7 @@ export function MissionsView() {
             <TabsContent value="plan" className="m-0 flex-1 overflow-hidden">
               <PlanPanel />
             </TabsContent>
-            <TabsContent value="openclaw" className="m-0 flex-1 overflow-hidden">
+            <TabsContent value="jarvis-agent" className="m-0 flex-1 overflow-hidden">
               <JarvisAgentPanel />
             </TabsContent>
             <TabsContent value="approvals" className="m-0 flex-1 overflow-hidden">

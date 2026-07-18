@@ -36,7 +36,7 @@ BrainCallback = Callable[[str], Awaitable[str]]
 #
 # REMOVED 2026-06-28 — ``dispatch-to-harness`` is intentionally NOT a
 # LLM-visible router tool. Its raw ``harness`` parameter let the brain request
-# a sub-agent vehicle by NAME (``harness="openclaw"``), but OpenClaw is not a
+# a sub-agent vehicle by NAME (``harness="openclaw"``), but that value is not a
 # registered harness (Wave-4 removal, ~92% hang). The operational harness
 # inventory now contains only python-script and the capability-gated screenshot
 # adapter. A "start a
@@ -47,7 +47,7 @@ BrainCallback = Callable[[str], Awaitable[str]]
 # is ``computer-use``. The tool class itself still exists for the INTERNAL,
 # non-LLM local-action fast path (see ``_load_local_action_tools``, called
 # programmatically with harness="screenshot"); it is just not router-selectable.
-# Do NOT re-add it here — that resurrects the phantom-openclaw routing bug.
+# Do NOT re-add it here — that resurrects the phantom-harness routing bug.
 #
 # Rationale: Hauptjarvis is a pure dispatcher. Direct actions outside this
 # list (open_app, type_text, remember, whoami …) are delegated to a background
@@ -95,8 +95,8 @@ ROUTER_TOOLS = frozenset({
     # Skills-Brain-Integration: Brain-callable executor for installed user
     # skills. D9-recursion-protection is structural — SkillRunner is constructed
     # without a tool_registry that would re-expose run-skill recursively.
-    # Available to BOTH Router-Tier (here) and in Wave 4: bypasses OpenClaw
-    # because OpenClaw itself has no skill layer.
+    # Available to BOTH Router-Tier (here) and in Wave 4: bypasses the
+    # Jarvis-Agent worker because the worker itself has no skill layer.
     "run-skill",
     # Phase B5 (recall-tool): read-only keyword search over the long-term
     # Obsidian wiki vault. Router-tier only — never in SUB_TOOLS (AP-D9).
@@ -231,11 +231,12 @@ SELF_MOD_TOOL_NAMES_ROUTER = frozenset({
 def warn_if_phantom_worker_harness(config: Any, harness_manager: Any) -> bool:
     """Log a warning when ``[harness.jarvis_agent].enabled`` is true but unregistered.
 
-    OpenClaw was removed in Welle 4 and has no entry-point, so an
-    ``enabled = true`` block is INERT (config honesty, 2026-06-28). This probe is
-    advisory only: it never raises, never changes routing, and "start a subagent"
-    routes to ``spawn_worker`` regardless. Returns True when a phantom config was
-    detected (consumed by the regression guard in tests).
+    The legacy ``openclaw`` harness was removed in Welle 4 and has no
+    entry-point, so an ``enabled = true`` block is INERT (config honesty,
+    2026-06-28). This probe is advisory only: it never raises, never changes
+    routing, and "start a subagent" routes to ``spawn_worker`` regardless.
+    Returns True when a phantom config was detected (consumed by the
+    regression guard in tests).
 
     The config field was renamed from ``harness.openclaw`` to ``harness.jarvis_agent``
     in the 2026-06-29 Jarvis-Agents rename; both TOML keys are accepted via
@@ -330,8 +331,8 @@ def _load_tools_for_tier(
     """Load all tools for the given tier and instantiate them.
 
     Wave-4 migration: previously there was a Sub-Jarvis tier with its own
-    SUB_TOOLS set + SubJarvisManager. After the OpenClaw-bridge migration
-    (see docs/openclaw-bridge.md §11) only ``"router"`` remains as a tier;
+    SUB_TOOLS set + SubJarvisManager. After the Jarvis-Agent-bridge migration
+    (see docs/jarvis-agents-bridge.md §11) only ``"router"`` remains as a tier;
     the heavy worker runs as an external subprocess via the Mission-Manager.
 
     Encapsulates entry-point discovery + special cases (dispatch-to-harness,
@@ -347,7 +348,7 @@ def _load_tools_for_tier(
     if tier != "router":
         raise ValueError(
             f"Unknown tier {tier!r}. The Sub-Jarvis tier was replaced by the "
-            f"OpenClaw bridge in Welle 4 — only 'router' remains."
+            f"Jarvis-Agent bridge in Welle 4 — only 'router' remains."
         )
 
     allow = ROUTER_TOOLS
@@ -404,8 +405,8 @@ def _load_tools_for_tier(
                 # this the Brain would freeze the tool dict at build-time, and
                 # the post-bootstrap ``set_mission_manager`` call would have
                 # no effect on an already-built BrainManager. See
-                # docs/openclaw-bridge.md AD-OC1 + the regression in
-                # tests/integration/test_openclaw_lazy_bootstrap.py.
+                # docs/jarvis-agents-bridge.md AD-OC1 + the regression in
+                # tests/integration/test_worker_lazy_bootstrap.py.
                 #
                 # The Kontrollierer-Resolver mirrors the manager-resolver:
                 # without it the voice path would only persist a PENDING
@@ -607,7 +608,7 @@ def _resolve_mission_manager() -> Any:
     """Resolve the MissionManager for the ``spawn_worker`` tool.
 
     Wave-4 migration: previously the ``SubJarvisManager`` was constructed
-    directly in the ``_phase2_full_brain`` flow. Today (OpenClaw bridge) the
+    directly in the ``_phase2_full_brain`` flow. Today (Jarvis-Agent bridge) the
     server layer (``jarvis/ui/web/server.py::_init_mission_stack``) bootstraps
     the MissionManager asynchronously — it lives under ``app.state.mission_manager``.
 
@@ -645,7 +646,7 @@ _KONTROLLIERER_REF: list[Any] = []
 # Sentinel that distinguishes "bootstrap not yet attempted" (default,
 # transient) from "bootstrap attempted and crashed" (permanent for this
 # process). spawn_worker checks this so the user gets an honest
-# "OpenClaw konnte nicht initialisiert werden" instead of the misleading  # i18n-allow
+# "Jarvis-Agent konnte nicht initialisiert werden" instead of the misleading  # i18n-allow
 # "noch nicht bereit, bitte einen Moment warten" returned during boot.  # i18n-allow
 # returns when both the manager and kontrollierer singletons are None
 # but the server is still booting.
@@ -715,8 +716,8 @@ def _phase2_full_brain(
     """Build the BrainManager in router tier.
 
     Wave-4 migration: previously there was also a ``"sub_jarvis"`` tier.
-    The Sub-Jarvis tier was replaced by the OpenClaw bridge (see
-    docs/openclaw-bridge.md §11). The heavy worker runs as an external
+    The Sub-Jarvis tier was replaced by the Jarvis-Agent bridge (see
+    docs/jarvis-agents-bridge.md §11). The heavy worker runs as an external
     subprocess via ``MissionManager`` from ``jarvis/missions/``.
 
     tier="router": RouterBrain system prompt + ROUTER_TOOLS + Haiku.
@@ -901,9 +902,10 @@ def _phase2_full_brain(
                 awareness_manager._probes = []    # noqa: SLF001
                 awareness_manager._fs_probe = None    # noqa: SLF001
 
-    # Build tools — Wave 4: no sub-tier any more; OpenClaw runs as an external
-    # subprocess via MissionManager. If a MissionManager is already present in
-    # ``app.state`` (server bootstrap), we pass it to ``spawn_worker``.
+    # Build tools — Wave 4: no sub-tier any more; the Jarvis-Agent worker runs
+    # as an external subprocess via MissionManager. If a MissionManager is
+    # already present in ``app.state`` (server bootstrap), we pass it to
+    # ``spawn_worker``.
     # If not (e.g. standalone call via ``build_default_brain`` BEFORE the server
     # bootstrap ran), the tool is excluded from the set — the force-spawn in
     # BrainManager knows this and returns a setup message instead of silently crashing.
@@ -1072,8 +1074,8 @@ def _phase2_full_brain(
 
             # Computer-Use tool set: Wave 4 — previously ``sub_tools``
             # (the Sub-Jarvis tier toolbox) was used as the base. After the
-            # OpenClaw-bridge migration we load all computer-use-relevant tools
-            # directly from entry_points.
+            # Jarvis-Agent-bridge migration we load all computer-use-relevant
+            # tools directly from entry_points.
             cu_tools: dict[str, Any] = {}
             cu_tools.update({
                 name: tool
@@ -1480,8 +1482,8 @@ def build_default_brain(
     """Return a brain callback (async (str)->str) according to the fallback chain.
 
     Wave-4 migration: previously there were two tiers ``router`` and
-    ``sub_jarvis``. The Sub-Jarvis tier was replaced by the OpenClaw bridge —
-    see docs/openclaw-bridge.md §11.
+    ``sub_jarvis``. The Sub-Jarvis tier was replaced by the Jarvis-Agent
+    bridge — see docs/jarvis-agents-bridge.md §11.
 
     Args:
         tier: "router" — the Haiku delegator tier (the only tier remaining

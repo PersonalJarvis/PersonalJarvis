@@ -111,12 +111,12 @@ If you still have uncommitted changes, **the script aborts** (log entry `SKIP: W
 
 ---
 
-## Clarification: relationship to the OpenClaw DENY rule
+## Clarification: relationship to the Jarvis-Agent DENY rule
 
-In `~/.claude/settings.json` there is a `Bash(git push *)` DENY rule that prevents OpenClaw agents from pushing at runtime. **This rule does NOT affect the auto-push script**, because:
+In `~/.claude/settings.json` there is a `Bash(git push *)` DENY rule that prevents Jarvis-Agent worker agents from pushing at runtime. **This rule does NOT affect the auto-push script**, because:
 
 - The Task Scheduler starts the script as a standalone Windows program (`powershell.exe`).
-- It does not run inside the OpenClaw harness, but as a normal user process.
+- It does not run inside the Jarvis-Agent worker harness, but as a normal user process.
 - The DENY rule only filters Bash tool calls of the LLM, not external scripts.
 
 So you keep **full control**: agents still cannot push on their own, but your own scheduled job mirrors your repo to GitHub every evening.

@@ -69,7 +69,7 @@ Grouped by responsibility. Bold = directly relevant for board Phase A/B.
 **Harness dispatch**
 - `HarnessDispatched(harness: str, task: HarnessTask | None)`
 - `HarnessProgress(harness, result)`
-- **`HarnessCompleted(harness: str, result: HarnessResult | None)`** — signal for MCP/Code-CLI/Jarvis-Agent completion. `harness` is e.g. `"mcp-remote"`, `"openclaw"`, `"codex"`, `"open-interpreter"`.
+- **`HarnessCompleted(harness: str, result: HarnessResult | None)`** — signal for MCP/Code-CLI/Jarvis-Agent completion. `harness` is e.g. `"mcp-remote"`, `"jarvis_agent"`, `"codex"`, `"open-interpreter"`.
 
 **Response + Memory**
 - `ResponseGenerated(text, language, audio_ref)`

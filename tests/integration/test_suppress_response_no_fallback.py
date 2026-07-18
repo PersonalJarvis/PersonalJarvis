@@ -128,8 +128,8 @@ async def test_suppress_response_does_not_trigger_fallback():
         f"Empty-response guard false-fired on a suppress_response turn."
     )
 
-    # Result may be empty (suppress_response) — the UI gets OpenClawAnnouncement
-    # via the bus, not via the BrainManager return value.
+    # Result may be empty (suppress_response) — the UI gets a
+    # JarvisAgentAnnouncement via the bus, not via the BrainManager return value.
     assert isinstance(result, str)
     # Critical: the result must NOT contain the "all failed" message,
     # even when the text is empty (suppress_response is NOT a failure).

@@ -47,7 +47,7 @@ class DispatchWithReviewTool:
     name: str = "dispatch_with_review"
     risk_tier: str = "monitor"
     description: str = (
-        "Runs an OpenClaw task with a review quality gate. "
+        "Runs a Jarvis-Agent task with a review quality gate. "
         "USE this tool when the result is user-irreversible (code "
         "generation, file mutation, skill authoring), requires multi-step "
         "synthesis (research, aggregation), or is hard to undo. DO NOT USE "
@@ -63,7 +63,7 @@ class DispatchWithReviewTool:
                 "type": "string",
                 "minLength": 20,
                 "description": (
-                    "Complete task description for OpenClaw. "
+                    "Complete task description for the Jarvis-Agent. "
                     "Required, at least 20 characters."
                 ),
             },
@@ -218,7 +218,7 @@ class DispatchWithReviewTool:
         except HarnessUnavailable:
             # AP-23 wave-2 finding 5: no registered harness backs the
             # worker/reviewer spawn on this install (e.g. every install
-            # today — Welle-4 removed the old OpenClaw subprocess bridge).
+            # today — Welle-4 removed the old Jarvis-Agents subprocess bridge).
             # Honest, install-neutral message — never the raw KeyError from
             # HarnessManager.get(), never the dead internal "openclaw" name.
             return ToolResult(

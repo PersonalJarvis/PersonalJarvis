@@ -855,11 +855,12 @@ class WebServer:
 
         @app.get("/api/jarvis-agent/status")
         async def jarvis_agent_status() -> dict[str, Any]:
-            """OpenClaw-bridge status for the settings view (Welle 3).
+            """Jarvis-Agent bridge status for the settings view (Welle 3).
 
             Read-only snapshot:
 
-            * ``configured``       — is the ``[harness.openclaw]`` block present in jarvis.toml?
+            * ``configured``       — is the ``[harness.jarvis_agent]`` block
+              (legacy alias: ``[harness.openclaw]``) present in jarvis.toml?
             * ``enabled``          — bridge toggle from the block
             * ``binary_path``      — configured path
             * ``binary_detected``  — resolver result (PATH + .cmd/.ps1/.exe)
@@ -868,13 +869,13 @@ class WebServer:
               (``[brain.sub_jarvis].provider``); falls back to ``brain.primary``
               only when no subagent provider is set. NOT the router
               brain — the subagent runs the heavy tasks.
-            * ``provider_slug``    — OpenClaw slug of the active subagent
+            * ``provider_slug``    — worker slug of the active subagent
               provider per AD-6 (claude-api->claude-cli)
             * ``model_resolved``   — override from config OR the frontier-deep
               model of the active subagent provider
             * ``mapping``          — the full slug-mapping table
 
-            Contract: docs/openclaw-bridge.md §4.3 wizard/setup extension.
+            Contract: docs/jarvis-agents-bridge.md §4.3 wizard/setup extension.
             The endpoint returns NO secrets — only a boolean for whether a key is set.
             """
             import shutil
@@ -1031,7 +1032,7 @@ class WebServer:
                     }
                 )
 
-            # Codex is a DIRECT worker (CodexDirectWorker) with no OpenClaw slug,
+            # Codex is a DIRECT worker (CodexDirectWorker) with no worker slug,
             # so it is not in MAPPINGS. Surface it as an explicit selectable
             # subagent row. Backed by the ChatGPT subscription (OAuth) OR an
             # OpenAI API key — "key_set" is true when either is present.
@@ -1087,7 +1088,7 @@ class WebServer:
             )
 
             # Antigravity is a DIRECT worker (GoogleCliWorker over the official
-            # agy/Gemini CLI) with no OpenClaw slug, so it is not in MAPPINGS —
+            # agy/Gemini CLI) with no worker slug, so it is not in MAPPINGS —
             # the Google sibling of Codex. Dual billing, mirror of Codex: the
             # Google subscription OAuth login OR a Gemini API key (per token).
             # "key_set" is true when either is present.
@@ -2405,7 +2406,7 @@ class WebServer:
 
         # Welle-4 follow-up: bridge MissionBus -> SubAgentRegistry so the
         # Sub-Agents board lights up. The legacy publishers for
-        # OpenClawTaskStarted/Completed were removed in the migration; without
+        # JarvisAgentTaskStarted/Completed were removed in the migration; without
         # this hook the dashboard stays empty even while missions are flowing.
         registry = getattr(self.app.state, "sub_agent_registry", None)
         if registry is not None:

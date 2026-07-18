@@ -196,7 +196,7 @@ class RunListItem(BaseModel):
 
 class ToolCall(BaseModel):
     name: str
-    caller: str                   # router_tool | openclaw_worker | ...
+    caller: str                   # router_tool | jarvis_agent_worker | ...
     risk_tier: str                # safe | monitor | ask | block
     approved_by: str | None       # auto | user | whitelist | blacklist | None
     duration_ms: int | None

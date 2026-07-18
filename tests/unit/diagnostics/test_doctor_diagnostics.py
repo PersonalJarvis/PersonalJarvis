@@ -1,7 +1,7 @@
 """Tests for the completeness self-check (``jarvis/diagnostics/doctor.py``).
 
-The doctor is the generalised defence against the phantom-openclaw class of bug
-(2026-06-28): a name advertised to the brain that resolves to no registered
+The doctor is the generalised defence against the phantom-jarvis-agent class of
+bug (2026-06-28): a name advertised to the brain that resolves to no registered
 backend. These tests pin the two highest-value checks — phantom router tools and
 inert harness config — plus the isolation guarantee that one crashing probe never
 blinds the rest of the report.
@@ -42,14 +42,14 @@ def test_router_tools_detects_phantom(monkeypatch) -> None:
     assert "advertised but not registered" in findings[0].message
 
 
-def test_harness_config_flags_inert_openclaw() -> None:
+def test_harness_config_flags_inert_legacy_openclaw_alias() -> None:
     """[harness.openclaw].enabled=true without registration → warn (dead config)."""
     config = SimpleNamespace(
         harness=SimpleNamespace(openclaw=SimpleNamespace(enabled=True)),
     )
     findings = check_harness_config(config)
     warns = [f for f in findings if f.status == "warn"]
-    assert warns, "inert openclaw config was not flagged"
+    assert warns, "inert legacy openclaw alias config was not flagged"
     assert "inert" in warns[0].message
 
 
@@ -57,7 +57,7 @@ def test_harness_config_flags_unregistered_enabled_adapter() -> None:
     config = SimpleNamespace(
         harness=SimpleNamespace(
             enabled=["python-script", "mcp-remote"],
-            openclaw=None,
+            jarvis_agent=None,
         ),
     )
 
@@ -113,7 +113,7 @@ def test_brain_provider_info_when_set() -> None:
 
 def test_run_doctor_aggregates_all_categories() -> None:
     config = SimpleNamespace(
-        harness=SimpleNamespace(openclaw=None),
+        harness=SimpleNamespace(jarvis_agent=None),
         brain=SimpleNamespace(primary="gemini"),
     )
     findings = run_doctor(config)
@@ -133,7 +133,7 @@ def test_run_doctor_isolates_a_crashing_check(monkeypatch) -> None:
 
     monkeypatch.setattr(doctor, "check_router_tools", boom)
     config = SimpleNamespace(
-        harness=SimpleNamespace(openclaw=None),
+        harness=SimpleNamespace(jarvis_agent=None),
         brain=SimpleNamespace(primary="gemini"),
     )
     findings = run_doctor(config)

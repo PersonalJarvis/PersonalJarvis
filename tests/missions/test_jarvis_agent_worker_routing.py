@@ -32,7 +32,7 @@ def test_claude_api_is_a_hard_lock(step_model: str) -> None:
     assert _select_subagent_worker_kind("claude-api", step_model) == "claude_direct"
 
 
-def test_openclaw_claude_routes_subjarvis() -> None:
+def test_legacy_openclaw_claude_alias_routes_subjarvis() -> None:
     assert _select_subagent_worker_kind("openclaw-claude", "gemini-x") == "subjarvis"
 
 
@@ -72,8 +72,9 @@ def test_antigravity_routes_to_oauth_cli_worker(step_model: str) -> None:
 
 def test_gemini_as_subagent_provider_uses_direct_gemini_worker() -> None:
     """Post-Welle-4: explicitly choosing 'gemini' routes to the direct
-    GeminiWorker so the sub-agent actually RUNS on Gemini. The OpenClaw path it
-    used to take was removed, so without this it silently ran on Claude. This is
+    GeminiWorker so the sub-agent actually RUNS on Gemini. The legacy
+    pre-rename routing it used to take (through the internal system's old
+    name) was removed, so without this it silently ran on Claude. This is
     an EXPLICIT selection, NOT the anti-silent-Gemini fallback case."""
     assert _select_subagent_worker_kind("gemini", "") == "gemini"
     assert _select_subagent_worker_kind("gemini", "claude-opus-4-8") == "gemini"
@@ -188,9 +189,10 @@ def test_live_provider_survives_registry_refresh_failure(monkeypatch: pytest.Mon
 #
 # Grok/OpenAI/OpenRouter run on their OWN provider via the
 # in-process ApiAgentWorker, so they are NO LONGER routing-level Claude
-# fallbacks. Only the legacy ``"subjarvis"`` kind (openclaw-claude / unknown)
-# still always runs Claude. The UI reads ``subagent_runs_on_claude_fallback``
-# (derived from the SAME routing function) so the badge never lies.
+# fallbacks. Only the legacy ``"subjarvis"`` kind (the legacy
+# openclaw-claude alias / unknown) still always runs Claude. The UI reads
+# ``subagent_runs_on_claude_fallback`` (derived from the SAME routing
+# function) so the badge never lies.
 
 
 @pytest.mark.parametrize("provider", ["openclaw-claude"])

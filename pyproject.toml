@@ -448,7 +448,8 @@ whoami = "jarvis.plugins.tool.whoami:WhoAmITool"
 dispatch-to-admin = "jarvis.plugins.tool.dispatch_to_admin:DispatchToAdminTool"
 # Phase 5.5 — tiered routing (Router Brain -> heavy worker and parallel harnesses).
 # spawn-worker dispatches a Mission-Manager-backed direct Opus worker
-# (ClaudeDirectWorker). Legacy names: spawn-sub-jarvis -> spawn-openclaw -> spawn-worker.
+# (ClaudeDirectWorker). Legacy names: spawn-sub-jarvis -> spawn-openclaw (internal
+# name only, never a live entry point) -> spawn-worker.
 multi-spawn = "jarvis.plugins.tool.multi_spawn:MultiSpawnTool"
 spawn-worker = "jarvis.plugins.tool.spawn_worker:SpawnWorkerTool"
 # Legacy Phase-8.4 review entry point. It is intentionally not model-visible;
@@ -471,7 +472,7 @@ mcp-tools = "jarvis.mcp.loader:McpToolLoader"
 # It pointed at jarvis.plugins.tool.spawn_cli_worker:SpawnCliWorkerTool, a file
 # that never existed (dead entry point). Single-step CLI work is now served
 # directly by the connected ``cli_<name>`` tools (the ``cli-tools`` loader);
-# heavy multi-step CLI work is already covered by ``spawn_openclaw`` (the
+# heavy multi-step CLI work is already covered by ``spawn_worker`` (the
 # mission worker has shell + CLI access). A dedicated spawn-cli-worker would be
 # redundant surface and a new D9 recursion vector to police, so it was dropped
 # rather than re-implemented.
@@ -513,7 +514,7 @@ wiki-ingest = "jarvis.plugins.tool.wiki_ingest:WikiIngestTool"
 # write, monitor. Closes the gap left by the soft-disabled legacy Curator.
 update-profile = "jarvis.plugins.tool.profile_update:UpdateProfileTool"
 # Phase 7.5 — skill authoring (router-tier, ask). Spawns the
-# SkillAuthoringRunner over OpenClaw. Implementation lives at
+# SkillAuthoringRunner over the Jarvis-Agent bridge. Implementation lives at
 # jarvis/brain/tools/skill_authoring.py since 2026-05-12; registration
 # was missing until the 2026-05-17 audit (CLAUDE.md flagged it as
 # "not yet registered in pyproject.toml" — this is that line landing).

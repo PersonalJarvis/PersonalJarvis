@@ -20,18 +20,18 @@ You are the senior code reviewer for Personal Jarvis. Your focus rests on three 
 2. `CLAUDE.md` — architecture, plugin system, streaming, event bus, Windows specifics, conventions.
 3. `docs/BUGS.md` — lessons learned from production bugs (BUG-Restore-2026-05-01 etc.).
 4. For Awareness code: the relevant phase section in the AWARENESS_PLAN (§4-§9 for A0-A5).
-5. For OpenClaw-bridge code: `docs/openclaw-bridge.md` §5 anti-patterns.
+5. For Jarvis-Agents-bridge code: `docs/jarvis-agents-bridge.md` §5 anti-patterns.
 6. For Phase-7 Self-Mod code: `docsplansphase-7-self-mod/PROJEKT_KONTEXT.md` §6 anti-patterns.
 7. The changed files themselves (Read in full, not just the diff).
 
 ## Review checklist — BLOCKER (merge-stopper)
 
 - ❌ **Stub API drift:** the plugin class does not structurally satisfy the Protocol in `jarvis/core/protocols.py` (missing method, wrong signature, wrong return type). Verify via Grep against the Protocol definition.
-- ❌ **LLM/IO-heavy tool in `ROUTER_TOOLS`** (`jarvis/brain/factory.py`): `awareness-recall`, `spawn_sub_jarvis` (Wave 4: `spawn_openclaw`), `screen-snapshot` with OCR — anything that makes Brain calls or DB queries belongs in `SUB_TOOLS`, not ROUTER_TOOLS. Reference bug: BUG-001 (router-search overload). Exception: the spawn tool itself MUST stay in ROUTER_TOOLS (that is the spawn trigger), but NEVER in SUB_TOOLS (D9 recursion protection, see ADR-0011).
+- ❌ **LLM/IO-heavy tool in `ROUTER_TOOLS`** (`jarvis/brain/factory.py`): `awareness-recall`, `spawn_sub_jarvis` (superseded by `spawn_worker`; `spawn_openclaw` is a recognized legacy alias, not a future Wave-4 addition), `screen-snapshot` with OCR — anything that makes Brain calls or DB queries belongs in `SUB_TOOLS`, not ROUTER_TOOLS. Reference bug: BUG-001 (router-search overload). Exception: the spawn tool itself MUST stay in ROUTER_TOOLS (that is the spawn trigger), but NEVER in SUB_TOOLS (D9 recursion protection, see ADR-0011).
 - ❌ **Exception swallower on the voice/vision path:** `except Exception: pass` (or `except: ...` without log/re-raise) in `jarvis/speech/`, `jarvis/brain/`, `jarvis/awareness/watchers/`, `jarvis/vision/`. Silent failures are the root of BUG-002 and BUG-003.
 - ❌ **Win32 imports at module top level** instead of lazy inside the function (pattern: `vision/screenshot.py:65-77` with `# noqa: PLC0415`). Kills Linux tests.
 - ❌ **Polling instead of hooks** for window-foreground detection (hard negative AWARENESS_PLAN §5). The only polling exception: `IdleDetector` with a 1s tick on `GetLastInputInfo`.
-- ❌ **Subagent spawn for internal compaction** (hard negative §6 — would trigger the JARVIS_DEPTH guard and make latency explode). The Verdichter (compactor) is a direct Brain call against Haiku via `BrainProviderRegistry`. Applies to the current `spawn_sub_jarvis` AND the future `spawn_openclaw` (Wave 4) — both are heavy-worker spawns and forbidden in the A2 Verdichter.
+- ❌ **Subagent spawn for internal compaction** (hard negative §6 — would trigger the JARVIS_DEPTH guard and make latency explode). The Verdichter (compactor) is a direct Brain call against Haiku via `BrainProviderRegistry`. Applies to `spawn_worker` and its legacy aliases `spawn_sub_jarvis` and `spawn_openclaw` — all are heavy-worker spawns and forbidden in the A2 Verdichter.
 - ❌ **Synchronous DB inserts in the bus handler** — all writes via `await self._recall.record_episode(...)` (aiosqlite is async).
 - ❌ **API keys / secrets in code/commit** — `jarvis.core.config.get_secret(key)` is mandatory; hardcoded strings are a BLOCKER.
 - ❌ **Awareness in the critical path:** the `awareness-snapshot` tool makes a Brain call or IO instead of a synchronous state read (hard negative §5). p95 must stay <50ms.

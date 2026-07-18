@@ -139,7 +139,7 @@ function antigravityMissing() {
   });
 }
 
-const OPENCLAW_EMPTY = {
+const JARVIS_AGENT_EMPTY = {
   configured: true,
   enabled: false,
   binary_path: "",
@@ -198,7 +198,7 @@ function routesFor(
 ): Record<string, () => RouteResult> {
   return {
     "/api/providers": () => ({ body: { providers: [provider] } }),
-    "/api/jarvis-agent/status": () => ({ body: OPENCLAW_EMPTY }),
+    "/api/jarvis-agent/status": () => ({ body: JARVIS_AGENT_EMPTY }),
     "/api/antigravity/status": () => ({
       body: provider.antigravity_status ?? {},
     }),

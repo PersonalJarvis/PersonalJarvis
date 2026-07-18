@@ -364,10 +364,11 @@ JARGON_RE = re.compile(
 # compound, otherwise just the compound itself.
 #
 # 2026-05-24: the 2026-05-13 "OpenClaw is a brand name, let it through"
-# exception is REVERSED. The OpenClaw subprocess was retired (the worker now
-# runs Opus 4.7 directly), so Jarvis must never say "OpenClaw" or "OpenClaw-
-# Subagent" — that would claim a component that no longer exists. The negative
-# lookbehind is removed, and OPENCLAW_RE below strips the brand token itself.
+# exception is REVERSED. The internal worker was renamed to Jarvis-Agent — the
+# retired "OpenClaw" subprocess no longer exists (the worker now runs Opus 4.7
+# directly), so Jarvis must never say "OpenClaw" or "OpenClaw-Subagent" — that
+# would claim a component that no longer exists. The negative lookbehind is
+# removed, and LEGACY_BRAND_RE below strips the retired brand token itself.
 JARGON_COMPOUND_RE = re.compile(
     r"\b(?:" + "|".join(re.escape(c) for c in JARGON_COMPOUNDS) + r")\b",
     re.IGNORECASE,
@@ -377,7 +378,7 @@ JARGON_COMPOUND_RE = re.compile(
 # "OpenClaw-" compound prefix ("OpenClaw-Mission" -> "Mission"; "OpenClaw-
 # Subagent" -> "Subagent", which JARGON_COMPOUND_RE then drops) and any
 # standalone "OpenClaw"/"OpenClore" (common STT mis-spelling of the brand).
-OPENCLAW_RE = re.compile(r"\bOpenCl(?:aw|ore)-?", re.IGNORECASE)
+LEGACY_BRAND_RE = re.compile(r"\bOpenCl(?:aw|ore)-?", re.IGNORECASE)
 
 # A1 drift (Mandate A1): remove the "Sir" honorific from the output.
 # The pattern matches ``Sir`` as an honorific in three forms:
@@ -445,7 +446,7 @@ def scrub_for_voice(
     """Cleans up brain output for TTS synthesis.
 
     Args:
-        text: The text to scrub (brain response, OpenClaw summary,
+        text: The text to scrub (brain response, Jarvis-Agent summary,
             skill output, announcement text, ...).
         language: ``"de"`` or ``"en"`` — determines the fallback phrase
             on a stacktrace hit.
@@ -604,7 +605,7 @@ def scrub_for_voice(
     # 7. Engineering-Jargon (Whitelist-Schutz via Bindestrich-Lookbehind)
     #    + Engineering-Compounds (Sub-Agent / Supervisor-Agent — Phase-1-
     #    Erweiterung 2026-04-28).
-    new = OPENCLAW_RE.sub("", out)
+    new = LEGACY_BRAND_RE.sub("", out)
     new = JARGON_RE.sub("", new)
     new = JARGON_COMPOUND_RE.sub("", new)
     if new != out:

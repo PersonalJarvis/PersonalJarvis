@@ -1,6 +1,6 @@
 ---
 name: plan-verifier
-description: Use after a phase is completed to check acceptance criteria against the plan file. Reads JARVIS_AWARENESS_PLAN.md / the OpenClaw bridge docs / the Phase-7 docs + the actual files + test output.
+description: Use after a phase is completed to check acceptance criteria against the plan file. Reads JARVIS_AWARENESS_PLAN.md / the Jarvis-Agent bridge docs (`docs/jarvis-agents-bridge.md`) / the Phase-7 docs + the actual files + test output.
 tools: Read, Grep, Glob, Bash
 model: sonnet
 role: verifier
@@ -37,7 +37,7 @@ You are QA / plan verifier for Personal Jarvis. Your only job: for a given aware
    - **Tests:** `Glob` for `tests/unit/awareness/test_*.py` + `tests/integration/awareness/test_a*_e2e.py`. If the user provides a test-output summary: use it. Otherwise: call `pytest tests/unit/awareness/ -q --tb=no --no-header` via Bash — you have Bash access for that.
    - **Hard negatives:** Counter-grep that the anti-pattern is NOT present. Examples:
      - `grep -r "while True" jarvis/awareness/watchers/` must be empty for A1 (except when commented out).
-     - `grep -rE "spawn_sub_jarvis|spawn_openclaw" jarvis/awareness/` must be empty for A2 (the Verdichter is a direct brain call, not a subagent spawn — applies to the current and the Wave-4-renamed tool).
+     - `grep -rE "spawn_sub_jarvis|spawn_openclaw" jarvis/awareness/` must be empty for A2 (the Verdichter is a direct brain call, not a subagent spawn — applies to `spawn_worker` and both legacy aliases `spawn_sub_jarvis`/`spawn_openclaw`).
      - `grep -rE "^import (win32|ctypes)" jarvis/awareness/` must be empty (lazy imports).
      - `grep -r "asyncio.run" jarvis/awareness/` must be empty (no library-code loop).
 4. **Back up** every finding with `File:Line` or `test name`.

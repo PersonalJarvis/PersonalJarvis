@@ -32,7 +32,7 @@ class CapabilityRegistry:
         Returns None when no capability covers the intent."""
     def has_action_intent(self, utterance: str) -> bool:
         """Heuristic: does the utterance look like a request for action
-        (verb present) vs. smalltalk/Q&A. Mirrors _should_force_openclaw verbs."""
+        (verb present) vs. smalltalk/Q&A. Mirrors _should_force_spawn verbs."""
     def render_for_prompt(self, lang: Literal["de","en"]="de") -> str:
         """Bullet list rendered into the system prompt. Replaces the
         hardcoded 'NUTZE: search_web' block."""
@@ -64,7 +64,7 @@ if registry.has_action_intent(normalized) and registry.resolve_intent(normalized
 ```
 New mode `UNSUPPORTED` is added to `LocalActionMode`; manager.py routes it directly to TTS, skipping brain dispatch.
 
-**(b) Mirror gate in `jarvis/brain/manager.py`** — `_should_force_openclaw` already runs verb-classification. Add a sibling `_capability_resolves(text) -> bool` check. If `has_action_intent AND not _capability_resolves AND not _is_smalltalk`:
+**(b) Mirror gate in `jarvis/brain/manager.py`** — `_should_force_spawn` already runs verb-classification. Add a sibling `_capability_resolves(text) -> bool` check. If `has_action_intent AND not _capability_resolves AND not _is_smalltalk`:
 - Skip both brain and Jarvis-Agents spawn.
 - Emit `_unsupported_response(text)` via the same TTS path as a normal short reply.
 

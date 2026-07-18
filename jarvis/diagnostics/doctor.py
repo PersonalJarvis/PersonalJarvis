@@ -1,7 +1,7 @@
 """Completeness self-check ("doctor") — honestly report what is registered and
 ready vs. what is advertised but missing.
 
-Motivation (forensic 2026-06-28): a phantom ``openclaw`` harness (advertised in a
+Motivation (forensic 2026-06-28): a phantom ``jarvis-agent`` harness (advertised in a
 tool description + an ``[harness.openclaw].enabled = true`` config block, but never
 registered as an entry-point) made Jarvis claim a sub-agent feature was "not
 available / not installed" — even though the real sub-agent path (``spawn_worker``
@@ -13,7 +13,7 @@ against what is actually registered/installed, and reports honestly:
 
   * **router tools** — every name in ``ROUTER_TOOLS`` must resolve to a registered
     entry-point (or a known non-entry-point tool). A name that resolves to neither
-    is a PHANTOM (the dispatch-to-harness/openclaw class of bug).
+    is a PHANTOM (the dispatch-to-harness/jarvis-agent class of bug).
   * **harness config** — any harness enabled in ``jarvis.toml`` must be a
     registered harness; an enabled-but-unregistered harness is inert dead config.
   * **sub-agent backend** — the sub-agent code ships in the base install, but the
@@ -91,7 +91,7 @@ def check_router_tools() -> list[DoctorFinding]:
     known non-entry-point router tool (the Phase-7 self-mod tools, registered
     directly in the loader). A name that resolves to NEITHER is a phantom: the
     brain is told the tool exists, but it can never load — the exact shape of the
-    dispatch-to-harness/openclaw bug.
+    dispatch-to-harness/jarvis-agent bug.
     """
     try:
         from jarvis.brain.factory import (

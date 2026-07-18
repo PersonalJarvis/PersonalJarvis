@@ -697,7 +697,7 @@ def test_computer_use_in_router_tools() -> None:
 
     The router reaches the live desktop ONLY when this entry-point name is in
     the frozenset — the loader filters entry-points against ROUTER_TOOLS.
-    Without it the brain has no honest desktop path: spawn-openclaw runs in an
+    Without it the brain has no honest desktop path: spawn-worker runs in an
     isolated worktree (cannot touch the desktop) and the dispatch-to-harness
     indirection was never described as desktop control, so the model refused or
     invented a tool for "öffne ein Terminal".
@@ -1052,9 +1052,9 @@ def test_router_tools_stays_frozenset() -> None:
 def test_dispatch_to_harness_not_in_router_tools() -> None:
     """``dispatch-to-harness`` must NOT be an LLM-visible router tool.
 
-    Phantom-openclaw regression (forensic 2026-06-28): the tool's raw ``harness``
-    parameter let the brain request ``harness="openclaw"`` — an unregistered
-    harness (Welle-4 removal) — which surfaced a raw "Harness not available"
+    Phantom-harness regression (forensic 2026-06-28): the tool's raw ``harness``
+    parameter let the brain request the retired ``harness="openclaw"`` — an
+    unregistered harness (Welle-4 removal) — which surfaced a raw "Harness not available"
     KeyError to voice. Heavy sub-agent work is ``spawn-worker``; live desktop
     work is ``computer-use``. The tool class still exists for the INTERNAL
     local-action fast path, but it must never be router-selectable again.
@@ -1130,8 +1130,8 @@ def test_spawn_worker_in_router_tools() -> None:
 
     Welle-4-Migration: vorher pruefte der Test zusaetzlich dass das alte
     Tool NICHT in ``SUB_TOOLS`` landet (D9-Recursion-Schutz). ``SUB_TOOLS``
-    ist nach der OpenClaw-Bridge-Migration geloescht (siehe
-    docs/openclaw-bridge.md §11) — Recursion-Schutz wird jetzt auf
+    ist nach der Jarvis-Agent-Bridge-Migration geloescht (siehe
+    docs/jarvis-agents-bridge.md §11) — Recursion-Schutz wird jetzt auf
     Mission-Manager-Ebene durchgesetzt (Worker hat keinen Spawn-Tool-
     Zugriff).
     """
@@ -1771,7 +1771,7 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             "spawn-worker",
             # NB: ``dispatch-to-harness`` was REMOVED from the LLM-visible router
             # set on 2026-06-28 (ADR-0011 amendment "dispatch-to-harness removal").
-            # Its raw ``harness`` param let the brain request a phantom
+            # Its raw ``harness`` param let the brain request a phantom, retired
             # ``harness="openclaw"`` (unregistered, Welle-4 removal), surfacing a
             # raw "Harness not available" KeyError to voice. Heavy work →
             # spawn-worker, desktop → computer-use. It must NOT reappear here;
@@ -1885,7 +1885,7 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
         f"{sorted(expected)}. Persona-Mandat Phase 3 + Master-Plan §22 + "
         "ADR-0011 (inkl. Phase-7/8/Awareness-Erweiterungen + Welle-4-Migration). "
         "Direkt-Aktionen wie open_app/type_text/whoami DUERFEN NICHT "
-        "hinzu — die gehoeren an die OpenClaw-Bridge. Sanktionierte Ausnahmen "
+        "hinzu — die gehoeren an die Jarvis-Agent-Bridge. Sanktionierte Ausnahmen "
         "sind deterministische Tools mit eigenem ADR-0011-Eintrag "
         "(wiki-ingest, update-profile, search-web)."
     )
@@ -2798,10 +2798,11 @@ def test_is_heavy_research_stays_inline(utterance: str) -> None:
 # ---------------------------------------------------------------------------
 # User mandate (2026-06-15): "When I say subagent, it HAS to spawn a subagent."
 #
-# An EXPLICIT heavy-work trigger ("subagent", "spawn", "openclaw", "delegate",
-# …) names the execution vehicle — it is an UNAMBIGUOUS spawn request and must
-# outrank the disambiguation guards that exist only to suppress AMBIGUOUS,
-# implicit spawns: the instructional/pointer/navigation/smalltalk/open-app
+# An EXPLICIT heavy-work trigger ("subagent", "spawn", "jarvis-agent",
+# "openclaw" legacy alias, "delegate", …) names the execution vehicle — it is
+# an UNAMBIGUOUS spawn request and must outrank the disambiguation guards
+# that exist only to suppress AMBIGUOUS, implicit spawns: the
+# instructional/pointer/navigation/smalltalk/open-app
 # guards in ``_should_force_spawn`` AND, end-to-end through ``generate()``, the
 # capability "I can't do that" refusal and the navigation fast-path. The bug:
 # those guards were checked BEFORE the explicit-trigger check, so a phrasing

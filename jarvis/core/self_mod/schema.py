@@ -32,14 +32,14 @@ class AuditSource(StrEnum):
 class AuditActor(StrEnum):
     """Logical initiator in the sense of the plan field `requested_by`.
 
-    Wave-4 migration: ``SUB_JARVIS`` renamed to ``OPENCLAW`` (see
-    docs/openclaw-bridge.md §11). Alias is retained for backwards compatibility
-    of historical audit entries.
+    The internal system is named Jarvis-Agent. ``JARVIS_AGENT`` keeps its
+    legacy string value so historical audit entries already containing
+    ``requested_by: "openclaw"`` keep parsing.
     """
 
     HAUPTJARVIS = "hauptjarvis"
-    OPENCLAW = "openclaw"
-    SUB_JARVIS = "sub-jarvis"  # legacy, ehemalige Sub-Jarvis-Tier-Eintraege
+    JARVIS_AGENT = "openclaw"  # legacy value; old audit rows keep parsing
+    SUB_JARVIS = "sub-jarvis"  # legacy: former Sub-Jarvis-tier entries
     USER = "user"
     SYSTEM = "system"
 

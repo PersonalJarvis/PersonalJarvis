@@ -60,7 +60,8 @@ Token cost per failed spawn: ~40k tokens × 4 providers ≈ $0.13.
   `success=False, duration_ms=5, error="one or more sections with non-zero exit"`. Production logs show 3× HarnessDispatched, NO
   HarnessProgress, NO HarnessCompleted.
 - **Root cause**: `HarnessManager.get(name)` cached ONE
-  `OpenClawHarness` instance. `SubprocessHarness.invoke()` wrote
+  `JarvisAgentHarness` (that harness class has since been removed;
+  `SubprocessHarness` is the current base class) instance. `SubprocessHarness.invoke()` wrote
   `self._process` and `self._cancelled` as instance state. With
   3 parallel `invoke()` calls on the same singleton instance:
   - Call A writes `self._process = procA`.
@@ -1950,8 +1951,8 @@ See also: `docs/anti-drift-three-layer.md` for the general pattern.
   `finish_reason=suppress_response` and `text_len=0`, immediately
   followed by `ActionExecuted tool_name=spawn_openclaw success=true
   duration_ms=2`, then `SystemStateChanged THINKING -> LISTENING`.
-  No `OpenClawBackgroundCompleted` event ever fires, so the speech
-  pipeline has nothing to read back.
+  No `OpenClawBackgroundCompleted` (since renamed `JarvisAgentBackgroundCompleted`)
+  event ever fires, so the speech pipeline has nothing to read back.
 - **Root cause:** `spawn_openclaw` only called
   `MissionManager.dispatch()`, which persists the mission as PENDING
   and publishes `MissionDispatched`. Nothing in the voice path called
@@ -1984,13 +1985,13 @@ See also: `docs/anti-drift-three-layer.md` for the general pattern.
   1. Add a `Kontrollierer` singleton + setter in `jarvis/brain/factory.py`
      mirroring `set_mission_manager` (`set_kontrollierer`,
      `_resolve_kontrollierer`, `_KONTROLLIERER_REF`).
-  2. Plumb a `kontrollierer_resolver` into `SpawnOpenClawTool`. The
+  2. Plumb a `kontrollierer_resolver` into `SpawnOpenClawTool` (since renamed `SpawnWorkerTool`). The
      background dispatch now calls `kontrollierer.run_mission(mission_id)`
      after the persist step, mirroring the REST path.
   3. Register both setters in `jarvis/ui/web/server.py::_init_mission_stack`
      after `bootstrap_missions()` returns.
   4. New regression tests in
-     `tests/integration/test_openclaw_lazy_bootstrap.py`:
+     `tests/integration/test_worker_lazy_bootstrap.py` (renamed from `test_openclaw_lazy_bootstrap.py`):
      - `test_voice_path_triggers_kontrollierer_run_mission` — voice
        path must call both `dispatch` and `run_mission`.
      - `test_voice_path_no_kontrollierer_logs_warning` — graceful
@@ -2021,7 +2022,7 @@ See also: `docs/anti-drift-three-layer.md` for the general pattern.
      "what objects cross from app.state into the brain factory" would
      have caught this before it shipped.
 - **Regression guard:** the three new asserts in
-  `tests/integration/test_openclaw_lazy_bootstrap.py` cover the happy
+  `tests/integration/test_worker_lazy_bootstrap.py` (renamed from `test_openclaw_lazy_bootstrap.py`) cover the happy
   path, the early-bootstrap fallback, and the orchestrator-crash
   fallback. The full lazy-bootstrap suite is now 9 tests; the broader
   factory-wiring + routing + manager-commands sweep stays green at 84
@@ -2366,7 +2367,7 @@ analysis and the three-layer fix.
      `resolve_intent` returns `None`, return `LocalActionMode.UNSUPPORTED`
      with the deterministic response. The brain is never called.
    - `jarvis/brain/manager.py` — sibling `_capability_resolves(text)` check
-     alongside `_should_force_openclaw`. If action-intent and no matching
+     alongside `_should_force_spawn`. If action-intent and no matching
      capability and not smalltalk: skip brain + Jarvis-Agent, emit UNSUPPORTED.
 
 3. **Dynamic system prompt.** The hardcoded `NUTZE: search_web` block is

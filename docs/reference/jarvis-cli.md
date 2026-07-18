@@ -121,8 +121,8 @@ curl -s http://127.0.0.1:47821/api/voice-bridge/health
 ## Skill runner: ``jarvis-skills``
 
 CLI frontend to the ``SkillRegistry`` — lists, inspects, runs skills,
-imports external OpenClaw skills, and promotes Jarvis-Agent-authored
-drafts to ``state=active``.
+imports external `openclaw` (Claude-Code-compatible) skills, and promotes
+Jarvis-Agent-authored drafts to ``state=active``.
 
 **Synopsis:**
 
@@ -136,7 +136,7 @@ jarvis-skills (--list | --info NAME | --run NAME |
 | ``--list`` | Table of all skills (name, version, state, triggers). |
 | ``--info NAME`` | Full detail for a skill: frontmatter, triggers, tools, resources, risk tier. |
 | ``--run NAME`` | Run a skill (requires an MCP connection context). |
-| ``--import-claude-skills PATH`` | Imports Anthropic-OpenClaw skills from a directory into the user skill repo. |
+| ``--import-claude-skills PATH`` | Imports skills from the external `openclaw` CLI's skill directory into the user skill repo. |
 | ``--list-drafts`` | List Jarvis-Agent-authored drafts (``state=draft``). |
 | ``--promote SLUG`` | Promote a draft skill to ``state=active`` — user-explicit activation with a security lint of the skill body. |
 

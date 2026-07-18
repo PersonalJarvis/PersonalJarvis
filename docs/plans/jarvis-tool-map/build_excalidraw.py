@@ -372,7 +372,7 @@ def region_core():
     begin_room()
     core = [
         ("BrainManager.generate()", "intent-router + fallback + force-spawn (manager.py:1519)", "brain", "core.bm"),
-        ("_should_force_openclaw", "smalltalk>verb>marker, strict default (manager.py:1088)", "brain", "core.fs"),
+        ("_should_force_spawn", "smalltalk>verb>marker, strict default (manager.py:1088)", "brain", "core.fs"),
         ("local_action_fast_path", "deterministic local tool, NO LLM (manager.py:1179)", "brain", "core.local"),
         ("ROUTER tier (single)", "sub-jarvis deleted Welle4; only 'router' (factory.py:119)", "brain", "core.router"),
         ("ROUTER_TOOLS frozenset", "13 + 3 self-mod = 16 live tools (factory.py:40)", "info", "core.rt"),
@@ -407,7 +407,7 @@ def region_flow():
         ("6 · local_action_gate", "deterministic local tool, no LLM", "flow"),
         ("7 · force-spawn OR LLM router", "heavy worker  OR  ROUTER_TOOLS tool-use loop", "flow"),
         ("8 · Tool dispatch", "ToolExecutor.execute -> ActionExecuted", "flow"),
-        ("8b · Worker spawn (heavy)", "spawn_openclaw -> Mission/Kontrollierer", "flow"),
+        ("8b · Worker spawn (heavy)", "spawn-worker -> Mission/Kontrollierer", "flow"),
         ("9 · Result aggregate", "ResponseGenerated / BackgroundCompleted", "flow"),
         ("10 · scrub_for_voice", "regex-only, NO LLM (AP-11)", "flow"),
         ("11 · TTS -> audio", "_speak -> synthesize -> WASAPI out", "flow"),
@@ -446,7 +446,7 @@ def region_catalog():
             ("screen-snapshot", "monitor · screen capture (screen_snapshot.py:92)", "live"),
             ("dispatch-to-harness", "monitor · route to harness (dispatch_to_harness.py)", "live"),
             ("multi-spawn", "monitor · parallel spawns (multi_spawn.py)", "live"),
-            ("spawn-openclaw", "monitor · spawn Mission (spawn_openclaw.py:124)", "live", "cat.spawn"),
+            ("spawn-worker", "monitor · spawn Mission (spawn_worker.py:124)", "live", "cat.spawn"),
             ("dispatch-with-review", "monitor · quality-gate pipeline (dispatch_with_review.py)", "live"),
             ("awareness-snapshot", "safe · sync state read (awareness_snapshot.py:42)", "live"),
             ("awareness-recall", "safe · FTS5/BM25 episodes (awareness_recall.py:82)", "live"),
@@ -512,7 +512,7 @@ def region_mission():
     global Y
     begin_room()
     chain = [
-        ("spawn_openclaw tool", "router tool, dispatch+run (spawn_openclaw.py:116)", "live", "m.entry"),
+        ("spawn-worker tool", "router tool, dispatch+run (spawn_worker.py:116)", "live", "m.entry"),
         ("MissionManager.dispatch()", "upsert PENDING + MissionDispatched (manager.py:84)", "live"),
         ("MissionEventStore", "SQLite append_and_publish, source-of-truth", "live"),
         ("startup_recover", "stale non-terminal -> FAILED on boot (recovery.py:23)", "live"),
@@ -546,7 +546,7 @@ def region_mission():
         return grid(chain, cx, cy, w - 150, 5, gx=22, gy=28)
 
     Y = room("HEAVY WORK · Phase-6 Mission / Critic loop (self-healing)",
-             "spawn_openclaw -> isolated worktree worker -> Critic (<=3 loops) -> Kontrollierer signs -> voice reads ONLY signed summary_de",
+             "spawn-worker -> isolated worktree worker -> Critic (<=3 loops) -> Kontrollierer signs -> voice reads ONLY signed summary_de",
              T_MISSION, MARGIN, Y, PAGE_W, content, key="mission") + GAP
     a = ANCHORS
     if "m.loop" in a and "m.verdict" in a:
@@ -627,10 +627,10 @@ def region_features():
             ("AD-OE6 zero silent drops", "always-speak guards live, taxonomy partial", "partial"),
             ("LatencyTracker (Wave 0)", "fire-and-forget spans, NO p95 CI gate (telemetry/latency.py:35)", "partial"),
         ]),
-        ("OpenClaw bridge (harness)", [
-            ("OpenClawHarness plugin", "registered but DORMANT live_mode=False (openclaw.py:164)", "partial"),
+        ("Jarvis-Agent bridge (harness)", [
+            ("Jarvis-Agent harness plugin", "removed in Welle-4 (was registered but DORMANT live_mode=False, formerly openclaw.py:164)", "partial"),
             ("Welle 1 spike", "provider_map + spawn-arg done", "live"),
-            ("Welle 2 live bridge", "invoke() returns mock string (openclaw.py:416)", "open"),
+            ("Welle 2 live bridge", "invoke() returns mock string (formerly openclaw.py:416, file removed)", "open"),
             ("Welle 3 live subprocess", "factory+JobObject exist, never armed", "partial"),
             ("Welle 4 sub-jarvis deleted", "only 'router' tier (factory.py:121)", "live"),
             ("ACTUAL worker = claude-cli", "voice uses claude_direct_worker, not the plugin", "live"),
@@ -734,8 +734,8 @@ def region_bus():
         ("ActionProposed/Approved/Executed", "tool lifecycle (events.py:125)", "evt"),
         ("ToolCallStarted/Completed", "tool dispatch telemetry (events.py:809)", "evt"),
         ("ResponseGenerated", "brain output text+lang (events.py:178)", "evt"),
-        ("OpenClawTaskStarted/Completed", "worker mission lifecycle (events.py:651)", "evt"),
-        ("OpenClawBackgroundCompleted", "proactive readback trigger (events.py:824)", "evt"),
+        ("JarvisAgentTaskStarted/Completed", "worker mission lifecycle (events.py:651)", "evt"),
+        ("JarvisAgentBackgroundCompleted", "proactive readback trigger (events.py:824)", "evt"),
         ("AnnouncementRequested", "preamble/info -> TTS (events.py:296)", "evt"),
         ("SystemStateChanged", "IDLE/LISTENING/THINKING/SPEAKING (events.py:226)", "evt"),
         ("BrainProviderSwitched", "runtime switch (events.py:92)", "evt"),
@@ -759,7 +759,7 @@ def evidence_panel():
     snippets = [
         ("ROUTER_TOOLS frozenset  (jarvis/brain/factory.py:40)",
          'ROUTER_TOOLS = frozenset({\n  "run-shell","screen-snapshot","dispatch-to-harness",\n'
-         '  "multi-spawn","spawn-openclaw","dispatch-with-review",\n'
+         '  "multi-spawn","spawn-worker","dispatch-with-review",\n'
          '  "awareness-snapshot","awareness-recall","run-skill",\n'
          '  "wiki-recall","wiki-page-read","wiki-ingest"})\n'
          '# + 3 self-mod tools = 16 live router tools'),
@@ -830,7 +830,7 @@ def region_gap_connectors():
         ("input", "core", "transcript -> brain"),
         ("core", "flow", "generate() sequence"),
         ("flow", "catalog", "ROUTER_TOOLS tool-use"),
-        ("catalog", "mission", "spawn-openclaw -> Mission"),
+        ("catalog", "mission", "spawn-worker -> Mission"),
         ("mission", "memory", "facts written / recalled"),
     ]
     for a_, b_, lab in seq:

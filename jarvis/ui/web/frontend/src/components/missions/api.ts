@@ -10,7 +10,7 @@ import type {
   MissionSummary,
   MissionToolApprovalDecision,
   MissionToolApprovalsResponse,
-  OpenClawWorkerSnapshot,
+  JarvisAgentWorkerSnapshot,
 } from "@/types/missions";
 
 export interface MissionsListResponse {
@@ -41,7 +41,7 @@ export async function fetchMissionDetail(id: string): Promise<MissionDetail> {
     events
       .filter((e) => e.payload.event_type === "CriticVerdictReady")
       .map((e) => e.payload as CriticVerdictReady);
-  const worker_snapshots: OpenClawWorkerSnapshot[] =
+  const worker_snapshots: JarvisAgentWorkerSnapshot[] =
     Array.isArray(data.worker_snapshots) ? data.worker_snapshots : [];
   return { mission: data.mission, events, verdicts, worker_snapshots };
 }

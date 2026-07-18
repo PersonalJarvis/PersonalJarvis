@@ -101,11 +101,11 @@ class TriggerMatcher:
 
     @staticmethod
     def _is_matchable(sk: Skill) -> bool:
-        """Skill darf nur triggern wenn er ACTIVE oder VALIDATED ist.
+        """A skill may only trigger when it is ACTIVE or VALIDATED.
 
-        DRAFT-Skills haben Parser-/Validator-Fehler oder sind OpenClaw-
-        generierte Entwuerfe (Phase 7.5) — die duerfen niemals automatisch
-        feuern. DISABLED-Skills hat der User explizit ausgeschaltet.
+        DRAFT skills either have parser/validator errors or are
+        Jarvis-Agent-generated drafts (Phase 7.5) — those must never fire
+        automatically. DISABLED skills were explicitly turned off by the user.
         """
         return sk.state in (
             SkillLifecycleState.ACTIVE,

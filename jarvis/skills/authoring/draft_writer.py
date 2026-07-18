@@ -1,6 +1,6 @@
 """Writes skill drafts into the user-skills directory with forced state=draft.
 
-Plan-§AD-8: `draft_writer` forces `state=draft`, even if OpenClaw-Author
+Plan-§AD-8: `draft_writer` forces `state=draft`, even if Jarvis-Agent-Author
 incorrectly sets `state=active` in the frontmatter. Plan-§AP-6: no
 auto-activation — the user must explicitly promote via the UI / CLI.
 
@@ -304,12 +304,12 @@ def _render_skill_md(draft: SkillDraft) -> str:
         "version": "0.1.0",
         "description": draft.description,
         "category": draft.category,
-        "tags": ["openclaw-authored"],
-        "author": "openclaw",
+        "tags": ["jarvis-agent-authored"],
+        "author": "jarvis-agent",
         "license": "MIT",
         "triggers": triggers_parsed,
         "requires_tools": draft.requires_tools,
-        # **HARDCODED**: Plan-§AD-8 — the OpenClaw-Author output `state` is discarded.
+        # **HARDCODED**: Plan-§AD-8 — the Jarvis-Agent-Author output `state` is discarded.
         "state": "draft",
     }
     yaml_text = yaml.safe_dump(
@@ -323,10 +323,10 @@ def write_draft(
     *,
     user_skills_root: Path | None = None,
 ) -> DraftWriteResult:
-    """Writes an OpenClaw-Author draft as SKILL.md.
+    """Writes a Jarvis-Agent-Author draft as SKILL.md.
 
     Plan-§7.5 pipeline step 6: state=draft is ALWAYS forced. If
-    the OpenClaw-Author draft outputs `state != "draft"`, we note the
+    the Jarvis-Agent-Author draft outputs `state != "draft"`, we note the
     override in the result (`forced_state_override=True`) — the caller
     writes that to the audit.
     """

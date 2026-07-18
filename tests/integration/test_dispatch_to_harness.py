@@ -35,16 +35,16 @@ def ctx():
 async def test_single_harness_success(ctx):
     bus = EventBus()
     mgr = _make_manager_with_fakes(bus, {
-        "openclaw": FakeHarness(scripted_output="Build succeeded."),
+        "harness-a": FakeHarness(scripted_output="Build succeeded."),
     })
     tool = DispatchToHarnessTool(bus=bus, manager=mgr, max_output_chars=4000)
 
     result = await tool.execute(
-        {"harness": "openclaw", "prompt": "Check the build."},
+        {"harness": "harness-a", "prompt": "Check the build."},
         ctx,
     )
     assert result.success is True
-    assert result.output["harness"] == "openclaw"
+    assert result.output["harness"] == "harness-a"
     assert "Build succeeded." in result.output["stdout"]
 
 
@@ -65,22 +65,22 @@ async def test_harness_failure_returns_error(ctx):
 async def test_parallel_harnesses_aggregate(ctx):
     bus = EventBus()
     mgr = _make_manager_with_fakes(bus, {
-        "openclaw": FakeHarness(scripted_output="claude-out"),
+        "harness-a": FakeHarness(scripted_output="claude-out"),
         "codex": FakeHarness(scripted_output="codex-out"),
     })
     tool = DispatchToHarnessTool(bus=bus, manager=mgr)
 
     result = await tool.execute(
         {
-            "harness": "openclaw",  # ignored wenn parallel_harnesses gesetzt
+            "harness": "harness-a",  # ignored when parallel_harnesses is set
             "prompt": "same task",
-            "parallel_harnesses": ["openclaw", "codex"],
+            "parallel_harnesses": ["harness-a", "codex"],
         },
         ctx,
     )
     assert result.success is True
     combined = result.output["combined"]
-    assert "openclaw" in combined
+    assert "harness-a" in combined
     assert "codex" in combined
     assert "claude-out" in combined
     assert "codex-out" in combined
@@ -89,7 +89,7 @@ async def test_parallel_harnesses_aggregate(ctx):
 @pytest.mark.asyncio
 async def test_missing_prompt_fails(ctx):
     tool = DispatchToHarnessTool(bus=EventBus(), manager=HarnessManager())
-    result = await tool.execute({"harness": "openclaw", "prompt": ""}, ctx)
+    result = await tool.execute({"harness": "harness-a", "prompt": ""}, ctx)
     assert result.success is False
 
 
@@ -109,7 +109,7 @@ async def test_unknown_harness_returns_neutral_error_no_inventory_leak(ctx):
     })
     tool = DispatchToHarnessTool(bus=bus, manager=mgr)
 
-    result = await tool.execute({"harness": "openclaw", "prompt": "x"}, ctx)
+    result = await tool.execute({"harness": "harness-a", "prompt": "x"}, ctx)
     assert result.success is False
     err = result.error or ""
     # No internal inventory leak — neither the registered harness names nor the

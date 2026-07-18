@@ -1,6 +1,6 @@
 """Integration-Test: MultiSpawnTool (CL-10, Phase 5).
 
-Uses FakeHarness instead of a real openclaw/codex CLI. HarnessManager is
+Uses FakeHarness instead of a real jarvis-agent/codex CLI. HarnessManager is
 equipped with injected fakes so tests run deterministically and
 offline.
 """
@@ -39,16 +39,16 @@ def ctx():
 
 
 @pytest.mark.asyncio
-async def test_three_parallel_openclaw_calls(ctx):
-    """3 parallele openclaw-Calls → aggregated output hat 3 Sections."""
+async def test_three_parallel_jarvis_agent_calls(ctx):
+    """3 parallel jarvis-agent calls → aggregated output has 3 sections."""
     bus = EventBus()
     fake = FakeHarness(scripted_output="branch-A done\n")
-    mgr = _make_manager_with_fake(bus, "openclaw", fake)
+    mgr = _make_manager_with_fake(bus, "jarvis_agent", fake)
     tool = MultiSpawnTool(bus=bus, manager=mgr, max_output_chars=8000)
 
     result = await tool.execute(
         {
-            "harness": "openclaw",
+            "harness": "jarvis_agent",
             "prompts": [
                 "write the tests for module X",
                 "write the implementation for module X",
@@ -73,12 +73,12 @@ async def test_aggregation_merge_joins_all_outputs(ctx):
     """Merge-Mode konkateniert alle Section-Outputs mit '---'-Separator."""
     bus = EventBus()
     fake = FakeHarness(scripted_output="shared-body")
-    mgr = _make_manager_with_fake(bus, "openclaw", fake)
+    mgr = _make_manager_with_fake(bus, "jarvis_agent", fake)
     tool = MultiSpawnTool(bus=bus, manager=mgr)
 
     result = await tool.execute(
         {
-            "harness": "openclaw",
+            "harness": "jarvis_agent",
             "prompts": ["p1", "p2"],
             "aggregation": "merge",
         },
@@ -97,12 +97,12 @@ async def test_aggregation_first_success_returns_first_ok(ctx):
     """first_success mode returns only the winning section."""
     bus = EventBus()
     fake = FakeHarness(scripted_output="winner-output")
-    mgr = _make_manager_with_fake(bus, "openclaw", fake)
+    mgr = _make_manager_with_fake(bus, "jarvis_agent", fake)
     tool = MultiSpawnTool(bus=bus, manager=mgr)
 
     result = await tool.execute(
         {
-            "harness": "openclaw",
+            "harness": "jarvis_agent",
             "prompts": ["p1", "p2", "p3"],
             "aggregation": "first_success",
         },
@@ -123,12 +123,12 @@ async def test_output_cap_truncates_large_outputs(ctx):
     bus = EventBus()
     big_body = "x" * 5000
     fake = FakeHarness(scripted_output=big_body)
-    mgr = _make_manager_with_fake(bus, "openclaw", fake)
+    mgr = _make_manager_with_fake(bus, "jarvis_agent", fake)
     tool = MultiSpawnTool(bus=bus, manager=mgr, max_output_chars=8000)
 
     result = await tool.execute(
         {
-            "harness": "openclaw",
+            "harness": "jarvis_agent",
             "prompts": ["p1", "p2", "p3"],
             "aggregation": "merge",
         },
@@ -171,7 +171,7 @@ async def test_missing_harness_fails(ctx):
 async def test_too_few_prompts_fails(ctx):
     tool = MultiSpawnTool(manager=HarnessManager())
     result = await tool.execute(
-        {"harness": "openclaw", "prompts": ["only-one"]},
+        {"harness": "jarvis_agent", "prompts": ["only-one"]},
         ctx,
     )
     assert result.success is False
@@ -183,12 +183,12 @@ async def test_merge_failure_propagates(ctx):
     """When a section exit != 0, success=False is set."""
     bus = EventBus()
     fake = FakeHarness(fail=True)
-    mgr = _make_manager_with_fake(bus, "openclaw", fake)
+    mgr = _make_manager_with_fake(bus, "jarvis_agent", fake)
     tool = MultiSpawnTool(bus=bus, manager=mgr)
 
     result = await tool.execute(
         {
-            "harness": "openclaw",
+            "harness": "jarvis_agent",
             "prompts": ["p1", "p2"],
             "aggregation": "merge",
         },

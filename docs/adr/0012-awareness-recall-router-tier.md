@@ -16,7 +16,7 @@ the latency-sensitive router should not perform.
 
 Welle 4 deleted the Jarvis-Agent tier in its entirety
 (`jarvis/brain/factory.py:90-103`). Heavy work is now executed by
-external Jarvis-Agent subprocesses spawned via `spawn_openclaw`. Those
+external Jarvis-Agent subprocesses spawned via `spawn_worker`. Those
 subprocesses run their own Jarvis-Agent instances and do **not** inherit
 the Jarvis in-process tool registry — they can only call the tools that
 the Jarvis-Agent itself exposes (`Bash`, `Read`, `Grep`, MCP servers, etc.).
@@ -46,7 +46,7 @@ and `StoryTracker`, so no new dependency is introduced.
 
 If the router brain decides to delegate work to a Jarvis-Agent worker
 after recalling, it may bake the recall result into the worker's
-`context_hints` field on the `spawn_openclaw` call. That follow-up is
+`context_hints` field on the `spawn_worker` call. That follow-up is
 out of scope for the initial A3 wave but the placement chosen here does
 not block it.
 
@@ -58,7 +58,7 @@ not block it.
   override.
 - **Router tier gains its first non-trivial IO tool.** Up to now the
   router-tier tools were either pure state reads (`awareness-snapshot`,
-  `whoami`) or dispatchers (`spawn_openclaw`, `dispatch-to-harness`).
+  `whoami`) or dispatchers (`spawn_worker`, `dispatch-to-harness`).
   `awareness-recall` performs one SQLite query. The latency budget set
   in the plan (p95 < 300 ms on 1000 episodes) is generous; the unit
   test enforces p95 < 300 ms on 100 episodes as a CI-friendly bound.
@@ -71,7 +71,7 @@ not block it.
 - **Recursion-protection is structural.** Because Jarvis-Agent workers
   cannot reach `awareness-recall` at all (no MCP bridge exposes it),
   there is no risk of a recursive spawn chain — analogous to how
-  `spawn_openclaw` itself is intentionally absent from any worker tool
+  `spawn_worker` itself is intentionally absent from any worker tool
   set.
 
 ## Alternatives Considered

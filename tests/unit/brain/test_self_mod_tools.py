@@ -596,11 +596,11 @@ class TestToolVisibility:
 
         Wave-4 migration: previously the test checked ``SUB_TOOLS`` (the
         sub-Jarvis-tier tool set). The sub-Jarvis tier was replaced by the
-        OpenClaw bridge (see docs/openclaw-bridge.md §11) — ``SUB_TOOLS``
-        has been deleted. Self-mod tools are now registered directly in the
-        router loader (``factory.py:_load_tools_for_tier`` with
-        ``tier="router"``), and the OpenClaw worker has no access to the
-        router's tool set (subprocess boundary).
+        Jarvis-Agent bridge (see docs/jarvis-agents-bridge.md §11) —
+        ``SUB_TOOLS`` has been deleted. Self-mod tools are now registered
+        directly in the router loader (``factory.py:_load_tools_for_tier``
+        with ``tier="router"``), and the Jarvis-Agent worker has no access
+        to the router's tool set (subprocess boundary).
         """
         from jarvis.brain.factory import ROUTER_TOOLS, SELF_MOD_TOOL_NAMES_ROUTER
 

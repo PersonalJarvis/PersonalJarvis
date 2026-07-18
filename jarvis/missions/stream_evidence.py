@@ -282,7 +282,7 @@ def extract_stream_evidence(
 
 
 # Tool names that materialise a file on disk. Covers the claude-direct worker
-# (`Write`/`Edit`/`MultiEdit`/`NotebookEdit`) and the OpenClaw / generic
+# (`Write`/`Edit`/`MultiEdit`/`NotebookEdit`) and the Jarvis-Agent / generic
 # variants (`file_write`/`write_file`/`create_file`). Matched case-sensitively
 # against the stream's `tool_use.name`.
 _WRITE_TOOL_NAMES: frozenset[str] = frozenset({
@@ -393,7 +393,7 @@ def extract_write_targets(stream_text: str) -> tuple[str, ...]:
 
 
 # Shell-execution tool names across the worker backends (claude-direct `Bash`,
-# OpenClaw / codex / generic variants). Matched case-sensitively against
+# Jarvis-Agent / codex / generic variants). Matched case-sensitively against
 # `tool_use.name`.
 _SHELL_TOOL_NAMES: frozenset[str] = frozenset({
     "Bash",

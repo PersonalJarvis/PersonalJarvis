@@ -7,10 +7,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class SkillDraft(BaseModel):
-    """Strict-typed OpenClaw-Author-Output.
+    """Strict-typed Jarvis-Agent-Author-Output.
 
-    Wave-4 migration: previously Sub-Jarvis output. Now OpenClaw worker
-    (see docs/openclaw-bridge.md §11). Schema stays 1:1.
+    Wave-4 migration: previously Sub-Jarvis output. Now Jarvis-Agent worker
+    (see docs/jarvis-agents-bridge.md §11). Schema stays 1:1.
 
     The worker delivers a complete skill specification. Plan §7.5: on a
     parse error the authoring attempt fails and writes an

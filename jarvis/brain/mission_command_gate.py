@@ -1,8 +1,8 @@
-"""MissionCommandGate — pattern matcher for OpenClaw mission meta-commands.
+"""MissionCommandGate — pattern matcher for Jarvis-Agent mission meta-commands.
 
-AD-12 + AP-OC5 (see ``docs/openclaw-bridge.md``): status phrases
+AD-12 + AP-OC5 (see ``docs/jarvis-agents-bridge.md``): status phrases
 ("laeuft das noch?", "wie weit?", "Status?") and stop phrases ("brich ab",  # i18n-allow
-"stop OpenClaw") MUST NOT lead to a new spawn — the router brain must
+"stop openclaw") MUST NOT lead to a new spawn — the router brain must
 detect them deterministically via regex, otherwise there is a risk of
 (a) latency from LLM tool-choice and (b) hallucination ("ja klar laeuft  # i18n-allow
 das noch" even though the mission is dead).  # i18n-allow
@@ -16,7 +16,7 @@ Architecture:
   match incorrectly.
 - Optional: extract mission ID if the user explicitly names a mission
   ("status mission abc123" / "stop mission xyz"). Default is
-  None = "applies to all active OpenClaw missions".
+  None = "applies to all active Jarvis-Agent missions".
 - Result is a lightweight frozen dataclass; the caller
   (``BrainManager.generate``) maps it to a Mission-Manager read or cancel.
 
@@ -24,7 +24,7 @@ Comparison to ``voice_command_gate.match_voice_command``:
   The voice-command gate handles global meta-commands (provider switch,
   general cancel, depth override) that already take effect in
   ``BrainManager.generate`` before the force-spawn check. This module is
-  narrower: only OpenClaw/mission-specific status and stop requests that
+  narrower: only Jarvis-Agent/mission-specific status and stop requests that
   would otherwise be misinterpreted as spawn verbs ("brich ab" would
   otherwise be treated as an action verb and trigger a new sub-spawn).
 """
@@ -106,15 +106,15 @@ _STATUS_PATTERN_EN = re.compile(
 
 # --- Cancel phrases -----------------------------------------------------------
 #
-# Match: "brich ab", "brich die Mission ab", "stop OpenClaw",
-# "stoppe die Mission", "abbrechen", "cancel OpenClaw",  # i18n-allow
+# Match: "brich ab", "brich die Mission ab", "stop openclaw",
+# "stoppe die Mission", "abbrechen", "cancel openclaw",  # i18n-allow
 # "kill the mission".
 #
 # Important: the existing ``voice_command_gate._CANCEL_PATTERN`` already
 # matches a generic "stopp / cancel / abbruch" at the sentence start —
 # that is relied on for background-cancelling sub-Jarvis tasks.
 # This module focuses specifically on **mission-cancel intent**:
-# explicit mention of "Mission" / "OpenClaw" / "den Auftrag" /
+# explicit mention of "Mission" / "openclaw" / "den Auftrag" /
 # "the task". When both match, MissionCommandMatch wins (narrower scope).
 _CANCEL_PATTERN_DE = re.compile(
     r"""
@@ -179,12 +179,12 @@ _MISSION_ID_PATTERN = re.compile(
 
 @dataclass(frozen=True, slots=True)
 class MissionCommandMatch:
-    """Result of a recognised OpenClaw mission meta-command.
+    """Result of a recognised Jarvis-Agent mission meta-command.
 
     Fields:
       intent: ``"status"`` or ``"cancel"``.
       mission_id: optional, present when the user explicitly names an ID.
-        ``None`` = "all active OpenClaw missions" (caller filters).
+        ``None`` = "all active Jarvis-Agent missions" (caller filters).
       language: detected language (``"de"`` or ``"en"``); default
         ``"de"`` so the caller can render the voice reply in the correct
         language.
@@ -196,13 +196,13 @@ class MissionCommandMatch:
 
 
 def match_mission_command(text: str) -> MissionCommandMatch | None:
-    """Strictly checks for OpenClaw mission meta-commands.
+    """Strictly checks for Jarvis-Agent mission meta-commands.
 
     Returns:
         ``MissionCommandMatch`` when the pattern hits a status or cancel
         phrase, otherwise ``None``. Order:
           1. Cancel first (takes priority — when the user says "stop
-             OpenClaw", status is irrelevant).
+             openclaw", status is irrelevant).
           2. Status afterwards.
         On ambiguity (e.g. "wie weit cancel?" — rare), cancel wins.
 
@@ -211,7 +211,7 @@ def match_mission_command(text: str) -> MissionCommandMatch | None:
       - "Status?"                      -> status / de
       - "Wie weit bist du?"            -> status / de
       - "Brich die Mission ab"         -> cancel / de
-      - "Stop OpenClaw"                -> cancel / en (or de — doesn't matter)
+      - "Stop openclaw"                -> cancel / en (or de — doesn't matter)
       - "Cancel the mission"           -> cancel / en
 
     Examples (no match):
@@ -274,7 +274,7 @@ def _extract_mission_id(text: str) -> str | None:
 
     Recognises UUIDv4/v7 strings and short alphanumeric aliases after the
     word "mission". Returns ``None`` when no ID is recognisable — the caller
-    then filters for "all active OpenClaw missions".
+    then filters for "all active Jarvis-Agent missions".
     """
     m = _MISSION_ID_PATTERN.search(text)
     if not m:

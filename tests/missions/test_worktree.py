@@ -458,7 +458,7 @@ def test_remove_retries_on_transient_permission_denied(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """BUG-LIVE-05 — on Windows the first `git worktree remove` often
-    fails with `Permission denied` because the OpenClaw subprocess
+    fails with `Permission denied` because the Jarvis-Agent subprocess
     holds SQLite/trajectory file handles for a few hundred milliseconds
     after exit. The manager retries with 50/100/200 ms back-off; this
     test fakes two transient failures followed by success and asserts

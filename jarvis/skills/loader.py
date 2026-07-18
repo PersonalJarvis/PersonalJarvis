@@ -159,7 +159,7 @@ def parse_skill(path: Path) -> Skill:
         )
 
     # Phase 7.5: if the frontmatter explicitly sets `state: draft`, honor it.
-    # This deterministically puts OpenClaw-authored skills into the DRAFT pool
+    # This deterministically puts Jarvis-Agent-authored skills into the DRAFT pool
     # and excludes them from the hot-reload active filter (Plan-§AD-8).
     final_state = (
         fm.state if fm.state is not None else SkillLifecycleState.VALIDATED

@@ -26,7 +26,7 @@ Today (template):
 
 Goal (context-rich):
   User:   [same input]
-  Jarvis: "Ja Chef, ich gebe das an OpenClaw weiter,  <!-- i18n-allow: quoted German voice-output example -->
+  Jarvis: "Ja Chef, ich gebe das an den Jarvis-Agent weiter,  <!-- i18n-allow: quoted German voice-output example -->
            melde mich gleich mit den Flugdaten."        ← topic + handoff +  <!-- i18n-allow: quoted German voice-output example -->
                                                           time-horizon
 ```
@@ -86,7 +86,7 @@ Rejected alternatives:
             │                                       │
             │   Input: utterance + Router prompt    │
             │   Output: tool_call(                  │
-            │     "spawn_openclaw",                 │
+            │     "spawn_worker",                   │
             │     args={                            │
             │       task: "find SF flights ...",   │
             │       preamble_de: "Ja Chef, ...",   │  ← NEW
@@ -107,7 +107,7 @@ Rejected alternatives:
             │                                       │
             └──────────────┬────────────────────────┘
                            │ (tool runs in background:
-                           │  spawns OpenClaw, takes 5-30 s)
+                           │  spawns the Jarvis-Agent worker, takes 5-30 s)
                            │
                            │      ┌──── Speech-Pipeline ────┐
                            │      │                         │
@@ -120,7 +120,7 @@ Rejected alternatives:
                            │                   │
                            │                   v
                            │        "Ja Chef, ich gebe das
-                           │         an OpenClaw weiter ..."  <!-- i18n-allow: quoted German voice-output example -->
+                           │         an den Jarvis-Agent weiter ..."  <!-- i18n-allow: quoted German voice-output example -->
                            │           (spoken via TTS)
                            │
                            v
@@ -135,7 +135,7 @@ Rejected alternatives:
 
 **P2 — Audio order guaranteed.** The preamble is published with `priority="normal"`, queueing it at the head of the TTS queue. The tool runs in parallel; when its final response is ready (5-30 s later), it appends to the queue. There is never overlap or interruption — except for genuine barge-in (`"sei still"`), which uses `priority="interrupt"` and stops both.
 
-**P3 — Blacklist-compliant.** The preamble passes through `scrub_for_voice` like any other voice output. Tool-call leaks, stack traces, markdown residues, and the `"Sir"` form of address are filtered. `"OpenClaw"` is allowed (already used in `MissionAnnouncer`). `"Subagent"` / `"Sub-Agent"` / `"Worker"` remain blocked — the system prompt explicitly instructs the LLM to use `"OpenClaw"` or the first-person `"ich"` (I) instead.
+**P3 — Blacklist-compliant.** The preamble passes through `scrub_for_voice` like any other voice output. Tool-call leaks, stack traces, markdown residues, and the `"Sir"` form of address are filtered. `"Jarvis-Agent"` is allowed (already used in `MissionAnnouncer`). `"Subagent"` / `"Sub-Agent"` / `"Worker"` remain blocked — the system prompt explicitly instructs the LLM to use `"Jarvis-Agent"` or the first-person `"ich"` (I) instead. (2026-05-24 update: `scrub_for_voice` now actively strips the retired "OpenClaw" brand token from voice output — this design predates that change.)
 
 ---
 
@@ -161,7 +161,7 @@ jarvis/brain/tool_use_loop.py                  [MODIFY]
     3. Determine language (from session / detected).
     4. If args had a preamble for that language AND tool not in
        skip-list AND utterance is not voice-control AND we are
-       not nested inside another spawn_openclaw frame:
+       not nested inside another spawn_worker frame:
        publish AnnouncementRequested.
     5. Execute tool with cleaned args.
 
@@ -183,9 +183,11 @@ jarvis/brain/ack_generator.py                  [REFACTOR]
         return text.strip() or None if isinstance(text, str) else None
 
 jarvis/brain/output_filter.py                  [VERIFY-ONLY]
-  No code change required; "OpenClaw" is already not on the
+  No code change required; "Jarvis-Agent" is already not on the
   blacklist. Add a regression test that confirms it survives
-  scrub_for_voice unchanged.
+  scrub_for_voice unchanged. (2026-05-24 update: the blacklist
+  now actively strips the retired "OpenClaw" brand token instead
+  of allowing it through — this design predates that change.)
 
 jarvis/core/events.py                          [MINOR]
   Optionally add `kind: Literal["preamble", "completion", "info"]
@@ -232,13 +234,13 @@ scripts/smoke-test-preamble.ps1                [NEW, manual]
 | `"Sei still"` ("Be quiet")                    | n/a (voice-control)            | **No**          | `is_voice_control_utterance` → True. Audio stops.                |
 | `"Mach Spotify auf"` ("Open Spotify")             | `open_app(name=Spotify)`       | **Yes**         | "Mach ich, Spotify öffnet sich." ("On it, Spotify is opening.")  | <!-- i18n-allow: quoted German voice example -->
 | `"Wie ist das Wetter?"` ("What's the weather?")          | `search_web(query=...)`        | **Yes**         | "Schau ich nach, einen Moment." ("Checking now, one moment.")    | <!-- i18n-allow: quoted German voice example -->
-| `"Find SF flights tomorrow"`     | `spawn_openclaw(task=...)`     | **Yes**         | "Ja Chef, ich gebe das an OpenClaw weiter, melde mich gleich." ("Yes, handing that off to OpenClaw, I'll be right back.") | <!-- i18n-allow: quoted German voice example -->
+| `"Find SF flights tomorrow"`     | `spawn_worker(task=...)`       | **Yes**         | "Ja Chef, ich gebe das an den Jarvis-Agent weiter, melde mich gleich." ("Yes, handing that off to the Jarvis-Agent, I'll be right back.") | <!-- i18n-allow: quoted German voice example -->
 | `"Klick auf Speichern"` ("Click Save")          | `click(target=...)`            | **No**          | `click` in ACK_SKIP_TOOLS — chattering on UI events forbidden.   | <!-- i18n-allow: quoted German voice example -->
 | `"Was läuft gerade?"` ("What's running right now?")            | `awareness_snapshot()`         | **No**          | Passive read in skip-list.                                       | <!-- i18n-allow: quoted German voice example -->
-| LLM omits `preamble_de`          | spawn_openclaw                 | **No**          | Silent fallback. `preamble_skipped_no_field_total` ++.           |
-| LLM emits 50-word preamble       | spawn_openclaw                 | **Yes, cut**    | First sentence kept, rest dropped. `preamble_truncated_total` ++.|
-| LLM emits `"Ich starte den Subagenten"` ("I am starting the subagent") | spawn_openclaw | **No** | scrub_for_voice strips "Subagent" → empty after scrub → silent.  |
-| Tool-inside-OpenClaw (nested)    | n/a — caller is subagent       | **No**          | Recursion guard: only top-level main-Jarvis tool calls preamble. |
+| LLM omits `preamble_de`          | spawn_worker                   | **No**          | Silent fallback. `preamble_skipped_no_field_total` ++.           |
+| LLM emits 50-word preamble       | spawn_worker                   | **Yes, cut**    | First sentence kept, rest dropped. `preamble_truncated_total` ++.|
+| LLM emits `"Ich starte den Subagenten"` ("I am starting the subagent") | spawn_worker | **No** | scrub_for_voice strips "Subagent" → empty after scrub → silent.  |
+| Tool-inside-Jarvis-Agent (nested) | n/a — caller is worker         | **No**          | Recursion guard: only top-level main-Jarvis tool calls preamble. |
 
 ---
 
@@ -308,12 +310,12 @@ A `preamble_skipped_no_field_total / preamble_emitted_total` ratio above 5 % is 
 
 ### Integration (`tests/integration/test_preamble_flow.py`, ~6 new cases)
 
-- Happy path: `spawn_openclaw` with preamble args → `AnnouncementRequested` published → `_on_announcement` invoked → TTS called once with the preamble text
+- Happy path: `spawn_worker` with preamble args → `AnnouncementRequested` published → `_on_announcement` invoked → TTS called once with the preamble text
 - Voice-control bypass: `"sei still"` short-circuits before any tool selection; no preamble emitted
 - Skip-list: `click` tool returns no preamble even if args contain one
 - Silent fallback: tool call missing `preamble_de` → no `AnnouncementRequested`, tool still executes
 - Audit-log ordering: Brain audit log shows preamble entry timestamp strictly before final-response entry
-- Recursion guard: a tool call originating from inside an `spawn_openclaw` execution context emits no preamble
+- Recursion guard: a tool call originating from inside a `spawn_worker` execution context emits no preamble
 
 ### Contract (`tests/contract/test_brain_protocol.py`, ~3 new cases)
 
@@ -347,5 +349,5 @@ Five scripted utterances per language replayed via simulated STT-final, audio re
 - **ADR-0011 (Router-Discipline)** — `docs/adr/0011-router-pure-dispatcher.md`. The preamble field lives **inside** tool args (not at top-level message content) precisely to preserve Router-Discipline's "no narrative output" property. The LLM cannot use the preamble field as a covert text channel — it is structurally bound to a concrete tool selection.
 - **AD-7 anti-pattern** — `CLAUDE.md` Phase-7 section. We partially relax AD-7 by letting the LLM generate the preamble *substance*, but enforce the *shape* (length, vocabulary, blacklist compliance) in code. A hybrid that preserves AD-7's intent (no constraint self-bypass) while gaining substance.
 - **`MissionAnnouncer`** — `jarvis/missions/voice/announcer.py`. The downstream `AnnouncementRequested` → `_on_announcement` → TTS path is reused unchanged. This spec adds a new producer of that bus event; the consumer side is identical.
-- **Output Filter** — `jarvis/brain/output_filter.py:scrub_for_voice`. The 40-case blacklist applies to the preamble. Specifically: `"Subagent"` is blocked, `"OpenClaw"` is allowed.
+- **Output Filter** — `jarvis/brain/output_filter.py:scrub_for_voice`. The 40-case blacklist applies to the preamble. Specifically: `"Subagent"` is blocked, `"Jarvis-Agent"` is allowed. (2026-05-24 update: the retired "OpenClaw" brand token is now actively stripped instead — this design predates that change.)
 - **BUG-006 / BUG-014** — When deploying, remember the four-layer restore trap (`docs/BUGS.md`). The editable install can pin to a stale clone, in which case the preamble feature ships in code but not at runtime. Verify with `python -c "import jarvis; print(jarvis.__file__)"` after install.

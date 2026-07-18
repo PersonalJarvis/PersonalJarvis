@@ -122,8 +122,8 @@ def build_worker_env(
         openai_api_key: optional, set as OPENAI_API_KEY.
         gemini_api_key: optional, set as GEMINI_API_KEY + GOOGLE_API_KEY.
         xai_api_key: optional, set as XAI_API_KEY + GROK_API_KEY
-            (xAI SDK accepts either name; OpenClaw reads XAI_API_KEY for the
-            ``xai`` provider slug).
+            (xAI SDK accepts either name; the external `openclaw` CLI reads
+            XAI_API_KEY for the ``xai`` provider slug).
         openrouter_api_key: optional, set as OPENROUTER_API_KEY.
 
     Output:
@@ -187,8 +187,8 @@ def build_worker_env(
     # directly). Auth then comes from CLAUDE_CODE_OAUTH_TOKEN below (the
     # credentials file lives in the *user's* ~/.claude, not here).
     env["CLAUDE_CONFIG_DIR"] = str(_seed_worker_claude_config(run_dir))
-    # OpenClaw reads `<MISSION_STATE_DIR>/openclaw.json` to find
-    # `agents.defaults.workspace`; without that redirect, file_write/edit
+    # The external `openclaw` CLI reads `<MISSION_STATE_DIR>/openclaw.json` to
+    # find `agents.defaults.workspace`; without that redirect, file_write/edit
     # tool calls land in `~/.openclaw/workspace` instead of the per-mission
     # git worktree, and `Kontrollierer._capture_diff(worktree)` then sees an
     # empty diff and the mission is rejected as a no-op. Pinning the
@@ -200,7 +200,7 @@ def build_worker_env(
     env["MISSION_STATE_DIR"] = str(run_dir / "openclaw_state")
 
     # Pre-create the per-mission `plugin-skills/browser-automation/` so
-    # OpenClaw's first-spawn symlink call doesn't crash with EPERM on
+    # the external `openclaw` CLI's first-spawn symlink call doesn't crash with EPERM on
     # Windows non-admin users (Windows reserves `CreateSymbolicLink` for
     # accounts with `SeCreateSymbolicLinkPrivilege`, which the default
     # interactive user does not have unless Developer Mode is enabled).
@@ -210,7 +210,7 @@ def build_worker_env(
     # browser/skills/browser-automation' -> '…/openclaw_state/plugin-
     # skills/browser-automation'`, two non-zero returncodes in a row →
     # `CriticSchemaInvalid`. With the target directory already present
-    # and populated with the source `SKILL.md`, OpenClaw's symlink call
+    # and populated with the source `SKILL.md`, `openclaw`'s symlink call
     # either short-circuits on `EEXIST` or skips the step entirely;
     # either way the subprocess no longer dies on this code path.
     #
@@ -218,7 +218,7 @@ def build_worker_env(
     # it, otherwise just create an empty marker file. Either is enough
     # to avoid `EPERM` on the symlink syscall — the worker doesn't
     # actually use the browser-automation skill for our task shapes.
-    _seed_openclaw_plugin_skills(Path(env["MISSION_STATE_DIR"]))
+    _seed_jarvis_agent_plugin_skills(Path(env["MISSION_STATE_DIR"]))
 
     # Optional API keys (explicitly passed as parameters, no os.environ heuristics)
     if anthropic_api_key:
@@ -236,7 +236,7 @@ def build_worker_env(
         # result-is_error=True frame and an empty diff.
         #
         # Fix: route the token by format. OAuth -> OAuth slot; classic
-        # API key -> API-key slot. OpenClaw + claude --print both look
+        # API key -> API-key slot. `openclaw` + claude --print both look
         # in both slots (OAuth-first), so either path works after this.
         if anthropic_api_key.startswith("sk-ant-oat"):
             env["ANTHROPIC_OAUTH_TOKEN"] = anthropic_api_key
@@ -245,7 +245,7 @@ def build_worker_env(
             # NOT honour ANTHROPIC_OAUTH_TOKEN alone in that mode — verified
             # live 2026-05-29: it answers "Not logged in · Please run /login"
             # and produces an empty diff. ANTHROPIC_OAUTH_TOKEN stays set above
-            # for the OpenClaw-backed path / other consumers.
+            # for the `openclaw`-backed path / other consumers.
             env["CLAUDE_CODE_OAUTH_TOKEN"] = anthropic_api_key
         else:
             env["ANTHROPIC_API_KEY"] = anthropic_api_key
@@ -258,7 +258,7 @@ def build_worker_env(
         env["GEMINI_API_KEY"] = gemini_api_key
         env["GOOGLE_API_KEY"] = gemini_api_key
     if xai_api_key:
-        # OpenClaw reads XAI_API_KEY for the ``xai`` provider slug; the
+        # The external `openclaw` CLI reads XAI_API_KEY for the ``xai`` provider slug; the
         # legacy GROK_API_KEY name is set as a fallback for older SDK
         # versions and matches what Jarvis stores in the credential
         # manager (``grok_api_key`` -> ENV ``GROK_API_KEY``).
@@ -373,27 +373,27 @@ def _seed_worker_claude_config(run_dir: Path) -> Path:
     return config_dir
 
 
-# Probable install locations of the npm-bundled OpenClaw browser-automation
+# Probable install locations of the npm-bundled `openclaw` browser-automation
 # skill on Windows. Listed in order of likelihood for the default install
 # path; the first one that exists wins. Empty paths are skipped.
-_OPENCLAW_BROWSER_SKILL_CANDIDATES: tuple[str, ...] = (
+_JARVIS_AGENT_BROWSER_SKILL_CANDIDATES: tuple[str, ...] = (
     r"%APPDATA%\npm\node_modules\openclaw\dist\extensions\browser\skills\browser-automation",
     r"%PROGRAMFILES%\nodejs\node_modules\openclaw\dist\extensions\browser\skills\browser-automation",
     r"%LOCALAPPDATA%\Programs\openclaw\dist\extensions\browser\skills\browser-automation",
 )
 
 
-def _seed_openclaw_plugin_skills(state_dir: Path) -> None:
-    """Pre-create the OpenClaw browser-automation skill location as a
+def _seed_jarvis_agent_plugin_skills(state_dir: Path) -> None:
+    """Pre-create the `openclaw` browser-automation skill location as a
     symlink, if the privilege is available; otherwise leave the path
-    *missing* and let OpenClaw handle its own EPERM.
+    *missing* and let `openclaw` handle its own EPERM.
 
     2026-05-17 (CRIT-3 from audit-team 10): the previous implementation
     materialised a plain *directory* at
-    ``<state_dir>/plugin-skills/browser-automation/`` so OpenClaw's
+    ``<state_dir>/plugin-skills/browser-automation/`` so `openclaw`'s
     first-spawn symlink call would short-circuit on EEXIST. That trade
     looked clean on paper, but live forensics (Audit-2 + Audit-6)
-    showed it actually trades EPERM for EINVAL: OpenClaw later does a
+    showed it actually trades EPERM for EINVAL: `openclaw` later does a
     ``readlink()`` against the path, which the kernel rejects with
     EINVAL (Linux/POSIX) or ERROR_INVALID_FUNCTION (Win32) because a
     plain directory is not a symbolic link. That EINVAL pulse fired
@@ -402,12 +402,12 @@ def _seed_openclaw_plugin_skills(state_dir: Path) -> None:
 
     Correct fix: try to *create the symlink ourselves* using
     ``os.symlink``. If that succeeds (Developer Mode or admin user),
-    OpenClaw's later ``readlink()`` returns a valid pointer and the
+    `openclaw`'s later ``readlink()`` returns a valid pointer and the
     whole pipeline works. If ``os.symlink`` raises EPERM/EACCES (the
     common case -- ``asInvoker`` user without
     ``SeCreateSymbolicLinkPrivilege``), we simply *do nothing*. The
-    path stays nonexistent; OpenClaw's own symlink call will then
-    raise EPERM exactly once and OpenClaw's bootstrap can fall back to
+    path stays nonexistent; `openclaw`'s own symlink call will then
+    raise EPERM exactly once and `openclaw`'s bootstrap can fall back to
     its copy-not-symlink branch.
 
     The only thing we deliberately do NOT do anymore is materialise a
@@ -423,7 +423,7 @@ def _seed_openclaw_plugin_skills(state_dir: Path) -> None:
     """
     # Step 1: find a real source the symlink can point at.
     source_dir: Path | None = None
-    for candidate in _OPENCLAW_BROWSER_SKILL_CANDIDATES:
+    for candidate in _JARVIS_AGENT_BROWSER_SKILL_CANDIDATES:
         expanded = Path(os.path.expandvars(candidate))
         if expanded.is_dir() and (expanded / "SKILL.md").is_file():
             source_dir = expanded
@@ -432,7 +432,7 @@ def _seed_openclaw_plugin_skills(state_dir: Path) -> None:
     if source_dir is None:
         logger.debug(
             "env: no source browser-automation skill found in any candidate "
-            "path — leaving plugin-skills target missing (OpenClaw will "
+            "path — leaving plugin-skills target missing (openclaw will "
             "handle its own bootstrap)"
         )
         return
@@ -468,14 +468,14 @@ def _seed_openclaw_plugin_skills(state_dir: Path) -> None:
         except OSError as exc:
             logger.info(
                 "env: could not clear stale non-symlink at %s: %s -- "
-                "leaving as-is and letting OpenClaw handle it",
+                "leaving as-is and letting openclaw handle it",
                 target_dir, exc,
             )
             return
 
     # Step 3: try the real symlink. Windows requires
     # ``target_is_directory=True`` so the resulting link reports as a
-    # directory junction-compatible target -- without this OpenClaw's
+    # directory junction-compatible target -- without this `openclaw`'s
     # ``readdir`` on the link would also fail.
     try:
         os.symlink(
@@ -484,7 +484,7 @@ def _seed_openclaw_plugin_skills(state_dir: Path) -> None:
             target_is_directory=True,
         )
         logger.info(
-            "env: symlink %s -> %s for OpenClaw browser-automation",
+            "env: symlink %s -> %s for openclaw browser-automation",
             target_dir, source_dir,
         )
     except (OSError, NotImplementedError) as exc:
@@ -494,7 +494,7 @@ def _seed_openclaw_plugin_skills(state_dir: Path) -> None:
         # (theoretical; covered for completeness).
         logger.info(
             "env: cannot symlink plugin-skills (likely no Developer Mode): "
-            "%s — leaving target missing so OpenClaw's own EPERM path runs "
+            "%s — leaving target missing so openclaw's own EPERM path runs "
             "consistently (was previously crashing on EINVAL/readlink)",
             exc,
         )

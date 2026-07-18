@@ -38,7 +38,7 @@ pytestmark = [
     pytest.mark.e2e,
     pytest.mark.skipif(
         shutil.which("claude") is None,
-        reason="OpenClaw CLI not in PATH — set up OpenClaw first.",
+        reason="claude CLI not in PATH — set up the claude CLI first.",
     ),
     pytest.mark.skipif(
         not (
@@ -47,7 +47,7 @@ pytestmark = [
         ),
         reason=(
             "No Anthropic auth (ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN) "
-            "— openclaw --bare needs explicit credentials."
+            "— claude --print --bare needs explicit credentials."
         ),
     ),
 ]

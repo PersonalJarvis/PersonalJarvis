@@ -1,6 +1,6 @@
 """Smoke test phase 3 — REAL critic call (costs ~$0.20).
 
-End-to-end test with a real `openclaw agent --json-schema ...` subprocess.
+End-to-end test with a real `claude --output-format json --json-schema ...` subprocess.
 Skips cleanly when the claude CLI is not installed/authenticated
 (same pattern as smoke_phase6_p2.py). Exit 0 on success OR SKIP,
 exit 1 only on a real failure.
@@ -76,7 +76,7 @@ def claude_available() -> bool:
 async def smoke_real() -> int:
     if not claude_available():
         print(f"{SKIP} claude CLI not in PATH — real smoke test skipped.")
-        print(f"      Install: https://docs.claude.com/en/docs/openclaw")
+        print(f"      Install: https://code.claude.com/docs/en/overview")
         return 0
 
     has_api_key = bool(os.environ.get("ANTHROPIC_API_KEY"))

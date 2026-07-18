@@ -1,8 +1,8 @@
 """Skill-authoring pipeline (Phase 7.5).
 
-OpenClaw (frontier worker, Mission-Manager-orchestrated) generates new skills
-on voice request. Welle-4 migration: previously Sub-Jarvis (Opus 4.7),
-today OpenClaw (see docs/openclaw-bridge.md §11, R-6). Plan-§7.5:
+Jarvis-Agent (frontier worker, Mission-Manager-orchestrated) generates new
+skills on voice request. Welle-4 migration: previously Sub-Jarvis (Opus 4.7),
+today Jarvis-Agent (see docs/jarvis-agents-bridge.md §11, R-6). Plan-§7.5:
 strict-typed output via the `SkillDraft` Pydantic model, `state=draft`
 enforcement on write (Plan-§AD-8), validation loop ≤3 retries,
 an audit trail per authoring attempt.

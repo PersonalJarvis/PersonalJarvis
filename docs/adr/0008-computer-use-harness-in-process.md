@@ -16,7 +16,7 @@ audience: developer
 
 ## Context
 
-The existing five harnesses (`openclaw`, `codex`, `open-interpreter`, `python-script`, `mcp-remote`) run as a subprocess with their own Python interpreter/shell and communicate via stdout/stdin NDJSON. `CLAUDE.md` §Security states:
+The existing five harnesses (`jarvis_agent`, `codex`, `open-interpreter`, `python-script`, `mcp-remote`) run as a subprocess with their own Python interpreter/shell and communicate via stdout/stdin NDJSON. `CLAUDE.md` §Security states:
 
 > **Harness isolation:** Sub-harnesses run in their own subprocess without access to Jarvis secrets (own ENV allowlist).
 
@@ -34,7 +34,7 @@ By its nature, Computer-Use is **not an external Jarvis-Agent framework** (as Ja
 3. Passes the `CancelToken` from ADR-0004 through transparently
 4. Emits event-bus events (`ObservationCaptured`, `ActionProposed`, `ActionVerified`) directly — no IPC translation
 
-Architecturally this is closer to the `BrainManager` or `HarnessManager` (both in-process) than to the `OpenClawHarness` (which wraps an external binary).
+Architecturally this is closer to the `BrainManager` or `HarnessManager` (both in-process) than to the external Jarvis-Agent worker harness (which wraps an external binary).
 
 ### Position relative to the CLAUDE.md rule
 The rule targets **third-party agent code** (Jarvis-Agents, Codex, Open Interpreter), which could potentially read/write arbitrarily. The Computer-Use harness is not third-party code — it is our own orchestrator code, whose tools run through the existing risk-tier/whitelist system. The secret-isolation clause is therefore not violated, because no foreign binary is started.

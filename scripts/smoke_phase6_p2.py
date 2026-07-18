@@ -10,8 +10,9 @@ Verifies the T1+T2 API surface in a realistic mini run:
    it's a no-op, the smoke still runs (worker spawns normally, no reaping).
 5. `ClaudeDirectWorker.spawn(prompt, ..., max_turns=3)` with a cost cap (--max-turns
    is cost guardrail #1 per the research doc §B). The stream is drained until the
-   `result` event. (OpenClawWorker was removed in the OpenClaw/UFO3 removal —
-   `f9fa1c2f`; ClaudeDirectWorker is the production claude-CLI worker.)
+   `result` event. (The legacy worker class was removed in the
+   Jarvis-Agent/UFO3 removal — `f9fa1c2f`; ClaudeDirectWorker is the
+   production claude-CLI worker.)
 6. Verify `(workspace / 'hello.txt').exists()` AND content == 'world'
    (with/without a trailing newline).
 7. Verify via `psutil.pid_exists(pid)` that the worker subprocess terminated

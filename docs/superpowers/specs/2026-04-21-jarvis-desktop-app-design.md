@@ -9,7 +9,7 @@
 
 ## 1. Overview & Philosophy
 
-Jarvis becomes a Windows desktop app — **voice-first, but fully observable and operable visually**. It is not a classic chat client with a microphone button, but a *conductor interface*: the user talks to a single persona that orchestrates multiple Jarvis-Agents and CLI tools (OpenClaw, Codex, Open Interpreter, MCP servers) in the background. The UI makes the invisible visible — without overwhelming.
+Jarvis becomes a Windows desktop app — **voice-first, but fully observable and operable visually**. It is not a classic chat client with a microphone button, but a *conductor interface*: the user talks to a single persona that orchestrates multiple Jarvis-Agents and CLI tools (Jarvis-Agent worker, Codex, Open Interpreter, MCP servers) in the background. The UI makes the invisible visible — without overwhelming.
 
 **Core principles:**
 

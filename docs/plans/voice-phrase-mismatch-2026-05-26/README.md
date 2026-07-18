@@ -82,7 +82,7 @@ the Critic returning `approve` (see `jarvis/missions/critic/runner.py`
 That the phrase fired at all means:
 
 1. The router-brain decided to **spawn a mission** for the user's
-   utterance (force-spawn, `BrainManager._should_force_openclaw`, or
+   utterance (force-spawn, `BrainManager._should_force_spawn`, or
    the deprecated `spawn_openclaw` tool path).
 2. The mission ran, the worker produced an answer/diff, the Critic
    rejected it.
@@ -147,13 +147,13 @@ surfaces. Phrase 2 must come from one of them:
 │    brain reply → TTS             │    design; only scrub_for_voice between brain & TTS. │
 │                                  │                                                      │
 │ B) _on_announcement              │ AnnouncementRequested events from MissionAnnouncer,  │
-│    (AnnouncementRequested)       │    Ack-Brain, OpenClaw-bridge,                       │
-│                                  │    spawn-watchdog. Mission/OpenClaw paths are        │
+│    (AnnouncementRequested)       │    Ack-Brain, Jarvis-Agents-bridge,                  │
+│                                  │    spawn-watchdog. Mission/Jarvis-Agent paths are    │
 │                                  │    static + ADR-0009-protected. Ack-Brain produces   │
 │                                  │    LLM-free-text but with persona-prompt + 200 ms    │
 │                                  │    latency budget.                                   │
 │                                  │                                                      │
-│ C) _on_background_completed      │ OpenClaw bridge readback. Uses summary_de via the    │
+│ C) _on_background_completed      │ Jarvis-Agents bridge readback. Uses summary_de via   │
 │                                  │    capability-honest summariser. Not a free-text     │
 │                                  │    vector either.                                    │
 │                                  │                                                      │
@@ -437,7 +437,7 @@ stays exposed and is tracked separately.
 - **The deeper question is upstream.** Why did a "simple task"
   reach the mission spawn in the first place, and why did the Critic
   reject the worker three iterations in a row? The routing decision
-  (`BrainManager._should_force_openclaw`) and the Critic rubric for
+  (`BrainManager._should_force_spawn`) and the Critic rubric for
   whatever the worker produced deserve their own review, independent
   of the voice-incoherence symptom. **That review is not part of this
   change.**

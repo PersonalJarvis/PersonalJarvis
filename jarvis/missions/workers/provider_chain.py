@@ -1,7 +1,7 @@
 """Worker provider chain — drives the `openclaw agent --local --json` CLI as a
 provider-agnostic Phase-6 worker.
 
-The worker delegates to the OpenClaw harness —
+The worker delegates to the external `openclaw` CLI harness —
 which already supports `google/gemini-*`, `openai/gpt-*`,
 `anthropic/claude-*`, and `openrouter/*` behind a single CLI surface.
 The provider+model is resolved from `[brain.sub_jarvis]` in jarvis.toml
@@ -10,7 +10,7 @@ The provider+model is resolved from `[brain.sub_jarvis]` in jarvis.toml
 `jarvis.missions.worker_runtime.provider_map.to_worker_slug` so this worker
 never hardcodes slugs.
 
-CLI layout (verified live 2026-05-13 against OpenClaw 2026.5.7):
+CLI layout (verified live 2026-05-13 against the external `openclaw` npm package, v2026.5.7):
 
     openclaw agent
         --local
@@ -86,8 +86,8 @@ _QUOTA_BLOCKED_MARKERS: tuple[str, ...] = (
     "insufficient_quota",
 )
 
-# Hard upper bound on a single OpenClaw spawn. Matches the Time-Cap used
-# by the OpenClaw harness (AD-19).
+# Hard upper bound on a single Jarvis-Agent worker spawn. Matches the Time-Cap used
+# by the worker harness (external `openclaw` CLI, AD-19).
 _DEFAULT_TIMEOUT_S: float = 600.0
 
 
@@ -99,7 +99,7 @@ _DEFAULT_TIMEOUT_S: float = 600.0
 # resolved from the `[brain.sub_jarvis]` config chain instead.
 #
 # Discovered live 2026-05-14: mission_019e2572 + mission_019e256f both
-# spawned `openclaw agent --model xai/sonnet` and OpenClaw rejected with
+# spawned `openclaw agent --model xai/sonnet` and the worker CLI rejected with
 # `FailoverError: Unknown model: xai/sonnet`. See stderr.log in those
 # mission dirs for the smoking gun.
 _DECOMPOSER_FALLBACK_MODELS: frozenset[str] = frozenset({
@@ -116,7 +116,7 @@ class _FallbackStep:
     Resolved from `[brain.sub_jarvis]` in jarvis.toml. `provider` is the
     jarvis-slug ("openai", "gemini", "claude-api", "openrouter").
     `model` is the provider-native model id ("gpt-5.5-pro",
-    "gemini-3.1-pro-preview", etc.). The OpenClaw slug translation
+    "gemini-3.1-pro-preview", etc.). The worker-CLI slug translation
     happens at spawn time via `to_worker_slug`.
     """
 
@@ -147,7 +147,7 @@ def _resolve_worker_binary() -> str:
 
 
 def _resolve_worker_argv_prefix() -> list[str]:
-    """Returns the argv prefix for invoking the OpenClaw CLI.
+    """Returns the argv prefix for invoking the external `openclaw` CLI.
 
     On Windows, the npm-installed CLI ships as `openclaw.cmd` — a batch
     wrapper around `node openclaw.mjs`. Calling `.cmd` from
@@ -155,7 +155,7 @@ def _resolve_worker_argv_prefix() -> list[str]:
     argv with batch tokenizer rules, and that tokenizer treats `'`,
     newline, `<`, `>`, `&`, `|`, `^`, `%` as metacharacters. A prompt
     containing a literal apostrophe (`print('hello world')`) or an
-    embedded newline therefore arrives at OpenClaw truncated or with
+    embedded newline therefore arrives at the worker CLI truncated or with
     the `--message` argument silently chopped. The CLI then can't read
     the requested `--model` flag either, falls back to its first listed
     provider (`openai/gpt-5.5`) and dies with `chain_exhausted`.
@@ -190,7 +190,7 @@ def _resolve_worker_argv_prefix() -> list[str]:
 
 
 def _stderr_signals_quota_block(stderr_bytes: bytes) -> bool:
-    """True if the OpenClaw stderr indicates a provider rate-limit / quota
+    """True if the worker-CLI stderr indicates a provider rate-limit / quota
     block — signals that we should try the configured fallback provider.
     """
     if not stderr_bytes:
@@ -235,8 +235,8 @@ def _resolve_provider_chain(
             primary_provider = primary_provider or getattr(sub_cfg, "provider", None)
             # Welle 7 (2026-05-20): "openclaw-claude" is a jarvis-side
             # sentinel that means "route through SubJarvisWorker, but use
-            # the claude-cli OpenClaw backend". It is NOT a real openclaw
-            # provider slug — normalise it to "claude-api" so the rest of
+            # the claude-cli backend of the external openclaw CLI". It is NOT
+            # a real openclaw provider slug — normalise it to "claude-api" so the rest of
             # the resolver + to_worker_slug() find it in MAPPINGS.
             if isinstance(primary_provider, str) and primary_provider.strip().lower() == "openclaw-claude":
                 primary_provider = "claude-api"
@@ -333,9 +333,9 @@ def _build_worker_cmd(
 
 
 def _extract_assistant_text(stdout_bytes: bytes) -> tuple[str, dict[str, Any]]:
-    """Parses OpenClaw's `--json` stdout into (text, raw_doc).
+    """Parses the worker CLI's `--json` stdout into (text, raw_doc).
 
-    OpenClaw can prepend a few stderr-like log lines to stdout in
+    The worker CLI can prepend a few stderr-like log lines to stdout in
     `[skills] failed to create symlink ...` situations; we scan for the
     first `{` and parse from there. Returns ("", {}) on any failure —
     the caller decides whether that's an error condition (by inspecting

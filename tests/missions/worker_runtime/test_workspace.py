@@ -1,7 +1,7 @@
 """Tests for jarvis.missions.worker_runtime.workspace.
 
-Source of truth: docs/openclaw-bridge.md AD-23 + AP-OC15 +
-docs/spike-results-openclaw.md B-9 (system-prompt auto-injection finding).
+Source of truth: docs/jarvis-agents-bridge.md AD-23 + AP-OC15 +
+docs/spike-results-jarvis-agents.md B-9 (system-prompt auto-injection finding).
 """
 from __future__ import annotations
 
@@ -84,7 +84,8 @@ def test_prepare_workspace_creates_subdir(tmp_path: Path) -> None:
 
 
 def test_prepare_workspace_writes_all_five_stub_files(tmp_path: Path) -> None:
-    """B-9: OpenClaw injects AGENTS/SOUL/IDENTITY/TOOLS/USER — all 5 stubs must be present."""
+    """B-9: the Jarvis-Agent worker harness injects AGENTS/SOUL/IDENTITY/TOOLS/USER
+    — all 5 stubs must be present."""
     workspace = prepare_workspace(tmp_path, mission_id="m-001")
     actual = {f.name for f in workspace.iterdir() if f.is_file()}
     assert actual == EXPECTED_WORKSPACE_FILES
@@ -134,17 +135,17 @@ def test_prepare_workspace_idempotent_with_new_mission_id(tmp_path: Path) -> Non
 
 
 def test_prepare_workspace_uses_lf_line_endings(tmp_path: Path) -> None:
-    """OpenClaw presumably reads the files as text — LF is safely cross-platform."""
+    """The worker harness presumably reads the files as text — LF is safely cross-platform."""
     workspace = prepare_workspace(tmp_path, mission_id="m-1")
     raw = (workspace / "AGENTS.md").read_bytes()
     assert b"\r\n" not in raw, "Stubs must use LF line endings, not CRLF"
 
 
 def test_prepare_workspace_utf8_encoding(tmp_path: Path) -> None:
-    """UTF-8 because OpenClaw runs cross-platform."""
+    """UTF-8 because the worker harness runs cross-platform."""
     workspace = prepare_workspace(tmp_path, mission_id="m-1")
     raw = (workspace / "AGENTS.md").read_bytes()
-    # UTF-8 BOM must NOT be present (interferes with OpenClaw's Markdown parser)
+    # UTF-8 BOM must NOT be present (interferes with the worker harness's Markdown parser)
     assert not raw.startswith(b"\xef\xbb\xbf"), "Files must not start with UTF-8 BOM"
 
 
@@ -202,12 +203,12 @@ def test_verify_injected_files_empty_list() -> None:
 
 
 def test_verify_injected_files_none_treated_as_pass() -> None:
-    """If OpenClaw delivers no report -> audit counts as green (not a fail)."""
+    """If the worker harness delivers no report -> audit counts as green (not a fail)."""
     assert verify_injected_files(None) == []
 
 
 def test_verify_injected_files_ignores_entries_without_name() -> None:
-    """A schema break on OpenClaw's side is not a bridge bug."""
+    """A schema break on the worker harness's side is not a bridge bug."""
     injected = [
         {"name": "AGENTS.md"},
         {"rawChars": 100},
@@ -248,7 +249,7 @@ def test_expected_workspace_files_matches_spike_b9() -> None:
 
 
 def test_workspace_subdir_constant_is_workspace() -> None:
-    """`workspace/` matcht OpenClaws systemPromptReport.workspaceDir-Suffix."""
+    """`workspace/` matches the Jarvis-Agent worker's systemPromptReport.workspaceDir suffix."""
     assert WORKSPACE_SUBDIR == "workspace"
 
 

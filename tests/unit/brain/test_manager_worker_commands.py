@@ -1,4 +1,4 @@
-"""Integration: BrainManager.generate() short-circuit for OpenClaw commands.
+"""Integration: BrainManager.generate() short-circuit for Jarvis-Agent commands.
 
 AD-12 + AP-OC5: status/cancel phrases must NOT trigger a force-spawn, even
 when their verb hangs off the ``spawn_verbs`` allowlist ("brich" i.e. an
@@ -56,7 +56,7 @@ async def test_cancel_short_circuits_to_handler() -> None:
 
     async def cancel_fn(mission_id: str | None) -> str:
         calls.append(mission_id)
-        return "OpenClaw-Mission abgebrochen."
+        return "Jarvis-Agent-Mission abgebrochen."
 
     manager.set_mission_command_handlers(
         status_fn=status_fn,
@@ -65,7 +65,7 @@ async def test_cancel_short_circuits_to_handler() -> None:
 
     result = await manager.generate("Brich die Mission ab", use_history=False)
 
-    assert result == "OpenClaw-Mission abgebrochen."
+    assert result == "Jarvis-Agent-Mission abgebrochen."
     assert calls == [None]
 
 

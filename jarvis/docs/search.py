@@ -261,7 +261,7 @@ class DocSearch:
 
         FTS5 breaks on ``"hello`` (unclosed quote) and treats ``-foo`` as
         negation. Because our doc bodies are full of hyphenated word pairs
-        (``Voice-Pipeline``, ``OpenClaw-Spawn``), we split hyphenated tokens
+        (``Voice-Pipeline``, ``Jarvis-Agent-Spawn``), we split hyphenated tokens
         into individual words. The ``unicode61`` tokeniser already does this in
         the index — the query just needs to avoid the negation pattern.
 

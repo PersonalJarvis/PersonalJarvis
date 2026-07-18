@@ -584,8 +584,8 @@ class BrainRoutingConfig(BaseModel):
 
     Persona mandate Phase 3: main Jarvis is a pure dispatcher. When this
     heuristic triggers, ``spawn_worker`` is called deterministically without
-    an LLM tool choice — the user utterance is passed verbatim to the OpenClaw
-    bridge (Wave-4 migration: previously the sub-Jarvis tier).
+    an LLM tool choice — the user utterance is passed verbatim to the
+    Jarvis-Agent bridge (Wave-4 migration: previously the sub-Jarvis tier).
 
     Defaults are chosen so that smalltalk (hello/thanks/how's it going) NEVER
     triggers, while action verbs (lies/baue/installiere/oeffne/mach/zeig)
@@ -640,9 +640,11 @@ class BrainRoutingConfig(BaseModel):
     # spawned heavy workers for trivial knowledge questions like
     # "Was ist ein Verbrenner-Motor?". The list captures the user's actual
     # signals for "I want a heavy worker, not a one-shot answer":
-    # explicit OpenClaw / sub-agent mentions plus deep-research markers.
+    # explicit Jarvis-Agent / sub-agent mentions plus deep-research markers.
     force_spawn_phrases: list[str] = Field(default_factory=lambda: [
-        # Explicit OpenClaw / sub-agent mentions
+        # Explicit Jarvis-Agent / sub-agent mentions. The "openclaw" variants
+        # are the retired internal codename, kept as a legacy trigger so a
+        # user who still says it out loud keeps working.
         "openclaw", "open claw", "open-claw",
         "subagent", "subagenten", "sub-agent", "sub-agenten", "sub agent",
         "spawne", "spawn", "spawnen", "spawnt", "gespawnt",
@@ -729,7 +731,7 @@ class BrainRoutingConfig(BaseModel):
 
     # Smalltalk allowlist — when the utterance matches one of these patterns,
     # NEVER spawn, even if the verb or marker heuristic fires. Pure wake/
-    # smalltalk inputs go straight through the brain, not via OpenClaw spawn.
+    # smalltalk inputs go straight through the brain, not via Jarvis-Agent spawn.
     smalltalk_allowlist: list[str] = Field(default_factory=lambda: [
         # Greetings / Hangup
         "hallo", "hi", "hey", "moin", "guten morgen", "guten abend",
@@ -908,7 +910,7 @@ class BrainConfig(BaseModel):
     # length against latency/cost. ~8192 tokens ≈ several minutes of speech.
     max_tokens: int = Field(default=8192, ge=256, le=32_768)
     # Phase 5 tiered routing — Wave-4 migration: the ``sub_jarvis`` tier was
-    # replaced by the OpenClaw bridge (see docs/openclaw-bridge.md §11).
+    # replaced by the Jarvis-Agent bridge (see docs/jarvis-agents-bridge.md §11).
     # Only ``router`` remains as a tier; the heavy worker runs as an external
     # subprocess via Mission Manager. The ``worker`` field (renamed from
     # ``sub_jarvis`` in the Jarvis-Agents rename, 2026-06-29) accepts both the
@@ -1226,10 +1228,12 @@ class JarvisAgentNotificationConfig(BaseModel):
 
 
 class JarvisAgentHarnessConfig(BaseModel):
-    """Top-level ``[harness.openclaw]`` config for the Jarvis-Agent worker harness.
+    """Top-level ``[harness.jarvis_agent]`` config for the Jarvis-Agent worker
+    harness (accepts the legacy ``[harness.openclaw]`` alias, see below).
 
-    ⚠️ INERT TODAY (2026-06-28): OpenClaw is NOT a registered harness — there is
-    no ``openclaw`` entry-point in pyproject.toml (Welle-4 removed the subprocess
+    ⚠️ INERT TODAY (2026-06-28): Jarvis-Agent is NOT a registered harness —
+    there is no ``jarvis_agent`` (formerly ``openclaw``) entry-point in
+    pyproject.toml (Welle-4 removed the subprocess
     worker, ~92% hang; see docs/BUGS.md). This block is a Wave-2 schema stub:
     setting ``enabled = true`` has NO effect — the harness cannot be dispatched
     and "start a subagent" routes to ``spawn_worker`` regardless. The boot path
@@ -1238,7 +1242,7 @@ class JarvisAgentHarnessConfig(BaseModel):
     sub-agent work runs through the Mission-Manager (ClaudeDirectWorker), not
     here, until Wave 3 actually wires the bridge.
 
-    Schema matches ``docs/openclaw-bridge.md §4.2`` post-Wave-1
+    Schema matches ``docs/jarvis-agents-bridge.md §4.2`` post-Wave-1
     (with AD-22..AD-24 findings incorporated). Wave 2 delivers only
     the schema + default block in jarvis.toml; Wave 3 wires the bridge.
 
@@ -1246,12 +1250,12 @@ class JarvisAgentHarnessConfig(BaseModel):
     means the bridge resolves the frontier-pro of the active Personal Jarvis
     provider (``cfg.brain.primary``) via the provider-slug mapping from AD-6
     (gemini→google/gemini-..., claude-api→anthropic/..., openai→openai/...).
-    This way OpenClaw automatically follows the user's provider choice.
+    This way Jarvis-Agent automatically follows the user's provider choice.
 
     AD-21 pin-version mandate: ``version`` must be set whenever the block
     exists at all — a Pydantic required field, no default. Guards against
     silent upstream drifts. Loading without the block (``HarnessConfig.
-    openclaw is None``) falls back to "bridge inactive".
+    jarvis_agent is None``) falls back to "bridge inactive".
     """
     model_config = ConfigDict(extra="forbid")
 
@@ -1269,7 +1273,7 @@ class JarvisAgentHarnessConfig(BaseModel):
     model: str | None = None
     # Time-cap fixed per AD-19; per-mission override deliberately not allowed.
     time_cap_min: int = Field(default=30, ge=1, le=240)
-    # Up to N OpenClaw missions in parallel; the fourth lands in the queue (AD-13).
+    # Up to N Jarvis-Agent missions in parallel; the fourth lands in the queue (AD-13).
     concurrency: int = Field(default=3, ge=1, le=10)
     # AD-20 reserved for v2 cost-cap retrofit. v1 None = no cap.
     cost_cap_eur: float | None = Field(default=None, ge=0.0)
@@ -1298,7 +1302,7 @@ class HarnessConfig(BaseModel):
     # Output limit per harness turn back to the brain — prevents large
     # build logs from blowing the context window.
     max_output_chars: int = 4000
-    # Per-harness overrides: e.g. {"openclaw": {"model": "opus", "max_turns": 10}}
+    # Per-harness overrides: e.g. {"jarvis_agent": {"model": "opus", "max_turns": 10}}
     per_harness: dict[str, dict[str, object]] = Field(default_factory=dict)
     # Jarvis-Agent worker harness (Wave 2). None = block missing in jarvis.toml,
     # bridge stays inactive. When the block is present, ``version`` is required.
@@ -1676,7 +1680,7 @@ class VisionContextConfig(BaseModel):
     Mandate: on every ``spawn_worker`` call, an optional active-window hint
     (process name + window title) is passed as an additional ``context_hint``
     to the worker. Default OFF because the UIA tree lookup costs 200-400 ms
-    of extra latency per spawn and does not pay off for every OpenClaw turn.
+    of extra latency per spawn and does not pay off for every Jarvis-Agent turn.
 
     Enable via either:
       - ENV ``JARVIS_VISION_CONTEXT=1``

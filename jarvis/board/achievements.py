@@ -16,7 +16,7 @@ Each achievement is an ``AchievementSpec`` with:
   rewards output, not unhealthy usage patterns.
 - No time-window-specific "most today" awards — that drives status anxiety,
   which we explicitly want to avoid.
-- ``ten_x_engineer`` measures weekly OpenClaw runtime; this is an output
+- ``ten_x_engineer`` measures weekly Jarvis-Agent runtime; this is an output
   metric ("how much Jarvis completed autonomously"), not "the user was online
   for many hours".
 
@@ -91,8 +91,8 @@ def _eval_first_mcp(event: Event, ctx: AchievementContext) -> UnlockDecision | N
     return UnlockDecision(evidence={"harness": harness})
 
 
-def _eval_openclaw_summoner(event: Event, ctx: AchievementContext) -> UnlockDecision | None:
-    """First successful OpenClaw spawn."""
+def _eval_jarvis_agent_summoner(event: Event, ctx: AchievementContext) -> UnlockDecision | None:
+    """First successful Jarvis-Agent spawn."""
     if type(event).__name__ != "JarvisAgentTaskCompleted":
         return None
     if not bool(getattr(event, "success", False)):
@@ -148,10 +148,10 @@ def _make_task_count_eval(threshold: int) -> Callable[[Event, AchievementContext
 
 
 def _eval_ten_x_engineer(event: Event, ctx: AchievementContext) -> UnlockDecision | None:
-    """10+ OpenClaw hours in the last 7 days (output metric).
+    """10+ Jarvis-Agent hours in the last 7 days (output metric).
 
     Deliberately NOT "user was online for 10 h" — ``hours_saved_estimate``
-    sums over OpenClaw runtimes during which the user was typically doing
+    sums over Jarvis-Agent runtimes during which the user was typically doing
     something else.
     """
     if type(event).__name__ != "JarvisAgentTaskCompleted":
@@ -200,7 +200,7 @@ ACHIEVEMENTS: list[AchievementSpec] = [
         title="Agent Summoner",
         description="First successful background-agent spawn.",
         tier="mastery",
-        evaluator=_eval_openclaw_summoner,
+        evaluator=_eval_jarvis_agent_summoner,
     ),
     AchievementSpec(
         id="tool_dabbler",

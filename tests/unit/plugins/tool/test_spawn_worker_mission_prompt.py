@@ -1,4 +1,4 @@
-"""Tests for the mission-prompt construction in spawn_openclaw.
+"""Tests for the mission-prompt construction in spawn_worker.
 
 Live incident 2026-05-29 (mission 019e70a9): the user's request reached the
 worker as a VAD-cut fragment. STT captured only 'die Detailwürfelspiele.html'

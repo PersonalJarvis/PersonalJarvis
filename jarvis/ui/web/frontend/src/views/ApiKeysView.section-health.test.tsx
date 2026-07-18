@@ -85,7 +85,7 @@ function baseRoutes(overrides: Record<string, () => RouteResult> = {}) {
     "/api/providers": () => ({
       body: { providers: [BROKEN_BRAIN_PROVIDER, ACTIVE_TTS_PROVIDER, ACTIVE_STT_PROVIDER] },
     }),
-    "/api/openclaw/status": () => ({ body: { mapping: [], brain_primary: "" } }),
+    "/api/jarvis-agent/status": () => ({ body: { mapping: [], brain_primary: "" } }),
     ...overrides,
   };
 }

@@ -670,9 +670,9 @@ class SessionRecorder:
         # (e.g. "openai/gpt-4o" even though no OpenAI key exists).
         # intent_level is the router decision (e.g. "spawn_worker"/
         # "direct_action"/"trivial"). The recorder schema, however, only
-        # allows the real tier names for ``tier`` ({"router", "openclaw",
-        # "trivial", "fast", "deep", "code"}). Values outside that set are
-        # mapped to "router" — the main Jarvis brain answered.
+        # allows the real tier names for ``tier`` ({"router", "jarvis_agent",
+        # "openclaw" (legacy), "trivial", "fast", "deep", "code"}). Values
+        # outside that set are mapped to "router" — the main Jarvis brain answered.
         if event.intent_level and not t.tier:
             t.tier = _normalize_intent_level_to_tier(event.intent_level)
 
@@ -681,7 +681,7 @@ class SessionRecorder:
 
         Wave 4 migration: formerly ``_on_sub_jarvis_started`` with
         ``SubJarvisStarted``-Event. Sub-Jarvis tier was replaced by the worker
-        harness (see docs/openclaw-bridge.md §11). Schema preserved 1:1.
+        harness (see docs/jarvis-agents-bridge.md §11). Schema preserved 1:1.
 
         Important for telemetry: without this setter, provider/model stayed
         empty in voice_turns when the worker no longer emitted its own
@@ -825,9 +825,9 @@ class SessionRecorder:
 
 
 # VoiceTurnRow.tier literal — keep in sync with jarvis/sessions/models.py.
-# Wave 4 migration: the ``sub_jarvis`` legacy value is still accepted for
-# backwards compatibility with old voice sessions in the DB; new turns
-# use ``openclaw``.
+# Wave 4 migration: the ``sub_jarvis`` and ``openclaw`` legacy values are
+# still accepted for backwards compatibility with old voice sessions in the
+# DB; new turns use ``jarvis_agent`` (see ``_on_worker_task_started``).
 _VALID_TIERS: frozenset[str] = frozenset(
     {
         "router",
@@ -848,11 +848,11 @@ def _normalize_intent_level_to_tier(intent_level: str) -> str:
     The router emits ``BrainTurnStarted.intent_level`` as the routing
     decision it made (``trivial`` / ``direct_action`` / ``spawn_worker``).
     The recorder schema, however, only allows the tier identifiers
-    ``router``/``openclaw``/etc. for ``tier``. Anything outside that set
-    becomes ``"router"`` — semantically correct, because in both cases
-    (direct_action, spawn) the router brain answered the turn. The
-    OpenClaw tier is explicitly overridden in
-    ``_on_openclaw_task_started``.
+    ``router``/``jarvis_agent``/etc. (``openclaw`` accepted only as legacy)
+    for ``tier``. Anything outside that set becomes ``"router"`` —
+    semantically correct, because in both cases (direct_action, spawn) the
+    router brain answered the turn. The Jarvis-Agent tier is explicitly
+    overridden in ``_on_worker_task_started``.
     """
     if intent_level in _VALID_TIERS:
         return intent_level

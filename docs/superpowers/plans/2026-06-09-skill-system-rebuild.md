@@ -288,7 +288,7 @@ def test_skill_match_blocks_force_spawn(manager_with_skill_ctx):
 # 2. Hard negatives keep spawning (no skill match)
 def test_non_skill_action_still_spawns(manager_with_skill_ctx):
     m = manager_with_skill_ctx(trigger=r"morgenroutine")
-    assert m._should_force_spawn("mach einen deep dive ins Repo via OpenClaw") is True
+    assert m._should_force_spawn("mach einen deep dive ins Repo via Jarvis-Agent") is True
 
 # 3. Matched turn guarantees run-skill in the tool set even on smalltalk
 def test_smalltalk_override_keeps_run_skill_on_skill_turn(manager_with_skill_ctx):

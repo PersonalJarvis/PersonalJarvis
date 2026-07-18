@@ -1,18 +1,22 @@
-"""OpenClaw worker aggregator for the mission-detail API.
+"""Jarvis-Agent worker aggregator for the mission-detail API.
 
-Phase 9 (Welle 4 UI): once the OpenClaw harness is wired into the
+Phase 9 (Welle 4 UI): once the Jarvis-Agent harness is wired into the
 mission-manager worker layer, it emits ``WorkerSpawned`` events with a
-session_id and ``step["harness"] == "openclaw"``. This aggregator pulls all
-OpenClaw-specific UI fields out of a mission's event stream —
+session_id and ``step["harness"] == "openclaw"`` (the harness-registration
+slug — kept as-is for backward compatibility, see AliasChoices in
+HarnessConfig). This aggregator pulls all Jarvis-Agent-specific UI fields
+out of a mission's event stream —
 ``state_dir``, ``log_path``, ``reattach_status``, ``cost_usd``, ``tokens``.
 
 Pure helpers, no IO. Tests for this live in
 ``tests/missions/api/test_missions_worker_aggregator.py``.
 
-Contract compatibility (see ``docs/openclaw-bridge.md``):
-- ``MISSION_STATE_DIR`` convention from ``OpenClawHarness._build_spec``:
-  ``<worktree>/.openclaw_state/<session_id>/openclaw_state``.
-- ``log_path`` convention: OpenClaw writes ``run.log`` into state_dir
+Contract compatibility (see ``docs/jarvis-agents-bridge.md``):
+- ``MISSION_STATE_DIR`` convention from the worker-runtime builder (see
+  ``jarvis/missions/workers/provider_chain.py``):
+  ``<worktree>/.openclaw_state/<session_id>/openclaw_state`` (legacy
+  directory-name segments, kept for on-disk backward compatibility).
+- ``log_path`` convention: the worker writes ``run.log`` into state_dir
   (see the Welle-3 spike results §SP-4).
 - Reattach status: ``live`` as long as neither ``WorkerKilled`` nor a
   mission-terminal event follows; otherwise ``ended``/``killed``.
@@ -29,15 +33,17 @@ ReattachStatus = Literal["live", "ended", "killed", "unknown"]
 
 
 def _is_worker_mission(spawn_payload: Any) -> bool:
-    """Detection heuristic for an OpenClaw worker.
+    """Detection heuristic for a Jarvis-Agent worker.
 
-    Primary: ``step["harness"] == "openclaw"`` — this is the canonical marker
-    once the worker layer calls the OpenClaw harness.
+    Primary: ``step["harness"] == "openclaw"`` (the harness-registration
+    slug — kept as-is for backward compatibility) — this is the canonical
+    marker once the worker layer calls the Jarvis-Agent harness.
 
     Fallback: ``session_id is not None`` AND ``model`` contains a
-    ``provider/model`` slash (OpenClaw's provider-prefix convention, see
-    ``OpenClawHarness.build_spawn_args``). This way the UI still works even
-    when the worker layer doesn't set the ``step`` marker yet.
+    ``provider/model`` slash (the Jarvis-Agent provider-prefix convention,
+    see ``jarvis/missions/workers/provider_chain.py``). This way the UI
+    still works even when the worker layer doesn't set the ``step`` marker
+    yet.
     """
     step = getattr(spawn_payload, "step", None) or {}
     if isinstance(step, dict) and step.get("harness") == "openclaw":
@@ -49,7 +55,8 @@ def _is_worker_mission(spawn_payload: Any) -> bool:
 
 
 def _derive_state_dir(worktree: str, session_id: str) -> str:
-    """Reproduces the ``OpenClawHarness._build_spec`` convention.
+    """Reproduces the worker-runtime state-dir convention (see
+    ``jarvis/missions/workers/provider_chain.py``).
 
     Returns a *forward-slash* path (UI-friendly even on Windows).
     """
@@ -61,7 +68,7 @@ def _derive_state_dir(worktree: str, session_id: str) -> str:
 
 
 def _derive_log_path(state_dir: str) -> str:
-    """OpenClaw writes ``run.log`` into state_dir (Welle-3 SP-4 finding)."""
+    """The worker writes ``run.log`` into state_dir (Welle-3 SP-4 finding)."""
     if not state_dir:
         return ""
     return f"{state_dir}/run.log"
@@ -70,7 +77,7 @@ def _derive_log_path(state_dir: str) -> str:
 def extract_worker_missions(
     events: Iterable[EventEnvelope],
 ) -> list[dict[str, Any]]:
-    """Aggregates OpenClaw worker snapshots from an event stream.
+    """Aggregates Jarvis-Agent worker snapshots from an event stream.
 
     Idempotent + no IO. Entry order matches the
     chronological spawn order.

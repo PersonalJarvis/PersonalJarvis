@@ -4,7 +4,7 @@ Difference from `dispatch_to_harness`:
     - `dispatch_to_harness` = 1 harness, 1 prompt (or N harnesses × 1 prompt).
     - `multi_spawn`         = 1 harness, N different prompts in parallel.
 
-Use case: an OpenClaw worker spawns 3 parallel `openclaw` agents with
+Use case: a Jarvis-Agent worker spawns 3 parallel `openclaw` agents with
 different sub-tasks ("write the tests", "write the implementation",
 "write the docs") and aggregates the outputs.
 

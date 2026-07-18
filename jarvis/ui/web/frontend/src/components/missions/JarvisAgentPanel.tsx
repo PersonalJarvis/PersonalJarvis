@@ -15,18 +15,18 @@ import { useShallow } from "zustand/react/shallow";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
-import type { OpenClawReattachStatus, OpenClawWorkerSnapshot } from "@/types/missions";
+import type { JarvisAgentReattachStatus, JarvisAgentWorkerSnapshot } from "@/types/missions";
 
 import { useMissionsStore } from "./store";
 
-const REATTACH_STYLE: Record<OpenClawReattachStatus, string> = {
+const REATTACH_STYLE: Record<JarvisAgentReattachStatus, string> = {
   live: "border-emerald-400/40 bg-emerald-400/10 text-emerald-300",
   ended: "border-zinc-500/40 bg-zinc-500/10 text-zinc-300",
   killed: "border-destructive/50 bg-destructive/15 text-destructive",
   unknown: "border-amber-400/40 bg-amber-400/10 text-amber-300",
 };
 
-const REATTACH_LABEL: Record<OpenClawReattachStatus, string> = {
+const REATTACH_LABEL: Record<JarvisAgentReattachStatus, string> = {
   live: "live",
   ended: "ended",
   killed: "killed",
@@ -68,7 +68,7 @@ export function JarvisAgentPanel() {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-xs text-muted-foreground">
         <Cpu className="h-7 w-7 text-muted-foreground/40" />
-        <p>{t("openclaw_panel.select_mission")}</p>
+        <p>{t("jarvis_agent_panel.select_mission")}</p>
       </div>
     );
   }
@@ -77,14 +77,14 @@ export function JarvisAgentPanel() {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 px-4 text-center text-xs text-muted-foreground">
         <CircleSlash className="h-7 w-7 text-muted-foreground/40" />
-        <p>{t("openclaw_panel.no_workers")}</p>
+        <p>{t("jarvis_agent_panel.no_workers")}</p>
       </div>
     );
   }
 
   return (
     <ScrollArea className="h-full">
-      <div data-testid="openclaw-worker-list" className="space-y-2 p-3">
+      <div data-testid="jarvis-agent-worker-list" className="space-y-2 p-3">
         {workers.map((w) => (
           <WorkerRow key={w.worker_id} worker={w} />
         ))}
@@ -94,7 +94,7 @@ export function JarvisAgentPanel() {
 }
 
 interface WorkerRowProps {
-  worker: OpenClawWorkerSnapshot;
+  worker: JarvisAgentWorkerSnapshot;
 }
 
 function WorkerRow({ worker }: WorkerRowProps) {
@@ -104,7 +104,7 @@ function WorkerRow({ worker }: WorkerRowProps) {
 
   return (
     <div
-      data-testid="openclaw-worker-row"
+      data-testid="jarvis-agent-worker-row"
       data-worker-id={worker.worker_id}
       className="rounded border border-border/60 bg-card/30 p-2 text-xs"
     >
@@ -124,7 +124,7 @@ function WorkerRow({ worker }: WorkerRowProps) {
             )}
           </div>
           <div
-            data-testid="openclaw-model"
+            data-testid="jarvis-agent-model"
             className="mt-1 truncate font-mono text-foreground/90"
             title={worker.model}
           >
@@ -132,7 +132,7 @@ function WorkerRow({ worker }: WorkerRowProps) {
           </div>
         </div>
         <span
-          data-testid="openclaw-reattach-badge"
+          data-testid="jarvis-agent-reattach-badge"
           data-reattach-status={worker.reattach_status}
           className={cn(
             "rounded border px-1.5 py-0.5 font-mono text-[9px] uppercase tracking-wider",
@@ -146,7 +146,7 @@ function WorkerRow({ worker }: WorkerRowProps) {
       <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[10px]">
         <dt className="text-muted-foreground">Cost</dt>
         <dd
-          data-testid="openclaw-cost"
+          data-testid="jarvis-agent-cost"
           className="font-mono text-foreground/80 tabular-nums"
         >
           {formatCost(worker.cost_usd)}
@@ -160,9 +160,9 @@ function WorkerRow({ worker }: WorkerRowProps) {
         <dt className="text-muted-foreground">State-Dir</dt>
         <dd className="flex items-center gap-1 min-w-0">
           <span
-            data-testid="openclaw-state-dir"
+            data-testid="jarvis-agent-state-dir"
             className="truncate font-mono text-foreground/80"
-            title={worker.state_dir || t("openclaw_panel.not_available")}
+            title={worker.state_dir || t("jarvis_agent_panel.not_available")}
           >
             {worker.state_dir || "—"}
           </span>
@@ -170,7 +170,7 @@ function WorkerRow({ worker }: WorkerRowProps) {
             <button
               type="button"
               onClick={() => copyToClipboard(worker.state_dir)}
-              title={t("openclaw_panel.copy_path")}
+              title={t("jarvis_agent_panel.copy_path")}
               className="shrink-0 text-muted-foreground/70 hover:text-foreground"
             >
               <Copy className="h-3 w-3" />
@@ -181,9 +181,9 @@ function WorkerRow({ worker }: WorkerRowProps) {
         <dt className="text-muted-foreground">Logfile</dt>
         <dd className="flex items-center gap-1 min-w-0">
           <span
-            data-testid="openclaw-log-path"
+            data-testid="jarvis-agent-log-path"
             className="truncate font-mono text-foreground/80"
-            title={worker.log_path || t("openclaw_panel.not_available")}
+            title={worker.log_path || t("jarvis_agent_panel.not_available")}
           >
             {worker.log_path || "—"}
           </span>
@@ -192,7 +192,7 @@ function WorkerRow({ worker }: WorkerRowProps) {
               <button
                 type="button"
                 onClick={() => copyToClipboard(worker.log_path)}
-                title={t("openclaw_panel.copy_path")}
+                title={t("jarvis_agent_panel.copy_path")}
                 className="shrink-0 text-muted-foreground/70 hover:text-foreground"
               >
                 <Copy className="h-3 w-3" />
@@ -206,7 +206,7 @@ function WorkerRow({ worker }: WorkerRowProps) {
                   e.preventDefault();
                   copyToClipboard(worker.log_path);
                 }}
-                title={t("openclaw_panel.file_link_copies_path")}
+                title={t("jarvis_agent_panel.file_link_copies_path")}
                 className="shrink-0 text-muted-foreground/70 hover:text-foreground"
               >
                 <ExternalLink className="h-3 w-3" />
@@ -217,9 +217,9 @@ function WorkerRow({ worker }: WorkerRowProps) {
 
         {worker.ended_reason && (
           <>
-            <dt className="text-muted-foreground">{t("openclaw_panel.ended_label")}</dt>
+            <dt className="text-muted-foreground">{t("jarvis_agent_panel.ended_label")}</dt>
             <dd
-              data-testid="openclaw-ended-reason"
+              data-testid="jarvis-agent-ended-reason"
               className="font-mono text-foreground/70"
             >
               {worker.ended_reason}

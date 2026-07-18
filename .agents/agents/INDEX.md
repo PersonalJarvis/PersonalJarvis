@@ -21,7 +21,7 @@ Every subagent is primarily classified along two axes: **role** (what it does) a
 ### Three domain classes
 
 - **generic** — phase-agnostic, broadly applicable
-- **phase-specific** — bound to a plan/phase/doc (P0-5, P6, P7, awareness-A0-A5, openclaw-bridge)
+- **phase-specific** — bound to a plan/phase/doc (P0-5, P6, P7, awareness-A0-A5, jarvis-agents-bridge)
 - **specialist** — domain-expert (Win32, Audio, Critic-Design)
 
 ---
@@ -31,8 +31,8 @@ Every subagent is primarily classified along two axes: **role** (what it does) a
 | Role | Generic | Phase-specific | Specialist |
 |---|---|---|---|
 | Researcher | — | `jarvis-architect-explorer` (P0–7) | — |
-| Worker | — | `jarvis-worker` (P6, more generically usable), `openclaw-bridge-builder` (openclaw) | `win32-specialist` |
-| Reviewer | `code-reviewer`, `docs-privacy-reviewer` | `jarvis-reviewer` (P6 Adversarial), `openclaw-bridge-reviewer` (openclaw), `phase7-selfmod-auditor` (P7) | `jarvis-critic-design-reviewer` (P6 Critic-Loop) |
+| Worker | — | `jarvis-worker` (P6, more generically usable), `jarvis-agents-bridge-builder` (jarvis-agent) | `win32-specialist` |
+| Reviewer | `code-reviewer`, `docs-privacy-reviewer` | `jarvis-reviewer` (P6 Adversarial), `jarvis-agents-bridge-reviewer` (jarvis-agent), `phase7-selfmod-auditor` (P7) | `jarvis-critic-design-reviewer` (P6 Critic-Loop) |
 | Verifier | `plan-verifier` (Awareness + general) | `awareness-a3-a5-verifier` (A3-A5) | — |
 | Test-Runner | `test-runner` | `jarvis-test-runner` (P6) | — |
 
@@ -46,7 +46,7 @@ Every subagent is primarily classified along two axes: **role** (what it does) a
 |---|---|---|
 | Understand a new Phase-0-to-5 component before coding | `jarvis-architect-explorer` | Phase 0-5 architecture knowledge, read-only |
 | Extend a Phase-6 mission/critic/worktree | `jarvis-worker` | Heavy worker, knows the Phase-6 internals |
-| Implement OpenClaw-bridge Wave 2/3 | `openclaw-bridge-builder` | Knows the spike findings, bridge doc §6 |
+| Implement Jarvis-Agent-bridge Wave 2/3 | `jarvis-agents-bridge-builder` | Knows the spike findings, bridge doc §6 |
 | Touch Win32/UIA/DPI/SetWinEventHook | `win32-specialist` | Lifecycle obligations, lazy-import patterns |
 | Write generic code (no phase knowledge needed) | directly in the main agent or `general-purpose` | Subagent overhead not worth it |
 
@@ -56,9 +56,9 @@ Every subagent is primarily classified along two axes: **role** (what it does) a
 |---|---|---|
 | Diff after every substantial change | `code-reviewer` | Senior review against AGENTS.md |
 | New/changed file under `docs/` (privacy pass before it could ship) | `docs-privacy-reviewer` | Reads the doc for the maintainer's name/email/handle, personal paths, machine ids, private life details, and real secrets — the semantic half of the docs privacy gate (`scripts/ci/docs_privacy_scan.py` is the deterministic half, run by a PostToolUse hook) |
-| Adversarially check jarvis-worker output (build phase) | `jarvis-reviewer` | JSON verdict, during the build before handoff to the user. NOT for OpenClaw production output (use the Phase-6 critic for that) |
+| Adversarially check jarvis-worker output (build phase) | `jarvis-reviewer` | JSON verdict, during the build before handoff to the user. NOT for Jarvis-Agent production output (use the Phase-6 critic for that) |
 | Phase-6 Critic-Loop design (prompts, verdict schema) | `jarvis-critic-design-reviewer` | Sycophancy risks, reflexion pattern |
-| OpenClaw-bridge code against AP-OC1..OC13 | `openclaw-bridge-reviewer` | Bridge doc §5 anti-patterns |
+| Jarvis-Agent-bridge code against AP-OC1..OC13 | `jarvis-agents-bridge-reviewer` | Bridge doc §5 anti-patterns |
 | Phase-7 Self-Mod code against AP-SM1..SM14 | `phase7-selfmod-auditor` | Allowlist + pre-validate + confirmation |
 
 ### When verifying
@@ -75,7 +75,7 @@ Every subagent is primarily classified along two axes: **role** (what it does) a
 |---|---|---|
 | pytest against Phase 0-5 or Awareness | `test-runner` | Generic, Haiku, compact |
 | pytest against Phase 6 (`tests/missions/`) | `jarvis-test-runner` | Phase-6 path conventions, JSON body output |
-| pytest against the OpenClaw bridge | `test-runner` | Generic is enough, the OpenClaw paths are not Phase-6 |
+| pytest against the Jarvis-Agent bridge | `test-runner` | Generic is enough, the Jarvis-Agent paths are not Phase-6 |
 
 ---
 
@@ -91,7 +91,7 @@ tools: <comma-list>                   # Required — tool allowlist
 model: <haiku|sonnet|opus>            # Required
 role: <researcher|worker|reviewer|verifier|test-runner>   # Doc field (not a Claude Code standard)
 domain: <generic|phase-N|specialist>  # Doc field
-phase: <optional, e.g. "0-5", "6", "7", "awareness-A3-A5", "openclaw-bridge">
+phase: <optional, e.g. "0-5", "6", "7", "awareness-A3-A5", "jarvis-agents-bridge">
 must_read:                            # Doc field, list of mandatory reading
   - AGENTS.md
   - <more>

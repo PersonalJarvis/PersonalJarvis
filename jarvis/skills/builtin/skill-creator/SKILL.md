@@ -47,10 +47,10 @@ token_budget_estimate: 8000
 >    tool requirements.
 >
 > 2. **Skill location:** Finished skills land in ``%LOCALAPPDATA%\Jarvis\skills\<name>\``,
->    not in an OpenClaw project folder. ``user_skills_dir()`` returns the
+>    not in a Jarvis-Agent project folder. ``user_skills_dir()`` returns the
 >    path programmatically.
 >
-> 3. **Eval framework:** Anthropic's original uses OpenClaw subagents +
+> 3. **Eval framework:** Anthropic's original uses Claude Code subagents +
 >    ``eval-viewer/generate_review.py`` for quantitative evals. That is not
 >    (yet) ported to Jarvis — the folders ``scripts/``, ``agents/`` and ``assets/``
 >    are intentionally empty and contain placeholder READMEs. For the MVP,
@@ -407,7 +407,7 @@ Create 20 eval queries — a mix of should-trigger and should-not-trigger. Save 
 ]
 ```
 
-The queries must be realistic and something a OpenClaw or OpenClaw user would actually type. Not abstract requests, but requests that are concrete and specific and have a good amount of detail. For instance, file paths, personal context about the user's job or situation, column names and values, company names, URLs. A little bit of backstory. Some might be in lowercase or contain abbreviations or typos or casual speech. Use a mix of different lengths, and focus on edge cases rather than making them clear-cut (the user will get a chance to sign off on them).
+The queries must be realistic and something a Jarvis user would actually type. Not abstract requests, but requests that are concrete and specific and have a good amount of detail. For instance, file paths, personal context about the user's job or situation, column names and values, company names, URLs. A little bit of backstory. Some might be in lowercase or contain abbreviations or typos or casual speech. Use a mix of different lengths, and focus on edge cases rather than making them clear-cut (the user will get a chance to sign off on them).
 
 Bad: `"Format this data"`, `"Extract text from PDF"`, `"Create a chart"`
 
@@ -481,7 +481,7 @@ After packaging, direct the user to the resulting `.skill` file path so they can
 
 ## Platform-specific instructions
 
-For OpenClaw- and Cowork-specific authoring notes, read
+For authoring notes specific to the external `openclaw` CLI and Cowork, read
 [references/platform-notes.md](references/platform-notes.md).
 
 ## Reference files

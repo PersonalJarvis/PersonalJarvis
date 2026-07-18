@@ -1,17 +1,17 @@
-"""SpawnWorkerTool — Delegation an die OpenClaw-Bridge via Mission-Manager.
+"""SpawnWorkerTool — Delegation an die Jarvis-Agent-Bridge via Mission-Manager.
 
 Welle-4-Migration: vorher ``SpawnSubJarvisTool`` mit eigenem
-``SubJarvisManager``. Sub-Jarvis-Tier wurde durch OpenClaw-Bridge ersetzt
-(siehe docs/openclaw-bridge.md §11). Das Tool dispatched jetzt eine Mission
+``SubJarvisManager``. Sub-Jarvis-Tier wurde durch Jarvis-Agent-Bridge ersetzt
+(siehe docs/jarvis-agents-bridge.md §11). Das Tool dispatched jetzt eine Mission
 an den ``MissionManager`` aus ``jarvis.missions.manager``; der Kontrollierer
-+ Worker uebernehmen Worktree-Setup, Subprocess-Spawn (OpenClaw-Bridge in
++ Worker uebernehmen Worktree-Setup, Subprocess-Spawn (Jarvis-Agent-Bridge in
 ``jarvis/missions/worker_runtime/``) und Voice-Readback.
 
 Das Router-Brain (Haiku/Flash) ruft dieses Tool, wenn der User eine komplexe
 Aufgabe beschreibt (Code-Build, App-Entwicklung, mehrstufige Recherche).
 
 Ablauf (Fire-and-Forget):
-    1. ``OpenClawAnnouncement`` auf den Bus publishen fuer UI/Telemetry.
+    1. ``JarvisAgentAnnouncement`` auf den Bus publishen fuer UI/Telemetry.
     2. ``MissionManager.dispatch(prompt=<utterance>, ...)`` Background-
        Task anstossen — Mission-Manager erzeugt PENDING-Mission, der
        Kontrollierer pickt sie auf und scheduled einen Worker.
@@ -19,7 +19,7 @@ Ablauf (Fire-and-Forget):
        ist sofort wieder frei fuer neue User-Utterances.
     4. Wenn die Mission im Hintergrund fertig ist, publisht der Voice-
        Listener (``jarvis/missions/voice/listener.py``) eine
-       ``OpenClawBackgroundCompleted``-Nachricht auf den Bus, die die
+       ``JarvisAgentBackgroundCompleted``-Nachricht auf den Bus, die die
        Speech-Pipeline in eine Voice-Ansage umwandelt.
 
 Wichtig: Die User-Utterance wird **verbatim** weitergegeben (AC2). Die
@@ -51,8 +51,8 @@ log = logging.getLogger(__name__)
 # Mission stack is bootstrapped AFTER build_default_brain() in the
 # DesktopApp startup sequence, but the BrainManager is built once and
 # never re-evaluates its tool dict. See AD-OC1 Lazy-Resolver in
-# docs/openclaw-bridge.md and the regression in
-# tests/integration/test_openclaw_lazy_bootstrap.py.
+# docs/jarvis-agents-bridge.md and the regression in
+# tests/integration/test_worker_lazy_bootstrap.py.
 MissionManagerResolver = Callable[[], "MissionManager | None"]
 # Same lazy-resolver pattern for the Kontrollierer (mission orchestrator).
 # The Kontrollierer is what actually executes a mission after dispatch.
@@ -293,11 +293,11 @@ def _build_mission_prompt(
 
 
 class SpawnWorkerTool:
-    """Delegiert komplexe Aufgaben an die OpenClaw-Bridge via Mission-Manager.
+    """Delegiert komplexe Aufgaben an die Jarvis-Agent-Bridge via Mission-Manager.
 
     Tier-Filter: Dieses Tool ist NUR im Router-Tier verfuegbar
     (``ROUTER_TOOLS`` in ``jarvis/brain/factory.py``). Worker selbst haben
-    es nicht — damit wird Rekursion (OpenClaw spawnt Sub-OpenClaw) im
+    es nicht — damit wird Rekursion (Jarvis-Agent spawnt Sub-Jarvis-Agent) im
     Tool-Layer blockiert.
     """
 
@@ -673,13 +673,18 @@ class SpawnWorkerTool:
             # 2. Fire-and-Forget: Mission anstossen und sofort zurueckkehren.
             #    Der Router-Brain ist dadurch sofort wieder frei fuer neue
             #    User-Utterances. Das Completion-Event publisht der Voice-
-            #    Listener als OpenClawBackgroundCompleted.
+            #    Listener als JarvisAgentBackgroundCompleted.
             asyncio.create_task(
                 self._background_dispatch(
                     mission_prompt, utterance, manager, kontrollierer,
                     mission_language=mission_language,
                 ),
-                name=f"openclaw-{ctx.trace_id.hex[:8]}",
+                # NOTE: prefix "jarvis-agent-" is a live matching key, not a
+                # cosmetic label — jarvis/brain/manager.py
+                # ``_cancel_all_background_tasks`` matches on this exact
+                # asyncio task-name prefix to cancel running background
+                # agents. Do not rename without updating that matcher too.
+                name=f"jarvis-agent-{ctx.trace_id.hex[:8]}",
             )
             launched = True
         finally:
@@ -734,7 +739,7 @@ class SpawnWorkerTool:
            publishes ``MissionDispatched``.
         2. ``kontrollierer.run_mission()`` plans + executes it and
            publishes ``MissionApproved`` / ``MissionFailed``, which the
-           Voice-Listener turns into an ``OpenClawBackgroundCompleted``
+           Voice-Listener turns into a ``JarvisAgentBackgroundCompleted``
            event for TTS readback.
 
         Without step 2 the mission stays PENDING forever and the user
@@ -763,7 +768,7 @@ class SpawnWorkerTool:
                 )
                 return
             # Run the mission. This blocks until APPROVED / FAILED;
-            # the Voice-Listener will then publish OpenClawBackgroundCompleted.
+            # the Voice-Listener will then publish JarvisAgentBackgroundCompleted.
             await kontrollierer.run_mission(mission_id)
         except asyncio.CancelledError:
             log.info("Jarvis-Agent background dispatch cancelled (app shutdown)")

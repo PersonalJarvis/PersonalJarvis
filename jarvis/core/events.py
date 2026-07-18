@@ -447,7 +447,7 @@ class TerminalCommandExecuted(Event):
 # Phase 5 — Kill / Cost / Observation / Task / Admin
 # ----------------------------------------------------------------------
 
-# Announcement (CL-3, formerly Sub-Jarvis lifecycle, now OpenClaw)
+# Announcement (CL-3, Jarvis-Agent lifecycle; renamed twice, see git history)
 
 @dataclass(frozen=True, slots=True)
 class AnnouncementRequested(Event):
@@ -914,7 +914,7 @@ class WorkflowCompleted(Event):
 
 
 # ----------------------------------------------------------------------
-# Jarvis-Agent Task Dashboard (formerly OpenClaw / Sub-Jarvis)
+# Jarvis-Agent Task Dashboard
 # ----------------------------------------------------------------------
 
 @dataclass(frozen=True, slots=True)

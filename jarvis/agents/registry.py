@@ -146,7 +146,7 @@ class JarvisAgentRegistry:
     def attach_mission_bus(self, mission_bus: Any) -> JarvisAgentRegistry:
         """Bridge Phase-6 MissionBus events into the legacy agent-tree.
 
-        Welle-4 removed the publishers for OpenClawTaskStarted/Completed et
+        Welle-4 removed the publishers for JarvisAgentTaskStarted/Completed et
         al. — the new Mission-Manager emits Phase-6 EventEnvelopes on its own
         per-subscriber bus. Without this bridge the Sub-Agents board stays
         empty even while missions are running. We translate the few relevant

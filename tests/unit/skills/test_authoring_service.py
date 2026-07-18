@@ -1,7 +1,7 @@
 """Tests for the deterministic user-skill authoring service.
 
 ``SkillAuthoringService`` backs ``POST /api/skills`` — the "New skill" form in
-the desktop app. Unlike the OpenClaw-author *mission* pipeline
+the desktop app. Unlike the Jarvis-Agent-author *mission* pipeline
 (``SkillAuthoringRunner``), this path takes a structured request (name,
 description, body, triggers) and writes a SKILL.md deterministically, with NO
 brain involved, so it works on a headless €5 VPS.

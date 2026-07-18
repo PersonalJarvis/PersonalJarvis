@@ -978,7 +978,7 @@ function ComputerUseCategory({
 
 /**
  * The Subagents category — the heavy-task worker selection. `SubagentSection`
- * owns its own data source (/api/openclaw/status) and card system; the hero band
+ * owns its own data source (/api/jarvis-agent/status) and card system; the hero band
  * just frames it consistently with the provider tiers.
  */
 function SubagentCategory() {

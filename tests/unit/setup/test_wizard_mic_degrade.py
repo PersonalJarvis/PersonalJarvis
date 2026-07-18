@@ -4,7 +4,7 @@ Regression guard: `sd.query_devices()` raises (e.g. PortAudioError "library not
 found") on any host with no audio backend — a headless server, or a Linux
 desktop without libportaudio2. If that error propagated, the wizard would die
 before step_finalize writes the .setup-complete marker, and the app would re-run
-its whole onboarding (the same failure mode as the step-7 OpenClaw crash).
+its whole onboarding (the same failure mode as the step-7 Jarvis-Agent crash).
 """
 from __future__ import annotations
 

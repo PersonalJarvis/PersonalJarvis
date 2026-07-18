@@ -1,17 +1,17 @@
 """Coverage for the ClaudeDirectCritic path (CRIT-1, 2026-05-17).
 
-Audit-Team 10 verdict on 2026-05-17 (Audit-2 RED): the live OpenClaw
-critic spawn has been failing 100 % of voice missions since 13:14 today
-because OpenClaw 2026.5.7 silently ignores the
+Audit-Team 10 verdict on 2026-05-17 (Audit-2 RED): the live critic spawn
+via the external `openclaw` worker CLI has been failing 100 % of voice
+missions since 13:14 today because openclaw 2026.5.7 silently ignores the
 ``agents.defaults.cliBackends["claude-cli"]`` override our
 ``_ensure_critic_agent_registered`` helper writes, and falls back to the
 ``anthropic`` Messages-API backend that needs paid extra-usage credits the
 user doesn't have. CRIT-1 mirrors what BUG-023 did for the worker: when
 ``[brain.sub_jarvis].provider`` resolves to ``claude-api`` we spawn
-``claude --print`` directly, bypassing OpenClaw entirely.
+``claude --print`` directly, bypassing the openclaw worker entirely.
 
 These tests pin the contract so the path stays exercised even after the
-existing OpenClaw fakes patch the resolver to a non-claude provider.
+existing openclaw-worker fakes patch the resolver to a non-claude provider.
 """
 from __future__ import annotations
 
@@ -51,7 +51,7 @@ def _claude_cli_viable_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
 def _valid_verdict_json(verdict: str = "approve") -> str:
     """A schema-valid CriticVerdict as the raw text claude --print prints.
 
-    Unlike the OpenClaw path we do NOT wrap this in ``{"payloads": [...]}``
+    Unlike the openclaw-worker path we do NOT wrap this in ``{"payloads": [...]}``
     — claude --print outputs the model's reply verbatim, so the entire
     stdout IS the JSON object the prompt asked for.
     """
@@ -151,7 +151,7 @@ async def test_claude_direct_path_approves_when_resolver_picks_claude_api(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     """When ``provider==claude-api``, the critic must spawn claude --print
-    directly instead of routing through OpenClaw."""
+    directly instead of routing through the openclaw worker."""
     captured = _patch_direct(monkeypatch, stdout=_valid_verdict_json("approve"))
 
     verdict = await CriticRunner().run(
@@ -177,7 +177,7 @@ async def test_claude_direct_path_approves_when_resolver_picks_claude_api(
     assert argv[argv.index("--add-dir") + 1] == str(tmp_path)
     # Model from the resolver — must be wired through.
     assert argv[argv.index("--model") + 1] == "claude-sonnet-4-6"
-    # OpenClaw must NOT have been spawned -- no openclaw.json gets written.
+    # The openclaw worker must NOT have been spawned -- no openclaw.json gets written.
     assert not (tmp_path / "openclaw.json").exists()
 
 
@@ -239,7 +239,7 @@ async def test_non_claude_provider_critic_uses_claude_model_not_foreign(
 
     assert verdict.verdict == "approve"
     argv = captured["argv"]
-    # The critic must fall back to the direct claude critic, not OpenClaw.
+    # The critic must fall back to the direct claude critic, not the openclaw worker.
     assert argv[0] == "claude", argv
     # The foreign provider model must NEVER reach `claude --model`.
     assert foreign_model not in argv, f"foreign model leaked into claude argv: {argv}"
@@ -349,7 +349,7 @@ async def test_claude_direct_nonzero_exit_returns_none_for_retry(
 ) -> None:
     """If the binary itself exits non-zero (e.g. OAuth token expired),
     the runner treats it as a parse failure and triggers the adversarial
-    retry path -- consistent with the OpenClaw branch."""
+    retry path -- consistent with the openclaw-worker branch."""
     call_count = {"n": 0}
 
     monkeypatch.setattr(
@@ -424,11 +424,11 @@ async def test_claude_direct_recovers_verdict_from_agent_narration(
 
 
 @pytest.mark.asyncio
-async def test_claude_direct_skips_openclaw_json_materialisation(
+async def test_claude_direct_skips_legacy_state_file_materialisation(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
 ) -> None:
     """The direct path must NOT write openclaw.json -- that file only
-    exists for the OpenClaw branch. A stray openclaw.json in the
+    exists for the openclaw-worker branch. A stray openclaw.json in the
     state-dir was the symptom that misled us into thinking the worker
     was using the right backend on 2026-05-16."""
     state_dir = tmp_path / "state"
@@ -445,7 +445,7 @@ async def test_claude_direct_skips_openclaw_json_materialisation(
         env={"MISSION_STATE_DIR": str(state_dir)},
     )
     assert not (state_dir / "openclaw.json").exists(), (
-        "claude-direct branch must not touch the OpenClaw state dir"
+        "claude-direct branch must not touch the legacy openclaw state dir"
     )
 
 

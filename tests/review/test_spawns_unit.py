@@ -135,7 +135,7 @@ def test_worker_spawner_calls_registered_jarvis_agent_harness(tmp_path: Path) ->
     assert isinstance(result, str) and result.strip()
 
 
-def test_worker_spawner_falls_back_to_openclaw_alias_when_registered(
+def test_worker_spawner_falls_back_to_legacy_openclaw_alias_when_registered(
     tmp_path: Path,
 ) -> None:
     """The pre-rename ``openclaw`` name is still accepted as a back-compat

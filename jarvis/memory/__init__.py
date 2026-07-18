@@ -1,6 +1,6 @@
 """Memory layer: recall (FTS5) + core memory (JSON) + workspace + auto-recording.
 
-Workspace (new, OpenClaw-inspired):
+Workspace (new, Jarvis-Agent-inspired):
 - `UserProfile` for USER.md (structured personality profile)
 - `Soul` for SOUL.md (Jarvis' own persona)
 - `PersonStore` for people/<name>.md (people around the user — kept separate from the user)

@@ -234,7 +234,7 @@ async def test_announcement_without_bus_is_safe() -> None:
 
 
 @pytest.mark.asyncio
-async def test_openclaw_spawn_announcement_is_silent() -> None:
+async def test_jarvis_agent_spawn_announcement_is_silent() -> None:
     """``JarvisAgentAnnouncement`` must NOT speak via TTS anymore.
 
     Spawn-ACK history:
@@ -271,7 +271,7 @@ async def test_openclaw_spawn_announcement_is_silent() -> None:
 
 
 @pytest.mark.asyncio
-async def test_openclaw_background_success_with_summary_speaks() -> None:
+async def test_jarvis_agent_background_success_with_summary_speaks() -> None:
     """``JarvisAgentBackgroundCompleted(success=True, summary=...)`` → Voice-Ansage."""
     bus = EventBus()
     tts = FakeTTS()
@@ -295,7 +295,7 @@ async def test_openclaw_background_success_with_summary_speaks() -> None:
 
 
 @pytest.mark.asyncio
-async def test_openclaw_background_success_no_summary_speaks_fertig() -> None:  # i18n-allow: identifier name, not translatable prose
+async def test_jarvis_agent_background_success_no_summary_speaks_fertig() -> None:  # i18n-allow: identifier name, not translatable prose
     """Success with no summary → ``"Fertig."`` (output-filter-safe)."""  # i18n-allow: quotes the actual German TTS output under test
     bus = EventBus()
     tts = FakeTTS()
@@ -313,7 +313,7 @@ async def test_openclaw_background_success_no_summary_speaks_fertig() -> None:  
 
 
 @pytest.mark.asyncio
-async def test_openclaw_background_failure_speaks_error() -> None:
+async def test_jarvis_agent_background_failure_speaks_error() -> None:
     """``success=False`` → error announcement ``"Das hat nicht geklappt. ..."``."""  # i18n-allow: quotes the actual German TTS output under test
     bus = EventBus()
     tts = FakeTTS()
@@ -398,7 +398,7 @@ async def test_empty_announcement_is_not_spoken() -> None:
 
 
 @pytest.mark.asyncio
-async def test_openclaw_spawn_action_echo_is_not_spoken() -> None:
+async def test_jarvis_agent_spawn_action_echo_is_not_spoken() -> None:
     """The spawn voice path has been completely silent since 2026-05-12.
 
     History of this test:
@@ -431,7 +431,7 @@ async def test_openclaw_spawn_action_echo_is_not_spoken() -> None:
 
 
 @pytest.mark.asyncio
-async def test_openclaw_completion_signal_does_speak_with_summary() -> None:
+async def test_jarvis_agent_completion_signal_does_speak_with_summary() -> None:
     """The completion voice message MUST speak — user request 2026-05-11.
 
     Before 2026-05-11 this path was suppressed and the predecessor test

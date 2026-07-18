@@ -92,7 +92,7 @@ included) + live log `data/jarvis_desktop.log`. Both timestamp-consistent.
 | `mission_id` | `019ea1da-4552-7ec4-8a88-ffba1773521e` |
 | Dispatched | 2026-06-07 **13:31:36.914** by `source_actor = hauptjarvis` (voice), `language=de` |
 | Originating utterance | ContinuationBuffer join of two fragments: **"Kannst du für mich bitte meinen… Man nen Explorer öffnen mit Computer-User."** |
-| Spawn trigger | `Force-Spawn OpenClaw` (log line 30558) — action verb *"öffnen"* + "Computer-User" marker |
+| Spawn trigger | `Force-Spawn OpenClaw` (log line 30558; log format since renamed to `Force-Spawn Jarvis-Agent`) — action verb *"öffnen"* + "Computer-User" marker |
 | Worker iterations | **3 real subprocesses** (`ClaudeDirectWorker`, `model=claude-opus-4-8`) |
 | iter0 | exit=0, wall=30.3 s, `tool_use_seen=True` → Critic **revise** (used raw `explorer.exe` shell / prose self-report, **empty diff**) |
 | iter1 | exit=0, wall=377.6 s, `tool_use_seen=True` → Critic **revise** (**empty diff**, only prose self-report, no tool-call evidence) |
@@ -198,8 +198,8 @@ was never generalized.
 **Files:** `announcer.py:189-205`, `readback.py:292-310`.
 
 ### Layer C — Spawn-perception gap (the user's literal complaint)
-The force-spawn heuristic (`BrainManager._should_force_openclaw` /
-`_should_force_spawn`, `manager.py:1736+`) deterministically turned a casual
+The force-spawn heuristic (`BrainManager._should_force_spawn`,
+`manager.py:1736+`) deterministically turned a casual
 *"open Explorer with Computer-Use"* into a heavyweight background Worker-Critic
 mission. The user received a brief optimistic ACK
 ("Mach ich, ich kümmere mich im Hintergrund darum…", log 30575) but does **not**
@@ -372,7 +372,7 @@ Only the wall-clock-timeout path was relabelled.
 - Collapse point: `jarvis/missions/kontrollierer/orchestrator.py:858-924`
 - Aggregation: `jarvis/missions/kontrollierer/orchestrator.py:587-628`
 - Recovery (ruled out): `jarvis/missions/recovery.py:166-171`
-- Force-spawn: `jarvis/brain/manager.py` (`_should_force_openclaw` / `_should_force_spawn`)
+- Force-spawn: `jarvis/brain/manager.py` (`_should_force_spawn`)
 - Bootstrap wiring: `jarvis/missions/init.py` (listener/announcer mode resolve)
 - Runtime evidence: `data/missions.db` (mission `019ea1da…`, event seqs
   3734/3738/3745/3752/3753/3754/3755), `data/jarvis_desktop.log` (lines

@@ -2088,7 +2088,7 @@
   "verdict_panel": {
     "empty": "Noch keine Critic-Verdicts für diese Mission."
   },
-  "openclaw_panel": {
+  "jarvis_agent_panel": {
     "select_mission": "Mission auswählen, um {name}-Agent-Worker zu sehen.",
     "no_workers": "Keine {name}-Agent-Worker in dieser Mission.",
     "not_available": "(nicht verfügbar)",

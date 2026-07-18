@@ -182,7 +182,7 @@ git commit -m "docs: gloss jargon in introduction for non-developer readers"
 **Files:** Modify (body only): `src/content/docs/harness-dispatch.md`
 
 - [ ] **Step 1: Read the whole file.**
-- [ ] **Step 2: Apply the canon.** Expected terms: `harness` (gloss again here — it's per-doc), `dispatch` (*"deciding which engine handles a request and handing it over"*), `OpenClaw`, `Codex`, `spawn`, `router` (*"the cheap fast brain that only decides where work goes"*), `force-spawn`. Keep the dispatch-decision detail.
+- [ ] **Step 2: Apply the canon.** Expected terms: `harness` (gloss again here — it's per-doc), `dispatch` (*"deciding which engine handles a request and handing it over"*), `Jarvis-Agent`, `Codex`, `spawn`, `router` (*"the cheap fast brain that only decides where work goes"*), `force-spawn`. Keep the dispatch-decision detail.
 - [ ] **Step 3: Verify frontmatter unchanged.** Expected: no output.
 - [ ] **Step 4: Commit** — `git commit -m "docs: gloss harness-dispatch"`
 

@@ -3,7 +3,7 @@
 **Status:** Done — Wave 1 completed on 2026-05-09
 **Script:** `scripts/spikes/openclaw_probe.ps1`
 **Reference:** `docs/jarvis-agents-bridge.md` §6 Open spike questions
-**OpenClaw version tested:** 2026.5.7 (eeef486), via `npm i -g openclaw`
+**`openclaw` version tested:** 2026.5.7 (eeef486), via `npm i -g openclaw`
 **Models tested:**
 - `google/gemini-3-flash-preview` (matches `jarvis.toml [brain.providers.gemini].model` — Personal Jarvis hot path)
 - `google/gemini-3.1-pro-preview` (matches `[brain.providers.gemini].deep_model` — frontier premium)
@@ -15,7 +15,7 @@
 ## Preparation on the Windows box (validated)
 
 1. **Node 24 LTS** — `node --version` answers `v24.13.0` (Windows-native, no WSL2 needed).
-2. **Install OpenClaw** via `npm i -g openclaw` — installs 559 packages in ~2 min, produces `<USER_HOME>\AppData\Roaming\npm\openclaw{.cmd, .ps1}` (see B-7 on the wrapper mechanics).
+2. **Install `openclaw`** via `npm i -g openclaw` — installs 559 packages in ~2 min, produces `<USER_HOME>\AppData\Roaming\npm\openclaw{.cmd, .ps1}` (see B-7 on the wrapper mechanics).
 3. **API key** from the Personal Jarvis Credential Manager via `get_secret(...)` into the provider-specific ENV var — see B-2 for the mapping table.
 4. **Run the spike:**
    ```powershell
@@ -48,7 +48,7 @@
 
 ## SP-2: stdout format
 
-**Question:** What format does OpenClaw deliver over stdout? Plain text, JSON, NDJSON stream?
+**Question:** What format does the external `openclaw` CLI deliver over stdout? Plain text, JSON, NDJSON stream?
 
 **Finding:** ✅ **JSON document** with the `--json` flag, with a clear structure.
 
@@ -146,7 +146,7 @@ Recognized CLI flags from `openclaw agent --help`:
 - `--local` — embedded agent without channel routing (MANDATORY for the subprocess bridge — see B-1)
 - `--session-id <id>` — explicit session identifier (MANDATORY — see B-1)
 
-**Importantly falsified:** Personal Jarvis provider slugs ≠ OpenClaw slugs (see B-2).
+**Importantly falsified:** Personal Jarvis provider slugs ≠ `openclaw` slugs (see B-2).
 
 ---
 
@@ -177,7 +177,7 @@ ENV vars for state control:
 
 ## SP-6: Cost tracking
 
-**Question:** Does OpenClaw deliver token counts in stdout (or a structured result body), or do we have to count via the provider API?
+**Question:** Does the external `openclaw` CLI deliver token counts in stdout (or a structured result body), or do we have to count via the provider API?
 
 **Finding:** ✅ **A `meta.usage` block in the JSON output** with a complete cost breakdown.
 
@@ -203,7 +203,7 @@ Plus `meta.agentMeta.promptTokens: 21030` and `meta.agentMeta.contextTokens: 104
 
 ## SP-7: Cancellation behavior
 
-**Question:** Does OpenClaw respect SIGTERM and do a clean shutdown, or do we have to hard-kill immediately via a Job Object?
+**Question:** Does the external `openclaw` CLI respect SIGTERM and do a clean shutdown, or do we have to hard-kill immediately via a Job Object?
 
 **Finding:** 🟡 **Mechanics documented, test inconclusive**.
 
@@ -215,7 +215,7 @@ Plus `meta.agentMeta.promptTokens: 21030` and `meta.agentMeta.contextTokens: 104
 
 **Test inconclusive — reason:**
 - With `gemini-3-flash-preview`, test tasks (even a "2000-word essay with `--thinking max`") finished in <8s — the job-watcher poll at 8s was too short
-- With `gemini-3.1-pro-preview` the run hit OpenClaw's **internal idle timeout** after 264s (see B-8) → the cancellation test was not practically feasible because OpenClaw aborted on its own
+- With `gemini-3.1-pro-preview` the run hit `openclaw`'s **internal idle timeout** after 264s (see B-8) → the cancellation test was not practically feasible because `openclaw` aborted on its own
 - Recommended Wave-2 validation: a local model (Ollama) or Anthropic Opus with a long task
 
 **Implication for the stop mechanism (AD-11):**
@@ -227,7 +227,7 @@ Plus `meta.agentMeta.promptTokens: 21030` and `meta.agentMeta.contextTokens: 104
 
 ## SP-8: Worktree path handoff
 
-**Question:** Does OpenClaw accept `--workdir`, `--cwd`, or do we have to set `process.chdir`/the subprocess working directory?
+**Question:** Does the external `openclaw` CLI accept `--workdir`, `--cwd`, or do we have to set `process.chdir`/the subprocess working directory?
 
 **Finding:** ✅ **Confirmed negative — no workdir flags. Spawner `cwd=` is mandatory.**
 
@@ -240,13 +240,13 @@ The same for `--cwd` and `--working-directory`. All three flags were rejected wi
 
 **Implication for the bridge:**
 - `subprocess.Popen(..., cwd=worktree_path)` (Python) or `Start-Process -WorkingDirectory $worktree` (PowerShell) is the only path
-- OpenClaw writes the default workspace to `~/.openclaw/workspace/` (see `meta.systemPromptReport.workspaceDir`) — this collides across parallel missions, so additionally set `OPENCLAW_STATE_DIR=<mission_dir>`
+- The external `openclaw` CLI writes the default workspace to `~/.openclaw/workspace/` (see `meta.systemPromptReport.workspaceDir`) — this collides across parallel missions, so additionally set `OPENCLAW_STATE_DIR=<mission_dir>`
 
 ---
 
 ## Bridge architecture findings (B-1..B-12)
 
-These findings are the condensed architecture implications from the SP tests. They belong in `docs/jarvis-agents-bridge.md` (Wave-2 update via `/skill openclaw-doc-update`).
+These findings are the condensed architecture implications from the SP tests. They belong in `docs/jarvis-agents-bridge.md` (Wave-2 update via `/skill jarvis-agent-doc-update`).
 
 ### B-1: Spawn pattern (corrected)
 
@@ -265,13 +265,13 @@ Without `--local` and `--session-id`, every call fails with:
 Error: Pass --to <E.164>, --session-id, or --agent to choose a session
 ```
 
-`--local` is mandatory for headless subprocess mode (otherwise OpenClaw tries to channel-route to Telegram/WhatsApp/etc.). `--session-id <uuid>` as the unique mission ID.
+`--local` is mandatory for headless subprocess mode (otherwise `openclaw` tries to channel-route to Telegram/WhatsApp/etc.). `--session-id <uuid>` as the unique mission ID.
 
 ### B-2: Provider-slug mapping (architecture-critical)
 
-Personal Jarvis provider slugs in `jarvis.toml` ≠ OpenClaw slugs in `--model`. The bridge needs a translation:
+Personal Jarvis provider slugs in `jarvis.toml` ≠ `openclaw` slugs in `--model`. The bridge needs a translation:
 
-| `jarvis.toml` provider | OpenClaw slug | OpenClaw ENV var (read) | Personal Jarvis secret key |
+| `jarvis.toml` provider | `openclaw` slug | `openclaw` ENV var (read) | Personal Jarvis secret key |
 |---|---|---|---|
 | `gemini` | `google` | `GEMINI_API_KEY` (fallback `GOOGLE_API_KEY`) | `gemini_api_key` |
 | `claude-api` | `anthropic` | `ANTHROPIC_API_KEY` | `anthropic_api_key` |
@@ -279,11 +279,11 @@ Personal Jarvis provider slugs in `jarvis.toml` ≠ OpenClaw slugs in `--model`.
 | `openrouter` | `openrouter` | `OPENROUTER_API_KEY` | `openrouter_api_key` |
 | `grok` | `xai` | `XAI_API_KEY` (fallback `GROK_API_KEY`) | (Grok key, separate) |
 
-OpenClaw knows **46 providers** in total (`openclaw models list --all` shows 1122 models). All Personal-Jarvis-relevant ones are included: anthropic, google, google-vertex, openai, openrouter, xai, groq, deepseek, mistral, moonshotai, etc.
+The external `openclaw` CLI knows **46 providers** in total (`openclaw models list --all` shows 1122 models). All Personal-Jarvis-relevant ones are included: anthropic, google, google-vertex, openai, openrouter, xai, groq, deepseek, mistral, moonshotai, etc.
 
 Pre-spawn requirement in the bridge:
 1. Read `cfg.brain.primary` (e.g. `"gemini"`)
-2. Map → OpenClaw slug `"google"`
+2. Map → `openclaw` slug `"google"`
 3. Model from `cfg.brain.providers.gemini.model` (hot path) or `.deep_model` (Jarvis-Agent tier)
 4. Secret from Credential Manager → set the ENV var in the spawn subprocess
 5. `openclaw agent --local --model google/<model> ...`
@@ -308,9 +308,9 @@ Setup pipeline per spawn (from the SP-3 verbose stages):
 - attempt-dispatch: 9ms
 - **Total setup: 17329ms** (= 17.3s before the first LLM call)
 
-**Implication:** OpenClaw as a one-shot subprocess per mission is expensive for the hot path. The bridge should consider:
+**Implication:** the external `openclaw` CLI as a one-shot subprocess per mission is expensive for the hot path. The bridge should consider:
 - `OPENCLAW_STATE_DIR=<mission_dir>` with a pre-warmed `node_modules` cache
-- Daemon mode (if supported by OpenClaw — Phase-2 research)
+- Daemon mode (if supported by `openclaw` — Phase-2 research)
 - A mission pool instead of one-shot (Phase-3 optimization)
 
 ### B-6: JSON output schema (reliably usable)
@@ -338,7 +338,7 @@ On Windows, `openclaw` is **not a standalone binary**, but three files in the `n
 
 ### B-8: Provider idle timeout (architecture-critical)
 
-OpenClaw has an **internal `model idle timeout` watchdog** that triggers on long Pro-model responses:
+The external `openclaw` CLI has an **internal `model idle timeout` watchdog** that triggers on long Pro-model responses:
 
 ```
 [agent/embedded] [llm-idle-timeout] google/gemini-3.1-pro-preview produced no reply
@@ -356,11 +356,11 @@ The default timeout is apparently `~264s`. Frontier-premium models with full rea
 
 ### B-9: System-prompt auto-injection (security-relevant)
 
-OpenClaw automatically injects workspace files into the system prompt. From the SP-2 JSON `systemPromptReport.injectedWorkspaceFiles[]`:
+The external `openclaw` CLI automatically injects workspace files into the system prompt. From the SP-2 JSON `systemPromptReport.injectedWorkspaceFiles[]`:
 
 ```
 ~/.openclaw/workspace/
-  AGENTS.md   7774 chars  ← OpenClaw's own anti-pattern docs, NOT the Personal Jarvis AGENTS.md
+  AGENTS.md   7774 chars  ← `openclaw`'s own anti-pattern docs, NOT the Personal Jarvis AGENTS.md
   SOUL.md     1797 chars  ← default persona
   TOOLS.md     910 chars
   IDENTITY.md  693 chars
@@ -370,7 +370,7 @@ OpenClaw automatically injects workspace files into the system prompt. From the 
 Total: system prompt 35.4k chars (`projectContextChars: 13783` + `nonProjectContextChars: 21617`).
 
 **Risks:**
-- Personal Jarvis persona drift: OpenClaw's SOUL.md overrides the Personal Jarvis persona mandate
+- Personal Jarvis persona drift: `openclaw`'s SOUL.md overrides the Personal Jarvis persona mandate
 - Persona leak: the default IDENTITY.md could cause an "I am OpenClaw" self-reference in the voice output (would be caught by the `scrub_for_voice` SELF_REFERENCE pattern, but ideally never in the first place)
 
 **Bridge requirement:**
@@ -380,10 +380,10 @@ Total: system prompt 35.4k chars (`projectContextChars: 13783` + `nonProjectCont
 
 ### B-10: `meta.aborted` as a cancellation indicator
 
-On every cancellation path (idle timeout, hard-kill, provider error) OpenClaw sets `meta.aborted: true` in the JSON output. The bridge uses this as a reliable trigger instead of stderr parsing.
+On every cancellation path (idle timeout, hard-kill, provider error) `openclaw` sets `meta.aborted: true` in the JSON output. The bridge uses this as a reliable trigger instead of stderr parsing.
 
 ```python
-# In jarvis/missions/openclaw_bridge.py:
+# In jarvis/missions/jarvis_agent_bridge.py:
 result = json.loads(stdout)
 if result["meta"].get("aborted", False):
     # Mission-State auf ABORTED, mission_event_bus.publish(MissionAborted(...))
@@ -395,7 +395,7 @@ From `meta.systemPromptReport.systemPrompt.chars`. Reduces the available output-
 - `OPENCLAW_AGENT_DIR=<minimal-profile>` with a reduced default prompt
 - OR: delete the workspace files before spawn and set only the mission prompt
 
-### B-12: OpenClaw config schema (incremental set blocked)
+### B-12: `openclaw` config schema (incremental set blocked)
 
 An attempt to set a single `models.providers.google.timeoutSeconds` fails:
 ```
@@ -405,7 +405,7 @@ Error: Config validation failed:
   models.providers.google.models: Invalid input: expected array, received undefined
 ```
 
-**Implication:** The OpenClaw schema requires a **complete provider block** for `models.providers.<id>`. Incremental per-field patching does not work.
+**Implication:** The `openclaw` schema requires a **complete provider block** for `models.providers.<id>`. Incremental per-field patching does not work.
 
 **Bridge solution:** Pre-boot setup as a one-shot patch via `openclaw config patch --stdin` with the complete `models.providers.<id>` structure:
 ```json5
@@ -434,7 +434,7 @@ Or write a template file `openclaw.config.json` directly into `OPENCLAW_CONFIG_P
 - New findings outside the original spike scope: cold-start latency (B-5), provider idle timeout (B-8), system-prompt auto-injection (B-9), config-schema trap (B-12)
 
 **Recommendation:** Architecture viable, start Wave 2. Prerequisites for Wave 2:
-1. Bridge-docs update via `/skill openclaw-doc-update` — amend AD-1..AD-21, new ADs (AD-22+) for B-8/B-9/B-12
-2. `jarvis/missions/openclaw/` module skeleton (subprocess spawn wrapper, provider-slug mapper, JSON parser)
+1. Bridge-docs update via `/skill jarvis-agent-doc-update` — amend AD-1..AD-21, new ADs (AD-22+) for B-8/B-9/B-12
+2. `jarvis/missions/jarvis_agent/` module skeleton (subprocess spawn wrapper, provider-slug mapper, JSON parser)
 3. Pre-boot setup routine: `openclaw config patch` with provider config (B-12) + workspace isolation (B-9)
 4. Mock bridge test: a local echo server instead of the real `openclaw`, validates the spawn-wrapper mechanics in isolation

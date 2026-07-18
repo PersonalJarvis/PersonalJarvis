@@ -103,7 +103,7 @@ def test_tool_identity_and_schema() -> None:
     assert "goal" in tool.schema["properties"]
     assert tool.schema["required"] == ["goal"]
     # The description must clearly signal LIVE-desktop control so the model
-    # selects it over spawn_openclaw / dispatch_to_harness.
+    # selects it over spawn_worker / spawn_openclaw (legacy alias) / dispatch_to_harness.
     assert "desktop" in tool.description.lower()
 
 

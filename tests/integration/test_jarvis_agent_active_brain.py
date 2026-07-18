@@ -28,7 +28,7 @@ from jarvis.ui.web.server import WebServer
     "raw,expected",
     [
         ("claude-api", "claude-api"),
-        # OpenClaw transport, but still the Claude brain -> display as claude.
+        # legacy openclaw-claude transport alias, still the Claude brain -> display as claude.
         ("openclaw-claude", "claude-api"),
         ("  Claude-API  ", "claude-api"),  # stripped + lower-cased
         ("GEMINI", "gemini"),
@@ -244,7 +244,7 @@ def test_subagent_switch_updates_status_endpoint(monkeypatch: pytest.MonkeyPatch
     assert active["claude-api"] is False
 
 
-# --- Codex as a subagent (direct worker, not an OpenClaw MAPPINGS row) -----
+# --- Codex as a subagent (direct worker, not a Jarvis-Agent MAPPINGS row) -----
 
 
 class _FakeCodex:
@@ -268,8 +268,8 @@ def _patch_codex(monkeypatch: pytest.MonkeyPatch, *, connected: bool) -> None:
     monkeypatch.setattr("jarvis.codex_auth.CodexAuthService", _FakeCodex)
 
 
-def test_openclaw_status_includes_codex_row(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Codex is selectable as a subagent even though it has no OpenClaw slug."""
+def test_jarvis_agent_status_includes_codex_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Codex is selectable as a subagent even though it has no Jarvis-Agent slug."""
     _patch_codex(monkeypatch, connected=False)
     cfg = load_config()
     data = _status(cfg)
@@ -445,7 +445,7 @@ def test_subagent_switch_409_claude_api_no_key_no_oauth(
     assert persisted == []
 
 
-# --- Antigravity as a subagent (direct GoogleCliWorker, no OpenClaw slug) ---
+# --- Antigravity as a subagent (direct GoogleCliWorker, no Jarvis-Agent slug) ---
 # The Google sibling of Codex: a selectable subagent row backed by the Google
 # subscription OAuth login (no API key), so the user can run heavy tasks over
 # agy — exactly like picking OpenRouter/Grok/Claude, never hardcoded.
@@ -477,8 +477,8 @@ def _patch_antigravity(monkeypatch: pytest.MonkeyPatch, *, connected: bool) -> N
     )
 
 
-def test_openclaw_status_includes_antigravity_row(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Antigravity is selectable as a subagent even though it has no OpenClaw slug."""
+def test_jarvis_agent_status_includes_antigravity_row(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Antigravity is selectable as a subagent even though it has no Jarvis-Agent slug."""
     _patch_antigravity(monkeypatch, connected=False)
     cfg = load_config()
     data = _status(cfg)

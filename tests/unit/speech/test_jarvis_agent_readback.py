@@ -8,7 +8,7 @@ Three behaviours, all on the out-of-band announcement path:
   offloaded result is never silently dropped (AD-OE6).
 * **Speaking indicator** — the readback drives the Supervisor ``SPEAKING`` state
   while it plays (so the mascot/orb animates), then restores the prior state.
-* **Keep listening** — the OpenClaw-background direct path stamps the readback
+* **Keep listening** — the Jarvis-Agent-background direct path stamps the readback
   grace timestamp so ``_active_session`` keeps the mic open afterward.
 
 Companion to ``test_announcement_bridge.py``; reuses its fake shapes.
@@ -216,13 +216,13 @@ async def test_preamble_does_not_animate_speaking() -> None:
 
 
 # --------------------------------------------------------------------------
-# Task 4 — OpenClaw-background readback re-arms the keep-listening grace
+# Task 4 — Jarvis-Agent-background readback re-arms the keep-listening grace
 # --------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
 async def test_background_completed_arms_readback_grace() -> None:
-    """The OpenClaw-background DIRECT path plays straight to the player (not via
+    """The Jarvis-Agent-background DIRECT path plays straight to the player (not via
     _on_announcement), so it must stamp the readback-grace timestamp itself —
     otherwise _active_session idle-times-out seconds after the result."""
     bus = EventBus()

@@ -1,10 +1,10 @@
-"""Regression test for OpenClaw bootstrap-order inversion (fix 2026-05-10).
+"""Regression test for Jarvis-Agent bootstrap-order inversion (fix 2026-05-10).
 
 Reproduces the production scenario where the BrainManager is built BEFORE
 the Mission stack is bootstrapped. Without the lazy-resolver pattern the
 ``spawn_worker`` tool would be permanently absent from the Brain's tool
 dict, the Force-Spawn heuristic would always return False, and voice input
-would never reach OpenClaw.
+would never reach the Jarvis-Agent (worker dispatch).
 
 The fix (AD-OC1): register the tool unconditionally, resolve the
 MissionManager via a closure at execute-time, and let
@@ -239,8 +239,8 @@ async def test_voice_path_kontrollierer_crash_publishes_completed_event() -> Non
     """If run_mission crashes, the tool must publish a failure event.
 
     The Voice-Listener subscribes to JarvisAgentBackgroundCompleted with
-    success=False to give the user voice feedback ("OpenClaw ist
-    abgestuerzt"). Without this publish the user would just hear silence.
+    success=False to give the user spoken failure feedback (e.g.
+    "the mission crashed", localized). Without this publish the user would just hear silence.
     """
     from jarvis.core.events import JarvisAgentBackgroundCompleted
     from jarvis.plugins.tool.spawn_worker import SpawnWorkerTool

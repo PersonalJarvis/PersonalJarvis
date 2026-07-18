@@ -26,7 +26,7 @@ run.bat --debug
 **During the test**, log subprocess spawns in a second terminal:
 
 ```powershell
-# counts running openclaw/codex/cli-tool subprocesses
+# counts running jarvis-agent/codex/cli-tool subprocesses
 while($true) {
   Get-Process | Where-Object {
     $_.ProcessName -match 'claude|codex|node'
@@ -80,7 +80,7 @@ Say **"Hey Jarvis"** as the wake word **before every turn**. Note briefly after 
 
 ## Mandate success criteria (to check off after the 10-minute test)
 
-- [ ] **5 smalltalk turns spawn 0 `openclaw` subprocesses** (Block A, subprocess column all "N").
+- [ ] **5 smalltalk turns spawn 0 Jarvis-Agent subprocesses** (Block A, subprocess column all "N").
 - [ ] **3 spawn turns spawn exactly 1 subprocess each** (Block B, 1× "Y" each during the turn).
 - [ ] **Voice output contains no tool JSON/XML leak** (Block B, no "spawn_sub_jarvis(…)" / "<spawn_sub_jarvis>" audible).
 - [ ] **Echo trap (11+12) delivers a direct answer** without a "Du möchtest also …" ("So you want to …") opener. <!-- i18n-allow: quoted voice echo-trap example -->

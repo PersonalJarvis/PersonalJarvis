@@ -42,13 +42,13 @@ Written by the user — typically:
 
 ---
 
-## Prompt 2 — Worker-Harness + Job Object + OpenClaw-stream-json + Codex-CLI
+## Prompt 2 — Worker-Harness + Job Object + Jarvis-Agent-stream-json + Codex-CLI
 
 <TBD by the user>
 
 **Delivers:**
 - `jarvis/missions/workers/base.py` — `WorkerHarness` protocol.
-- `jarvis/missions/workers/openclaw.py` — `openclaw agent --output-format stream-json --include-partial-messages` consumer with `--resume <session_id>` support.
+- `jarvis/missions/workers/jarvis_agent.py` — the external `openclaw agent --output-format stream-json --include-partial-messages` consumer with `--resume <session_id>` support.
 - `jarvis/missions/workers/codex.py` — `codex exec --json --sandbox workspace-write --ask-for-approval never` with per-worker `CODEX_HOME`.
 - `jarvis/missions/workers/stream_consumer.py` — line-buffered async NDJSON reader with tee to `<run_dir>/logs/stream.jsonl`.
 - `jarvis/missions/workers/supervisor.py` — done/stuck/waiting detection (process-exit + `result` event + `api_retry` honor + 90s idle + 900s hard cap).

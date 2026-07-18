@@ -39,8 +39,9 @@ def compose_mission_inject_text(payload: dict[str, Any]) -> str | None:
 
     # Phrased as a recap request about an ALREADY-FINISHED job. It must not
     # contain the router's force-spawn triggers ("sub-agent"/"spawn"/"delegate"/
-    # "openclaw") or action verbs — a dropped mission is discussed, never
-    # re-dispatched (spec AP-5/AP-14). See test_compose_avoids_router_spawn_*.
+    # the legacy "openclaw" trigger, still accepted per jarvis/core/config.py)
+    # or action verbs — a dropped mission is discussed, never re-dispatched
+    # (spec AP-5/AP-14). See test_compose_avoids_router_spawn_*.
     parts = [f'\U0001F4CE I\'ve pinned a finished task to our conversation: "{title}" (status: {status}).']
     if summary:
         parts.append(f"\nWhat it produced:\n{summary}")

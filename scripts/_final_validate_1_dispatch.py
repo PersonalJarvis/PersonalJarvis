@@ -1,6 +1,6 @@
 """Final-Validation Probe 1/5 — Dispatch Path.
 
-Read-only verification of the OpenClaw worker dispatch pipeline.
+Read-only verification of the Jarvis-Agent worker dispatch pipeline.
 Does NOT mutate production code. Prints PASS/FAIL per assertion.
 
 Stages validated:
@@ -78,7 +78,7 @@ def probe_stage_2_action_verbs() -> list[tuple[str, bool, bool]]:
         "Analysiere die letzte Mission",
         "Schreib mir eine Zusammenfassung",
         "Mach einen Screenshot vom Code",  # i18n-allow: simulated German user utterance under test (force-spawn router probe)
-        "Spawn einen OpenClaw-Agenten",
+        "Spawn einen Jarvis-Agenten",
     ]
     rows: list[tuple[str, bool, bool]] = []
     for p in prompts:
@@ -177,7 +177,7 @@ def main() -> int:
 
     print("=== Stage 1: Whisper-FP seeds ===")
     p1, n1, r1 = probe_stage_1_whisper_seeds()
-    print(f"  {p1}/{n1} seeds correctly filtered (force_openclaw -> False)")
+    print(f"  {p1}/{n1} seeds correctly filtered (force_spawn -> False)")
     for seed, ok in r1:
         if not ok:
             fails.append(f"seed {seed!r} did NOT filter to False")
@@ -188,8 +188,8 @@ def main() -> int:
     print("\n=== Stage 2a: action-verb prompts (strict mode default) ===")
     rows = probe_stage_2_action_verbs()
     for prompt, observed, want_spawn in rows:
-        # Expectation: only "Spawn einen OpenClaw-Agenten" returns True in strict.
-        is_spawn_phrase = "spawn" in prompt.lower() or "openclaw" in prompt.lower()
+        # Expectation: only "Spawn einen Jarvis-Agenten" returns True in strict.
+        is_spawn_phrase = "spawn" in prompt.lower() or "jarvis-agent" in prompt.lower()
         expected = is_spawn_phrase
         ok = observed is expected
         print(f"  {'PASS' if ok else 'FAIL'} {prompt!r} -> {observed} (expected={expected})")

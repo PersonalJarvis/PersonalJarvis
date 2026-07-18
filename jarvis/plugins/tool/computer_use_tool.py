@@ -9,7 +9,7 @@ path for desktop actions:
   and research, but it can **never** touch the user's live desktop.
 * ``dispatch_to_harness`` could reach the computer-use harness, but only through
   a two-level indirection (``harness="computer-use"``) whose schema description
-  talks about "OpenClaw, Codex, code-editing, research" — so the model never
+  talks about "generic sub-agent harnesses, code-editing, research" — so the model never
   picked it for desktop actions and instead refused or hallucinated a tool.
 
 A dedicated tool with an unambiguous name + description is the strongest signal

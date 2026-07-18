@@ -1,6 +1,7 @@
-"""Shared mission worker-runtime helpers (legacy ``openclaw`` package name).
+"""Shared mission worker-runtime helpers (legacy package name, now generic
+mission-runtime infra).
 
-The OpenClaw subprocess execution path was removed (the maintainer migrated
+The old subprocess execution path was removed (the maintainer migrated
 to the direct Opus worker, ``ClaudeDirectWorker``). What remains here is the
 provider-agnostic scaffolding the live worker + critic still depend on:
 
@@ -10,8 +11,10 @@ provider-agnostic scaffolding the live worker + critic still depend on:
   (AGENTS.md materialisation). Pure file IO. Consumed by the Kontrollierer
   orchestrator for every mission worktree.
 
-Both modules carry the legacy ``openclaw`` name only for historical reasons;
-they are generic mission-runtime infrastructure.
+Both modules still carry a handful of legacy ``openclaw`` literals (the
+external worker binary's on-disk paths and a read-time backcompat provider
+alias) for historical reasons; they are otherwise generic mission-runtime
+infrastructure.
 """
 from __future__ import annotations
 

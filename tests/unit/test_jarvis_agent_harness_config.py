@@ -1,6 +1,6 @@
 """Tests for JarvisAgentHarnessConfig + JarvisAgentNotificationConfig (Wave 2).
 
-Three blocks per docs/openclaw-bridge.md §4.2:
+Three blocks per docs/jarvis-agents-bridge.md §4.2:
   1. Schema defaults (Pydantic construction without TOML data)
   2. Live-load from jarvis.toml + Pydantic auto-unmarshal
   3. Validation error paths (invalid values, missing required fields)
@@ -79,12 +79,12 @@ def test_jarvis_agent_notification_defaults():
     assert n.voice_when_active is True
 
 
-def test_harness_config_openclaw_optional_default_none():
+def test_harness_config_jarvis_agent_optional_default_none():
     """Without an explicit block, ``HarnessConfig.jarvis_agent is None``.
 
     Guarantees: existing configs without ``[harness.openclaw]`` / ``[harness.jarvis_agent]``
-    still load. The field was renamed openclaw → jarvis_agent in the 2026-06-29
-    Jarvis-Agents rename; the TOML alias accepts both section names.
+    still load. The field was renamed to jarvis_agent in the 2026-06-29
+    Jarvis-Agents rename; the TOML alias still accepts the legacy section name.
     """
     h = HarnessConfig()
     assert h.enabled == ["python-script"]
@@ -108,7 +108,7 @@ def test_jarvis_agent_harness_model_can_be_pinned_explicitly():
 # 2. Live-load from jarvis.toml
 # ----------------------------------------------------------------------
 
-def test_legacy_openclaw_section_is_accepted_from_portable_fixture(tmp_path: Path):
+def test_legacy_jarvis_agent_section_is_accepted_from_portable_fixture(tmp_path: Path):
     """The legacy section remains readable without maintainer-local config."""
     toml_path = _write_legacy_harness_config(tmp_path)
 
@@ -143,9 +143,10 @@ def test_legacy_openclaw_section_is_accepted_from_portable_fixture(tmp_path: Pat
 def test_jarvis_agent_harness_config_unmarshalled_via_load_config(tmp_path: Path):
     """Pydantic auto-unmarshal lands in the correct field (jarvis_agent).
 
-    jarvis.toml still uses the old ``[harness.openclaw]`` section name for
-    back-compat; the ``validation_alias`` on HarnessConfig.jarvis_agent
-    accepts both names, so this field is populated regardless.
+    A jarvis.toml using the legacy ``[harness.openclaw]`` section name is
+    still accepted for back-compat; the ``validation_alias`` on
+    HarnessConfig.jarvis_agent accepts both names, so this field is
+    populated regardless.
     """
     cfg = load_config(_write_legacy_harness_config(tmp_path))
     assert cfg.harness.jarvis_agent is not None, (

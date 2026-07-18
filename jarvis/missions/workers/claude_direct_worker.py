@@ -1,7 +1,8 @@
-"""ClaudeDirectWorker — drives the `claude` CLI directly, bypassing OpenClaw.
+"""ClaudeDirectWorker — drives the `claude` CLI directly, bypassing the external `openclaw` CLI.
 
-Live forensics on 2026-05-16 (Verifier-Agent 5/5) proved that OpenClaw
-2026.5.7 silently ignores ``agents.defaults.cliBackends["claude-cli"].args``
+Live forensics on 2026-05-16 (Verifier-Agent 5/5) proved that the external
+``openclaw`` worker CLI (version 2026.5.7) silently ignores
+``agents.defaults.cliBackends["claude-cli"].args``
 when running ``openclaw agent --local --json --model claude-cli/<model>``.
 The injected ``--permission-mode bypassPermissions`` never reaches the
 claude binary, so the worker boots in chat-only mode and produces
@@ -21,7 +22,7 @@ vs the identical request through ``openclaw agent``:
 This worker spawns ``claude`` directly with the right argv and the prompt
 on stdin, preserving the WorkerProtocol contract so the Kontrollierer
 sees the same ClaudeSystemInit / ClaudeResult events as it does for the
-OpenClaw-backed SubJarvisWorker. The provider chain is read from
+``openclaw``-backed SubJarvisWorker. The provider chain is read from
 ``[brain.sub_jarvis]`` for parity with SubJarvisWorker — we only act
 when the resolved primary provider is ``claude-api``; other providers
 fall through to SubJarvisWorker via ``worker_factory`` routing in
@@ -276,7 +277,7 @@ def _build_mcp_config_args(config_dir: Path, mcp_servers: dict[str, Any] | None)
 
 
 class ClaudeDirectWorker:
-    """Heavy worker that calls ``claude`` directly without OpenClaw.
+    """Heavy worker that calls ``claude`` directly without the external ``openclaw`` worker CLI.
 
     Conforms to ``WorkerProtocol`` structurally (no inheritance — see
     ``jarvis/missions/workers/base.py``). Yields the same Pydantic
@@ -408,7 +409,7 @@ class ClaudeDirectWorker:
         #   2. as the UNIVERSAL FALLBACK when the chosen provider cannot run this
         #      mission — its API key is missing / the codex login is dead — or when
         #      an old/unknown provider is configured (openclaw-claude / unset / the
-        #      removed OpenClaw "subjarvis" path that caused the ~92% nested-claude
+        #      removed Jarvis-Agent "subjarvis" path that caused the ~92% nested-claude
         #      hang). The factory LOGS every such fallback; the choice is never
         #      silently swapped (anti-silent-fallback mandate).
         #
@@ -425,7 +426,7 @@ class ClaudeDirectWorker:
         if primary is not None and primary.provider != "claude-api":
             logger.warning(
                 "ClaudeDirectWorker[%s]: configured sub_jarvis provider is %r, "
-                "which has no direct worker (OpenClaw path removed in Welle 4) — "
+                "which has no direct worker (Jarvis-Agent path removed in Welle 4) — "
                 "running heavy work on the Claude Max OAuth backend (model=%s) "
                 "instead of failing the mission.",
                 worker_id,

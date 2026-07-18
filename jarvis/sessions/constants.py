@@ -132,7 +132,7 @@ SPOKEN_KIND_PRIVACY: Final[str] = "privacy"
 """A privacy acknowledgement ('Ja.' / 'Ich sehe wieder.') for the vision toggle."""
 
 SPOKEN_KIND_COMPLETION: Final[str] = "completion"
-"""A background mission / OpenClaw result read back after it finished."""
+"""A background mission / Jarvis-Agent result read back after it finished."""
 
 SPOKEN_KIND_SUBAGENT: Final[str] = "subagent"
 """A spawned sub-agent / mission / worker result read back to the user. The

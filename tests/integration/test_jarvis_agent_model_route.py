@@ -4,7 +4,7 @@ The API-Keys "Subagent" section lets the user pin which MODEL the heavy-task
 sub-agents run, separate from the router brain. Write side:
 ``POST /api/jarvis-agent/model`` -> 3-layer ``config_writer.set_sub_jarvis_model``
 (TOML + config-soll + ENV — ``brain.sub_jarvis.model`` is drift-guard pinned).  # i18n-allow
-Read side: ``GET /api/openclaw/status`` exposes ``sub_model_override`` and the
+Read side: ``GET /api/jarvis-agent/status`` exposes ``sub_model_override`` and the
 effective ``model_resolved`` (override wins, else the provider's deep model).
 """
 from __future__ import annotations
@@ -55,7 +55,7 @@ def test_post_model_persists_and_updates_memory(
         assert body["persisted"] is True
         assert body["restart_required"] is True
     assert _no_toml_write == ["claude-sonnet-4-6"]
-    # In-memory cfg updated so the next /openclaw/status reflects it.
+    # In-memory cfg updated so the next /jarvis-agent/status reflects it.
     assert server.cfg.brain.worker.model == "claude-sonnet-4-6"
 
 

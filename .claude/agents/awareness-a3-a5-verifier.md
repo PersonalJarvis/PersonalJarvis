@@ -39,7 +39,7 @@ You write NO code; you prove or disprove.
 
 ## A3-specific checks (L3 Session Search)
 
-- **AP-AW5 FTS5 recall in the critical path:** the `awareness-recall` tool MUST be registered in the `SUB_TOOLS` frozenset (`jarvis/brain/factory.py`), NOT in `ROUTER_TOOLS`. The Personal-Jarvis brain (Haiku, router tier) makes no SQLite FTS5 queries — only the subagent does (OpenClaw, from Wave 4 on; before Wave 4 it was still the Sub-Jarvis tier). Grep for `"awareness-recall"` in `factory.py` → if it is in the ROUTER_TOOLS block → BLOCKER.
+- **AP-AW5 FTS5 recall in the critical path:** the `awareness-recall` tool MUST be registered in the `SUB_TOOLS` frozenset (`jarvis/brain/factory.py`), NOT in `ROUTER_TOOLS`. The Personal-Jarvis brain (Haiku, router tier) makes no SQLite FTS5 queries — only the subagent does (the Jarvis-Agent worker, from Wave 4 on; before Wave 4 it was still the Sub-Jarvis tier). Grep for `"awareness-recall"` in `factory.py` → if it is in the ROUTER_TOOLS block → BLOCKER.
 - **FTS5 schema:** SQLite FTS5 table with `content`, `episode_id`, `timestamp`, optionally `salience`. Grep for `CREATE VIRTUAL TABLE ... USING fts5`.
 - **Recall latency:** tests should verify p95 < 200ms against a 7d window. If a latency test is missing → MAJOR.
 - **PII filter before FTS5 insert:** episode content MUST be passed through the PrivacyFilter before the FTS5 index is built (AP-AW4 + AP-AW6).

@@ -5,7 +5,7 @@ Architecture:
 1. **Router** (`jarvis/brain/router.py`) classifies user intent:
    - `fast` → fast model (Haiku) for tool actions, smalltalk
    - `deep` → reasoning model (Opus) for analysis, planning, explanation
-   - `code` → OpenClaw-backed heavy worker
+   - `code` → Jarvis-Agent-backed heavy worker
 
 2. **Model-Cache**: `(provider_name, model) → Brain-Instance` — multiple
    models of the same family coexist without re-instantiation.
@@ -300,7 +300,7 @@ _SECRET_KEY_TO_BRAIN: dict[str, str] = {
 #
 # Wave-4 migration: the second key was previously named ``"sub_jarvis"``
 # because the frontier model drove the Sub-Jarvis tier. The Sub-Jarvis tier
-# was removed with the OpenClaw-Bridge migration, but the frontier mapping
+# was removed with the Jarvis-Agent-Bridge migration, but the frontier mapping
 # itself is retained as the deep-brain source — hence simply ``"deep"``.
 #
 # Aliases like "haiku"/"opus" are NOT mapped here — PROVIDER_ALIASES
@@ -2041,14 +2041,14 @@ class BrainManager:
         # (compiled from `brain.routing.force_spawn_phrases`). Cached so
         # the hot path stays cheap.
         self._force_spawn_pattern: re.Pattern[str] | None = None
-        # AD-12 / AP-OC5 (wave-4 router): optional handlers for OpenClaw
+        # AD-12 / AP-OC5 (wave-4 router): optional handlers for Jarvis-Agent
         # mission status/cancel. Injected via ``set_mission_command_handlers``
         # after bootstrap so the BrainManager constructor has no hard
         # dependency on MissionManager.
-        self._openclaw_status_fn: (
+        self._jarvis_agent_status_fn: (
             Callable[[str | None], Awaitable[str]] | None
         ) = None
-        self._openclaw_cancel_fn: (
+        self._jarvis_agent_cancel_fn: (
             Callable[[str | None], Awaitable[str]] | None
         ) = None
 
@@ -2078,8 +2078,8 @@ class BrainManager:
         """Builds a BrainManager from the tier-specific config.
 
         Wave-4 migration: previously there were two tiers, ``router`` and
-        ``sub_jarvis``. The Sub-Jarvis tier was replaced by the OpenClaw bridge
-        (see docs/openclaw-bridge.md §11); only ``router`` remains.
+        ``sub_jarvis``. The Sub-Jarvis tier was replaced by the Jarvis-Agent
+        bridge (see docs/jarvis-agents-bridge.md §11); only ``router`` remains.
 
         Reads `config.brain.router` and writes into a deep copy of JarvisConfig:
           - `brain.primary = tier_cfg.provider` (or `provider_override`)
@@ -3085,9 +3085,9 @@ class BrainManager:
         return raw_output
 
     def _build_system_prompt(self) -> str:
-        """Builds the system prompt with OpenClaw-style workspace injection.
+        """Builds the system prompt with Jarvis-Agent-style workspace injection.
 
-        Layer order (OpenClaw priority map):
+        Layer order (Jarvis-Agent priority map):
         1. SOUL.md           — Jarvis' own persona (who I am, tone rules)
         2. JARVIS_PERSONA.md — voice persona incl. ECHO-PARAPHRASE section
                                and hangup contract (mandate phase 2 effect)
@@ -3871,7 +3871,7 @@ class BrainManager:
         return _provider_switch_failure_phrase(result, display, lang)
 
     def _detect_cancel_intent(self, text: str) -> bool:
-        """True when the user wants to cancel a running OpenClaw task."""
+        """True when the user wants to cancel a running Jarvis-Agent task."""
         match = match_voice_command(text)
         return match is not None and match.kind == "cancel"
 
@@ -3987,7 +3987,7 @@ class BrainManager:
         status_fn: Callable[[str | None], Awaitable[str]] | None,
         cancel_fn: Callable[[str | None], Awaitable[str]] | None,
     ) -> None:
-        """Wires the status/cancel handlers for OpenClaw mission reads.
+        """Wires the status/cancel handlers for Jarvis-Agent mission reads.
 
         Called by bootstrap (e.g. ``jarvis/missions/init.py`` or server
         startup) once the MissionManager is ready.
@@ -3995,7 +3995,7 @@ class BrainManager:
         AD-12 (status read via voice without spawn): when ``status_fn`` is
         set, the ``generate()`` path deterministically calls
         ``status_fn(mission_id)`` on a detected status phrase instead of
-        asking the LLM or triggering a new OpenClaw spawn.
+        asking the LLM or triggering a new Jarvis-Agent spawn.
 
         AP-OC5: pattern-match-first discipline — when no handlers are
         registered (e.g. tests, headless mode), the code falls back to the
@@ -4007,10 +4007,10 @@ class BrainManager:
                 "summarise all active missions".
             cancel_fn: ``async (mission_id: str | None) -> str`` — cancels
                 mission(s) and returns a confirmation. ``mission_id=None``
-                means "cancel all active OpenClaw missions".
+                means "cancel all active Jarvis-Agent missions".
         """
-        self._openclaw_status_fn = status_fn
-        self._openclaw_cancel_fn = cancel_fn
+        self._jarvis_agent_status_fn = status_fn
+        self._jarvis_agent_cancel_fn = cancel_fn
 
     def _check_unsupported_intent(self, user_text: str) -> str | None:
         """Agent-C capability gate: return a deterministic refusal when the
@@ -4188,7 +4188,7 @@ class BrainManager:
         Bug fix 2026-05-01 (voice session 2026-04-30 22:38): the user said
         "es geht ab", the smalltalk allowlist did not match (phrase was
         missing), force-spawn did nothing, the LLM had full tool visibility
-        and hallucinated an OpenClaw spawn. Result: main Jarvis claimed to have
+        and hallucinated a Jarvis-Agent spawn. Result: main Jarvis claimed to have
         started tests that it never started.
 
         Used in ``generate()`` to hide tools on clear smalltalk turns — the
@@ -5082,7 +5082,7 @@ class BrainManager:
 
         Wave-4 migration: previously ``_should_force_sub_jarvis`` with
         ``spawn_sub_jarvis`` tool lookup. The Sub-Jarvis tier was replaced by
-        the OpenClaw bridge — see docs/openclaw-bridge.md §11.
+        the Jarvis-Agent bridge — see docs/jarvis-agents-bridge.md §11.
 
         Order (the real evaluation sequence — keep this in sync with the body):
           0. Conversational source (drag-dropped mission recap) → False.
@@ -5132,14 +5132,14 @@ class BrainManager:
         # `log` is the module-level logger bound at L73 -- BUG-026 fix.
         if lowered in _WHISPER_FP_EXACT_ONLY:
             log.info(
-                "force_openclaw skipped: Whisper FP exact-only seed %r",
+                "force_spawn skipped: Whisper FP exact-only seed %r",
                 lowered,
             )
             return False
         for _seed in _WHISPER_FP_PREFIX_OK:
             if lowered == _seed or lowered.startswith(_seed + " "):
                 log.info(
-                    "force_openclaw skipped: Whisper FP prefix seed %r",
+                    "force_spawn skipped: Whisper FP prefix seed %r",
                     _seed,
                 )
                 return False
@@ -5190,7 +5190,7 @@ class BrainManager:
         # smalltalk / open-app / skill). Those guards exist only to suppress
         # AMBIGUOUS, implicit spawns; they must never veto a request in which the
         # user literally named the vehicle. Before this hoist, an explicit
-        # "Starte OpenClaw" / "Spawne einen Subagenten und zeig …" was swallowed
+        # "Starte Jarvis-Agent" / "Spawne einen Subagenten und zeig …" was swallowed
         # by the open-app / navigation guard and never spawned ("sometimes saying
         # subagent doesn't spawn a subagent"). The fatal preconditions above (no
         # tool/executor, Whisper-FP seed, min length, worker not viable) still
@@ -5294,7 +5294,7 @@ class BrainManager:
         # hoisted to the top of this method (above every disambiguation guard)
         # per the 2026-06-15 user mandate — see the comment there. It used to sit
         # here, between the open-app guard and the skill guard, which let the
-        # open-app / navigation guards veto an explicit "Starte OpenClaw" /
+        # open-app / navigation guards veto an explicit "Starte Jarvis-Agent" /
         # "Spawne … und zeig …" before the trigger was ever evaluated.
         # Skill-aware guard (AD-S3, 2026-06-09 rebuild): an utterance that
         # matches an installed, active skill is the skill's turn — never a
@@ -5340,7 +5340,7 @@ class BrainManager:
         # used to spawn on every spawn_verb hit ("schreib", "mach",
         # "zeig", "lies", ...), which fired heavy workers for everyday
         # utterances. In strict mode we only spawn when the user
-        # explicitly names a heavy-work trigger ("OpenClaw", "Sub-Agent",
+        # explicitly names a heavy-work trigger ("Jarvis-Agent", "Sub-Agent",
         # "spawn", "deep dive", "gründliche Recherche", ...). The legacy
         # verb/marker heuristic stays available via
         # `brain.routing.force_spawn_mode = "permissive"`.
@@ -5467,7 +5467,7 @@ class BrainManager:
         ``_select_subagent_worker_kind``) and is chosen independently of which
         provider talks to the user. A configured worker provider always maps to a
         real worker (claude-api -> ClaudeDirectWorker, codex -> CodexDirectWorker,
-        else the OpenClaw/default path), so it is viable for ANY talker — this is
+        else the Jarvis-Agent/default path), so it is viable for ANY talker — this is
         what lets the user switch ``brain.primary`` to gemini / openai / codex
         without silencing every action request (AP-6: never couple routing to a
         hardcoded talker provider).
@@ -6551,7 +6551,7 @@ class BrainManager:
     ) -> list[str]:
         """Formats the last N turn pairs as compact ``context_hints``.
 
-        Conversation memory bridge to the OpenClaw worker (bug fix 2026-04-30,
+        Conversation memory bridge to the Jarvis-Agent worker (bug fix 2026-04-30,
         wave-4 rebrand): the worker is architecturally stateless. Without this
         bridge it does not know the previous turns, even when the user
         explicitly refers to them ("erklaer mir das genauer",
@@ -6589,11 +6589,11 @@ class BrainManager:
 
         Wave-4 migration: previously ``_force_spawn_sub_jarvis`` with the
         ``spawn_sub_jarvis`` tool. The Sub-Jarvis tier was replaced by the
-        OpenClaw bridge — see docs/openclaw-bridge.md §11.
+        Jarvis-Agent bridge — see docs/jarvis-agents-bridge.md §11.
 
         Returns:
             ``None`` when the heuristic does not trigger or the tool is absent.
-            Otherwise the OpenClaw output (the mission manager delivers a
+            Otherwise the Jarvis-Agent output (the mission manager delivers a
             TTS-safe shortened summary via the voice listener path). The caller
             (``generate``) forwards the string as the final brain response.
         """
@@ -6615,7 +6615,7 @@ class BrainManager:
         # receives a snapshot of the last turns as a hint, not the full
         # manager state.
         context_hints.extend(self._build_history_hints())
-        # Phase 5 (opt-in): include active-window hint so the OpenClaw worker
+        # Phase 5 (opt-in): include active-window hint so the Jarvis-Agent worker
         # knows which app the user is currently working in. Default OFF
         # (costs 200-400 ms latency, not worth it for every spawn). 250 ms
         # timeout in the module; failure mode 4 (pywinauto crash) is caught.
@@ -6645,7 +6645,7 @@ class BrainManager:
             # otherwise detect from the user's words.
             "language": self._spawn_ack_language(user_text),
         }
-        log.info("Force-Spawn OpenClaw: %r", user_text[:160])
+        log.info("Force-Spawn Jarvis-Agent: %r", user_text[:160])
         # Stamp the turn's resolved output language so spawn_worker drives the
         # spoken ACK + mission language from the ONE authoritative resolver on
         # the force-spawn path too (the tool-use loop does this for brain
@@ -6835,10 +6835,11 @@ class BrainManager:
         )
 
     def _cancel_all_background_tasks(self) -> int:
-        """Cancels all running background OpenClaw tasks.
+        """Cancels all running background Jarvis-Agent tasks.
 
-        Matches via `task.get_name()` against the "openclaw-" prefix. The
-        convention is set by the `spawn_worker` tool in `create_task(...)`.
+        Matches via `task.get_name()` against the "jarvis-agent-" prefix (legacy
+        naming convention, kept for byte-for-byte agreement with the
+        `spawn_worker` tool's `create_task(...)` call).
         Returns the number of cancelled tasks.
         """
         cancelled = 0
@@ -6849,10 +6850,10 @@ class BrainManager:
             return 0
         for task in running:
             name = task.get_name() or ""
-            if name.startswith("openclaw-") and not task.done():
+            if name.startswith("jarvis-agent-") and not task.done():
                 task.cancel()
                 cancelled += 1
-        log.info("Cancelled %d background openclaw task(s)", cancelled)
+        log.info("Cancelled %d background Jarvis-Agent task(s)", cancelled)
         return cancelled
 
     def _cancel_readback(self, count: int) -> str:
@@ -7284,7 +7285,7 @@ class BrainManager:
             )
             return confirmation
 
-        # AD-12 + AP-OC5 (OpenClaw bridge wave-4 router): intercept status/cancel
+        # AD-12 + AP-OC5 (Jarvis-Agent bridge wave-4 router): intercept status/cancel
         # phrases via pattern match BEFORE the force-spawn heuristic
         # misinterprets them as action verbs ("brich ab" contains the verb 'ab'
         # and would otherwise trigger a new spawn). Pattern-match-first is
@@ -7292,7 +7293,7 @@ class BrainManager:
         oc_match = match_mission_command(user_text)
         if oc_match is not None:
             log.info(
-                "OpenClaw-Command erkannt: intent=%s id=%s lang=%s text=%r",
+                "Jarvis-Agent-Command recognized: intent=%s id=%s lang=%s text=%r",
                 oc_match.intent,
                 oc_match.mission_id,
                 oc_match.language,
@@ -7300,9 +7301,9 @@ class BrainManager:
             )
             if (
                 oc_match.intent == "status"
-                and self._openclaw_status_fn is not None
+                and self._jarvis_agent_status_fn is not None
             ):
-                response = await self._openclaw_status_fn(oc_match.mission_id)
+                response = await self._jarvis_agent_status_fn(oc_match.mission_id)
                 await self._record_response_side_effects(
                     user_text=user_text,
                     response_text=response,
@@ -7312,9 +7313,9 @@ class BrainManager:
                 return response
             if (
                 oc_match.intent == "cancel"
-                and self._openclaw_cancel_fn is not None
+                and self._jarvis_agent_cancel_fn is not None
             ):
-                response = await self._openclaw_cancel_fn(oc_match.mission_id)
+                response = await self._jarvis_agent_cancel_fn(oc_match.mission_id)
                 await self._record_response_side_effects(
                     user_text=user_text,
                     response_text=response,
@@ -7326,9 +7327,9 @@ class BrainManager:
             # the normal path. Logging aids debugging ("why does the status
             # read still spawn?": handlers not wired).
             log.warning(
-                "OpenClaw-Command-Match ohne Handler — fallback to normal "
-                "generate-pfad. Bootstrap muss "
-                "set_mission_command_handlers() rufen."
+                "Jarvis-Agent-Command match without a handler — fallback to "
+                "the normal generate path. Bootstrap must call "
+                "set_mission_command_handlers()."
             )
 
         routing_text, contextual_tool_names = self._contextual_routing_state(
@@ -7366,7 +7367,7 @@ class BrainManager:
                 self._skill_turn_match = self._match_skill_for_turn(routing_text)
             if self._skill_turn_match is not None:
                 self._skill_turn_source = "continuation"
-        # AD-S9: an explicit heavy-work trigger ("Sub-Agent", "OpenClaw",
+        # AD-S9: an explicit heavy-work trigger ("Sub-Agent", "Jarvis-Agent",
         # "spawne", "deep dive", …) names the execution vehicle — the mission
         # path owns such a turn, not the inline skill prompt. Live bug
         # 2026-06-10 14:34: "spawne einen Sub-Agent … Gmail …" became a mute
@@ -7484,7 +7485,7 @@ class BrainManager:
         # Agent-C (capability-coupling): pre-generation capability gate.
         # If the utterance looks like an action request but no registered
         # capability covers it, return a deterministic "not supported" reply
-        # and skip both brain and openclaw.  No LLM call, no latency cost
+        # and skip both brain and the Jarvis-Agent worker.  No LLM call, no latency cost
         # (AP-11 compliant — pure regex + registry lookup).
         # AD-S3: a matched skill IS the capability — the unsupported-intent
         # refusal must not fire on a skill turn.
@@ -8266,7 +8267,7 @@ class BrainManager:
         # successfully — even if `response_text` is empty (e.g. suppress_response
         # for fire-and-forget tools like spawn_worker). In that case do NOT
         # return the "all failed" message — the UI receives feedback via bus events
-        # (OpenClawAnnouncement, etc.).
+        # (JarvisAgentAnnouncement, etc.).
         # B5 Agent C: reset per-turn wiki suffix regardless of outcome so
         # stale context cannot leak into the next voice turn.
         self._wiki_context_suffix = ""
@@ -8677,7 +8678,7 @@ class BrainManager:
                     pass
 
     # ------------------------------------------------------------------
-    # Summarize — fuer OpenClaw-Announcements (Phase 5, Welle-4-rebrand)
+    # Summarize — for Jarvis-Agent-Announcements (Phase 5, Wave-4 rebrand)
     # ------------------------------------------------------------------
 
     async def summarize(self, text: str, *, max_tokens: int = 120) -> str:

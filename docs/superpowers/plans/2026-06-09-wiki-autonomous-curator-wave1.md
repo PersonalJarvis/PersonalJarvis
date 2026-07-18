@@ -966,7 +966,7 @@ import { WikiProviderCard } from "@/views/settings/WikiProviderCard";
 Then render it as the last sibling tier section, immediately after `<TelephonySection />`. Current block (lines 70-78):
 
 ```tsx
-            {/* Subagent (OpenClaw) — own data source (/api/openclaw/status),
+            {/* Subagent (Jarvis-Agent) — own data source (/api/jarvis-agent/status),
                 rendered as a sibling tier so it shares the card system. */}
             <SubagentSection />
             {/* Telephony — the former standalone "Telephony" screen, folded in
@@ -979,7 +979,7 @@ Then render it as the last sibling tier section, immediately after `<TelephonySe
 becomes:
 
 ```tsx
-            {/* Subagent (OpenClaw) — own data source (/api/openclaw/status),
+            {/* Subagent (Jarvis-Agent) — own data source (/api/jarvis-agent/status),
                 rendered as a sibling tier so it shares the card system. */}
             <SubagentSection />
             {/* Telephony — the former standalone "Telephony" screen, folded in

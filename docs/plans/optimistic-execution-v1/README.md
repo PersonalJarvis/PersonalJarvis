@@ -20,7 +20,7 @@ v1.0 promise, end-to-end, measured".
 | Main Jarvis (Talker) | Router-Brain (`jarvis/brain/factory.py` `ROUTER_TOOLS`) + Ack-Brain (`jarvis/brain/ack_brain/`) | exceeded | ACK must fire *before* dispatch, guaranteed |
 | Heavy-Duty Worker ("4.6") | Mission-Manager + Worker-Critic + `claude-cli` Sonnet (OAuth) | live | success-rate telemetry |
 | Event-Bus / Task-Queue | `jarvis/core/bus.py` + mission event store | live | latency spans on the bus |
-| Optimistic Execution | Force-spawn ACK + `BrainManager._should_force_openclaw` | partial | make it the guaranteed default path |
+| Optimistic Execution | Force-spawn ACK + `BrainManager._should_force_spawn` | partial | make it the guaranteed default path |
 | Smart Tools (Gmail/MCP) | `jarvis/mcp/adapter.py` + Jarvis-Agent worker | Welle 2/3 open | worker-makes-the-call, end-to-end |
 | Dumb Tools (local scripts) | `jarvis/brain/local_action_gate.py` | gaps (BUG-020) | allowlist coverage + zero false-spawn |
 | Oops protocol / VAD / organic correction | Always-speak guards (BUG-020) + announcement path + Silero VAD | **no closed loop** | the full error→inject→VAD-gated→correct loop |
@@ -125,7 +125,7 @@ EventBus = append-only log; mission store = read model).
 - **Event-Bus:** keep `jarvis/core/bus.py` (frozen dataclasses, `trace_id`,
   `timestamp_ns`, `_safe_dispatch` swallow). The talker↔worker queue is the mission event
   store. No external broker (cloud-first doctrine).
-- **Router logic:** keep the `_should_force_openclaw` heuristic (smalltalk allowlist >
+- **Router logic:** keep the `_should_force_spawn` heuristic (smalltalk allowlist >
   action verb > external-system marker). Add (a) latency instrumentation, (b) an *optional*
   embedding-similarity tiebreaker that runs only on ambiguous cases, behind a config flag,
   default off, hard < 150 ms budget, heuristic fallback.
@@ -159,7 +159,7 @@ EventBus = append-only log; mission store = read model).
 - **2.1** Extend `local_action_gate` allowlist + regression cases ("mach die Adjusties",
   "spiel X ab") (`jarvis/brain/local_action_gate.py` + `tests/unit/brain/test_local_action_gate.py`).
 - **2.2** False-spawn guard: every allowlist entry must NOT trigger
-  `_should_force_openclaw` (`tests/unit/brain/test_routing.py`).
+  `_should_force_spawn` (`tests/unit/brain/test_routing.py`).
 - **2.3** Instrument router decision latency; CI fails if p95 > 150 ms.
 - **2.4** Optional embedding tiebreaker behind a config flag (default off, < 150 ms,
   heuristic fallback).

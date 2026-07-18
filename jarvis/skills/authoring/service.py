@@ -4,7 +4,7 @@ This is the "New skill" form path in the desktop app. It takes a structured
 request (name, description, body, triggers) and writes a SKILL.md
 deterministically — NO brain, no network — so it works on a headless €5 VPS.
 
-It is the sibling of the OpenClaw-author *mission* pipeline
+It is the sibling of the Jarvis-Agent-author *mission* pipeline
 (``SkillAuthoringRunner`` in ``runner.py``): that one spawns a frontier worker to
 generate a draft from a voice intent and forces ``state=draft``; this one
 persists an explicit, user-reviewed form submission and leaves the skill

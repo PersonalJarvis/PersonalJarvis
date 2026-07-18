@@ -1,4 +1,4 @@
-"""NDJSON stream consumer for OpenClaw and Codex CLIs.
+"""NDJSON stream consumer for the Jarvis-Agent worker (the external `openclaw` CLI) and Codex CLIs.
 
 Both CLIs emit NDJSON over stdout (one Pydantic-round-trip-capable JSON
 line per event). We parse line-buffered, optionally tee to disk, and yield

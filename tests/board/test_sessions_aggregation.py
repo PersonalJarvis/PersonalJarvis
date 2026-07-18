@@ -122,7 +122,8 @@ def test_sessions_category_counts(tmp_path: Path) -> None:
             "SELECT category_counts FROM daily_stats WHERE date = ?", (day_a,)
         ).fetchone()["category_counts"]
     )
-    # Day A tools: spawn_openclaw(agents), wiki-recall(knowledge), open_app(browser), click(browser)
+    # Day A tools: spawn_openclaw (agents; legacy pre-rename tool name),
+    # wiki-recall(knowledge), open_app(browser), click(browser)
     assert cats_a.get("agents") == 1
     assert cats_a.get("knowledge") == 1
     assert cats_a.get("browser") == 2

@@ -3,7 +3,7 @@
 ``classify(command)`` returns the RouteKind for one user utterance.
 ``ack_for(command, route)`` returns the spoken German acknowledgement text.
 
-Classification order (mirrors BrainManager._should_force_openclaw in production):
+Classification order (mirrors BrainManager._should_force_spawn in production):
 
   1. match_tool(command) returns a DUMB tool  → RouteKind.DUMB_TOOL
   2. match_tool(command) returns a SMART tool → RouteKind.SMART_TOOL

@@ -34,11 +34,11 @@ pytestmark = [
     pytest.mark.e2e,
     pytest.mark.skipif(
         shutil.which("claude") is None,
-        reason="OpenClaw CLI not in PATH",
+        reason="claude CLI not in PATH",
     ),
     pytest.mark.skipif(
         not (os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("CLAUDE_CODE_OAUTH_TOKEN")),
-        reason="No Anthropic auth — openclaw --bare requires explicit credentials.",
+        reason="No Anthropic auth — claude --bare requires explicit credentials.",
     ),
 ]
 

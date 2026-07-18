@@ -162,7 +162,7 @@ async def test_interrupt_priority_punches_through_user_speaking() -> None:
 
 @pytest.mark.asyncio
 async def test_background_completion_while_user_speaking_is_deferred() -> None:
-    """The direct OpenClaw-background readback path (which bypasses
+    """The direct Jarvis-Agent-background readback path (which bypasses
     ``_on_announcement`` and plays straight to the player) must also respect the
     floor: defer while the user speaks, flush at the boundary."""
     from jarvis.core.events import JarvisAgentBackgroundCompleted

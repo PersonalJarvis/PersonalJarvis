@@ -11,7 +11,7 @@ Architecture (Phase F1):
 - **Privacy**: every outbound message passes through ``scrub_for_voice``.
 - **FriendRegistry integration**: inbound reverse-lookup, optional auto-register.
 
-OpenClaw pattern adopted: token hierarchy, ``group_policy``, ``require_mention``.
+Jarvis-Agent pattern adopted: token hierarchy, ``group_policy``, ``require_mention``.
 """
 from __future__ import annotations
 

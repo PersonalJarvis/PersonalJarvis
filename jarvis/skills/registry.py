@@ -108,7 +108,7 @@ class SkillRegistry:
         """Phase 7.5 (Plan-§AD-8): skills the TriggerMatcher is allowed to see.
 
         DRAFT/DISABLED skills are excluded — a hot-reload filter
-        against accidental activation of OpenClaw-authored drafts.
+        against accidental activation of Jarvis-Agent-authored drafts.
         """
         return [
             s
@@ -117,7 +117,7 @@ class SkillRegistry:
         ]
 
     def list_drafts(self) -> list[Skill]:
-        """Plan-§7.5: all skills with state=DRAFT (produced by the OpenClaw worker
+        """Plan-§7.5: all skills with state=DRAFT (produced by the Jarvis-Agent worker
         or flagged by the loader due to a schema error)."""
         return [
             s

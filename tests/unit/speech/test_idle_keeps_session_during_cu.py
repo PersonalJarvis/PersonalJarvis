@@ -7,7 +7,7 @@ naturally said nothing while watching the agent work. The mission kept
 clicking invisibly for two more minutes (orb gone, session closed) and
 finally spoke its failure announcement into a dead session.
 
-The session already knows how to stay open for OpenClaw spawns
+The session already knows how to stay open for Jarvis-Agent spawns
 (``_live_spawn_watchdogs``); these tests pin the same courtesy for live
 Computer-Use missions via ``cu_mission_active()`` /
 ``SpeechPipeline._background_mission_in_flight``.

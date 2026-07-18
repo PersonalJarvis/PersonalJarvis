@@ -1,4 +1,4 @@
-"""CriticRunner - spawns OpenClaw as the out-of-process reviewer.
+"""CriticRunner - spawns the Jarvis-Agent worker harness as the out-of-process reviewer.
 
 The critic receives the mission prompt, worker diff, worker log summary, and
 reflection context, then returns a schema-valid verdict. Provider/model
@@ -6,15 +6,15 @@ selection follows the same [brain.sub_jarvis] fallback chain as the heavy
 worker path.
 
 2026-05-17 (CRIT-1 from audit-team 10): when the resolved primary provider
-is ``claude-api`` we bypass OpenClaw entirely and spawn ``claude --print``
+is ``claude-api`` we bypass the Jarvis-Agent worker harness entirely and spawn ``claude --print``
 directly (analogous to ``ClaudeDirectWorker``). Live forensics on
-mission_019e35a4 today showed OpenClaw 2026.5.7 silently ignores the
+mission_019e35a4 today showed the external ``openclaw`` CLI (2026.5.7) silently ignores the
 ``cliBackends["claude-cli"]`` override we inject into ``openclaw.json``
 (``provider_chain.py:486-505`` for the worker, ``_ensure_critic_agent_registered``
 below for the critic), routes the LLM call through the ``anthropic`` Messages
 API backend instead, and dies with HTTP 400 "out of extra usage". That
 failure mode put 100 % of voice-driven missions into ``critic_loop_exhausted``
-since 13:14 today. Direct-spawn cuts OpenClaw out of the critic call-path
+since 13:14 today. Direct-spawn cuts the Jarvis-Agent worker harness out of the critic call-path
 so the OAuth token from ``~/.claude/.credentials.json`` is the only auth
 surface — same path the user's interactive ``claude`` shell uses.
 """
@@ -88,7 +88,7 @@ class CapabilityHonestyCheck:
 
     This is a *sibling artefact* that augments the frozen ``CriticVerdict``
     without touching ``verdict.py`` (which has ``extra="forbid"`` and a
-    frozen schema shared with the OpenClaw subprocess contract).
+    frozen schema shared with the Jarvis-Agent worker subprocess contract).
 
     Attributes:
         verdict: The underlying CriticVerdict returned by the LLM.
@@ -112,7 +112,7 @@ class CapabilityHonestyCheck:
 
 
 # Patterns for the known harness output formats.
-# 1. OpenClaw stream.jsonl: ``"type": "tool_use"`` frames with ``"name": "<tool>"``
+# 1. Jarvis-Agent worker stream.jsonl: ``"type": "tool_use"`` frames with ``"name": "<tool>"``
 _RE_TOOL_USE_NAME = re.compile(
     r'"type"\s*:\s*"tool_use"[^}]*?"name"\s*:\s*"([^"]+)"',
     re.DOTALL,
@@ -269,7 +269,7 @@ def _extract_tool_call_evidence(worker_output: str) -> tuple[str, ...]:
     """Parse tool-call evidence from worker output in a defensive, format-agnostic way.
 
     Supports four harness output formats:
-    - OpenClaw stream.jsonl ``"type":"tool_use"`` frames.
+    - Jarvis-Agent worker stream.jsonl ``"type":"tool_use"`` frames.
     - ``[TOOL_USE] <tool_name>`` CLI markers.
     - ``"dispatch-result"`` mission event bus entries.
     - Codex ``exec --json`` action items (command_execution / file_change /
@@ -604,10 +604,10 @@ def build_critic_cmd(
     use_bare: bool,
     provider: str | None = None,
 ) -> list[str]:
-    """Build the OpenClaw argv for the critic subprocess.
+    """Build the Jarvis-Agent worker argv for the critic subprocess.
 
     `model` and `use_bare` stay in the signature for compatibility with older
-    callers. The effective provider/model comes from the OpenClaw SubJarvis
+    callers. The effective provider/model comes from the Jarvis-Agent SubJarvis
     fallback chain so worker and critic use the same backend policy.
     """
     del model, use_bare
@@ -676,7 +676,7 @@ def _verdict_from_codex_flat(flat: dict) -> CriticVerdict:
     codex only returns the 5 decision fields (forced by --output-schema).
     The four required axes are synthesised: all ``pass`` when the verdict is
     approve, all ``fail`` otherwise -- consistent with the aggregate-axis
-    downgrade logic the OpenClaw path already relies on. The
+    downgrade logic the Jarvis-Agent path already relies on. The
     suggested_next_action is derived from the verdict so the mission state
     machine has a concrete next step.
     """
@@ -706,7 +706,7 @@ def _verdict_from_codex_flat(flat: dict) -> CriticVerdict:
 
 
 class CriticRunner:
-    """Out-of-process critic backed by OpenClaw."""
+    """Out-of-process critic backed by the Jarvis-Agent worker harness."""
 
     def __init__(
         self,
@@ -1200,20 +1200,20 @@ class CriticRunner:
     async def _ensure_critic_agent_registered(
         self, *, env: dict[str, str], worktree: Path
     ) -> None:
-        """Make sure the `critic` OpenClaw agent exists in the per-mission
+        """Make sure the `critic` Jarvis-Agent agent exists in the per-mission
         `MISSION_STATE_DIR` before we call `openclaw agent --agent critic`.
 
         2026-05-17 (BUG-024-Episode-2 fix): the old implementation shelled
         out to ``openclaw agents add critic --workspace <wt>``. Empirically
         that subprocess can take 30-60 s on a cold Windows install (full
-        OpenClaw bootstrap: skills sync, MCP config, runtime plugins, …),
+        Jarvis-Agent worker bootstrap: skills sync, MCP config, runtime plugins, …),
         regularly exceeding the 15 s timeout we used. When it timed out
         the next ``openclaw agent --agent critic`` call surfaced
         ``Error: Unknown agent id "critic"`` and the whole Critic-Loop
         died with ``critic_loop_exhausted`` — exactly the symptom every
         voice mission hit yesterday.
 
-        OpenClaw stores the agent registration as a plain JSON entry in
+        The Jarvis-Agent worker harness stores the agent registration as a plain JSON entry in
         ``<state_dir>/openclaw.json`` (`agents.list[]`). We can write that
         ourselves in milliseconds and skip the subprocess entirely. The
         materialised shape matches what ``openclaw agents add`` produces
@@ -1242,7 +1242,7 @@ class CriticRunner:
 
         Defensive: if the env doesn't carry ``MISSION_STATE_DIR`` (e.g.
         in unit tests that bypass build_worker_env), we silently skip —
-        OpenClaw will then auto-create ``main`` on first use and the
+        the worker harness will then auto-create ``main`` on first use and the
         critic call will surface ``Unknown agent`` as before. Production
         always sets MISSION_STATE_DIR in build_worker_env.
         """
@@ -1287,7 +1287,7 @@ class CriticRunner:
         if not found:
             agent_list.append(critic_entry)
 
-        # Make sure `main` exists too — OpenClaw expects it. If the worker
+        # Make sure `main` exists too — the Jarvis-Agent worker expects it. If the worker
         # spawn already wrote it we leave the row alone.
         has_main = any(
             isinstance(r, dict) and r.get("id") == "main"
@@ -1298,7 +1298,7 @@ class CriticRunner:
 
         # 2026-05-17 (BUG-024-Episode-3): the Critic subprocess crashes
         # with `LLM request rejected: You're out of extra usage` because
-        # OpenClaw routes Claude through the `anthropic` Messages-API
+        # The Jarvis-Agent worker routes Claude through the `anthropic` Messages-API
         # backend (which needs paid extra-usage credits) instead of the
         # `claude-cli` OAuth backend (which goes through the user's Claude
         # Max subscription). The Worker-spawn has the same problem and
@@ -1306,7 +1306,7 @@ class CriticRunner:
         # right --permission-mode + --add-dir + --verbose args into the
         # mission's openclaw.json (provider_chain.py:486-505).
         #
-        # The Critic must inject the SAME block — without it OpenClaw
+        # The Critic must inject the SAME block — without it the Jarvis-Agent worker
         # falls back to the anthropic Messages-API path and the Critic
         # call dies with HTTP 400 "out of extra usage". Live repro:
         # mission_019e35a4 today (2026-05-17 13:14) — Critic stderr
@@ -1358,7 +1358,7 @@ class CriticRunner:
         except OSError as exc:
             logger.warning(
                 "CriticRunner: openclaw.json write failed (%s) — critic "
-                "spawn will fall back to OpenClaw's own auto-registration",
+                "spawn will fall back to the Jarvis-Agent worker's own auto-registration",
                 exc,
             )
 
@@ -1383,8 +1383,8 @@ class CriticRunner:
 
         Branches on the resolved primary provider:
           * ``claude-api``  -> ``claude --print`` directly (ClaudeDirectCritic
-            path, CRIT-1 from 2026-05-17 audit). Bypasses OpenClaw.
-          * any other slug  -> classic OpenClaw ``agent --agent critic`` path.
+            path, CRIT-1 from 2026-05-17 audit). Bypasses the Jarvis-Agent worker harness.
+          * any other slug  -> classic Jarvis-Agent ``agent --agent critic`` path.
 
         Raises ``CriticTimeout`` on wall-clock cap; other subprocess errors
         surface as ``None`` so the outer caller can run the adversarial retry.
@@ -1399,8 +1399,8 @@ class CriticRunner:
         )
 
         # Append the JSON-only output contract once at the call site so both
-        # the OpenClaw and the direct paths see the same prompt. (The old
-        # `build_critic_cmd` appended it for the OpenClaw path; we lift that
+        # the Jarvis-Agent worker and the direct paths see the same prompt. (The old
+        # `build_critic_cmd` appended it for the Jarvis-Agent worker path; we lift that
         # so the direct path doesn't end up without the contract.)
         prompt_for_subprocess = (
             f"{prompt}\n\n"
@@ -1516,8 +1516,8 @@ class CriticRunner:
                 )
 
         # Any other provider (grok / gemini / openrouter / unset) falls back to
-        # the direct claude critic. The OpenClaw subprocess critic path was
-        # removed alongside the OpenClaw worker — it shared the ~92% nested-
+        # the direct claude critic. The Jarvis-Agent worker subprocess critic path was
+        # removed alongside the Jarvis-Agent worker — it shared the ~92% nested-
         # claude hang failure mode (see docs/BUGS.md). The direct claude CLI
         # path is the proven critic surface.
         #
@@ -1603,12 +1603,12 @@ class CriticRunner:
           * No ``--output-format stream-json``: the prompt asks for a
             single JSON object as the entire output, ``--print`` writes
             that text verbatim to stdout. Simpler parse path than the
-            OpenClaw ``payloads[].text`` wrapper.
+            Jarvis-Agent worker ``payloads[].text`` wrapper.
 
         OAuth: ``env`` carries ``ANTHROPIC_OAUTH_TOKEN`` and
         ``ANTHROPIC_API_KEY`` from ``build_worker_env`` -> the binary
         uses the user's Claude Max subscription instead of the paid
-        Messages-API path that OpenClaw routes through by default.
+        Messages-API path that the Jarvis-Agent worker routes through by default.
         """
         from jarvis.missions.workers.claude_direct_worker import (
             _resolve_claude_argv_prefix,
@@ -2061,7 +2061,7 @@ def _resolve_critic_provider_model() -> tuple[str | None, str | None]:
     Reads ``[brain.sub_jarvis]`` via the same chain resolver the Worker
     uses, so Worker and Critic always agree on the backend. Returns
     ``(None, None)`` when no chain is resolvable (test paths, broken
-    config) so the caller falls back to the OpenClaw path.
+    config) so the caller falls back to the Jarvis-Agent path.
     """
     try:
         from jarvis.missions.workers.provider_chain import (
@@ -2193,7 +2193,7 @@ class _suppress:
 def _extract_json_payload(stdout_text: str) -> str:
     """Extract the schema-validated CriticVerdict JSON from critic stdout.
 
-    OpenClaw returns a JSON document whose first payload text normally contains
+    The Jarvis-Agent worker returns a JSON document whose first payload text normally contains
     the reviewer JSON. Older fixtures may pass the verdict JSON directly, so
     we keep the bare-object fallback.
     """

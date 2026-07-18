@@ -1,11 +1,11 @@
-"""Unit tests for the OpenClaw worker aggregator (Phase 9 Wave 4 UI).
+"""Unit tests for the Jarvis-Agent worker aggregator (Phase 9 Wave 4 UI).
 
 Pure helper tests without FastAPI / DB I/O. Covers:
 - Detection heuristic (step.harness == 'openclaw' AND fallback via model+sid)
-- State-dir convention (matches ``OpenClawHarness._build_spec``)
+- State-dir convention (matches ``missions_worker._derive_state_dir``)
 - Reattach status: live -> killed -> ended (mission terminal)
 - Cost/tokens aggregation from Progress + DraftReady
-- Empty stream / non-OpenClaw workers
+- Empty stream / non-Jarvis-Agent workers
 """
 from __future__ import annotations
 
@@ -41,9 +41,9 @@ def test_no_workers_returns_empty():
     assert extract_worker_missions([]) == []
 
 
-def test_non_openclaw_worker_is_ignored():
+def test_non_jarvis_agent_worker_is_ignored():
     """Pure Claude/Codex workers (no step.harness, no /-model) do not
-    show up in the OpenClaw list."""
+    show up in the Jarvis-Agent list."""
     spawn = WorkerSpawned(
         worker_id="w1",
         step={"task": "build foo"},
@@ -64,7 +64,7 @@ def test_step_harness_marker_is_canonical():
         worker_id="w1",
         step={"harness": "openclaw"},
         pid=42,
-        cli="python",  # OpenClaw cannot yet register itself as 'openclaw'
+        cli="python",  # Jarvis-Agent cannot yet register itself as 'openclaw'
         model="any",
         worktree="C:/wt/agent-1",
         session_id=None,
@@ -96,8 +96,8 @@ def test_session_id_plus_provider_slash_fallback_detection():
 # ---------------------------------------------------------------------------
 
 
-def test_state_dir_matches_openclaw_harness_convention():
-    """The state_dir path MUST exactly follow the ``OpenClawHarness._build_spec``
+def test_state_dir_matches_legacy_openclaw_harness_convention():
+    """The state_dir path MUST exactly follow the ``missions_worker._derive_state_dir``
     convention — otherwise the UI shows the wrong location."""
     spawn = WorkerSpawned(
         worker_id="w1",
@@ -270,7 +270,7 @@ def test_cost_aggregated_from_progress_then_draft_ready():
 # ---------------------------------------------------------------------------
 
 
-def test_multiple_openclaw_workers_preserved_in_spawn_order():
+def test_multiple_jarvis_agent_workers_preserved_in_spawn_order():
     s1 = WorkerSpawned(worker_id="w1", step={"harness": "openclaw"}, pid=1, cli="python", model="a/b", worktree="C:/wt", session_id="s1")
     s2 = WorkerSpawned(worker_id="w2", step={"harness": "openclaw"}, pid=2, cli="python", model="a/b", worktree="C:/wt", session_id="s2")
     other = WorkerSpawned(worker_id="w3", step={}, pid=3, cli="claude", model="claude-sonnet-4-6", worktree="C:/wt", session_id=None)

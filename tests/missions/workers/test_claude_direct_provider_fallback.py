@@ -8,7 +8,7 @@ verbatim worker error in ``data/jarvis_desktop.log`` was::
     ClaudeDirectWorker: primary provider is grok, expected claude-api
     ClaudeDirectWorker: primary provider is openai-codex, expected claude-api
 
-Root cause: post-Welle-4 the OpenClaw-backed ``SubJarvisWorker`` was removed
+Root cause: post-Welle-4 the openclaw-backed ``SubJarvisWorker`` was removed
 (the ~92% nested-claude hang), so ``jarvis.missions.init._worker_factory``
 routes EVERY ``[brain.sub_jarvis].provider`` that is not ``openai-codex`` /
 ``chatgpt`` (grok, gemini, openai, openrouter, openclaw-claude, AND the unset

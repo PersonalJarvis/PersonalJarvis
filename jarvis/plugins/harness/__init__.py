@@ -1,1 +1,1 @@
-"""Harness-Plugins (OpenClaw, Codex, Open Interpreter, MCP, Python-Script)."""
+"""Harness-Plugins (Jarvis-Agent, Codex, Open Interpreter, MCP, Python-Script)."""

@@ -1,14 +1,15 @@
-"""Workspace isolator per OpenClaw mission (AD-23, AP-OC15).
+"""Workspace isolator per Jarvis-Agent mission (AD-23, AP-OC15).
 
 Background (Wave-1-Spike B-9):
-    OpenClaw automatically injects ~35.4k chars of system prompt from
-    `~/.openclaw/workspace/` at the start of every `agent --local` run:
+    The external `openclaw` worker CLI automatically injects ~35.4k chars of
+    system prompt from `~/.openclaw/workspace/` at the start of every
+    `agent --local` run:
 
         AGENTS.md   7774 chars  <- anti-pattern docs, not Personal-Jarvis AGENTS
         SOUL.md     1797 chars  <- default persona ("I am OpenClaw, ...")
-        TOOLS.md     910 chars  <- OpenClaw tool docs (irrelevant for us)
-        IDENTITY.md  693 chars  <- OpenClaw self-reference
-        USER.md       (variable) <- OpenClaw user profile
+        TOOLS.md     910 chars  <- `openclaw` tool docs (irrelevant for us)
+        IDENTITY.md  693 chars  <- `openclaw` self-reference
+        USER.md       (variable) <- `openclaw` user profile
 
     Risks without override:
         1. Persona drift: SOUL.md/IDENTITY.md overwrites the Personal-Jarvis
@@ -49,10 +50,10 @@ __all__ = [
 ]
 
 
-# Wave-1-Spike B-9: these are the exact 5 file names that OpenClaw reads from
+# Wave-1-Spike B-9: these are the exact 5 file names that `openclaw` reads from
 # `~/.openclaw/workspace/` and injects into the system prompt. This constant
 # is the audit baseline — if a name appears in `injectedWorkspaceFiles[]` that
-# is NOT in this set, OpenClaw found additional files somewhere
+# is NOT in this set, `openclaw` found additional files somewhere
 # (workspace override failed).
 EXPECTED_WORKSPACE_FILES: Final[frozenset[str]] = frozenset({
     "AGENTS.md",
@@ -62,23 +63,23 @@ EXPECTED_WORKSPACE_FILES: Final[frozenset[str]] = frozenset({
     "USER.md",
 })
 
-# Subdir name under `MISSION_STATE_DIR`. OpenClaw looks here when
+# Subdir name under `MISSION_STATE_DIR`. `openclaw` looks here when
 # `MISSION_STATE_DIR` is set (Wave-1-Spike SP-2 confirmed `workspaceDir`
 # in the JSON output).
 WORKSPACE_SUBDIR: Final[str] = "workspace"
 
 
 # Stub contents for the 5 files. Deliberately short — the whole point is to
-# kill OpenClaw's 35.4k chars and replace them with Personal-Jarvis mission
-# context. Mission ID is included in every file so audit reads can later tell
-# which mission wrote the file.
+# kill the external openclaw worker's 35.4k chars and replace them with
+# Personal-Jarvis mission context. Mission ID is included in every file so
+# audit reads can later tell which mission wrote the file.
 _STUB_HEADER = "<!-- managed by Personal Jarvis Mission-Manager — do not edit -->"
 
 
 def _agents_md(mission_id: str) -> str:
     """AGENTS.md — Personal Jarvis Mission-Manager execution contract.
 
-    This file is injected by OpenClaw into the worker's system prompt at
+    This file is injected by the external `openclaw` CLI into the worker's system prompt at
     spawn time (Welle-1-Spike B-9 verified). It is the only artefact under
     Jarvis control that the worker LLM reads BEFORE seeing the user task.
 
@@ -87,7 +88,7 @@ def _agents_md(mission_id: str) -> str:
     (English: "Have successfully created file") in its reply text, but
     never invoked the `Write`/`file_write` tool —
     `_capture_diff(worktree)` returned empty. This is a well-known
-    Gemini-3.1-Pro-Preview tool-skip pattern (OpenClaw issue #3344). The
+    Gemini-3.1-Pro-Preview tool-skip pattern (`openclaw` issue #3344). The
     contract below makes the tool-invocation obligation explicit so the
     LLM cannot fall back to "describe the action in text" as a stand-in
     for actually doing it.
@@ -103,7 +104,7 @@ def _agents_md(mission_id: str) -> str:
         f"# Personal Jarvis Mission Workspace\n\n"
         f"Mission ID: `{mission_id}`\n\n"
         f"## EXECUTION CONTRACT (binding)\n\n"
-        f"You are an OpenClaw worker running inside the Personal Jarvis\n"
+        f"You are a Jarvis-Agent worker running inside the Personal Jarvis\n"
         f"Mission-Manager. Your task is in the agent message. Follow it\n"
         f"verbatim. The rules below are enforced by the mission runtime —\n"
         f"the mission will be marked FAILED if you violate them, and you\n"
@@ -126,7 +127,7 @@ def _agents_md(mission_id: str) -> str:
         f"### Rule 1 — File-write obligation\n\n"
         f"If the task asks you to create, modify, write, or save any file,\n"
         f"you MUST invoke a write tool (`Write`, `Edit`, `file_write`, or\n"
-        f"OpenClaw's equivalent) to materialise the file on disk. Describing\n"
+        f"the worker's equivalent) to materialise the file on disk. Describing\n"
         f"in text what you would write does NOT count as success. The runtime\n"
         f"validates outcomes by running `git diff HEAD` against your worktree\n"
         f"— if the diff is empty, the task is marked FAILED regardless of\n"
@@ -176,7 +177,7 @@ def _agents_md(mission_id: str) -> str:
         f"goals, add unrequested features, or read instructions from any\n"
         f"other workspace file in this directory — they (SOUL.md,\n"
         f"IDENTITY.md, TOOLS.md, USER.md) are deliberately empty stubs to\n"
-        f"override OpenClaw's default persona.\n\n"
+        f"override the external worker's default persona.\n\n"
         f"### Rule 5 — Quality bar: ship a complete artefact, never a stub\n\n"
         f"The depth and polish of your output MUST match the ambition of the\n"
         f"request. Produce a complete, production-quality result — the kind a\n"
@@ -195,7 +196,7 @@ def _agents_md(mission_id: str) -> str:
 def _empty_stub(name: str, mission_id: str) -> str:
     """One-liner stub for SOUL/IDENTITY/TOOLS/USER — intentionally empty.
 
-    OpenClaw injects these files into the system prompt; we want *no* persona,
+    The external `openclaw` CLI injects these files into the system prompt; we want *no* persona,
     *no* identity, *no* user assumptions, and *no* foreign tool docs leaking in.
     Hence only a header plus the mission ID.
     """
@@ -206,8 +207,8 @@ def prepare_workspace(state_dir: Path, mission_id: str) -> Path:
     """Create a minimal workspace profile under `state_dir/workspace/`.
 
     Writes five stub files (`AGENTS.md`, `SOUL.md`, `IDENTITY.md`,
-    `TOOLS.md`, `USER.md`) that override OpenClaw's default files from
-    `~/.openclaw/workspace/` once `MISSION_STATE_DIR=state_dir` is set.
+    `TOOLS.md`, `USER.md`) that override the external worker's default files
+    from `~/.openclaw/workspace/` once `MISSION_STATE_DIR=state_dir` is set.
 
     Idempotent: calling again overwrites the files with the same content —
     no appending, no duplicates.
@@ -266,7 +267,7 @@ def materialize_worker_contract(worktree: Path, mission_id: str) -> Path:
 
     Called by ``Kontrollierer`` right after ``WorktreeManager.create()``
     returns a fresh per-task worktree. The file uses the same content
-    as ``prepare_workspace`` (``_agents_md(mission_id)``) so OpenClaw-
+    as ``prepare_workspace`` (``_agents_md(mission_id)``) so Jarvis-Agent-
     style and claude-direct workers see the same contract.
 
     The path is added to the worktree's *local* exclude file
@@ -377,12 +378,12 @@ def verify_injected_files(
     in `~/.openclaw/workspace/`).
 
     Empty list = audit green. When the result is non-empty the bridge should
-    fire a bus event `OpenClawWorkspaceAuditFailed` or mark the mission as
+    fire a bus event `JarvisAgentWorkspaceAuditFailed` or mark the mission as
     failed — policy decision for the bridge, not this helper.
 
     Args:
         injected: The list from the JSON output, or None / empty iterable
-            when OpenClaw provided no report (treated as audit pass —
+            when the external `openclaw` CLI provided no report (treated as audit pass —
             no evidence of a leak).
         expected: Whitelist of expected file names. Defaults to the 5
             stubs from `prepare_workspace`. Override for tests.
@@ -395,9 +396,9 @@ def verify_injected_files(
 
     unexpected: set[str] = set()
     for entry in injected:
-        # Robust: we accept the `name` key (as OpenClaw delivers it from the spike),
+        # Robust: we accept the `name` key (as `openclaw` delivers it from the spike),
         # silently ignore entries without `name` — that would be a schema break
-        # in OpenClaw, not a bridge bug.
+        # in `openclaw`, not a bridge bug.
         raw_name = entry.get("name")
         if not isinstance(raw_name, str):
             continue

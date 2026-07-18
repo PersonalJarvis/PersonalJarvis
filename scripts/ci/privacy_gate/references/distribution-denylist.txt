@@ -8,7 +8,7 @@
 # Lines starting with `#` and blank lines are ignored.
 #
 # Decision record: the maintainer chose (2026-05-31) to keep withholding all
-# internal dev docs (OpenClaw-style clean public repo) and the encrypted
+# internal dev docs (an openclaw-style clean public repo) and the encrypted
 # release-signing keys (forks generate their own). Confirmed in the skill plan.
 #
 # WHY a denylist and not the file diff: the working↔dist diff conflates two
@@ -17,7 +17,7 @@
 # features (e.g. jarvis/state/*, jarvis/plugins/tts/fallback_tts.py). So those
 # are intentionally ABSENT from this list and ship normally.
 
-# --- .claude/ contributor toolchain: SHIP it (like OpenClaw), minus the
+# --- .claude/ contributor toolchain: SHIP it (like the openclaw repo), minus the
 #     maintainer's own release skill (2026-06-27, revised) ----------------------
 # REVISED: .claude/ is Claude-Code CONTRIBUTOR tooling — subagent definitions,
 # slash-commands, dev skills — exactly what a fork needs to keep developing with
@@ -117,7 +117,7 @@ docs/diagnostics/**
 # --- Contributor doctrine now SHIPS (2026-06-27, revised) -------------------
 # CLAUDE.md + CLOUD.md are the binding contributor doctrine. AGENTS.md is the
 # byte-twin of CLAUDE.md and ALREADY ships, so withholding CLAUDE.md was
-# inconsistent — its content was public via AGENTS.md regardless. OpenClaw ships
+# inconsistent — its content was public via AGENTS.md regardless. the openclaw repo ships
 # CLAUDE.md + VISION.md publicly; matching that is the professional move. Both
 # are depersonalized by the PII scrub on the way out. (docs/BUGS.md stays
 # withheld below — that is the internal bug log, not contributor doctrine.)
@@ -132,8 +132,8 @@ docs/diagnostics/**
 docs/adr/0009-self-healing-worker-critic.md
 docs/agents-self-verification.md
 docs/deepgram-stt-research-2026-05-20.md
-docs/openclaw-bridge.md
-docs/openclaw-spawn-failure-analysis-2026-05-18.md
+docs/jarvis-agents-bridge.md
+docs/jarvis-agents-spawn-failure-analysis-2026-05-18.md
 docs/persona-audit-report.md
 docs/persona-refactor-results.md
 docs/persona-research.md
@@ -141,7 +141,7 @@ docs/phase1c-test-results.md
 docs/phase2-integration-test-results.md
 docs/phase6-handoff-2026-04-26.md
 docs/phase6-test-report.md
-docs/spike-results-openclaw.md
+docs/spike-results-jarvis-agents.md
 docs/voice-acceptance-brief.md
 docs/bug-019-spawn-failure-report.html
 docs/jarvis-board/PHASE_A_DONE.md

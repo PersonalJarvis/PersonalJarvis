@@ -73,7 +73,7 @@ const GEMINI_BRAIN = {
   active: true,
 };
 
-const OPENCLAW_EMPTY = {
+const JARVIS_AGENT_EMPTY = {
   configured: true,
   enabled: false,
   binary_path: "",
@@ -121,7 +121,7 @@ const TELEPHONY_CONFIG_LIVE = {
 function routes(): Record<string, () => RouteResult> {
   return {
     "/api/providers": () => ({ body: { providers: [GEMINI_BRAIN] } }),
-    "/api/openclaw/status": () => ({ body: OPENCLAW_EMPTY }),
+    "/api/jarvis-agent/status": () => ({ body: JARVIS_AGENT_EMPTY }),
     "/api/telephony/status": () => ({ body: TELEPHONY_STATUS_LIVE }),
     "/api/telephony/config": () => ({ body: TELEPHONY_CONFIG_LIVE }),
     "/api/telephony/scripts": () => ({ body: { scripts: [] } }),

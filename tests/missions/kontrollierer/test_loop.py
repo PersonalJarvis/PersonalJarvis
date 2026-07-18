@@ -275,15 +275,16 @@ async def test_two_iterations_approve_on_second(
 
 
 @pytest.mark.asyncio
-async def test_iter1_does_not_resume_openclaw_session(
+async def test_iter1_does_not_resume_jarvis_agent_session(
     manager: MissionManager, tmp_path: Path
 ) -> None:
     """BUG-LIVE-03 regression — `resume_session_id` must be None on every
-    iteration. OpenClaw 2026.5.7 prefers the failover chain persisted in
-    the session-state file over the explicit `--model` flag on resume, so
-    a reused session-id silently downgrades the provider routing. The
-    critic correction lives in the worker prompt (`prior_block`) and not
-    in OpenClaw state, so a fresh session loses nothing.
+    iteration. The external openclaw worker (v2026.5.7) prefers the failover
+    chain persisted in the session-state file over the explicit `--model`
+    flag on resume, so a reused session-id silently downgrades the provider
+    routing. The critic correction lives in the worker prompt
+    (`prior_block`) and not in the external worker's session state, so a
+    fresh session loses nothing.
     """
     critic = FakeCriticRunner(_make_revise_verdict("needs fix"), _make_approve_verdict())
     shared_worker = FakeWorker(session="s-iter0")

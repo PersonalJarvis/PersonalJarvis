@@ -38,7 +38,7 @@ def test_phantom_direct_tools_stay_out_of_router_tools() -> None:
     present = [ep for ep in _PHANTOM_EP_NAMES if ep in ROUTER_TOOLS]
     assert not present, (
         f"{present} are in ROUTER_TOOLS — the router is a pure dispatcher; "
-        f"direct-action tools belong behind the OpenClaw bridge (ADR-0011)."
+        f"direct-action tools belong behind the Jarvis-Agents bridge (ADR-0011)."
     )
 
 

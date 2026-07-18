@@ -2,7 +2,7 @@
 
 Wave-4 migration: previously ``spawn_sub_jarvis``. Provides a short
 Active-Window-Hint (``"User active in: <process_name> (<window_title>)"``)
-as an additional ``context_hint`` at spawn time. The OpenClaw worker gets
+as an additional ``context_hint`` at spawn time. The Jarvis-Agent worker gets
 free context about which application the user is currently working in —
 without burdening the main Jarvis prompt with a permanent vision block.
 

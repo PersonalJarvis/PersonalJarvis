@@ -176,7 +176,7 @@ PHASE 4 — PROVE IT (this is the stop condition; do not declare success without
       pre-existing red is foreign (worktree-isolate it).
    2. Restart the LIVE app via POST http://127.0.0.1:47821/api/settings/restart-app
       and confirm it is running the new code (jarvis.__file__ check + the chosen
-      provider visible via GET /api/openclaw/status or the settings API).
+      provider visible via GET /api/jarvis-agent/status or the settings API).
    3. Dispatch a BATCH of at least 8 REAL missions through the live app (not just the
       harness), mixing the three task classes:
         - file/side-effect task (e.g. "write a 200-word story into story.txt")  x3

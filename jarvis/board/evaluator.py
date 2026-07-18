@@ -62,7 +62,7 @@ class _LiveContext(AchievementContext):
         self._conn = conn
         self._tools_ever: set[str] = set()
         self._successful_tasks = 0
-        self._openclaw_success = 0
+        self._jarvis_agent_success = 0
         self._mcp_success = 0
         self._trace_tools: OrderedDict[str, set[str]] = OrderedDict()
         self._first_event_iso: str | None = None
@@ -92,7 +92,7 @@ class _LiveContext(AchievementContext):
             self._tools_ever = set()
         self._successful_tasks = int(data.get("successful_tasks_total", "0") or 0)
         legacy_sj = int(data.get("sub_jarvis_success_total", "0") or 0)
-        self._openclaw_success = int(data.get("openclaw_success_total", "0") or 0) + legacy_sj
+        self._jarvis_agent_success = int(data.get("openclaw_success_total", "0") or 0) + legacy_sj
         self._mcp_success = int(data.get("mcp_success_total", "0") or 0)
         self._first_event_iso = data.get("first_event_iso") or None
 
@@ -115,13 +115,13 @@ class _LiveContext(AchievementContext):
         return self._successful_tasks
 
     def openclaw_success_total(self) -> int:
-        return self._openclaw_success
+        return self._jarvis_agent_success
 
     def mcp_success_total(self) -> int:
         return self._mcp_success
 
     def hours_saved_last_7d(self) -> float:
-        """Computed from ``daily_stats`` — with a 60 s cache so that OpenClaw
+        """Computed from ``daily_stats`` — with a 60 s cache so that Jarvis-Agent
         bursts do not saturate the query.
         """
         now = int(time.time())
@@ -187,9 +187,9 @@ class _LiveContext(AchievementContext):
             elif name == "JarvisAgentTaskCompleted":
                 if bool(getattr(event, "success", False)):
                     self._successful_tasks += 1
-                    self._openclaw_success += 1
+                    self._jarvis_agent_success += 1
                     self._persist("successful_tasks_total", str(self._successful_tasks))
-                    self._persist("openclaw_success_total", str(self._openclaw_success))
+                    self._persist("openclaw_success_total", str(self._jarvis_agent_success))
 
             elif name == "HarnessCompleted":
                 harness = getattr(event, "harness", "")

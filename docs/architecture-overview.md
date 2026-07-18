@@ -26,7 +26,7 @@ deviations must be documented back in the plan.
 **Binding architecture contracts:**
 - Realtime, chat, and voice delegate heavy work through the same
   `spawn-worker` → Mission Manager → worker → Critic/Kontrollierer lifecycle.
-  The retired OpenClaw sub-tier and phantom harness paths must not be restored.
+  The retired pre-rename (OpenClaw) sub-tier and phantom harness paths must not be restored.
 - [`docs/anti-drift-three-layer.md`](anti-drift-three-layer.md) — five-layer enum
   pattern (Python ↔ SQL ↔ Pydantic ↔ TS ↔ UI). Mandatory for any string crossing
   module boundaries.
@@ -128,7 +128,7 @@ Four levels: `safe` / `monitor` / `ask` / `block`. Priority is **blacklist > whi
 
 The router-tier brain is a **pure dispatcher**. Tool surface is the `ROUTER_TOOLS` frozenset in `jarvis/brain/factory.py`. Direct actions outside this set are delegated to the agent harness via the harness-spawn tool.
 
-Force-spawn heuristic in `BrainManager._should_force_openclaw`:
+Force-spawn heuristic in `BrainManager._should_force_spawn`:
 - Smalltalk allowlist wins → never spawn.
 - Action verb (`lies/baue/installiere/öffne/mach/zeig` + repair words) → spawn. <!-- i18n-allow -->
 - External-system marker (PR/Repo/GitHub/Issue) → spawn.

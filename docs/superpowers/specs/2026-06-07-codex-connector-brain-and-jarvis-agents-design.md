@@ -86,11 +86,11 @@ login flow — which is exactly the repeated activation toast.
 ### 2.2 Codex is absent from the Jarvis-Agents surface
 
 The Jarvis-Agents section (`components/SubagentSection.tsx`) is rendered from
-`GET /api/openclaw/status` → `mapping_rows`, which is built by iterating
+`GET /api/jarvis-agent/status` → `mapping_rows`, which is built by iterating
 `jarvis/missions/worker_runtime/provider_map.py::MAPPINGS`. `MAPPINGS` contains
 only `gemini, claude-api, openai, openrouter, grok`. **Codex has no row**, so no
-card is shown. `POST /api/subagent/switch` likewise validates against
-`JARVIS_TO_OPENCLAW` (derived from `MAPPINGS`) and rejects Codex with HTTP 404.
+card is shown. `POST /api/subagent/switch` likewise validates against the
+Jarvis-Agent provider allow-list (derived from `MAPPINGS`) and rejects Codex with HTTP 404.
 
 This is *correct* in spirit: Codex is **not** a Jarvis-Agents-routed provider — it has
 no Jarvis-Agents provider slug and no shared ENV-var mapping. It is a **direct
@@ -223,13 +223,13 @@ never-ending toast cannot recur.
 **Canonical slug.** Store/display Codex as `"openai-codex"` (the value
 `_select_subagent_worker_kind` already accepts, alongside the alias `"chatgpt"`).
 
-**`GET /api/openclaw/status` (server.py).** After the `MAPPINGS` loop, append one
+**`GET /api/jarvis-agent/status` (server.py).** After the `MAPPINGS` loop, append one
 synthetic Codex row:
 
 ```python
 {
   "jarvis": "openai-codex",
-  "openclaw": "codex-cli (direct)",      # cosmetic; codex has no OpenClaw slug
+  "openclaw": "codex-cli (direct)",      # cosmetic; codex has no Jarvis-Agent slug
   "env_var": "ChatGPT-OAuth",
   "env_fallback": "OPENAI_API_KEY",
   "key_set": <codex connected OR codex_openai_api_key saved>,
@@ -243,7 +243,7 @@ the active highlight works without further change. `to_provider_slug` is
 correctly left to fail-soft to `None` for codex (it has no slug).
 
 **`POST /api/subagent/switch` (provider_routes.py).** Add a codex branch
-**before** the `JARVIS_TO_OPENCLAW` membership check:
+**before** the Jarvis-Agent provider allow-list membership check:
 
 ```python
 CODEX_SUBAGENT_SLUGS = frozenset({"openai-codex", "chatgpt"})
@@ -319,7 +319,7 @@ The worker env (`jarvis/missions/init.py::_env_builder` →
 3. `/api/subagent/switch` — accepts `openai-codex`/`chatgpt` when connected,
    409 when not connected, persists `"openai-codex"`; still 404 for genuinely
    unknown providers.
-4. `/api/openclaw/status` — includes the synthetic codex row; `is_active_brain`
+4. `/api/jarvis-agent/status` — includes the synthetic codex row; `is_active_brain`
    true when `sub_jarvis.provider == "openai-codex"`.
 5. `CodexDirectWorker` env — strips `OPENAI_API_KEY` when OAuth present, keeps it
    when only the API key is configured (parametrized).
@@ -365,7 +365,7 @@ The worker env (`jarvis/missions/init.py::_env_builder` →
 
 - `jarvis/codex_auth.py` — rebuild service (core).
 - `jarvis/ui/web/provider_routes.py` — codex branch in `/api/subagent/switch`.
-- `jarvis/ui/web/server.py` — synthetic codex row in `/api/openclaw/status`.
+- `jarvis/ui/web/server.py` — synthetic codex row in `/api/jarvis-agent/status`.
 - `jarvis/brain/app_control.py` — mirror codex acceptance in `_switch_subagent`.
 - `jarvis/missions/init.py` + `workers/codex_direct_worker.py` — conditional
   key handling for the API-key path.

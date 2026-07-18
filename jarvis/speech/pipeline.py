@@ -302,7 +302,7 @@ BrainCallback = Callable[[str], Awaitable[str]]
 
 
 # AnnouncementRequested.kind values that deliver an answer the user is owed — a
-# finished background mission / sub-agent / worker / OpenClaw result. These
+# finished background mission / sub-agent / worker / Jarvis-Agent result. These
 # punch through the hangup gate (AD-OE5/OE6 zero-silent-drop) and cancel any
 # pending "still on it" heartbeat. ``subagent`` is the attributed sibling of
 # ``completion``: same delivery semantics, but rendered as its own transcript
@@ -1788,7 +1788,7 @@ class SpeechPipeline:
         # resulting 40-90 s silence leaves the user unable to tell whether
         # Jarvis is working or stuck. Compromise: at 90 s we emit a single
         # discrete "Bin noch dran." via AnnouncementRequested. Cancel
-        # the watchdog on OpenClawBackgroundCompleted so successful
+        # the watchdog on JarvisAgentBackgroundCompleted so successful
         # short missions stay silent. FIFO list, one entry per pending
         # spawn -- matches the sequential-dispatch model of the voice
         # pipeline. The 90 s threshold is well past the typical short
@@ -1805,16 +1805,16 @@ class SpeechPipeline:
         self._heartbeat_max_count: int = 3
         self._heartbeat_recent: deque[str] = deque(maxlen=2)
 
-        # TTS-Announcement-Bridge (Phase 5 CL-13): Router/Tools emittieren
-        # `AnnouncementRequested` wenn sie dem User eine Zwischenansage geben
-        # wollen (z.B. "Starte einen Sub-Agenten, einen Moment."), ohne den
-        # Brain-Pfad zu durchlaufen. Handler spricht direkt via TTS.
+        # TTS announcement bridge (Phase 5 CL-13): router/tools emit
+        # `AnnouncementRequested` when they want to give the user an interim
+        # announcement (e.g. "Starting a sub-agent, one moment."), without
+        # going through the brain path. The handler speaks directly via TTS.
         if self._bus is not None:
             self._bus.subscribe(AnnouncementRequested, self._on_announcement)
-            # Fire-and-Forget OpenClaw: wenn ein Background-Run fertig wird,
-            # proaktive Voice-Ansage ("Sir, fertig. <summary>") — so weiss der
-            # User auch dann Bescheid, wenn er zwischenzeitlich etwas anderes
-            # gemacht hat.
+            # Fire-and-forget Jarvis-Agent: when a background run finishes,
+            # a proactive voice announcement ("Sir, done. <summary>") — so
+            # the user finds out even if they did something else in the
+            # meantime.
             self._bus.subscribe(
                 JarvisAgentBackgroundCompleted, self._on_background_completed
             )
@@ -3022,7 +3022,7 @@ class SpeechPipeline:
             return
         # A completion / sub-agent readback IS the mission's answer — cancel any
         # pending "still on it" heartbeats so a reassurance never lands AFTER the
-        # result (the success path does not publish OpenClawBackgroundCompleted,
+        # result (the success path does not publish JarvisAgentBackgroundCompleted,
         # so the heartbeat is not otherwise drained on completion). 2026-06-19.
         if is_readback:
             self._cancel_spawn_heartbeats()
@@ -3175,8 +3175,8 @@ class SpeechPipeline:
                 self._player.stop()
             except Exception as exc:  # noqa: BLE001
                 log.warning("Player-Stop vor Announcement fehlgeschlagen: %s", exc)
-        # Phase-1-Output-Filter auch fuer Bus-Announcements (Skill-Output,
-        # OpenClaw-Announce, Vision-Privacy-Hinweise). Mandat-Pfad #2.
+        # Phase-1 output filter also applies to bus announcements (skill
+        # output, Jarvis-Agent announce, vision privacy notices). Mandate path #2.
         # Pre-Thinking-Ack Flash-Brain (kind="preamble"): the AckGenerator
         # already ran scrub_for_voice with ack_mode=True. We still re-scrub
         # here as a safety net, but pass ack_mode=is_preamble so legitimate
@@ -3585,7 +3585,7 @@ class SpeechPipeline:
     async def _on_background_completed(
         self, event: JarvisAgentBackgroundCompleted
     ) -> None:
-        """Proaktive Voice-Ansage wenn ein Background-OpenClaw-Task fertig wird.
+        """Proaktive Voice-Ansage wenn ein Background-Jarvis-Agent-Task fertig wird.
 
         User-Wunsch 2026-05-11 (Bug-Report Voice-Spawn-Latenz): Completion-
         Voice-Meldung soll hoerbar sein, damit der User auch dann Bescheid
@@ -3609,7 +3609,7 @@ class SpeechPipeline:
         if getattr(self, "_muted", False):
             log.debug("Background-completed announcement suppressed — voice muted")
             return
-        # WS3b (live bug 2026-06-14): an OpenClaw mission that completes AFTER
+        # WS3b (live bug 2026-06-14): a Jarvis-Agent mission that completes AFTER
         # the user hung up still owes them its result. This readback is a FRESH
         # turn (the answer they asked for), not a stale leftover from the aborted
         # turn, so it must NOT be dropped by the hangup gate (AD-OE6
@@ -3639,7 +3639,7 @@ class SpeechPipeline:
         else:
             err_short = (event.error or ph["unknown_err"])[:80]
             text = ph["fail"].format(e=err_short)
-        # Defense-in-Depth: Summary/Error kann aus dem OpenClaw-Pfad kommen
+        # Defense-in-Depth: Summary/Error kann aus dem Jarvis-Agent-Pfad kommen
         # und Engineering-Tokens (Sub-Agent, Subprocess, MCP) enthalten.
         # scrub_for_voice filtert die raus, sonst leakt Worker-Mechanik
         # in den Voice-Kanal (vgl. Mandat-Pfad #2 Output-Filter).
@@ -3652,11 +3652,11 @@ class SpeechPipeline:
         cleaned = scrubbed.cleaned.strip()
         if not cleaned:
             log.info(
-                "OpenClaw background fertig — Ansage nach Filter leer, schweige."
+                "Jarvis-Agent background fertig — Ansage nach Filter leer, schweige."
             )
             return
         log.info(
-            "OpenClaw background fertig (success=%s, dauer=%.1fs) — Ansage: %r",
+            "Jarvis-Agent background fertig (success=%s, dauer=%.1fs) — Ansage: %r",
             event.success, event.duration_s, cleaned,
         )
         # AD-OE5: this path plays straight to the player, bypassing
@@ -3668,7 +3668,7 @@ class SpeechPipeline:
         if getattr(self, "_turn_state", TurnTakingState.IDLE) in _USER_HOLDS_FLOOR_STATES:
             self._deferred_announcements.append(
                 AnnouncementRequested(
-                    source_layer="harness.openclaw.background",
+                    source_layer="harness.jarvis_agent.background",
                     text=cleaned,
                     language=lang,
                     priority="normal",
@@ -3733,7 +3733,7 @@ class SpeechPipeline:
                          (Sub-Agents-Board) und ueber den Background-
                          Completed-Voice-Readback am Ende der Mission.
 
-        Der Bus-Event selbst (``OpenClawAnnouncement``) wird in
+        Der Bus-Event selbst (``JarvisAgentAnnouncement``) wird in
         ``spawn_worker.py`` weiterhin publisht und vom UI gelesen — wir
         unterdruecken hier nur den Voice-Pfad. Cleanup-Logging behalten wir
         einmalig pro Event, damit man im Log noch sehen kann dass der ACK
@@ -3775,7 +3775,7 @@ class SpeechPipeline:
         session open — otherwise the idle-timeout override in ``_active_session``
         and the keep-listening branch in ``_finish_after_response`` would keep
         the session in LISTENING *forever* after a force-spawn. In production the
-        success path never publishes ``OpenClawBackgroundCompleted`` (the
+        success path never publishes ``JarvisAgentBackgroundCompleted`` (the
         readback travels the MissionAnnouncer → ``AnnouncementRequested`` path,
         and ``_on_background_completed`` — the only code that pops the list —
         fires solely on the crash path), so the list is otherwise never drained.
@@ -3788,7 +3788,7 @@ class SpeechPipeline:
 
     def _background_mission_in_flight(self) -> bool:
         """True while anything is still working for the user in the background:
-        an OpenClaw spawn watchdog counting down OR a live Computer-Use
+        a Jarvis-Agent spawn watchdog counting down OR a live Computer-Use
         mission.
 
         Consumed by the idle-timeout branch in ``_active_session`` and the
@@ -3858,7 +3858,7 @@ class SpeechPipeline:
         signal read by ``_active_session``'s idle-timeout override and by
         ``_finish_after_response``; a done-but-still-listed task would hold the
         voice session open forever, because the success path never publishes the
-        ``OpenClawBackgroundCompleted`` event that would otherwise drain it. The
+        ``JarvisAgentBackgroundCompleted`` event that would otherwise drain it. The
         hard cap bounds the in-flight hold to the heartbeat lifetime.
         """
         try:
@@ -3915,7 +3915,7 @@ class SpeechPipeline:
         Called when a mission delivers its actual answer (a readback —
         ``kind="completion"`` or ``kind="subagent"``) so Jarvis never says "still
         on it" right AFTER the result. The
-        success path does not publish ``OpenClawBackgroundCompleted``, so the
+        success path does not publish ``JarvisAgentBackgroundCompleted``, so the
         heartbeat is otherwise only drained by its own cap; this is the precise
         hook that silences it the moment the answer lands. Each cancelled task
         still self-removes from ``_spawn_watchdog_tasks`` in its ``finally``.
@@ -4779,7 +4779,7 @@ class SpeechPipeline:
         User intent (2026-05-20): "auflegen" is an absolute kill switch.
         No matter what Jarvis is currently saying, announcing, or queueing,
         a hangup must silence the voice channel immediately. Background
-        OpenClaw missions keep running (they live in their own subprocess
+        Jarvis-Agent missions keep running (they live in their own subprocess
         + Job Object); only their *voice readback* is suppressed via the
         ``_hangup_event`` gate on the bus-driven announcement handlers.
 
@@ -4800,7 +4800,7 @@ class SpeechPipeline:
         # BUG-CU-HANGUP (2026-05-28): "auflegen" must also STOP a running
         # Computer-Use mission immediately — otherwise Jarvis keeps clicking
         # the screen in the background after the user told it to stop. This is
-        # CU-scoped (cancels only the active CU token), so OpenClaw
+        # CU-scoped (cancels only the active CU token), so Jarvis-Agent
         # background missions are unaffected (their voice readback is muted via
         # the _hangup_event gate, matching the documented hangup contract).
         try:
@@ -6002,7 +6002,7 @@ class SpeechPipeline:
                             )
                             continue
                         # A background mission JUST spoke its readback out-of-band
-                        # (Computer-Use / OpenClaw completion or failure). That
+                        # (Computer-Use / Jarvis-Agent completion or failure). That
                         # readback handed the floor back to the user exactly like a
                         # normal inline answer — but, delivered via ``_on_announcement``
                         # OFF this loop, it did NOT reset the idle window, which may
@@ -7068,9 +7068,9 @@ class SpeechPipeline:
         """Schliesst normale Voice-Turns; Barge-in darf weiterlaufen.
 
         Spawn-in-flight override: a force-spawn-worker ACK ("Mach ich, ich
-        lasse dafuer einen OpenClaw-Subagent ...") is a promise, not the
+        lasse dafuer einen Jarvis-Agent-Subagent ...") is a promise, not the
         answer -- the actual answer arrives 30-90 s later as the mission
-        readback via ``OpenClawBackgroundCompleted``. Hanging up after the
+        readback via ``JarvisAgentBackgroundCompleted``. Hanging up after the
         ACK closes the mic context (see ``_active_session``'s
         ``MicrophoneCapture`` block), the readback plays into a dead
         session, and the user has to re-wake to continue. While at least
@@ -9697,7 +9697,7 @@ class SpeechPipeline:
             return result is True
         return result is not False
 
-    #: Spoken readback for an OpenClaw background task that finished off the
+    #: Spoken readback for a Jarvis-Agent background task that finished off the
     #: chat path. de/en/es so the readback follows the conversation language
     #: instead of a hardcoded German literal (forensic 2026-06-23). German
     #: strings are TTS product surface, not source artifacts (i18n-allow).

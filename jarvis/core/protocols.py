@@ -119,7 +119,7 @@ RiskTier = Literal["safe", "monitor", "ask", "block"]
 
 @dataclass(frozen=True, slots=True)
 class HarnessTask:
-    """Task for a sub-agent harness (OpenClaw, Codex, OI, …)."""
+    """Task for a sub-agent harness (Jarvis-Agent, Codex, OI, …)."""
     prompt: str
     cwd: str = "."
     env: dict[str, str] = field(default_factory=dict)
@@ -316,7 +316,7 @@ class Brain(Protocol):
 
 @runtime_checkable
 class Harness(Protocol):
-    """Sub-Agent-Framework (OpenClaw, Codex, Open Interpreter, MCP)."""
+    """Sub-Agent-Framework (Jarvis-Agent, Codex, Open Interpreter, MCP)."""
 
     name: str
     version: str
@@ -426,7 +426,7 @@ class MemoryStore(Protocol):
 class ChannelAdapter(Protocol):
     """Bidirectional message channel (web UI, Telegram, WhatsApp, …).
 
-    See the Phase-1a spec (OpenClaw pattern).
+    See the Phase-1a spec (Jarvis-Agent pattern).
     """
 
     name: str
@@ -607,7 +607,7 @@ class IntentClassification:
     - `trivial`         → main Jarvis answers directly (small talk, acknowledgement).
     - `direct_action`   → main Jarvis calls a first-class tool (bash,
                           screenshot, multi_spawn).
-    - `spawn_worker`  → task goes verbatim to the OpenClaw bridge via
+    - `spawn_worker`  → task goes verbatim to the Jarvis-Agent bridge via
                           the mission manager. (formerly ``spawn_sub_jarvis``.)
     """
     intent: Literal["trivial", "direct_action", "spawn_worker"]

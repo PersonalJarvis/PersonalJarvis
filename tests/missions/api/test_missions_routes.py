@@ -412,16 +412,16 @@ def test_kill_invokes_kontrollierer_method_when_present(
 
 
 # ---------------------------------------------------------------------------
-# Phase 9 (Welle 4 UI) — OpenClaw-Worker-Snapshots im Detail-Endpoint
+# Phase 9 (Welle 4 UI) — Jarvis-Agent-Worker-Snapshots im Detail-Endpoint
 # ---------------------------------------------------------------------------
 
 
-async def test_get_returns_empty_openclaw_workers_when_no_openclaw_marker(
+async def test_get_returns_empty_jarvis_agent_workers_when_no_jarvis_agent_marker(
     manager: MissionManager,
 ) -> None:
     """Without a step.harness=='openclaw' marker: ``worker_snapshots`` is []
     but always present in the response (the frontend can rely on that)."""
-    mid = await manager.dispatch(prompt="non-openclaw mission")
+    mid = await manager.dispatch(prompt="non-jarvis-agent mission")
 
     spawn_env = EventEnvelope(
         mission_id=mid,
@@ -451,11 +451,11 @@ async def test_get_returns_empty_openclaw_workers_when_no_openclaw_marker(
     assert body["worker_snapshots"] == []
 
 
-async def test_get_returns_openclaw_worker_snapshot(
+async def test_get_returns_jarvis_agent_worker_snapshot(
     manager: MissionManager,
 ) -> None:
     """Mit step.harness=='openclaw' + WorkerKilled: alle Spalten gefuellt (als worker_snapshots)."""
-    mid = await manager.dispatch(prompt="openclaw mission")
+    mid = await manager.dispatch(prompt="jarvis-agent mission")
 
     spawn_env = EventEnvelope(
         mission_id=mid,

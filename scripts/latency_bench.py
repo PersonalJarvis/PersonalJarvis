@@ -3,7 +3,7 @@
 Feeds simulated utterances through the router-tier BrainManager (text-in, no
 STT/TTS/audio) and reports p50/p95 for the metrics we can measure offline:
 
-  * router_decision_ms  — ``_should_force_openclaw`` heuristic (SLO: p95 < 150ms)
+  * router_decision_ms  — ``_should_force_spawn`` heuristic (SLO: p95 < 150ms)
   * prompt_build_ms     — ``_build_system_prompt`` assembly cost (Wave 2 target)
   * prompt_chars        — system-prompt size (cache-friendliness proxy)
   * first_token_ms      — real provider TTFT          (``--real`` only)
@@ -154,11 +154,7 @@ async def run_bench(runs: int, real: bool, assert_slo: bool) -> int:
     by_cat_ttft: dict[str, list[float]] = {}
 
     for cat, text in SCENARIOS:
-        # Renamed during the 2026-06-10 spawn-threshold rework; support both
-        # so the bench keeps running on older checkouts.
-        decide = (
-            getattr(bm, "_should_force_spawn", None) or bm._should_force_openclaw
-        )
+        decide = bm._should_force_spawn
         decision_ms: list[float] = []
         for _ in range(max(runs * 5, 50)):
             t = time.perf_counter_ns()

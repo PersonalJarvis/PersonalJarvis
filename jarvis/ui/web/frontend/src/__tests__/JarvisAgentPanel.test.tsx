@@ -13,7 +13,7 @@ import { cleanup, render, screen } from "@testing-library/react";
 import { JarvisAgentPanel } from "@/components/missions/JarvisAgentPanel";
 import { useMissionsStore } from "@/components/missions/store";
 import { useEventStore } from "@/store/events";
-import type { OpenClawWorkerSnapshot } from "@/types/missions";
+import type { JarvisAgentWorkerSnapshot } from "@/types/missions";
 
 // A deliberately arbitrary assistant name: the agent brand must follow ANY
 // wake-word-derived name, never just the maintainer's own configuration.
@@ -27,7 +27,7 @@ afterEach(() => {
   useEventStore.setState({ assistantName: "Assistant" });
 });
 
-function makeWorker(overrides: Partial<OpenClawWorkerSnapshot> = {}): OpenClawWorkerSnapshot {
+function makeWorker(overrides: Partial<JarvisAgentWorkerSnapshot> = {}): JarvisAgentWorkerSnapshot {
   return {
     worker_id: "oc-worker-1",
     model: "gemini/gemini-3.1-pro-preview",
@@ -65,7 +65,7 @@ describe("JarvisAgentPanel", () => {
     ).toBeDefined();
   });
 
-  it("renders all columns for a live OpenClaw worker", () => {
+  it("renders all columns for a live Jarvis-Agent worker", () => {
     useMissionsStore.setState({
       selectedMissionId: "mid-1",
       workerSnapshotsByMission: { "mid-1": [makeWorker()] },
@@ -73,26 +73,26 @@ describe("JarvisAgentPanel", () => {
     render(<JarvisAgentPanel />);
 
     // Model
-    const model = screen.getByTestId("openclaw-model");
+    const model = screen.getByTestId("jarvis-agent-model");
     expect(model.textContent).toBe("gemini/gemini-3.1-pro-preview");
 
     // Cost
-    const cost = screen.getByTestId("openclaw-cost");
+    const cost = screen.getByTestId("jarvis-agent-cost");
     expect(cost.textContent).toContain("$0.0234");
     expect(cost.textContent).toContain("12.5k tok");
 
     // State-Dir
-    const stateDir = screen.getByTestId("openclaw-state-dir");
+    const stateDir = screen.getByTestId("jarvis-agent-state-dir");
     expect(stateDir.textContent).toBe(
       "C:/wt/oc-1/.openclaw_state/sess-cafebabe/openclaw_state",
     );
 
     // Logfile
-    const logPath = screen.getByTestId("openclaw-log-path");
+    const logPath = screen.getByTestId("jarvis-agent-log-path");
     expect(logPath.textContent).toContain("run.log");
 
     // Reattach-Status: live
-    const badge = screen.getByTestId("openclaw-reattach-badge");
+    const badge = screen.getByTestId("jarvis-agent-reattach-badge");
     expect(badge.getAttribute("data-reattach-status")).toBe("live");
     expect(badge.textContent).toBe("live");
   });
@@ -112,11 +112,11 @@ describe("JarvisAgentPanel", () => {
     });
     render(<JarvisAgentPanel />);
 
-    const badge = screen.getByTestId("openclaw-reattach-badge");
+    const badge = screen.getByTestId("jarvis-agent-reattach-badge");
     expect(badge.getAttribute("data-reattach-status")).toBe("killed");
     expect(badge.textContent).toBe("killed");
 
-    const reason = screen.getByTestId("openclaw-ended-reason");
+    const reason = screen.getByTestId("jarvis-agent-ended-reason");
     expect(reason.textContent).toBe("user");
   });
 
@@ -137,13 +137,13 @@ describe("JarvisAgentPanel", () => {
     });
     render(<JarvisAgentPanel />);
 
-    const rows = screen.getAllByTestId("openclaw-worker-row");
+    const rows = screen.getAllByTestId("jarvis-agent-worker-row");
     expect(rows).toHaveLength(2);
     expect(rows[0].getAttribute("data-worker-id")).toBe("w-aaa");
     expect(rows[1].getAttribute("data-worker-id")).toBe("w-bbb");
 
     // Cost == 0 is rendered as "—"
-    const costs = screen.getAllByTestId("openclaw-cost");
+    const costs = screen.getAllByTestId("jarvis-agent-cost");
     expect(costs[1].textContent).toContain("—");
   });
 });

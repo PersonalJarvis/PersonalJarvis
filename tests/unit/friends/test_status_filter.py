@@ -184,7 +184,7 @@ def test_minimal_blocks_mission_started() -> None:
     assert result is None
 
 
-def test_minimal_blocks_openclaw() -> None:
+def test_minimal_blocks_jarvis_agent() -> None:
     """'minimal' blocks Jarvis-Agent events (only allowed from 'detailed')."""
     event = JarvisAgentTaskStarted()
     result = StatusFilter.filter(event, "minimal")
@@ -213,14 +213,14 @@ def test_standard_passes_mission_completed_with_success() -> None:
     assert "cost_usd" not in result.fields
 
 
-def test_standard_blocks_openclaw() -> None:
+def test_standard_blocks_jarvis_agent() -> None:
     """'standard' blocks JarvisAgentTaskStarted."""
     event = JarvisAgentTaskStarted()
     result = StatusFilter.filter(event, "standard")
     assert result is None
 
 
-def test_detailed_passes_openclaw_with_summary_only() -> None:
+def test_detailed_passes_jarvis_agent_with_summary_only() -> None:
     """'detailed' lets JarvisAgentTaskStarted through, BUT only the summary field.
 
     CRITICAL: utterance + private_secret on the event must NOT pass through.
@@ -251,7 +251,7 @@ def test_detailed_passes_voice_session_ended() -> None:
     assert result.timestamp_ns == 2_000
 
 
-def test_detailed_passes_openclaw_completed() -> None:
+def test_detailed_passes_jarvis_agent_completed() -> None:
     event = JarvisAgentTaskCompleted()
     result = StatusFilter.filter(event, "detailed")
     assert result is not None

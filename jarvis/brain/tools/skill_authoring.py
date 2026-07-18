@@ -1,10 +1,10 @@
 """`spawn_skill_author` — Anthropic tool for main-Jarvis (Phase 7.5).
 
-Plan-§7.5: the tool delegates skill creation via OpenClaw (Wave-4 rebrand,
-frontier worker). Does not write anything itself — the `SkillAuthoringRunner`
-handles the entire flow including pipeline audit.
+Plan-§7.5: the tool delegates skill creation via the Jarvis-Agent worker
+(Wave-4 rebrand, frontier worker). Does not write anything itself — the
+`SkillAuthoringRunner` handles the entire flow including pipeline audit.
 
-Plan-§AD-2: exclusively main-Jarvis tier; the OpenClaw worker has no
+Plan-§AD-2: exclusively main-Jarvis tier; the Jarvis-Agent worker has no
 access to this tool (recursion guard).
 """
 from __future__ import annotations

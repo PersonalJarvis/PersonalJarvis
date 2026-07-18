@@ -1,7 +1,7 @@
 """MissionAnnouncer — bridge MissionBus -> AnnouncementRequested bus event.
 
-AD-17 (see ``docs/openclaw-bridge.md``): "Notifications via existing
-``_on_announcement`` bus" — the OpenClaw bridge pipes mission summaries
+AD-17 (see ``docs/jarvis-agents-bridge.md``): "Notifications via existing
+``_on_announcement`` bus" — the Jarvis-Agent bridge pipes mission summaries
 through the existing ``AnnouncementRequested`` event into the
 ``SpeechPipeline``. Advantages over the direct ``tts_speak_fn``
 path in ``MissionVoiceListener``:

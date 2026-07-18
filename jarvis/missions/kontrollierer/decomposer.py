@@ -162,7 +162,7 @@ class Step(BaseModel):
     # [brain.providers.claude-api]; CodexDirectWorker omits --model when
     # empty (relies on ~/.codex/config.toml default). Previously hardcoded
     # to "sonnet", which is rejected by Codex on ChatGPT-OAuth accounts
-    # (HTTP 400). See docs/openclaw-spawn-failure-analysis-2026-05-18.md.
+    # (HTTP 400). See docs/jarvis-agents-spawn-failure-analysis-2026-05-18.md.
     model: str = ""
     allowed_tools: str = "Read,Edit,Write,Bash,Grep,Glob"
     # Whether this step needs a full git worktree of the Personal Jarvis repo

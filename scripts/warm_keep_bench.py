@@ -1,4 +1,4 @@
-"""Standalone benchmark: 3x back-to-back calls to openclaw."""
+"""Standalone benchmark: 3x back-to-back calls to the Jarvis-Agent SDK brain."""
 import asyncio
 import sys
 import time
@@ -9,9 +9,9 @@ OUT = Path(__file__).resolve().parent.parent / "data" / "warm_keep_bench.log"
 
 async def main():
     from jarvis.core.protocols import BrainMessage, BrainRequest
-    from jarvis.plugins.brain.openclaw_sdk import OpenClawSDKBrain
+    from jarvis.plugins.brain.jarvis_agent_sdk import JarvisAgentSDKBrain
 
-    brain = OpenClawSDKBrain(model="haiku")
+    brain = JarvisAgentSDKBrain(model="haiku")
     lines: list[str] = []
 
     async def once(txt: str) -> tuple[float, str]:

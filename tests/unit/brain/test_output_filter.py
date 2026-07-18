@@ -713,17 +713,17 @@ def test_legitimate_is_sentence_is_kept() -> None:
     assert "removed_tool_json" not in result.actions
 
 
-# --- OpenClaw brand-name is now SCRUBBED (reversal 2026-05-24) ---
+# --- retired OpenClaw brand-name is now SCRUBBED (reversal 2026-05-24) ---
 #
 # The 2026-05-13 whitelist that let Jarvis say "OpenClaw-Subagent" is
 # reversed: the OpenClaw subprocess was retired (the worker runs Opus 4.7
 # directly), so naming it would announce a component that no longer exists.
-# OPENCLAW_RE strips the brand token and JARGON_COMPOUND_RE removes the bare
+# LEGACY_BRAND_RE strips the brand token and JARGON_COMPOUND_RE removes the bare
 # "Subagent" left behind.
 
 
 def test_openclaw_brand_name_is_scrubbed() -> None:
-    """OpenClaw must NOT survive voice output anymore (2026-05-24 reversal)."""
+    """The retired OpenClaw brand name must NOT survive voice output (2026-05-24 reversal)."""
     text = (
         "Mach ich, ich lasse dafür einen OpenClaw-Subagent "  # i18n-allow
         "ein Hello-World-Programm schreiben."  # i18n-allow
@@ -743,7 +743,7 @@ def test_bare_subagent_still_scrubbed_without_brand_prefix() -> None:
 
 
 def test_openclaw_compound_prefix_stripped_but_noun_kept() -> None:
-    """'OpenClaw-Mission' -> 'Mission' (brand prefix removed, noun stays)."""
+    """The retired 'OpenClaw-Mission' brand prefix is stripped, the noun 'Mission' stays."""
     text = "Die OpenClaw-Mission ist fertig."  # i18n-allow
     result = scrub_for_voice(text)
     assert "OpenClaw" not in result.cleaned
@@ -751,7 +751,7 @@ def test_openclaw_compound_prefix_stripped_but_noun_kept() -> None:
 
 
 def test_openclaw_subagenten_plural_also_scrubbed() -> None:
-    """The plural 'OpenClaw-Subagenten' must also be scrubbed."""
+    """The plural 'OpenClaw-Subagenten' (retired brand) must also be scrubbed."""
     text = "Mehrere OpenClaw-Subagenten arbeiten parallel."  # i18n-allow
     result = scrub_for_voice(text)
     assert "OpenClaw" not in result.cleaned

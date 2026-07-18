@@ -157,7 +157,7 @@ This decoupling is the central correctness property.
 
 **P2 — Audio order guaranteed by existing queue.** `jarvis/audio/player.py::play_chunks` is single-consumer. The first `synthesize` call (the Flash-Brain output) is queued first; the second (the main response) waits for it to finalize. There is never overlap. Barge-in (`"sei still"`) uses the existing `priority="interrupt"` mechanism and stops both.
 
-**P3 — Blacklist-compliant.** Output passes through `scrub_for_voice` ([`jarvis/brain/output_filter.py`](../../../jarvis/brain/output_filter.py)) before being emitted on the bus. The 40-pattern blacklist blocks "Subagent" / "Sub-Agent" / "Worker" / "Sir" / stack traces / markdown residues. "OpenClaw" is allowed (already used by MissionAnnouncer). If scrub returns less than 3 alphanumeric characters, the ack is silent.
+**P3 — Blacklist-compliant.** Output passes through `scrub_for_voice` ([`jarvis/brain/output_filter.py`](../../../jarvis/brain/output_filter.py)) before being emitted on the bus. The 40-pattern blacklist blocks "Subagent" / "Sub-Agent" / "Worker" / "Sir" / stack traces / markdown residues. "Jarvis-Agent" is allowed (already used by MissionAnnouncer). (2026-05-24 update: the retired "OpenClaw" brand token is now actively stripped instead — this design predates that change.) If scrub returns less than 3 alphanumeric characters, the ack is silent.
 
 ---
 
@@ -295,7 +295,7 @@ Both languages mirror each other in shape and intent. Key invariants:
 - Two-branch decision: the prompt MUST first decide whether to speak at all. If the request is smalltalk, a quick factual question, or voice control, the LLM returns an empty string. Only longer-running tasks (research, multi-step action, external service, data lookup) get a sentence.
 - The sentence, when emitted, MUST reference the concrete topic of the request (search subject, app name, data object, location, person, …). Generic acknowledgments like "Mache ich" / "On it" / "Verstanden" / "Sure thing" are explicitly forbidden because they pass any utterance equally well — the failure mode the previous template generator and the original few-shot prompt both produced.
 - Forbidden (defense-in-depth alongside `scrub_for_voice`): Subagent / Sub-Agent / Worker / Provider (alone) / Sir / Sehr wohl / Jawohl / Boss / Chef (as address).
-- Allowed: OpenClaw / Jarvis / brand names (Spotify, Discord, GitHub, Outlook, …) / topical nouns (calendar, meeting, flights, weather, …).
+- Allowed: Jarvis-Agent / Jarvis / brand names (Spotify, Discord, GitHub, Outlook, …) / topical nouns (calendar, meeting, flights, weather, …).
 - NO positive few-shot examples. The previous spec embedded eight per language and the LLM reproduced them verbatim regardless of fit. The revised prompt uses negative examples ("never say …") and structural rules only.
 
 Committed verbatim as `PERSONA_PROMPT_DE` and `PERSONA_PROMPT_EN` constants in `persona_prompt.py`. No template strings, no string interpolation — the prompt is fully static.
@@ -349,12 +349,15 @@ VERBOTENES VOKABULAR (auch in erlaubten Sätzen, defense-in-depth):  <!-- i18n-a
 "Sir", "Sehr wohl", "Jawohl", "Boss".
 
 ERLAUBT in deinem Satz:
-"OpenClaw", "Jarvis", Marken-Namen (Spotify, Discord, GitHub, Outlook,
+"Jarvis-Agent", "Jarvis", Marken-Namen (Spotify, Discord, GitHub, Outlook,
 …), sachliche Themen-Wörter (Kalender, Termin, Flüge, Wetter, …).  <!-- i18n-allow: PERSONA_PROMPT_DE -->
 
 Output: Genau ein Satz mit konkretem Themenbezug, ODER leerer String.  <!-- i18n-allow: PERSONA_PROMPT_DE -->
 Kein Markdown, kein Kommentar, kein Begleitsatz.  <!-- i18n-allow: PERSONA_PROMPT_DE -->
 ``` <!-- i18n-allow: PERSONA_PROMPT_DE -->
+(Note: `persona_prompt.py` has since been substantially revised — the current
+prompt forbids saying "Jarvis-Agent" outright rather than allowing it. This
+verbatim quote reflects the 2026-05-11 version this design shipped.)
 
 #### PERSONA_PROMPT_EN (verbatim)
 
@@ -406,12 +409,15 @@ defense-in-depth):
 "Very well", "Boss", "Chief".
 
 ALLOWED in your sentence:
-"OpenClaw", "Jarvis", brand names (Spotify, Discord, GitHub,
+"Jarvis-Agent", "Jarvis", brand names (Spotify, Discord, GitHub,
 Outlook, …), topical nouns (calendar, meeting, flights, weather, …).
 
 Output: Exactly one sentence with concrete topical reference, OR an
 empty string. No markdown, no comments, no accompanying text.
 ```
+(Note: `persona_prompt.py` has since been substantially revised — the current
+prompt forbids saying "Jarvis-Agent" outright rather than allowing it. This
+verbatim quote reflects the 2026-05-11 version this design shipped.)
 
 #### Empirical validation (2026-05-13)
 
@@ -473,7 +479,7 @@ Two columns matter: whether the Flash-Brain produces text at all (silent vs spea
 | User Input                            | Expected Flash-Brain Output            | Reason                                                        | Spoken Order                                |
 |---------------------------------------|----------------------------------------|---------------------------------------------------------------|---------------------------------------------|
 | `"Mach Spotify auf"`                  | Topic-specific sentence mentioning "Spotify" (LLM-generated, e.g. "Spotify öffne ich grad.") | Action with visible execution lag | Ack → app launch → Main response            | <!-- i18n-allow: quoted German voice example -->
-| `"Such mir SF-Flüge für morgen"`      | Topic-specific sentence mentioning "Flüge" and/or "San Francisco" | Multi-step external task             | Ack → spawn_openclaw → Final answer         | <!-- i18n-allow: quoted German voice example -->
+| `"Such mir SF-Flüge für morgen"`      | Topic-specific sentence mentioning "Flüge" and/or "San Francisco" | Multi-step external task             | Ack → spawn_worker → Final answer           | <!-- i18n-allow: quoted German voice example -->
 | `"Wann wird Albel eingestellt?"`      | Topic-specific sentence referencing "Albel" or "Einstellung" | External lookup needed                       | Ack → search_web → Main answer              | <!-- i18n-allow: quoted German voice example -->
 | `"Wann wurde Einstein geboren?"`      | `""` (silent)                          | Quick factual question, main brain answers directly in < 1 s  | Main response only                          | <!-- i18n-allow: quoted German voice example -->
 | `"Was ist die Hauptstadt von Italien?"`| `""` (silent)                         | Same — main brain trivia                                      | Main response only                          | <!-- i18n-allow: quoted German voice example -->
@@ -640,7 +646,7 @@ Five scripted utterances per language replayed via simulated STT-final, audio re
 ## 10. Cross-References
 
 - **ADR-0011 (Router-Discipline)** — `docs/adr/0011-router-pure-dispatcher.md`. The Flash-Brain is **outside** the Router's responsibility. The Router stays a pure dispatcher; the Flash-Brain handles persona narration. Clean separation of concerns.
-- **`jarvis/brain/output_filter.py:scrub_for_voice`** — 40-case blacklist applies to every Flash-Brain output. "OpenClaw" is allowed; "Subagent" / "Worker" / "Sir" / "Sehr wohl" are blocked.
+- **`jarvis/brain/output_filter.py:scrub_for_voice`** — 40-case blacklist applies to every Flash-Brain output. "Jarvis-Agent" is allowed; "Subagent" / "Worker" / "Sir" / "Sehr wohl" are blocked. (2026-05-24 update: the retired "OpenClaw" brand token is now actively stripped instead — this design predates that change.)
 - **`jarvis/missions/voice/announcer.py`** — MissionAnnouncer is the sibling pattern. It also publishes `AnnouncementRequested` events; the Flash-Brain reuses the same bus event + handler. Two producers, one consumer.
 
 ---

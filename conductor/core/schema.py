@@ -109,7 +109,7 @@ class AgentJobSpec(BaseModel):
     - ``gemini``    — **Google AI Studio default.** Uses the ``google-genai``
       SDK, key from ``GEMINI_API_KEY`` or ``GOOGLE_AIStudio_API_KEY``.
       Default model ``gemini-3.1-pro`` (frontier).
-    - ``anthropic`` — for users with an OpenClaw subscription. Shells out
+    - ``anthropic`` — for users with a Claude (Max-plan) subscription. Shells out
       to the local ``claude`` CLI (OAuth session from the Max-plan login),
       needs no API key. Models: ``sonnet``, ``opus``, ``haiku``, or the
       full name (``claude-sonnet-4-6``).

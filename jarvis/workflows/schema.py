@@ -5,7 +5,7 @@ primitives without a Turing-complete node editor:
 
 - ``brain_prompt``     → sends a prompt to the active BrainManager,
   writes the reply as ``output`` into the run context.
-- ``harness_dispatch`` → dispatches a HarnessTask (OpenClaw, Codex,
+- ``harness_dispatch`` → dispatches a HarnessTask (Jarvis-Agent, Codex,
   Computer-Use, MCP-Remote, Python script).
 - ``speak``            → emits an ``AnnouncementRequested`` event; the TTS
   pipeline listens and speaks the text. Without TTS: the event stays in the log.
@@ -78,7 +78,7 @@ class BrainPromptStep(BaseModel):
 
 
 class HarnessDispatchStep(BaseModel):
-    """Dispatches to a harness (openclaw, codex, computer-use, ...).
+    """Dispatches to a harness (jarvis_agent, codex, computer-use, ...).
 
     The result is the ``stdout`` of the final round; stored as ``output``
     in the run context.

@@ -1,6 +1,6 @@
 """Base classes for harness plugins.
 
-A harness starts a sub-agent process (OpenClaw, Codex, OI, Hermes,
+A harness starts a sub-agent process (Jarvis-Agent, Codex, OI, Hermes,
 Python script) and streams progress back. All harnesses are plugin classes
 behind the `Harness` protocol. The `SubprocessHarness` base class handles
 the common parts (spawning the subprocess, reading UTF-8 line by line,

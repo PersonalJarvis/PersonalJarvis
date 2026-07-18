@@ -466,7 +466,7 @@ antigravity = "jarvis.plugins.brain.antigravity:AntigravityBrain"
 
 **Files:**
 - Create: `jarvis/missions/workers/google_cli_worker.py`
-- Modify: Jarvis-Agent mapping source (the `/api/openclaw/status` mapping rows) to add an `antigravity` row whose `key_set` = `GoogleCliAuthService().status().connected`
+- Modify: Jarvis-Agent mapping source (the `/api/jarvis-agent/status` mapping rows) to add an `antigravity` row whose `key_set` = `GoogleCliAuthService().status().connected`
 - Modify: `jarvis/ui/web/frontend/src/components/SubagentSection.tsx` (`PROVIDER_LABELS`: `"antigravity" → "Antigravity (Google subscription)"`)
 - Test: `tests/missions/test_google_cli_worker.py`
 

@@ -10,6 +10,6 @@ Spawn the subagent `jarvis-architect-explorer` with the following task:
 
 **Scope:** Phase 6 (`jarvis/missions/`) plus the connection points in `jarvis/brain/manager.py` (spawn path), `jarvis/ui/web/server.py` (_init_mission_stack), `jarvis/missions/voice/` (Kontrollierer).
 
-**Mandatory reading:** `AGENTS.md`, the `CLAUDE.md` Phase-6 section, `docs/adr/0009-self-healing-worker-critic.md`, `docs/phase6-test-report.md`. For OpenClaw-related questions, additionally `docs/openclaw-bridge.md`.
+**Mandatory reading:** `AGENTS.md`, the `CLAUDE.md` Phase-6 section, `docs/adr/0009-self-healing-worker-critic.md`, `docs/phase6-test-report.md`. For Jarvis-Agents-Bridge-related questions, additionally `docs/jarvis-agents-bridge.md`.
 
 **Output:** Architecture report in the format from the subagent front-matter — components, interfaces, data flow, risks-on-change. Maximum 400 words. Every claim with a `file:line` reference.

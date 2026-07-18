@@ -27,7 +27,7 @@ You are paranoid. You write NO code. You deliver PASS/FAIL verdicts with `file:l
 ### Block 1 — Allowlist discipline (AP-SM9, AP-SM11)
 
 - **AP-SM11 Allowlist as a configuration file:** Grep for the allowlist definition. It MUST be hardcoded in `jarvis/core/self_mod/registry.py` as a `Final[frozenset]`. If loaded from `jarvis.toml` → BLOCKER (constraint self-bypass via the self-mod tool, which is allowed to change `jarvis.toml`).
-- **AP-SM9 security.* in the allowlist:** Grep through the allowlist constant for `security`, `admin_password_hash`, `keyring`, `OPENCLAW_*_API_KEY`. If present → BLOCKER (privilege escalation).
+- **AP-SM9 security.* in the allowlist:** Grep through the allowlist constant for `security`, `admin_password_hash`, `keyring`, `JARVIS_AGENT_*_API_KEY`. If present → BLOCKER (privilege escalation).
 
 **PASS evidence:** The allowlist is a `Final[frozenset]` with explicitly only `tts.provider`, `tts.voice_*`, `tts.speed`, `stt.provider`, `brain.primary`, `ui.theme`, `profile.language`. Nothing under `security.*`, `auth.*`, `keyring.*`.
 
@@ -46,7 +46,7 @@ The self-mod writer MUST, in this order: **allowlist check → read → apply �
 
 ### Block 4 — Tool definition (AP-SM7, AP-SM8)
 
-- **AP-SM7 Skill authoring in the Personal-Jarvis brain path:** The tool `spawn_skill_author` MUST spawn OpenClaw via the Mission-Manager, NOT write code directly in the Personal-Jarvis process. Grep through the tool body — if `Path.write_text` is directly in it → BLOCKER. (Bridge docs R-6: the skill-authoring migration is a mandatory sub-phase of Wave 4 Phase 10 — `runner.py` calls the Mission-Manager with task type `"skill_author"`.)
+- **AP-SM7 Skill authoring in the Personal-Jarvis brain path:** The tool `spawn_skill_author` MUST spawn the Jarvis-Agent worker via the Mission-Manager, NOT write code directly in the Personal-Jarvis process. Grep through the tool body — if `Path.write_text` is directly in it → BLOCKER. (Bridge docs R-6: the skill-authoring migration is a mandatory sub-phase of Wave 4 Phase 10 — `runner.py` calls the Mission-Manager with task type `"skill_author"`.)
 - **AP-SM8 Single universal tool:** Search for a tool `set_anything` or `set_config`. There MUST be at least three discrete tools (`list_mutable_settings`, `get_config_value`, `set_config_value`) plus `spawn_skill_author`. If a universal setter → MAJOR.
 - **AD-9 Strict Tool Definitions:** Grep in the tool frontmatter for `strict: true` for the four self-mod tools. If missing → MAJOR (tool-trigger quality).
 
@@ -59,7 +59,7 @@ The self-mod writer MUST, in this order: **allowlist check → read → apply �
 
 - **AP-SM6 Auto-activation of generated skills:** The skill-authoring spawn MUST set `state=draft`, and the `TriggerMatcher` MUST skip drafts. Grep for `SkillLifecycleState.DRAFT` in the authoring path and in the TriggerMatcher. If newly created skills are `state=active` directly → BLOCKER (lateral-movement vector).
 - **AP-SM10 Drafts outside user_skills_dir:** Drafts MUST land under `~/.jarvis/skills/` (or the configured `user_skills_dir`), not in `jarvis/skills/builtin/`. Grep for the write path → BLOCKER if the builtin directory.
-- **`draft_writer` forces `state=draft`:** Even if OpenClaw (or still the old Sub-Jarvis tier before the Wave-4 migration) writes `state=active` in the frontmatter, the writer must override it. Grep for the `state = SkillLifecycleState.DRAFT  # forced` pattern → if missing, MAJOR.
+- **`draft_writer` forces `state=draft`:** Even if the Jarvis-Agent worker (or still the old Sub-Jarvis tier before the Wave-4 migration) writes `state=active` in the frontmatter, the writer must override it. Grep for the `state = SkillLifecycleState.DRAFT  # forced` pattern → if missing, MAJOR.
 
 ### Block 7 — Voice/chat discipline (AP-SM2)
 
@@ -98,7 +98,7 @@ If an E2E test is included in the diff, check against the four:
 - AP-SM13 Out-of-watchdog: <PASS|FAIL>
 
 ### Block 4 — Tool definition
-- AP-SM7 OpenClaw spawn via Mission-Manager: <PASS|FAIL>
+- AP-SM7 Jarvis-Agent spawn via Mission-Manager: <PASS|FAIL>
 - AP-SM8 Discrete tools: <PASS|FAIL>
 - AD-9 Strict + Examples: <PASS|FAIL>
 

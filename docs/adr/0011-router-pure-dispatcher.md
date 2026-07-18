@@ -232,12 +232,12 @@ shared `HarnessManager`. It delegates to the in-process computer-use harness
 
 The router previously had **no honest path** for live-desktop actions:
 
-- `spawn-openclaw` runs a worker in an isolated git worktree — it can edit code
+- `spawn-worker` runs a worker in an isolated git worktree — it can edit code
   and research, but it can **never** touch the user's live desktop.
 - The router prompt told the model to reach the computer-use harness through the
   two-level `dispatch_to_harness(harness="computer-use", …)` indirection — but
   that tool's schema description only mentions "OpenClaw, Codex, code-editing,
-  research". LLMs select tools primarily by their **description**, so the model
+  research" (pre-rename wording). LLMs select tools primarily by their **description**, so the model
   never picked it for desktop actions. For "Öffne ein neues Terminal für mich,
   starte darin Cloud-Konfiguration" Gemini invented a non-existent tool
   (`terminal_count`) and the anti-silence guard spoke a refusal
@@ -246,7 +246,7 @@ The router previously had **no honest path** for live-desktop actions:
 A dedicated tool with an unambiguous name + description is the strongest signal
 for LLM tool selection and removes the fragile indirection. The router prompt
 (`router.py:SYSTEM_PROMPT`) was updated to route every on-screen/app/GUI action
-to `computer_use` and to explicitly state that `spawn_openclaw` cannot touch the
+to `computer_use` and to explicitly state that `spawn_worker` cannot touch the
 desktop.
 
 ### Why it belongs in `ROUTER_TOOLS` (and nowhere else)
@@ -721,7 +721,7 @@ aloud.
 
 **Root cause.** `dispatch-to-harness` exposed a free-form `harness` string
 parameter and its description advertised *"OpenClaw, Codex, Python-Script, MCP"*
-as Jarvis-Agent vehicles. But OpenClaw is **not a registered harness** — it was
+as Jarvis-Agent vehicles. But the legacy OpenClaw harness name is **not a registered harness** — it was
 removed in Welle 4 (~92% nested-claude hang; see `docs/BUGS.md`), and
 `pyproject.toml` registers only `open-interpreter`, `mcp-remote`,
 `python-script`, `screenshot`. So a "Jarvis-Agent" turn could name a phantom harness
@@ -739,7 +739,7 @@ sufficient:
 The `DispatchToHarnessTool` class is **retained** for the internal, non-LLM
 local-action / computer-use fast path (`_load_local_action_tools`, invoked
 programmatically with a registered harness name). It is just not router-visible.
-Do **not** re-add it to `ROUTER_TOOLS` — that resurrects the phantom-openclaw
+Do **not** re-add it to `ROUTER_TOOLS` — that resurrects the phantom-harness
 routing bug.
 
 Companion changes: the dead `tool.dispatch-to-harness` and `harness.openclaw`
@@ -748,7 +748,7 @@ capabilities are deleted from the seed; `tool.spawn-worker` is re-described
 removed; the `HarnessManager.get()` / `dispatch_to_harness` error paths no longer
 leak the raw harness inventory into a message that can reach voice; and the boot
 path logs a warning when an inert `[harness.openclaw].enabled = true` block is
-present (`warn_if_phantom_openclaw`).
+present (`warn_if_phantom_worker_harness`).
 
 ### Regression guards
 
@@ -757,7 +757,7 @@ present (`warn_if_phantom_openclaw`).
 - `tests/unit/brain/test_routing.py::test_router_tools_is_pure_dispatcher_set`
   (exact-match set updated — `dispatch-to-harness` removed)
 - `tests/unit/core/test_capabilities.py::test_dispatch_to_harness_capability_removed`
-  / `::test_no_capability_advertises_openclaw` / `::test_harness_adapters_present`
+  / `::test_no_capability_advertises_legacy_harness_name` / `::test_harness_adapters_present`
 - `tests/integration/test_dispatch_to_harness.py::test_unknown_harness_returns_neutral_error_no_inventory_leak`
 
 ## Amendment — `app-command` tool (Command Registry executor, 2026-07-09)
@@ -824,7 +824,7 @@ schemas + the provider-test regression).
 
 ### Context
 
-The live harness inventory no longer contains the historical OpenClaw/Codex
+The live harness inventory no longer contains the historical Jarvis-Agent/Codex
 vehicles advertised by `multi-spawn`. The tool therefore competed with the
 working `spawn-worker` mission path while offering backend names that could not
 run. This is the same phantom-capability failure class that previously required
@@ -889,8 +889,8 @@ it.
 
 ### Alternatives considered
 
-- Re-register the retired harnesses: rejected because the OpenClaw subprocess
-  path was removed after repeated reliability failures.
+- Re-register the retired harnesses: rejected because the Jarvis-Agent (formerly
+  OpenClaw) subprocess path was removed after repeated reliability failures.
 - Rewrite `dispatch-with-review` as a second alias for `spawn-worker`: rejected
   because duplicate schemas recreate nondeterministic model selection and split
   telemetry across two names.

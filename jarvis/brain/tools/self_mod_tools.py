@@ -11,7 +11,7 @@ Plan-§AD-9: all schemas with `strict: true`, `additionalProperties: false`,
 `required` covers all properties, plus `input_examples` for better tool triggering.
 
 Plan-§AD-2: self-mod tools are exclusively router/main-Jarvis tools.
-The OpenClaw worker has NO access (Wave 4: SUB_TOOLS deleted; worker sandbox without self-mod tools).
+The Jarvis-Agent worker has NO access (Wave 4: SUB_TOOLS deleted; worker sandbox without self-mod tools).
 
 Defense-in-depth against "trust the model output" (Plan-AP-1):
 Every handler re-validates its input against type and schema before

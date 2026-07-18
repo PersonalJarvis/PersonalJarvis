@@ -100,7 +100,7 @@ def test_cursorrules_inject_high() -> None:
 def test_claude_md_bare_path_no_false_positive() -> None:
     """Bare path mentions (as in a diff listing of untracked files in a
     cloned repo) must NOT fire — that was the BUG that killed every
-    OpenClaw mission running inside the Personal Jarvis workspace.
+    Jarvis-Agent mission running inside the Personal Jarvis workspace.
     """
     workspace_dump = (
         "+++ b/CLAUDE.md\n"

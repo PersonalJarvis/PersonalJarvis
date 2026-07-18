@@ -58,7 +58,7 @@ async def test_tree_reflects_published_events(server_bus) -> None:
         JarvisAgentTaskStarted(
             trace_id=tid,
             utterance="bau mir X",
-            provider="openclaw",
+            provider="jarvis-agent",
             model="opus",
         )
     )

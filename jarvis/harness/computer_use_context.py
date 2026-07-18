@@ -101,7 +101,7 @@ _CONTEXT: ComputerUseContext | None = None
 # duration of a mission and removes it in the finally block. The voice hangup
 # handler ("auflegen") calls ``cancel_active_cu()`` to stop ONLY the running
 # Computer-Use mission(s) -- it must NOT use ``KillSwitch.trip()``, which is
-# global and would also kill OpenClaw background missions (the documented
+# global and would also kill Jarvis-Agent background missions (the documented
 # hangup contract keeps those alive; only their voice readback is muted).
 #
 # This is a SET, not a single slot (BUG-CU-CONCURRENT-CANCEL, 2026-06-24): CU

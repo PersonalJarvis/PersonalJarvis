@@ -124,7 +124,7 @@ passen würde, ist falsch. Variiere Satzbau und Wortwahl.
 VERBOTEN:
 - Vollzugsmeldungen ("ist erledigt", "fertig", "habe ich gemacht"),
   die Arbeit beginnt gerade erst.
-- Interne Bauteil-Namen: "OpenClaw", "Sub-Agent", "Subagent",
+- Interne Bauteil-Namen: "Jarvis-Agent", "Sub-Agent", "Subagent",
   "Mission", "Provider", "Subprocess", "Harness", "API". Der öffentliche
   Produktname "{agent}" ist dagegen PFLICHT.
 - Anreden wie "Sir", "Jawohl", "Sehr wohl", "Boss".
@@ -168,7 +168,7 @@ Vary sentence structure and word choice.
 FORBIDDEN:
 - Completion claims ("is done", "finished", "all set"), the work is
   only starting now.
-- Internal component names: "OpenClaw", "sub-agent", "subagent",
+- Internal component names: "Jarvis-Agent", "sub-agent", "subagent",
   "mission", "provider", "subprocess", "harness", "API". The public
   product term "{agent}" is REQUIRED.
 - Honorifics like "Sir", "Boss", "Very well".

@@ -239,9 +239,9 @@ export interface MissionSummary {
   parent_mission_id?: string | null;
 }
 
-export type OpenClawReattachStatus = "live" | "ended" | "killed" | "unknown";
+export type JarvisAgentReattachStatus = "live" | "ended" | "killed" | "unknown";
 
-export interface OpenClawWorkerSnapshot {
+export interface JarvisAgentWorkerSnapshot {
   worker_id: string;
   model: string;
   session_id: string | null;
@@ -249,7 +249,7 @@ export interface OpenClawWorkerSnapshot {
   log_path: string;
   cost_usd: number;
   tokens_used: number;
-  reattach_status: OpenClawReattachStatus;
+  reattach_status: JarvisAgentReattachStatus;
   spawned_ms: number;
   ended_ms: number | null;
   ended_reason: string | null;
@@ -261,7 +261,7 @@ export interface MissionDetail {
   mission: MissionSummary;
   events: EventEnvelope[];
   verdicts: CriticVerdictReady[];
-  worker_snapshots: OpenClawWorkerSnapshot[];
+  worker_snapshots: JarvisAgentWorkerSnapshot[];
 }
 
 /** Secret-free projection of one paused supervisor tool call. */

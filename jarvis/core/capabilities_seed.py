@@ -256,8 +256,9 @@ _SEED_CAPABILITIES: list[Capability] = [
     # ------------------------------------------------------------------ #
     # OPERATIONAL HARNESS ADAPTERS (2)
     # ------------------------------------------------------------------ #
-    # NB: ``harness.openclaw`` deliberately removed (2026-06-28). OpenClaw is
-    # not a registered harness. Advertising phantom adapters mis-routes actions
+    # NB: a ``harness.jarvis_agent`` (formerly ``harness.openclaw``) capability
+    # was deliberately not added (2026-06-28). Jarvis-Agent is not a registered
+    # harness. Advertising phantom adapters mis-routes actions
     # away from ``tool.spawn-worker`` and the live MCP capability broker.
     Capability(
         id="harness.computer-use",

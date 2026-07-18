@@ -93,7 +93,7 @@ class SkillFrontmatter(BaseModel):
     risk_policy: SkillRiskPolicy = Field(default_factory=SkillRiskPolicy)
     config: dict[str, Any] = Field(default_factory=dict)
     token_budget_estimate: int = Field(default=2000, ge=1, le=100_000)
-    # Phase 7.5: lifecycle state in the frontmatter — OpenClaw-authored skills
+    # Phase 7.5: lifecycle state in the frontmatter — Jarvis-Agent-authored skills
     # explicitly carry `state: draft`, enforced by the `draft_writer` (Plan-§AD-8).
     # Default `None` → the loader interprets it as "validated/active" (legacy).
     state: SkillLifecycleState | None = None

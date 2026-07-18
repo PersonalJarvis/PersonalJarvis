@@ -6,7 +6,7 @@ this tool lives in ``ROUTER_TOOLS``. The router brain calls it directly
 when the user asks about earlier work ("vorhin", "heute morgen", "an
 welcher Datei war ich"), and may bake the result into an
 ``spawn_worker`` ``context_hints`` field if it then decides to delegate
-heavy work to an OpenClaw worker.
+heavy work to a Jarvis-Agent worker.
 
 The tool is read-only (``risk_tier="safe"``): a single FTS5 ``MATCH``
 query against the ``awareness_episodes_fts`` virtual table, no brain

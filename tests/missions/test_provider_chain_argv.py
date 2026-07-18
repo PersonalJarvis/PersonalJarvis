@@ -1,6 +1,6 @@
 """Unit tests for the worker harness argv-prefix resolver (BUG-ALT-03).
 
-Goal: prove that the OpenClaw worker invokes `node openclaw.mjs` directly
+Goal: prove that the Jarvis-Agent worker invokes `node openclaw.mjs` directly
 when possible (sidestepping the cmd.exe metacharacter trap that mangles
 apostrophes and newlines in `--message` arguments), and that the
 argv-builder accepts either the legacy single-string `binary` arg or
@@ -103,7 +103,7 @@ def test_resolver_returns_bare_default_when_nothing_resolves(
 # --- _build_worker_cmd ---------------------------------------------------
 
 
-def test_build_openclaw_cmd_accepts_string_binary_legacy() -> None:
+def test_build_worker_cmd_accepts_string_binary_legacy() -> None:
     """The old contract — `binary` as a single path string — must still
     work for existing callers and tests."""
     cmd = sjw._build_worker_cmd(
@@ -123,10 +123,10 @@ def test_build_openclaw_cmd_accepts_string_binary_legacy() -> None:
     assert cmd[cmd.index("--model") + 1] == "google/gemini-3.1-pro-preview"
 
 
-def test_build_openclaw_cmd_accepts_argv_prefix_list() -> None:
+def test_build_worker_cmd_accepts_argv_prefix_list() -> None:
     """The new contract — `binary` as a list — must place the prefix
     elements at the head of the argv, in order, and then append the
-    OpenClaw arguments unchanged."""
+    worker arguments unchanged."""
     cmd = sjw._build_worker_cmd(
         "Create hello.py with print('hi')",
         binary=["C:/Program Files/nodejs/node.exe", "C:/npm/openclaw.mjs"],
@@ -144,7 +144,7 @@ def test_build_openclaw_cmd_accepts_argv_prefix_list() -> None:
     assert cmd[cmd.index("--message") + 1] == "Create hello.py with print('hi')"
 
 
-def test_build_openclaw_cmd_extra_args_appended_after_timeout() -> None:
+def test_build_worker_cmd_extra_args_appended_after_timeout() -> None:
     """Stable order: `extra_args` go at the very end so they can override
     or supplement standard flags without re-ordering parsing."""
     cmd = sjw._build_worker_cmd(

@@ -301,7 +301,7 @@ Four levels: `RiskTier = Literal["safe", "monitor", "ask", "block"]` (`protocols
 
 **Router discipline (ADR-0011 amended):** the Router Brain uses the curated `ROUTER_TOOLS` frozenset in `jarvis/brain/factory.py`. Heavy work has exactly one model-visible delegation action: `spawn-worker`. The legacy `dispatch-to-harness`, `multi-spawn`, and `dispatch-with-review` entry points are not in that set. Flat CLI, MCP, marketplace, and app-command loaders expose only capability-gated actions; the Mission Manager owns worker execution and Critic review.
 
-Force-spawn heuristic in `BrainManager._should_force_openclaw`:
+Force-spawn heuristic in `BrainManager._should_force_spawn`:
 - Smalltalk allowlist wins → never spawn.
 - Action verb (`lies/baue/installiere/öffne/mach/zeig` + repair words) → spawn. <!-- i18n-allow -->
 - External-system marker (PR/Repo/GitHub/Issue) → spawn.
@@ -382,13 +382,13 @@ Verified against the actual file tree (not just CLAUDE.md claims):
 |---|---|---|
 | 0–4 Foundations | live | Protocols, plugin system, FastAPI/React, speech pipeline, skill system, tool-use loop, harness dispatch, core memory |
 | 5 Vision/Action/Admin/Async/Control + Tiered Routing | live | `jarvis/{vision,admin,tasks,control,telemetry}/`, `ROUTER_TOOLS` frozenset, ADR-0001..0011 |
-| 6 Self-Healing Worker-Critic | live | `jarvis/missions/{manager,kontrollierer,critic,workers,isolation,openclaw,voice,safety}/`. 458 mission tests. Wired via `bootstrap_missions` |
+| 6 Self-Healing Worker-Critic | live | `jarvis/missions/{manager,kontrollierer,critic,workers,isolation,worker_runtime,voice,safety}/`. 458 mission tests. Wired via `bootstrap_missions` |
 | 7 Self-Mod (foundation + writer + tools) | live | `jarvis/core/self_mod/` (audit, errors, pending, registry, schema, writer). `spawn-skill-author` **IS** registered at `pyproject.toml:208` (CLAUDE.md says otherwise — see §25) |
 | Awareness A0–A5 | live | `jarvis/awareness/` (state, story, salience, verdichter, working_set, episode, watchers, probes). A1 + A3 router tools registered |
 | Wiki B0/B1/B2/B3/B5/B7/B8/B9 | live | `jarvis/memory/wiki/` (curator, atomic_writer, page, integration, scheduler, session_rollup, voice_bridge, telemetry, vault_index, watcher, search). 3 router tools |
 | Wiki B4 (legacy Curator) | soft-disabled | `factory.py:736-757` gates on `cfg.memory.legacy_curator.enabled` (default `false` since 2026-05-17). `data/workspace/` snapshot stays on disk for 35 reader sites |
 | Wiki B6 | not started | — |
-| Jarvis-Agents bridge Welle 1+4 | done | `jarvis/plugins/harness/openclaw.py` (Mock-Mode), `jarvis/missions/openclaw/` (provider_map, workspace, mcp, setup) |
+| Jarvis-Agents bridge Welle 1+4 | done | `jarvis/missions/worker_runtime/{provider_map,workspace}.py` (harness plugin removed in Welle-4, ~92% hang; see docs/BUGS.md) |
 | Jarvis-Agents bridge Welle 2 (live default) | open | Mock-Mode in plugin file; live subprocess factory pending |
 | Jarvis-Agents bridge Welle 3 (full live mode) | open | — |
 | Ack-Brain (pre-thinking) | live | `jarvis/brain/ack_brain/` + factory hook (`factory.py:1034`) |
@@ -657,7 +657,6 @@ Self-mod writeup: [`docs/self_mod.md`](docs/self_mod.md) — 8 mutable settings 
 | `jarvis/missions/critic/runner.py:50` | `MAX_CRITIC_LOOPS = 3` hardcoded. |
 | `jarvis/missions/workers/{base,claude_direct_worker,codex_worker,gemini_worker,subjarvis_worker,supervisor}.py` | Worker variants — `WorkerProtocol` structural contract. |
 | `jarvis/missions/isolation/{worktree,job_object,env}.py` | Git-worktree manager + Windows Job Object kill-on-close. |
-| `jarvis/plugins/harness/openclaw.py` | Jarvis-Agents bridge plugin (Welle-2 Mock-Mode). |
 | `jarvis/harness/screenshot_only_loop.py` | Screenshot-only POAV loop — the sole `computer_use` engine (vision picks pixel targets; cross-platform `mss` + `pyautogui`). |
 | `jarvis/awareness/manager.py` | `AwarenessManager` — state holder; **never on voice critical path** (AP-9). |
 | `jarvis/memory/wiki/integration.py` | `bootstrap_wiki_integration` — wires SessionRollupWorker (B7) + WikiCurator (B1). |

@@ -378,8 +378,8 @@ def _select_subagent_worker_kind(sub_jarvis_provider: str | None, step_model: st
     and the caller logs that case so a Gemini spawn is never silent.
 
     Note that choosing ``"gemini"`` as the *subagent provider* routes through
-    OpenClaw (``"subjarvis"``), NOT the direct ``GeminiWorker`` API path — the
-    latter is purely the legacy no-provider fallback.
+    the Jarvis-Agent worker (``"subjarvis"``), NOT the direct ``GeminiWorker``
+    API path — the latter is purely the legacy no-provider fallback.
     """
     if sub_jarvis_provider == "claude-api":
         return "claude_direct"
@@ -405,8 +405,8 @@ def _select_subagent_worker_kind(sub_jarvis_provider: str | None, step_model: st
     # sub-agent actually runs on Gemini (the user's "selected provider must run"
     # mandate). This is NOT the anti-silent-Gemini case (2026-05-29) — that
     # forbade gemini as a *silent* fallback when something else was configured;
-    # here the user deliberately picked gemini. The OpenClaw path that this used
-    # to take ("subjarvis") was removed in Welle 4, so without this it silently
+    # here the user deliberately picked gemini. The Jarvis-Agent path that this
+    # used to take ("subjarvis") was removed in Welle 4, so without this it silently
     # ran on Claude instead of Gemini.
     if sub_jarvis_provider == "gemini":
         return "gemini"
@@ -426,8 +426,8 @@ def subagent_runs_on_claude_fallback(sub_jarvis_provider: str | None) -> bool:
     (the in-process ApiAgentWorker runs them on their OWN provider), so they no
     longer report a Claude fallback here — provided an API key is configured. The
     only remaining always-Claude case is the legacy ``"subjarvis"`` kind
-    (openclaw-claude / unknown provider), whose dedicated OpenClaw worker was
-    removed after the ~92% nested-claude hang.
+    (the legacy ``openclaw-claude`` alias / unknown provider), whose dedicated
+    Jarvis-Agent worker was removed after the ~92% nested-claude hang.
 
     NOTE: this is the ROUTING truth, not a credential check — an api_agent
     provider with NO key still falls back to Claude at run time (``_worker_
@@ -956,7 +956,7 @@ async def bootstrap_missions(
     except Exception as exc:  # noqa: BLE001
         logger.warning(
             "missions: brain config lookup failed (%s) — defaulting to "
-            "openclaw-backed worker routing",
+            "jarvis-agent-backed worker routing",
             exc,
         )
 
@@ -1008,7 +1008,7 @@ async def bootstrap_missions(
             # Grok / xAI: Jarvis stores under ``grok_api_key`` in the
             # credential manager (ENV fallback ``GROK_API_KEY``); we set
             # both XAI_API_KEY + GROK_API_KEY on the worker side so
-            # OpenClaw (XAI_API_KEY) and any legacy SDK (GROK_API_KEY)
+            # Jarvis-Agent (XAI_API_KEY) and any legacy SDK (GROK_API_KEY)
             # both find it.
             if live_provider in {"grok", "xai"}:
                 xai_key = get_jarvis_agent_secret("grok")
@@ -1065,38 +1065,39 @@ async def bootstrap_missions(
         #
         # 1. If ``[brain.sub_jarvis].provider`` is set in jarvis.toml,
         #    every mission step routes to SubJarvisWorker (which drives
-        #    the provider-agnostic OpenClaw CLI). This is the documented
-        #    OpenClaw-bridge migration path and the way the user switches
+        #    the provider-agnostic Jarvis-Agent CLI). This is the documented
+        #    Jarvis-Agent-bridge migration path and the way the user switches
         #    between grok / gemini / openai / claude-api / openrouter as
         #    the Heavy-Worker provider without code changes.
         #
         # 2. Otherwise use SubJarvisWorker as the default heavy worker.
-        #    That keeps complex work on the provider-agnostic OpenClaw path
+        #    That keeps complex work on the provider-agnostic Jarvis-Agent path
         #    instead of spawning a vendor-specific code CLI.
-        # BUG-023 fix (2026-05-16): OpenClaw 2026.5.7 silently swallows
-        # `cliBackends["claude-cli"].args` injection, so Sonnet via OpenClaw
-        # never gets file_write tools (verified live in mission_019e3236).
-        # When the configured provider is `claude-api`, bypass OpenClaw and
+        # BUG-023 fix (2026-05-16): the external openclaw worker CLI 2026.5.7
+        # silently swallows `cliBackends["claude-cli"].args` injection, so
+        # Sonnet via Jarvis-Agent never gets file_write tools (verified live
+        # in mission_019e3236).
+        # When the configured provider is `claude-api`, bypass Jarvis-Agent and
         # drive the `claude` CLI directly — that path was empirically
         # proven to actually invoke Write tools (see /tmp/probe5 + /tmp/probe6
         # on 2026-05-16). Other providers (grok / gemini / openai / openrouter)
-        # still go through SubJarvisWorker / OpenClaw because OpenClaw is the
-        # right surface for them.
+        # still go through SubJarvisWorker / Jarvis-Agent because Jarvis-Agent
+        # is the right surface for them.
         # Welle 7 (2026-05-20): two opt-in routes coexist for the claude-cli
         # backend.
         #   - "claude-api": direct claude CLI via ClaudeDirectWorker
         #     (BUG-023-era shortcut, retained for back-compat).
-        #   - "openclaw-claude": real OpenClaw subprocess (`openclaw agent
-        #     --local --json --model claude-cli/<model>`). Empirically
-        #     verified 2026-05-20 via the probe at ~/openclaw-probe-*: file
-        #     write succeeded once SubJarvisWorker.spawn sets
+        #   - "openclaw-claude": real Jarvis-Agent subprocess (`openclaw agent
+        #     --local --json --model claude-cli/<model>`, the external worker
+        #     binary). Empirically verified 2026-05-20 via a local probe
+        #     directory: file write succeeded once SubJarvisWorker.spawn sets
         #     agents.defaults.workspace to the per-mission worktree. The
         #     SubJarvisWorker resolves "openclaw-claude" to the claude-api
-        #     OpenClaw provider via _resolve_provider_chain's
+        #     Jarvis-Agent provider via _resolve_provider_chain's
         #     primary_provider remap below.
         # Welle 6 (2026-05-18): user switched from Claude Max to ChatGPT
         # subscription. ``chatgpt`` / ``openai-codex`` route through the
-        # codex CLI's ChatGPT-OAuth path -- no API key, no OpenClaw, just
+        # codex CLI's ChatGPT-OAuth path -- no API key, no Jarvis-Agent, just
         # `codex exec --json --skip-git-repo-check ...`. Both slug names
         # are accepted so a future jarvis.toml renames don't break boot.
         #
@@ -1233,9 +1234,10 @@ async def bootstrap_missions(
                 getattr(step, "model", ""),
             )
             return GeminiWorker(capability_inventory=capability_inventory)
-        # The legacy ``"subjarvis"`` kind (openclaw-claude / unknown provider /
-        # unset default) routed to the OpenClaw subprocess worker, which was
-        # removed (it caused the ~92% nested-claude hang; see docs/BUGS.md).
+        # The legacy ``"subjarvis"`` kind (the legacy ``openclaw-claude`` alias /
+        # unknown provider / unset default) routed to the Jarvis-Agent
+        # subprocess worker, which was removed (it caused the ~92%
+        # nested-claude hang; see docs/BUGS.md).
         # Open-source AP-22/AP-23: try the user's ACTUAL provider family before
         # the Claude last resort, so an openrouter/gemini/openai-only downloader
         # is not dead-ended on the absent `claude` binary.

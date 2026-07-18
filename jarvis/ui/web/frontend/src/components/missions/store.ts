@@ -14,7 +14,7 @@ import type {
   MissionState,
   MissionStateChanged,
   MissionSummary,
-  OpenClawWorkerSnapshot,
+  JarvisAgentWorkerSnapshot,
 } from "@/types/missions";
 
 const MAX_EVENTS_PER_MISSION = 500;
@@ -23,7 +23,7 @@ interface MissionsStore {
   missions: Record<string, MissionSummary>;
   eventsByMission: Record<string, EventEnvelope[]>;
   verdictsByMission: Record<string, CriticVerdictReady[]>;
-  workerSnapshotsByMission: Record<string, OpenClawWorkerSnapshot[]>;
+  workerSnapshotsByMission: Record<string, JarvisAgentWorkerSnapshot[]>;
   selectedMissionId: string | null;
   selectedWorkerId: string | null;
   lastSeq: number;
@@ -36,7 +36,7 @@ interface MissionsStore {
     missionId: string,
     events: EventEnvelope[],
     verdicts: CriticVerdictReady[],
-    workerSnapshots?: OpenClawWorkerSnapshot[],
+    workerSnapshots?: JarvisAgentWorkerSnapshot[],
   ) => void;
   selectMission: (id: string | null) => void;
   selectWorker: (id: string | null) => void;

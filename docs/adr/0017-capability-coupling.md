@@ -72,7 +72,7 @@ Seeding at boot (`bootstrap`):
 2. `MCPRegistry.load` → `CapabilityRegistry.register(...)` for every namespaced
    MCP tool, verbs derived best-effort from schema descriptions plus optional
    user overrides in `[capabilities.mcp.<server>.<tool>]` in `jarvis.toml`.
-3. Harness adapters (`openclaw`, `mcp-remote`, `python-script`) → register their
+3. Harness adapters (`jarvis_agent`, `mcp-remote`, `python-script`) → register their
    action surface.
 4. Local-action-gate patterns → register `open_app`, `type_text`, `hotkey`,
    `reset_orb_position`, `terminal_count`.
@@ -95,7 +95,7 @@ New `LocalActionMode.UNSUPPORTED` routes directly to TTS; the brain is never
 called. This is intentionally AP-11 compliant — no LLM, regex-only.
 
 **(b) `jarvis/brain/manager.py`** — sibling check `_capability_resolves(text)`
-alongside the existing `_should_force_openclaw` heuristic. If
+alongside the existing `_should_force_spawn` heuristic. If
 `has_action_intent AND NOT _capability_resolves AND NOT _is_smalltalk`:
 skip brain dispatch and Jarvis-Agent spawn; emit the deterministic UNSUPPORTED
 response via the same TTS path as a short reply.
@@ -204,7 +204,7 @@ Run a fast model (Gemini Flash Lite) as a pre-classifier to decide "is this
 utterance a request for an action that is not in our capability list?" before
 dispatching to the brain. Rejected because: (1) adds 200–400 ms to every turn
 in the voice critical path; (2) is non-deterministic — the same utterance may
-classify differently on retries; (3) the existing `_should_force_openclaw`
+classify differently on retries; (3) the existing `_should_force_spawn`
 heuristic already performs verb classification deterministically via regex;
 extending it with a registry lookup is free.
 

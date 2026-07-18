@@ -346,7 +346,7 @@ class TraceEvent(BaseModel):
 class ToolCall(BaseModel):
     model_config = ConfigDict(extra="ignore")
     name: str
-    caller: str = ""            # router_tool | openclaw_worker | ...
+    caller: str = ""            # router_tool | jarvis_agent_worker | ...
     risk_tier: str = ""         # safe | monitor | ask | block
     approved_by: str | None = None  # auto | user | whitelist | None
     duration_ms: int | None = None
@@ -746,7 +746,7 @@ def build_decision_path(events: list[VoiceEventRow]) -> list[DecisionStep]:
                 label=f"brain: {provider or '?'}",
                 detail=(f"model={model}" if model else None),
             ))
-        elif e.kind == "OpenClawTaskStarted":
+        elif e.kind == "JarvisAgentTaskStarted":
             steps.append(DecisionStep(
                 kind=DECISION_MISSION,
                 label="spawned sub-agent mission",
@@ -1368,7 +1368,7 @@ _LIVE_KINDS: frozenset[str] = frozenset({
     "BrainTurnStarted", "BrainTurnCompleted", "BrainTTFT",
     "ToolCallStarted", "ToolCallCompleted", "ActionExecuted",
     "ResponseGenerated", "SystemStateChanged", "LatencySpan",
-    "ErrorOccurred", "SpeechSpoken", "OpenClawTaskStarted", "OpenClawTaskCompleted",
+    "ErrorOccurred", "SpeechSpoken", "JarvisAgentTaskStarted", "JarvisAgentTaskCompleted",
 })
 
 

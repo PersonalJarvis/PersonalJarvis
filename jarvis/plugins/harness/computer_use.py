@@ -183,7 +183,7 @@ class ComputerUseHarness:
         async with CancelScope(ctx.kill_switch, holder="cu_loop") as token:
             self._active_token = token
             # Register CU-scoped so the voice hangup ("auflegen") can cancel
-            # THIS mission without touching OpenClaw (BUG-CU-HANGUP). The
+            # THIS mission without touching Jarvis-Agent (BUG-CU-HANGUP). The
             # registry is a SET — concurrent CU missions each register so a
             # single hangup cancels them ALL (BUG-CU-CONCURRENT-CANCEL).
             register_active_cu_token(token)

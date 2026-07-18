@@ -189,7 +189,7 @@ async def test_completion_within_quiet_window_is_not_suppressed(
 ) -> None:
     """Only ``kind == "preamble"`` is gated — completion readbacks pass through.
 
-    A completion (e.g. ``OpenClawBackgroundCompleted`` → "Fertig.") that  # i18n-allow
+    A completion (e.g. ``JarvisAgentBackgroundCompleted`` → "Fertig.") that  # i18n-allow
     lands inside the quiet window after a mission failure on another
     track must still be voiced.  Suppressing it would lose information
     the user actually needs.

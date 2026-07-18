@@ -481,7 +481,8 @@ def _is_deliverable_relpath(rel_parts: tuple[str, ...]) -> bool:
         projects/*.jsonl, .claude.json, .last-cleanup, backups/). Live report
         2026-05-30: a trivial "make an HTML file" mission showed 10+ of these.
       * ``.codex/``          — ``CODEX_HOME``.
-      * ``openclaw_state/``  — the OpenClaw state dir.
+      * ``openclaw_state/``  — the Jarvis-Agent worker state dir (legacy
+        on-disk directory name).
       * ``tasks/*/artifacts/diff*.patch`` and ``tasks/*/logs/*`` — forensic
         worker diffs + subprocess logs (kept on disk + reachable via the
         "open in Explorer" button, but not a deliverable).

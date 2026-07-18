@@ -7,9 +7,9 @@ router-inject → BrainDispatcher.dispatch path.
 Wave-4 migration: the formerly "critical" test
 ``test_sub_jarvis_isolated_from_vision`` verified that ``SubJarvisManager``
 does not pass along any vision images. The Sub-Jarvis tier was replaced by
-the OpenClaw bridge (see docs/openclaw-bridge.md §11) — the OpenClaw
-worker is an external subprocess with no image channel, so vision
-isolation is structurally guaranteed. This test was removed.
+the Jarvis-Agents bridge (see docs/jarvis-agents-bridge.md §11) — the
+Jarvis-Agent worker is an external subprocess with no image channel, so
+vision isolation is structurally guaranteed. This test was removed.
 """
 from __future__ import annotations
 
@@ -190,16 +190,16 @@ async def test_router_handle_includes_image():
 
 
 # ======================================================================
-# Test 2: OpenClaw worker isolation
+# Test 2: Jarvis-Agent worker isolation
 #
 # Wave-4 migration: the original ``test_sub_jarvis_isolated_from_vision``
 # test verified that ``SubJarvisManager.run(task)`` does not pass along any
-# vision images. ``SubJarvisManager`` was replaced by the OpenClaw bridge
-# (see docs/openclaw-bridge.md §11). Vision isolation is structurally
-# guaranteed for the OpenClaw worker: it is an external subprocess that
-# only receives a ``--message <prompt>`` string — no image channel. The
-# old test was therefore removed; a comparable smoke test for the
-# OpenClaw subprocess stream lives in ``tests/integration/test_openclaw_*``.
+# vision images. ``SubJarvisManager`` was replaced by the Jarvis-Agents
+# bridge (see docs/jarvis-agents-bridge.md §11). Vision isolation is
+# structurally guaranteed for the Jarvis-Agent worker: it is an external
+# subprocess that only receives a ``--message <prompt>`` string — no image
+# channel. The old test was therefore removed; no dedicated harness
+# subprocess-stream smoke test currently exists in this suite.
 # ======================================================================
 
 

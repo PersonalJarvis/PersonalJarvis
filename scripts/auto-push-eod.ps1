@@ -10,11 +10,11 @@
     Working-Tree-Dirty-Check: Bricht ab, damit nichts uncommittetes "verpasst" wird.
     Detached HEAD wird uebersprungen. main wird nie geforced.
 
-    Phase 11 (Welle 4 Backstop): Worktrees mit aktiver OpenClaw-Session
+    Phase 11 (Welle 4 Backstop): Worktrees mit aktiver Jarvis-Agent-Session
     (.openclaw_state\<sid>\openclaw_state\ existiert UND wurde innerhalb der
-    letzten -OpenClawActiveMinutes geaendert) werden vom Push uebersprungen,
+    letzten -JarvisAgentActiveMinutes geaendert) werden vom Push uebersprungen,
     damit ein laufender Sub-Agent nicht mitten im Run einen halben Stand
-    upstream pusht. Mit -OpenClawWarnOnly wird nur gewarnt statt geskippt.
+    upstream pusht. Mit -JarvisAgentWarnOnly wird nur gewarnt statt geskippt.
 
 .PARAMETER RepoRoot
     Pfad zum Repo-Root. Default: C:\Users\Administrator\Desktop\Personal Jarvis
@@ -22,13 +22,13 @@
 .PARAMETER DryRun
     Nur loggen was getan wuerde, kein Tag und kein Push.
 
-.PARAMETER OpenClawActiveMinutes
-    Schwellwert fuer "aktive" OpenClaw-Session: Modify-Time juenger als X
-    Minuten. Default: 30. Setze auf 0 um die OpenClaw-Erkennung komplett zu
+.PARAMETER JarvisAgentActiveMinutes
+    Schwellwert fuer "aktive" Jarvis-Agent-Session: Modify-Time juenger als X
+    Minuten. Default: 30. Setze auf 0 um die Jarvis-Agent-Erkennung komplett zu
     deaktivieren.
 
-.PARAMETER OpenClawWarnOnly
-    Wenn gesetzt: aktive OpenClaw-Worktrees werden nur geloggt aber trotzdem
+.PARAMETER JarvisAgentWarnOnly
+    Wenn gesetzt: aktive Jarvis-Agent-Worktrees werden nur geloggt aber trotzdem
     gepusht. Ohne diesen Switch wird der zugehoerige Branch geskippt.
 
 .EXAMPLE
@@ -42,8 +42,8 @@
 param(
     [string]$RepoRoot = "C:\Users\Administrator\Desktop\Personal Jarvis",
     [switch]$DryRun,
-    [int]$OpenClawActiveMinutes = 30,
-    [switch]$OpenClawWarnOnly
+    [int]$JarvisAgentActiveMinutes = 30,
+    [switch]$JarvisAgentWarnOnly
 )
 
 # ---------- Setup ----------
@@ -138,20 +138,20 @@ if ([string]::IsNullOrWhiteSpace($branchInfo)) {
 $branches = $branchInfo -split "`n" | Where-Object { $_ -match '\S' }
 Write-Log "INFO" "$($branches.Count) lokale Branch(es) gefunden."
 
-# ---------- Phase-11-Backstop: aktive OpenClaw-Worktrees ----------
+# ---------- Phase-11-Backstop: aktive Jarvis-Agent-Worktrees ----------
 # Idee: Worktree hat .openclaw_state\<session>\openclaw_state\ und das Verzeichnis
-# wurde innerhalb der letzten -OpenClawActiveMinutes geaendert (Subprocess
+# wurde innerhalb der letzten -JarvisAgentActiveMinutes geaendert (Subprocess
 # schreibt run.log + state-Files). Solange die Welle laeuft, wuerde ein push
 # einen halben Stand spiegeln. Skip dieser Branches (oder warn-only).
 
-$openclawBlockedBranches = @{}  # Hash<branch, reason>
-if ($OpenClawActiveMinutes -gt 0) {
-    Write-Log "INFO" "OpenClaw-Backstop aktiv (Schwelle: $OpenClawActiveMinutes Min, Modus: $(if ($OpenClawWarnOnly) { 'WARN' } else { 'SKIP' }))."
+$jarvisAgentBlockedBranches = @{}  # Hash<branch, reason>
+if ($JarvisAgentActiveMinutes -gt 0) {
+    Write-Log "INFO" "Jarvis-Agent-Backstop aktiv (Schwelle: $JarvisAgentActiveMinutes Min, Modus: $(if ($JarvisAgentWarnOnly) { 'WARN' } else { 'SKIP' }))."
 
     $worktreeRaw = git worktree list --porcelain 2>$null
     if (-not [string]::IsNullOrWhiteSpace($worktreeRaw)) {
         $worktreeLines = $worktreeRaw -split "`n"
-        $cutoff = (Get-Date).AddMinutes(-1 * $OpenClawActiveMinutes)
+        $cutoff = (Get-Date).AddMinutes(-1 * $JarvisAgentActiveMinutes)
         $currentWt = ""
         $currentBranch = ""
 
@@ -175,7 +175,7 @@ if ($OpenClawActiveMinutes -gt 0) {
                             Select-Object -First 1
                         if ($recentSession) {
                             $age = [int]((Get-Date) - $recentSession.LastWriteTime).TotalMinutes
-                            $openclawBlockedBranches[$currentBranch] = "active OpenClaw session in $($recentSession.Name) (age: ${age}min, worktree: $currentWt)"
+                            $jarvisAgentBlockedBranches[$currentBranch] = "active Jarvis-Agent session in $($recentSession.Name) (age: ${age}min, worktree: $currentWt)"
                         }
                     }
                 }
@@ -192,18 +192,18 @@ if ($OpenClawActiveMinutes -gt 0) {
                     Select-Object -First 1
                 if ($recentSession) {
                     $age = [int]((Get-Date) - $recentSession.LastWriteTime).TotalMinutes
-                    $openclawBlockedBranches[$currentBranch] = "active OpenClaw session in $($recentSession.Name) (age: ${age}min, worktree: $currentWt)"
+                    $jarvisAgentBlockedBranches[$currentBranch] = "active Jarvis-Agent session in $($recentSession.Name) (age: ${age}min, worktree: $currentWt)"
                 }
             }
         }
     }
 
-    if ($openclawBlockedBranches.Count -eq 0) {
-        Write-Log "INFO" "Keine aktiven OpenClaw-Sessions in irgendeinem Worktree gefunden."
+    if ($jarvisAgentBlockedBranches.Count -eq 0) {
+        Write-Log "INFO" "Keine aktiven Jarvis-Agent-Sessions in irgendeinem Worktree gefunden."
     } else {
-        $action = if ($OpenClawWarnOnly) { "WARN" } else { "SKIP" }
-        foreach ($entry in $openclawBlockedBranches.GetEnumerator()) {
-            Write-Log $action "OpenClaw-Backstop trifft Branch '$($entry.Key)': $($entry.Value)"
+        $action = if ($JarvisAgentWarnOnly) { "WARN" } else { "SKIP" }
+        foreach ($entry in $jarvisAgentBlockedBranches.GetEnumerator()) {
+            Write-Log $action "Jarvis-Agent-Backstop trifft Branch '$($entry.Key)': $($entry.Value)"
         }
     }
 }
@@ -220,9 +220,9 @@ foreach ($entry in $branches) {
 
     Write-Log "INFO" "--- Branch: $branch (upstream: $(if ($hasUpstream) { $upstream } else { '<none>' })) ---"
 
-    # Phase-11-Backstop: aktive OpenClaw-Session?
-    if ($openclawBlockedBranches.ContainsKey($branch) -and -not $OpenClawWarnOnly) {
-        Write-Log "SKIP" "Branch '$branch' uebersprungen: $($openclawBlockedBranches[$branch])"
+    # Phase-11-Backstop: aktive Jarvis-Agent-Session?
+    if ($jarvisAgentBlockedBranches.ContainsKey($branch) -and -not $JarvisAgentWarnOnly) {
+        Write-Log "SKIP" "Branch '$branch' uebersprungen: $($jarvisAgentBlockedBranches[$branch])"
         $skippedCount++
         continue
     }

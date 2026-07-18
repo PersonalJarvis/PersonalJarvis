@@ -69,7 +69,7 @@ class CoreMemory:
     def reload(self) -> None:
         """Re-reads the JSON from disk. Required before every brain call;
         otherwise the LLM will not see facts added after initialisation
-        (user additions via UI, remember-tool from a parallel OpenClaw worker,
+        (user additions via UI, remember-tool from a parallel Jarvis-Agent worker,
         external editor)."""
         if not self.path.exists():
             return

@@ -3,7 +3,7 @@
 PrintWindow with PW_RENDERFULLCONTENT (0x2) captures a window's pixel
 content regardless of z-order or foreground state. This bypasses the
 focus-stealing problem we hit when capturing via pyautogui.screenshot()
-from a OpenClaw session.
+from a Jarvis-Agent session.
 
 Flow:
   1. Kill all Obsidian instances.

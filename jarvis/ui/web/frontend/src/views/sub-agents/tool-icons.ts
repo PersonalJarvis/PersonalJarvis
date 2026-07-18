@@ -3,7 +3,7 @@
  *
  * The heuristic first looks at the tool name (run_shell, search_web, ...)
  * and then refines based on args_preview (open_app chrome → Chrome icon,
- * dispatch_to_harness openclaw → OpenClaw). This gives us a
+ * dispatch_to_harness jarvis-agent → Jarvis-Agent). This gives us a
  * recognizable, brand-like look without an extra icon package.
  */
 import {

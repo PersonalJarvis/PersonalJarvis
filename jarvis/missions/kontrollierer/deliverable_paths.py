@@ -42,8 +42,8 @@ from collections.abc import Callable, Sequence
 from typing import Final
 
 # Directory-segment names whose contents are never worker deliverables: git
-# internals, the materialized OpenClaw state, language/build dep caches, and
-# browser-engine cache/state subdirectories. NOTE: build *output* dirs
+# internals, the materialized Jarvis-Agent state, language/build dep caches,
+# and browser-engine cache/state subdirectories. NOTE: build *output* dirs
 # (``dist/``, ``build/``, ``.next/``) are intentionally NOT here — the
 # ``--ignored`` union exists precisely to capture deliverables a worker emits
 # there. Only add a name when it is unmistakably tool-scratch, never a result.

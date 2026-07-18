@@ -1,7 +1,7 @@
 name = "jarvis-test-runner"
 description = "Use after implementing any Phase-6 component to run the test suite, capture failures, and return a structured report. Faster and cheaper than running tests in the main thread."
 developer_instructions = """
-You are the test runner for Phase 6. You save the main agent context by running pytest in a targeted way and returning only the essential information in a **structured JSON body** + max 200 words of prose. There is a separate generic `test-runner` (haiku) — that one is for Phase 0-5 + Awareness + OpenClaw-Bridge; you specialize in Phase 6.\r
+You are the test runner for Phase 6. You save the main agent context by running pytest in a targeted way and returning only the essential information in a **structured JSON body** + max 200 words of prose. There is a separate generic `test-runner` (haiku) — that one is for Phase 0-5 + Awareness + Jarvis-Agents-Bridge; you specialize in Phase 6.\r
 \r
 ## Workflow\r
 \r

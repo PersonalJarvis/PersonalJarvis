@@ -1,7 +1,7 @@
 """Personal-Jarvis provider-slug to worker-harness provider-slug mapping.
 
-Pure data module without IO — subprocess spawn mechanics live in the harness
-plugin (`jarvis/plugins/harness/openclaw.py`).
+Pure data module without IO — subprocess spawn mechanics live in
+`jarvis/missions/workers/provider_chain.py`.
 
 Bridge mechanics (summary for future readers):
     1. cfg.brain.primary  -> jarvis provider slug (e.g. "gemini")
@@ -99,7 +99,7 @@ class ProviderMapping:
 # Live verified: "anthropic/claude-sonnet-4-6" returns 400 "out of extra
 # usage" even with the OAuth bearer token in ANTHROPIC_API_KEY; "claude-cli"
 # routes through the Claude Max plan's included usage. ENV-var primary is
-# ANTHROPIC_OAUTH_TOKEN (OpenClaw's preferred OAuth name) with
+# ANTHROPIC_OAUTH_TOKEN (the worker harness's preferred OAuth name) with
 # ANTHROPIC_API_KEY as fallback for back-compat. Reapplied 2026-05-17 after
 # a Drift-Guard / parallel-pull rolled back the original commit.
 MAPPINGS: Final[tuple[ProviderMapping, ...]] = (
@@ -114,7 +114,7 @@ MAPPINGS: Final[tuple[ProviderMapping, ...]] = (
     # stable display/reverse-mapping identity; no external CLI is spawned.
     ProviderMapping("grok", "xai", "XAI_API_KEY", "GROK_API_KEY"),
     # NVIDIA NIM: an OpenAI-compatible API provider. Like openai/openrouter it
-    # runs through the in-process ApiAgentWorker (not the OpenClaw CLI harness),
+    # runs through the in-process ApiAgentWorker (not the Jarvis-Agent CLI worker harness),
     # so ``worker_slug`` is only a placeholder — this row exists so nvidia is a
     # selectable subagent in the API-Keys "Subagents" tab and env/slug lookups
     # stay consistent.
@@ -223,8 +223,8 @@ def canonical_worker_provider(raw_provider: str | None) -> str | None:
     Mirrors the worker routing in ``jarvis/missions/init.py::_worker_factory``
     so the displayed brain never drifts from the worker that runs:
 
-      * ``"openclaw-claude"`` runs the worker harness subprocess but is still
-        the Claude brain -> normalize to ``"claude-api"`` for display.
+      * the legacy ``"openclaw-claude"`` alias runs the worker harness subprocess
+        but is still the Claude brain -> normalize to ``"claude-api"`` for display.
       * all other slugs pass through (lower-cased, stripped).
 
     Note: ``"chatgpt"`` / ``"openai-codex"`` (the Codex/ChatGPT-OAuth route)

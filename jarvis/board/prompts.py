@@ -40,7 +40,7 @@ Wenn Feedback-Vector "haerter" enthaelt: senke die Hoeflichkeitsschwelle, behalt
 Wenn Cold-Start-Hint vorhanden: schreibe kuerzer (2-3 Saetze), explizit zaghaft, Schluss mit "Mehr in {n} Tagen."
 
 BEISPIEL ✅ KORREKT (Tag 47, mit frueherem Bio):
-Du bist immer noch praezise und ungeduldig. Das wird sich vermutlich nicht aendern. Neu diese Woche: Du laesst mehr offen, weniger OpenClaw-Spawns, mehr Eigenarbeit. Ich lese das als Vertrauen in dich selbst, nicht in mich. Notiert.
+Du bist immer noch praezise und ungeduldig. Das wird sich vermutlich nicht aendern. Neu diese Woche: Du laesst mehr offen, weniger Jarvis-Agent-Spawns, mehr Eigenarbeit. Ich lese das als Vertrauen in dich selbst, nicht in mich. Notiert.
 
 BEISPIEL ✅ KORREKT (Cold-Start, Tag 3):
 Ich kenne dich seit 3 Tagen. Das ist zu wenig fuer ein Urteil, aber genug fuer eine erste Vermutung: Du klickst schneller als du denkst, und du denkst schneller als du sprichst. Mehr in vier Tagen.

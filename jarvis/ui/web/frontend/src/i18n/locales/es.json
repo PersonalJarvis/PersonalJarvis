@@ -2088,7 +2088,7 @@
   "verdict_panel": {
     "empty": "Aún no hay veredictos del crítico para esta misión."
   },
-  "openclaw_panel": {
+  "jarvis_agent_panel": {
     "select_mission": "Selecciona una misión para ver los {name}-Agent workers.",
     "no_workers": "No hay {name}-Agent workers en esta misión.",
     "not_available": "(no disponible)",
