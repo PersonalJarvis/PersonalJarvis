@@ -439,10 +439,21 @@ class SessionRollupWorker:
         try:
             async with self._brain_lock:
                 if self._brain is None:
+                    # Same curator-tier instantiation as the extractor/judge:
+                    # disables Gemini thinking AND flags structured prompts so
+                    # a subscription-CLI brain forwards the digest instructions
+                    # verbatim instead of the conversational "1-3 short
+                    # sentences" wrapper that contradicts the requested
+                    # flowing paragraph.
+                    from jarvis.memory.wiki.curator_llm import (
+                        instantiate_curator_brain,
+                    )
+
                     self._brain = await asyncio.to_thread(
-                        self._registry.instantiate,
+                        instantiate_curator_brain,
+                        self._registry,
                         provider_name,
-                        model=model,
+                        model,
                     )
         except Exception as exc:    # noqa: BLE001
             log.warning(

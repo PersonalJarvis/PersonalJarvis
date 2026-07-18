@@ -368,7 +368,7 @@ class CodexBrain:
             emitted = False
             try:
                 async for delta in stream_complete(client, self._model, req):
-                    if delta.content or getattr(delta, "tool_calls", None):
+                    if delta.content or delta.tool_call:
                         emitted = True
                     yield delta
                 return
@@ -385,7 +385,20 @@ class CodexBrain:
                 # stream produced nothing a listener could have consumed.
                 if emitted or status not in (401, 402, 403, 429):
                     raise
-                if not _codex_oauth_connected():
+                if req.tools:
+                    # The CLI path is tool-blind; answering a tool turn with
+                    # plausible prose would LOOK like "model chose no tool"
+                    # and defeat BrainManager's delegation to a genuinely
+                    # tool-capable provider. Let the chain handle it instead.
+                    log.warning(
+                        "CodexBrain: API-key path failed (HTTP %s) with %d "
+                        "tool(s) requested — not crossing to the tool-blind "
+                        "CLI; surfacing the error for provider fallback",
+                        status,
+                        len(req.tools),
+                    )
+                    raise
+                if not await asyncio.to_thread(_codex_oauth_connected):
                     raise
                 log.warning(
                     "CodexBrain: API-key path failed (HTTP %s) — falling back "
@@ -395,7 +408,9 @@ class CodexBrain:
             async for delta in self._complete_via_cli(req):
                 yield delta
             return
-        oauth = _codex_oauth_connected()
+        # to_thread: the probe shells out to `codex --version` on its first
+        # call per process (up to ~4s) — never block the event loop for it.
+        oauth = await asyncio.to_thread(_codex_oauth_connected)
         log.info(
             "CodexBrain.complete: no API key — oauth=%s, %d tool(s) requested "
             "(ignored on the CLI path)", oauth, len(req.tools or ()),

@@ -99,6 +99,46 @@ async def test_throttled_api_key_crosses_over_to_the_subscription_cli(
 
 
 @pytest.mark.asyncio
+async def test_partial_tool_call_stream_never_crosses_over(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A stream that already emitted a tool_call delta must re-raise on a
+    later 429 — crossing over would append CLI prose behind a half-consumed
+    tool turn (double yield into the aggregator)."""
+    brain = CodexBrain()
+    calls = _arm_api_and_oauth(monkeypatch, brain, status=429)
+
+    async def _tool_then_429(client: Any, model: str, req: BrainRequest):
+        yield BrainDelta(tool_call={"name": "open_app", "arguments": "{}"})
+        raise _StatusError(429)
+
+    monkeypatch.setattr(codex_module, "stream_complete", _tool_then_429)
+
+    with pytest.raises(_StatusError):
+        await _collect(brain.complete(_wiki_request()))
+    assert calls == []
+
+
+@pytest.mark.asyncio
+async def test_tool_turns_surface_the_error_instead_of_going_tool_blind(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With tools requested, the tool-blind CLI must not answer in prose that
+    looks like 'model chose no tool' — the error surfaces so BrainManager's
+    fallback can pick a genuinely tool-capable provider."""
+    brain = CodexBrain()
+    calls = _arm_api_and_oauth(monkeypatch, brain, status=429)
+    req = BrainRequest(
+        messages=(BrainMessage(role="user", content="Open the calculator."),),
+        tools=({"name": "open_app"},),
+    )
+
+    with pytest.raises(_StatusError):
+        await _collect(brain.complete(req))
+    assert calls == []
+
+
+@pytest.mark.asyncio
 async def test_non_account_errors_still_raise(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
