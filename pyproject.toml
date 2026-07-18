@@ -15,6 +15,10 @@ dependencies = [
     "anthropic>=0.96",
     "openai>=1.30",  # 1.30+ is the minimum version required for stream_options (June 2024)
     "google-genai>=1.0",
+    # Lazy-imported by jarvis/brain/structured_output_parser.py to recover
+    # malformed vision JSON; without it the repair path silently degrades on
+    # every fresh install (found 2026-07-18, was never declared).
+    "json-repair>=0.30",
     # cryptography 49 stopped publishing Windows ARM64 and Intel macOS wheels.
     # Keep MCP/JWT and Google auth binary-installable on those targets with the
     # newest tested releases that still publish the required architecture.
@@ -109,7 +113,11 @@ dependencies = [
     "aiofiles>=24.1",
     "aiolimiter>=1.1",
     "tenacity>=9.0",
-    "mcp>=1.0",
+    # Floor 1.28.1: three high-severity advisories in the MCP SDK's HTTP/WS
+    # transports (missing Host/Origin validation, unverified session
+    # principal, cross-client task access) are fixed there — never resolve
+    # lower (Dependabot #48-#51).
+    "mcp>=1.28.1",
     "rich>=13.9",
     # jarvisctl control CLI (jarvis/cli_ctl/): Typer command surface + platformdirs
     # for cross-platform per-user config/cache dirs. Pure-Python, VPS-safe.

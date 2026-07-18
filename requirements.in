@@ -22,8 +22,17 @@
 anthropic>=0.96
 openai>=1.30
 google-genai>=1.0
+# Lazy-imported by jarvis/brain/structured_output_parser.py to recover
+# malformed vision JSON; without it the repair path silently degrades on
+# every fresh install (found 2026-07-18, was never declared).
+json-repair>=0.30
 # Keep transitive auth/JWT crypto wheel-installable where the newest release
-# stopped publishing the architecture.
+# stopped publishing the architecture. KNOWN, ACCEPTED EXPOSURE: no
+# cryptography release after 46.0.3 publishes a Windows-ARM64 wheel, so that
+# one target stays on 46.0.3 and remains affected by the advisories fixed in
+# 46.0.5-48.0.1 (Dependabot #44-#47) — installability wins over an unfixable
+# pin; every other platform resolves 48.0.1/49.0.0 (clean). Re-check the
+# wheel matrix on each bump and lift the pin the moment win_arm64 returns.
 cryptography==46.0.3; sys_platform == 'win32' and platform_machine == 'ARM64'
 cryptography==48.0.1; sys_platform == 'darwin' and platform_machine == 'x86_64'
 
@@ -112,7 +121,11 @@ tenacity>=9.0
 ddgs==9.14.3
 
 # MCP (Model Context Protocol)
-mcp>=1.0
+# Floor 1.28.1: three high-severity advisories in the MCP SDK's HTTP/WS
+# transports (missing Host/Origin validation, unverified session principal,
+# cross-client task access) are fixed there — never resolve lower
+# (Dependabot #48-#51).
+mcp>=1.28.1
 
 # CLI (setup wizard + jarvisctl control CLI)
 rich>=13.9
