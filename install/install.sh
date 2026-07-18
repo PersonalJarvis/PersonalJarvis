@@ -873,6 +873,48 @@ GIT_VERBOSITY='--quiet'
 #      up to 3 times before giving up with an honest message.
 GIT_NET_OPTS='-c http.lowSpeedLimit=1024 -c http.lowSpeedTime=30'
 
+# Restyle git's raw transfer chatter into the installer's visual grammar
+# (maintainer request 2026-07-18: phases 1-2 look polished, then raw
+# "Cloning into ... / remote: Enumerating ..." breaks the look). Pure
+# bookkeeping lines are dropped, live progress collapses into ONE
+# self-updating gutter line (percent + volume + speed stay visible), and
+# every error/unknown line still comes through - restyled, never swallowed.
+git_stream_pretty() {
+    tr '\r' '\n' | awk -v gut="$GUT" -v dim="$DIM" -v gold="$GOLD" -v red="$RED" -v rst="$RST" '
+        function endlive() { if (live) { printf "\n"; live = 0 } }
+        function liveline(label, line,   pct, tail) {
+            pct = ""
+            if (match(line, /[0-9]+% \([0-9]+\/[0-9]+\)/)) pct = substr(line, RSTART, RLENGTH)
+            else if (match(line, /[0-9]+%/)) pct = substr(line, RSTART, RLENGTH)
+            tail = ""
+            if (match(line, /[0-9.]+ [KMGT]?iB \| [0-9.]+ [KMGT]?iB\/s/))
+                tail = "  " dim substr(line, RSTART, RLENGTH) rst
+            printf "\r%s    %s%s%s %s%s%s%s        ", gut, dim, label, rst, gold, pct, rst, tail
+            fflush(); live = 1
+            if (line ~ /done\.?$/) endlive()
+        }
+        /^(Cloning into|remote: (Enumerating|Counting|Compressing|Total)|Checking connectivity)/ { next }
+        /^$/ { next }
+        /^Receiving objects:/ { liveline("downloading", $0); next }
+        /^Resolving deltas:/  { liveline("unpacking  ", $0); next }
+        /^Updating files:/    { liveline("writing    ", $0); next }
+        /^(error|fatal):/ { endlive(); printf "%s    %s%s%s\n", gut, red, $0, rst; fflush(); next }
+        { endlive(); printf "%s    %s%s%s\n", gut, dim, $0, rst; fflush() }
+        END { endlive() }
+    ' >&2
+}
+
+# On a TTY, run the git command through the restyler; piped/CI runs keep
+# the plain --quiet transcript. Callers pass "$GIT_VERBOSITY" as usual -
+# the pipe preserves the git exit code via PIPESTATUS (this is bash).
+pretty_git() {
+    if [ "$GIT_VERBOSITY" = '--progress' ]; then
+        "$@" 2>&1 | git_stream_pretty
+        return "${PIPESTATUS[0]}"
+    fi
+    "$@"
+}
+
 clone_with_retry() {
     note 'downloading ~80 MB - a few minutes on slow connections'
     _attempt=1
@@ -884,7 +926,7 @@ clone_with_retry() {
         _http_mode=''
         [ "$_attempt" -gt 1 ] && _http_mode='-c http.version=HTTP/1.1'
         # shellcheck disable=SC2086  # GIT_NET_OPTS/_http_mode word-split into -c pairs
-        if git $GIT_NET_OPTS $_http_mode clone "$GIT_VERBOSITY" --depth 1 --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"; then
+        if pretty_git git $GIT_NET_OPTS $_http_mode clone "$GIT_VERBOSITY" --depth 1 --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"; then
             return 0
         fi
         rm -rf "$INSTALL_DIR" 2>/dev/null || true
@@ -929,7 +971,7 @@ tarball_fallback() {
     _got=''
     _try=1
     while [ -n "$_asset_url" ] && [ "$_try" -le 8 ]; do
-        if curl -fL --speed-limit 1024 --speed-time 60 -C - -o "$_tmp" "$_asset_url"; then
+        if curl -fL -# --speed-limit 1024 --speed-time 60 -C - -o "$_tmp" "$_asset_url"; then
             _got=1
             break
         fi
@@ -943,7 +985,7 @@ tarball_fallback() {
     if [ -z "$_got" ]; then
         rm -f "$_tmp" 2>/dev/null || true
         note 'no resumable release archive reachable - trying the direct snapshot (single stream)'
-        curl -fL --speed-limit 1024 --speed-time 60 -o "$_tmp" "$_snapshot_url" || {
+        curl -fL -# --speed-limit 1024 --speed-time 60 -o "$_tmp" "$_snapshot_url" || {
             rm -f "$_tmp" 2>/dev/null || true
             return 1
         }
@@ -997,7 +1039,7 @@ salvage_reclone() {
 
 if [ -d "$INSTALL_DIR/.git" ]; then
     # shellcheck disable=SC2086  # GIT_NET_OPTS must word-split into -c pairs
-    if git $GIT_NET_OPTS -C "$INSTALL_DIR" fetch "$GIT_VERBOSITY" --depth 1 origin "$BRANCH" \
+    if pretty_git git $GIT_NET_OPTS -C "$INSTALL_DIR" fetch "$GIT_VERBOSITY" --depth 1 origin "$BRANCH" \
         && git -C "$INSTALL_DIR" checkout --quiet "$BRANCH" \
         && git -C "$INSTALL_DIR" reset --quiet --hard "origin/$BRANCH"; then
         ok 'updated existing checkout to latest'
