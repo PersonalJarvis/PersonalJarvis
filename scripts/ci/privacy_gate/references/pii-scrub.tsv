@@ -23,14 +23,17 @@
 # public (see the Herz note at the end of this file) and is NOT scrubbed.
 
 # --- maintainer GitHub login + entity slug (MUST precede the bare-name rules
+# 2026-07-18 maintainer directive (CLAUDE.md rule 2): name exposure no longer
+# BLOCKS anything - all name/login/slug rows are `warn` (surfaced, never
+# blocking). Credentials/secrets keep blocking fail-closed.
 # --- below, else the bare "ruben" rule would fragment them) -----------------
-scrub	rubenluetke10-beep	octocat	maintainer github login (appears in a stream-evidence test fixture)
-scrub	ruben-luetke	personal-jarvis-maintainer	maintainer entity slug (= slugify of full name; keeps name->slug test couplings consistent)
+warn	rubenluetke10-beep	octocat	maintainer github login (appears in a stream-evidence test fixture)
+warn	ruben-luetke	personal-jarvis-maintainer	maintainer entity slug (= slugify of full name; keeps name->slug test couplings consistent)
 
 # --- maintainer real name (order matters: full name before surname) ---------
-scrub	Ruben Lütke	Personal Jarvis Maintainer	maintainer real name (full)
-scrub	Lütke	Maintainer	maintainer surname
-scrub	Luetke	Maintainer	maintainer surname (ascii-fold)
+warn	Ruben Lütke	Personal Jarvis Maintainer	maintainer real name (full)
+warn	Lütke	Maintainer	maintainer surname
+warn	Luetke	Maintainer	maintainer surname (ascii-fold)
 
 scrub	luetke	maintainer	maintainer surname (lowercase residue in slugs)
 scrub	lütke	maintainer	maintainer surname (lowercase umlaut residue)
@@ -38,14 +41,14 @@ scrub	lütke	maintainer	maintainer surname (lowercase umlaut residue)
 # --- maintainer bare first names: full-depersonalization (2026-06-01). Two
 # --- distinct neutral names preserve router-prompt semantics where "Ruben" is
 # --- the user (address) and "Harald" is an example third person mentioned. ---
-scrub	Ruben	Alex	maintainer first name (sample/address user) -> neutral
-scrub	ruben	alex	maintainer first name lowercase (config defaults, slugs, branch tags)
+warn	Ruben	Alex	maintainer first name (sample/address user) -> neutral
+warn	ruben	alex	maintainer first name lowercase (config defaults, slugs, branch tags)
 # Accented spelling 'Rubén' — the ASCII 'Ruben' rules above do NOT match the é,
 # so the accented real first name shipped through (2026-06-30 sub-agent review:
 # docs/phase-b1-wiki-curator/*, tests/unit/memory/wiki/test_page.py, etc.).
-scrub	Rubén	Alex	maintainer first name accented (é) -> neutral
-scrub	rubén	alex	maintainer first name accented lowercase
-scrub	RUBÉN	ALEX	maintainer first name accented all-caps (regression guard)
+warn	Rubén	Alex	maintainer first name accented (é) -> neutral
+warn	rubén	alex	maintainer first name accented lowercase
+warn	RUBÉN	ALEX	maintainer first name accented all-caps (regression guard)
 scrub	Harald	Sam	maintainer alt first name (example person in prompts/tests)
 scrub	harald	sam	maintainer alt first name lowercase (ADR owner field, slugs, test emails)
 
