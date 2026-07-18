@@ -9,6 +9,42 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [1.0.12] — 2026-07-18
+
+### Fixed
+
+- **macOS permissions no longer look "auto-denied" after an app update.**
+  Updating rebuilds the app bundle with a new ad-hoc code signature, and macOS
+  then orphans every previously recorded permission: Microphone falls back to
+  "not asked" while Input Monitoring and Input Control read as silently DENIED
+  without ever showing a prompt. The installer now detects the signature
+  change and resets its own stale permission entries, so macOS asks fresh
+  instead of inheriting a dead denial (BUG-083).
+- **"Open Settings" now always lands on the requested privacy pane.** macOS
+  System Settings ignores the pane deep link while it is already running and
+  just raises whatever pane was open last; Personal Jarvis now closes a
+  running System Settings first so it relaunches on the right pane.
+- **Screen Recording no longer shows a stale "Not allowed" with a dead Allow
+  button.** macOS freezes that permission's status until the app restarts and
+  never re-prompts after the first request. The permissions UI now shows
+  "Restart pending" instead of the stale state, hides the request button that
+  could never prompt again, and keeps the restart call-to-action.
+- **Background agents start only on an explicit request.** A deterministic
+  gate now enforces the delegation contract at every model-chosen spawn site;
+  a plain conversational remark can no longer start a background agent. A
+  blocked spawn instructs the model to answer inline and, for genuinely heavy
+  tasks, offer delegation — a clear yes then unlocks exactly one spawn.
+- **The installer self-heals a stale or broken install directory** instead of
+  aborting with an error.
+- **Dependency resolution no longer fails on ARM64 Linux**: the on-screen
+  indicator's optional Qt dependency is excluded where no compatible wheel
+  exists; the indicator degrades to a logged no-op there.
+
+### Changed
+
+- The installer banner mascot was redrawn as hand-drawn pixel art, crisp on
+  light and dark terminals.
+
 ## [1.0.11] — 2026-07-18
 
 Consolidation release. v1.0.6–v1.0.10 were cut from a separate macOS-focused
