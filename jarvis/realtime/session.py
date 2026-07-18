@@ -2762,8 +2762,12 @@ class RealtimeVoiceSession:
         if callable(set_snapshot):
             try:
                 set_snapshot(self._history_seed())
-            except Exception:  # noqa: BLE001, S110 — snapshot is best-effort
-                pass
+            except Exception:  # noqa: BLE001 — snapshot is best-effort
+                log.debug(
+                    "realtime[%s] history snapshot update failed",
+                    self.session_id,
+                    exc_info=True,
+                )
 
     def _history_seed(self) -> tuple[dict[str, str], ...]:
         """The bounded call transcript in provider-neutral seed form.

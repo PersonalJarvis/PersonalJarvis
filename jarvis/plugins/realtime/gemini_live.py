@@ -285,31 +285,34 @@ async def _seed_history(session: Any, history: tuple[dict[str, str], ...]) -> No
     """
     if not history:
         return
-    from google.genai import types  # lazy (AP-26)
-
-    turns = []
-    for message in history:
-        if not isinstance(message, dict):
-            continue
-        role = str(message.get("role", "") or "")
-        text = str(message.get("text", "") or "").strip()
-        if not text or role not in {"user", "assistant"}:
-            continue
-        turns.append(
-            types.Content(
-                role="user" if role == "user" else "model",
-                parts=[types.Part(text=text)],
-            )
-        )
-    if not turns:
-        return
+    # The whole seed is one guarded unit — including SDK type construction:
+    # a types.Content/Part validation error must degrade exactly like a
+    # rejected wire call, never fail the provider handshake.
     try:
+        from google.genai import types  # lazy (AP-26)
+
+        turns = []
+        for message in history:
+            if not isinstance(message, dict):
+                continue
+            role = str(message.get("role", "") or "")
+            text = str(message.get("text", "") or "").strip()
+            if not text or role not in {"user", "assistant"}:
+                continue
+            turns.append(
+                types.Content(
+                    role="user" if role == "user" else "model",
+                    parts=[types.Part(text=text)],
+                )
+            )
+        if not turns:
+            return
         await session.send_client_content(turns=turns, turn_complete=False)
     except Exception:  # noqa: BLE001 — an amnesiac session beats a dead call
         log.warning(
             "gemini-live: seeding %d prior turns into the fresh session "
             "failed; the conversation continues without in-call context",
-            len(turns),
+            len(history),
             exc_info=True,
         )
 

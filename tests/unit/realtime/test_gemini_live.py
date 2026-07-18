@@ -612,6 +612,29 @@ async def test_history_seeding_failure_keeps_the_session_alive(
     assert session is not None
 
 
+@pytest.mark.asyncio
+async def test_history_seed_construction_failure_keeps_the_session_alive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """SDK type construction sits inside the fail-open boundary too: a
+    Content/Part validation error must degrade to an amnesiac session,
+    never fail the provider handshake."""
+    holder = _patch_seedable_genai_client(monkeypatch)
+
+    from google.genai import types
+
+    def _explode(*_args, **_kwargs):
+        raise ValueError("SDK validation tightened")
+
+    monkeypatch.setattr(types, "Content", _explode)
+    session = await GeminiLiveProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig(history=({"role": "user", "text": "hello"},))
+    )
+
+    assert session is not None
+    assert holder["client"].aio.live.last_cm.client_content_calls == []
+
+
 # --- function_declarations schema sanitizing --------------------------------
 
 
