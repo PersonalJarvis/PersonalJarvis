@@ -179,6 +179,22 @@ if [ -f "$privkey_gate" ]; then
     fi
 fi
 
+# --- 5c) DIST CONSISTENCY gate (FAIL-CLOSED on a confirmed broken bundle) ------
+# The shipped frontend bundle must be self-consistent IN GIT: dist/index.html
+# and every chunk reachable from it (dynamic imports included) must resolve to
+# tracked files, or every fresh clone boots to a blank spinner while the
+# builder's machine looks fine (cloud review 2026-07-18, AP-23). Checks HEAD,
+# so it also catches breakage a parallel session committed. rc 1 = confirmed
+# missing chunk; any other rc fails OPEN. Stdlib + git only, sub-second.
+dist_gate="scripts/ci/check_dist_consistency.py"
+if [ -f "$dist_gate" ]; then
+    "$PY" "$dist_gate" </dev/null
+    if [ "$?" -eq 1 ]; then
+        status=1
+        dist_hit=1
+    fi
+fi
+
 # --- 6) REQUIREMENTS SYNC gate (FAIL-CLOSED) ----------------------------------
 # requirements.in (source for the hash-pinned requirements.txt lockfile) must
 # mirror pyproject.toml [project].dependencies exactly. When they drift, an
@@ -274,6 +290,13 @@ if [ "$status" -ne 0 ]; then
         echo "pre-push BLOCKED: PRIVATE-KEY gate (private key / passphrase in the tree)."
         echo "  Signing private keys live ONLY in GitHub Actions secrets, never in the"
         echo "  repo. Remove the key material shown above (public keys are fine)."
+    fi
+    if [ "${dist_hit:-0}" -ne 0 ]; then
+        echo "pre-push BLOCKED: DIST CONSISTENCY gate (half-shipped frontend bundle)."
+        echo "  dist/index.html (or a chunk it loads) references files git does not"
+        echo "  track — a fresh clone would boot to a blank spinner. Commit the"
+        echo "  rebuilt bundle as ONE set (see the MISSING list above):"
+        echo "    git add jarvis/ui/web/dist/index.html jarvis/ui/web/dist/assets/"
     fi
     if [ "${reqsync_hit:-0}" -ne 0 ]; then
         echo "pre-push BLOCKED: REQUIREMENTS SYNC gate (requirements.in != pyproject deps)."

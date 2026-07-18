@@ -83,6 +83,27 @@ if [ -f "$lang" ]; then
     fi
 fi
 
+# --- DIST CONSISTENCY gate (FAIL-CLOSED on a confirmed broken bundle) ---------
+# The shipped frontend bundle (jarvis/ui/web/dist/) must be self-consistent IN
+# GIT: a commit that rewrites dist/index.html to freshly-hashed chunks while
+# the chunks themselves stay untracked works on the builder's machine (files
+# are on disk) but boots every clone to a blank spinner (cloud review
+# 2026-07-18, AP-23). Checks the STAGED index, only when the commit touches
+# dist/. rc 1 = confirmed missing chunk; any other rc fails OPEN.
+dist_gate="scripts/ci/check_dist_consistency.py"
+if [ -f "$dist_gate" ]; then
+    "$PY" "$dist_gate" --staged </dev/null
+    if [ "$?" -eq 1 ]; then
+        echo ""
+        echo "pre-commit BLOCKED: DIST CONSISTENCY gate — half-shipped frontend bundle."
+        echo "  The staged dist/index.html (or a chunk it loads) references files that"
+        echo "  are NOT staged/tracked. Stage the ENTIRE rebuilt bundle as one set:"
+        echo "    git add jarvis/ui/web/dist/index.html jarvis/ui/web/dist/assets/"
+        echo "  Bypass once with:  git commit --no-verify"
+        exit 1
+    fi
+fi
+
 # --- PRIVATE-KEY gate (FAIL-CLOSED) -------------------------------------------
 # Signing private keys and the retired signing passphrase must NEVER be
 # committed — they live only in GitHub Actions secrets. Catches a full PEM
