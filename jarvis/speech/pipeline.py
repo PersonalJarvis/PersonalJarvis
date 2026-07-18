@@ -12,7 +12,6 @@ hotkeys remain active alongside wake detection.
 from __future__ import annotations
 
 import asyncio
-import difflib
 import enum
 import hashlib
 import logging
@@ -113,6 +112,7 @@ from jarvis.speech.completion import (
 )
 from jarvis.speech.continuation_buffer import ContinuationBuffer
 from jarvis.speech.continuation_window import ContinuationWindow
+from jarvis.speech.echo_guard import SelfEchoGuard
 from jarvis.speech.hangup import (
     HANGUP_RE,
     contains_end_signal,
@@ -6953,99 +6953,46 @@ class SpeechPipeline:
         log.info("TTS echo lock armed: %.1fs (%s).", seconds, reason)
 
     # --- Self-echo TEXT guard (BUG-084) --------------------------------- #
-    # Last line of defense behind the acoustic gates (barge-in energy floor,
-    # post-TTS suppression window): when a "user" utterance that arrives
-    # during / right after our own playback consists — fuzzily, STT garbles
-    # echo — of nothing but words Jarvis itself just spoke, it is the speaker
-    # echo that slipped every acoustic gate, never a turn to answer. Without
-    # this, ONE missed false barge loops forever: reply → echo transcribed →
-    # brain answers itself → new reply → new echo (the Mac test machine's
-    # multi-turn self-conversation, 2026-07-18). Conservative by design:
-    # near-total containment in the assistant's own recent words is required,
-    # so a genuine user answer that ADDS anything is always kept (fail-open).
+    # The logic lives in jarvis.speech.echo_guard.SelfEchoGuard so the
+    # realtime session shares ONE implementation (BUG-089) instead of a
+    # drifting copy; these thin delegates keep the pipeline's historical
+    # call sites and test surface unchanged.
 
-    _ECHO_TEXT_GUARD_WINDOW_S = 6.0
-    _ECHO_TEXT_REF_TTL_S = 30.0
-    _ECHO_TEXT_MIN_TOKENS = 3
-    _ECHO_TEXT_MIN_OVERLAP = 0.8
-    # 0.8, not lower: at 0.75 near-misses like "gut"→"guten" (ratio exactly
-    # 0.75) count as contained and a genuine short user answer built from the
-    # assistant's own words plus one inflected token would be eaten. Real STT
-    # echo garble sits above 0.8:
-    # "misch"→"mich" 0.89, "hörn"→"hören" 0.89.  # i18n-allow: German STT-garble ratio anchors under test
-    _ECHO_TEXT_FUZZY_CUTOFF = 0.8
-
-    @staticmethod
-    def _echo_guard_tokens(text: str) -> list[str]:
-        return re.findall(r"\w+", text.lower())
+    def _echo_text_guard(self) -> SelfEchoGuard:
+        guard = getattr(self, "_self_echo_guard", None)
+        if guard is None:
+            guard = SelfEchoGuard()
+            self._self_echo_guard = guard
+        return guard
 
     def _register_assistant_speech(self, text: str) -> None:
         """Remember what Jarvis is about to voice as an echo-guard reference."""
 
-        tokens = self._echo_guard_tokens(text)
-        if not tokens:
-            return
-        refs = getattr(self, "_assistant_echo_refs", None)
-        if refs is None:
-            refs = deque(maxlen=8)
-            self._assistant_echo_refs = refs
-        refs.append((tokens, time.time_ns()))
-        self._touch_assistant_speech_activity()
+        self._echo_text_guard().register(text)
 
     def _touch_assistant_speech_activity(self) -> None:
         """Stamp 'assistant audio was active around now' for the echo guard."""
 
-        self._assistant_speech_activity_ns = time.time_ns()
+        self._echo_text_guard().touch()
 
     def _looks_like_self_echo(self, text: str) -> bool:
         """True when ``text`` is (fuzzily) contained in Jarvis' recent speech.
 
-        Only consulted while playback activity is recent
-        (``_ECHO_TEXT_GUARD_WINDOW_S``); outside that window a user may echo
-        Jarvis verbatim all they want. Tokens match fuzzily
-        (``difflib``-ratio ≥ ``_ECHO_TEXT_FUZZY_CUTOFF``) because STT garbles
-        echo (see the ratio anchors at ``_ECHO_TEXT_FUZZY_CUTOFF`` above).
-        Utterances shorter than ``_ECHO_TEXT_MIN_TOKENS`` are never judged —
-        short commands ("stopp") must always reach their handlers. References
-        are checked per spoken phrase plus the concatenation of the two
-        newest phrases, so an echo spanning a sentence boundary still matches
-        without building a big vocabulary union that common words could
-        false-match.
+        See ``SelfEchoGuard.is_echo`` for the containment contract (activity
+        window, fuzzy cutoff anchors, fail-open novelty allowance).
         """
 
-        activity_ns = getattr(self, "_assistant_speech_activity_ns", 0)
-        if activity_ns <= 0:
-            return False
-        now_ns = time.time_ns()
-        if now_ns - activity_ns > int(self._ECHO_TEXT_GUARD_WINDOW_S * 1e9):
-            return False
-        utterance = self._echo_guard_tokens(text)
-        if len(utterance) < self._ECHO_TEXT_MIN_TOKENS:
-            return False
-        refs = list(getattr(self, "_assistant_echo_refs", ()) or ())
-        ttl_ns = int(self._ECHO_TEXT_REF_TTL_S * 1e9)
-        fresh = [tokens for tokens, ref_ns in refs if now_ns - ref_ns <= ttl_ns]
-        if not fresh:
-            return False
-        candidates = list(fresh)
-        if len(fresh) >= 2:
-            candidates.append(fresh[-2] + fresh[-1])
-        allowed_novel = len(utterance) // 6
-        for reference in candidates:
-            matched = sum(
-                1
-                for token in utterance
-                if token in reference
-                or difflib.get_close_matches(
-                    token, reference, n=1, cutoff=self._ECHO_TEXT_FUZZY_CUTOFF
-                )
-            )
-            if (
-                matched / len(utterance) >= self._ECHO_TEXT_MIN_OVERLAP
-                and (len(utterance) - matched) <= allowed_novel
-            ):
-                return True
-        return False
+        return self._echo_text_guard().is_echo(text)
+
+    @property
+    def _assistant_speech_activity_ns(self) -> int:
+        """Guard activity stamp, proxied for historical direct pokes."""
+
+        return self._echo_text_guard().activity_ns
+
+    @_assistant_speech_activity_ns.setter
+    def _assistant_speech_activity_ns(self, value: int) -> None:
+        self._echo_text_guard().touch(int(value), force=True)
 
     def _voice_confirm_pending(self) -> bool:
         """True while the brain is awaiting a spoken yes/no for a deferred
