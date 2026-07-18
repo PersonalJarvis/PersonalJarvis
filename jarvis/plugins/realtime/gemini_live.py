@@ -271,6 +271,49 @@ class _GeminiLiveSession:
                     log.debug("gemini-live: client close raised", exc_info=True)
 
 
+async def _seed_history(session: Any, history: tuple[dict[str, str], ...]) -> None:
+    """Restore the call transcript into a freshly connected Live session.
+
+    Gemini fixes conversation state per connection: a mid-call transport
+    rebuild (session limit GoAway, 1006 abnormal closure) used to start the
+    fresh session with total amnesia, so follow-up questions lost their
+    grounding (BUG-088). ``send_client_content`` with ``turn_complete=False``
+    is Gemini's documented initial-history channel — it appends context
+    without triggering a response generation. Seeding fails open: a session
+    without history is exactly today's behavior and strictly better than no
+    session at all.
+    """
+    if not history:
+        return
+    from google.genai import types  # lazy (AP-26)
+
+    turns = []
+    for message in history:
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role", "") or "")
+        text = str(message.get("text", "") or "").strip()
+        if not text or role not in {"user", "assistant"}:
+            continue
+        turns.append(
+            types.Content(
+                role="user" if role == "user" else "model",
+                parts=[types.Part(text=text)],
+            )
+        )
+    if not turns:
+        return
+    try:
+        await session.send_client_content(turns=turns, turn_complete=False)
+    except Exception:  # noqa: BLE001 — an amnesiac session beats a dead call
+        log.warning(
+            "gemini-live: seeding %d prior turns into the fresh session "
+            "failed; the conversation continues without in-call context",
+            len(turns),
+            exc_info=True,
+        )
+
+
 # Gemini function_declarations accept only an OpenAPI-style schema subset.
 # Standard JSON-schema keys like additionalProperties, $ref/$defs, or
 # oneOf/anyOf/allOf make the handshake fail — which silently drops the whole
@@ -415,6 +458,7 @@ class GeminiLiveProvider:
                 if hasattr(result, "__await__"):
                     await result
             raise
+        await _seed_history(session, tuple(getattr(cfg, "history", ()) or ()))
         return _GeminiLiveSession(
             session=session,
             connection_cm=connection_cm,

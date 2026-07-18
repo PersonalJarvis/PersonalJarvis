@@ -187,6 +187,104 @@ async def test_text_update_creates_tool_free_audio_response(
 
 
 @pytest.mark.asyncio
+async def test_open_session_seeds_prior_call_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUG-088: a mid-call open (cross-family fallback after another
+    provider's transport died) carries the call transcript; the adapter must
+    recreate it as conversation items so the model keeps the context."""
+    holder = _patch_openai_client(monkeypatch)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig(
+            history=(
+                {"role": "user", "text": "let's talk programming languages"},
+                {"role": "assistant", "text": "Sure — which one?"},
+            )
+        )
+    )
+    conn = holder["client"].realtime.last_conn
+
+    assert conn.created_items == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": "let's talk programming languages",
+                }
+            ],
+        },
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Sure — which one?"}],
+        },
+    ]
+    await session.close()
+
+
+@pytest.mark.asyncio
+async def test_transport_rebuild_replays_the_current_history_snapshot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUG-088 x BUG-064: the in-place transport rebuild replaces the
+    connection that held the conversation server-side. The rebuilt transport
+    must receive the orchestrator's latest history snapshot — not the (empty)
+    open-time seed — so the call continues with context."""
+    holder = _patch_openai_client(monkeypatch)
+    monkeypatch.setattr(openai_realtime, "_TRANSCRIPT_OVERDUE_S", 0.0)
+    session = await OpenAIRealtimeProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig(model="gpt-realtime")
+    )
+    session.set_history_snapshot(
+        (
+            {"role": "user", "text": "let's talk programming languages"},
+            {"role": "assistant", "text": "Sure — which one?"},
+            {"role": "ignored-role", "text": "dropped"},
+            {"role": "user", "text": "   "},
+        )
+    )
+    api = holder["client"].realtime
+    conn1 = api.last_conn
+    conn2 = _FakeConn()
+    conn2._events = iter([SimpleNamespace(type="session.updated")])
+    api.extra_conns.append(conn2)
+    conn1._events = iter(
+        [
+            SimpleNamespace(
+                type="response.created",
+                response=SimpleNamespace(id="resp-auto", metadata=None),
+            ),
+            SimpleNamespace(type="input_audio_buffer.speech_started"),
+        ]
+    )
+    session._events = conn1.__aiter__()
+
+    _events = [event async for event in session.receive()]
+
+    assert session._conn is conn2
+    assert conn2.created_items == [
+        {
+            "type": "message",
+            "role": "user",
+            "content": [
+                {
+                    "type": "input_text",
+                    "text": "let's talk programming languages",
+                }
+            ],
+        },
+        {
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type": "text", "text": "Sure — which one?"}],
+        },
+    ]
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_unsolicited_second_response_is_cancelled_without_replaying_audio(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

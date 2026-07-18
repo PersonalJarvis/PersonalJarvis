@@ -4613,9 +4613,11 @@ class RebuildingProvider(FakeProvider):
         self._session_factories = list(session_factories)
         self.open_calls = 0
         self.sessions = []
+        self.opened_cfgs = []
 
     async def open_session(self, cfg):
         self.opened_with = cfg
+        self.opened_cfgs.append(cfg)
         self.open_calls += 1
         factory = self._session_factories[
             min(self.open_calls - 1, len(self._session_factories) - 1)
@@ -4881,6 +4883,99 @@ async def test_transport_rebuild_mirrors_the_frozen_turn_to_the_surface():
     assert kinds.count("turn_complete") == 1
     second_ready = [i for i, k in enumerate(kinds) if k == "audio_ready"][1]
     assert kinds.index("turn_complete") < second_ready
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_transport_rebuild_seeds_the_call_history_into_the_fresh_session():
+    """BUG-088: an in-place transport rebuild used to hand the fresh provider
+    session a completely empty conversation, so the native voice model
+    answered every follow-up with amnesia ("what is the hardest language?"
+    lost its programming-language framing from earlier turns). The rebuild
+    open must carry the bounded call transcript; the first open of a call
+    stays seedless."""
+    provider = RebuildingProvider(
+        [
+            lambda: DyingSession(
+                [
+                    RealtimeEvent(
+                        type="input_transcript",
+                        text="what is the hardest language",
+                        is_final=True,
+                    ),
+                    RealtimeEvent(
+                        type="output_transcript_delta",
+                        text="Malbolge is widely feared.",
+                    ),
+                    RealtimeEvent(type="turn_complete"),
+                ]
+            ),
+            lambda: StayOpenSession([]),
+        ]
+    )
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="rebuild-history-seed",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda m: jsons.append(m) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await _wait_until(lambda: len(provider.sessions) == 2)
+
+    assert provider.opened_cfgs[0].history == ()
+    assert provider.opened_cfgs[1].history == (
+        {"role": "user", "text": "what is the hardest language"},
+        {"role": "assistant", "text": "Malbolge is widely feared."},
+    )
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_completed_turns_refresh_the_session_history_snapshot():
+    """The orchestrator must keep a snapshot-capable provider session current
+    after every completed turn (BUG-088), so a provider-internal transport
+    rebuild (openai_realtime's BUG-064 stack) can restore the conversation
+    without a wire call."""
+
+    class SnapshotSession(FakeSession):
+        def __init__(self, events):
+            super().__init__(events)
+            self.history_snapshots = []
+
+        def set_history_snapshot(self, history):
+            self.history_snapshots.append(history)
+
+    class SnapshotProvider(FakeProvider):
+        async def open_session(self, cfg):
+            self.opened_with = cfg
+            self.session = SnapshotSession(self._events)
+            return self.session
+
+    provider = SnapshotProvider(
+        [
+            RealtimeEvent(type="input_transcript", text="hello", is_final=True),
+            RealtimeEvent(type="output_transcript_delta", text="Hi there."),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = RealtimeVoiceSession(
+        session_id="history-snapshot",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _m: asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await _wait_until(lambda: bool(provider.session.history_snapshots))
+
+    assert provider.session.history_snapshots[-1] == (
+        {"role": "user", "text": "hello"},
+        {"role": "assistant", "text": "Hi there."},
+    )
     await sess.end(reason="test")
 
 

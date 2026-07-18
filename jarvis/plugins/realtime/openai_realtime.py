@@ -119,6 +119,19 @@ def _error_code(event: Any) -> str:
     return str(getattr(error, "code", "") or "").strip()
 
 
+def _normalize_history(history: Any) -> tuple[dict[str, str], ...]:
+    """Keep only well-formed user/assistant text turns from a history seed."""
+    normalized: list[dict[str, str]] = []
+    for message in tuple(history or ()):
+        if not isinstance(message, dict):
+            continue
+        role = str(message.get("role", "") or "")
+        text = str(message.get("text", "") or "").strip()
+        if text and role in {"user", "assistant"}:
+            normalized.append({"role": role, "text": text})
+    return tuple(normalized)
+
+
 def _error_message(event: Any) -> str:
     error = getattr(event, "error", None)
     code = _error_code(event)
@@ -232,6 +245,7 @@ class _OpenAIRealtimeSession:
         session_id: str,
         session_payload: dict[str, Any] | None = None,
         connect_model: str = "",
+        history_seed: tuple[dict[str, str], ...] = (),
     ) -> None:
         self._conn = connection
         self._connection_cm = connection_cm
@@ -241,6 +255,12 @@ class _OpenAIRealtimeSession:
         # Model the transport was opened with — required to rebuild the
         # connection in place when the server goes deaf (BUG-064 escalation).
         self._connect_model = str(connect_model or "")
+        # Bounded call transcript for context restoration (BUG-088). Seeded
+        # from the open-time config and kept current by the orchestrator via
+        # set_history_snapshot after every completed turn, so a BUG-064
+        # transport rebuild can hand the fresh connection the conversation
+        # it would otherwise lose entirely.
+        self._history_seed = _normalize_history(history_seed)
         self._last_transcript_at = float("-inf")
         self._transcript_deadline: float | None = None
         self._rebuild_task: asyncio.Task[None] | None = None
@@ -474,6 +494,43 @@ class _OpenAIRealtimeSession:
                 error=_error_message(event),
                 recoverable=_error_is_recoverable(event),
             )
+
+    def set_history_snapshot(self, history: tuple[dict[str, str], ...]) -> None:
+        """Refresh the transcript a transport rebuild would restore (BUG-088).
+
+        Local state only — never a wire call. The orchestrator pushes the
+        bounded call transcript here after every completed turn.
+        """
+        self._history_seed = _normalize_history(history)
+
+    async def _seed_conversation_history(self, connection: Any) -> None:
+        """Recreate the call transcript as conversation items on a connection.
+
+        Used when a fresh transport replaces one that held the conversation
+        server-side (open with a mid-call seed after a cross-family fallback,
+        or the BUG-064 in-place rebuild). Fails open: an amnesiac session is
+        exactly the pre-BUG-088 behavior and strictly better than no session.
+        """
+        for message in self._history_seed:
+            role = message["role"]
+            content_type = "input_text" if role == "user" else "text"
+            try:
+                await connection.conversation.item.create(
+                    item={
+                        "type": "message",
+                        "role": role,
+                        "content": [
+                            {"type": content_type, "text": message["text"]}
+                        ],
+                    }
+                )
+            except Exception:  # noqa: BLE001 — degrade to an amnesiac session
+                log.warning(
+                    "OpenAI Realtime history seeding failed part-way; the "
+                    "session continues with partial in-call context",
+                    exc_info=True,
+                )
+                return
 
     async def update_session(
         self,
@@ -903,6 +960,10 @@ class _OpenAIRealtimeSession:
             )
             await self.close()
             return
+        # Restore the call transcript before any new turn flows (BUG-088):
+        # the dead transport held the conversation server-side, and without
+        # this seed the rebuilt session answers follow-ups with amnesia.
+        await self._seed_conversation_history(connection)
         # Swap fully initialized state first; only then retire the old
         # transport so send_audio and the receive() hop never observe a
         # half-built connection.
@@ -1019,6 +1080,7 @@ class OpenAIRealtimeProvider:
             session_id=str(uuid4()),
             session_payload=payload,
             connect_model=connect_model,
+            history_seed=tuple(getattr(cfg, "history", ()) or ()),
         )
         try:
             await connection.session.update(session=payload)
@@ -1026,4 +1088,8 @@ class OpenAIRealtimeProvider:
         except BaseException:
             await session.close()
             raise
+        # A mid-call open (cross-family fallback after another provider's
+        # transport died) carries the call transcript; restore it so the
+        # conversation survives the provider crossing (BUG-088).
+        await session._seed_conversation_history(connection)
         return session

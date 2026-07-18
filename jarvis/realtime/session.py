@@ -957,6 +957,11 @@ class RealtimeVoiceSession:
                 modalities=("audio",),
                 silence_duration_ms=_configured_thinking_pause_ms(self._config),
                 tools=self._declared_tools(),
+                # Empty at the first open of a call; after an in-place
+                # transport rebuild (or a mid-call cross-family fallback) it
+                # carries the bounded call transcript so the fresh provider
+                # session keeps understanding follow-up turns (BUG-088).
+                history=self._history_seed(),
             )
             try:
                 providers_left = len(self._providers) - index
@@ -2747,6 +2752,32 @@ class RealtimeVoiceSession:
         self._delegate_history = self._delegate_history[
             -_DELEGATE_HISTORY_MAX_MESSAGES:
         ]
+        # Keep the provider session's rebuild seed current (BUG-088): an
+        # adapter that self-heals its transport internally (openai_realtime's
+        # BUG-064 stack) restores this snapshot into the fresh connection so
+        # the model keeps the call context. Optional capability, probed —
+        # never a wire call, never required (AP-21).
+        session = self._session
+        set_snapshot = getattr(session, "set_history_snapshot", None)
+        if callable(set_snapshot):
+            try:
+                set_snapshot(self._history_seed())
+            except Exception:  # noqa: BLE001, S110 — snapshot is best-effort
+                pass
+
+    def _history_seed(self) -> tuple[dict[str, str], ...]:
+        """The bounded call transcript in provider-neutral seed form.
+
+        Derived from the same ``_delegate_history`` that grounds delegated
+        Brain turns, so both the native voice model (after a transport
+        rebuild) and the delegate see one consistent view of the call.
+        """
+        return tuple(
+            {"role": message.role, "text": str(message.content or "").strip()}
+            for message in self._delegate_history
+            if message.role in {"user", "assistant"}
+            and str(message.content or "").strip()
+        )
 
     def _reset_turn_tracking(self) -> None:
         self._turn_id = ""

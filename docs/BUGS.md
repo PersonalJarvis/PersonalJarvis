@@ -6013,3 +6013,57 @@ is already stable. (3) Pipeline the surface-TTS chunk synthesis ahead of
 playback (prefetch N+1 while N plays) so playback can never starve.
 (4) Keep the Live transport's keepalive fed during long surface-TTS
 playback so the session does not die underneath a healthy call.
+
+## BUG-088: Realtime voice answers follow-ups with total amnesia after an in-place transport rebuild — the fresh provider session starts with an empty conversation (HIGH, FIXED 2026-07-18)
+
+**Symptom.** Mid-call, the realtime voice suddenly stops understanding
+conversational context: a follow-up that plainly depends on earlier turns is
+answered as if the call had just started. Live case (2026-07-18, the same
+session as BUG-086/087): turn 4 discussed the "best and hardest programming
+language to learn"; at 17:14:07 the idle Live websocket died (`1006`,
+keepalive ping timeout) and the BUG-071 in-place rebuild recovered the
+transport in ~2 s; the next user turn — "what is the hardest language in the
+world?" — was answered with natural languages, because for the model the
+question WAS the first turn of a brand-new conversation. The maintainer's
+verdict "he just doesn't get the context, Gemini Live by itself wouldn't do
+this" is literally accurate: raw Gemini Live keeps context per connection —
+it was OUR rebuild that silently replaced the connection.
+
+**Root cause.** Realtime providers hold the conversation server-side, scoped
+to one WebSocket connection. The BUG-064/071/085 transport-rebuild stack
+(deliberately) reopens a fresh connection mid-call — Gemini's Live sessions
+die routinely (GoAway session limits, 1008, idle 1006; four rebuilds in the
+2026-07-18 desktop log alone), so mid-call context loss was not an edge
+case but the EXPECTED cost of every rebuild ("In-provider conversation
+history is lost" was documented as acceptable). The orchestrator-side
+bounded call transcript (`_delegate_history`) survived every rebuild — it
+just was never given to the fresh provider session.
+
+**Fix (provider-neutral seed, capability-gated — AP-21).**
+`RealtimeSessionConfig.history` now carries the bounded call transcript
+(oldest-first `{"role", "text"}` mappings, derived from the same
+`_delegate_history` that grounds delegated Brain turns, so the native model
+and the delegate see ONE consistent view of the call). `_open()` fills it on
+every open: empty at call start, populated at every mid-call reopen
+(in-place rebuild AND cross-family fallback). Adapters restore it through
+their native channel:
+
+- **gemini-live** replays it right after connect via
+  `send_client_content(turns=…, turn_complete=False)` — Gemini's documented
+  initial-history channel; no response generation is triggered.
+- **openai-realtime** recreates it as `conversation.item.create` messages
+  after the handshake, and its provider-internal BUG-064 rebuild replays the
+  orchestrator's LATEST snapshot, kept current after every completed turn
+  through the optional `set_history_snapshot` capability (probed with
+  `getattr`, never required — third-party adapters are untouched).
+
+All seeding fails OPEN: a seeding error degrades to exactly the pre-fix
+amnesiac-but-alive session, never a dead call.
+
+**Guards.**
+`tests/unit/realtime/test_session.py::test_transport_rebuild_seeds_the_call_history_into_the_fresh_session`
+(+ `…::test_completed_turns_refresh_the_session_history_snapshot`),
+`tests/unit/realtime/test_gemini_live.py::test_open_session_seeds_prior_call_history`
+(+ no-history / seeding-failure cases),
+`tests/unit/realtime/test_openai_realtime.py::test_open_session_seeds_prior_call_history`
+(+ `…::test_transport_rebuild_replays_the_current_history_snapshot`).

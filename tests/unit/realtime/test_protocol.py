@@ -39,3 +39,11 @@ def test_session_config_defaults_to_shared_thinking_pause():
     assert RealtimeSessionConfig().silence_duration_ms == (
         SpeechConfig().vad_silence_ms
     ) == 1_500
+
+
+def test_session_config_history_defaults_empty():
+    from jarvis.realtime.protocol import RealtimeSessionConfig
+
+    # The first open of a call carries no history; only a mid-call reopen
+    # (transport rebuild / cross-family fallback) seeds it (BUG-088).
+    assert RealtimeSessionConfig().history == ()

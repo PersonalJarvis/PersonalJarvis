@@ -478,6 +478,140 @@ async def test_tool_call_suppresses_intermediate_turn_complete() -> None:
     assert receive_calls == 3
 
 
+# --- BUG-088: conversation-history seeding into a fresh session -------------
+
+
+class _SeedableConnectCM:
+    """Connect CM whose session records send_client_content calls."""
+
+    def __init__(self) -> None:
+        self.exited = False
+        self.client_content_calls: list[dict] = []
+
+        async def _send_client_content(*, turns=None, turn_complete=True):
+            self.client_content_calls.append(
+                {"turns": turns, "turn_complete": turn_complete}
+            )
+
+        self.session = SimpleNamespace(send_client_content=_send_client_content)
+
+    async def __aenter__(self):
+        return self.session
+
+    async def __aexit__(self, *_args):
+        self.exited = True
+
+
+def _patch_seedable_genai_client(monkeypatch: pytest.MonkeyPatch) -> dict:
+    holder: dict = {}
+
+    class _SeedableLiveAPI:
+        def __init__(self) -> None:
+            self.last_cm: _SeedableConnectCM | None = None
+
+        def connect(self, *, model, config):
+            del model, config
+            self.last_cm = _SeedableConnectCM()
+            return self.last_cm
+
+    def _make_client(*, api_key=None):
+        client = SimpleNamespace(
+            api_key=api_key,
+            aio=SimpleNamespace(live=_SeedableLiveAPI()),
+            closed=False,
+        )
+        holder["client"] = client
+        return client
+
+    from google import genai
+
+    monkeypatch.setattr(genai, "Client", _make_client)
+    return holder
+
+
+@pytest.mark.asyncio
+async def test_open_session_seeds_prior_call_history(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUG-088: a mid-call transport rebuild reopens Gemini with a fresh,
+    empty conversation. The open must replay the bounded call transcript via
+    send_client_content(turn_complete=False) — Gemini's initial-history
+    channel — so follow-up questions keep their earlier-turn grounding."""
+    holder = _patch_seedable_genai_client(monkeypatch)
+    await GeminiLiveProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig(
+            history=(
+                {"role": "user", "text": "let's talk programming languages"},
+                {"role": "assistant", "text": "Sure — which one interests you?"},
+                {"role": "user", "text": "what is the hardest language"},
+            )
+        )
+    )
+
+    live = holder["client"].aio.live
+    calls = live.last_cm.client_content_calls
+    assert len(calls) == 1
+    assert calls[0]["turn_complete"] is False
+    turns = calls[0]["turns"]
+    assert [turn.role for turn in turns] == ["user", "model", "user"]
+    assert [turn.parts[0].text for turn in turns] == [
+        "let's talk programming languages",
+        "Sure — which one interests you?",
+        "what is the hardest language",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_open_session_without_history_sends_no_client_content(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    holder = _patch_seedable_genai_client(monkeypatch)
+    await GeminiLiveProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig()
+    )
+
+    assert holder["client"].aio.live.last_cm.client_content_calls == []
+
+
+@pytest.mark.asyncio
+async def test_history_seeding_failure_keeps_the_session_alive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Seeding fails open: an amnesiac session is exactly the pre-BUG-088
+    behavior and strictly better than no session at all."""
+    async def _broken_send_client_content(*, turns=None, turn_complete=True):
+        del turns, turn_complete
+        raise RuntimeError("seed rejected")
+
+    class _BrokenSeedCM:
+        async def __aenter__(self):
+            return SimpleNamespace(
+                send_client_content=_broken_send_client_content
+            )
+
+        async def __aexit__(self, *_args):
+            return None
+
+    def _make_client(*, api_key=None):
+        return SimpleNamespace(
+            api_key=api_key,
+            aio=SimpleNamespace(
+                live=SimpleNamespace(
+                    connect=lambda *, model, config: _BrokenSeedCM()
+                )
+            ),
+        )
+
+    from google import genai
+
+    monkeypatch.setattr(genai, "Client", _make_client)
+    session = await GeminiLiveProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig(history=({"role": "user", "text": "hello"},))
+    )
+
+    assert session is not None
+
+
 # --- function_declarations schema sanitizing --------------------------------
 
 

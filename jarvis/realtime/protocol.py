@@ -68,11 +68,27 @@ class RealtimeSessionConfig:
     # user's turn, so a natural pause cannot start model reasoning early.
     silence_duration_ms: int = 1500
     tools: tuple[dict[str, Any], ...] = ()
+    # Bounded transcript of the call so far, oldest first, as
+    # ``{"role": "user" | "assistant", "text": ...}`` mappings. A fresh
+    # transport opened MID-CALL (in-place rebuild after a provider disconnect,
+    # or a cross-family fallback) starts with an empty server-side
+    # conversation; seeding this history restores the context the model
+    # needs to understand follow-up turns (BUG-088). Empty at the first open
+    # of a call. Providers that cannot inject history ignore it.
+    history: tuple[dict[str, str], ...] = ()
 
 
 @runtime_checkable
 class RealtimeSession(Protocol):
-    """A live duplex handle (one connection)."""
+    """A live duplex handle (one connection).
+
+    Optional capability (probed with ``getattr``, never required): a session
+    that can seed conversation history into a rebuilt transport may expose
+    ``set_history_snapshot(history: tuple[dict[str, str], ...]) -> None``.
+    The orchestrator calls it with the current bounded call transcript after
+    every completed turn so a provider-internal transport rebuild (e.g. the
+    openai_realtime BUG-064 stack) can restore context without a wire call.
+    """
 
     session_id: str
     creates_responses_automatically: bool
