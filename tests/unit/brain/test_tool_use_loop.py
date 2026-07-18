@@ -481,6 +481,57 @@ async def test_underscore_alias_resolves_to_hyphenated_tool() -> None:
     assert "wiki-recall" in result.executed_tool_names
 
 
+@pytest.mark.asyncio
+async def test_paired_capability_id_resolves_to_native_tool() -> None:
+    """A ``skill.paired.<plugin>`` capability id called as a tool must execute
+    the registered native tool (live 2026-07-18 18:15: gemini called
+    'skill.paired.google_calendar' — advertised verbatim by the capability
+    prompt block — and the turn fell into the anti-silence fallback although
+    the real ``google_calendar`` tool sat registered)."""
+
+    class _CalendarTool:
+        name = "google_calendar"
+        schema: dict[str, Any] = {}
+
+    brain = _AliasCallingBrain("skill.paired.google_calendar")
+    executor = _ExecOK()
+    loop = ToolUseLoop(
+        brain,
+        {"google_calendar": _CalendarTool(), "run_shell": _RunShellTool()},
+        executor,  # type: ignore[arg-type]
+    )
+
+    result = await loop.run([], user_utterance="lies meinen Kalender vor")  # i18n-allow: German utterance fixture under test
+
+    assert executor.calls, "the capability id must resolve to the native tool"
+    assert executor.calls[0][0].name == "google_calendar"
+    assert "google_calendar" in result.executed_tool_names
+
+
+@pytest.mark.asyncio
+async def test_dotted_cli_capability_id_resolves_to_cli_tool() -> None:
+    """``cli.<name>`` (the CLI capability id) must resolve to the registered
+    ``cli_<name>`` tool via the dot-folding canonical alias."""
+
+    class _GcloudTool:
+        name = "cli_gcloud"
+        schema: dict[str, Any] = {}
+
+    brain = _AliasCallingBrain("cli.gcloud")
+    executor = _ExecOK()
+    loop = ToolUseLoop(
+        brain,
+        {"cli_gcloud": _GcloudTool()},
+        executor,  # type: ignore[arg-type]
+    )
+
+    result = await loop.run([], user_utterance="list my gcloud projects")
+
+    assert executor.calls, "'cli.gcloud' must resolve to the registered 'cli_gcloud'"
+    assert executor.calls[0][0].name == "cli_gcloud"
+    assert "cli_gcloud" in result.executed_tool_names
+
+
 class _ExecWithDeniedLog(_ExecOK):
     """Executor fake that records guard-denied publications (Task-3 contract)."""
 

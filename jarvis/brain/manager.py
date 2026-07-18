@@ -4094,6 +4094,24 @@ class BrainManager:
         """
         from jarvis.brain.evidence_gate import EvidenceVerdict, check_evidence_domain
 
+        # AD-S3 (a matched skill IS the capability): a deterministically
+        # skill-matched turn already proves an installed integration owns this
+        # request — the gate must never overrule it. Live 2026-07-18 (voice
+        # session 18:31): the paired-capability sync had not reached this
+        # process' CapabilityRegistry, so a CONNECTED Google Calendar plugin
+        # turn — freshly matched to plugin-google_calendar — still got the
+        # deterministic "Ich habe aktuell keinen Kalenderzugriff" refusal  # i18n-allow: quoted live refusal under discussion
+        # plus a CLI-setup detour. With the skill match as evidence the turn
+        # proceeds; a genuinely dead plugin still fails honestly through its
+        # tool's own "not connected" result.
+        if getattr(self, "_skill_turn_match", None) is not None:
+            log.info(
+                "Evidence gate stood down: turn is owned by matched skill %s "
+                "(AD-S3: a matched skill IS the capability)",
+                getattr(self._skill_turn_match, "name", "?"),
+            )
+            return EvidenceVerdict(kind="pass")
+
         try:
             cfg = self._config.brain.evidence_domains
             if not cfg.enabled:
@@ -7538,7 +7556,9 @@ class BrainManager:
         # from the model's head. Either a connected CLI covers the domain
         # (mandatory-tool directive for this turn) or the answer is a
         # deterministic honest refusal. Pure regex + registry lookup, no LLM
-        # (AP-11). Skill turns already returned above; non-CLI capabilities
+        # (AP-11). Only MISSION skill turns returned above — an inline
+        # plugin-skill turn reaches this point, so _run_evidence_gate itself
+        # stands down on a matched skill (AD-S3); non-CLI capabilities
         # (paired skills, router tools, MCP) make the gate stand down (PASS).
         verdict = self._run_evidence_gate(user_text)
         if verdict.kind == "honest_refusal":

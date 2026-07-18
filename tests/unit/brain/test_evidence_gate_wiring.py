@@ -54,6 +54,33 @@ def test_run_evidence_gate_refuses_without_any_integration(monkeypatch):
     assert verdict.kind == "honest_refusal"
 
 
+def test_run_evidence_gate_stands_down_on_matched_skill_turn(monkeypatch):
+    """AD-S3: a deterministically matched skill IS the capability — the gate
+    must never overrule it. Live 2026-07-18 (voice 18:31): the paired-
+    capability sync had not reached the serving process' CapabilityRegistry,
+    so a CONNECTED Google Calendar plugin turn — freshly matched to
+    plugin-google_calendar — was answered with the deterministic
+    "no calendar access" refusal plus a CLI-setup detour."""
+    import jarvis.clis.shared as shared
+    import jarvis.core.capabilities as cap_mod
+
+    m = _bare_manager()
+    m._config = SimpleNamespace(
+        brain=SimpleNamespace(
+            evidence_domains=SimpleNamespace(
+                enabled=True,
+                domains={"calendar": ["kalender", "steht heute"]},
+            )
+        )
+    )
+    monkeypatch.setattr(shared, "get_active_registry", lambda: None)
+    # Empty capability registry — exactly the live failure state:
+    monkeypatch.setattr(cap_mod, "get_registry", lambda: cap_mod.CapabilityRegistry())
+    m._skill_turn_match = SimpleNamespace(name="plugin-google_calendar")
+    verdict = m._run_evidence_gate("Kannst du mal meinen Kalender vorlesen?")
+    assert verdict.kind == "pass"
+
+
 def test_run_evidence_gate_disabled_passes():
     m = _bare_manager()
     m._config = SimpleNamespace(

@@ -326,7 +326,11 @@ class SkillRegistry:
 
             sync_paired_capabilities(get_registry(), self.list())
         except Exception:  # noqa: BLE001
-            log.debug("paired-capability sync failed", exc_info=True)
+            # WARNING, not debug: a silently missing sync leaves the evidence
+            # gate blind to every connected plugin domain for the whole
+            # process lifetime ("no calendar access" on a connected calendar,
+            # live 2026-07-17 and 2026-07-18) — that must be visible in logs.
+            log.warning("paired-capability sync failed", exc_info=True)
 
     def _emit_reloaded(self) -> None:
         if self.bus is None:

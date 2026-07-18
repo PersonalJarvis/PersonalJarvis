@@ -358,15 +358,17 @@ _ARG_MAXLEN: dict[str, tuple[str, int]] = {
 
 
 def _canonical_tool_name(name: str) -> str:
-    """Hyphen/underscore- and case-insensitive canonical form of a tool name.
+    """Separator- and case-insensitive canonical form of a tool name.
 
     The registered tool surface mixes naming conventions (``wiki-recall`` vs
     ``run_shell``), so models cross-normalize and invent the OTHER spelling of a
-    real tool (live incident 2026-07-05: gemini called ``run-shell``). Both
-    spellings collapse to one canonical key so an unambiguous variant still
-    resolves to the registered tool instead of the missing-tool refusal.
+    real tool (live incident 2026-07-05: gemini called ``run-shell``). Dots are
+    folded too: the system prompt advertises CapabilityRegistry ids like
+    ``cli.gcloud`` whose registered tool is ``cli_gcloud``. All spellings
+    collapse to one canonical key so an unambiguous variant still resolves to
+    the registered tool instead of the missing-tool refusal.
     """
-    return (name or "").strip().lower().replace("-", "_")
+    return (name or "").strip().lower().replace("-", "_").replace(".", "_")
 
 
 def _is_stt_hallucinated(tool_name: str, args: Any) -> tuple[bool, str]:
@@ -459,6 +461,31 @@ class ToolUseLoop:
             return tool, requested
         alias = self._alias_map.get(_canonical_tool_name(requested))
         if alias is None:
+            # Capability ids are NOT tool names, but the system prompt renders
+            # them verbatim (``skill.paired.<plugin>`` from the paired-skill
+            # coupling) and a model occasionally calls one as a tool (live
+            # 2026-07-18 18:15: 'skill.paired.google_calendar' hit the
+            # anti-silence fallback although the real ``google_calendar`` tool
+            # was registered). A paired capability id's tail IS the native
+            # tool / plugin id, so strip the namespace and resolve the rest.
+            try:
+                from jarvis.skills.plugin_coupling import PAIRED_CAP_PREFIX
+            except Exception:  # noqa: BLE001 — resolution aid must never break the loop
+                PAIRED_CAP_PREFIX = "skill.paired."
+            if requested.startswith(PAIRED_CAP_PREFIX):
+                stripped = requested[len(PAIRED_CAP_PREFIX):]
+                tool = self._tools.get(stripped)
+                if tool is None:
+                    inner = self._alias_map.get(_canonical_tool_name(stripped))
+                    if inner is not None:
+                        tool = self._tools.get(inner)
+                        stripped = inner if tool is not None else stripped
+                if tool is not None:
+                    log.info(
+                        "tool_use_loop: model called capability id %r — "
+                        "resolved to registered tool %r", requested, stripped,
+                    )
+                    return tool, stripped
             return None, requested
         tool = self._tools.get(alias)
         if tool is None:
