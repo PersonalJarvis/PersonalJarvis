@@ -239,6 +239,28 @@ in doubt, gate behind an extras group with a graceful no-op and lead the docs
 with the VPS path. Doctrine: [`CLOUD.md`](CLOUD.md) +
 [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md) (doctrine wins). See AP-21/22/23.
 
+### Device-parity triage ritual (BINDING)
+
+"Works on the dev box, broken on device X" has THREE independent causes;
+check them **in order** and never diagnose a cross-device defect without
+stating which layer it is (full runbook:
+[`docs/device-parity-debugging.md`](docs/device-parity-debugging.md)):
+
+1. **Version lag** — the device runs older code. Compare the running version
+   on the device (`GET /api/update/status` → `current`) against the dev box;
+   remember that uncommitted edits and unpublished commits exist NOWHERE
+   else, fresh installs clone public `main`, and the in-app updater only
+   moves between **published GitHub Releases** (a pushed tag without a
+   Release updates nobody).
+2. **Setup divergence** — config, credentials, and data never travel with the
+   code (deliberate, §2). A fresh install starts empty, and key-aware
+   fallback chains (AP-22) degrade QUIETLY — "feature broken on device X" is
+   usually "feature downgraded because that machine lacks the key/provider".
+   Compare provider/key presence, mode, and wake word on both machines and
+   align them in-app before debugging.
+3. **OS gap** — only after layers 1+2 match may an OS-specific defect be
+   assumed; then the OS-parity rules above + `docs/os-parity.md` apply.
+
 ---
 
 ## 4. Naming — internal system "Jarvis-Agents", user-visible brand is DYNAMIC (BINDING)
