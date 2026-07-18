@@ -950,18 +950,17 @@ async def test_split_filler_opener_keeps_realtime_answer_playing():
 
 
 @pytest.mark.asyncio
-async def test_later_segment_leak_audio_not_emitted():
-    # Regression test for the T4 ScrubHoldGate one-chunk-boundary residual:
-    # push_audio's "cleared" branch bundles the release-triggering chunk with
-    # the previously-buffered one, so a LATER segment's first audio chunk
-    # could ride along before its own transcript is scrubbed. The session
-    # must flush release_available() right after sending a clean transcript
-    # so the gate's _cleared flag never spans into the next segment's audio.
-    # The leak segment carries 1500 ms of PCM — beyond what the 23-char clean
-    # first sentence funds under the BUG-069 coverage budget, so it must stay
-    # buffered until its own (leaking) transcript arrives and drops it.
+async def test_audio_after_a_leak_transcript_is_never_emitted():
+    # The gate flows audio unconditionally once the turn opening is vetted
+    # clean (maintainer mandate 2026-07-18, BUG-080 follow-up: zero
+    # gate-caused mid-reply interruptions). A later segment's audio (a2) is
+    # therefore audible BEFORE its own transcript is scrubbed — accepted
+    # trade-off. The trailing kill switch is the remaining guarantee: from
+    # the moment the leaking transcript is detected, the response cancels
+    # and no further provider audio (a3) may reach the user.
     a1 = b"\x11\x22" * 8
     a2 = b"\x33\x44" * 36_000
+    a3 = b"\x55\x66" * 8
     events = [
         RealtimeEvent(
             type="audio_delta", audio=AudioChunk(pcm=a1, sample_rate=24000, timestamp_ns=0)
@@ -973,6 +972,9 @@ async def test_later_segment_leak_audio_not_emitted():
         RealtimeEvent(
             type="output_transcript_delta",
             text="Traceback (most recent call last):\n  File x\nValueError: y\n\n",
+        ),
+        RealtimeEvent(
+            type="audio_delta", audio=AudioChunk(pcm=a3, sample_rate=24000, timestamp_ns=0)
         ),
         RealtimeEvent(type="turn_complete"),
     ]
@@ -989,7 +991,8 @@ async def test_later_segment_leak_audio_not_emitted():
     await sess.wait_finished()
     await sess.end(reason="test")
     assert a1 in binaries
-    assert a2 not in binaries
+    assert a2 in binaries  # flowed before its transcript — mandated trade-off
+    assert a3 not in binaries  # after the leak: kill switch, nothing plays
 
 
 @pytest.mark.asyncio

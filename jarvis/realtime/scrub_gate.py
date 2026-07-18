@@ -7,31 +7,22 @@ decoded audio delta and release it only once its transcript region has passed
 the buffered audio and signals the session to cancel + speak the fallback.
 Regex-only, no LLM (AP-11).
 
-Release accounting is a COVERAGE BUDGET, not a per-delta credit. Providers do
-not pace their output transcription against their audio: a Gemini Live probe
-(2026-07-17) delivered the ENTIRE reply transcript as one delta alongside the
-first audio chunk, and live sessions have shown the opposite — transcription
-falling 5-7 s behind the audio. The previous design released exactly one
-audio push per transcript delta, so an up-front en-bloc transcript starved
-every later chunk until turn end: the audible word-splitting stutter and
-multi-second mid-reply holes of BUG-069. Now each clean transcript char funds
-``_COVERAGE_MS_PER_CHAR`` of audio, cumulatively per response. The rate is
-deliberately FASTER than any real speaking voice (~18 chars/s vs a real
-12-17), so the budget systematically underestimates the true spoken duration
-of the vetted text — released audio therefore always stays inside the span
-the scrubber has already cleared. Audio beyond that span still buffers,
-fail-closed, exactly as before.
-
-The hold is additionally TIME-BOUNDED once a turn's aggregate transcript has
-been vetted clean at least once (BUG-080): Gemini Live's output transcription
-routinely falls 3-22 s behind its audio, and an unbounded mid-reply hold
-turned every such lag into an audible mid-word freeze. After
-``_LAGGING_TRANSCRIPT_GRACE_MS`` the backlog flows even though its own
-transcript has not arrived yet — a deliberate, narrow fail-open: the same
-never-covered audio would have been flushed by ``finalize()`` at the turn
-boundary anyway, and a hard leak in a later transcript delta still cancels
-the remaining output. Before the first clean transcript the gate stays
-strictly fail-closed with no grace.
+The hold applies ONLY to the turn opening. Providers do not pace their
+output transcription against their audio: Gemini Live has delivered the
+entire reply transcript en bloc with the first audio chunk, and live
+sessions have shown the opposite — transcription falling 3-22 s behind the
+audio. Every mid-reply release-accounting scheme tried against that reality
+turned provider lag into audible dead air: the per-delta credit starved
+audio into word-splitting stutter (BUG-069), the coverage budget froze the
+voice mid-word for the whole lag (BUG-080), and the 400 ms bounded grace
+still chopped the reply into rhythmic blocks while transcription lagged
+(maintainer test 2026-07-18). The maintainer mandate is zero gate-caused
+interruptions: once the turn's AGGREGATE transcript has been vetted clean
+at least once, audio flows unconditionally and the scrubber becomes a
+trailing kill switch — a hard leak in a later transcript delta still drops
+everything not yet played and cancels the response. Before that first clean
+transcript the gate stays strictly fail-closed (nothing is audible yet, so
+the hold cannot interrupt anything).
 """
 
 from __future__ import annotations
@@ -72,21 +63,14 @@ _KNOWN_SCRUB_ACTIONS = (
     _HARD_LEAK_ACTIONS | _NON_BLOCKING_SCRUB_ACTIONS | {_RESIDUE_ACTION}
 )
 _TRANSCRIPT_TAIL_MAX_CHARS = 4_096
-# How much audio one vetted transcript char funds. 55 ms/char is ~18 chars/s
-# — faster than any real TTS voice speaks (measured Gemini Live German:
-# ~14 chars/s, i.e. ~70 ms/char) — so the budget UNDERESTIMATES the spoken
-# duration of already-scrubbed text and released audio cannot outrun it.
+# Diagnosis only (no release decision hangs on it): estimated audio one
+# vetted transcript char accounts for. 55 ms/char is ~18 chars/s — faster
+# than any real TTS voice speaks (measured Gemini Live German: ~14 chars/s)
+# — so released audio far beyond this estimate proves transcription lagged.
 _COVERAGE_MS_PER_CHAR = 55.0
 # A finalize() tail this far beyond the coverage estimate cannot be explained
 # by the deliberate underestimation alone; log it as a transcription stall.
 _FINALIZE_EXCESS_LOG_MS = 5_000.0
-# Longest a mid-reply hold may last once the aggregate transcript has been
-# clean at least once (BUG-080). Short enough that a lagging transcription
-# never freezes the voice perceptibly (live 2026-07-17 20:04: a 4.9 s
-# mid-word hole; observed lags run 3-22 s), long enough that a co-timed
-# transcript (typically <300 ms behind its audio) still wins the race — in
-# the healthy case the scrubber keeps vetting text BEFORE its audio plays.
-_LAGGING_TRANSCRIPT_GRACE_MS = 400.0
 
 
 class ScrubHoldGate:
@@ -209,73 +193,34 @@ class ScrubHoldGate:
     async def push_audio(self, chunk: AudioChunk) -> list[AudioChunk]:
         """Buffer or release an audio delta. Returns chunks safe to play now.
 
-        Release order of precedence:
-        1. A clean transcript delta clears everything buffered before it plus
-           this chunk (audio received before the delta belongs to text up to
-           that delta on a co-timed stream) — the pre-budget behavior,
-           unchanged.
-        2. The coverage budget: this chunk flows immediately while cumulative
-           released audio stays inside the estimated spoken duration of all
-           vetted transcript chars. This is what keeps playback continuous
-           when a provider sends its transcript up-front en bloc (BUG-069).
-        3. The lagging-transcript grace (BUG-080): once the aggregate
-           transcript has been clean at least once, a backlog held longer
-           than ``_LAGGING_TRANSCRIPT_GRACE_MS`` flows anyway — the provider
-           transcription is lagging its audio, and an unbounded hold freezes
-           the voice mid-word for the whole lag. A hard leak in a later
-           transcript delta still cancels the remaining output.
-        Anything else buffers, fail-closed.
+        Two states only (maintainer mandate 2026-07-18, BUG-080 follow-up —
+        zero gate-caused mid-reply interruptions):
+        1. Turn opening (aggregate transcript never clean yet): buffer,
+           fail-closed. Nothing is audible yet, so this hold cannot
+           interrupt speech — it only delays the reply start by the co-timed
+           transcript's few-ms head start. A clean transcript delta clears
+           the backlog (via ``_cleared``/``release_available``).
+        2. After the first clean aggregate transcript: everything flows
+           unconditionally, however far the provider transcription lags its
+           audio. The scrubber keeps running as a trailing kill switch — a
+           hard leak in a later delta drops all unplayed audio and cancels
+           the response.
         """
         if self._hard_leak:
             return []
-        if self._cleared:
-            out = self._pending + [chunk]
-            self._pending = []
-            self._pending_audio_ms = 0.0
-            self._cleared = False
-            self._released_ms += _duration_ms(out)
-            self._consume_hold_clock()
-            return out
-        chunk_ms = _duration_ms((chunk,))
-        if self._coverage_active:
-            # Evaluate the WHOLE backlog plus this chunk so a budget that
-            # grew since the backlog formed can un-stick it (FIFO preserved:
-            # either everything flows or everything keeps buffering).
-            total_ms = self._pending_audio_ms + chunk_ms
-            if (
-                self._released_ms + total_ms
-                <= self._covered_chars * _COVERAGE_MS_PER_CHAR
-            ):
-                out = self._pending + [chunk]
-                self._pending = []
-                self._pending_audio_ms = 0.0
-                self._released_ms += total_ms
-                self._consume_hold_clock()
-                return out
-            if (
-                self._pending_since is not None
-                and (time.monotonic() - self._pending_since) * 1_000.0
-                >= _LAGGING_TRANSCRIPT_GRACE_MS
-            ):
-                out = self._pending + [chunk]
-                self._pending = []
-                self._pending_audio_ms = 0.0
-                self._released_ms += total_ms
-                self._consume_hold_clock()
-                log.info(
-                    "scrub gate released %d ms of audio after a %d ms hold "
-                    "— the provider output transcription is lagging behind "
-                    "its audio; a leak in a later transcript delta still "
-                    "cancels the remaining output",
-                    int(total_ms),
-                    int(self.last_hold_ms),
-                )
-                return out
-        if not self._pending and self._pending_since is None:
-            self._pending_since = time.monotonic()
-        self._pending.append(chunk)
-        self._pending_audio_ms += chunk_ms
-        return []
+        if not self._cleared and not self._coverage_active:
+            if not self._pending and self._pending_since is None:
+                self._pending_since = time.monotonic()
+            self._pending.append(chunk)
+            self._pending_audio_ms += _duration_ms((chunk,))
+            return []
+        out = self._pending + [chunk]
+        self._pending = []
+        self._pending_audio_ms = 0.0
+        self._cleared = False
+        self._released_ms += _duration_ms(out)
+        self._consume_hold_clock()
+        return out
 
     def release_available(self) -> list[AudioChunk]:
         """Release buffered audio only after a transcript cleared the gate."""

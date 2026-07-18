@@ -5624,6 +5624,24 @@ reach the user anyway (here: the finalize() flush), and let the kill
 switch — not the hold — be the actual safety mechanism. An unbounded hold
 converts a provider lag into a user-facing outage.
 
+**Amendment (2026-07-18, maintainer mandate).** The 400 ms bounded grace
+was still audible: while the transcription lagged, the gate metered audio
+out in ~400 ms blocks, which the maintainer heard as rhythmic mid-reply
+stutter and rejected. Mid-reply release rationing is now removed entirely
+(third scheme to fail against provider transcription lag, after the
+per-delta credit and the coverage budget — the class rule generalizes:
+ANY mid-reply rationing of a live stream converts provider lag into
+audible artifacts). Final model: the turn opening stays fail-closed until
+the aggregate transcript has been vetted clean once (nothing is audible
+yet, so that hold interrupts nothing); from then on audio flows
+unconditionally and the scrubber acts purely as a trailing kill switch —
+a hard leak in a later delta drops all unplayed audio and cancels the
+response. Accepted trade-off: mid-reply audio can be audible before its
+own transcript is vetted. Guards updated:
+`test_audio_flows_unconditionally_once_the_opening_is_vetted`,
+`test_later_segment_leak_still_cancels_after_a_clean_first_segment`,
+`tests/unit/realtime/test_session.py::test_audio_after_a_leak_transcript_is_never_emitted`.
+
 ---
 
 ## BUG-081: Hanging up a realtime call can hang forever — end() loses its one pump cancel to an asyncio race after a transport rebuild (HIGH, FIXED 2026-07-18)

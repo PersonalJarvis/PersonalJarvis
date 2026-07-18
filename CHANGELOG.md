@@ -11,13 +11,15 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ### Fixed
 
-- **Realtime voice no longer freezes mid-word for seconds.** When the live
+- **Realtime voice no longer pauses or stutters mid-reply.** When the live
   provider's output transcription lagged its audio (Gemini Live: routinely
-  3-22 s), the voice-scrub gate held the audio for the whole lag — an
-  audible dead stop mid-sentence. The mid-reply hold is now bounded at
-  400 ms once the reply's transcript has been vetted clean once; the strict
-  fail-closed turn opening and the hard-leak kill switch are unchanged
-  (BUG-080).
+  3-22 s), the voice-scrub gate held the audio back — first as
+  multi-second dead stops mid-word, then (after an interim 400 ms bounded
+  hold) as rhythmic block-wise stutter. Mid-reply holds are now removed
+  entirely: once the reply's opening transcript has been vetted clean,
+  audio flows unconditionally and the scrubber acts as a trailing kill
+  switch that still cancels the response on a detected leak. The strict
+  fail-closed turn opening is unchanged (BUG-080).
 
 - **macOS 15 no longer kills the app when hotkeys arm or Computer-Use types
   ("Personal Jarvis quit unexpectedly", SIGILL).** pynput resolved the
