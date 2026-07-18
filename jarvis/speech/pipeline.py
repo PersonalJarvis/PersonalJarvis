@@ -6094,11 +6094,27 @@ class SpeechPipeline:
         speaking = False
         post_output_echo_guard_until = 0.0
         semantic_turn_committed = False
+        # Per-segment accumulator of the session's assistant transcript
+        # deltas: registered with the PIPELINE's own text echo guard when the
+        # segment closes, so a session teardown → classic fallback cannot
+        # answer a late speaker echo of realtime output (BUG-089).
+        assistant_transcript_parts: list[str] = []
 
         def _close_output_segment(*, preserve_echo_tail: bool) -> None:
             """Keep half-duplex protection through physical speaker drain."""
             nonlocal post_output_echo_guard_until, speaking
+            was_audible = speaking or bool(assistant_transcript_parts)
             speaking = False
+            # The physical drain has completed here (callers await
+            # playback.finish_turn() first), so the guard's activity stamp is
+            # accurate at this moment.
+            if assistant_transcript_parts:
+                self._register_assistant_speech(
+                    " ".join(assistant_transcript_parts)
+                )
+                assistant_transcript_parts.clear()
+            elif was_audible:
+                self._touch_assistant_speech_activity()
             if preserve_echo_tail:
                 post_output_echo_guard_until = (
                     time.monotonic() + _REALTIME_POST_OUTPUT_ECHO_GUARD_S
@@ -6175,6 +6191,9 @@ class SpeechPipeline:
                     await self._set_turn_state(TurnTakingState.PROCESSING)
                 elif role == "assistant":
                     semantic_turn_committed = True
+                    delta = str(message.get("text", "") or "")
+                    if delta:
+                        assistant_transcript_parts.append(delta)
             elif kind == "thinking":
                 # A short Realtime bridge sentence has finished, while the
                 # delegated action continues. Drain that exact audio segment
@@ -6247,6 +6266,11 @@ class SpeechPipeline:
                     await playback.cancel()
                     speaking = True
                     barge_detector.start_output()
+                    # Pre-synthesis registration mirrors _speak (BUG-084): the
+                    # canned phrase is about to be audible on this machine's
+                    # speakers, and its echo must never become a classic turn
+                    # (BUG-089).
+                    self._register_assistant_speech(cleaned)
                     await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
                     try:
                         # Voice-identity continuity: the realtime session names
