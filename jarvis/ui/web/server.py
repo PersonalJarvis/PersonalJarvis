@@ -978,19 +978,28 @@ class WebServer:
                     shared_key_set = False
                 api_key_set = dedicated_key_set or shared_key_set
                 oauth_connected = False
+                oauth_stale = False
                 # Claude Max users authenticate the subagent via the LIVE OAuth
                 # login in ~/.claude/.credentials.json (read by ClaudeDirectWorker),
                 # not a stored API key — count that as configured so a fresh
                 # Claude-Max user (only ran `claude login`) is not falsely locked.
+                # An EXPIRED-in-place access token still counts as a configured
+                # login: `claude` refreshes it automatically the next time it
+                # runs, so locking the card would tell a logged-in Max user
+                # "not connected" (Windows test-machine report 2026-07-18). The
+                # spawn-time viability gate keeps re-reading the live file.
                 if mapping.jarvis == "claude-api":
                     try:
-                        from jarvis.missions.isolation.env import (
-                            read_live_claude_oauth_token,
+                        from jarvis.claude_credentials import (
+                            freshest_claude_oauth,
                         )
 
-                        oauth_connected = bool(read_live_claude_oauth_token())
+                        snapshot_status = freshest_claude_oauth().status
+                        oauth_connected = snapshot_status == "valid"
+                        oauth_stale = snapshot_status == "expired"
                     except Exception:  # noqa: BLE001
                         oauth_connected = False
+                        oauth_stale = False
                 # claude-api is dual-billed like Codex/Antigravity: the Claude Max
                 # subscription (claude CLI OAuth login) OR an Anthropic API key.
                 # Every other MAPPINGS provider bills per token on an API account.
@@ -1006,7 +1015,7 @@ class WebServer:
                     else "legacy_shared"
                     if shared_key_set
                     else "oauth"
-                    if oauth_connected
+                    if oauth_connected or oauth_stale
                     else "none"
                 )
                 mapping_rows.append(
@@ -1015,11 +1024,12 @@ class WebServer:
                         "worker_slug": mapping.worker_slug,
                         "env_var": mapping.env_var,
                         "env_fallback": mapping.env_fallback,
-                        "key_set": api_key_set or oauth_connected,
+                        "key_set": api_key_set or oauth_connected or oauth_stale,
                         "api_key_set": api_key_set,
                         "dedicated_key_set": dedicated_key_set,
                         "shared_key_set": shared_key_set,
                         "oauth_connected": oauth_connected,
+                        "oauth_stale": oauth_stale,
                         "credential_source": credential_source,
                         "secret_key": secret_key,
                         "dashboard_url": spec.dashboard_url if spec else None,

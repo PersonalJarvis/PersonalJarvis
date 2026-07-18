@@ -392,16 +392,41 @@ def test_claude_api_row_key_set_via_max_oauth(monkeypatch: pytest.MonkeyPatch) -
     assert row["key_set"] is True
 
 
+def _patch_claude_oauth(monkeypatch: pytest.MonkeyPatch, status: str) -> None:
+    """Stub the freshest-login snapshot the claude-api row reads."""
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        "jarvis.claude_credentials.freshest_claude_oauth",
+        lambda **_k: SimpleNamespace(status=status),
+    )
+
+
 def test_claude_api_row_locked_without_key_or_oauth(monkeypatch: pytest.MonkeyPatch) -> None:
     import jarvis.core.config as cfg_mod
 
     monkeypatch.setattr(cfg_mod, "get_secret", lambda *_a, **_k: None)
-    monkeypatch.setattr(
-        "jarvis.missions.isolation.env.read_live_claude_oauth_token", lambda: None
-    )
+    _patch_claude_oauth(monkeypatch, "absent")
     cfg = load_config()
     row = next(r for r in _status(cfg)["mapping"] if r["jarvis"] == "claude-api")
     assert row["key_set"] is False
+
+
+def test_claude_api_row_stays_configured_on_a_stale_oauth_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An EXPIRED-in-place access token is a login that `claude` refreshes on
+    its next run — the card must stay selectable instead of telling a
+    logged-in Max user "not connected" (Windows test-machine 2026-07-18)."""
+    import jarvis.core.config as cfg_mod
+
+    monkeypatch.setattr(cfg_mod, "get_secret", lambda *_a, **_k: None)
+    _patch_claude_oauth(monkeypatch, "expired")
+    cfg = load_config()
+    row = next(r for r in _status(cfg)["mapping"] if r["jarvis"] == "claude-api")
+    assert row["key_set"] is True
+    assert row["oauth_stale"] is True
+    assert row["oauth_connected"] is False
 
 
 def test_subagent_switch_accepts_claude_max_oauth(monkeypatch: pytest.MonkeyPatch) -> None:

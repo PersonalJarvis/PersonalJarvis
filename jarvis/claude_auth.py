@@ -345,7 +345,11 @@ class ClaudeAuthService:
         if oauth_expired:
             # Honest expired-state (2026-07-06): the bearer exists but died in
             # place — presence-only reporting showed a green "Connected via
-            # Claude Max" card while every subagent spawn 401'd.
+            # Claude Max" card while every subagent spawn 401'd. The ADVICE
+            # matters though: a stale ACCESS token refreshes automatically the
+            # next time `claude` runs — a full re-login is only needed when
+            # that refresh fails (Windows test-machine confusion 2026-07-18:
+            # a logged-in Max user was told to sign in again).
             log.info(
                 "claude status: installed=True connected=False (subscription "
                 "login expired)"
@@ -355,8 +359,10 @@ class ClaudeAuthService:
                 connected=False,
                 mode="unknown",
                 message=(
-                    "Claude subscription login has expired — run 'claude /login' "
-                    "to sign in again, or add an Anthropic API key."
+                    "Claude login token has expired — it refreshes itself the "
+                    "next time claude runs: open a terminal and run 'claude' "
+                    "once (only if that fails, sign in again via "
+                    "'claude /login' or add an Anthropic API key)."
                 ),
                 version=version,
                 subscription_type=sub_type,
