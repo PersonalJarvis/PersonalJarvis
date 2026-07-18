@@ -538,6 +538,35 @@ Write-Note $InstallDir
 # transcript. Real errors still surface on stderr either way.
 $GitVerbosity = if ([Console]::IsErrorRedirected) { '--quiet' } else { '--progress' }
 
+# The payload is a single ~80 MB stream and git cannot resume a clone, so a
+# flaky network kills installs two ways (maintainer's Mac, 2026-07-18:
+# "Receiving objects: 45%" frozen for minutes, then "early EOF" /
+# "unexpected disconnect while reading sideband packet"):
+#   1. a stalled stream hangs silently -> low-speed limits turn that into a
+#      fast, visible failure (under 1 KB/s for 30 s = dead connection);
+#   2. a mid-transfer disconnect aborts the install -> retry a clean clone
+#      up to 3 times before giving up with an honest message.
+$GitNetOpts = @('-c', 'http.lowSpeedLimit=1024', '-c', 'http.lowSpeedTime=30')
+
+function Invoke-CloneWithRetry {
+    Write-Note 'downloading ~80 MB - a few minutes on slow connections'
+    $Attempt = 1
+    while ($true) {
+        & git @GitNetOpts clone $GitVerbosity --depth 1 --branch $Branch $RepoUrl $InstallDir
+        if ($LASTEXITCODE -eq 0) { return $true }
+        try { Remove-Item -LiteralPath $InstallDir -Recurse -Force -ErrorAction Stop } catch {}
+        if ($Attempt -ge 3) {
+            Write-Err 'the download kept failing (connection dropped mid-transfer).'
+            Write-Note 'Check your internet connection (Wi-Fi, VPN, proxy), then re-run the'
+            Write-Note 'installer - it is safe to re-run and picks up where it makes sense.'
+            return $false
+        }
+        $Attempt++
+        Write-Note "connection dropped mid-download - retrying ($Attempt/3) ..."
+        Start-Sleep -Seconds 3
+    }
+}
+
 # Self-heal a broken install dir (leftover non-git folder from an earlier or
 # aborted install, or a checkout whose git state no longer updates): keep the
 # old tree as a timestamped sibling backup - never delete - clone fresh, then
@@ -553,8 +582,7 @@ function Invoke-SalvageReclone {
         exit 1
     }
     Write-Note "moved the old directory to $StaleBackup (nothing was deleted)"
-    & git clone $GitVerbosity --depth 1 --branch $Branch $RepoUrl $InstallDir
-    if ($LASTEXITCODE -ne 0) { Write-Err 'git clone failed.'; exit 1 }
+    if (-not (Invoke-CloneWithRetry)) { exit 1 }
     foreach ($Item in @('data', 'jarvis.toml', '.env')) {
         $Old = Join-Path $StaleBackup $Item
         $New = Join-Path $InstallDir $Item
@@ -572,7 +600,7 @@ if (Test-Path (Join-Path $InstallDir '.git')) {
     $UpdateOk = $true
     Push-Location $InstallDir
     try {
-        & git fetch $GitVerbosity --depth 1 origin $Branch
+        & git @GitNetOpts fetch $GitVerbosity --depth 1 origin $Branch
         if ($LASTEXITCODE -ne 0) { $UpdateOk = $false }
         if ($UpdateOk) {
             & git checkout --quiet $Branch
@@ -596,8 +624,7 @@ if (Test-Path (Join-Path $InstallDir '.git')) {
         Write-Note "$InstallDir exists but is not a git repo (leftover from an earlier install) - reinstalling in place."
         Invoke-SalvageReclone
     } else {
-        & git clone $GitVerbosity --depth 1 --branch $Branch $RepoUrl $InstallDir
-        if ($LASTEXITCODE -ne 0) { Write-Err 'git clone failed.'; exit 1 }
+        if (-not (Invoke-CloneWithRetry)) { exit 1 }
         Write-Ok 'downloaded'
     }
 }

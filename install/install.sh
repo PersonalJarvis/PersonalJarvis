@@ -863,6 +863,37 @@ note "$INSTALL_DIR"
 GIT_VERBOSITY='--quiet'
 [ -t 2 ] && GIT_VERBOSITY='--progress'
 
+# The payload is a single ~80 MB stream and git cannot resume a clone, so a
+# flaky network kills installs two ways (maintainer's Mac, 2026-07-18:
+# "Receiving objects: 45%" frozen for minutes, then "early EOF" /
+# "unexpected disconnect while reading sideband packet"):
+#   1. a stalled stream hangs silently -> low-speed limits turn that into a
+#      fast, visible failure (under 1 KB/s for 30 s = dead connection);
+#   2. a mid-transfer disconnect aborts the install -> retry a clean clone
+#      up to 3 times before giving up with an honest message.
+GIT_NET_OPTS='-c http.lowSpeedLimit=1024 -c http.lowSpeedTime=30'
+
+clone_with_retry() {
+    note 'downloading ~80 MB - a few minutes on slow connections'
+    _attempt=1
+    while :; do
+        # shellcheck disable=SC2086  # GIT_NET_OPTS must word-split into -c pairs
+        if git $GIT_NET_OPTS clone "$GIT_VERBOSITY" --depth 1 --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"; then
+            return 0
+        fi
+        rm -rf "$INSTALL_DIR" 2>/dev/null || true
+        if [ "$_attempt" -ge 3 ]; then
+            err 'the download kept failing (connection dropped mid-transfer).'
+            note 'Check your internet connection (Wi-Fi, VPN, proxy), then re-run the'
+            note 'installer - it is safe to re-run and picks up where it makes sense.'
+            return 1
+        fi
+        _attempt=$((_attempt + 1))
+        note "connection dropped mid-download - retrying ($_attempt/3) ..."
+        sleep 3
+    done
+}
+
 # Self-heal a broken install dir (leftover non-git folder from an earlier or
 # aborted install, or a checkout whose git state no longer updates): keep the
 # old tree as a timestamped sibling backup — never delete — clone fresh, then
@@ -877,7 +908,7 @@ salvage_reclone() {
         exit 1
     fi
     note "moved the old directory to $stale_backup (nothing was deleted)"
-    git clone "$GIT_VERBOSITY" --depth 1 --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
+    clone_with_retry || exit 1
     local item
     for item in data jarvis.toml .env; do
         if [ -e "$stale_backup/$item" ] && [ ! -e "$INSTALL_DIR/$item" ]; then
@@ -890,7 +921,8 @@ salvage_reclone() {
 }
 
 if [ -d "$INSTALL_DIR/.git" ]; then
-    if git -C "$INSTALL_DIR" fetch "$GIT_VERBOSITY" --depth 1 origin "$BRANCH" \
+    # shellcheck disable=SC2086  # GIT_NET_OPTS must word-split into -c pairs
+    if git $GIT_NET_OPTS -C "$INSTALL_DIR" fetch "$GIT_VERBOSITY" --depth 1 origin "$BRANCH" \
         && git -C "$INSTALL_DIR" checkout --quiet "$BRANCH" \
         && git -C "$INSTALL_DIR" reset --quiet --hard "origin/$BRANCH"; then
         ok 'updated existing checkout to latest'
@@ -902,7 +934,7 @@ elif [ -e "$INSTALL_DIR" ]; then
     note "$INSTALL_DIR exists but is not a git repo (leftover from an earlier install) - reinstalling in place."
     salvage_reclone
 else
-    git clone "$GIT_VERBOSITY" --depth 1 --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
+    clone_with_retry || exit 1
     ok 'downloaded'
 fi
 
