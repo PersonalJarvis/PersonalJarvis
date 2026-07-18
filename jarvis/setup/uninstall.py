@@ -29,6 +29,7 @@ while we run (open handles keep working from memory), so we delete directly. The
 entirely: they pass ``--keep-folder`` and remove the tree themselves from OUTSIDE
 the venv.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -98,12 +99,79 @@ def _looks_like_jarvis_install(path: Path) -> bool:
         return False
 
 
+def _macos_keychain_item_present(key: str) -> bool | None:
+    """Attributes-only macOS Keychain lookup — never decrypts, never prompts.
+
+    The Keychain guards the secret DATA of each item: any read of the value
+    (``keyring.get_password``) pops one password dialog per item per binary.
+    ``security find-generic-password`` WITHOUT ``-w`` returns only the item's
+    attributes, which needs no access to the secret — so probing all secret
+    slots stays silent. Returns ``None`` when the probe cannot answer (not
+    macOS, or ``security`` unavailable) so the caller falls back."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        res = subprocess.run(  # noqa: S603, S607 — fixed argv, no shell
+            ["security", "find-generic-password", "-s", cfg.KEYRING_SERVICE, "-a", key],
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+    except Exception:  # noqa: BLE001 — probe unavailable → generic fallback
+        return None
+    return res.returncode == 0
+
+
+def _macos_delete_keychain_items(key: str) -> bool:
+    """Delete a macOS Keychain item WITHOUT ever reading it — so no prompt.
+
+    Deletion needs no access to the secret data, only the read does. keyring's
+    delete/verify path reads each item back, which turned one uninstall into
+    dozens of per-item Keychain password dialogs. Duplicate service+account
+    items can exist across keychains and ``security`` deletes one match per
+    call — loop with a small safety cap. Returns True when at least one item
+    was removed."""
+    if sys.platform != "darwin":
+        return False
+    gone_any = False
+    for _ in range(8):
+        try:
+            res = subprocess.run(  # noqa: S603, S607 — fixed argv, no shell
+                ["security", "delete-generic-password", "-s", cfg.KEYRING_SERVICE, "-a", key],
+                capture_output=True,
+                timeout=15,
+                check=False,
+            )
+        except Exception:  # noqa: BLE001 — best effort; delete_secret still runs
+            break
+        if res.returncode != 0:
+            break
+        gone_any = True
+    return gone_any
+
+
+def _file_fallback_copy_present(key: str) -> bool:
+    """A copy in the portable 0600 file store must be uninstalled too.
+
+    Saved there when the OS store was declined or locked; reading it never
+    prompts on any OS."""
+    try:
+        return cfg._FileCredStore().get(cfg.KEYRING_SERVICE, key) is not None
+    except Exception:  # noqa: BLE001 — unreadable fallback counts as absent
+        return False
+
+
 def _keyring_keys_present() -> list[str]:
     """Which of Jarvis's known secret slots are actually stored in the keyring.
 
     Prefers a direct keyring probe (so an ENV-provided key is NOT mistaken for a
     stored one — we never delete ENV vars, they aren't ours). Falls back to the
-    general getter only if the keyring module is unavailable."""
+    general getter only if the keyring module is unavailable.
+
+    On macOS the probe never READS a secret: reading pops one Keychain password
+    dialog per stored item (30+ dialogs before the user even confirmed the
+    uninstall). The attributes-only ``security`` lookup answers presence
+    silently; the file-fallback store is checked alongside it."""
     cfg._ensure_keyring_backend()
     probe = None
     try:
@@ -112,13 +180,19 @@ def _keyring_keys_present() -> list[str]:
         def probe(key: str) -> str | None:
             return keyring.get_password(cfg.KEYRING_SERVICE, key)
     except Exception:  # noqa: BLE001 — no keyring module → fall back to the getter
+
         def probe(key: str) -> str | None:
             return cfg.get_secret(key)
 
     present: list[str] = []
     for spec in SECRETS:
         try:
-            if probe(spec.key):
+            stored = _macos_keychain_item_present(spec.key)
+            if stored is None:
+                stored = bool(probe(spec.key))
+            else:
+                stored = stored or _file_fallback_copy_present(spec.key)
+            if stored:
                 present.append(spec.key)
         except Exception:  # noqa: BLE001, S112 — a single unreadable slot must not abort
             continue
@@ -283,8 +357,7 @@ def _print_plan(plan: UninstallPlan, *, keep_keys: bool, keep_folder: bool) -> N
         )
     if not keep_folder:
         lines.append(
-            f"[brand]•[/] Delete the install folder:\n"
-            f"    [muted]{escape(str(plan.install_dir))}[/]"
+            f"[brand]•[/] Delete the install folder:\n    [muted]{escape(str(plan.install_dir))}[/]"
         )
         lines.append("    [muted](code, the Python environment, jarvis.toml, and data folder)[/]")
     if plan.autostart_entry:
@@ -294,9 +367,7 @@ def _print_plan(plan: UninstallPlan, *, keep_keys: bool, keep_folder: bool) -> N
         )
     else:
         lines.append("[brand]•[/] Login autostart: [muted]nothing to remove[/]")
-    lines.append(
-        "[brand]•[/] Remove the operating-system app launcher and registration"
-    )
+    lines.append("[brand]•[/] Remove the operating-system app launcher and registration")
     if not keep_keys:
         if plan.keyring_keys:
             lines.append(
@@ -328,13 +399,11 @@ def _remove_desktop_registration() -> None:
         else:
             detail = "; ".join(report.warnings)
             _console.print(
-                f"    [bad]⚠ desktop app registration cleanup was incomplete: "
-                f"{escape(detail)}[/]"
+                f"    [bad]⚠ desktop app registration cleanup was incomplete: {escape(detail)}[/]"
             )
     except Exception as exc:  # noqa: BLE001 - never abort uninstall on shell cleanup
         _console.print(
-            f"    [bad]⚠ could not remove desktop app registration: "
-            f"{escape(str(exc))}[/]"
+            f"    [bad]⚠ could not remove desktop app registration: {escape(str(exc))}[/]"
         )
 
 
@@ -358,7 +427,13 @@ def _remove_autostart() -> None:
 def _remove_keys(keys: list[str]) -> int:
     deleted = 0
     for key in keys:
-        if cfg.delete_secret(key):
+        # macOS first: remove the Keychain item without ever reading it, so
+        # the Keychain shows no password dialog (one per item otherwise).
+        macos_gone = _macos_delete_keychain_items(key)
+        # Shared cleanup for every OS: removes the platform keyring entry
+        # (non-macOS) and the file-fallback copy. With the Keychain item
+        # already gone this path reads nothing on macOS and stays silent.
+        if cfg.delete_secret(key) or macos_gone:
             deleted += 1
     if deleted:
         _console.print(f"    [ok]→ removed {deleted} saved key(s) from the keychain.[/]")
@@ -430,8 +505,7 @@ def _remove_folder(install_dir: Path) -> bool:
         try:
             _spawn_windows_self_deleter(install_dir)
             _console.print(
-                "    [ok]→ the install folder will be removed a moment after this "
-                "window closes.[/]"
+                "    [ok]→ the install folder will be removed a moment after this window closes.[/]"
             )
             return True
         except Exception as exc:  # noqa: BLE001
@@ -504,9 +578,10 @@ def run_uninstall(
         # The bootstrap script (uninstall.ps1 / uninstall.sh) deletes the
         # folder next — claiming "removed" here would be dishonest if that
         # final step still fails.
-        _console.print("  [ok]Cleanup done.[/] [muted]Removing the install "
-                       "folder itself…[/]\n")
+        _console.print("  [ok]Cleanup done.[/] [muted]Removing the install folder itself…[/]\n")
     else:
-        _console.print("  [ok]Done.[/] [muted]Personal Jarvis has been removed. "
-                       "Re-run the installer any time to start fresh.[/]\n")
+        _console.print(
+            "  [ok]Done.[/] [muted]Personal Jarvis has been removed. "
+            "Re-run the installer any time to start fresh.[/]\n"
+        )
     return 0

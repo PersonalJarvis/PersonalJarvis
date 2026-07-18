@@ -198,6 +198,151 @@ def test_remove_keys_deletes_each_present_key(monkeypatch: pytest.MonkeyPatch) -
     assert deleted == ["openai_api_key", "gemini_api_key"]
 
 
+# ------------------------------------------- macOS Keychain (prompt-free paths)
+#
+# Regression guards for the uninstall prompt storm: macOS pops one Keychain
+# password dialog per ITEM whose secret DATA is read. The old probe/delete
+# path read every stored slot 2-3 times, so an uninstall with many saved keys
+# meant 30-60 password dialogs. Presence checks and deletions must never
+# decrypt: `security find-generic-password` WITHOUT -w and
+# `security delete-generic-password` touch only attributes.
+
+
+class _FakeCompleted:
+    def __init__(self, returncode: int) -> None:
+        self.returncode = returncode
+
+
+def test_macos_probe_is_attributes_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[list[str]] = []
+
+    def fake_run(argv, **_kwargs):  # noqa: ANN001, ANN003
+        calls.append(list(argv))
+        return _FakeCompleted(0)
+
+    monkeypatch.setattr(uninstall.sys, "platform", "darwin")
+    monkeypatch.setattr(uninstall.subprocess, "run", fake_run)
+
+    assert uninstall._macos_keychain_item_present("openai_api_key") is True
+    argv = calls[0]
+    assert argv[:2] == ["security", "find-generic-password"]
+    assert "-w" not in argv  # -w decrypts the secret → one password dialog per item
+
+
+def test_macos_probe_absent_item(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(uninstall.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        uninstall.subprocess, "run", lambda *a, **k: _FakeCompleted(44)
+    )
+    assert uninstall._macos_keychain_item_present("openai_api_key") is False
+
+
+def test_macos_probe_declines_on_other_platforms(monkeypatch: pytest.MonkeyPatch) -> None:
+    def explode(*_a, **_k):  # noqa: ANN002, ANN003
+        raise AssertionError("security CLI must not run outside macOS")
+
+    monkeypatch.setattr(uninstall.sys, "platform", "linux")
+    monkeypatch.setattr(uninstall.subprocess, "run", explode)
+    assert uninstall._macos_keychain_item_present("openai_api_key") is None
+
+
+def test_macos_delete_loops_over_duplicates_and_stops(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    codes = iter([0, 0, 44])
+    calls: list[list[str]] = []
+
+    def fake_run(argv, **_kwargs):  # noqa: ANN001, ANN003
+        calls.append(list(argv))
+        return _FakeCompleted(next(codes))
+
+    monkeypatch.setattr(uninstall.sys, "platform", "darwin")
+    monkeypatch.setattr(uninstall.subprocess, "run", fake_run)
+
+    assert uninstall._macos_delete_keychain_items("openai_api_key") is True
+    assert len(calls) == 3  # two duplicates removed, then "not found" ends the loop
+    assert calls[0][:2] == ["security", "delete-generic-password"]
+    assert all("-w" not in argv for argv in calls)
+
+
+def test_macos_delete_noop_on_other_platforms(monkeypatch: pytest.MonkeyPatch) -> None:
+    def explode(*_a, **_k):  # noqa: ANN002, ANN003
+        raise AssertionError("security CLI must not run outside macOS")
+
+    monkeypatch.setattr(uninstall.sys, "platform", "win32")
+    monkeypatch.setattr(uninstall.subprocess, "run", explode)
+    assert uninstall._macos_delete_keychain_items("openai_api_key") is False
+
+
+def test_remove_keys_deletes_keychain_item_before_shared_cleanup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    order: list[str] = []
+    monkeypatch.setattr(
+        uninstall,
+        "_macos_delete_keychain_items",
+        lambda key: order.append(f"security:{key}") or True,
+    )
+    monkeypatch.setattr(
+        uninstall.cfg,
+        "delete_secret",
+        lambda key: order.append(f"shared:{key}") or True,
+    )
+    n = uninstall._remove_keys(["openai_api_key"])
+    assert n == 1
+    # The silent Keychain delete must run FIRST so delete_secret's read-back
+    # verification finds nothing to decrypt (= no password dialog).
+    assert order == ["security:openai_api_key", "shared:openai_api_key"]
+
+
+def test_remove_keys_counts_security_only_deletion(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(uninstall, "_macos_delete_keychain_items", lambda key: True)
+    monkeypatch.setattr(uninstall.cfg, "delete_secret", lambda key: False)
+    assert uninstall._remove_keys(["openai_api_key"]) == 1
+
+
+def test_keyring_keys_present_darwin_never_reads_secret_values(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the attributes-only probe answers, no decrypting read may happen."""
+    import keyring
+
+    from jarvis.setup.wizard import SECRETS
+
+    target = SECRETS[0].key
+
+    def boom(*_a, **_k):  # noqa: ANN002, ANN003
+        raise AssertionError("decrypting read — one Keychain password dialog per item")
+
+    monkeypatch.setattr(keyring, "get_password", boom)
+    monkeypatch.setattr(uninstall.cfg, "_ensure_keyring_backend", lambda: None)
+    monkeypatch.setattr(
+        uninstall, "_macos_keychain_item_present", lambda key: key == target
+    )
+    monkeypatch.setattr(uninstall, "_file_fallback_copy_present", lambda key: False)
+
+    assert uninstall._keyring_keys_present() == [target]
+
+
+def test_keyring_keys_present_still_sees_file_fallback_copies(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A key saved to the 0600 file store (Keychain declined) must be removed too."""
+    from jarvis.setup.wizard import SECRETS
+
+    target = SECRETS[0].key
+
+    monkeypatch.setattr(uninstall.cfg, "_ensure_keyring_backend", lambda: None)
+    monkeypatch.setattr(uninstall, "_macos_keychain_item_present", lambda key: False)
+    monkeypatch.setattr(
+        uninstall, "_file_fallback_copy_present", lambda key: key == target
+    )
+
+    assert uninstall._keyring_keys_present() == [target]
+
+
 # ---------------------------------------------------------------- folder removal
 def test_remove_folder_direct_delete(tmp_path: Path) -> None:
     target = tmp_path / "install"
