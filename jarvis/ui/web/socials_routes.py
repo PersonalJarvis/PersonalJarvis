@@ -74,12 +74,11 @@ def _seed_entries() -> list[dict[str, Any]]:
         ("discord", "Discord", "https://discord.gg/x7USduHxbc"),
         ("github", "GitHub (Repo)", "https://github.com/PersonalJarvis/PersonalJarvis"),
         ("github", "GitHub (Profile)", "https://github.com/PersonalJarvis"),
-        # X: the official project account. The first-run seed ships ONLY the
-        # project's own public accounts — never a maintainer's personal profile —
-        # so an arbitrary downloader is not handed a link to someone's private
-        # account (and the depersonalization scrub has nothing to rewrite). A
-        # maintainer adds their own personal profile via the UI if they want it.
-        ("x", "Personal Jarvis", "https://x.com/PersonalJarvis"),
+        # X: the project's public X presence. Maintainer directive 2026-07-18:
+        # the former @PersonalJarvis account is defunct; the project posts from
+        # the maintainer's public handle @Ruben_Luetke, so every X link in the
+        # repo points there. Users edit or remove the entry via the UI.
+        ("x", "Personal Jarvis", "https://x.com/Ruben_Luetke"),
         ("instagram", "Instagram", "https://www.instagram.com/personaljarvis/"),
     ]
     return [

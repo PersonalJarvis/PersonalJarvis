@@ -9,8 +9,9 @@
 # the review) instead of blocking the ship.
 .mailmap
 
-# Maintainer's intentional authorship attribution (explicit decision 2026-06-26):
-# the personal X/Twitter profile @Ruben_Herz is kept REAL in the public socials
+# Maintainer's intentional authorship attribution (explicit decision 2026-06-26;
+# handle switched to @Ruben_Luetke on 2026-07-18):
+# the personal X/Twitter profile is kept REAL in the public socials
 # seed, the README socials line, and the seed's test — an open-source author
 # credit, not an accidental leak. These three files were verified to carry NO
 # other personal data, so exempting them keeps ONLY the handle and leaks nothing

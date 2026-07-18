@@ -99,11 +99,12 @@ block-only	ruben\.luetke10@gmail\.com		private email (must only live in .mailmap
 
 # --- any other consumer-mailbox address: surface for a human look -----------
 warn	[A-Za-z0-9._%+-]+@(?:gmail|gmx|outlook|hotmail|yahoo|protonmail|proton|web)\.[a-z.]+	consumer email address
-# "Herz" scrub REMOVED 2026-06-27 by maintainer decision: @Ruben_Herz is the
-# INTENTIONAL public build-in-public X handle (README social link + socials seed +
-# tests), kept public on purpose. Do NOT re-add a Herz scrub — it would anonymize
-# the maintainer's own chosen public project identity. (The real surname "Lütke"
-# stays scrubbed above; "Herz" is the deliberately-public brand handle.)
+# "Herz" scrub REMOVED 2026-06-27 by maintainer decision: @Ruben_Herz was the
+# INTENTIONAL public build-in-public X handle. 2026-07-18 update: the public
+# handle switched to @Ruben_Luetke (README social links + socials seed + tests)
+# — the maintainer's own chosen public identity; do NOT re-add a Herz or
+# Luetke-handle scrub. (Name rows above are warn-only per the 2026-07-18
+# directive; credentials keep blocking fail-closed.)
 # --- 2026-07-07 sub-agent privacy review: internal note-folder + community ids
 scrub	(?i)bridgemind	exampleserver	real personal Discord server name quoted in live-bug transcripts (9 files) — consistent rename keeps test fixtures self-consistent
 scrub	Unbenanntes Dokument \(\d+\)\.(?:md|pdf)	internal-research-notes.md	private German-named note-doc family (maintainer local notes)

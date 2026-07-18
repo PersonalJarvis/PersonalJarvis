@@ -157,11 +157,11 @@ By contributing, you agree your contribution is licensed under the [MIT License]
 
 <p align="center">
   <a href="https://discord.gg/x7USduHxbc"><img alt="Discord" src="https://img.shields.io/badge/Discord-join_the_server-FFD60A?style=for-the-badge&logo=discord&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
-  <a href="https://x.com/PersonalJarvis"><img alt="X" src="https://img.shields.io/badge/X-follow-FFD60A?style=for-the-badge&logo=x&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
+  <a href="https://x.com/Ruben_Luetke"><img alt="X" src="https://img.shields.io/badge/X-follow-FFD60A?style=for-the-badge&logo=x&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
 </p>
 
 <p align="center">
   <a href="https://discord.gg/x7USduHxbc">Discord</a> ·
-  <a href="https://x.com/PersonalJarvis">X</a> ·
+  <a href="https://x.com/Ruben_Luetke">X</a> ·
   <a href="https://github.com/PersonalJarvis/PersonalJarvis/issues">Issues</a>
 </p>

@@ -29,7 +29,7 @@ from fastapi.testclient import TestClient
 DISCORD_URL = "https://discord.gg/x7USduHxbc"
 REPO_URL = "https://github.com/PersonalJarvis/PersonalJarvis"
 PROFILE_URL = "https://github.com/PersonalJarvis"
-JARVIS_X_URL = "https://x.com/PersonalJarvis"
+JARVIS_X_URL = "https://x.com/Ruben_Luetke"
 INSTAGRAM_URL = "https://www.instagram.com/personaljarvis/"
 
 
@@ -71,14 +71,14 @@ def test_get_seeds_on_first_run(client: TestClient) -> None:
     urls = [e["url"] for e in entries]
     assert REPO_URL in urls
     assert PROFILE_URL in urls
-    assert JARVIS_X_URL in urls  # the official project X account
+    assert JARVIS_X_URL in urls  # the project's public X presence
     assert INSTAGRAM_URL in urls
     assert any(e["platform"] == "instagram" for e in entries)
-    # The seed carries the official project X account and no personal profile —
-    # an arbitrary downloader is never handed a link to a maintainer's account.
+    # Maintainer directive 2026-07-18: the project's X presence is the
+    # maintainer's public handle (@Ruben_Luetke) — the former @PersonalJarvis
+    # account is defunct, so every X link points at the live handle.
     x_labels = [e["label"] for e in entries if e["platform"] == "x"]
     assert x_labels == ["Personal Jarvis"]
-    assert not any("Ruben" in e["label"] or "Ruben" in e["url"] for e in entries)
     # Every entry carries the stable wire shape.
     for e in entries:
         assert set(e) >= {"id", "platform", "label", "url", "enabled", "order"}
