@@ -151,6 +151,9 @@ async def test_falls_over_to_first_working_provider():
 
 
 async def test_returns_none_only_when_every_provider_fails():
+    from jarvis.memory.wiki.telemetry import telemetry
+
+    before = telemetry.get("wiki_all_providers_failed")
     reg = _FakeRegistry(fail_providers=set(_ALL))
     chain = build_wiki_provider_chain(
         primary="openrouter", model_override="", available=reg.available()
@@ -165,6 +168,10 @@ async def test_returns_none_only_when_every_provider_fails():
     )
     assert result is None  # honest give-up, not a crash
     assert set(reg.tried) == _ALL  # it really tried all families
+    # The AP-22 honest signal must actually fire — a mis-bound telemetry
+    # import once made this inc raise AttributeError into a swallowed
+    # except, so the counter never moved and no test noticed.
+    assert telemetry.get("wiki_all_providers_failed") == before + 1
 
 
 async def test_first_provider_success_does_not_try_others():

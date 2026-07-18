@@ -29,7 +29,7 @@ from collections.abc import Callable
 from typing import Any
 
 from jarvis.core.redact import safe_preview
-from jarvis.memory.wiki import telemetry
+from jarvis.memory.wiki.telemetry import telemetry
 
 log = logging.getLogger(__name__)
 
