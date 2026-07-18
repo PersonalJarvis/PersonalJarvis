@@ -296,14 +296,18 @@ class TriggerConfig(BaseModel):
     # user-editable via /api/settings/keybinds. Read directly at bootstrap.
     hotkey_hangup: str = "f1+f2"
     wake_word: WakeWordConfig = Field(default_factory=WakeWordConfig)
-    # When true (default), every voice turn ends after Jarvis finishes
-    # speaking and a fresh "Hey Jarvis" wake is required to start the
-    # next turn. When false, the pipeline keeps the mic open after the
-    # response (legacy conversation mode introduced 2026-05-05) and only
-    # hangs up via HANGUP_RE, the idle timeout, or a hotkey. User mandate
-    # 2026-05-18: single-turn is the canonical behaviour — open-mic mode
-    # made Jarvis trigger on every word in the room.
-    single_turn_mode: bool = True
+    # When false (default), the pipeline keeps the mic open after the
+    # response (conversation mode) and only hangs up via HANGUP_RE, the idle
+    # timeout, or a hotkey. When true, every voice turn ends after Jarvis
+    # finishes speaking and a fresh wake is required for the next turn.
+    # History: single-turn became the default 2026-05-18 because open-mic mode
+    # then triggered on every word in the room; the endpointing/echo fixes
+    # since removed that failure, and shipping single-turn made every fresh
+    # install feel broken ("Jarvis hangs up after each answer") while the
+    # maintainer's local jarvis.toml quietly overrode it — the AP-23 class.
+    # Maintainer directive 2026-07-18: conversation mode is the shipped
+    # behaviour; single-turn stays available as an opt-in.
+    single_turn_mode: bool = False
     # Silence window (seconds) after which a CONVERSATION-mode voice session
     # (``single_turn_mode = false``) auto-hangs-up while waiting for the next
     # user turn. Set to 0 — or any value <= 0 — to DISABLE the auto-hangup

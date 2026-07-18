@@ -213,10 +213,11 @@ async def test_wellbeing_prompt_gets_voice_fallback_when_brain_returns_filler() 
 
 @pytest.mark.asyncio
 async def test_single_turn_mode_ends_session_after_response() -> None:
-    # User mandate 2026-05-18: every voice turn must end after the response
-    # so the next turn requires a fresh "Hey Jarvis". If this test fails the
-    # bug is back -- Jarvis stays in LISTENING and the open mic catches
-    # background conversation without a wake word.
+    # Opt-in single-turn path (shipped default until 2026-07-18): with
+    # [trigger].single_turn_mode = true every voice turn ends after the
+    # response and the next turn requires a fresh wake. If this test fails
+    # the opt-in is broken -- Jarvis stays in LISTENING even though the user
+    # asked for one turn per wake.
     pipe = _make_pipeline(
         FakeSTT(text="Wie spaet ist es"),
         brain_response="Es ist kurz nach drei.",  # i18n-allow
@@ -233,8 +234,8 @@ async def test_single_turn_mode_ends_session_after_response() -> None:
 
 @pytest.mark.asyncio
 async def test_conversation_mode_keeps_session_listening_when_opted_in() -> None:
-    # Opt-in legacy path: when [trigger].single_turn_mode = false in
-    # jarvis.toml, the desktop launcher wires
+    # Shipped default since 2026-07-18: with [trigger].single_turn_mode =
+    # false the desktop launcher wires
     # ``continue_listening_after_response=True`` and the pipeline keeps the
     # mic open after the response. Idle-timeout / hangup-regex / hotkey are
     # then the only ways out -- same semantics as 2026-05-05 production.
