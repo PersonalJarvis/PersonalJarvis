@@ -9,6 +9,51 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [1.1.0] — 2026-07-18
+
+### Added
+
+- **Desktop control is on by default for fresh installs.** New installs can
+  ask Jarvis to operate the computer out of the box; every action still runs
+  through the safety tiers, and the switch remains in Settings.
+- **Live "Test" button on the Claude / Codex / Antigravity agent cards** —
+  verify a connected coding CLI actually responds, right from Settings.
+- **A release-safety gate against half-shipped UI bundles.** Commits and
+  pushes are now blocked automatically when the shipped web UI references
+  files that were never added to the repository — the failure previously
+  produced a permanently blank window on every fresh install.
+
+### Changed
+
+- **Conversation mode is now the default.** After Jarvis answers, the mic
+  stays open for a natural follow-up; one-turn-per-wake becomes an explicit
+  opt-in (`[trigger].single_turn_mode = true`). The developer speech CLI now
+  honors the same setting.
+- Field-tuned routing defaults (spawn / smalltalk / marker lists) now ship
+  for every install instead of living only in the maintainer's local config.
+
+### Fixed
+
+- **Jarvis no longer answers its own voice.** Speaker output picked up by
+  the microphone could start a phantom turn (BUG-084); the echo is now
+  suppressed at the source.
+- **One-click updates got honest and resilient.** A transient release-check
+  failure no longer breaks the update button; a staged-but-unfinished update
+  is surfaced as "finish the update" instead of silently starting over; a
+  failed install after restart reports the rollback instead of pretending
+  nothing happened; the status overlay never offers a non-newer version.
+- **The uninstaller stops the running app first** instead of failing to
+  delete files that were still in use.
+- **The model picker no longer crashes on fresh installs** that have no
+  `[brain.providers]` section yet.
+- **Installed coding CLIs are detected reliably** even when the desktop
+  app's environment lacks their install directories on PATH.
+- **macOS: the transparent window backing is re-asserted on every reveal**,
+  with loud diagnostics when the pyobjc layer is missing (BUG-075
+  follow-up).
+- Dependency security floors: `mcp>=1.28.1`, `json-repair` declared
+  explicitly; the Windows-ARM64 `cryptography` exposure is documented.
+
 ## [1.0.12] — 2026-07-18
 
 ### Fixed
