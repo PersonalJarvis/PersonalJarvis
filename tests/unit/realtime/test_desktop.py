@@ -233,3 +233,101 @@ def test_energy_pre_gate_passes_loud_speech_through() -> None:
     # Amplitude 2000/32768 ≈ 0.061 RMS — normal speaking volume.
     assert detector.feed(_pcm_frames(2000)) is not None
     assert calls  # the model ran and confirmed
+
+
+# --- BUG-084: adaptive echo floor ----------------------------------------- #
+# A FIXED RMS floor cannot cover every speaker/mic coupling: on built-in
+# laptop speakers next to the built-in mic the assistant's own voice lands far
+# above the static 0.010 gate, Silero (which cannot tell whose voice it hears)
+# confirms, and the false barge truncates the answer and seeds the self-talk
+# loop. The detector therefore calibrates a per-answer echo floor from the
+# grace-window frames (pure speaker echo by construction) and keeps updating
+# it from a LAGGED rolling window, so echo at the calibrated loudness is
+# gated while a user speaking clearly above it still confirms.
+
+
+class _AlwaysSpeechModel:
+    """Silero stand-in that calls every frame 'speech' — mirrors the real
+    model's behavior on the assistant's own voice, so ONLY the energy gate
+    can tell echo and user apart."""
+
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def _ensure_model(self) -> None: ...
+
+    def _prob(self, _frame) -> float:
+        self.calls += 1
+        return 1.0
+
+
+def _echo_calibrated_detector(
+    *, echo_amplitude: int, grace_frames: int = 30, **kwargs
+) -> tuple[DesktopRealtimeBargeInDetector, _AlwaysSpeechModel]:
+    model = _AlwaysSpeechModel()
+    detector = DesktopRealtimeBargeInDetector(grace_s=60.0, model=model, **kwargs)
+    detector.warmup()
+    detector.start_output()
+    # Grace window: playback echo only — calibration data, never preroll.
+    assert detector.feed(_pcm_frames(*[echo_amplitude] * grace_frames)) is None
+    # End the grace period deterministically (no sleeps in unit tests).
+    detector._started_at = -1e9
+    return detector, model
+
+
+def test_adaptive_floor_gates_echo_louder_than_the_static_floor() -> None:
+    # Echo at amplitude 2000 (~0.061 RMS) sails over the static 0.010 gate —
+    # exactly the Mac speakers+mic case. After grace calibration the learned
+    # floor (~1.4 × 0.061) must keep gating it: no ONNX call, no confirm.
+    detector, model = _echo_calibrated_detector(
+        echo_amplitude=2000, consecutive_frames=3
+    )
+    assert detector.feed(_pcm_frames(*[2000] * 20)) is None
+    assert model.calls == 0  # pure echo never reached the model
+    # A user speaking clearly above the echo still confirms.
+    assert detector.feed(_pcm_frames(*[6000] * 5)) is not None
+    assert model.calls >= 3
+
+
+def test_adaptive_floor_lag_lets_sustained_user_speech_confirm() -> None:
+    # Quiet room during grace → floor stays at the static minimum. Sustained
+    # genuine speech must then confirm even though its own frames enter the
+    # rolling history: the lag excludes them from their own baseline, so
+    # speech can never raise its own bar before the confirm run completes.
+    detector, model = _echo_calibrated_detector(
+        echo_amplitude=100, consecutive_frames=12
+    )
+    assert detector.feed(_pcm_frames(*[2000] * 12)) is not None
+    assert model.calls >= 12
+
+
+def test_adaptive_floor_disabled_with_zero_min_rms() -> None:
+    # min_frame_rms=0.0 is the explicit logic-test / opt-out hook: it must
+    # disable the adaptive floor as well, not only the static gate.
+    detector, model = _echo_calibrated_detector(
+        echo_amplitude=2000, consecutive_frames=3, min_frame_rms=0.0
+    )
+    assert detector.feed(_pcm_frames(*[2000] * 3)) is not None
+    assert model.calls >= 3
+
+
+def test_start_output_resets_echo_calibration() -> None:
+    detector, _model = _echo_calibrated_detector(
+        echo_amplitude=2000, consecutive_frames=3
+    )
+    assert len(detector._rms_history) > 0
+    detector.start_output()
+    assert len(detector._rms_history) == 0
+
+
+def test_grace_frames_calibrate_but_never_become_preroll() -> None:
+    detector, model = _echo_calibrated_detector(
+        echo_amplitude=2000, grace_frames=10, consecutive_frames=3
+    )
+    # Calibration data was collected …
+    assert len(detector._rms_history) == 10
+    # … but nothing from the grace window is buffered as user preroll and
+    # the model was never consulted during grace.
+    assert len(detector._pre_buffer) == 0
+    assert detector._candidate_frames == []
+    assert model.calls == 0

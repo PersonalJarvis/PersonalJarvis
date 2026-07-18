@@ -43,6 +43,34 @@ class DesktopRealtimeBargeInDetector:
     # Trade-off (documented): whisper-quiet barge-in no longer triggers.
     _DEFAULT_MIN_FRAME_RMS = 0.010
 
+    # Adaptive echo floor (BUG-084): a FIXED floor cannot cover every
+    # speaker/mic coupling — on built-in laptop speakers next to the built-in
+    # mic the assistant's own voice lands far above 0.010, so the static gate
+    # passes it, Silero (which cannot tell whose voice it hears) confirms, and
+    # the false barge truncates the answer AND opens the self-talk loop. The
+    # only word-agnostic discriminator we own is the echo's measured loudness:
+    # while output is active the detector keeps a rolling window of recent
+    # frame RMS values and derives the gate floor from its 90th percentile
+    # times a safety margin — i.e. "louder than the loudest sustained thing
+    # the room currently produces", which during playback IS our own echo.
+    # The newest ``_ADAPTIVE_FLOOR_LAG_FRAMES`` frames are EXCLUDED from the
+    # baseline so a user starting to speak is judged against the pure-echo
+    # past, never against their own rising voice (the lag must stay above
+    # ``consecutive_frames`` or sustained genuine speech would raise its own
+    # bar before it can confirm). The floor is clamped to the static minimum
+    # below and ``_DEFAULT_ADAPTIVE_FLOOR_CAP`` above so a shouting user can
+    # always break through. The cap must sit ABOVE any realistic echo RMS
+    # (loud open speakers reach ~0.06-0.15) — a cap below the echo level
+    # would re-open the false-barge hole it exists to close; 0.25 still
+    # leaves loud close-range speech (>0.25) able to interrupt worst-case
+    # coupling. ``min_frame_rms=0.0`` disables both gates (test hook /
+    # explicit opt-out).
+    _DEFAULT_ADAPTIVE_FLOOR_MARGIN = 1.4
+    _DEFAULT_ADAPTIVE_FLOOR_CAP = 0.25
+    _ADAPTIVE_FLOOR_LAG_FRAMES = 16
+    _ADAPTIVE_FLOOR_WINDOW_FRAMES = 96
+    _ADAPTIVE_FLOOR_MIN_BASELINE_FRAMES = 8
+
     def __init__(
         self,
         *,
@@ -51,6 +79,8 @@ class DesktopRealtimeBargeInDetector:
         consecutive_frames: int = 12,
         pre_speech_frames: int = 10,
         min_frame_rms: float | None = None,
+        adaptive_floor_margin: float | None = None,
+        adaptive_floor_cap: float | None = None,
         model: Any = None,
     ) -> None:
         self._grace_s = max(0.0, float(grace_s))
@@ -59,6 +89,24 @@ class DesktopRealtimeBargeInDetector:
         self._pre_speech_frames = max(1, int(pre_speech_frames))
         self._min_frame_rms = (
             self._DEFAULT_MIN_FRAME_RMS if min_frame_rms is None else max(0.0, float(min_frame_rms))
+        )
+        self._adaptive_floor_margin = (
+            self._DEFAULT_ADAPTIVE_FLOOR_MARGIN
+            if adaptive_floor_margin is None
+            else max(1.0, float(adaptive_floor_margin))
+        )
+        self._adaptive_floor_cap = (
+            self._DEFAULT_ADAPTIVE_FLOOR_CAP
+            if adaptive_floor_cap is None
+            else max(self._min_frame_rms, float(adaptive_floor_cap))
+        )
+        # The lag must exceed the confirm run so genuine sustained speech is
+        # always judged against a baseline formed BEFORE it started.
+        self._adaptive_floor_lag = max(
+            self._consecutive_frames + 4, self._ADAPTIVE_FLOOR_LAG_FRAMES
+        )
+        self._rms_history: deque[float] = deque(
+            maxlen=self._ADAPTIVE_FLOOR_WINDOW_FRAMES + self._adaptive_floor_lag
         )
         self._model = model or SileroEndpointer(
             speech_threshold=self._speech_threshold
@@ -91,6 +139,10 @@ class DesktopRealtimeBargeInDetector:
         self._active = True
         self._started_at = time.monotonic()
         self._reset_buffers()
+        # Fresh echo calibration per response: the grace window (pure speaker
+        # echo by construction) re-trains the adaptive floor for the volume /
+        # coupling of THIS answer instead of trusting a stale estimate.
+        self._rms_history.clear()
 
     def stop_output(self) -> None:
         self._active = False
@@ -101,17 +153,28 @@ class DesktopRealtimeBargeInDetector:
 
         if not self._active or not self._ready or len(pcm16) < 2:
             return None
-        if time.monotonic() - self._started_at < self._grace_s:
-            # Never let speaker echo collected during the grace period become
-            # user preroll once detection arms.
-            self._reset_buffers()
-            return None
 
         usable = len(pcm16) - (len(pcm16) % 2)
         samples = np.frombuffer(pcm16[:usable], dtype=np.dtype("<i2"))
         if self._residual.size:
             samples = np.concatenate([self._residual, samples])
         frame_count = samples.size // VAD_FRAME_SAMPLES
+
+        if time.monotonic() - self._started_at < self._grace_s:
+            # Never let speaker echo collected during the grace period become
+            # user preroll once detection arms — but DO measure it: grace-time
+            # frames are our own playback echo, the calibration data the
+            # adaptive floor is built from (BUG-084).
+            if frame_count:
+                framed_samples = frame_count * VAD_FRAME_SAMPLES
+                grace_frames = samples[:framed_samples].reshape(
+                    frame_count, VAD_FRAME_SAMPLES
+                )
+                for frame in grace_frames:
+                    self._rms_history.append(self._frame_rms(frame))
+            self._reset_buffers()
+            return None
+
         if frame_count == 0:
             self._residual = samples.copy()
             return None
@@ -122,11 +185,15 @@ class DesktopRealtimeBargeInDetector:
 
         for index, frame in enumerate(frames):
             normalized = frame.astype(np.float32) / 32768.0
-            # Energy pre-gate (BUG-062): quiet frames never reach the ONNX
-            # model — this is both the loop-load fix and the echo damper.
-            if self._min_frame_rms > 0.0 and float(
-                np.sqrt(np.mean(np.square(normalized)))
-            ) < self._min_frame_rms:
+            frame_rms = float(np.sqrt(np.mean(np.square(normalized))))
+            # Energy pre-gate (BUG-062) + adaptive echo floor (BUG-084):
+            # frames below the gate never reach the ONNX model — this is the
+            # loop-load fix and the echo damper in one. The adaptive floor is
+            # computed BEFORE this frame enters the history, so every frame is
+            # judged against the lagged pure-echo past, never against itself.
+            gate = self._effective_floor()
+            self._rms_history.append(frame_rms)
+            if gate > 0.0 and frame_rms < gate:
                 probability = 0.0
             else:
                 probability = float(self._model._prob(normalized))
@@ -160,6 +227,29 @@ class DesktopRealtimeBargeInDetector:
 
         self._residual = trailing
         return None
+
+    @staticmethod
+    def _frame_rms(frame: np.ndarray) -> float:
+        normalized = frame.astype(np.float32) / 32768.0
+        return float(np.sqrt(np.mean(np.square(normalized))))
+
+    def _effective_floor(self) -> float:
+        """Current energy gate: static minimum or the learned echo floor.
+
+        ``min_frame_rms == 0.0`` disables gating entirely (adaptive included) —
+        the explicit logic-test / opt-out hook. Otherwise the floor is the 90th
+        percentile of the lagged RMS history times the safety margin, clamped
+        to [static minimum, cap]. With too little history (fresh detector, no
+        playback echo measured yet) it falls back to the static minimum.
+        """
+
+        if self._min_frame_rms <= 0.0:
+            return 0.0
+        baseline = list(self._rms_history)[: -self._adaptive_floor_lag]
+        if len(baseline) < self._ADAPTIVE_FLOOR_MIN_BASELINE_FRAMES:
+            return self._min_frame_rms
+        learned = self._adaptive_floor_margin * float(np.percentile(baseline, 90))
+        return min(self._adaptive_floor_cap, max(self._min_frame_rms, learned))
 
     def _reset_buffers(self) -> None:
         self._residual = np.empty(0, dtype=np.dtype("<i2"))

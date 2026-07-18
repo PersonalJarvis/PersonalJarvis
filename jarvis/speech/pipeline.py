@@ -12,6 +12,7 @@ hotkeys remain active alongside wake detection.
 from __future__ import annotations
 
 import asyncio
+import difflib
 import enum
 import hashlib
 import logging
@@ -38,7 +39,7 @@ from jarvis.audio.capture import (
 from jarvis.audio.chime import CHIME_PCM, CHIME_SAMPLE_RATE, DISCONNECT_PCM, READY_PCM
 from jarvis.audio.device_init import wait_for_stable_audio_devices
 from jarvis.audio.player import AudioPlayer
-from jarvis.audio.vad import VAD_FRAME_SAMPLES, SileroEndpointer
+from jarvis.audio.vad import SileroEndpointer
 from jarvis.audio.vad_reasons import FORCED_CUT_REASONS
 from jarvis.brain.output_filter import scrub_for_voice
 from jarvis.core.events import (
@@ -3333,6 +3334,7 @@ class SpeechPipeline:
             # fall back to its English voice on German text (the British-accent
             # symptom; forensic 2026-06-23).
             lang_code = self._bcp47(ann_lang)
+            self._register_assistant_speech(scrubbed.cleaned)
             try:
                 chunks = self._tts.synthesize(scrubbed.cleaned, language_code=lang_code)
             except TypeError:
@@ -3701,11 +3703,13 @@ class SpeechPipeline:
         if animate:
             await self._transition("SPEAKING")
         try:
+            self._register_assistant_speech(cleaned)
             try:
                 chunks = self._tts.synthesize(cleaned, language_code=self._bcp47(lang))
             except TypeError:
                 chunks = self._tts.synthesize(cleaned)
             playback_result = await self._player.play_chunks(chunks)
+            self._touch_assistant_speech_activity()
             if self._playback_confirmed(playback_result):
                 self._emit_spoken(cleaned, lang, SPOKEN_KIND_SUBAGENT)
         except Exception as exc:  # noqa: BLE001
@@ -6934,7 +6938,102 @@ class SpeechPipeline:
         until_ns = time.time_ns() + int(seconds * 1_000_000_000)
         previous = getattr(self, "_input_suppressed_until_ns", 0)
         self._input_suppressed_until_ns = max(previous, until_ns)
-        log.info("TTS-Echo-Sperre aktiv: %.1fs (%s).", seconds, reason)
+        log.info("TTS echo lock armed: %.1fs (%s).", seconds, reason)
+
+    # --- Self-echo TEXT guard (BUG-084) --------------------------------- #
+    # Last line of defense behind the acoustic gates (barge-in energy floor,
+    # post-TTS suppression window): when a "user" utterance that arrives
+    # during / right after our own playback consists — fuzzily, STT garbles
+    # echo — of nothing but words Jarvis itself just spoke, it is the speaker
+    # echo that slipped every acoustic gate, never a turn to answer. Without
+    # this, ONE missed false barge loops forever: reply → echo transcribed →
+    # brain answers itself → new reply → new echo (the Mac test machine's
+    # multi-turn self-conversation, 2026-07-18). Conservative by design:
+    # near-total containment in the assistant's own recent words is required,
+    # so a genuine user answer that ADDS anything is always kept (fail-open).
+
+    _ECHO_TEXT_GUARD_WINDOW_S = 6.0
+    _ECHO_TEXT_REF_TTL_S = 30.0
+    _ECHO_TEXT_MIN_TOKENS = 3
+    _ECHO_TEXT_MIN_OVERLAP = 0.8
+    # 0.8, not lower: at 0.75 near-misses like "gut"→"guten" (ratio exactly
+    # 0.75) count as contained and a genuine short user answer built from the
+    # assistant's own words plus one inflected token would be eaten. Real STT
+    # echo garble sits above 0.8:
+    # "misch"→"mich" 0.89, "hörn"→"hören" 0.89.  # i18n-allow: German STT-garble ratio anchors under test
+    _ECHO_TEXT_FUZZY_CUTOFF = 0.8
+
+    @staticmethod
+    def _echo_guard_tokens(text: str) -> list[str]:
+        return re.findall(r"\w+", text.lower())
+
+    def _register_assistant_speech(self, text: str) -> None:
+        """Remember what Jarvis is about to voice as an echo-guard reference."""
+
+        tokens = self._echo_guard_tokens(text)
+        if not tokens:
+            return
+        refs = getattr(self, "_assistant_echo_refs", None)
+        if refs is None:
+            refs = deque(maxlen=8)
+            self._assistant_echo_refs = refs
+        refs.append((tokens, time.time_ns()))
+        self._touch_assistant_speech_activity()
+
+    def _touch_assistant_speech_activity(self) -> None:
+        """Stamp 'assistant audio was active around now' for the echo guard."""
+
+        self._assistant_speech_activity_ns = time.time_ns()
+
+    def _looks_like_self_echo(self, text: str) -> bool:
+        """True when ``text`` is (fuzzily) contained in Jarvis' recent speech.
+
+        Only consulted while playback activity is recent
+        (``_ECHO_TEXT_GUARD_WINDOW_S``); outside that window a user may echo
+        Jarvis verbatim all they want. Tokens match fuzzily
+        (``difflib``-ratio ≥ ``_ECHO_TEXT_FUZZY_CUTOFF``) because STT garbles
+        echo (see the ratio anchors at ``_ECHO_TEXT_FUZZY_CUTOFF`` above).
+        Utterances shorter than ``_ECHO_TEXT_MIN_TOKENS`` are never judged —
+        short commands ("stopp") must always reach their handlers. References
+        are checked per spoken phrase plus the concatenation of the two
+        newest phrases, so an echo spanning a sentence boundary still matches
+        without building a big vocabulary union that common words could
+        false-match.
+        """
+
+        activity_ns = getattr(self, "_assistant_speech_activity_ns", 0)
+        if activity_ns <= 0:
+            return False
+        now_ns = time.time_ns()
+        if now_ns - activity_ns > int(self._ECHO_TEXT_GUARD_WINDOW_S * 1e9):
+            return False
+        utterance = self._echo_guard_tokens(text)
+        if len(utterance) < self._ECHO_TEXT_MIN_TOKENS:
+            return False
+        refs = list(getattr(self, "_assistant_echo_refs", ()) or ())
+        ttl_ns = int(self._ECHO_TEXT_REF_TTL_S * 1e9)
+        fresh = [tokens for tokens, ref_ns in refs if now_ns - ref_ns <= ttl_ns]
+        if not fresh:
+            return False
+        candidates = list(fresh)
+        if len(fresh) >= 2:
+            candidates.append(fresh[-2] + fresh[-1])
+        allowed_novel = len(utterance) // 6
+        for reference in candidates:
+            matched = sum(
+                1
+                for token in utterance
+                if token in reference
+                or difflib.get_close_matches(
+                    token, reference, n=1, cutoff=self._ECHO_TEXT_FUZZY_CUTOFF
+                )
+            )
+            if (
+                matched / len(utterance) >= self._ECHO_TEXT_MIN_OVERLAP
+                and (len(utterance) - matched) <= allowed_novel
+            ):
+                return True
+        return False
 
     def _voice_confirm_pending(self) -> bool:
         """True while the brain is awaiting a spoken yes/no for a deferred
@@ -7307,7 +7406,17 @@ class SpeechPipeline:
         # Endcards. Diese Phrasen nie ans Brain — sonst ruft Gemini
         # open_app('WDR mediagroup GmbH im Auftrag des WDR, 2020').
         if _STT_HALLUCINATION_RE.search(text):
-            log.info("🚫 STT-Halluzination erkannt (%r) — skip Brain.", text[:80])
+            log.info("🚫 STT hallucination detected (%r) — skip brain.", text[:80])
+            await self._set_turn_state(TurnTakingState.LISTENING)
+            return True
+
+        # Self-echo TEXT guard (BUG-084): an utterance that is (fuzzily)
+        # nothing but words Jarvis itself just voiced is speaker echo that
+        # slipped the acoustic gates — answering it is how the assistant ends
+        # up in a multi-turn conversation with itself. Skip the brain, keep
+        # listening; a genuine user turn that adds anything new always passes.
+        if self._looks_like_self_echo(text):
+            log.info("🔁 Own speaker echo suppressed (%r) — skip brain.", text[:80])
             await self._set_turn_state(TurnTakingState.LISTENING)
             return True
 
@@ -8478,6 +8587,9 @@ class SpeechPipeline:
                 if tracker is not None and not tts_request_marked:
                     tts_request_marked = True
                     tracker.mark(LatencyPhase.TTS_REQUEST_SENT)
+                # Echo-guard reference (BUG-084): every voiced sentence may
+                # come back through the mic as speaker echo.
+                self._register_assistant_speech(sentence)
                 try:
                     gen = self._tts.synthesize(sentence, language_code=lang_code)
                 except TypeError:
@@ -8669,14 +8781,37 @@ class SpeechPipeline:
                 and not barge_task.cancelled()
                 and barge_task.result()
             ):
-                log.info("🛑 Barge-in — stoppe TTS-Playback")
+                log.info("🛑 Barge-in — stopping TTS playback")
                 barged = True
                 self._player.stop()
+            elif (
+                barge_task in done
+                and not barge_task.cancelled()
+                and not play_task.done()
+            ):
+                # Barge monitor returned WITHOUT barging (mic ended/error)
+                # while the answer is still playing. Falling through to the
+                # ``finally`` here used to cancel the producer + playback and
+                # behead a perfectly healthy streamed answer (latent; exposed
+                # once the monitor could finish fast, BUG-084). Mirror
+                # ``_speak``: wait playback out under the same device-wedge
+                # watchdog, still abortable by a hangup.
+                tail_done = await self._await_playback(play_task, {hangup_task})
+                if play_task not in tail_done:
+                    if hangup_task in tail_done and not hangup_task.cancelled():
+                        log.info("📵 Hangup during TTS — aborting turn")
+                        barged = True
+                    # else: watchdog already aborted the wedged device + logged.
+                    self._player.stop()
+                elif not play_task.cancelled():
+                    exc = play_task.exception()
+                    if exc is not None:
+                        log.exception("Streaming playback error: %s", exc)
             elif play_task in done and not play_task.cancelled():
                 # Whole turn played out naturally; surface any playback error.
                 exc = play_task.exception()
                 if exc is not None:
-                    log.exception("Streaming-Playback-Fehler: %s", exc)
+                    log.exception("Streaming playback error: %s", exc)
         except Exception as exc:  # noqa: BLE001
             log.exception("Streaming-TTS-Turn-Fehler: %s", exc)
         finally:
@@ -8707,6 +8842,12 @@ class SpeechPipeline:
         # least one sentence reached TTS; an all-empty turn marks nothing.
         if tracker is not None and spoken_anything:
             tracker.mark(LatencyPhase.TTS_STREAM_DONE)
+        # Echo-guard activity stamp (BUG-084) — unconditional: a barged turn
+        # ends with NO post-TTS suppression (a real interrupter's words must
+        # not be dropped), which is exactly the window where a FALSE barge's
+        # echo tail becomes the next "user" turn. The text guard needs to
+        # know audio was just active to catch that.
+        self._touch_assistant_speech_activity()
         if not barged:
             self._suppress_session_input_after_tts("response")
         return "".join(full_text_parts), barged
@@ -9658,6 +9799,9 @@ class SpeechPipeline:
         # Used by _emit_completeness_signal to pick earcon vs. spoken cue.
         self._session_has_assistant_spoken = True
         lang_code = self._bcp47(language)
+        # Echo-guard reference (BUG-084): whatever we voice may come back
+        # through the mic as speaker echo.
+        self._register_assistant_speech(text)
         try:
             chunks = self._tts.synthesize(text, language_code=lang_code)
         except TypeError:
@@ -9733,6 +9877,11 @@ class SpeechPipeline:
             and self._playback_confirmed(play_task.result())
         ):
             self._emit_spoken(text, language, kind)
+        # Echo-guard activity stamp (BUG-084) — unconditional: after a FALSE
+        # barge (our own echo confirmed as "user speech") there is no post-TTS
+        # suppression at all, so the text guard is the only thing standing
+        # between the echo tail and a brain turn.
+        self._touch_assistant_speech_activity()
         if not barged:
             self._suppress_session_input_after_tts("response")
         return barged
@@ -9740,26 +9889,44 @@ class SpeechPipeline:
     async def _barge_monitor(
         self, *, grace_s: float = 1.5, respect_input_suppression: bool = False
     ) -> bool:
-        """Lauscht auf einer zweiten Mic-Instanz, ob der User während Jarvis'
-        TTS-Ausgabe zu sprechen beginnt. Returnt ``True`` sobald das der Fall ist.
+        """Listen on a second mic instance for the user speaking over Jarvis'
+        TTS output. Returns ``True`` as soon as that is confirmed.
 
-        User-Feedback 2026-04-22: Barge-in feuerte fast sofort nach TTS-Start
-        (z.B. ~600 ms) und wuergte die Antwort ab — Ursache war Speaker→Mic-
-        Echo (Kopfhoerer-Leakage oder Open-Back). Ohne Hardware-AEC koennen
-        wir nur per Heuristik filtern. Jetzt aggressiv konservativ:
-          - 1500 ms Grace-Period (TTS-Start + initiale Echo-Phase)
-          - Silero-Threshold 0.97 (nur bei *sehr* klarem Speech)
-          - 12 consecutive Frames (~380 ms) — Echos sind kurz/fluktuierend
-        Ergebnis: Barge-in greift nur wenn User klar ueber die TTS-Ausgabe
-        spricht, nicht bei Lautsprecher-Rueckkopplung.
+        History: barge-in used to fire almost immediately after TTS start
+        (~600 ms) and truncated the answer — speaker→mic echo (user feedback
+        2026-04-22). The conservative policy (1.5 s grace, Silero 0.97, 12
+        consecutive frames ≈ 380 ms) fixed headphone leakage but NOT open
+        laptop speakers next to a built-in mic: there the assistant's own
+        voice is loud, sustained, and perfectly speech-shaped, so Silero —
+        which cannot tell whose voice it hears — confirmed a "barge" against
+        the assistant itself. That false confirm truncated the audible answer
+        AND (because a barge keeps the session listening with no post-TTS
+        suppression) let the echo tail become the next "user" turn: the
+        BUG-084 self-talk loop on the Mac test machine.
+
+        This monitor therefore reuses the shared
+        ``DesktopRealtimeBargeInDetector`` (the BUG-062 realtime fix) instead
+        of a bare Silero loop, gaining its two defenses:
+
+        - the static RMS energy pre-gate (quiet frames never reach ONNX), and
+        - the BUG-084 adaptive echo floor, calibrated per answer from the
+          grace-window frames — which during playback ARE our own echo.
+
+        Every ``feed`` runs in a worker thread: the per-frame ONNX inference
+        used to run synchronously on the voice event loop and starved the
+        ~120 ms playback write batches on slow CPUs (BUG-062 cause #2 —
+        constant stutter / multi-second pauses on the Intel-Mac test machine).
         """
+        from jarvis.realtime.desktop import DesktopRealtimeBargeInDetector
+
+        detector = DesktopRealtimeBargeInDetector(grace_s=grace_s)
         try:
-            await asyncio.sleep(grace_s)
+            # Model load off the event loop — it shares the turn with live
+            # audio playback.
+            await asyncio.to_thread(detector.warmup)
         except asyncio.CancelledError:
             return False
-
-        detector = SileroEndpointer(speech_threshold=0.97)
-        detector._ensure_model()
+        detector.start_output()
 
         try:
             async with MicrophoneCapture(
@@ -9767,8 +9934,6 @@ class SpeechPipeline:
                 max_queue_chunks=REALTIME_QUEUE_CHUNKS,
                 device_priority=self._input_priority,
             ) as mic:
-                residual = np.empty(0, dtype=np.float32)
-                speech_run = 0
                 async for chunk in mic.stream():
                     # Honour the global mute (orb double-click → _muted=True):
                     # while muted the user has told us to stop listening, so a
@@ -9777,7 +9942,6 @@ class SpeechPipeline:
                     # _muted. Without this the thinking-interrupt monitor aborted a
                     # muted-but-still-working turn (live bug 2026-07-01).
                     if getattr(self, "_muted", False):
-                        speech_run = 0
                         continue
                     # Echo-suppression (spec §4.2): while our own ACK/preamble
                     # audio is still within the post-TTS suppression window, skip
@@ -9789,28 +9953,13 @@ class SpeechPipeline:
                         until_ns = getattr(self, "_input_suppressed_until_ns", 0)
                         chunk_ts = getattr(chunk, "timestamp_ns", 0) or time.time_ns()
                         if until_ns > 0 and chunk_ts < until_ns:
-                            speech_run = 0
                             continue
-                    samples = pcm_bytes_to_np(chunk.pcm)
-                    buf = np.concatenate([residual, samples])
-                    n_full = len(buf) // VAD_FRAME_SAMPLES
-                    if n_full == 0:
-                        residual = buf
-                        continue
-                    frames = buf[: n_full * VAD_FRAME_SAMPLES].reshape(n_full, VAD_FRAME_SAMPLES)
-                    residual = buf[n_full * VAD_FRAME_SAMPLES:]
-                    for frame in frames:
-                        prob = detector._prob(frame)
-                        if prob >= 0.97:
-                            speech_run += 1
-                            if speech_run >= 12:
-                                return True
-                        else:
-                            speech_run = 0
+                    if await asyncio.to_thread(detector.feed, chunk.pcm) is not None:
+                        return True
         except asyncio.CancelledError:
             return False
         except Exception as exc:  # noqa: BLE001
-            log.warning("Barge-in-Monitor Fehler: %s", exc)
+            log.warning("Barge-in monitor error: %s", exc)
         return False
 
 

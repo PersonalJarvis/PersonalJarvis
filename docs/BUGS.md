@@ -5777,3 +5777,84 @@ rebuild with a scoped `tccutil` reset (and long-term, a stable signing
 identity). Never surface a permission request control the OS will ignore:
 macOS prompts exactly once per TCC state, and reads some probes only at
 process start — the UI must model both or it gaslights the user.
+
+## BUG-084: Classic pipeline answers ITSELF on open speakers — false self-barge truncates the reply and its echo becomes the next "user" turn (CRITICAL, FIXED 2026-07-18)
+
+**Symptom (Intel-Mac test machine, v1.0.12, built-in speakers + mic).** The
+assistant's speech is severely chopped — mid-sentence pauses of 5-6 s,
+skipped words — and the session transcript shows the assistant holding a
+conversation WITH ITSELF across multiple turns: its reply tail comes back
+(STT-garbled, e.g. "freut mich zu hören" heard as "Misch zu hören") as a <!-- i18n-allow: forensic quote of the garbled echo under test -->
+"user" turn, which the brain politely answers, producing a new reply, a new
+echo, and so on — an unbounded self-talk loop.
+
+**Root cause — BUG-062 was fixed ONLY in the realtime path.** The classic
+pipeline's `_barge_monitor` (`jarvis/speech/pipeline.py`) still had both
+BUG-062 failure modes, plus a loop-amplifier of its own:
+
+1. **No energy floor before Silero.** Every mic frame went straight to the
+   VAD model, which cannot tell WHOSE voice it hears. On open speakers next
+   to the built-in mic the assistant's own voice is loud, sustained and
+   perfectly speech-shaped → prob ≥ 0.97 for ≥ 12 frames → false barge-in →
+   `player.stop()` mid-sentence (the skipped words).
+2. **Per-frame ONNX synchronously on the voice event loop** for the entire
+   answer — starved the ~120 ms playback write batches on the slow CPU →
+   PortAudio underruns (the stutter); a ≥ 5 s gap additionally tripped the
+   `_TTS_PLAYBACK_STALL_S` watchdog and aborted the whole turn.
+3. **The loop-amplifier:** a barge keeps the session LISTENING and skips
+   `_suppress_session_input_after_tts` entirely (correct for a REAL
+   interrupter — their words must not be dropped). After a FALSE barge that
+   means: no echo lock, mic live, the room still carrying the assistant's
+   own voice → the echo is transcribed → dispatched to the brain → answered.
+   One false barge is enough to seed the endless self-conversation.
+
+**Fix (three layers, all cross-platform).**
+
+1. **Shared detector:** `_barge_monitor` now reuses
+   `DesktopRealtimeBargeInDetector` (the tuned BUG-062 realtime fix — static
+   RMS floor 0.010, grace, 0.97 × 12 frames) instead of its own bare Silero
+   loop, and every `feed` runs via `asyncio.to_thread` so inference never
+   shares the event loop with live playback writes.
+2. **Adaptive echo floor (in the shared detector, so realtime gains it
+   too):** a fixed floor cannot cover every speaker/mic coupling — loud
+   built-in-speaker echo sails over 0.010. The detector now calibrates a
+   per-answer floor from the grace-window frames (pure speaker echo by
+   construction) and keeps updating it from a rolling window of frame RMS
+   values: floor = clamp(1.4 × P90, static floor, 0.25). The newest ~16
+   frames are EXCLUDED from the baseline (lag > confirm run), so a user
+   starting to speak is judged against the pure-echo past, never against
+   their own rising voice. `min_frame_rms=0.0` still disables all gating.
+3. **Self-echo TEXT guard (last line of defense, `_looks_like_self_echo`):**
+   inside the post-playback window, an utterance that is (fuzzily, cutoff
+   0.8 — STT garbles echo) contained in the assistant's own recently spoken
+   words with essentially no novel token is dropped before the brain (log:
+   "Own speaker echo suppressed"), keeping the session listening. Fail-open
+   by design: < 3 tokens are never judged (short commands always pass), any
+   novel content keeps the turn, and outside the 6 s activity window the
+   user may quote Jarvis verbatim at will. This breaks the loop even when a
+   false barge slips the acoustic gates — and covers the barge path's
+   deliberate lack of post-TTS suppression.
+
+**Latent bug exposed and fixed on the way:** when the barge monitor returned
+WITHOUT barging while the streamed answer was still playing,
+`_brain_streaming` fell through to its `finally` and cancelled the producer +
+playback — beheading a healthy answer. Invisible before (the old monitor
+slept through its grace before touching anything and practically never ended
+early); `_speak` always had the wait-it-out branch. `_brain_streaming` now
+mirrors it.
+
+**Guards.** `tests/unit/speech/test_self_echo_guard.py` (garbled echo
+flagged, novel-content answers kept, short commands immune, window lapse,
+cross-sentence echo); `tests/unit/realtime/test_desktop.py` (adaptive floor
+gates echo louder than the static floor, lag keeps sustained user speech
+confirmable, `min_frame_rms=0.0` opt-out, `start_output` recalibration,
+grace frames calibrate but never become preroll).
+
+**Class rule (sharpens BUG-062's).** Half-duplex voice on open speakers must
+treat its own output as hostile input on EVERY path that consumes the mic —
+fixing one surface (realtime) while the sibling (classic pipeline) keeps the
+bare detector just moves the bug. An interrupt detector needs an energy floor
+*derived from the echo actually being measured*, not a hardcoded guess; and
+any state transition that deliberately skips echo suppression (real barge-in)
+needs a content-level backstop, because it will eventually be entered by
+mistake.
