@@ -4822,6 +4822,63 @@ async def test_mid_turn_stream_end_with_capability_salvages_then_rebuilds():
 
 
 @pytest.mark.asyncio
+async def test_transport_rebuild_mirrors_the_frozen_turn_to_the_surface():
+    """BUG-085: a dead transport never delivers its own turn_complete, so
+    after the in-place rebuild the desktop surface stayed in its half-duplex
+    'assistant is speaking' echo-guard state forever — every microphone frame
+    was fed only to the local barge-in detector, never uploaded, and the
+    freshly rebuilt session heard nothing (live forensic 2026-07-18 16:17:
+    Gemini's Live-API session limit aborted the connection as turn 21
+    drained; the user spoke into a swallowed microphone for 20 s). The
+    rebuild must mirror the frozen turn to the surface: one turn_complete
+    BEFORE the fresh audio_ready."""
+    provider = RebuildingProvider(
+        [
+            lambda: EndingSession(
+                [
+                    RealtimeEvent(
+                        type="input_transcript", text="hi", is_final=True
+                    ),
+                    RealtimeEvent(
+                        type="output_transcript_delta", text="Hi there."
+                    ),
+                    RealtimeEvent(
+                        type="audio_delta",
+                        audio=AudioChunk(
+                            pcm=b"\x01\x02" * 8,
+                            sample_rate=24000,
+                            timestamp_ns=0,
+                        ),
+                    ),
+                ]
+            ),
+            lambda: StayOpenSession([]),
+        ]
+    )
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="rebuild-surface-mirror",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda m: jsons.append(m) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await _wait_until(
+        lambda: len([m for m in jsons if m.get("type") == "audio_ready"]) == 2
+    )
+
+    kinds = [str(m.get("type", "")) for m in jsons]
+    # The scripted first transport dies mid-turn WITHOUT a provider
+    # turn_complete event, so the single one here must come from the rebuild.
+    assert kinds.count("turn_complete") == 1
+    second_ready = [i for i, k in enumerate(kinds) if k == "audio_ready"][1]
+    assert kinds.index("turn_complete") < second_ready
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
 async def test_transport_death_after_end_call_converts_to_hangup():
     """The user already asked to end the call (end_call acknowledged); a
     dead transport cannot speak the goodbye. The session must end as the

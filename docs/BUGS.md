@@ -5858,3 +5858,57 @@ bare detector just moves the bug. An interrupt detector needs an energy floor
 any state transition that deliberately skips echo suppression (real barge-in)
 needs a content-level backstop, because it will eventually be entered by
 mistake.
+
+## BUG-085: Realtime session goes permanently DEAF after an in-place transport rebuild — the surface's echo guard swallows every microphone frame (CRITICAL, FIXED 2026-07-18)
+
+**Symptom (live 2026-07-18 16:17, gemini-live, 21-turn conversation).** At
+the ~10-minute Gemini Live session limit the server sent `GoAway`
+(`time_left=50s`) and then aborted the WebSocket with `1008 policy
+violation` — right as turn 21's 35-second reply finished draining from the
+speaker. The BUG-071 in-place rebuild worked: a fresh transport was open
+~2 s later, no error surfaced, the call stayed "alive". But the user then
+spoke for 20 more seconds into a session that heard NOTHING — no
+transcript, no orb/taskbar reaction, no reply — until they hotkey-killed
+the call.
+
+**Root cause — the rebuild froze the turn for the RECORDER but never told
+the SURFACE.** A natural turn boundary sends the surface
+`{"type": "turn_complete"}` and then publishes the turn-completed event;
+`_rebuild_transport` only published the event. The desktop surface's
+half-duplex closure (`jarvis/speech/pipeline.py`) leaves its `speaking`
+echo-guard state only on session JSON (`turn_complete` / `tts_cancel` /
+`thinking` / `hangup`) — and the dead transport can never deliver its own
+`turn_complete`. With `speaking` stuck True, `_send_microphone` routes
+every frame into `DesktopRealtimeBargeInDetector.feed()` and uploads
+nothing. The detector is deliberately conservative (static RMS floor,
+0.97 × 12-frame confirm, BUG-084's adaptive echo floor still elevated from
+35 s of loud playback), so normal-volume "is anyone there?" speech never
+confirms a barge-in: the microphone is swallowed locally, forever. The
+rebuilt transport was healthy — it simply never received a byte.
+
+**Fix (both sides, transport-neutral).**
+
+1. **Session side (`jarvis/realtime/session.py::_rebuild_transport`):**
+   mirror the frozen turn to the surface exactly like a natural boundary —
+   send `{"type": "turn_complete"}` (best-effort) before
+   `_publish_turn_completed()` and the fresh `audio_ready`. The surface
+   drains any salvaged audio tail, closes the output segment, and returns
+   to LISTENING; in single-turn mode this also ends the call exactly as a
+   completed turn should.
+2. **Desktop surface (`jarvis/speech/pipeline.py`, `audio_ready`
+   handler):** defense in depth — a transport that just completed its
+   handshake cannot be mid-output, so a still-open output segment at
+   `audio_ready` is stale pre-rebuild state and is drained + closed before
+   the new sample rate applies.
+
+**Guards.**
+`tests/unit/realtime/test_session.py::test_transport_rebuild_mirrors_the_frozen_turn_to_the_surface`
+(exactly one rebuild-sourced `turn_complete`, ordered before the second
+`audio_ready`).
+
+**Class rule (extends BUG-071's).** An in-place transport rebuild must
+resynchronize EVERY party that tracks per-turn state — the provider session
+object alone is not the session. Any surface state machine that can only be
+released by a message from the (now dead) transport will wedge; whoever
+declares the old turn finished must broadcast that fact to all surfaces,
+not just to the recorder.

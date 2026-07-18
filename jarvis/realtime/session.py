@@ -1985,6 +1985,21 @@ class RealtimeVoiceSession:
                 len(self._pending_tool_events),
             )
             self._pending_tool_events = []
+        # Mirror the frozen turn to the SURFACE exactly like a natural
+        # boundary does (turn_complete JSON, then publish): the dead
+        # transport can never deliver its own turn_complete, and without it
+        # the desktop surface stays in its half-duplex "assistant is
+        # speaking" echo-guard state forever — every later microphone frame
+        # is fed only to the local barge-in detector, never uploaded, so the
+        # freshly rebuilt transport hears NOTHING and the call sits deaf
+        # until the user hotkey-kills it (BUG-085, live forensic 2026-07-18
+        # 16:17: Gemini's Live-API session limit aborted the connection with
+        # 1008 right as turn 21's reply drained; the rebuild succeeded in
+        # ~2 s but the user spoke into a swallowed microphone for 20 s).
+        try:
+            await self._send_json({"type": "turn_complete"})
+        except Exception:  # noqa: BLE001, S110 — surface mirror is best-effort
+            pass
         await self._publish_turn_completed()
         self._gate = ScrubHoldGate(self._language)
         self._output_active = False

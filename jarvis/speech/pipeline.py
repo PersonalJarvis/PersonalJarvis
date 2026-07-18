@@ -6136,6 +6136,18 @@ class SpeechPipeline:
             nonlocal semantic_turn_committed, speaking
             kind = str(message.get("type", ""))
             if kind == "audio_ready":
+                if speaking:
+                    # A transport that just completed its handshake cannot be
+                    # mid-output: an open segment here is stale state from
+                    # before an in-place rebuild whose dead turn never sent
+                    # its turn_complete. Left open, the echo guard feeds
+                    # every microphone frame only to the local barge-in
+                    # detector and the rebuilt session hears nothing
+                    # (BUG-085). Drain politely first so a salvaged audio
+                    # tail keeps its last words.
+                    await playback.finish_turn()
+                    _close_output_segment(preserve_echo_tail=True)
+                    await self._set_turn_state(TurnTakingState.LISTENING)
                 playback.set_sample_rate(
                     int(message.get("output_sample_rate", 24_000) or 24_000)
                 )
