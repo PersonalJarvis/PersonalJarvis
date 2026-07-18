@@ -105,9 +105,15 @@ async def test_suppress_response_does_not_trigger_fallback():
     # we can observe the suppress_response path end-to-end.
     manager._hide_action_tools_on_signalless_turn = lambda tools, user_text: tools  # type: ignore[method-assign]
 
-    # The utterance contains NO verb from spawn_verbs, so the Force-Spawn
-    # heuristic does not kick in and the LLM path is genuinely exercised.
-    result = await manager.generate("erkläre mir das mal", use_history=False)  # i18n-allow
+    # The utterance explicitly requests delegation ("Agent", "Hintergrund"),
+    # so the explicit-delegation gate (spawn_gate.llm_spawn_allowed,
+    # 2026-07-18) lets the LLM-chosen spawn through — while containing NO
+    # force_spawn_phrases entry, so the strict force-spawn hoist stays quiet
+    # and the LLM path is genuinely exercised.
+    result = await manager.generate(
+        "ein Agent soll das im Hintergrund erledigen",  # i18n-allow
+        use_history=False,
+    )
 
     # The spawn tool was called EXACTLY ONCE — not twice (no fallback).
     assert len(spawn_tool.calls) == 1, (
