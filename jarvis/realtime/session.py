@@ -4060,10 +4060,16 @@ class RealtimeVoiceSession:
                 await self._tool_bridge.close()
             except Exception:  # noqa: BLE001, S110 — teardown is best-effort
                 pass
-        if (
-            self._surface == "browser"
-            and self._browser_session_started
-            and self._bus is not None
+        # Every surface publishes the logical session end. The browser
+        # surface has no other publisher (it bypasses the speech pipeline),
+        # so it keeps its started-gate; the desktop surface ALSO gets one
+        # from the pipeline's teardown — subscribers that consume per-session
+        # state (the wiki VoiceFactBridge sweep pops its turn buffer) treat
+        # the second event with the same session_id as a natural no-op, and
+        # the redundancy keeps the wiki completeness sweep alive even when
+        # one layer misses its teardown.
+        if self._bus is not None and (
+            self._surface != "browser" or self._browser_session_started
         ):
             try:
                 from jarvis.core.events import VoiceSessionEnded

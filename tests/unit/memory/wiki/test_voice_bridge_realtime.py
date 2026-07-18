@@ -387,3 +387,34 @@ async def test_session_end_runs_one_full_realtime_sweep(tmp_path: Path) -> None:
 
     assert brain.call_count == 2
     assert journal.capture_summary()["sessions_swept"] == 1
+
+
+@pytest.mark.asyncio
+async def test_duplicate_session_end_sweeps_only_once(tmp_path: Path) -> None:
+    """On desktop BOTH the realtime session and the speech pipeline publish
+    VoiceSessionEnded with the same session_id. The first event pops the
+    per-session turn buffer, so the duplicate must be a natural no-op."""
+    bus, journal, _curator, bridge, brain = _stack(tmp_path)
+    try:
+        await bus.publish(_realtime_turn(FACT_SENTENCE, "Okay.", turn_id="turn-a"))
+        await _wait_for_calls(brain, 1)
+        await bus.publish(
+            VoiceSessionEnded(session_id="rt-session", hangup_reason="hotkey")
+        )
+        await bus.publish(
+            VoiceSessionEnded(session_id="rt-session", hangup_reason="client_stop")
+        )
+        await _wait_for_calls(brain, 2)
+        deadline = time.monotonic() + 2.0
+        while (  # noqa: ASYNC110 - polls a persisted counter with a hard deadline
+            journal.capture_summary()["sessions_swept"] < 1
+            and time.monotonic() < deadline
+        ):
+            await asyncio.sleep(0.02)
+        # Give a hypothetical second sweep a moment to (wrongly) start.
+        await asyncio.sleep(0.1)
+    finally:
+        bridge.stop()
+
+    assert brain.call_count == 2  # one turn extraction + ONE sweep
+    assert journal.capture_summary()["sessions_swept"] == 1

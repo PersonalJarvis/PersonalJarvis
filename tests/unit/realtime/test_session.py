@@ -1040,8 +1040,14 @@ async def test_desktop_session_publishes_effective_provider_and_completed_turn()
     assert completed.model == "live-model"
     assert completed.user_text == "Hello"
     assert completed.jarvis_text == "Hi there."
+    # VoiceSessionStarted stays pipeline-owned on desktop; the session END is
+    # published from every surface so the wiki completeness sweep never
+    # depends on the outer layer alone. The desktop pipeline publishes a
+    # second end event with the same session_id; sweep consumers treat the
+    # duplicate as a no-op (their per-session buffer is popped by the first).
     assert "VoiceSessionStarted" not in by_name
-    assert "VoiceSessionEnded" not in by_name
+    ended = by_name["VoiceSessionEnded"]
+    assert ended.session_id == "desktop-telemetry"
 
 
 @pytest.mark.asyncio
