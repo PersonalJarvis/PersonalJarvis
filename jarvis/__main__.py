@@ -482,6 +482,13 @@ def _run_control(argv: list[str]) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # GUI launches (Finder/Dock on macOS, tray relaunch on Windows) start with
+    # a minimal PATH that misses Homebrew/npm/winget install dirs — augment it
+    # before ANY CLI probe or subprocess spawn runs (stat-only, AP-26-safe).
+    from jarvis.core.path_augment import ensure_cli_paths
+
+    ensure_cli_paths()
+
     raw = list(sys.argv[1:] if argv is None else argv)
     # Unified entry point: `jarvis <group> ...` (or a control-global option like
     # `--json`) drives the control CLI; bare `jarvis`, `jarvis serve`, and every

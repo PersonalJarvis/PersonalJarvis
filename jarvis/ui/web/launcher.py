@@ -1022,6 +1022,13 @@ def main(argv: list[str] | None = None) -> int:
             print(f"[BOOT_PROFILE] m_{_name}={(_now - _m_last) * 1000.0:.1f}", flush=True)
         _m_last = _now
 
+    # GUI/desktop launches carry a minimal PATH (macOS launchd, Windows tray
+    # relaunch) — append the well-known CLI install dirs before any provider
+    # probe or worker spawn resolves binaries (stat-only, AP-26-safe).
+    from jarvis.core.path_augment import ensure_cli_paths
+
+    ensure_cli_paths()
+
     _raw_argv = argv if argv is not None else sys.argv[1:]
     args = _parse_args(_raw_argv)
 
