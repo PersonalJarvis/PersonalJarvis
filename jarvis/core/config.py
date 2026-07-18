@@ -602,6 +602,11 @@ class BrainRoutingConfig(BaseModel):
         # Repair/implementation (old _FORCE_SPAWN_RE list)
         "umsetz", "reparier", "fix", "behebe", "korrigier",
         "implementier", "entwickel", "refactor", "debug", "repair",
+        # Analysis/investigation (2026-07-18: promoted from the maintainer's
+        # field-tuned jarvis.toml — fresh installs missed these and answered
+        # "analysiere das Repo" inline instead of spawning a worker)
+        "analysier", "analyz", "untersuche", "untersuch",
+        "pruefe", "prüfe", "investigate", "examine", "inspect",
         # File/system action (persona mandate Phase 3)
         "lies", "lese", "liest", "schreib", "schreibe", "schreibt",
         "bau", "baue", "baut", "oeffne", "öffne", "oeffnet", "öffnet",
@@ -614,7 +619,7 @@ class BrainRoutingConfig(BaseModel):
         # heuristic fell back to the LLM without a match, which replied with
         # smalltalk. List "spawn" and conjugations explicitly.)
         "spawn", "starte", "start", "starten", "startet",
-        "delegier", "delegier",
+        "delegier",
     ])
 
     # External system markers — when the utterance mentions a repo/PR/issue,
@@ -622,6 +627,10 @@ class BrainRoutingConfig(BaseModel):
     external_system_markers: list[str] = Field(default_factory=lambda: [
         "pr", "prs", "issue", "issues", "repo", "repository",
         "github", "gitlab", "branch",
+        # 2026-07-18: promoted from the maintainer's field-tuned jarvis.toml
+        # so agent/worker mentions spawn on fresh installs too.
+        "subagent", "subagenten", "sub-agent", "sub-agents",
+        "openclaw", "open-claw",
     ])
 
     # Force-Spawn-Phrases (User-Mandate 2026-05-14): explicit-only trigger
@@ -730,6 +739,11 @@ class BrainRoutingConfig(BaseModel):
         "wie geht", "how are you", "how's it going",
         "was machst du", "was machen wir",  # neutralise "mach" as a verb trigger
         "danke", "thank you", "thanks",
+        # 2026-07-18: promoted from the maintainer's field-tuned jarvis.toml —
+        # casual openers fresh installs misrouted to the action path.
+        "was geht", "es geht ab", "geht ab",
+        "alles gut", "alles fit", "alles klar", "passt schon",
+        "what's up", "whats up", "sup",
         # Factual question from memory
         "wie spaet", "wie spät", "what time",
         "welcher tag", "what day",
