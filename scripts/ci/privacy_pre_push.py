@@ -208,15 +208,22 @@ def load_secret_scanner(repo_root: Path) -> tuple[dict | None, set, set]:
         return None, set(), set()
 
 
-def resolve_base(remote_sha: str, local_sha: str) -> str:
-    """Pick the diff base: the remote sha, or origin/main for a brand-new branch.
+def resolve_base(
+    remote_sha: str, local_sha: str, fallback_base: str = "origin/main"
+) -> str:
+    """Pick the diff base: the remote sha, or ``fallback_base`` for a new ref.
 
     `local_sha` is accepted for symmetry / future use; an all-zero remote sha
-    means the remote has no copy of this ref yet, so we fall back to origin/main.
+    means the remote has no copy of this ref yet. The caller passes the PUSH
+    TARGET's own main as the fallback when it exists locally: a brand-new ref
+    (a tag, a first branch push) only ADDS what the target does not already
+    have. The old hardcoded origin/main fallback measured the possibly-stale
+    backup remote instead and re-flagged long-public history on every tag
+    push (v1.1.0 release block, 2026-07-18).
     """
     if remote_sha and not _ALL_ZERO_RE.match(remote_sha):
         return remote_sha
-    return "origin/main"
+    return fallback_base
 
 
 def _is_text_bytes(data: bytes) -> bool:
@@ -308,6 +315,16 @@ def main(argv: list[str], stdin) -> int:
                 file=sys.stderr,
             )
 
+        # A brand-new ref diffs against the PUSH TARGET's main when we track
+        # it locally; origin/main (possibly a stale backup) is the last resort.
+        fallback_base = "origin/main"
+        target_main_probe = subprocess.run(
+            ["git", "rev-parse", "--verify", "--quiet", f"{remote_name}/main"],
+            capture_output=True,
+        )
+        if target_main_probe.returncode == 0:
+            fallback_base = f"{remote_name}/main"
+
         blocked = False
         for raw in ref_lines:
             parts = raw.split()
@@ -320,7 +337,7 @@ def main(argv: list[str], stdin) -> int:
                 continue
 
             try:
-                base = resolve_base(remote_sha, local_sha)
+                base = resolve_base(remote_sha, local_sha, fallback_base)
             except Exception as exc:  # pragma: no cover - defensive
                 print(
                     f"privacy-pre-push: WARNING could not resolve diff base for "
