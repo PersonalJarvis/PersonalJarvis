@@ -326,6 +326,156 @@ async def test_update_merges_in_place_and_judge_saw_the_body(stack) -> None:
     assert "- Lena works at the animal clinic." in content
 
 
+RUBEN_FULL_BODY = (
+    "---\n"
+    "type: entity\n"
+    "entity_kind: person\n"
+    "slug: ruben\n"
+    "aliases: [Ruben]\n"
+    "created: 2026-06-01\n"
+    "updated: 2026-06-01\n"
+    "---\n"
+    "\n"
+    "# Ruben\n"
+    "\n"
+    "## Summary\n"
+    "\n"
+    "The user.\n"
+    "\n"
+    "## Facts\n"
+    "\n"
+    "- Enjoys great coffee.\n"
+    "\n"
+    "## Relationships\n"
+    "\n"
+    "## Sources\n"
+    "\n"
+    "- conversation\n"
+)
+
+
+def _espresso_project_body() -> str:
+    today = dt.date.today().isoformat()
+    return (
+        "---\n"
+        "type: project\n"
+        "slug: espresso-machine\n"
+        "status: active\n"
+        f"started: {today}\n"
+        f"last_activity: {today}\n"
+        "---\n\n"
+        "# Espresso Machine\n\n"
+        "## Goal\n\n"
+        "Find a high-end espresso machine for the kitchen.\n\n"
+        "## Current Status\n\n"
+        "Researching options.\n\n"
+        "## Recent Activity\n\n"
+        "- The user disclosed the pursuit.\n\n"
+        "## Open Threads\n\n"
+        "- None recorded.\n\n"
+        "## Related\n\n"
+        "- [[entities/ruben]]\n\n"
+        "## Sources\n\n"
+        "- conversation\n"
+    )
+
+
+@pytest.mark.asyncio
+async def test_companion_add_creates_topic_page_beside_profile_update(stack) -> None:
+    """Graph-visibility rule: a profile update may CREATE the missing topic
+    page as a secondary "add" in the same batch, cross-linked both ways."""
+    vault_root, _curator, journal = stack
+    _write_aged(vault_root / "entities" / "ruben.md", RUBEN_FULL_BODY)
+    journal.append(
+        [CandidateFact(
+            fact="The user is pursuing a high-end espresso machine for the kitchen.",
+            kind="preference", subjects=("ruben", "espresso-machine"),
+        )],
+        source_label="realtime-aggressive:1", turn_hash="h-espresso",
+    )
+    cid = journal.pending()[0].id
+
+    updated_profile = RUBEN_FULL_BODY.replace(
+        "- Enjoys great coffee.\n",
+        "- Enjoys great coffee.\n"
+        "- Pursuing a high-end espresso machine for the kitchen.\n",
+    ).replace(
+        "## Relationships\n\n",
+        "## Relationships\n\n- [[projects/espresso-machine]] — active pursuit\n\n",
+    )
+    brain = FakeBrain([_judge_json([
+        {
+            "candidate_id": cid,
+            "decision": "update",
+            "target": "entities/ruben.md",
+            "new_body": updated_profile,
+            "reason": "profile note",
+        },
+        {
+            "candidate_id": cid,
+            "decision": "add",
+            "target": "projects/espresso-machine.md",
+            "new_body": _espresso_project_body(),
+            "reason": "companion topic page (graph visibility)",
+        },
+    ])])
+    consolidator = _consolidator(stack, brain)
+
+    label = await consolidator.run_once()
+
+    assert label == "journal-batch:1"
+    topic = vault_root / "projects" / "espresso-machine.md"
+    assert topic.is_file()
+    assert "Find a high-end espresso machine" in topic.read_text(encoding="utf-8")
+    profile = (vault_root / "entities" / "ruben.md").read_text(encoding="utf-8")
+    assert "- Enjoys great coffee." in profile  # existing fact survived
+    assert "- Pursuing a high-end espresso machine for the kitchen." in profile
+    # The cross-link survives demotion because the target page is created
+    # in the SAME batch.
+    assert "[[projects/espresso-machine]]" in profile
+    assert journal.pending() == []
+
+
+@pytest.mark.asyncio
+async def test_secondary_update_is_still_rejected(stack) -> None:
+    """Only "add" and "invalidate" may ride as secondary actions — a
+    secondary "update" of another existing page stays invalid."""
+    vault_root, _curator, journal = stack
+    _write_aged(vault_root / "entities" / "ruben.md", RUBEN_FULL_BODY)
+    journal.append(
+        [CandidateFact(
+            fact="The user is pursuing a high-end espresso machine.",
+            kind="preference", subjects=("ruben",),
+        )],
+        source_label="realtime-aggressive:2", turn_hash="h-espresso-2",
+    )
+    cid = journal.pending()[0].id
+
+    brain = FakeBrain([_judge_json([
+        {
+            "candidate_id": cid,
+            "decision": "update",
+            "target": "entities/ruben.md",
+            "new_body": RUBEN_FULL_BODY,
+            "reason": "profile note",
+        },
+        {
+            "candidate_id": cid,
+            "decision": "update",
+            "target": "entities/lena.md",
+            "new_body": LENA_BODY,
+            "reason": "sneaky second update",
+        },
+    ])])
+    consolidator = _consolidator(stack, brain)
+
+    label = await consolidator.run_once()
+
+    assert label == "judge-unavailable"  # rejected response, chain exhausted
+    assert not (vault_root / "entities" / "lena.md").exists()
+    assert journal.pending() != []  # candidate stays visible for the next pass
+
+
 @pytest.mark.asyncio
 async def test_partial_decision_array_crosses_to_complete_provider(stack) -> None:
     _vault_root, _curator, journal = stack

@@ -431,6 +431,22 @@ def test_consolidator_prompt_rechecks_question_derived_user_claims() -> None:
     assert "What are the benefits of Vitamin D?" in user
 
 
+def test_consolidator_prompt_carries_the_graph_visibility_rule() -> None:
+    candidate = SimpleNamespace(
+        id=9,
+        fact="The user is pursuing a high-end espresso machine.",
+        kind="preference",
+        subjects=("user", "espresso-machine"),
+    )
+
+    system, _user = build_consolidator_prompt([candidate], {})
+
+    assert "Graph visibility (binding)" in system
+    assert 'ALSO emit a secondary "add"' in system
+    assert "cross-link it with the profile in both directions" in system
+    assert "one-off mentions, smalltalk themes, or unsupported guesses" in system
+
+
 def test_consolidator_prompt_elevates_explicit_persistence_requests() -> None:
     candidate = SimpleNamespace(
         id=8,

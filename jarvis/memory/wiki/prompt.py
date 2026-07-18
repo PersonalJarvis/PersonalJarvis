@@ -468,9 +468,11 @@ languages (English, German, and Spanish):
   request itself remains non-durable.
 
 Return ONLY a JSON array. Emit exactly one PRIMARY object per candidate. A
-primary "add" or "update" may be followed by one or more SECONDARY
-"invalidate" objects with the same candidate_id when a contradiction must
-retire existing pages. No other duplicate candidate_id is allowed:
+primary "add", "update" or "invalidate" may be followed by SECONDARY objects
+with the same candidate_id: "invalidate" objects when a contradiction must
+retire existing pages, and/or "add" objects that create a missing companion
+topic page in the same batch (see graph visibility below). No other
+duplicate candidate_id is allowed:
   {"candidate_id": <int>, "decision": "add" | "update" | "noop" | "invalidate",
    "target": "<dir>/<slug>.md", "new_body": "<full page markdown>",
    "superseded_by": "<slug>", "reason": "<short why>"}
@@ -502,6 +504,20 @@ Decision semantics:
   "superseded_by" (the slug of the page that replaces it — usually one you
   "add" or "update" in this same batch). Do NOT provide "new_body"; the
   system marks the page superseded mechanically. Nothing is ever deleted.
+
+Graph visibility (binding): the vault graph shows only PAGES and
+[[wikilinks]] — a fact stored solely as a bullet on the user's profile is
+invisible there. A durable non-user TOPIC the user actively pursues
+deserves its own page in addition to the profile note: an undertaking or
+acquisition hunt (researching a major purchase, planning a trip or event)
+belongs in projects/; an adopted tool, service, organization, or other
+named thing in entities/; a recurring theme or standing decision in
+concepts/. When the correct primary decision is "update" on the user
+profile but the candidate's subjects name such a durable topic with NO
+existing page, ALSO emit a secondary "add" for that topic page in the same
+batch and cross-link it with the profile in both directions. Do not create
+topic pages for one-off mentions, smalltalk themes, or unsupported guesses
+— the evidence rules above still apply.
 
 Page-type templates (frontmatter keys are mandatory):
 - entities/<slug>.md: type: entity, entity_kind (person|tool|repository|

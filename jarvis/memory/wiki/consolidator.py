@@ -464,9 +464,10 @@ class Consolidator:
         write_plan: dict[int, tuple[str | None, str | None]] = {}
         noop_ids: list[int] = []
         required_targets: dict[int, set[str]] = {}
-        # Secondary invalidate targets (extra writes beyond a candidate's
-        # primary decision); counted only after the write actually lands.
+        # Secondary targets (extra writes beyond a candidate's primary
+        # decision); counted only after the write actually lands.
         secondary_invalidations: list[str] = []
+        secondary_adds: list[str] = []
 
         # Never submit two independently generated full-page bodies for the
         # same target in one AtomicWriter call: the later body was based on the
@@ -511,12 +512,13 @@ class Consolidator:
                 continue
             if cid in deferred_ids or cid in duplicate_target_ids:
                 continue
-            # One PRIMARY decision per candidate; additional "invalidate"
-            # items are allowed as secondary actions — a contradiction
+            # One PRIMARY decision per candidate; "invalidate" and companion
+            # "add" items are allowed as secondary actions — a contradiction
             # typically ADDs/UPDATEs the corrected page AND invalidates the
-            # superseded one in the same batch, for the same candidate.
+            # superseded one, and a profile update may create the missing
+            # topic page in the same batch, for the same candidate.
             is_secondary = cid in judged_ids
-            if is_secondary and decision != "invalidate":
+            if is_secondary and decision not in ("invalidate", "add"):
                 continue
             judged_ids.add(cid)
 
@@ -536,7 +538,8 @@ class Consolidator:
             if decision in ("add", "update"):
                 new_body = item.get("new_body")
                 if not isinstance(new_body, str) or not new_body.strip():
-                    write_plan[cid] = (None, None)
+                    if not is_secondary:
+                        write_plan[cid] = (None, None)
                     continue
                 new_body = self._with_source_marker(new_body, by_id[cid])
                 updates_by_candidate.setdefault(cid, []).append(
@@ -547,7 +550,10 @@ class Consolidator:
                         reason=str(item.get("reason", ""))[:200],
                     )
                 )
-                write_plan[cid] = (decision, target)
+                if is_secondary:
+                    secondary_adds.append(target)
+                else:
+                    write_plan[cid] = (decision, target)
                 required_targets.setdefault(cid, set()).add(target)
             else:  # invalidate
                 superseded_by = str(item.get("superseded_by", "") or "").strip()
@@ -592,6 +598,9 @@ class Consolidator:
         for target in secondary_invalidations:
             if target in applied_rel:
                 telemetry.inc("wiki_consolidator_invalidate")
+        for target in secondary_adds:
+            if target in applied_rel:
+                telemetry.inc("wiki_consolidator_add")
 
         transient_ids: set[int] = set()
         # Close out every candidate unless it is intentionally deferred or hit
@@ -710,8 +719,8 @@ class Consolidator:
         A transport-successful JSON array is not necessarily a usable answer.
         Reject the whole response (and let the provider chain try another
         family) unless every candidate has exactly one valid primary decision.
-        Secondary actions are limited to distinct invalidations for the same
-        candidate.
+        Secondary actions are limited to distinct invalidations and companion
+        "add" pages (the graph-visibility rule) for the same candidate.
         """
         expected = {row.id for row in rows}
         by_id = {row.id: row for row in rows}
@@ -731,7 +740,13 @@ class Consolidator:
 
             secondary = cid in primary_seen
             if secondary:
-                if primary_decisions[cid] == "noop" or decision != "invalidate":
+                # Secondary actions: extra invalidations for a contradiction,
+                # or a companion "add" that creates a missing topic page in
+                # the same batch (graph-visibility rule in the prompt).
+                if primary_decisions[cid] == "noop" or decision not in (
+                    "invalidate",
+                    "add",
+                ):
                     return "candidate has more than one primary decision"
             else:
                 primary_seen.add(cid)
@@ -769,8 +784,8 @@ class Consolidator:
             target_path = self._vault_root / target
 
             if decision in ("add", "update"):
-                if secondary:
-                    return "secondary decision is not an invalidation"
+                if secondary and decision != "add":
+                    return "secondary decision must be an add or an invalidation"
                 body = item.get("new_body")
                 if not isinstance(body, str) or not body.strip():
                     return "page decision is missing a full new_body"
