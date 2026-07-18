@@ -121,6 +121,8 @@ class WebServer:
         self._task_cancel_token: Any | None = None
         # Phase B5 wiki write-wiring handle — shutdown() called in stop().
         self._wiki_integration_handle: Any | None = None
+        # Periodic evidence-safe realtime wiki backfill — cancelled in stop().
+        self._wiki_backfill_task: asyncio.Task[None] | None = None
         # Phase B3 wiki live-reload watchdog handle — shutdown() called in stop().
         self._wiki_watcher: Any | None = None
         self._channel_chat_bridge: Any | None = None
@@ -2497,12 +2499,79 @@ class WebServer:
         )
         self._wiki_integration_handle = handle
         logger.info("wiki_integration: bootstrap_wiki_integration succeeded")
+        # Safety net for realtime turns whose live capture was missed (empty
+        # provider input transcript, crash, provider outage): sweep persisted
+        # sessions periodically. Idempotent via durable review keys, so a
+        # session already reviewed live is skipped, never re-journaled. The
+        # manual POST /api/wiki/backfill stays the explicit control.
+        if self._wiki_backfill_task is None:
+            self._wiki_backfill_task = asyncio.create_task(
+                self._wiki_auto_backfill_loop(), name="wiki-auto-backfill"
+            )
         try:
             from jarvis.memory.wiki.health import health as _wiki_health
 
             _wiki_health.record_bootstrap(True)
         except Exception:  # noqa: BLE001 — health recording must never break boot
             logger.debug("wiki health.record_bootstrap(True) failed", exc_info=True)
+
+    async def _wiki_auto_backfill_loop(
+        self,
+        *,
+        initial_delay_s: float = 300.0,
+        interval_s: float = 6 * 3600.0,
+    ) -> None:
+        """Periodically sweep persisted realtime sessions into the wiki.
+
+        The live per-turn capture silently loses a turn whenever the realtime
+        provider delivers no input transcript, and the session-end sweep dies
+        with whichever layer misses its teardown. ``backfill_realtime_sessions``
+        re-reads the persisted voice turns and runs the same evidence-bound
+        pipeline, idempotent across retries via durable review keys — so this
+        loop only ever pays for sessions live capture actually missed. First
+        run is delayed well past boot readiness (AP-26); every pass is bounded
+        (2 days, 20 sessions).
+        """
+        from jarvis.memory.wiki.backfill import backfill_realtime_sessions
+        from jarvis.memory.wiki.integration import get_running_capture_runtime
+
+        await asyncio.sleep(initial_delay_s)
+        while True:
+            try:
+                runtime = get_running_capture_runtime()
+                store = getattr(self.app.state, "session_store", None)
+                if runtime is None or store is None or runtime.scheduler is None:
+                    logger.debug(
+                        "wiki auto-backfill: capture runtime or session store "
+                        "not ready — skipping this pass"
+                    )
+                else:
+                    result = await backfill_realtime_sessions(
+                        store=store,
+                        extractor=runtime.extractor,
+                        days=2,
+                        max_sessions=20,
+                        dry_run=False,
+                    )
+                    if result.sessions_reviewed or result.candidates_journaled:
+                        logger.info(
+                            "wiki auto-backfill: reviewed {} session(s), "
+                            "journaled {} candidate(s)",
+                            result.sessions_reviewed,
+                            result.candidates_journaled,
+                        )
+                    else:
+                        logger.debug(
+                            "wiki auto-backfill: nothing eligible "
+                            "(scanned={}, already_reviewed={})",
+                            result.sessions_scanned,
+                            result.sessions_already_reviewed,
+                        )
+            except asyncio.CancelledError:
+                raise
+            except Exception:  # noqa: BLE001 — the safety net must never crash the app
+                logger.opt(exception=True).warning("wiki auto-backfill pass failed")
+            await asyncio.sleep(interval_s)
 
     def _init_wiki_boot_index(self, *, background: bool = False) -> None:
         """Rebuild the derived FTS view against the active vault.
@@ -2900,6 +2969,12 @@ class WebServer:
                 self._board_aggregator.close()
             except Exception as exc:  # noqa: BLE001
                 logger.opt(exception=exc).debug("Board-Aggregator close(): {}", exc)
+
+        # Stop the periodic realtime backfill before the wiki runtime goes away.
+        backfill_task = getattr(self, "_wiki_backfill_task", None)
+        if backfill_task is not None:
+            backfill_task.cancel()
+            self._wiki_backfill_task = None
 
         # Phase B5 wiki write-wiring: unsubscribe + drain in-flight rollup task.
         wiki_handle = getattr(self, "_wiki_integration_handle", None)
