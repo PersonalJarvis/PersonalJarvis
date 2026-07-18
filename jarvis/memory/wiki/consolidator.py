@@ -468,6 +468,11 @@ class Consolidator:
         # decision); counted only after the write actually lands.
         secondary_invalidations: list[str] = []
         secondary_adds: list[str] = []
+        # Companion topic pages (graph-visibility secondary "add"s) are
+        # written in their OWN non-atomic call, never bundled into the
+        # primary's all-or-nothing transaction: a failing bonus page must
+        # not block the durable primary fact.
+        companion_by_candidate: dict[int, list[PageUpdate]] = {}
 
         # Never submit two independently generated full-page bodies for the
         # same target in one AtomicWriter call: the later body was based on the
@@ -542,19 +547,22 @@ class Consolidator:
                         write_plan[cid] = (None, None)
                     continue
                 new_body = self._with_source_marker(new_body, by_id[cid])
-                updates_by_candidate.setdefault(cid, []).append(
-                    PageUpdate(
-                        target_path=Path(target),
-                        operation="create" if decision == "add" else "update",
-                        new_body=new_body,
-                        reason=str(item.get("reason", ""))[:200],
-                    )
+                update = PageUpdate(
+                    target_path=Path(target),
+                    operation="create" if decision == "add" else "update",
+                    new_body=new_body,
+                    reason=str(item.get("reason", ""))[:200],
                 )
                 if is_secondary:
+                    companion_by_candidate.setdefault(cid, []).append(update)
                     secondary_adds.append(target)
                 else:
+                    updates_by_candidate.setdefault(cid, []).append(update)
                     write_plan[cid] = (decision, target)
-                required_targets.setdefault(cid, set()).add(target)
+                    # The candidate's journal verdict tracks ONLY its primary
+                    # (and invalidation) writes — a companion page failure
+                    # must not reject or stall the primary fact.
+                    required_targets.setdefault(cid, set()).add(target)
             else:  # invalidate
                 superseded_by = str(item.get("superseded_by", "") or "").strip()
                 invalidated = self._build_invalidation(target, superseded_by)
@@ -573,12 +581,48 @@ class Consolidator:
         applied_rel: set[str] = set()
         rejected_rel: set[str] = set()
         recent_rel: set[str] = set()
-        for cid in sorted(updates_by_candidate, key=row_order.__getitem__):
+        write_cids = set(updates_by_candidate) | set(companion_by_candidate)
+        for cid in sorted(write_cids, key=row_order.__getitem__):
+            # Companion topic pages land FIRST, in their own non-atomic call:
+            # the primary body's [[link]] to them then resolves from disk,
+            # and a failing companion can never hold the durable primary
+            # fact hostage — it just logs, and the demoted link heals via
+            # promotion once a later batch creates the page.
+            companions = companion_by_candidate.get(cid)
+            if companions:
+                companion_result = await self._curator.apply_external_updates(
+                    companions,
+                    source_label=f"{label}:candidate:{cid}:companion",
+                    verb="merge",
+                    all_or_nothing=False,
+                )
+                applied_rel.update(
+                    self._rel(p) for p in companion_result.applied
+                )
+                failed_companions = [
+                    self._rel(p)
+                    for p in (
+                        *companion_result.blocked_pii,
+                        *companion_result.failed_validation,
+                        *companion_result.skipped_due_to_recent_edit,
+                    )
+                ]
+                if failed_companions:
+                    log.warning(
+                        "Consolidator: companion topic page(s) %s for "
+                        "candidate %d did not land — the primary decision "
+                        "proceeds without them",
+                        ", ".join(failed_companions),
+                        cid,
+                    )
+            updates = updates_by_candidate.get(cid)
+            if not updates:
+                continue
             # A contradiction can create/update one page and invalidate a
             # second.  Those writes are one candidate-level transaction: a
             # validation failure or edit lock on either page rolls back both.
             result = await self._curator.apply_external_updates(
-                updates_by_candidate[cid],
+                updates,
                 source_label=f"{label}:candidate:{cid}",
                 verb="merge",
                 all_or_nothing=True,

@@ -430,10 +430,62 @@ async def test_companion_add_creates_topic_page_beside_profile_update(stack) -> 
     profile = (vault_root / "entities" / "ruben.md").read_text(encoding="utf-8")
     assert "- Enjoys great coffee." in profile  # existing fact survived
     assert "- Pursuing a high-end espresso machine for the kitchen." in profile
-    # The cross-link survives demotion because the target page is created
-    # in the SAME batch.
+    # The cross-link survives demotion because the companion page lands in
+    # its own call BEFORE the profile update, so the link resolves from disk.
     assert "[[projects/espresso-machine]]" in profile
     assert journal.pending() == []
+
+
+@pytest.mark.asyncio
+async def test_failing_companion_add_never_blocks_the_primary_fact(stack) -> None:
+    """The companion topic page is a bonus, not a hostage-taker: when it is
+    refused (here: secret guard), the primary profile update still lands and
+    the candidate is closed out as consolidated."""
+    vault_root, _curator, journal = stack
+    _write_aged(vault_root / "entities" / "ruben.md", RUBEN_FULL_BODY)
+    journal.append(
+        [CandidateFact(
+            fact="The user is pursuing a high-end espresso machine for the kitchen.",
+            kind="preference", subjects=("ruben", "espresso-machine"),
+        )],
+        source_label="realtime-aggressive:3", turn_hash="h-espresso-3",
+    )
+    cid = journal.pending()[0].id
+
+    updated_profile = RUBEN_FULL_BODY.replace(
+        "- Enjoys great coffee.\n",
+        "- Enjoys great coffee.\n"
+        "- Pursuing a high-end espresso machine for the kitchen.\n",
+    )
+    poisoned_companion = _espresso_project_body().replace(
+        "Researching options.",
+        "Researching options via sk-proj-" + "A" * 24 + " lookups.",
+    )
+    brain = FakeBrain([_judge_json([
+        {
+            "candidate_id": cid,
+            "decision": "update",
+            "target": "entities/ruben.md",
+            "new_body": updated_profile,
+            "reason": "profile note",
+        },
+        {
+            "candidate_id": cid,
+            "decision": "add",
+            "target": "projects/espresso-machine.md",
+            "new_body": poisoned_companion,
+            "reason": "companion topic page",
+        },
+    ])])
+    consolidator = _consolidator(stack, brain)
+
+    label = await consolidator.run_once()
+
+    assert label == "journal-batch:1"
+    assert not (vault_root / "projects" / "espresso-machine.md").exists()
+    profile = (vault_root / "entities" / "ruben.md").read_text(encoding="utf-8")
+    assert "- Pursuing a high-end espresso machine for the kitchen." in profile
+    assert journal.pending() == []  # consolidated despite the refused companion
 
 
 @pytest.mark.asyncio
