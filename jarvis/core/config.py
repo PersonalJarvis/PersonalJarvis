@@ -1692,13 +1692,17 @@ class ComputerUseConfig(BaseModel):
     """Top-level ``[computer_use]`` config for the Computer-Use harness.
 
     Controls the screenshot-click loop in
-    ``jarvis/harness/screenshot_only_loop.py``. Default OFF — the harness
-    only runs when ``enabled = true`` is set (Phase 5 shell module,
-    see ADR-0008).
+    ``jarvis/harness/screenshot_only_loop.py``. Default ON since 2026-07-18
+    (maintainer directive): desktop control is the product's core promise and
+    fresh installs experienced the old opt-out default as a broken feature
+    (AP-23 class). Safety holds without the flag: the whitelist ships empty so
+    risky actions stay ask-tier, and machines without a vision engine or
+    display degrade to an honest "not active" ToolResult instead of running
+    (Phase 5 shell module, see ADR-0008).
     """
     model_config = {"extra": "allow"}
 
-    enabled: bool = False
+    enabled: bool = True
     # Screen indicator (2026-07-15): while a CU mission controls the local
     # mouse/keyboard, a pulsing gold border glows on every monitor edge and
     # an "Esc to cancel" pill is shown (jarvis/cu/indicator).

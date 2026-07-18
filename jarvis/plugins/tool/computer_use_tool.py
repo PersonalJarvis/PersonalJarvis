@@ -163,18 +163,19 @@ class ComputerUseTool:
             return ToolResult(success=False, output=None, error="goal missing")
         # Fresh-machine honesty (2026-07-06): computer_use stays in ROUTER_TOOLS
         # unconditionally (ADR-0011), but the CU context is only wired when
-        # [computer_use].enabled AND a vision engine exist (factory.py). On a
-        # fresh install (the shipped default is disabled) every dispatch used
-        # to die deep inside the harness with "RuntimeError: ComputerUseHarness
-        # context not set". Peek the singleton BEFORE dispatching so an unwired
-        # machine gets an honest, actionable ToolResult instead of a crash.
+        # [computer_use].enabled AND a vision engine exist (factory.py). On an
+        # unwired machine (enabled=false, or no vision engine — e.g. headless)
+        # every dispatch used to die deep inside the harness with
+        # "RuntimeError: ComputerUseHarness context not set". Peek the
+        # singleton BEFORE dispatching so an unwired machine gets an honest,
+        # actionable ToolResult instead of a crash.
         if peek_computer_use_context() is None:
             return ToolResult(
                 success=False,
                 output=None,
                 error=(
                     "computer-use is not active on this machine: [computer_use].enabled "
-                    "is false (the shipped default) or no vision engine could be built. "
+                    "is false or no vision engine could be built. "
                     "Tell the user desktop control is currently OFF. There is no "
                     "Settings toggle for it (yet); it is enabled via the config value "
                     "computer_use.enabled=true — you may offer to set it through the "
