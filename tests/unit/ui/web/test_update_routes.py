@@ -23,6 +23,7 @@ def _reset_cache() -> None:
     # sees a fresh check.
     u._status_cache = None
     u._status_cache_until = 0.0
+    u._status_cache_root = None
     u._last_good_release = None
 
 
@@ -415,6 +416,26 @@ def test_status_reports_pending_update_and_last_result(
         "rolled_back": True,
         "completed_at": 123,
     }
+
+
+def test_status_hides_stale_manifest_for_non_newer_version(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # A manifest surviving a crashed finalize (the checkout already ON the
+    # target) must not render a "Finish update" offer for the running version —
+    # the status overlay honors the same never-offer-non-newer rule as apply.
+    _patch_managed(monkeypatch, tmp_path)
+    monkeypatch.setattr(u, "_running_version", lambda: "1.0.2")
+    _patch_latest(
+        monkeypatch,
+        {"version": "1.0.2", "notes": "", "published_at": None, "release_url": None},
+    )
+    _write_manifest(tmp_path)
+    _patch_git_show_version(monkeypatch, "b" * 40, "1.0.2")
+
+    body = client.get("/api/update/status").json()
+    assert body["update_available"] is False
+    assert body["pending_update"] is None
 
 
 def test_status_cache_hit_still_reports_fresh_pending_state(

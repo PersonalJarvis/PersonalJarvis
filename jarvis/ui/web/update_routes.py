@@ -72,9 +72,12 @@ _STATUS_RETRY_S = 120.0  # after a failed network check, retry sooner than the T
 _RELEASE_TAG_RE = re.compile(r"^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 
 # In-process cache of the last status result. The managed state is stable for a
-# process lifetime; the network result is what the TTL protects.
+# process lifetime; the network result is what the TTL protects. The resolved
+# managed root is cached alongside so a cache hit (every focus-triggered poll)
+# costs only two tiny local file reads — not a git subprocess.
 _status_cache: dict[str, Any] | None = None
 _status_cache_until: float = 0.0
+_status_cache_root: Path | None = None
 
 # Last release metadata that was successfully fetched from GitHub, kept for the
 # apply path. The unauthenticated releases API is rate-limited PER IP (60/h) —
@@ -439,13 +442,32 @@ def _read_update_result(root: Path) -> dict[str, Any] | None:
     }
 
 
+async def _fresh_staged_manifest(root: Path) -> tuple[dict[str, Any], str] | None:
+    """The staged manifest + its target version, IFF still worth finishing.
+
+    "Worth finishing" means the target is strictly newer than the RUNNING
+    version — the same fail-closed rule the apply route enforces. A manifest
+    left behind by a crashed finalize (the checkout already reset to the
+    target) or by an already-installed update must never be re-offered, in
+    the status overlay any more than in the apply fallback.
+    """
+    manifest = _read_pending_manifest(root)
+    if manifest is None:
+        return None
+    version = await _version_at_revision(root, str(manifest["target_revision"]))
+    if version is None or not _is_newer(version, _running_version()):
+        return None
+    return manifest, version
+
+
 async def _pending_update_overlay(root: Path) -> dict[str, Any]:
     """Live (never cached) status fields: staged transaction + last verdict."""
     overlay: dict[str, Any] = {"pending_update": None, "last_result": None}
-    manifest = _read_pending_manifest(root)
-    if manifest is not None:
+    staged = await _fresh_staged_manifest(root)
+    if staged is not None:
+        manifest, version = staged
         overlay["pending_update"] = {
-            "version": await _version_at_revision(root, str(manifest["target_revision"])),
+            "version": version,
             "target_revision": manifest["target_revision"],
         }
     overlay["last_result"] = _read_update_result(root)
@@ -476,13 +498,10 @@ async def _staged_update_response(root: Path) -> dict[str, object] | None:
     the revision itself is trusted). Returns ``None`` when nothing usable is
     staged — the caller then reports the network failure honestly.
     """
-    manifest = _read_pending_manifest(root)
-    if manifest is None:
+    staged = await _fresh_staged_manifest(root)
+    if staged is None:
         return None
-    target = str(manifest["target_revision"])
-    version = await _version_at_revision(root, target)
-    if version is None or not _is_newer(version, _running_version()):
-        return None
+    manifest, version = staged
     profile = manifest["profile"]
     return {
         "ok": True,
@@ -510,20 +529,23 @@ async def update_status(force: bool = False) -> dict[str, object]:
 
     ``force=true`` bypasses the in-process cache (a manual "check now").
     """
-    global _status_cache, _status_cache_until
+    global _status_cache, _status_cache_until, _status_cache_root
     now = time.monotonic()
     if not force and _status_cache is not None and now < _status_cache_until:
-        # The network part is cached; the staged-transaction fields are cheap
-        # local reads and must always be live (an apply invalidates the cache,
-        # but a relauncher result appears while the cache is warm).
-        if _status_cache.get("managed"):
-            root = await _resolve_managed_repo()
-            if root is not None:
-                return {**_status_cache, **(await _pending_update_overlay(root))}
+        # The network part (and the resolved managed root, one git subprocess)
+        # is cached; the staged-transaction fields are cheap local file reads
+        # and must always be live (an apply invalidates the cache, but a
+        # relauncher result appears while the cache is warm).
+        if _status_cache.get("managed") and _status_cache_root is not None:
+            return {
+                **_status_cache,
+                **(await _pending_update_overlay(_status_cache_root)),
+            }
         return _status_cache
 
     current = _running_version()
     root = await _resolve_managed_repo()
+    _status_cache_root = root
 
     if root is None:
         result: dict[str, object] = {
@@ -575,7 +597,7 @@ async def update_apply() -> dict[str, object]:
     ``POST /api/settings/restart-app``; its detached relauncher applies the
     pinned revision and completes installation after this process exits.
     """
-    global _status_cache, _status_cache_until
+    global _status_cache, _status_cache_until, _status_cache_root
     root = await _resolve_managed_repo()
     if root is None:
         raise HTTPException(
@@ -661,7 +683,7 @@ async def update_apply() -> dict[str, object]:
         ) from exc
 
     # The next status poll must see the staged transaction immediately.
-    _status_cache, _status_cache_until = None, 0.0
+    _status_cache, _status_cache_until, _status_cache_root = None, 0.0, None
 
     return {
         "ok": True,
