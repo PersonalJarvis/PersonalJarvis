@@ -58,6 +58,34 @@ def extract_reply_language_directive(system_prompt: str | None) -> str:
     return system_prompt[idx:].strip()
 
 
+def render_structured_prompt(req: object) -> str:
+    """Render a background/structured request verbatim for a CLI agent.
+
+    Voice turns are flattened into a light conversational prompt on purpose,
+    but background curation (the wiki extractor and Stage-2 judge) carries its
+    own binding contract in ``req.system`` ("Return ONLY a JSON array ...").
+    Replacing that contract with the conversational wrapper ("answer in one to
+    three short sentences, plain text only") makes structured output
+    impossible BY INSTRUCTION — the subscription CLI then looks permanently
+    broken to the wiki provider chain (live 2026-07-18: every antigravity
+    extraction died with "no JSON array found in response"). Structured mode
+    forwards the system contract and the user payload verbatim instead.
+    """
+    parts: list[str] = []
+    system = str(getattr(req, "system", "") or "").strip()
+    if system:
+        parts.append(system)
+    for message in getattr(req, "messages", ()) or ():
+        content = getattr(message, "content", None)
+        if (
+            getattr(message, "role", "") in ("system", "user")
+            and isinstance(content, str)
+            and content.strip()
+        ):
+            parts.append(content.strip())
+    return "\n\n".join(parts)
+
+
 def render_cli_standing_instructions(system_prompt: str | None) -> str:
     """Render a compact system-like block for flattened CLI prompts."""
     block = extract_standing_instructions_block(system_prompt)

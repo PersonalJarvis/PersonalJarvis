@@ -64,3 +64,31 @@ def test_none_model_is_passed_through() -> None:
     instantiate_curator_brain(registry, "grok", None)
     _name, kwargs = registry.calls[0]
     assert kwargs.get("model") is None
+
+
+def test_structured_prompts_probe_reaches_supporting_providers() -> None:
+    """Subscription-CLI brains (codex/antigravity) must receive the curator's
+    structured-prompt flag so the JSON contract survives the CLI flattening."""
+    registry = FakeRegistry()
+    instantiate_curator_brain(registry, "codex", None)
+    _name, kwargs = registry.calls[0]
+    assert kwargs.get("structured_prompts") is True
+
+
+class _NoStructuredRegistry(FakeRegistry):
+    def instantiate(self, name: str, **kwargs: Any) -> Any:
+        if "structured_prompts" in kwargs:
+            self.calls.append((name, dict(kwargs)))
+            raise TypeError("unexpected keyword argument 'structured_prompts'")
+        return super().instantiate(name, **kwargs)
+
+
+def test_structured_prompts_probe_degrades_without_losing_the_model() -> None:
+    """A provider without the flag keeps model + thinking kwargs on the retry —
+    the probe must never demote it to a bare default instantiation."""
+    registry = _NoStructuredRegistry()
+    instantiate_curator_brain(registry, "gemini", "gemini-3-flash-preview")
+    _name, kwargs = registry.calls[-1]
+    assert "structured_prompts" not in kwargs
+    assert kwargs["model"] == "gemini-3-flash-preview"
+    assert kwargs["thinking_budget"] == 0

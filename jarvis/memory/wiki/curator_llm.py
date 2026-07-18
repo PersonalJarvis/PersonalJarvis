@@ -165,10 +165,17 @@ def instantiate_curator_brain(
     kwargs: dict[str, Any] = {"model": model}
     if provider == "gemini" and "pro" not in (model or "").lower():
         kwargs["thinking_budget"] = 0
-    try:
-        return registry.instantiate(provider, **kwargs)
-    except TypeError:
-        return registry.instantiate(provider)
+    # Subscription-CLI brains (codex, antigravity) flatten voice turns into a
+    # conversational plain-text prompt by design — which silently destroys the
+    # curator tier's JSON contract. Providers whose constructor accepts
+    # ``structured_prompts`` forward the contract verbatim instead; the probe
+    # is signature acceptance (capability, never a provider name — AP-21).
+    for attempt in ({**kwargs, "structured_prompts": True}, kwargs):
+        try:
+            return registry.instantiate(provider, **attempt)
+        except TypeError:
+            continue
+    return registry.instantiate(provider)
 
 
 def _extract_json_array(text: str) -> Any:

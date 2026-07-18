@@ -56,6 +56,32 @@ def _system_with_empty_standing_instructions() -> str:
     )
 
 
+def _wiki_request() -> BrainRequest:
+    return BrainRequest(
+        messages=(BrainMessage(role="user", content="Source content here."),),
+        system="Return ONLY a single JSON array. No prose before or after.",
+    )
+
+
+def test_structured_mode_forwards_the_json_contract_verbatim():
+    """Wiki-tier callers need their JSON contract to reach the CLI model —
+    the conversational wrapper made structured output impossible by
+    instruction (live 2026-07-18: every extraction died with 'no JSON array
+    found in response')."""
+    brain = AntigravityBrain(structured_prompts=True)
+    prompt = brain._render_prompt(_wiki_request())
+    assert "Return ONLY a single JSON array" in prompt
+    assert "Source content here." in prompt
+    assert "one to three short sentences" not in prompt
+
+
+def test_voice_mode_keeps_the_conversational_flattening():
+    brain = AntigravityBrain()
+    prompt = brain._render_prompt(_wiki_request())
+    assert "one to three short sentences" in prompt
+    assert "Return ONLY a single JSON array" not in prompt
+
+
 def test_cli_prompt_includes_standing_instructions_without_heavy_router_prompt():
     req = BrainRequest(
         messages=(BrainMessage(role="user", content="Was ist das wertvollste Unternehmen?"),),  # i18n-allow: simulated German user utterance, content under test

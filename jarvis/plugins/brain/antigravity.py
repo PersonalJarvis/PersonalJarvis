@@ -45,6 +45,7 @@ from jarvis.google_cli.resolver import GoogleCli, resolve_google_cli
 from .cli_prompt_context import (
     extract_reply_language_directive,
     render_cli_standing_instructions,
+    render_structured_prompt,
 )
 
 log = logging.getLogger(__name__)
@@ -167,8 +168,16 @@ class AntigravityBrain:
     supports_tools: bool = True  # ignored on the CLI path (mirrors CodexBrain)
     supports_vision: bool = False
 
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(
+        self, model: str | None = None, structured_prompts: bool = False,
+    ) -> None:
         self._model = model or DEFAULT_MODEL
+        # Background/structured callers (the wiki curator tier) set this so
+        # their JSON contract reaches the CLI model verbatim instead of the
+        # conversational "answer in 1-3 plain-text sentences" wrapper — which
+        # made structured output impossible by instruction (live 2026-07-18:
+        # every wiki extraction died with "no JSON array found in response").
+        self._structured_prompts = bool(structured_prompts)
 
     def can_call_tools(self) -> bool:
         """Runtime tool-calling capability (NOT the static ``supports_tools``).
@@ -180,6 +189,12 @@ class AntigravityBrain:
         tool-capable provider instead of letting the CLI silently no-op."""
         return False
 
+    def _render_prompt(self, req: BrainRequest) -> str:
+        """Conversational flattening for voice turns; verbatim for structured."""
+        if self._structured_prompts:
+            return render_structured_prompt(req)
+        return _build_cli_prompt(req)
+
     async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
         cli = resolve_google_cli()
         if cli is None:
@@ -188,7 +203,7 @@ class AntigravityBrain:
                 "CLI and sign in with Google."
             )
 
-        prompt = _build_cli_prompt(req)
+        prompt = self._render_prompt(req)
         argv = _build_argv(cli, prompt, self._model)
         # agy is a TUI tool: over a plain pipe it emits 0 bytes (the brain then
         # sees "no answer"). It must be driven over a real pseudo-terminal. The

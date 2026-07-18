@@ -39,6 +39,7 @@ from ._openai_base import stream_complete
 from .cli_prompt_context import (
     extract_reply_language_directive,
     render_cli_standing_instructions,
+    render_structured_prompt,
 )
 
 log = logging.getLogger(__name__)
@@ -139,9 +140,16 @@ class CodexBrain:
     # True only when an API key (→ the vision-capable API path) is configured.
     supports_vision: bool = False
 
-    def __init__(self, model: str | None = None) -> None:
+    def __init__(
+        self, model: str | None = None, structured_prompts: bool = False,
+    ) -> None:
         self._model = model or DEFAULT_MODEL
         self._client: Any = None
+        # Background/structured callers (the wiki curator tier) set this so the
+        # CLI path forwards their JSON contract verbatim instead of the
+        # conversational "answer in 1-3 plain-text sentences" wrapper — which
+        # made structured output impossible by instruction.
+        self._structured_prompts = bool(structured_prompts)
         # Only the API-key path can see images (see the supports_vision note).
         self.supports_vision = bool(self._api_key())
 
@@ -172,6 +180,12 @@ class CodexBrain:
 
     # ---- CLI (ChatGPT-OAuth) path ------------------------------------
 
+    def _render_prompt(self, req: BrainRequest) -> str:
+        """Conversational flattening for voice turns; verbatim for structured."""
+        if self._structured_prompts:
+            return render_structured_prompt(req)
+        return _build_cli_prompt(req)
+
     async def _complete_via_cli(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
         """Drive ``codex exec`` over the ChatGPT login and stream its answer.
 
@@ -190,7 +204,7 @@ class CodexBrain:
                 "Codex CLI not found — run 'npm i -g @openai/codex' and 'codex login'."
             )
 
-        prompt = _build_cli_prompt(req)
+        prompt = self._render_prompt(req)
         workdir = tempfile.mkdtemp(prefix="jarvis-codex-brain-")
         # OAuth env: drop OPENAI_API_KEY (so the subscription token wins) and
         # CODEX_HOME (a custom home breaks the global ~/.codex auth lookup).
@@ -351,7 +365,34 @@ class CodexBrain:
         if api_key:
             log.info("CodexBrain.complete: API-key path (model=%s)", self._model)
             client = self._ensure_client(api_key)
-            async for delta in stream_complete(client, self._model, req):
+            emitted = False
+            try:
+                async for delta in stream_complete(client, self._model, req):
+                    if delta.content or getattr(delta, "tool_calls", None):
+                        emitted = True
+                    yield delta
+                return
+            except Exception as exc:  # noqa: BLE001 — classified below, re-raised when not recoverable
+                status = getattr(exc, "status_code", None)
+                if status is None:
+                    status = getattr(
+                        getattr(exc, "response", None), "status_code", None
+                    )
+                # A throttled/dead API KEY must not brick the provider while
+                # the user's paid ChatGPT subscription sits idle next to it
+                # (live 2026-07-18: every wiki call died on a 429ing key).
+                # Only account-level failures cross over, and only when the
+                # stream produced nothing a listener could have consumed.
+                if emitted or status not in (401, 402, 403, 429):
+                    raise
+                if not _codex_oauth_connected():
+                    raise
+                log.warning(
+                    "CodexBrain: API-key path failed (HTTP %s) — falling back "
+                    "to the ChatGPT-subscription CLI",
+                    status,
+                )
+            async for delta in self._complete_via_cli(req):
                 yield delta
             return
         oauth = _codex_oauth_connected()

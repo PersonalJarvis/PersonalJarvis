@@ -42,6 +42,25 @@ def _empty_state_block() -> str:
     )
 
 
+def test_render_structured_prompt_keeps_system_and_user_verbatim() -> None:
+    from types import SimpleNamespace
+
+    from jarvis.plugins.brain.cli_prompt_context import render_structured_prompt
+
+    req = SimpleNamespace(
+        system="Return ONLY a single JSON array.",
+        messages=(
+            SimpleNamespace(role="user", content="Source content."),
+            SimpleNamespace(role="assistant", content="never included"),
+            SimpleNamespace(role="user", content=None),
+        ),
+    )
+    prompt = render_structured_prompt(req)
+    assert prompt.startswith("Return ONLY a single JSON array.")
+    assert "Source content." in prompt
+    assert "never included" not in prompt  # assistant turns are not payload
+
+
 def test_extracts_trailing_mandatory_directive() -> None:
     assert extract_reply_language_directive(_system_with_directive()) == _MANDATORY
 
