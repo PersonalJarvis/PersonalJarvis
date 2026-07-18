@@ -5,7 +5,8 @@ export type PermissionId =
   | "screen_recording"
   | "accessibility"
   | "input_monitoring"
-  | "event_posting";
+  | "event_posting"
+  | "credential_store";
 
 export type PermissionState =
   | "granted"

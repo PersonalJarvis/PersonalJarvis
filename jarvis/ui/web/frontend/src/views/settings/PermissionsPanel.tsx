@@ -3,6 +3,7 @@ import {
   CheckCircle2,
   CircleAlert,
   Keyboard,
+  KeyRound,
   Loader2,
   Mic,
   Monitor,
@@ -28,6 +29,7 @@ const ICONS = {
   accessibility: Accessibility,
   input_monitoring: Keyboard,
   event_posting: MousePointer2,
+  credential_store: KeyRound,
 } satisfies Record<PermissionId, typeof Mic>;
 
 const READY_STATES = new Set(["granted", "not_required"]);
@@ -175,7 +177,10 @@ function PermissionRow({
         <Icon className="h-4 w-4 shrink-0 text-primary" />
         <div className="min-w-[12rem] flex-1">
           <div className="text-sm font-medium">{t(`permissions.items.${item.id}.title`)}</div>
-          {!compact && (
+          {/* Compact rows drop descriptions to stay scannable — except when
+              the grant is missing: a user deciding whether to allow access
+              (e.g. the startup Keychain prompt) needs the why right here. */}
+          {(!compact || !ready) && (
             <p className="mt-0.5 text-xs text-muted-foreground">
               {t(`permissions.items.${item.id}.description`)}
             </p>

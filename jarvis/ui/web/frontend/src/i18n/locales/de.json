@@ -1076,7 +1076,8 @@
       "screen_recording": { "title": "Bildschirmaufnahme", "description": "Erforderlich, damit Computer-Use alle verbundenen Bildschirme sehen kann." },
       "accessibility": { "title": "Bedienungshilfen", "description": "Erforderlich für zuverlässige Klicks, Eingaben, Fokus und Fenstersteuerung." },
       "input_monitoring": { "title": "Eingabeüberwachung", "description": "Erforderlich für globale Push-to-Talk- und Tastaturkurzbefehle." },
-      "event_posting": { "title": "Eingabesteuerung", "description": "Erforderlich, damit Computer-Use Maus- und Tastaturereignisse senden kann." }
+      "event_posting": { "title": "Eingabesteuerung", "description": "Erforderlich, damit Computer-Use Maus- und Tastaturereignisse senden kann." },
+      "credential_store": { "title": "Schlüsselbund (API-Keys)", "description": "Speichert deine API-Keys verschlüsselt im macOS-Schlüsselbund statt in einer Klartextdatei — genau dafür fragt macOS beim Start der App. Deine Keys bleiben auf deinem Mac und werden nirgendwohin gesendet." }
     },
     "banner": {
       "title": "Aktion nötig: macOS-Berechtigungen fehlen",
@@ -1089,7 +1090,8 @@
       "voice": "Sprache & Aktivierungswort",
       "computer_use": "Computer-Use",
       "global_hotkeys": "Globale Kurzbefehle",
-      "window_control": "Fenstersteuerung"
+      "window_control": "Fenstersteuerung",
+      "api_keys": "Sichere API-Key-Ablage"
     }
   },
   "settings_view": {
@@ -1673,7 +1675,7 @@
     "permissions": {
       "title": "Zugriff auf diesem Mac erlauben",
       "body": "macOS lässt jede Funktion einzeln bestätigen. Nutze die Schaltflächen unten und kehre danach hierher zurück; der Status wird automatisch aktualisiert.",
-      "privacy_note": "Diese Abfragen kommen von macOS. Das Installationsprogramm kann sie nicht stillschweigend freigeben, und Personal Jarvis umgeht niemals die Systemeinstellungen.",
+      "privacy_note": "Diese Abfragen kommen von macOS. Das Installationsprogramm kann sie nicht stillschweigend freigeben, und Personal Jarvis umgeht niemals die Systemeinstellungen. Die Schlüsselbund-Abfrage beim App-Start bedeutet nur, dass Personal Jarvis deine API-Keys verschlüsselt im macOS-Schlüsselbund speichert — sie verlassen deinen Mac nicht.",
       "continue": "Weiter",
       "text_only": "Nur mit Text fortfahren"
     },

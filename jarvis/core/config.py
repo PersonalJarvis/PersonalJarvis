@@ -2597,6 +2597,13 @@ _FILE_BACKEND_ACTIVE: bool = False
 # still readable from the OS store, and recovery probes must not mistake the
 # currently installed file backend for a recovered platform backend.
 _PLATFORM_KEYRING_BACKEND: Any | None = None
+# The credential slot whose OS-keyring read failed most recently. On macOS a
+# user who clicks "Deny" on the Keychain prompt lands exactly here: the read
+# raises, the process degrades to the file backend, and only a fresh read of a
+# real existing item makes macOS show the prompt again. The permissions UI
+# replays this slot on a user-initiated retry (a probe on a brand-new item
+# would silently succeed without ever re-prompting).
+_LAST_KEYRING_FAILED_SLOT: str | None = None
 _SECRET_REVISION_LOCK = threading.Lock()
 _SECRET_REVISIONS: dict[str, int] = {}
 
@@ -2846,6 +2853,56 @@ def _try_restore_platform_keyring_backend() -> bool:
     return True
 
 
+def credential_store_backend() -> str:
+    """Report which credential store is live: ``platform`` | ``file`` | ``unavailable``.
+
+    ``platform`` means the OS-encrypted store (macOS Keychain / Windows
+    Credential Manager / Secret Service) serves reads and writes. ``file``
+    means this process degraded to the local 0600 JSON fallback — on macOS
+    that is the observable state after the user declined the Keychain prompt.
+    The desktop permissions UI maps this onto its Keychain row.
+    """
+    _ensure_keyring_backend()
+    try:
+        import keyring
+
+        backend = keyring.get_keyring()
+    except Exception:  # noqa: BLE001 -- no keyring module on this install
+        return "unavailable"
+    if _is_platform_keyring_backend(backend):
+        return "platform"
+    if getattr(backend, "_jarvis_file_backend", False):
+        return "file"
+    return "unavailable"
+
+
+def try_recover_platform_credential_store() -> bool:
+    """User-initiated retry of the OS credential store (macOS Keychain re-prompt).
+
+    Restores the platform keyring backend, then replays the exact read whose
+    failure degraded this process to the file fallback. On macOS that replay
+    is what makes the Keychain prompt appear again after an earlier "Deny" —
+    the restore probe alone touches only a fresh disposable item, which never
+    prompts, so without the replay a recovery would be reported that the next
+    real read immediately reverts.
+    """
+    global _LAST_KEYRING_FAILED_SLOT
+    if not _try_restore_platform_keyring_backend():
+        return False
+    slot = _LAST_KEYRING_FAILED_SLOT
+    if slot is None:
+        return True
+    try:
+        import keyring
+
+        keyring.get_password(KEYRING_SERVICE, slot)
+    except Exception:  # noqa: BLE001 -- the user declined the prompt again
+        _install_file_cred_backend("credential-store access declined again")
+        return False
+    _LAST_KEYRING_FAILED_SLOT = None
+    return True
+
+
 def get_secret(key: str, env_fallback: str | None = None) -> str | None:
     """Retrieve a secret value from every portable credential source.
 
@@ -2906,6 +2963,8 @@ def get_secret(key: str, env_fallback: str | None = None) -> str | None:
         # _ensure_keyring_backend saw a viable backend. Degrade to the 0600 file
         # store and retry once, so a key saved to the file fallback in a prior run
         # is still visible instead of dead-ending on the locked keyring.
+        global _LAST_KEYRING_FAILED_SLOT
+        _LAST_KEYRING_FAILED_SLOT = key
         if _install_file_cred_backend("keyring read failed"):
             try:
                 import keyring

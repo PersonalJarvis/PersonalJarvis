@@ -1077,7 +1077,8 @@
       "screen_recording": { "title": "Screen Recording", "description": "Required for Computer-Use to see every connected display." },
       "accessibility": { "title": "Accessibility", "description": "Required for reliable clicks, typing, focus, and window control." },
       "input_monitoring": { "title": "Input Monitoring", "description": "Required for global push-to-talk and keyboard shortcuts." },
-      "event_posting": { "title": "Input control", "description": "Required for Computer-Use to send mouse and keyboard events." }
+      "event_posting": { "title": "Input control", "description": "Required for Computer-Use to send mouse and keyboard events." },
+      "credential_store": { "title": "Keychain (API keys)", "description": "Stores your API keys encrypted in the macOS Keychain instead of a plain file — that is the Keychain prompt you see when the app starts. Your keys stay on your Mac and are never sent anywhere." }
     },
     "banner": {
       "title": "Action needed: macOS permissions are missing",
@@ -1090,7 +1091,8 @@
       "voice": "Voice & wake word",
       "computer_use": "Computer-Use",
       "global_hotkeys": "Global shortcuts",
-      "window_control": "Window control"
+      "window_control": "Window control",
+      "api_keys": "Secure API-key storage"
     }
   },
   "settings_view": {
@@ -1674,7 +1676,7 @@
     "permissions": {
       "title": "Allow access on this Mac",
       "body": "macOS asks you to approve each capability separately. Use the buttons below, then return here; the status updates automatically.",
-      "privacy_note": "These prompts come from macOS. The installer cannot silently approve them, and Personal Jarvis never bypasses System Settings.",
+      "privacy_note": "These prompts come from macOS. The installer cannot silently approve them, and Personal Jarvis never bypasses System Settings. The Keychain prompt at app start only means Personal Jarvis is saving your API keys encrypted in the macOS Keychain — they never leave your Mac.",
       "continue": "Continue",
       "text_only": "Continue with text only"
     },

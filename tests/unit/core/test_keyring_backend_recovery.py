@@ -62,6 +62,31 @@ class _LockableBackend(_MemoryBackend):
         super().delete_password(service, username)
 
 
+class _CountingBackend(_MemoryBackend):
+    """Platform store that records every read for replay assertions."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.reads: list[tuple[str, str]] = []
+
+    def get_password(self, service: str, username: str) -> str | None:
+        self.reads.append((service, username))
+        return super().get_password(service, username)
+
+
+class _DenyingSlotBackend(_MemoryBackend):
+    """Platform store where one slot keeps raising — a re-denied Keychain item."""
+
+    def __init__(self, denied_slot: str) -> None:
+        super().__init__()
+        self.denied_slot = denied_slot
+
+    def get_password(self, service: str, username: str) -> str | None:
+        if username == self.denied_slot:
+            raise RuntimeError("user denied keychain access")
+        return super().get_password(service, username)
+
+
 @pytest.fixture
 def _restore_keyring_backend():
     original = keyring.get_keyring()
@@ -343,6 +368,97 @@ def test_failed_retained_platform_delete_preserves_newer_file_copy(
     assert cfg.delete_secret("google_client_secret") is False
     assert cfg._FileCredStore().get(cfg.KEYRING_SERVICE, "google_client_secret") == "new-file-value"
     assert cfg.get_secret("google_client_secret", "TEST_GOOGLE_CLIENT_SECRET") == "new-file-value"
+
+
+def test_credential_store_backend_reports_platform_and_file(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    _restore_keyring_backend,
+) -> None:
+    keyring.set_keyring(_MemoryBackend())
+    monkeypatch.setattr(cfg, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(cfg, "_data_dir_cache", None, raising=False)
+    monkeypatch.setattr(cfg, "_KEYRING_BACKEND_READY", True)
+    monkeypatch.setattr(cfg, "_FILE_BACKEND_ACTIVE", False)
+    monkeypatch.setattr(cfg, "_PLATFORM_KEYRING_BACKEND", None)
+
+    assert cfg.credential_store_backend() == "platform"
+
+    assert cfg._install_file_cred_backend("test degrade") is True
+    assert cfg.credential_store_backend() == "file"
+
+
+def test_failed_keyring_read_remembers_the_slot_for_replay(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    _restore_keyring_backend,
+) -> None:
+    keyring.set_keyring(_UnavailableBackend())
+    monkeypatch.setattr(cfg, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(cfg, "_data_dir_cache", None, raising=False)
+    monkeypatch.setattr(cfg, "_KEYRING_BACKEND_READY", True)
+    monkeypatch.setattr(cfg, "_FILE_BACKEND_ACTIVE", False)
+    monkeypatch.setattr(cfg, "_PLATFORM_KEYRING_BACKEND", None)
+    monkeypatch.setattr(cfg, "_LAST_KEYRING_FAILED_SLOT", None)
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+
+    cfg.get_secret("openrouter_api_key")
+
+    assert cfg._LAST_KEYRING_FAILED_SLOT == "openrouter_api_key"
+    assert cfg._FILE_BACKEND_ACTIVE is True
+
+
+def test_recover_replays_the_failed_slot_and_clears_it(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    _restore_keyring_backend,
+) -> None:
+    # The restore probe only touches a fresh disposable item, which never
+    # re-triggers the macOS Keychain prompt. Recovery must replay the exact
+    # slot whose read failed, or it would report success the next real read
+    # immediately reverts.
+    file_backend = _MemoryBackend()
+    platform_backend = _CountingBackend()
+    keyring.set_keyring(file_backend)
+    monkeypatch.setattr(cfg, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(cfg, "_data_dir_cache", None, raising=False)
+    monkeypatch.setattr(cfg, "_KEYRING_BACKEND_READY", True)
+    monkeypatch.setattr(cfg, "_FILE_BACKEND_ACTIVE", True)
+    monkeypatch.setattr(cfg, "_PLATFORM_KEYRING_BACKEND", None)
+    monkeypatch.setattr(cfg, "_LAST_KEYRING_FAILED_SLOT", "openrouter_api_key")
+    monkeypatch.setattr(
+        keyring.core, "init_backend", lambda: keyring.set_keyring(platform_backend)
+    )
+
+    assert cfg.try_recover_platform_credential_store() is True
+
+    assert cfg._FILE_BACKEND_ACTIVE is False
+    assert cfg._LAST_KEYRING_FAILED_SLOT is None
+    assert (cfg.KEYRING_SERVICE, "openrouter_api_key") in platform_backend.reads
+    assert cfg.credential_store_backend() == "platform"
+
+
+def test_recover_degrades_again_when_the_replayed_read_is_denied(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path,
+    _restore_keyring_backend,
+) -> None:
+    file_backend = _MemoryBackend()
+    denying = _DenyingSlotBackend("openrouter_api_key")
+    keyring.set_keyring(file_backend)
+    monkeypatch.setattr(cfg, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(cfg, "_data_dir_cache", None, raising=False)
+    monkeypatch.setattr(cfg, "_KEYRING_BACKEND_READY", True)
+    monkeypatch.setattr(cfg, "_FILE_BACKEND_ACTIVE", True)
+    monkeypatch.setattr(cfg, "_PLATFORM_KEYRING_BACKEND", None)
+    monkeypatch.setattr(cfg, "_LAST_KEYRING_FAILED_SLOT", "openrouter_api_key")
+    monkeypatch.setattr(keyring.core, "init_backend", lambda: keyring.set_keyring(denying))
+
+    assert cfg.try_recover_platform_credential_store() is False
+
+    assert cfg._FILE_BACKEND_ACTIVE is True
+    assert cfg._LAST_KEYRING_FAILED_SLOT == "openrouter_api_key"
+    assert cfg.credential_store_backend() == "file"
 
 
 def test_marketplace_disconnect_fails_closed_when_platform_token_becomes_locked(

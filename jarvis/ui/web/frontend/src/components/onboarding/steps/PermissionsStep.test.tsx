@@ -8,6 +8,7 @@ const IDS = [
   "accessibility",
   "input_monitoring",
   "event_posting",
+  "credential_store",
 ] as const;
 
 function macSnapshot(overrides: Partial<PermissionSnapshot> = {}): PermissionSnapshot {

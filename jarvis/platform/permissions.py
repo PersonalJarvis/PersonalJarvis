@@ -35,6 +35,11 @@ class PermissionId(StrEnum):
     ACCESSIBILITY = "accessibility"
     INPUT_MONITORING = "input_monitoring"
     EVENT_POSTING = "event_posting"
+    # Not a TCC grant: the macOS Keychain prompts per item at first access
+    # (typically right at app start, when API keys are read). Users who deny
+    # it silently land on the file fallback and read the prompt as suspicious
+    # unless the UI names and explains it like every other permission.
+    CREDENTIAL_STORE = "credential_store"
 
 
 class PermissionState(StrEnum):
@@ -61,6 +66,7 @@ FEATURE_REQUIREMENTS: dict[str, tuple[PermissionId, ...]] = {
         PermissionId.INPUT_MONITORING,
     ),
     "window_control": (PermissionId.ACCESSIBILITY,),
+    "api_keys": (PermissionId.CREDENTIAL_STORE,),
 }
 
 _LABELS: dict[PermissionId, str] = {
@@ -69,6 +75,7 @@ _LABELS: dict[PermissionId, str] = {
     PermissionId.ACCESSIBILITY: "Accessibility",
     PermissionId.INPUT_MONITORING: "Input Monitoring",
     PermissionId.EVENT_POSTING: "Input Control",
+    PermissionId.CREDENTIAL_STORE: "Keychain (API keys)",
 }
 
 _SETTINGS_URLS: dict[PermissionId, str] = {
@@ -118,6 +125,20 @@ def _default_iohid_check(request_type: int) -> int | None:
         return int(check(request_type))
     except Exception:  # noqa: BLE001 - a missing native bridge falls back
         return None
+
+
+def _default_credential_store_backend() -> str:
+    """Ask the config layer which credential backend is live right now."""
+    from jarvis.core.config import credential_store_backend
+
+    return credential_store_backend()
+
+
+def _default_credential_store_recover() -> bool:
+    """Retry the OS credential store; on macOS this re-triggers the prompt."""
+    from jarvis.core.config import try_recover_platform_credential_store
+
+    return try_recover_platform_credential_store()
 
 
 _READY_STATES = frozenset({PermissionState.GRANTED, PermissionState.NOT_REQUIRED})
@@ -185,10 +206,14 @@ class SystemPermissionPort:
         platform_name: PlatformName | None = None,
         module_loader: Callable[[str], Any] = importlib.import_module,
         iohid_check: Callable[[int], int | None] = _default_iohid_check,
+        credential_store_backend: Callable[[], str] = _default_credential_store_backend,
+        credential_store_recover: Callable[[], bool] = _default_credential_store_recover,
     ) -> None:
         self._platform_name = platform_name
         self._module_loader = module_loader
         self._iohid_check = iohid_check
+        self._credential_store_backend = credential_store_backend
+        self._credential_store_recover = credential_store_recover
         # This is operation state, not a cached permission probe. The set lives
         # only for the current process and therefore clears exactly when the
         # required app restart has happened.
@@ -312,9 +337,30 @@ class SystemPermissionPort:
             return None
         return _IOHID_ACCESS_STATES.get(int(raw))
 
+    def _credential_store_state(self) -> PermissionState:
+        """Map the live credential backend onto a permission state.
+
+        The macOS Keychain has no TCC preflight; the observable truth is which
+        keyring backend serves this process. A declined Keychain prompt makes
+        the next read raise, config degrades to the 0600 file fallback, and
+        this row turns "not granted" — recoverable through the request flow,
+        which replays the failed read so macOS prompts again.
+        """
+        try:
+            backend = self._credential_store_backend()
+        except Exception:  # noqa: BLE001 - a broken probe fails closed
+            return PermissionState.UNAVAILABLE
+        if backend == "platform":
+            return PermissionState.GRANTED
+        if backend == "file":
+            return PermissionState.NOT_GRANTED
+        return PermissionState.UNAVAILABLE
+
     def _state(self, permission_id: PermissionId) -> PermissionState:
         if self.platform != "darwin":
             return PermissionState.NOT_REQUIRED
+        if permission_id is PermissionId.CREDENTIAL_STORE:
+            return self._credential_store_state()
         if permission_id is PermissionId.MICROPHONE:
             return self._microphone_state()
         if permission_id is PermissionId.SCREEN_RECORDING:
@@ -375,6 +421,8 @@ class SystemPermissionPort:
         )
 
     def _requester_available(self, permission_id: PermissionId) -> bool:
+        if permission_id is PermissionId.CREDENTIAL_STORE:
+            return True
         if permission_id is PermissionId.MICROPHONE:
             module = self._load("AVFoundation")
             owner = getattr(module, "AVCaptureDevice", None)
@@ -445,6 +493,15 @@ class SystemPermissionPort:
                 }
             )
             detail = self._detail(state)
+            if (
+                permission_id is PermissionId.CREDENTIAL_STORE
+                and state is PermissionState.NOT_GRANTED
+            ):
+                detail = (
+                    "Keychain access was declined, so API keys are kept in a "
+                    "local file for now. Allow access to store them encrypted "
+                    "in the macOS Keychain."
+                )
             if restart_pending and state not in _READY_STATES:
                 detail = (
                     "Permission changes made in System Settings take effect "
@@ -457,7 +514,9 @@ class SystemPermissionPort:
                     status=state.value,
                     required=required,
                     can_request=can_request,
-                    can_open_settings=eligible,
+                    # The Keychain has no System Settings pane; its only
+                    # recovery path is the request flow above.
+                    can_open_settings=eligible and permission_id in _SETTINGS_URLS,
                     restart_required=restart_pending,
                     detail=detail,
                 )
@@ -507,6 +566,12 @@ class SystemPermissionPort:
         return None
 
     def _native_request(self, permission_id: PermissionId) -> None:
+        if permission_id is PermissionId.CREDENTIAL_STORE:
+            # Replaying the failed Keychain read is the only supported way to
+            # make macOS show the prompt again; the outcome (allowed or denied
+            # once more) lands honestly in the after-snapshot.
+            self._credential_store_recover()
+            return
         if permission_id is PermissionId.MICROPHONE:
             av = self._load("AVFoundation")
             av.AVCaptureDevice.requestAccessForMediaType_completionHandler_(
@@ -653,6 +718,18 @@ class SystemPermissionPort:
     ) -> PermissionOperation:
         """Open the matching System Settings pane via LaunchServices."""
         before = self.snapshot()
+        if permission_id not in _SETTINGS_URLS:
+            return PermissionOperation(
+                False,
+                permission_id.value,
+                "open_settings",
+                False,
+                dry_run,
+                False,
+                f"{_LABELS[permission_id]} has no System Settings pane; "
+                "use the request flow instead.",
+                before,
+            )
         if dry_run:
             return PermissionOperation(
                 True,

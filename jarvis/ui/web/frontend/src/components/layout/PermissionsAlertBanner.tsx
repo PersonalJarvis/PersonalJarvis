@@ -4,6 +4,7 @@ import {
   ChevronDown,
   ChevronUp,
   Keyboard,
+  KeyRound,
   Loader2,
   Mic,
   Monitor,
@@ -25,6 +26,7 @@ const ICONS = {
   accessibility: Accessibility,
   input_monitoring: Keyboard,
   event_posting: MousePointer2,
+  credential_store: KeyRound,
 } satisfies Record<PermissionId, typeof Mic>;
 
 // Mirrors the "waiting for System Settings" logic inside usePermissions: a

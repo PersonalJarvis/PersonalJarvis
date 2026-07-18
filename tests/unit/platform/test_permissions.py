@@ -132,6 +132,8 @@ def _native_modules(
 def _port(
     modules: dict[str, object],
     iohid_check: Callable[[int], int | None] = lambda _type: None,
+    credential_backend: Callable[[], str] = lambda: "platform",
+    credential_recover: Callable[[], bool] = lambda: True,
 ) -> SystemPermissionPort:
     def load(name: str) -> object:
         if name not in modules:
@@ -139,8 +141,15 @@ def _port(
         return modules[name]
 
     # iohid_check defaults to "unavailable" so unit runs stay hermetic even on
-    # a real Mac, where the default probe would read the machine's TCC state.
-    return SystemPermissionPort(platform_name="darwin", module_loader=load, iohid_check=iohid_check)
+    # a real Mac, where the default probe would read the machine's TCC state;
+    # the credential stubs keep the host's real keyring untouched the same way.
+    return SystemPermissionPort(
+        platform_name="darwin",
+        module_loader=load,
+        iohid_check=iohid_check,
+        credential_store_backend=credential_backend,
+        credential_store_recover=credential_recover,
+    )
 
 
 def _permission(snapshot: dict, permission_id: PermissionId) -> dict:
@@ -540,10 +549,14 @@ def test_broken_native_bridge_import_fails_closed() -> None:
     def broken_loader(_name: str) -> object:
         raise OSError("incompatible native framework")
 
+    def broken_credential_probe() -> str:
+        raise OSError("credential probe unavailable")
+
     port = SystemPermissionPort(
         platform_name="darwin",
         module_loader=broken_loader,
         iohid_check=lambda _type: None,
+        credential_store_backend=broken_credential_probe,
     )
 
     snapshot = port.snapshot()
@@ -551,3 +564,96 @@ def test_broken_native_bridge_import_fails_closed() -> None:
     assert snapshot["app_identity"]["stable"] is False
     assert {item["status"] for item in snapshot["permissions"]} == {"unavailable"}
     assert all(not feature["ready"] for feature in snapshot["features"].values())
+
+
+def test_credential_store_reports_granted_while_platform_keyring_serves() -> None:
+    modules, _, _ = _native_modules()
+
+    item = _permission(_port(modules).snapshot(), PermissionId.CREDENTIAL_STORE)
+
+    assert item["status"] == "granted"
+    assert item["can_open_settings"] is False
+
+
+def test_credential_store_file_fallback_is_not_granted_and_requestable() -> None:
+    # A declined macOS Keychain prompt degrades config to the 0600 file
+    # fallback; the row must surface that honestly and keep the retry alive.
+    modules, _, _ = _native_modules()
+    port = _port(modules, credential_backend=lambda: "file")
+
+    snapshot = port.snapshot()
+    item = _permission(snapshot, PermissionId.CREDENTIAL_STORE)
+
+    assert item["status"] == "not_granted"
+    assert item["can_request"] is True
+    assert item["can_open_settings"] is False
+    assert "Keychain" in (item["detail"] or "")
+    assert snapshot["features"]["api_keys"]["ready"] is False
+
+
+def test_credential_store_request_replays_recovery_and_reports_live_state() -> None:
+    modules, _, _ = _native_modules()
+    state = {"backend": "file", "recover_calls": 0}
+
+    def recover() -> bool:
+        state["recover_calls"] += 1
+        state["backend"] = "platform"
+        return True
+
+    port = _port(
+        modules,
+        credential_backend=lambda: str(state["backend"]),
+        credential_recover=recover,
+    )
+
+    result = port.request(PermissionId.CREDENTIAL_STORE)
+
+    assert result.ok is True
+    assert result.performed is True
+    assert result.restart_required is False
+    assert state["recover_calls"] == 1
+    assert _permission(result.snapshot, PermissionId.CREDENTIAL_STORE)["status"] == "granted"
+    assert result.snapshot["restart_required"] is False
+
+
+def test_credential_store_declined_again_stays_not_granted() -> None:
+    modules, _, _ = _native_modules()
+    port = _port(
+        modules,
+        credential_backend=lambda: "file",
+        credential_recover=lambda: False,
+    )
+
+    result = port.request(PermissionId.CREDENTIAL_STORE)
+
+    assert result.ok is True
+    assert result.performed is True
+    assert _permission(result.snapshot, PermissionId.CREDENTIAL_STORE)["status"] == "not_granted"
+
+
+def test_credential_store_open_settings_refuses_honestly() -> None:
+    # There is no System Settings pane for the Keychain; a silent no-op button
+    # would look like the app is broken.
+    modules, _, workspace = _native_modules()
+    port = _port(modules, credential_backend=lambda: "file")
+
+    result = port.open_settings(PermissionId.CREDENTIAL_STORE)
+
+    assert result.ok is False
+    assert "System Settings pane" in result.message
+    assert workspace.opened_urls == []
+
+
+def test_credential_store_probe_failure_reports_unavailable() -> None:
+    modules, _, _ = _native_modules()
+
+    def broken_probe() -> str:
+        raise RuntimeError("probe failed")
+
+    item = _permission(
+        _port(modules, credential_backend=broken_probe).snapshot(),
+        PermissionId.CREDENTIAL_STORE,
+    )
+
+    assert item["status"] == "unavailable"
+    assert item["can_request"] is False

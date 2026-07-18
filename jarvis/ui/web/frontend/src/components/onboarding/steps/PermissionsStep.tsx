@@ -12,6 +12,7 @@ const EXPECTED_MACOS_PERMISSIONS = new Set<PermissionId>([
   "accessibility",
   "input_monitoring",
   "event_posting",
+  "credential_store",
 ]);
 
 export function permissionSnapshotReady(snapshot: PermissionSnapshot | null): boolean {

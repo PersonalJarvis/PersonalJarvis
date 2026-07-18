@@ -1076,7 +1076,8 @@
       "screen_recording": { "title": "Grabación de pantalla", "description": "Necesario para que Computer-Use vea todas las pantallas conectadas." },
       "accessibility": { "title": "Accesibilidad", "description": "Necesario para clics, escritura, enfoque y control de ventanas fiables." },
       "input_monitoring": { "title": "Monitorización de entrada", "description": "Necesario para pulsar para hablar y atajos de teclado globales." },
-      "event_posting": { "title": "Control de entrada", "description": "Necesario para que Computer-Use envíe eventos de ratón y teclado." }
+      "event_posting": { "title": "Control de entrada", "description": "Necesario para que Computer-Use envíe eventos de ratón y teclado." },
+      "credential_store": { "title": "Llavero (claves API)", "description": "Guarda tus claves API cifradas en el Llavero de macOS en lugar de un archivo de texto plano — ese es el aviso del Llavero que ves al iniciar la app. Tus claves se quedan en tu Mac y nunca se envían a ningún sitio." }
     },
     "banner": {
       "title": "Acción necesaria: faltan permisos de macOS",
@@ -1089,7 +1090,8 @@
       "voice": "Voz y palabra de activación",
       "computer_use": "Computer-Use",
       "global_hotkeys": "Atajos globales",
-      "window_control": "Control de ventanas"
+      "window_control": "Control de ventanas",
+      "api_keys": "Almacenamiento seguro de claves API"
     }
   },
   "settings_view": {
@@ -1673,7 +1675,7 @@
     "permissions": {
       "title": "Permite el acceso en este Mac",
       "body": "macOS pide aprobar cada capacidad por separado. Usa los botones de abajo y vuelve aquí; el estado se actualizará automáticamente.",
-      "privacy_note": "Estos avisos proceden de macOS. El instalador no puede aprobarlos de forma silenciosa y Personal Jarvis nunca elude Ajustes del Sistema.",
+      "privacy_note": "Estos avisos proceden de macOS. El instalador no puede aprobarlos de forma silenciosa y Personal Jarvis nunca elude Ajustes del Sistema. El aviso del Llavero al iniciar la app solo significa que Personal Jarvis guarda tus claves API cifradas en el Llavero de macOS — nunca salen de tu Mac.",
       "continue": "Continuar",
       "text_only": "Continuar solo con texto"
     },
