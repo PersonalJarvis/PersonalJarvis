@@ -148,6 +148,22 @@ class FakePageRepository:
 # ---------------------------------------------------------------------
 
 
+@pytest.fixture(autouse=True)
+def _reset_provider_failure_memory():
+    """Isolate the provider-chain failure cooldown between tests.
+
+    ``complete_with_fallback`` remembers hard provider failures in module
+    state so live callers stop paying for dead chain rungs on every call.
+    Tests that script failing providers must not demote those providers
+    for every later test in the session.
+    """
+    from jarvis.memory.wiki.provider_chain import reset_provider_failure_memory
+
+    reset_provider_failure_memory()
+    yield
+    reset_provider_failure_memory()
+
+
 @pytest.fixture
 def fake_repo() -> FakePageRepository:
     """A fresh ``FakePageRepository`` per test."""

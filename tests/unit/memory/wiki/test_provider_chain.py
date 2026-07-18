@@ -347,6 +347,120 @@ async def test_two_valid_empty_opinions_stop_later_provider_attempts() -> None:
     assert reg.tried == ["openrouter", "antigravity", "gemini"]
 
 
+# --- failure cooldown: dead rungs stop taxing every call ---------------------
+
+
+async def test_recently_failed_provider_is_demoted_behind_healthy_ones() -> None:
+    reg = _FakeRegistry(fail_providers={"openrouter"})
+    chain = [("openrouter", None), ("gemini", None)]
+
+    first = await complete_with_fallback(
+        registry=reg,
+        chain=chain,
+        request=object(),
+        timeout_s=5.0,
+        label="test",
+        aggregate=_aggregate,
+    )
+    assert first is not None and first[1] == "gemini"
+    assert reg.tried == ["openrouter", "gemini"]  # the failure that arms the cooldown
+
+    second = await complete_with_fallback(
+        registry=reg,
+        chain=chain,
+        request=object(),
+        timeout_s=5.0,
+        label="test",
+        aggregate=_aggregate,
+    )
+    assert second is not None and second[1] == "gemini"
+    # Within the cooldown the dead provider is no longer tried FIRST — the
+    # healthy one answers before the doomed round-trip is even attempted.
+    assert reg.tried == ["openrouter", "gemini", "gemini"]
+
+
+async def test_cooldown_never_removes_the_last_resort() -> None:
+    """AP-22 honesty: when every healthy provider fails, cooled ones still run."""
+    reg = _FakeRegistry(fail_providers={"openrouter"})
+    chain = [("openrouter", None), ("gemini", None)]
+
+    await complete_with_fallback(
+        registry=reg,
+        chain=chain,
+        request=object(),
+        timeout_s=5.0,
+        label="test",
+        aggregate=_aggregate,
+    )  # arms the cooldown for openrouter
+
+    reg._fail = {"gemini"}  # now the previously-healthy provider dies...
+    reg.tried.clear()
+    result = await complete_with_fallback(
+        registry=reg,
+        chain=chain,
+        request=object(),
+        timeout_s=5.0,
+        label="test",
+        aggregate=_aggregate,
+    )
+    # ...and the cooled provider, tried last, saves the call.
+    assert result is not None and result[1] == "openrouter"
+    assert reg.tried == ["gemini", "openrouter"]
+
+
+async def test_transport_success_clears_the_cooldown() -> None:
+    from jarvis.memory.wiki import provider_chain as pc
+
+    reg = _FakeRegistry(fail_providers={"openrouter"})
+    chain = [("openrouter", None), ("gemini", None)]
+    await complete_with_fallback(
+        registry=reg,
+        chain=chain,
+        request=object(),
+        timeout_s=5.0,
+        label="test",
+        aggregate=_aggregate,
+    )
+    assert pc._in_cooldown("openrouter")
+
+    reg._fail = set()  # provider recovered
+    reg.tried.clear()
+    result = await complete_with_fallback(
+        registry=reg,
+        chain=[("gemini", None), ("openrouter", None)],
+        request=object(),
+        timeout_s=5.0,
+        label="test",
+        aggregate=_aggregate,
+    )
+    assert result is not None and result[1] == "gemini"
+    # gemini answered first, so openrouter stays cooled until it is needed…
+    reg.tried.clear()
+    result2 = await complete_with_fallback(
+        registry=reg,
+        chain=[("openrouter", None)],
+        request=object(),
+        timeout_s=5.0,
+        label="test",
+        aggregate=_aggregate,
+    )
+    # …a single-provider chain still tries it (demotion, never removal) and
+    # the success clears the memory.
+    assert result2 is not None and result2[1] == "openrouter"
+    assert not pc._in_cooldown("openrouter")
+
+
+async def test_cooldown_expires_by_time(monkeypatch: pytest.MonkeyPatch) -> None:
+    from jarvis.memory.wiki import provider_chain as pc
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(pc.time, "monotonic", lambda: clock["now"])
+    pc._note_provider_failure("openrouter", "429")
+    assert pc._in_cooldown("openrouter")
+    clock["now"] += pc._PROVIDER_COOLDOWN_S + 1
+    assert not pc._in_cooldown("openrouter")
+
+
 @pytest.mark.asyncio
 async def test_provider_failures_never_expose_raw_exception_secrets(
     monkeypatch: pytest.MonkeyPatch,

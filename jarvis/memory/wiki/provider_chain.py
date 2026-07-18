@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable
 from typing import Any
 
@@ -31,6 +32,53 @@ from jarvis.core.redact import safe_preview
 from jarvis.memory.wiki import telemetry
 
 log = logging.getLogger(__name__)
+
+# How long a provider that just hard-failed (transport error, timeout, or
+# unusable structured output) is demoted to the END of the chain instead of
+# being retried first. Live 2026-07-18: three dead chain rungs (codex 429,
+# antigravity malformed JSON, claude-api 401) were re-tried on EVERY wiki
+# call, taxing each extraction with 10-15 s of doomed round-trips before a
+# healthy provider answered. Demotion — never removal — keeps the AP-22
+# honesty contract: when every healthy provider fails, the cooled ones are
+# still tried before the chain gives up.
+_PROVIDER_COOLDOWN_S = 900.0
+
+# provider name -> (monotonic timestamp of last hard failure, short reason)
+_provider_failures: dict[str, tuple[float, str]] = {}
+
+
+def _note_provider_failure(provider: str, reason: str) -> None:
+    _provider_failures[provider] = (time.monotonic(), reason)
+
+
+def _in_cooldown(provider: str) -> bool:
+    entry = _provider_failures.get(provider)
+    if entry is None:
+        return False
+    if time.monotonic() - entry[0] >= _PROVIDER_COOLDOWN_S:
+        del _provider_failures[provider]
+        return False
+    return True
+
+
+def reset_provider_failure_memory() -> None:
+    """Forget every recorded provider failure (tests + explicit recovery)."""
+    _provider_failures.clear()
+
+
+def _order_by_cooldown(
+    chain: list[tuple[str, str | None]],
+) -> tuple[list[tuple[str, str | None]], list[str]]:
+    """Healthy providers first, recently-failed ones demoted to the end.
+
+    Returns the reordered chain plus the demoted provider names (for the
+    one honest log line). Relative order inside each group is preserved.
+    """
+    healthy: list[tuple[str, str | None]] = []
+    cooled: list[tuple[str, str | None]] = []
+    for entry in chain:
+        (cooled if _in_cooldown(entry[0]) else healthy).append(entry)
+    return healthy + cooled, [provider for provider, _model in cooled]
 
 
 def _exception_summary(exc: Exception) -> str:
@@ -140,7 +188,16 @@ async def complete_with_fallback(
     failure_summaries: list[str] = []
     allowed_rejection_fallback: tuple[Any, str, str] | None = None
 
-    for index, (provider, model) in enumerate(chain):
+    ordered, demoted = _order_by_cooldown(chain)
+    if demoted and ordered != chain:
+        log.info(
+            "%s: demoting recently-failed provider(s) to the end of the "
+            "chain: %s",
+            label,
+            ", ".join(demoted),
+        )
+
+    for index, (provider, model) in enumerate(ordered):
         try:
             brain = instantiate_curator_brain(registry, provider, model)
         except Exception as exc:  # noqa: BLE001 — a bad provider must not abort the chain
@@ -152,12 +209,16 @@ async def complete_with_fallback(
                 detail,
             )
             failure_summaries.append(f"{provider} instantiate failed: {detail}")
+            _note_provider_failure(provider, detail)
             continue
         if brain is None:
             failure_summaries.append(f"{provider} unavailable")
             continue
         try:
             agg = await asyncio.wait_for(aggregate(brain.complete(request)), timeout=timeout_s)
+            # Transport-level success: the provider is reachable again.
+            # A validation rejection below re-records it as failed.
+            _provider_failures.pop(provider, None)
             if validate is not None:
                 try:
                     rejection = validate(agg)
@@ -172,6 +233,7 @@ async def complete_with_fallback(
                         allow_last_rejection is not None
                         and allow_last_rejection(rejection)
                     )
+                    last_in_chain = index == len(ordered) - 1
                     if allowed:
                         # Keep a semantically safe fallback (currently the
                         # extractor's valid empty array) while still asking the
@@ -191,7 +253,7 @@ async def complete_with_fallback(
                         # If every later provider fails, their failure must not
                         # erase this valid bounded answer.
                         allowed_rejection_fallback = (agg, provider, rejection)
-                    if index == len(chain) - 1 and allowed:
+                    if last_in_chain and allowed:
                         log.info(
                             "%s: accepting final provider %s output after "
                             "bounded second-opinion attempts (%s)",
@@ -210,6 +272,7 @@ async def complete_with_fallback(
                     failure_summaries.append(
                         f"{provider} unusable output: {safe_rejection}"
                     )
+                    _note_provider_failure(provider, safe_rejection)
                     try:
                         telemetry.inc("wiki_provider_output_rejected")
                     except Exception:  # noqa: BLE001 - telemetry cannot break fallback
@@ -228,6 +291,7 @@ async def complete_with_fallback(
                 timeout_s,
             )
             failure_summaries.append(f"{provider} timeout ({timeout_s:.1f}s)")
+            _note_provider_failure(provider, "timeout")
             continue
         except Exception as exc:  # noqa: BLE001 — try the next family, never dead-end on one
             detail = _exception_summary(exc)
@@ -238,6 +302,7 @@ async def complete_with_fallback(
                 detail,
             )
             failure_summaries.append(f"{provider} {detail}")
+            _note_provider_failure(provider, detail)
             continue
 
     if allowed_rejection_fallback is not None:
@@ -281,4 +346,5 @@ __all__ = [
     "build_wiki_provider_chain",
     "complete_with_fallback",
     "credential_ready_wiki_providers",
+    "reset_provider_failure_memory",
 ]
