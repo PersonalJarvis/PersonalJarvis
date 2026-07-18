@@ -320,6 +320,7 @@ class WebServer:
         from .self_mod_routes import router as self_mod_router
         from .sessions_routes import router as sessions_router
         from .settings_routes import router as settings_router
+        from .setup_report_routes import router as setup_report_router
         from .setup_routes import router as setup_router
         from .skills_routes import router as skills_router
         from .socials_routes import router as socials_router
@@ -357,6 +358,9 @@ class WebServer:
         # In-app updater (GET status / POST apply). Managed-install only — see
         # jarvis/ui/web/update_routes.py; refuses to self-reset a dev checkout.
         app.include_router(update_router)
+        # Share-safe cross-device setup report (read-only) — names why THIS
+        # install behaves differently from another device (CLAUDE.md §3 triage).
+        app.include_router(setup_report_router)
         # Frontier auto-switch modal API (GET pending / POST ack) + Self-Mod
         # read/restore API. Both were the last route modules left unmounted; the
         # 404 on /api/frontier/pending silently broke the desktop auto-switch
