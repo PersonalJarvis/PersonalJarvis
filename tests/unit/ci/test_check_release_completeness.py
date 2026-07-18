@@ -9,6 +9,7 @@ reading, and the published-release tag match.
 
 from __future__ import annotations
 
+import subprocess
 from pathlib import Path
 
 from scripts.ci import check_release_completeness as gate
@@ -63,6 +64,16 @@ def test_dirty_check_keeps_the_first_entry_intact(monkeypatch, tmp_path: Path):
     assert not ok
     assert "AGENTS.md" in message
     assert "GENTS.md" not in message.replace("AGENTS.md", "")
+
+
+def test_run_git_surfaces_stderr_on_failure(tmp_path: Path):
+    # Git writes its failure reason (missing remote, offline, bad ref) to
+    # STDERR; a gate whose whole point is transparency must never print an
+    # empty reason. Exercised against a real git repo, not a stub.
+    subprocess.run(["git", "init", "--quiet", str(tmp_path)], check=True)
+    rc, out = gate._run_git(["rev-parse", "--verify", "no-such-ref"], cwd=tmp_path)
+    assert rc != 0
+    assert out.strip(), "the stderr failure reason must reach the caller"
 
 
 def test_release_matches_accepts_v_prefix_and_rejects_other_versions():

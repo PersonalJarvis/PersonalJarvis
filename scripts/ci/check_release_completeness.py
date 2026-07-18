@@ -72,7 +72,14 @@ def _run_git(args: list[str], *, cwd: Path) -> tuple[int, str]:
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
         return -1, f"could not run git: {exc}"
-    return proc.returncode, (proc.stdout or "").rstrip("\n")
+    out = (proc.stdout or "").rstrip("\n")
+    if proc.returncode != 0:
+        # Git reports the actual failure reason (missing remote, offline, auth)
+        # on STDERR — a failing check must surface it, never an empty string.
+        err = (proc.stderr or "").strip()
+        if err:
+            out = f"{out}\n{err}".strip("\n") if out else err
+    return proc.returncode, out
 
 
 # --------------------------------------------------------------------------- #

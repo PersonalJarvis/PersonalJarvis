@@ -74,7 +74,8 @@ def _install_snapshot() -> dict[str, Any]:
         root = _update._repo_root()
         managed = bool(root is not None and (root / _update._MARKER_NAME).exists())
         profile = _update._managed_install_profile(root) if root is not None else "unknown"
-    except Exception:  # noqa: BLE001 — diagnostics must never raise
+    except Exception as exc:  # noqa: BLE001 — diagnostics must never raise
+        log.debug("setup-report: install probe failed: %s", exc)
         managed, profile = False, "unknown"
     return {"managed": managed, "profile": profile}
 
@@ -122,7 +123,8 @@ def _credential_presence(request: Request) -> dict[str, bool]:
             present = bool(
                 _providers._is_credential_present(spec, binary_path if spec.id == "codex" else None)
             )
-        except Exception:  # noqa: BLE001 — an unreadable slot reads as absent
+        except Exception as exc:  # noqa: BLE001 — an unreadable slot reads as absent
+            log.debug("setup-report: credential probe for %s failed: %s", spec.id, exc)
             present = False
         out[spec.id] = present
     return out
@@ -200,23 +202,29 @@ def _render_text(report: dict[str, Any]) -> str:
 # --------------------------------------------------------------------------- #
 # Route
 # --------------------------------------------------------------------------- #
-@router.get("")
+# response_model=None: the return union includes a bare Response subclass
+# (text mode), which FastAPI must not try to model as a pydantic field.
+@router.get("", response_model=None)
 async def get_setup_report(
     request: Request,
     fmt: str = Query(default="json", alias="format"),
-) -> Any:
+) -> dict[str, Any] | PlainTextResponse:
     """One share-safe snapshot of what powers THIS install, for device diffing."""
 
-    def _sync_parts() -> tuple[dict[str, Any], dict[str, str | None], dict[str, bool]]:
-        # Config reads, plugin-registry resolution, and keyring probes are all
-        # synchronous — off the loop so the report never stalls the server.
+    def _sync_parts() -> tuple[
+        dict[str, Any], dict[str, str | None], dict[str, bool], dict[str, Any]
+    ]:
+        # Config reads, plugin-registry resolution, keyring probes, and the
+        # install-marker file reads are all synchronous — off the loop so the
+        # report never stalls the server.
         return (
             _behavior_snapshot(request),
             _active_tiers(request),
             _credential_presence(request),
+            _install_snapshot(),
         )
 
-    behavior, tiers, credentials = await asyncio.to_thread(_sync_parts)
+    behavior, tiers, credentials, install = await asyncio.to_thread(_sync_parts)
     sections = await _section_snapshot(request)
 
     report: dict[str, Any] = {
@@ -224,7 +232,7 @@ async def get_setup_report(
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "version": _version(),
         "platform": _platform_snapshot(),
-        "install": _install_snapshot(),
+        "install": install,
         "behavior": behavior,
         "tiers": tiers,
         "credentials": credentials,
