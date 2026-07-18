@@ -5623,3 +5623,38 @@ unboundedly: bound every hold by the moment the withheld content would
 reach the user anyway (here: the finalize() flush), and let the kill
 switch — not the hold — be the actual safety mechanism. An unbounded hold
 converts a provider lag into a user-facing outage.
+
+---
+
+## BUG-081: Hanging up a realtime call can hang forever — end() loses its one pump cancel to an asyncio race after a transport rebuild (HIGH, FIXED 2026-07-18)
+
+**Symptom.** The full unit suite froze at ~61 % on
+`test_idle_stream_end_with_capability_rebuilds_instead_of_ending` — the test
+(and the same code path live) hung in `RealtimeVoiceSession.end()`
+indefinitely; per-test timeouts killed the whole run. Live equivalent: after
+a provider transport rebuild (BUG-071 path), hanging up the call never
+completes.
+
+**Root cause.** `end()` cancelled the pump task exactly once and then
+awaited it unbounded. When that single `cancel()` lands while the pump's
+current waiter future is ALREADY finished (observed: `end()` arriving just
+as `_rebuild_transport`'s `_open()` completed — waiter showed
+`<Future finished>`), asyncio absorbs the cancellation without ever raising
+`CancelledError` inside the coroutine: the task reports `cancelling()=1`,
+`_must_cancel` resets, and the pump keeps waiting on the next provider
+event. The bare `await self._pump_task` then waits forever. A second
+cancel — e.g. the loop teardown — was proven to deliver fine, which
+confirmed delivery, not handling, was the failure.
+
+**Fix (2026-07-18).** `end()` re-cancels on a bounded wait (up to 3 ×
+`cancel()` + 2 s `asyncio.wait`), logging and abandoning the task only if it
+survives all retries; a retry hits the task in a plain suspended await,
+where delivery is reliable. Non-cancelled outcomes have their exception
+retrieved so nothing is silently lost. Guard: the previously hanging
+rebuild tests in `tests/unit/realtime/test_session.py` (133 green, 10 s).
+
+**Class rule.** Never pair a single `task.cancel()` with an UNBOUNDED
+`await task` in teardown: cancellation delivery is not guaranteed on the
+first attempt when the target's waiter future has already completed.
+Teardown must re-cancel on a bounded wait (or otherwise wake the awaited
+resource) so a lost cancel degrades to a retry, never a permanent hang.

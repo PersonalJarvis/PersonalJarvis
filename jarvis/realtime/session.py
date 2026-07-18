@@ -3970,12 +3970,36 @@ class RealtimeVoiceSession:
                 safe_preview(lost.text, max_chars=200),
             )
         self._late_delegate_results.clear()
-        if self._pump_task is not None and not self._pump_task.done():
-            self._pump_task.cancel()
-            try:
-                await self._pump_task
-            except asyncio.CancelledError:
-                pass
+        pump = self._pump_task
+        if pump is not None and not pump.done():
+            # A single cancel() can be LOST to an asyncio race (BUG-081): when
+            # cancel() lands while the pump's current waiter future is already
+            # finished — observed live with end() arriving as
+            # _rebuild_transport's _open() completed — the cancellation is
+            # absorbed without ever raising inside the coroutine. The task
+            # keeps pumping, and a bare ``await pump`` here waits forever, so
+            # the hangup itself hangs. Re-cancel on a bounded wait instead:
+            # the retry hits the task in a plain suspended await, where
+            # delivery is reliable.
+            for _ in range(3):
+                pump.cancel()
+                done, _ = await asyncio.wait({pump}, timeout=2.0)
+                if done:
+                    break
+            else:
+                log.warning(
+                    "realtime[%s] pump task survived repeated cancellation "
+                    "during end() — abandoning it",
+                    self.session_id,
+                )
+            if pump.done() and not pump.cancelled():
+                exc = pump.exception()
+                if exc is not None:
+                    log.debug(
+                        "realtime[%s] pump task ended with %r during end()",
+                        self.session_id,
+                        exc,
+                    )
         # A provider/socket can disappear after either side has already emitted
         # transcript text but before its turn_complete marker. Freeze the
         # accumulated values into VoiceTurnCompleted before the logical session
