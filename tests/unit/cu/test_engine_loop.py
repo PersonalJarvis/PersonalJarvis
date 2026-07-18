@@ -362,6 +362,56 @@ async def test_coordinate_less_scroll_targets_capture_center_and_stales_batch(pa
     assert any("only one pointer action" in user for _system, user in brain.calls)
 
 
+async def test_ineffective_scroll_fails_with_keyboard_hint(patched):
+    # Live run 2026-07-18 07:47 (Gmail unsubscribe hunt): the wheel event was
+    # dispatched but the reading pane never moved. The old engine recorded a
+    # phantom "scroll ok"; every retry was then silently refused as a ledger
+    # duplicate and the mission died as an opaque "no progress". An
+    # ineffective scroll must FAIL with actionable feedback so the model can
+    # switch to keyboard scrolling — and that keyboard fallback must run.
+    patched.region_changes_after_click = False   # pre == post → no effect
+    brain = FakeBrain([
+        '{"action":"scroll","direction":"down","amount":5}',
+        '{"action":"key","keys":["pagedown"]}',
+        '{"action": "done", "reason": "scrolled"}',
+        '{"done": true, "proof": "the unsubscribe link is visible"}',
+    ])
+    executor = FakeExecutor()
+
+    chunks = await _run(_ctx(brain, executor))
+
+    assert _final(chunks).exit_code == 0
+    assert any("NO visible effect" in user for _system, user in brain.calls), (
+        "the model must be told the scroll did not move anything"
+    )
+    assert any(name == "hotkey" for name, _args in executor.calls), (
+        "the keyboard fallback the hint suggests must not be blocked"
+    )
+
+
+async def test_repeated_ineffective_scroll_aborts_with_honest_reason(patched):
+    # Worst case: the model stubbornly re-issues the same dead scroll. The
+    # abort must carry the real cause (scroll had no effect) instead of the
+    # bare "no progress" the voice layer previously embroidered into a
+    # fabricated story ("the unsubscribe link did not work").
+    patched.region_changes_after_click = False
+    brain = FakeBrain(['{"action":"scroll","direction":"down","amount":5}'] * 6)
+    executor = FakeExecutor()
+
+    chunks = await _run(_ctx(brain, executor))
+
+    final = _final(chunks)
+    assert final.exit_code == 5
+    assert "NO visible effect" in final.stderr, (
+        "the no-progress abort must name the last real attempts"
+    )
+    scrolls = [name for name, _args in executor.calls if name == "scroll"]
+    assert len(scrolls) >= 2, (
+        "retrying an ineffective scroll must stay allowed (no silent ledger "
+        "refusal) so the failure surfaces as FAILED feedback instead"
+    )
+
+
 async def test_done_judge_reuses_the_step_frame_when_no_action_ran(patched):
     # "Say you are done FAST": when `done` arrives before any action of the
     # batch executed, the screen is exactly the frame the model saw — the

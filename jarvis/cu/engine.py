@@ -801,10 +801,17 @@ async def run_cu_loop(
                     stdout=f"[cu] done (verified: {proof})\n", exit_code=_EXIT_OK,
                 )
             else:
+                # Name the last real attempts: a bare "no progress" invites
+                # the voice layer to invent a cause (live run 2026-07-18:
+                # "the unsubscribe link did not work" was never attempted —
+                # the mission died scrolling).
+                recent = "; ".join(h[:140] for h in history[-2:])
                 yield _final(
                     stderr=(
                         f"[cu] fail at step-{step_idx}: no progress — the "
-                        "screen has not changed despite my actions.\n"
+                        "screen has not changed despite my actions."
+                        + (f" Last attempts: {recent}" if recent else "")
+                        + "\n"
                     ),
                     exit_code=_EXIT_FAIL,
                 )
@@ -952,11 +959,14 @@ async def run_cu_loop(
                         exit_code=_EXIT_FAIL,
                     )
                     return
-                history.append(
+                msg = (
                     f"step {step_idx}: done REJECTED by the verifier"
                     + (f" — {proof}" if proof else "")
-                    + " — keep working toward visible proof",
+                    + " — keep working toward visible proof"
                 )
+                history.append(msg)
+                log.info("[cu] %s", msg)
+                yield _progress(f"[cu] {msg}")
                 break  # re-perceive
 
             if kind == "fail":
@@ -973,11 +983,14 @@ async def run_cu_loop(
             # omission is resolved to this frame's capture center below.
             is_pointer = kind in ("click", "click_element", "drag", "scroll")
             if is_pointer and pointer_used:
-                history.append(
+                msg = (
                     f"step {step_idx}: {_summarize_action(action)} SKIPPED — "
                     "only one pointer action per screenshot; the screen may "
-                    "have changed",
+                    "have changed"
                 )
+                history.append(msg)
+                log.info("[cu] %s", msg)
+                yield _progress(f"[cu] {msg}")
                 break  # re-perceive before the next pointer action
 
             # -- resolve coordinates through THIS frame's mapper -----------
@@ -1033,20 +1046,26 @@ async def run_cu_loop(
                     await asyncio.to_thread(list_monitors),
                 )
                 if live_topology != captured_topology:
-                    history.append(
+                    msg = (
                         f"step {step_idx}: {_summarize_action(action)} REFUSED — "
                         "the display layout changed after the screenshot; "
                         "capturing fresh geometry before any pointer action."
                     )
+                    history.append(msg)
+                    log.info("[cu] %s", msg)
+                    yield _progress(f"[cu] {msg}")
                     break
 
             if ledger.is_duplicate(action, frame.thumb, resolved_xy=resolved_xy):
                 guard_hits += 1
-                history.append(
+                msg = (
                     f"step {step_idx}: {_summarize_action(action)} REFUSED — "
                     "this exact action already ran on this unchanged screen; "
-                    "the screen did not react. Choose a DIFFERENT action.",
+                    "the screen did not react. Choose a DIFFERENT action."
                 )
+                history.append(msg)
+                log.info("[cu] %s", msg)
+                yield _progress(f"[cu] {msg}")
                 if guard_hits >= _MAX_GUARD_HITS:
                     yield _final(
                         stderr=(
@@ -1060,11 +1079,14 @@ async def run_cu_loop(
 
             if kind in {"click", "click_element", "drag", "scroll", "type", "key"}:
                 if await _live_window_state_signature() != captured_window_signature:
-                    history.append(
+                    msg = (
                         f"step {step_idx}: {_summarize_action(action)} REFUSED — "
                         "the foreground window changed after the screenshot; "
                         "capturing a fresh frame before acting."
                     )
+                    history.append(msg)
+                    log.info("[cu] %s", msg)
+                    yield _progress(f"[cu] {msg}")
                     break
 
             # -- execute ------------------------------------------------------
@@ -1294,10 +1316,36 @@ async def run_cu_loop(
                     "_expected_window_signature": captured_window_signature,
                 }
                 pointer_used = True
+                pre = await asyncio.to_thread(grab_region, monitor.bbox)
                 ok, detail = await _dispatch_tool(ctx, "scroll", args, trace_id)
-                if ok:
-                    ledger.record(action, frame.thumb)
                 profiler.add("act", t0, step_idx)
+                t0 = time.monotonic()
+                if ok:
+                    # Effect-check, same contract as clicks: a wheel event the
+                    # OS accepted but the app visibly ignored is a FAILED
+                    # action, not a success. Recording it as "ok" fed the
+                    # model a phantom scroll; its identical retry was then
+                    # silently refused by the ledger and the mission died as
+                    # an opaque "no progress" (live run 2026-07-18 07:47,
+                    # Gmail reading pane never moved).
+                    await asyncio.sleep(_EFFECT_SETTLE_S * settle_scale)
+                    post = await asyncio.to_thread(grab_region, monitor.bbox)
+                    from jarvis.cu.capture import frames_differ  # noqa: PLC0415
+
+                    if (
+                        pre is not None
+                        and post is not None
+                        and not frames_differ(pre, post)
+                    ):
+                        ok = False
+                        detail = (
+                            "the scroll had NO visible effect — the surface "
+                            "under the pointer did not move. Do NOT repeat "
+                            "the same scroll. Click once inside the content "
+                            "area to give it scroll focus, or scroll by "
+                            'keyboard: key(["pagedown"]) or key(["end"]).'
+                        )
+                profiler.add("verify", t0, step_idx)
 
             elif kind == "drag":
                 assert resolved_xy is not None

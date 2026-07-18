@@ -5658,3 +5658,49 @@ rebuild tests in `tests/unit/realtime/test_session.py` (133 green, 10 s).
 first attempt when the target's waiter future has already completed.
 Teardown must re-cancel on a bounded wait (or otherwise wake the awaited
 resource) so a lost cancel degrades to a retry, never a permanent hang.
+
+## BUG-082: Computer-Use aborts mid-mission as "no progress" after one swallowed scroll — phantom scroll success + silent ledger refusals (HIGH, FIXED 2026-07-18)
+
+**Symptom.** A CU mission that ran fast and clean (Chrome → Gmail → open the
+LinkedIn email in 5 steps, 07:47 live run) suddenly stopped with
+`fail at step-10: no progress — the screen has not changed despite my
+actions`, ~5 s after its last visible action. The voice layer then invented a
+cause the mission never reached ("the unsubscribe link did not work" — no
+unsubscribe link was ever clicked). Flight recorder: steps 7–9 show
+observe+think but NO action, no refusal, no log line — the round dies
+invisibly.
+
+**Root cause (three interlocking defects).**
+1. *No effect-check for scroll:* the wheel event was dispatched (verified
+   move + SendInput), Gmail's reading pane never moved (pre/post screenshots
+   pixel-identical), yet the engine recorded `scroll ok` into history AND the
+   idempotency ledger — clicks are pre/post effect-checked, scrolls were not.
+2. *Direction-only ledger key:* `action_key` reduced every scroll to
+   `scroll@down`, so each retry the model sensibly proposed on the unchanged
+   frame was refused as a duplicate — regardless of position or amount.
+3. *Silent refusal paths:* the ledger/staleness/window-signature refusals
+   only appended to the model-facing history — no `log.info`, no progress
+   chunk, no flight-recorder event. Three silent refusals in a row satisfied
+   the `_STUCK_FRAMES` no-progress guard and the mission aborted with a
+   context-free reason the realtime voice model then embroidered.
+
+**Fix (2026-07-18).** (a) Scroll is now effect-checked exactly like clicks
+(pre/post `grab_region` + `frames_differ`); an ineffective scroll FAILS with
+actionable feedback (click the content area for scroll focus / use
+`key(["pagedown"])`/`key(["end"])`) and is bounded by
+`_MAX_CONSECUTIVE_FAILURES`. (b) Scroll is exempt from the ledger (it can no
+longer run blindly, and re-scrolling a similar-looking long page is
+legitimate progress). (c) Every refusal path (`REFUSED`/`SKIPPED`/`done
+REJECTED`) now logs and yields a progress chunk. (d) The no-progress abort
+names the last real attempts so the voice layer reports the true cause.
+Guards: `tests/unit/cu/test_engine_loop.py::
+test_ineffective_scroll_fails_with_keyboard_hint`,
+`::test_repeated_ineffective_scroll_aborts_with_honest_reason`.
+
+**Class rule.** Every state-changing CU action needs a closed verification
+loop — "the OS accepted the input" is not "the app reacted"; an action class
+without an effect-check (scroll was one) silently corrupts both the model's
+history and the dedup ledger, and the two errors compound. And guard paths
+that refuse an action must be OBSERVABLE (log + progress + recorder event):
+a guard that only whispers to the model turns every interaction bug into an
+unexplainable early abort.

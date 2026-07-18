@@ -18,6 +18,14 @@ moved is exactly the double-action bug class and is blocked regardless of
 what the model asks for.
 
 ``wait`` is exempt (waiting twice is harmless and sometimes right).
+
+``scroll`` is exempt too (2026-07-18): the engine effect-checks every scroll
+— a wheel event the app visibly ignored FAILS the action with feedback, so a
+scroll can no longer "run blindly". And a repeated scroll on a similar-looking
+frame is often legitimate forward progress (long uniform pages); the old
+direction-only key (``scroll@down``) refused every retry silently, which
+starved the no-progress guard into an opaque early abort (live Gmail run,
+07:47: unsubscribe hunt died after one swallowed wheel event).
 """
 from __future__ import annotations
 
@@ -41,7 +49,10 @@ def action_key(action: dict[str, Any]) -> str | None:
     """Stable identity key for one validated action, or ``None`` when the
     action kind is exempt from deduplication (``wait``/``done``/``fail``)."""
     kind = action.get("action")
-    if kind in (None, "wait", "done", "fail"):
+    if kind in (None, "wait", "done", "fail", "scroll"):
+        # scroll: effect-checked by the engine (an ineffective wheel event
+        # fails the action outright), and re-scrolling a page that still
+        # looks similar is legitimate progress — see the module docstring.
         return None
     if kind == "click_element":
         return f"click_element@{_norm_text(str(action.get('name', '')))}"
@@ -50,8 +61,6 @@ def action_key(action: dict[str, Any]) -> str | None:
     if kind == "key":
         keys = "+".join(_norm_text(str(k)) for k in action.get("keys", []))
         return f"key@{keys}"
-    if kind == "scroll":
-        return f"scroll@{action.get('direction')}"
     if kind in ("open_app", "switch_window"):
         return f"{kind}@{_norm_text(str(action.get('name', '')))}"
     if kind == "drag":
