@@ -40,13 +40,15 @@ and it runs everywhere — headless server to full voice desktop.
 
 ## Just say it
 
-<p align="center">
-  <img src="assets/brand/just-say-it.png" alt="Examples of what you can say to Personal Jarvis" width="860" />
-</p>
+| You say | What happens |
+|---|---|
+| *"Research vector databases."* | An isolated agent digs in; the finished report lands as a download in **Outputs**. |
+| *"Call the clinic and book the next open appointment."* | A real outbound phone call goes out through the optional Twilio line. |
+| *"Remember: Alex prefers Signal over email."* | Written to the Knowledge Wiki — still known in every future session. |
+| *"When the download finishes, ping me on Telegram."* | A when-then trigger arms itself and messages you the moment it fires. |
+| *"Open the browser and pull up the weather."* | Jarvis takes mouse and keyboard and does it on your screen. |
 
-Every one of these works today: research lands as a downloadable report in **Outputs**,
-calls go out through the optional Twilio line, memories stick in the Knowledge Wiki, and
-triggers ping you on Telegram or Discord when they fire.
+Every one of these works today, out of the box.
 
 ## Why it's different
 
@@ -242,9 +244,8 @@ Worker-Critic), `jarvis/memory/wiki/` (long-term memory), `jarvis/ui/web/` (the 
 
 ## Community
 
-<p align="center">
-  <img src="assets/brand/community.png" alt="Come build with us" width="640" />
-</p>
+Personal Jarvis is built in the open — the roadmap, the bug hunts, and the wins all land
+on Discord first. Come say hi and help shape where it goes.
 
 <p align="center">
   <a href="https://discord.gg/x7USduHxbc"><img alt="Discord" src="https://img.shields.io/badge/Discord-join_the_server-FFD60A?style=for-the-badge&logo=discord&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
