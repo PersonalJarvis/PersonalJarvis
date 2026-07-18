@@ -66,6 +66,7 @@ def _posix_candidates() -> list[str]:
 
 
 def _windows_candidates() -> list[str]:
+    home = Path.home()
     dirs: list[str] = []
     local = os.environ.get("LOCALAPPDATA")
     if local:
@@ -75,6 +76,14 @@ def _windows_candidates() -> list[str]:
     appdata = os.environ.get("APPDATA")
     if appdata:
         dirs.append(os.path.join(appdata, "npm"))
+    # Claude Code's NATIVE installer (install.ps1) drops the binary into
+    # %USERPROFILE%\.local\bin, and `claude install` migrates npm setups to
+    # %USERPROFILE%\.claude\local — neither is on a default Windows PATH, so
+    # the desktop app reported a working terminal `claude` as "not installed"
+    # (Windows test-machine report 2026-07-18; same class as the Mac case in
+    # the module docstring).
+    dirs.append(str(home / ".local" / "bin"))
+    dirs.append(str(home / ".claude" / "local"))
     return dirs
 
 

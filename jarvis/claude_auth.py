@@ -198,6 +198,16 @@ class ClaudeAuthService:
         """Full path to the ``claude`` binary, or ``None`` when absent."""
         import shutil
 
+        # A CLI installed AFTER app start (or into a dir the GUI PATH never
+        # had, e.g. the native installer's ~/.local/bin) must still be found —
+        # idempotent stat probes, no subprocess.
+        try:
+            from jarvis.core.path_augment import ensure_cli_paths
+
+            ensure_cli_paths()
+        except Exception:  # noqa: BLE001 — a probe helper must never break status
+            pass
+
         candidates = (self._binary_path, *_BINARY_CANDIDATES)
         for name in candidates:
             if not name:

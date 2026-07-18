@@ -1098,11 +1098,13 @@ class WebServer:
                 from jarvis.google_cli.auth_service import GoogleCliAuthService
 
                 antigravity_status = GoogleCliAuthService().status()
+                antigravity_installed = antigravity_status.installed
                 antigravity_connected = (
                     antigravity_status.connected
                     and antigravity_status.mode == "oauth-personal"
                 )
             except Exception:  # noqa: BLE001
+                antigravity_installed = False
                 antigravity_connected = False
             try:
                 antigravity_key = bool(get_jarvis_agent_secret("gemini"))
@@ -1114,7 +1116,14 @@ class WebServer:
                     "openclaw": "agy-cli (direct)",
                     "env_var": "Google-OAuth",
                     "env_fallback": "GEMINI_API_KEY",
-                    "key_set": antigravity_connected or antigravity_key,
+                    # The worker DRIVES the agy/Gemini CLI — a Gemini API key
+                    # alone, with no CLI on the machine, must never render the
+                    # card "Ready" (Windows test-machine report 2026-07-18:
+                    # Antigravity showed Ready although never installed, then
+                    # every run died at spawn). Mirrors the Codex row's
+                    # installed-gate below.
+                    "key_set": antigravity_connected
+                    or (antigravity_installed and antigravity_key),
                     "api_key_set": antigravity_key,
                     "dedicated_key_set": False,
                     "shared_key_set": False,

@@ -139,6 +139,14 @@ class GoogleCliAuthService:
     """
 
     def _resolve(self) -> GoogleCli | None:
+        # A CLI installed AFTER app start (or into a dir the GUI PATH never
+        # had) must still be found — idempotent stat probes, no subprocess.
+        try:
+            from jarvis.core.path_augment import ensure_cli_paths
+
+            ensure_cli_paths()
+        except Exception:  # noqa: BLE001 — a probe helper must never break status
+            pass
         return resolve_google_cli()
 
     def _read_json(self, name: str) -> dict[str, Any]:

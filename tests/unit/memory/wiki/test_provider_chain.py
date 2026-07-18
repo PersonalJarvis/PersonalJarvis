@@ -75,6 +75,58 @@ def test_keyless_primary_is_skipped_for_the_users_available_key() -> None:
     assert chain[0][1]  # fallback receives its own cheap provider-family model
 
 
+def test_uninstalled_cli_provider_is_excluded_from_the_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Antigravity without its CLI installed must not enter the wiki chain —
+    it failed on every call on machines that never installed it (2026-07-18)."""
+    from types import SimpleNamespace as NS
+
+    from jarvis.core import config as config_module
+    from jarvis.google_cli import auth_service as google_auth
+
+    monkeypatch.setattr(
+        config_module,
+        "resolve_provider_endpoint",
+        lambda provider, config: NS(credential=None),
+    )
+    monkeypatch.setattr(
+        google_auth,
+        "GoogleCliAuthService",
+        lambda: NS(status=lambda: NS(installed=False, connected=False)),
+    )
+    ready = credential_ready_wiki_providers(
+        available={"antigravity", "future-oauth"},
+        config=object(),
+    )
+    assert ready == {"future-oauth"}  # unknown OAuth providers stay fail-open
+
+
+def test_keyless_codex_subscription_keeps_the_wiki_working(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from types import SimpleNamespace as NS
+
+    import jarvis.codex_auth as codex_auth
+    from jarvis.core import config as config_module
+
+    monkeypatch.setattr(
+        config_module,
+        "resolve_provider_endpoint",
+        lambda provider, config: NS(credential=None),
+    )
+    monkeypatch.setattr(
+        codex_auth,
+        "CodexAuthService",
+        lambda: NS(status=lambda: NS(installed=True, connected=True)),
+    )
+    ready = credential_ready_wiki_providers(
+        available={"codex"},
+        config=object(),
+    )
+    assert ready == {"codex"}  # ChatGPT login counts, no API key needed
+
+
 def test_credential_probe_uses_core_portable_storage_and_keeps_oauth(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -103,6 +103,31 @@ def _exception_summary(exc: Exception) -> str:
         code = None
     return f"{name} HTTP {code}" if code is not None else name
 
+def _cli_login_ready(provider: str) -> bool | None:
+    """Login-readiness of a subscription-CLI provider; ``None`` = not CLI-backed.
+
+    Codex and Antigravity are callable WITHOUT an API key — but only when
+    their official CLI is installed and logged in. Without this probe an
+    uninstalled/logged-out CLI provider entered every wiki chain and failed
+    on every single call (live 2026-07-18: antigravity produced chain errors
+    on machines that never installed it). A probe failure returns ``None``
+    (unknown) so an auth-service hiccup can never empty the chain.
+    """
+    try:
+        if provider == "codex":
+            from jarvis.codex_auth import CodexAuthService
+
+            return bool(CodexAuthService().status().connected)
+        if provider == "antigravity":
+            from jarvis.google_cli.auth_service import GoogleCliAuthService
+
+            status = GoogleCliAuthService().status()
+            return bool(status.installed and status.connected)
+    except Exception:  # noqa: BLE001 — a probe failure must never empty the chain
+        return None
+    return None
+
+
 def credential_ready_wiki_providers(
     *,
     available: set[str] | frozenset[str],
@@ -113,7 +138,10 @@ def credential_ready_wiki_providers(
     API providers are checked through the core endpoint resolver, which already
     implements team-proxy credentials plus keyring, environment, ``.env``, and
     the headless local-file fallback. Providers without a core API-key mapping
-    remain eligible because they may authenticate through OAuth or be local.
+    remain eligible when their subscription-CLI login probe does not say
+    otherwise (OAuth/local providers with no probe stay fail-open); a provider
+    WITH a key mapping is also admitted when its CLI login is connected, so a
+    keyless Codex-subscription user keeps the wiki working.
     """
     from jarvis.core.config import (
         PROVIDER_SECRET_CANDIDATES,
@@ -122,18 +150,22 @@ def credential_ready_wiki_providers(
 
     ready: set[str] = set()
     for provider in available:
+        cli_ready = _cli_login_ready(provider)
         if provider not in PROVIDER_SECRET_CANDIDATES:
+            if cli_ready is False:
+                continue
             ready.add(provider)
             continue
         try:
             endpoint = resolve_provider_endpoint(provider, config=config)
+            has_key = bool(endpoint.credential)
         except Exception:  # noqa: BLE001 - one credential probe cannot hide others
             log.debug(
                 "wiki provider credential probe failed for %s", provider,
                 exc_info=True,
             )
-            continue
-        if endpoint.credential:
+            has_key = False
+        if has_key or cli_ready is True:
             ready.add(provider)
     return ready
 

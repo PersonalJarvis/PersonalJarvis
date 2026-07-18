@@ -65,6 +65,12 @@ def test_candidates_are_platform_appropriate():
     if sys.platform == "win32":
         assert any("WinGet" in d for d in dirs)
         assert any(d.endswith("npm") for d in dirs)
+        # Claude Code's native installer (install.ps1 -> ~/.local/bin) and the
+        # `claude install` migration dir (~/.claude/local) — a working terminal
+        # `claude` was reported "not installed" without them (2026-07-18
+        # Windows test machine).
+        assert any(d.endswith(os.path.join(".local", "bin")) for d in dirs)
+        assert any(d.endswith(os.path.join(".claude", "local")) for d in dirs)
     else:
         assert "/usr/local/bin" in dirs
         assert "/opt/homebrew/bin" in dirs  # Apple-Silicon Homebrew
