@@ -235,8 +235,9 @@ def set_tool_model_selection(
                 f"brain.providers.{provider}", {"tool_model": model}
             )
     except Exception as exc:  # noqa: BLE001
-        log.warning(  # i18n-allow
-            "Could not sync Tool Model selection to config-soll.json: %s", exc  # i18n-allow: filename false positive
+        log.warning(  # i18n-allow: config-soll filename false positive
+            "Could not sync Tool Model selection to config-soll.json: %s",  # i18n-allow
+            exc,
         )
     try:
         _set_user_env_var(_TOOL_MODEL_PROVIDER_ENV, provider)
@@ -1002,8 +1003,10 @@ def set_brain_provider_defaults(
             doc["brain"] = brain
         providers = brain.get("providers")
         if providers is None:
-            providers = tomlkit.table()
-            providers.is_super_table = True  # type: ignore[attr-defined]
+            # tomlkit's Table.is_super_table is a METHOD; assigning a bool to it
+            # shadows the method and later dumps() crashes with "'bool' object is
+            # not callable". The super-table flag must go through the factory.
+            providers = tomlkit.table(True)
             brain["providers"] = providers
 
         if name in providers:
@@ -1276,8 +1279,10 @@ def set_brain_provider_model(
             doc["brain"] = brain
         providers = brain.get("providers")
         if providers is None:
-            providers = tomlkit.table()
-            providers.is_super_table = True  # type: ignore[attr-defined]
+            # tomlkit's Table.is_super_table is a METHOD; assigning a bool to it
+            # shadows the method and later dumps() crashes with "'bool' object is
+            # not callable". The super-table flag must go through the factory.
+            providers = tomlkit.table(True)
             brain["providers"] = providers
         block = providers.get(provider)
         if block is None:
