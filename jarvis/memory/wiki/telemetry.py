@@ -56,6 +56,7 @@ DEFAULT_COUNTERS: tuple[str, ...] = (
     # D2 (2026-06): session-page feed retirement + conversation-only feed.
     "session_rollups_wiki_write_disabled",
     "wiki_links_refused_dangling",
+    "wiki_links_promoted",
     "wiki_writes_blocked_pii",
     "wiki_writes_blocked_truncated",
     # Wave-2 two-stage curator quality counters (B8). Decision names follow

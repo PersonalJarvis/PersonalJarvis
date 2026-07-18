@@ -44,6 +44,7 @@ from .protocols import (
 from .session_links import (
     _WIKILINK_RE,
     SlugIndex,
+    promote_plaintext_links,
     rewrite_body_links,
     strip_dangling_wikilinks,
 )
@@ -307,9 +308,15 @@ class WikiCurator:
             before_links = len(_WIKILINK_RE.findall(upd.new_body))
             body = strip_dangling_wikilinks(upd.new_body)
             body, _resolved = rewrite_body_links(body, index)
+            # Heal old demotion scars: a plain-text ``dir/slug`` whose page
+            # exists NOW (created after the original demotion) becomes a
+            # [[link]] again, so lost graph edges recover on the next write.
+            body, promoted = promote_plaintext_links(body, index)
+            if promoted > 0:
+                telemetry.inc("wiki_links_promoted", promoted)
             # Every closed link either survived as [[...]] (resolved) or was
             # demoted to plain text; the difference is the refusal count.
-            after_links = len(_WIKILINK_RE.findall(body))
+            after_links = len(_WIKILINK_RE.findall(body)) - promoted
             refused = before_links - after_links
             if refused > 0:
                 telemetry.inc("wiki_links_refused_dangling", refused)

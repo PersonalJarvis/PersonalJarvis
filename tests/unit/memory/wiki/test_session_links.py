@@ -22,6 +22,7 @@ import pytest
 from jarvis.memory.wiki.session_links import (
     SlugIndex,
     build_related_footer,
+    promote_plaintext_links,
     relink_session_body,
     rewrite_body_links,
     slugify,
@@ -206,6 +207,88 @@ def test_relink_clean_body_is_unchanged() -> None:
     body = "# Session\n\nWorked on [[projects/personal-jarvis]].\n\n## Related\n\n- [[entities/ruben]]\n"
     new_body, stats = relink_session_body(body, _index(), user_slug="ruben")
     assert stats["changed"] is False
+    assert new_body == body
+
+
+def _colliding_index() -> SlugIndex:
+    """One slug living in TWO directories — the live bugatti-divo layout."""
+    return SlugIndex.from_pages([
+        ("entities", "ruben", ["Ruben"]),
+        ("entities", "bugatti-divo", ["Bugatti Divo"]),
+        ("projects", "bugatti-divo", []),
+    ])
+
+
+def test_dir_prefixed_resolve_survives_cross_directory_slug_collision() -> None:
+    """Live scar 2026-07-18: entities/bugatti-divo AND projects/bugatti-divo
+    both exist; the single-slot bare-slug map made ONE of the dir-prefixed
+    forms unresolvable, so its valid [[link]] was demoted on every write."""
+    index = _colliding_index()
+    assert index.resolve("entities/bugatti-divo") == "entities/bugatti-divo"
+    assert index.resolve("projects/bugatti-divo") == "projects/bugatti-divo"
+
+
+def test_rewrite_keeps_both_colliding_dir_prefixed_links() -> None:
+    body = (
+        "Owner of [[entities/bugatti-divo]]; "
+        "purchase tracked in [[projects/bugatti-divo]]."
+    )
+    new_body, resolved = rewrite_body_links(body, _colliding_index())
+    assert "[[entities/bugatti-divo]]" in new_body
+    assert "[[projects/bugatti-divo]]" in new_body
+    assert set(resolved) == {"entities/bugatti-divo", "projects/bugatti-divo"}
+
+
+# ---------------------------------------------------------------------------
+# promote_plaintext_links — healing old demotion scars
+# ---------------------------------------------------------------------------
+
+
+def test_promote_rewraps_existing_page_path() -> None:
+    body = "## Relationships\n\n- entities/bugatti-divo — Owner.\n"
+    new_body, promoted = promote_plaintext_links(body, _colliding_index())
+    assert promoted == 1
+    assert "- [[entities/bugatti-divo]] — Owner.\n" in new_body
+
+
+def test_promote_accepts_md_suffixed_spelling() -> None:
+    body = "See projects/bugatti-divo.md for the purchase.\n"
+    new_body, promoted = promote_plaintext_links(body, _colliding_index())
+    assert promoted == 1
+    assert "See [[projects/bugatti-divo]] for the purchase.\n" == new_body
+
+
+def test_promote_leaves_unknown_paths_alone() -> None:
+    body = "- entities/never-created — gone.\n"
+    new_body, promoted = promote_plaintext_links(body, _colliding_index())
+    assert promoted == 0
+    assert new_body == body
+
+
+def test_promote_never_touches_existing_links_or_frontmatter() -> None:
+    body = (
+        "---\n"
+        "type: entity\n"
+        "slug: ruben\n"
+        "note: entities/bugatti-divo\n"
+        "---\n"
+        "\n"
+        "- [[entities/bugatti-divo]] already linked\n"
+        "- entities/bugatti-divo scar\n"
+    )
+    new_body, promoted = promote_plaintext_links(body, _colliding_index())
+    assert promoted == 1
+    assert "note: entities/bugatti-divo\n" in new_body  # frontmatter untouched
+    assert new_body.count("[[entities/bugatti-divo]]") == 2  # link + healed scar
+
+
+def test_promote_skips_backticked_and_url_spans() -> None:
+    body = (
+        "Run `entities/bugatti-divo` manually; "
+        "see https://example.com/entities/bugatti-divo too.\n"
+    )
+    new_body, promoted = promote_plaintext_links(body, _colliding_index())
+    assert promoted == 0
     assert new_body == body
 
 

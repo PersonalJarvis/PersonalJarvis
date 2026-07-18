@@ -124,6 +124,13 @@ class SlugIndex:
             if not slug:
                 continue
             canonical = f"{directory}/{slug}"
+            # The bare-slug slot is single-valued (last directory wins), so a
+            # slug living in TWO directories (entities/bugatti-divo AND
+            # projects/bugatti-divo) used to make the dir-prefixed form of one
+            # of them unresolvable — its valid [[link]] was demoted to plain
+            # text on every write (live scar 2026-07-18). The dir-prefixed key
+            # keeps each page addressable regardless of collisions.
+            by_slug[canonical] = canonical
             by_slug[slug] = canonical
             # The slug with hyphens turned to spaces resolves a Title-Case
             # mention even without an explicit alias ("personal-jarvis" then
@@ -148,9 +155,13 @@ class SlugIndex:
             return None
 
         if "/" in target:
+            canonical = self._by_slug.get(target)
+            if canonical is not None:
+                return canonical
+            # Hand-built indexes may carry only bare-slug keys; trust the
+            # prefix only when it matches the page's real directory.
             directory, _, bare = target.rpartition("/")
             canonical = self._by_slug.get(bare)
-            # Trust the prefix only when it matches the page's real directory.
             if canonical is not None and canonical == f"{directory}/{bare}":
                 return canonical
             return None
@@ -198,6 +209,60 @@ def rewrite_body_links(text: str, index: SlugIndex) -> tuple[str, list[str]]:
 
     new_text = _WIKILINK_RE.sub(_replace, text)
     return new_text, resolved
+
+
+# A demotion scar: a bare ``dir/slug`` page path in prose. Nobody writes
+# these as ordinary text — they are what ``rewrite_body_links`` leaves behind
+# when it demotes a link whose target did not exist at write time. The
+# lookbehind/lookahead keep us out of URLs, longer paths, and backticked
+# spans; the optional ``.md`` accepts the file-name spelling.
+_PLAINTEXT_PATH_RE = re.compile(
+    r"(?<![\w/.`-])"
+    r"(entities|concepts|projects|sessions)/([a-z0-9](?:[a-z0-9-]*[a-z0-9])?)"
+    r"(?:\.md)?"
+    r"(?![\w/-])"
+)
+
+
+def promote_plaintext_links(text: str, index: SlugIndex) -> tuple[str, int]:
+    """Re-promote demoted plain-text page paths back into ``[[wikilinks]]``.
+
+    Link demotion is one-way at write time: a ``[[entities/x]]`` written
+    moments before ``entities/x.md`` existed survives as the plain text
+    ``entities/x`` forever, and the graph edge stays lost even after the
+    page is created. Any bare ``dir/slug`` occurrence that resolves to an
+    existing page is wrapped back into a canonical link; text inside
+    existing ``[[...]]`` spans and the leading frontmatter block are left
+    untouched. Returns ``(new_text, promoted_count)``.
+
+    Pure: regex only, no LLM call, no disk write (AP-9/AP-11).
+    """
+    promoted = 0
+
+    def _wrap(match: re.Match[str]) -> str:
+        nonlocal promoted
+        canonical = index.resolve(f"{match.group(1)}/{match.group(2)}")
+        if canonical is None:
+            return match.group(0)
+        promoted += 1
+        return f"[[{canonical}]]"
+
+    body_start = 0
+    if text.startswith("---"):
+        fm_end = text.find("\n---", 3)
+        if fm_end != -1:
+            body_start = text.find("\n", fm_end + 1)
+            body_start = len(text) if body_start == -1 else body_start + 1
+
+    head = text[:body_start]
+    parts: list[str] = []
+    last = body_start
+    for existing in _WIKILINK_RE.finditer(text, body_start):
+        parts.append(_PLAINTEXT_PATH_RE.sub(_wrap, text[last:existing.start()]))
+        parts.append(existing.group(0))
+        last = existing.end()
+    parts.append(_PLAINTEXT_PATH_RE.sub(_wrap, text[last:]))
+    return head + "".join(parts), promoted
 
 
 def build_related_footer(
@@ -265,6 +330,7 @@ def relink_session_body(
 __all__ = [
     "SlugIndex",
     "build_related_footer",
+    "promote_plaintext_links",
     "relink_session_body",
     "rewrite_body_links",
     "slugify",
