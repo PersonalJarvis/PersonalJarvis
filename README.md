@@ -194,12 +194,110 @@ stays usable for text, but browsers block voice.
 
 </details>
 
-## A guided tour
+## What's inside
 
-- **Missions** — non-trivial asks spawn an isolated worker; a critic reviews (up to three rounds) before you hear the result. Deliverables land in **Outputs**.
-- **Knowledge Wiki** — an Obsidian-compatible memory vault it reads and writes, so facts survive every session.
-- **Channels & telephony** — desktop, browser, Telegram, Discord; optional Twilio for real outbound calls.
-- **Self-mod & skills** — it adjusts its own config safely and drafts new skills for your review (never auto-activated).
+**Missions — the self-healing work loop.** Anything non-trivial ("research X and
+write me a report") spawns a worker in an isolated `git worktree` — a private
+sandbox copy of the workspace, with crash containment. A critic reviews the
+result (up to three rounds) before you ever hear it; deliverables land in
+**Outputs** as downloadable files.
+
+**Knowledge Wiki — memory that survives.** An Obsidian-compatible Markdown vault
+Jarvis reads and writes. Tell it something once and every future session knows.
+It's plain files on your disk — read it, edit it, sync it, own it.
+
+**Computer use.** Jarvis takes the mouse and keyboard when you ask: open apps,
+click, type, navigate — with an on-screen action border so you always see when
+it's driving.
+
+**Channels & telephony.** Desktop window, browser, Telegram, and Discord all
+reach the same brain and share the same memory. Optional Twilio integration
+makes real outbound phone calls.
+
+**Safety tiers.** Every action is classified **safe / monitor / ask / block**
+before it runs — destructive things ask first, whitelisted routines stop nagging
+you, and the blacklist always outranks the whitelist.
+
+**Self-modification.** It can change its own settings by voice — through a
+guarded pipeline (validate → backup → apply → verify → roll back on failure)
+with a full audit trail. Generated skills always land as *drafts* for your
+review; nothing self-activates.
+
+**Realtime voice.** Optional speech-to-speech mode (OpenAI Realtime, Gemini
+Live) for sub-second conversational latency — with automatic fallback to the
+classic wake → STT → brain → TTS pipeline when it's unavailable.
+
+## Drive it from the terminal
+
+The `jarvis` CLI (aliases `jarvisctl`, `jctl`) controls a **running** instance —
+the same actions as the app, behind the same safety checks, just scriptable.
+Anything you can click, you (or your scripts, or another coding agent) can type:
+
+```bash
+jarvis system status          # {"reachable": true} when Jarvis is up
+jarvis --json brain status    # which provider is live, as machine-readable JSON
+jarvis api <tag> <op>         # EVERY REST endpoint, auto-generated from OpenAPI
+```
+
+It's a thin client over the local REST API (`127.0.0.1:47821`), so it inherits
+every guardrail — risk tiers, atomic config writes, the audit log — rather than
+bypassing them. Full guide: [`docs/jarvis-cli.md`](docs/jarvis-cli.md).
+
+## Configuration
+
+Zero config files needed — every setting has a built-in default and the one-time
+in-app setup covers the rest. For fine control there's one optional, documented
+file ([`jarvis.toml.example`](jarvis.toml.example)):
+
+```toml
+[profile]
+language = "auto"          # de | en | auto — bilingual auto-detect
+
+[trigger.wake_word]
+phrase = ""                # YOUR word — nothing is preset for you
+engine = "auto"            # resolves the best engine for your phrase
+
+[stt]
+provider = "groq-api"      # or openai-api, openrouter-stt, deepgram-…
+
+[tts]
+provider = "gemini-flash-tts"
+fallback = "grok-voice"    # cross-provider fallback is the norm everywhere
+```
+
+Overrides cascade `jarvis.toml → ENV` (`JARVIS__SECTION__KEY=…`). **Secrets
+never go in this file** — API keys live in your OS credential manager (or
+`.env`), entered in-app.
+
+## Privacy
+
+- **Keys stay yours** — stored in the OS credential manager, never in the repo, never in a file you could accidentally commit.
+- **The always-on part is local** — wake-word listening runs entirely on your machine; audio only goes to a cloud STT provider *after* you've addressed Jarvis, and only if you chose a cloud provider.
+- **Local per stage, your choice** — speech recognition can run fully offline (`[local-voice]` extra); brain and voice output use whichever provider you configure.
+- **Memory is plain files** — the Knowledge Wiki is Markdown on your disk, not a hosted database.
+
+## Extend it
+
+Every pluggable part is a Python **entry point**: write a class against the
+protocols in [`jarvis/core/protocols.py`](jarvis/core/protocols.py), register
+one line in `pyproject.toml`, reinstall — no fork, no core edits.
+
+| Plugin group | What you can add |
+|---|---|
+| `jarvis.brain` | A new LLM provider |
+| `jarvis.stt` / `jarvis.tts` | Speech recognition / synthesis backends |
+| `jarvis.wakeword` | Wake-word engines |
+| `jarvis.realtime` | Speech-to-speech providers |
+| `jarvis.harness` | Agent harnesses missions delegate to |
+| `jarvis.tool` | Actions the router can call directly |
+| `jarvis.channel` | New surfaces — chat platforms, transports |
+
+Three rules keep it stable: implement the protocol, stream everything
+(`AsyncIterator` — non-streaming yields one element), and pass the contract
+suite (`pytest tests/contract/`). The deep engineering map — anti-patterns,
+recurring bug classes, phase status — lives in
+[`docs/LLM-CONTEXT.md`](docs/LLM-CONTEXT.md), built to be pasted into an LLM
+chat whole.
 
 <details>
 <summary><b>Project structure</b></summary>
@@ -232,15 +330,13 @@ Worker-Critic), `jarvis/memory/wiki/` (long-term memory), `jarvis/ui/web/` (the 
 
 | Document | What's in it |
 |---|---|
+| [`docs/architecture-overview.md`](docs/architecture-overview.md) | The full architecture — layers, module catalog, data flow |
+| [`docs/LLM-CONTEXT.md`](docs/LLM-CONTEXT.md) | Dense project snapshot, built to paste into an LLM chat whole |
 | [`CLAUDE.md`](CLAUDE.md) | Binding contributor guide — conventions, doctrine, anti-patterns |
 | [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md) | Cross-platform, provider-agnostic design doctrine |
-| [`docs/BRAND.md`](docs/BRAND.md) | Brand guidelines — colors, typography, the wordmark |
 | [`docs/adr/`](docs/adr/) | Architecture Decision Records |
 | [`docs/BUGS.md`](docs/BUGS.md) | The recurring-bug register |
-
-> 🤖 **Working with an LLM on this codebase?** Paste
-> [`docs/LLM-CONTEXT.md`](docs/LLM-CONTEXT.md) into a fresh chat — a dense, self-contained
-> snapshot of the entire project, built for exactly that.
+| [`docs/BRAND.md`](docs/BRAND.md) | Brand guidelines — colors, typography, the wordmark |
 
 ## Community
 
