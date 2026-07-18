@@ -188,6 +188,13 @@ reverse proxy (for example Caddy or Nginx) and use its `https://` URL. A plain
 
 ## Architecture at a glance
 
+<img
+  src="assets/brand/how-personal-jarvis-works.png"
+  width="1064"
+  height="568"
+  alt="How Personal Jarvis works: routing voice and chat through safe actions or reviewed missions"
+/>
+
 Higher layers reach lower layers **only through protocols**; everything else talks over a
 typed, immutable **EventBus**. That strict seam is what lets harnesses, providers, and
 plugins be swapped without rippling through the codebase.
