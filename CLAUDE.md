@@ -147,7 +147,12 @@ only)* — "Mach ein Release", "mach eine neue Version" <!-- i18n-allow: quoted 
 → SemVer bump + git tag + CHANGELOG entry.
 A release always ships the ENTIRE current local state — reconcile with
 `public/main` first and never knowingly ship a release lacking local fixes
-without saying so. When ambiguous, default to update.
+without saying so. When ambiguous, default to update. **Pre-tag gate
+(BINDING):** run `python scripts/ci/check_release_completeness.py` before
+tagging (dirty-tree report with explicit `--ack-dirty` exclusions, never
+silent; behind-public check; frontend-dist freshness) and again with
+`--verify-release` after publishing — a pushed tag without a *published*
+GitHub Release updates no managed install.
 
 **Guardrails:** **Do not PUSH unless the maintainer asks** (local
 auto-commit is fine, governed by §9). Releases are cut from the dev machine

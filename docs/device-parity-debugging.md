@@ -54,12 +54,15 @@ user this reads as "the feature is broken on this device".
 
 **Compare the two machines' setups before debugging anything:**
 
-- Which providers are connected per tier (brain/router, STT, TTS, wake) —
-  key **presence** only, never values. Settings → Providers on both devices,
-  or the `jarvis` CLI against each running instance.
-- Mode: realtime vs. classic pipeline (`[tts].provider`, realtime config).
-- Wake word set? Skills activated? Relevant feature toggles?
-- `python -m jarvis --check` on both, and diff the output.
+- **The one-call answer: `GET /api/setup-report`** on each running instance
+  (`?format=text` for a human-readable version; also reachable as
+  `jarvis api setup-report get-setup-report`). It is share-safe by
+  construction — key **presence** booleans only, never values — and its
+  `summary` lines are ordered for line-by-line diffing between two devices;
+  `degradations` names every tier that quietly fell back or lacks a key.
+- Manual cross-check: Settings → Providers on both devices; mode (realtime
+  vs. classic pipeline), wake word set, skills activated;
+  `python -m jarvis --check` on both, and diff the output.
 
 If the setups differ, align them (in-app — §3 requires every credential path
 to be recoverable in-app) and re-test **before** filing a bug.
@@ -76,14 +79,23 @@ tracked parity gap, not folklore.
 
 ## Release completeness (the layer-1 prophylaxis)
 
-A release ships the ENTIRE current local state (§2). Before tagging:
+A release ships the ENTIRE current local state (§2). The checks below are
+automated as a fail-closed gate — run it before tagging, from the repo root:
 
-1. `git status --short` — every dirty file is either committed by its owning
-   session or **explicitly reported to the maintainer** as excluded. Never
-   silently cut a release that lacks visible local fixes.
-2. `git log --oneline public/main..main` must be empty after the push.
-3. The GitHub **Release** must be published (not just the tag pushed) —
-   otherwise managed installs are never offered the update.
-4. The frontend `dist/` bundle in the release must match the frontend
-   sources (rebuild if any commit after the last dist rebuild touched
-   `jarvis/ui/web/frontend/src`).
+```bash
+python scripts/ci/check_release_completeness.py                  # pre-tag
+python scripts/ci/check_release_completeness.py --verify-release # post-publish
+```
+
+What it enforces (and why each item exists):
+
+1. **Dirty tree** — every dirty file is either committed by its owning
+   session or **explicitly excluded via `--ack-dirty`** (the gate prints the
+   list). Never silently cut a release that lacks visible local fixes.
+2. **Reconcile** — the branch must not be behind `public/main`.
+3. **Published Release** (`--verify-release`) — the GitHub **Release** must be
+   published, not just the tag pushed; the in-app updater follows
+   `releases/latest`, so a tag alone updates nobody.
+4. **Dist freshness** — the frontend `dist/` bundle must be at least as new
+   as the frontend sources (a stale bundle ships invisible-old UI).
+5. **Version parity** — `jarvis/__init__.py` and `pyproject.toml` agree.
