@@ -206,6 +206,56 @@ async def test_malformed_json_yields_nothing(journal: CandidateJournal) -> None:
 
 
 @pytest.mark.asyncio
+async def test_ungrounded_consensus_ends_the_chain_without_a_chain_failure(
+    journal: CandidateJournal,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Two families agreeing "nothing groundable in this turn" is a quiet
+    no-op, never a chain failure. Live 2026-07-18: an ordinary no-fact turn
+    burned all 8 providers (incl. dead rungs and a 30s timeout) and left a
+    sticky red 'Chain failure' banner users read as 'Obsidian not connected'."""
+    from jarvis.memory.wiki import health as health_module
+    from jarvis.memory.wiki.health import WikiHealth
+
+    isolated_health = WikiHealth()
+    monkeypatch.setattr(health_module, "health", isolated_health)
+
+    ungrounded = json.dumps(
+        [
+            {
+                "fact": "The assistant guessed something about the user.",
+                "kind": "asset",
+                "evidence_turn_id": "assistant-turn",
+            }
+        ]
+    )
+    registry = ScriptedRegistry(
+        {
+            # Chain order: primary gemini, then the rest alphabetically —
+            # nvidia is the second opinion, openrouter the never-asked third.
+            "gemini": ungrounded,
+            "nvidia": ungrounded,
+            "openrouter": _ok_facts_json(),
+        }
+    )
+    extractor = ConversationFactExtractor(
+        config=_config(), journal=journal, registry=registry,
+    )
+
+    count = await extractor.extract_and_journal(
+        "Hmm, interesting.",
+        "Indeed.",
+        source_label="voice-fact:consensus",
+        turn_hash="h-consensus",
+    )
+
+    assert count == 0
+    assert journal.backlog_count() == 0
+    assert registry.tried == ["gemini", "nvidia"]  # consensus stopped the chain
+    assert isolated_health.snapshot()["last_chain_failure"] is None
+
+
+@pytest.mark.asyncio
 async def test_parseable_unusable_output_crosses_to_grounded_provider(
     journal: CandidateJournal,
 ) -> None:

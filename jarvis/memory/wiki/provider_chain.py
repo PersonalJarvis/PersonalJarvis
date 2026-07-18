@@ -66,6 +66,16 @@ def reset_provider_failure_memory() -> None:
     _provider_failures.clear()
 
 
+def _record_chain_recovery(label: str) -> None:
+    """Clear the sticky health chain-failure record on any usable outcome."""
+    try:
+        from jarvis.memory.wiki.health import health
+
+        health.record_chain_success()
+    except Exception:  # noqa: BLE001 — health recording must never break the pipeline
+        log.debug("%s: health record_chain_success failed", label, exc_info=True)
+
+
 def _order_by_cooldown(
     chain: list[tuple[str, str | None]],
 ) -> tuple[list[tuple[str, str | None]], list[str]]:
@@ -171,6 +181,7 @@ async def complete_with_fallback(
     aggregate: Callable[[Any], Any],
     validate: Callable[[Any], str | None] | None = None,
     allow_last_rejection: Callable[[str], bool] | None = None,
+    allow_lone_rejection: Callable[[str], bool] | None = None,
 ) -> tuple[Any, str] | None:
     """Try each ``(provider, model)`` until one returns an aggregated response.
 
@@ -178,6 +189,14 @@ async def complete_with_fallback(
     when the whole chain fails. ``validate`` can reject a transport-successful
     response with a short reason; the next provider is then tried before the
     caller gives up on malformed or truncated structured output.
+
+    ``allow_last_rejection`` marks CONTENT-verdict rejections ("nothing
+    usable in this turn") that may end the chain: two agreeing providers are
+    consensus and stop immediately. ``allow_lone_rejection`` (default: same
+    set) additionally decides whether a SINGLE such verdict — with no second
+    opinion available — is accepted as final; a reason outside it stays a
+    retryable failure, so one weak provider can never be terminal proof that
+    a transcript held no facts.
     """
     from jarvis.memory.wiki.curator_llm import instantiate_curator_brain
 
@@ -235,12 +254,13 @@ async def complete_with_fallback(
                     )
                     last_in_chain = index == len(ordered) - 1
                     if allowed:
-                        # Keep a semantically safe fallback (currently the
-                        # extractor's valid empty array) while still asking the
+                        # An allowed rejection is a CONTENT verdict ("this
+                        # turn holds nothing usable"), not provider damage:
+                        # it never cools the provider down. Keep a
+                        # semantically safe fallback while asking the
                         # remaining providers for one *valid structured*
-                        # second opinion. Transport/malformed failures do not
-                        # count, but a second allowed answer is agreement and
-                        # ends the chain immediately.
+                        # second opinion; a second allowed answer is
+                        # agreement and ends the chain.
                         if allowed_rejection_fallback is not None:
                             log.info(
                                 "%s: accepting provider %s output after a "
@@ -249,19 +269,44 @@ async def complete_with_fallback(
                                 provider,
                                 safe_rejection,
                             )
+                            _record_chain_recovery(label)
                             return agg, provider
                         # If every later provider fails, their failure must not
                         # erase this valid bounded answer.
                         allowed_rejection_fallback = (agg, provider, rejection)
-                    if last_in_chain and allowed:
+                        if last_in_chain:
+                            lone_ok = (
+                                allow_lone_rejection is None
+                                or allow_lone_rejection(rejection)
+                            )
+                            if lone_ok:
+                                log.info(
+                                    "%s: accepting final provider %s output "
+                                    "after bounded second-opinion attempts "
+                                    "(%s)",
+                                    label,
+                                    provider,
+                                    safe_rejection,
+                                )
+                                _record_chain_recovery(label)
+                                return agg, provider
+                            # A lone verdict this caller does not trust as
+                            # final stays a retryable failure — one weak
+                            # provider must never be terminal proof.
+                            failure_summaries.append(
+                                f"{provider} unusable output: {safe_rejection}"
+                            )
+                            allowed_rejection_fallback = None
+                            continue
                         log.info(
-                            "%s: accepting final provider %s output after "
-                            "bounded second-opinion attempts (%s)",
+                            "%s: provider %s returned a valid but empty/"
+                            "ungrounded result (%s) - asking one more "
+                            "provider for a second opinion",
                             label,
                             provider,
                             safe_rejection,
                         )
-                        return agg, provider
+                        continue
                     log.warning(
                         "%s: provider %s returned unusable output (%s) - "
                         "trying next provider",
@@ -282,6 +327,7 @@ async def complete_with_fallback(
                             exc_info=True,
                         )
                     continue
+            _record_chain_recovery(label)
             return agg, provider
         except TimeoutError:
             log.warning(
@@ -307,14 +353,20 @@ async def complete_with_fallback(
 
     if allowed_rejection_fallback is not None:
         agg, provider, rejection = allowed_rejection_fallback
-        log.info(
-            "%s: accepting provider %s output after later second-opinion "
-            "attempts failed (%s)",
-            label,
-            provider,
-            safe_preview(rejection, max_chars=240),
-        )
-        return agg, provider
+        safe_rejection = safe_preview(rejection, max_chars=240)
+        if allow_lone_rejection is None or allow_lone_rejection(rejection):
+            log.info(
+                "%s: accepting provider %s output after later second-opinion "
+                "attempts failed (%s)",
+                label,
+                provider,
+                safe_rejection,
+            )
+            _record_chain_recovery(label)
+            return agg, provider
+        # A lone content verdict this caller does not trust as final: the
+        # chain ends as a retryable failure instead of terminal proof.
+        failure_summaries.append(f"{provider} unusable output: {safe_rejection}")
 
     log.error(
         "%s: ALL %d wiki provider(s) failed or returned unusable output — "

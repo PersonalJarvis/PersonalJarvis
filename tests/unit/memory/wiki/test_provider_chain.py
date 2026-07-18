@@ -354,6 +354,66 @@ async def test_two_valid_empty_opinions_stop_later_provider_attempts() -> None:
     assert reg.tried == ["openrouter", "antigravity", "gemini"]
 
 
+async def test_allowed_rejection_never_cools_the_provider_down() -> None:
+    """A valid-but-empty answer is a CONTENT verdict, not provider damage —
+    it must not demote the provider for the next 15 minutes."""
+    from jarvis.memory.wiki import provider_chain as pc
+
+    reg = _ScriptedRegistry(
+        {"openrouter": "[]", "gemini": '[{"fact":"usable"}]'}
+    )
+    result = await complete_with_fallback(
+        registry=reg,
+        chain=[("openrouter", None), ("gemini", None)],
+        request=object(),
+        timeout_s=5.0,
+        label="test",
+        aggregate=_aggregate,
+        validate=lambda agg: "empty-needs-second-opinion" if agg.text == "[]" else None,
+        allow_last_rejection=lambda reason: reason == "empty-needs-second-opinion",
+    )
+    assert result is not None and result[1] == "gemini"
+    assert not pc._in_cooldown("openrouter")
+
+
+async def test_chain_success_clears_the_sticky_health_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Live 2026-07-18: one exhausted chain painted the Wiki tab red forever
+    ("Obsidian not connected" perception) although later runs succeeded —
+    nothing ever cleared last_chain_failure. Any usable outcome must clear it."""
+    from jarvis.memory.wiki import health as health_module
+    from jarvis.memory.wiki.health import WikiHealth
+
+    isolated_health = WikiHealth()
+    monkeypatch.setattr(health_module, "health", isolated_health)
+
+    reg = _FakeRegistry(fail_providers={"openrouter", "gemini"})
+    chain = [("openrouter", None), ("gemini", None)]
+    failed = await complete_with_fallback(
+        registry=reg,
+        chain=chain,
+        request=object(),
+        timeout_s=5.0,
+        label="test",
+        aggregate=_aggregate,
+    )
+    assert failed is None
+    assert isolated_health.snapshot()["last_chain_failure"] is not None
+
+    reg._fail = set()  # providers recover
+    ok = await complete_with_fallback(
+        registry=reg,
+        chain=chain,
+        request=object(),
+        timeout_s=5.0,
+        label="test",
+        aggregate=_aggregate,
+    )
+    assert ok is not None
+    assert isolated_health.snapshot()["last_chain_failure"] is None
+
+
 # --- failure cooldown: dead rungs stop taxing every call ---------------------
 
 

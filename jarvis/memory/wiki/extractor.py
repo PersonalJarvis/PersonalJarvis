@@ -847,7 +847,21 @@ class ConversationFactExtractor:
             label="ConversationFactExtractor",
             aggregate=aggregate,
             validate=_validate_response,
-            allow_last_rejection=lambda reason: (
+            # Both reasons are CONTENT verdicts ("this turn holds nothing
+            # storable"), not provider damage. Two independent families
+            # agreeing ends the chain quietly; without this, an ordinary
+            # no-fact turn burned EVERY provider (incl. dead rungs and their
+            # timeouts) and recorded a scary chain failure the Wiki tab
+            # rendered as a red "not connected" state (live 2026-07-18).
+            allow_last_rejection=lambda reason: reason in (
+                "empty-needs-second-opinion",
+                "candidate array has no grounded usable fact",
+            ),
+            # But a LONE ungrounded array (no second opinion available) stays
+            # a retryable failure: one weak provider must never be terminal
+            # proof that the transcript held no facts. A lone valid EMPTY
+            # answer remains acceptable as before.
+            allow_lone_rejection=lambda reason: (
                 reason == "empty-needs-second-opinion"
             ),
         )

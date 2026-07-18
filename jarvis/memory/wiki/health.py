@@ -52,6 +52,18 @@ class WikiHealth:
                 "detail": safe_preview(detail, max_chars=800),
             }
 
+    def record_chain_success(self) -> None:
+        """A completed provider-chain run clears the failure record.
+
+        Without this, ONE bad moment (a single call exhausting every
+        provider) painted the Wiki tab red forever — users read the sticky
+        banner as "Obsidian is not connected" while writes were flowing
+        (live report 2026-07-18). The surface must say "currently broken",
+        never "was ever broken".
+        """
+        with self._lock:
+            self._last_chain_failure = None
+
     def record_index(
         self,
         ok: bool,

@@ -34,6 +34,14 @@ def test_chain_failure_and_backlog_recorded():
     assert snap["journal_backlog"] == 5
 
 
+def test_chain_success_clears_the_failure_record():
+    h = WikiHealth()
+    h.record_chain_failure("openai 401; gemini 429")
+    assert h.snapshot()["last_chain_failure"] is not None
+    h.record_chain_success()
+    assert h.snapshot()["last_chain_failure"] is None
+
+
 def test_chain_failure_detail_redacts_secrets():
     h = WikiHealth()
     secret = "sk-proj-" + "Q" * 32
