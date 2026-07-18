@@ -5722,3 +5722,58 @@ history and the dedup ledger, and the two errors compound. And guard paths
 that refuse an action must be OBSERVABLE (log + progress + recorder event):
 a guard that only whispers to the model turns every interaction bug into an
 unexplainable early abort.
+
+---
+
+## BUG-083: macOS permissions "auto-denied" after an app update, Settings deep links landing on the wrong pane, and a dead second Allow button (HIGH, FIXED 2026-07-18)
+
+**Symptom (live Intel test Mac, macOS 15.7, first run after the v1.0.11
+update).** The onboarding permissions view showed Input Monitoring and Input
+Control as DENIED although macOS never showed a prompt; Microphone had
+reverted to "not asked". "Open Settings" for those rows surfaced System
+Settings on an unrelated pane (the last-open Files & Folders pane with the
+Documents-folder rows) instead of the requested one. Screen Recording kept
+reading NOT ALLOWED after the user granted it, and a second click on Allow
+did nothing.
+
+**Root causes (three independent defects).**
+1. *Signature churn orphans TCC grants:* the app is ad-hoc signed, so macOS
+   pins every TCC grant to the executable's CDHash. The BUG-079 bundle-format
+   bump forced a rebuild → new CDHash → macOS treated the updated app as a
+   stranger: HID-class services (ListenEvent/PostEvent) report the orphaned
+   rows as DENIED — a state in which macOS suppresses every further prompt —
+   while AVFoundation reverts to "not determined". Nothing in the app ever
+   asked; the denial was inherited from a dead identity.
+2. *System Settings ignores pane anchors while running:* the
+   `x-apple.systempreferences:...?Privacy_*` URL only raises an already-open
+   System Settings window on whatever pane it last showed. Microphone/Screen
+   Recording "worked" earlier in the flow only because System Settings was
+   not running yet at that point.
+3. *Frozen Screen Recording preflight + one-shot prompts:*
+   `CGPreflightScreenCaptureAccess` is frozen per process, so a mid-session
+   grant stays invisible until relaunch, and macOS never re-prompts after the
+   first request — yet the UI kept showing the stale state AND a request
+   button that could never do anything again.
+
+**Fix (2026-07-18).** (a) `_install_native_bundle` records the CDHash before
+and after a rebuild; on a real signature change it resets the five TCC
+services scoped to `com.personal-jarvis.desktop` via `tccutil` so macOS can
+prompt fresh instead of inheriting orphaned denials; bundle format bumped to
+3 so affected installs go through exactly one healing rebuild. (b)
+`_open_settings` terminates a running System Settings (no TCC needed) before
+opening the anchor URL, so LaunchServices relaunches it on the requested
+pane. (c) While a restart is pending, `can_request` is false (the dead Allow
+button disappears), the detail explains the restart, and the frontend shows
+"Restart pending" instead of the stale state for the one frozen probe
+(screen recording). Guards: `tests/unit/platform/test_permissions.py::
+test_open_settings_quits_running_system_settings_before_navigating`,
+`::test_screen_capture_restart_pending_hides_the_dead_allow_button`, and the
+`_tcc_reset_*` tests in `tests/unit/setup/test_macos_app_bundle.py`.
+
+**Class rule.** An ad-hoc-signed app's TCC identity IS its CDHash: any forced
+rebuild silently voids every recorded grant, and the orphaned rows come back
+as invisible denials, not as fresh prompts — pair every identity-changing
+rebuild with a scoped `tccutil` reset (and long-term, a stable signing
+identity). Never surface a permission request control the OS will ignore:
+macOS prompts exactly once per TCC state, and reads some probes only at
+process start — the UI must model both or it gaslights the user.

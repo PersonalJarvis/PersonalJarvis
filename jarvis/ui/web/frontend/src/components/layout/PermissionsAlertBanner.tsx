@@ -186,6 +186,13 @@ function MissingPermissionRow({
   // A newer backend may report a permission id this build does not know yet;
   // fall back to the generic shield instead of rendering `undefined`.
   const Icon = ICONS[item.id] ?? ShieldAlert;
+  // Screen Recording's probe is frozen per process (see PermissionsPanel):
+  // once a restart is pending, the stale "not granted" would gaslight the
+  // user who just granted it — show the honest pending label instead.
+  const statusKey =
+    item.restart_required && item.id === "screen_recording"
+      ? "restart_pending"
+      : item.status;
 
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-lg border border-amber-500/30 bg-background/40 p-3">
@@ -199,7 +206,7 @@ function MissingPermissionRow({
         </p>
       </div>
       <span className="rounded-full bg-amber-500/10 px-2 py-1 text-[10px] font-medium uppercase tracking-wide text-amber-500">
-        {t(`permissions.status.${item.status}`)}
+        {t(`permissions.status.${statusKey}`)}
       </span>
       {item.can_request && (
         <Button size="sm" disabled={busy} onClick={onRequest}>

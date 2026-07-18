@@ -511,3 +511,57 @@ def test_launcher_identity_probe_uses_main_bundle(tmp_path: Path, monkeypatch) -
         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
         "machine": platform.machine(),
     }
+
+
+def test_tcc_reset_needed_only_on_a_real_signature_change() -> None:
+    from jarvis.setup.macos_app_bundle import _tcc_reset_needed
+
+    # A rebuild that produced a NEW code signature orphans the recorded TCC
+    # rows (BUG-083) — including the fresh-install case with no prior bundle.
+    assert _tcc_reset_needed("aaaa", "bbbb") is True
+    assert _tcc_reset_needed(None, "bbbb") is True
+    # Identical signature or an unreadable new one must never trigger a reset.
+    assert _tcc_reset_needed("aaaa", "aaaa") is False
+    assert _tcc_reset_needed("aaaa", None) is False
+    assert _tcc_reset_needed(None, None) is False
+
+
+def test_reset_stale_tcc_grants_scopes_every_service_to_our_bundle_id() -> None:
+    import jarvis.setup.macos_app_bundle as mab
+
+    commands: list[list[str]] = []
+
+    def runner(command, **_kwargs):
+        commands.append(list(command))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+
+    mab._reset_stale_tcc_grants(runner=runner)
+
+    assert commands == [
+        ["/usr/bin/tccutil", "reset", service, mab.BUNDLE_ID]
+        for service in mab._TCC_SERVICES
+    ]
+    assert set(mab._TCC_SERVICES) == {
+        "Microphone",
+        "ScreenCapture",
+        "Accessibility",
+        "ListenEvent",
+        "PostEvent",
+    }
+
+
+def test_reset_stale_tcc_grants_survives_a_failing_tccutil() -> None:
+    import jarvis.setup.macos_app_bundle as mab
+
+    attempts: list[str] = []
+
+    def runner(command, **_kwargs):
+        attempts.append(command[2])
+        if command[2] == "ScreenCapture":
+            raise OSError("tccutil missing")
+        return SimpleNamespace(returncode=1, stdout="", stderr="denied")
+
+    # Best-effort contract: one broken service never aborts the sweep.
+    mab._reset_stale_tcc_grants(runner=runner)
+
+    assert attempts == list(mab._TCC_SERVICES)

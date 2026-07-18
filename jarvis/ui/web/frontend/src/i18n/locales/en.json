@@ -1065,7 +1065,8 @@
       "restricted": "Restricted",
       "not_granted": "Not allowed",
       "unavailable": "Unavailable",
-      "not_required": "Not required"
+      "not_required": "Not required",
+      "restart_pending": "Restart pending"
     },
     "items": {
       "microphone": { "title": "Microphone", "description": "Required for wake-word and local voice input." },

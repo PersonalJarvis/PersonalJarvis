@@ -1064,7 +1064,8 @@
       "restricted": "Eingeschränkt",
       "not_granted": "Nicht erlaubt",
       "unavailable": "Nicht verfügbar",
-      "not_required": "Nicht erforderlich"
+      "not_required": "Nicht erforderlich",
+      "restart_pending": "Neustart ausstehend"
     },
     "items": {
       "microphone": { "title": "Mikrofon", "description": "Erforderlich für Aktivierungswort und lokale Spracheingabe." },

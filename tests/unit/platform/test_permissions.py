@@ -464,6 +464,68 @@ def test_open_settings_uses_permission_specific_launchservices_url() -> None:
     ]
 
 
+def test_open_settings_quits_running_system_settings_before_navigating() -> None:
+    # System Settings ignores the pane anchor while already running: the URL
+    # only raises the stale window (live on macOS 15.7 the Input Monitoring
+    # link surfaced the last-open Files & Folders pane). The port must quit a
+    # running System Settings first so LaunchServices relaunches it on the
+    # requested pane.
+    modules, _, workspace = _native_modules()
+    order: list[str] = []
+
+    class _SettingsApp:
+        def __init__(self) -> None:
+            self._terminated = False
+
+        def terminate(self) -> None:
+            order.append("terminate")
+            self._terminated = True
+
+        def isTerminated(self) -> bool:
+            return self._terminated
+
+    lookups: list[str] = []
+
+    def lookup(bundle_id: str) -> list[_SettingsApp]:
+        lookups.append(bundle_id)
+        return [settings_app]
+
+    settings_app = _SettingsApp()
+    appkit = modules["AppKit"]
+    appkit.NSRunningApplication.runningApplicationsWithBundleIdentifier_ = lookup
+    original_open = workspace.openURL_
+
+    def open_url(url: str) -> bool:
+        order.append("open")
+        return original_open(url)
+
+    workspace.openURL_ = open_url
+
+    result = _port(modules).open_settings(PermissionId.INPUT_MONITORING)
+
+    assert result.ok is True
+    assert lookups == ["com.apple.systempreferences"]
+    assert order == ["terminate", "open"]
+
+
+def test_screen_capture_restart_pending_hides_the_dead_allow_button() -> None:
+    # CGPreflightScreenCaptureAccess stays frozen for the process lifetime, and
+    # macOS never re-prompts after the first request — a second visible Allow
+    # button could only ever do nothing (live Mac finding 2026-07-18).
+    modules, screen, _ = _native_modules()
+    port = _port(modules)
+
+    port.request(PermissionId.SCREEN_RECORDING)
+    # Mimic the real frozen preflight: the grant is invisible until relaunch.
+    screen["granted"] = False
+    item = _permission(port.snapshot(), PermissionId.SCREEN_RECORDING)
+
+    assert item["status"] == "not_granted"
+    assert item["restart_required"] is True
+    assert item["can_request"] is False
+    assert "restart" in (item["detail"] or "").lower()
+
+
 def test_missing_framework_reports_unavailable_without_raising() -> None:
     modules, _, _ = _native_modules()
     del modules["Quartz"]

@@ -125,6 +125,31 @@ describe("PermissionsAlertBanner", () => {
     expect(screen.getByRole("button", { name: "permissions.restart_now" })).toBeDefined();
   });
 
+  it("labels a restart-pending screen recording honestly instead of the frozen state", () => {
+    // CGPreflightScreenCaptureAccess is frozen per process: after granting in
+    // System Settings the probe still reports not_granted until relaunch. The
+    // stale label plus a dead Allow button was the live 2026-07-18 Mac finding.
+    mockSnapshot = darwinSnapshot({
+      permissions: [
+        {
+          id: "screen_recording",
+          status: "not_granted",
+          required: ["computer_use"],
+          can_request: false,
+          can_open_settings: true,
+          restart_required: true,
+        },
+      ],
+      features: { computer_use: { ready: false, missing: ["screen_recording"] } },
+      restart_required: true,
+    });
+    render(<PermissionsAlertBanner />);
+
+    expect(screen.getByText("permissions.status.restart_pending")).toBeDefined();
+    expect(screen.queryByText("permissions.status.not_granted")).toBeNull();
+    expect(screen.queryByRole("button", { name: "permissions.request" })).toBeNull();
+  });
+
   it("renders nothing on other platforms", () => {
     mockSnapshot = darwinSnapshot({ platform: "win32" });
     render(<PermissionsAlertBanner />);

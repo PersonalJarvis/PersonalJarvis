@@ -160,6 +160,14 @@ function PermissionRow({
   // "asked and denied". Keep the Settings escape hatch visible alongside the
   // first-party request button so a prior denial is always recoverable.
   const showSettings = !ready && item.can_open_settings;
+  // Screen Recording is the one probe macOS freezes per process: after the
+  // user grants it in System Settings, the live value stays stale until the
+  // app restarts. Show the honest pending label instead of the stale state;
+  // every other permission reads live TCC state and keeps its real status.
+  const statusKey =
+    !ready && item.restart_required && item.id === "screen_recording"
+      ? "restart_pending"
+      : item.status;
 
   return (
     <div className={`rounded-lg border border-border bg-background/40 ${compact ? "p-3" : "p-4"}`}>
@@ -180,7 +188,7 @@ function PermissionRow({
               : "bg-amber-500/10 text-amber-500"
           }`}
         >
-          {t(`permissions.status.${item.status}`)}
+          {t(`permissions.status.${statusKey}`)}
         </span>
         {showRequest && (
           <Button size="sm" disabled={busy} onClick={onRequest}>

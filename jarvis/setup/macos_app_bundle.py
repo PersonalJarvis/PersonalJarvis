@@ -10,9 +10,15 @@ AND non-framework interpreters (for example uv-managed standalone builds)
 while the source and dependencies remain in the managed checkout.
 
 The locally generated app is ad-hoc signed and is preserved byte-for-byte on
-ordinary source updates so its local TCC identity does not churn. Public binary
-distribution still requires the separate Developer-ID signing and notarization
-pipeline; this module never claims an ad-hoc app is a notarized artifact.
+ordinary source updates so its local TCC identity does not churn. When a
+rebuild is unavoidable (format bump, broken bundle), the ad-hoc code signature
+changes and macOS orphans every previously recorded TCC grant — the old rows
+then read as silently DENIED for the "new" app and macOS never prompts again
+(BUG-083). After such a signature change this module therefore resets the
+stale TCC rows for our bundle id via ``tccutil`` so the app can prompt fresh.
+Public binary distribution still requires the separate Developer-ID signing
+and notarization pipeline; this module never claims an ad-hoc app is a
+notarized artifact.
 """
 
 from __future__ import annotations
@@ -40,7 +46,19 @@ BUNDLE_ID = "com.personal-jarvis.desktop"
 # 2: stub launcher sets only LC_CTYPE (BUG-079 — LC_ALL leaked a de_DE
 # LC_NUMERIC into native libs; libvosk then emitted malformed JSON). Bumping
 # forces existing bundles through a rebuild on the next ensure pass.
-_BUNDLE_FORMAT_VERSION = 2
+# 3: one forced rebuild so the new signature-change TCC reset (BUG-083) heals
+# bundles whose grants were orphaned by the version-2 rebuild.
+_BUNDLE_FORMAT_VERSION = 3
+
+# TCC service names this app ever requests; reset scope is always limited to
+# our own bundle id, never the whole service (BUG-083).
+_TCC_SERVICES: tuple[str, ...] = (
+    "Microphone",
+    "ScreenCapture",
+    "Accessibility",
+    "ListenEvent",
+    "PostEvent",
+)
 _MACHO_MAGICS = frozenset(
     {
         b"\xfe\xed\xfa\xce",
@@ -69,8 +87,7 @@ _SCREEN_CAPTURE_USAGE = (
     "Personal Jarvis captures the screen only when you ask it to see or control applications."
 )
 _APPLE_EVENTS_USAGE = (
-    "Personal Jarvis lowers Music/Spotify volume while you dictate and "
-    "restores it afterwards."
+    "Personal Jarvis lowers Music/Spotify volume while you dictate and restores it afterwards."
 )
 
 
@@ -149,6 +166,67 @@ def _codesign_issue(bundle: Path) -> str | None:
 
 def _codesign_valid(bundle: Path) -> bool:
     return _codesign_issue(bundle) is None
+
+
+def _bundle_cdhash(bundle: Path) -> str | None:
+    """Return the bundle's code-directory hash — its TCC identity — or ``None``.
+
+    An ad-hoc signature has no certificate chain, so macOS pins TCC grants to
+    the CDHash of the main executable. Two bundles with different CDHashes are
+    different apps to TCC even under the same bundle id.
+    """
+    if sys.platform != "darwin":
+        return None
+    try:
+        result = subprocess.run(
+            ["/usr/bin/codesign", "--display", "--verbose=4", str(bundle)],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    # codesign prints the display block on stderr.
+    match = re.search(r"^CDHash=([0-9a-f]+)", result.stderr or "", re.MULTILINE)
+    return match.group(1) if match else None
+
+
+def _tcc_reset_needed(previous_cdhash: str | None, current_cdhash: str | None) -> bool:
+    """A signature change (or an unknowable previous one) orphans TCC rows."""
+    return current_cdhash is not None and previous_cdhash != current_cdhash
+
+
+def _reset_stale_tcc_grants(runner=subprocess.run) -> None:
+    """Drop this app's orphaned TCC rows so macOS can prompt fresh (BUG-083).
+
+    After a signature change the recorded grants belong to the OLD CDHash: the
+    rebuilt app reads them as DENIED and macOS suppresses every further prompt,
+    so permissions appear "auto-rejected" without the user ever being asked.
+    Resetting is scoped to our bundle id, is best-effort per service, and never
+    raises — a failed reset leaves behavior no worse than before. The caller
+    (`_install_native_bundle`) only runs on macOS; the injectable runner keeps
+    this unit-testable on every OS.
+    """
+    for service in _TCC_SERVICES:
+        try:
+            result = runner(
+                ["/usr/bin/tccutil", "reset", service, BUNDLE_ID],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            log.warning("TCC reset for %s did not run: %s", service, exc)
+            continue
+        if result.returncode == 0:
+            log.info("Reset stale TCC rows for %s (%s).", service, BUNDLE_ID)
+        else:
+            detail = (result.stderr or result.stdout or "unknown error").strip()
+            log.warning("TCC reset for %s failed: %s", service, detail[-300:])
 
 
 def macos_app_bundle_is_launchable(bundle: Path | None = None) -> bool:
@@ -311,18 +389,14 @@ def _runtime_link_info(venv_python: Path) -> dict:
             creationflags=NO_WINDOW_CREATIONFLAGS,
         )
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise RuntimeError(
-            f"could not query the venv interpreter {venv_python}: {exc}"
-        ) from exc
+        raise RuntimeError(f"could not query the venv interpreter {venv_python}: {exc}") from exc
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "unknown interpreter error").strip()
         raise RuntimeError(f"venv runtime introspection failed: {detail[-1200:]}")
     try:
         return json.loads(result.stdout.strip().splitlines()[-1])
     except (ValueError, IndexError) as exc:
-        raise RuntimeError(
-            f"venv runtime introspection returned invalid JSON: {exc}"
-        ) from exc
+        raise RuntimeError(f"venv runtime introspection returned invalid JSON: {exc}") from exc
 
 
 # A fully versioned uv/python-build-standalone prefix directory name, for
@@ -364,9 +438,7 @@ def _resolve_runtime_dylib(info: dict) -> Path:
     if not ldlibrary:
         raise RuntimeError("the venv interpreter reported no LDLIBRARY config variable")
     roots = [
-        Path(str(root))
-        for root in (info.get("LIBDIR"), info.get("PYTHONFRAMEWORKPREFIX"))
-        if root
+        Path(str(root)) for root in (info.get("LIBDIR"), info.get("PYTHONFRAMEWORKPREFIX")) if root
     ]
     base_prefix = str(info.get("base_prefix") or "")
     if base_prefix:
@@ -424,9 +496,7 @@ def _compile_stub(
         raise RuntimeError(f"stub launcher compilation failed: {exc}; {hint}") from exc
     if result.returncode != 0:
         detail = (result.stderr or result.stdout or "unknown clang error").strip()
-        raise RuntimeError(
-            f"stub launcher compilation failed: {detail[-1200:]}; {hint}"
-        )
+        raise RuntimeError(f"stub launcher compilation failed: {detail[-1200:]}; {hint}")
 
 
 def _build_native_bundle(install_root: Path, work_dir: Path) -> Path:
@@ -475,9 +545,7 @@ def _build_native_bundle(install_root: Path, work_dir: Path) -> Path:
         defines,
         executable,
     )
-    executable.chmod(
-        executable.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
-    )
+    executable.chmod(executable.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     with (bundle / "Contents" / "Info.plist").open("wb") as stream:
         plistlib.dump(plist, stream)
     return bundle
@@ -536,8 +604,7 @@ def _runtime_identity_valid(
         if diagnostics is not None:
             stderr_tail = (result.stderr or "").strip()[-500:]
             diagnostics.append(
-                f"open returncode {result.returncode}, "
-                f"stderr tail: {stderr_tail or '(empty)'}"
+                f"open returncode {result.returncode}, stderr tail: {stderr_tail or '(empty)'}"
             )
         if result.returncode != 0 or not probe.is_file():
             if diagnostics is not None and not probe.is_file():
@@ -600,6 +667,7 @@ def _install_native_bundle(install_root: Path, bundle: Path) -> Path:
     """Build beside the destination and replace it atomically with rollback."""
     parent = bundle.parent
     parent.mkdir(parents=True, exist_ok=True)
+    previous_cdhash = _bundle_cdhash(bundle) if bundle.exists() else None
     with tempfile.TemporaryDirectory(prefix=".jarvis-native-", dir=parent) as raw_work:
         work = Path(raw_work)
         built = _build_native_bundle(install_root, work)
@@ -620,14 +688,17 @@ def _install_native_bundle(install_root: Path, bundle: Path) -> Path:
             ):
                 detail = "; ".join(diagnostics) or "no probe diagnostics captured"
                 raise RuntimeError(
-                    "the installed app reported an unexpected runtime identity "
-                    f"({detail})"
+                    f"the installed app reported an unexpected runtime identity ({detail})"
                 )
         except Exception:
             _remove_path(bundle)
             if previous.exists() or previous.is_symlink():
                 previous.rename(bundle)
             raise
+    if _tcc_reset_needed(previous_cdhash, _bundle_cdhash(bundle)):
+        # The rebuild changed the app's TCC identity: every recorded grant is
+        # now orphaned and would read as silently DENIED (BUG-083).
+        _reset_stale_tcc_grants()
     return bundle
 
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import importlib
 import logging
 import os
+import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass
 from enum import StrEnum
@@ -23,6 +24,7 @@ log = logging.getLogger(__name__)
 
 EXPECTED_BUNDLE_ID = "com.personal-jarvis.desktop"
 APP_NAME = "Personal Jarvis"
+_SYSTEM_SETTINGS_BUNDLE_ID = "com.apple.systempreferences"
 
 
 class PermissionId(StrEnum):
@@ -424,8 +426,14 @@ class SystemPermissionPort:
                 for feature, requirements in FEATURE_REQUIREMENTS.items()
                 if permission_id in requirements
             )
+            restart_pending = permission_id in self._restart_required
+            # After the first request/settings visit macOS never re-prompts in
+            # this process (and the Screen Recording preflight stays frozen
+            # until relaunch), so a second request button would be a dead
+            # control — hide it and let the restart call-to-action take over.
             can_request = (
                 eligible
+                and not restart_pending
                 and self._requester_available(permission_id)
                 and state
                 not in {
@@ -436,6 +444,12 @@ class SystemPermissionPort:
                     PermissionState.UNAVAILABLE,
                 }
             )
+            detail = self._detail(state)
+            if restart_pending and state not in _READY_STATES:
+                detail = (
+                    "Permission changes made in System Settings take effect "
+                    "after Personal Jarvis restarts."
+                )
             statuses.append(
                 PermissionStatus(
                     id=permission_id.value,
@@ -444,8 +458,8 @@ class SystemPermissionPort:
                     required=required,
                     can_request=can_request,
                     can_open_settings=eligible,
-                    restart_required=permission_id in self._restart_required,
-                    detail=self._detail(state),
+                    restart_required=restart_pending,
+                    detail=detail,
                 )
             )
 
@@ -596,11 +610,41 @@ class SystemPermissionPort:
             after,
         )
 
+    def _quit_system_settings(self, appkit: Any) -> None:
+        """Close a running System Settings so the pane deep link can navigate.
+
+        System Settings ignores the ``x-apple.systempreferences`` anchor while
+        it is already running: the URL merely raises the existing window on
+        whatever pane it last showed (observed live on macOS 15.7 — the Input
+        Monitoring link surfaced the stale Files & Folders pane instead).
+        Terminating first makes LaunchServices relaunch it directly on the
+        requested pane. ``NSRunningApplication.terminate`` needs no TCC grant;
+        everything here is best-effort and never blocks the open call.
+        """
+        runner = getattr(appkit, "NSRunningApplication", None)
+        lookup = getattr(runner, "runningApplicationsWithBundleIdentifier_", None)
+        if not callable(lookup):
+            return
+        try:
+            running = list(lookup(_SYSTEM_SETTINGS_BUNDLE_ID) or [])
+            if not running:
+                return
+            for app in running:
+                app.terminate()
+            deadline = time.monotonic() + 2.0
+            while time.monotonic() < deadline:
+                if all(bool(app.isTerminated()) for app in running):
+                    break
+                time.sleep(0.05)
+        except Exception:  # noqa: BLE001 - closing Settings is best-effort
+            log.debug("Could not close a running System Settings.", exc_info=True)
+
     def _open_settings(self, permission_id: PermissionId) -> bool:
         appkit = self._load("AppKit")
         foundation = self._load("Foundation")
         if appkit is None or foundation is None:
             return False
+        self._quit_system_settings(appkit)
         url = foundation.NSURL.URLWithString_(_SETTINGS_URLS[permission_id])
         return bool(appkit.NSWorkspace.sharedWorkspace().openURL_(url))
 
