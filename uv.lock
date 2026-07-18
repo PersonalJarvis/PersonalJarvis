@@ -2483,7 +2483,7 @@ wheels = [
 
 [[package]]
 name = "personal-jarvis"
-version = "1.0.5"
+version = "1.0.11"
 source = { editable = "." }
 dependencies = [
     { name = "aiofiles" },

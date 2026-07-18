@@ -9,8 +9,45 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [1.0.11] — 2026-07-18
+
+Consolidation release. v1.0.6–v1.0.10 were cut from a separate macOS-focused
+line; this release unifies both lines into ONE repository history, so it
+carries every fix from both sides. The repository also moves to the standard
+shared-history workflow: GitHub secret scanning with push protection is
+enabled, and releases now always ship the entire current state.
+
 ### Fixed
 
+- **Voice calls no longer end on their own right after Jarvis answers.**
+  Three independent causes fixed: the provider dropping its Live WebSocket
+  after a long reply now triggers an in-place transport rebuild instead of a
+  hang-up (BUG-071); a "hello?" probe while a delegated answer is still being
+  computed gets a deterministic wait answer instead of derailing the session
+  (BUG-070); and the hang-up gate is re-checked at the moment of speaking, so
+  a stale preamble can no longer play into an already-ended call.
+- **Delegated realtime answers are ~3.7× faster** (live p50 15.6 s → 4.2 s):
+  no thinking on tool rounds, stable per-turn caching, and text-leaked tool
+  calls eliminated (BUG-072).
+- **Realtime sessions could hang forever on shutdown** when the pump's single
+  cancellation was lost mid-await; the bounded wait now re-cancels (BUG-081).
+- **Fresh installs no longer show "Model unavailable" for the default
+  model.** The Gemini default pointed at a model id the API no longer serves;
+  model health checks now probe the exact model the runtime would use, and
+  switching models in the picker takes effect reliably.
+- **Wake word reliability:** a shape-only offline confirm can no longer win
+  against a stronger acoustic candidate, and the boot storm no longer starves
+  the wake-model load (wake was deaf for the first minute after boot).
+- **macOS JarvisBar renders correctly** — the bar appears without the opaque
+  grey box (Tk 9 paints systemTransparent opaque; the native window backing
+  is now cleared) and survives Tk 9 init order; the wake engine no longer
+  crash-loops on comma-decimal locales; fresh macOS installs no longer crash
+  at first launch.
+- **Computer-Use:** desktop missions are serialized behind a global actuation
+  lock, every mission gets an id with per-id cancel, and silently refused
+  guard actions are surfaced instead of swallowed (BUG-082).
+- **Sidebar logo shows reliably** — missing assets return an honest 404 and
+  the image self-heals instead of rendering broken.
 - **Realtime voice no longer pauses or stutters mid-reply.** When the live
   provider's output transcription lagged its audio (Gemini Live: routinely
   3-22 s), the voice-scrub gate held the audio back — first as
@@ -51,6 +88,13 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ### Added
 
+- **Optional browser lock.** The local web UI opens without the Control Key
+  by default; the lock is now an opt-in setting.
+- **Per-voice audio previews** for realtime provider voices in the settings.
+- **Computer-Use screen indicator** — a gold glow border while a desktop
+  mission runs, with Esc-to-cancel, backed by an in-process run registry.
+- **Screen-adaptive JarvisBar sizing** — small screens shrink the bar, large
+  monitors keep the approved look.
 - **Real macOS menu-bar icon.** The tray icon is hosted on the AppKit main
   thread (pystray `darwin_nsapplication` + `run_detached`), completing the
   BUG-056 follow-up — macOS gets the same tray surface as Windows/Linux.
