@@ -59,9 +59,7 @@ router = APIRouter(prefix="/api/update", tags=["update"])
 # guard verifies the installed checkout's ``origin`` resolves here before any
 # ``git reset --hard`` runs, so a dev checkout or a fork can never be self-reset.
 _OFFICIAL_REPO_SLUG = "PersonalJarvis/PersonalJarvis"
-_RELEASES_LATEST_API = (
-    "https://api.github.com/repos/PersonalJarvis/PersonalJarvis/releases/latest"
-)
+_RELEASES_LATEST_API = "https://api.github.com/repos/PersonalJarvis/PersonalJarvis/releases/latest"
 # Written by install/installer.py into the checkout root. Its presence is one
 # half of "this copy is safe to self-update".
 _MARKER_NAME = ".jarvis-managed-install"
@@ -71,14 +69,22 @@ _UPDATE_RESULT_NAME = ".jarvis-update-result.json"
 _NETWORK_TIMEOUT_S = 6.0
 _STATUS_CACHE_TTL_S = 1800.0  # 30 min — don't hit GitHub on every poll.
 _STATUS_RETRY_S = 120.0  # after a failed network check, retry sooner than the TTL.
-_RELEASE_TAG_RE = re.compile(
-    r"^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$"
-)
+_RELEASE_TAG_RE = re.compile(r"^v?\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 
 # In-process cache of the last status result. The managed state is stable for a
 # process lifetime; the network result is what the TTL protects.
 _status_cache: dict[str, Any] | None = None
 _status_cache_until: float = 0.0
+
+# Last release metadata that was successfully fetched from GitHub, kept for the
+# apply path. The unauthenticated releases API is rate-limited PER IP (60/h) —
+# on carrier-grade NAT / DS-Lite connections that budget is shared with other
+# households, so the refetch inside ``apply`` can 403 minutes after ``status``
+# succeeded. Falling back to the last good answer keeps the one-click update
+# working instead of failing with an opaque 502.
+_last_good_release: dict[str, Any] | None = None
+
+_REVISION_RE = re.compile(r"^[0-9a-f]{40}$")
 
 
 # --------------------------------------------------------------------------- #
@@ -184,9 +190,7 @@ async def _terminate(proc: asyncio.subprocess.Process) -> None:
         pass
 
 
-async def _run(
-    cmd: list[str], *, cwd: Path, timeout_s: float
-) -> tuple[int, str, str]:
+async def _run(cmd: list[str], *, cwd: Path, timeout_s: float) -> tuple[int, str, str]:
     """Run ``cmd`` in ``cwd``. Returns ``(returncode, stdout, stderr)``.
 
     ``returncode == -1`` signals the process could not run at all (missing
@@ -206,9 +210,7 @@ async def _run(
 
     try:
         try:
-            raw_out, raw_err = await asyncio.wait_for(
-                proc.communicate(), timeout=timeout_s
-            )
+            raw_out, raw_err = await asyncio.wait_for(proc.communicate(), timeout=timeout_s)
         except TimeoutError:
             await _terminate(proc)
             return -1, "", f"{cmd[0]} timed out after {timeout_s:.0f}s"
@@ -293,7 +295,13 @@ async def _resolve_managed_repo() -> Path | None:
 # GitHub release check (fail-open)
 # --------------------------------------------------------------------------- #
 async def _fetch_latest_release() -> dict[str, Any] | None:
-    """GET the latest GitHub Release. Fail-open: any error returns ``None``."""
+    """GET the latest GitHub Release. Fail-open: any error returns ``None``.
+
+    A successful answer is also remembered in ``_last_good_release`` so the
+    apply path can survive a transient API failure (rate limit, blip) that
+    happens between the status check and the button click.
+    """
+    global _last_good_release
     try:
         import httpx
 
@@ -312,13 +320,15 @@ async def _fetch_latest_release() -> dict[str, Any] | None:
         release_tag = str(data.get("tag_name") or "").strip()
         if not _RELEASE_TAG_RE.fullmatch(release_tag):
             return None
-        return {
+        release = {
             "version": release_tag.lstrip("vV"),
             "tag": release_tag,
             "notes": (data.get("body") or "").strip(),
             "published_at": data.get("published_at"),
             "release_url": data.get("html_url"),
         }
+        _last_good_release = release
+        return release
     except Exception as exc:  # noqa: BLE001 — fail-open on any network/parse error
         log.debug("update check: latest-release fetch failed: %s", exc)
         return None
@@ -385,6 +395,63 @@ def _write_pending_update(
         pass
 
 
+def _read_pending_manifest(root: Path) -> dict[str, Any] | None:
+    """Read + validate a staged-but-not-yet-installed update transaction.
+
+    Mirrors the relauncher's strict validation (same file, same schema) without
+    importing its private helper. Any doubt returns ``None``.
+    """
+    try:
+        payload = json.loads((root / _PENDING_UPDATE_NAME).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("schema") != 1:
+        return None
+    target = payload.get("target_revision")
+    previous = payload.get("previous_revision")
+    profile = payload.get("profile")
+    if not isinstance(target, str) or not _REVISION_RE.fullmatch(target):
+        return None
+    if not isinstance(previous, str) or not _REVISION_RE.fullmatch(previous):
+        return None
+    if profile not in {"full", "headless"}:
+        return None
+    return payload
+
+
+def _read_update_result(root: Path) -> dict[str, Any] | None:
+    """The relauncher's verdict on the LAST finalized update, if any.
+
+    ``ok: false`` means the target install failed after the restart and the
+    checkout was reset back — without surfacing this, a rolled-back update is
+    indistinguishable from "the button silently did nothing".
+    """
+    try:
+        payload = json.loads((root / _UPDATE_RESULT_NAME).read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(payload, dict) or not isinstance(payload.get("ok"), bool):
+        return None
+    return {
+        "ok": payload["ok"],
+        "rolled_back": bool(payload.get("rolled_back", False)),
+        "completed_at": payload.get("completed_at"),
+    }
+
+
+async def _pending_update_overlay(root: Path) -> dict[str, Any]:
+    """Live (never cached) status fields: staged transaction + last verdict."""
+    overlay: dict[str, Any] = {"pending_update": None, "last_result": None}
+    manifest = _read_pending_manifest(root)
+    if manifest is not None:
+        overlay["pending_update"] = {
+            "version": await _version_at_revision(root, str(manifest["target_revision"])),
+            "target_revision": manifest["target_revision"],
+        }
+    overlay["last_result"] = _read_update_result(root)
+    return overlay
+
+
 async def _version_at_revision(root: Path, revision: str) -> str | None:
     """Read a target version without checking that target out over the live app."""
 
@@ -401,6 +468,39 @@ async def _version_at_revision(root: Path, revision: str) -> str | None:
     return None
 
 
+async def _staged_update_response(root: Path) -> dict[str, object] | None:
+    """Re-offer an already-staged transaction when GitHub is unreachable.
+
+    Only accepted when the staged target is still strictly newer than the
+    running version (the manifest was written by a fully validated apply, so
+    the revision itself is trusted). Returns ``None`` when nothing usable is
+    staged — the caller then reports the network failure honestly.
+    """
+    manifest = _read_pending_manifest(root)
+    if manifest is None:
+        return None
+    target = str(manifest["target_revision"])
+    version = await _version_at_revision(root, target)
+    if version is None or not _is_newer(version, _running_version()):
+        return None
+    profile = manifest["profile"]
+    return {
+        "ok": True,
+        "prepared": True,
+        "restart_required": True,
+        "version": version,
+        "release_tag": f"v{version}",
+        "install_profile": profile,
+        "deps_refreshed": False,
+        "deps_pending": True,
+        "deps_warning": None,
+        "ui_bundle_pending": True,
+        "desktop_integration_ok": None,
+        "desktop_integration_pending": profile == "full",
+        "desktop_integration_warning": None,
+    }
+
+
 # --------------------------------------------------------------------------- #
 # Routes
 # --------------------------------------------------------------------------- #
@@ -413,6 +513,13 @@ async def update_status(force: bool = False) -> dict[str, object]:
     global _status_cache, _status_cache_until
     now = time.monotonic()
     if not force and _status_cache is not None and now < _status_cache_until:
+        # The network part is cached; the staged-transaction fields are cheap
+        # local reads and must always be live (an apply invalidates the cache,
+        # but a relauncher result appears while the cache is warm).
+        if _status_cache.get("managed"):
+            root = await _resolve_managed_repo()
+            if root is not None:
+                return {**_status_cache, **(await _pending_update_overlay(root))}
         return _status_cache
 
     current = _running_version()
@@ -444,7 +551,7 @@ async def update_status(force: bool = False) -> dict[str, object]:
             "check_failed": True,
         }
         _status_cache, _status_cache_until = result, now + _STATUS_RETRY_S
-        return result
+        return {**result, **(await _pending_update_overlay(root))}
 
     available = _is_newer(str(latest["version"]), current)
     result = {
@@ -457,7 +564,7 @@ async def update_status(force: bool = False) -> dict[str, object]:
         "release_url": latest.get("release_url"),
     }
     _status_cache, _status_cache_until = result, now + _STATUS_CACHE_TTL_S
-    return result
+    return {**result, **(await _pending_update_overlay(root))}
 
 
 @router.post("/apply", openapi_extra={"x-jarvis-dangerous": True})
@@ -468,6 +575,7 @@ async def update_apply() -> dict[str, object]:
     ``POST /api/settings/restart-app``; its detached relauncher applies the
     pinned revision and completes installation after this process exits.
     """
+    global _status_cache, _status_cache_until
     root = await _resolve_managed_repo()
     if root is None:
         raise HTTPException(
@@ -476,10 +584,25 @@ async def update_apply() -> dict[str, object]:
         )
 
     latest = await _fetch_latest_release()
+    if latest is None and _last_good_release is not None:
+        # The status check knew the target minutes ago; a transient API failure
+        # (shared-IP rate limit, blip) must not brick the one-click update. The
+        # tag fetch + version-at-revision equality check below still verify the
+        # actual bytes, so a stale answer can never install the wrong thing.
+        log.info("update apply: live release check failed — using last good answer")
+        latest = _last_good_release
     if latest is None:
+        staged = await _staged_update_response(root)
+        if staged is not None:
+            # GitHub is unreachable but a validated transaction is already on
+            # disk from an earlier click — restarting can finish it offline.
+            return staged
         raise HTTPException(
             status_code=502,
-            detail="could not resolve the latest published release",
+            detail=(
+                "could not reach GitHub to resolve the latest published release "
+                "(offline or rate-limited) — try again in a few minutes"
+            ),
         )
     release_version = str(latest.get("version") or "")
     release_tag = str(latest.get("tag") or "")
@@ -508,9 +631,7 @@ async def update_apply() -> dict[str, object]:
             status_code=502, detail=f"git fetch failed: {err[:300] or 'unknown error'}"
         )
 
-    target_revision = await _git_output(
-        ["rev-parse", "FETCH_HEAD^{commit}"], cwd=root
-    )
+    target_revision = await _git_output(["rev-parse", "FETCH_HEAD^{commit}"], cwd=root)
     if not target_revision:
         raise HTTPException(
             status_code=500,
@@ -538,6 +659,9 @@ async def update_apply() -> dict[str, object]:
             status_code=500,
             detail="could not stage the update transaction",
         ) from exc
+
+    # The next status poll must see the staged transaction immediately.
+    _status_cache, _status_cache_until = None, 0.0
 
     return {
         "ok": True,
