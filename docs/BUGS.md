@@ -5913,3 +5913,103 @@ object alone is not the session. Any surface state machine that can only be
 released by a message from the (now dead) transport will wedge; whoever
 declares the old turn finished must broadcast that fact to all surfaces,
 not just to the recorder.
+
+## BUG-086: Realtime voice audibly flips gender between turns while every transcript label reads the same pinned voice (HIGH, MITIGATED 2026-07-18, provider-side root cause OPEN)
+
+**Symptom (live 2026-07-18 17:12, session `f4e8e93d`, gemini-live,
+4 turns).** The audible voice alternated male / female / male /
+female across consecutive turns of ONE call. The exported transcript
+claims the opposite: every turn carries `voice_name: "Fenrir"`. The same
+class was already seen live on 2026-07-17 (08:47: the injected bridge line
+came out in a female, distorted voice; 10:04: Fenrir's aborted readback was
+re-spoken by Charon).
+
+**What actually spoke, per the run log.** Turns 0-2 were rendered by
+Gemini Live's own native-audio generation (session voice pinned to Fenrir
+via `PrebuiltVoiceConfig`); turn 3's provider produced no audio for the
+grounded Brain result, so the surface TTS fallback spoke it through
+`gemini-flash-tts`, also pinned to Fenrir. No second local speaker existed
+(the one OpenRouter `/audio/speech` call at 17:12:16 belongs to a
+background health probe that also fires outside sessions).
+
+**Root cause, two layers.**
+
+1. **Provider-side (primary, not ours to fix):** Gemini's native audio is
+   a *generative* renderer, not a fixed-voice synthesizer. The pinned
+   prebuilt voice is a starting point the model can drift from when the
+   content reads as a performance cue — a heavy dialect persona (this
+   session answered in Bavarian), quoted lines, or tagged content such as
+   `<trusted_action_result>`. The 2026-07-17 forensics proved framing
+   alone flips the voice; this session shows it happening on plain persona
+   turns as well.
+2. **Our side (label honesty):** the per-turn `voice_name` the recorder
+   stores as "which voice actually spoke" is fed from
+   `RealtimeVoiceSession._active_voice` — the voice we REQUESTED at
+   session open — never from the audio that was heard. For native-audio
+   turns the label is aspirational, so a real flip is invisible in the
+   transcript and the register looks self-consistent while the user hears
+   four different speakers.
+
+**Mitigation shipped (this commit).** The voice-identity clause that fixed
+the 2026-07-17 bridge-line flip ("say it as yourself, in exactly the same
+voice … do not imitate, do not dramatize") now covers every native
+rendering order, not just the bridge line: `_delegate_result_prompt`,
+`_direct_tool_result_retry_prompt`, `_external_update_prompt`, and — for
+plain persona turns — a standing session-wide clause in
+`_REALTIME_SAFETY_APPENDIX` ("keep one single, consistent voice for the
+entire conversation; never switch voice, gender, tone").
+
+**Still OPEN.**
+
+- The provider can still drift despite instructions; if it does, the next
+  escalation is rendering delegate results through the surface TTS
+  (deterministic voice) instead of native readback — trading first-audio
+  latency for voice identity.
+- Label honesty: `voice_name` should distinguish "requested" from
+  "verified" (classic TTS engines are verified by construction; native
+  realtime audio is only ever requested). Until then, treat realtime
+  `voice_name` as the pin, not as evidence.
+
+**Class rule.** A generative native-audio renderer holds its voice only as
+firmly as EVERY text it is told to speak reminds it to. Any new prompt
+that asks the realtime model to deliver content (results, updates, interim
+lines) must carry the voice-identity clause — and a transcript label must
+never present a requested voice as a heard one.
+
+## BUG-087: 60-second realtime turn felt like "an eternity of pauses" — 9.6 s to first audio, then chunk-starved gaps in a 53 s surface-TTS readback (MEDIUM, ANALYZED 2026-07-18, OPEN)
+
+**Symptom (same session as BUG-086, turn 4 of 4).** A plain knowledge
+question ("best and hardest programming language to learn") took 60.9 s
+end-to-end: long dead air after the user finished speaking, then an answer
+that repeatedly stalled mid-delivery before continuing.
+
+**Measured timeline (run log + latency spans).**
+
+- 17:13:06.0 — turn committed; the planner routes it over the
+  orchestrator (`reasons=capability,connected_data` — a pure knowledge
+  question needed no tools; over-routing is the first avoidable cost).
+- +3.0 s — deterministic delegate waits out the full hardcoded
+  provider-input-boundary window before dispatching on the stable local
+  transcript.
+- +5.0 s — Brain turn (gemini-3.5-flash), including building a ~34k-token
+  Gemini context cache mid-turn.
+- 17:13:14.1 — provider rendered no audio for the grounded result →
+  surface TTS fallback (`gemini-flash-tts`, Fenrir).
+- 17:13:15.7 — first audible audio: **9.6 s of silence** after the user
+  stopped speaking; the interim bridge line never became audible.
+- 17:13:21.5-26.0 — the remaining five/six sentence-chunk synthesis calls
+  complete while playback of chunk 1 is already running: playback outran
+  synthesis early on, producing audible mid-answer gaps (~52.8 s speaking
+  for ~45 s of audio).
+- 17:14:07 — one second after playback drained, the idle Live websocket
+  died (`keepalive ping timeout` → `1006`); the BUG-071/085 in-place
+  rebuild recovered it (1/3), the user then hung up by hotkey.
+
+**Open fix directions (in value order).** (1) Planner: stop routing pure
+knowledge questions through the orchestrator when no capability is truly
+needed — the native path answers the same question in ~1 s (turns 0-1).
+(2) Shorten/parallelize the 3.0 s boundary wait when the local transcript
+is already stable. (3) Pipeline the surface-TTS chunk synthesis ahead of
+playback (prefetch N+1 while N plays) so playback can never starve.
+(4) Keep the Live transport's keepalive fed during long surface-TTS
+playback so the session does not die underneath a healthy call.
