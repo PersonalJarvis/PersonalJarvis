@@ -39,9 +39,13 @@
     "update_available": "Actualización disponible",
     "updating": "Actualizando {name}…",
     "update_failed": "Error al actualizar",
-    "update_hint": "Descargar e instalar la nueva versión",
+    "update_hint": "Descargar la nueva versión y reiniciar {name} automáticamente para instalarla",
     "update_deps_warning": "Actualizado — algunos componentes pueden requerir reinstalación manual",
-    "update_desktop_warning": "Actualizado — el sistema operativo no pudo reparar por completo el iniciador de la aplicación"
+    "update_desktop_warning": "Actualizado — el sistema operativo no pudo reparar por completo el iniciador de la aplicación",
+    "update_finish_restart": "Finalizar actualización",
+    "update_staged_restart_failed": "Actualización descargada — reinicia {name} para terminar la instalación",
+    "update_rolled_back": "La última actualización no se pudo instalar — {name} volvió a la versión anterior",
+    "update_network_error": "error de red"
   },
   "nav": {
     "chats": "Chats",

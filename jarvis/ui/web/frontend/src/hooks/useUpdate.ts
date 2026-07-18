@@ -15,6 +15,22 @@ export interface UpdateStatus {
   published_at: string | null;
   release_url?: string | null;
   check_failed?: boolean;
+  /**
+   * A downloaded-but-not-yet-installed transaction staged by an earlier apply
+   * (the restart finishes it). Reported live so a failed/skipped restart still
+   * surfaces as "finish the update" instead of silently starting over.
+   */
+  pending_update?: { version: string | null; target_revision: string } | null;
+  /**
+   * The relauncher's verdict on the last finalized update. ``ok: false`` means
+   * the install failed after the restart and the app was rolled back — the UI
+   * must say so, or the failure is indistinguishable from "nothing happened".
+   */
+  last_result?: {
+    ok: boolean;
+    rolled_back: boolean;
+    completed_at?: number | null;
+  } | null;
 }
 
 // Slow poll: a new release is a rare event, so 6h keeps the button fresh

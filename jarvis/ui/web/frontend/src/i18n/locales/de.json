@@ -39,9 +39,13 @@
     "update_available": "Update verfügbar",
     "updating": "{name} wird aktualisiert…",
     "update_failed": "Update fehlgeschlagen",
-    "update_hint": "Neue Version herunterladen und installieren",
+    "update_hint": "Neue Version herunterladen und {name} zur Installation automatisch neu starten",
     "update_deps_warning": "Aktualisiert — einige Komponenten brauchen evtl. eine manuelle Neuinstallation",
-    "update_desktop_warning": "Aktualisiert — das Betriebssystem konnte den App-Starter nicht vollständig reparieren"
+    "update_desktop_warning": "Aktualisiert — das Betriebssystem konnte den App-Starter nicht vollständig reparieren",
+    "update_finish_restart": "Update abschließen",
+    "update_staged_restart_failed": "Update heruntergeladen — starte {name} neu, um die Installation abzuschließen",
+    "update_rolled_back": "Das letzte Update konnte nicht installiert werden — {name} wurde auf die vorherige Version zurückgesetzt",
+    "update_network_error": "Netzwerkfehler"
   },
   "nav": {
     "chats": "Chats",

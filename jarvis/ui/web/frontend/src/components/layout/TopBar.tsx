@@ -147,13 +147,29 @@ export function TopBar() {
   );
 }
 
+// The restart can fail transiently right after an apply (the backend is busy,
+// the desktop shell still warming) — retry briefly before giving up honestly.
+const RESTART_ATTEMPTS = 3;
+const RESTART_RETRY_MS = 1500;
+
+const wait = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** Append the server's error detail so a failure is diagnosable, not generic. */
+function withDetail(message: string, detail: string | null): string {
+  const trimmed = (detail ?? "").trim();
+  if (!trimmed) return message;
+  return `${message} (${trimmed.slice(0, 180)})`;
+}
+
 /**
- * Shown ONLY when the backend reports a managed install with a newer published
- * release (``status.update_available``). One click pulls the new code
- * (`POST /api/update/apply`) and then restarts to load it, reusing the same
- * mission-guard (409 → force) flow as the restart button. Hovering reveals the
- * release notes. On a dev tree / manual clone the status is ``managed: false``,
- * so this renders nothing and can never trigger a self-update.
+ * Shown when the backend reports a managed install with a newer published
+ * release (``status.update_available``) — or with a staged-but-not-installed
+ * transaction (``status.pending_update``) left behind by an earlier attempt.
+ * One click stages the new code (`POST /api/update/apply`) and then restarts
+ * to install it, reusing the same mission-guard (409 → force) flow as the
+ * restart button. Hovering reveals the release notes. On a dev tree / manual
+ * clone the status is ``managed: false``, so this renders nothing and can
+ * never trigger a self-update.
  */
 function UpdateButton() {
   const t = useT();
@@ -163,6 +179,7 @@ function UpdateButton() {
   const [forceArmed, setForceArmed] = useState(false);
   const [showNotes, setShowNotes] = useState(false);
   const resetTimer = useRef<number | null>(null);
+  const rollbackNotified = useRef<string | null>(null);
 
   const clearResetTimer = useCallback(() => {
     if (resetTimer.current !== null) {
@@ -172,65 +189,125 @@ function UpdateButton() {
   }, []);
   useEffect(() => clearResetTimer, [clearResetTimer]);
 
-  if (!status?.managed || !status.update_available) return null;
+  // A rolled-back install is otherwise invisible: the app comes back on the
+  // old version and the button simply re-renders. Say it happened, once.
+  const lastResult = status?.last_result;
+  useEffect(() => {
+    if (!lastResult || lastResult.ok) return;
+    const key = String(lastResult.completed_at ?? "unknown");
+    if (rollbackNotified.current === key) return;
+    rollbackNotified.current = key;
+    pushToast("warning", t("topbar.update_rolled_back"));
+  }, [lastResult, pushToast, t]);
+
+  if (!status?.managed) return null;
+  const hasOffer = status.update_available;
+  const hasStaged = Boolean(status.pending_update);
+  if (!hasOffer && !hasStaged) return null;
+  const shownVersion = status.latest ?? status.pending_update?.version ?? null;
 
   async function run(force: boolean) {
     clearResetTimer();
     setBusy(true);
     setShowNotes(false);
+
+    // 1. Stage the new code. The server re-verifies the managed-install guard,
+    // so a spoofed client can't force a reset on an unmanaged checkout. This is
+    // idempotent — with a transaction already staged it succeeds even offline.
     try {
-      // 1. Pull the new code. The server re-verifies the managed-install guard,
-      // so a spoofed client can't force a reset on an unmanaged checkout.
       const applyRes = await fetch("/api/update/apply", { method: "POST" });
-      const applyBody = await applyRes.json().catch(() => ({}));
+      const applyBody = (await applyRes.json().catch(() => ({}))) as {
+        detail?: string;
+        deps_warning?: string | null;
+        desktop_integration_warning?: string | null;
+      };
       if (!applyRes.ok) {
-        throw new Error(
-          (applyBody as { detail?: string }).detail ?? `HTTP ${applyRes.status}`,
-        );
-      }
-      if ((applyBody as { deps_warning?: string | null }).deps_warning) {
-        pushToast("warning", t("topbar.update_deps_warning"));
-      }
-      if (
-        (applyBody as { desktop_integration_warning?: string | null })
-          .desktop_integration_warning
-      ) {
-        pushToast("warning", t("topbar.update_desktop_warning"));
-      }
-      // 2. Restart to load it — reuse the existing route + its mission guard.
-      const url = force
-        ? "/api/settings/restart-app?force=true"
-        : "/api/settings/restart-app";
-      const restartRes = await fetch(url, { method: "POST" });
-      if (restartRes.status === 409) {
-        let count = 0;
-        try {
-          const body = await restartRes.json();
-          count = body?.detail?.missions?.length ?? 0;
-        } catch {
-          /* malformed body — still arm the override */
-        }
+        // 403 unmanaged / 409 nothing newer / 502 git or GitHub failure — the
+        // backend's detail says WHICH, and the user must get to see it.
         setBusy(false);
-        setForceArmed(true);
-        clearResetTimer();
-        resetTimer.current = window.setTimeout(() => {
-          setForceArmed(false);
-          resetTimer.current = null;
-        }, CONFIRM_TIMEOUT_MS);
-        pushToast("warning", `${count} ${t("topbar.restart_missions_running")}`);
+        setForceArmed(false);
+        pushToast(
+          "error",
+          withDetail(
+            t("topbar.update_failed"),
+            applyBody.detail ?? `HTTP ${applyRes.status}`,
+          ),
+        );
         return;
       }
-      if (!restartRes.ok) throw new Error(`restart-failed:${restartRes.status}`);
-      // Success — the code is pulled and the window goes away shortly; keep the
-      // busy state so the button never flips back before the app dies.
-      pushToast("info", t("topbar.updating"));
+      if (applyBody.deps_warning) {
+        pushToast("warning", t("topbar.update_deps_warning"));
+      }
+      if (applyBody.desktop_integration_warning) {
+        pushToast("warning", t("topbar.update_desktop_warning"));
+      }
     } catch {
-      // apply failed (403 on an unmanaged host, 502/500 on a git error) or the
-      // restart 503'd on a headless host: recover the control with an honest toast.
       setBusy(false);
       setForceArmed(false);
-      pushToast("error", t("topbar.update_failed"));
+      pushToast(
+        "error",
+        withDetail(t("topbar.update_failed"), t("topbar.update_network_error")),
+      );
+      return;
     }
+
+    // 2. Restart to install it — reuse the existing route + its mission guard,
+    // retrying a transient failure before giving up. The update stays staged
+    // either way, so the honest fallback is "restart to finish", not "failed".
+    let restartDetail: string | null = null;
+    for (let attempt = 0; attempt < RESTART_ATTEMPTS; attempt++) {
+      if (attempt > 0) await wait(RESTART_RETRY_MS);
+      try {
+        const url = force
+          ? "/api/settings/restart-app?force=true"
+          : "/api/settings/restart-app";
+        const restartRes = await fetch(url, { method: "POST" });
+        if (restartRes.status === 409) {
+          let count = 0;
+          try {
+            const body = await restartRes.json();
+            count = body?.detail?.missions?.length ?? 0;
+          } catch {
+            /* malformed body — still arm the override */
+          }
+          setBusy(false);
+          setForceArmed(true);
+          clearResetTimer();
+          resetTimer.current = window.setTimeout(() => {
+            setForceArmed(false);
+            resetTimer.current = null;
+          }, CONFIRM_TIMEOUT_MS);
+          pushToast(
+            "warning",
+            `${count} ${t("topbar.restart_missions_running")}`,
+          );
+          return;
+        }
+        if (restartRes.ok) {
+          // Success — the code is staged and the window goes away shortly; keep
+          // the busy state so the button never flips back before the app dies.
+          pushToast("info", t("topbar.updating"));
+          return;
+        }
+        const body = (await restartRes.json().catch(() => ({}))) as {
+          detail?: unknown;
+        };
+        restartDetail =
+          typeof body.detail === "string"
+            ? body.detail
+            : `HTTP ${restartRes.status}`;
+      } catch {
+        restartDetail = t("topbar.update_network_error");
+      }
+    }
+    // The download IS staged — a manual restart (or the next successful click)
+    // finishes it. Saying "failed" here would be dishonest and untraceable.
+    setBusy(false);
+    setForceArmed(false);
+    pushToast(
+      "warning",
+      withDetail(t("topbar.update_staged_restart_failed"), restartDetail),
+    );
   }
 
   function onClick() {
@@ -242,7 +319,9 @@ function UpdateButton() {
     ? t("topbar.updating")
     : forceArmed
       ? t("topbar.restart_force")
-      : t("topbar.update_available");
+      : hasOffer
+        ? t("topbar.update_available")
+        : t("topbar.update_finish_restart");
 
   return (
     <div
@@ -267,16 +346,16 @@ function UpdateButton() {
           className={cn("h-3.5 w-3.5", busy && "animate-pulse")}
         />
         {label}
-        {!busy && !forceArmed && status.latest && (
+        {!busy && !forceArmed && shownVersion && (
           <span className="rounded bg-primary/20 px-1 text-[10px] tabular-nums">
-            v{status.latest}
+            v{shownVersion}
           </span>
         )}
       </button>
       {showNotes && status.notes && (
         <div className="absolute right-0 top-full z-50 mt-1 w-80 rounded-md border border-border bg-background p-3 text-left shadow-lg">
           <div className="mb-1 text-xs font-semibold text-foreground">
-            {t("topbar.update_available")} · v{status.latest}
+            {t("topbar.update_available")} · v{shownVersion}
           </div>
           <div className="max-h-64 overflow-y-auto whitespace-pre-wrap text-[11px] leading-relaxed text-muted-foreground">
             {status.notes.slice(0, 800)}

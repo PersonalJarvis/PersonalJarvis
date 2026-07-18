@@ -39,9 +39,13 @@
     "update_available": "Update available",
     "updating": "Updating {name}…",
     "update_failed": "Update failed",
-    "update_hint": "Download and install the new version",
+    "update_hint": "Download the new version and restart {name} automatically to install it",
     "update_deps_warning": "Updated — some components may need a manual reinstall",
-    "update_desktop_warning": "Updated — the operating system could not fully repair the app launcher"
+    "update_desktop_warning": "Updated — the operating system could not fully repair the app launcher",
+    "update_finish_restart": "Finish update",
+    "update_staged_restart_failed": "Update downloaded — restart {name} to finish installing it",
+    "update_rolled_back": "The last update could not be installed — {name} was rolled back to the previous version",
+    "update_network_error": "network error"
   },
   "nav": {
     "chats": "Chats",
