@@ -33,12 +33,64 @@ ok()   { printf '%s    ✓%s %s%s%s\n' "$GREEN" "$RST" "$DIM" "$1" "$RST"; }
 note() { printf '%s      %s%s\n' "$DIM" "$1" "$RST"; }
 err()  { printf '%s    ✗ %s%s\n' "$RED" "$1" "$RST"; }
 
+# Stop every process still executing out of the install dir — the app itself
+# (tray, server, worker). On POSIX the delete would succeed anyway, but a
+# survivor would keep running from a removed tree (holding its port and mic)
+# until reboot. Never touches this shell or its parent. Best effort.
+stop_running_instances() {
+    root="$1"
+    pids=""
+    if [ -d /proc ]; then
+        # Linux: match the real executable path behind each /proc entry.
+        for exe in /proc/[0-9]*/exe; do
+            pid="${exe#/proc/}"; pid="${pid%/exe}"
+            [ "$pid" = "$$" ] && continue
+            [ "$pid" = "${PPID:-0}" ] && continue
+            target=$(readlink "$exe" 2>/dev/null) || continue
+            case "$target" in "$root"/*) pids="$pids $pid" ;; esac
+        done
+    else
+        # macOS/BSD: ps reports the full executable path in comm.
+        pids=$(ps -axo pid=,comm= 2>/dev/null | while read -r pid comm; do
+            [ "$pid" = "$$" ] && continue
+            [ "$pid" = "${PPID:-0}" ] && continue
+            case "$comm" in "$root"/*) printf '%s ' "$pid" ;; esac
+        done) || true
+    fi
+    pids=$(printf '%s' "$pids" | tr -s ' ')
+    [ -n "${pids# }" ] || return 0
+
+    # shellcheck disable=SC2086 — word-splitting the PID list is intended
+    kill $pids 2>/dev/null || true
+    alive=""
+    for _ in 1 2 3 4 5 6; do
+        alive=""
+        for pid in $pids; do
+            kill -0 "$pid" 2>/dev/null && alive="$alive $pid"
+        done
+        [ -z "$alive" ] && break
+        sleep 1
+    done
+    if [ -n "$alive" ]; then
+        # shellcheck disable=SC2086
+        kill -9 $alive 2>/dev/null || true
+        sleep 1
+    fi
+    n=$(echo "$pids" | wc -w | tr -d ' ')
+    ok "Stopped the running Jarvis app ($n process(es))."
+}
+
 step 'Uninstall Personal Jarvis'
 note "$INSTALL_DIR"
 
-# Is this a dry run? Then never touch the folder.
+# Is this a dry run? Then never touch the folder. --yes/-y skips every prompt
+# (required on a headless box where stdin is not a terminal).
 DRY_RUN=0
-for a in "$@"; do [ "$a" = "--dry-run" ] && DRY_RUN=1; done
+ASSUME_YES=0
+for a in "$@"; do
+    [ "$a" = "--dry-run" ] && DRY_RUN=1
+    { [ "$a" = "--yes" ] || [ "$a" = "-y" ]; } && ASSUME_YES=1
+done
 
 if [ ! -d "$INSTALL_DIR" ]; then
     err "No install found at $INSTALL_DIR — nothing to do."
@@ -55,9 +107,11 @@ else
     err "Python environment missing — skipping autostart/key cleanup."
     note "The app registration and folder can still be removed; saved API keys may remain."
     if [ "$DRY_RUN" -eq 1 ]; then exit 0; fi
-    printf 'Type '\''yes'\'' to delete %s: ' "$INSTALL_DIR"
-    read -r ans
-    [ "$ans" = "yes" ] || { note 'Cancelled.'; exit 1; }
+    if [ "$ASSUME_YES" -eq 0 ]; then
+        printf 'Type '\''yes'\'' to delete %s: ' "$INSTALL_DIR"
+        read -r ans
+        [ "$ans" = "yes" ] || { note 'Cancelled.'; exit 1; }
+    fi
     case "$(uname -s)" in
         Darwin)
             rm -rf -- "$HOME/Applications/Personal Jarvis.app"
@@ -76,10 +130,17 @@ if [ "$RC" -ne 0 ]; then
     exit "$RC"
 fi
 
-# 1: delete the folder from OUTSIDE the venv (nothing is locked now).
+# 1: delete the folder from OUTSIDE the venv. The Python step above already
+#    stops the running app; anything (re)started since - and the no-venv
+#    fallback path - is caught here again. A failed delete says plainly WHY.
 if [ "$DRY_RUN" -eq 0 ]; then
     cd "$HOME"
-    rm -rf "$INSTALL_DIR"
+    stop_running_instances "$INSTALL_DIR"
+    if ! rm -rf "$INSTALL_DIR"; then
+        err "Could not fully remove $INSTALL_DIR — something is still using files inside it."
+        note 'Close every Jarvis window, then run this uninstaller again.'
+        exit 3
+    fi
     ok "Removed $INSTALL_DIR"
     step 'Done. Personal Jarvis has been uninstalled.'
 fi

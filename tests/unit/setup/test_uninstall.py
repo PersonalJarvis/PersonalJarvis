@@ -6,6 +6,9 @@ are monkeypatched to recorders whenever run_uninstall() is exercised.
 """
 from __future__ import annotations
 
+import os
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -32,8 +35,13 @@ def _use_plan(monkeypatch: pytest.MonkeyPatch, plan: UninstallPlan) -> None:
 
 
 def _record_steps(monkeypatch: pytest.MonkeyPatch) -> list[str]:
-    """Replace the four removal helpers with recorders; return the shared log."""
+    """Replace the five removal helpers with recorders; return the shared log."""
     called: list[str] = []
+    monkeypatch.setattr(
+        uninstall,
+        "_stop_running_instances",
+        lambda p: called.append("stop") or 0,
+    )
     monkeypatch.setattr(
         uninstall,
         "_remove_desktop_registration",
@@ -60,9 +68,10 @@ def test_looks_like_jarvis_install_false_for_random_dir(tmp_path: Path) -> None:
 
 
 def test_build_plan_reflects_real_repo(monkeypatch: pytest.MonkeyPatch) -> None:
-    # Keep it hermetic: no real keyring / autostart probing.
+    # Keep it hermetic: no real keyring / autostart / process probing.
     monkeypatch.setattr(uninstall, "_autostart_state", lambda: (False, None))
     monkeypatch.setattr(uninstall, "_keyring_keys_present", lambda: [])
+    monkeypatch.setattr(uninstall, "_find_running_instances", lambda _p: [])
     plan = uninstall.build_plan()
     from jarvis.core import config as cfg
 
@@ -123,11 +132,12 @@ def test_assume_yes_runs_all_four_steps(tmp_path: Path, monkeypatch: pytest.Monk
     rc = uninstall.run_uninstall(assume_yes=True)
     assert rc == 0
     assert called == [
+        "stop",
         "desktop",
         "autostart",
         "keys",
         "folder",
-    ]  # order: outside-the-folder first
+    ]  # order: stop the live app first, then outside-the-folder registrations
 
 
 def test_keep_keys_skips_key_removal(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -159,6 +169,26 @@ def test_bootstrap_fallbacks_remove_registration_without_the_venv() -> None:
     assert "applications/personal-jarvis.desktop" in posix
 
 
+def test_bootstraps_stop_the_running_app_and_retry_the_delete() -> None:
+    """Regression guard for the locked-folder uninstall failure: a still-running
+    Jarvis process kept venv files locked on Windows, so the final
+    ``Remove-Item -Recurse`` died with a red PermissionDenied stacktrace. Both
+    bootstraps must stop processes running out of the install dir, retry the
+    delete, and end with an honest plain-language message instead of a crash."""
+    root = Path(__file__).resolve().parents[3]
+    windows = (root / "install" / "uninstall.ps1").read_text(encoding="utf-8")
+    posix = (root / "install" / "uninstall.sh").read_text(encoding="utf-8")
+
+    assert "Stop-JarvisProcesses" in windows
+    assert "$Attempt" in windows  # retry loop around the folder delete
+    assert "Could not fully remove" in windows  # honest failure message
+    assert "run this uninstaller again" in windows
+
+    assert "stop_running_instances" in posix
+    assert "Could not fully remove" in posix
+    assert "run this uninstaller again" in posix
+
+
 # ---------------------------------------------------------------- key removal
 def test_remove_keys_deletes_each_present_key(monkeypatch: pytest.MonkeyPatch) -> None:
     deleted: list[str] = []
@@ -186,6 +216,89 @@ def test_running_inside_detects_self_host() -> None:
 
 def test_running_inside_false_for_unrelated_dir(tmp_path: Path) -> None:
     assert uninstall._running_inside(tmp_path) is False
+
+
+# ---------------------------------------------------------------- process stop
+#
+# Safety: these tests NEVER touch a real install. They copy a harmless system
+# long-runner (ping/sleep) into a throwaway tmp_path "install dir", start it
+# from there, and prove the stop step finds and ends exactly that process.
+
+
+def _start_fake_install_process(fake_dir: Path) -> subprocess.Popen[bytes]:
+    """Launch a long-running process whose executable lives INSIDE fake_dir.
+
+    That is precisely the condition that locked the venv files on Windows and
+    made the real uninstall fail with PermissionDenied.
+    """
+    if sys.platform == "win32":
+        bin_dir = fake_dir / ".venv" / "Scripts"
+    else:
+        bin_dir = fake_dir / ".venv" / "bin"
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    if sys.platform == "win32":
+        source = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32" / "ping.exe"
+        target = bin_dir / "jarvis-fake.exe"
+        shutil.copy2(source, target)
+        args = [str(target), "-n", "60", "127.0.0.1"]
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        return subprocess.Popen(  # noqa: S603 — self-copied system binary
+            args,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            creationflags=flags,
+        )
+    source_str = shutil.which("sleep")
+    if source_str is None:
+        pytest.skip("no 'sleep' binary available")
+    target = bin_dir / "jarvis-fake"
+    shutil.copy2(source_str, target)
+    target.chmod(0o755)
+    return subprocess.Popen(  # noqa: S603 — self-copied system binary
+        [str(target), "60"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def test_stop_running_instances_ends_process_from_install_dir(tmp_path: Path) -> None:
+    fake_dir = tmp_path / "fake-install"
+    try:
+        proc = _start_fake_install_process(fake_dir)
+    except OSError as exc:  # hardened runner without ping/sleep copy rights
+        pytest.skip(f"cannot start sandbox process: {exc}")
+    try:
+        assert proc.poll() is None, "sandbox process must be running before the stop"
+
+        stopped = uninstall._stop_running_instances(fake_dir)
+
+        assert stopped >= 1
+        proc.wait(timeout=10)
+        assert proc.poll() is not None
+        # The point of the whole fix: with nothing running from the tree, the
+        # folder is deletable — on Windows this fails while the process lives.
+        shutil.rmtree(fake_dir)
+        assert not fake_dir.exists()
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
+def test_stop_running_instances_zero_when_nothing_runs(tmp_path: Path) -> None:
+    assert uninstall._stop_running_instances(tmp_path) == 0
+
+
+def test_find_running_instances_never_lists_self_or_parents() -> None:
+    """The uninstall itself runs from the venv python — killing self or the
+    bootstrap shell would abort the uninstall mid-flight. Scanning the live
+    interpreter's own directory is read-only and must exclude our chain."""
+    own_dir = Path(sys.executable).resolve().parent
+    pids = {p.pid for p in uninstall._find_running_instances(own_dir)}
+
+    import psutil
+
+    protected = {os.getpid()} | {p.pid for p in psutil.Process().parents()}
+    assert pids.isdisjoint(protected)
 
 
 def test_windows_self_deleter_writes_batch_and_spawns(

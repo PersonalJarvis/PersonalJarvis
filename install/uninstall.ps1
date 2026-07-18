@@ -34,6 +34,30 @@ function Write-Ok([string]$Text)    { Write-Host "$Green    $Chk$Rst $Dim$Text$R
 function Write-Note([string]$Text)  { Write-Host "$Dim      $Text$Rst" }
 function Write-Err([string]$Text)   { Write-Host "$Red    $Crs $Text$Rst" }
 
+function Stop-JarvisProcesses([string]$Root) {
+    # Any process whose executable lives inside the install dir is the app
+    # itself (tray, server, worker). Windows keeps a running .exe and every
+    # loaded .dll/.pyd locked, so the folder delete fails with "access denied"
+    # while one is alive. Best effort: never this PowerShell, never elevated
+    # processes we cannot see.
+    $Prefix = $Root.TrimEnd('\') + '\'
+    $Procs = @()
+    foreach ($p in (Get-Process -ErrorAction SilentlyContinue)) {
+        if ($p.Id -eq $PID) { continue }
+        $ProcPath = $null
+        try { $ProcPath = $p.Path } catch {}
+        if ($ProcPath -and $ProcPath.StartsWith($Prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+            $Procs += $p
+        }
+    }
+    if ($Procs.Count -eq 0) { return }
+    foreach ($p in $Procs) { Stop-Process -Id $p.Id -Force -ErrorAction SilentlyContinue }
+    foreach ($p in $Procs) {
+        try { Wait-Process -Id $p.Id -Timeout 10 -ErrorAction SilentlyContinue } catch {}
+    }
+    Write-Ok "Stopped the running Jarvis app ($($Procs.Count) process(es))."
+}
+
 $InstallDir = if ($env:JARVIS_INSTALL_DIR) { $env:JARVIS_INSTALL_DIR } else { Join-Path $env:USERPROFILE '.personal-jarvis' }
 $VenvPython = Join-Path $InstallDir '.venv\Scripts\python.exe'
 
@@ -78,11 +102,33 @@ if ($Rc -ne 0) {
     exit $Rc
 }
 
-# 1: delete the folder from OUTSIDE the venv (nothing is locked now). Leave the
-#    install dir first so it is not the current location during removal.
+# 1: delete the folder from OUTSIDE the venv. Leave the install dir first so it
+#    is not the current location during removal. The Python step above already
+#    stops the running app, but anything (re)started since - and the no-venv
+#    fallback path - is caught here again. Windows can also hold file locks for
+#    a moment after a process dies, so the delete retries before giving up, and
+#    a final failure says plainly WHY instead of a red stacktrace.
 if (-not $DryRun) {
     Set-Location -LiteralPath $env:USERPROFILE
-    Remove-Item -LiteralPath $InstallDir -Recurse -Force
+    Stop-JarvisProcesses $InstallDir
+    $Deleted = $false
+    for ($Attempt = 1; $Attempt -le 5; $Attempt++) {
+        try {
+            Remove-Item -LiteralPath $InstallDir -Recurse -Force -ErrorAction Stop
+            $Deleted = $true
+            break
+        } catch {
+            if (-not (Test-Path -LiteralPath $InstallDir)) { $Deleted = $true; break }
+            Stop-JarvisProcesses $InstallDir
+            Start-Sleep -Seconds 2
+        }
+    }
+    if (-not $Deleted -and (Test-Path -LiteralPath $InstallDir)) {
+        Write-Err "Could not fully remove $InstallDir - a program is still using files inside it."
+        Write-Note 'Close every Jarvis window (including the tray icon near the clock) and any terminal opened inside that folder, then run this uninstaller again.'
+        Write-Note 'Signing out of Windows and back in also releases leftover file locks.'
+        exit 3
+    }
     Write-Ok "Removed $InstallDir"
     Write-Step 'Done. Personal Jarvis has been uninstalled.'
 }

@@ -31,6 +31,7 @@ the venv.
 """
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import subprocess
@@ -72,6 +73,7 @@ class UninstallPlan:
     autostart_supported: bool
     autostart_entry: str | None
     keyring_keys: list[str] = field(default_factory=list)
+    running_pids: list[int] = field(default_factory=list)
 
     @property
     def config_file(self) -> Path:
@@ -123,6 +125,114 @@ def _keyring_keys_present() -> list[str]:
     return present
 
 
+def _find_running_instances(install_dir: Path) -> list:
+    """Processes that keep the install tree busy — a still-running Jarvis app.
+
+    Matches a process when its executable lives inside ``install_dir`` (the
+    venv's python/pythonw and every console script), or when it is a Python
+    interpreter whose command line references the install dir (a system python
+    driving code from the tree). On Windows any such process keeps ``.exe`` /
+    ``.dll`` / ``.pyd`` files locked, which is exactly what made the final
+    folder delete fail with "access denied".
+
+    The current process and its whole parent chain are always excluded — the
+    uninstall itself runs from the venv when invoked as
+    ``python -m jarvis --uninstall``, and killing our own bootstrap would abort
+    the uninstall mid-flight. Best-effort: returns [] when psutil is missing.
+    """
+    try:
+        import psutil
+    except ImportError:
+        return []
+
+    root = os.path.normcase(str(install_dir.resolve())) + os.sep
+
+    def _inside(raw: str | None) -> bool:
+        if not raw:
+            return False
+        try:
+            return os.path.normcase(os.path.realpath(raw)).startswith(root)
+        except OSError:
+            return False
+
+    protected: set[int] = {os.getpid()}
+    # A broken parent probe must not stop the scan.
+    with contextlib.suppress(Exception):
+        protected.update(p.pid for p in psutil.Process().parents())
+
+    found = []
+    for proc in psutil.process_iter(["pid", "exe", "name", "cmdline"]):
+        try:
+            if proc.info["pid"] in protected:
+                continue
+            if _inside(proc.info["exe"]):
+                found.append(proc)
+                continue
+            # A system interpreter running code out of the install tree. Only
+            # python-named processes qualify so an editor or file manager that
+            # merely has the path on its command line is never touched.
+            name = (proc.info["name"] or "").lower()
+            if name.startswith("python") and any(
+                _inside(arg) for arg in (proc.info["cmdline"] or [])[1:]
+            ):
+                found.append(proc)
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            continue
+    return found
+
+
+def _stop_running_instances(install_dir: Path) -> int:
+    """Stop every running Jarvis process before anything is removed.
+
+    Graceful terminate first, hard kill for stragglers. Never raises — a
+    process we cannot stop is reported and the uninstall carries on (the
+    bootstrap scripts retry the folder delete and explain what still blocks
+    it). Returns the number of processes that are gone.
+    """
+    try:
+        import psutil
+    except ImportError:
+        _console.print(
+            "    [muted]→ process check unavailable (psutil missing) — "
+            "close Jarvis yourself if it is still running.[/]"
+        )
+        return 0
+
+    procs = _find_running_instances(install_dir)
+    if not procs:
+        return 0
+
+    for proc in procs:
+        try:
+            proc.terminate()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    _gone, alive = psutil.wait_procs(procs, timeout=6)
+    for proc in alive:
+        try:
+            proc.kill()
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+    if alive:
+        _gone, alive = psutil.wait_procs(alive, timeout=4)
+
+    stopped = len(procs) - len(alive)
+    if stopped:
+        _console.print(
+            f"    [ok]→ stopped the running Jarvis app "
+            f"({stopped} process{'es' if stopped != 1 else ''}).[/]"
+        )
+    for proc in alive:
+        # Reporting must never abort the uninstall (the process may vanish
+        # between the wait and the name() lookup).
+        with contextlib.suppress(Exception):
+            _console.print(
+                f"    [bad]⚠ could not stop process {proc.pid} "
+                f"({escape(proc.name())}) — it may keep files locked.[/]"
+            )
+    return stopped
+
+
 def _autostart_state() -> tuple[bool, str | None]:
     """(supported, entry_path) for the current install's login-autostart entry.
 
@@ -143,12 +253,17 @@ def build_plan() -> UninstallPlan:
     """Inspect the machine and report what an uninstall would remove. Pure."""
     install_dir = Path(cfg.PROJECT_ROOT).resolve()
     supported, entry = _autostart_state()
+    try:
+        running = [p.pid for p in _find_running_instances(install_dir)]
+    except Exception:  # noqa: BLE001 — a scan failure must not block the uninstall
+        running = []
     return UninstallPlan(
         install_dir=install_dir,
         is_jarvis_install=_looks_like_jarvis_install(install_dir),
         autostart_supported=supported,
         autostart_entry=entry,
         keyring_keys=_keyring_keys_present(),
+        running_pids=running,
     )
 
 
@@ -160,6 +275,12 @@ def _print_plan(plan: UninstallPlan, *, keep_keys: bool, keep_folder: bool) -> N
         "[bad]This removes Jarvis from THIS machine.[/] "
         "It does not touch your accounts or anything you created elsewhere.\n",
     ]
+    if plan.running_pids:
+        n = len(plan.running_pids)
+        lines.append(
+            f"[brand]•[/] Stop the running Jarvis app first "
+            f"([brand.bold]{n}[/] process{'es' if n != 1 else ''} still active)"
+        )
     if not keep_folder:
         lines.append(
             f"[brand]•[/] Delete the install folder:\n"
@@ -365,9 +486,12 @@ def run_uninstall(
     _console.print()
     _console.print(" [brand.bold]Removing…[/]")
 
-    # Order matters: remove every external registration and the keys FIRST, then
-    # remove the folder last — on Windows the folder step may
-    # end this process's ability to do further work if it self-deletes.
+    # Order matters: stop the running app FIRST (a live process keeps venv
+    # files locked on Windows and the folder delete would fail), then remove
+    # every external registration and the keys, then the folder last — on
+    # Windows the folder step may end this process's ability to do further
+    # work if it self-deletes.
+    _stop_running_instances(plan.install_dir)
     _remove_desktop_registration()
     _remove_autostart()
     if not keep_keys:
@@ -376,6 +500,13 @@ def run_uninstall(
         _remove_folder(plan.install_dir)
 
     _console.print()
-    _console.print("  [ok]Done.[/] [muted]Personal Jarvis has been removed. "
-                   "Re-run the installer any time to start fresh.[/]\n")
+    if keep_folder:
+        # The bootstrap script (uninstall.ps1 / uninstall.sh) deletes the
+        # folder next — claiming "removed" here would be dishonest if that
+        # final step still fails.
+        _console.print("  [ok]Cleanup done.[/] [muted]Removing the install "
+                       "folder itself…[/]\n")
+    else:
+        _console.print("  [ok]Done.[/] [muted]Personal Jarvis has been removed. "
+                       "Re-run the installer any time to start fresh.[/]\n")
     return 0
