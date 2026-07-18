@@ -118,8 +118,21 @@ curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/
 > dependencies, prefetches the voice models, and launches the app. Keys land in your OS
 > credential manager, never in the repo. Re-running the same one-liner updates in place.
 
+**Uninstall** — one command as well. Removes the install folder, the autostart entry, and
+the keychain entries; add `--dry-run` to preview, `--yes` to skip the confirmation:
+
+```powershell
+# Windows (PowerShell)
+& "$env:USERPROFILE\.personal-jarvis\install\uninstall.ps1"
+```
+
+```bash
+# macOS · Linux
+bash ~/.personal-jarvis/install/uninstall.sh
+```
+
 <details>
-<summary><b>Optional extras, install flags, uninstall, pipx & manual clone</b></summary>
+<summary><b>Optional extras, install flags, pipx & manual clone</b></summary>
 
 <br/>
 
@@ -136,19 +149,6 @@ Everything below is optional — each item only unlocks a specific feature:
 |---|---|
 | `--headless` | Minimal server install: API + WebSocket only, torch-free base, no Node.js — the tiny-VPS path |
 | `--no-launch` | Install only; don't start the app |
-
-**Uninstall** — removes the install folder, the autostart entry, and the keychain entries.
-Add `--dry-run` to preview, `--yes` to skip the confirmation:
-
-```powershell
-# Windows (PowerShell)
-& "$env:USERPROFILE\.personal-jarvis\install\uninstall.ps1"
-```
-
-```bash
-# macOS · Linux
-bash ~/.personal-jarvis/install/uninstall.sh
-```
 
 **pipx** — isolated, no clone, any OS:
 
