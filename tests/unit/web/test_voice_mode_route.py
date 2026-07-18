@@ -64,6 +64,10 @@ def test_get_voice_mode(monkeypatch):
     assert body["mode"] == "realtime"
     assert body["realtime_available"] is True
     assert body["active_provider"] == "openai-realtime"
+    # Sidebar display fields: registry label + the catalog-default model (no
+    # pin configured in this app fixture).
+    assert body["active_provider_label"] == "OpenAI Realtime"
+    assert body["active_model"] == "gpt-realtime"
     assert body["session_active"] is False
     assert body["active_session_mode"] is None
 
@@ -84,6 +88,31 @@ def test_get_voice_mode_cross_family_gemini_only(monkeypatch):
     body = r.json()
     assert body["realtime_available"] is True
     assert body["active_provider"] == "gemini-live"
+    assert body["active_provider_label"] == "Gemini Live"
+    assert body["active_model"] == "gemini-3.1-flash-live-preview"
+
+
+def test_get_voice_mode_reports_pinned_realtime_model(monkeypatch):
+    """A model pinned in [brain.providers.<id>].model outranks the catalog
+    default in the sidebar display fields."""
+    import jarvis.realtime.factory as rf
+
+    def only_gemini(candidates):
+        keys = {c[0] for c in candidates}
+        return "sk-x" if "gemini_api_key" in keys else None
+
+    monkeypatch.setattr(rf, "get_secret_any", only_gemini)
+    app = _app(mode="realtime")
+    app.state.config.brain = SimpleNamespace(
+        providers={
+            "gemini-live": SimpleNamespace(
+                model="gemini-2.5-flash-native-audio-latest", voice=""
+            )
+        }
+    )
+    body = TestClient(app).get("/api/settings/voice-mode").json()
+    assert body["active_provider"] == "gemini-live"
+    assert body["active_model"] == "gemini-2.5-flash-native-audio-latest"
 
 
 def test_get_voice_mode_no_realtime_key_anywhere(monkeypatch):
@@ -94,6 +123,8 @@ def test_get_voice_mode_no_realtime_key_anywhere(monkeypatch):
     body = r.json()
     assert body["realtime_available"] is False
     assert body["active_provider"] is None
+    assert body["active_provider_label"] is None
+    assert body["active_model"] is None
 
 
 def test_put_voice_mode_invalid_is_400():

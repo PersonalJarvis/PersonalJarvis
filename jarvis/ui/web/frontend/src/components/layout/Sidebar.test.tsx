@@ -32,6 +32,38 @@ vi.mock("@/hooks/usePluginAttention", () => ({
       : { count: 0, names: [] },
 }));
 
+// useVoiceMode fetches /api/settings/voice-mode; mock it so the footer card's
+// pipeline-vs-realtime split is driven by the test, not a fetch. The default
+// mirrors a fresh pipeline install (the pre-existing footer tests rely on it).
+const voiceModeMock = vi.hoisted(() => ({
+  value: {
+    mode: "pipeline",
+    activeProvider: null as string | null,
+    activeProviderLabel: null as string | null,
+    activeModel: null as string | null,
+    sessionActive: false,
+    activeSessionMode: null as "pipeline" | "realtime" | null,
+    activeSessionProvider: "",
+    activeSessionModel: "",
+  },
+}));
+vi.mock("@/hooks/useVoiceMode", () => ({
+  useVoiceMode: () => voiceModeMock.value,
+}));
+
+function resetVoiceModeMock() {
+  voiceModeMock.value = {
+    mode: "pipeline",
+    activeProvider: null,
+    activeProviderLabel: null,
+    activeModel: null,
+    sessionActive: false,
+    activeSessionMode: null,
+    activeSessionProvider: "",
+    activeSessionModel: "",
+  };
+}
+
 function renderSidebar() {
   const client = new QueryClient({
     defaultOptions: {
@@ -174,6 +206,91 @@ describe("Sidebar brain footer", () => {
 
     expect(screen.getByTestId("sidebar-brain-model").textContent).toBe("gemini-3.1-flash");
     expect(screen.getByText("Gemini")).toBeTruthy();
+  });
+});
+
+describe("Sidebar footer in realtime voice mode", () => {
+  beforeEach(() => {
+    useEventStore.setState({
+      voiceState: "idle",
+      transcription: "",
+      transcriptionFinal: true,
+      connected: true,
+      voiceReady: true,
+      // The pipeline brain stays configured — it must NOT be what the footer
+      // shows while the realtime engine owns the voice path.
+      brainProvider: "openrouter",
+      brainModel: "google/gemini-3.5-flash",
+    });
+  });
+
+  afterEach(() => {
+    cleanup();
+    resetVoiceModeMock();
+  });
+
+  test("shows the realtime provider + model instead of the dormant pipeline brain", () => {
+    // The bug: the footer said "OpenRouter / google/gemini-3.5-flash" while
+    // Gemini Live was doing all the talking. In realtime mode the card must
+    // follow the realtime engine.
+    voiceModeMock.value = {
+      ...voiceModeMock.value,
+      mode: "realtime",
+      activeProvider: "gemini-live",
+      activeProviderLabel: "Gemini Live",
+      activeModel: "gemini-3.1-flash-live-preview",
+    };
+
+    renderSidebar();
+
+    expect(screen.getByTestId("sidebar-footer-tier").textContent).toBe("Realtime");
+    expect(screen.getByText("Gemini Live")).toBeTruthy();
+    expect(screen.getByTestId("sidebar-brain-model").textContent).toBe(
+      "gemini-3.1-flash-live-preview",
+    );
+    expect(screen.queryByText("OpenRouter")).toBeNull();
+    expect(screen.queryByText("google/gemini-3.5-flash")).toBeNull();
+  });
+
+  test("a RUNNING realtime session's live provider/model outrank the configured pick", () => {
+    // Mid-call cross-family fallback (AP-22) must be visible: the session
+    // crossed from Gemini to OpenAI, so the card shows the live engine.
+    voiceModeMock.value = {
+      ...voiceModeMock.value,
+      mode: "realtime",
+      activeProvider: "gemini-live",
+      activeProviderLabel: "Gemini Live",
+      activeModel: "gemini-3.1-flash-live-preview",
+      sessionActive: true,
+      activeSessionMode: "realtime",
+      activeSessionProvider: "openai-realtime",
+      activeSessionModel: "gpt-realtime-2.1",
+    };
+
+    renderSidebar();
+
+    expect(screen.getByText("OpenAI Realtime")).toBeTruthy();
+    expect(screen.getByTestId("sidebar-brain-model").textContent).toBe("gpt-realtime-2.1");
+  });
+
+  test("pipeline mode keeps the classic brain footer", () => {
+    // Guard the split itself: mode "pipeline" must still show the brain card
+    // even when a realtime provider is fully configured.
+    voiceModeMock.value = {
+      ...voiceModeMock.value,
+      mode: "pipeline",
+      activeProvider: "gemini-live",
+      activeProviderLabel: "Gemini Live",
+      activeModel: "gemini-3.1-flash-live-preview",
+    };
+
+    renderSidebar();
+
+    expect(screen.getByTestId("sidebar-footer-tier").textContent).toBe("Brain");
+    expect(screen.getByText("OpenRouter")).toBeTruthy();
+    expect(screen.getByTestId("sidebar-brain-model").textContent).toBe(
+      "google/gemini-3.5-flash",
+    );
   });
 });
 

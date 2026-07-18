@@ -157,6 +157,43 @@ class VoiceModeBody(BaseModel):
     persist: bool = Field(default=True, description="Persist as boot default in jarvis.toml")
 
 
+def _realtime_provider_display(
+    cfg: object, provider_id: str | None
+) -> tuple[str | None, str | None]:
+    """(label, model) the sidebar shows for the resolved realtime provider.
+
+    The label comes from the provider registry; the model is the pin in
+    ``[brain.providers.<id>].model``, resolved to the curated catalog's default
+    (always FIRST in its list) when unset — the same value an idle realtime
+    session would actually connect with. Both are best-effort cosmetics: any
+    failure degrades to ``None`` rather than breaking the status endpoint.
+    """
+    if not provider_id:
+        return None, None
+    label: str | None = None
+    try:
+        from jarvis.ui.web.provider_spec import get_spec
+
+        spec = get_spec(provider_id)
+        label = getattr(spec, "label", None) or None
+    except Exception:  # noqa: BLE001 — label is cosmetic, never fatal
+        label = None
+    model: str | None = None
+    try:
+        providers = getattr(getattr(cfg, "brain", None), "providers", None)
+        pc = providers.get(provider_id) if isinstance(providers, dict) else None
+        model = (getattr(pc, "model", None) or "") if pc is not None else ""
+        if not model:
+            from jarvis.brain.model_catalog import REALTIME_MODELS
+
+            entries = REALTIME_MODELS.get(provider_id) or ()
+            model = entries[0].id if entries else ""
+        model = model or None
+    except Exception:  # noqa: BLE001 — model is cosmetic, never fatal
+        model = None
+    return label, model
+
+
 @router.get("/voice-mode")
 async def get_voice_mode(request: Request) -> dict[str, object]:
     cfg = getattr(request.app.state, "config", None) or getattr(request.app.state, "cfg", None)
@@ -166,6 +203,7 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
     # session would actually build (Gemini-only users now get `true` too,
     # not just OpenAI — Feature A2).
     prov = _realtime_available_provider(cfg)
+    prov_label, prov_model = _realtime_provider_display(cfg, prov)
     from jarvis.ui.web.voice_runtime import voice_engine_status
 
     runtime = voice_engine_status(request)
@@ -173,6 +211,12 @@ async def get_voice_mode(request: Request) -> dict[str, object]:
         "mode": mode,
         "realtime_available": prov is not None,
         "active_provider": prov,
+        # Sidebar-footer display fields: the pretty provider name + the model
+        # an idle realtime session would use (configured pin or catalog
+        # default). A RUNNING session's live values are the separate
+        # active_session_* fields below.
+        "active_provider_label": prov_label,
+        "active_model": prov_model,
         "session_active": bool(runtime.get("session_active", False)),
         "active_session_mode": runtime.get("active_session_mode"),
         "active_session_provider": str(

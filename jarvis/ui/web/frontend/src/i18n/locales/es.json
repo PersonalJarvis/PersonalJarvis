@@ -223,6 +223,8 @@
     "wake_hint": "Di tu palabra de activación…",
     "brain_label": "Cerebro",
     "brain_tooltip": "Cambiar proveedor de IA",
+    "realtime_label": "Tiempo real",
+    "realtime_tooltip": "Cambiar proveedor de tiempo real",
     "apikeys_alert": "Un proveedor está configurado pero no funciona — abre API Keys para solucionarlo",
     "plugins_reconnect_alert": "Una conexión de plugin expiró — abre Skills & Tools para volver a conectarla",
     "realtime_start": "Iniciar Voz en Tiempo Real",

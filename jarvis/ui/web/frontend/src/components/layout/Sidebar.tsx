@@ -24,6 +24,7 @@ import {
 } from "lucide-react";
 import { useEventStore, type SectionId } from "@/store/events";
 import { useVoiceReadiness } from "@/hooks/useVoiceReadiness";
+import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { useSectionHealth } from "@/hooks/useProviders";
 import { usePluginAttention } from "@/hooks/usePluginAttention";
 import { cn } from "@/lib/utils";
@@ -188,6 +189,36 @@ export function Sidebar() {
 
   const providerLabel = useMemo(() => prettyProviderName(brainProvider), [brainProvider]);
 
+  // The footer card follows the VOICE MODE, not always the pipeline brain:
+  // in realtime mode the pipeline brain is dormant, so showing it there
+  // misled the user ("OpenRouter" while Gemini Live was doing all the talking).
+  // A RUNNING realtime session's live provider/model outrank the configured
+  // pick (a mid-call cross-family fallback must be visible, AP-22); when idle
+  // the resolved provider + its pinned/default model are shown.
+  const voiceMode = useVoiceMode();
+  const realtimeFooter = voiceMode.mode === "realtime";
+  const liveRealtimeSession =
+    realtimeFooter &&
+    voiceMode.sessionActive &&
+    voiceMode.activeSessionMode === "realtime";
+  const footerLabel = realtimeFooter
+    ? t("sidebar.realtime_label")
+    : t("sidebar.brain_label");
+  const footerTooltip = realtimeFooter
+    ? t("sidebar.realtime_tooltip")
+    : t("sidebar.brain_tooltip");
+  const footerProvider = realtimeFooter
+    ? liveRealtimeSession && voiceMode.activeSessionProvider
+      ? prettyProviderName(voiceMode.activeSessionProvider)
+      : voiceMode.activeProviderLabel ??
+        prettyProviderName(voiceMode.activeProvider ?? "unknown")
+    : providerLabel;
+  const footerModel = realtimeFooter
+    ? liveRealtimeSession && voiceMode.activeSessionModel
+      ? voiceMode.activeSessionModel
+      : voiceMode.activeModel ?? ""
+    : brainModel;
+
   return (
     <aside className="flex h-full w-[280px] shrink-0 flex-col border-r border-border bg-card/40 backdrop-blur">
       <div className="border-b border-border px-4 py-4">
@@ -285,23 +316,27 @@ export function Sidebar() {
           type="button"
           onClick={() => setActive("apikeys")}
           className="group flex w-full items-center gap-3 rounded-lg border border-border bg-background/40 px-3 py-2 text-left transition-colors hover:border-primary/40 hover:bg-background/60"
-          title={t("sidebar.brain_tooltip")}
+          title={footerTooltip}
         >
           <div className="h-2 w-2 rounded-full bg-primary shadow-[0_0_8px_rgba(255,214,10,0.7)]" />
           <div className="flex-1 min-w-0">
-            <div className="text-[10px] uppercase tracking-wider text-muted-foreground">
-              {t("sidebar.brain_label")}
+            <div
+              className="text-[10px] uppercase tracking-wider text-muted-foreground"
+              data-testid="sidebar-footer-tier"
+            >
+              {footerLabel}
             </div>
-            <div className="text-xs font-medium truncate">{providerLabel}</div>
-            {/* The configured model id (e.g. "claude-opus-4-8") — the user asked
-                to see WHICH model is actually in use, not just the provider. */}
-            {brainModel && (
+            <div className="text-xs font-medium truncate">{footerProvider}</div>
+            {/* The model id actually in use (e.g. "claude-opus-4-8", or the
+                realtime model in realtime mode) — the user asked to see WHICH
+                model is in use, not just the provider. */}
+            {footerModel && (
               <div
                 className="text-[10px] text-muted-foreground/70 truncate"
-                title={brainModel}
+                title={footerModel}
                 data-testid="sidebar-brain-model"
               >
-                {brainModel}
+                {footerModel}
               </div>
             )}
           </div>
@@ -402,6 +437,10 @@ function prettyProviderName(id: string): string {
     "openai": "OpenAI",
     "codex": "Codex",
     "mock": "Mock-Brain",
+    // Realtime tier — used by the footer card in realtime voice mode when the
+    // backend's pretty label is unavailable (cosmetic fallback only).
+    "openai-realtime": "OpenAI Realtime",
+    "gemini-live": "Gemini Live",
     "unknown": "—",
   };
   return map[id] ?? id;

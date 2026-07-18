@@ -7,6 +7,10 @@ type VoiceModeResp = {
   mode: string;
   realtime_available: boolean;
   active_provider: string | null;
+  // Sidebar-footer display fields: pretty provider name + the model an idle
+  // realtime session would use (configured pin or catalog default).
+  active_provider_label: string | null;
+  active_model: string | null;
   session_active: boolean;
   active_session_mode: "pipeline" | "realtime" | null;
   active_session_provider: string;
@@ -88,6 +92,9 @@ export function useVoiceMode() {
     // false claim "Realtime needs an API key" and looked like a locked
     // toggle on a machine that merely had a slow/broken backend moment.
     statusKnown: q.isSuccess,
+    activeProvider: q.data?.active_provider ?? null,
+    activeProviderLabel: q.data?.active_provider_label ?? null,
+    activeModel: q.data?.active_model ?? null,
     sessionActive: q.data?.session_active ?? false,
     activeSessionMode: q.data?.active_session_mode ?? null,
     activeSessionProvider: q.data?.active_session_provider ?? "",
