@@ -234,7 +234,12 @@ desktop = [
     # process. Essentials only (QtCore/QtGui/QtWidgets — no WebEngine).
     # Imported ONLY inside the sidecar; the controller probes for it and
     # degrades to a logged no-op when absent (headless/base install).
-    "pyside6-essentials>=6.7",
+    # EXCLUDED on aarch64 Linux entirely: no PySide6 release >=6.7 publishes
+    # an aarch64 wheel at the advertised glibc/manylinux_2_28 floor (verified
+    # 2026-07-18 across 6.7..6.11.1 — aarch64 wheels start at manylinux_2_39),
+    # so the dep is unsatisfiable there for every CPython. The indicator's
+    # probe already degrades to a logged no-op where PySide6 is absent.
+    "pyside6-essentials>=6.7; sys_platform != 'linux' or platform_machine != 'aarch64'",
     # Drag-drop ONTO the floating overlay (bar/mascot): the cross-platform tkdnd
     # Tcl extension, with bundled binaries for Windows / macOS / Linux. Registered
     # onto the live Tk root in place (jarvis/overlay/drop_target.py). All-platform
