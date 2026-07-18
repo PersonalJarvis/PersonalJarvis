@@ -1,23 +1,12 @@
 #!/bin/sh
-# >>> guard_no_raw_public_push (managed by scripts/ci/install_git_hooks.py) >>>
-# Hard-block a raw push to the PUBLIC flagship repo PersonalJarvis/PersonalJarvis.
-# That repo only ever receives a depersonalized snapshot via the public-release
-# privacy gate (CLAUDE.md rule 2). git passes: pre-push <name> <url>.
-__pj_guard="scripts/ci/guard_no_raw_public_push.py"
-if [ -f "$__pj_guard" ]; then
-    __pj_py="/c/Program Files/Python311/python.exe"
-    [ -x "$__pj_py" ] || __pj_py="$(command -v python3 || command -v python)"
-    if [ -n "$__pj_py" ]; then
-        "$__pj_py" "$__pj_guard" "$1" "$2" </dev/null || exit 1
-    fi
-fi
-# <<< guard_no_raw_public_push <<<
-# pre-push: versioned local mirror of the privacy + language CI gates.
+# pre-push: versioned local mirror of the credential + language CI gates.
 #
-# Layer 1 of a 3-layer privacy defence. It runs two checks per push:
+# Direct pushes to the public repo are the NORMAL flow (CLAUDE.md rule 2,
+# standard shared-history workflow since 2026-07-18). What stays fail-closed
+# is credential protection, never a raw-push block.
 #
-#   1. PRIVACY gate (FAIL-CLOSED on positive findings) — scripts/ci/privacy_pre_push.py
-#        (A) blocks any direct push to the PUBLIC repo (PersonalJarvis/PersonalJarvis);
+#   1. CREDENTIAL gate (FAIL-CLOSED on positive findings) — scripts/ci/privacy_pre_push.py
+#        (A) logs a heads-up when the target is the public repo (never blocks);
 #        (B) blocks a commit carrying a private maintainer email (author/committer);
 #        (C) blocks a real secret / forbidden secret file in the pushed files.
 #      The gate itself fails OPEN only when it genuinely cannot run (no python,
@@ -249,8 +238,8 @@ rm -f "$refs_file"
 if [ "$status" -ne 0 ]; then
     echo ""
     if [ "$privacy_hit" -ne 0 ]; then
-        echo "pre-push BLOCKED: PRIVACY gate (public target / private email / secret)."
-        echo "  See the findings above. Public releases go via the depersonalized release snapshot."
+        echo "pre-push BLOCKED: CREDENTIAL gate (private email / secret in pushed files)."
+        echo "  See the findings above. Remove the credential from the commit, then retry."
     fi
     if [ "$language_hit" -ne 0 ]; then
         echo "pre-push BLOCKED: LANGUAGE gate (newly added German text)."

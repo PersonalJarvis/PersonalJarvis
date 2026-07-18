@@ -45,6 +45,11 @@ htmlcov/
 node_modules/
 dist/
 build/
+# EXCEPTION: the built web UI ships IN the repo — a fresh clone/installer must
+# have a servable frontend without a Node toolchain (public installs relied on
+# this on every v1.0.x release). Rebuilt + committed as part of each release.
+!jarvis/ui/web/dist/
+!jarvis/ui/web/dist/**
 
 # Installer-managed-install marker: written by install/installer.py at install
 # time to opt a checkout into in-app self-update. Must NEVER be committed — a

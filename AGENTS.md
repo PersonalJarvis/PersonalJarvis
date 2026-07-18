@@ -141,16 +141,6 @@ histories. What remains is credential protection, **fail-closed**:
    naming, logos, third-party assets. No scanner clears it; flag concerns to
    the maintainer instead of shipping them.
 
-**Transition to the shared history (delete this block once done):** before
-the FIRST direct push of local `main` to the public repo: (a) purge
-`install/keys/offline-ceremony.key.enc` + `install/keys/pq-mldsa65.key.enc`
-from local history (`git filter-repo --invert-paths`) — they were never
-public and must not become so; (b) force-push the unified, filtered `main`
-as the new public history; (c) retool `.githooks/pre-push` from raw-push
-blocking (`guard_no_raw_public_push.py` / `privacy_pre_push.py`) to
-credential-scan-only. Until (a)–(c) land, do NOT raw-push to the public
-repo — full history verified key-clean otherwise (gitleaks, 2026-07-17).
-
 **Two volumes:** *Update (DEFAULT)* — "push", "sichere den Stand", "update
 GitHub" → normal push, **no bump / tag / release**. *Release (explicit
 only)* — "Mach ein Release", "mach eine neue Version" <!-- i18n-allow: quoted German maintainer trigger phrases -->
