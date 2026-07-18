@@ -18,12 +18,15 @@ export interface StepProps {
   isLast: boolean;
 }
 
+// Restart batching (2026-07-18): permissions + wake-word sit LAST before
+// finish — both only fully apply after a relaunch, and onboarding already
+// ends with ONE unconditional fresh restart. Never demand a second one.
 const REGISTRY: Record<string, (p: StepProps) => JSX.Element> = {
   welcome: WelcomeStep,
   language: LanguageStep,
+  "api-keys": ApiKeysStep,
   permissions: PermissionsStep,
   "wake-word": WakeWordStep,
-  "api-keys": ApiKeysStep,
   finish: FinishStep,
 };
 

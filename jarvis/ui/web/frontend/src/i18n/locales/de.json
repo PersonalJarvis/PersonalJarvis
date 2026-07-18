@@ -1072,12 +1072,30 @@
       "restart_pending": "Neustart ausstehend"
     },
     "items": {
-      "microphone": { "title": "Mikrofon", "description": "Erforderlich für Aktivierungswort und lokale Spracheingabe." },
-      "screen_recording": { "title": "Bildschirmaufnahme", "description": "Erforderlich, damit Computer-Use alle verbundenen Bildschirme sehen kann." },
-      "accessibility": { "title": "Bedienungshilfen", "description": "Erforderlich für zuverlässige Klicks, Eingaben, Fokus und Fenstersteuerung." },
-      "input_monitoring": { "title": "Eingabeüberwachung", "description": "Erforderlich für globale Push-to-Talk- und Tastaturkurzbefehle." },
-      "event_posting": { "title": "Eingabesteuerung", "description": "Erforderlich, damit Computer-Use Maus- und Tastaturereignisse senden kann." },
-      "credential_store": { "title": "Schlüsselbund (API-Keys)", "description": "Speichert deine API-Keys verschlüsselt im macOS-Schlüsselbund statt in einer Klartextdatei — genau dafür fragt macOS beim Start der App. Deine Keys bleiben auf deinem Mac und werden nirgendwohin gesendet." }
+      "microphone": {
+        "title": "Mikrofon",
+        "description": "Erforderlich für Aktivierungswort und lokale Spracheingabe."
+      },
+      "screen_recording": {
+        "title": "Bildschirmaufnahme",
+        "description": "Erforderlich, damit Computer-Use alle verbundenen Bildschirme sehen kann."
+      },
+      "accessibility": {
+        "title": "Bedienungshilfen",
+        "description": "Erforderlich für zuverlässige Klicks, Eingaben, Fokus und Fenstersteuerung."
+      },
+      "input_monitoring": {
+        "title": "Eingabeüberwachung",
+        "description": "Erforderlich für globale Push-to-Talk- und Tastaturkurzbefehle."
+      },
+      "event_posting": {
+        "title": "Eingabesteuerung",
+        "description": "Erforderlich, damit Computer-Use Maus- und Tastaturereignisse senden kann."
+      },
+      "credential_store": {
+        "title": "Schlüsselbund (API-Keys)",
+        "description": "Speichert deine API-Keys verschlüsselt im macOS-Schlüsselbund statt in einer Klartextdatei — genau dafür fragt macOS beim Start der App. Deine Keys bleiben auf deinem Mac und werden nirgendwohin gesendet."
+      }
     },
     "banner": {
       "title": "Aktion nötig: macOS-Berechtigungen fehlen",
@@ -1092,7 +1110,9 @@
       "global_hotkeys": "Globale Kurzbefehle",
       "window_control": "Fenstersteuerung",
       "api_keys": "Sichere API-Key-Ablage"
-    }
+    },
+    "restart_deferred": "Neu erteilte Freigaben werden mit dem automatischen Neustart am Ende der Einrichtung aktiv - jetzt ist nichts zu tun.",
+    "ask_again": "Erneut fragen"
   },
   "settings_view": {
     "silence_window": {

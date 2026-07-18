@@ -19,7 +19,7 @@ export function permissionSnapshotReady(snapshot: PermissionSnapshot | null): bo
   if (!snapshot) return false;
   if (snapshot.platform === "linux" || snapshot.platform === "win32") return true;
   if (snapshot.platform !== "darwin") return false;
-  if (snapshot.app_identity.stable !== true || snapshot.restart_required) return false;
+  if (snapshot.app_identity.stable !== true) return false;
   if (snapshot.permissions.length !== EXPECTED_MACOS_PERMISSIONS.size) return false;
 
   const observed = new Set(snapshot.permissions.map((item) => item.id));
@@ -29,8 +29,16 @@ export function permissionSnapshotReady(snapshot: PermissionSnapshot | null): bo
   ) {
     return false;
   }
-  return snapshot.permissions.every((item) =>
-    ["granted", "not_required"].includes(item.status),
+  // Restart batching (2026-07-18): a granted-but-stale row (macOS freezes
+  // some TCC probes per process, so the grant only reads back after a
+  // relaunch) counts as satisfied here — onboarding ends with ONE
+  // unconditional fresh restart that applies it. Blocking Continue on
+  // restart_required forced a mid-flow restart that threw users back to
+  // step 1 and doubled the total restarts.
+  return snapshot.permissions.every(
+    (item) =>
+      ["granted", "not_required"].includes(item.status) ||
+      item.restart_required === true,
   );
 }
 
@@ -57,7 +65,7 @@ export function PermissionsStep({ goNext, skip }: StepProps) {
         </div>
       </div>
 
-      <PermissionRows compact onSnapshot={onSnapshot} />
+      <PermissionRows compact deferRestartNote onSnapshot={onSnapshot} />
 
       <p className="text-xs text-muted-foreground">
         {t("onboarding.permissions.privacy_note")}

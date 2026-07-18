@@ -141,6 +141,16 @@ def _default_credential_store_recover() -> bool:
     return try_recover_platform_credential_store()
 
 
+# tccutil service names for the per-permission reset recovery. Keychain
+# (credential_store) is not TCC-governed and has no resettable row.
+_TCC_RESET_SERVICES: dict[PermissionId, str] = {
+    PermissionId.MICROPHONE: "Microphone",
+    PermissionId.SCREEN_RECORDING: "ScreenCapture",
+    PermissionId.ACCESSIBILITY: "Accessibility",
+    PermissionId.INPUT_MONITORING: "ListenEvent",
+    PermissionId.EVENT_POSTING: "PostEvent",
+}
+
 _READY_STATES = frozenset({PermissionState.GRANTED, PermissionState.NOT_REQUIRED})
 _RESTART_AFTER_CHANGE = frozenset(
     {
@@ -712,6 +722,88 @@ class SystemPermissionPort:
         self._quit_system_settings(appkit)
         url = foundation.NSURL.URLWithString_(_SETTINGS_URLS[permission_id])
         return bool(appkit.NSWorkspace.sharedWorkspace().openURL_(url))
+
+    def reset(
+        self, permission_id: PermissionId, *, dry_run: bool = False
+    ) -> PermissionOperation:
+        """Drop this app's own TCC row so the native prompt can appear again.
+
+        The in-app way out of the auto-denied trap: once ANY build of the
+        app ever created an input listener before the user was asked - or a
+        signature change orphaned the recorded grant (BUG-083) - macOS
+        silently registers the app as DENIED and suppresses every further
+        prompt. The permissions view then shows a dead "Denied" forever.
+        ``tccutil reset <service> <our bundle id>`` returns that one row to
+        "not determined" (never touching other apps' grants), so the real
+        system dialog can fire again on the next request.
+        """
+        before = self.snapshot()
+        service = _TCC_RESET_SERVICES.get(permission_id)
+        if self.platform != "darwin" or service is None:
+            return PermissionOperation(
+                False,
+                permission_id.value,
+                "reset",
+                False,
+                dry_run,
+                False,
+                f"{_LABELS[permission_id]} has no resettable macOS record.",
+                before,
+            )
+        if dry_run:
+            return PermissionOperation(
+                True,
+                permission_id.value,
+                "reset",
+                False,
+                True,
+                False,
+                f"Would reset this app's {_LABELS[permission_id]} record.",
+                before,
+            )
+        import subprocess  # lazy: this method is darwin-only at runtime
+
+        from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+        from jarvis.setup.macos_app_bundle import BUNDLE_ID
+
+        try:
+            result = subprocess.run(
+                ["/usr/bin/tccutil", "reset", service, BUNDLE_ID],
+                capture_output=True,
+                text=True,
+                timeout=30,
+                check=False,
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+            )
+            performed = result.returncode == 0
+            detail = (result.stderr or result.stdout or "").strip()
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            performed = False
+            detail = str(exc)
+        if not performed:
+            return PermissionOperation(
+                False,
+                permission_id.value,
+                "reset",
+                False,
+                False,
+                False,
+                f"Could not reset the {_LABELS[permission_id]} record: "
+                f"{detail[-200:] or 'unknown error'}",
+                before,
+            )
+        self._restart_required.discard(permission_id)
+        return PermissionOperation(
+            True,
+            permission_id.value,
+            "reset",
+            True,
+            False,
+            False,
+            f"{_LABELS[permission_id]} was reset - the system prompt can "
+            "appear again on the next request.",
+            self.snapshot(),
+        )
 
     def open_settings(
         self, permission_id: PermissionId, *, dry_run: bool = False

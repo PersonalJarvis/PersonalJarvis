@@ -19,12 +19,17 @@ CURRENT_TERMS_VERSION = "1.0"
 # posture now rests on the up-front risk gate + the MIT-license disclaimer, so
 # first-run stays short. The /terms + /accept-terms routes remain for back-compat
 # but are no longer part of the guided flow.
+# Restart batching (maintainer mandate 2026-07-18): permissions and wake-word
+# sit LAST, directly before finish, because both only take full effect after a
+# relaunch — and onboarding already ends with one unconditional fresh restart
+# (onboarding_routes._schedule_fresh_restart). One restart covers everything;
+# the guide must never demand a second one mid-flow.
 ONBOARDING_STEPS: list[str] = [
     "welcome",
     "language",
+    "api-keys",
     "permissions",
     "wake-word",
-    "api-keys",
     "finish",
 ]
 

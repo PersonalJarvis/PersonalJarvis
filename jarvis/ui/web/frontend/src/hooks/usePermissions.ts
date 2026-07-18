@@ -109,7 +109,7 @@ export function usePermissions() {
   }, []);
 
   const mutate = useCallback(
-    async (id: PermissionId, action: "request" | "open-settings") => {
+    async (id: PermissionId, action: "request" | "open-settings" | "reset") => {
       setPendingId(id);
       try {
         const payload = await readJson(
@@ -171,5 +171,6 @@ export function usePermissions() {
     refetch,
     request: (id: PermissionId) => mutate(id, "request"),
     openSettings: (id: PermissionId) => mutate(id, "open-settings"),
+    reset: (id: PermissionId) => mutate(id, "reset"),
   };
 }

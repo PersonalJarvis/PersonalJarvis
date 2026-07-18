@@ -70,4 +70,25 @@ def open_permission_settings(
     return _operation_response(payload)
 
 
+@router.post(
+    "/{permission_id}/reset",
+    summary="Reset this app's own system permission record",
+    openapi_extra={"x-jarvis-dangerous": True},
+    response_model=None,
+)
+def reset_permission(
+    permission_id: PermissionId,
+    request: Request,
+    dry_run: bool = Query(default=False),
+) -> Any:
+    """Drop the app's own macOS TCC row so the native prompt can reappear.
+
+    Recovery for the permanently-"Denied" trap: macOS auto-denies an app
+    that ever listened before being asked and then never prompts again.
+    Scoped strictly to this app's bundle id; other apps stay untouched.
+    """
+    payload = _port(request).reset(permission_id, dry_run=dry_run).to_dict()
+    return _operation_response(payload)
+
+
 __all__ = ["router"]

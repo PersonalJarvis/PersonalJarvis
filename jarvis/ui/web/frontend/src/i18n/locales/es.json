@@ -1072,12 +1072,30 @@
       "restart_pending": "Reinicio pendiente"
     },
     "items": {
-      "microphone": { "title": "Micrófono", "description": "Necesario para la palabra de activación y la entrada de voz local." },
-      "screen_recording": { "title": "Grabación de pantalla", "description": "Necesario para que Computer-Use vea todas las pantallas conectadas." },
-      "accessibility": { "title": "Accesibilidad", "description": "Necesario para clics, escritura, enfoque y control de ventanas fiables." },
-      "input_monitoring": { "title": "Monitorización de entrada", "description": "Necesario para pulsar para hablar y atajos de teclado globales." },
-      "event_posting": { "title": "Control de entrada", "description": "Necesario para que Computer-Use envíe eventos de ratón y teclado." },
-      "credential_store": { "title": "Llavero (claves API)", "description": "Guarda tus claves API cifradas en el Llavero de macOS en lugar de un archivo de texto plano — ese es el aviso del Llavero que ves al iniciar la app. Tus claves se quedan en tu Mac y nunca se envían a ningún sitio." }
+      "microphone": {
+        "title": "Micrófono",
+        "description": "Necesario para la palabra de activación y la entrada de voz local."
+      },
+      "screen_recording": {
+        "title": "Grabación de pantalla",
+        "description": "Necesario para que Computer-Use vea todas las pantallas conectadas."
+      },
+      "accessibility": {
+        "title": "Accesibilidad",
+        "description": "Necesario para clics, escritura, enfoque y control de ventanas fiables."
+      },
+      "input_monitoring": {
+        "title": "Monitorización de entrada",
+        "description": "Necesario para pulsar para hablar y atajos de teclado globales."
+      },
+      "event_posting": {
+        "title": "Control de entrada",
+        "description": "Necesario para que Computer-Use envíe eventos de ratón y teclado."
+      },
+      "credential_store": {
+        "title": "Llavero (claves API)",
+        "description": "Guarda tus claves API cifradas en el Llavero de macOS en lugar de un archivo de texto plano — ese es el aviso del Llavero que ves al iniciar la app. Tus claves se quedan en tu Mac y nunca se envían a ningún sitio."
+      }
     },
     "banner": {
       "title": "Acción necesaria: faltan permisos de macOS",
@@ -1092,7 +1110,9 @@
       "global_hotkeys": "Atajos globales",
       "window_control": "Control de ventanas",
       "api_keys": "Almacenamiento seguro de claves API"
-    }
+    },
+    "restart_deferred": "Los permisos recién concedidos se activan con el reinicio automático al final de la configuración; no hay nada que hacer ahora.",
+    "ask_again": "Preguntar de nuevo"
   },
   "settings_view": {
     "silence_window": {

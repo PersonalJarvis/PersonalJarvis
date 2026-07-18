@@ -36,15 +36,22 @@ const READY_STATES = new Set(["granted", "not_required"]);
 
 export function PermissionRows({
   compact = false,
+  deferRestartNote = false,
   onSnapshot,
 }: {
   compact?: boolean;
+  /**
+   * Onboarding mode: the guide ends with ONE unconditional fresh restart,
+   * so a granted-but-stale permission shows a calm "applies after the
+   * final restart" note instead of the amber restart-now demand.
+   */
+  deferRestartNote?: boolean;
   onSnapshot?: (snapshot: PermissionSnapshot | null) => void;
 }) {
   const t = useT();
   const pushToast = useEventStore((state) => state.pushToast);
   const [restarting, setRestarting] = useState(false);
-  const { snapshot, loading, error, pendingId, refetch, request, openSettings } =
+  const { snapshot, loading, error, pendingId, refetch, request, openSettings, reset } =
     usePermissions();
 
   useEffect(() => {
@@ -125,9 +132,15 @@ export function PermissionRows({
           compact={compact}
           onRequest={() => run(() => request(permission.id))}
           onOpenSettings={() => run(() => openSettings(permission.id))}
+          onReset={() => run(() => reset(permission.id))}
         />
       ))}
-      {snapshot?.restart_required && (
+      {snapshot?.restart_required && deferRestartNote && (
+        <p className="text-xs text-muted-foreground">
+          {t("permissions.restart_deferred")}
+        </p>
+      )}
+      {snapshot?.restart_required && !deferRestartNote && (
         <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-amber-500/40 bg-amber-500/5 p-3">
           <p className="text-xs text-amber-500">{t("permissions.restart_required")}</p>
           <Button size="sm" disabled={restarting} onClick={() => void restartApp()}>
@@ -147,12 +160,14 @@ function PermissionRow({
   compact,
   onRequest,
   onOpenSettings,
+  onReset,
 }: {
   item: PermissionItem;
   busy: boolean;
   compact: boolean;
   onRequest: () => void;
   onOpenSettings: () => void;
+  onReset: () => void;
 }) {
   const t = useT();
   const Icon = ICONS[item.id];
@@ -162,6 +177,13 @@ function PermissionRow({
   // "asked and denied". Keep the Settings escape hatch visible alongside the
   // first-party request button so a prior denial is always recoverable.
   const showSettings = !ready && item.can_open_settings;
+  // macOS auto-denies an app that ever created an input listener before the
+  // user was asked, and a signature change orphans recorded grants (BUG-083)
+  // — either way the row reads a dead "Denied" and macOS never prompts
+  // again. "Ask again" drops OUR OWN record (tccutil, scoped to this app's
+  // bundle id) so the real system dialog can fire once more. Keychain has
+  // no TCC row, hence the exclusion.
+  const showReset = item.status === "denied" && item.id !== "credential_store";
   // Screen Recording is the one probe macOS freezes per process: after the
   // user grants it in System Settings, the live value stays stale until the
   // app restarts. Show the honest pending label instead of the stale state;
@@ -205,6 +227,12 @@ function PermissionRow({
           <Button size="sm" variant="outline" disabled={busy} onClick={onOpenSettings}>
             {busy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
             {t("permissions.open_settings")}
+          </Button>
+        )}
+        {showReset && (
+          <Button size="sm" variant="ghost" disabled={busy} onClick={onReset}>
+            {busy && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+            {t("permissions.ask_again")}
           </Button>
         )}
       </div>

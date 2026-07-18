@@ -1073,12 +1073,30 @@
       "restart_pending": "Restart pending"
     },
     "items": {
-      "microphone": { "title": "Microphone", "description": "Required for wake-word and local voice input." },
-      "screen_recording": { "title": "Screen Recording", "description": "Required for Computer-Use to see every connected display." },
-      "accessibility": { "title": "Accessibility", "description": "Required for reliable clicks, typing, focus, and window control." },
-      "input_monitoring": { "title": "Input Monitoring", "description": "Required for global push-to-talk and keyboard shortcuts." },
-      "event_posting": { "title": "Input control", "description": "Required for Computer-Use to send mouse and keyboard events." },
-      "credential_store": { "title": "Keychain (API keys)", "description": "Stores your API keys encrypted in the macOS Keychain instead of a plain file — that is the Keychain prompt you see when the app starts. Your keys stay on your Mac and are never sent anywhere." }
+      "microphone": {
+        "title": "Microphone",
+        "description": "Required for wake-word and local voice input."
+      },
+      "screen_recording": {
+        "title": "Screen Recording",
+        "description": "Required for Computer-Use to see every connected display."
+      },
+      "accessibility": {
+        "title": "Accessibility",
+        "description": "Required for reliable clicks, typing, focus, and window control."
+      },
+      "input_monitoring": {
+        "title": "Input Monitoring",
+        "description": "Required for global push-to-talk and keyboard shortcuts."
+      },
+      "event_posting": {
+        "title": "Input control",
+        "description": "Required for Computer-Use to send mouse and keyboard events."
+      },
+      "credential_store": {
+        "title": "Keychain (API keys)",
+        "description": "Stores your API keys encrypted in the macOS Keychain instead of a plain file — that is the Keychain prompt you see when the app starts. Your keys stay on your Mac and are never sent anywhere."
+      }
     },
     "banner": {
       "title": "Action needed: macOS permissions are missing",
@@ -1093,7 +1111,9 @@
       "global_hotkeys": "Global shortcuts",
       "window_control": "Window control",
       "api_keys": "Secure API-key storage"
-    }
+    },
+    "restart_deferred": "Newly granted access turns on with the automatic restart at the end of setup - nothing to do now.",
+    "ask_again": "Ask again"
   },
   "settings_view": {
     "silence_window": {
