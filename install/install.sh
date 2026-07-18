@@ -857,15 +857,45 @@ note "$INSTALL_DIR"
 # run keeps --quiet for a clean log. Errors surface on stderr either way.
 GIT_VERBOSITY='--quiet'
 [ -t 2 ] && GIT_VERBOSITY='--progress'
+
+# Self-heal a broken install dir (leftover non-git folder from an earlier or
+# aborted install, or a checkout whose git state no longer updates): keep the
+# old tree as a timestamped sibling backup — never delete — clone fresh, then
+# carry the user's local state (data/, jarvis.toml, .env) into the new
+# checkout. A stale folder must never require manual cleanup to install.
+salvage_reclone() {
+    local stale_backup
+    stale_backup="${INSTALL_DIR%/}.stale-$(date +%Y%m%d-%H%M%S)"
+    if ! mv "$INSTALL_DIR" "$stale_backup"; then
+        err "cannot move the broken install dir aside ($INSTALL_DIR -> $stale_backup)."
+        note 'Close any program using that folder (or move it yourself), then re-run.'
+        exit 1
+    fi
+    note "moved the old directory to $stale_backup (nothing was deleted)"
+    git clone "$GIT_VERBOSITY" --depth 1 --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
+    local item
+    for item in data jarvis.toml .env; do
+        if [ -e "$stale_backup/$item" ] && [ ! -e "$INSTALL_DIR/$item" ]; then
+            if cp -R "$stale_backup/$item" "$INSTALL_DIR/$item" 2>/dev/null; then
+                note "kept your $item from the previous install"
+            fi
+        fi
+    done
+    ok 'reinstalled fresh (previous state preserved in the backup dir)'
+}
+
 if [ -d "$INSTALL_DIR/.git" ]; then
-    git -C "$INSTALL_DIR" fetch "$GIT_VERBOSITY" --depth 1 origin "$BRANCH"
-    git -C "$INSTALL_DIR" checkout --quiet "$BRANCH"
-    git -C "$INSTALL_DIR" reset --quiet --hard "origin/$BRANCH"
-    ok 'updated existing checkout to latest'
+    if git -C "$INSTALL_DIR" fetch "$GIT_VERBOSITY" --depth 1 origin "$BRANCH" \
+        && git -C "$INSTALL_DIR" checkout --quiet "$BRANCH" \
+        && git -C "$INSTALL_DIR" reset --quiet --hard "origin/$BRANCH"; then
+        ok 'updated existing checkout to latest'
+    else
+        note 'existing checkout would not update (broken git state) - reinstalling in place.'
+        salvage_reclone
+    fi
 elif [ -e "$INSTALL_DIR" ]; then
-    err "$INSTALL_DIR exists but is not a git repo."
-    note 'Aborting to avoid clobbering your files. Remove or move that directory, then re-run.'
-    exit 1
+    note "$INSTALL_DIR exists but is not a git repo (leftover from an earlier install) - reinstalling in place."
+    salvage_reclone
 else
     git clone "$GIT_VERBOSITY" --depth 1 --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"
     ok 'downloaded'

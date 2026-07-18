@@ -537,25 +537,69 @@ Write-Note $InstallDir
 # report 2026-07-15); a redirected/CI run keeps --quiet for a clean
 # transcript. Real errors still surface on stderr either way.
 $GitVerbosity = if ([Console]::IsErrorRedirected) { '--quiet' } else { '--progress' }
+
+# Self-heal a broken install dir (leftover non-git folder from an earlier or
+# aborted install, or a checkout whose git state no longer updates): keep the
+# old tree as a timestamped sibling backup - never delete - clone fresh, then
+# carry the user's local state (data/, jarvis.toml, .env) into the new
+# checkout. A stale folder must never require manual cleanup to install.
+function Invoke-SalvageReclone {
+    $StaleBackup = "$InstallDir.stale-$(Get-Date -Format 'yyyyMMdd-HHmmss')"
+    try {
+        Move-Item -LiteralPath $InstallDir -Destination $StaleBackup -ErrorAction Stop
+    } catch {
+        Write-Err "cannot move the broken install dir aside ($InstallDir -> $StaleBackup)."
+        Write-Note 'Close any program using that folder (or move it yourself), then re-run.'
+        exit 1
+    }
+    Write-Note "moved the old directory to $StaleBackup (nothing was deleted)"
+    & git clone $GitVerbosity --depth 1 --branch $Branch $RepoUrl $InstallDir
+    if ($LASTEXITCODE -ne 0) { Write-Err 'git clone failed.'; exit 1 }
+    foreach ($Item in @('data', 'jarvis.toml', '.env')) {
+        $Old = Join-Path $StaleBackup $Item
+        $New = Join-Path $InstallDir $Item
+        if ((Test-Path $Old) -and -not (Test-Path $New)) {
+            try {
+                Copy-Item -LiteralPath $Old -Destination $New -Recurse -ErrorAction Stop
+                Write-Note "kept your $Item from the previous install"
+            } catch {}
+        }
+    }
+    Write-Ok 'reinstalled fresh (previous state preserved in the backup dir)'
+}
+
 if (Test-Path (Join-Path $InstallDir '.git')) {
+    $UpdateOk = $true
     Push-Location $InstallDir
     try {
         & git fetch $GitVerbosity --depth 1 origin $Branch
-        & git checkout --quiet $Branch
-        & git reset --quiet --hard "origin/$Branch"
+        if ($LASTEXITCODE -ne 0) { $UpdateOk = $false }
+        if ($UpdateOk) {
+            & git checkout --quiet $Branch
+            if ($LASTEXITCODE -ne 0) { $UpdateOk = $false }
+        }
+        if ($UpdateOk) {
+            & git reset --quiet --hard "origin/$Branch"
+            if ($LASTEXITCODE -ne 0) { $UpdateOk = $false }
+        }
     } finally {
         Pop-Location
     }
-    Write-Ok 'updated existing checkout to latest'
+    if ($UpdateOk) {
+        Write-Ok 'updated existing checkout to latest'
+    } else {
+        Write-Note 'existing checkout would not update (broken git state) - reinstalling in place.'
+        Invoke-SalvageReclone
+    }
 } else {
     if (Test-Path $InstallDir) {
-        Write-Err "$InstallDir exists but is not a git repo."
-        Write-Note 'Aborting to avoid clobbering your files. Remove or move that directory, then re-run.'
-        exit 1
+        Write-Note "$InstallDir exists but is not a git repo (leftover from an earlier install) - reinstalling in place."
+        Invoke-SalvageReclone
+    } else {
+        & git clone $GitVerbosity --depth 1 --branch $Branch $RepoUrl $InstallDir
+        if ($LASTEXITCODE -ne 0) { Write-Err 'git clone failed.'; exit 1 }
+        Write-Ok 'downloaded'
     }
-    & git clone $GitVerbosity --depth 1 --branch $Branch $RepoUrl $InstallDir
-    if ($LASTEXITCODE -ne 0) { Write-Err 'git clone failed.'; exit 1 }
-    Write-Ok 'downloaded'
 }
 
 # WAVE 5 - payload-commit pin (axis E, Wave-5 audit Finding 2).
