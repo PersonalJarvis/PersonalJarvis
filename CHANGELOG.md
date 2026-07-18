@@ -11,6 +11,14 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ### Fixed
 
+- **Realtime voice no longer freezes mid-word for seconds.** When the live
+  provider's output transcription lagged its audio (Gemini Live: routinely
+  3-22 s), the voice-scrub gate held the audio for the whole lag — an
+  audible dead stop mid-sentence. The mid-reply hold is now bounded at
+  400 ms once the reply's transcript has been vetted clean once; the strict
+  fail-closed turn opening and the hard-leak kill switch are unchanged
+  (BUG-080).
+
 - **macOS 15 no longer kills the app when hotkeys arm or Computer-Use types
   ("Personal Jarvis quit unexpectedly", SIGILL).** pynput resolved the
   keyboard layout through HIToolbox TSM calls on background threads, which

@@ -5582,3 +5582,44 @@ Python — mirror CPython and touch only LC_CTYPE; every native library that
 prints numbers breaks under a comma-decimal LC_NUMERIC. And any JSON built
 by native code is untrusted input to the Python side: parse it behind a
 degrade-to-no-op guard that preserves the raw payload.
+
+---
+
+## BUG-080: Realtime voice freezes mid-word for seconds — unbounded scrub-gate hold while the provider transcription lags its audio (HIGH, FIXED 2026-07-18)
+
+**Symptom.** Mid-sentence, the live realtime voice stops dead for 2-15+ s,
+then resumes exactly where it paused (maintainer session 2026-07-17 20:04,
+turn 1: "Servus, bei" — 4.9 s hole — "mir passt ois…"). <!-- i18n-allow: quoted runtime voice output under test -->
+~25 incidents across 2026-07-16/17, worst observed 17.1 s. Log signature:
+`mid-reply audio stalled N ms (scrub-gate hold M ms …) — the transcript
+needed to clear this audio arrived late`.
+
+**Root cause.** The BUG-069 coverage budget releases audio only against
+vetted transcript chars. Gemini Live does not pace its output transcription
+against its audio: transcript deltas routinely fall 3-22 s behind. When the
+budget ran dry mid-reply, `ScrubHoldGate` held the audio backlog for the
+WHOLE lag — an unbounded hold whose only effect was audible dead air,
+because at the turn boundary `finalize()` flushes the very same
+never-covered tail anyway (same night: a 9.3 s never-transcribed tail was
+released at the boundary). The hold was not buying safety, only silence.
+
+**Fix (2026-07-18).** The mid-reply hold is now time-bounded
+(`_LAGGING_TRANSCRIPT_GRACE_MS = 400 ms`, `jarvis/realtime/scrub_gate.py`):
+once the turn's aggregate transcript has been vetted clean at least once, a
+backlog held past the grace window flows even though its own transcript has
+not arrived yet. The fail-open is narrow and deliberate: the turn opening
+stays strictly fail-closed (nothing plays before the first clean
+transcript; `fail_closed()` and the 15 s `fail_if_pending_exceeds` bound
+are untouched), and a hard leak in a later transcript delta still cancels
+the remaining output. In the healthy co-timed case (transcript <300 ms
+behind its audio) the scrubber still vets text before it becomes audible.
+Guards: `tests/unit/realtime/test_scrub_gate.py::
+test_lagging_transcript_backlog_flows_after_grace` plus three siblings
+(no grace before the first clean transcript, none on residue-only
+transcripts, kill switch intact after a grace release).
+
+**Class rule.** A safety gate on a live media stream may buffer, but never
+unboundedly: bound every hold by the moment the withheld content would
+reach the user anyway (here: the finalize() flush), and let the kill
+switch — not the hold — be the actual safety mechanism. An unbounded hold
+converts a provider lag into a user-facing outage.

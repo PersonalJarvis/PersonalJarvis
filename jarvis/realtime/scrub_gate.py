@@ -21,6 +21,17 @@ deliberately FASTER than any real speaking voice (~18 chars/s vs a real
 of the vetted text — released audio therefore always stays inside the span
 the scrubber has already cleared. Audio beyond that span still buffers,
 fail-closed, exactly as before.
+
+The hold is additionally TIME-BOUNDED once a turn's aggregate transcript has
+been vetted clean at least once (BUG-080): Gemini Live's output transcription
+routinely falls 3-22 s behind its audio, and an unbounded mid-reply hold
+turned every such lag into an audible mid-word freeze. After
+``_LAGGING_TRANSCRIPT_GRACE_MS`` the backlog flows even though its own
+transcript has not arrived yet — a deliberate, narrow fail-open: the same
+never-covered audio would have been flushed by ``finalize()`` at the turn
+boundary anyway, and a hard leak in a later transcript delta still cancels
+the remaining output. Before the first clean transcript the gate stays
+strictly fail-closed with no grace.
 """
 
 from __future__ import annotations
@@ -69,6 +80,13 @@ _COVERAGE_MS_PER_CHAR = 55.0
 # A finalize() tail this far beyond the coverage estimate cannot be explained
 # by the deliberate underestimation alone; log it as a transcription stall.
 _FINALIZE_EXCESS_LOG_MS = 5_000.0
+# Longest a mid-reply hold may last once the aggregate transcript has been
+# clean at least once (BUG-080). Short enough that a lagging transcription
+# never freezes the voice perceptibly (live 2026-07-17 20:04: a 4.9 s
+# mid-word hole; observed lags run 3-22 s), long enough that a co-timed
+# transcript (typically <300 ms behind its audio) still wins the race — in
+# the healthy case the scrubber keeps vetting text BEFORE its audio plays.
+_LAGGING_TRANSCRIPT_GRACE_MS = 400.0
 
 
 class ScrubHoldGate:
@@ -200,6 +218,12 @@ class ScrubHoldGate:
            released audio stays inside the estimated spoken duration of all
            vetted transcript chars. This is what keeps playback continuous
            when a provider sends its transcript up-front en bloc (BUG-069).
+        3. The lagging-transcript grace (BUG-080): once the aggregate
+           transcript has been clean at least once, a backlog held longer
+           than ``_LAGGING_TRANSCRIPT_GRACE_MS`` flows anyway — the provider
+           transcription is lagging its audio, and an unbounded hold freezes
+           the voice mid-word for the whole lag. A hard leak in a later
+           transcript delta still cancels the remaining output.
         Anything else buffers, fail-closed.
         """
         if self._hard_leak:
@@ -227,6 +251,25 @@ class ScrubHoldGate:
                 self._pending_audio_ms = 0.0
                 self._released_ms += total_ms
                 self._consume_hold_clock()
+                return out
+            if (
+                self._pending_since is not None
+                and (time.monotonic() - self._pending_since) * 1_000.0
+                >= _LAGGING_TRANSCRIPT_GRACE_MS
+            ):
+                out = self._pending + [chunk]
+                self._pending = []
+                self._pending_audio_ms = 0.0
+                self._released_ms += total_ms
+                self._consume_hold_clock()
+                log.info(
+                    "scrub gate released %d ms of audio after a %d ms hold "
+                    "— the provider output transcription is lagging behind "
+                    "its audio; a leak in a later transcript delta still "
+                    "cancels the remaining output",
+                    int(total_ms),
+                    int(self.last_hold_ms),
+                )
                 return out
         if not self._pending and self._pending_since is None:
             self._pending_since = time.monotonic()

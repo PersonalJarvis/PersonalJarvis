@@ -436,3 +436,86 @@ async def test_fail_closed_reports_missing_transcript_action():
     await gate.push_audio(_chunk(4))
     assert gate.fail_closed() is True
     assert gate.hard_leak_actions() == ("no_transcript",)
+
+
+class _FakeClock:
+    """Deterministic stand-in for the gate's ``time`` module."""
+
+    def __init__(self) -> None:
+        self.now = 1_000.0
+
+    def monotonic(self) -> float:
+        return self.now
+
+
+@pytest.fixture
+def clock(monkeypatch) -> _FakeClock:
+    fake = _FakeClock()
+    monkeypatch.setattr(scrub_gate_module, "time", fake)
+    return fake
+
+
+@pytest.mark.asyncio
+async def test_lagging_transcript_backlog_flows_after_grace(clock):
+    """BUG-080: a mid-reply transcription stall must not freeze the voice.
+
+    Gemini Live's output transcription can fall 3-22 s behind its audio
+    (live 2026-07-17 20:04: a 4.9 s mid-word hole). Once the aggregate
+    transcript has been clean, a backlog held past the grace window flows
+    even though its own transcript has not arrived yet.
+    """
+    gate = ScrubHoldGate(language="en")
+
+    await gate.feed_transcript("Okay.")  # clean: activates coverage
+    first = _chunk(9_600)  # 400 ms at 24 kHz
+    assert await gate.push_audio(first) == [first]
+
+    second = _chunk(9_600)
+    assert await gate.push_audio(second) == []  # budget spent: buffers
+
+    clock.now += 0.5  # past the 400 ms grace, transcript still absent
+    third = _chunk(9_600)
+    assert await gate.push_audio(third) == [second, third]
+    assert gate.pending_audio_ms == 0.0
+    assert gate.hard_leak_pending() is False
+
+
+@pytest.mark.asyncio
+async def test_no_grace_release_before_first_clean_transcript(clock):
+    """The turn opening stays strictly fail-closed — grace never applies."""
+    gate = ScrubHoldGate(language="en")
+
+    assert await gate.push_audio(_chunk(9_600)) == []
+    clock.now += 10.0
+    assert await gate.push_audio(_chunk(9_600)) == []
+    assert gate.fail_closed() is True
+
+
+@pytest.mark.asyncio
+async def test_residue_only_transcript_gets_no_grace_release(clock):
+    """A turn whose aggregate transcript is still residue funds no grace."""
+    gate = ScrubHoldGate(language="en")
+
+    await gate.feed_transcript("Great question.")  # residue: filler opener
+    assert await gate.push_audio(_chunk(9_600)) == []
+    clock.now += 10.0
+    assert await gate.push_audio(_chunk(9_600)) == []
+
+
+@pytest.mark.asyncio
+async def test_hard_leak_after_grace_release_still_blocks_further_audio(clock):
+    """The grace release must not weaken the hard-leak kill switch."""
+    gate = ScrubHoldGate(language="en")
+
+    await gate.feed_transcript("Okay.")
+    assert await gate.push_audio(_chunk(9_600))
+    assert await gate.push_audio(_chunk(9_600)) == []
+    clock.now += 0.5
+    assert await gate.push_audio(_chunk(9_600))  # grace release happened
+
+    await gate.feed_transcript(
+        "Traceback (most recent call last):\n  File x\nValueError: y\n\n"
+    )
+    assert gate.hard_leak_pending() is True
+    assert await gate.push_audio(_chunk(9_600)) == []
+    assert gate.finalize() == []
