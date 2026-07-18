@@ -38,6 +38,7 @@ from jarvis.sessions.constants import (
     SPOKEN_KIND_REPLY,
     SPOKEN_KIND_WITHHELD,
 )
+from jarvis.speech.echo_guard import SelfEchoGuard
 from jarvis.speech.hangup import HANGUP_RE
 
 log = logging.getLogger(__name__)
@@ -62,6 +63,10 @@ _END_CALL_GRACE_S = 10.0
 # Gemini emits is_final per transcript CHUNK, so hang-up matching runs on a
 # per-turn accumulator; the tail-trim bounds it without losing recent words.
 _HANGUP_BUFFER_MAX_CHARS = 300
+# Ceiling on how far ahead of wall-clock the echo guard's activity stamp may
+# be dated (estimated playback drain, BUG-089). Bounds a runaway estimate
+# from a mis-reported sample rate; real replies stay far below it.
+_ECHO_HORIZON_MAX_S = 120.0
 # Declared to the realtime model alongside the bridge tools, but handled by
 # the session itself: ending the call is surface lifecycle (like the hotkey),
 # not a risk-tiered Jarvis tool, and must work even without a tool bridge.
@@ -788,6 +793,13 @@ class RealtimeVoiceSession:
         self._user_transcript_parts: list[str] = []
         self._input_turn_observed = False
         self._output_transcript: list[str] = []
+        # BUG-089: text-level self-echo backstop. The realtime path's acoustic
+        # gates leak on open speakers next to a built-in mic (macOS), so every
+        # text this session makes audible is registered here and each final
+        # provider-transcribed input is judged against it BEFORE it can become
+        # a turn — otherwise the brain answers its own speaker echo forever.
+        self._echo_guard = SelfEchoGuard()
+        self._echo_playback_horizon = 0.0
         self._provider_output_probe = ""
         self._executed_tool_names: set[str] = set()
         self._direct_tool_results: list[tuple[str, dict[str, Any]]] = []
@@ -1243,6 +1255,42 @@ class RealtimeVoiceSession:
                     transcript = str(event.text or "").strip()
                     transcription_failed = bool(event.error)
                     input_observed = bool(transcript or transcription_failed)
+                    if event.is_final and transcript:
+                        # BUG-089: judge the accumulated candidate BEFORE any
+                        # turn side effect (deferred barge confirm, turn
+                        # start, tool bridge, delegate, request_response). A
+                        # final transcript that is fuzzily nothing but our
+                        # own recent speech is the speaker echo that slipped
+                        # the acoustic gates — dropping it here means no
+                        # response is ever generated for it.
+                        echo_probe = " ".join(
+                            (*self._user_transcript_parts, transcript)
+                        ).strip()
+                        if self._echo_guard.is_echo(echo_probe):
+                            log.info(
+                                "realtime[%s] dropped provider-transcribed "
+                                "self-echo before it became a turn: %r",
+                                self.session_id,
+                                echo_probe[:80],
+                            )
+                            if bool(
+                                getattr(
+                                    self._session,
+                                    "creates_responses_automatically",
+                                    False,
+                                )
+                            ):
+                                # The provider may already be answering its
+                                # own echo — silence that generation until a
+                                # genuine user turn opens.
+                                self._drop_provider_output_until_user_turn = (
+                                    True
+                                )
+                                try:
+                                    await self._session.interrupt()
+                                except Exception:  # noqa: BLE001, S110 — best effort
+                                    pass
+                            continue
                     if (
                         event.is_final
                         and input_observed
@@ -1514,6 +1562,14 @@ class RealtimeVoiceSession:
                         self._gate.drain()
                         continue
                     self._output_transcript.append(display)
+                    # Cumulative snapshot under ONE slot: what the provider
+                    # is audibly saying this turn, as an echo-guard reference
+                    # (BUG-089). Slot replacement keeps the growing snapshot
+                    # from evicting the other references.
+                    self._register_spoken_reference(
+                        "".join(self._output_transcript),
+                        slot=f"turn:{self._turn_id or 'session'}",
+                    )
                     await self._send_json(
                         {
                             "type": "transcript",
@@ -2100,6 +2156,54 @@ class RealtimeVoiceSession:
             return ""
         return scrub_for_voice(raw, language=self._language).cleaned.strip()
 
+    def _advance_echo_horizon(self, duration_s: float) -> None:
+        """Date the echo guard's activity forward to the estimated drain.
+
+        The surface never reports physical playback drain back to the
+        session, and providers send audio faster than realtime — a plain
+        "recently active" wall-clock stamp would lapse mid-playback on long
+        replies. Estimating the drain from emitted audio keeps the guard
+        armed exactly as long as the user can still hear us (BUG-089).
+        """
+        now = time.monotonic()
+        horizon = max(self._echo_playback_horizon, now) + max(0.0, duration_s)
+        horizon = min(horizon, now + _ECHO_HORIZON_MAX_S)
+        self._echo_playback_horizon = horizon
+        self._echo_guard.touch(time.time_ns() + int((horizon - now) * 1e9))
+
+    def _reset_echo_horizon(self) -> None:
+        """Playback stopped early (barge-in/cancel) — pull the horizon back.
+
+        ``force=True`` re-stamps activity to "now": the guard stays armed for
+        its short trailing window (audible reverb of what DID play) but no
+        longer claims the cancelled remainder as active playback.
+        """
+        self._echo_playback_horizon = time.monotonic()
+        self._echo_guard.touch(force=True)
+
+    def _register_spoken_reference(
+        self,
+        text: str,
+        *,
+        slot: str | None = None,
+        estimate_playback: bool = False,
+    ) -> None:
+        """Feed one about-to-be-audible text to the self-echo guard.
+
+        ``estimate_playback`` is for surface-spoken phrases whose PCM never
+        flows through this session: their horizon is estimated from word
+        count (~2.5 words/s plus a one-second lead-out). Provider-voiced
+        text must NOT estimate — its real audio advances the horizon in
+        ``_emit_audio`` and estimating twice would over-arm the guard.
+        """
+        cleaned = str(text or "").strip()
+        if not cleaned:
+            return
+        self._echo_guard.register(cleaned, slot=slot)
+        if estimate_playback:
+            words = len(cleaned.split())
+            self._advance_echo_horizon(words * 0.4 + 1.0)
+
     def _surface_speech_message(self, text: str) -> dict[str, Any]:
         """Build one ``error_spoken`` payload for the surface's classic TTS.
 
@@ -2110,6 +2214,10 @@ class RealtimeVoiceSession:
         ``list_voices()``, so a foreign voice name never reaches a provider
         that would reject it.
         """
+        # Every surface-spoken phrase is an echo-guard reference: the canned
+        # apologies are exactly what the Mac loop transcribed back as "user"
+        # input (BUG-089).
+        self._register_spoken_reference(text, estimate_playback=True)
         message: dict[str, Any] = {
             "type": "error_spoken",
             "text": text,
@@ -2166,6 +2274,7 @@ class RealtimeVoiceSession:
                 pass
         self._output_active = False
         self._output_samples_sent = 0
+        self._reset_echo_horizon()
         spoken_fallback = fallback_text or self._gate.fallback_phrase()
         # The turn's answer is what the user actually hears. Keeping the
         # aborted partial provider transcript here poisoned the NEXT turn:
@@ -3175,6 +3284,12 @@ class RealtimeVoiceSession:
             turn_state.provider_ready.set()
             if turn_state.result_complete and turn_state.result_payload:
                 turn_state.delivery_started = True
+                # Belt-and-braces echo reference: we know the exact reply we
+                # hand the provider to voice, even if its output
+                # transcription lags or garbles (BUG-089).
+                self._register_spoken_reference(
+                    str(turn_state.last_reply or "")
+                )
                 self._drop_provider_output_until_new_response = False
                 await self._session.send_tool_result(
                     call_id,
@@ -3578,6 +3693,10 @@ class RealtimeVoiceSession:
             self._queue_late_delegate_result(turn_state)
             return
         turn_state.delivery_started = True
+        # Belt-and-braces echo reference: the exact reply text, independent
+        # of the provider's (possibly lagging/garbled) readback
+        # transcription (BUG-089).
+        self._register_spoken_reference(str(turn_state.last_reply or ""))
         drop_before_delivery = self._drop_provider_output_until_new_response
         self._drop_provider_output_until_new_response = False
         try:
@@ -3761,6 +3880,9 @@ class RealtimeVoiceSession:
             return
         try:
             turn_state.delivery_started = True
+            # Belt-and-braces echo reference, same rationale as the
+            # deterministic delivery path (BUG-089).
+            self._register_spoken_reference(str(turn_state.last_reply or ""))
             drop_before_delivery = self._drop_provider_output_until_new_response
             self._drop_provider_output_until_new_response = False
             for call_id, wire_name in tuple(turn_state.pending_tool_calls):
@@ -3914,6 +4036,10 @@ class RealtimeVoiceSession:
                 pass
         self._note_audio_flow(pcm, chunk)
         self._output_samples_sent += len(pcm) // 2
+        # Real provider audio: advance the echo guard's playback horizon by
+        # this chunk's audible duration (BUG-089).
+        rate = max(1, int(getattr(chunk, "sample_rate", 0) or 24_000))
+        self._advance_echo_horizon((len(pcm) / 2) / rate)
         await self._send_binary(pcm)
 
     def _note_audio_flow(self, pcm: bytes, chunk: Any) -> None:
@@ -3995,6 +4121,7 @@ class RealtimeVoiceSession:
                 pass
         self._output_samples_sent = 0
         self._output_active = False
+        self._reset_echo_horizon()
         try:
             await self._send_json({"type": "tts_cancel"})
         except Exception:  # noqa: BLE001, S110
