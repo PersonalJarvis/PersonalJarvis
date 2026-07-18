@@ -170,6 +170,11 @@ def key_to_alpha(img: Image.Image) -> Image.Image:
     return Image.fromarray(np.dstack((arr, alpha)), "RGBA")
 
 
+# Warn-once latch: the clear-backing pass runs on every reveal, but a missing
+# pyobjc should produce ONE actionable warning, not a log storm.
+_WARNED_NO_APPKIT = False
+
+
 def apply_macos_clear_backing() -> None:
     """Make every NSWindow of THIS process paint a clear backing (BUG-075).
 
@@ -184,19 +189,33 @@ def apply_macos_clear_backing() -> None:
     """
     if sys.platform != "darwin":
         return
+    import logging  # noqa: PLC0415
+
+    orb_log = logging.getLogger("jarvis.orb")
     try:
         from AppKit import NSApp, NSColor  # type: ignore[import-not-found] # noqa: PLC0415
-
-        for win in NSApp.windows():
+    except Exception:  # noqa: BLE001
+        # Without this pass Tk 9 paints the window backing as an OPAQUE grey
+        # box (BUG-075) — the single most visible macOS defect. Say so loudly
+        # once instead of hiding the cause in a debug line.
+        global _WARNED_NO_APPKIT
+        if not _WARNED_NO_APPKIT:
+            _WARNED_NO_APPKIT = True
+            orb_log.warning(
+                "pyobjc (AppKit) unavailable — Tk 9 paints the mascot backing "
+                "as an opaque grey box. Install the [desktop-macos] extra "
+                "(pip install 'personal-jarvis[desktop-macos]') to fix it."
+            )
+        return
+    try:
+        wins = list(NSApp.windows())
+        for win in wins:
             win.setOpaque_(False)
             win.setBackgroundColor_(NSColor.clearColor())
             win.setHasShadow_(False)
+        orb_log.debug("macOS clear-backing applied to %d window(s)", len(wins))
     except Exception:  # noqa: BLE001 — cosmetic; the grey box is the degrade
-        import logging  # noqa: PLC0415
-
-        logging.getLogger("jarvis.orb").debug(
-            "macOS clear-backing pass skipped", exc_info=True
-        )
+        orb_log.warning("macOS clear-backing pass failed", exc_info=True)
 
 
 _GWL_EXSTYLE = -20
@@ -1909,6 +1928,12 @@ class OrbOverlay:
             self._set_mode(mode)
             if self._root:
                 self._root.deiconify()
+                if self._mac_transparent:
+                    # Tk 9 can (re)materialize the NSWindow on mapping after a
+                    # withdraw; a construction-time clear-backing pass does not
+                    # survive that, leaving the opaque grey box (BUG-075).
+                    # Re-assert on every reveal — idempotent and cheap.
+                    apply_macos_clear_backing()
                 # ADR-0016 visible-feedback contract: schedule a post-frame
                 # visibility snapshot. 50 ms gives Tk time to actually map
                 # the window before we sample winfo_viewable / winfo_x.

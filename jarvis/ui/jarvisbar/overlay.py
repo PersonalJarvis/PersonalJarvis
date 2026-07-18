@@ -38,6 +38,10 @@ from jarvis.ui.jarvisbar import interaction, renderer
 
 log = logging.getLogger("jarvis.ui.jarvisbar")
 
+# Warn-once latch: the clear-backing pass runs on every reveal, but a missing
+# pyobjc should produce ONE actionable warning, not a log storm.
+_WARNED_NO_APPKIT = False
+
 COLOR_KEY_HEX = "#FF00FF"
 DRAG_THRESHOLD_PX = 16
 MARGIN_PX = 12
@@ -197,13 +201,28 @@ def _apply_macos_clear_backing() -> None:
         return
     try:
         from AppKit import NSApp, NSColor  # type: ignore[import-not-found] # noqa: PLC0415
-
-        for win in NSApp.windows():
+    except Exception:  # noqa: BLE001
+        # Without this pass Tk 9 paints the window backing as an OPAQUE grey
+        # box (BUG-075) — the single most visible macOS defect. Say so loudly
+        # once instead of hiding the cause in a debug line.
+        global _WARNED_NO_APPKIT
+        if not _WARNED_NO_APPKIT:
+            _WARNED_NO_APPKIT = True
+            log.warning(
+                "pyobjc (AppKit) unavailable — Tk 9 paints the bar backing as "
+                "an opaque grey box. Install the [desktop-macos] extra "
+                "(pip install 'personal-jarvis[desktop-macos]') to fix it."
+            )
+        return
+    try:
+        wins = list(NSApp.windows())
+        for win in wins:
             win.setOpaque_(False)
             win.setBackgroundColor_(NSColor.clearColor())
             win.setHasShadow_(False)
+        log.debug("macOS clear-backing applied to %d window(s)", len(wins))
     except Exception:  # noqa: BLE001 — cosmetic; the grey box is the degrade
-        log.debug("macOS clear-backing pass skipped", exc_info=True)
+        log.warning("macOS clear-backing pass failed", exc_info=True)
 
 
 def _create_hidden_tk_root(tk: Any) -> Any:
@@ -791,6 +810,12 @@ class JarvisBarOverlay:
         except Exception:  # noqa: BLE001
             log.debug("jarvisbar deiconify failed", exc_info=True)
         self._do_reassert_z_order(opacity=0.0)
+        if sys.platform == "darwin" and getattr(self, "_mac_transparent", False):
+            # Tk 9 (re)materializes the NSWindow on mapping; the construction-
+            # time clear-backing pass ran on a still-withdrawn root and can
+            # miss it, leaving the opaque grey box (BUG-075). Re-assert on
+            # every reveal — idempotent and cheap.
+            _apply_macos_clear_backing()
         self._refresh_prepared_frame()
         try:
             # Flush geometry/map/canvas work while the window is still fully
