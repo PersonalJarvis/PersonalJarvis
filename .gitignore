@@ -297,7 +297,7 @@ video/*.png
 /voice-assistant-system-prompt.md
 # Editor-generated untitled notes dropped at the repo root (personal scratch).
 # i18n-allow: literal filename a German-locale editor generates
-/Unbenanntes Dokument*.md
+/Unbenanntes Dokument*
 
 # Codex-session visualization artifacts (generated HTML analysis pages; the
 # tracked .codex/ agent definitions stay versioned).
@@ -313,3 +313,4 @@ video/*.png
 
 # Ad-hoc generated deliverables (presentations, exports) — never ship
 /outputs/
+/test_output.txt
