@@ -9,6 +9,11 @@ from dataclasses import dataclass
 from typing import Any, cast
 from uuid import UUID, uuid4
 
+from jarvis.brain.spawn_gate import (
+    SPAWN_BLOCKED_MODEL_FEEDBACK,
+    SPAWN_VEHICLE_TOOL_NAMES,
+    llm_spawn_allowed,
+)
 from jarvis.brain.tool_use_loop import (
     _is_instructional_question,
     _is_meta_debug_intent,
@@ -394,6 +399,13 @@ class RealtimeToolBridge:
             message = "The user was introducing themselves; the side-effect tool was not run."
         elif name == "spawn_worker" and _is_meta_debug_intent(user_text):
             message = "A meta/debug request must be answered directly, not delegated."
+        elif name in SPAWN_VEHICLE_TOOL_NAMES and not llm_spawn_allowed(user_text):
+            # Explicit-delegation gate (maintainer mandate 2026-07-18): the
+            # realtime model may start a background agent ONLY when the user's
+            # spoken turn asks for one (or confirms an offer one turn later).
+            # Deterministic — prompt-side discouragement failed repeatedly.
+            # See jarvis/brain/spawn_gate.py.
+            message = SPAWN_BLOCKED_MODEL_FEEDBACK
         elif _should_block_action_as_research(
             descriptor,
             name,

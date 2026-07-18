@@ -20,6 +20,11 @@ from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
+from jarvis.brain.spawn_gate import (
+    SPAWN_BLOCKED_MODEL_FEEDBACK,
+    SPAWN_VEHICLE_TOOL_NAMES,
+    llm_spawn_allowed,
+)
 from jarvis.core.protocols import Brain, BrainMessage, BrainRequest, ImageBlock, Tool
 from jarvis.core.turn_language import resolve_output_language, resolve_turn_language
 from jarvis.safety.tool_executor import VOICE_CONFIRM_SENTINEL, ToolExecutor
@@ -867,6 +872,30 @@ class ToolUseLoop:
                             "directly and concretely; no delegation, no "
                             "confirmation phrase."
                         ),
+                    }
+                elif (
+                    tool_name in SPAWN_VEHICLE_TOOL_NAMES
+                    and not llm_spawn_allowed(user_utterance)
+                ):
+                    # Explicit-delegation gate (maintainer mandate 2026-07-18):
+                    # an LLM-chosen spawn runs ONLY when the user's own turn
+                    # asks for an agent (or confirms an offer one turn later).
+                    # Deterministic enforcement — the SPAWN-CRITERIA prompt and
+                    # the tool description alone failed to stop conversational
+                    # auto-spawns repeatedly. See jarvis/brain/spawn_gate.py.
+                    log.info(
+                        "tool_use_loop: %s blocked — no explicit delegation "
+                        "request in the user turn", tool_name,
+                    )
+                    await self._publish_guard_denied(
+                        tool_name,
+                        "guard: no explicit delegation request — spawn not executed",
+                        tid,
+                    )
+                    tool_result_payload = {
+                        "success": False,
+                        "output": None,
+                        "error": SPAWN_BLOCKED_MODEL_FEEDBACK,
                     }
                 elif stt_blocked:
                     # Arg sanity guard: the tool args look like a Whisper

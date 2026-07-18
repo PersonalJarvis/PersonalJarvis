@@ -504,12 +504,17 @@ _TOOL_ROLE_DIRECTIVE = (
     "computer. When the user asks you to DO something — create a file, write "
     "code, research, start background work, open a view, change a setting, "
     "control the computer — call the matching function instead of claiming "
-    "you cannot act. Heavy multi-minute work (building files, coding, deep "
-    "research) belongs to the Jarvis-Agent spawn function: start it, "
-    "then briefly confirm what you started. If a function asks for a spoken "
-    "confirmation, relay the question and wait for the user's answer. Never "
-    "announce that you will check, open, save, or do something and then end the "
-    "turn without a function call; an intention is not execution evidence."
+    "you cannot act. The Jarvis-Agent spawn function is EXPLICIT-REQUEST "
+    "ONLY: call it when the user themselves asks for an agent, a subagent, "
+    "spawning, delegating, or background work — or has just said yes to your "
+    "offer to start one. Never start it on your own initiative during "
+    "ordinary conversation, however heavy the topic sounds; answer inline "
+    "and at most offer to start an agent (an unrequested spawn is blocked "
+    "anyway). When you do start one, briefly confirm what you started. If a "
+    "function asks for a spoken confirmation, relay the question and wait "
+    "for the user's answer. Never announce that you will check, open, save, "
+    "or do something and then end the turn without a function call; an "
+    "intention is not execution evidence."
 )
 
 

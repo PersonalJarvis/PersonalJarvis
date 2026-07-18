@@ -253,3 +253,79 @@ async def test_bridge_refresh_retains_a_tool_awaiting_voice_confirmation(
     assert result["success"] is True
     assert bridge.refresh_from_source() is True
     assert [item["name"] for item in bridge.declarations] == ["new_tool"]
+
+
+class FakeSpawnTool:
+    """Minimal spawn_worker stand-in — no required args, monitor tier."""
+
+    def __init__(self) -> None:
+        self.name = "spawn_worker"
+        self.description = "Delegates a heavy task to a background worker."
+        self.schema = {"type": "object", "properties": {}, "required": []}
+        self.risk_tier = "monitor"
+
+    async def execute(self, *_args, **_kwargs):
+        raise AssertionError("Realtime must never execute a tool directly")
+
+
+def _spawn_bridge():
+    tool = FakeSpawnTool()
+    executor = FakeExecutor()
+    bridge = RealtimeToolBridge(
+        tools={"spawn_worker": tool}, executor=executor, language="en"
+    )
+    return bridge, executor
+
+
+@pytest.fixture(autouse=True)
+def _fresh_spawn_offer_window():
+    from jarvis.brain.spawn_gate import OFFER_WINDOW
+
+    OFFER_WINDOW.disarm()
+    yield
+    OFFER_WINDOW.disarm()
+
+
+@pytest.mark.asyncio
+async def test_conversational_turn_blocks_realtime_spawn():
+    """Explicit-delegation gate (mandate 2026-07-18): the realtime model chose
+    spawn_worker on a plain conversational remark — blocked before the
+    executor, with the redirect message fed back to the model."""
+    bridge, executor = _spawn_bridge()
+    await bridge.handle_user_transcript(
+        "Ah, ich will gucken, wo ich als nächstes hinziehe."  # i18n-allow: live utterance
+    )
+
+    name, result = await bridge.execute(wire_name="spawn_worker", arguments={})
+
+    assert name == "spawn_worker"
+    assert result["success"] is False
+    assert "did not explicitly ask" in result["error"]
+    assert executor.execute_calls == []
+
+
+@pytest.mark.asyncio
+async def test_explicit_agent_request_executes_realtime_spawn():
+    bridge, executor = _spawn_bridge()
+    await bridge.handle_user_transcript("Spawn an agent to research this.")
+
+    _name, result = await bridge.execute(wire_name="spawn_worker", arguments={})
+
+    assert result["success"] is True
+    assert len(executor.execute_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_confirmed_delegation_offer_unlocks_realtime_spawn():
+    """Blocked turn → the model offers delegation → a short yes unlocks it."""
+    bridge, executor = _spawn_bridge()
+    await bridge.handle_user_transcript("Figure out where I should move next.")
+    _name, blocked = await bridge.execute(wire_name="spawn_worker", arguments={})
+    assert blocked["success"] is False
+    assert executor.execute_calls == []
+
+    await bridge.handle_user_transcript("Yes, go ahead.")
+    _name, result = await bridge.execute(wire_name="spawn_worker", arguments={})
+
+    assert result["success"] is True
+    assert len(executor.execute_calls) == 1

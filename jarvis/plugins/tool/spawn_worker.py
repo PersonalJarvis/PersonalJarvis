@@ -305,20 +305,28 @@ class SpawnWorkerTool:
     # LLMs pick tools primarily by description (ADR-0011, computer-use
     # amendment). The old wording sold this tool for generic "Recherche",
     # which pulled plain news/knowledge questions into multi-minute worker
-    # missions (live complaint 2026-06-10). Keep the heavy-only contract and
-    # the explicit negative boundary in sync with router.py SPAWN-CRITERIA
-    # and tests/unit/plugins/tool/test_spawn_worker_description.py.
+    # missions (live complaint 2026-06-10). The 2026-07-18 mandate tightened
+    # the contract further: an unrequested conversational spawn is a defect,
+    # enforced deterministically by jarvis/brain/spawn_gate.py — this
+    # description mirrors that gate so the model does not waste a tool-call
+    # round trip on a doomed spawn. Keep it in sync with router.py
+    # SPAWN-CRITERIA and tests/unit/plugins/tool/test_spawn_worker_description.py.
     description: str = (
         "Delegates a GENUINELY HEAVY task to a background frontier worker "
-        "(mission-manager orchestrated; runs for several minutes). Use it "
-        "ONLY when the task builds a real work product (code, app, script, "
-        "refactor, file, document, HTML report) or clearly needs many steps "
-        "of multi-minute focused work (deep multi-source research WITH a "
-        "deliverable report). NEVER use it for simple or medium requests: "
-        "questions, news, quick lookups, single web searches, or anything "
-        "you can answer inline with your own tools in this turn. Pass the "
-        "user utterance verbatim plus optional 3-5 short brainstorm notes "
-        "as ``context_hints``."
+        "(mission-manager orchestrated; runs for several minutes). Call it "
+        "ONLY when the user EXPLICITLY asked for delegation in their current "
+        "turn — they named an agent/subagent/worker/mission, said "
+        "spawn/delegate, asked for work in the background, or just gave a "
+        "clear yes to your offer to delegate — AND the task builds a real "
+        "work product (code, app, script, refactor, file, document, HTML "
+        "report) or clearly needs many steps of multi-minute focused work "
+        "(deep multi-source research WITH a deliverable report). NEVER call "
+        "it on your own initiative during ordinary conversation: questions, "
+        "remarks, news, quick lookups, single web searches, or anything you "
+        "can answer inline in this turn. Without an explicit request, answer "
+        "inline yourself and at most OFFER to start a background agent. Pass "
+        "the user utterance verbatim plus optional 3-5 short brainstorm "
+        "notes as ``context_hints``."
     )
     risk_tier: str = "monitor"
     suppress_response: bool = True

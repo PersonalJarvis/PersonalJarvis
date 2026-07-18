@@ -613,3 +613,78 @@ async def test_tool_executes_despite_huge_per_turn_input_tokens() -> None:
     assert executor.calls, "the Gmail tool must execute despite the large prompt"
     assert "msg1 bis msg5" in result.text or "5 Mails" in result.text
     assert len(brain.requests) == 2, "the loop must do a second turn to report"
+
+
+class _SpawnWorkerTool:
+    name = "spawn_worker"
+    schema: dict[str, Any] = {}
+
+
+class _SpawnThenAnswerBrain:
+    """Requests spawn_worker on round 1, answers inline on round 2."""
+
+    def __init__(self) -> None:
+        self.requests: list[BrainRequest] = []
+
+    async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
+        self.requests.append(req)
+        if len(self.requests) == 1:
+            yield BrainDelta(
+                tool_call={
+                    "id": "spawn_1",
+                    "name": "spawn_worker",
+                    "input": {"utterance": "irrelevant", "action": "research"},
+                }
+            )
+            yield BrainDelta(finish_reason="tool_use")
+            return
+        yield BrainDelta(content="Answering inline instead.")
+        yield BrainDelta(finish_reason="stop")
+
+
+@pytest.mark.asyncio
+async def test_conversational_turn_blocks_llm_chosen_spawn() -> None:
+    """Explicit-delegation gate (mandate 2026-07-18, voice sessions 08:25 +
+    08:29): the model chose spawn_worker on a plain conversational remark —
+    the gate must refuse execution and redirect the model to answer inline."""
+    from jarvis.brain.spawn_gate import OFFER_WINDOW
+
+    OFFER_WINDOW.disarm()
+    brain = _SpawnThenAnswerBrain()
+    executor = _Executor()
+    loop = ToolUseLoop(
+        brain,
+        {"spawn_worker": _SpawnWorkerTool()},
+        executor,  # type: ignore[arg-type]
+    )
+
+    result = await loop.run(
+        [],
+        user_utterance="Ah, ich will gucken, wo ich als nächstes hinziehe.",  # i18n-allow: live utterance
+    )
+
+    assert executor.calls == [], "unrequested spawn must never reach the executor"
+    assert "Answering inline" in result.text
+    tool_message = str(brain.requests[1].messages[-1].content)
+    assert "did not explicitly ask" in tool_message
+
+
+@pytest.mark.asyncio
+async def test_explicit_delegation_request_executes_spawn() -> None:
+    from jarvis.brain.spawn_gate import OFFER_WINDOW
+
+    OFFER_WINDOW.disarm()
+    brain = _SpawnThenAnswerBrain()
+    executor = _Executor()
+    loop = ToolUseLoop(
+        brain,
+        {"spawn_worker": _SpawnWorkerTool()},
+        executor,  # type: ignore[arg-type]
+    )
+
+    await loop.run(
+        [],
+        user_utterance="Spawne einen Subagenten und recherchier Umzugsorte.",  # i18n-allow: DE trigger
+    )
+
+    assert len(executor.calls) == 1, "an explicit spawn request must execute"
