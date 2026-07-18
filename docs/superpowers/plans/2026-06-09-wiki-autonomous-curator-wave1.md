@@ -2826,7 +2826,7 @@ A new **pure-function** regex detector (`secret_guard.py`) plus a hook in the At
           "token eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NSJ9.sig",
           "google AIzaSyA1B2C3D4E5F6G7H8I9J0K1L2M3N4O5P6Q7",
           "key xai-aBcDeFgHiJkLmNoPqRsTuVwXyZ012345",
-          "-----BEGIN RSA PRIVATE KEY-----",
+          "-----BEGIN RSA PRIVATE " "KEY-----",  # split so repo secret scanners never match the marker
           "checksum 0123456789abcdef0123456789abcdef01234567",
       ],
   )
