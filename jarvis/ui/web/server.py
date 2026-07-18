@@ -949,13 +949,13 @@ class WebServer:
                         binary_detected = cand
                         break
 
+            from jarvis.brain.assistant_name import agent_brand
             from jarvis.core.config import (
                 get_jarvis_agent_secret,
                 get_provider_secret,
                 get_secret,
                 jarvis_agent_secret_slot,
             )
-            from jarvis.brain.assistant_name import agent_brand
             from jarvis.ui.web.provider_spec import get_spec
 
             # Display brand follows the wake-word-derived assistant name.

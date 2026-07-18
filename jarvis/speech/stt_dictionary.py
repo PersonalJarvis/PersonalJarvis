@@ -35,10 +35,11 @@ import tempfile
 import threading
 import time
 import uuid
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, AsyncIterator
+from typing import Any
 
 from jarvis.core.paths import user_data_dir
 
@@ -97,7 +98,7 @@ class DictionaryEntry:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="seconds")
 
 
 def _clean_word(raw: str) -> str:

@@ -50,10 +50,11 @@ import logging
 import re
 import secrets
 import time
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from collections.abc import Callable
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Callable
+from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from jarvis.core.bus import EventBus
@@ -135,13 +136,13 @@ class SessionRollupWorker:
     def __init__(
         self,
         *,
-        config: "JarvisConfig",
-        recall_store: "RecallStore",
+        config: JarvisConfig,
+        recall_store: RecallStore,
         vault_root: Path,
-        atomic_writer: "AtomicWriter",
-        page_repo: "PageRepository",
-        log_writer: "LogWriter",
-        bus: "EventBus",
+        atomic_writer: AtomicWriter,
+        page_repo: PageRepository,
+        log_writer: LogWriter,
+        bus: EventBus,
         clock: Callable[[], int] | None = None,
         registry: BrainProviderRegistry | None = None,
     ) -> None:
@@ -462,7 +463,7 @@ class SessionRollupWorker:
                 aggregate(self._brain.complete(request)),
                 timeout=self._cfg.timeout_s,
             )
-        except (asyncio.TimeoutError, TimeoutError):
+        except TimeoutError:
             log.warning(
                 "SessionRollupWorker: brain timed out after %.1fs",
                 self._cfg.timeout_s,

@@ -112,7 +112,7 @@ class FriendRegistry:
             await self._conn.close()
             self._conn = None
 
-    async def __aenter__(self) -> "FriendRegistry":
+    async def __aenter__(self) -> FriendRegistry:
         await self.open()
         return self
 

@@ -75,7 +75,7 @@ class WikiRecallTool:
         {"query": "Personal Jarvis architecture"},
     ]
 
-    def __init__(self, search: "VaultSearch") -> None:
+    def __init__(self, search: VaultSearch) -> None:
         self._search = search
 
     async def execute(self, args: dict[str, Any], ctx: Any) -> ToolResult:
@@ -141,7 +141,7 @@ class WikiRecallTool:
         return ToolResult(success=True, output="\n".join(lines))
 
 
-def _build_search_instance() -> "VaultSearch":
+def _build_search_instance() -> VaultSearch:
     """Build a ``VaultSearch`` with the configured vault root.
 
     Resolves through :func:`jarvis.memory.wiki.vault_root.resolve_vault_root`

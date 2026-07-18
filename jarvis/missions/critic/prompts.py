@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from typing import Final
 
-
 # Verbatim from Research-Doc §F lines 247-301. NO rewording — the phrasing
 # is calibrated for sycophancy mitigation (Kim & Kim 2025: casual rebuttal
 # increases sycophancy; formal phrasing reduces it).

@@ -38,7 +38,6 @@ from .verdict import (
     requires_escalation,
 )
 
-
 __all__ = [
     "ADVERSARIAL_REFRAME_PREFIX",
     "CRITIC_JSON_SCHEMA",

@@ -31,7 +31,6 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 logger = logging.getLogger(__name__)
 
 
@@ -97,7 +96,7 @@ class ReflectionMemory:
         evidence: list[str] | None = None,
     ) -> None:
         """Append a reflection block to the end of the file."""
-        ts_iso = _dt.datetime.now(_dt.timezone.utc).isoformat(timespec="seconds")
+        ts_iso = _dt.datetime.now(_dt.UTC).isoformat(timespec="seconds")
         evidence = evidence or []
 
         block_lines: list[str] = [
@@ -191,7 +190,7 @@ class ReflectionMemory:
         if not last:
             return ""
 
-        lines: list[str] = ["Prior Critic Feedback (last {} iterations):".format(len(last))]
+        lines: list[str] = [f"Prior Critic Feedback (last {len(last)} iterations):"]
         for refl in last:
             lines.append("")
             lines.append(f"[Iteration {refl.iteration}] {refl.summary}")

@@ -48,8 +48,8 @@ class StatusPublisher:
     def __init__(
         self,
         bus: EventBus,
-        friend_registry: "FriendRegistry",
-        channel_manager: "ChannelManager | None" = None,
+        friend_registry: FriendRegistry,
+        channel_manager: ChannelManager | None = None,
     ) -> None:
         self._bus = bus
         self._friends = friend_registry

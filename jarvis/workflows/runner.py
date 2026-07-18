@@ -26,7 +26,6 @@ import time
 from typing import TYPE_CHECKING, Any, Protocol
 
 from jarvis.core.bus import EventBus
-from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 from jarvis.core.events import (
     AnnouncementRequested,
     WorkflowCompleted,
@@ -34,6 +33,7 @@ from jarvis.core.events import (
     WorkflowStepCompleted,
     WorkflowStepStarted,
 )
+from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
 from .schema import (
     WorkflowDef,

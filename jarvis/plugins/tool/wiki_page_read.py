@@ -178,7 +178,7 @@ class WikiPageReadTool:
         return ToolResult(success=True, output=header + content)
 
 
-def _build_page_read_tool() -> "WikiPageReadTool":
+def _build_page_read_tool() -> WikiPageReadTool:
     """Construct a :class:`WikiPageReadTool` with the configured vault root.
 
     Mirrors :func:`jarvis.plugins.tool.wiki_recall._build_search_instance` so

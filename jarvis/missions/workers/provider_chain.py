@@ -59,26 +59,13 @@ honored. The chain is resolved once per spawn and never cycles.
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import shutil
-import subprocess
 import sys
-import time
-import uuid
-from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, AsyncIterator, Literal
-
-from jarvis.missions.worker_runtime.provider_map import (
-    NoWorkerSlugMappingError,
-    to_worker_slug,
-)
-
-from .process_utils import worker_creationflags as _win32_creationflags
-from .stream_consumer import ClaudeResult, ClaudeSystemInit
+from typing import Any
 
 logger = logging.getLogger(__name__)
 

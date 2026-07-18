@@ -20,6 +20,7 @@ import mimetypes
 import os
 import re
 import time
+from datetime import UTC
 from pathlib import Path
 from typing import Any
 
@@ -83,9 +84,9 @@ def _parse_slug(name: str) -> dict[str, Any]:
     if m:
         ts = m.group("ts")
         try:
-            from datetime import datetime, timezone
+            from datetime import datetime
 
-            dt = datetime.strptime(ts, "%Y%m%dT%H%M%S").replace(tzinfo=timezone.utc)
+            dt = datetime.strptime(ts, "%Y%m%dT%H%M%S").replace(tzinfo=UTC)
             started_at: float | None = dt.timestamp()
         except ValueError:
             started_at = None

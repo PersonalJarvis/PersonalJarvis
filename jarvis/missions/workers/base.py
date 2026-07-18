@@ -7,9 +7,10 @@ not via MRO — this allows third-party workers without importing Jarvis.
 """
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, AsyncIterator, Literal, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 CliKind = Literal["claude", "codex", "python", "browser"]
 

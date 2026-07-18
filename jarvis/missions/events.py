@@ -10,12 +10,11 @@ prefix (`MissionBudgetWarning`) — no import collision, no semantic ambiguity.
 from __future__ import annotations
 
 import time
-from typing import Annotated, Any, Final, Literal, Union
+from typing import Annotated, Any, Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
 from .ids import uuid7_str
-
 
 # --- Base ---
 
@@ -195,23 +194,7 @@ class MissionBudgetWarning(_PayloadBase):
 
 
 Payload = Annotated[
-    Union[
-        MissionDispatched,
-        MissionPlanReady,
-        WorkerSpawned,
-        WorkerProgress,
-        WorkerDraftReady,
-        CriticVerdictReady,
-        WorkerCorrectionRequired,
-        WorkerKilled,
-        MissionApproved,
-        MissionFailed,
-        MissionCancelled,
-        MissionTimedOut,
-        MissionStateChanged,
-        BusStats,
-        MissionBudgetWarning,
-    ],
+    MissionDispatched | MissionPlanReady | WorkerSpawned | WorkerProgress | WorkerDraftReady | CriticVerdictReady | WorkerCorrectionRequired | WorkerKilled | MissionApproved | MissionFailed | MissionCancelled | MissionTimedOut | MissionStateChanged | BusStats | MissionBudgetWarning,
     Field(discriminator="event_type"),
 ]
 

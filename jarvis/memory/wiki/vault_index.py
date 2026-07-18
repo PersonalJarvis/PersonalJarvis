@@ -29,7 +29,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:  # pragma: no cover
-    from jarvis.memory.wiki.protocols import PageRepository, WikiPage
+    pass
 
 log = logging.getLogger(__name__)
 

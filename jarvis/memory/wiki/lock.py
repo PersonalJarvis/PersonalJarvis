@@ -94,7 +94,7 @@ class VaultLock:
     # Context-manager protocol
     # ------------------------------------------------------------------
 
-    def __enter__(self) -> "VaultLock":
+    def __enter__(self) -> VaultLock:
         if not self.acquire():
             raise TimeoutError(
                 f"VaultLock: timed out waiting for lock at {self._path}"

@@ -152,7 +152,7 @@ class DispatchToHarnessTool:
             while True:
                 remaining_s = deadline - time.monotonic()
                 if remaining_s <= 0:
-                    raise asyncio.TimeoutError
+                    raise TimeoutError
                 try:
                     result = await asyncio.wait_for(anext(stream), timeout=remaining_s)
                 except StopAsyncIteration:
@@ -177,7 +177,7 @@ class DispatchToHarnessTool:
                 output=None,
                 error=f"harness {name!r} is not set up here",
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             duration_ms = (time.time_ns() - started_ns) // 1_000_000
             combined_stdout = self._trim("".join(stdout_buf).strip())
             timeout_msg = f"timeout after {timeout_s:.3g}s"
@@ -230,7 +230,7 @@ class DispatchToHarnessTool:
             while True:
                 remaining_s = deadline - time.monotonic()
                 if remaining_s <= 0:
-                    raise asyncio.TimeoutError
+                    raise TimeoutError
                 try:
                     name, result = await asyncio.wait_for(
                         anext(stream),
@@ -245,7 +245,7 @@ class DispatchToHarnessTool:
                     buf["stderr"].append(result.stderr)
                 if result.is_final:
                     buf["exit"] = result.exit_code
-        except asyncio.TimeoutError:
+        except TimeoutError:
             timeout_msg = f"timeout after {timeout_s:.3g}s"
             for buf in buffers.values():
                 if buf["exit"] == -1:

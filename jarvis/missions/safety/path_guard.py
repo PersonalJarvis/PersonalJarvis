@@ -20,7 +20,6 @@ import fnmatch
 import re
 from typing import Final
 
-
 # Glob patterns against normalized POSIX paths (forward-slash; lowercase
 # is not required — fnmatch is case-sensitive in POSIX style; we
 # normalize backslashes to forward slashes).

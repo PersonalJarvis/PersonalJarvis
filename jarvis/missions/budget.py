@@ -23,8 +23,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import time
-from typing import Awaitable, Callable, Final
+from collections.abc import Awaitable, Callable
+from typing import Final
 
 from .events import EventEnvelope, MissionBudgetWarning, WorkerDraftReady, now_ms
 

@@ -111,7 +111,7 @@ class AwarenessRecallTool:
         "required": ["query"],
     }
 
-    def __init__(self, recall_store: "RecallStore | None") -> None:
+    def __init__(self, recall_store: RecallStore | None) -> None:
         self._recall = recall_store
 
     async def execute(self, args: dict[str, Any], ctx: Any) -> ToolResult:

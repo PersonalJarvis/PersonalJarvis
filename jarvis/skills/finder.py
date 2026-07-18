@@ -17,11 +17,10 @@ Design principles:
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
@@ -94,7 +93,7 @@ class SkillCandidate:
         }
 
     @classmethod
-    def from_catalog_entry(cls, entry: dict[str, Any]) -> "SkillCandidate":
+    def from_catalog_entry(cls, entry: dict[str, Any]) -> SkillCandidate:
         return cls(
             name=str(entry["name"]),
             title=str(entry.get("title", entry["name"])),

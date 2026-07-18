@@ -39,7 +39,7 @@ _SOURCE = "telemetry.latency"
 logger = logging.getLogger(__name__)
 
 
-CURRENT_TRACKER: contextvars.ContextVar["LatencyTracker | None"] = (
+CURRENT_TRACKER: contextvars.ContextVar[LatencyTracker | None] = (
     contextvars.ContextVar("jarvis.telemetry.latency.tracker", default=None)
 )
 

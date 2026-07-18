@@ -50,9 +50,10 @@ import logging
 import shutil
 import time
 import uuid
+from collections.abc import AsyncIterator
 from contextlib import suppress
 from pathlib import Path
-from typing import Any, AsyncIterator, ClassVar, Literal
+from typing import Any, ClassVar, Literal
 
 from .capabilities import WorkerCapabilityInventory
 from .process_utils import create_worker_subprocess

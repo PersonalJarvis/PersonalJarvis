@@ -18,14 +18,20 @@ import secrets
 import sys
 import threading
 import tomllib
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Iterator, Literal, Mapping
+from typing import TYPE_CHECKING, Any, Literal
 
 import yaml
 from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
+
+# Sub-config from the awareness sub-package. A top-level import is fine because
+# jarvis.awareness.config only knows Pydantic and never calls back into core.* —
+# no circular-import risk.
+from jarvis.awareness.config import AwarenessConfig
 
 # wake_constants is pure stdlib (no jarvis imports) — safe to import from this
 # foundational config module without a cycle. Single source of truth for the
@@ -33,11 +39,6 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator
 from jarvis.speech.wake_constants import DEFAULT_WAKE_PHRASE, WAKE_ENGINES
 
 from .protocols import RiskTier
-
-# Sub-config from the awareness sub-package. A top-level import is fine because
-# jarvis.awareness.config only knows Pydantic and never calls back into core.* —
-# no circular-import risk.
-from jarvis.awareness.config import AwarenessConfig
 
 # AckBrainConfig lives under jarvis.brain.ack_brain.config. We cannot
 # import it at module top because jarvis.brain.__init__ eagerly loads
@@ -2318,7 +2319,7 @@ class JarvisConfig(BaseModel):
     # acknowledgment LLM). Opt-in via [ack_brain].enabled = true.
     # Forward-reference + late import at the bottom of this module avoids
     # the brain<->core.config circular import.
-    ack_brain: "AckBrainConfig" = Field(  # noqa: F821 (resolved by model_rebuild below)
+    ack_brain: AckBrainConfig = Field(  # noqa: F821 (resolved by model_rebuild below)
         default_factory=lambda: AckBrainConfig()
     )
     # Speech pipeline sub-configs (completeness classifier, …).

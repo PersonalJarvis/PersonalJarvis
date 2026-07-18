@@ -165,7 +165,7 @@ async def submit_feedback(body: FeedbackPayload) -> FeedbackResult:
     version = _app_version()
     os_info = platform.platform()
     py_version = platform.python_version()
-    reported_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    reported_at = datetime.datetime.now(datetime.UTC).isoformat()
 
     # Decode and size-check the screenshot if the client provided one.
     screenshot_bytes: bytes | None = None

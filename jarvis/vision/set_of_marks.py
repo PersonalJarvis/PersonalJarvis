@@ -80,7 +80,7 @@ class SetOfMarksResult:
         return None
 
 
-def _is_interactable(node: "UIANode", roles: frozenset[str]) -> bool:
+def _is_interactable(node: UIANode, roles: frozenset[str]) -> bool:
     x, y, w, h = node.bounds
     if w <= 0 or h <= 0:
         return False
@@ -173,7 +173,7 @@ def _legend_line(mark: Mark) -> str:
 
 def render_set_of_marks(
     screenshot_path: str | None,
-    nodes: Sequence["UIANode"],
+    nodes: Sequence[UIANode],
     *,
     viewport_origin: tuple[int, int] | None = None,
     scale: float | None = None,
@@ -191,7 +191,7 @@ def render_set_of_marks(
     roles = interactable_roles or _DEFAULT_INTERACTABLE_ROLES
 
     # 1) Select + number interactable elements (preserve UIA tree order).
-    selected: list["UIANode"] = []
+    selected: list[UIANode] = []
     for node in nodes:
         if _is_interactable(node, roles):
             selected.append(node)

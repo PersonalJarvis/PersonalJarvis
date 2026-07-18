@@ -20,10 +20,10 @@ Contract compatibility (see ``docs/openclaw-bridge.md``):
 from __future__ import annotations
 
 import os.path
-from typing import Any, Iterable, Literal
+from collections.abc import Iterable
+from typing import Any, Literal
 
 from jarvis.missions.events import EventEnvelope
-
 
 ReattachStatus = Literal["live", "ended", "killed", "unknown"]
 

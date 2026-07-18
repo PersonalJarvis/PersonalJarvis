@@ -18,11 +18,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-# Phase B5 — Agent A: integration / bootstrap
-from jarvis.memory.wiki.integration import WikiIntegrationHandle, bootstrap_wiki_integration
-
 # Phase B5 — Agent D: scheduler + lock
 from jarvis.core.config import SchedulerConfig
+
+# Phase B5 — Agent A: integration / bootstrap
+from jarvis.memory.wiki.integration import WikiIntegrationHandle, bootstrap_wiki_integration
 from jarvis.memory.wiki.lock import VaultLock
 from jarvis.memory.wiki.scheduler import (
     CuratorScheduler,

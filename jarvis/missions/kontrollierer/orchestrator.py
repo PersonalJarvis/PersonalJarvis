@@ -1329,7 +1329,7 @@ class Kontrollierer:
                     iteration=iteration,
                     resume_session_id=None,
                 )
-            except Exception as exc:  # noqa: BLE001
+            except Exception:  # noqa: BLE001
                 logger.exception("Task %s iter %d: worker spawn failed", step.task_id, iteration)
                 if iteration == MAX_CRITIC_LOOPS - 1:
                     return TaskOutcome.ERROR
@@ -1787,7 +1787,7 @@ class Kontrollierer:
         step: Step,
         iteration: int,
         resume_session_id: str | None,
-    ) -> "Kontrollierer._SpawnResult":
+    ) -> Kontrollierer._SpawnResult:
         """Spawns the worker, drains the stream, and aggregates cost/tokens/session.
 
         ``mission_dir`` is the mission root (parent of the per-task ``log_dir``).

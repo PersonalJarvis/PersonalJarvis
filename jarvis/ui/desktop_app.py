@@ -1828,7 +1828,7 @@ class DesktopApp:
                     await asyncio.wait_for(
                         self._wake_model_loaded.wait(), timeout=12.0
                     )
-                except (TimeoutError, asyncio.TimeoutError):
+                except TimeoutError:
                     from loguru import logger as _slog
                     _slog.info(
                         "Heavy backend: wake-model gate timed out (12 s) — "
@@ -2599,19 +2599,18 @@ class DesktopApp:
             # Concurrency handle for the heavy wake-model build (below). It is
             # started in a worker thread and joined just before the pipeline ctor
             # so the TTS + ack-brain builds overlap it instead of waiting it out.
-            wake_task: "asyncio.Task | None" = None
+            wake_task: asyncio.Task | None = None
             if self.cfg.trigger.heavy_local_whisper or wake_plan.needs_local_whisper:
                 # The local wake-match / live-preview Whisper — a SMALL model on
                 # CPU (cfg.stt.wake_*), not the heavy utterance model on the GPU.
                 # On a Blackwell GPU the CUDA model-load JIT cost dominates boot
                 # (~71 s vs ~0.45 s for base/cpu, measured); wake matching is
                 # latency-tolerant and does not need the big model.
-                from jarvis.plugins.stt import build_wake_whisper
-
                 # Tell the boot-storm housekeeping (deferred registry disk scans)
                 # that a local wake model is loading, so it yields CPU/disk to the
                 # wake-model load first (no-op for headless / voice-off).
                 from jarvis.core import runtime_refs as _rr_wake
+                from jarvis.plugins.stt import build_wake_whisper
                 _rr_wake.signal_wake_model_expected()
 
                 # Seed the wake Whisper's prompt with the custom phrase ONLY on
@@ -2999,7 +2998,7 @@ class DesktopApp:
                             await asyncio.wait_for(
                                 self._wake_model_loaded.wait(), timeout=120.0
                             )
-                        except (TimeoutError, asyncio.TimeoutError):
+                        except TimeoutError:
                             pass
 
                         turbo = await asyncio.to_thread(

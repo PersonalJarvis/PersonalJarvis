@@ -9,10 +9,11 @@ import logging
 import re
 import sqlite3
 import threading
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 from jarvis.core.paths import cli_usage_db_path, ensure_user_dirs
 

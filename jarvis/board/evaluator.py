@@ -24,14 +24,13 @@ on a Brain call").
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 import sqlite3
 import threading
 import time
 from collections import OrderedDict
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +39,6 @@ from jarvis.core.events import AchievementUnlocked, Event
 
 from .achievements import (
     ACHIEVEMENTS,
-    ACHIEVEMENTS_BY_ID,
     TRIGGERING_EVENT_NAMES,
     AchievementContext,
     AchievementSpec,
@@ -158,7 +156,7 @@ class _LiveContext(AchievementContext):
             if self._first_event_iso is None:
                 ts_ns = int(getattr(event, "timestamp_ns", 0) or 0)
                 if ts_ns > 0:
-                    iso = datetime.fromtimestamp(ts_ns / 1e9, tz=timezone.utc)\
+                    iso = datetime.fromtimestamp(ts_ns / 1e9, tz=UTC)\
                         .astimezone().date().isoformat()
                     self._first_event_iso = iso
                     self._persist("first_event_iso", iso)
@@ -311,7 +309,7 @@ class AchievementEvaluator:
         """Executes INSERT OR IGNORE. Returns True if the row was newly inserted."""
         conn = self._connect()
         evidence_json = json.dumps(decision.evidence) if decision else "{}"
-        now_iso = datetime.now(timezone.utc).astimezone().isoformat()
+        now_iso = datetime.now(UTC).astimezone().isoformat()
         cur = conn.execute(
             "INSERT OR IGNORE INTO achievements (id, unlocked_at, evidence) "
             "VALUES (?, ?, ?)",

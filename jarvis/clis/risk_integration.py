@@ -14,12 +14,12 @@ hang, even if the catalog is broken.
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from collections.abc import Callable
 
 log = logging.getLogger(__name__)
 
 
-def make_cli_patterns_fn() -> Callable[[], "tuple[list[str], list[str]]"]:
+def make_cli_patterns_fn() -> Callable[[], tuple[list[str], list[str]]]:
     """Factory for an ``ExtraPatternsFn`` (compatible with RiskTierEvaluator).
 
     The returned function accepts no arguments and returns a

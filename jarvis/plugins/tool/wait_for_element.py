@@ -23,7 +23,6 @@ from typing import Any
 
 from jarvis.core.protocols import ExecutionContext, ToolResult
 
-
 _POLL_INTERVAL_S = 0.25
 _DEFAULT_TIMEOUT_S = 5.0
 _MAX_TIMEOUT_S = 60.0

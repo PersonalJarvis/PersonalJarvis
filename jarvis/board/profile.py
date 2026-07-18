@@ -36,8 +36,8 @@ import logging
 import sqlite3
 import time
 from collections import Counter
-from collections.abc import Awaitable, Callable
-from datetime import datetime, timedelta, timezone
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -95,7 +95,7 @@ class BioStore:
         triggered_by: str = "manual",
     ) -> str:
         """Writes a new bio record. Returns the ISO timestamp."""
-        now_iso = datetime.now(timezone.utc).astimezone().isoformat()
+        now_iso = datetime.now(UTC).astimezone().isoformat()
         conn = self._connect()
         try:
             conn.execute(
@@ -150,7 +150,7 @@ class BioStore:
                 f"Invalid feedback kind: {kind!r} "
                 "(allowed: trifft, trifft_nicht, haerter)"  # i18n-allow: same API/DB contract values
             )
-        now_iso = datetime.now(timezone.utc).astimezone().isoformat()
+        now_iso = datetime.now(UTC).astimezone().isoformat()
         conn = self._connect()
         try:
             conn.execute(
@@ -168,7 +168,7 @@ class BioStore:
         Missing kinds are filled with 0 so the caller can safely iterate.
         """
         cutoff = (
-            datetime.now(timezone.utc).astimezone() - timedelta(days=max(0, days))
+            datetime.now(UTC).astimezone() - timedelta(days=max(0, days))
         ).isoformat()
         conn = self._connect()
         try:
@@ -554,7 +554,7 @@ def _load_self_mod_summary(
     """
     if log_path is None or not Path(log_path).exists():
         return None
-    cutoff = datetime.now(timezone.utc).astimezone() - timedelta(days=max(1, days))
+    cutoff = datetime.now(UTC).astimezone() - timedelta(days=max(1, days))
     counts: Counter[str] = Counter()
     try:
         with Path(log_path).open("r", encoding="utf-8") as fh:

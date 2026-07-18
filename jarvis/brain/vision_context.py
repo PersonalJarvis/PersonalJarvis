@@ -38,7 +38,7 @@ log = logging.getLogger(__name__)
 _ENV_FLAG = "JARVIS_VISION_CONTEXT"
 
 
-def is_enabled(config: "VisionContextConfig | None" = None) -> bool:
+def is_enabled(config: VisionContextConfig | None = None) -> bool:
     """Return True if vision context is enabled (ENV OR config flag)."""
     env = os.environ.get(_ENV_FLAG, "").strip().lower()
     if env in ("1", "true", "on", "yes"):
@@ -50,8 +50,8 @@ def is_enabled(config: "VisionContextConfig | None" = None) -> bool:
 
 async def get_active_window_hint(
     *,
-    engine: "VisionEngine | None" = None,
-    config: "VisionContextConfig | None" = None,
+    engine: VisionEngine | None = None,
+    config: VisionContextConfig | None = None,
 ) -> str | None:
     """Return a short Active-Window-Hint, or ``None``.
 
@@ -81,7 +81,7 @@ async def get_active_window_hint(
             engine.observe(mode="ui_tree"),
             timeout=timeout_s,
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         log.warning(
             "Vision context: timeout after %.0f ms — no hint",
             timeout_s * 1000,

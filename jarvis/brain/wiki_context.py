@@ -63,7 +63,7 @@ _STOPWORDS: frozenset[str] = frozenset({
     "will", "wird", "wirst", "wohl", "worden", "wurden", "wurde", "wird",  # i18n-allow: same German stopword list
     "zwar", "zwischen",
     # English
-    "about", "above", "after", "again", "against", "also", "among", "any",
+    "about", "above", "after", "again", "against", "among", "any",
     "are", "because", "been", "before", "being", "between", "both", "but",
     "came", "can", "come", "could", "did", "does", "doing", "done", "down",
     "during", "each", "few", "for", "from", "further", "gave", "get", "give",
@@ -74,13 +74,12 @@ _STOPWORDS: frozenset[str] = frozenset({
     "over", "same", "say", "should", "since", "some", "still", "such",
     "tell", "than", "that", "the", "their", "them", "then", "there", "these",
     "they", "this", "those", "though", "through", "time", "told", "too",
-    "under", "until", "upon", "use", "used", "using", "very", "want", "was",
-    "well", "were", "what", "when", "where", "which", "while", "who", "whom",
-    "why", "will", "with", "would", "you", "your",
+    "under", "until", "upon", "use", "used", "using", "very", "want", "well", "were", "what", "when", "where", "which", "while", "who", "whom",
+    "why", "with", "would", "you", "your",
     # Short German articles and pronouns
-    "das", "dem", "den", "der", "des", "die", "dir", "doch", "du", "ein",  # i18n-allow: same German stopword list
-    "hat", "ich", "ihm", "ihn", "ihr", "ihm", "ins", "man", "mir", "mit",
-    "nun", "nur", "pro", "sei", "sie", "uns", "war", "wir", "wer", "wen",
+    "das", "dem", "den", "der", "des", "die", "dir", "du", "ein",  # i18n-allow: same German stopword list
+    "hat", "ich", "ihm", "ihn", "ihr", "ins", "man", "mir", "mit",
+    "nun", "nur", "pro", "sei", "uns", "war", "wir", "wen",
     "zum", "zur",  # i18n-allow: same German stopword list
 })
 
@@ -163,7 +162,7 @@ class WikiContextInjector:
     def __init__(
         self,
         *,
-        search: "VaultSearch | None",
+        search: VaultSearch | None,
         max_chars: int = 1500,
         latency_budget_ms: int = 80,
         min_keyword_length: int = 4,
@@ -231,7 +230,7 @@ class WikiContextInjector:
                 _run_search(self._search, query),
                 timeout=self._latency_budget_ms / 1000.0,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             latency_ms = int((time.monotonic() - t0) * 1000)
             log.warning(
                 "WikiContextInjector timed out after %dms (budget=%dms) — "
@@ -306,7 +305,7 @@ class WikiContextInjector:
         return augmented
 
 
-async def _run_search(search: "VaultSearch", query: str) -> list:
+async def _run_search(search: VaultSearch, query: str) -> list:
     """Thin async wrapper around VaultSearch.search.
 
     VaultSearch.search is a synchronous method (file-walking + grep).

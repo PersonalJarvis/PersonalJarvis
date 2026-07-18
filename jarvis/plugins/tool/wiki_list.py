@@ -157,7 +157,7 @@ class WikiListTool:
         return ToolResult(success=True, output="\n".join(lines))
 
 
-def _build_wiki_list_tool() -> "WikiListTool":
+def _build_wiki_list_tool() -> WikiListTool:
     """Construct a :class:`WikiListTool` with the configured vault root.
 
     Mirrors ``wiki_page_read._build_page_read_tool`` so the factory can

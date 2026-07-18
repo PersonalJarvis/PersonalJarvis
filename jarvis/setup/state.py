@@ -39,7 +39,7 @@ import json
 import logging
 import os
 import secrets
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -170,7 +170,7 @@ def mark_obsidian_seen(path: Path | None = None) -> None:
         return
 
     state = load_setup_state(path)
-    state["obsidian_setup_seen_at"] = datetime.now(timezone.utc).isoformat()
+    state["obsidian_setup_seen_at"] = datetime.now(UTC).isoformat()
 
     tempfile_path: Path | None = None
     try:
@@ -238,7 +238,7 @@ def _merge_state(updates: dict[str, Any], path: Path | None = None) -> None:
 
 
 def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
+    return datetime.now(UTC).isoformat()
 
 
 # ---------------------------------------------------------------------------

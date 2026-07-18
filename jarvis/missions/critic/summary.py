@@ -16,8 +16,7 @@ Design constraints:
 from __future__ import annotations
 
 import re
-from typing import Sequence
-
+from collections.abc import Sequence
 
 # Maximum characters for a TTS summary line (mirrors readback.MAX_VOICE_CHARS).
 _MAX_SUMMARY_CHARS: int = 200

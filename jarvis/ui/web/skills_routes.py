@@ -24,9 +24,8 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request
-from pydantic import BaseModel, Field
-
 from fastapi.responses import PlainTextResponse
+from pydantic import BaseModel, Field
 
 from jarvis.core.paths import user_skills_dir
 from jarvis.skills.builtin import BUILTIN_SKILL_NAMES

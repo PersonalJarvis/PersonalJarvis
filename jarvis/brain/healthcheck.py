@@ -79,7 +79,7 @@ class BrainHealthChecker:
                 self._drain_first_delta(brain),
                 timeout=timeout_s,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             duration_ms = (time.perf_counter() - start) * 1000.0
             return HealthResult(
                 provider=provider,

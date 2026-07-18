@@ -22,7 +22,8 @@ import re
 from pathlib import Path
 
 from .protocols import WikiPage
-from .wikilink import extract_wikilinks, resolve_wikilink as _resolve_wikilink
+from .wikilink import extract_wikilinks
+from .wikilink import resolve_wikilink as _resolve_wikilink
 
 log = logging.getLogger(__name__)
 

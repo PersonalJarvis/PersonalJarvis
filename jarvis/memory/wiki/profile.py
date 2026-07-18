@@ -68,7 +68,7 @@ async def ensure_profile_skeleton(
     *,
     vault_root: Path,
     slug: str,
-    curator: "WikiCurator",
+    curator: WikiCurator,
 ) -> bool:
     """Make sure the profile page exists and carries every section.
 

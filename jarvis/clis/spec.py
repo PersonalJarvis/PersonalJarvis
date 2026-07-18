@@ -13,7 +13,7 @@ hashability + performance.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator
@@ -117,7 +117,7 @@ class CliSpec:
     capabilities: tuple[CliCapabilityDecl, ...] = ()
 
     @classmethod
-    def from_model(cls, model: "CliSpecModel") -> "CliSpec":
+    def from_model(cls, model: CliSpecModel) -> CliSpec:
         return cls(
             name=model.name,
             display_name=model.display_name,

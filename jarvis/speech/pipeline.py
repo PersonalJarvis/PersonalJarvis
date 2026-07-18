@@ -5019,7 +5019,7 @@ class SpeechPipeline:
             )
             try:
                 await asyncio.wait_for(self._wake_reload_event.wait(), timeout=30.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 pass
             finally:
                 self._wake_reload_event.clear()

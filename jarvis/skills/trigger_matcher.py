@@ -134,7 +134,7 @@ class TriggerMatcher:
         self,
         utterance: str,
         lang: str = "auto",
-    ) -> tuple[Skill, "re.Match[str]"] | None:
+    ) -> tuple[Skill, re.Match[str]] | None:
         """Wie ``match_voice``, gibt zusaetzlich das Match-Objekt zurueck.
 
         Caller (z.B. die Speech-Pipeline) brauchen die Capture-Groups —
@@ -149,7 +149,7 @@ class TriggerMatcher:
         # against the filler-stripped core. A stripped hit carries a score
         # penalty so a direct hit on any skill always outranks it.
         stripped = _strip_fillers(utterance)
-        best: tuple[int, Skill, "re.Match[str]"] | None = None
+        best: tuple[int, Skill, re.Match[str]] | None = None
         for sk in self.registry.by_trigger("voice"):
             if not self._is_matchable(sk):
                 continue

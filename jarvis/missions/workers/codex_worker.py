@@ -19,12 +19,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import AsyncIterator
 from pathlib import Path
-from typing import Any, AsyncIterator, Literal
+from typing import Any, Literal
 
 from .process_utils import (
     contextlib_suppress,
     create_worker_subprocess,
+)
+from .process_utils import (
     drain_stderr as _drain_stderr,
 )
 from .stream_consumer import CodexStreamEvent, parse_codex_stream_json, read_ndjson_stream
@@ -162,14 +165,14 @@ class CodexWorker:
         finally:
             try:
                 await asyncio.wait_for(stderr_task, timeout=1.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 stderr_task.cancel()
             with contextlib_suppress(ProcessLookupError):
                 if proc.returncode is None:
                     proc.terminate()
             try:
                 await asyncio.wait_for(proc.wait(), timeout=2.0)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.warning(
                     "CodexWorker[%s]: subprocess wait() timeout",
                     worker_id,

@@ -36,7 +36,8 @@ import contextlib
 import logging
 import sys
 import threading
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -159,16 +160,16 @@ class JarvisSystemCursor:
 
 
 _singleton_lock = threading.Lock()
-_singleton: Optional[JarvisSystemCursor] = None
+_singleton: JarvisSystemCursor | None = None
 
 
-def set_jarvis_system_cursor(c: Optional[JarvisSystemCursor]) -> None:
+def set_jarvis_system_cursor(c: JarvisSystemCursor | None) -> None:
     global _singleton
     with _singleton_lock:
         _singleton = c
 
 
-def get_jarvis_system_cursor() -> Optional[JarvisSystemCursor]:
+def get_jarvis_system_cursor() -> JarvisSystemCursor | None:
     with _singleton_lock:
         return _singleton
 
@@ -400,7 +401,7 @@ def _real_restore() -> None:
     )
 
 
-def build_real_jarvis_cursor(*, idle_ms: int = DEFAULT_IDLE_MS) -> Optional[JarvisSystemCursor]:
+def build_real_jarvis_cursor(*, idle_ms: int = DEFAULT_IDLE_MS) -> JarvisSystemCursor | None:
     """Build the production cursor lifecycle, or ``None`` when unavailable.
 
     Returns ``None`` on non-Windows and when Pillow / Win32 are not usable —

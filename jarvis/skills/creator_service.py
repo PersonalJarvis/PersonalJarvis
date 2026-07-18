@@ -20,7 +20,7 @@ import asyncio
 import json
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -28,7 +28,6 @@ import yaml
 from pydantic import ValidationError
 
 from jarvis.skills.authoring.service import (
-    SkillAuthoringError,
     SkillAuthoringService,
     SkillCreateRequest,
 )
@@ -458,7 +457,7 @@ class SkillCreatorService:
             agg = await asyncio.wait_for(
                 aggregate(brain.complete(request)), timeout=_BRAIN_TIMEOUT_S
             )
-        except (TimeoutError, asyncio.TimeoutError):
+        except TimeoutError:
             _LOG.warning("creator: brain timed out — using skeleton")
             return None
         except Exception as exc:  # noqa: BLE001

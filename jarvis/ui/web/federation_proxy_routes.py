@@ -11,7 +11,6 @@ auth model.
 """
 from __future__ import annotations
 
-import json
 import logging
 import time
 from typing import Any
@@ -26,6 +25,7 @@ from jarvis.board.sync import (
     _load_or_create_privkey,
     _resolve_admin_token,
 )
+
 try:
     from board_backend.crypto import canonical_json, sign
 except ModuleNotFoundError:
@@ -155,7 +155,7 @@ async def pair_accept_from_friend(
 
     We extract the owner base URL and the token from ``pair_url``.
     """
-    from urllib.parse import urlparse, parse_qs
+    from urllib.parse import parse_qs, urlparse
 
     parsed = urlparse(payload.pair_url)
     if not parsed.scheme or not parsed.netloc:

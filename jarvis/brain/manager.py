@@ -24,7 +24,6 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import re
 import time
@@ -33,6 +32,10 @@ from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID, uuid4
 
+# ONE canonical billing/budget/quota marker list, shared with the test-badge
+# classifier (provider_test.classify_provider_error) so the live fallback chain and
+# the API-Keys badge can never disagree on "out of credits / over budget" (AP-22).
+from jarvis.brain.provider_test import BILLING_LIMIT_MARKERS
 from jarvis.core.bus import EventBus
 from jarvis.core.config import BrainTierConfig, JarvisConfig
 from jarvis.core.events import (
@@ -60,6 +63,9 @@ from jarvis.core.turn_language import (
     resolve_output_language,
     resolve_turn_language,
 )
+from jarvis.memory import CoreMemory, PersonStore, RecallStore, Soul, UserProfile
+from jarvis.memory.curator import Curator
+from jarvis.safety.tool_executor import ToolExecutor
 from jarvis.voice.action_phrases import (
     CU_CANCEL_EXIT_CODE,
     CU_TOOL_OUTCOME_LAYER,
@@ -70,17 +76,13 @@ from jarvis.voice.action_phrases import (
     extract_speakable_reason,
 )
 from jarvis.voice.contextual_readback import render_readback
-from jarvis.memory import CoreMemory, PersonStore, RecallStore, Soul, UserProfile
-from jarvis.memory.curator import Curator
-from jarvis.safety.tool_executor import ToolExecutor
-# ONE canonical billing/budget/quota marker list, shared with the test-badge
-# classifier (provider_test.classify_provider_error) so the live fallback chain and
-# the API-Keys badge can never disagree on "out of credits / over budget" (AP-22).
-from jarvis.brain.provider_test import BILLING_LIMIT_MARKERS
 
-from .dispatcher import BrainDispatcher
 from .action_honesty import replace_unbacked_action_claim
-from .tool_surface import maybe_reconcile_tool_surface, stamp_tool_surface
+from .assistant_name import (
+    DEFAULT_ASSISTANT_NAME,
+    resolve_assistant_name,
+)
+from .dispatcher import BrainDispatcher
 from .intent_router import RoutingDecision, classify
 from .local_action_gate import (
     HARNESS_NAME,
@@ -93,20 +95,18 @@ from .local_action_gate import (
 )
 from .local_action_gate import _normalize as _gate_normalize
 from .mission_command_gate import match_mission_command
-from .assistant_name import (
-    DEFAULT_ASSISTANT_NAME,
-    resolve_assistant_name,
-)
 from .persona_loader import load_effective_persona_prompt
 from .provider_registry import BrainProviderRegistry
 from .rate_limit_tracker import RateLimitTracker
 from .streaming import aggregate
 from .tool_call_recovery import extract_leaked_tool_calls
+from .tool_surface import maybe_reconcile_tool_surface, stamp_tool_surface
 from .turn_planner import is_contextual_follow_up, plan_turn
 from .voice_command_gate import match_voice_command
 
 if TYPE_CHECKING:
     from jarvis.awareness.manager import AwarenessManager
+    from jarvis.brain.evidence_gate import EvidenceVerdict
     from jarvis.brain.wiki_context import WikiContextInjector
     from jarvis.control.cost import CostMeter as CostMeterLike
     from jarvis.voice.contextual_readback import ReadbackComposer
@@ -1217,7 +1217,7 @@ def _cli_failure_reason(output: Any, error: str | None, *, german: bool) -> str:
 
 
 def _evidence_answer_is_unverified(
-    required_tool: str, executed: "set[str]", response_text: str, *, suppressed: bool
+    required_tool: str, executed: set[str], response_text: str, *, suppressed: bool
 ) -> bool:
     """True when a mandated-tool turn produced an answer WITHOUT calling the tool.
 
@@ -1379,13 +1379,13 @@ def _action_unfulfilled_answer(required_tool: str, *, lang: str) -> str:
 def _unfulfilled_replacement(
     *,
     required_tool: str,
-    executed: "set[str]",
+    executed: set[str],
     response_text: str,
     suppressed: bool,
     is_write: bool,
     lang: str,
     domain: str = "",
-) -> "str | None":
+) -> str | None:
     """Decide whether a mandated-tool turn's answer must be replaced for honesty.
 
     Returns the honest replacement text, or ``None`` to keep the answer as-is.
@@ -1910,7 +1910,7 @@ class BrainManager:
         # B5 Agent C: wiki context injector.  None = no-op (Agent B not merged
         # yet, or [wiki_context].enabled = false).  Set by factory.py for the
         # router tier only; sub-tiers never get wiki injection.
-        self._wiki_injector: "WikiContextInjector | None" = wiki_injector
+        self._wiki_injector: WikiContextInjector | None = wiki_injector
         # Per-turn wiki context suffix; set in generate() and consumed by
         # _build_system_prompt().  Reset to "" after each turn.
         self._wiki_context_suffix: str = ""
@@ -4085,7 +4085,7 @@ class BrainManager:
             log.debug("_check_unsupported_intent: registry error", exc_info=True)
         return None
 
-    def _run_evidence_gate(self, user_text: str) -> "EvidenceVerdict":
+    def _run_evidence_gate(self, user_text: str) -> EvidenceVerdict:
         """Defensive wrapper around ``check_evidence_domain`` (AD-CLI4..8).
 
         Any infrastructure fault (missing config field, no shared CLI
@@ -4680,7 +4680,7 @@ class BrainManager:
         self._publish_skill_invoked(name, source=self._skill_turn_source)
         return str(result.output or "")
 
-    def _smalltalk_tool_override(self) -> dict[str, "Tool"]:
+    def _smalltalk_tool_override(self) -> dict[str, Tool]:
         """Tool set visible on a smalltalk turn: only the read-only safe tools.
 
         Returns ``{}`` when none of the safe tools are registered — identical to
@@ -4705,12 +4705,12 @@ class BrainManager:
 
     def _gate_screen_tool(
         self,
-        tools: dict[str, "Tool"],
+        tools: dict[str, Tool],
         *,
         user_text: str,
         has_image: bool,
         pointing_turn: bool = False,
-    ) -> dict[str, "Tool"]:
+    ) -> dict[str, Tool]:
         """Drop the on-demand ``screenshot`` tool on a turn that is not about the screen.
 
         The validation the screen-narration bug needed (live 2026-06-14): a
@@ -4739,8 +4739,8 @@ class BrainManager:
         return {n: t for n, t in tools.items() if n != "screenshot"}
 
     def _hide_spawn_on_knowledge_question(
-        self, tools: dict[str, "Tool"], user_text: str
-    ) -> dict[str, "Tool"]:
+        self, tools: dict[str, Tool], user_text: str
+    ) -> dict[str, Tool]:
         """Remove the spawn tools from a PLAIN knowledge/factual question's tool
         surface so the router-LLM cannot reflexively delegate an answerable
         question to a background worker.
@@ -4782,8 +4782,8 @@ class BrainManager:
             return tools
 
     def _hide_action_tools_on_signalless_turn(
-        self, tools: dict[str, "Tool"], user_text: str
-    ) -> dict[str, "Tool"]:
+        self, tools: dict[str, Tool], user_text: str
+    ) -> dict[str, Tool]:
         """Remove computer_use + the spawn vehicles from ANY turn that carries no
         action signal of its own, so the router-LLM cannot INHERIT the previous
         turn's desktop action from the conversation context.
@@ -4841,8 +4841,8 @@ class BrainManager:
             return tools
 
     def _hide_spawn_when_plugin_tool_handles_turn(
-        self, tools: dict[str, "Tool"], user_text: str
-    ) -> dict[str, "Tool"]:
+        self, tools: dict[str, Tool], user_text: str
+    ) -> dict[str, Tool]:
         """Hide the spawn vehicles when a connected plugin tool's usage-card
         keywords match the turn, so the router-LLM uses that (router-only) plugin
         tool DIRECTLY instead of delegating to a worker that cannot reach it.
@@ -4895,8 +4895,8 @@ class BrainManager:
             return tools
 
     def _hide_run_skill_on_pc_control_turn(
-        self, tools: dict[str, "Tool"], user_text: str
-    ) -> dict[str, "Tool"]:
+        self, tools: dict[str, Tool], user_text: str
+    ) -> dict[str, Tool]:
         """Hide ``run-skill`` when the turn explicitly asks to operate THIS
         computer's screen (open an app/terminal, click, type into a program),
         so ``computer_use`` stays authoritative for the named desktop vehicle.
@@ -4942,8 +4942,8 @@ class BrainManager:
             return tools
 
     def _apply_plugin_relevance(
-        self, user_text: str, tools: dict[str, "Tool"]
-    ) -> dict[str, "Tool"]:
+        self, user_text: str, tools: dict[str, Tool]
+    ) -> dict[str, Tool]:
         """Drop plugin tools (namespaced ``<id>/<tool>``) irrelevant to this turn.
 
         Keyword-only, no LLM / no IO (AP-9). Native (non-namespaced) tools are
@@ -4961,8 +4961,8 @@ class BrainManager:
             return tools
 
     def _suppress_plugins_covered_by_cli(
-        self, tools: dict[str, "Tool"]
-    ) -> dict[str, "Tool"]:
+        self, tools: dict[str, Tool]
+    ) -> dict[str, Tool]:
         """Hide plugin/native tools whose CLI counterpart is connected (req 4).
 
         A CLI runs a local subprocess and is cheaper than a plugin's MCP/API
@@ -4980,7 +4980,7 @@ class BrainManager:
             log.debug("plugin-CLI suppression failed; full tool set", exc_info=True)
             return tools
 
-    def _plugin_usage_cards_block(self, tools: dict[str, "Tool"]) -> str:
+    def _plugin_usage_cards_block(self, tools: dict[str, Tool]) -> str:
         """Markdown block of usage cards for the plugins active in this turn.
 
         Only the plugins whose tools are in ``tools`` (already relevance-gated)
@@ -5629,7 +5629,7 @@ class BrainManager:
                         ),
                         timeout=timeout_s,
                     )
-                except asyncio.TimeoutError:
+                except TimeoutError:
                     await self._bus.publish(ActionExecuted(
                         trace_id=tid,
                         tool_name=call.name,

@@ -13,8 +13,8 @@ from __future__ import annotations
 from .listener import MissionVoiceListener
 from .readback import (
     MAX_VOICE_CHARS,
-    MissionReadback,
     READBACK_TEMPLATES,
+    MissionReadback,
 )
 
 __all__ = [

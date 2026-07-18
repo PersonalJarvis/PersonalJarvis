@@ -66,7 +66,7 @@ def check_plausibility(
     risk_tier: RiskTier,
     transcript: Transcript | None,
     wake_age_s: float | None,
-    config: "BrainPlausibilityConfig | None" = None,
+    config: BrainPlausibilityConfig | None = None,
 ) -> PlausibilityDecision:
     """Checks confidence and wake-age against the plausibility thresholds.
 

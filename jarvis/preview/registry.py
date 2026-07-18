@@ -7,8 +7,7 @@ uniformly.
 from __future__ import annotations
 
 import logging
-import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from jarvis.core.events import Event
@@ -55,7 +54,7 @@ class PreviewRegistry:
         self._bus = bus
         self._entries: dict[int, PreviewEntry] = {}
 
-    def attach(self) -> "PreviewRegistry":
+    def attach(self) -> PreviewRegistry:
         self._bus.subscribe(PreviewServerStarted, self._on_started)
         self._bus.subscribe(PreviewServerClosed, self._on_closed)
         return self

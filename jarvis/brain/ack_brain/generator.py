@@ -264,7 +264,7 @@ class AckGenerator:
         provider: AbstractAckProvider,
         config: AckBrainConfig,
         breaker: CircuitBreaker,
-        fallback: "AckGenerator | None" = None,
+        fallback: AckGenerator | None = None,
         preferences_provider: Callable[[], str] | None = None,
     ) -> None:
         self._provider = provider

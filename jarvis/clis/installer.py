@@ -12,8 +12,9 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Callable, Literal
+from typing import Literal
 from uuid import uuid4
 
 from jarvis.clis.spec import CliSpec

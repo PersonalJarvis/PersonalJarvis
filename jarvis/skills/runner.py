@@ -16,7 +16,7 @@ import logging
 import re
 import time
 from dataclasses import dataclass
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from typing import Any
 from uuid import uuid4
 
@@ -41,7 +41,7 @@ class _DateProxy:
 
 
 def _build_time_context() -> dict[str, Any]:
-    n = datetime.now(timezone.utc)
+    n = datetime.now(UTC)
     today = date.today()
     return {
         "now": _NowProxy(

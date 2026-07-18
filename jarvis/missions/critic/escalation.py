@@ -15,7 +15,6 @@ from __future__ import annotations
 
 from typing import Final
 
-
 # The strongest available model for escalation rounds. An explicit slug, not
 # the "opus" CLI alias — the alias would silently resolve to claude-opus-* on
 # the claude CLI, which is the exact auto-fallback the user forbade.

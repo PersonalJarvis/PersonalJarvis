@@ -49,7 +49,7 @@ QUEUE_MAXSIZE = 64
 router = APIRouter(tags=["wiki-ws"])
 
 
-def _resolve_bus(ws: WebSocket) -> "EventBus | None":
+def _resolve_bus(ws: WebSocket) -> EventBus | None:
     """Pull the shared EventBus off ``app.state``.
 
     Returns ``None`` when the bus has not been wired yet (e.g. early

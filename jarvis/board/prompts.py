@@ -175,7 +175,7 @@ def _render_missions(missions: Any) -> str:
     if approved + failed + aborted == 0 and not overdue:
         return ""
     parts = [
-        f"\nMISSIONS (letzte 30 Tage):",
+        "\nMISSIONS (letzte 30 Tage):",
         f"- Abgeschlossen: {approved} | Fehlgeschlagen: {failed} | Abgebrochen: {aborted}",  # i18n-allow: German BIO_SYSTEM_PROMPT fragment
     ]
     if overdue:
@@ -211,7 +211,7 @@ def _render_feedback(feedback: Any) -> str:
     haerter = int(feedback.get("haerter", 0) or 0)
     if trifft + trifft_nicht + haerter == 0:  # i18n-allow: same API/DB contract identifiers
         return ""
-    parts = [f"\nFEEDBACK-VECTOR (letzte 4 Wochen):"]
+    parts = ["\nFEEDBACK-VECTOR (letzte 4 Wochen):"]
     parts.append(
         f"- Trifft: {trifft} | Trifft-nicht: {trifft_nicht} | Haerter-gefordert: {haerter}",  # i18n-allow: German BIO_SYSTEM_PROMPT fragment
     )

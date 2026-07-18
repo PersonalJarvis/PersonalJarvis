@@ -21,8 +21,7 @@ import json
 import logging
 import queue
 import threading
-import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -226,7 +225,7 @@ class LatencyLogWriter:
 def _iso(ts_ns: int) -> str:
     """ns since epoch (wall clock) → ISO-8601 UTC string."""
     seconds = ts_ns / 1_000_000_000
-    return datetime.fromtimestamp(seconds, tz=timezone.utc).isoformat()
+    return datetime.fromtimestamp(seconds, tz=UTC).isoformat()
 
 
 # Stage pairs whose ms-difference is meaningful for the bottleneck ranking.

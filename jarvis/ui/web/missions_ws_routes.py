@@ -72,7 +72,7 @@ class ConnectionManager:
         self,
         client_id: str,
         last_seq: int,
-        store: "MissionEventStore",
+        store: MissionEventStore,
     ) -> asyncio.Queue[EventEnvelope | dict[str, Any]]:
         """Registers a client, then enqueues all replay events since ``last_seq``.
 
@@ -220,7 +220,7 @@ async def _drain_client_frames(ws: WebSocket) -> None:
             continue
 
 
-def _resolve_manager(ws: WebSocket) -> tuple[ConnectionManager, "MissionManager"] | None:
+def _resolve_manager(ws: WebSocket) -> tuple[ConnectionManager, MissionManager] | None:
     """Looks up ``missions_ws_manager`` + ``mission_manager`` in app.state."""
     app = ws.scope["app"]
     mgr = getattr(app.state, "missions_ws_manager", None)
@@ -246,7 +246,7 @@ async def missions_ws(ws: WebSocket) -> None:
         first = await asyncio.wait_for(
             ws.receive_json(), timeout=_HELLO_TIMEOUT_S
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         await ws.close(code=4400, reason="hello timeout")
         return
     except WebSocketDisconnect:

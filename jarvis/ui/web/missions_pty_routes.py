@@ -60,7 +60,7 @@ async def pty_ws(ws: WebSocket, worker_id: str) -> None:
         first = await asyncio.wait_for(
             ws.receive_json(), timeout=_HELLO_TIMEOUT_S
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         await ws.close(code=4400, reason="hello timeout")
         return
     except WebSocketDisconnect:

@@ -17,8 +17,7 @@ from __future__ import annotations
 import re
 import threading
 from dataclasses import dataclass
-from typing import Literal, Optional
-
+from typing import Literal
 
 # ---------------------------------------------------------------------------
 # Umlaut normalisation helpers
@@ -200,7 +199,7 @@ class CapabilityRegistry:
         with self._lock:
             return tuple(self._caps.values())
 
-    def resolve_intent(self, utterance: str) -> Optional[Capability]:
+    def resolve_intent(self, utterance: str) -> Capability | None:
         """Deterministic verb+object match against the registered surface.
 
         Matching strategy (in order):
@@ -217,7 +216,7 @@ class CapabilityRegistry:
         No LLM call, no fuzzy scoring.
         """
         normalised = _normalize(utterance)
-        best: Optional[Capability] = None
+        best: Capability | None = None
         best_score = 0
 
         with self._lock:
@@ -314,7 +313,7 @@ class CapabilityRegistry:
 # ---------------------------------------------------------------------------
 
 _registry_lock = threading.Lock()
-_registry_instance: Optional[CapabilityRegistry] = None
+_registry_instance: CapabilityRegistry | None = None
 
 
 def get_registry() -> CapabilityRegistry:

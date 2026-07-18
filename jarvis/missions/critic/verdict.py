@@ -19,7 +19,6 @@ from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-
 # --- Axis vocabulary (Literal types for drift protection) ---
 
 AxisName = Literal["correctness", "completeness", "side_effects", "security"]
