@@ -7,7 +7,7 @@
 <p align="center">
   <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-e7c46e?style=for-the-badge&labelColor=242424" /></a>
   <a href="https://discord.gg/x7USduHxbc"><img alt="Discord" src="https://img.shields.io/badge/Discord-Join-5865F2?style=for-the-badge&logo=discord&logoColor=white&labelColor=242424" /></a>
-  <a href="https://x.com/PersonalJarvis"><img alt="Follow @PersonalJarvis on X" src="https://img.shields.io/badge/Follow-%40PersonalJarvis-e7c46e?style=for-the-badge&logo=x&logoColor=white&labelColor=242424" /></a>
+  <a href="https://x.com/Ruben_Luetke"><img alt="Follow @Ruben_Luetke on X" src="https://img.shields.io/badge/Follow-%40Ruben__Luetke-e7c46e?style=for-the-badge&logo=x&logoColor=white&labelColor=242424" /></a>
   <a href="https://personaljarvis.ai/"><img alt="Personal Jarvis website" src="https://img.shields.io/badge/Website-personaljarvis.ai-e7c46e?style=for-the-badge&labelColor=242424" /></a>
   <img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-e7c46e?style=for-the-badge&logo=python&logoColor=e7c46e&labelColor=242424" />
   <img alt="Platforms: Linux, macOS, Windows" src="https://img.shields.io/badge/Linux%20%C2%B7%20macOS%20%C2%B7%20Windows-242424?style=for-the-badge&labelColor=242424&color=242424" />
@@ -32,34 +32,21 @@
 
 ---
 
-Personal Jarvis is not a classical voice assistant. At its core is a fast **Router-Brain**
-that listens, decides, and *delegates* — dispatching heavy work to interchangeable agent
-harnesses (Claude Code, Codex CLI, MCP servers, raw computer-use loops) that run in
-isolation, review each other's output through a critic loop, and report back in your own
-language. It is **provider-agnostic by design** (swap Gemini, Claude, OpenAI, or
-OpenRouter with one setting), **self-modifying** (it can safely edit its own configuration
-through an audited, reversible pipeline), and runs everywhere — from a headless server with
-a browser UI to a full desktop with a tray app, an Orb overlay, and global-hotkey wake.
+Not a classical voice assistant: a fast **Router-Brain** listens, decides, and *delegates* —
+heavy work goes to interchangeable agent harnesses (Claude Code, Codex CLI, MCP,
+computer-use) that run isolated, get reviewed by a critic, and report back in your language.
+**Provider-agnostic** (Gemini, Claude, OpenAI, OpenRouter — one setting), **self-modifying**,
+and it runs everywhere — headless server to full voice desktop.
 
-## What do you actually say to it?
+## Just say it
 
-You talk to it the way you'd hand a task to a capable assistant — then it goes and does
-it. A few things it can do today:
+<p align="center">
+  <img src="assets/brand/just-say-it.png" alt="Examples of what you can say to Personal Jarvis" width="860" />
+</p>
 
-- **"Research the best open-source vector databases and drop a comparison in my Outputs."**
-  → spawns a background mission: a worker does the digging, a critic checks the work, and
-  you get a downloadable write-up in **Outputs**.
-- **"Read the README in my current project and summarize it in three sentences."**
-  → a file-aware worker opens the files, reads them, and reports back.
-- **"Open my browser and pull up the weather in Berlin."**
-  → drives the screen directly through computer-use — real clicks and keystrokes, not a
-  canned integration.
-- **"Call the clinic on Main Street and ask for their next open appointment."**
-  → places a real outbound phone call through the optional Twilio integration.
-- **"Remember that Alex prefers Signal over email."**
-  → writes the fact to the Knowledge Wiki so it sticks across every future session.
-- **"When the download finishes, ping me on Telegram."**
-  → sets a when-this-then-that trigger and reaches you on your channel when it fires.
+Every one of these works today: research lands as a downloadable report in **Outputs**,
+calls go out through the optional Twilio line, memories stick in the Knowledge Wiki, and
+triggers ping you on Telegram or Discord when they fire.
 
 ## Why it's different
 
@@ -74,35 +61,44 @@ it. A few things it can do today:
 | **Lasting memory** | A Knowledge Wiki + awareness build a model of you across sessions. |
 | **Runs anywhere** | Headless Linux server to full voice desktop; local parts degrade. |
 
-## Requirements
+## How it works
 
-You need exactly **two** things on your machine before you install. The installer checks for
-both up front and stops with a download link if either is missing — nothing else is mandatory.
+<img
+  src="assets/brand/how-personal-jarvis-works.png"
+  width="1064"
+  height="568"
+  alt="How Personal Jarvis works: routing voice and chat through safe actions or reviewed missions"
+/>
 
-| Required | Version | Why it's needed |
-|---|---|---|
-| **Python** | 3.11 or newer | The application runs on Python. |
-| **Git** | any recent release | Fetches the project and runs background missions in isolated worktrees. |
+Higher layers reach lower layers **only through protocols**; everything else talks over a
+typed, immutable **EventBus** — that strict seam is what lets harnesses, providers, and
+plugins be swapped freely.
 
-Everything below is **optional** — each item only unlocks a specific feature, and Personal
-Jarvis runs without it:
+<details>
+<summary><b>The 8-layer map</b></summary>
 
-| Optional | Unlocks |
-|---|---|
-| A provider **API key or subscription login** — Gemini, Claude, OpenAI, or OpenRouter | Actually talking to a brain. Bring your own; nothing is bundled. The app's one-time setup guide stores it in your OS credential manager. |
-| **Node.js 18+** | The coding-agent worker CLIs that heavy missions delegate to (Claude Code, Codex) and a few Node-based integrations. The installer continues without it — install Node any time and add the worker later in-app. |
-| **libportaudio** *(Linux only)* | Local microphone and speakers (`apt install libportaudio2`). Not needed for the headless / browser-audio path. |
-| A **GPU** | Faster fully-offline speech. The local voice models install by default and run on CPU everywhere; a GPU only speeds them up. Cloud speech needs none of this. |
+```
+L7  UI/UX           Desktop app (FastAPI + React + pywebview), tray, Orb overlay
+L6  Orchestrator    State machine, Router, BrainManager, Mission-Manager, Controller
+L5  Harness adapter Claude Code, Codex, Open Interpreter, MCP, raw computer-use
+L4  Brain           Gemini · Claude · OpenAI · Grok · OpenRouter  +  sub-second Ack-Brain
+L3  Intent / Risk   Classifier, four-tier risk policy, approval, rate-limit tracking
+L2  Speech          Wake → VAD → STT → TTS  (cloud or local, your choice)
+L1  Audio I/O       Device routing, chime feedback
+L0  OS / Hardware   Mic, speakers, global hotkeys, optional GPU
+```
+
+A deeper engineering map — anti-patterns, bug classes, phase status with `file:line`
+references — lives in [`docs/LLM-CONTEXT.md`](docs/LLM-CONTEXT.md).
+
+</details>
 
 ## Install
 
-One command on **Windows, macOS, or Linux** — no Docker, no Python-version archaeology. It
-installs the **full profile**: everything in this repository (desktop app, telephony, chat
-channels, local voice models incl. the offline wake word and Whisper), skipping only what
-your OS cannot run. It asks **nothing** in the terminal and launches the app as its last
-step. The app then walks you through a one-time setup guide (language, wake word, API
-keys) — it never shows again, not even after updates. **Bring your own keys**; nothing is
-bundled.
+One command on **Windows, macOS, or Linux**. You need **Python 3.11+** and **Git** — the
+installer checks both and stops with a download link if one is missing. It asks nothing in
+the terminal, launches the app, and the app walks you through a one-time setup (language,
+wake word, API keys). **Bring your own keys**; nothing is bundled.
 
 **Windows** — PowerShell
 
@@ -117,18 +113,30 @@ curl -fsSL https://raw.githubusercontent.com/PersonalJarvis/PersonalJarvis/main/
 ```
 
 > Open source — read the installer before you run it. It only creates a venv, installs
-> dependencies, prefetches the voice models, and launches the app. All setup (API keys —
-> stored in your OS credential manager, never in the repo — wake word, language) happens
-> in the app itself, once. Re-running the same one-liner updates in place and keeps your setup.
+> dependencies, prefetches the voice models, and launches the app. Keys land in your OS
+> credential manager, never in the repo. Re-running the same one-liner updates in place.
+
+<details>
+<summary><b>Optional extras, install flags, uninstall, pipx & manual clone</b></summary>
+
+<br/>
+
+Everything below is optional — each item only unlocks a specific feature:
+
+| Optional | Unlocks |
+|---|---|
+| A provider **API key or subscription login** — Gemini, Claude, OpenAI, or OpenRouter | Actually talking to a brain. The in-app setup stores it in your OS credential manager. |
+| **Node.js 18+** | The coding-agent worker CLIs (Claude Code, Codex) heavy missions delegate to. Add it any time. |
+| **libportaudio** *(Linux only)* | Local microphone and speakers (`apt install libportaudio2`). |
+| A **GPU** | Faster fully-offline speech; everything also runs on CPU. |
 
 | Install flag | Effect |
 |---|---|
-| `--headless` | Minimal server install (advanced): API + WebSocket only, torch-free base, no Node.js required — the tiny-VPS path |
+| `--headless` | Minimal server install: API + WebSocket only, torch-free base, no Node.js — the tiny-VPS path |
 | `--no-launch` | Install only; don't start the app |
 
-**Uninstall** — one command removes everything a plain folder-delete would miss: the
-install folder, the login-autostart entry, and the API keys saved in your OS keychain.
-Add `--dry-run` to preview, or `--yes` to skip the confirmation.
+**Uninstall** — removes the install folder, the autostart entry, and the keychain entries.
+Add `--dry-run` to preview, `--yes` to skip the confirmation:
 
 ```powershell
 # Windows (PowerShell)
@@ -139,11 +147,6 @@ Add `--dry-run` to preview, or `--yes` to skip the confirmation.
 # macOS · Linux
 bash ~/.personal-jarvis/install/uninstall.sh
 ```
-
-<details>
-<summary><b>Prefer pipx, or a manual clone?</b></summary>
-
-<br/>
 
 **pipx** — isolated, no clone, any OS:
 
@@ -165,57 +168,39 @@ jarvis serve
 
 ## Run it
 
-The one-liner launches the app for you. To start it again later:
-
 ```bash
 jarvis          # full desktop: window + voice + Orb overlay
 jarvis serve    # headless server: API + WebSocket + browser UI, no local audio needed
 ```
 
-Then open **http://localhost:47821** — the full Router-Brain → Worker-Critic →
-Mission-Manager experience lives in the browser, including voice through the browser's
-microphone. On a headless deployment the same one-time setup guide runs in the browser; you
-can also set a provider key (e.g. `GEMINI_API_KEY`) in the environment or a `.env` file.
-
-Browser microphone access requires a secure context. `http://localhost:47821` works on the
-server itself; when opening a remote VPS from another device, terminate TLS with an HTTPS
-reverse proxy (for example Caddy or Nginx) and use its `https://` URL. A plain
-`http://server-ip:47821` connection remains usable for text, but browsers will block voice.
-
 <p align="center">
-  <img src="assets/screenshots/app-home.png" alt="The Personal Jarvis desktop app" width="820" />
+  <img src="assets/screenshots/app-desktop.png" alt="The Personal Jarvis desktop app" width="860" />
 </p>
 
-## Architecture at a glance
+<details>
+<summary><b>Headless / server notes</b></summary>
 
-<img
-  src="assets/brand/how-personal-jarvis-works.png"
-  width="1064"
-  height="568"
-  alt="How Personal Jarvis works: routing voice and chat through safe actions or reviewed missions"
-/>
+<br/>
 
-Higher layers reach lower layers **only through protocols**; everything else talks over a
-typed, immutable **EventBus**. That strict seam is what lets harnesses, providers, and
-plugins be swapped without rippling through the codebase.
+On a server, open **http://localhost:47821** — the full experience lives in the browser,
+including voice through the browser microphone. The one-time setup runs there too; you can
+also set a provider key (e.g. `GEMINI_API_KEY`) in the environment or a `.env` file.
 
-```
-L7  UI/UX           Desktop app (FastAPI + React + pywebview), tray, Orb overlay
-L6  Orchestrator    State machine, Router, BrainManager, Mission-Manager, Controller
-L5  Harness adapter Claude Code, Codex, Open Interpreter, MCP, raw computer-use
-L4  Brain           Gemini · Claude · OpenAI · Grok · OpenRouter  +  sub-second Ack-Brain
-L3  Intent / Risk   Classifier, four-tier risk policy, approval, rate-limit tracking
-L2  Speech          Wake → VAD → STT → TTS  (cloud or local, your choice)
-L1  Audio I/O       Device routing, chime feedback
-L0  OS / Hardware   Mic, speakers, global hotkeys, optional GPU
-```
+Browser microphone access needs a secure context: `localhost` works as-is; for a remote
+VPS, terminate TLS with an HTTPS reverse proxy (Caddy, Nginx) — plain `http://server-ip`
+stays usable for text, but browsers block voice.
 
-A deeper, exhaustive engineering map — anti-pattern register, recurring bug classes,
-phase-by-phase status with `file:line` references — lives in the LLM context drop below.
+</details>
 
-## Project structure
+## A guided tour
 
-A quick map of the repository so you know where everything lives:
+- **Missions** — non-trivial asks spawn an isolated worker; a critic reviews (up to three rounds) before you hear the result. Deliverables land in **Outputs**.
+- **Knowledge Wiki** — an Obsidian-compatible memory vault it reads and writes, so facts survive every session.
+- **Channels & telephony** — desktop, browser, Telegram, Discord; optional Twilio for real outbound calls.
+- **Self-mod & skills** — it adjusts its own config safely and drafts new skills for your review (never auto-activated).
+
+<details>
+<summary><b>Project structure</b></summary>
 
 ```text
 PersonalJarvis/
@@ -235,27 +220,11 @@ PersonalJarvis/
 └── README · LICENSE · CODE_OF_CONDUCT · CONTRIBUTING · SECURITY · CHANGELOG
 ```
 
-Inside `jarvis/`, the layout mirrors the 8-layer model above — `jarvis/brain/`
-(providers + router), `jarvis/speech/` (wake → VAD → STT → TTS), `jarvis/missions/`
-(the self-healing Worker-Critic), `jarvis/memory/wiki/` (long-term memory), and
-`jarvis/ui/web/` (the FastAPI + React desktop app).
+Inside `jarvis/`, the layout mirrors the 8-layer model — `jarvis/brain/` (providers +
+router), `jarvis/speech/` (wake → VAD → STT → TTS), `jarvis/missions/` (the self-healing
+Worker-Critic), `jarvis/memory/wiki/` (long-term memory), `jarvis/ui/web/` (the desktop app).
 
-## A guided tour
-
-- **Missions & the Worker-Critic loop** — ask for something non-trivial and Jarvis spawns a
-  background *mission*: an isolated worker does the work, a critic reviews it (up to three
-  correction rounds), and a signed controller approves what's spoken. Every deliverable
-  shows up in **Outputs** as a downloadable artifact.
-- **Knowledge Wiki** — a long-term memory vault (Obsidian-compatible) Jarvis can search,
-  read, and write back to, so it remembers people, projects, and facts across sessions.
-- **Channels & telephony** — talk to Jarvis from the desktop, the browser, Telegram, or
-  Discord; optional Twilio integration places real outbound calls.
-- **Self-mod & skills** — Jarvis can adjust its own configuration safely and author new
-  skills as reviewable drafts (never auto-activated).
-
-<!-- Wiki screenshot removed 2026-07-07: the previous capture showed a live
-     personal vault (privacy review finding). Re-add once a staged demo-vault
-     screenshot exists. -->
+</details>
 
 ## Documentation
 
@@ -268,37 +237,39 @@ Inside `jarvis/`, the layout mirrors the 8-layer model above — `jarvis/brain/`
 | [`docs/BUGS.md`](docs/BUGS.md) | The recurring-bug register |
 
 > 🤖 **Working with an LLM on this codebase?** Paste
-> [`docs/LLM-CONTEXT.md`](docs/LLM-CONTEXT.md) into a fresh chat — it's a dense,
-> self-contained snapshot of the entire project, built for exactly that.
+> [`docs/LLM-CONTEXT.md`](docs/LLM-CONTEXT.md) into a fresh chat — a dense, self-contained
+> snapshot of the entire project, built for exactly that.
 
 ## Community
 
-Come build with us — questions, ideas, and showcases all welcome.
+<p align="center">
+  <img src="assets/brand/community.png" alt="Come build with us" width="640" />
+</p>
 
 <p align="center">
   <a href="https://discord.gg/x7USduHxbc"><img alt="Discord" src="https://img.shields.io/badge/Discord-join_the_server-FFD60A?style=for-the-badge&logo=discord&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
-  <a href="https://x.com/PersonalJarvis"><img alt="X" src="https://img.shields.io/badge/X-follow-FFD60A?style=for-the-badge&logo=x&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
+  <a href="https://x.com/Ruben_Luetke"><img alt="X" src="https://img.shields.io/badge/X-follow-FFD60A?style=for-the-badge&logo=x&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
 </p>
 
-- **Discord** — [discord.gg/x7USduHxbc](https://discord.gg/x7USduHxbc)
-- **X** — [@PersonalJarvis](https://x.com/PersonalJarvis) · [@Ruben_Herz](https://x.com/Ruben_Herz)
-- **Instagram** — [@personaljarvis](https://www.instagram.com/personaljarvis/)
-- **GitHub** — [PersonalJarvis/PersonalJarvis](https://github.com/PersonalJarvis/PersonalJarvis)
+<p align="center">
+  <a href="https://discord.gg/x7USduHxbc">Discord</a> ·
+  <a href="https://x.com/Ruben_Luetke">@Ruben_Luetke</a> ·
+  <a href="https://www.instagram.com/personaljarvis/">Instagram</a> ·
+  <a href="https://github.com/PersonalJarvis/PersonalJarvis">GitHub</a>
+</p>
 
-## Sponsors & supporters
+## Sponsors
 
-Personal Jarvis is independent and self-funded. If it saves you time, or you just like
-where it's headed, sponsorship keeps the lights on and the roadmap moving — and goes
-straight into provider costs, infrastructure, and development time.
+Personal Jarvis is independent and self-funded — sponsorship goes straight into provider
+costs, infrastructure, and development time. The wall is empty; want to be the first?
+Reach out on [Discord](https://discord.gg/x7USduHxbc) or [X](https://x.com/Ruben_Luetke).
 
 <p align="center">
   <a href="https://github.com/sponsors/PersonalJarvis"><img alt="Sponsor" src="https://img.shields.io/badge/Sponsor-♥-FFD60A?style=for-the-badge&logo=githubsponsors&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
 </p>
 
-<p align="center">
-  <i>This wall is empty — for now.</i><br/>
-  Want to be the first? Reach out on <a href="https://discord.gg/x7USduHxbc">Discord</a> or <a href="https://x.com/PersonalJarvis">X</a>.
-</p>
+<details>
+<summary><b>Sponsor tiers</b></summary>
 
 | Tier | You get |
 |---|---|
@@ -307,41 +278,24 @@ straight into provider costs, infrastructure, and development time.
 | **Sponsor** | The above + your logo on the sponsor wall |
 | **Partner** | The above + a seat at the roadmap table |
 
-> Sponsorship is being set up. Want to talk before the page is live? Reach out on
-> [Discord](https://discord.gg/x7USduHxbc) or [X](https://x.com/PersonalJarvis).
+</details>
 
 ## Contributing
 
-Pull requests are welcome — see **[`CONTRIBUTING.md`](CONTRIBUTING.md)** for the full guide
-(dev setup, architecture, the plugin-vs-tool-vs-skill decision, and the PR checklist). The
-short version:
-
-- **Artifacts are English** — code, comments, docs, and commit messages. (Conversation can
-  be any language; the assistant speaks de/en/es at runtime.)
-- Read [`CLAUDE.md`](CLAUDE.md) and [`docs/PHILOSOPHY.md`](docs/PHILOSOPHY.md) before larger
-  changes — the binding conventions and the cross-platform doctrine.
-- New providers must pass the contract test suite (`pytest tests/contract/`).
-- Found a security issue? Please report it privately — see [`SECURITY.md`](SECURITY.md).
-
-## Author
-
-Personal Jarvis is created and maintained by **Ruben Herz**.
-Say hi on X — [@Ruben_Herz](https://x.com/Ruben_Herz).
+Pull requests are welcome — **[`CONTRIBUTING.md`](CONTRIBUTING.md)** has the full guide.
+The short version: artifacts are English, read [`CLAUDE.md`](CLAUDE.md) before larger
+changes, new providers must pass `pytest tests/contract/`, and security issues go to
+[`SECURITY.md`](SECURITY.md) privately.
 
 ## License
 
-Released under the **MIT License** — free to use, modify, and distribute, including
-commercially, provided the copyright notice is preserved. See [`LICENSE`](LICENSE) for the
-full text, the attribution clause, and the third-party notices.
-
-**Trademarks.** Product, provider, and integration names and logos shown here are
-trademarks of their respective owners and are used only to identify the services they refer
-to. Personal Jarvis is not affiliated with or endorsed by any of them — see
-[`TRADEMARK.md`](TRADEMARK.md).
+**MIT** — free to use, modify, and distribute, including commercially; see
+[`LICENSE`](LICENSE). Third-party names and logos belong to their owners —
+see [`TRADEMARK.md`](TRADEMARK.md).
 
 <br/>
 
 <p align="center">
-  <sub>Created by <b>Ruben Herz</b> · <a href="https://x.com/Ruben_Herz">@Ruben_Herz</a> · © 2026 · MIT</sub><br/>
-  <sub><a href="https://discord.gg/x7USduHxbc">Discord</a> · <a href="https://x.com/PersonalJarvis">X</a> · <a href="https://www.instagram.com/personaljarvis/">Instagram</a></sub>
+  <sub>Created by <b>Ruben Lütke</b> · <a href="https://x.com/Ruben_Luetke">@Ruben_Luetke</a> · © 2026 · MIT</sub><br/> <!-- i18n-allow: maintainer's name, not German prose -->
+  <sub><a href="https://discord.gg/x7USduHxbc">Discord</a> · <a href="https://x.com/Ruben_Luetke">X</a> · <a href="https://www.instagram.com/personaljarvis/">Instagram</a></sub>
 </p>
