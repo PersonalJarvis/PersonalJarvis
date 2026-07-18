@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { ArrowUp, Bot, CreditCard, Laptop, Lock, LogIn, LogOut, Sparkles, Terminal, type LucideIcon } from "lucide-react";
+import { ArrowUp, Bot, CreditCard, FlaskConical, Laptop, Lock, LogIn, LogOut, Sparkles, Terminal, type LucideIcon } from "lucide-react";
 import { agentBrandNow, useAgentBrand } from "@/lib/agentBrand";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
@@ -13,6 +13,8 @@ import {
   saveSubagentModel,
   startCodexLogin,
   switchSubagentProvider,
+  testAgentCli,
+  type AgentCliTestResult,
   type AntigravityStatus,
   type Billing,
   type ClaudeStatus,
@@ -732,6 +734,102 @@ function ConnectButton({
   );
 }
 
+/**
+ * "Test" button + inline result panel shared by the three agent-CLI cards.
+ *
+ * POSTs the card's live-test endpoint (the backend re-augments PATH, clears
+ * the version caches, and spawns the real binary), then reports found /
+ * not-found with the binary path, version and login state. A miss lists the
+ * PATH directories that were searched — making "installed in the shell but
+ * invisible to the app" (the macOS GUI-PATH trap) diagnosable on the card.
+ */
+function CliTestControl({
+  endpoint,
+  onChanged,
+}: {
+  endpoint: string;
+  onChanged?: () => void | Promise<void>;
+}) {
+  const [running, setRunning] = useState(false);
+  const [result, setResult] = useState<AgentCliTestResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run() {
+    setRunning(true);
+    setError(null);
+    try {
+      setResult(await testAgentCli(endpoint));
+      // The test may have just discovered a freshly-installed CLI (PATH was
+      // re-augmented) — refresh the section so the card state follows.
+      await onChanged?.();
+    } catch (e) {
+      setResult(null);
+      setError((e as Error).message);
+    } finally {
+      setRunning(false);
+    }
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={run}
+        disabled={running}
+        data-agent-card-control
+        className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
+      >
+        <FlaskConical className={cn("h-3.5 w-3.5", running && "animate-pulse")} />
+        {running ? "Testing…" : "Test"}
+      </button>
+      {(result || error) && (
+        <div
+          data-agent-card-control
+          className="basis-full rounded-lg border border-border bg-muted/40 p-2 text-[11px] leading-relaxed"
+        >
+          {error ? (
+            <p className="text-red-500">Test failed: {error}</p>
+          ) : result ? (
+            <>
+              <p className={result.ok ? "text-emerald-600" : "text-amber-600"}>
+                {result.ok ? "✓ " : "✗ "}
+                {result.message}
+              </p>
+              {result.installed && (
+                <p className="mt-1 text-muted-foreground">
+                  {result.binary_path && (
+                    <>
+                      Binary: <code className="break-all">{result.binary_path}</code>
+                      <br />
+                    </>
+                  )}
+                  {result.version && <>Version: {result.version} · </>}
+                  Login: {result.connected ? `connected (${result.auth_mode})` : "not connected"}
+                  {result.account ? ` · ${result.account}` : ""}
+                </p>
+              )}
+              {!result.installed && result.searched_path.length > 0 && (
+                <details className="mt-1 text-muted-foreground">
+                  <summary className="cursor-pointer select-none">
+                    Searched {result.searched_path.length} PATH directories
+                  </summary>
+                  <ul className="mt-1 max-h-32 overflow-y-auto">
+                    {result.searched_path.map((p) => (
+                      <li key={p} className="break-all">
+                        {p}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
+              )}
+            </>
+          ) : null}
+        </div>
+      )}
+    </>
+  );
+}
+
 /** Disconnect (ghost) action shared by the OAuth-login cards. */
 function DisconnectButton({
   onClick,
@@ -870,6 +968,7 @@ function CodexConnectionCard({
           ) : (
             <ConnectButton onClick={connect} disabled={pending || !installed} />
           )}
+          <CliTestControl endpoint="/api/codex/test" onChanged={onChanged} />
         </>
       }
     />
@@ -965,6 +1064,7 @@ function AntigravityConnectionCard({
           ) : (
             <ConnectButton onClick={connect} disabled={pending || !installed} />
           )}
+          <CliTestControl endpoint="/api/antigravity/test" onChanged={onChanged} />
         </>
       }
     />
@@ -1063,6 +1163,7 @@ function ClaudeConnectionCard({
           ) : (
             <ConnectButton onClick={connect} disabled={pending || !installed} />
           )}
+          <CliTestControl endpoint="/api/claude/test" onChanged={onChanged} />
         </>
       }
     />

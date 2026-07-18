@@ -165,8 +165,14 @@ class GoogleCliAuthService:
         )
         email = _email_from_accounts(_gemini_home()) if connected else None
 
+        # Name WHAT was detected: the card is titled "Antigravity", but the
+        # resolver also accepts a Gemini-CLI install (incl. a PATH-less npm
+        # bundle). Without the kind in the message, a machine that never
+        # installed agy shows a bare "Installed" and the user rightly asks
+        # "installed WHAT?" (test-machine report 2026-07-18).
+        kind_label = "Antigravity (agy)" if cli.kind == "agy" else "Gemini CLI"
         if not connected:
-            message = "Installed but not logged in — run the Google login."
+            message = f"{kind_label} installed but not logged in — run the Google login."
         elif mode == "oauth-personal":
             message = (
                 f"Connected via Google subscription ({email})."

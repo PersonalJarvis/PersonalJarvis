@@ -49,6 +49,20 @@ async def antigravity_status() -> dict[str, Any]:
     return GoogleCliAuthService().status().to_dict()
 
 
+@router.post("/antigravity/test")
+async def antigravity_test() -> dict[str, Any]:
+    """Live CLI test: which Google CLI resolved (agy vs Gemini), version, login.
+
+    Re-augments PATH first, so a CLI installed after app start is found without
+    a restart. Runs off the event loop — the probe spawns the real binary.
+    """
+    import asyncio
+
+    from jarvis.agent_cli_probe import test_antigravity
+
+    return (await asyncio.to_thread(test_antigravity)).to_dict()
+
+
 @router.post("/antigravity/login")
 async def antigravity_login() -> dict[str, Any]:
     """Start the interactive Google login in a terminal. 409 if no CLI is found."""

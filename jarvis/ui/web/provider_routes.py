@@ -2107,6 +2107,21 @@ async def codex_status(request: Request) -> dict[str, Any]:
     return CodexAuthService(_codex_binary_path(request)).status().to_dict()
 
 
+@router.post("/codex/test")
+async def codex_test(request: Request) -> dict[str, Any]:
+    """Live CLI test: cache-busting binary + version + login probe.
+
+    Re-augments PATH first, so a CLI installed after app start is found without
+    a restart. Runs off the event loop — the probe spawns the real binary.
+    """
+    import asyncio
+
+    from jarvis.agent_cli_probe import test_codex
+
+    binary_path = _codex_binary_path(request)
+    return (await asyncio.to_thread(test_codex, binary_path)).to_dict()
+
+
 @router.post("/codex/binary-path")
 async def codex_set_binary_path(body: CodexBinaryPathBody, request: Request) -> dict[str, Any]:
     value = body.binary_path.strip()

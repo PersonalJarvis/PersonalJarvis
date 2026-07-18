@@ -435,6 +435,36 @@ export async function codexLogout(): Promise<void> {
 }
 
 /**
+ * Result of a live agent-CLI test (POST /api/{claude,codex,antigravity}/test).
+ * Cache-busting on the backend: PATH re-augmented, the real binary spawned —
+ * so the card can show WHERE the CLI was found (or which dirs were searched).
+ */
+export interface AgentCliTestResult {
+  cli: string;
+  ok: boolean;
+  installed: boolean;
+  binary_path: string | null;
+  version: string | null;
+  connected: boolean;
+  auth_mode: string;
+  account: string | null;
+  message: string;
+  searched_path: string[];
+  duration_ms: number;
+  cli_kind: string | null;
+}
+
+/** Runs the live CLI test behind the "Test" button on the agent cards. */
+export async function testAgentCli(endpoint: string): Promise<AgentCliTestResult> {
+  const res = await fetch(endpoint, { method: "POST" });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body.detail ?? `HTTP ${res.status}`);
+  }
+  return body as AgentCliTestResult;
+}
+
+/**
  * Starts the interactive "Sign in with Google" flow by driving the official
  * `agy`/`gemini` CLI as a subprocess (POST /api/antigravity/login). The Google
  * sibling of `startCodexLogin` — a 409 means no Google CLI is installed (the

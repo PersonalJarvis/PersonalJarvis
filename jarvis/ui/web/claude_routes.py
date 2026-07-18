@@ -61,6 +61,20 @@ async def claude_status() -> dict[str, Any]:
     return _service().status().to_dict()
 
 
+@router.post("/claude/test")
+async def claude_test() -> dict[str, Any]:
+    """Live CLI test: cache-busting binary + version + login probe.
+
+    Re-augments PATH first, so a CLI installed after app start is found without
+    a restart. Runs off the event loop — the probe spawns the real binary.
+    """
+    import asyncio
+
+    from jarvis.agent_cli_probe import test_claude
+
+    return (await asyncio.to_thread(test_claude)).to_dict()
+
+
 @router.post("/claude/login")
 async def claude_login() -> dict[str, Any]:
     """Start the interactive Claude sign-in in a terminal. 409 if no CLI is found."""
