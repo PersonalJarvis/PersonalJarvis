@@ -58,6 +58,17 @@ human review) plus the SemVer bump + git tag + CHANGELOG entry, from a separate 
 clone. Never raw-push the working tree; never bypass the pre-push guard with
 `--no-verify`. A single privacy finding STOPS the push.
 
+### 2b. Resumable install asset (EVERY release)
+Upload the source archive the installers' network-fallback depends on. On
+networks where a git clone stalls (curl 28 / early EOF), both install
+scripts fall back to
+`releases/latest/download/personal-jarvis-src.tar.gz` — HTTP-range
+resumable, so even a crawling connection finishes. Build + upload:
+`git archive --format=tar.gz --prefix=personal-jarvis/ -o personal-jarvis-src.tar.gz vX.Y.Z`
+then `gh release upload vX.Y.Z personal-jarvis-src.tar.gz`. A release
+missing this asset silently degrades the fallback to the non-resumable
+snapshot for every downloader until the next release.
+
 ### 3. Proof (never claim success without it)
 After the push, prove it is live:
 - `git ls-remote https://github.com/PersonalJarvis/PersonalJarvis refs/heads/main refs/tags/vX.Y.Z`

@@ -552,19 +552,84 @@ function Invoke-CloneWithRetry {
     Write-Note 'downloading ~80 MB - a few minutes on slow connections'
     $Attempt = 1
     while ($true) {
-        & git @GitNetOpts clone $GitVerbosity --depth 1 --branch $Branch $RepoUrl $InstallDir
+        # Attempt 1 uses git's default transport; later attempts force
+        # HTTP/1.1 - the known cure for a family of "RPC failed; curl 28 /
+        # early EOF" aborts that only bite the bulk pack stream while small
+        # requests sail through (observed on the test Mac, 2026-07-18).
+        $HttpMode = if ($Attempt -gt 1) { @('-c', 'http.version=HTTP/1.1') } else { @() }
+        & git @GitNetOpts @HttpMode clone $GitVerbosity --depth 1 --branch $Branch $RepoUrl $InstallDir
         if ($LASTEXITCODE -eq 0) { return $true }
         try { Remove-Item -LiteralPath $InstallDir -Recurse -Force -ErrorAction Stop } catch {}
         if ($Attempt -ge 3) {
-            Write-Err 'the download kept failing (connection dropped mid-transfer).'
-            Write-Note 'Check your internet connection (Wi-Fi, VPN, proxy), then re-run the'
-            Write-Note 'installer - it is safe to re-run and picks up where it makes sense.'
+            Write-Note 'git could not finish the download on this network (3 attempts).'
             return $false
         }
         $Attempt++
-        Write-Note "connection dropped mid-download - retrying ($Attempt/3) ..."
+        Write-Note "connection dropped mid-download - retrying ($Attempt/3, compatibility transfer mode) ..."
         Start-Sleep -Seconds 3
     }
+}
+
+# Last-resort transport when git cannot get the pack through AT ALL: a plain
+# HTTPS archive download. The release asset (uploaded per release) supports
+# HTTP ranges, so curl -C - RESUMES after every disconnect - even a crawling
+# connection eventually finishes, which a restarted git clone never does.
+# Falls back to the branch snapshot (codeload, not resumable) when no release
+# asset is reachable. The tree lands WITHOUT .git metadata; the next installer
+# run detects that and repairs it in place (salvage path), so updates keep
+# working. Windows 10+ ships both curl.exe and tar.exe.
+function Invoke-TarballFallback {
+    if (-not (Get-Command curl.exe -ErrorAction SilentlyContinue)) { return $false }
+    if (-not (Get-Command tar.exe -ErrorAction SilentlyContinue)) { return $false }
+    if ($RepoUrl -notmatch 'github\.com/') { return $false }
+    $RepoPath = ($RepoUrl -split 'github\.com/', 2)[1] -replace '\.git$', ''
+    $AssetUrl = "https://github.com/$RepoPath/releases/latest/download/personal-jarvis-src.tar.gz"
+    $SnapshotUrl = "https://codeload.github.com/$RepoPath/tar.gz/refs/heads/$Branch"
+    if ($env:JARVIS_PAYLOAD_COMMIT) {
+        # A verified install is pinned to ONE signed commit; the "latest"
+        # release asset cannot honor that pin, so go straight to the
+        # commit-addressed snapshot - the URL itself names the exact tree.
+        $AssetUrl = ''
+        $SnapshotUrl = "https://codeload.github.com/$RepoPath/tar.gz/$($env:JARVIS_PAYLOAD_COMMIT)"
+    }
+    $Tmp = "$InstallDir.payload.tar.gz"
+    Write-Note 'git transfer keeps stalling on this network - switching to a resumable archive download'
+    $Got = $false
+    $Try = 1
+    while ($AssetUrl -and $Try -le 8) {
+        & curl.exe -fL --speed-limit 1024 --speed-time 60 -C - -o $Tmp $AssetUrl
+        if ($LASTEXITCODE -eq 0) { $Got = $true; break }
+        if ($LASTEXITCODE -eq 22) { break }  # HTTP error (e.g. asset missing): not retryable
+        Write-Note "archive download interrupted - resuming where it stopped ($Try/8) ..."
+        $Try++
+        Start-Sleep -Seconds 3
+    }
+    if (-not $Got) {
+        try { Remove-Item -LiteralPath $Tmp -Force -ErrorAction Stop } catch {}
+        Write-Note 'no resumable release archive reachable - trying the direct snapshot (single stream)'
+        & curl.exe -fL --speed-limit 1024 --speed-time 60 -o $Tmp $SnapshotUrl
+        if ($LASTEXITCODE -ne 0) {
+            try { Remove-Item -LiteralPath $Tmp -Force -ErrorAction Stop } catch {}
+            return $false
+        }
+    }
+    try { Remove-Item -LiteralPath $InstallDir -Recurse -Force -ErrorAction Stop } catch {}
+    New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
+    & tar.exe -xzf $Tmp -C $InstallDir --strip-components=1
+    $TarOk = ($LASTEXITCODE -eq 0)
+    try { Remove-Item -LiteralPath $Tmp -Force -ErrorAction Stop } catch {}
+    if (-not $TarOk) { return $false }
+    Write-Note 'installed from the release archive (git metadata is repaired on a future update)'
+    return $true
+}
+
+function Invoke-FetchPayload {
+    if (Invoke-CloneWithRetry) { return $true }
+    if (Invoke-TarballFallback) { return $true }
+    Write-Err 'the download kept failing (connection dropped mid-transfer).'
+    Write-Note 'Check your internet connection (Wi-Fi, VPN, proxy), then re-run the'
+    Write-Note 'installer - it is safe to re-run and picks up where it makes sense.'
+    return $false
 }
 
 # Self-heal a broken install dir (leftover non-git folder from an earlier or
@@ -582,7 +647,7 @@ function Invoke-SalvageReclone {
         exit 1
     }
     Write-Note "moved the old directory to $StaleBackup (nothing was deleted)"
-    if (-not (Invoke-CloneWithRetry)) { exit 1 }
+    if (-not (Invoke-FetchPayload)) { exit 1 }
     foreach ($Item in @('data', 'jarvis.toml', '.env')) {
         $Old = Join-Path $StaleBackup $Item
         $New = Join-Path $InstallDir $Item
@@ -624,7 +689,7 @@ if (Test-Path (Join-Path $InstallDir '.git')) {
         Write-Note "$InstallDir exists but is not a git repo (leftover from an earlier install) - reinstalling in place."
         Invoke-SalvageReclone
     } else {
-        if (-not (Invoke-CloneWithRetry)) { exit 1 }
+        if (-not (Invoke-FetchPayload)) { exit 1 }
         Write-Ok 'downloaded'
     }
 }
@@ -642,6 +707,16 @@ if ($env:JARVIS_PAYLOAD_COMMIT) {
         Write-Err "JARVIS_PAYLOAD_COMMIT is not a well-formed git SHA: '$PayloadCommit' - refusing."
         exit 1
     }
+    if (-not (Test-Path (Join-Path $InstallDir '.git'))) {
+        # Tarball-fallback install: the tree was fetched from the commit-
+        # addressed archive URL, so the pin is embedded in the download
+        # itself; there are no git objects to re-verify against.
+        Write-Ok "pinned via commit-addressed archive ($($PayloadCommit.Substring(0,12)))"
+        $PinnedViaArchive = $true
+    } else {
+        $PinnedViaArchive = $false
+    }
+    if (-not $PinnedViaArchive) {
     Push-Location $InstallDir
     try {
         # Shallow clones don't carry full history; deepen to retrieve the
@@ -668,6 +743,7 @@ if ($env:JARVIS_PAYLOAD_COMMIT) {
         Write-Ok "pinned to signed commit $($PayloadCommit.Substring(0,12))"
     } finally {
         Pop-Location
+    }
     }
 }
 

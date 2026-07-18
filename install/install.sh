@@ -877,21 +877,96 @@ clone_with_retry() {
     note 'downloading ~80 MB - a few minutes on slow connections'
     _attempt=1
     while :; do
-        # shellcheck disable=SC2086  # GIT_NET_OPTS must word-split into -c pairs
-        if git $GIT_NET_OPTS clone "$GIT_VERBOSITY" --depth 1 --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"; then
+        # Attempt 1 uses git's default transport; later attempts force
+        # HTTP/1.1 - the known cure for a family of "RPC failed; curl 28 /
+        # early EOF" aborts that only bite the bulk pack stream while small
+        # requests sail through (observed on the test Mac, 2026-07-18).
+        _http_mode=''
+        [ "$_attempt" -gt 1 ] && _http_mode='-c http.version=HTTP/1.1'
+        # shellcheck disable=SC2086  # GIT_NET_OPTS/_http_mode word-split into -c pairs
+        if git $GIT_NET_OPTS $_http_mode clone "$GIT_VERBOSITY" --depth 1 --branch "$BRANCH" "$REPO_URL" "$INSTALL_DIR"; then
             return 0
         fi
         rm -rf "$INSTALL_DIR" 2>/dev/null || true
         if [ "$_attempt" -ge 3 ]; then
-            err 'the download kept failing (connection dropped mid-transfer).'
-            note 'Check your internet connection (Wi-Fi, VPN, proxy), then re-run the'
-            note 'installer - it is safe to re-run and picks up where it makes sense.'
+            note 'git could not finish the download on this network (3 attempts).'
             return 1
         fi
         _attempt=$((_attempt + 1))
-        note "connection dropped mid-download - retrying ($_attempt/3) ..."
+        note "connection dropped mid-download - retrying ($_attempt/3, compatibility transfer mode) ..."
         sleep 3
     done
+}
+
+# Last-resort transport when git cannot get the pack through AT ALL: a plain
+# HTTPS archive download. The release asset (uploaded per release) supports
+# HTTP ranges, so `curl -C -` RESUMES after every disconnect - even a
+# crawling connection eventually finishes, which a restarted git clone never
+# does. Falls back to the branch snapshot (codeload, not resumable) when no
+# release asset is reachable. The tree lands WITHOUT .git metadata; the next
+# installer run detects that and repairs it in place (salvage path), so
+# updates keep working.
+tarball_fallback() {
+    command -v curl >/dev/null 2>&1 || return 1
+    command -v tar >/dev/null 2>&1 || return 1
+    case "$REPO_URL" in
+        *github.com/*) ;;
+        *) return 1 ;;
+    esac
+    _repo_path="${REPO_URL#*github.com/}"
+    _repo_path="${_repo_path%.git}"
+    _asset_url="https://github.com/$_repo_path/releases/latest/download/personal-jarvis-src.tar.gz"
+    _snapshot_url="https://codeload.github.com/$_repo_path/tar.gz/refs/heads/$BRANCH"
+    if [ -n "${JARVIS_PAYLOAD_COMMIT:-}" ]; then
+        # A verified install is pinned to ONE signed commit; the "latest"
+        # release asset cannot honor that pin, so go straight to the
+        # commit-addressed snapshot - the URL itself names the exact tree.
+        _asset_url=''
+        _snapshot_url="https://codeload.github.com/$_repo_path/tar.gz/$JARVIS_PAYLOAD_COMMIT"
+    fi
+    _tmp="${INSTALL_DIR%/}.payload.tar.gz"
+    note 'git transfer keeps stalling on this network - switching to a resumable archive download'
+    _got=''
+    _try=1
+    while [ -n "$_asset_url" ] && [ "$_try" -le 8 ]; do
+        if curl -fL --speed-limit 1024 --speed-time 60 -C - -o "$_tmp" "$_asset_url"; then
+            _got=1
+            break
+        fi
+        _rc=$?
+        # 22 = HTTP error (e.g. asset missing on old releases): not retryable.
+        [ "$_rc" -eq 22 ] && break
+        note "archive download interrupted - resuming where it stopped ($_try/8) ..."
+        _try=$((_try + 1))
+        sleep 3
+    done
+    if [ -z "$_got" ]; then
+        rm -f "$_tmp" 2>/dev/null || true
+        note 'no resumable release archive reachable - trying the direct snapshot (single stream)'
+        curl -fL --speed-limit 1024 --speed-time 60 -o "$_tmp" "$_snapshot_url" || {
+            rm -f "$_tmp" 2>/dev/null || true
+            return 1
+        }
+    fi
+    rm -rf "$INSTALL_DIR" 2>/dev/null || true
+    mkdir -p "$INSTALL_DIR"
+    if ! tar -xzf "$_tmp" -C "$INSTALL_DIR" --strip-components=1; then
+        rm -f "$_tmp" 2>/dev/null || true
+        return 1
+    fi
+    rm -f "$_tmp" 2>/dev/null || true
+    note 'installed from the release archive (git metadata is repaired on a future update)'
+    return 0
+}
+
+fetch_payload() {
+    if clone_with_retry || tarball_fallback; then
+        return 0
+    fi
+    err 'the download kept failing (connection dropped mid-transfer).'
+    note 'Check your internet connection (Wi-Fi, VPN, proxy), then re-run the'
+    note 'installer - it is safe to re-run and picks up where it makes sense.'
+    return 1
 }
 
 # Self-heal a broken install dir (leftover non-git folder from an earlier or
@@ -908,7 +983,7 @@ salvage_reclone() {
         exit 1
     fi
     note "moved the old directory to $stale_backup (nothing was deleted)"
-    clone_with_retry || exit 1
+    fetch_payload || exit 1
     local item
     for item in data jarvis.toml .env; do
         if [ -e "$stale_backup/$item" ] && [ ! -e "$INSTALL_DIR/$item" ]; then
@@ -934,7 +1009,7 @@ elif [ -e "$INSTALL_DIR" ]; then
     note "$INSTALL_DIR exists but is not a git repo (leftover from an earlier install) - reinstalling in place."
     salvage_reclone
 else
-    clone_with_retry || exit 1
+    fetch_payload || exit 1
     ok 'downloaded'
 fi
 
@@ -950,6 +1025,12 @@ if [ -n "${JARVIS_PAYLOAD_COMMIT:-}" ]; then
         err "JARVIS_PAYLOAD_COMMIT is not a well-formed git SHA: '$JARVIS_PAYLOAD_COMMIT' — refusing."
         exit 1
     fi
+    if [ ! -d "$INSTALL_DIR/.git" ]; then
+        # Tarball-fallback install: the tree was fetched from the commit-
+        # addressed archive URL, so the pin is embedded in the download
+        # itself; there are no git objects to re-verify against.
+        ok "pinned via commit-addressed archive (${JARVIS_PAYLOAD_COMMIT%"${JARVIS_PAYLOAD_COMMIT#????????????}"}…)"
+    else
     # Shallow clones don't carry the full history; deepen to retrieve the
     # target SHA explicitly. `fetch <sha>` succeeds on most modern
     # github.com hosts (allowReachableSHA1InWant + uploadpack.allowAnySHA1InWant
@@ -968,7 +1049,8 @@ if [ -n "${JARVIS_PAYLOAD_COMMIT:-}" ]; then
         err "HEAD drift detected: pinned=${JARVIS_PAYLOAD_COMMIT}, actual=${ACTUAL_HEAD} — refusing."
         exit 1
     fi
-    ok "pinned to signed commit ${JARVIS_PAYLOAD_COMMIT:0:12}…"
+        ok "pinned to signed commit ${JARVIS_PAYLOAD_COMMIT:0:12}…"
+    fi
 fi
 
 # -------------------------------------------------------------- venv + bootstrap deps
