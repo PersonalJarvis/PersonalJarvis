@@ -2769,10 +2769,11 @@ class DesktopApp:
                 # "Jarvis" false-fire path without pendulumming the OWW
                 # threshold (BUG-009).
                 require_hey_prefix=self.cfg.trigger.require_hey_prefix,
-                # User mandate 2026-05-18: single turn per wake. ``single_turn_mode``
-                # in jarvis.toml is the canonical source; ``continue_listening``
-                # is its negated counterpart here — if the user ever wants
-                # conversation mode again, they flip the TOML entry.
+                # ``single_turn_mode`` in jarvis.toml is the canonical source;
+                # ``continue_listening`` is its negated counterpart here.
+                # Shipped default since 2026-07-18 is conversation mode
+                # (single_turn_mode = false); flipping the TOML entry opts
+                # back into one turn per wake (the retired 2026-05-18 mandate).
                 continue_listening_after_response=(
                     not self.cfg.trigger.single_turn_mode
                 ),

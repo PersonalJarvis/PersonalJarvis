@@ -146,6 +146,7 @@ complete questions. So the obvious "just add more patterns" fix is exactly what 
 | 05-24 | `5a9afb22a` | `single_turn_mode` → `false` (conversation mode back on). |
 | 05-25 | `87b27e0b5` | **(today)** Added `cancel_hysteresis_ms=160` — fixes "never endpoints in noise" but is antagonistic to pause-tolerance (Suspect #3). |
 | 05-25 | `939eeb932` | **(today)** Probe refactor: `_probe_stt` can be cloud Groq; `_probe_generation` cross-turn-leak guard; dropped polite-thanks hangup regex. |
+| 07-18 | `c564b9d7` | Code default `single_turn_mode` flipped `True` → `False` in `config.py` (conversation mode ships by default). The truth-table row below (`True config.py:95`) is the 05-25 snapshot, now historical. |
 
 ### Corrected agent finding (verified false)
 A Jarvis-Agent flagged commit `17296d5e3` ("accumulate long dictation across VAD max-utterance

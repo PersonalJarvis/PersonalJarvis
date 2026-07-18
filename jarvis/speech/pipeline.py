@@ -10007,7 +10007,7 @@ async def _main() -> None:
     )
     from jarvis.plugins.tts import build_tts_from_config
     tts = build_tts_from_config(config.tts)
-    # Env-Override bleibt fuer Quick-Tests an der CLI bestehen.
+    # The env override stays available for quick CLI tests.
     env_voice = os.environ.get("JARVIS_TTS_VOICE")
     if env_voice and hasattr(tts, "_default_voice"):
         tts._default_voice = env_voice
@@ -10029,6 +10029,10 @@ async def _main() -> None:
         tts=tts,
         brain_callback=brain,
         enable_whisper_wake=True,
+        # Mirror the production wiring (desktop_app / watchdog): the config
+        # field is canonical; without this line the constructor default
+        # (False) silently overrides the shipped conversation-mode default.
+        continue_listening_after_response=not config.trigger.single_turn_mode,
         idle_timeout_s=config.trigger.session_idle_timeout_s,
         input_device=config.audio.input_device or None,
         output_device=config.audio.output_device or None,
@@ -10037,12 +10041,12 @@ async def _main() -> None:
     print("=" * 64)
     print("  Personal Jarvis — Speech-Pipeline")
     print("=" * 64)
-    print("  ANRUFEN :  sag dein Wake-Word           |  Ctrl+RightAlt+J  |  F3+F4")
-    print("  AUFLEGEN:  sag 'auflegen'               |  F1+F2")
-    print("  BEENDEN :  Ctrl+C im Terminal")
+    print("  CALL    :  say your wake word           |  Ctrl+RightAlt+J  |  F3+F4")
+    print("  HANG UP :  say 'auflegen'               |  F1+F2")  # i18n-allow: quoted German hangup trigger phrase
+    print("  QUIT    :  Ctrl+C in the terminal")
     print()
-    print("  Wenn Jarvis dich hört: Ding-Ton + 'Ja?' zurück.")
-    print("  Live-Score-Log zeigt dir ob Wake-Word triggert.")
+    print("  When Jarvis hears you: chime + a short spoken ack back.")
+    print("  The live score log shows whether the wake word triggers.")
     print("=" * 64)
     print()
     await pipeline.run()

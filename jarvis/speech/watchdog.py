@@ -139,8 +139,9 @@ async def _main() -> None:
         tts=tts,
         brain_callback=brain,
         enable_whisper_wake=True,
-        # User-Mandat 2026-05-18: every turn requires a fresh wake. The Toml
-        # field ``[trigger].single_turn_mode`` is the canonical source.
+        # ``[trigger].single_turn_mode`` is the canonical source. Shipped
+        # default since 2026-07-18 is conversation mode (false); true opts
+        # back into a fresh wake per turn (the retired 2026-05-18 mandate).
         continue_listening_after_response=not config.trigger.single_turn_mode,
         # ``session_idle_timeout_s`` <= 0 keeps a conversation session active
         # until a manual hangup; the 30 s default stays the safe baseline.

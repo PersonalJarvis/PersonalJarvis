@@ -192,11 +192,11 @@ async def test_turn_state_mapping_preserves_ui_supervisor_states() -> None:
 
 @pytest.mark.asyncio
 async def test_wellbeing_prompt_gets_voice_fallback_when_brain_returns_filler() -> None:
-    # Production-Default since 2026-05-18 (single-turn-per-wake): the
+    # Opt-in single-turn path (shipped default until 2026-07-18): the
     # wellbeing-fallback phrase still fires AND the session ends with
     # hangup_reason=turn_complete so the next turn requires a fresh
-    # "Hey Jarvis" wake. ``_make_pipeline`` defaults to
-    # ``continue_listening_after_response=False`` to match production.
+    # "Hey Jarvis" wake. Single-turn is passed explicitly because the
+    # shipped default has been conversation mode since 2026-07-18.
     pipe = _make_pipeline(
         FakeSTT(text="Wie geht es dir Jarvis"),
         brain_response="Ich bin einsatzbereit.",
