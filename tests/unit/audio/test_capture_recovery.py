@@ -107,6 +107,57 @@ async def test_automatic_capture_recovers_on_another_physical_microphone(
 
 
 @pytest.mark.asyncio
+async def test_reopen_after_working_wake_capture_uses_physical_fallback(
+    monkeypatch,
+) -> None:
+    """A cached long-lived wake mic must not become a permanent dead end."""
+    _install_device_enumeration(monkeypatch, "Core Audio")
+    preferred_is_poisoned = False
+    open_calls: list[tuple[int, int]] = []
+
+    class FakeStream:
+        def __init__(self, device: int, rate: int) -> None:
+            self.device = device
+            self.rate = rate
+
+        def start(self) -> None:
+            if self.device == 0 and preferred_is_poisoned:
+                raise RuntimeError("Internal PortAudio error [PaErrorCode -9986]")
+
+        def stop(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    def fake_input_stream(**kwargs):
+        call = (kwargs["device"], kwargs["samplerate"])
+        open_calls.append(call)
+        return FakeStream(*call)
+
+    monkeypatch.setattr(capture.sd, "InputStream", fake_input_stream)
+
+    first = capture.MicrophoneCapture(device="auto-headset", access_gate=lambda: True)
+    async with first:
+        assert first._device == 0
+    assert capture._cached_resolve("auto-headset", ()) == 0
+
+    preferred_is_poisoned = True
+    reopened = capture.MicrophoneCapture(device="auto-headset", access_gate=lambda: True)
+    async with reopened:
+        assert reopened._device == 2
+        assert reopened._using_physical_fallback is True
+
+    assert open_calls == [
+        (0, 16_000),
+        (0, 16_000),
+        (0, 48_000),
+        (0, 44_100),
+        (2, 16_000),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_explicit_numeric_microphone_does_not_switch_hardware(
     monkeypatch,
 ) -> None:
