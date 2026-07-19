@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import pytest
@@ -155,6 +156,65 @@ async def test_reopen_after_working_wake_capture_uses_physical_fallback(
         (0, 44_100),
         (2, 16_000),
     ]
+
+
+@pytest.mark.asyncio
+async def test_stall_watchdog_aborts_dead_stream_before_physical_fallback(
+    monkeypatch,
+) -> None:
+    """CoreAudio recovery must never wait for a stalled stream to drain."""
+    _install_device_enumeration(monkeypatch, "Core Audio")
+    preferred_is_poisoned = False
+    original_stream = None
+    recovered = asyncio.Event()
+    teardown_calls: list[tuple[str, int]] = []
+
+    class FakeStream:
+        def __init__(self, device: int) -> None:
+            self.device = device
+
+        def start(self) -> None:
+            if self.device == 0 and preferred_is_poisoned:
+                raise RuntimeError("Internal PortAudio error [PaErrorCode -9986]")
+            if self.device == 2:
+                recovered.set()
+
+        def abort(self) -> None:
+            teardown_calls.append(("abort", self.device))
+
+        def stop(self) -> None:
+            raise AssertionError("a stalled native input stream must not drain")
+
+        def close(self) -> None:
+            teardown_calls.append(("close", self.device))
+
+    def fake_input_stream(**kwargs):
+        nonlocal original_stream
+        stream = FakeStream(kwargs["device"])
+        if original_stream is None:
+            original_stream = stream
+        return stream
+
+    monkeypatch.setattr(capture.sd, "InputStream", fake_input_stream)
+
+    mic = capture.MicrophoneCapture(device="auto-headset", access_gate=lambda: True)
+    await mic._try_open_stream()
+    assert mic._stream is original_stream
+
+    preferred_is_poisoned = True
+    mic._STALL_THRESHOLD_S = 0.0
+    mic._WATCHDOG_TICK_S = 0.001
+    watchdog = asyncio.create_task(mic._stream_watchdog())
+    try:
+        await asyncio.wait_for(recovered.wait(), timeout=1.0)
+        await asyncio.sleep(0)
+    finally:
+        mic._closed = True
+        await asyncio.wait_for(watchdog, timeout=1.0)
+
+    assert teardown_calls[:2] == [("abort", 0), ("close", 0)]
+    assert mic._device == 2
+    assert mic._using_physical_fallback is True
 
 
 @pytest.mark.asyncio

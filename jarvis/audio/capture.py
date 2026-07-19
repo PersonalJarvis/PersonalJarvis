@@ -923,10 +923,26 @@ class MicrophoneCapture:
             old_stream = self._stream
             self._stream = None
             if old_stream is not None:
+                # A stalled callback stream cannot drain gracefully.  In
+                # particular, CoreAudio may leave ``InputStream.stop()``
+                # blocked inside PortAudio for minutes after an endpoint or
+                # power-state transition.  Abort discards the dead native
+                # stream immediately, matching AudioPlayer's established
+                # device-wedge recovery contract.  Every sounddevice stream
+                # exposes ``abort``; the ``stop`` fallback keeps lightweight
+                # test/third-party stream doubles compatible.
+                discard_method = "abort"
                 try:
-                    old_stream.stop()
+                    abort = getattr(old_stream, "abort", None)
+                    if callable(abort):
+                        abort()
+                    else:
+                        discard_method = "stop"
+                        old_stream.stop()
                 except Exception as exc:  # noqa: BLE001
-                    _log.debug("Mic-Restart: stop() ignored ({}).", exc)
+                    _log.debug(
+                        "Mic-Restart: {}() ignored ({}).", discard_method, exc
+                    )
                 try:
                     old_stream.close()
                 except Exception as exc:  # noqa: BLE001
