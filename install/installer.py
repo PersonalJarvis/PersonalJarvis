@@ -274,6 +274,31 @@ def write_managed_marker(*, with_desktop: bool) -> None:
         note(f"could not write update marker ({exc}); in-app updates stay disabled")
 
 
+def _make_tree_owner_writable(root: Path) -> None:
+    """Make a metadata tree removable without following directory symlinks."""
+
+    def _make_writable(path: Path, *, directory: bool) -> None:
+        mode = path.lstat().st_mode
+        if stat.S_ISLNK(mode):
+            return
+        required = stat.S_IRUSR | stat.S_IWUSR
+        if directory:
+            required |= stat.S_IXUSR
+        path.chmod(stat.S_IMODE(mode) | required)
+
+    # A read-only root cannot be traversed reliably on POSIX. In top-down
+    # order, each child directory is then made searchable before os.walk
+    # descends into it. Adding S_IWUSR also clears the Windows read-only flag.
+    _make_writable(root, directory=True)
+    for current, directories, files in os.walk(root, topdown=True, followlinks=False):
+        current_path = Path(current)
+        _make_writable(current_path, directory=True)
+        for name in directories:
+            _make_writable(current_path / name, directory=True)
+        for name in files:
+            _make_writable(current_path / name, directory=False)
+
+
 def repair_distribution_metadata(
     *, site_packages: Path | None = None, dry_run: bool = False
 ) -> bool:
@@ -313,11 +338,8 @@ def repair_distribution_metadata(
             if candidate.is_symlink():
                 candidate.unlink()
             else:
-                def _retry_readonly(func, path, _exc_info):
-                    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR | stat.S_IXUSR)
-                    func(path)
-
-                shutil.rmtree(candidate, onerror=_retry_readonly)
+                _make_tree_owner_writable(candidate)
+                shutil.rmtree(candidate)
         except OSError as exc:
             note(f"could not repair package metadata at {candidate.name} ({exc})")
             return False
