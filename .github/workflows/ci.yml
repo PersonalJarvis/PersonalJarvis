@@ -386,7 +386,9 @@ jobs:
   # never drift. Unlike privacy-gate above, this DOES check the real name — but
   # ONLY inside docs/, where (maintainer decision 2026-06-29) it must never
   # appear, so it cannot false-positive on code where the name lives
-  # legitimately. stdlib + git only, no pip install. BLOCKING, PR-only.
+  # legitimately. The privacy scan itself is stdlib-only; the public-reader
+  # contract also parses YAML frontmatter and therefore installs the PyYAML
+  # version pinned by the universal lock. BLOCKING, PR-only.
   docs-privacy:
     name: docs-privacy (no personal data in docs/)
     if: github.event_name == 'pull_request'
@@ -402,6 +404,9 @@ jobs:
         uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.11"
+
+      - name: Install public-docs parser dependency
+        run: python -m pip install --no-deps pyyaml==6.0.3
 
       - name: Docs privacy gate (BLOCKING - name / email / paths / ids in docs/)
         run: python scripts/ci/docs_privacy_scan.py
