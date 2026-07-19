@@ -27,11 +27,14 @@
 remote_name="$1"
 remote_url="$2"
 
-# Prefer the known-good interpreter (a bare 'python' may be a deps-less venv on
-# this machine); fall back to python3 (macOS/Linux boxes often ship ONLY
-# python3), then python. The gates are stdlib + git only, so any Python 3.x
-# works. No Python at all -> fail OPEN.
-PY="/c/Program Files/Python311/python.exe"
+# Prefer the repository venv because several gates import the project's dev
+# dependencies. Cover POSIX and Windows layouts, then retain the historical
+# known-good Windows interpreter before falling back to PATH. No Python at all
+# -> fail OPEN.
+PY=".venv/bin/python3"
+[ -x "$PY" ] || PY=".venv/bin/python"
+[ -x "$PY" ] || PY=".venv/Scripts/python.exe"
+[ -x "$PY" ] || PY="/c/Program Files/Python311/python.exe"
 [ -x "$PY" ] || PY="$(command -v python3 2>/dev/null || command -v python 2>/dev/null)"
 [ -n "$PY" ] || exit 0
 

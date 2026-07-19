@@ -10,6 +10,7 @@ on:
   pull_request:
     paths:
       - ".github/workflows/macos-desktop.yml"
+      - ".githooks/pre-push"
       - "install/**"
       - "jarvis/admin/**"
       - "jarvis/cu/**"
@@ -19,6 +20,9 @@ on:
       - "jarvis/ui/**"
       - "jarvis/vision/**"
       - "pyproject.toml"
+      - "scripts/ci/check_boot_budget.py"
+      - "scripts/measure_boot.py"
+      - "scripts/measure_desktop_boot.py"
       - "tests/**"
       - "uv.lock"
   workflow_dispatch:
@@ -143,6 +147,7 @@ jobs:
             tests/unit/setup/test_desktop_integration.py \
             tests/unit/autostart/test_macos.py \
             tests/unit/autostart/test_command.py \
+            tests/unit/ci/test_boot_harness_portability.py \
             tests/unit/cu/test_geometry.py \
             tests/unit/cu/test_actuate.py \
             tests/unit/cu/test_capture.py \

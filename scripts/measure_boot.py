@@ -36,8 +36,8 @@ Isolation contract (NEVER touches the running production instance)
 
 Usage
 -----
-    "C:\\Program Files\\Python311\\python.exe" scripts/measure_boot.py
-    "...python.exe" scripts/measure_boot.py --runs 5 --warmup 1
+    python scripts/measure_boot.py
+    python scripts/measure_boot.py --python /path/to/python --runs 5 --warmup 1
 
 Writes ``boot-latest.json`` every run and freezes ``boot-baseline.json`` on the
 first run (so later optimization passes compare against the original baseline).
@@ -65,7 +65,12 @@ ISO_DIR = BENCH_DIR / "sub-agents-outputs"
 BASELINE_PATH = REPO_ROOT / "boot-baseline.json"
 LATEST_PATH = REPO_ROOT / "boot-latest.json"
 
-DEFAULT_PYTHON = r"C:\Program Files\Python311\python.exe"
+_WINDOWS_REFERENCE_PYTHON = Path(r"C:\Program Files\Python311\python.exe")
+DEFAULT_PYTHON = (
+    str(_WINDOWS_REFERENCE_PYTHON)
+    if sys.platform == "win32" and _WINDOWS_REFERENCE_PYTHON.exists()
+    else sys.executable
+)
 DEFAULT_PAGES = 80
 
 # Canonical no-window flag (AP-1) with a safe fallback if jarvis is not importable

@@ -25,8 +25,8 @@ comparable. Writes ``desktop-boot-latest.json`` every run and freezes
 
 Usage
 -----
-    "C:\\Program Files\\Python311\\python.exe" scripts/measure_desktop_boot.py
-    "...python.exe" scripts/measure_desktop_boot.py --runs 5 --warmup 1
+    python scripts/measure_desktop_boot.py
+    python scripts/measure_desktop_boot.py --python /path/to/python --runs 5 --warmup 1
 """
 
 from __future__ import annotations
