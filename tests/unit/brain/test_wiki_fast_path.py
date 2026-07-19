@@ -372,6 +372,36 @@ async def test_non_wiki_turn_returns_none(manager_factory):
     assert not tool.calls
 
 
+async def test_reported_obsidian_follow_up_ingests_inline_facts(manager_factory):
+    """An immediate Obsidian context resolves "there" without saving the
+    preceding listing question as content."""
+    tool = FakeWikiIngestTool(ToolResult(success=True, output="stored"))
+    mgr, _executor, _bus = manager_factory(tools={"wiki-ingest": tool})
+    mgr._history.append(  # noqa: SLF001 - bounded production-history seam
+        BrainMessage(
+            role="user",
+            content="Was steht in meiner Obsidian-Wiki drin?",  # i18n-allow
+        )
+    )
+    mgr._history.append(  # noqa: SLF001 - mirror the preceding assistant reply
+        BrainMessage(role="assistant", content="Dein Vault hat zwÃ¶lf Seiten."),  # i18n-allow
+    )
+
+    reply = await mgr._run_wiki_ingest_fast_path(
+        "Kannst du bitte einen Eintrag da eintragen, dass ich ziemlich "  # i18n-allow
+        "genervt bin und dass ich in San Francisco "  # i18n-allow
+        "wohne?"  # i18n-allow: production transcript under test
+    )
+
+    assert reply is not None
+    await asyncio.sleep(0.05)
+    assert len(tool.calls) == 1
+    saved = tool.calls[0]["text"].lower()
+    assert "genervt" in saved
+    assert "san francisco" in saved
+    assert "was steht" not in saved
+
+
 async def test_live_polite_travel_fact_reaches_wiki_before_local_action(
     manager_factory,
     monkeypatch,

@@ -1332,11 +1332,12 @@ class FileSaved(Event):
 class WikiPageChanged(Event):
     """A markdown file inside the wiki vault changed on disk.
 
-    Emitted by :class:`jarvis.memory.wiki.watcher.WikiWatcher` after a
-    debounced filesystem event in one of the watched sub-folders
-    (``entities/``, ``concepts/``, ``projects/``, ``sessions/``). The
-    desktop wiki view's WebSocket endpoint forwards this event to the
-    frontend so React Query caches can be invalidated immediately.
+    Emitted directly by :class:`jarvis.memory.wiki.curator.WikiCurator`
+    after an app-owned atomic write, or by
+    :class:`jarvis.memory.wiki.watcher.WikiWatcher` after a debounced
+    external filesystem event. The desktop wiki view's WebSocket endpoint
+    forwards this event to the frontend so React Query caches can be
+    invalidated immediately.
 
     ``path`` is the vault-relative POSIX path (e.g. ``"entities/harald.md"``)
     so the frontend can use the string as-is regardless of the host

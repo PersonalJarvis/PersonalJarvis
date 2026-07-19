@@ -237,6 +237,35 @@ async def test_fire_and_forget_requests_share_one_task(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_fire_task_rechecks_request_after_drain_final_check(
+    tmp_path: Path,
+) -> None:
+    """A request in the drain's return tail must start one follow-up pass."""
+    drain_checked = asyncio.Event()
+    release_tail = asyncio.Event()
+    consolidator = FakeConsolidator()
+    scheduler = _scheduler(tmp_path, consolidator=consolidator)
+    original_drain = scheduler._drain_journal
+
+    async def _pause_after_final_check():
+        result = await original_drain()
+        drain_checked.set()
+        await release_tail.wait()
+        return result
+
+    scheduler._drain_journal = _pause_after_final_check
+    first = fire_journal_trigger(scheduler)
+    await drain_checked.wait()
+
+    second = fire_journal_trigger(scheduler)
+    assert second is first
+    release_tail.set()
+    await first
+
+    assert consolidator.runs == 2
+
+
+@pytest.mark.asyncio
 async def test_journal_trigger_without_consolidator_skips(tmp_path: Path) -> None:
     scheduler = _scheduler(tmp_path, consolidator=None)
 

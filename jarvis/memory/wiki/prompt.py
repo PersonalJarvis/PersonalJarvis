@@ -104,6 +104,12 @@ Rules:
   with no commentary.
 - Never break a `[[wikilink]]`. If a link would resolve nowhere, also
   emit the missing target as a `create` update in the same array.
+- A named durable place, person, organization, project, owned asset, or
+  vehicle must be visually browsable as its own page; a bullet on the user
+  profile alone is not sufficient. Create the missing topic page in the same
+  array and link both pages. In particular, a disclosed residence creates or
+  updates `entities/<place-slug>.md` and links it bidirectionally with the
+  runtime-supplied user entity page.
 - Every `new_body` must conform to `schema.md` (frontmatter keys, body
   sections, page-type rules).
 - Never touch `_archive/` or `attachments/`. Never write secrets.
@@ -471,8 +477,10 @@ Return ONLY a JSON array. Emit exactly one PRIMARY object per candidate. A
 primary "add", "update" or "invalidate" may be followed by SECONDARY objects
 with the same candidate_id: "invalidate" objects when a contradiction must
 retire existing pages, and/or "add" objects that create a missing companion
-topic page in the same batch (see graph visibility below). No other
-duplicate candidate_id is allowed:
+topic page in the same batch (see graph visibility below). One narrowly scoped
+secondary "update" is also allowed when BOTH the existing user profile and an
+existing residence place page need their missing bidirectional link repaired.
+No other duplicate candidate_id is allowed:
   {"candidate_id": <int>, "decision": "add" | "update" | "noop" | "invalidate",
    "target": "<dir>/<slug>.md", "new_body": "<full page markdown>",
    "superseded_by": "<slug>", "reason": "<short why>"}
@@ -518,6 +526,15 @@ existing page, ALSO emit a secondary "add" for that topic page in the same
 batch and cross-link it with the profile in both directions. Do not create
 topic pages for one-off mentions, smalltalk themes, or unsupported guesses
 — the evidence rules above still apply.
+
+A grounded residence is always graph-visible: use kind `place`, require the
+candidate subjects to contain both the exact user slug and the named place
+slug, create `entities/<place-slug>.md` when missing, and cross-link the place
+and user profile in both directions. A profile-only residence decision is an
+invalid response, not a successful consolidation. If both pages already exist
+but either direction is missing, emit the two complete-page `update` objects
+under the same candidate_id; this residence-link repair is the ONLY permitted
+secondary update.
 
 Page-type templates (frontmatter keys are mandatory):
 - entities/<slug>.md: type: entity, entity_kind (person|tool|repository|

@@ -1,51 +1,58 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { renderHook, act } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { act, renderHook } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { createElement, ReactNode } from "react";
 import { useWikiLive } from "@/hooks/useWikiLive";
 
-/** Minimal mock for WebSocket with onopen/onmessage/onclose/onerror plumbing. */
+/** Minimal event-listener WebSocket mock compatible with the shared client. */
 class MockWebSocket {
   static OPEN = 1;
   static CLOSED = 3;
-  readyState = MockWebSocket.OPEN;
   static instances: MockWebSocket[] = [];
 
-  onopen: ((ev: unknown) => void) | null = null;
-  onmessage: ((ev: { data: string }) => void) | null = null;
-  onclose: ((ev: unknown) => void) | null = null;
-  onerror: ((ev: unknown) => void) | null = null;
-
-  url: string;
-  close = vi.fn(() => {
-    this.readyState = MockWebSocket.CLOSED;
-    if (this.onclose) this.onclose({});
-  });
+  readyState = MockWebSocket.OPEN;
+  readonly url: string;
+  private listeners: Record<string, Array<(event: any) => void>> = {};
 
   constructor(url: string) {
     this.url = url;
     MockWebSocket.instances.push(this);
-    // Fire open on the next tick so the consumer's effect has run.
-    queueMicrotask(() => {
-      if (this.onopen) this.onopen({});
-    });
+    queueMicrotask(() => this.fire("open", {}));
+  }
+
+  addEventListener(type: string, listener: (event: any) => void) {
+    (this.listeners[type] ??= []).push(listener);
+  }
+
+  send = vi.fn();
+
+  close = vi.fn(() => {
+    if (this.readyState === MockWebSocket.CLOSED) return;
+    this.readyState = MockWebSocket.CLOSED;
+    this.fire("close", { code: 1000 });
+  });
+
+  fire(type: string, event: any) {
+    if (type === "close") this.readyState = MockWebSocket.CLOSED;
+    for (const listener of this.listeners[type] ?? []) listener(event);
   }
 
   deliver(payload: unknown) {
     const data = typeof payload === "string" ? payload : JSON.stringify(payload);
-    if (this.onmessage) this.onmessage({ data });
+    this.fire("message", { data });
   }
 }
 
 function wrapper({ children }: { children: ReactNode }) {
-  const qc = new QueryClient({
+  const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return createElement(QueryClientProvider, { client: qc }, children);
+  return createElement(QueryClientProvider, { client: queryClient }, children);
 }
 
 describe("useWikiLive", () => {
-  const OriginalWS = globalThis.WebSocket;
+  const originalWebSocket = globalThis.WebSocket;
+  const originalFetch = globalThis.fetch;
 
   beforeEach(() => {
     MockWebSocket.instances = [];
@@ -57,15 +64,19 @@ describe("useWikiLive", () => {
   });
 
   afterEach(() => {
-    (globalThis as any).WebSocket = OriginalWS;
+    vi.useRealTimers();
+    (globalThis as any).WebSocket = originalWebSocket;
+    (globalThis as any).fetch = originalFetch;
   });
 
-  it("opens a WebSocket on mount and sets connected=true after open", async () => {
+  it("opens the live socket and reports the connected state", async () => {
     const { result } = renderHook(() => useWikiLive(), { wrapper });
-    expect(MockWebSocket.instances.length).toBe(1);
-    expect(MockWebSocket.instances[0].url).toContain("/api/wiki/live");
 
-    // Wait a microtask so the queued open fires.
+    expect(MockWebSocket.instances).toHaveLength(1);
+    expect(MockWebSocket.instances[0].url).toBe(
+      "ws://localhost:5173/api/wiki/live",
+    );
+
     await act(async () => {
       await Promise.resolve();
     });
@@ -73,18 +84,19 @@ describe("useWikiLive", () => {
   });
 
   it("refreshes every wiki projection when the socket opens", async () => {
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const spy = vi.spyOn(qc, "invalidateQueries");
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     const customWrapper = ({ children }: { children: ReactNode }) =>
-      createElement(QueryClientProvider, { client: qc }, children);
+      createElement(QueryClientProvider, { client: queryClient }, children);
 
     renderHook(() => useWikiLive(), { wrapper: customWrapper });
     await act(async () => {
       await Promise.resolve();
     });
 
-    const keys = spy.mock.calls.map((call) => call[0]?.queryKey);
-    expect(keys).toEqual([
+    expect(invalidate.mock.calls.map((call) => call[0]?.queryKey)).toEqual([
       ["wiki", "tree"],
       ["wiki", "graph"],
       ["wiki", "health"],
@@ -95,31 +107,32 @@ describe("useWikiLive", () => {
   });
 
   it("refreshes every wiki projection on page_changed", async () => {
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const spy = vi.spyOn(qc, "invalidateQueries");
-
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     const customWrapper = ({ children }: { children: ReactNode }) =>
-      createElement(QueryClientProvider, { client: qc }, children);
+      createElement(QueryClientProvider, { client: queryClient }, children);
 
-    const { result } = renderHook(() => useWikiLive(), { wrapper: customWrapper });
+    const { result } = renderHook(() => useWikiLive(), {
+      wrapper: customWrapper,
+    });
     await act(async () => {
       await Promise.resolve();
     });
-    expect(result.current.connected).toBe(true);
-    spy.mockClear();
+    invalidate.mockClear();
 
     await act(async () => {
       MockWebSocket.instances[0].deliver({
         type: "page_changed",
-        slug: "harald",
-        path: "entities/harald.md",
+        slug: "nova",
+        path: "entities/nova.md",
         kind: "modified",
       });
       await Promise.resolve();
     });
 
-    const keys = spy.mock.calls.map((call) => call[0]?.queryKey);
-    expect(keys).toEqual([
+    expect(invalidate.mock.calls.map((call) => call[0]?.queryKey)).toEqual([
       ["wiki", "tree"],
       ["wiki", "graph"],
       ["wiki", "health"],
@@ -130,43 +143,76 @@ describe("useWikiLive", () => {
     expect(result.current.lastEventAt).not.toBeNull();
   });
 
-  it("closes the WebSocket on unmount and stops further work", async () => {
-    const { unmount } = renderHook(() => useWikiLive(), { wrapper });
-    await act(async () => {
-      await Promise.resolve();
+  it("retries a 4401 WebKit rejection with a one-time ticket", async () => {
+    vi.useFakeTimers();
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ ticket: "wiki-ticket", expires_in: 60 }),
     });
-    const ws = MockWebSocket.instances[0];
-    expect(ws.close).not.toHaveBeenCalled();
+    (globalThis as any).fetch = fetchMock;
+
+    const { result, unmount } = renderHook(() => useWikiLive(), { wrapper });
+    const firstSocket = MockWebSocket.instances[0];
+
+    await act(async () => {
+      firstSocket.fire("close", { code: 4401 });
+      await vi.advanceTimersByTimeAsync(500);
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/ui/ws-ticket",
+      expect.objectContaining({
+        method: "POST",
+        cache: "no-store",
+        credentials: "same-origin",
+      }),
+    );
+    expect(MockWebSocket.instances).toHaveLength(2);
+    expect(MockWebSocket.instances[1].url).toBe(
+      "ws://localhost:5173/api/wiki/live?ticket=wiki-ticket",
+    );
+    expect(result.current.connected).toBe(true);
 
     unmount();
-    expect(ws.close).toHaveBeenCalled();
-    // After unmount, no further reconnect happens even if we wait.
-    const before = MockWebSocket.instances.length;
-    await act(async () => {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    });
-    expect(MockWebSocket.instances.length).toBe(before);
   });
 
-  it("ignores malformed messages", async () => {
-    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-    const spy = vi.spyOn(qc, "invalidateQueries");
+  it("closes the socket on unmount without reconnecting", async () => {
+    vi.useFakeTimers();
+    const { unmount } = renderHook(() => useWikiLive(), { wrapper });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    const socket = MockWebSocket.instances[0];
 
+    unmount();
+    expect(socket.close).toHaveBeenCalledOnce();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(60_000);
+    });
+    expect(MockWebSocket.instances).toHaveLength(1);
+  });
+
+  it("ignores malformed and unrelated messages", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const invalidate = vi.spyOn(queryClient, "invalidateQueries");
     const customWrapper = ({ children }: { children: ReactNode }) =>
-      createElement(QueryClientProvider, { client: qc }, children);
+      createElement(QueryClientProvider, { client: queryClient }, children);
+
     renderHook(() => useWikiLive(), { wrapper: customWrapper });
     await act(async () => {
       await Promise.resolve();
     });
-    spy.mockClear();
+    invalidate.mockClear();
 
     await act(async () => {
       MockWebSocket.instances[0].deliver("not json at all");
       MockWebSocket.instances[0].deliver({ type: "something_else" });
       await Promise.resolve();
     });
-    // The spy must NOT have been called — malformed and unrelated
-    // messages are silently dropped.
-    expect(spy).not.toHaveBeenCalled();
+
+    expect(invalidate).not.toHaveBeenCalled();
   });
 });
