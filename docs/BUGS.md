@@ -6227,3 +6227,78 @@ authoritative "this voice actually spoke" signal must be attachable to the
 turn it describes even when playback outlives the turn — a label that can
 only land on an open turn silently disappears exactly when the fallback
 path (the interesting case) is slow.
+
+---
+
+## BUG-091: The uninstall one-liner is DEAD on every Mac — bash 3.2 cannot parse `install/uninstall.sh` at all (HIGH, FIXED 2026-07-19)
+
+**Symptom (field report 2026-07-19, macOS test machine).** The documented
+uninstall command from README.md
+
+```bash
+bash ~/.personal-jarvis/install/uninstall.sh
+```
+
+prints a syntax error and nothing else. No banner, no prompt, nothing
+removed, exit 2:
+
+```
+~/.personal-jarvis/install/uninstall.sh: line 57: syntax error near unexpected token `;;'
+```
+
+**Root cause — a PARSE failure, so not one line of the script runs.** macOS
+still ships GNU bash **3.2.57 (2007)** as `/bin/bash`; Linux and Git Bash
+ship bash 4/5. `stop_running_instances()` put a `case` arm inside a `$( )`
+command substitution (`install/uninstall.sh:57`):
+
+```bash
+pids=$(ps -axo pid=,comm= 2>/dev/null | while read -r pid comm; do
+    case "$comm" in "$root"/*) printf '%s ' "$pid" ;; esac
+done) || true
+```
+
+The bash 3.2 parser reads the `)` that closes the case **pattern** as the end
+of the command substitution, then chokes on the `;;`. Because it is a parse
+error, the failure is total and happens before the first statement executes —
+which is why it reads as "the uninstaller does nothing" rather than "the
+uninstaller failed halfway".
+
+Version boundary verified in isolated containers: `bash 3.2.57` → parse error,
+`bash 4.4.23` → OK, `bash 5.2.37` → OK. Linux and Windows were never affected.
+
+**Origin and blast radius.** Introduced by 470da3ea (2026-07-18, "stop the
+running app before deleting the install folder"). The three earlier versions
+of the script parse cleanly on 3.2. Shipped in **v1.1.0 and v1.1.1**, so every
+Mac that updated to those releases has a completely dead uninstaller; a Mac
+still holding an older `~/.personal-jarvis` is unaffected.
+
+**Fix.** The optional leading parenthesis on the case pattern — POSIX, and
+parses on bash 3.2/4/5, zsh, and dash alike:
+
+```bash
+case "$comm" in ("$root"/*) printf '%s ' "$pid" ;; esac
+```
+
+Both arms in the function carry it, so a future move in or out of a
+substitution stays safe.
+
+**Why CI could not catch it (the real defect).** No workflow parsed a single
+shell script against bash 3.2. `fresh-install-smoke.yml` never executes
+`install.sh` — it reconstructs the venv by hand — and no workflow invokes
+`uninstall.sh` at all. Green CI on Linux and Windows said nothing about the
+one shell version macOS actually uses.
+
+New gate: `scripts/ci/check_shell_bash32.py` parses **every** tracked `*.sh`
+with real bash 3.2 (`bash -n`, never an execution) and is wired into `ci.yml`
+as the BLOCKING `shell-portability` job. It picks its engine portably — a
+Mac's native `/bin/bash` when that is 3.2, otherwise the `bash:3.2` Docker
+image — and skips with an honest message where neither exists, unless
+`--require` (what CI passes) turns the skip into a failure. Verified in both
+directions: red on the pre-fix file with the exact field error text, green on
+the fix and on all 7 tracked scripts.
+
+**Lesson.** "Runs on Linux and Git Bash" proves nothing about macOS for a
+shell script: the Mac is a full bash MAJOR VERSION behind, and the failure
+mode is not a runtime bug but a dead file. Any shell artifact we ship to end
+users must be parse-checked against 3.2 — the same OS-parity discipline
+CLAUDE.md section 3 demands of Python and OS-specific backends.

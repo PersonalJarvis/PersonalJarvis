@@ -47,14 +47,23 @@ stop_running_instances() {
             [ "$pid" = "$$" ] && continue
             [ "$pid" = "${PPID:-0}" ] && continue
             target=$(readlink "$exe" 2>/dev/null) || continue
-            case "$target" in "$root"/*) pids="$pids $pid" ;; esac
+            case "$target" in ("$root"/*) pids="$pids $pid" ;; esac
         done
     else
         # macOS/BSD: ps reports the full executable path in comm.
+        #
+        # The leading "(" on the case pattern is REQUIRED, not style: bash 3.2
+        # — the version macOS still ships — cannot parse a bare `pattern)` case
+        # arm inside a $( ) command substitution. Its parser takes that ")" as
+        # the end of the substitution and the whole FILE fails to parse:
+        #   uninstall.sh: line 57: syntax error near unexpected token `;;'
+        # so not one line of the uninstaller runs. The optional leading "(" is
+        # POSIX and works on every shell we target. Both arms carry it so a
+        # future move in or out of a substitution stays safe.
         pids=$(ps -axo pid=,comm= 2>/dev/null | while read -r pid comm; do
             [ "$pid" = "$$" ] && continue
             [ "$pid" = "${PPID:-0}" ] && continue
-            case "$comm" in "$root"/*) printf '%s ' "$pid" ;; esac
+            case "$comm" in ("$root"/*) printf '%s ' "$pid" ;; esac
         done) || true
     fi
     pids=$(printf '%s' "$pids" | tr -s ' ')

@@ -293,6 +293,33 @@ jobs:
       - name: Target-resolved portable install matrix (BLOCKING)
         run: python scripts/ci/check_portable_install_matrix.py --jobs 4
 
+  # macOS still ships GNU bash 3.2 (2007) as /bin/bash, while every runner and
+  # dev box here has bash 4/5. A script can therefore be valid everywhere we
+  # look and still fail to PARSE on a Mac - meaning not one line of it runs.
+  # That shipped: install/uninstall.sh in v1.1.0/v1.1.1 died with
+  # `syntax error near unexpected token ';;'` on every Mac, because bash 3.2
+  # cannot read a `case` arm inside a $( ) substitution. Nothing in CI parsed a
+  # shell script against 3.2, so nothing caught it. This does, for pennies: a
+  # parse check in a bash:3.2 container, never an execution. Own job (stdlib +
+  # Docker only, no pip install), BLOCKING.
+  shell-portability:
+    name: shell portability (parses on macOS bash 3.2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
+        with:
+          python-version: "3.11"
+
+      - name: bash 3.2 parse gate (BLOCKING)
+        run: python scripts/ci/check_shell_bash32.py --require
+
   # Output Language Policy enforcement (CLAUDE.md, HIGHEST PRIORITY): block any
   # NEWLY ADDED German text from reaching GitHub. Diff-based, so the in-flight
   # DE->EN translation backlog (pre-existing German) does NOT turn this red - only
