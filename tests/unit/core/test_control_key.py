@@ -6,14 +6,31 @@ restarts even when the OS keyring is unavailable (headless Linux VPS), be
 idempotent on boot, and be rotatable. These tests inject a fake keyring so the
 real Credential Manager is never touched.
 """
+
 from __future__ import annotations
 
 import sys
+import threading
+from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 
 import pytest
 
 from jarvis.core import config as cfg
 from jarvis.core import control_key as ck
+
+_REAL_MACOS_APP_IDENTITY_TOKEN = ck._macos_app_identity_token
+
+
+@pytest.fixture(autouse=True)
+def reset_process_cache(monkeypatch):
+    """No test may inherit another test's in-process credential cache."""
+    ck._clear_control_key_cache()
+    # Unit tests must never inspect or mutate the developer machine's real app
+    # identity, even when this suite itself runs on macOS.
+    monkeypatch.setattr(ck, "_macos_app_identity_token", lambda: None)
+    yield
+    ck._clear_control_key_cache()
 
 
 @pytest.fixture
@@ -63,6 +80,71 @@ def test_get_returns_none_when_nothing_stored(isolated) -> None:
     assert ck.get_control_key() is None
 
 
+def test_successful_keyring_read_is_cached_for_the_process(isolated, monkeypatch) -> None:
+    calls = 0
+    isolated[ck.KEYRING_SLOT] = "jctl_cached-key"
+
+    def fake_get(key: str, env_fallback: str | None = None) -> str | None:
+        nonlocal calls
+        calls += 1
+        return isolated.get(key)
+
+    monkeypatch.setattr(cfg, "get_secret", fake_get)
+    assert ck.get_control_key() == "jctl_cached-key"
+    assert ck.get_control_key() == "jctl_cached-key"
+    assert calls == 1
+
+
+def test_concurrent_auth_checks_share_one_keyring_read(isolated, monkeypatch) -> None:
+    calls = 0
+    entered = threading.Event()
+    release = threading.Event()
+    isolated[ck.KEYRING_SLOT] = "jctl_one-dialog"
+
+    def slow_get(key: str, env_fallback: str | None = None) -> str | None:
+        nonlocal calls
+        calls += 1
+        entered.set()
+        assert release.wait(timeout=2)
+        return isolated.get(key)
+
+    monkeypatch.setattr(cfg, "get_secret", slow_get)
+    with ThreadPoolExecutor(max_workers=12) as pool:
+        futures = [pool.submit(ck.get_control_key) for _ in range(24)]
+        assert entered.wait(timeout=2)
+        release.set()
+        assert [future.result(timeout=2) for future in futures] == ["jctl_one-dialog"] * 24
+    assert calls == 1
+
+
+def test_cache_is_invalidated_by_secret_revision(isolated, monkeypatch) -> None:
+    revision = 0
+    isolated[ck.KEYRING_SLOT] = "jctl_first-value"
+    monkeypatch.setattr(cfg, "secret_revision", lambda _key: revision)
+
+    assert ck.get_control_key() == "jctl_first-value"
+    isolated[ck.KEYRING_SLOT] = "jctl_second-value"
+    assert ck.get_control_key() == "jctl_first-value"
+    revision += 1
+    assert ck.get_control_key() == "jctl_second-value"
+
+
+def test_forked_child_drops_the_parent_cache(isolated, monkeypatch) -> None:
+    calls = 0
+    isolated[ck.KEYRING_SLOT] = "jctl_parent-value"
+
+    def fake_get(key: str, env_fallback: str | None = None) -> str | None:
+        nonlocal calls
+        calls += 1
+        return isolated.get(key)
+
+    monkeypatch.setattr(cfg, "get_secret", fake_get)
+    assert ck.get_control_key() == "jctl_parent-value"
+    ck._after_fork_in_child()
+    assert ck.get_control_key() == "jctl_parent-value"
+    assert calls == 2
+
+
 def test_ensure_is_idempotent(isolated) -> None:
     first = ck.ensure_control_key()
     second = ck.ensure_control_key()
@@ -84,6 +166,7 @@ def test_headless_fallback_writes_file(monkeypatch, tmp_path) -> None:
     assert key_file.is_file()
     assert key_file.read_text(encoding="utf-8").strip() == key
     # And it is read back from the file on the next access.
+    ck._clear_control_key_cache()
     assert ck.get_control_key() == key
     if sys.platform != "win32":
         mode = key_file.stat().st_mode & 0o777
@@ -112,6 +195,177 @@ def test_env_seed_used_when_no_keyring_no_file(isolated, monkeypatch) -> None:
     # ensure must NOT overwrite an operator-provided env seed
     assert ck.ensure_control_key() == "jctl_envseed0000"
     assert ck.KEYRING_SLOT not in isolated
+
+
+# --- one-time macOS Keychain ownership migration ---
+
+
+def test_macos_identity_uses_verified_canonical_designated_requirement(
+    monkeypatch, tmp_path
+) -> None:
+    bundle_path = tmp_path / "Applications" / "Personal Jarvis.app"
+    executable = bundle_path / "Contents" / "MacOS" / "PersonalJarvis"
+    executable.parent.mkdir(parents=True)
+    executable.write_bytes(b"Mach-O test fixture")
+    bundle = SimpleNamespace(
+        bundleIdentifier=lambda: "com.personal-jarvis.desktop",
+        bundlePath=lambda: str(bundle_path),
+        executablePath=lambda: str(executable),
+    )
+    foundation = SimpleNamespace(NSBundle=SimpleNamespace(mainBundle=lambda: bundle))
+    commands: list[list[str]] = []
+
+    def fake_run(command: list[str], **kwargs):
+        commands.append(command)
+        if "--verify" in command:
+            return SimpleNamespace(returncode=0)
+        return SimpleNamespace(
+            returncode=0,
+            stderr='# designated => identifier "com.personal-jarvis.desktop"\n',
+            stdout="",
+        )
+
+    monkeypatch.setattr(ck.sys, "platform", "darwin")
+    monkeypatch.setattr(ck.Path, "home", classmethod(lambda _cls: tmp_path))
+    monkeypatch.setitem(sys.modules, "Foundation", foundation)
+    monkeypatch.setattr(ck.subprocess, "run", fake_run)
+
+    identity = _REAL_MACOS_APP_IDENTITY_TOKEN()
+    assert identity is not None
+    assert identity.startswith("designated-requirement-v1:")
+    assert commands[0][:2] == ["/usr/bin/codesign", "--verify"]
+    assert commands[1][:4] == [
+        "/usr/bin/codesign",
+        "--display",
+        "--requirements",
+        "-",
+    ]
+
+
+def test_macos_identity_rejects_direct_python_before_codesign(monkeypatch, tmp_path) -> None:
+    bundle = SimpleNamespace(
+        bundleIdentifier=lambda: "org.python.python",
+        bundlePath=lambda: str(tmp_path),
+        executablePath=lambda: str(tmp_path / "python3.12"),
+    )
+    foundation = SimpleNamespace(NSBundle=SimpleNamespace(mainBundle=lambda: bundle))
+    monkeypatch.setattr(ck.sys, "platform", "darwin")
+    monkeypatch.setitem(sys.modules, "Foundation", foundation)
+    monkeypatch.setattr(
+        ck.subprocess,
+        "run",
+        lambda *args, **kwargs: pytest.fail("codesign must not run for direct Python"),
+    )
+
+    assert _REAL_MACOS_APP_IDENTITY_TOKEN() is None
+
+
+def test_legacy_macos_item_is_adopted_once(isolated, monkeypatch) -> None:
+    identity = "designated-requirement-v1:stable-app"
+    writes: list[tuple[str, str]] = []
+    isolated[ck.KEYRING_SLOT] = "jctl_legacy-value"
+    original_set = cfg.set_secret
+
+    def recording_set(key: str, value: str) -> bool:
+        writes.append((key, value))
+        return original_set(key, value)
+
+    monkeypatch.setattr(ck.sys, "platform", "darwin")
+    monkeypatch.setattr(ck, "_macos_app_identity_token", lambda: identity)
+    monkeypatch.setattr(ck, "_platform_credential_store_active", lambda: True)
+    monkeypatch.setattr(ck, "_macos_keychain_item_exists", lambda: True)
+    monkeypatch.setattr(cfg, "set_secret", recording_set)
+
+    assert ck.get_control_key() == "jctl_legacy-value"
+    assert writes == [(ck.KEYRING_SLOT, "jctl_legacy-value")]
+    assert ck._macos_owner_file().read_text(encoding="utf-8") == identity
+
+    # A new process under the same designated requirement reads the item but
+    # does not delete/re-create it again.
+    ck._clear_control_key_cache()
+    assert ck.get_control_key() == "jctl_legacy-value"
+    assert writes == [(ck.KEYRING_SLOT, "jctl_legacy-value")]
+
+
+def test_new_macos_app_requirement_readopts_legacy_item(isolated, monkeypatch) -> None:
+    identity = ["designated-requirement-v1:first-build"]
+    writes: list[str] = []
+    isolated[ck.KEYRING_SLOT] = "jctl_legacy-value"
+    original_set = cfg.set_secret
+
+    def recording_set(key: str, value: str) -> bool:
+        writes.append(identity[0])
+        return original_set(key, value)
+
+    monkeypatch.setattr(ck.sys, "platform", "darwin")
+    monkeypatch.setattr(ck, "_macos_app_identity_token", lambda: identity[0])
+    monkeypatch.setattr(ck, "_platform_credential_store_active", lambda: True)
+    monkeypatch.setattr(ck, "_macos_keychain_item_exists", lambda: True)
+    monkeypatch.setattr(cfg, "set_secret", recording_set)
+
+    assert ck.get_control_key() == "jctl_legacy-value"
+    identity[0] = "designated-requirement-v1:rebuilt-app"
+    ck._clear_control_key_cache()
+    assert ck.get_control_key() == "jctl_legacy-value"
+    assert writes == [
+        "designated-requirement-v1:first-build",
+        "designated-requirement-v1:rebuilt-app",
+    ]
+
+
+def test_direct_python_read_never_changes_keychain_acl(isolated, monkeypatch) -> None:
+    writes = 0
+    isolated[ck.KEYRING_SLOT] = "jctl_legacy-value"
+
+    def unexpected_set(key: str, value: str) -> bool:
+        nonlocal writes
+        writes += 1
+        return True
+
+    monkeypatch.setattr(ck, "_macos_app_identity_token", lambda: None)
+    monkeypatch.setattr(cfg, "set_secret", unexpected_set)
+    assert ck.get_control_key() == "jctl_legacy-value"
+    assert writes == 0
+
+
+def test_file_seed_is_not_promoted_into_macos_keychain(isolated, monkeypatch) -> None:
+    writes = 0
+    ck.control_key_file().write_text("jctl_file-value", encoding="utf-8")
+    monkeypatch.setattr(ck.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        ck,
+        "_macos_app_identity_token",
+        lambda: "designated-requirement-v1:stable-app",
+    )
+    monkeypatch.setattr(ck, "_platform_credential_store_active", lambda: True)
+    monkeypatch.setattr(ck, "_macos_keychain_item_exists", lambda: False)
+
+    def unexpected_set(key: str, value: str) -> bool:
+        nonlocal writes
+        writes += 1
+        return True
+
+    monkeypatch.setattr(cfg, "set_secret", unexpected_set)
+    assert ck.get_control_key() == "jctl_file-value"
+    assert writes == 0
+
+
+def test_macos_owner_stamp_requires_a_successful_platform_write(
+    isolated, monkeypatch
+) -> None:
+    identity = "designated-requirement-v1:stable-app"
+    monkeypatch.setattr(ck.sys, "platform", "darwin")
+    monkeypatch.setattr(ck, "_macos_app_identity_token", lambda: identity)
+    monkeypatch.setattr(ck, "_platform_credential_store_active", lambda: True)
+
+    ck.set_control_key("correct-horse-battery")
+    assert ck._macos_owner_file().read_text(encoding="utf-8") == identity
+
+    # A failed Keychain write can still succeed via the dedicated 0600 file,
+    # but it must not retain a false claim that the app owns a Keychain item.
+    monkeypatch.setattr(cfg, "set_secret", lambda *args, **kwargs: False)
+    ck.set_control_key("another-correct-key")
+    assert not ck._macos_owner_file().exists()
 
 
 # --- user-chosen key (set_control_key) ---

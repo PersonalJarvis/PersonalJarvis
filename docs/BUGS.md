@@ -6302,3 +6302,103 @@ shell script: the Mac is a full bash MAJOR VERSION behind, and the failure
 mode is not a runtime bug but a dead file. Any shell artifact we ship to end
 users must be parse-checked against 3.2 — the same OS-parity discipline
 CLAUDE.md section 3 demands of Python and OS-specific backends.
+
+---
+
+## BUG-092: macOS asks for the login-keychain password on every Control API request (HIGH, FIXED 2026-07-19)
+
+**Symptom (live macOS field report).** Launching Jarvis produced ten to thirty
+indistinguishable login-keychain dialogs. Each said that `python3.12` wanted to
+access the `personal-jarvis` item; **Always Allow** was disabled because macOS
+could not verify that executable. Approving one dialog did not stop the next.
+The ordinary onboarding permission rows were already complete, so this looked
+like one global permission that macOS had forgotten repeatedly.
+
+**Forensic evidence.** No credential values were read or printed during the
+investigation.
+
+1. The login Keychain contained three generic-password items for service
+   `personal-jarvis`. The two provider items were created during the current
+   native-app onboarding. The older `jarvis_control_api_key` item predated that
+   app and was the only legacy item.
+2. The Python 3.12 executable used by the earlier direct launch was completely
+   unsigned (`codesign`: no signature; Gatekeeper: no usable signature), which
+   exactly explains both the `python3.12` label and the unavailable persistent
+   approval button.
+3. The installed app now has the canonical bundle id
+   `com.personal-jarvis.desktop` and a valid local ad-hoc signature. Its native
+   Mach-O stub embeds Python without replacing the main process, and ordinary
+   managed updates preserve that bundle byte-for-byte.
+4. `verify_control_key()` called `get_control_key()` for every presented Bearer
+   credential. That method decrypted `jarvis_control_api_key` through Python
+   `keyring` every time. Startup also called `ensure_control_key()` from several
+   paths. There was no cache and no single-flight lock, so concurrent browser,
+   CLI, and status requests could each open their own native dialog.
+5. The earlier macOS uninstaller prompt-storm fix had already proved the
+   decisive distinction: attribute queries and item deletion do not request
+   secret data, while a value read produces one authorization dialog per item
+   and caller. The runtime path was still doing exactly the dangerous operation
+   repeatedly.
+
+**Root cause.** macOS Keychain access is not a TCC-style global toggle. A
+generic-password item has its own ACL and normally trusts the code-signing
+designated requirement of the process that created it. The legacy Control key
+therefore trusted an unverifiable Python interpreter rather than the stable
+Jarvis app. Clicking **Allow** authorized one read; it neither changed the
+item's creator ACL nor fixed the next read. Jarvis multiplied that one ownership
+problem into a dialog storm by reading the same secret on every authentication
+check. The permissions screen could report the Keychain backend as available,
+but backend availability cannot prove an individual item's ACL.
+
+**Fix (two layers, no ACL weakening).**
+
+- `get_control_key()` now protects the first successful lookup with a process
+  `RLock` and caches it with `config.secret_revision()` invalidation. Twenty-four
+  concurrent callers in the regression test perform exactly one credential
+  read. Rotation and custom-key replacement update the cache immediately.
+  Missing values are not cached, so a user-initiated Keychain recovery remains
+  visible without a restart.
+- Forked children discard both the cached value and inherited lock. The Control
+  key is still never exported into the environment, and a worker cannot use the
+  parent's Python cache through the supported API.
+- After the first successful legacy read, Jarvis verifies that the current
+  process really is the canonical app at
+  `~/Applications/Personal Jarvis.app`, verifies its code signature, and
+  fingerprints the exact `codesign` designated requirement. It also confirms
+  the old item exists using `security find-generic-password` **without** `-w`
+  (attributes only, never secret data). Only then does it re-save the same value,
+  making the stable app the new item creator.
+- A private non-secret owner stamp records that designated requirement. A
+  Developer-ID build therefore remains stable across signed releases; the local
+  ad-hoc build uses its CDHash requirement and re-adopts once after an actual
+  bundle rebuild. A direct/unsigned Python launch has no accepted app identity,
+  never migrates the item, and clears a stale stamp if it explicitly replaces
+  the key.
+- The repair does not use `set-generic-password-partition-list`, does not grant
+  all applications access, and does not modify or sign the user's Python
+  installation. Fresh credentials saved through the native app already receive
+  the correct creator ACL and need no repair.
+
+**Distribution boundary.** The managed local bundle is deliberately ad-hoc
+signed. Preserving it byte-for-byte makes ordinary source updates stable, but a
+rebuild changes its CDHash. The permanent public-distribution solution remains
+Developer-ID signing and notarization, whose designated requirement stays
+stable across app versions. The repository cannot manufacture or embed the
+maintainer's private Apple signing identity; this runtime migration is the safe
+local-install bridge, not a claim that ad-hoc signing equals distribution
+signing.
+
+**Guards.** `tests/unit/core/test_control_key.py` covers one read per process,
+24-way concurrent single-flight, revision invalidation, fork-cache reset,
+same-requirement one-time adoption, re-adoption after a requirement change,
+direct-Python refusal, and non-promotion of a file seed. The adjacent Control
+API, surface-security, CLI-tool, and auth suites cover request semantics and key
+rotation end to end.
+
+**Class rule.** Never decrypt an OS credential in a per-request authentication
+dependency. Load it once through a serialized path, invalidate it on deliberate
+replacement, and clear it across process-boundary inheritance. On macOS, never
+model Keychain as one global permission: ownership is per item and anchored to
+the caller's designated requirement. Repair legacy ownership only after one
+user-approved read and only from the verified canonical app; never solve a
+prompt by broadening an ACL to unsigned tools or all applications.

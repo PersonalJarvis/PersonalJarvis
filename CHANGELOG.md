@@ -11,6 +11,15 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ### Fixed
 
+- **macOS: the repeated Keychain password-dialog storm is stopped.** A Control
+  key created by an older direct Python launch could make macOS ask for the
+  login-keychain password again on every protected request — often dozens of
+  identical dialogs, with **Always Allow** unavailable because that Python
+  executable had no verifiable signature. Jarvis now performs one serialized
+  credential read per process and, after the one necessary approval, safely
+  re-creates that legacy item under the verified installed app identity. Normal
+  restarts and source updates then reuse the app-owned item without asking
+  again; direct development launches cannot weaken or claim its access rules.
 - **macOS: the uninstall command works again.** On a Mac, the documented
   one-liner `bash ~/.personal-jarvis/install/uninstall.sh` printed a syntax
   error and did nothing at all — no prompt, no removal. macOS still ships a
