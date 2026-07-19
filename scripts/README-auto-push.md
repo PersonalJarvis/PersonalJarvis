@@ -109,6 +109,8 @@ Same fix as (2), but with extra care. The backup tag `safety/eod-main-*` is alre
 
 If you still have uncommitted changes, **the script aborts** (log entry `SKIP: Working tree dirty`). This is intentional: otherwise you'd think everything was pushed, but the open changes would not be in the backup. Before going to bed, check `git status` once and commit or stash everything.
 
+**Exception — volatile telemetry:** files that the app rewrites on every start (currently `desktop-ttu-latest.json`) never count as dirty, otherwise the backup would skip forever on any machine that ran the app that day. The allowlist lives in the script and mirrors `DIRTY_ALLOWLIST` in `scripts/ci/check_release_completeness.py`.
+
 ---
 
 ## Clarification: relationship to the Jarvis-Agent DENY rule

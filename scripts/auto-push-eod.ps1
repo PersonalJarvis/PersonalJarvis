@@ -104,14 +104,26 @@ if ([string]::IsNullOrWhiteSpace($headRef)) {
     Write-Log "WARN" "HEAD ist detached. Aktueller Checkout wird nicht gepusht; Branch-Liste wird trotzdem verarbeitet."
 }
 
-# Working Tree dirty?
+# Working tree dirty?
+# Volatile telemetry stamps are rewritten on EVERY desktop start; without this
+# allowlist the nightly backup would skip forever on a machine that merely ran
+# the app today. Keep it in lockstep with DIRTY_ALLOWLIST in
+# scripts/ci/check_release_completeness.py. Real uncommitted work still blocks.
+$volatileAllowlist = @('desktop-ttu-latest.json')
 $dirty = git status --porcelain 2>$null
+$dirtyLines = @()
 if (-not [string]::IsNullOrWhiteSpace($dirty)) {
-    $dirtyLines = ($dirty -split "`n") | Where-Object { $_ -ne "" }
-    Write-Log "SKIP" "Working tree dirty ($($dirtyLines.Count) Datei(en) geaendert/untracked). Bitte committen oder stashen, dann erneut."
+    $dirtyLines = @(($dirty -split "`n") | Where-Object { $_ -ne "" } | Where-Object {
+        $path = if ($_.Length -ge 4) { $_.Substring(3).Trim().Trim('"') } else { $_ }
+        if ($path -match ' -> ') { $path = ($path -split ' -> ', 2)[1].Trim('"') }
+        $volatileAllowlist -notcontains ($path -replace '\\', '/')
+    })
+}
+if ($dirtyLines.Count -gt 0) {
+    Write-Log "SKIP" "Working tree dirty ($($dirtyLines.Count) file(s) changed/untracked). Commit or stash them, then retry."
     foreach ($d in $dirtyLines) { Write-Log "SKIP" "  $d" }
-    Write-Log "INFO" "=== Auto-Push EoD ENDE (skipped: dirty) ==="
-    # Exit 0 ist hier korrekt: Skript hat sauber erkannt, dass es nichts tun darf.
+    Write-Log "INFO" "=== Auto-Push EoD END (skipped: dirty) ==="
+    # Exit 0 is correct here: the script cleanly detected it must not act.
     exit 0
 }
 
