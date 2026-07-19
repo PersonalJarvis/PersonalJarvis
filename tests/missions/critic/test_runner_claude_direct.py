@@ -120,6 +120,10 @@ def _patch_direct(
         "jarvis.missions.critic.runner._resolve_critic_provider_model",
         lambda: ("claude-api", "claude-sonnet-4-6"),
     )
+    monkeypatch.setattr(
+        "jarvis.missions.critic.runner._claude_cli_critic_viable",
+        lambda: True,
+    )
     # Neutralize the in-process API critic so no live network call is made
     # even on a machine that has a real API key configured.
     monkeypatch.setattr(

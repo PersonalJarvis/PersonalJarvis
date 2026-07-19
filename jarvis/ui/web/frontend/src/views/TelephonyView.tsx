@@ -19,6 +19,7 @@ import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { SettingsField, settingsInputCls } from "@/views/settings/SettingsBlock";
 import { useEventStore } from "@/store/events";
+import { robustCopy } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
@@ -437,11 +438,10 @@ function CopyValue({
 
   async function copy() {
     if (!value) return;
-    try {
-      await navigator.clipboard.writeText(value);
+    if (await robustCopy(value)) {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
-    } catch {
+    } else {
       pushToast("warning", value);
     }
   }
@@ -967,11 +967,10 @@ function ScriptRow({ script }: { script: TelephonyScript }) {
   const pushToast = useEventStore((s) => s.pushToast);
 
   async function copy() {
-    try {
-      await navigator.clipboard.writeText(script.command);
+    if (await robustCopy(script.command)) {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1500);
-    } catch {
+    } else {
       pushToast("warning", script.command);
     }
   }

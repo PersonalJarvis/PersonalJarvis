@@ -6580,3 +6580,96 @@ through visible pixels, retain against a stable intended interaction footprint,
 and reconcile with the real cursor. Non-activating overlays must explicitly
 prove both states in every visual mode: pointer outside means normal rendering;
 pointer on the bar means controls visible and usable.
+
+---
+
+## BUG-096: viable Jarvis-Agent deliverables are reported as generic errors (HIGH, FIXED 2026-07-19)
+
+**Symptom (local macOS mission forensic, platform-neutral path).** The Outputs
+view showed every recent Jarvis-Agent mission as an error or cancellation even
+though four runs had produced complete HTML documents between 48 and 59 KB. A
+fifth worker produced a 10 KB Markdown report that remained in its disposable
+worktree but never appeared in Outputs. The active database contained four
+`FAILED` missions, one `CANCELLED` mission, and no `MissionApproved` event, so
+the frontend was faithfully displaying an upstream lifecycle decision rather
+than merely recoloring a successful row.
+
+**Root cause.** Several independent defects compounded:
+
+1. Direct Codex critic output uses a flat strict schema. Its reconstruction
+   instantiated `CriticVerdict` directly and bypassed the tolerant validation
+   used by full verdicts. A valid decision whose English or localized voice
+   summary exceeded 280 characters was discarded solely for
+   `string_too_long`. Live logs show approval-shaped fallback output followed
+   by an adversarial retry and eventual failure.
+2. The critic was told to act as a code reviewer and find at least three bugs,
+   regardless of the original goal. Static reports therefore accumulated new
+   polish, browser-validation, citation, or accessibility demands on each
+   round. Non-blocking suggestions became blocking revisions merely to satisfy
+   the quota.
+3. Codex and API workers appended every correction attempt to one
+   `stream.jsonl`. The current critic round could re-grade stale errors and old
+   final answers after the worker had corrected them.
+4. A correction prevented by the task time guard fell through to
+   `critic_loop_exhausted`, so one local mission claimed three failed attempts
+   despite having only two critic verdicts.
+5. Shutdown cancellation changed the header to `CANCELLED` without publishing
+   the canonical `MissionCancelled` terminal event. Draft artifacts were
+   archived only in the task-level `finally`, so a process restart between
+   `WorkerDraftReady` and critic completion could leave the canonical output
+   directory empty.
+6. The Outputs response returned `error: null` and no terminal reason. It could
+   not distinguish a content-free failure from unsigned but reviewable output.
+
+**Fix.** Flat Codex decisions now carry grounded per-axis status/evidence and an
+explicit blocking flag. The direct prompt describes that exact flat contract,
+and reconstruction goes through the same narrowly tolerant validator as every
+other provider. Only presentation summaries may be truncated; every
+substantive schema error and every empty evidence axis still fails closed. The
+critic judges the original mission goal, revises only for a cited blocking
+defect, and may approve with low/medium non-blocking suggestions. The defect
+quota is removed. Each worker spawn truncates its own stream before any
+subprocess setup so a failed spawn cannot expose stale evidence.
+
+Draft files are snapshotted into the persistent mission directory before the
+draft event is published. The canonical `files/` snapshot is synchronized to
+the latest iteration, so a deleted or renamed first draft cannot replace the
+final deliverable; earlier content remains in the per-iteration patches. A
+complete sibling snapshot is staged before a portable two-phase directory
+promotion, so a copy failure leaves the previous durable output untouched.
+Shutdown emits exactly one canonical cancellation event, and cancellation is
+rendered separately from failure on the Jarvis-Agent board. A correction
+stopped by the time guard records
+`review_time_budget_exhausted`, while the mission header records the actual
+zero-based critic iteration without rewriting lifecycle state. Execution
+failures outrank review outcomes when a multi-task mission aggregates its final
+reason. The typed Outputs response exposes terminal event, terminal reason,
+artifact count, `has_partial_output`, and `needs_review`. Only exhausted,
+unavailable, or time-limited review with retained deliverables becomes
+**Needs review**. An explicit critic rejection, setup, worker, safety, or
+execution-timeout failure remains visibly failed even when a partial file was
+retained.
+
+**Safety boundary.** File existence never equals approval. The forensic set
+also contained a historical 286-byte placeholder and reports with real factual
+or safety findings. Only a signed `MissionApproved` event is successful. A real
+blocking issue remains failed; a retained deliverable without approval remains
+reviewable partial output. Historical events are not rewritten.
+
+**Guards.** Regression coverage pins overlong flat approvals, malformed-field
+rejection, contradictory blocker/axis rejection, grounded blocking revisions,
+all-pass non-blocking normalization, fresh per-spawn worker logs, pre-critic
+draft durability, canonical shutdown
+cancellation, atomic snapshot copy-failure recovery, rename/delete archive
+synchronization, truthful time-budget and multi-task failure precedence,
+race-safe mission-header iteration, typed
+Python/TypeScript status parity, terminal-reason propagation, narrowed
+Needs-review classification, and distinct cancellation rendering. The
+lifecycle contains no OS-specific status branch, so the same correction applies
+to Windows, macOS, Linux desktop, and headless Linux.
+
+**Class rule.** Treat worker execution, artifact durability, critic approval,
+and user-facing outcome as four separate facts. Never infer approval from a
+file, never discard a valid decision because a presentation field is verbose,
+never review stale attempt logs, and never collapse retained unsigned work into
+an unexplained error.

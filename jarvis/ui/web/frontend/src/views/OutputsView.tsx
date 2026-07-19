@@ -30,6 +30,7 @@ import {
   revealArtifact,
   openArtifactWith,
   type OutputSummary,
+  type OutputStatus,
   type ArtifactSummary,
 } from "@/hooks/useOutputs";
 import { OpenWithDialog } from "@/components/OpenWithDialog";
@@ -38,7 +39,7 @@ import { useT } from "@/i18n";
 import { applyMissionDragImage } from "@/lib/missionDragImage";
 import { useMissionDrag } from "@/store/missionDrag";
 
-const STATUS_BADGE: Record<string, string> = {
+const STATUS_BADGE: Record<OutputStatus, string> = {
   success: "border-emerald-400/40 bg-emerald-400/10 text-emerald-400",
   error: "border-destructive/40 bg-destructive/10 text-destructive",
   running: "border-primary/40 bg-primary/10 text-primary",
@@ -46,6 +47,9 @@ const STATUS_BADGE: Record<string, string> = {
   cancelled: "border-amber-400/40 bg-amber-400/10 text-amber-400",
   unknown: "border-border bg-secondary/40 text-muted-foreground",
 };
+
+const NEEDS_REVIEW_BADGE =
+  "border-amber-400/40 bg-amber-400/10 text-amber-300";
 
 /** Tiny ping dot inside the RUNNING badge — inherits the badge colour. */
 function PulseDot() {
@@ -236,7 +240,9 @@ function SessionRow({
   const t = useT();
   const cancel = useCancelMission();
   const statusKey = meta.status ?? "unknown";
-  const badgeClass = STATUS_BADGE[statusKey] ?? STATUS_BADGE.unknown;
+  const needsReview = statusKey === "error" && !!meta.needs_review;
+  const badgeClass = needsReview ? NEEDS_REVIEW_BADGE : STATUS_BADGE[statusKey];
+  const statusLabel = needsReview ? t("outputs_view.needs_review") : statusKey;
   const ts = meta.completed_at ?? meta.started_at;
   const tsLabel = ts ? new Date(ts * 1000).toLocaleString() : "--";
   const canAbort = statusKey === "running" && !!meta.mission_id;
@@ -316,7 +322,7 @@ function SessionRow({
               )}
             >
               {statusKey === "running" && <PulseDot />}
-              {statusKey}
+              {statusLabel}
             </span>
           </span>
           {meta.github_url && (
@@ -373,7 +379,10 @@ function SessionDetail({
   const cancel = useCancelMission();
   const plan = usePlanForOutput(meta.slug);
   const statusKey = meta.status ?? "unknown";
-  const badgeClass = STATUS_BADGE[statusKey] ?? STATUS_BADGE.unknown;
+  const needsReview = statusKey === "error" && !!meta.needs_review;
+  const isCancelled = statusKey === "cancelled";
+  const badgeClass = needsReview ? NEEDS_REVIEW_BADGE : STATUS_BADGE[statusKey];
+  const statusLabel = needsReview ? t("outputs_view.needs_review") : statusKey;
   const canAbort = statusKey === "running" && !!meta.mission_id;
   const liveChildSlug =
     statusKey === "cancelled" || statusKey === "error"
@@ -399,7 +408,7 @@ function SessionDetail({
               )}
             >
               {statusKey === "running" && <PulseDot />}
-              {statusKey}
+              {statusLabel}
             </span>
             {typeof meta.duration_s === "number" && (
               <span className="text-xs text-muted-foreground">
@@ -467,6 +476,41 @@ function SessionDetail({
           </div>
         </header>
 
+        {(meta.terminal_reason || needsReview) && (
+          <section
+            data-testid={needsReview ? "output-needs-review" : "output-terminal-reason"}
+            className={cn(
+              "rounded-xl border p-4",
+              needsReview || isCancelled
+                ? "border-amber-400/30 bg-amber-400/5"
+                : "border-destructive/30 bg-destructive/5",
+            )}
+          >
+            <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+              {needsReview
+                ? t("outputs_view.needs_review")
+                : isCancelled
+                  ? t("outputs_view.cancellation_reason")
+                : t("outputs_view.failure_reason")}
+            </div>
+            {needsReview && (
+              <p className="text-sm leading-relaxed text-foreground/90">
+                {t("outputs_view.needs_review_hint")}
+              </p>
+            )}
+            {!needsReview && !isCancelled && meta.has_partial_output && (
+              <p className="text-sm leading-relaxed text-foreground/90">
+                {t("outputs_view.partial_output_hint")}
+              </p>
+            )}
+            {meta.terminal_reason && (
+              <div className="mt-2 font-mono text-[11px] text-muted-foreground">
+                {meta.terminal_reason}
+              </div>
+            )}
+          </section>
+        )}
+
         {meta.summary && (
           <section className="rounded-xl border border-border bg-card/40 p-4">
             <div className="mb-2 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
@@ -478,7 +522,7 @@ function SessionDetail({
           </section>
         )}
 
-        {meta.error && (
+        {meta.error && !meta.terminal_reason && (
           <section className="rounded-xl border border-destructive/30 bg-destructive/5 p-4">
             <div className="mb-1 text-[10px] font-semibold uppercase tracking-wide text-destructive">
               {t("common.error")}

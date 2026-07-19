@@ -1,25 +1,21 @@
 /**
  * Robust clipboard + download helper.
  *
- * Background: on Windows, pywebview uses the WebView2 engine
- * (Edge Chromium). Its ``navigator.clipboard.writeText`` has a known
- * quirk for **multi-line strings** (e.g. JSON with ``indent=2``) —
- * sometimes only the first line (= ``{``) ends up in the system
- * clipboard. Markdown/plain text hits this less often, because their
- * header fills the first line with more characters.
+ * Background: embedded WebViews do not expose one dependable browser clipboard
+ * path. WebView2 can truncate multi-line text, while WKWebView can reject both
+ * ``navigator.clipboard.writeText`` and ``execCommand('copy')`` after the click
+ * handler awaited an export request and lost its transient user activation.
  *
- * Solution: robustCopy() first tries the modern clipboard API. On
- * failure OR on suspiciously short output (multi-line truncation), it
- * falls back to the classic ``document.execCommand('copy')`` path —
- * which works via a hidden ``textarea`` + selection and reliably
- * writes the full content in WebView2.
+ * Solution: robustCopy() tries the modern API, then a selected hidden textarea,
+ * then a desktop-only REST fallback that writes through the operating system.
+ * The REST route is disabled on a browser/headless server, so those surfaces
+ * remain scoped to the user's browser clipboard.
  */
 
 /**
  * Robustly copies a string to the system clipboard.
  *
- * Returns true if successful (or if the fallback path was used),
- * false if both paths failed.
+ * Returns true if any path succeeded, false if all paths failed.
  */
 export async function robustCopy(text: string): Promise<boolean> {
   // Path A — modern clipboard API. Fast and reliable for short texts.
@@ -37,7 +33,8 @@ export async function robustCopy(text: string): Promise<boolean> {
       // too — it overwrites the corrupted entry with the full text
       // if needed.
       if (text.includes("\n")) {
-        return execCommandCopy(text);
+        if (execCommandCopy(text)) return true;
+        return nativeBackendCopy(text);
       }
       return true;
     }
@@ -45,7 +42,29 @@ export async function robustCopy(text: string): Promise<boolean> {
     // Path A failed — fall through to the fallback.
   }
   // Path B — classic fallback via a hidden textarea.
-  return execCommandCopy(text);
+  if (execCommandCopy(text)) return true;
+  // Path C — local desktop backend. It is intentionally unavailable on a
+  // browser/headless server, where writing would target the wrong machine.
+  return nativeBackendCopy(text);
+}
+
+async function nativeBackendCopy(text: string): Promise<boolean> {
+  if (typeof fetch !== "function") return false;
+  try {
+    const response = await fetch("/api/clipboard/text", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text }),
+    });
+    if (!response.ok) return false;
+    const result = (await response.json().catch(() => null)) as {
+      copied?: unknown;
+    } | null;
+    return result?.copied === true;
+  } catch {
+    return false;
+  }
 }
 
 function execCommandCopy(text: string): boolean {

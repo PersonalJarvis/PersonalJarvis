@@ -662,10 +662,23 @@ _CODEX_CRITIC_OUTPUT_SCHEMA: Final[dict] = {
         "summary": {"type": "string"},
         "summary_de": {"type": "string"},
         "correction_instruction": {"type": "string"},
+        "blocking_issue": {"type": "boolean"},
+        "correctness_status": {"type": "string", "enum": ["pass", "fail"]},
+        "correctness_evidence": {"type": "string"},
+        "completeness_status": {"type": "string", "enum": ["pass", "fail"]},
+        "completeness_evidence": {"type": "string"},
+        "side_effects_status": {"type": "string", "enum": ["pass", "fail"]},
+        "side_effects_evidence": {"type": "string"},
+        "security_status": {"type": "string", "enum": ["pass", "fail"]},
+        "security_evidence": {"type": "string"},
     },
     "required": [
         "verdict", "confidence", "summary", "summary_de",
-        "correction_instruction",
+        "correction_instruction", "blocking_issue",
+        "correctness_status", "correctness_evidence",
+        "completeness_status", "completeness_evidence",
+        "side_effects_status", "side_effects_evidence",
+        "security_status", "security_evidence",
     ],
 }
 
@@ -673,35 +686,100 @@ _CODEX_CRITIC_OUTPUT_SCHEMA: Final[dict] = {
 def _verdict_from_codex_flat(flat: dict) -> CriticVerdict:
     """Reconstruct a full CriticVerdict from codex's flat structured output.
 
-    codex only returns the 5 decision fields (forced by --output-schema).
-    The four required axes are synthesised: all ``pass`` when the verdict is
-    approve, all ``fail`` otherwise -- consistent with the aggregate-axis
-    downgrade logic the Jarvis-Agent path already relies on. The
-    suggested_next_action is derived from the verdict so the mission state
-    machine has a concrete next step.
+    New structured outputs carry one status and one concise evidence reference
+    per axis plus an explicit blocking flag. Older five-field payloads remain
+    readable for compatibility, using the historical synthetic-axis fallback.
+
+    The semantic fields are authoritative when a model contradicts its own
+    verdict label: all-pass evidence with no blocker is an approval, while a
+    claimed approval with a blocker or failed axis is a revision. This keeps the
+    original-goal threshold deterministic without treating file existence as
+    success. The reconstructed full verdict goes through the shared tolerant
+    validator, so a voice-summary length cap cannot discard a valid decision.
     """
     verdict = str(flat.get("verdict", "revise"))
-    axis_status = "pass" if verdict == "approve" else "fail"
-    evidence = (
-        ["codex structured-output verdict"]
-        if verdict == "approve" else []
-    )
-    axes = {
-        ax: CriticAxis(status=axis_status, evidence=list(evidence))
-        for ax in REQUIRED_AXES
+    axis_field_names = {
+        field_name
+        for axis in REQUIRED_AXES
+        for field_name in (f"{axis}_status", f"{axis}_evidence")
     }
+    has_any_axis_field = bool(axis_field_names.intersection(flat))
+    has_axis_fields = all(
+        f"{axis}_status" in flat and f"{axis}_evidence" in flat
+        for axis in REQUIRED_AXES
+    )
+    if (has_any_axis_field or "blocking_issue" in flat) and (
+        not has_axis_fields or "blocking_issue" not in flat
+    ):
+        raise ValueError("Incomplete Codex flat verdict axis fields")
+    if has_axis_fields:
+        axes = {
+            axis: CriticAxis(
+                status=str(flat[f"{axis}_status"]),  # type: ignore[arg-type]
+                evidence=(
+                    [str(flat[f"{axis}_evidence"]).strip()]
+                    if str(flat[f"{axis}_evidence"]).strip()
+                    else []
+                ),
+            )
+            for axis in REQUIRED_AXES
+        }
+        empty_evidence_axes = [
+            axis for axis, axis_verdict in axes.items() if not axis_verdict.evidence
+        ]
+        if empty_evidence_axes:
+            raise ValueError(
+                "Codex flat verdict has empty evidence for axis/axes: "
+                + ", ".join(sorted(empty_evidence_axes))
+            )
+        blocking_issue = bool(flat.get("blocking_issue", verdict != "approve"))
+        all_axes_pass = all(axis.status == "pass" for axis in axes.values())
+        has_failed_axis = not all_axes_pass
+        if blocking_issue != has_failed_axis:
+            raise ValueError(
+                "Codex flat verdict contradicts its blocking flag and axis statuses"
+            )
+        if all_axes_pass:
+            if verdict != "approve":
+                logger.info(
+                    "CriticRunner: normalized flat verdict=%s to approve "
+                    "because every grounded axis passed and no blocker was reported",
+                    verdict,
+                )
+            verdict = "approve"
+        elif verdict == "approve":
+            verdict = "revise"
+    else:
+        axis_status = "pass" if verdict == "approve" else "fail"
+        evidence = (
+            ["codex structured-output verdict"]
+            if verdict == "approve" else []
+        )
+        axes = {
+            axis: CriticAxis(status=axis_status, evidence=list(evidence))
+            for axis in REQUIRED_AXES
+        }
+
     next_action = {
         "approve": "accept", "revise": "retry", "reject": "escalate_to_user",
     }.get(verdict, "retry")
-    return CriticVerdict(
-        verdict=verdict,  # type: ignore[arg-type]
-        axes=axes,
-        issues=[],
-        correction_instruction=str(flat.get("correction_instruction", "")),
-        summary=str(flat.get("summary", "")),
-        summary_de=str(flat.get("summary_de", "")),
-        confidence=float(flat.get("confidence", 0.5)),
-        suggested_next_action=next_action,  # type: ignore[arg-type]
+    payload = {
+        "verdict": verdict,
+        "axes": {axis: value.model_dump() for axis, value in axes.items()},
+        "issues": [],
+        "correction_instruction": str(flat.get("correction_instruction", "")),
+        "summary": str(flat.get("summary", "")),
+        "summary_de": str(flat.get("summary_de", "")),
+        "confidence": flat.get("confidence", 0.5),
+        "suggested_next_action": next_action,
+    }
+    return _validate_verdict_tolerant(json.dumps(payload))
+
+
+def _verdict_has_grounded_axes(verdict: CriticVerdict) -> bool:
+    """Return whether every required axis carries at least one evidence item."""
+    return REQUIRED_AXES.issubset(verdict.axes) and all(
+        verdict.axes[axis].evidence for axis in REQUIRED_AXES
     )
 
 
@@ -1040,7 +1118,7 @@ class CriticRunner:
             adversarial_reframe=False,
         )
 
-        # Aggregation check FIRST (deterministic, no LLM retry):
+        # Aggregation check FIRST (deterministic):
         # If the Critic returns verdict=approve but any axis is fail,
         # we immediately downgrade to revise. The LLM gave us the information;
         # only the verdict label is inconsistent — no second LLM round needed.
@@ -1052,7 +1130,7 @@ class CriticRunner:
             logger.warning(
                 "CriticRunner: verdict=approve with fail-axis -> deterministic downgrade to revise"
             )
-            return verdict.model_copy(
+            verdict = verdict.model_copy(
                 update={
                     "verdict": "revise",
                     "summary": (
@@ -1063,15 +1141,17 @@ class CriticRunner:
                 }
             )
 
-        # JSONError OR empty-evidence approval -> one LLM retry with reframe.
-        # (Empty evidence + all axes pass = classic sycophancy; LLM gets one more try.)
+        # JSON error or any ungrounded axis -> one LLM retry with reframe.
+        # Unsupported revisions are as harmful as unsupported approvals: they
+        # spend another worker round and can falsely exhaust the mission.
         retry_needed = (
             verdict is None
-            or (verdict.verdict == "approve" and not is_approval_valid(verdict))
+            or not _verdict_has_grounded_axes(verdict)
         )
         if retry_needed:
             logger.info(
-                "CriticRunner: empty-evidence approval or JSONError -> retry with adversarial reframe (iter=%d)",
+                "CriticRunner: ungrounded verdict or JSON error -> retry with "
+                "adversarial reframe (iter=%d)",
                 iteration,
             )
             verdict = await self._invoke_once(
@@ -1094,7 +1174,7 @@ class CriticRunner:
                 and verdict.verdict == "approve"
                 and aggregate_axes_status(verdict) != "pass"
             ):
-                return verdict.model_copy(
+                verdict = verdict.model_copy(
                     update={
                         "verdict": "revise",
                         "summary": (
@@ -1109,11 +1189,15 @@ class CriticRunner:
                 "Critic returned no schema-valid JSON output twice."
             )
 
-        # Empty-evidence approval even after retry -> raise (no silent pass).
-        if verdict.verdict == "approve" and not is_approval_valid(verdict):
+        # Any ungrounded verdict after retry is an abstention, not a decision.
+        if not _verdict_has_grounded_axes(verdict):
             raise CriticVerdictInconsistent(
-                "Critic approved with empty evidence even after adversarial reframe."
+                "Critic returned missing or empty axis evidence after "
+                "adversarial reframe."
             )
+
+        if verdict.verdict == "approve" and not is_approval_valid(verdict):
+            raise CriticVerdictInconsistent("Critic approval remained inconsistent.")
 
         # --- Capability-Honesty Gate (Layer 3c, Capability Coupling spec) ---
         # Must run AFTER the sycophancy / schema checks above so we only
@@ -1397,6 +1481,15 @@ class CriticRunner:
             iteration=iteration,
             adversarial_reframe=adversarial_reframe,
         )
+        codex_prompt = render_critic_prompt(
+            mission_prompt=mission_prompt,
+            worker_diff=worker_diff,
+            log_summary=log_summary,
+            prior_reflections=prior_reflections,
+            iteration=iteration,
+            adversarial_reframe=adversarial_reframe,
+            codex_flat=True,
+        )
 
         # Append the JSON-only output contract once at the call site so both
         # the Jarvis-Agent worker and the direct paths see the same prompt. (The old
@@ -1408,6 +1501,13 @@ class CriticRunner:
             "Output contract: return exactly one JSON object matching this "
             "JSON schema. No prose, markdown, or code fences before or after "
             f"it.\n{schema_json}\n"
+        )
+        codex_prompt_for_subprocess = (
+            f"{codex_prompt}\n\n"
+            "---\n"
+            "Output contract: return exactly one flat JSON object matching "
+            "this JSON schema. No prose, markdown, or code fences before or "
+            f"after it.\n{json.dumps(_CODEX_CRITIC_OUTPUT_SCHEMA)}\n"
         )
 
         primary_provider, primary_model = _resolve_critic_provider_model()
@@ -1469,7 +1569,7 @@ class CriticRunner:
                 primary_model or model
             )
             codex_verdict = await self._invoke_via_codex_direct(
-                prompt=prompt_for_subprocess,
+                prompt=codex_prompt_for_subprocess,
                 worktree=worktree,
                 env=env,
                 model=effective_critic_model,
@@ -1799,7 +1899,7 @@ class CriticRunner:
             req = BrainRequest(
                 messages=(BrainMessage(role="user", content=prompt),),
                 system=(
-                    "You are a strict, adversarial code-review critic. Return "
+                    "You are a strict, adversarial mission-output critic. Return "
                     "EXACTLY one JSON object matching the schema in the prompt — "
                     "no prose and no markdown fences before or after it."
                 ),
@@ -2010,10 +2110,9 @@ class CriticRunner:
             return None
 
         # Last agent_message wins. With --output-schema codex returns the
-        # FLAT decision object ({verdict, confidence, summary, summary_de,
-        # correction_instruction}); reconstruct the full CriticVerdict from
-        # it. Fall back to validating the raw text as a full CriticVerdict
-        # for backwards-compatibility (older runs / non-schema paths).
+        # FLAT decision object (decision fields plus grounded per-axis fields);
+        # reconstruct the full CriticVerdict from it. Fall back to validating
+        # raw full-verdict text for older runs and non-schema paths.
         candidate = agent_texts[-1]
         cleaned = _strip_json_fences(candidate.strip())
         try:
@@ -2160,19 +2259,21 @@ def _parse_verdict_from_text(
     Returns ``None`` when no valid verdict object is present.
     """
     cleaned = _strip_json_fences(stdout_text.strip())
+    last_error: Exception | None = None
     try:
         return _validate_verdict_tolerant(cleaned)
-    except (json.JSONDecodeError, ValueError, ValidationError):
-        pass
+    except (json.JSONDecodeError, ValueError, ValidationError) as exc:
+        last_error = exc
     for candidate in reversed(_iter_balanced_json_objects(stdout_text)):
         try:
             return _validate_verdict_tolerant(_strip_json_fences(candidate))
-        except (json.JSONDecodeError, ValueError, ValidationError):
+        except (json.JSONDecodeError, ValueError, ValidationError) as exc:
+            last_error = exc
             continue
     logger.warning(
         "CriticRunner: JSON-parse failed (no valid verdict object) iter=%d adv=%s "
-        "output[:300]=%r",
-        iteration, adversarial_reframe, stdout_text[:300],
+        "validation=%r output[:300]=%r",
+        iteration, adversarial_reframe, str(last_error)[:600], stdout_text[:300],
     )
     return None
 

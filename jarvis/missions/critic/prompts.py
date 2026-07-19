@@ -1,29 +1,70 @@
 """Critic prompt templates for the Phase-6 Worker-Critic loop.
 
-Source: Research-Doc §F (Critic prompt engineering) lines 247-301. Verbatim
-adversarial framing, anchor token (`<<<{mission_prompt}>>>` triple-bracketed),
-JSON output schema reminder in the prompt.
-
-Design-reviewer criteria (see `.claude/agents/jarvis-critic-design-reviewer.md`):
-- Criterion 2 (Adversarial Framing): "skeptical of this implementation",
-  "find at least three concrete bugs", "explain why each plausible failure
-  mode does NOT apply" — all three phrases verbatim in the template.
-- Criterion 3 (Anchor Token): `mission_prompt` is NOT paraphrased,
-  NOT summarised; re-injected verbatim inside <<<>>> brackets every iteration.
+The critic stays skeptical and evidence-grounded, but judges the requested
+deliverable instead of assuming every mission is source code. The original
+mission is re-injected verbatim inside ``<<<>>>`` on every iteration.
 """
 from __future__ import annotations
 
 from typing import Final
 
-# Verbatim from Research-Doc §F lines 247-301. NO rewording — the phrasing
-# is calibrated for sycophancy mitigation (Kim & Kim 2025: casual rebuttal
-# increases sycophancy; formal phrasing reduces it).
+FULL_CRITIC_OUTPUT_CONTRACT: Final[str] = """\
+OUTPUT SCHEMA (Pydantic CriticVerdict):
+{
+  "verdict": "approve" | "revise" | "reject",
+  "axes": {
+    "correctness":  { "status": "pass"|"fail", "evidence": ["file:line", ...] },
+    "completeness": { "status": "pass"|"fail", "evidence": [...] },
+    "side_effects": { "status": "pass"|"fail", "evidence": [...] },
+    "security":     { "status": "pass"|"fail", "evidence": [...] }
+  },
+  "issues": [
+    { "severity": "low"|"med"|"high"|"critical",
+      "category": "correctness"|"completeness"|"side_effects"|"security",
+      "description": "...",
+      "evidence_ref": "src/foo.py:42 OR log_line:128 OR test:test_x",
+      "fix": "concrete instruction to the worker" }
+  ],
+  "correction_instruction": "single-paragraph instruction the worker reads on retry",
+  "summary": "<= 2 sentences for voice readback (English)",
+  "summary_de": "<= 2 sentences for voice readback (German)",
+  "confidence": 0.0..1.0,
+  "suggested_next_action": "retry"|"accept"|"escalate_to_user"|"abort"
+}"""
+
+CODEX_FLAT_OUTPUT_CONTRACT: Final[str] = """\
+OUTPUT SCHEMA (flat Codex critic; every field is required):
+{
+  "verdict": "approve" | "revise" | "reject",
+  "confidence": 0.0..1.0,
+  "summary": "<= 2 sentences for voice readback (English)",
+  "summary_de": "<= 2 sentences for voice readback (German)",
+  "correction_instruction": "empty on approval; concrete blocker fix otherwise",
+  "blocking_issue": true | false,
+  "correctness_status": "pass" | "fail",
+  "correctness_evidence": "one concise, non-empty evidence reference",
+  "completeness_status": "pass" | "fail",
+  "completeness_evidence": "one concise, non-empty evidence reference",
+  "side_effects_status": "pass" | "fail",
+  "side_effects_evidence": "one concise, non-empty evidence reference",
+  "security_status": "pass" | "fail",
+  "security_evidence": "one concise, non-empty evidence reference"
+}
+Set blocking_issue=true exactly when a cited blocking defect remains. The
+runtime derives the nested axes and next action from these flat fields. Do not
+emit nested axes, issues, or suggested_next_action in this format."""
+
+# Amended by ADR-0009 (2026-07-19): adversarial review remains mandatory, but
+# a defect quota is forbidden. The old "find at least three" instruction made
+# a report or static HTML page fail until the critic invented three more polish
+# requests. Only evidence-backed blockers may force another worker iteration.
 CRITIC_SYSTEM_PROMPT: Final[str] = """\
-You are an adversarial code critic for the Personal Jarvis worker-critic loop.
-You are a senior engineer who is skeptical of this implementation. Your job
-is to find at least three concrete bugs, edge cases, or security issues. If
-you cannot find any, explain why each plausible failure mode does NOT apply,
-citing specific code lines.
+You are an adversarial mission-output critic for the Personal Jarvis
+worker-critic loop. You are a senior reviewer who is skeptical of this
+deliverable. Search rigorously for concrete correctness, completeness,
+side-effect, and security defects. Never invent findings or expand the user's
+scope to satisfy a defect quota. If no blocking defect remains, approve the
+deliverable and briefly explain why the plausible failure modes do not apply.
 
 ORIGINAL MISSION GOAL (user's original request, anchor your judgment here):
 <<<{mission_prompt}>>>
@@ -40,47 +81,31 @@ PRIOR REFLECTIONS (last 3 critique cycles, if any):
 CURRENT ITERATION: {iteration} (max 3 — failure here ends the mission)
 
 TASK: Evaluate the worker output across four axes. For each axis, output PASS
-or FAIL with cited evidence (file:line, log_line:N, or test:name). If you
-cannot find any issue on an axis, briefly justify why each plausible failure
-mode does NOT apply — your justifications also count as evidence and MUST be
-non-empty. Cite at most THREE concise ``file:line — brief note`` items per
-axis (twelve words max each); never paste file contents or long excerpts.
-Keep the whole verdict SHORT — an over-long response can be cut off by the
-output limit and then cannot be parsed, which wrongly fails the mission.
-Output ONLY the JSON object matching the schema — no prose, no
-markdown, no code fences.
+or FAIL with cited evidence (file:line, log_line:N, or test:name). FAIL means
+you found a BLOCKING defect: the requested outcome is missing, unusable,
+unsafe, materially incorrect, or violates an explicit requirement. Optional
+polish, speculative hardening, unavailable optional browser automation, and
+requirements not present in the original mission are NON-BLOCKING. Keep the
+relevant axis PASS and mention such suggestions briefly if useful. If you cannot
+find a blocking issue on an axis, briefly justify why plausible failure modes
+do not apply; the justification is evidence and MUST be non-empty. Cite at
+most THREE concise ``file:line — brief note`` items per axis (twelve words max
+each); never paste file contents or long excerpts. Keep the whole verdict
+SHORT. Output ONLY the JSON object matching the schema — no prose, no markdown,
+no code fences.
 
 AXES:
 - correctness: does the diff achieve the original goal?
-- completeness: are edge cases, error paths, and tests covered?
+- completeness: are the original goal and its explicit edge cases covered?
 - side_effects: were unrelated tests or files broken? Any unexpected mutations?
 - security: any unsafe operations (eval, shell injection, secrets, network)?
 
-OUTPUT SCHEMA (Pydantic CriticVerdict):
-{{
-  "verdict": "approve" | "revise" | "reject",
-  "axes": {{
-    "correctness":  {{ "status": "pass"|"fail", "evidence": ["file:line", ...] }},
-    "completeness": {{ "status": "pass"|"fail", "evidence": [...] }},
-    "side_effects": {{ "status": "pass"|"fail", "evidence": [...] }},
-    "security":     {{ "status": "pass"|"fail", "evidence": [...] }}
-  }},
-  "issues": [
-    {{ "severity": "low"|"med"|"high"|"critical",
-       "category": "correctness"|"completeness"|"side_effects"|"security",
-       "description": "...",
-       "evidence_ref": "src/foo.py:42 OR log_line:128 OR test:test_x",
-       "fix": "concrete instruction to the worker" }}
-  ],
-  "correction_instruction": "single-paragraph instruction the worker reads on retry",
-  "summary": "<= 2 sentences for voice readback (English)",
-  "summary_de": "<= 2 sentences for voice readback (German)",
-  "confidence": 0.0..1.0,
-  "suggested_next_action": "retry"|"accept"|"escalate_to_user"|"abort"
-}}
+{output_contract}
 
 Rules:
-- verdict=approve only if every axis is pass AND every axis has non-empty evidence.
+- verdict=approve when the original goal is satisfied, every axis is pass, and
+  every axis has non-empty evidence. Low/med non-blocking suggestions may remain.
+- verdict=revise only when at least one axis has a cited blocking defect.
 - verdict=reject only if you have evidence the task is impossible or outside scope.
 - Empty-evidence FAILs are treated as abstentions and rejected by the orchestrator.
 - Empty-evidence PASSes are also rejected — justify your judgement.
@@ -200,10 +225,10 @@ believed the log and approved with confidence=0.9):
 ADVERSARIAL_REFRAME_PREFIX: Final[str] = """\
 PREVIOUS RESPONSE WAS REJECTED BECAUSE: it returned an approval without
 specific evidence references, or its output could not be parsed as one valid
-JSON object — often because it was too long and got cut off. This is the
-hallmark of a sycophantic critic (or a runaway one). Re-evaluate from scratch with
-maximum skepticism. Your default position is now FAIL — only approve if every
-axis has concrete evidence. Cite at most THREE concise ``file:line`` items per
+JSON object — often because it was too long and got cut off. Re-evaluate from
+scratch with maximum skepticism, but do not invent a blocker or broaden the
+original goal. Approve only when every axis has concrete evidence; revise only
+for a cited blocking defect. Cite at most THREE concise ``file:line`` items per
 axis; do NOT paste file contents or write prose. Output ONLY the JSON object,
 nothing before or after it — keeping it short is what lets it be parsed.
 
@@ -218,6 +243,7 @@ def render_critic_prompt(
     prior_reflections: str,
     iteration: int,
     adversarial_reframe: bool = False,
+    codex_flat: bool = False,
 ) -> str:
     """Render the Critic prompt with anchor token and adversarial framing.
 
@@ -230,6 +256,7 @@ def render_critic_prompt(
         iteration: Current iteration (0..MAX_CRITIC_LOOPS-1).
         adversarial_reframe: When True, prepend ADVERSARIAL_REFRAME_PREFIX
             (retry path after empty-evidence approval / JSONError).
+        codex_flat: Render the strict flat schema accepted by ``codex exec``.
     """
     base = CRITIC_SYSTEM_PROMPT.format(
         mission_prompt=mission_prompt,
@@ -237,6 +264,9 @@ def render_critic_prompt(
         log_summary=log_summary,
         prior_reflections=prior_reflections,
         iteration=iteration,
+        output_contract=(
+            CODEX_FLAT_OUTPUT_CONTRACT if codex_flat else FULL_CRITIC_OUTPUT_CONTRACT
+        ),
     )
     if adversarial_reframe:
         return ADVERSARIAL_REFRAME_PREFIX + base
@@ -245,6 +275,8 @@ def render_critic_prompt(
 
 __all__ = [
     "ADVERSARIAL_REFRAME_PREFIX",
+    "CODEX_FLAT_OUTPUT_CONTRACT",
     "CRITIC_SYSTEM_PROMPT",
+    "FULL_CRITIC_OUTPUT_CONTRACT",
     "render_critic_prompt",
 ]

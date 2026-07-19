@@ -14,6 +14,7 @@ import { useShallow } from "zustand/react/shallow";
 
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { useT } from "@/i18n";
+import { robustCopy } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import type { JarvisAgentReattachStatus, JarvisAgentWorkerSnapshot } from "@/types/missions";
 
@@ -46,12 +47,7 @@ function formatTokens(value: number): string {
 }
 
 async function copyToClipboard(value: string): Promise<void> {
-  try {
-    await navigator.clipboard.writeText(value);
-  } catch {
-    // Best-effort. If the browser API isn't available (e.g. an insecure
-    // context), the user will just see nothing happen — we log it silently.
-  }
+  await robustCopy(value);
 }
 
 export function JarvisAgentPanel() {

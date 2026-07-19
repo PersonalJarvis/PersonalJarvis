@@ -27,7 +27,6 @@ from jarvis.missions.isolation.worktree import WorktreeManager
 from jarvis.missions.kontrollierer.orchestrator import Kontrollierer
 from jarvis.missions.worker_runtime.workspace import materialize_worker_contract
 
-
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
@@ -274,6 +273,188 @@ def test_archive_task_artifacts_handles_empty_worktree(
     assert (artifacts / "diff.patch").read_text(encoding="utf-8") == ""
 
 
+def test_draft_snapshot_survives_before_final_archive_and_retains_history(
+    worktree: Path, kontrollierer: Kontrollierer, tmp_path: Path
+) -> None:
+    """A published draft must already have a durable file outside its worktree."""
+    task_id = "draft-snapshot-task"
+    mission_dir = tmp_path / "mission_root"
+    mission_dir.mkdir()
+    output = worktree / "report.html"
+    output.write_text("<!doctype html><p>first draft</p>", encoding="utf-8")
+    first_diff = kontrollierer._capture_diff(worktree)
+    kontrollierer._task_iter_diffs = {task_id: [(0, first_diff)]}
+
+    draft_artifacts = kontrollierer._archive_task_artifacts(
+        worktree=worktree,
+        mission_dir=mission_dir,
+        task_id=task_id,
+        drain_iteration_diffs=False,
+    )
+
+    assert draft_artifacts is not None
+    durable = draft_artifacts / "files" / "report.html"
+    assert durable.read_text(encoding="utf-8") == "<!doctype html><p>first draft</p>"
+    assert task_id in kontrollierer._task_iter_diffs
+
+    output.write_text("<!doctype html><p>corrected draft</p>", encoding="utf-8")
+    second_diff = kontrollierer._capture_diff(worktree)
+    kontrollierer._task_iter_diffs[task_id].append((1, second_diff))
+    final_artifacts = kontrollierer._archive_task_artifacts(
+        worktree=worktree,
+        mission_dir=mission_dir,
+        task_id=task_id,
+    )
+
+    assert final_artifacts is not None
+    assert (final_artifacts / "diff.iter0.patch").is_file()
+    assert (final_artifacts / "diff.iter1.patch").is_file()
+    assert durable.read_text(encoding="utf-8") == "<!doctype html><p>corrected draft</p>"
+    assert task_id not in kontrollierer._task_iter_diffs
+
+
+def test_final_archive_replaces_a_deleted_and_renamed_first_draft(
+    worktree: Path, kontrollierer: Kontrollierer, tmp_path: Path
+) -> None:
+    """Canonical files must reflect the latest iteration, not the largest diff."""
+    task_id = "rename-draft"
+    mission_dir = tmp_path / "mission_root"
+    mission_dir.mkdir()
+    first = worktree / "draft-one.html"
+    first.write_text("<!doctype html><p>first</p>", encoding="utf-8")
+    first_diff = kontrollierer._capture_diff(worktree)
+    kontrollierer._task_iter_diffs = {task_id: [(0, first_diff)]}
+
+    draft_artifacts = kontrollierer._archive_task_artifacts(
+        worktree=worktree,
+        mission_dir=mission_dir,
+        task_id=task_id,
+        drain_iteration_diffs=False,
+    )
+    assert draft_artifacts is not None
+    assert (draft_artifacts / "files" / first.name).is_file()
+
+    first.unlink()
+    final = worktree / "final.html"
+    final.write_text("<!doctype html><p>final</p>", encoding="utf-8")
+    second_diff = kontrollierer._capture_diff(worktree)
+    kontrollierer._task_iter_diffs[task_id].append((1, second_diff))
+
+    final_artifacts = kontrollierer._archive_task_artifacts(
+        worktree=worktree,
+        mission_dir=mission_dir,
+        task_id=task_id,
+    )
+
+    assert final_artifacts is not None
+    assert not (final_artifacts / "files" / first.name).exists()
+    assert (final_artifacts / "files" / final.name).read_text(encoding="utf-8") == (
+        "<!doctype html><p>final</p>"
+    )
+    assert (final_artifacts / "diff.iter0.patch").is_file()
+    assert (final_artifacts / "diff.iter1.patch").is_file()
+
+
+def test_snapshot_copy_failure_preserves_previous_durable_draft(
+    worktree: Path,
+    kontrollierer: Kontrollierer,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed refresh must not erase the last recoverable worker output."""
+    task_id = "copy-failure"
+    mission_dir = tmp_path / "mission_root"
+    mission_dir.mkdir()
+    output = worktree / "report.html"
+    output.write_text("<!doctype html><p>durable draft</p>", encoding="utf-8")
+
+    draft_artifacts = kontrollierer._archive_task_artifacts(
+        worktree=worktree,
+        mission_dir=mission_dir,
+        task_id=task_id,
+        drain_iteration_diffs=False,
+    )
+    assert draft_artifacts is not None
+    durable = draft_artifacts / "files" / output.name
+    assert durable.read_text(encoding="utf-8") == (
+        "<!doctype html><p>durable draft</p>"
+    )
+
+    output.write_text("<!doctype html><p>new draft</p>", encoding="utf-8")
+    real_copy2 = shutil.copy2
+
+    def fail_new_snapshot_copy(
+        src: Path, dst: Path, *args: object, **kwargs: object
+    ) -> object:
+        if Path(src) == output and ".files-next-" in str(dst):
+            raise OSError("simulated snapshot copy failure")
+        return real_copy2(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(shutil, "copy2", fail_new_snapshot_copy)
+
+    failed_archive = kontrollierer._archive_task_artifacts(
+        worktree=worktree,
+        mission_dir=mission_dir,
+        task_id=task_id,
+    )
+
+    assert failed_archive is None
+    assert durable.read_text(encoding="utf-8") == (
+        "<!doctype html><p>durable draft</p>"
+    )
+    assert not list(draft_artifacts.glob(".files-next-*"))
+
+
+def test_snapshot_promotion_failure_rolls_back_previous_durable_draft(
+    worktree: Path,
+    kontrollierer: Kontrollierer,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A failed directory promotion restores the prior canonical snapshot."""
+    task_id = "promotion-failure"
+    mission_dir = tmp_path / "mission_root"
+    mission_dir.mkdir()
+    output = worktree / "report.html"
+    output.write_text("<!doctype html><p>durable draft</p>", encoding="utf-8")
+
+    draft_artifacts = kontrollierer._archive_task_artifacts(
+        worktree=worktree,
+        mission_dir=mission_dir,
+        task_id=task_id,
+        drain_iteration_diffs=False,
+    )
+    assert draft_artifacts is not None
+    durable = draft_artifacts / "files" / output.name
+
+    output.write_text("<!doctype html><p>new draft</p>", encoding="utf-8")
+    real_replace = Path.replace
+    failed_once = False
+
+    def fail_staged_promotion(source: Path, target: Path) -> Path:
+        nonlocal failed_once
+        if source.name.startswith(".files-next-") and not failed_once:
+            failed_once = True
+            raise OSError("simulated snapshot promotion failure")
+        return real_replace(source, target)
+
+    monkeypatch.setattr(Path, "replace", fail_staged_promotion)
+
+    failed_archive = kontrollierer._archive_task_artifacts(
+        worktree=worktree,
+        mission_dir=mission_dir,
+        task_id=task_id,
+    )
+
+    assert failed_archive is None
+    assert failed_once is True
+    assert durable.read_text(encoding="utf-8") == (
+        "<!doctype html><p>durable draft</p>"
+    )
+    assert not list(draft_artifacts.glob(".files-next-*"))
+    assert not list(draft_artifacts.glob(".files-previous-*"))
+
+
 # --- 2026-05-27 hardening audit: archive must round-trip non-ASCII and
 #     gitignored deliverables, and must NOT leak materialized contract files.
 
@@ -458,7 +639,7 @@ def test_archive_captures_committed_deliverable(
     (not a `.md` summary) in artifacts/files/. Reproduces mission 019f26d0-bb07.
     """
     ws = lean_manager.create(
-        mission_slug="choc", task_id="01-committed-archive", needs_repo=False
+        mission_slug="choc", task_id="01-a", needs_repo=False
     )
     mission_dir = tmp_path / "mission_root"
     mission_dir.mkdir()

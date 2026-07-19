@@ -38,6 +38,7 @@ import {
 import { useEventStore } from "@/store/events";
 import { useVoiceMode } from "@/hooks/useVoiceMode";
 import { agentBrand, agentsBrand } from "@/lib/agentBrand";
+import { robustCopy } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
@@ -1738,10 +1739,8 @@ function CodexAuthWidget({
   async function handleCopy() {
     setPending("copy");
     try {
-      await navigator.clipboard.writeText(installCommand);
-      pushToast("success", "Install command copied");
-    } catch {
-      pushToast("warning", installCommand);
+      const copied = await robustCopy(installCommand);
+      pushToast(copied ? "success" : "warning", copied ? "Install command copied" : installCommand);
     } finally {
       setPending(null);
     }
@@ -1871,10 +1870,8 @@ function AntigravityAuthWidget({
   async function handleCopy() {
     setPending("copy");
     try {
-      await navigator.clipboard.writeText(installCommand);
-      pushToast("success", "Install command copied");
-    } catch {
-      pushToast("warning", installCommand);
+      const copied = await robustCopy(installCommand);
+      pushToast(copied ? "success" : "warning", copied ? "Install command copied" : installCommand);
     } finally {
       setPending(null);
     }

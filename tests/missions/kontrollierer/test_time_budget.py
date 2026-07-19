@@ -12,8 +12,8 @@ Shape pinned here:
 - correction iterations get the short budget (6 min) — they refine an
   existing workspace, they do not rebuild;
 - no new correction iteration starts when the remaining task time cannot
-  fit a correction + one critic call (the loop ends with the existing
-  exhausted semantics instead of overshooting the 20-minute target);
+  fit a correction + one critic call (the mission records that explicit reason
+  instead of pretending all three critic attempts ran);
 - MAX_CRITIC_LOOPS stays untouched (ADR-0009) — the time guard is an
   additional bound, not a loop-count change.
 """
@@ -77,8 +77,7 @@ async def test_iter0_gets_main_budget_corrections_get_short_budget(
 async def test_no_new_iteration_when_time_budget_exhausted(
     manager: MissionManager, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """When no correction fits the remaining budget, the loop ends instead
-    of overshooting — existing exhausted semantics, only one worker spawn."""
+    """When no correction fits, report time budget rather than three failures."""
     monkeypatch.setattr(orch_mod, "_TASK_TIME_BUDGET_S", 0.0)
     worker = FakeWorker()
     critic = FakeCriticRunner(_make_revise_verdict())
@@ -95,6 +94,13 @@ async def test_no_new_iteration_when_time_budget_exhausted(
     assert len(worker.spawn_calls) == 1, (
         "no second iteration may start once the time budget is spent"
     )
+    failures = [
+        event.payload
+        for event in await manager.store.events_for_mission(mid)
+        if event.payload.event_type == "MissionFailed"
+    ]
+    assert len(failures) == 1
+    assert failures[0].reason == "review_time_budget_exhausted"
 
 
 def test_worker_error_transient_matcher_knows_subscription_limits() -> None:

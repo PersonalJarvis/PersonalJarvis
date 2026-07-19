@@ -177,6 +177,58 @@ async def test_stream_jsonl_written_live(
 
 
 @pytest.mark.asyncio
+async def test_stream_jsonl_is_isolated_per_spawn(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A new worker attempt must replace evidence from the prior iteration."""
+    stdout = _LiveStream()
+
+    async def _fake_exec(*_a: Any, **_k: Any) -> _LiveProc:
+        return _LiveProc(stdout)
+
+    monkeypatch.setattr(cdw.asyncio, "create_subprocess_exec", _fake_exec)
+    stream_path = tmp_path / "logs" / "stream.jsonl"
+    stream_path.parent.mkdir(parents=True)
+    stream_path.write_text('{"stale":"prior spawn"}\n', encoding="utf-8")
+
+    agen = _spawn(CodexDirectWorker(), tmp_path)
+    try:
+        await agen.__anext__()  # init
+        stdout.queue.put_nowait(_agent_line("current spawn"))
+        await asyncio.wait_for(agen.__anext__(), timeout=2.0)
+
+        stream_text = stream_path.read_text(encoding="utf-8")
+        assert "prior spawn" not in stream_text
+        assert "current spawn" in stream_text
+
+        stdout.queue.put_nowait(b"")
+        async for _ in agen:
+            pass
+    finally:
+        await agen.aclose()
+
+
+@pytest.mark.asyncio
+async def test_spawn_failure_does_not_leave_prior_stream_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A missing Codex binary must not expose the preceding attempt's log."""
+
+    async def _missing_exec(*_a: Any, **_k: Any) -> Any:
+        raise FileNotFoundError("codex")
+
+    monkeypatch.setattr(cdw, "create_worker_subprocess", _missing_exec)
+    stream_path = tmp_path / "logs" / "stream.jsonl"
+    stream_path.parent.mkdir(parents=True)
+    stream_path.write_text('{"stale":"prior spawn"}\n', encoding="utf-8")
+
+    events = [event async for event in _spawn(CodexDirectWorker(), tmp_path)]
+
+    assert getattr(events[-1], "is_error", False) is True
+    assert stream_path.read_text(encoding="utf-8") == ""
+
+
+@pytest.mark.asyncio
 async def test_partial_stream_survives_startup_timeout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

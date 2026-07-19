@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Check, Copy } from "lucide-react";
 
+import { robustCopy } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
@@ -105,7 +106,8 @@ export function CodeBlock({ language, code }: CodeBlockProps) {
   }, [language, code]);
 
   const handleCopy = () => {
-    void navigator.clipboard.writeText(code).then(() => {
+    void robustCopy(code).then((copied) => {
+      if (!copied) return;
       setCopied(true);
       window.setTimeout(() => {
         if (mountedRef.current) setCopied(false);

@@ -286,6 +286,7 @@ class WebServer:
         from .chats_routes import router as chats_router
         from .claude_routes import router as claude_router
         from .cli_routes import router as cli_router
+        from .clipboard_routes import router as clipboard_router
         from .commands_routes import router as commands_router
         from .computer_use_routes import router as computer_use_router
         from .contacts_routes import router as contacts_router
@@ -394,6 +395,7 @@ class WebServer:
         app.include_router(sub_agents_router)
         app.include_router(outputs_router)
         app.include_router(downloads_router)
+        app.include_router(clipboard_router)
         # Socials section — project social-media links (pure file store, no Brain dep).
         app.include_router(socials_router)
         # In-app feedback / bug-report form → Discord webhook.

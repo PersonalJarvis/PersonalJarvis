@@ -18,6 +18,7 @@ design).
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import AsyncIterator
 from pathlib import Path
@@ -162,8 +163,6 @@ async def _insert_dispatch_event(
     the parent→child edge lives only in the dispatch event payload (the
     ``missions`` header has no parent column).
     """
-    import json
-
     payload = json.dumps(
         {
             "event_type": "MissionDispatched",
@@ -176,6 +175,20 @@ async def _insert_dispatch_event(
     await conn.execute(
         "INSERT INTO mission_events (mission_id, event_type, payload_json) VALUES (?, ?, ?)",
         (child_id, "MissionDispatched", payload),
+    )
+
+
+async def _insert_terminal_event(
+    conn: aiosqlite.Connection,
+    *,
+    mission_id: str,
+    event_type: str,
+    payload: dict[str, object],
+) -> None:
+    await conn.execute(
+        "INSERT INTO mission_events (mission_id, event_type, payload_json) "
+        "VALUES (?, ?, ?)",
+        (mission_id, event_type, json.dumps(payload)),
     )
 
 
@@ -282,6 +295,161 @@ async def test_list_outputs_mission_dir_failed_state(
         r = client.get("/api/outputs")
     sessions = r.json()["sessions"]
     assert sessions[0]["status"] == "error"
+    assert sessions[0]["has_partial_output"] is False
+    assert sessions[0]["needs_review"] is False
+    assert sessions[0]["artifact_count"] == 0
+
+
+@pytest.mark.asyncio
+async def test_failed_mission_with_deliverable_is_exposed_as_reviewable_partial(
+    app: FastAPI, tmp_path: Path, db_conn: aiosqlite.Connection
+) -> None:
+    """A retained file is not approval, but it is not a content-free error."""
+    mission_id = "019e3600-c100-7000-8000-000000000103"
+    mission_dir = _make_mission_dir(tmp_path, mission_id)
+    _seed(
+        mission_dir / "tasks/task-1/artifacts/files/report.html",
+        "<!doctype html><html><body>Report</body></html>",
+    )
+    await _insert_mission(db_conn, mission_id=mission_id, state="FAILED")
+    await _insert_terminal_event(
+        db_conn,
+        mission_id=mission_id,
+        event_type="MissionFailed",
+        payload={"reason": "critic_loop_exhausted"},
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/outputs")
+
+    assert response.status_code == 200
+    session = response.json()["sessions"][0]
+    assert session["status"] == "error"
+    assert session["terminal_event"] == "MissionFailed"
+    assert session["terminal_reason"] == "critic_loop_exhausted"
+    assert session["error"] == "critic_loop_exhausted"
+    assert session["artifact_count"] == 1
+    assert session["has_partial_output"] is True
+    assert session["needs_review"] is True
+
+
+@pytest.mark.asyncio
+async def test_execution_failure_with_retained_file_stays_failed(
+    app: FastAPI, tmp_path: Path, db_conn: aiosqlite.Connection
+) -> None:
+    """A leftover file does not soften a worker crash into a review outcome."""
+    mission_id = "019e3600-c150-7000-8000-000000000153"
+    mission_dir = _make_mission_dir(tmp_path, mission_id)
+    _seed(mission_dir / "tasks/task-1/artifacts/files/partial.html", "partial")
+    await _insert_mission(db_conn, mission_id=mission_id, state="FAILED")
+    await _insert_terminal_event(
+        db_conn,
+        mission_id=mission_id,
+        event_type="MissionFailed",
+        payload={"reason": "task_error"},
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/outputs")
+
+    session = response.json()["sessions"][0]
+    assert session["status"] == "error"
+    assert session["has_partial_output"] is True
+    assert session["needs_review"] is False
+
+
+@pytest.mark.asyncio
+async def test_explicit_critic_rejection_with_retained_file_stays_failed(
+    app: FastAPI, tmp_path: Path, db_conn: aiosqlite.Connection
+) -> None:
+    """An explicit rejection is a real terminal decision, not review exhaustion."""
+    mission_id = "019e3600-c175-7000-8000-000000000173"
+    mission_dir = _make_mission_dir(tmp_path, mission_id)
+    _seed(mission_dir / "tasks/task-1/artifacts/files/rejected.html", "partial")
+    await _insert_mission(db_conn, mission_id=mission_id, state="FAILED")
+    await _insert_terminal_event(
+        db_conn,
+        mission_id=mission_id,
+        event_type="MissionFailed",
+        payload={"reason": "critic_rejected"},
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/outputs")
+
+    session = response.json()["sessions"][0]
+    assert session["status"] == "error"
+    assert session["terminal_reason"] == "critic_rejected"
+    assert session["has_partial_output"] is True
+    assert session["needs_review"] is False
+
+
+@pytest.mark.asyncio
+async def test_approved_mission_exposes_signed_summary_without_partial_flag(
+    app: FastAPI, tmp_path: Path, db_conn: aiosqlite.Connection
+) -> None:
+    mission_id = "019e3600-c200-7000-8000-000000000203"
+    mission_dir = _make_mission_dir(tmp_path, mission_id)
+    _seed(mission_dir / "tasks/task-1/artifacts/files/report.md", "# Complete")
+    await _insert_mission(db_conn, mission_id=mission_id, state="APPROVED")
+    await _insert_terminal_event(
+        db_conn,
+        mission_id=mission_id,
+        event_type="MissionApproved",
+        payload={
+            "summary_en": "The report was approved.",
+            "summary_de": "Der Bericht wurde freigegeben.",  # i18n-allow: fixture
+        },
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/outputs")
+
+    session = response.json()["sessions"][0]
+    assert session["status"] == "success"
+    assert session["summary"] == "Der Bericht wurde freigegeben."  # i18n-allow: fixture
+    assert session["artifact_count"] == 1
+    assert session["has_partial_output"] is False
+    assert session["needs_review"] is False
+    assert session["error"] is None
+
+
+@pytest.mark.asyncio
+async def test_terminal_state_transition_reason_is_a_legacy_fallback(
+    app: FastAPI, tmp_path: Path, db_conn: aiosqlite.Connection
+) -> None:
+    mission_id = "019e3600-c300-7000-8000-000000000303"
+    _make_mission_dir(tmp_path, mission_id)
+    await _insert_mission(db_conn, mission_id=mission_id, state="CANCELLED")
+    await _insert_terminal_event(
+        db_conn,
+        mission_id=mission_id,
+        event_type="MissionStateChanged",
+        payload={"to_state": "CANCELLED", "reason": "app_shutdown"},
+    )
+
+    with TestClient(app) as client:
+        response = client.get("/api/outputs")
+
+    session = response.json()["sessions"][0]
+    assert session["status"] == "cancelled"
+    assert session["terminal_event"] == "MissionStateChanged"
+    assert session["terminal_reason"] == "app_shutdown"
+    assert session["error"] is None
+
+
+def test_outputs_openapi_exposes_typed_status_and_partial_fields(app: FastAPI) -> None:
+    schema = app.openapi()["components"]["schemas"]["OutputSummary"]
+    status_schema = schema["properties"]["status"]
+    assert status_schema["enum"] == [
+        "running",
+        "success",
+        "error",
+        "cancelled",
+        "unknown",
+    ]
+    assert schema["properties"]["has_partial_output"]["type"] == "boolean"
+    assert schema["properties"]["needs_review"]["type"] == "boolean"
 
 
 @pytest.mark.asyncio

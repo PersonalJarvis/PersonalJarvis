@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import ntpath
 import os
 import shutil
 import time
@@ -55,24 +56,24 @@ def _repair_windows_worker_path(
     """
     root = environ.get("SystemRoot") or environ.get("windir") or r"C:\Windows"
     essentials: list[str] = [
-        os.path.join(root, "System32"),
+        ntpath.join(root, "System32"),
         root,
-        os.path.join(root, "System32", "Wbem"),
-        os.path.join(root, "System32", "WindowsPowerShell", "v1.0"),
+        ntpath.join(root, "System32", "Wbem"),
+        ntpath.join(root, "System32", "WindowsPowerShell", "v1.0"),
     ]
     if node_exe:
-        essentials.append(str(Path(node_exe).parent))
+        essentials.append(ntpath.dirname(node_exe))
     appdata = environ.get("APPDATA")
     if appdata:
         # npm-global shims (codex.cmd / claude.cmd / gemini.cmd) live here.
-        essentials.append(os.path.join(appdata, "npm"))
+        essentials.append(ntpath.join(appdata, "npm"))
 
-    existing = [p for p in path.split(os.pathsep) if p]
+    existing = [p for p in path.split(";") if p]
     seen = {p.rstrip("\\/").lower() for p in existing}
     additions = [d for d in essentials if d.rstrip("\\/").lower() not in seen]
     if not additions:
         return path
-    return os.pathsep.join(existing + additions)
+    return ";".join(existing + additions)
 
 # System variables that are ALWAYS forwarded from os.environ (when set).
 # - PATH: without it the worker cannot find binaries (git, claude, codex, python).
