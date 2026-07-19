@@ -9,6 +9,23 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+### Fixed
+
+- **macOS: the uninstall command works again.** On a Mac, the documented
+  one-liner `bash ~/.personal-jarvis/install/uninstall.sh` printed a syntax
+  error and did nothing at all — no prompt, no removal. macOS still ships a
+  2007 version of the shell the script is written for, and one line of the
+  uninstaller was written in a way only newer versions understand, so the file
+  could not even be read, let alone run. Affects installs on 1.1.0 and 1.1.1;
+  Windows and Linux were never affected. If you are stuck on an affected Mac
+  and want to uninstall before updating, this does the same job and skips the
+  broken script: `~/.personal-jarvis/.venv/bin/python -m jarvis --uninstall`.
+- **Shell scripts are now checked against the shell macOS actually ships.**
+  Nothing in the automated checks had ever done that, which is why the dead
+  uninstaller shipped twice while every test stayed green. Every shell script
+  in the project is now verified to be readable by that older version before a
+  change can land.
+
 ## [1.1.1] — 2026-07-19
 
 ### Fixed
