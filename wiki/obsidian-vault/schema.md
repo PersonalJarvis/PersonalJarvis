@@ -65,7 +65,7 @@ Required frontmatter:
 ```yaml
 ---
 type: entity
-entity_kind: person | tool | repository | service | device
+entity_kind: person | tool | repository | service | device | asset | vehicle | place | organization
 slug: <slug>
 aliases: [list, of, alt, names]
 created: YYYY-MM-DD
