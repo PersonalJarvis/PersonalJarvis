@@ -3,18 +3,30 @@
 The Settings device pickers: GET lists one entry per physical device plus the
 current [audio] selection; PUT persists a device NAME (or the "auto-headset"
 sentinel) via config_writer and live-applies it to the running SpeechPipeline
-(output: player hot-swap, input: wake-session re-arm). Headless hosts degrade
-to available=false / restart_required=true — never a 500.
+when its PortAudio table contains that device. A fresh-probe-only selection is
+saved for the next app start. Headless hosts degrade to available=false /
+restart_required=true — never a 500.
 """
 from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from jarvis.audio.devices import AudioDeviceInfo
+from jarvis.ui.web import settings_routes
 from jarvis.ui.web.settings_routes import router
+
+
+@pytest.fixture(autouse=True)
+def _assume_requested_device_is_in_live_table(monkeypatch):
+    monkeypatch.setattr(
+        settings_routes,
+        "_audio_device_available_in_live_table",
+        lambda value, *, output: True,
+    )
 
 
 def _client(*, output_device="auto-headset", input_device="auto-headset", pipeline=None):
@@ -33,8 +45,14 @@ def _client(*, output_device="auto-headset", input_device="auto-headset", pipeli
 def _fake_lists(monkeypatch, outputs, inputs):
     import jarvis.audio.devices as dv
 
+    def fresh_options(*, fresh=False):
+        assert fresh is True
+        return outputs, inputs
+
     monkeypatch.setattr(
-        dv, "list_devices", lambda *, output: outputs if output else inputs
+        dv,
+        "list_device_options",
+        fresh_options,
     )
 
 
@@ -134,6 +152,43 @@ def test_put_input_only_and_auto_reset(monkeypatch):
     # No pipeline on app.state → persisted only, applies on next start.
     assert body["applied_live"] is False
     assert body["restart_required"] is True
+
+
+def test_put_hotplugged_device_waits_for_safe_next_start(monkeypatch):
+    """A fresh-probe-only index must never be applied to the stale live table."""
+    persisted: dict[str, str] = {}
+    import jarvis.core.config_writer as cw
+
+    monkeypatch.setattr(
+        cw,
+        "set_audio_device",
+        lambda kind, value, **kwargs: persisted.setdefault(kind, value),
+    )
+    monkeypatch.setattr(
+        settings_routes,
+        "_audio_device_available_in_live_table",
+        lambda value, *, output: value != "External Headphones",
+    )
+
+    applied: list[dict[str, str]] = []
+
+    class FakePipeline:
+        def set_audio_devices(self, **devices):
+            applied.append(devices)
+
+    response = _client(pipeline=FakePipeline()).put(
+        "/api/settings/audio-devices",
+        json={"output_device": "External Headphones", "persist": True},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["selected_output"] == "External Headphones"
+    assert body["persisted"] is True
+    assert body["applied_live"] is False
+    assert body["restart_required"] is True
+    assert persisted == {"output": "External Headphones"}
+    assert applied == []
 
 
 def test_put_requires_at_least_one_side():

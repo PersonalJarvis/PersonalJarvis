@@ -18,6 +18,15 @@ import signal
 import sys
 from typing import NoReturn
 
+# A frozen GUI executable cannot be relaunched with ``python -m`` and has no
+# reliable stdout.  Dispatch this private, file-backed sidecar mode before the
+# normal desktop imports so Settings can safely enumerate newly hot-plugged
+# audio hardware in a separate PortAudio instance.
+if len(sys.argv) == 3 and sys.argv[1] == "--audio-device-probe":
+    from jarvis.audio.device_probe import main as _audio_device_probe_main
+
+    raise SystemExit(_audio_device_probe_main(sys.argv[2]))
+
 # Windows Terminal defaults to cp1252 — which breaks Unicode (box-drawing,
 # emojis, ✓/✗). Force utf-8 before printing anything.
 if sys.platform == "win32":

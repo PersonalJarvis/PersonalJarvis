@@ -25,8 +25,13 @@ and the stream-open resolvers.
 """
 from __future__ import annotations
 
+import json
+import subprocess
+import sys
+import tempfile
 import unicodedata
 from dataclasses import dataclass
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -51,6 +56,7 @@ from jarvis.audio.capture import (
 from jarvis.audio.capture import (
     _HOSTAPI_PREFERENCE as _INPUT_HOSTAPI_PREFERENCE,
 )
+from jarvis.audio.device_probe import SNAPSHOT_MARKER
 from jarvis.audio.device_select import is_legacy_primary_mapper
 from jarvis.audio.player import (
     _FORBIDDEN_OUTPUT_HOSTAPIS as _OUTPUT_FORBIDDEN_HOSTAPIS,
@@ -58,6 +64,7 @@ from jarvis.audio.player import (
 from jarvis.audio.player import (
     _HOSTAPI_PREFERENCE as _OUTPUT_HOSTAPI_PREFERENCE,
 )
+from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
 #: The config sentinel for "pick a device automatically" (the default in
 #: ``[audio].input_device`` / ``[audio].output_device``).
@@ -67,6 +74,9 @@ AUTO_DEVICE = "auto-headset"
 # chars). A shorter name that is a strict PREFIX of a longer one and at least
 # this long is treated as that device's truncated twin, not a distinct device.
 _MME_TRUNCATION_MIN = 30
+_FRESH_PROBE_TIMEOUT_S = 4.0
+
+_DeviceTables = tuple[list[Any], list[Any], tuple[int | None, int | None]]
 
 
 @dataclass(frozen=True)
@@ -96,14 +106,101 @@ def _hostapi_name(dev: dict[str, Any], hostapis: list[Any]) -> str:
     return ""
 
 
-def _query_tables() -> tuple[list[Any], list[Any]] | None:
-    """The (devices, hostapis) tables, or None when PortAudio is unusable."""
+def _default_index(value: object) -> int | None:
+    """Normalize a sounddevice device index, including non-int scalar types."""
+    try:
+        index = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError, OverflowError):
+        return None
+    return index if index >= 0 else None
+
+
+def _query_tables_in_process() -> _DeviceTables | None:
+    """Return this process's cached PortAudio tables, if usable."""
     if sd is None:
         return None
     try:
-        return list(sd.query_devices()), list(sd.query_hostapis())
+        default_pair = sd.default.device
+        defaults = (_default_index(default_pair[0]), _default_index(default_pair[1]))
+        return list(sd.query_devices()), list(sd.query_hostapis()), defaults
     except Exception:  # noqa: BLE001 — enumeration must never raise (headless)
         return None
+
+
+def _fresh_probe_command(output_path: Path) -> list[str]:
+    """Build the probe command for source and frozen desktop installations."""
+    if getattr(sys, "frozen", False):
+        return [sys.executable, "--audio-device-probe", str(output_path)]
+    return [
+        sys.executable,
+        "-m",
+        "jarvis.audio.device_probe",
+        str(output_path),
+    ]
+
+
+def _query_tables_fresh() -> _DeviceTables | None:
+    """Query a new PortAudio process so post-start hot-plugs are visible.
+
+    PortAudio's device list is immutable between initialize and terminate.  A
+    child process is the only safe rescan while this process owns live streams:
+    reinitializing the shared instance would close those streams and has caused
+    native CoreAudio faults on macOS.  Any worker failure falls back to the
+    in-process table, preserving the headless and degraded-mode contracts.
+    """
+    try:
+        with tempfile.TemporaryDirectory(prefix="jarvis-audio-probe-") as temp_dir:
+            output_path = Path(temp_dir) / "snapshot.json"
+            subprocess.run(
+                _fresh_probe_command(output_path),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=_FRESH_PROBE_TIMEOUT_S,
+                check=False,
+                close_fds=True,
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+            )
+            record = output_path.read_text(encoding="utf-8", errors="replace")
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+    marker_line = next(
+        (line for line in reversed(record.splitlines()) if line.startswith(SNAPSHOT_MARKER)),
+        "",
+    )
+    if not marker_line:
+        return None
+    try:
+        payload = json.loads(marker_line.removeprefix(SNAPSHOT_MARKER))
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not isinstance(payload, dict) or payload.get("ok") is not True:
+        return None
+    devices = payload.get("devices")
+    hostapis = payload.get("hostapis")
+    defaults = payload.get("default")
+    if not isinstance(devices, list) or not isinstance(hostapis, list):
+        return None
+    if not all(isinstance(device, dict) for device in devices) or not all(
+        isinstance(hostapi, dict) for hostapi in hostapis
+    ):
+        return None
+    if not isinstance(defaults, list) or len(defaults) != 2:
+        return None
+    return (
+        devices,
+        hostapis,
+        (_default_index(defaults[0]), _default_index(defaults[1])),
+    )
+
+
+def _query_tables(*, fresh: bool = False) -> _DeviceTables | None:
+    """Return current or safely refreshed PortAudio device tables."""
+    if fresh:
+        tables = _query_tables_fresh()
+        if tables is not None:
+            return tables
+    return _query_tables_in_process()
 
 
 def _candidates(
@@ -135,30 +232,17 @@ def _hostapi_rank(hostapi: str, *, output: bool) -> int:
     return table.get(hostapi, 99)
 
 
-def _os_default_index(*, output: bool) -> int | None:
-    try:
-        idx = sd.default.device[1 if output else 0]
-    except Exception:  # noqa: BLE001 — no default configured
-        return None
-    return idx if isinstance(idx, int) and idx >= 0 else None
+def _os_default_index(defaults: tuple[int | None, int | None], *, output: bool) -> int | None:
+    return defaults[1 if output else 0]
 
 
-def list_devices(*, output: bool) -> list[AudioDeviceInfo]:
-    """One picker entry per physical device in the requested direction.
-
-    Dedupes host-API twins by exact name, merges an MME-truncated name into
-    its full-name twin, flags the OS-default endpoint and sorts it first
-    (then alphabetically). Headless / no PortAudio → ``[]``.
-    """
-    tables = _query_tables()
-    if tables is None:
-        return []
-    devices, hostapis = tables
+def _list_devices_from_tables(tables: _DeviceTables, *, output: bool) -> list[AudioDeviceInfo]:
+    devices, hostapis, defaults = tables
     cands = _candidates(devices, hostapis, output=output)
     if not cands:
         return []
 
-    default_idx = _os_default_index(output=output)
+    default_idx = _os_default_index(defaults, output=output)
     default_name = ""
     if default_idx is not None and 0 <= default_idx < len(devices):
         default_name = str(devices[default_idx].get("name", ""))
@@ -202,6 +286,34 @@ def list_devices(*, output: bool) -> list[AudioDeviceInfo]:
     return entries
 
 
+def list_devices(*, output: bool, fresh: bool = False) -> list[AudioDeviceInfo]:
+    """One picker entry per physical device in the requested direction.
+
+    Dedupes host-API twins by exact name, merges an MME-truncated name into
+    its full-name twin, flags the OS-default endpoint and sorts it first
+    (then alphabetically).  ``fresh=True`` uses an isolated PortAudio process
+    so devices connected after desktop startup are included without touching
+    live audio streams.  Headless / no PortAudio yields ``[]``.
+    """
+    tables = _query_tables(fresh=fresh)
+    if tables is None:
+        return []
+    return _list_devices_from_tables(tables, output=output)
+
+
+def list_device_options(
+    *, fresh: bool = False
+) -> tuple[list[AudioDeviceInfo], list[AudioDeviceInfo]]:
+    """Return output and input picker entries from one consistent snapshot."""
+    tables = _query_tables(fresh=fresh)
+    if tables is None:
+        return [], []
+    return (
+        _list_devices_from_tables(tables, output=True),
+        _list_devices_from_tables(tables, output=False),
+    )
+
+
 def resolve_device_by_name(name: str, *, output: bool) -> int | None:
     """The PortAudio index for a persisted device NAME, or None when absent.
 
@@ -218,7 +330,7 @@ def resolve_device_by_name(name: str, *, output: bool) -> int | None:
     tables = _query_tables()
     if tables is None:
         return None
-    devices, hostapis = tables
+    devices, hostapis, _defaults = tables
 
     target_cf = _canon(target)
     # Same-device pool: exact matches plus truncation twins (the candidate is

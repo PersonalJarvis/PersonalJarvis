@@ -1,4 +1,10 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AudioDevicesGroup } from "./AudioDevicesGroup";
 
@@ -128,5 +134,46 @@ describe("AudioDevicesGroup", () => {
       ) as HTMLSelectElement;
       expect(output.value).toBe("Jabra Evolve2 65");
     });
+  });
+
+  it("rescans when the browser reports an audio-device change", async () => {
+    let deviceChange: EventListener | undefined;
+    const mediaDevices = {
+      addEventListener: vi.fn((type: string, listener: EventListener) => {
+        if (type === "devicechange") deviceChange = listener;
+      }),
+      removeEventListener: vi.fn(),
+    };
+    const previous = Object.getOwnPropertyDescriptor(
+      window.navigator,
+      "mediaDevices",
+    );
+    Object.defineProperty(window.navigator, "mediaDevices", {
+      configurable: true,
+      value: mediaDevices,
+    });
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => DESKTOP,
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const view = render(<AudioDevicesGroup />);
+    try {
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1));
+      act(() => deviceChange?.(new Event("devicechange")));
+      await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2));
+      view.unmount();
+      expect(mediaDevices.removeEventListener).toHaveBeenCalledWith(
+        "devicechange",
+        deviceChange,
+      );
+    } finally {
+      if (previous) {
+        Object.defineProperty(window.navigator, "mediaDevices", previous);
+      } else {
+        Reflect.deleteProperty(window.navigator, "mediaDevices");
+      }
+    }
   });
 });

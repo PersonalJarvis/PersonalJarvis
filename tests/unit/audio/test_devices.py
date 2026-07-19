@@ -17,10 +17,14 @@ Guards for :mod:`jarvis.audio.devices`:
 """
 from __future__ import annotations
 
+import json
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+from jarvis.audio import device_probe
 from jarvis.audio import devices as dv
 
 
@@ -152,6 +156,138 @@ def test_list_devices_without_sounddevice_returns_empty(monkeypatch) -> None:
 
     assert dv.list_devices(output=True) == []
     assert dv.list_devices(output=False) == []
+
+
+def test_fresh_probe_without_sounddevice_returns_empty_headless_snapshot(
+    monkeypatch,
+) -> None:
+    monkeypatch.setitem(sys.modules, "sounddevice", None)
+
+    snapshot = device_probe.collect_snapshot()
+
+    assert snapshot == {
+        "ok": True,
+        "devices": [],
+        "hostapis": [],
+        "default": [-1, -1],
+    }
+
+
+def test_device_probe_main_writes_marker_file(monkeypatch, tmp_path) -> None:
+    payload = {"ok": True, "devices": [], "hostapis": [], "default": [-1, -1]}
+    monkeypatch.setattr(device_probe, "collect_snapshot", lambda: payload)
+    output_path = tmp_path / "snapshot.json"
+
+    assert device_probe.main(str(output_path)) == 0
+
+    record = output_path.read_text(encoding="utf-8").strip()
+    assert record.startswith(device_probe.SNAPSHOT_MARKER)
+    assert json.loads(record.removeprefix(device_probe.SNAPSHOT_MARKER)) == payload
+
+
+def test_fresh_options_use_isolated_snapshot_instead_of_stale_live_table(
+    monkeypatch,
+) -> None:
+    """A headset connected after startup must appear without reinitializing the
+    live PortAudio instance that owns the wake and playback streams."""
+    stale_hostapis = [{"name": "Core Audio", "devices": [0, 1]}]
+    stale_devices = [
+        {
+            "name": "Built-in Microphone",
+            "hostapi": 0,
+            "max_input_channels": 1,
+            "max_output_channels": 0,
+        },
+        {
+            "name": "Built-in Speakers",
+            "hostapi": 0,
+            "max_input_channels": 0,
+            "max_output_channels": 2,
+        },
+    ]
+    _patch_tables(monkeypatch, stale_hostapis, stale_devices, default=(0, 1))
+    fresh_payload = {
+        "ok": True,
+        "hostapis": [{"name": "Core Audio", "devices": [0, 1, 2, 3]}],
+        "devices": [
+            {
+                "name": "External Microphone",
+                "hostapi": 0,
+                "max_input_channels": 1,
+                "max_output_channels": 0,
+            },
+            {
+                "name": "External Headphones",
+                "hostapi": 0,
+                "max_input_channels": 0,
+                "max_output_channels": 2,
+            },
+            *stale_devices,
+        ],
+        "default": [0, 1],
+    }
+    calls: list[tuple[list[str], dict]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs))
+        Path(command[-1]).write_text(
+            dv.SNAPSHOT_MARKER + json.dumps(fresh_payload) + "\n",
+            encoding="utf-8",
+        )
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(dv.subprocess, "run", fake_run)
+
+    outputs, inputs = dv.list_device_options(fresh=True)
+
+    assert [entry.name for entry in outputs] == [
+        "External Headphones",
+        "Built-in Speakers",
+    ]
+    assert [entry.name for entry in inputs] == [
+        "External Microphone",
+        "Built-in Microphone",
+    ]
+    assert outputs[0].is_default is True
+    assert inputs[0].is_default is True
+    assert calls[0][0][1:3] == ["-m", "jarvis.audio.device_probe"]
+    assert calls[0][1]["creationflags"] == dv.NO_WINDOW_CREATIONFLAGS
+
+
+def test_fresh_probe_uses_internal_mode_in_frozen_desktop(monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(dv.sys, "frozen", True, raising=False)
+    output_path = tmp_path / "snapshot.json"
+
+    command = dv._fresh_probe_command(output_path)
+
+    assert command == [
+        dv.sys.executable,
+        "--audio-device-probe",
+        str(output_path),
+    ]
+
+
+def test_fresh_probe_failure_falls_back_to_live_table(monkeypatch) -> None:
+    hostapis = [{"name": "ALSA", "devices": [0]}]
+    devices = [
+        {
+            "name": "USB Audio",
+            "hostapi": 0,
+            "max_input_channels": 1,
+            "max_output_channels": 2,
+        }
+    ]
+    _patch_tables(monkeypatch, hostapis, devices, default=(0, 0))
+    monkeypatch.setattr(
+        dv.subprocess,
+        "run",
+        lambda *args, **kwargs: SimpleNamespace(stdout="", returncode=1),
+    )
+
+    outputs, inputs = dv.list_device_options(fresh=True)
+
+    assert [entry.name for entry in outputs] == ["USB Audio"]
+    assert [entry.name for entry in inputs] == ["USB Audio"]
 
 
 # --------------------------------------------------------------------------- #
