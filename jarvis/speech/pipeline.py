@@ -22,6 +22,7 @@ import threading
 import time
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -6090,6 +6091,15 @@ class SpeechPipeline:
         session_id = getattr(self, "_current_voice_session_id", None) or str(uuid4())
         playback = DesktopRealtimePlayback(self._player)
         barge_detector = DesktopRealtimeBargeInDetector()
+        # Per-frame Silero inference runs OFF the voice event loop — the same
+        # BUG-062/BUG-084 class the classic barge monitor already fixed with
+        # to_thread; inline it stalled playback on slow CPUs (Intel-Mac test
+        # machine). ONE worker preserves frame order and the detector's
+        # internal state; _run_voice_critical_thread would spawn a fresh
+        # thread per frame.
+        barge_feed_executor = ThreadPoolExecutor(
+            max_workers=1, thread_name_prefix=f"rt-barge-feed-{session_id}"
+        )
         turn_complete = asyncio.Event()
         speaking = False
         post_output_echo_guard_until = 0.0
@@ -6385,7 +6395,12 @@ class SpeechPipeline:
                             or time.monotonic() < post_output_echo_guard_until
                         )
                         if echo_guard_active:
-                            interrupted_pcm = barge_detector.feed(chunk.pcm)
+                            interrupted_pcm = await asyncio.get_running_loop(
+                            ).run_in_executor(
+                                barge_feed_executor,
+                                barge_detector.feed,
+                                chunk.pcm,
+                            )
                             if interrupted_pcm is None:
                                 # Provider half-duplex remains intact: speaker
                                 # echo, including the hardware playback tail,
@@ -6548,6 +6563,7 @@ class SpeechPipeline:
             if getattr(self, "_active_realtime_handle", None) is session:
                 self._active_realtime_handle = None
             barge_detector.stop_output()
+            barge_feed_executor.shutdown(wait=False, cancel_futures=True)
             if not barge_warm_task.done():
                 barge_warm_task.cancel()
             try:
