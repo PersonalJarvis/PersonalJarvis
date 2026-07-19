@@ -30,7 +30,7 @@ from uuid import uuid4
 
 import numpy as np
 
-from jarvis.audio import mic_level
+from jarvis.audio import level_tap, mic_level
 from jarvis.audio.capture import (
     REALTIME_QUEUE_CHUNKS,
     MicrophoneCapture,
@@ -6090,7 +6090,9 @@ class SpeechPipeline:
 
         session_id = getattr(self, "_current_voice_session_id", None) or str(uuid4())
         playback = DesktopRealtimePlayback(self._player)
-        barge_detector = DesktopRealtimeBargeInDetector()
+        barge_detector = DesktopRealtimeBargeInDetector(
+            output_active=level_tap.playback_active
+        )
         # Per-frame Silero inference runs OFF the voice event loop — the same
         # BUG-062/BUG-084 class the classic barge monitor already fixed with
         # to_thread; inline it stalled playback on slow CPUs (Intel-Mac test
@@ -10043,7 +10045,10 @@ class SpeechPipeline:
         """
         from jarvis.realtime.desktop import DesktopRealtimeBargeInDetector
 
-        detector = DesktopRealtimeBargeInDetector(grace_s=grace_s)
+        detector = DesktopRealtimeBargeInDetector(
+            grace_s=grace_s,
+            output_active=level_tap.playback_active,
+        )
         try:
             # Model load off the event loop — it shares the turn with live
             # audio playback.

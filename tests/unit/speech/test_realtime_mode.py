@@ -540,8 +540,12 @@ async def test_desktop_cpu_barge_in_cancels_and_forwards_user_preroll(
     pipe = _pipe()
     output_started = asyncio.Event()
     forwarded = b"\x09\x00" * 32
+    detector_kwargs: dict[str, object] = {}
 
     class _Detector:
+        def __init__(self, **kwargs: object) -> None:
+            detector_kwargs.update(kwargs)
+
         def warmup(self) -> None:
             return None
 
@@ -623,6 +627,50 @@ async def test_desktop_cpu_barge_in_cancels_and_forwards_user_preroll(
     assert {"type": "barge_in"} in session.controls
     assert session.audio_frames[-1] == forwarded
     assert built["half_duplex"] is True
+    assert detector_kwargs["output_active"] is pipeline_mod.level_tap.playback_active
+
+
+@pytest.mark.asyncio
+async def test_classic_barge_grace_uses_physical_playback_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    pipe = _pipe(mode="pipeline")
+    detector_kwargs: dict[str, object] = {}
+
+    class _Detector:
+        def __init__(self, **kwargs: object) -> None:
+            detector_kwargs.update(kwargs)
+
+        def warmup(self) -> None:
+            return None
+
+        def start_output(self) -> None:
+            return None
+
+        def feed(self, _pcm: bytes) -> bytes:
+            return b"confirmed"
+
+    class _Mic:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *_exc: object) -> bool:
+            return False
+
+        async def stream(self):
+            yield AudioChunk(
+                pcm=b"\x01\x00" * 32,
+                sample_rate=16_000,
+                timestamp_ns=0,
+            )
+
+    monkeypatch.setattr(
+        "jarvis.realtime.desktop.DesktopRealtimeBargeInDetector", _Detector
+    )
+    monkeypatch.setattr(pipeline_mod, "MicrophoneCapture", lambda **_kwargs: _Mic())
+
+    assert await pipe._barge_monitor() is True
+    assert detector_kwargs["output_active"] is pipeline_mod.level_tap.playback_active
 
 
 @pytest.mark.asyncio
@@ -639,7 +687,7 @@ async def test_post_output_echo_tail_stays_local_and_preserves_immediate_user(
     detector_inputs: list[bytes] = []
 
     class _Detector:
-        def __init__(self) -> None:
+        def __init__(self, **_kwargs: object) -> None:
             self.active = False
 
         def warmup(self) -> None:

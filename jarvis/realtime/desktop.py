@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import time
 from collections import deque
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 import numpy as np
@@ -81,6 +81,7 @@ class DesktopRealtimeBargeInDetector:
         min_frame_rms: float | None = None,
         adaptive_floor_margin: float | None = None,
         adaptive_floor_cap: float | None = None,
+        output_active: Callable[[], bool] | None = None,
         model: Any = None,
     ) -> None:
         self._grace_s = max(0.0, float(grace_s))
@@ -100,6 +101,15 @@ class DesktopRealtimeBargeInDetector:
             if adaptive_floor_cap is None
             else max(self._min_frame_rms, float(adaptive_floor_cap))
         )
+        # Surface TTS can spend more than a second synthesizing and opening the
+        # output stream after the response is logically marked SPEAKING. The
+        # grace window must begin at physical playback, not at that early state
+        # edge, or synthesis latency consumes the echo-calibration period and
+        # the assistant's first sentence is misclassified as a barge-in. The
+        # desktop pipeline supplies the AudioPlayer's process-local playback
+        # probe; omitted keeps the detector usable in isolation and tests.
+        self._output_active = output_active
+        self._playback_started = False
         # The lag must exceed the confirm run so genuine sustained speech is
         # always judged against a baseline formed BEFORE it started.
         self._adaptive_floor_lag = max(
@@ -138,6 +148,7 @@ class DesktopRealtimeBargeInDetector:
 
         self._active = True
         self._started_at = time.monotonic()
+        self._playback_started = self._output_active is None
         self._reset_buffers()
         # Fresh echo calibration per response: the grace window (pure speaker
         # echo by construction) re-trains the adaptive floor for the volume /
@@ -146,6 +157,7 @@ class DesktopRealtimeBargeInDetector:
 
     def stop_output(self) -> None:
         self._active = False
+        self._playback_started = False
         self._reset_buffers()
 
     def feed(self, pcm16: bytes) -> bytes | None:
@@ -153,6 +165,17 @@ class DesktopRealtimeBargeInDetector:
 
         if not self._active or not self._ready or len(pcm16) < 2:
             return None
+
+        if not self._playback_started:
+            # Keep half-duplex input local while synthesis/stream setup is
+            # pending, but do not let that silent lead-in age the grace clock.
+            # The first frame observed during real playback starts a full,
+            # fresh calibration window built only from speaker echo.
+            if self._output_active is not None and not self._output_active():
+                self._reset_buffers()
+                return None
+            self._playback_started = True
+            self._started_at = time.monotonic()
 
         usable = len(pcm16) - (len(pcm16) % 2)
         samples = np.frombuffer(pcm16[:usable], dtype=np.dtype("<i2"))
