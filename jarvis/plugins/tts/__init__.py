@@ -316,9 +316,25 @@ def build_realtime_surface_tts(cfg: Any, realtime_provider: str) -> Any | None:
             from jarvis.plugins.tts.gemini_flash_tts import GeminiFlashTTS
 
             # The Live API and Gemini Flash TTS share one prebuilt-voice
-            # catalog, so the session voice usually carries over verbatim;
-            # an unknown voice falls back to the plugin default.
-            voice = session_voice if session_voice in _GEMINI_VOICES else "Charon"
+            # catalog, so the session voice usually carries over verbatim.
+            # An unknown voice keeps the session's VOICE PROFILE instead of
+            # hard-flipping to the plugin default: a feminine live voice
+            # re-rendered as masculine "Charon" reads as a second assistant
+            # joining the call (BUG-089, Mac live test 2026-07-18).
+            if session_voice in _GEMINI_VOICES:
+                voice = session_voice
+            else:
+                from jarvis.plugins.tts.curated_catalog import (
+                    continuity_voice,
+                    voice_gender,
+                )
+
+                profile_gender = voice_gender(session_voice)
+                voice = (
+                    continuity_voice(family, profile_gender)
+                    if profile_gender
+                    else None
+                ) or "Charon"
             surface: Any = GeminiFlashTTS(
                 default_voice=voice,
                 language_code=getattr(tts_cfg, "language_code", None) or "de-DE",

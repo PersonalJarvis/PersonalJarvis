@@ -63,8 +63,37 @@ def test_gemini_live_builds_same_family_tts_with_session_voice() -> None:
 
 
 def test_unknown_session_voice_falls_back_to_family_default() -> None:
+    # "cedar" is not a Gemini voice but carries a curated MASCULINE profile,
+    # and Charon is the family's first curated masculine voice — the
+    # continuity pick and the historical default coincide here.
     with override_provider_secrets({"gemini-live": "rt-scoped-key"}):
         tts = build_realtime_surface_tts(_cfg(voice="cedar"), "gemini-live")
+    assert isinstance(tts, GeminiFlashTTS)
+    assert tts._default_voice == "Charon"
+
+
+def test_feminine_session_voice_keeps_a_feminine_fallback() -> None:
+    """BUG-089: the surface fallback keeps the session's voice PROFILE.
+
+    A feminine live voice hard-flipping to masculine Charon reads as a
+    second assistant joining the call (Mac live test 2026-07-18). Pinned via
+    the curated gender register, never a hardcoded voice id.
+    """
+    from jarvis.plugins.tts import _GEMINI_VOICES
+    from jarvis.plugins.tts.curated_catalog import FEMININE, voice_gender
+
+    with override_provider_secrets({"gemini-live": "rt-scoped-key"}):
+        tts = build_realtime_surface_tts(_cfg(voice="marin"), "gemini-live")
+    assert isinstance(tts, GeminiFlashTTS)
+    assert tts._default_voice in _GEMINI_VOICES
+    assert voice_gender(tts._default_voice) == FEMININE
+
+
+def test_untagged_unknown_voice_still_falls_back_to_charon() -> None:
+    with override_provider_secrets({"gemini-live": "rt-scoped-key"}):
+        tts = build_realtime_surface_tts(
+            _cfg(voice="definitely-not-a-voice"), "gemini-live"
+        )
     assert isinstance(tts, GeminiFlashTTS)
     assert tts._default_voice == "Charon"
 
