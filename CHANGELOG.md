@@ -29,6 +29,11 @@ versioning per [SemVer](https://semver.org/lang/de/).
   substitute voice now matches the session voice's gender instead of
   hard-flipping to a male default — no more "second assistant" joining the
   call.
+- **The fallback voice also stops re-rolling its delivery mid-answer.**
+  The local re-render now speaks a reply as ONE take (honoring the
+  configured voice-consistency knobs), so a long answer can no longer
+  audibly change character between sentences (BUG-090); session records
+  now label each turn with the voice that actually spoke it.
 - **Smoother replies while you can interrupt.** The local interrupt
   detector's per-frame inference moved off the audio loop — one less
   stutter source on slower machines.
