@@ -5860,6 +5860,9 @@ any state transition that deliberately skips echo suppression (real barge-in)
 needs a content-level backstop, because it will eventually be entered by
 mistake.
 
+*(This class rule fired the very same day: the realtime path itself had NO
+text-level backstop and looped in the live Mac test — see BUG-089.)*
+
 ## BUG-085: Realtime session goes permanently DEAF after an in-place transport rebuild — the surface's echo guard swallows every microphone frame (CRITICAL, FIXED 2026-07-18)
 
 **Symptom (live 2026-07-18 16:17, gemini-live, 21-turn conversation).** At
@@ -6067,3 +6070,100 @@ amnesiac-but-alive session, never a dead call.
 (+ no-history / seeding-failure cases),
 `tests/unit/realtime/test_openai_realtime.py::test_open_session_seeds_prior_call_history`
 (+ `…::test_transport_rebuild_replays_the_current_history_snapshot`).
+
+## BUG-089: macOS realtime voice converses WITH ITSELF in two voices — echoed canned apologies become "user" turns while the starved brain chain re-speaks them forever (CRITICAL, FIXED 2026-07-19)
+
+**Symptom (live Mac test 2026-07-18, Intel MacBook Pro, built-in
+speakers+mic, realtime/duplex default mode).** Turn 1 is always perfect: fast
+reply in the female realtime session voice. From turn 2 on, every turn speaks
+a canned provider-down apology — in a DIFFERENT, male voice — and the
+assistant then ANSWERS its own apologies conversationally ("no problem, I'll
+try again shortly"), two voices holding a dialogue with each other in an
+unbounded loop. Reproduced across fresh runs; Windows (headset, tuned device
+selection) unaffected. Game-breaking.
+
+**Root cause — three interlocking weaknesses, all in the realtime path.**
+BUG-084 had fixed exactly this loop for the CLASSIC pipeline hours earlier;
+its own class rule ("fixing one surface while the sibling keeps the bare
+detector just moves the bug") described the realtime gap precisely:
+
+1. **No text-level echo backstop.** The realtime mic gate was acoustic only
+   (0.5 s post-output tail guard + barge detector). On macOS built-in
+   speakers next to the built-in mic (no AEC anywhere in the desktop path),
+   the assistant's own playback leaked through, was uploaded as "user"
+   audio, transcribed provider-side, and answered.
+   `_looks_like_self_echo` existed but was never consulted here, and the
+   surface-spoken canned phrases were never registered as assistant speech.
+2. **The echo loop starves the brain chain.** One 429/quota error put the
+   delegate chain's provider into `RateLimitTracker(cooldown_s=30.0)` (or
+   the terminal per-session dead list). Echo turns fire every few seconds —
+   far inside 30 s — so EVERY subsequent turn found an empty chain and
+   returned a `_PROVIDER_DOWN_PHRASES` apology: "turn 1 perfect, turn 2+
+   always the phrase". AP-22 corner: realtime (Gemini Live) and the whole
+   delegate chain on ONE Gemini credential family collapse together.
+3. **The second voice is the surface TTS fallback.** A dead realtime
+   provider cannot voice the apology, so `_surface_speech_message` re-renders
+   it through the realtime-scoped surface TTS — which hard-defaulted an
+   unknown session voice to masculine "Charon". A feminine live session
+   suddenly apologizing in a male voice completed the "two assistants
+   talking to each other" illusion.
+
+**Fix (defense in depth — any single layer breaks the loop).**
+
+- **Shared guard:** the BUG-084 text guard moved byte-for-byte into
+  `jarvis/speech/echo_guard.py` (`SelfEchoGuard`), gaining slot-replacement
+  registration and a future-datable activity stamp; the pipeline keeps its
+  methods as thin delegates (facade, old tests green unchanged).
+- **Realtime interception:** the session registers EVERY text it makes
+  audible (all surface-spoken phrases at the `_surface_speech_message` choke
+  point, the provider's cumulative per-turn output transcript under one
+  replaceable slot, the exact delegate reply at each delivery site) and
+  judges each final input transcript at the head of the `input_transcript`
+  branch — an echo match is dropped before ANY turn side effect (no barge
+  confirm, no turn start, no tool bridge, no delegate, no
+  `request_response`, no TranscriptionUpdate). Auto-response adapters get a
+  best-effort `interrupt()` + the existing output-withhold flag. Guard
+  activity is future-dated to the estimated playback drain
+  (`_output_samples_sent` / `output_sample_rate`, capped +120 s, reset on
+  barge/cancel) because providers send audio faster than realtime.
+- **Desktop surface:** the classic pipeline's own guard now also arms on
+  realtime output (`error_spoken` pre-synthesis + assistant-transcript
+  segments), so a session teardown into classic fallback cannot answer a
+  late echo.
+- **Anti-nag cooldown:** ONE outage/recovery notice per 30 s
+  (`_OUTAGE_NOTICE_COOLDOWN_S`); a repeat apology (detected via
+  `brain._last_turn_all_failed`) completes its turn silently and is NEVER
+  written into `_output_transcript` (no fabricated audible record); turns
+  with pending native tool calls are always answered (protocol first).
+- **Voice continuity:** the surface fallback resolves the session voice's
+  curated gender (`voice_gender` + `continuity_voice`) before defaulting to
+  Charon — the fallback voice keeps the session's profile.
+- **Hardening:** the desktop barge detector's per-frame Silero inference
+  moved off the event loop (session-scoped single-worker executor); the
+  realtime factory logs an AP-22 warning when the realtime provider and the
+  entire configured brain chain share one credential family.
+
+**Deliberate non-changes.** The 0.5 s acoustic tail guard and the adaptive
+floor cap stay untouched — headset users must not pay latency for a
+Mac-speaker problem; the text guard is the word-agnostic backstop. No
+delegate-chain reordering (realtime-scoped credential separation).
+
+**Guards.** `tests/unit/realtime/test_session_self_echo.py` (canned-phrase
+echo never becomes a turn; provider-transcript echo dropped; novel-content
+fail-open; short commands immune; auto-response interrupt; playback horizon
+armed + capped + barge reset), `tests/unit/realtime/test_outage_notice_cooldown.py`
+(repeat apology silent + not in the transcript record, speaks again after the
+window, healthy replies never suppressed, pending native calls always
+answered), `tests/unit/speech/test_echo_guard.py` (slot replacement,
+future-dated touch), `tests/unit/realtime/test_factory.py` (AP-22 warning),
+`tests/unit/plugins/tts/test_realtime_surface_tts.py` (gender-continuous
+fallback voice).
+
+**Class rule (closes BUG-084's).** A voice surface may only make text
+audible through a path that (a) REGISTERS that text with the self-echo
+guard and (b) judges inbound "user" text against it while playback can
+still be heard. Canned error phrases are not exempt — they are the WORST
+offenders, because they are spoken exactly when the system is degraded and
+repeating. And an error phrase that can repeat MUST carry a cooldown: a
+fixed apology re-spoken every few seconds is not honesty, it is fuel for
+whatever loop caused it.
