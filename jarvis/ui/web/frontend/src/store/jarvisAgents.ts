@@ -10,7 +10,7 @@ import { create } from "zustand";
 import { agentBrandNow } from "@/lib/agentBrand";
 
 export type NodeKind = "router" | "jarvis_agent" | "harness" | "tool_call";
-export type NodeStatus = "running" | "completed" | "failed";
+export type NodeStatus = "running" | "completed" | "failed" | "cancelled";
 
 export interface ToolCallEntry {
   trace_id?: string | null;

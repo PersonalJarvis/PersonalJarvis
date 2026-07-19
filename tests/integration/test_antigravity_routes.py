@@ -4,6 +4,7 @@ from __future__ import annotations
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from jarvis.core.interactive_terminal import InteractiveTerminalUnavailable
 from jarvis.google_cli.auth_service import GoogleCliAuthStatus
 from jarvis.ui.web import antigravity_routes
 
@@ -61,6 +62,20 @@ def test_login_ok_when_installed(monkeypatch):
     resp = client.post("/api/antigravity/login")
     assert resp.status_code == 200
     assert resp.json()["pid"] == 999
+
+
+def test_login_409_when_no_graphical_terminal(monkeypatch):
+    st = GoogleCliAuthStatus(installed=True, connected=False)
+    client = _client(
+        monkeypatch,
+        status=st,
+        login_raises=InteractiveTerminalUnavailable(
+            "No graphical terminal. Open a terminal and run: agy"
+        ),
+    )
+    resp = client.post("/api/antigravity/login")
+    assert resp.status_code == 409
+    assert "run: agy" in resp.json()["detail"]
 
 
 def test_logout_ok(monkeypatch):

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import threading
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
 from typing import TYPE_CHECKING, Any
@@ -42,6 +43,11 @@ _PortAudioError: type[BaseException] = sd.PortAudioError if sd is not None else 
 
 TTS_SAMPLE_RATE = 24_000  # Gemini 3.1 Flash TTS output rate
 TTS_WRITE_BUFFER_MS = 120
+
+
+class _PlaybackSuperseded(RuntimeError):
+    """A stopped playback attempted to acquire a new output stream."""
+
 
 # Audio devices we NEVER auto-select as headset output. These are
 # locale-independent hardware/interface names: monitor speakers reached over
@@ -417,6 +423,12 @@ class AudioPlayer:
         self._active_stream: sd.OutputStream | None = None
         self._active_source_rate: int | None = None
         self._active_device_rate: int | None = None
+        # ``OutputStream`` setup runs in a worker thread while stop() runs on
+        # the voice event loop. A stop can therefore land after setup began but
+        # before the worker publishes the new stream. The generation + lock
+        # make that late stream stale instead of letting it resurrect playback.
+        self._playback_generation = 0
+        self._stream_state_lock = threading.Lock()
         # Most devices expose at least two output channels, but small USB DACs,
         # accessibility devices, and virtual sinks may be genuinely mono. The
         # value is refreshed whenever a stream opens; stereo remains the safe
@@ -467,6 +479,13 @@ class AudioPlayer:
             self._play_lock = asyncio.Lock()
         return self._play_lock
 
+    def _get_stream_state_lock(self) -> threading.Lock:
+        lock = getattr(self, "_stream_state_lock", None)
+        if lock is None:
+            lock = threading.Lock()
+            self._stream_state_lock = lock
+        return lock
+
     def invalidate_device_cache(self) -> None:
         """Forget every cached device_rate and tear down the active stream.
 
@@ -479,11 +498,16 @@ class AudioPlayer:
         success when the underlying device has vanished — the audio just
         evaporates silently. Forcing the cascade on swap is the safe path.
         """
-        if self._active_stream is not None:
-            self._close_output_stream(self._active_stream)
+        with self._get_stream_state_lock():
+            self._playback_generation = (
+                getattr(self, "_playback_generation", 0) + 1
+            )
+            stream = self._active_stream
             self._active_stream = None
             self._active_source_rate = None
             self._active_device_rate = None
+        if stream is not None:
+            self._close_output_stream(stream)
         self._device_rate_cache.clear()
 
     def set_device(self, device: int | str | None) -> None:
@@ -784,11 +808,11 @@ class AudioPlayer:
         rejected by ``should_play``, returns ``False``. Callers use this receipt
         to keep the audible transcript free of text that never reached output.
 
-        ``should_play`` is an optional staleness predicate evaluated ONCE right
-        after the play lock is acquired (and before any audio is written). When
-        it returns False the playback is dropped silently — the ack preamble
-        uses this so it is never voiced once the main answer has started
-        speaking (2026-06-20 'preamble after the answer' defense-in-depth).
+        ``should_play`` is an optional staleness predicate evaluated after the
+        play lock is acquired and before each buffered write. When it returns
+        False the playback is dropped silently — the ack preamble uses this so
+        it is never voiced once the main answer has started speaking (2026-06-20
+        'preamble after the answer' defense-in-depth).
 
         History — what went wrong before:
             * First version: ``sd.play(blocking=True)`` **per chunk** — each
@@ -811,6 +835,9 @@ class AudioPlayer:
         appended seamlessly → no discontinuity, no clicks.
         """
         self._log_device_once()
+        stream_state_lock = self._get_stream_state_lock()
+        with stream_state_lock:
+            playback_generation = getattr(self, "_playback_generation", 0)
         owner_task = asyncio.current_task()
         owner_task_id = id(owner_task) if owner_task is not None else None
         # Reset the playback-progress watchdog signal at the START of every
@@ -868,36 +895,64 @@ class AudioPlayer:
                 # Reuse the persistent OutputStream across sentence-by-sentence
                 # play_chunks() calls — closing+reopening per sentence is what
                 # caused the "haaaaa lalala oooo" stretch (see __init__ comment).
-                if (
-                    self._active_stream is not None
-                    and self._active_source_rate == needed_rate
-                ):
-                    assert self._active_device_rate is not None
-                    return self._active_stream, self._active_device_rate
-                # Rate change or initial open: close the old stream, open a new one
-                if self._active_stream is not None:
-                    self._close_output_stream(self._active_stream)
+                with stream_state_lock:
+                    if (
+                        getattr(self, "_playback_generation", 0)
+                        != playback_generation
+                    ):
+                        raise _PlaybackSuperseded
+                    if (
+                        self._active_stream is not None
+                        and self._active_source_rate == needed_rate
+                    ):
+                        assert self._active_device_rate is not None
+                        return self._active_stream, self._active_device_rate
+                    old_stream = self._active_stream
                     self._active_stream = None
+                    self._active_source_rate = None
+                    self._active_device_rate = None
+                # Stream open is intentionally outside the state lock: stop()
+                # must remain immediate even when PortAudio setup is slow.
+                if old_stream is not None:
+                    self._close_output_stream(old_stream)
                 new_stream, device_rate = self._open_output_stream(needed_rate)
-                self._active_stream = new_stream
-                self._active_source_rate = needed_rate
-                self._active_device_rate = device_rate
-                return new_stream, device_rate
+                with stream_state_lock:
+                    if (
+                        getattr(self, "_playback_generation", 0)
+                        == playback_generation
+                    ):
+                        self._active_stream = new_stream
+                        self._active_source_rate = needed_rate
+                        self._active_device_rate = device_rate
+                        return new_stream, device_rate
+                # stop() won while the worker opened PortAudio. Close the late
+                # handle locally; never publish it as the active stream.
+                self._close_output_stream(new_stream)
+                raise _PlaybackSuperseded
 
             pending = bytearray()
             pending_rate: int | None = None
             first_audio_published = False
 
-            async def _flush_pending(*, final: bool = False) -> None:
+            async def _flush_pending(*, final: bool = False) -> bool:
                 nonlocal pending, pending_rate, first_audio_published
                 if not pending or pending_rate is None:
-                    return
+                    return True
                 min_bytes = int(pending_rate * TTS_WRITE_BUFFER_MS / 1000) * 2
                 if not final and len(pending) < min_bytes:
-                    return
+                    return True
+                if should_play is not None and not should_play():
+                    pending.clear()
+                    return False
                 pcm = bytes(pending)
                 pending.clear()
-                stm, dev_rate = await asyncio.to_thread(_ensure_stream, pending_rate)
+                try:
+                    stm, dev_rate = await asyncio.to_thread(
+                        _ensure_stream, pending_rate
+                    )
+                except _PlaybackSuperseded:
+                    pending.clear()
+                    return False
                 arr = np.frombuffer(pcm, dtype=np.int16)
                 # Tell the UI how long this block will be audible BEFORE the
                 # blocking write below. _write_samples blocks for the whole
@@ -926,6 +981,7 @@ class AudioPlayer:
                         log.info("AudioOutFirst published")
                     except Exception as exc:  # noqa: BLE001
                         log.debug("AudioOutFirst publish failed: %s", exc)
+                return True
 
             # NOTE: no finally-close — the stream stays open across play_chunks
             # calls and is only torn down by stop() (barge-in) or by the next
@@ -934,11 +990,14 @@ class AudioPlayer:
                 if not chunk.pcm:
                     continue
                 if pending_rate is not None and chunk.sample_rate != pending_rate:
-                    await _flush_pending(final=True)
+                    if not await _flush_pending(final=True):
+                        return False
                 pending_rate = chunk.sample_rate
                 pending.extend(chunk.pcm)
-                await _flush_pending()
-            await _flush_pending(final=True)
+                if not await _flush_pending():
+                    return False
+            if not await _flush_pending(final=True):
+                return False
             return self.frames_written > 0
 
     def abort_active(self) -> None:
@@ -953,10 +1012,14 @@ class AudioPlayer:
         (PortAudio abort behaves identically on Windows/macOS/Linux).
         """
         level_tap.reset_playing()
-        stream = self._active_stream
-        self._active_stream = None
-        self._active_source_rate = None
-        self._active_device_rate = None
+        with self._get_stream_state_lock():
+            self._playback_generation = (
+                getattr(self, "_playback_generation", 0) + 1
+            )
+            stream = self._active_stream
+            self._active_stream = None
+            self._active_source_rate = None
+            self._active_device_rate = None
         if stream is not None:
             try:
                 stream.abort()
@@ -980,10 +1043,14 @@ class AudioPlayer:
         # Barge-in discards the buffered tail, so the UI must stop showing the
         # speaking equalizer for audio that will never play.
         level_tap.reset_playing()
-        stream = self._active_stream
-        self._active_stream = None
-        self._active_source_rate = None
-        self._active_device_rate = None
+        with self._get_stream_state_lock():
+            self._playback_generation = (
+                getattr(self, "_playback_generation", 0) + 1
+            )
+            stream = self._active_stream
+            self._active_stream = None
+            self._active_source_rate = None
+            self._active_device_rate = None
         if stream is not None:
             try:
                 stream.abort()

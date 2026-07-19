@@ -20,6 +20,7 @@ constants' docstrings in ``overlay.py``):
 These tests pin both contracts headless — a fake root/canvas/renderer, no
 real Tk display, so they run on every OS including a headless CI box.
 """
+
 from __future__ import annotations
 
 import pytest
@@ -41,7 +42,7 @@ def _no_real_tk_photoimage(monkeypatch):
     render()/re-arm CALL COUNTS, not actual Tk image objects. Patching the
     real ``PIL.ImageTk`` module attribute (not ``overlay``'s local name)
     because the import is re-resolved fresh inside the function body."""
-    monkeypatch.setattr("PIL.ImageTk.PhotoImage", lambda img: img)
+    monkeypatch.setattr("PIL.ImageTk.PhotoImage", lambda img, **_kwargs: img)
 
 
 class _FakeRoot:
@@ -240,9 +241,7 @@ def test_adaptive_pacing_shortens_the_next_delay_after_a_slow_tick(monkeypatch):
     than a full extra TARGET_FRAME_MS later — otherwise a single slow render
     compounds into an even longer visible gap (the old fixed-16ms behavior)."""
     clock = [1000.0]
-    monkeypatch.setattr(
-        "jarvis.ui.jarvisbar.overlay.time.perf_counter", lambda: clock[0]
-    )
+    monkeypatch.setattr("jarvis.ui.jarvisbar.overlay.time.perf_counter", lambda: clock[0])
     slow_cost_s = (TARGET_FRAME_MS + 25) / 1000.0  # well past the target
     bar, root, _canvas = _bare_bar(_SlowRenderer(clock, slow_cost_s), mode="think")
 
@@ -259,9 +258,7 @@ def test_adaptive_pacing_keeps_the_full_target_delay_for_a_fast_tick(monkeypatch
     """A negligible-cost tick must schedule (at, or very near) the full
     TARGET_FRAME_MS — the adaptive math must not change normal-case behavior."""
     clock = [1000.0]
-    monkeypatch.setattr(
-        "jarvis.ui.jarvisbar.overlay.time.perf_counter", lambda: clock[0]
-    )
+    monkeypatch.setattr("jarvis.ui.jarvisbar.overlay.time.perf_counter", lambda: clock[0])
     bar, root, _canvas = _bare_bar(_CountingRenderer(), mode="think")
 
     bar._schedule_frame()

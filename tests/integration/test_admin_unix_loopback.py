@@ -11,6 +11,7 @@ only), an AF_UNIX socket runs fine on a Linux/macOS CI runner — this test is t
 standout cross-platform verification win for the Admin wave and is intentionally
 NOT marked ``skip_ci``.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -38,11 +39,12 @@ async def test_signed_envelope_roundtrips_over_unix_socket(tmp_path):
 
     executor = AdminExecutor()
     server_transport = UnixSocketTransport(sock_path)
-    server = AdminPipeServer(
-        secret, pipe_name, executor, sid="S-0-0", transport=server_transport
-    )
+    effective_path = server_transport.address
+    server = AdminPipeServer(secret, pipe_name, executor, sid="S-0-0", transport=server_transport)
     client = AdminPipeClient(
-        secret, pipe_name, io_timeout_s=10.0,
+        secret,
+        pipe_name,
+        io_timeout_s=10.0,
         transport=UnixSocketTransport(sock_path),
     )
 
@@ -50,16 +52,16 @@ async def test_signed_envelope_roundtrips_over_unix_socket(tmp_path):
     try:
         # Wait for the socket to be bound.
         import os
+
         for _ in range(200):
-            if os.path.exists(sock_path):
+            if os.path.exists(effective_path):
                 break
             await asyncio.sleep(0.01)
 
         # On a non-Windows host the registry op is not executable; we are only
         # proving the round-trip + HMAC + peer-cred path. A read_registry op
         # decodes + validates fine, then the executor returns a typed failure.
-        op = ReadRegistryOp(hive="HKCU", key_path="Environment",
-                            value_name="PATH")
+        op = ReadRegistryOp(hive="HKCU", key_path="Environment", value_name="PATH")
         resp = await client.send(op)
         assert resp.op_id == op.op_id
         # The peer is the same uid (this process talks to itself), so the
@@ -78,21 +80,25 @@ async def test_tampered_hmac_rejected_over_unix_socket(tmp_path):
 
     secret = b"X" * 32
     sock_path = str(tmp_path / "jarvis-admin-tamper.sock")
+    server_transport = UnixSocketTransport(sock_path)
     server = AdminPipeServer(
-        secret, sock_path, AdminExecutor(), sid="S-0-0",
-        transport=UnixSocketTransport(sock_path),
+        secret,
+        sock_path,
+        AdminExecutor(),
+        sid="S-0-0",
+        transport=server_transport,
     )
+    effective_path = server_transport.address
     serve_task = asyncio.create_task(server.serve_forever())
     try:
         import os
+
         for _ in range(200):
-            if os.path.exists(sock_path):
+            if os.path.exists(effective_path):
                 break
             await asyncio.sleep(0.01)
 
-        client = AdminPipeClient(
-            secret, sock_path, transport=UnixSocketTransport(sock_path)
-        )
+        client = AdminPipeClient(secret, sock_path, transport=UnixSocketTransport(sock_path))
         op = ReadRegistryOp(hive="HKCU", key_path="Environment")
         envelope = client._build_envelope(op)
         envelope["hmac"] = "0" * 64

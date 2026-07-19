@@ -556,6 +556,11 @@ class CodexDirectWorker:
         log_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240
         stdout_log = log_dir / "stream.jsonl"
         stderr_log = log_dir / "stderr.log"
+        # The orchestrator reuses one log directory across critic iterations.
+        # Clear it before any subprocess setup so even a spawn failure cannot
+        # leave stale evidence masquerading as the current worker attempt.
+        with suppress(OSError):
+            stdout_log.write_bytes(b"")
 
         session_id = resume_session_id or str(uuid.uuid4())
         self.last_session_id = session_id

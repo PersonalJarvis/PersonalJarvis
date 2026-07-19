@@ -4,9 +4,9 @@
 ``OrbBusBridge`` drives, but renders nothing itself: it spawns
 ``python -m jarvis.ui.jarvisbar.host`` — whose MAIN thread may legally own
 Aqua-Tk — and forwards every surface call as one JSON line on the child's
-stdin. Child events (mute toggle, feedback, show-window) stream back on
-stdout and are dispatched to the callbacks the bridge registered, so the
-bridge wiring is reused unchanged.
+stdin. Child events (talk, hang-up, mute toggle, feedback, show-window) stream
+back on stdout. Voice actions are executed against the live parent-process
+pipeline; bridge-owned actions are dispatched to its registered callbacks.
 
 Failure contract: while the host is down, every method degrades to a one-log
 no-op (``NullOverlay`` behavior) — the bar is cosmetic and must never take
@@ -71,7 +71,12 @@ class SubprocessBarOverlay:
         self._startup_gated = bool(startup_gated)
         self._mode = "idle"
         self._muted = False
-        self._visible = False
+        # Mirror what the real host does at construction time. A persistent,
+        # ungated bar maps itself immediately; a startup-gated or
+        # non-persistent bar starts withdrawn. This mirror is load-bearing for
+        # respawn: _reapply_desired_state must not hide a bar that the host just
+        # restored after a crash/reload.
+        self._visible = self._persistent_flag and not self._startup_gated
         self._last_level: float | None = None
         self._proc: subprocess.Popen[str] | None = None
         self._send_lock = threading.Lock()
@@ -83,6 +88,8 @@ class SubprocessBarOverlay:
         self._respawn_succeeded = threading.Event()
         self._respawn_exhausted = threading.Event()
         self._on_mute_toggle: Callable[[], None] | None = None
+        self._on_talk: Callable[[], None] | None = None
+        self._on_hangup: Callable[[], None] | None = None
         self._feedback_publisher: Callable[[str, dict], None] | None = None
         self._on_show_window: Callable[[], None] | None = None
 
@@ -198,7 +205,10 @@ class SubprocessBarOverlay:
         if mode not in _MODES:
             return
         self._mode = mode
-        self._visible = True
+        # Match JarvisBarOverlay.show(): a non-persistent idle bar withdraws
+        # instead of becoming visible. Active modes and every persistent mode
+        # are visible once the startup gate permits them.
+        self._visible = self._persistent_flag or mode != "idle"
         self._send({"op": "show", "mode": mode})
 
     def hide(self) -> None:
@@ -212,6 +222,10 @@ class SubprocessBarOverlay:
         released = self._startup_gated
         self._startup_gated = False
         if released:
+            # The host maps a persistent bar immediately on gate release. Keep
+            # the proxy's desired-state mirror in lock-step so a later bounded
+            # respawn replays ``show`` rather than hiding the restored bar.
+            self._visible = self._persistent_flag or self._mode != "idle"
             self._send({"op": "release_startup_gate"})
         return released
 
@@ -234,6 +248,12 @@ class SubprocessBarOverlay:
 
     def set_on_mute_toggle(self, callback: Callable[[], None] | None) -> None:
         self._on_mute_toggle = callback
+
+    def set_on_talk(self, callback: Callable[[], None] | None) -> None:
+        self._on_talk = callback
+
+    def set_on_hangup(self, callback: Callable[[], None] | None) -> None:
+        self._on_hangup = callback
 
     def set_feedback_publisher(self, callback: Callable[[str, dict], None] | None) -> None:
         self._feedback_publisher = callback
@@ -407,6 +427,10 @@ class SubprocessBarOverlay:
         try:
             if event == "ready":
                 self._ready.set()
+            elif event == "talk":
+                self._dispatch_talk_action()
+            elif event == "hangup":
+                self._dispatch_hangup_action()
             elif event == "mute_toggle":
                 cb = self._on_mute_toggle
                 if cb is not None:
@@ -421,6 +445,55 @@ class SubprocessBarOverlay:
                     cb_show()
         except Exception:  # noqa: BLE001 — a bad callback must not kill the pump
             log.exception("bar host event callback failed: %r", event)
+
+    def _dispatch_talk_action(self) -> None:
+        """Start a voice session in the parent process.
+
+        An explicitly installed callback wins for embedders/tests. The normal
+        macOS desktop path falls through to ``runtime_refs``, which is populated
+        in this parent process (and deliberately empty in the Tk host child).
+        """
+        callback = self._on_talk
+        if callback is not None:
+            callback()
+            return
+
+        from jarvis.core.runtime_refs import get_speech_pipeline
+
+        pipeline = get_speech_pipeline()
+        if pipeline is None:
+            return
+        start = getattr(pipeline, "request_voice_session", None)
+        if callable(start):
+            start()
+
+    def _dispatch_hangup_action(self) -> None:
+        """Apply the close-X active-session guard in the parent process."""
+        callback = self._on_hangup
+        if callback is not None:
+            callback()
+            return
+
+        from jarvis.core.runtime_refs import get_speech_pipeline
+
+        pipeline = get_speech_pipeline()
+        if pipeline is None:
+            return
+
+        # Preserve the in-process bar contract: an active-looking bar with no
+        # live session is a stuck visual state, so the close click starts a
+        # session and lets the user escape. Pipelines without the probe retain
+        # the legacy fail-safe and receive a normal hang-up request.
+        active = getattr(pipeline, "is_session_active", None)
+        if callable(active) and not active():
+            start = getattr(pipeline, "request_voice_session", None)
+            if callable(start):
+                start()
+            return
+
+        hangup = getattr(pipeline, "request_hangup", None)
+        if callable(hangup):
+            hangup()
 
     def _pump_stderr(self, stream: IO[str] | None) -> None:
         if stream is None:
@@ -451,6 +524,9 @@ class SubprocessMascotOverlay(SubprocessBarOverlay):
     def __init__(self, mascot_path: str | None = None) -> None:
         super().__init__()
         self._mascot_path = mascot_path
+        # OrbOverlay(sticky=False) always starts withdrawn. The base proxy's
+        # persistent-bar visibility default does not apply to this surface.
+        self._visible = False
 
     def _init_payload(self) -> dict[str, Any]:
         return {

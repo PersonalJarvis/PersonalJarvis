@@ -77,6 +77,15 @@ class _GlowWindow(QWidget):
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        if sys.platform == "darwin":
+            # Qt::Tool maps to NSPanel on macOS.  An NSPanel normally stays
+            # off-screen while its process is inactive, but this sidecar is
+            # deliberately never activated.  Without the always-show
+            # attribute the animation advances and commands are acknowledged
+            # while the native window remains invisible.
+            mac_always_show = getattr(Qt.WidgetAttribute, "WA_MacAlwaysShowToolWindow", None)
+            if mac_always_show is not None:
+                self.setAttribute(mac_always_show)
         self.setScreen(screen)
         self.setGeometry(screen.geometry())
         self.setWindowOpacity(0.0)
@@ -176,7 +185,7 @@ class Renderer(QObject):
         self._app = app
         self._windows: list[_GlowWindow] = []
         self._hint = ""
-        self._active = False   # "show" was requested and not yet "hide"
+        self._active = False  # "show" was requested and not yet "hide"
         self._blanked = False  # capture guard currently hiding the border
 
         # Breathing pulse: 0 → 1 → 0 per period, applied as a factor on
@@ -307,9 +316,7 @@ class _StdinPump(QObject):
     eof = Signal()
 
     def start(self) -> None:
-        threading.Thread(
-            target=self._run, name="cu-indicator-stdin", daemon=True
-        ).start()
+        threading.Thread(target=self._run, name="cu-indicator-stdin", daemon=True).start()
 
     def _run(self) -> None:
         # A dying pipe simply means "parent gone" — treated as EOF.
@@ -336,9 +343,7 @@ def run() -> int:
     try:
         app = QApplication(sys.argv[:1] or ["cu-indicator"])
     except Exception as exc:  # noqa: BLE001 — no display / no platform plugin
-        sys.stderr.write(
-            f"cu-indicator: no usable display ({exc!r}) — indicator disabled.\n"
-        )
+        sys.stderr.write(f"cu-indicator: no usable display ({exc!r}) — indicator disabled.\n")
         return protocol.EXIT_NO_GUI
     # All windows are frequently hidden (blank/hide) — that must never
     # terminate the sidecar; only stdin EOF or "quit" does.

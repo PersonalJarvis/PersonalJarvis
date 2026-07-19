@@ -18,6 +18,7 @@ from typing import Any
 import pytest
 
 from jarvis.missions.budget import BudgetTracker
+from jarvis.missions.events import now_ms
 from jarvis.missions.kontrollierer.orchestrator import Kontrollierer
 from jarvis.missions.manager import MissionManager
 from jarvis.missions.state_machine import MissionState
@@ -188,6 +189,19 @@ async def test_cancel_all_running_finalizes_inflight_missions(
     view = await manager.mission(mid)
     assert view is not None
     assert view.state == MissionState.CANCELLED
+    cancelled_events = [
+        event.payload
+        for event in await manager.store.events_for_mission(mid)
+        if event.payload.event_type == "MissionCancelled"
+    ]
+    assert len(cancelled_events) == 1
+    assert cancelled_events[0].reason == "app_shutdown"
+    assert cancelled_events[0].cascade is True
+
+    # A late critic progress update may race with shutdown. It may advance the
+    # diagnostic iteration, but it must never resurrect a terminal mission.
+    await manager.store.advance_mission_iteration(mid, iteration=2, ts_ms=now_ms())
+    assert await manager.store.get_mission_state(mid) == MissionState.CANCELLED.value
 
     # Idempotent: nothing left in flight.
     assert await k.cancel_all_running(reason="app_shutdown") == []

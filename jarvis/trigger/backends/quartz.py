@@ -85,8 +85,10 @@ class QuartzHotkeyBackend:
         self._held: set[str] = set()
         self._permission_check = _macos_hotkey_permissions_granted
         self._tap: object | None = None
+        self._source: object | None = None
         self._runloop: object | None = None
         self._thread: threading.Thread | None = None
+        self._teardown_failed = False
 
     # ------------------------------------------------------------------
     # Registration + chord matching (mirrors PynputBackend semantics)
@@ -181,6 +183,13 @@ class QuartzHotkeyBackend:
         """
         if self._started:
             return
+        if self._teardown_failed:
+            log.warning(
+                "Quartz hotkeys remain disabled after an event-tap teardown "
+                "failure; restart Jarvis to re-arm them safely. Voice still "
+                "works via the wake word."
+            )
+            return
 
         granted = False
         try:
@@ -263,40 +272,107 @@ class QuartzHotkeyBackend:
             return
 
         self._tap = tap
+        self._source = source
         ready = threading.Event()
+        startup_failed = threading.Event()
 
         def _run() -> None:
-            loop = Quartz.CFRunLoopGetCurrent()
-            self._runloop = loop
-            Quartz.CFRunLoopAddSource(loop, source, Quartz.kCFRunLoopCommonModes)
-            Quartz.CGEventTapEnable(tap, True)
-            ready.set()
-            Quartz.CFRunLoopRun()
+            try:
+                loop = Quartz.CFRunLoopGetCurrent()
+                self._runloop = loop
+                Quartz.CFRunLoopAddSource(
+                    loop, source, Quartz.kCFRunLoopCommonModes
+                )
+                Quartz.CGEventTapEnable(tap, True)
+                ready.set()
+                Quartz.CFRunLoopRun()
+            except Exception:  # noqa: BLE001 — native hook failure must degrade
+                startup_failed.set()
+                log.error("Quartz event tap thread failed", exc_info=True)
+                ready.set()
 
         thread = threading.Thread(
             target=_run, name="jarvis-hotkey-tap", daemon=True
         )
-        thread.start()
-        ready.wait(timeout=5.0)
         self._thread = thread
+        thread.start()
+        if (
+            not ready.wait(timeout=5.0)
+            or startup_failed.is_set()
+            or not thread.is_alive()
+        ):
+            log.error(
+                "Quartz event tap thread did not become ready — hotkeys "
+                "disabled for this session; voice still works via wake word."
+            )
+            self.stop()
+            return
         self._started = True
 
     def stop(self) -> None:
         """Stop the run loop and drop the tap. Idempotent, never raises."""
+        tap = self._tap
+        source = self._source
         runloop = self._runloop
-        if runloop is not None:
+        if tap is not None or runloop is not None:
             try:
                 import Quartz  # type: ignore[import-untyped]
-
-                Quartz.CFRunLoopStop(runloop)
             except Exception:  # noqa: BLE001 — teardown must never propagate
-                log.debug("CFRunLoopStop failed (non-fatal)", exc_info=True)
+                Quartz = None  # type: ignore[assignment,misc]
+                log.debug("Quartz teardown import failed (non-fatal)", exc_info=True)
+            if Quartz is not None:
+                # Re-arm used to call only CFRunLoopStop. A sleeping run loop
+                # could survive the two-second join, leaving its event tap live;
+                # after three Settings saves one physical key-up therefore
+                # produced four PTT release callbacks. Run every cleanup step
+                # independently so one native failure cannot skip stop+wake.
+                teardown_steps = []
+                if tap is not None:
+                    teardown_steps.append(
+                        ("disable", lambda: Quartz.CGEventTapEnable(tap, False))
+                    )
+                if runloop is not None and source is not None:
+                    teardown_steps.append(
+                        (
+                            "remove source",
+                            lambda: Quartz.CFRunLoopRemoveSource(
+                                runloop, source, Quartz.kCFRunLoopCommonModes
+                            ),
+                        )
+                    )
+                if tap is not None:
+                    teardown_steps.append(
+                        ("invalidate", lambda: Quartz.CFMachPortInvalidate(tap))
+                    )
+                if runloop is not None:
+                    teardown_steps.extend(
+                        [
+                            ("stop", lambda: Quartz.CFRunLoopStop(runloop)),
+                            ("wake", lambda: Quartz.CFRunLoopWakeUp(runloop)),
+                        ]
+                    )
+                for step_name, step in teardown_steps:
+                    try:
+                        step()
+                    except Exception:  # noqa: BLE001 — continue remaining steps
+                        log.debug(
+                            "Quartz event tap %s failed (non-fatal)",
+                            step_name,
+                            exc_info=True,
+                        )
         thread = self._thread
         if thread is not None:
             thread.join(timeout=2.0)
+            if thread.is_alive():
+                self._teardown_failed = True
+                log.warning(
+                    "Quartz hotkey listener did not stop within two seconds; "
+                    "the replacement listener will not be started."
+                )
         self._runloop = None
         self._thread = None
         self._tap = None
+        self._source = None
         self._held.clear()
         for combo in self._combos:
             combo["down"] = False

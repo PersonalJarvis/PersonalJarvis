@@ -646,18 +646,31 @@ async def _switch_subagent(
         }
 
     if canon in ANTIGRAVITY_SUBAGENT_SLUGS:
+        antigravity_status = None
         try:
-            from jarvis.google_cli.auth_service import GoogleCliAuthService
+            from jarvis.google_cli.auth_service import (
+                GoogleCliAuthService,
+                antigravity_provider_ready,
+            )
 
             antigravity_status = GoogleCliAuthService().status()
-            antigravity_connected = (
-                antigravity_status.connected
-                and antigravity_status.mode == "oauth-personal"
-            )
-        except Exception:  # noqa: BLE001 — Google CLI absent is just "not connected"
-            antigravity_connected = False
+        except Exception as exc:  # noqa: BLE001 — absent CLI is a normal capability miss
+            log.debug("Antigravity CLI readiness probe failed: %s", exc)
         has_key = bool(cfg_mod.get_jarvis_agent_secret("gemini"))
-        if not (antigravity_connected or has_key):
+        if antigravity_status is None or not antigravity_status.installed:
+            return {
+                "ok": False,
+                "error_kind": "subagent_unavailable",
+                "error": (
+                    "Antigravity is not installed. Install the agy or Gemini CLI, "
+                    f"or select the Google Gemini {brand} provider for key-only "
+                    "execution."
+                ),
+            }
+        if not antigravity_provider_ready(
+            antigravity_status,
+            api_key_present=has_key,
+        ):
             return {
                 "ok": False,
                 "error_kind": "missing_credential",

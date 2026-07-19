@@ -68,7 +68,7 @@ def test_tts_owns_the_bars_and_suppresses_the_silent_mic():
     # the audio is still playing — exactly the bug this guards against).
     bridge._note_tts_level(0.6)
     bridge._on_mic_level(0.0)
-    assert surface.level is None  # silent mic must NOT clobber Jarvis's voice
+    assert surface.level == 0.6  # silent mic must NOT clobber Jarvis's voice
 
     # Once TTS has been quiet for a while, the mic drives the bars again.
     bridge._last_tts_level_t = time.monotonic() - 1.0

@@ -1,6 +1,32 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { saveOrDownload } from "./clipboard";
+import { robustCopy, saveOrDownload } from "./clipboard";
+
+const originalClipboard = Object.getOwnPropertyDescriptor(navigator, "clipboard");
+const originalExecCommand = Object.getOwnPropertyDescriptor(document, "execCommand");
+
+function restoreProperty(
+  owner: object,
+  name: string,
+  descriptor: PropertyDescriptor | undefined,
+) {
+  if (descriptor) Object.defineProperty(owner, name, descriptor);
+  else delete (owner as Record<string, unknown>)[name];
+}
+
+function stubClipboard(writeText: (text: string) => Promise<void>) {
+  Object.defineProperty(navigator, "clipboard", {
+    configurable: true,
+    value: { writeText },
+  });
+}
+
+function stubExecCommand(copy: () => boolean) {
+  Object.defineProperty(document, "execCommand", {
+    configurable: true,
+    value: copy,
+  });
+}
 
 /** jsdom does not define URL.createObjectURL at all, so assign the methods
  *  directly (spyOn would fail) + stub the anchor click so the browser-download
@@ -22,6 +48,64 @@ describe("saveOrDownload", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    restoreProperty(navigator, "clipboard", originalClipboard);
+    restoreProperty(document, "execCommand", originalExecCommand);
+  });
+
+  describe("robustCopy", () => {
+    it("uses the browser clipboard when it succeeds", async () => {
+      const writeText = vi.fn(async () => undefined);
+      const fetchMock = vi.fn();
+      stubClipboard(writeText);
+      stubExecCommand(() => false);
+      vi.stubGlobal("fetch", fetchMock);
+
+      await expect(robustCopy("short text")).resolves.toBe(true);
+
+      expect(writeText).toHaveBeenCalledWith("short text");
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+
+    it("falls back to the desktop backend when WKWebView blocks DOM copy", async () => {
+      stubClipboard(vi.fn(async () => Promise.reject(new Error("blocked"))));
+      stubExecCommand(() => false);
+      const fetchMock = vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ copied: true }),
+      }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      await expect(robustCopy("first line\nsecond line")).resolves.toBe(true);
+
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/clipboard/text",
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ text: "first line\nsecond line" }),
+        }),
+      );
+    });
+
+    it("uses the backend when WebView2 cannot confirm a multiline overwrite", async () => {
+      stubClipboard(vi.fn(async () => undefined));
+      stubExecCommand(() => false);
+      const fetchMock = vi.fn(async () => ({
+        ok: true,
+        json: async () => ({ copied: true }),
+      }));
+      vi.stubGlobal("fetch", fetchMock);
+
+      await expect(robustCopy("one\ntwo")).resolves.toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("reports failure when browser and native clipboard paths fail", async () => {
+      stubClipboard(vi.fn(async () => Promise.reject(new Error("blocked"))));
+      stubExecCommand(() => false);
+      vi.stubGlobal("fetch", vi.fn(async () => ({ ok: false })));
+
+      await expect(robustCopy("copy me")).resolves.toBe(false);
+    });
   });
 
   it("posts base64 to the backend on desktop and returns the saved path", async () => {

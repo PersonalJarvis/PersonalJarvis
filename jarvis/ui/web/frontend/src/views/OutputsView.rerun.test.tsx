@@ -135,6 +135,53 @@ describe("OutputsView rerun button gating", () => {
     expect(screen.queryByRole("button", { name: "Continue" })).toBeNull();
   });
 
+  it("shows retained output as needs-review instead of a generic error", async () => {
+    installFetchMock([
+      session({
+        slug: "review-slug",
+        status: "error",
+        mission_id: "m-review",
+        has_partial_output: true,
+        needs_review: true,
+        artifact_count: 1,
+        terminal_reason: "critic_loop_exhausted",
+        error: "critic_loop_exhausted",
+      }),
+    ]);
+
+    renderView();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("output-needs-review")).toBeDefined(),
+    );
+    expect(screen.getAllByText("Needs review").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("critic_loop_exhausted").length).toBeGreaterThan(0);
+    expect(screen.queryByTestId("output-terminal-reason")).toBeNull();
+  });
+
+  it("keeps a worker failure red when it merely retained a partial file", async () => {
+    installFetchMock([
+      session({
+        slug: "failed-partial",
+        status: "error",
+        mission_id: "m-failed",
+        has_partial_output: true,
+        needs_review: false,
+        artifact_count: 1,
+        terminal_reason: "task_error",
+        error: "task_error",
+      }),
+    ]);
+
+    renderView();
+
+    await waitFor(() =>
+      expect(screen.getByTestId("output-terminal-reason")).toBeDefined(),
+    );
+    expect(screen.queryByTestId("output-needs-review")).toBeNull();
+    expect(screen.getAllByText("error").length).toBeGreaterThan(0);
+  });
+
   it("replaces Continue with a live continuation chip and jumps to the child", async () => {
     // Forensic 2026-06-28: a cancelled mission that was already "continued"
     // kept showing a Continue button next to its own running child — the two

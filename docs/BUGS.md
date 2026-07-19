@@ -6302,3 +6302,458 @@ shell script: the Mac is a full bash MAJOR VERSION behind, and the failure
 mode is not a runtime bug but a dead file. Any shell artifact we ship to end
 users must be parse-checked against 3.2 — the same OS-parity discipline
 CLAUDE.md section 3 demands of Python and OS-specific backends.
+
+---
+
+## BUG-092: macOS asks for the login-keychain password on every Control API request (HIGH, FIXED 2026-07-19)
+
+**Symptom (live macOS field report).** Launching Jarvis produced ten to thirty
+indistinguishable login-keychain dialogs. Each said that `python3.12` wanted to
+access the `personal-jarvis` item; **Always Allow** was disabled because macOS
+could not verify that executable. Approving one dialog did not stop the next.
+The ordinary onboarding permission rows were already complete, so this looked
+like one global permission that macOS had forgotten repeatedly.
+
+**Forensic evidence.** No credential values were read or printed during the
+investigation.
+
+1. The login Keychain contained three generic-password items for service
+   `personal-jarvis`. The two provider items were created during the current
+   native-app onboarding. The older `jarvis_control_api_key` item predated that
+   app and was the only legacy item.
+2. The Python 3.12 executable used by the earlier direct launch was completely
+   unsigned (`codesign`: no signature; Gatekeeper: no usable signature), which
+   exactly explains both the `python3.12` label and the unavailable persistent
+   approval button.
+3. The installed app now has the canonical bundle id
+   `com.personal-jarvis.desktop` and a valid local ad-hoc signature. Its native
+   Mach-O stub embeds Python without replacing the main process, and ordinary
+   managed updates preserve that bundle byte-for-byte.
+4. `verify_control_key()` called `get_control_key()` for every presented Bearer
+   credential. That method decrypted `jarvis_control_api_key` through Python
+   `keyring` every time. Startup also called `ensure_control_key()` from several
+   paths. There was no cache and no single-flight lock, so concurrent browser,
+   CLI, and status requests could each open their own native dialog.
+5. The earlier macOS uninstaller prompt-storm fix had already proved the
+   decisive distinction: attribute queries and item deletion do not request
+   secret data, while a value read produces one authorization dialog per item
+   and caller. The runtime path was still doing exactly the dangerous operation
+   repeatedly.
+
+**Root cause.** macOS Keychain access is not a TCC-style global toggle. A
+generic-password item has its own ACL and normally trusts the code-signing
+designated requirement of the process that created it. The legacy Control key
+therefore trusted an unverifiable Python interpreter rather than the stable
+Jarvis app. Clicking **Allow** authorized one read; it neither changed the
+item's creator ACL nor fixed the next read. Jarvis multiplied that one ownership
+problem into a dialog storm by reading the same secret on every authentication
+check. The permissions screen could report the Keychain backend as available,
+but backend availability cannot prove an individual item's ACL.
+
+**Fix (two layers, no ACL weakening).**
+
+- `get_control_key()` now protects the first successful lookup with a process
+  `RLock` and caches it with `config.secret_revision()` invalidation. Twenty-four
+  concurrent callers in the regression test perform exactly one credential
+  read. Rotation and custom-key replacement update the cache immediately.
+  Missing values are not cached, so a user-initiated Keychain recovery remains
+  visible without a restart.
+- Forked children discard both the cached value and inherited lock. The Control
+  key is still never exported into the environment, and a worker cannot use the
+  parent's Python cache through the supported API.
+- After the first successful legacy read, Jarvis verifies that the current
+  process really is the canonical app at
+  `~/Applications/Personal Jarvis.app`, verifies its code signature, and
+  fingerprints the exact `codesign` designated requirement. It also confirms
+  the old item exists using `security find-generic-password` **without** `-w`
+  (attributes only, never secret data). Only then does it re-save the same value,
+  making the stable app the new item creator.
+- A private non-secret owner stamp records that designated requirement. A
+  Developer-ID build therefore remains stable across signed releases; the local
+  ad-hoc build uses its CDHash requirement and re-adopts once after an actual
+  bundle rebuild. A direct/unsigned Python launch has no accepted app identity,
+  never migrates the item, and clears a stale stamp if it explicitly replaces
+  the key.
+- The repair does not use `set-generic-password-partition-list`, does not grant
+  all applications access, and does not modify or sign the user's Python
+  installation. Fresh credentials saved through the native app already receive
+  the correct creator ACL and need no repair.
+
+**Distribution boundary.** The managed local bundle is deliberately ad-hoc
+signed. Preserving it byte-for-byte makes ordinary source updates stable, but a
+rebuild changes its CDHash. The permanent public-distribution solution remains
+Developer-ID signing and notarization, whose designated requirement stays
+stable across app versions. The repository cannot manufacture or embed the
+maintainer's private Apple signing identity; this runtime migration is the safe
+local-install bridge, not a claim that ad-hoc signing equals distribution
+signing.
+
+**Guards.** `tests/unit/core/test_control_key.py` covers one read per process,
+24-way concurrent single-flight, revision invalidation, fork-cache reset,
+same-requirement one-time adoption, re-adoption after a requirement change,
+direct-Python refusal, and non-promotion of a file seed. The adjacent Control
+API, surface-security, CLI-tool, and auth suites cover request semantics and key
+rotation end to end.
+
+**Class rule.** Never decrypt an OS credential in a per-request authentication
+dependency. Load it once through a serialized path, invalidate it on deliberate
+replacement, and clear it across process-boundary inheritance. On macOS, never
+model Keychain as one global permission: ownership is per item and anchored to
+the caller's designated requirement. Repair legacy ownership only after one
+user-approved read and only from the verified canonical app; never solve a
+prompt by broadening an ACL to unsigned tools or all applications.
+
+---
+
+## BUG-093: macOS Jarvis Bar has a black rectangle and retains every speaking frame (HIGH, FIXED 2026-07-19)
+
+**Symptom (physical-Mac field report).** Once the missing-image error was fixed,
+the idle pill appeared inside a black rectangular window. Entering an active
+voice state made every eased pill size remain on screen: old outlines formed
+larger concentric red/green/gold capsules around the current frame. The
+rectangle was the fixed `83x37` bar surface; the nested sizes exactly matched
+the renderer's `36x6 -> 53.5x15.5 -> 62.25x20.25 -> ... -> 71x25` transition.
+After the Qt surface removed those visual artifacts, clicks over transparent
+padding around the pill were still swallowed instead of reaching the browser
+or other window underneath. Worse, the companion became macOS' frontmost
+application. Its 500 ms Z-order guard repeatedly reclaimed foreground status,
+so ordinary browser/editor clicks were consumed merely to reactivate that app
+and appeared globally unreliable even when the pointer was nowhere near the
+bar.
+
+**Root cause.** The PIL renderer was correct and returned a complete fresh
+frame each tick. The failure was Aqua-Tk 9's layer-backed Canvas composition:
+an RGBA `PhotoImage` update used source-over behavior, so source pixels with
+alpha zero were no-ops rather than replacements. They could neither erase the
+initial opaque Canvas backing nor clear pixels occupied only by the preceding
+larger frame. Reusing a PhotoImage, deleting/recreating the Canvas item, and
+clearing the `NSWindow` all left the same retained pixels.
+
+BUG-075's AppKit pass was therefore insufficient. The target `NSWindow`, its
+`TKContentView`, and its backing layer were already non-opaque with a clear
+background; the unwanted pixels lived in the Canvas backing store above that
+window background. The separate `master=self._root` fix remains necessary for
+BUG-074's two Tcl interpreters, but it only makes the frames visible and cannot
+change their composition semantics.
+
+**Fix (platform split).** The companion host now selects
+`QtJarvisBarOverlay` on Darwin. It keeps the existing deterministic PIL
+renderer, geometry, modes, startup gate, drag/persistence, opacity, and JSON
+host protocol, but presents each RGBA image on a `WA_TranslucentBackground`
+Qt tool window. Every paint first clears the complete destination under
+`QPainter.CompositionMode_Source`, then draws the new frame. Transparent pixels
+therefore replace old alpha instead of blending over it. Windows and Linux
+still instantiate `JarvisBarOverlay`; their proven Tk color-key/DWM path is not
+changed. The Qt application is created before the host enters macOS accessory
+mode, so no Tk bootstrap is mixed into its Cocoa lifecycle and no extra Dock
+icon is required. Each complete RGBA frame also supplies the top-level Qt
+window's native input mask. Only non-transparent pixels participate in hit
+testing, so the visible pill remains interactive while its rectangular clear
+padding passes mouse events through to the app below. Before `QApplication`
+starts, the companion disables Qt's foreground-application transform. The
+native window is marked as a non-activating `NSPanel`, and the Z-order guard
+uses AppKit's `orderFrontRegardless` instead of `QWidget.raise_()`. This keeps
+the bar above normal windows without making the helper process active; if the
+native bridge is unavailable, the guard skips its cosmetic raise rather than
+stealing focus through the Qt fallback.
+
+**Adjacent subprocess fixes.** The audit found two bugs hidden by the missing
+image. Talk/hang-up/mute clicks were resolved in the child, whose
+`runtime_refs` can never contain the parent SpeechPipeline; they now cross the
+host protocol and execute against the authoritative parent pipeline, including
+the stuck-active recovery guard. `level_tap` is process-local too, so the bus
+bridge now forwards live parent TTS levels through `set_level`; Jarvis' speaking
+bars react to actual output instead of remaining flat.
+
+**Guards.** A headless `QImage` regression starts with an opaque black backing,
+paints a larger shape, then a fully transparent frame, asserting both the black
+corner and old-only shape pixels return to alpha zero. Input-mask regressions
+assert opaque bar pixels remain clickable, clear corners are excluded, and
+every newly rendered eased frame updates the window mask. Z-order regressions
+prove Darwin uses native non-activating ordering and never falls back to Qt's
+focus-stealing raise. A physical-Mac trace activates Finder, waits across
+multiple guard intervals, and confirms Finder remains frontmost while the bar
+stays onscreen. Host-selection tests prove Darwin uses Qt without calling the
+Tk bootstrap and non-Darwin keeps Tk. Interaction tests cover child events
+through parent pipeline actions, and a real `QT_QPA_PLATFORM=offscreen`
+subprocess smoke covers init, ready, state, level, hide, stop, and clean exit.
+The full Jarvis Bar unit suite passes on the physical Mac.
+
+**Class rule.** Window transparency and animated-frame replacement are separate
+contracts, and visual transparency is separate again from input transparency.
+A clear/non-opaque native window does not prove that a child Canvas will erase
+its own backing store or that alpha-zero pixels pass clicks through. For dynamic
+RGBA overlays, test a large frame followed by a smaller or transparent one,
+assert old-only pixels return to alpha zero, and constrain the native hit-test
+region to the visible content. An always-on-top helper must also prove that its
+periodic ordering operation does not activate the helper application. Keep
+compositor workarounds behind a platform backend instead of changing a
+rendering path already proven on another OS.
+
+---
+
+## BUG-094: macOS Jarvis Bar cannot enter a hidden Dock strip and stays stranded when the Dock changes state (MEDIUM, FIXED 2026-07-19)
+
+**Symptom (physical-Mac field report).** With the Dock visible, keeping the bar
+above it is correct. After an app enters a fullscreen Space and macOS hides the
+Dock, however, dragging still stops at the old work-area boundary. The blocked
+strip is invisible but remains as tall as the Dock. A bar placed near the real
+screen edge also needs to retreat automatically when the Dock returns rather
+than being covered by it.
+
+**Root cause.** The Qt surface used `QScreen.availableGeometry()` for startup,
+saved-position recovery, and drag release. On the affected `1440x900` Intel Mac,
+Qt reported `(0, 25, 1440, 818)` even while the Dock was absent from Quartz's
+on-screen window catalogue. The resulting 57-pixel bottom reservation was
+therefore stale presentation state, not a real obstacle. The surface also held
+only one position, so temporarily clamping it for a returning Dock would have
+destroyed the user's lower fullscreen preference.
+
+**Fix.** The Darwin Qt backend now compares the complete and available screen
+rectangles, infers the reserved Dock edge (bottom, left, or right), and checks
+the live on-screen Dock window through the optional Quartz capability. A hidden
+Dock restores only its reserved edge; the menu-bar inset is deliberately kept.
+Missing Quartz remains fail-safe and uses Qt's conservative work area. The bar
+stores the user's preferred position separately from its current safe position.
+Its existing 500 ms ordering guard also reconciles geometry: a visible Dock
+moves the bar clear without rewriting the preference, and a hidden Dock restores
+that preference. Reconciliation pauses during an active drag. Windows and Linux
+retain their existing available-work-area behavior.
+
+**Guards.** Pure geometry tests cover bottom, left, and right Dock reservations;
+a Quartz catalogue double proves visibility is scoped to the target display;
+and surface regressions prove visible-Dock retreat, hidden-Dock restoration,
+preferred-position persistence, and drag stability. The physical Mac trace
+confirmed both native states: no on-screen Dock window while hidden, followed by
+an on-screen layer-20 Dock window spanning the target display when revealed.
+
+**Class rule.** A desktop work area is policy, not necessarily current visual
+occupancy. For overlays that may enter fullscreen content, keep user intent
+separate from temporary collision avoidance, preserve unrelated safe-area edges,
+and detect the obstacle's live presentation state through a capability-gated
+native probe. Never persist a transient clamp as the user's new preference.
+
+---
+
+## BUG-095: macOS Jarvis Bar hover effects and controls do not react reliably (HIGH, FIXED 2026-07-19)
+
+**Symptom (physical-Mac field report).** Moving the pointer onto the Qt Jarvis
+Bar often produced no visible hover transition. When it did transition, the
+expanded state could disappear immediately, leaving the close and microphone
+controls unavailable. The failure affected both the idle pill and active voice
+states, so macOS did not expose the same clear mouse-out versus mouse-over
+presentation as the established desktop surface.
+
+**Root cause.** Two native behaviors compounded. First, the non-activating
+`NSPanel` did not explicitly request mouse-move delivery, so Cocoa could omit an
+Enter or Move notification while another application remained active. Second,
+BUG-093 correctly constrained hit testing to the current non-transparent pixels,
+but the input mask changes on every eased pill-size transition. Cocoa can emit a
+Leave while replacing that mask even though the physical pointer is still over
+the bar. The old Qt handlers trusted every Enter and Leave synchronously, so one
+false Leave reversed the hover animation and shrank the hit region beneath the
+pointer.
+
+**Fix.** The native panel now accepts mouse-moved events without becoming key or
+activating its helper process. A lightweight 32 ms UI timer also reads Qt's real
+global cursor position, which covers stationary pointers and omitted native
+notifications. The collapsed state's current alpha mask remains the acquisition
+region, so transparent padding still passes through and cannot trigger hover.
+After acquisition, a deterministic target-pill footprint retains the state while
+the pill expands. Leaving that footprint restores the normal presentation. The
+same state machine runs in idle, listen, think, and speak modes; hiding the
+surface clears hover, and an active drag cannot leave stale controls behind.
+
+**Guards.** Qt surface tests prove the non-activating native panel requests mouse
+movement, transparent padding cannot acquire hover, mask churn cannot cancel a
+real hover, leaving the visible pill restores the non-hover state, hiding clears
+stale state, and all four voice modes follow the same two-state contract. The
+renderer suite separately proves that the mouse-over frame differs visually in
+idle, listening, thinking, and speaking modes. A physical Cocoa smoke placed a
+temporary bar under a stationary cursor and then moved the window away, observing
+`idle_over=True`, `speak_over=True`, and `speak_out=False` without activating the
+helper application.
+
+**Class rule.** Do not treat toolkit Enter/Leave notifications as authoritative
+when the window's native hit-test region changes under the pointer. Acquire only
+through visible pixels, retain against a stable intended interaction footprint,
+and reconcile with the real cursor. Non-activating overlays must explicitly
+prove both states in every visual mode: pointer outside means normal rendering;
+pointer on the bar means controls visible and usable.
+
+---
+
+## BUG-096: viable Jarvis-Agent deliverables are reported as generic errors (HIGH, FIXED 2026-07-19)
+
+**Symptom (local macOS mission forensic, platform-neutral path).** The Outputs
+view showed every recent Jarvis-Agent mission as an error or cancellation even
+though four runs had produced complete HTML documents between 48 and 59 KB. A
+fifth worker produced a 10 KB Markdown report that remained in its disposable
+worktree but never appeared in Outputs. The active database contained four
+`FAILED` missions, one `CANCELLED` mission, and no `MissionApproved` event, so
+the frontend was faithfully displaying an upstream lifecycle decision rather
+than merely recoloring a successful row.
+
+**Root cause.** Several independent defects compounded:
+
+1. Direct Codex critic output uses a flat strict schema. Its reconstruction
+   instantiated `CriticVerdict` directly and bypassed the tolerant validation
+   used by full verdicts. A valid decision whose English or localized voice
+   summary exceeded 280 characters was discarded solely for
+   `string_too_long`. Live logs show approval-shaped fallback output followed
+   by an adversarial retry and eventual failure.
+2. The critic was told to act as a code reviewer and find at least three bugs,
+   regardless of the original goal. Static reports therefore accumulated new
+   polish, browser-validation, citation, or accessibility demands on each
+   round. Non-blocking suggestions became blocking revisions merely to satisfy
+   the quota.
+3. Codex and API workers appended every correction attempt to one
+   `stream.jsonl`. The current critic round could re-grade stale errors and old
+   final answers after the worker had corrected them.
+4. A correction prevented by the task time guard fell through to
+   `critic_loop_exhausted`, so one local mission claimed three failed attempts
+   despite having only two critic verdicts.
+5. Shutdown cancellation changed the header to `CANCELLED` without publishing
+   the canonical `MissionCancelled` terminal event. Draft artifacts were
+   archived only in the task-level `finally`, so a process restart between
+   `WorkerDraftReady` and critic completion could leave the canonical output
+   directory empty.
+6. The Outputs response returned `error: null` and no terminal reason. It could
+   not distinguish a content-free failure from unsigned but reviewable output.
+
+**Fix.** Flat Codex decisions now carry grounded per-axis status/evidence and an
+explicit blocking flag. The direct prompt describes that exact flat contract,
+and reconstruction goes through the same narrowly tolerant validator as every
+other provider. Only presentation summaries may be truncated; every
+substantive schema error and every empty evidence axis still fails closed. The
+critic judges the original mission goal, revises only for a cited blocking
+defect, and may approve with low/medium non-blocking suggestions. The defect
+quota is removed. Each worker spawn truncates its own stream before any
+subprocess setup so a failed spawn cannot expose stale evidence.
+
+Draft files are snapshotted into the persistent mission directory before the
+draft event is published. The canonical `files/` snapshot is synchronized to
+the latest iteration, so a deleted or renamed first draft cannot replace the
+final deliverable; earlier content remains in the per-iteration patches. A
+complete sibling snapshot is staged before a portable two-phase directory
+promotion, so a copy failure leaves the previous durable output untouched.
+Shutdown emits exactly one canonical cancellation event, and cancellation is
+rendered separately from failure on the Jarvis-Agent board. A correction
+stopped by the time guard records
+`review_time_budget_exhausted`, while the mission header records the actual
+zero-based critic iteration without rewriting lifecycle state. Execution
+failures outrank review outcomes when a multi-task mission aggregates its final
+reason. The typed Outputs response exposes terminal event, terminal reason,
+artifact count, `has_partial_output`, and `needs_review`. Only exhausted,
+unavailable, or time-limited review with retained deliverables becomes
+**Needs review**. An explicit critic rejection, setup, worker, safety, or
+execution-timeout failure remains visibly failed even when a partial file was
+retained.
+
+**Safety boundary.** File existence never equals approval. The forensic set
+also contained a historical 286-byte placeholder and reports with real factual
+or safety findings. Only a signed `MissionApproved` event is successful. A real
+blocking issue remains failed; a retained deliverable without approval remains
+reviewable partial output. Historical events are not rewritten.
+
+**Guards.** Regression coverage pins overlong flat approvals, malformed-field
+rejection, contradictory blocker/axis rejection, grounded blocking revisions,
+all-pass non-blocking normalization, fresh per-spawn worker logs, pre-critic
+draft durability, canonical shutdown
+cancellation, atomic snapshot copy-failure recovery, rename/delete archive
+synchronization, truthful time-budget and multi-task failure precedence,
+race-safe mission-header iteration, typed
+Python/TypeScript status parity, terminal-reason propagation, narrowed
+Needs-review classification, and distinct cancellation rendering. The
+lifecycle contains no OS-specific status branch, so the same correction applies
+to Windows, macOS, Linux desktop, and headless Linux.
+
+**Class rule.** Treat worker execution, artifact durability, critic approval,
+and user-facing outcome as four separate facts. Never infer approval from a
+file, never discard a valid decision because a presentation field is verbose,
+never review stale attempt logs, and never collapse retained unsigned work into
+an unexplained error.
+
+---
+
+## BUG-097: realtime replies cut off after two seconds, resumed as untracked audio, then ended the call (CRITICAL, FIXED IN CODE 2026-07-19; LIVE DEPLOYMENT PENDING)
+
+**Symptom (macOS live forensic, platform-neutral code path).** Long replies were
+cut off roughly two seconds after first audio even though the user had not
+interrupted. Audio could then resume after the surface had returned to
+LISTENING, the user's next speech produced no visible transcript or answer, and
+the call ended with `hangup_reason=error`. The immediately preceding call had
+the same signature. The affected process was running managed-install commit
+`35fda998`, at least 25 commits behind the development line at diagnosis, so
+this is also a confirmed device-parity layer-1 version lag rather than a new
+macOS-only diagnosis.
+
+**Last five stored turns in session `163fca8b` (18:31-18:34).**
+
+| Turn | Outcome | Evidence |
+|---|---|---|
+| 4 | Cut off | First audio at 18:32:41.288; local VAD falsely declared barge-in 1.545 s later. Speaker echo was subsequently transcribed as the user's input. |
+| 6 | Completed | Surface TTS rendered the full 436-character reply and emitted `SpeechSpoken`. |
+| 7 | Completed | Native realtime reply completed; PortAudio reported a first-write underflow. |
+| 8 | Completed | The 21.5 s native reply completed; PortAudio again reported only a first-write underflow. |
+| 9 | Cut off, resumed, hung up | First audio at 18:34:25.732; false barge-in 1.607 s later; `OutputStream` reopened after cancellation; microphone send timed out; the call ended as an error. |
+
+Session `957b7fce` immediately before it reproduced the same sequence: first
+audio, false local barge-in after 1.736 s, post-cancel stream reopen, microphone
+send timeout, error hangup. This repetition and the stream timestamps rule out a
+random provider sentence boundary.
+
+**Root causes.** Three independent lifecycle defects chained together:
+
+1. `DesktopRealtimeBargeInDetector` began its 1.5 s grace window at the logical
+   SPEAKING transition. Surface synthesis and stream setup consumed about one
+   second of that window before physical playback existed. The detector then
+   had too little real speaker-echo calibration and classified the assistant's
+   own output as user speech.
+2. Surface fallback TTS called `AudioPlayer.play_chunks()` outside
+   `DesktopRealtimePlayback` ownership. `tts_cancel` stopped PortAudio but did
+   not cancel the async TTS producer. Its next chunk reopened the stream and
+   produced the untracked post-cancel speech.
+3. The old managed install treated the later write-only provider stall as a
+   terminal microphone error. The development line already contains the
+   in-place, key/provider-neutral transport rebuild and stale-timeout guard from
+   `b9023134` and `a1657225`; the running process contained neither.
+
+**Fix.** Commit `363be37c` starts grace and adaptive echo calibration from
+`level_tap.playback_active()`, so synthesis latency cannot consume it. The
+surface fallback now owns its complete playback task, invalidates older renders
+with an epoch, cancels the producer before stopping the shared player, and
+awaits generator shutdown. `AudioPlayer` independently generation-guards its
+worker-thread stream setup: if `stop()` wins while PortAudio is still opening,
+the late handle is closed instead of being published as the active stream. A
+terminal session teardown invalidates the pre-task synthesis window as well.
+The existing in-place transport recovery then keeps a write-only stall and any
+overlapping stale timeout from ending an otherwise healthy call.
+
+**Pause attribution.** The last five turns contain no logged mid-reply provider
+gap or embedded-silence event at the existing 400 ms threshold, so their
+reported half-second pauses cannot be reconstructed honestly from the available
+event granularity. Earlier same-day sessions do prove 400-600 ms provider gaps
+and embedded silent PCM; those remain the separate BUG-087 audio-flow issue.
+This fix removes the deterministic cut/restart/hangup chain but does not claim
+that every provider-generated pause is gone.
+
+**Guards and parity.** Detector tests delay synthesis past the old grace window
+and prove that a full physical-playback grace still follows. Surface tests
+cancel both before the first chunk and between chunks, require generator
+closure, reject a spoken receipt, forbid the second chunk, and keep the live
+call open. A pre-task cancel test pins the state-callback race. Audio-player
+coverage stops playback while a worker thread is opening PortAudio and proves
+the late stream is closed without one write. The transport test now forces two
+overlapping send deadlines, lets the first rebuild the transport, then delivers
+the second as a stale timeout and verifies the fresh session still accepts
+audio. These paths are pure Python plus the existing PortAudio abstraction and
+contain no OS branch; `stop()` remains an honest no-op without PortAudio on a
+headless install. Hardware validation on the updated managed installation is
+still required before changing the status to live-verified.
+
+**Class rule.** A cancel boundary owns the producer, buffer, device stream, and
+any in-flight stream-open operation. Stopping only the current device handle is
+not cancellation: an async producer or worker thread can recreate it after the
+surface has already changed state. Playback grace begins at physical playback,
+not at intent to play.

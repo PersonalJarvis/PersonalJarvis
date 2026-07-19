@@ -22,7 +22,7 @@ import re
 import time
 from datetime import UTC
 from pathlib import Path
-from typing import Any
+from typing import Any, Final, Literal, get_args
 
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
@@ -49,6 +49,56 @@ _SLUG_RE = re.compile(r"^(?P<ts>\d{8}T\d{6})__(?P<utterance>.+?)__(?P<short>[0-9
 # both forms. The persistent dir uses the task-id as the "short" and has no
 # embedded utterance or timestamp.
 _MISSION_DIR_RE = re.compile(r"^mission_(?P<short>[0-9a-f-]{6,40})$")
+
+OUTPUT_STATUSES: Final[tuple[str, ...]] = (
+    "running",
+    "success",
+    "error",
+    "cancelled",
+    "unknown",
+)
+OutputStatus = Literal["running", "success", "error", "cancelled", "unknown"]
+if set(get_args(OutputStatus)) != set(OUTPUT_STATUSES):
+    raise RuntimeError("OutputStatus drifted from OUTPUT_STATUSES")
+
+# A retained file makes these review outcomes recoverable, but does not sign
+# them as successful. Execution, setup, safety, and timeout failures remain
+# visibly failed even when they happened to leave a partial file behind.
+_REVIEWABLE_FAILURE_REASONS: Final[frozenset[str]] = frozenset(
+    {
+        "critic_loop_exhausted",
+        "critic_unavailable",
+        "review_time_budget_exhausted",
+    }
+)
+
+
+class OutputSummary(BaseModel):
+    """Typed read model for one archived mission output."""
+
+    slug: str
+    utterance: str | None = None
+    status: OutputStatus = "unknown"
+    mission_id: str | None = None
+    summary: str | None = None
+    started_at: float | None = None
+    completed_at: float | None = None
+    duration_s: float | None = None
+    github_url: str | None = None
+    error: str | None = None
+    terminal_reason: str | None = None
+    terminal_event: str | None = None
+    artifact_count: int = 0
+    has_partial_output: bool = False
+    needs_review: bool = False
+    active_child_id: str | None = None
+    active_child_slug: str | None = None
+
+
+class OutputsResponse(BaseModel):
+    """Response model for the Outputs list."""
+
+    sessions: list[OutputSummary]
 
 
 def _outputs_root(request: Request) -> Path:
@@ -196,7 +246,7 @@ async def _mission_status_lookup(
             continue
         try:
             cur = await mgr.store.conn.execute(
-                "SELECT id, state, cost_usd, updated_ms, created_ms, prompt "
+                "SELECT id, state, cost_usd, updated_ms, created_ms, prompt, language "
                 "FROM missions WHERE id LIKE ? ORDER BY updated_ms DESC LIMIT 1",
                 (f"{prefix}%",),
             )
@@ -213,13 +263,101 @@ async def _mission_status_lookup(
             "updated_ms": int(row[3] or 0),
             "created_ms": int(row[4] or 0),
             "prompt": row[5],
+            "language": row[6],
             "full_id": row[0],
         }
+        record.update(
+            await _terminal_outcome_details(
+                mgr.store.conn,
+                mission_id=str(row[0]),
+                output_language=str(row[6] or "en"),
+            )
+        )
         # Index by both the short prefix the caller passed AND the full
         # uuid — downstream code can look up either form.
         out[prefix] = record
         out[row[0]] = record
     return out
+
+
+async def _terminal_outcome_details(
+    conn: Any,
+    *,
+    mission_id: str,
+    output_language: str = "en",
+) -> dict[str, Any]:
+    """Return the latest canonical terminal event, with transition fallback.
+
+    Older shutdown cancellation paths persisted only ``MissionStateChanged``.
+    The fallback keeps their reason visible without rewriting history; new runs
+    also emit the canonical terminal event.
+    """
+    try:
+        cur = await conn.execute(
+            """
+            SELECT event_type, payload_json
+            FROM mission_events
+            WHERE mission_id = ?
+              AND event_type IN (
+                  'MissionApproved', 'MissionFailed', 'MissionCancelled',
+                  'MissionTimedOut', 'MissionStateChanged'
+              )
+            ORDER BY seq DESC
+            LIMIT 50
+            """,
+            (mission_id,),
+        )
+        rows = await cur.fetchall()
+        await cur.close()
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("outputs: terminal event lookup failed for %s: %s", mission_id, exc)
+        return {}
+
+    transition_fallback: dict[str, Any] = {}
+    for event_type, payload_json in rows:
+        try:
+            payload = json.loads(payload_json or "{}")
+        except (ValueError, TypeError):
+            continue
+        event_type = str(event_type)
+        if event_type == "MissionApproved":
+            language = output_language.lower().split("-", 1)[0]
+            preferred_summary = {
+                "de": payload.get("summary_de"),
+                "en": payload.get("summary_en"),
+            }.get(language)
+            return {
+                "terminal_event": event_type,
+                "terminal_reason": None,
+                "terminal_summary": (
+                    preferred_summary
+                    or payload.get("summary_en")
+                    or payload.get("summary_de")
+                ),
+            }
+        if event_type in ("MissionFailed", "MissionCancelled"):
+            return {
+                "terminal_event": event_type,
+                "terminal_reason": payload.get("reason"),
+                "terminal_summary": None,
+            }
+        if event_type == "MissionTimedOut":
+            return {
+                "terminal_event": event_type,
+                "terminal_reason": "mission_timed_out",
+                "terminal_summary": None,
+            }
+        if (
+            not transition_fallback
+            and event_type == "MissionStateChanged"
+            and str(payload.get("to_state")) in _TERMINAL_STATE_VALUES
+        ):
+            transition_fallback = {
+                "terminal_event": event_type,
+                "terminal_reason": payload.get("reason"),
+                "terminal_summary": None,
+            }
+    return transition_fallback
 
 
 _STATE_TO_STATUS: dict[str, str] = {
@@ -301,8 +439,8 @@ async def _live_continuation_map(request: Request) -> dict[str, str]:
     return out
 
 
-@router.get("")
-async def list_outputs(request: Request) -> dict[str, Any]:
+@router.get("", response_model=OutputsResponse)
+async def list_outputs(request: Request) -> OutputsResponse:
     """List output directories newest-first.
 
     Each entry mirrors `OutputSummary` in `useOutputs.ts`:
@@ -315,7 +453,7 @@ async def list_outputs(request: Request) -> dict[str, Any]:
     """
     root = _outputs_root(request)
     if not root.is_dir():
-        return {"sessions": []}
+        return OutputsResponse(sessions=[])
 
     try:
         entries = sorted(
@@ -385,6 +523,11 @@ async def list_outputs(request: Request) -> dict[str, Any]:
             "duration_s": None,
             "github_url": None,
             "error": None,
+            "terminal_reason": None,
+            "terminal_event": None,
+            "artifact_count": 0,
+            "has_partial_output": False,
+            "needs_review": False,
             # When this (terminal) mission has already been continued/restarted
             # and that re-run is still live, the full id + slug of the running
             # child — so the UI shows "running", not a redundant "Continue".
@@ -401,6 +544,11 @@ async def list_outputs(request: Request) -> dict[str, Any]:
                 summary["active_child_id"] = child_id
                 summary["active_child_slug"] = f"mission_{child_id[:13]}"
             summary["utterance"] = summary["utterance"] or mission_row.get("prompt")
+            summary["summary"] = mission_row.get("terminal_summary")
+            summary["terminal_reason"] = mission_row.get("terminal_reason")
+            summary["terminal_event"] = mission_row.get("terminal_event")
+            if status == "error":
+                summary["error"] = mission_row.get("terminal_reason")
             # Running missions tick wall-clock from created_ms: right after
             # dispatch created_ms == updated_ms, so updated-minus-created
             # rendered a frozen "RUNNING 0.0s" until the next mission event
@@ -418,9 +566,39 @@ async def list_outputs(request: Request) -> dict[str, Any]:
                         0.0,
                         (end_ms - mission_row["created_ms"]) / 1000.0,
                     )
+        artifact_count = _count_deliverables(entry)
+        summary["artifact_count"] = artifact_count
+        summary["has_partial_output"] = (
+            artifact_count > 0 and summary["status"] in ("error", "cancelled")
+        )
+        terminal_reason = str(summary.get("terminal_reason") or "")
+        reason_key = terminal_reason.split(":", 1)[0]
+        summary["needs_review"] = (
+            artifact_count > 0
+            and summary["status"] == "error"
+            and reason_key in _REVIEWABLE_FAILURE_REASONS
+        )
         sessions.append(summary)
 
-    return {"sessions": sessions}
+    return OutputsResponse.model_validate({"sessions": sessions})
+
+
+def _count_deliverables(session_dir: Path) -> int:
+    """Count genuine archived files without reading their contents."""
+    count = 0
+    try:
+        for child in session_dir.glob("tasks/*/artifacts/files/**/*"):
+            if not child.is_file():
+                continue
+            try:
+                rel_parts = child.relative_to(session_dir).parts
+            except ValueError:
+                continue
+            if _is_deliverable_relpath(rel_parts):
+                count += 1
+    except OSError as exc:
+        logger.debug("outputs: deliverable count failed for %s: %s", session_dir, exc)
+    return count
 
 
 @router.get("/capabilities")

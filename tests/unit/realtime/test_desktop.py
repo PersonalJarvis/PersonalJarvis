@@ -320,6 +320,45 @@ def test_start_output_resets_echo_calibration() -> None:
     assert len(detector._rms_history) == 0
 
 
+def test_synthesis_delay_cannot_consume_echo_calibration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The grace clock starts only once output is physically active."""
+    now = 100.0
+    output_is_active = False
+    monkeypatch.setattr(
+        "jarvis.realtime.desktop.time.monotonic", lambda: now
+    )
+    model = _AlwaysSpeechModel()
+    detector = DesktopRealtimeBargeInDetector(
+        grace_s=1.5,
+        consecutive_frames=3,
+        output_active=lambda: output_is_active,
+        model=model,
+    )
+    detector.warmup()
+    detector.start_output()
+
+    # Surface synthesis and stream setup can exceed the nominal grace period.
+    # Loud microphone frames during that lead-in must remain local without
+    # arming Silero or aging the calibration clock.
+    now = 102.0
+    assert detector.feed(_pcm_frames(*[2000] * 20)) is None
+    assert model.calls == 0
+    assert len(detector._rms_history) == 0
+
+    # Physical playback begins now. Its first 1.5 seconds are a fresh echo-only
+    # calibration window even though start_output() happened two seconds ago.
+    output_is_active = True
+    assert detector.feed(_pcm_frames(*[2000] * 30)) is None
+    assert model.calls == 0
+    assert len(detector._rms_history) == 30
+
+    now = 104.0
+    assert detector.feed(_pcm_frames(*[2000] * 20)) is None
+    assert model.calls == 0
+
+
 def test_grace_frames_calibrate_but_never_become_preroll() -> None:
     detector, model = _echo_calibrated_detector(
         echo_amplitude=2000, grace_frames=10, consecutive_frames=3

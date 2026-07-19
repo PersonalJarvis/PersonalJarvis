@@ -186,6 +186,9 @@ FAILURE_REASON_PHRASES: Final[dict[str, dict[str, str]]] = {
         "critic_rejected": "Die Prüfung war nicht zufrieden.",  # i18n-allow
         "task_error": "Der Worker ist abgebrochen.",  # i18n-allow
         "attempts_timed_out": "Das Zeitlimit wurde überschritten.",  # i18n-allow (DE TTS phrase)
+        "review_time_budget_exhausted": (  # i18n-allow: German TTS phrase
+            "Das Prüfzeitlimit ist erreicht; das Zwischenergebnis ist verfügbar."  # i18n-allow
+        ),
         "budget_exceeded": "Das Kostenlimit ist erreicht.",  # i18n-allow
         "decompose_failed": "Die Aufgabe konnte ich nicht zerlegen.",  # i18n-allow
         "crash_recovery": "Eine alte Mission wurde aufgeräumt.",  # i18n-allow
@@ -218,6 +221,9 @@ FAILURE_REASON_PHRASES: Final[dict[str, dict[str, str]]] = {
         "critic_rejected": "The review wasn't satisfied.",
         "task_error": "The worker aborted.",
         "attempts_timed_out": "The time limit was reached.",
+        "review_time_budget_exhausted": (
+            "The review time budget was reached; partial output is available."
+        ),
         "budget_exceeded": "The cost limit was reached.",
         "decompose_failed": "I could not break the task down.",
         "crash_recovery": "An old mission was cleaned up.",
@@ -246,6 +252,10 @@ FAILURE_REASON_PHRASES: Final[dict[str, dict[str, str]]] = {
     # rest of the table is de/en pending a broader translation pass; a missing
     # key here falls back via ``.get(language, {})``.
     "es": {
+        "review_time_budget_exhausted": (  # i18n-allow: Spanish TTS phrase
+            "Se agotó el tiempo de revisión; el resultado parcial está "  # i18n-allow
+            "disponible."  # i18n-allow
+        ),
         "git_missing": "{agents} necesitan que git esté instalado y en el PATH.",  # i18n-allow: Spanish TTS product-surface phrase
         "git_not_a_repository": (
             "{agents} necesitan una copia de git (instala con el "  # i18n-allow: Spanish TTS product-surface phrase

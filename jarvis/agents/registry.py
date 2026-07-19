@@ -8,7 +8,7 @@ Design decisions (see Plan §3):
 - **Client-side tree building** is possible (all events reach the frontend
   via WebSocket anyway), but the registry provides a snapshot endpoint for
   the initial render (before WS events start flowing).
-- **TTL 60s** for completed/failed nodes. An asyncio task sleeps, then
+- **TTL 60s** for completed/failed/cancelled nodes. An asyncio task sleeps, then
   removes the node from the map and from ``parent.children_trace_ids``.
 - **Heuristic parent linking for HarnessDispatched**: the event has no
   ``parent_trace_id`` field. We take the most recently started still-running
@@ -52,7 +52,7 @@ from jarvis.missions.events import (
 log = logging.getLogger(__name__)
 
 NodeKind = Literal["router", "jarvis_agent", "harness", "tool_call"]
-NodeStatus = Literal["running", "completed", "failed"]
+NodeStatus = Literal["running", "completed", "failed", "cancelled"]
 
 
 def _tid(uuid_or_str: UUID | str | None) -> str | None:
@@ -325,7 +325,7 @@ class JarvisAgentRegistry:
         task.add_done_callback(self._cleanup_tasks.discard)
 
     def _mark_running_children_terminal(
-        self, parent_tid: str, ts_ns: int, *, success: bool
+        self, parent_tid: str, ts_ns: int, *, status: NodeStatus
     ) -> None:
         """When a mission terminates, sweep its still-`running` children.
 
@@ -341,10 +341,12 @@ class JarvisAgentRegistry:
             child = self._nodes.get(child_tid)
             if child is None or child.status != "running":
                 continue
-            child.status = "completed" if success else "failed"
+            child.status = status
             child.completed_ns = ts_ns
-            if not success and not child.error:
+            if status == "failed" and not child.error:
                 child.error = "mission ended before worker exit"
+            elif status == "cancelled" and not child.error:
+                child.error = "cancelled with mission"
 
     async def _remove_after_ttl(self, tid: str) -> None:
         try:
@@ -437,7 +439,11 @@ class JarvisAgentRegistry:
             node = self._nodes.get(worker_tid)
             if node is None:
                 return
-            node.status = "failed"
+            node.status = (
+                "cancelled"
+                if payload.reason in ("user", "parent_cancelled")
+                else "failed"
+            )
             node.completed_ns = ts_ns
             node.error = payload.error_detail or f"killed: {payload.reason}"
             node.error_class = payload.error_class
@@ -463,7 +469,7 @@ class JarvisAgentRegistry:
             node.tokens_out = payload.tokens_used
             if payload.summary_de:
                 node.prompts.append(f"[summary] {payload.summary_de}")
-            self._mark_running_children_terminal(tid, ts_ns, success=True)
+            self._mark_running_children_terminal(tid, ts_ns, status="completed")
             self._schedule_removal(tid)
             return
 
@@ -471,16 +477,18 @@ class JarvisAgentRegistry:
             node = self._nodes.get(tid)
             if node is None:
                 return
-            node.status = "failed"
             node.completed_ns = ts_ns
             if isinstance(payload, MissionFailed):
+                node.status = "failed"
                 node.error = payload.error_detail or payload.reason
                 node.error_class = payload.error_class
             elif isinstance(payload, MissionCancelled):
+                node.status = "cancelled"
                 node.error = f"cancelled: {payload.reason}"
             else:
+                node.status = "failed"
                 node.error = "timed out"
-            self._mark_running_children_terminal(tid, ts_ns, success=False)
+            self._mark_running_children_terminal(tid, ts_ns, status=node.status)
             self._schedule_removal(tid)
             return
 

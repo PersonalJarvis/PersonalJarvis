@@ -301,6 +301,34 @@ describe("ApiKeysView — Antigravity (Google subscription) OAuth card", () => {
     ).toBeTruthy();
   });
 
+  it("does not show Ready when a Gemini key exists but the CLI is missing", async () => {
+    const routes = routesFor(antigravityMissing());
+    routes["/api/jarvis-agent/status"] = () => ({
+      body: {
+        ...JARVIS_AGENT_EMPTY,
+        mapping: [
+          {
+            ...JARVIS_AGENT_EMPTY.mapping[0],
+            key_set: false,
+            api_key_set: true,
+            is_active_brain: true,
+          },
+        ],
+      },
+    });
+    installFetchMock(routes);
+    render(<ApiKeysView />);
+    fireEvent.click(screen.getByRole("tab", { name: /-agents$/i }));
+
+    await waitFor(() => expect(screen.getByText("open")).toBeTruthy());
+    expect(screen.queryByText("ready")).toBeNull();
+    expect(screen.queryByText("active")).toBeNull();
+    expect(screen.queryByRole("radio")).toBeNull();
+    expect(
+      screen.getByText("Install Antigravity or the Gemini CLI before connecting."),
+    ).toBeTruthy();
+  });
+
   it("disconnects via POST /api/antigravity/logout", async () => {
     const { calls } = installFetchMock(routesFor(antigravityDescriptor()));
     render(<ApiKeysView />);

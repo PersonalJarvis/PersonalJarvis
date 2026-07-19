@@ -123,10 +123,12 @@ jobs:
 
       # The import gate above PROVES the €5-VPS base install imports clean (no
       # Windows APIs, no system libs). Only AFTER that proof do we install the
-      # system libraries + test-only packages the *test suite* needs to RUN — these
+      # system libraries + optional packages the *test suite* needs to RUN — these
       # are NOT part of the base-install contract. libportaudio2 backs sounddevice
-      # (a base dep that lazy-imports PortAudio); hypothesis + twilio are imported
-      # by some test modules that lack an importorskip guard (pre-existing).
+      # (a base dep that lazy-imports PortAudio); twilio is imported by some test
+      # modules that lack an importorskip guard (pre-existing). Test-only Python
+      # packages, including Hypothesis, come from the [dev] extra above so the
+      # documented development install is exercised without hidden supplements.
       - name: System + test-only deps (to run the suite, not part of the base proof)
         shell: bash
         run: |
@@ -134,8 +136,23 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y libportaudio2
           fi
-          python -m pip install hypothesis
           python -m pip install -e ".[telephony]"
+
+      # The monolithic Windows process reached these stateful session tests at
+      # 68%, then spent the rest of the 30-minute job budget in this two-file
+      # block. Run it first in a fresh process with strict exit semantics and
+      # named progress: a real regression stays blocking, while cross-suite
+      # state cannot hide the remaining Windows coverage behind a timeout.
+      - name: Windows realtime session isolation (BLOCKING)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          python -m pytest \
+            tests/unit/realtime/test_session.py \
+            tests/unit/realtime/test_session_self_echo.py \
+            -v -p no:cacheprovider \
+            -m "not skip_ci and not slow and not openclaw_live and not voice_latency and not eval" \
+            --junitxml=realtime-session-report.xml
 
       - name: pytest (JUnit XML)
         shell: bash
@@ -146,7 +163,14 @@ jobs:
           # (drop the `|| echo` and pass --strict) only once the backlog is
           # actually green cross-platform — flipping strict first turned the
           # v1.0.6 release head red on 133 long-tolerated failures.
-          python -m pytest tests/ -q -p no:cacheprovider \
+          extra_pytest_args=()
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            extra_pytest_args+=(
+              --ignore=tests/unit/realtime/test_session.py
+              --ignore=tests/unit/realtime/test_session_self_echo.py
+            )
+          fi
+          python -m pytest tests/ "${extra_pytest_args[@]}" -q -p no:cacheprovider \
             -m "not skip_ci and not slow and not openclaw_live and not voice_latency and not eval" \
             --continue-on-collection-errors \
             --junitxml=report.xml \
@@ -385,7 +409,9 @@ jobs:
   # never drift. Unlike privacy-gate above, this DOES check the real name — but
   # ONLY inside docs/, where (maintainer decision 2026-06-29) it must never
   # appear, so it cannot false-positive on code where the name lives
-  # legitimately. stdlib + git only, no pip install. BLOCKING, PR-only.
+  # legitimately. The privacy scan itself is stdlib-only; the public-reader
+  # contract also parses YAML frontmatter and therefore installs the PyYAML
+  # version pinned by the universal lock. BLOCKING, PR-only.
   docs-privacy:
     name: docs-privacy (no personal data in docs/)
     if: github.event_name == 'pull_request'
@@ -401,6 +427,9 @@ jobs:
         uses: actions/setup-python@0b93645e9fea7318ecaed2b359559ac225c90a2b # v5.3.0
         with:
           python-version: "3.11"
+
+      - name: Install public-docs parser dependency
+        run: python -m pip install --no-deps pyyaml==6.0.3
 
       - name: Docs privacy gate (BLOCKING - name / email / paths / ids in docs/)
         run: python scripts/ci/docs_privacy_scan.py

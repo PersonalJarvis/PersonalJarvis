@@ -18,16 +18,15 @@ exactly like a live mic between the last word and the key release.
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 from collections.abc import AsyncIterator
 from types import SimpleNamespace
 
-import pytest
-
 from jarvis.core.events import TranscriptionUpdate
 from jarvis.core.protocols import AudioChunk
 from jarvis.sessions.constants import HANGUP_HOTKEY, HANGUP_TURN_COMPLETE
-from jarvis.speech.pipeline import PipelineState, SpeechPipeline
+from jarvis.speech.pipeline import PipelineState, SpeechPipeline, TurnTakingState
 
 
 class FakeTTS:
@@ -388,6 +387,193 @@ async def test_ptt_live_feed_disabled_when_interval_zero(monkeypatch):
     asyncio.create_task(_release_later())
     await asyncio.wait_for(pipe._ptt_session(), timeout=2.0)
     assert pipe._utterance_stt.calls == 0, "interval=0 must not probe the STT"
+
+
+class _SerialProbeSTT:
+    """STT fake that exposes any overlap between partial and final calls."""
+
+    def __init__(self) -> None:
+        self.partial_started = asyncio.Event()
+        self.finish_partial = asyncio.Event()
+        self.calls = 0
+        self.active = 0
+        self.max_active = 0
+
+    async def transcribe_pcm(self, pcm: bytes):  # noqa: ANN201
+        self.calls += 1
+        call = self.calls
+        self.active += 1
+        self.max_active = max(self.max_active, self.active)
+        try:
+            if call == 1:
+                self.partial_started.set()
+                await self.finish_partial.wait()
+                return SimpleNamespace(text="partial", language="en", confidence=0.9)
+            return SimpleNamespace(text="final", language="en", confidence=0.9)
+        finally:
+            self.active -= 1
+
+
+class _TrackedInputBuffer:
+    """Wake-handoff stand-in that records exactly when PTT releases capture."""
+
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+        self.closed = asyncio.Event()
+
+    async def stream(self) -> AsyncIterator[AudioChunk]:
+        for pcm in self._chunks:
+            yield AudioChunk(pcm=pcm, sample_rate=16_000, timestamp_ns=0, channels=1)
+            await asyncio.sleep(0)
+        await self.closed.wait()
+
+    async def close(self) -> None:
+        self.closed.set()
+
+
+async def test_ptt_release_closes_capture_then_waits_for_live_probe_before_final_stt():
+    """A native live probe must quiesce before final STT uses the same model."""
+    pipe = _make_pipeline()
+    _silence_side_effects(pipe)
+    pipe._ptt_mode = True
+    pipe._ptt_partial_interval_s = 0.01
+    pipe._stt_final_timeout_s = 0.5
+    stt = _SerialProbeSTT()
+    pipe._utterance_stt = stt  # type: ignore[assignment]
+    input_buffer = _TrackedInputBuffer([_CHUNK_100MS] * 8)
+    states: list[TurnTakingState] = []
+
+    async def _track_state(state: TurnTakingState) -> None:
+        states.append(state)
+
+    pipe._set_turn_state = _track_state  # type: ignore[method-assign]
+    captured: dict[str, object] = {}
+
+    async def _finalize(pcm: bytes, *, skip_completion: bool = False) -> bool:
+        captured["transcript"] = await pipe._transcribe_final(pcm)
+        return False
+
+    pipe._handle_utterance = _finalize  # type: ignore[method-assign]
+    session = asyncio.create_task(pipe._ptt_session(input_buffer=input_buffer))
+    await asyncio.wait_for(stt.partial_started.wait(), timeout=1.0)
+
+    pipe._on_ptt_release()
+    await asyncio.wait_for(input_buffer.closed.wait(), timeout=0.2)
+    assert states[-1] is TurnTakingState.WAITING_FOR_FINAL_TRANSCRIPT
+    await asyncio.sleep(0.03)
+    assert stt.calls == 1, "final STT started while the partial still owned the model"
+
+    stt.finish_partial.set()
+    reason = await asyncio.wait_for(session, timeout=2.0)
+
+    assert reason == HANGUP_TURN_COMPLETE
+    assert stt.calls == 2
+    assert stt.max_active == 1
+    assert getattr(captured["transcript"], "text", "") == "final"
+
+
+class _RecoverableBlockingSTT:
+    """Models an un-cancellable native probe and its fresh-engine recovery."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.recover_calls = 0
+
+    async def transcribe_pcm(self, pcm: bytes):  # noqa: ANN201
+        self.started.set()
+        await asyncio.Event().wait()
+
+    def recover(self) -> None:
+        self.recover_calls += 1
+
+
+class _RecoverableNativeSTT:
+    """Models a timed-out ``to_thread`` probe that survives task cancellation."""
+
+    def __init__(self) -> None:
+        self.partial_started = asyncio.Event()
+        self.release_native_call = threading.Event()
+        self.calls = 0
+        self.recover_calls = 0
+        self.final_started_after_recover = False
+
+    async def transcribe_pcm(self, pcm: bytes):  # noqa: ANN201
+        self.calls += 1
+        if self.calls == 1:
+            self.partial_started.set()
+            await asyncio.to_thread(self.release_native_call.wait)
+            return SimpleNamespace(text="partial", language="en", confidence=0.9)
+        self.final_started_after_recover = self.recover_calls > 0
+        return SimpleNamespace(text="final", language="en", confidence=0.9)
+
+    def recover(self) -> None:
+        self.recover_calls += 1
+
+
+async def test_ptt_release_recovers_timed_out_native_probe_before_final_stt(
+    monkeypatch,
+):
+    """A wedged cosmetic probe is orphaned onto a fresh engine before submit."""
+    pipe = _make_pipeline()
+    _silence_side_effects(pipe)
+    pipe._ptt_mode = True
+    pipe._ptt_partial_interval_s = 0.01
+    pipe._stt_final_timeout_s = 0.05
+    stt = _RecoverableNativeSTT()
+    pipe._utterance_stt = stt  # type: ignore[assignment]
+    monkeypatch.setattr(
+        "jarvis.speech.pipeline.MicrophoneCapture",
+        lambda device=None, **kwargs: _FakeMic(chunks=[_CHUNK_100MS] * 8),
+    )
+    captured: dict[str, object] = {}
+
+    async def _finalize(pcm: bytes, *, skip_completion: bool = False) -> bool:
+        captured["transcript"] = await pipe._transcribe_final(pcm)
+        return False
+
+    pipe._handle_utterance = _finalize  # type: ignore[method-assign]
+    session = asyncio.create_task(pipe._ptt_session())
+    try:
+        await asyncio.wait_for(stt.partial_started.wait(), timeout=1.0)
+        pipe._on_ptt_release()
+        reason = await asyncio.wait_for(session, timeout=2.0)
+    finally:
+        # Let the deliberately orphaned executor call leave its old engine.
+        stt.release_native_call.set()
+        if not session.done():
+            session.cancel()
+            try:
+                await session
+            except asyncio.CancelledError:  # noqa: S110 - test cleanup
+                pass
+
+    assert reason == HANGUP_TURN_COMPLETE
+    assert stt.recover_calls == 1
+    assert stt.calls == 2
+    assert stt.final_started_after_recover is True
+    assert getattr(captured["transcript"], "text", "") == "final"
+
+
+async def test_ptt_hangup_recovers_live_probe_before_wake_rearm(monkeypatch):
+    """A hard hangup never leaves a busy native STT engine for the wake path."""
+    pipe = _make_pipeline()
+    _silence_side_effects(pipe)
+    pipe._ptt_mode = True
+    pipe._ptt_partial_interval_s = 0.01
+    stt = _RecoverableBlockingSTT()
+    pipe._utterance_stt = stt  # type: ignore[assignment]
+    monkeypatch.setattr(
+        "jarvis.speech.pipeline.MicrophoneCapture",
+        lambda device=None, **kwargs: _FakeMic(chunks=[_CHUNK_100MS] * 8),
+    )
+
+    session = asyncio.create_task(pipe._ptt_session())
+    await asyncio.wait_for(stt.started.wait(), timeout=1.0)
+    pipe._hangup_event.set()
+    reason = await asyncio.wait_for(session, timeout=2.0)
+
+    assert reason == HANGUP_HOTKEY
+    assert stt.recover_calls == 1
 
 
 async def test_non_ptt_ack_plays_spoken_ack_and_dead_zone(monkeypatch):

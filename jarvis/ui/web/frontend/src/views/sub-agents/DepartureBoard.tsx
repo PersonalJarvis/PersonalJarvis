@@ -24,12 +24,14 @@ const STATUS_COLOR: Record<SubAgentNode["status"], string> = {
   running: "text-primary",
   completed: "text-emerald-400",
   failed: "text-destructive",
+  cancelled: "text-amber-400",
 };
 
 const STATUS_LABEL: Record<SubAgentNode["status"], string> = {
   running: "ACTIVE",
   completed: "DONE",
   failed: "FAILED",
+  cancelled: "CANCELLED",
 };
 
 const TOOL_STATUS_LABEL: Record<ToolCallEntry["status"], string> = {

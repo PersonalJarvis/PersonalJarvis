@@ -3,12 +3,12 @@
 GUI-launched processes do not inherit the user's shell PATH: on macOS an app
 started from Finder/Dock/launchd gets the minimal ``/usr/bin:/bin:/usr/sbin:
 /sbin`` (no Homebrew, no npm-global, no ``~/.local/bin``), and on Windows a
-winget install appends its ``WinGet\\Links`` shim dir to the *registry* PATH,
-which already-running processes never see. Every ``shutil.which``-based CLI
-probe (claude / codex / gemini / node / npm, the CLI-tools catalog prober,
-worker spawns) then reports a perfectly-installed binary as "not installed" —
-the 2026-07-18 Mac-test-machine symptom: Claude Code installed via the shell,
-the desktop app insisting it is missing.
+fresh installer can update only the registry PATH or place a binary in an app-
+specific user directory. Already-running processes see neither change. Every
+``shutil.which``-based CLI probe (claude / codex / agy / gemini / node / npm,
+the CLI-tools catalog prober, worker spawns) then reports a perfectly-installed
+binary as "not installed" — the 2026-07-18 Mac-test-machine symptom: Claude
+Code installed via the shell, the desktop app insisting it is missing.
 
 ``ensure_cli_paths()`` appends the well-known, actually-existing install dirs
 to ``os.environ["PATH"]``. Existing entries keep priority — only *missing*
@@ -70,6 +70,8 @@ def _windows_candidates() -> list[str]:
     dirs: list[str] = []
     local = os.environ.get("LOCALAPPDATA")
     if local:
+        # The official Antigravity PowerShell/CMD installer uses this directory.
+        dirs.append(os.path.join(local, "agy", "bin"))
         # winget's shim dir lands on the *registry* PATH only — a running
         # process (and every subprocess it spawns) misses fresh installs.
         dirs.append(os.path.join(local, "Microsoft", "WinGet", "Links"))

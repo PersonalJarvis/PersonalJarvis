@@ -11,6 +11,40 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ### Fixed
 
+- **macOS: Jarvis Bar hover controls now react and remain stable.** The
+  non-activating Qt panel could miss mouse-move events, while replacing its
+  alpha input mask emitted a false leave as the pill expanded. The result was
+  an unresponsive or flickering hover state whose close and microphone controls
+  could not be used reliably. The panel now explicitly accepts mouse movement
+  and reconciles the real cursor against a stable pill footprint, preserving
+  distinct mouse-out and mouse-over visuals during idle, listening, thinking,
+  and speaking states (BUG-095).
+- **macOS: the Jarvis Bar now follows the Dock's real visibility instead of an
+  invisible work-area boundary.** Fullscreen Spaces can hide the Dock while Qt
+  continues to reserve its 57-pixel strip, which prevented the bar from being
+  dragged to the true bottom of the app. The bar now uses the complete screen
+  edge while the Dock is hidden, retreats above it when it returns, and restores
+  the user's preferred position when it hides again. Menu-bar and multi-display
+  safe areas remain respected (BUG-094).
+- **macOS: the Jarvis Bar is transparent and animation frames no longer pile
+  up.** Aqua-Tk 9 kept an opaque black Canvas backing and composited every new
+  RGBA frame over the old one, producing a rectangle at rest and concentric
+  red/green/gold outlines while speaking. The macOS companion now uses Qt's
+  translucent surface with full-frame alpha replacement; Windows and Linux
+  keep the established Tk color-key path unchanged. Bar clicks are also
+  executed in the parent process again, transparent window padding passes
+  clicks through to the app underneath, the companion no longer steals macOS
+  foreground focus every 500 ms, and parent TTS loudness now reaches the
+  companion equalizer (BUG-093).
+- **macOS: the repeated Keychain password-dialog storm is stopped.** A Control
+  key created by an older direct Python launch could make macOS ask for the
+  login-keychain password again on every protected request — often dozens of
+  identical dialogs, with **Always Allow** unavailable because that Python
+  executable had no verifiable signature. Jarvis now performs one serialized
+  credential read per process and, after the one necessary approval, safely
+  re-creates that legacy item under the verified installed app identity. Normal
+  restarts and source updates then reuse the app-owned item without asking
+  again; direct development launches cannot weaken or claim its access rules.
 - **macOS: the uninstall command works again.** On a Mac, the documented
   one-liner `bash ~/.personal-jarvis/install/uninstall.sh` printed a syntax
   error and did nothing at all — no prompt, no removal. macOS still ships a

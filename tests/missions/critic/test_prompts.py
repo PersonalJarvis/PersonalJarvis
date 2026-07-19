@@ -1,40 +1,76 @@
 """Tests for the Critic prompt templates.
 
-Explicitly checks the five design-reviewer criteria from
+Checks the applicable design-reviewer criteria from
 `.claude/agents/jarvis-critic-design-reviewer.md`:
 - Criterion 1 — evidence-cite requirement (prompt demands file:line / log_line:N / test:name).
-- Criterion 2 — adversarial framing verbatim from the research doc §F.
+- Criterion 2 — skeptical framing without a defect quota.
 - Criterion 3 — anchor token (mission_prompt verbatim, triple-bracketed).
 """
 from __future__ import annotations
 
 from jarvis.missions.critic.prompts import (
     ADVERSARIAL_REFRAME_PREFIX,
+    CODEX_FLAT_OUTPUT_CONTRACT,
     CRITIC_SYSTEM_PROMPT,
+    FULL_CRITIC_OUTPUT_CONTRACT,
     render_critic_prompt,
 )
-
 
 # --- Criterion 2 — Adversarial Framing ---
 
 
 def test_template_contains_skeptical_phrasing() -> None:
-    assert "skeptical of this implementation" in CRITIC_SYSTEM_PROMPT
+    assert "skeptical of this" in CRITIC_SYSTEM_PROMPT
 
 
-def test_template_demands_minimum_three_issues() -> None:
-    assert "find at least three concrete bugs" in CRITIC_SYSTEM_PROMPT
+def test_template_forbids_a_defect_quota() -> None:
+    assert "find at least three concrete bugs" not in CRITIC_SYSTEM_PROMPT
+    assert "Never invent findings" in CRITIC_SYSTEM_PROMPT
+
+
+def test_template_only_revises_for_blocking_defects() -> None:
+    assert "verdict=revise only" in CRITIC_SYSTEM_PROMPT
+    assert "cited blocking defect" in CRITIC_SYSTEM_PROMPT
+    assert "NON-BLOCKING" in CRITIC_SYSTEM_PROMPT
+    assert "requirements not present in the original mission" in CRITIC_SYSTEM_PROMPT
+
+
+def test_codex_prompt_uses_only_the_flat_output_contract() -> None:
+    prompt = render_critic_prompt(
+        mission_prompt="Build a report",
+        worker_diff="diff",
+        log_summary="log",
+        prior_reflections="none",
+        iteration=0,
+        codex_flat=True,
+    )
+
+    assert CODEX_FLAT_OUTPUT_CONTRACT in prompt
+    assert FULL_CRITIC_OUTPUT_CONTRACT not in prompt
+    assert '"correctness_evidence"' in prompt
+    assert '"axes"' not in prompt
+    assert '"issues"' not in prompt
+
+
+def test_default_prompt_retains_the_full_verdict_contract() -> None:
+    prompt = render_critic_prompt(
+        mission_prompt="Build a report",
+        worker_diff="diff",
+        log_summary="log",
+        prior_reflections="none",
+        iteration=0,
+    )
+
+    assert FULL_CRITIC_OUTPUT_CONTRACT in prompt
+    assert CODEX_FLAT_OUTPUT_CONTRACT not in prompt
 
 
 def test_template_demands_falsification_justification() -> None:
-    assert (
-        "explain why each plausible failure mode does NOT apply"
-        in CRITIC_SYSTEM_PROMPT
-    )
+    assert "plausible failure modes do not apply" in CRITIC_SYSTEM_PROMPT
 
 
 def test_template_uses_adversarial_role() -> None:
-    assert "adversarial code critic" in CRITIC_SYSTEM_PROMPT
+    assert "adversarial mission-output critic" in CRITIC_SYSTEM_PROMPT
 
 
 # --- Criterion 1 — Evidence-Cite Requirement ---
@@ -90,7 +126,7 @@ def test_render_does_not_paraphrase_mission_prompt() -> None:
 # --- Schema-Reminder + Output-Rules ---
 
 
-def test_template_includes_output_schema_keys() -> None:
+def test_full_output_contract_includes_schema_keys() -> None:
     for key in (
         "verdict",
         "axes",
@@ -100,7 +136,7 @@ def test_template_includes_output_schema_keys() -> None:
         "confidence",
         "suggested_next_action",
     ):
-        assert f'"{key}"' in CRITIC_SYSTEM_PROMPT
+        assert f'"{key}"' in FULL_CRITIC_OUTPUT_CONTRACT
 
 
 def test_template_demands_no_prose_no_markdown() -> None:
@@ -219,8 +255,9 @@ def test_render_adversarial_reframe_prepends_prefix() -> None:
 
 
 def test_adversarial_prefix_emphasizes_skepticism() -> None:
-    assert "sycophantic critic" in ADVERSARIAL_REFRAME_PREFIX
-    assert "default position is now FAIL" in ADVERSARIAL_REFRAME_PREFIX
+    assert "maximum skepticism" in ADVERSARIAL_REFRAME_PREFIX
+    assert "do not invent a blocker" in ADVERSARIAL_REFRAME_PREFIX
+    assert "default position is now FAIL" not in ADVERSARIAL_REFRAME_PREFIX
 
 
 def test_render_anchor_present_in_both_modes() -> None:

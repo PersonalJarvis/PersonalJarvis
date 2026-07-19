@@ -9,10 +9,12 @@ The current contract separates initialization from visibility: boot creates a
 fully painted, startup-gated bar; the bus bridge releases that gate directly on
 the genuine ``VoiceBootStatus`` event. Runtime builds remain immediate.
 """
+
 from __future__ import annotations
 
 from types import SimpleNamespace
 
+import jarvis.ui.desktop_app as desktop_app_module
 from jarvis.ui.desktop_app import DesktopApp
 from jarvis.ui.jarvisbar.overlay import JarvisBarOverlay
 
@@ -31,9 +33,11 @@ def _app(*, bar_persistent: bool) -> DesktopApp:
 
 
 def _disable_real_tk(monkeypatch) -> None:
-    monkeypatch.setattr(
-        JarvisBarOverlay, "start_in_thread", lambda self, timeout=3.0: None
-    )
+    # These tests exercise the in-process Tk lifecycle specifically. The real
+    # macOS desktop selects SubprocessBarOverlay; its mirror/gate contract is
+    # covered in test_subprocess_overlay.py and the Qt host-selection tests.
+    monkeypatch.setattr(desktop_app_module.sys, "platform", "linux")
+    monkeypatch.setattr(JarvisBarOverlay, "start_in_thread", lambda self, timeout=3.0: None)
 
 
 def test_boot_persistent_bar_is_initialized_but_startup_gated(monkeypatch) -> None:

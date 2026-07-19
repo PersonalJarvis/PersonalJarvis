@@ -24,8 +24,17 @@ gets a unique key.
   daemon the keyring silently fails, so the key falls back to a `0600` file at
   `data/.control_api_key` (or `$JARVIS_DATA_DIR`). Read order:
   keyring → file → `JARVIS_CONTROL_API_KEY` env seed.
+- **Runtime reads:** a successful lookup is serialized and cached for the life
+  of the Jarvis process, then invalidated by an in-process key replacement.
+  Forked children drop the cache. This keeps per-request Bearer checks from
+  repeatedly decrypting the same operating-system credential.
+- **macOS upgrade repair:** if the item was created by an older direct-Python
+  launcher, the first approved read re-creates the same value under the
+  verified canonical `Personal Jarvis.app` code-signing requirement. A private,
+  non-secret owner stamp prevents repeat migrations. An unsigned development
+  process is never allowed to perform or claim that repair.
 - **Never exported into `os.environ`** during normal operation (a spawned worker
-  would inherit it and leak it via `/proc/<pid>/environ`). Read on demand.
+  would inherit it and leak it via `/proc/<pid>/environ`).
 - **Where the user finds it:** desktop app → **API Keys → Access &
   Integrations → Control Key** (masked by default, Show/Hide, one-click Copy,
   Regenerate behind a confirm dialog, or replace it with a user-chosen key —

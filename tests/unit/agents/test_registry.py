@@ -24,8 +24,8 @@ from jarvis.core.events import (
     BrainTurnStarted,
     HarnessCompleted,
     HarnessDispatched,
-    JarvisAgentTaskCompleted,
     JarvisAgentReviewTriggered,
+    JarvisAgentTaskCompleted,
     JarvisAgentTaskStarted,
     ToolCallCompleted,
     ToolCallStarted,
@@ -454,6 +454,67 @@ async def test_mission_bus_bridge_failed_marks_failed(
 
 
 @pytest.mark.asyncio
+async def test_mission_bus_bridge_cancelled_marks_tree_cancelled(
+    registry: JarvisAgentRegistry,
+) -> None:
+    """Mission cancellation stays distinct from worker or critic failure."""
+    from jarvis.missions.event_bus import MissionBus
+    from jarvis.missions.events import (
+        EventEnvelope,
+        MissionCancelled,
+        MissionDispatched,
+        WorkerSpawned,
+        now_ms,
+    )
+
+    mbus = MissionBus()
+    registry.attach_mission_bus(mbus)
+
+    mission_id = "019e1800-0000-7000-8000-000000000020"
+    worker_id = "019e1800-0000-7000-8000-000000000021"
+    await mbus.publish(
+        EventEnvelope(
+            mission_id=mission_id,
+            source_actor="hauptjarvis",
+            ts_ms=now_ms(),
+            payload=MissionDispatched(prompt="cancel me", language="en"),
+        )
+    )
+    await mbus.publish(
+        EventEnvelope(
+            mission_id=mission_id,
+            worker_id=worker_id,
+            source_actor="kontrollierer",
+            ts_ms=now_ms(),
+            payload=WorkerSpawned(
+                worker_id=worker_id,
+                step={"task": "build"},
+                pid=4242,
+                cli="claude",
+                model="sonnet",
+                worktree="/workspace/agent-1",
+            ),
+        )
+    )
+    await mbus.publish(
+        EventEnvelope(
+            mission_id=mission_id,
+            source_actor="kontrollierer",
+            ts_ms=now_ms(),
+            payload=MissionCancelled(cascade=True, reason="user_cancelled"),
+        )
+    )
+
+    snapshot = registry.snapshot()
+    mission = snapshot[mission_id.replace("-", "")]
+    worker = snapshot[worker_id.replace("-", "")]
+    assert mission.status == "cancelled"
+    assert mission.error == "cancelled: user_cancelled"
+    assert worker.status == "cancelled"
+    assert worker.error == "cancelled with mission"
+
+
+@pytest.mark.asyncio
 async def test_mission_bus_bridge_is_idempotent(
     registry: JarvisAgentRegistry,
 ) -> None:
@@ -689,3 +750,62 @@ async def test_worker_killed_without_detail_falls_back_to_reason(
     assert node.status == "failed"
     assert node.error == "killed: timeout"
     assert node.error_class is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("reason", ["user", "parent_cancelled"])
+async def test_worker_cancel_reason_stays_distinct_from_failure(
+    registry: JarvisAgentRegistry,
+    reason: str,
+) -> None:
+    from jarvis.missions.event_bus import MissionBus
+    from jarvis.missions.events import (
+        EventEnvelope,
+        MissionDispatched,
+        WorkerKilled,
+        WorkerSpawned,
+        now_ms,
+    )
+
+    mbus = MissionBus()
+    registry.attach_mission_bus(mbus)
+
+    mission_id = "019e1800-0000-7000-8000-000000000030"
+    worker_id = "019e1800-0000-7000-8000-000000000031"
+    await mbus.publish(
+        EventEnvelope(
+            mission_id=mission_id,
+            source_actor="hauptjarvis",
+            ts_ms=now_ms(),
+            payload=MissionDispatched(prompt="build it", language="en"),
+        )
+    )
+    await mbus.publish(
+        EventEnvelope(
+            mission_id=mission_id,
+            worker_id=worker_id,
+            source_actor="kontrollierer",
+            ts_ms=now_ms(),
+            payload=WorkerSpawned(
+                worker_id=worker_id,
+                step={"task": "build"},
+                pid=4242,
+                cli="claude",
+                model="sonnet",
+                worktree="/workspace/agent-1",
+            ),
+        )
+    )
+    await mbus.publish(
+        EventEnvelope(
+            mission_id=mission_id,
+            worker_id=worker_id,
+            source_actor="kontrollierer",
+            ts_ms=now_ms(),
+            payload=WorkerKilled(worker_id=worker_id, reason=reason),
+        )
+    )
+
+    node = registry.snapshot()[worker_id.replace("-", "")]
+    assert node.status == "cancelled"
+    assert node.error == f"killed: {reason}"

@@ -24,6 +24,7 @@ configured opacity. This keeps Tk's opaque backing surface off-screen even
 when the bar spent long enough withdrawn for the idle renderer to stop
 repainting.
 """
+
 from __future__ import annotations
 
 import logging
@@ -71,9 +72,7 @@ _SWP_NOOWNERZORDER = 0x0200
 _GW_HWNDPREV = 3
 _GWL_EXSTYLE = -20
 _WS_EX_TOPMOST = 0x00000008
-_WIN32_TOPMOST_FLAGS = (
-    _SWP_NOSIZE | _SWP_NOMOVE | _SWP_NOACTIVATE | _SWP_NOOWNERZORDER
-)
+_WIN32_TOPMOST_FLAGS = _SWP_NOSIZE | _SWP_NOMOVE | _SWP_NOACTIVATE | _SWP_NOOWNERZORDER
 
 # Sound-driven look. The bar shows the speaking equalizer (bars) ONLY while real
 # audio is present — mic input while you speak, or TTS output while Jarvis speaks
@@ -171,9 +170,7 @@ def _primary_work_area() -> tuple[int, int, int, int] | None:
 
         SPI_GETWORKAREA = 0x0030
         rect = wintypes.RECT()
-        ok = ctypes.windll.user32.SystemParametersInfoW(
-            SPI_GETWORKAREA, 0, ctypes.byref(rect), 0
-        )
+        ok = ctypes.windll.user32.SystemParametersInfoW(SPI_GETWORKAREA, 0, ctypes.byref(rect), 0)
         if not ok:
             return None
         return (int(rect.left), int(rect.top), int(rect.right), int(rect.bottom))
@@ -289,9 +286,7 @@ def _win32_force_topmost(root: Any, *, user32: Any | None = None) -> bool:
         return False
 
 
-def _win32_topmost_band_is_healthy(
-    root: Any, *, user32: Any | None = None
-) -> bool | None:
+def _win32_topmost_band_is_healthy(root: Any, *, user32: Any | None = None) -> bool | None:
     """Check whether any ordinary visible HWND sits above the Jarvis Bar.
 
     ``WS_EX_TOPMOST`` on the bar itself cannot answer this: the reported bug
@@ -393,6 +388,12 @@ class JarvisBarOverlay:
         self._drag: dict | None = None
         self._level_unsub: Callable[[], None] | None = None
         self._on_mute_toggle: Callable[[], None] | None = None
+        # Interaction callbacks let the macOS companion host forward actions
+        # to the parent process, where the live SpeechPipeline is registered.
+        # They stay optional so Windows/Linux keep their existing in-process
+        # runtime_refs fallback when no callback is installed.
+        self._on_talk: Callable[[], None] | None = None
+        self._on_hangup: Callable[[], None] | None = None
         self._feedback_publisher: Callable[[str, dict], None] | None = None
         self._on_show_window: Callable[[], None] | None = None
         self._hovered = False  # mouse over the bar → reveal the close cross
@@ -499,6 +500,14 @@ class JarvisBarOverlay:
 
     def set_on_mute_toggle(self, callback: Callable[[], None] | None) -> None:
         self._on_mute_toggle = callback
+
+    def set_on_talk(self, callback: Callable[[], None] | None) -> None:
+        """Register the idle-body click action for an external host."""
+        self._on_talk = callback
+
+    def set_on_hangup(self, callback: Callable[[], None] | None) -> None:
+        """Register the active close-X action for an external host."""
+        self._on_hangup = callback
 
     def set_feedback_publisher(self, callback: Callable[[str, dict], None] | None) -> None:
         self._feedback_publisher = callback
@@ -639,17 +648,13 @@ class JarvisBarOverlay:
                 root.configure(bg="systemTransparent")
                 self._mac_transparent = True
             except tk.TclError:
-                log.warning(
-                    "macOS -transparent unsupported — bar will show its key colour"
-                )
+                log.warning("macOS -transparent unsupported — bar will show its key colour")
                 root.configure(bg=COLOR_KEY_HEX)
         else:
             try:
                 root.wm_attributes("-transparentcolor", COLOR_KEY_HEX)
             except tk.TclError:
-                log.warning(
-                    "transparentcolor unsupported — bar will show its key colour"
-                )
+                log.warning("transparentcolor unsupported — bar will show its key colour")
             root.configure(bg=COLOR_KEY_HEX)
         # Window-level alpha ON TOP of the color key: the magenta stays fully
         # keyed out (verified — no bleed) while the pill itself goes
@@ -754,8 +759,13 @@ class JarvisBarOverlay:
             pos = None
         if pos is not None:
             self._x, self._y = interaction.clamp_to_screen(
-                pos[0], pos[1], screen_w=sw, screen_h=sh,
-                bar_w=renderer.WIN_W, bar_h=renderer.WIN_H, margin=MARGIN_PX,
+                pos[0],
+                pos[1],
+                screen_w=sw,
+                screen_h=sh,
+                bar_w=renderer.WIN_W,
+                bar_h=renderer.WIN_H,
+                margin=MARGIN_PX,
             )
         else:
             # Anchor just ABOVE the taskbar (work area), exactly centered —
@@ -768,8 +778,11 @@ class JarvisBarOverlay:
                 self._y = wb - renderer.WIN_H - TASKBAR_GAP_PX
             else:
                 self._x, self._y = interaction.default_bottom_center(
-                    screen_w=sw, screen_h=sh,
-                    bar_w=renderer.WIN_W, bar_h=renderer.WIN_H, margin=MARGIN_PX,
+                    screen_w=sw,
+                    screen_h=sh,
+                    bar_w=renderer.WIN_W,
+                    bar_h=renderer.WIN_H,
+                    margin=MARGIN_PX,
                 )
 
     def _do_show(self) -> None:
@@ -838,9 +851,7 @@ class JarvisBarOverlay:
             try:
                 self._root.wm_attributes("-transparentcolor", COLOR_KEY_HEX)
             except Exception:  # noqa: BLE001
-                log.debug(
-                    "jarvisbar transparentcolor re-assert failed", exc_info=True
-                )
+                log.debug("jarvisbar transparentcolor re-assert failed", exc_info=True)
         try:
             self._root.wm_attributes("-alpha", opacity)
         except Exception:  # noqa: BLE001
@@ -879,9 +890,7 @@ class JarvisBarOverlay:
         # exactly as set at creation so a dropped attribute self-heals on the
         # very next reveal instead of needing an app restart. Guarded
         # separately so a failure here can never undo the topmost re-assert.
-        self._apply_layered_attributes(
-            opacity=self._opacity if opacity is None else opacity
-        )
+        self._apply_layered_attributes(opacity=self._opacity if opacity is None else opacity)
         # A long-withdrawn idle bar may already be in the static-frame fast
         # path. Native style/map changes require one fresh canvas submission so
         # DWM cannot keep a stale backing surface indefinitely.
@@ -991,8 +1000,7 @@ class JarvisBarOverlay:
             else:
                 self._static_tick_count += 1
             is_settled_idle = (
-                effective_mode == "idle"
-                and self._static_tick_count >= _IDLE_SETTLE_TICKS
+                effective_mode == "idle" and self._static_tick_count >= _IDLE_SETTLE_TICKS
             )
 
             if not is_settled_idle:
@@ -1002,19 +1010,28 @@ class JarvisBarOverlay:
                 # your mic. No synthetic floor (that made the bars look
                 # uniformly blocky).
                 img = self._renderer.render(
-                    t, effective_mode, self._ext_level,
-                    hovered=self._hovered, muted=self._muted,
+                    t,
+                    effective_mode,
+                    self._ext_level,
+                    hovered=self._hovered,
+                    muted=self._muted,
                 )
                 if getattr(self, "_mac_transparent", False):
                     # macOS: no color key — carry real per-pixel alpha instead.
                     img = renderer.key_to_alpha(img)
                 # PhotoImage must be retained on self, else Tk GCs it before
-                # drawing.
-                self._photo = ImageTk.PhotoImage(img)
+                # drawing.  The explicit master is equally load-bearing on
+                # macOS: the companion host owns a withdrawn bootstrap Tk root
+                # (so Tk, not pyobjc, creates NSApp) and this overlay owns a
+                # second Tcl interpreter.  Pillow otherwise binds the image to
+                # the bootstrap interpreter, and this canvas rejects it with
+                # ``TclError: image \"pyimageN\" does not exist`` — leaving only
+                # the empty backing rectangle on screen.  Supplying the actual
+                # consumer also stays correct for the single-root Windows/Linux
+                # paths.
+                self._photo = ImageTk.PhotoImage(img, master=self._root)
                 if self._image_id is None:
-                    self._image_id = self._canvas.create_image(
-                        0, 0, anchor="nw", image=self._photo
-                    )
+                    self._image_id = self._canvas.create_image(0, 0, anchor="nw", image=self._photo)
                 else:
                     self._canvas.itemconfig(self._image_id, image=self._photo)
         except Exception:  # noqa: BLE001 — one bad frame must never freeze the bar
@@ -1057,9 +1074,7 @@ class JarvisBarOverlay:
             last = self._last_frame_ns
             if last and (time.monotonic_ns() - last) > FRAME_STALL_THRESHOLD_NS:
                 stalled_s = (time.monotonic_ns() - last) / 1e9
-                log.warning(
-                    "JarvisBar frame loop stalled %.1fs — reviving it", stalled_s
-                )
+                log.warning("JarvisBar frame loop stalled %.1fs — reviving it", stalled_s)
                 # Pre-stamp so a false alarm (a still-live loop) doesn't make us
                 # re-kick every tick; the revived loop immediately re-stamps.
                 self._last_frame_ns = time.monotonic_ns()
@@ -1069,13 +1084,9 @@ class JarvisBarOverlay:
         finally:
             if self._running and self._root is not None:
                 try:
-                    self._root.after(
-                        WATCHDOG_INTERVAL_MS, self._schedule_frame_watchdog
-                    )
+                    self._root.after(WATCHDOG_INTERVAL_MS, self._schedule_frame_watchdog)
                 except Exception:  # noqa: BLE001
-                    log.warning(
-                        "JarvisBar frame watchdog re-arm skipped", exc_info=True
-                    )
+                    log.warning("JarvisBar frame watchdog re-arm skipped", exc_info=True)
 
     def _schedule_z_order_guard(self) -> None:
         """Keep a mapped bar above apps that are opened after it.
@@ -1107,13 +1118,9 @@ class JarvisBarOverlay:
         finally:
             if self._running and self._root is not None:
                 try:
-                    self._root.after(
-                        Z_ORDER_GUARD_INTERVAL_MS, self._schedule_z_order_guard
-                    )
+                    self._root.after(Z_ORDER_GUARD_INTERVAL_MS, self._schedule_z_order_guard)
                 except Exception:  # noqa: BLE001
-                    log.warning(
-                        "JarvisBar Z-order guard re-arm skipped", exc_info=True
-                    )
+                    log.warning("JarvisBar Z-order guard re-arm skipped", exc_info=True)
 
     # ------------------------------------------------------------------ #
     # Drag (reposition) + click (start a voice session)                 #
@@ -1177,8 +1184,13 @@ class JarvisBarOverlay:
             sw = int(self._root.winfo_screenwidth())
             sh = int(self._root.winfo_screenheight())
             self._x, self._y = interaction.clamp_to_screen(
-                self._x, self._y, screen_w=sw, screen_h=sh,
-                bar_w=renderer.WIN_W, bar_h=renderer.WIN_H, margin=MARGIN_PX,
+                self._x,
+                self._y,
+                screen_w=sw,
+                screen_h=sh,
+                bar_w=renderer.WIN_W,
+                bar_h=renderer.WIN_H,
+                margin=MARGIN_PX,
             )
             self._root.geometry(f"{renderer.WIN_W}x{renderer.WIN_H}+{self._x}+{self._y}")
             from jarvis.core.config_writer import DEFAULT_CONFIG_FILE
@@ -1246,20 +1258,14 @@ class JarvisBarOverlay:
         if time.monotonic() < self._hangup_click_block_until:
             return
         try:
-            from jarvis.core.runtime_refs import get_speech_pipeline
-
-            pipeline = get_speech_pipeline()
-            if pipeline is None:
-                return
-            # Hang-up must be a deliberate click on the VISIBLE close-X glyph
-            # (the X is only drawn while hovered), never the wide left dead-zone
-            # — see interaction.resolve_click + the silent-hangup forensic. The
-            # active pill is ACTIVE_W, so the X glyph sits at WIN_W/2-0.42*pw.
             active = self._mode in ("listen", "think", "speak")
             pill_w = renderer.ACTIVE_W if active else None
             action = interaction.resolve_click(
-                click_x, renderer.WIN_W, self._mode,
-                hovered=hovered, pill_w=pill_w,
+                click_x,
+                renderer.WIN_W,
+                self._mode,
+                hovered=hovered,
+                pill_w=pill_w,
             )
             if action == "mute":
                 # The mic button toggles voice mute via the bridge-wired
@@ -1274,6 +1280,21 @@ class JarvisBarOverlay:
                     cb()
                     self._muted = not self._muted
             elif action == "hangup":
+                callback = self._on_hangup
+                if callback is not None:
+                    # The macOS child cannot inspect the parent's live session.
+                    # It emits the resolved action; SubprocessBarOverlay applies
+                    # the same active/stuck-active guard in the parent process.
+                    callback()
+                    self._mode = "idle"
+                    self._hangup_click_block_until = time.monotonic() + HANGUP_CLICK_GUARD_S
+                    return
+
+                from jarvis.core.runtime_refs import get_speech_pipeline
+
+                pipeline = get_speech_pipeline()
+                if pipeline is None:
+                    return
                 # Only a LIVE session is hung up. If the bar is stuck in an
                 # active "listen/think/speak" look with NO session behind it
                 # (a wake confirmed then swallowed by the post-hangup wake-lock,
@@ -1295,11 +1316,18 @@ class JarvisBarOverlay:
                         # round-trip. The authoritative bridge state will
                         # reconcile the same value when teardown completes.
                         self._mode = "idle"
-                        self._hangup_click_block_until = (
-                            time.monotonic() + HANGUP_CLICK_GUARD_S
-                        )
+                        self._hangup_click_block_until = time.monotonic() + HANGUP_CLICK_GUARD_S
             elif action == "talk":
-                pipeline.request_voice_session()
+                callback = self._on_talk
+                if callback is not None:
+                    callback()
+                    return
+
+                from jarvis.core.runtime_refs import get_speech_pipeline
+
+                pipeline = get_speech_pipeline()
+                if pipeline is not None:
+                    pipeline.request_voice_session()
             # "none" → nothing
         except Exception:  # noqa: BLE001
             log.debug("jarvisbar click action failed", exc_info=True)
@@ -1317,8 +1345,11 @@ class JarvisBarOverlay:
             sw = int(self._root.winfo_screenwidth())
             sh = int(self._root.winfo_screenheight())
             self._x, self._y = interaction.default_bottom_center(
-                screen_w=sw, screen_h=sh,
-                bar_w=renderer.WIN_W, bar_h=renderer.WIN_H, margin=MARGIN_PX,
+                screen_w=sw,
+                screen_h=sh,
+                bar_w=renderer.WIN_W,
+                bar_h=renderer.WIN_H,
+                margin=MARGIN_PX,
             )
             self._root.geometry(f"{renderer.WIN_W}x{renderer.WIN_H}+{self._x}+{self._y}")
             from jarvis.core.config_writer import DEFAULT_CONFIG_FILE

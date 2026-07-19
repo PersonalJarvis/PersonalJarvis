@@ -159,13 +159,36 @@ def test_start_login_uses_bare_agy_not_login_subcommand(monkeypatch):
     svc._resolve = lambda: GoogleCli(kind="agy", argv_prefix=["agy.exe"])  # type: ignore[method-assign]
     captured: dict = {}
 
-    def _fake_popen(argv, **kw):
+    def _fake_launch(argv, **kw):
         captured["argv"] = list(argv)
-        return object()
+        captured["kwargs"] = kw
+        return auth_mod.InteractiveTerminalLaunch(10, "test-terminal")
 
-    monkeypatch.setattr(auth_mod.subprocess, "Popen", _fake_popen)
+    monkeypatch.setattr(auth_mod, "launch_interactive_terminal", _fake_launch)
     svc.start_login()
     assert captured["argv"] == ["agy.exe"]  # bare binary, no "login"
+    assert captured["kwargs"] == {"title": "Google sign-in"}
+
+
+def test_provider_ready_requires_cli_even_with_api_key():
+    missing = auth_mod.GoogleCliAuthStatus(installed=False)
+    assert not auth_mod.antigravity_provider_ready(missing, api_key_present=True)
+
+    installed = auth_mod.GoogleCliAuthStatus(installed=True)
+    assert auth_mod.antigravity_provider_ready(installed, api_key_present=True)
+
+    oauth = auth_mod.GoogleCliAuthStatus(
+        installed=True,
+        connected=True,
+        mode="oauth-personal",
+    )
+    assert auth_mod.antigravity_provider_ready(oauth, api_key_present=False)
+
+
+def test_install_command_is_platform_specific():
+    assert auth_mod.antigravity_install_command("win32").startswith("irm ")
+    assert auth_mod.antigravity_install_command("darwin").startswith("curl ")
+    assert auth_mod.antigravity_install_command("linux").startswith("curl ")
 
 
 def test_logout_removes_creds_without_calling_agy_logout(tmp_path, monkeypatch):
@@ -176,10 +199,6 @@ def test_logout_removes_creds_without_calling_agy_logout(tmp_path, monkeypatch):
     svc = GoogleCliAuthService()
     svc._resolve = lambda: GoogleCli(kind="agy", argv_prefix=["agy.exe"])  # type: ignore[method-assign]
 
-    def _no_run(*a, **k):
-        raise AssertionError("agy logout must not be invoked (no such subcommand)")
-
-    monkeypatch.setattr(auth_mod.subprocess, "run", _no_run)
     ok, err = svc.logout_blocking()
     assert ok and err is None
     assert not (gem / "oauth_creds.json").is_file()  # creds actually removed

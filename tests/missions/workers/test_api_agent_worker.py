@@ -432,3 +432,32 @@ async def test_stream_jsonl_is_valid_ndjson(
                  worker_id="m::0", log_dir=log_dir)
     for line in (log_dir / "stream.jsonl").read_text(encoding="utf-8").splitlines():
         json.loads(line)  # every line is valid JSON
+
+
+@pytest.mark.asyncio
+async def test_stream_jsonl_is_isolated_per_spawn(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """A new worker attempt must replace evidence from the prior iteration."""
+    _patch_brain(
+        monkeypatch,
+        FakeBrain([[BrainDelta(content="current spawn"), BrainDelta(finish_reason="end_turn")]]),
+    )
+    log_dir = tmp_path / "_logs"
+    log_dir.mkdir()
+    stream_path = log_dir / "stream.jsonl"
+    stream_path.write_text('{"stale":"prior spawn"}\n', encoding="utf-8")
+
+    await _drain(
+        ApiAgentWorker("openai"),
+        prompt="x",
+        worktree=tmp_path,
+        env={},
+        job=None,
+        worker_id="m::1",
+        log_dir=log_dir,
+    )
+
+    stream_text = stream_path.read_text(encoding="utf-8")
+    assert "prior spawn" not in stream_text
+    assert "current spawn" in stream_text

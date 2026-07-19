@@ -112,7 +112,9 @@ async def test_tool_incapable_model_fails_early(
     assert errors, "expected an early error result"
     msg = (errors[-1].result or "").lower()
     assert "cannot call tools" in msg
-    assert "jarvis-agents" in msg
+    assert "missions deliver work" in msg
+    assert "settings -> agents" in msg
+    assert "jarvis-agent" not in msg
     # the gate fires before the turn loop — no assistant/user turn was emitted
     kinds = [type(e).__name__ for e in events]
     assert "ClaudeAssistantMessage" not in kinds
@@ -157,7 +159,9 @@ async def test_first_round_trip_no_endpoints_error_is_translated(
     assert errors, "expected the raw provider error to be translated"
     msg = (errors[-1].result or "").lower()
     assert "cannot call tools" in msg
-    assert "jarvis-agents" in msg
+    assert "missions deliver work" in msg
+    assert "settings -> agents" in msg
+    assert "jarvis-agent" not in msg
 
 
 async def test_unrelated_tool_error_is_not_mislabeled(

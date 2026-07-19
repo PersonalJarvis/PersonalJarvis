@@ -139,9 +139,24 @@ def test_text_and_mouth_methods_are_local_noops(monkeypatch) -> None:
 
 def test_release_startup_gate_semantics_match_the_real_bar(monkeypatch) -> None:
     surface, proc = _started_proxy(monkeypatch, startup_gated=True)
+    assert surface._visible is False
     assert surface.release_startup_gate() is True
+    assert surface._visible is True
     assert surface.release_startup_gate() is False  # released exactly once
     assert [m["op"] for m in proc.sent()[1:]] == ["release_startup_gate"]
+
+
+def test_visibility_mirror_matches_bar_start_and_idle_semantics() -> None:
+    assert SubprocessBarOverlay(persistent=True, startup_gated=False)._visible is True
+    assert SubprocessBarOverlay(persistent=True, startup_gated=True)._visible is False
+    non_persistent = SubprocessBarOverlay(persistent=False, startup_gated=False)
+    assert non_persistent._visible is False
+    non_persistent._send = lambda _msg: None  # type: ignore[method-assign]
+
+    non_persistent.show("listen")
+    assert non_persistent._visible is True
+    non_persistent.show("idle")
+    assert non_persistent._visible is False
 
 
 def test_persistent_attribute_flip_is_forwarded(monkeypatch) -> None:
@@ -157,12 +172,16 @@ def test_child_events_dispatch_to_bridge_callbacks(monkeypatch) -> None:
     surface = SubprocessBarOverlay()
     fired: list[tuple] = []
     done = threading.Event()
+    surface.set_on_talk(lambda: fired.append(("talk",)))
+    surface.set_on_hangup(lambda: fired.append(("hangup",)))
     surface.set_on_mute_toggle(lambda: fired.append(("mute",)))
     surface.set_feedback_publisher(lambda k, d: fired.append(("feedback", k, d)))
     surface.set_on_show_window(lambda: (fired.append(("show_window",)), done.set()))
 
     events = (
         '{"event": "ready"}\n'
+        '{"event": "talk"}\n'
+        '{"event": "hangup"}\n'
         '{"event": "mute_toggle"}\n'
         '{"event": "feedback", "kind": "bar", "payload": {"a": 1}}\n'
         "not json\n"
@@ -177,9 +196,77 @@ def test_child_events_dispatch_to_bridge_callbacks(monkeypatch) -> None:
     monkeypatch.setattr(mod.subprocess, "Popen", _EventPopen)
     surface.start_in_thread(timeout=2.0)
     assert done.wait(timeout=2.0)
+    assert ("talk",) in fired
+    assert ("hangup",) in fired
     assert ("mute",) in fired
     assert ("feedback", "bar", {"a": 1}) in fired
     assert ("show_window",) in fired
+
+
+class _FakeSpeechPipeline:
+    def __init__(self, *, session_active: bool) -> None:
+        self.session_active = session_active
+        self.talk_calls = 0
+        self.hangup_calls = 0
+
+    def is_session_active(self) -> bool:
+        return self.session_active
+
+    def request_voice_session(self) -> None:
+        self.talk_calls += 1
+
+    def request_hangup(self) -> None:
+        self.hangup_calls += 1
+
+
+def test_talk_event_executes_the_parent_pipeline(monkeypatch) -> None:
+    pipeline = _FakeSpeechPipeline(session_active=False)
+    monkeypatch.setattr("jarvis.core.runtime_refs.get_speech_pipeline", lambda: pipeline)
+    surface = SubprocessBarOverlay()
+
+    surface._dispatch_event({"event": "talk"})
+
+    assert pipeline.talk_calls == 1
+    assert pipeline.hangup_calls == 0
+
+
+def test_hangup_event_closes_a_live_parent_session(monkeypatch) -> None:
+    pipeline = _FakeSpeechPipeline(session_active=True)
+    monkeypatch.setattr("jarvis.core.runtime_refs.get_speech_pipeline", lambda: pipeline)
+    surface = SubprocessBarOverlay()
+
+    surface._dispatch_event({"event": "hangup"})
+
+    assert pipeline.hangup_calls == 1
+    assert pipeline.talk_calls == 0
+
+
+def test_hangup_event_escapes_a_stuck_active_parent_state(monkeypatch) -> None:
+    pipeline = _FakeSpeechPipeline(session_active=False)
+    monkeypatch.setattr("jarvis.core.runtime_refs.get_speech_pipeline", lambda: pipeline)
+    surface = SubprocessBarOverlay()
+
+    surface._dispatch_event({"event": "hangup"})
+
+    assert pipeline.hangup_calls == 0
+    assert pipeline.talk_calls == 1
+
+
+def test_hangup_event_preserves_legacy_parent_pipeline_behavior(monkeypatch) -> None:
+    class _LegacyPipeline:
+        def __init__(self) -> None:
+            self.hangup_calls = 0
+
+        def request_hangup(self) -> None:
+            self.hangup_calls += 1
+
+    pipeline = _LegacyPipeline()
+    monkeypatch.setattr("jarvis.core.runtime_refs.get_speech_pipeline", lambda: pipeline)
+    surface = SubprocessBarOverlay()
+
+    surface._dispatch_event({"event": "hangup"})
+
+    assert pipeline.hangup_calls == 1
 
 
 def test_dead_host_degrades_to_noop_without_raising(monkeypatch) -> None:
@@ -399,6 +486,7 @@ def test_mascot_init_line_declares_surface_and_mascot_path(monkeypatch) -> None:
     init = proc.sent()[0]
     assert init == {"op": "init", "surface": "mascot", "mascot_path": "assets/m.png"}
     assert surface._ready.is_set()  # scripted ready event consumed
+    assert surface._visible is False  # sticky=False mascot starts withdrawn
 
 
 def test_bar_init_payload_is_unchanged_by_the_mascot_variant(monkeypatch) -> None:

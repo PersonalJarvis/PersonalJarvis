@@ -79,9 +79,7 @@ class _FakeOrb:
     def stop_animation(self, name: str) -> None:
         self.calls.append(("stop_animation", name))
 
-    def show_listening_transcript(
-        self, text: str = "", duration_ms: int = 30000
-    ) -> None:
+    def show_listening_transcript(self, text: str = "", duration_ms: int = 30000) -> None:
         self.calls.append(("show_listening_transcript", text))
 
     def hide_comment(self) -> None:
@@ -111,6 +109,17 @@ class _FakeStartupGatedBar(_FakeBarWithExplicitReassert):
             return False
         self.startup_gated = False
         return True
+
+
+def test_tts_level_is_forwarded_to_cross_process_surface() -> None:
+    """The macOS surface cannot subscribe to the parent's process-local tap."""
+    orb = _FakeOrb()
+    bridge = OrbBusBridge(bus=_FakeBus(), orb=orb, idle_animations_enabled=False)  # type: ignore[arg-type]
+
+    bridge._note_tts_level(0.73)  # noqa: SLF001
+
+    assert ("set_level", 0.73) in orb.calls
+    assert bridge._last_tts_level_t > 0.0  # noqa: SLF001
 
 
 async def test_orb_is_shown_again_for_thinking_after_external_hide() -> None:
@@ -279,7 +288,10 @@ async def test_broadcast_boilerplate_is_not_shown_in_listening_bubble() -> None:
         TranscriptionUpdate(text="Eine Sendung des NDR, 2020", is_final=False)  # i18n-allow
     )
 
-    assert ("show_listening_transcript", "Eine Sendung des NDR, 2020") not in orb.calls  # i18n-allow
+    assert (
+        "show_listening_transcript",
+        "Eine Sendung des NDR, 2020",  # i18n-allow
+    ) not in orb.calls  # i18n-allow
     assert ("show_listening_transcript", "") in orb.calls
 
 
@@ -299,7 +311,8 @@ async def test_listening_bubble_mirrors_accumulating_pipeline_snapshots() -> Non
 
     await bridge._on_transcription_update(  # noqa: SLF001
         TranscriptionUpdate(
-            text="Hallo ich moechte einen langen Prompt", is_final=False  # i18n-allow
+            text="Hallo ich moechte einen langen Prompt",
+            is_final=False,  # i18n-allow
         )
     )
     await bridge._on_transcription_update(  # noqa: SLF001
@@ -797,7 +810,7 @@ async def test_listening_bubble_mirrors_pipeline_snapshot_one_to_one() -> None:
         "Hallo",
         "Hallo wie",
         "Eine Sendung Hallo wie geht es dir",
-        "Hallo wie geht es dir",          # downward correction
+        "Hallo wie geht es dir",  # downward correction
         "Hallo wie geht es dir heute",
     ]
     for snapshot in snapshots:
@@ -1073,9 +1086,7 @@ async def test_delayed_hide_withdraws_non_persistent_bar() -> None:
     real session is unchanged. The persistence gate only spares the always-on
     bar."""
     orb = _FakeOrb()
-    bridge = OrbBusBridge(
-        bus=_FakeBus(), orb=orb, idle_animations_enabled=False, hide_on_idle=True
-    )  # type: ignore[arg-type]
+    bridge = OrbBusBridge(bus=_FakeBus(), orb=orb, idle_animations_enabled=False, hide_on_idle=True)  # type: ignore[arg-type]
     bridge._last_state = "IDLE"  # noqa: SLF001
 
     await bridge._delayed_hide(0.0)  # noqa: SLF001
@@ -1124,6 +1135,7 @@ async def test_mute_toggle_publishes_voice_mute_request() -> None:
     callback()
     # Give the scheduled coro a tick to run.
     import asyncio
+
     await asyncio.sleep(0.05)
 
     assert len(seen) == 1
@@ -1162,6 +1174,7 @@ from jarvis.core.events import (  # noqa: E402
 async def test_attach_injects_feedback_publisher_into_orb() -> None:
     """The bridge must inject its publisher via ``set_feedback_publisher``
     so the orb can call back from the Tk thread."""
+
     class _OrbWithFeedback(_FakeOrb):
         def __init__(self) -> None:
             super().__init__()
@@ -1204,6 +1217,7 @@ async def test_visible_feedback_publish_emits_event_with_correlation_id() -> Non
 
     # Drain any pending threadsafe publishes scheduled via asyncio.
     import asyncio
+
     await asyncio.sleep(0.05)
 
     assert len(seen) >= 1
@@ -1217,6 +1231,7 @@ async def test_visible_feedback_publish_emits_event_with_correlation_id() -> Non
 async def test_reset_requested_dispatches_to_tk_thread() -> None:
     """L2 wiring: an OrbResetRequested bus event must call into the
     orb's ``_on_reset_double_click`` via ``root.after(0, ...)``."""
+
     class _Root:
         def __init__(self) -> None:
             self.after_calls: list = []
@@ -1247,6 +1262,7 @@ async def test_reset_requested_dispatches_to_tk_thread() -> None:
 async def test_reset_requested_with_no_root_logs_and_returns() -> None:
     """Defensive: when the orb has no Tk root yet (boot race), the reset
     request must NOT crash — the handler logs and returns."""
+
     class _OrbNoRoot(_FakeOrb):
         _root = None
 

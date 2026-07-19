@@ -258,6 +258,10 @@ def test_failure_reason_phrases_shared_with_announcer() -> None:
     # 2026-06-07 fix back to a raw snake_case token on the voice path.
     assert "attempts_timed_out" in FAILURE_REASON_PHRASES["de"]
     assert "attempts_timed_out" in FAILURE_REASON_PHRASES["en"]
+    assert all(
+        "review_time_budget_exhausted" in FAILURE_REASON_PHRASES[language]
+        for language in ("de", "en", "es")
+    )
     assert set(FAILURE_REASON_PHRASES["de"]) == set(FAILURE_REASON_PHRASES["en"])
 
 

@@ -294,6 +294,11 @@ class ApiAgentWorker:
         resolved_model = _resolve_worker_model(self.provider, model)
         log_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240 — trivial sync mkdir (mirrors sibling workers)
         stream_path = log_dir / "stream.jsonl"
+        # The orchestrator reuses one log directory across critic iterations.
+        # Keep stream evidence scoped to this spawn instead of appending a new
+        # run to stale frames from an earlier worker attempt.
+        with suppress(OSError):
+            stream_path.write_text("", encoding="utf-8")
         written: list[str] = []
         broker_specs = broker_binding.tool_specs if broker_binding is not None else ()
         local_names = {str(spec["name"]) for spec in WORKER_TOOL_SPECS}

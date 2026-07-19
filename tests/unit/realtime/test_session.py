@@ -710,7 +710,7 @@ async def test_repeated_barge_in_interrupts_active_provider_only_once():
 async def test_audio_send_timeout_marks_realtime_session_failed(monkeypatch):
     import jarvis.realtime.session as session_module
 
-    monkeypatch.setattr(session_module, "_AUDIO_SEND_TIMEOUT_S", 0.01)
+    monkeypatch.setattr(session_module, "_AUDIO_SEND_TIMEOUT_S", 0.02)
     sess = RealtimeVoiceSession(
         session_id="audio-send-timeout",
         send_binary=lambda _data: asyncio.sleep(0),
@@ -4605,6 +4605,14 @@ class StayOpenSession(FakeSession):
         self._released.set()
 
 
+class WriteStalledSession(StayOpenSession):
+    """Keep receiving while microphone writes block forever."""
+
+    async def send_audio(self, chunk):
+        del chunk
+        await asyncio.Event().wait()
+
+
 class RebuildingProvider(FakeProvider):
     """Serve a scripted sequence of session objects, one per open_session."""
 
@@ -4682,6 +4690,74 @@ async def test_transport_death_rebuilds_the_session_in_place():
     assert not sess.failed
     assert [m for m in jsons if m.get("type") == "provider_error"] == []
     assert len([m for m in jsons if m.get("type") == "audio_ready"]) == 2
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_audio_send_timeout_rebuilds_without_ending_the_call(monkeypatch):
+    """A write-only stall and a later stale timeout preserve the live call."""
+    import jarvis.realtime.session as session_module
+
+    class _ObservedWriteStalledSession(WriteStalledSession):
+        def __init__(self):
+            super().__init__([])
+            self.send_entered = [asyncio.Event(), asyncio.Event()]
+            self._send_count = 0
+
+        async def send_audio(self, chunk):
+            del chunk
+            index = self._send_count
+            self._send_count += 1
+            self.send_entered[index].set()
+            await asyncio.Event().wait()
+
+    stalled = _ObservedWriteStalledSession()
+    monkeypatch.setattr(session_module, "_AUDIO_SEND_TIMEOUT_S", 0.02)
+    provider = RebuildingProvider(
+        [
+            lambda: stalled,
+            lambda: StayOpenSession([]),
+        ]
+    )
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="rebuild-audio-send-timeout",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda message: jsons.append(message) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+        browser_sample_rate=16_000,
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    pump = sess._pump_task
+
+    first_send = asyncio.create_task(
+        sess.handle_audio_frame(b"\x00\x01" * 16)
+    )
+    await asyncio.wait_for(stalled.send_entered[0].wait(), timeout=0.5)
+    # ``wait_for`` captured the short deadline for send one. Give send two a
+    # longer deadline so the first timeout deterministically rebuilds the
+    # transport before the overlapping stale timeout is delivered.
+    monkeypatch.setattr(session_module, "_AUDIO_SEND_TIMEOUT_S", 0.15)
+    overlapping_send = asyncio.create_task(
+        sess.handle_audio_frame(b"\x01\x02" * 16)
+    )
+    await asyncio.wait_for(stalled.send_entered[1].wait(), timeout=0.5)
+    await first_send
+    await _wait_until(lambda: provider.open_calls == 2)
+    await overlapping_send
+
+    assert sess._pump_task is pump
+    assert pump is not None and not pump.done()
+    assert not sess.failed
+    assert provider.sessions[0].closed
+    assert provider.open_calls == 2
+    assert len([item for item in jsons if item.get("type") == "audio_ready"]) == 2
+
+    await sess.handle_audio_frame(b"\x02\x03" * 16)
+    assert len(provider.sessions[1].sent_audio) == 1
+
     await sess.end(reason="test")
 
 

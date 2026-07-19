@@ -12,6 +12,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Switch } from "@/components/ui/switch";
 import { Button } from "@/components/ui/button";
 import { useEventStore } from "@/store/events";
+import { robustCopy } from "@/lib/clipboard";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 
@@ -362,12 +363,13 @@ function ConfigModal({ onClose }: { onClose: () => void }) {
     },
   });
 
-  const copyPath = () => {
+  const copyPath = async () => {
     const path = info.data?.path;
     if (!path) return;
-    navigator.clipboard?.writeText(path).then(
-      () => pushToast("info", t("mcps_view.path_copied")),
-      () => pushToast("error", t("mcps_view.copy_failed")),
+    const copied = await robustCopy(path);
+    pushToast(
+      copied ? "info" : "error",
+      t(copied ? "mcps_view.path_copied" : "mcps_view.copy_failed"),
     );
   };
 

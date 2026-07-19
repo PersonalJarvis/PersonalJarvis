@@ -43,7 +43,7 @@ class MissionEventStore:
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         conn = await aiosqlite.connect(
             self._db_path,
-            isolation_level=None,  # autocommit — WAL ist Lock-Manager
+            isolation_level=None,  # autocommit — WAL is the lock manager
         )
         await conn.execute("PRAGMA journal_mode=WAL")
         await conn.execute("PRAGMA synchronous=NORMAL")
@@ -92,10 +92,10 @@ class MissionEventStore:
     @property
     def conn(self) -> aiosqlite.Connection:
         if self._conn is None:
-            raise RuntimeError("MissionEventStore: open() vor Verwendung aufrufen")
+            raise RuntimeError("MissionEventStore: call open() before use")
         return self._conn
 
-    # --- Append & Publish (atomar im WAL-Sinne) ---
+    # --- Append & Publish (atomic in the WAL sense) ---
 
     async def append_and_publish(self, envelope: EventEnvelope) -> int:
         """Persist event, then publish to bus. Returns the assigned seq.
@@ -238,6 +238,29 @@ class MissionEventStore:
         if row is None:
             return None
         return (str(row[0]), str(row[1]), str(row[2]), int(row[3]), float(row[4]))
+
+    async def advance_mission_iteration(
+        self,
+        mission_id: str,
+        *,
+        iteration: int,
+        ts_ms: int,
+    ) -> None:
+        """Advance the header iteration without changing its lifecycle state.
+
+        Critic events and cancellation can race. Reusing ``upsert_mission`` for
+        progress would write a previously read state back into the header and
+        could therefore revert a concurrent terminal transition. This narrow
+        update keeps iteration monotonic while leaving state authoritative.
+        """
+        await self.conn.execute(
+            """
+            UPDATE missions
+            SET updated_ms = ?, iteration = MAX(iteration, ?)
+            WHERE id = ?
+            """,
+            (ts_ms, iteration, mission_id),
+        )
 
     async def list_missions(
         self,

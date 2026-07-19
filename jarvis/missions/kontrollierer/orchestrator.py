@@ -27,6 +27,7 @@ import logging
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 from collections.abc import Callable
 from contextlib import suppress
@@ -49,6 +50,7 @@ from ..events import (
     CriticVerdictReady,
     EventEnvelope,
     MissionApproved,
+    MissionCancelled,
     MissionFailed,
     MissionPlanReady,
     WorkerCorrectionRequired,
@@ -706,6 +708,7 @@ class TaskOutcome:
     EXHAUSTED = "exhausted"
     REJECTED = "rejected"
     BUDGET_EXCEEDED = "budget_exceeded"
+    TIME_BUDGET_EXHAUSTED = "time_budget_exhausted"
     ERROR = "error"
     # Live forensic 2026-05-16 (mission_019e3288): iter0 produced a real
     # 1237-byte diff, but the Critic spawn returned non-zero rc twice in
@@ -906,6 +909,7 @@ class Kontrollierer:
             task = self._running_missions.get(mission_id)
             if task is None or task.done():
                 continue
+            transitioned = False
             try:
                 await self._manager.transition_state(
                     mission_id,
@@ -913,6 +917,7 @@ class Kontrollierer:
                     reason=reason,
                     source_actor="kontrollierer",
                 )
+                transitioned = True
             except IllegalStateTransition:
                 # Already terminal — still cancel the zombie task below.
                 pass
@@ -920,6 +925,24 @@ class Kontrollierer:
                 logger.exception(
                     "cancel_all_running: state flip failed for %s", mission_id
                 )
+            if transitioned:
+                try:
+                    await self._manager.store.append_and_publish(
+                        EventEnvelope(
+                            mission_id=mission_id,
+                            source_actor="kontrollierer",
+                            ts_ms=now_ms(),
+                            payload=MissionCancelled(
+                                cascade=True,
+                                reason=reason,
+                            ),
+                        )
+                    )
+                except Exception:  # noqa: BLE001 — shutdown still kills the worker
+                    logger.exception(
+                        "cancel_all_running: terminal event failed for %s",
+                        mission_id,
+                    )
             task.cancel()
             tasks.append(task)
             finalized.append(mission_id)
@@ -1051,26 +1074,12 @@ class Kontrollierer:
         # or critic-reject is more recoverable when the user can see the
         # work the worker actually produced.
         partial = self._collect_partial_artifacts(mission_id, plan)
-        # CRITIC_UNAVAILABLE has priority over EXHAUSTED: when the
-        # Critic spawn crashed before iter0's verdict could be rendered,
-        # subsequent iterations only saw the deterministic empty-diff
-        # fast-path and contributed nothing. Surfacing the real root
-        # cause to the voice layer is the whole point of this branch.
+        # Execution/setup failures outrank review outcomes in a multi-task
+        # mission. Otherwise one review time guard can mask a real worker crash
+        # in another step and show the user the wrong terminal cause.
         if TaskOutcome.BUDGET_EXCEEDED in task_outcomes:
             await self._fail_mission(
                 mission_id, "budget_exceeded", partial_artifacts=partial
-            )
-        elif TaskOutcome.CRITIC_UNAVAILABLE in task_outcomes:
-            await self._fail_mission(
-                mission_id, "critic_unavailable", partial_artifacts=partial
-            )
-        elif TaskOutcome.REJECTED in task_outcomes:
-            await self._fail_mission(
-                mission_id, "critic_rejected", partial_artifacts=partial
-            )
-        elif TaskOutcome.EXHAUSTED in task_outcomes:
-            await self._fail_mission(
-                mission_id, "critic_loop_exhausted", partial_artifacts=partial
             )
         elif TaskOutcome.SETUP_FAILED in task_outcomes:
             # Worktree-create failure (path cap / git index lock / missing git
@@ -1092,13 +1101,36 @@ class Kontrollierer:
             # reason="timeout"; surface the same truth at the mission level so
             # the voice layer never speaks the "worker aborted" phrase for a run
             # that simply ran out of time.
-            # Ranked BELOW BUDGET/CRITIC_UNAVAILABLE/REJECTED/EXHAUSTED on
-            # purpose: in a multi-step mission, a reviewer-failed or budget-
-            # capped step is a more specific, more actionable diagnosis than a
-            # wall-clock cap on a different step. TIMED_OUT only wins over the
-            # generic task_error fallback.
+            # A worker timeout outranks review outcomes in another step because
+            # it is an execution failure and must remain visible. Budget remains
+            # the only higher-priority aggregate terminal cause.
             await self._fail_mission(
                 mission_id, "attempts_timed_out", partial_artifacts=partial
+            )
+        elif TaskOutcome.ERROR in task_outcomes:
+            await self._fail_mission(
+                mission_id, "task_error", partial_artifacts=partial
+            )
+        # CRITIC_UNAVAILABLE has priority over the other review outcomes: when
+        # the critic crashed before iter0's verdict, later empty-diff rounds do
+        # not turn that infrastructure failure into ordinary exhaustion.
+        elif TaskOutcome.CRITIC_UNAVAILABLE in task_outcomes:
+            await self._fail_mission(
+                mission_id, "critic_unavailable", partial_artifacts=partial
+            )
+        elif TaskOutcome.REJECTED in task_outcomes:
+            await self._fail_mission(
+                mission_id, "critic_rejected", partial_artifacts=partial
+            )
+        elif TaskOutcome.TIME_BUDGET_EXHAUSTED in task_outcomes:
+            await self._fail_mission(
+                mission_id,
+                "review_time_budget_exhausted",
+                partial_artifacts=partial,
+            )
+        elif TaskOutcome.EXHAUSTED in task_outcomes:
+            await self._fail_mission(
+                mission_id, "critic_loop_exhausted", partial_artifacts=partial
             )
         else:
             await self._fail_mission(
@@ -1266,9 +1298,10 @@ class Kontrollierer:
                 # Time-budget guard (2026-06-10 mandate): a correction
                 # iteration only starts when it can FINISH inside the task
                 # budget (its worker slice + one critic call). Otherwise the
-                # loop ends here with the existing exhausted semantics — a
-                # late, rushed correction would overshoot the 20-minute
-                # target without improving the deliverable.
+                # loop ends with an explicit time-budget outcome — a late,
+                # rushed correction would overshoot the 20-minute target
+                # without improving the deliverable. Do not claim that all
+                # three critic attempts ran when this guard prevented one.
                 elapsed_s = time.monotonic() - task_t0
                 needed_s = _CORRECTION_WORKER_TIMEOUT_S + _CRITIC_TIME_RESERVE_S
                 if elapsed_s + needed_s > _TASK_TIME_BUDGET_S:
@@ -1279,7 +1312,7 @@ class Kontrollierer:
                         step.task_id, iteration, elapsed_s, needed_s,
                         _TASK_TIME_BUDGET_S,
                     )
-                    break
+                    return TaskOutcome.TIME_BUDGET_EXHAUSTED
                 await self._safe_transition(
                     mission_id, MissionState.LOOPING, f"iter-{iteration}-revise"
                 )
@@ -1565,7 +1598,30 @@ class Kontrollierer:
             # double-counting. Hard-abort on overrun is detected by the
             # pre-spawn assert_under_limit() check at the top of each
             # iteration of this loop.
-            draft_env = await self._publish_worker_draft(
+            # Persist the current draft BEFORE announcing it. The final archive
+            # in the worktree-cleanup block is still authoritative, but it never
+            # runs after a hard process crash. A WorkerDraftReady event must not
+            # point at a deliverable that exists only in a disposable worktree.
+            try:
+                snapshot = await asyncio.to_thread(
+                    self._archive_task_artifacts,
+                    worktree=worktree,
+                    mission_dir=mission_dir,
+                    task_id=step.task_id,
+                    drain_iteration_diffs=False,
+                )
+                if snapshot is None:
+                    logger.warning(
+                        "draft artifact snapshot returned no archive for %s",
+                        worktree,
+                    )
+            except Exception:  # noqa: BLE001 — snapshot is best-effort
+                logger.warning(
+                    "draft artifact snapshot failed for %s",
+                    worktree,
+                    exc_info=True,
+                )
+            await self._publish_worker_draft(
                 mission_id=mission_id,
                 worker_id=spawn_result.worker_id,
                 diff=diff_text,
@@ -2399,6 +2455,7 @@ class Kontrollierer:
         worktree: Path,
         mission_dir: Path,
         task_id: str,
+        drain_iteration_diffs: bool = True,
     ) -> Path | None:
         """Persist the worker's outputs out of the worktree so they survive
         the per-task cleanup.
@@ -2417,32 +2474,34 @@ class Kontrollierer:
           Falls back to a fresh `git diff HEAD` of the worktree when no
           per-iter captures exist (rare: only when this helper is called
           out-of-band from a test fixture).
-        - ``files/<rel>`` — verbatim copies of any *new* untracked files.
-          The diff records only their paths, not their content, so a
-          "create hello.txt"-style task would leave nothing recoverable
-          here without an explicit copy step.
+        - ``files/<rel>`` — a synchronized snapshot of the latest deliverable
+          files. Earlier iteration content remains recoverable from the
+          ``diff.iter<N>.patch`` history, but a deleted or renamed draft must
+          never survive here as if it were the final output.
 
-        All git operations are best-effort with a 10s cap. Returns the
-        artifacts directory on success, ``None`` on irrecoverable failure
-        (the upstream finally still runs the worktree cleanup either way).
+        ``drain_iteration_diffs=False`` creates a crash-safe draft snapshot
+        while retaining the in-memory per-iteration history for later critic
+        rounds. The final cleanup call uses the default ``True`` and releases
+        that history. All git operations are best-effort with a 10s cap.
+        Returns the artifacts directory on success, ``None`` on irrecoverable
+        failure (the upstream finally still runs the worktree cleanup either
+        way).
         """
         try:
             artifacts = mission_dir / "tasks" / task_id[:13] / "artifacts"
             artifacts.mkdir(parents=True, exist_ok=True)
 
-            # Drain the per-iteration captures collected during the
-            # critic loop. The dict-pop guarantees a single mission can't
-            # accidentally double-archive the same task and that the
-            # per-mission map doesn't grow unbounded across the
-            # orchestrator's lifetime. `getattr` keeps test fixtures
-            # happy that instantiate via `object.__new__` and bypass
-            # the constructor — the helper still produces a valid
-            # archive in that case, just without per-iter snapshots.
+            # Read or drain per-iteration captures. Draft-time snapshots retain
+            # the list so later rounds and the final cleanup can still choose
+            # the best diff; final archival pops it to prevent process-lifetime
+            # growth. `getattr` keeps bare unit-test fixtures functional.
             iter_map = getattr(self, "_task_iter_diffs", None)
             if iter_map is None:
                 per_iter: list[tuple[int, str]] = []
-            else:
+            elif drain_iteration_diffs:
                 per_iter = iter_map.pop(task_id, [])
+            else:
+                per_iter = list(iter_map.get(task_id, []))
             for it_idx, diff_text in per_iter:
                 (artifacts / f"diff.iter{it_idx}.patch").write_text(
                     diff_text or "", encoding="utf-8"
@@ -2597,10 +2656,11 @@ class Kontrollierer:
                 timeout=10.0,
                 creationflags=NO_WINDOW_CREATIONFLAGS,
             )
+            current_diff = _strip_managed_persona_hunks(r_diff.stdout or "")
             final_diff = (
                 best_diff
                 if best_diff is not None
-                else (r_diff.stdout or "")
+                else current_diff
             )
             # best_diff is already stripped (it comes from _capture_diff); the
             # r_diff fallback is not — strip managed contract files either way
@@ -2609,11 +2669,14 @@ class Kontrollierer:
             (artifacts / "diff.patch").write_text(
                 final_diff, encoding="utf-8"
             )
-            # Recover new-file paths the ``git ls-files --others`` call
+            # Recover current new-file paths the ``git ls-files --others`` call
             # missed because earlier ``_capture_diff`` invocations had
             # already run ``git add -A`` (live 2026-05-27 regression
             # mission_019e6858-ab9a: SUCCESS but artifacts/files/ empty).
-            for _np in _extract_new_file_paths_from_diff(final_diff):
+            # Use the fresh worktree diff, not the largest historical diff:
+            # the latter may name a first draft that a later worker deleted or
+            # renamed. Per-iteration patches preserve that history separately.
+            for _np in _extract_new_file_paths_from_diff(current_diff):
                 if _np not in untracked:
                     untracked.append(_np)
             # Drop managed worker-contract files (AGENTS.md etc.) and
@@ -2635,22 +2698,58 @@ class Kontrollierer:
                 )
                 if _generators:
                     untracked = [r for r in untracked if r not in _generators]
-            if untracked:
-                files_root = artifacts / "files"
+            files_root = artifacts / "files"
+            # ``files`` is the canonical latest snapshot. Rebuild it on every
+            # draft/final archive so deleted and renamed first drafts cannot be
+            # mistaken for the current deliverable. Historical bytes remain in
+            # the per-iteration patches written above. Build the entire new
+            # tree beside the canonical one before promotion: a copy failure
+            # must leave the last durable snapshot untouched.
+            staged_root = Path(
+                tempfile.mkdtemp(prefix=".files-next-", dir=str(artifacts))
+            )
+            previous_root = staged_root.with_name(
+                staged_root.name.replace(".files-next-", ".files-previous-", 1)
+            )
+            try:
                 for rel in untracked:
                     src = worktree / rel
                     if not src.is_file():
                         # Skip directories, broken symlinks etc. — only
                         # regular files round-trip cleanly via copy2.
                         continue
-                    dst = files_root / rel
+                    dst = staged_root / rel
                     dst.parent.mkdir(parents=True, exist_ok=True)
-                    try:
-                        shutil.copy2(src, dst)
-                    except OSError as exc:
-                        logger.warning(
-                            "artifact copy failed for %s: %s", src, exc
-                        )
+                    shutil.copy2(src, dst)
+
+                # Path.replace is a same-volume rename because both trees are
+                # siblings. Keep the prior directory under a unique backup
+                # name until the new tree is canonical; if promotion fails,
+                # roll it back. This portable two-phase swap works on Windows,
+                # macOS, and Linux without relying on platform-specific rename
+                # exchange flags.
+                moved_previous = False
+                if files_root.exists():
+                    files_root.replace(previous_root)
+                    moved_previous = True
+                try:
+                    staged_root.replace(files_root)
+                except OSError:
+                    if (
+                        moved_previous
+                        and previous_root.exists()
+                        and not files_root.exists()
+                    ):
+                        previous_root.replace(files_root)
+                    raise
+                if moved_previous:
+                    shutil.rmtree(previous_root, ignore_errors=True)
+            finally:
+                # No-op after successful promotion. On a copy/promotion error,
+                # remove only the unpublished staging tree; never the prior
+                # canonical snapshot (or its rollback copy).
+                if staged_root.exists():
+                    shutil.rmtree(staged_root, ignore_errors=True)
             return artifacts
         except (subprocess.TimeoutExpired, OSError) as exc:
             logger.warning(
@@ -2966,7 +3065,7 @@ class Kontrollierer:
             payload=WorkerDraftReady(
                 worker_id=worker_id,
                 artifact_uri=f"diff://{worker_id}",
-                diff=diff[:8000],  # Cap zum Schutz vor Riesen-Diffs im Event-Store
+                diff=diff[:8000],  # Cap protects the event store from huge diffs.
                 tokens_used=tokens_used,
                 cost_usd=cost_usd,
                 session_id=session_id,
@@ -3001,6 +3100,19 @@ class Kontrollierer:
             ),
         )
         await self._manager.store.append_and_publish(env)
+        try:
+            await self._manager.store.advance_mission_iteration(
+                mission_id,
+                iteration=iteration,
+                ts_ms=now_ms(),
+            )
+        except Exception:  # noqa: BLE001 — event remains authoritative
+            logger.warning(
+                "critic verdict header update failed for %s iter-%d",
+                mission_id,
+                iteration,
+                exc_info=True,
+            )
 
     async def _publish_correction(
         self,

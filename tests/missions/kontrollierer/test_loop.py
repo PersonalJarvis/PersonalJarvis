@@ -377,7 +377,7 @@ async def test_critic_unavailable_short_circuits_when_iter0_has_real_diff(
 async def test_three_iter_exhaustion_fails_mission(
     manager: MissionManager, tmp_path: Path
 ) -> None:
-    """Alle 3 Iterationen revise -> MissionFailed("critic_loop_exhausted") nach exakt 3 Spawns."""
+    """Three revisions fail once, after exactly three worker spawns."""
     critic = FakeCriticRunner(*[_make_revise_verdict() for _ in range(3)])
     shared_worker = FakeWorker()
     k = _make_kontrollierer(
@@ -392,6 +392,9 @@ async def test_three_iter_exhaustion_fails_mission(
     assert end_state == MissionState.FAILED
     assert len(critic.calls) == 3
     assert len(shared_worker.spawn_calls) == 3
+    header = await manager.store.get_mission_view(mid)
+    assert header is not None
+    assert header[3] == 2, "mission header must reflect the final zero-based iteration"
 
 
 @pytest.mark.asyncio
@@ -1367,6 +1370,47 @@ async def test_empty_task_outcomes_is_not_approved(
     assert failed_payloads[0].reason == "task_error", (  # type: ignore[attr-defined]
         f"expected reason='task_error', got {failed_payloads[0].reason!r}"  # type: ignore[attr-defined]
     )
+
+
+@pytest.mark.asyncio
+async def test_worker_error_outranks_review_time_budget_in_multi_task_mission(
+    manager: MissionManager,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real worker failure must not be mislabeled as a review time guard."""
+    plan = MissionPlan(
+        steps=[
+            Step(slug="review-step", prompt="review output"),
+            Step(slug="worker-step", prompt="run worker"),
+        ],
+        n_workers=2,
+        expected_output="two results",
+    )
+    k = _make_kontrollierer(
+        manager=manager,
+        tmp_path=tmp_path,
+        critic=FakeCriticRunner(),
+        decomposer_plan=plan,
+    )
+
+    async def _outcome_for_step(**kwargs: Any) -> str:
+        step = kwargs["step"]
+        if step.slug == "review-step":
+            return TaskOutcome.TIME_BUDGET_EXHAUSTED
+        return TaskOutcome.ERROR
+
+    monkeypatch.setattr(k, "_run_task_with_critic_loop", _outcome_for_step)
+    mission_id = await manager.dispatch(prompt="run two tasks")
+
+    assert await k.run_mission(mission_id) == MissionState.FAILED
+    failures = [
+        event.payload
+        for event in await manager.store.events_for_mission(mission_id)
+        if event.payload.event_type == "MissionFailed"
+    ]
+    assert len(failures) == 1
+    assert failures[0].reason == "task_error"
 
 
 @pytest.mark.asyncio

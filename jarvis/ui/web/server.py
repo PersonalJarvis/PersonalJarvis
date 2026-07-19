@@ -286,6 +286,7 @@ class WebServer:
         from .chats_routes import router as chats_router
         from .claude_routes import router as claude_router
         from .cli_routes import router as cli_router
+        from .clipboard_routes import router as clipboard_router
         from .commands_routes import router as commands_router
         from .computer_use_routes import router as computer_use_router
         from .contacts_routes import router as contacts_router
@@ -394,6 +395,7 @@ class WebServer:
         app.include_router(sub_agents_router)
         app.include_router(outputs_router)
         app.include_router(downloads_router)
+        app.include_router(clipboard_router)
         # Socials section — project social-media links (pure file store, no Brain dep).
         app.include_router(socials_router)
         # In-app feedback / bug-report form → Discord webhook.
@@ -1106,24 +1108,34 @@ class WebServer:
             # Antigravity is a DIRECT worker (GoogleCliWorker over the official
             # agy/Gemini CLI) with no worker slug, so it is not in MAPPINGS —
             # the Google sibling of Codex. Dual billing, mirror of Codex: the
-            # Google subscription OAuth login OR a Gemini API key (per token).
-            # "key_set" is true when either is present.
+            # installed Google CLI plus either its subscription OAuth login or
+            # a Gemini API key (per token). A key cannot replace the executable.
+            antigravity_status = None
             try:
-                from jarvis.google_cli.auth_service import GoogleCliAuthService
+                from jarvis.google_cli.auth_service import (
+                    GoogleCliAuthService,
+                    antigravity_provider_ready,
+                )
 
                 antigravity_status = GoogleCliAuthService().status()
-                antigravity_installed = antigravity_status.installed
                 antigravity_connected = (
                     antigravity_status.connected
                     and antigravity_status.mode == "oauth-personal"
                 )
             except Exception:  # noqa: BLE001
-                antigravity_installed = False
                 antigravity_connected = False
             try:
                 antigravity_key = bool(get_jarvis_agent_secret("gemini"))
             except Exception:  # noqa: BLE001
                 antigravity_key = False
+            antigravity_ready = (
+                antigravity_provider_ready(
+                    antigravity_status,
+                    api_key_present=antigravity_key,
+                )
+                if antigravity_status is not None
+                else False
+            )
             mapping_rows.append(
                 {
                     "jarvis": "antigravity",
@@ -1136,8 +1148,7 @@ class WebServer:
                     # Antigravity showed Ready although never installed, then
                     # every run died at spawn). Mirrors the Codex row's
                     # installed-gate below.
-                    "key_set": antigravity_connected
-                    or (antigravity_installed and antigravity_key),
+                    "key_set": antigravity_ready,
                     "api_key_set": antigravity_key,
                     "dedicated_key_set": False,
                     "shared_key_set": False,

@@ -1543,12 +1543,9 @@ function DeviceCodeDialog({
   }, [poll.data?.state, onSuccess]);
 
   const copyCode = async () => {
-    try {
-      await navigator.clipboard.writeText(userCode);
+    if (await robustCopy(userCode)) {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1200);
-    } catch {
-      // Ignore — user can still type the code manually.
     }
   };
 

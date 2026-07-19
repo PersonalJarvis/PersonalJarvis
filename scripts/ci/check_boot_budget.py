@@ -57,8 +57,26 @@ DEFAULT_VOICE_BUDGET_MS = 20_000.0
 DEFAULT_INTERACTIVE_BUDGET_MS = 20_000.0
 
 
+def _macos_microphone_granted() -> bool:
+    """Return whether this process may measure voice without a TCC prompt."""
+    if sys.platform != "darwin":
+        return True
+    try:
+        from jarvis.platform.permissions import (  # noqa: PLC0415
+            PermissionId,
+            PermissionState,
+            SystemPermissionPort,
+        )
+
+        return SystemPermissionPort().state(PermissionId.MICROPHONE) is PermissionState.GRANTED
+    except Exception:  # noqa: BLE001 — an uncertain TCC state fails closed
+        return False
+
+
 def _audio_capable() -> bool:
     """True when the host can plausibly run the voice stack (mic present)."""
+    if not _macos_microphone_granted():
+        return False
     try:
         import sounddevice  # noqa: PLC0415
 
@@ -149,7 +167,10 @@ def main() -> int:
                 flush=True,
             )
     else:
-        print("boot-budget: no audio input device — voice anchor skipped (honest)", flush=True)
+        print(
+            "boot-budget: no usable audio input or permission — voice anchor skipped (honest)",
+            flush=True,
+        )
 
     if window_ms is not None and window_ms <= window_budget:
         print(

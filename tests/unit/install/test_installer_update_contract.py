@@ -64,6 +64,9 @@ def test_metadata_repair_removes_only_incomplete_records(tmp_path: Path) -> None
     (broken / "RECORD").write_text("", encoding="utf-8")
     licenses = broken / "licenses"
     licenses.mkdir()
+    license_file = licenses / "LICENSE.txt"
+    license_file.write_text("legacy license\n", encoding="utf-8")
+    os.chmod(license_file, stat.S_IREAD)
     os.chmod(licenses, stat.S_IREAD)
     os.chmod(broken, stat.S_IREAD)
 

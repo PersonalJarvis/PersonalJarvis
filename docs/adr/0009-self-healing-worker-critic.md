@@ -4,14 +4,14 @@ slug: adr-0009-self-healing-worker-critic
 diataxis: adr
 status: active
 owner: sam
-last_reviewed: 2026-04-29
+last_reviewed: 2026-07-19
 phase: 6
 audience: developer
 ---
 
 # ADR-0009 — Self-Healing Worker-Critic-Loop with Action/Observation Invariant
 
-**Status:** Accepted (2026-04-26)
+**Status:** Amended 2026-07-19
 **Phase:** 6 — Self-Healing Multi-Agent Orchestrator
 
 ## Context
@@ -128,3 +128,85 @@ Heuristic: a mission is Phase-6-eligible if the router classifier returns `code`
 - **Cross-model-critic trigger:** should the switch to Codex/GPT as the critic happen automatically when Worker = Claude and iteration == 3, or only via config? Gather observations during Phase 6, amend if needed.
 - **Worktree-cleanup policy on MissionFailed:** immediate `git worktree remove --force` or keep for N days for forensics? Proposal: keep + automatic prune after 7 days.
 - **Voice readback at iteration 2:** should the user hear "I'm trying again" after the critic verdict `revise`, or loop silently until approval? Default silent, opt-in via `[voice].announce_critic_loop = true`.
+
+## Amendment 2026-07-19 — goal-based review and truthful partial outcomes
+
+### Context
+
+Local mission forensics found a repeated false-negative pattern in otherwise
+substantial HTML and Markdown deliverables. The direct Codex critic returned a
+structured decision, but its flat-schema reconstruction bypassed the tolerant
+validator used by every full verdict. A `summary` or `summary_de` longer than
+the 280-character voice-readback cap therefore invalidated the entire decision.
+Some fallback critics subsequently returned approval-shaped JSON, but the lost
+primary decision and an adversarial retry could still end the mission as
+`critic_loop_exhausted`.
+
+The prompt amplified that parser defect. It required an adversarial *code*
+critic to find at least three bugs even when the original goal was a report or
+standalone HTML document. Optional polish, unavailable browser automation, and
+new requirements invented during review were consequently treated like
+blocking failures. Correction iterations also reused an accumulating worker
+log, so stale errors from an earlier attempt could be judged again after the
+worker had fixed them. Finally, the Outputs read model collapsed every terminal
+failure with an archived deliverable into a generic error without exposing the
+terminal reason or the existence of reviewable partial work.
+
+Artifact existence alone is not approval. The same forensic set contained an
+old placeholder artifact and deliverables with real factual or safety defects.
+The signed `MissionApproved` event remains the only success authority.
+
+### Decision
+
+- The critic judges the original mission goal and uses a blocking-defect
+  threshold. `revise` means that cited evidence shows the requested outcome is
+  missing, unusable, unsafe, materially incorrect, or violates an explicit
+  requirement. Low- and medium-severity polish may be reported with an
+  approval; it must not be promoted into a blocking defect to satisfy a quota.
+  The critic remains skeptical, evidence-grounded, read-only, and subject to
+  the action/observation invariant.
+- Every provider path applies the same presentation-field tolerance. Overlong
+  voice summaries are truncated to their declared cap only after all other
+  schema fields validate. Missing axes, invalid enums, empty approval evidence,
+  empty revision evidence, and malformed decisions still fail closed. A direct
+  provider's prompt and enforced output schema must describe the same shape.
+- Each worker correction attempt owns a fresh runtime log. Evidence from prior
+  attempts remains available through bounded reflections and per-iteration
+  artifacts, not by concatenating stale process streams into the current
+  observation.
+- A terminal read model distinguishes signed success, cancellation, genuine
+  failure without a usable artifact, and a non-approved mission that still has
+  reviewable output. Only exhausted, unavailable, or time-limited review can
+  enter the last category; an explicit rejection, execution failure, or safety
+  failure with a leftover file remains failed. A reviewable partial is never a
+  green success, and its terminal reason remains visible.
+- Draft deliverables are copied into a complete sibling tree before the latest
+  `files/` snapshot is promoted. A copy or promotion error preserves and rolls
+  back to the prior durable tree; no platform-specific rename primitive is
+  required.
+- `MAX_CRITIC_LOOPS = 3` remains fixed. This amendment changes decision quality
+  and presentation, not the retry budget.
+
+### Consequences
+
+- A valid critic decision can no longer be discarded solely because its spoken
+  summary is verbose.
+- Reports and static documents are evaluated against their requested purpose,
+  while evidence-backed factual, safety, security, and missing-deliverable
+  defects continue to block approval.
+- A correction is judged on the current attempt instead of stale worker errors.
+- Users can recover a useful but unsigned artifact without being told that it
+  is either fully successful or wholly absent.
+- Existing historical events are not rewritten. Their audit trail remains
+  intact; the read model may describe retained artifacts more precisely.
+
+### Alternatives considered
+
+- Treat any created file as success: rejected because a file can be empty,
+  placeholder-only, unsafe, factually wrong, or unrelated to the request.
+- Add more critic retries: rejected because it preserves the biased decision
+  rule, increases cost, and violates the fixed-loop decision.
+- Remove adversarial review: rejected because grounded review still catches
+  real defects and protects the signed success contract.
+- Rewrite historical mission events after reclassification: rejected because
+  it would destroy the append-only forensic record.

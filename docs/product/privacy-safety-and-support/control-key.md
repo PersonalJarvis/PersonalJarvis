@@ -61,6 +61,13 @@ with a restricted file in the Jarvis data directory as the fallback on systems
 without such a store. No two installations share a key, and the key never
 leaves your machine by itself.
 
+On macOS, an installation upgraded from an older Python-based launcher may ask
+for the login-keychain password once when it first reads that existing item.
+After you approve that read, Jarvis transfers the item to the installed app's
+verified identity; subsequent app starts and ordinary updates should not ask
+again. Start Jarvis through **Personal Jarvis.app**, not by running its Python
+module directly, so macOS sees the stable app identity.
+
 ## Find the Key
 
 The key lives in its own section, named after your assistant: if your wake

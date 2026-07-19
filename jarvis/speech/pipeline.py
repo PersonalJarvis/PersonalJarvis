@@ -30,7 +30,7 @@ from uuid import uuid4
 
 import numpy as np
 
-from jarvis.audio import mic_level
+from jarvis.audio import level_tap, mic_level
 from jarvis.audio.capture import (
     REALTIME_QUEUE_CHUNKS,
     MicrophoneCapture,
@@ -6090,7 +6090,9 @@ class SpeechPipeline:
 
         session_id = getattr(self, "_current_voice_session_id", None) or str(uuid4())
         playback = DesktopRealtimePlayback(self._player)
-        barge_detector = DesktopRealtimeBargeInDetector()
+        barge_detector = DesktopRealtimeBargeInDetector(
+            output_active=level_tap.playback_active
+        )
         # Per-frame Silero inference runs OFF the voice event loop — the same
         # BUG-062/BUG-084 class the classic barge monitor already fixed with
         # to_thread; inline it stalled playback on slow CPUs (Intel-Mac test
@@ -6100,6 +6102,14 @@ class SpeechPipeline:
         barge_feed_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix=f"rt-barge-feed-{session_id}"
         )
+        # Provider PCM is owned by ``playback``; the independent surface-TTS
+        # fallback used to bypass that adapter and was awaited inline. A barge
+        # then stopped PortAudio but left the TTS producer alive, so its next
+        # chunk reopened the stream and resumed untracked speech. Keep explicit
+        # ownership of that producer so every output-cancel boundary can stop
+        # generation before it aborts the shared player.
+        surface_playback_task: asyncio.Task[Any] | None = None
+        surface_playback_epoch = 0
         turn_complete = asyncio.Event()
         speaking = False
         post_output_echo_guard_until = 0.0
@@ -6147,6 +6157,25 @@ class SpeechPipeline:
             _warm_barge_detector(), name=f"rt-barge-warm-{session_id}"
         )
 
+        async def _cancel_output_playback() -> None:
+            """Cancel surface generation and provider playback as one unit."""
+
+            nonlocal surface_playback_epoch, surface_playback_task
+            # Invalidate the parent callback before cancelling its child. A new
+            # surface fallback may start while the old callback is unwinding;
+            # only the newest epoch may close the shared speaking segment.
+            surface_playback_epoch += 1
+            surface_task = surface_playback_task
+            surface_playback_task = None
+            if surface_task is not None and not surface_task.done():
+                # Cancel before AudioPlayer.stop(): a blocked native write can
+                # still unwind after the abort, but the owning coroutine can no
+                # longer advance its async generator and reopen the stream.
+                surface_task.cancel()
+            await playback.cancel()
+            if surface_task is not None:
+                await asyncio.gather(surface_task, return_exceptions=True)
+
         async def _send_binary(pcm: bytes) -> None:
             nonlocal post_output_echo_guard_until
             nonlocal semantic_turn_committed, speaking
@@ -6160,6 +6189,7 @@ class SpeechPipeline:
 
         async def _send_json(message: dict[str, Any]) -> None:
             nonlocal semantic_turn_committed, speaking
+            nonlocal surface_playback_epoch, surface_playback_task
             kind = str(message.get("type", ""))
             if kind == "audio_ready":
                 if speaking:
@@ -6217,12 +6247,12 @@ class SpeechPipeline:
                 await self._set_turn_state(TurnTakingState.PROCESSING)
             elif kind == "tts_cancel":
                 _close_output_segment(preserve_echo_tail=False)
-                await playback.cancel()
+                await _cancel_output_playback()
                 await self._set_turn_state(TurnTakingState.LISTENING)
             elif kind == "hangup":
                 semantic_turn_committed = True
                 _close_output_segment(preserve_echo_tail=False)
-                await playback.cancel()
+                await _cancel_output_playback()
             elif kind == "turn_complete":
                 semantic_turn_committed = True
                 await playback.finish_turn()
@@ -6273,7 +6303,9 @@ class SpeechPipeline:
                     # AudioPlayer as an independent last mile. The existing mic
                     # pump and local barge detector remain active, so this does
                     # not open a second microphone or replay the user's request.
-                    await playback.cancel()
+                    await _cancel_output_playback()
+                    surface_playback_epoch += 1
+                    active_surface_epoch = surface_playback_epoch
                     speaking = True
                     barge_detector.start_output()
                     # Pre-synthesis registration mirrors _speak (BUG-084): the
@@ -6282,6 +6314,11 @@ class SpeechPipeline:
                     # (BUG-089).
                     self._register_assistant_speech(cleaned)
                     await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
+                    if surface_playback_epoch != active_surface_epoch:
+                        # A cancel can arrive while the state callback yields,
+                        # before there is a child playback task to own. Its
+                        # epoch invalidates this render before synthesis starts.
+                        return
                     try:
                         # Voice-identity continuity: the realtime session names
                         # the voice it was speaking with, so this last mile does
@@ -6328,7 +6365,30 @@ class SpeechPipeline:
                                 )
                             except TypeError:
                                 chunks = surface_tts.synthesize(cleaned)
-                        playback_result = await self._player.play_chunks(chunks)
+                        active_surface_task = asyncio.create_task(
+                            self._player.play_chunks(
+                                chunks,
+                                should_play=lambda: (
+                                    surface_playback_epoch
+                                    == active_surface_epoch
+                                ),
+                            ),
+                            name=f"rt-surface-tts-{session_id}",
+                        )
+                        surface_playback_task = active_surface_task
+                        try:
+                            playback_result = await active_surface_task
+                        except asyncio.CancelledError:
+                            current_task = asyncio.current_task()
+                            if current_task is not None and current_task.cancelling():
+                                raise
+                            # A concurrent local barge-in cancels the owned child
+                            # task, not this provider-pump callback. The turn stays
+                            # alive and simply records no spoken receipt.
+                            playback_result = False
+                        finally:
+                            if surface_playback_task is active_surface_task:
+                                surface_playback_task = None
                         if self._playback_confirmed(playback_result):
                             self._emit_spoken(
                                 cleaned,
@@ -6342,10 +6402,11 @@ class SpeechPipeline:
                             exc,
                         )
                     finally:
-                        _close_output_segment(
-                            preserve_echo_tail=speaking,
-                        )
-                        await self._set_turn_state(TurnTakingState.LISTENING)
+                        if surface_playback_epoch == active_surface_epoch:
+                            _close_output_segment(
+                                preserve_echo_tail=speaking,
+                            )
+                            await self._set_turn_state(TurnTakingState.LISTENING)
             elif kind == "provider_error":
                 log.warning("Realtime desktop status: %s", message)
 
@@ -6562,6 +6623,9 @@ class SpeechPipeline:
         finally:
             if getattr(self, "_active_realtime_handle", None) is session:
                 self._active_realtime_handle = None
+            # Invalidate even when synthesis is paused before child-task
+            # creation; terminal teardown must own that pre-playback window too.
+            await _cancel_output_playback()
             barge_detector.stop_output()
             barge_feed_executor.shutdown(wait=False, cancel_futures=True)
             if not barge_warm_task.done():
@@ -6645,17 +6709,23 @@ class SpeechPipeline:
             hangup_task = asyncio.create_task(self._hangup_event.wait())
             # Background live-transcript feed (cosmetic — the bubble). NOT part
             # of the wait-set: it must never end the session, only mirror what
-            # is being held into the orb bubble. Cancelled + awaited in cleanup.
+            # is being held into the orb bubble. It is quiesced after the input
+            # lease closes so releasing the key always ends capture first.
+            live_stop_event = asyncio.Event()
+            live_inference_active = asyncio.Event()
             live_task = (
                 asyncio.create_task(
-                    self._ptt_live_transcribe(lambda: bytes(buffer)),
+                    self._ptt_live_transcribe(
+                        lambda: bytes(buffer),
+                        stop_event=live_stop_event,
+                        inference_active=live_inference_active,
+                    ),
                     name="ptt-live-transcript",
                 )
                 if self._ptt_partial_interval_s > 0
                 else None
             )
             wait_set = {drain_task, release_task, hangup_task}
-            all_tasks = list(wait_set) + ([live_task] if live_task else [])
             try:
                 done, _pending = await asyncio.wait(
                     wait_set,
@@ -6663,7 +6733,9 @@ class SpeechPipeline:
                     return_when=asyncio.FIRST_COMPLETED,
                 )
             except asyncio.CancelledError:
-                for t in all_tasks:
+                if live_task is not None:
+                    live_stop_event.set()
+                for t in list(wait_set) + ([live_task] if live_task else []):
                     t.cancel()
                 raise
             if not done:
@@ -6672,16 +6744,41 @@ class SpeechPipeline:
                     self._ptt_max_hold_s,
                 )
             hung_up = hangup_task in done or self._hangup_event.is_set()
-            # Stop draining + the live feed and let every task settle. ALL must
-            # be awaited after cancel — leaving any pending throws "Task was
-            # destroyed but it is pending" on the GC pass after the mic closes.
-            for t in all_tasks:
+            # Freeze the cosmetic probe before awaiting any other teardown so
+            # key-up cannot race one more growing-buffer transcription into
+            # flight after capture has ended.
+            live_stop_event.set()
+            # The key-up edge ends CAPTURE immediately.  The cosmetic live-STT
+            # probe is stopped separately below: blindly cancelling an
+            # ``asyncio.to_thread`` local-Whisper call only cancels its asyncio
+            # wrapper, not the native inference.  Starting final STT against the
+            # same model then deterministically raises TranscribeBusy and drops
+            # the submitted prompt (AP-24).
+            for t in wait_set:
                 t.cancel()
-            for t in all_tasks:
+            for t in wait_set:
                 try:
                     await t
-                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
                     pass
+            if input_buffer is not None:
+                # PTT is one-shot, so it will never replay this capture. Release
+                # a wake-handoff/fallback pump now instead of retaining its mic
+                # lease while final STT and the answer run.
+                await input_buffer.close()
+
+        # The microphone/input lease is closed before waiting for a cosmetic
+        # native transcription to settle: key-up therefore ends recording even
+        # if the partial STT call itself is slow or wedged.
+        if not hung_up:
+            await self._set_turn_state(TurnTakingState.WAITING_FOR_FINAL_TRANSCRIPT)
+        if live_task is not None:
+            await self._stop_ptt_live_transcription(
+                live_task,
+                stop_event=live_stop_event,
+                inference_active=live_inference_active,
+                wait_for_inference=not hung_up,
+            )
 
         if hung_up:
             return HANGUP_HOTKEY
@@ -6704,7 +6801,6 @@ class SpeechPipeline:
         self._carry_pcm = bytearray()
         self._carry_started_monotonic = None
         self._last_endpoint_reason = None
-        await self._set_turn_state(TurnTakingState.WAITING_FOR_FINAL_TRANSCRIPT)
         await self._publish_utterance_captured(pcm)
         # One-shot: run exactly one turn, then end the session regardless of the
         # _handle_utterance return value (it may request continuation, which PTT
@@ -6716,7 +6812,88 @@ class SpeechPipeline:
             return self._session_end_reason or HANGUP_VOICE_PATTERN
         return HANGUP_TURN_COMPLETE
 
-    async def _ptt_live_transcribe(self, snapshot: Callable[[], bytes]) -> None:
+    async def _stop_ptt_live_transcription(
+        self,
+        task: asyncio.Task[None],
+        *,
+        stop_event: asyncio.Event,
+        inference_active: asyncio.Event,
+        wait_for_inference: bool,
+    ) -> None:
+        """Quiesce the cosmetic PTT probe before final STT or wake re-arm.
+
+        Native STT calls running through ``asyncio.to_thread`` cannot be
+        cancelled.  On a normal key release, allow the one already-running
+        probe to finish before the authoritative final transcription starts.
+        Bound that wait by the same ceiling as final STT; a provider exposing
+        ``recover()`` then swaps in a fresh engine/lock before the orphaned call
+        is cancelled, which is the AP-24 recovery contract.  A hard hangup does
+        not wait for cosmetic output, but still recovers a busy native engine so
+        the wake listener never inherits it.
+        """
+        stop_event.set()
+        if task.done():
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                pass
+            return
+
+        timed_out = False
+        if wait_for_inference:
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(task),
+                    timeout=max(0.1, self._stt_final_timeout_s),
+                )
+                return
+            except TimeoutError:
+                timed_out = True
+                log.warning(
+                    "PTT live transcript did not quiesce within %.1fs; "
+                    "recovering before final transcription.",
+                    self._stt_final_timeout_s,
+                )
+            except asyncio.CancelledError:
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                    pass
+                raise
+            except Exception:  # noqa: BLE001 — cosmetic probe failure is contained
+                if task.done():
+                    return
+
+        if inference_active.is_set():
+            recover = getattr(self._utterance_stt, "recover", None)
+            if callable(recover):
+                try:
+                    recover()
+                except Exception:  # noqa: BLE001 — cleanup must never drop teardown
+                    log.warning(
+                        "PTT live-transcript STT recovery failed; continuing "
+                        "with provider-level fallback.",
+                        exc_info=True,
+                    )
+            elif timed_out:
+                log.warning(
+                    "PTT live-transcript provider has no recovery hook; "
+                    "cancelling the timed-out probe before final STT."
+                )
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+            pass
+
+    async def _ptt_live_transcribe(
+        self,
+        snapshot: Callable[[], bytes],
+        *,
+        stop_event: asyncio.Event,
+        inference_active: asyncio.Event,
+    ) -> None:
         """Background live-transcript feed for the held push-to-talk audio.
 
         Every ``_ptt_partial_interval_s`` it transcribes the held-so-far buffer
@@ -6725,8 +6902,9 @@ class SpeechPipeline:
         wake-word path's VAD stability probe (PTT bypasses the VAD, so it needs
         its own feed). Purely cosmetic and best-effort: every error is swallowed
         and the loop continues. It NEVER drives the turn — the authoritative
-        transcription is the final one in ``_handle_utterance``. ``_ptt_session``
-        cancels it on release / hangup / max-hold.
+        transcription is the final one in ``_handle_utterance``. On release,
+        ``_ptt_session`` signals ``stop_event`` and lets an in-flight native call
+        settle before final STT, so the two never share one inference engine.
         """
         interval = self._ptt_partial_interval_s
         stt = getattr(self, "_utterance_stt", None)
@@ -6736,16 +6914,27 @@ class SpeechPipeline:
         # near-silence; wait until enough audio has accumulated before probing.
         min_bytes = int(0.4 * 16_000 * 2)
         try:
-            while True:
-                await asyncio.sleep(interval)
+            while not stop_event.is_set():
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=interval)
+                except TimeoutError:
+                    pass
+                if stop_event.is_set():
+                    return
                 pcm = snapshot()
                 if len(pcm) < min_bytes:
                     continue
                 try:
-                    transcript = await stt.transcribe_pcm(pcm)
+                    inference_active.set()
+                    try:
+                        transcript = await stt.transcribe_pcm(pcm)
+                    finally:
+                        inference_active.clear()
                 except Exception as exc:  # noqa: BLE001 — cosmetic, keep going
                     log.debug("PTT live-transcript probe failed: %s", exc)
                     continue
+                if stop_event.is_set():
+                    return
                 text = (getattr(transcript, "text", "") or "").strip() if transcript else ""
                 if not text:
                     continue
@@ -9918,7 +10107,10 @@ class SpeechPipeline:
         """
         from jarvis.realtime.desktop import DesktopRealtimeBargeInDetector
 
-        detector = DesktopRealtimeBargeInDetector(grace_s=grace_s)
+        detector = DesktopRealtimeBargeInDetector(
+            grace_s=grace_s,
+            output_active=level_tap.playback_active,
+        )
         try:
             # Model load off the event loop — it shares the turn with live
             # audio playback.

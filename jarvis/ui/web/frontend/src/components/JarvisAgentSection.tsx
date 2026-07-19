@@ -990,9 +990,13 @@ function AntigravityConnectionCard({
   const { activating, activate } = useSubagentActivate(row, onChanged);
   const connected = Boolean(status?.connected && status.mode === "oauth-personal");
   const installed = status?.installed ?? false;
-  const apiKeyReady = Boolean(row?.api_key_set);
-  const usable = connected || apiKeyReady;
-  const isActive = Boolean(row?.is_active_brain);
+  const apiKeyReady = Boolean(installed && row?.api_key_set);
+  // `/api/jarvis-agent/status.key_set` is the canonical readiness decision.
+  // Keep the independent live status gate as defense against two parallel
+  // responses straddling an install/uninstall. A Gemini key alone belongs to
+  // the separate Google Gemini card and must never make this CLI card ready.
+  const usable = Boolean(installed && row?.key_set);
+  const isActive = Boolean(usable && row?.is_active_brain);
   const detail = connected
     ? status?.user_email
       ? `Connected as ${status.user_email}`
@@ -1044,7 +1048,7 @@ function AntigravityConnectionCard({
       badge={<StatusPill state={isActive ? "active" : usable ? "ready" : "open"} />}
       subtitle={detail}
       warning={
-        !installed && !apiKeyReady && (
+        !installed && (
           <CardHint icon={Terminal}>
             Install Antigravity or the Gemini CLI before connecting.
           </CardHint>
@@ -1469,4 +1473,3 @@ function SubagentActiveControl({
     </label>
   );
 }
-

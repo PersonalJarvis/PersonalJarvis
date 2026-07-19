@@ -208,6 +208,7 @@ async def test_switch_antigravity_allowed_as_subagent(monkeypatch, no_keys):
     from jarvis.brain.app_control import apply_provider_switch
 
     class _Status:
+        installed = True
         connected = True
         mode = "oauth-personal"
 
@@ -229,6 +230,35 @@ async def test_switch_antigravity_allowed_as_subagent(monkeypatch, no_keys):
     assert res["tier"] == "subagent"
     assert res["new_provider"] == "antigravity"
     assert cfg.brain.worker.provider == "antigravity"
+
+
+async def test_switch_antigravity_rejects_key_without_cli(
+    monkeypatch, configured_keys
+):
+    from jarvis.brain.app_control import apply_provider_switch
+
+    class _Status:
+        installed = False
+        connected = False
+        mode = "unknown"
+
+    class _FakeGoogleCliAuthService:
+        def status(self):
+            return _Status()
+
+    monkeypatch.setattr(
+        "jarvis.google_cli.auth_service.GoogleCliAuthService",
+        _FakeGoogleCliAuthService,
+    )
+
+    cfg = make_cfg(sub="gemini")
+    res = await apply_provider_switch(
+        "subagent", "antigravity", cfg=cfg, persist=False,
+    )
+
+    assert res["ok"] is False
+    assert res["error_kind"] == "subagent_unavailable"
+    assert cfg.brain.worker.provider == "gemini"
 
 
 async def test_switch_codex_allowed_as_subagent(monkeypatch, no_keys):

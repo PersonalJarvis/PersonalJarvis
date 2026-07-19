@@ -147,7 +147,7 @@ async def test_canned_phrase_echo_never_becomes_a_turn():
                 type="input_transcript",
                 # Garbled echo of the canned provider-down apology — exactly
                 # the Mac loop's fuel.
-                text="mein Sprachmodell ist im Moment nicht erreichbar",  # i18n-allow: garbled echo under test
+                text="mein Sprachmodell ist im Moment nicht erreichbar",  # i18n-allow: STT
                 is_final=True,
             ),
             RealtimeEvent(type="turn_complete"),
@@ -174,7 +174,7 @@ async def test_provider_output_transcript_echo_is_dropped():
         [
             RealtimeEvent(
                 type="output_transcript_delta",
-                text="Moin, bei mir ist alles bestens und ich bin bereit.",  # i18n-allow: voice fixture
+                text="Moin, bei mir ist alles bestens und ich bin bereit.",  # i18n-allow: voice
             ),
             RealtimeEvent(
                 type="audio_delta",
@@ -183,7 +183,7 @@ async def test_provider_output_transcript_echo_is_dropped():
             RealtimeEvent(type="turn_complete"),
             RealtimeEvent(
                 type="input_transcript",
-                text="bei mir ist alles bestens ich bin bereit",  # i18n-allow: garbled echo under test
+                text="bei mir ist alles bestens ich bin bereit",  # i18n-allow: STT
                 is_final=True,
             ),
         ]
@@ -209,7 +209,7 @@ async def test_genuine_user_turn_with_novel_content_passes():
     fake, jsons = await _run(
         provider,
         arm=lambda sess: sess._surface_speech_message(
-            "Tut mir leid, mein Sprachmodell ist im Moment nicht erreichbar."  # i18n-allow: voice fixture
+            "Tut mir leid, mein Sprachmodell ist im Moment nicht erreichbar."  # i18n-allow: voice
         ),
     )
     assert fake.response_requests == 1
@@ -245,7 +245,7 @@ async def test_echo_drop_interrupts_auto_response_provider():
         [
             RealtimeEvent(
                 type="input_transcript",
-                text="mein Sprachmodell ist im Moment nicht erreichbar",  # i18n-allow: garbled echo under test
+                text="mein Sprachmodell ist im Moment nicht erreichbar",  # i18n-allow: STT
                 is_final=True,
             ),
         ]
@@ -260,7 +260,7 @@ async def test_echo_drop_interrupts_auto_response_provider():
         bus=None,
     )
     sess._surface_speech_message(
-        "Tut mir leid, mein Sprachmodell ist im Moment nicht erreichbar."  # i18n-allow: voice fixture
+        "Tut mir leid, mein Sprachmodell ist im Moment nicht erreichbar."  # i18n-allow: voice
     )
     await sess.handle_control({"type": "audio_start", "sample_rate": 16000})
     await asyncio.sleep(0.05)
@@ -268,6 +268,62 @@ async def test_echo_drop_interrupts_auto_response_provider():
     await sess.end(reason="test")
     assert provider.session.interrupts == 1
     assert dropped_flag is True
+
+
+@pytest.mark.asyncio
+async def test_echo_followed_by_tool_call_never_opens_empty_turn():
+    """A speculative call for dropped echo stays outside persisted turns."""
+    provider = AutoResponseFakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="an einem bestimmten Projekt arbeiten",  # i18n-allow: speaker echo fixture
+                is_final=True,
+            ),
+            RealtimeEvent(
+                type="tool_call",
+                call_id="echo-call",
+                tool_name="jarvis_action",
+                tool_args={},
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    jsons: list[dict[str, object]] = []
+    sess = RealtimeVoiceSession(
+        session_id="echo-tool",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda message: jsons.append(message) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+    sess._surface_speech_message(
+        "Möchtest du an einem bestimmten Projekt arbeiten?"  # i18n-allow: voice fixture
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.sleep(0.05)
+    opened_turns = sess._turn_index
+    await sess.end(reason="test")
+
+    assert opened_turns == 0
+    assert provider.session.interrupts == 1
+    assert provider.session.tool_results == [
+        (
+            "echo-call",
+            "jarvis_action",
+            {
+                "success": False,
+                "error": (
+                    "The input transcript was unavailable, so the action was not "
+                    "executed. Ask the user to repeat the request."
+                ),
+            },
+        )
+    ]
+    assert _user_transcripts(jsons) == []
+    assert not [message for message in jsons if message.get("type") == "error_spoken"]
 
 
 @pytest.mark.asyncio

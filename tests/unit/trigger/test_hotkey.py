@@ -31,7 +31,7 @@ LIVE_BINDINGS = {"call": CALL_COMBOS, "hangup": HANGUP_COMBOS}
 
 
 @pytest.fixture()
-def fake_gh():
+def fake_gh(monkeypatch):
     """Install a fresh FakeGlobalHotkeys into ``sys.modules`` for the test.
 
     Also resets the module-level checker refcount so the single-checker
@@ -43,6 +43,12 @@ def fake_gh():
     saved = sys.modules.get("global_hotkeys")
     sys.modules["global_hotkeys"] = fake
     hk._reset_checker_state_for_tests()
+    # This module verifies the Windows global-hotkeys contract.  Pin the
+    # backend explicitly so the same tests remain valid on the macOS and Linux
+    # CI legs instead of silently selecting Quartz/pynput from the host OS.
+    from jarvis.trigger.backends.global_hotkeys import GlobalHotkeysBackend
+
+    monkeypatch.setattr(hk, "make_hotkey_backend", GlobalHotkeysBackend)
     try:
         yield fake
     finally:

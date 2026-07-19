@@ -39,10 +39,20 @@ export interface PlanResponse {
   steps: PlanStep[];
 }
 
+/** Must stay in parity with `OUTPUT_STATUSES` in `outputs_routes.py`. */
+export const OUTPUT_STATUSES = [
+  "running",
+  "success",
+  "error",
+  "cancelled",
+  "unknown",
+] as const;
+export type OutputStatus = (typeof OUTPUT_STATUSES)[number];
+
 export interface OutputSummary {
   slug: string;
   utterance?: string;
-  status?: string;
+  status?: OutputStatus;
   /** Full missions.id when the dir resolved to a DB row — enables cancel. */
   mission_id?: string | null;
   summary?: string;
@@ -51,6 +61,14 @@ export interface OutputSummary {
   started_at?: number;
   github_url?: string | null;
   error?: string | null;
+  /** Canonical terminal-event reason, when one was recorded. */
+  terminal_reason?: string | null;
+  terminal_event?: string | null;
+  artifact_count?: number;
+  /** A non-approved/cancelled mission retained genuine deliverable files. */
+  has_partial_output?: boolean;
+  /** Review ended without approval, but a genuine deliverable was retained. */
+  needs_review?: boolean;
   /** When this terminal mission has already been continued/restarted and that
    *  re-run is still running, the full id + slug of that live child. The card
    *  then shows a "running" indicator pointing at the child instead of a
