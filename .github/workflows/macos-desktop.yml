@@ -11,6 +11,7 @@ on:
     paths:
       - ".github/workflows/macos-desktop.yml"
       - "install/**"
+      - "jarvis/admin/**"
       - "jarvis/cu/**"
       - "jarvis/platform/**"
       - "jarvis/setup/**"
@@ -132,6 +133,8 @@ jobs:
         shell: bash
         run: |
           python -m pytest -q \
+            tests/integration/test_admin_unix_loopback.py \
+            tests/unit/admin/test_unix_socket_transport.py \
             tests/unit/platform/test_permissions.py \
             tests/unit/audio/test_capture_permission_gate.py \
             tests/unit/ui/web/test_permissions_routes.py \

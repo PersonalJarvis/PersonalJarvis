@@ -9,6 +9,8 @@ socket two ways, defense in depth:
    directory (``$XDG_RUNTIME_DIR/jarvis-admin-<uid>.sock``, falling back to a
    ``0700`` ``tempfile.mkdtemp`` when ``$XDG_RUNTIME_DIR`` is absent). This is
    the direct equivalent of the pipe ACL: only the owning uid can reach it.
+   Addresses that exceed Darwin's shorter ``AF_UNIX`` limit are mapped
+   deterministically into an owner-only per-uid directory under ``/tmp``.
 2. **Peer-credential check** — on every accepted connection the server reads the
    connecting process's uid (Linux: ``SO_PEERCRED``; macOS: ``LOCAL_PEERCRED`` /
    ``getpeereid``) and **rejects any peer whose uid != the server process uid**.
@@ -32,8 +34,11 @@ never selects this transport, but tests still import the module).
 from __future__ import annotations
 
 import asyncio
+import errno
+import hashlib
 import os
 import socket
+import stat
 import struct
 import tempfile
 from collections.abc import Awaitable, Callable
@@ -50,6 +55,84 @@ _MAX_PAYLOAD_BYTES = 12 * 1024 * 1024
 # owner-only ACE on Windows.
 _DIR_MODE = 0o700
 _SOCK_MODE = 0o600
+
+# Darwin's ``sockaddr_un.sun_path`` is shorter than Linux's. Keep the encoded
+# path below 100 bytes so the trailing NUL and the platform-specific structure
+# layout always fit (macOS allows 104 bytes, Linux 108). A character count is
+# insufficient because non-ASCII filesystem paths may occupy multiple bytes.
+_MAX_SOCKET_PATH_BYTES = 100
+
+
+def _private_short_socket_dir(uid: int) -> str:
+    """Return a deterministic owner-only directory for shortened addresses."""
+    # The fixed short prefix is deliberate: Darwin's AF_UNIX address budget is
+    # too small for its ordinary per-user TMPDIR. Ownership, type, and mode are
+    # validated below before the directory is trusted.
+    candidates = ("/tmp", tempfile.gettempdir())  # noqa: S108
+    seen: set[str] = set()
+    errors: list[OSError] = []
+
+    for base in candidates:
+        if not base or base in seen:
+            continue
+        seen.add(base)
+        directory = os.path.join(base, f"jarvis-admin-{uid}")
+        try:
+            os.mkdir(directory, _DIR_MODE)
+        except FileExistsError:
+            pass
+        except OSError as exc:
+            errors.append(exc)
+            continue
+
+        try:
+            info = os.lstat(directory)
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+                raise PermissionError(f"admin socket runtime path is not a directory: {directory}")
+            if hasattr(os, "getuid") and info.st_uid != uid:
+                raise PermissionError(
+                    f"admin socket runtime directory has the wrong owner: {directory}"
+                )
+            if stat.S_IMODE(info.st_mode) != _DIR_MODE:
+                os.chmod(directory, _DIR_MODE)
+            return directory
+        except OSError as exc:
+            errors.append(exc)
+
+    cause = errors[-1] if errors else None
+    raise OSError(
+        errno.EACCES,
+        "no private runtime directory is available for the admin socket",
+    ) from cause
+
+
+def _portable_socket_path(path: str) -> str:
+    """Shorten an over-budget POSIX address without weakening its ACLs.
+
+    Server and client may normalize the same requested address independently,
+    so the replacement is deterministic. The digest prevents collisions while
+    the per-uid ``0700`` directory, peer-credential check, and HMAC envelope
+    retain the original defense-in-depth model.
+    """
+    if os.name == "nt" or len(os.fsencode(path)) <= _MAX_SOCKET_PATH_BYTES:
+        return path
+
+    uid = os.getuid() if hasattr(os, "getuid") else 0
+    requested = os.path.abspath(os.path.expanduser(path))
+    digest = hashlib.sha256(os.fsencode(requested)).hexdigest()[:24]
+    directory = _private_short_socket_dir(uid)
+    shortened = os.path.join(directory, f"{digest}.sock")
+    if len(os.fsencode(shortened)) > _MAX_SOCKET_PATH_BYTES:
+        raise OSError(
+            errno.ENAMETOOLONG,
+            "no safe admin socket address fits this platform's AF_UNIX limit",
+        )
+    logger.debug(
+        "admin_unix_transport.path_shortened requested_bytes={} effective={}",
+        len(os.fsencode(path)),
+        shortened,
+    )
+    return shortened
 
 
 # ---------------------------------------------------------------------
@@ -74,7 +157,7 @@ def read_peer_uid(conn: socket.socket) -> int | None:
             buf = conn.getsockopt(socket.SOL_SOCKET, so_peercred, struct.calcsize("3i"))
             _pid, uid, _gid = struct.unpack("3i", buf)
             return int(uid)
-        except OSError:  # pragma: no cover - platform/kernel guard
+        except (OSError, struct.error):  # pragma: no cover - platform/kernel guard
             return None
 
     # macOS / BSD: LOCAL_PEERCRED on SOL_LOCAL -> struct xucred; the uid is the
@@ -85,7 +168,7 @@ def read_peer_uid(conn: socket.socket) -> int | None:
         try:
             uid, _gid = getpeereid(conn.fileno())
             return int(uid)
-        except OSError:  # pragma: no cover - platform/kernel guard
+        except (OSError, struct.error):  # pragma: no cover - platform/kernel guard
             return None
 
     local_peercred = getattr(socket, "LOCAL_PEERCRED", None)
@@ -97,7 +180,7 @@ def read_peer_uid(conn: socket.socket) -> int | None:
             buf = conn.getsockopt(sol_local, local_peercred, struct.calcsize("2I"))
             _version, uid = struct.unpack("2I", buf)
             return int(uid)
-        except OSError:  # pragma: no cover - platform/kernel guard
+        except (OSError, struct.error):  # pragma: no cover - platform/kernel guard
             return None
 
     return None
@@ -155,9 +238,10 @@ class UnixSocketTransport:
 
     @property
     def address(self) -> str:
-        """The socket path; used by the elevator to bind the helper (3.4)."""
+        """The effective socket path used by the elevator and helper."""
         if self._socket_path is None:
             self._socket_path = default_socket_path()
+        self._socket_path = _portable_socket_path(self._socket_path)
         return self._socket_path
 
     # ------------------------------------------------------------------
@@ -189,8 +273,7 @@ class UnixSocketTransport:
         except OSError:  # pragma: no cover - platform guard
             logger.warning("admin_unix_transport.chmod_failed", path=path)
 
-        logger.info("admin_unix_transport.start",
-                    path=path, uid=self._server_uid)
+        logger.info("admin_unix_transport.start", path=path, uid=self._server_uid)
         try:
             async with self._server:
                 await self._stop.wait()

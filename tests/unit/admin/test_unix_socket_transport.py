@@ -10,11 +10,13 @@ that tests monkeypatch), so the rejection/acceptance gate runs on every OS,
 including the Windows dev box. The real AF_UNIX bind needs POSIX and is covered
 by ``tests/integration/test_admin_unix_loopback.py`` (skipped on Windows).
 """
+
 from __future__ import annotations
 
 import os
 import stat
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -35,6 +37,25 @@ class _FakeWriter:
 
 def test_unix_socket_transport_satisfies_protocol():
     assert isinstance(UnixSocketTransport("/tmp/x.sock"), AdminTransport)
+
+
+def test_short_socket_address_is_preserved():
+    assert UnixSocketTransport("/tmp/x.sock").address == "/tmp/x.sock"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="AF_UNIX paths are POSIX-only")
+def test_long_socket_address_is_shortened_deterministically(tmp_path):
+    requested = str(tmp_path / ("nested-" * 20) / "jarvis-admin.sock")
+
+    first = UnixSocketTransport(requested).address
+    second = UnixSocketTransport(requested).address
+
+    assert first == second
+    assert first != requested
+    assert len(os.fsencode(first)) <= unix_socket._MAX_SOCKET_PATH_BYTES
+    runtime_dir = Path(first).parent
+    assert stat.S_IMODE(runtime_dir.stat().st_mode) == 0o700
+    assert runtime_dir.stat().st_uid == os.getuid()
 
 
 def test_peer_uid_match_accepted(monkeypatch):
@@ -67,7 +88,7 @@ def test_peer_uid_no_socket_rejected():
 @pytest.mark.skipif(
     sys.platform == "win32",
     reason="AF_UNIX bind + os.getuid are POSIX-only; logic is covered by the "
-           "monkeypatched peer-cred tests above and the unix loopback test.",
+    "monkeypatched peer-cred tests above and the unix loopback test.",
 )
 @pytest.mark.asyncio
 async def test_socket_file_is_0600_in_0700_dir(tmp_path):
@@ -76,8 +97,10 @@ async def test_socket_file_is_0600_in_0700_dir(tmp_path):
 
     runtime_dir = tmp_path / "runtime"
     runtime_dir.mkdir(mode=0o700)
-    sock_path = str(runtime_dir / "jarvis-admin.sock")
-    transport = UnixSocketTransport(sock_path)
+    requested_path = str(runtime_dir / "jarvis-admin.sock")
+    transport = UnixSocketTransport(requested_path)
+    sock_path = transport.address
+    runtime_dir = Path(sock_path).parent
 
     async def _handler(raw: bytes) -> bytes:
         return raw
