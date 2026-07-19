@@ -29,6 +29,24 @@ def test_user_answer_with_novel_word_is_kept() -> None:
     assert guard.is_echo("bei mir läuft alles gut") is False  # i18n-allow
 
 
+def test_live_follow_up_with_one_novel_word_is_kept() -> None:
+    """A semantic pivot must survive even when five surrounding words repeat."""
+    guard = SelfEchoGuard()
+    guard.register(
+        "Wenn du mich fragst, ist das eine gute Wahl, wie ich finde."  # i18n-allow: voice fixture
+    )
+    guard.register(
+        "Möchtest du an einem bestimmten Projekt arbeiten?"  # i18n-allow: voice fixture
+    )
+
+    assert (
+        guard.is_echo(
+            "Wie willst du an Projekten arbeiten?"  # i18n-allow: captured user follow-up
+        )
+        is False
+    )
+
+
 def test_slot_reregistration_replaces_instead_of_appending() -> None:
     guard = SelfEchoGuard()
     guard.register("Ich bin bereit", slot="turn:1")  # i18n-allow: voice fixture

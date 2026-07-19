@@ -1758,13 +1758,20 @@ class RealtimeVoiceSession:
                         interrupt_provider=event.type == "speech_started"
                     )
                 elif event.type == "tool_call":
-                    await self._ensure_turn_started()
                     if str(getattr(event, "tool_name", "") or "") == "end_call":
+                        await self._ensure_turn_started()
                         # Session lifecycle, not a bridge tool: works without
                         # a tool bridge and must not be held back by the
                         # missing-transcript guard below.
                         await self._handle_end_call(event)
                     elif not self._last_user_text:
+                        # Providers may emit a speculative tool call before the
+                        # input transcript carried by the same response. Buffer
+                        # it without opening a persisted turn: a later genuine
+                        # transcript opens the turn and releases the call, while
+                        # a self-echo transcript is dropped and the call is
+                        # rejected at the boundary. Opening here produced the
+                        # contentless 5.7-second turn in the 2026-07-19 Mac run.
                         self._pending_tool_events.append(event)
                         if self._tool_transcript_task is None:
                             self._tool_transcript_task = asyncio.create_task(
@@ -1772,6 +1779,7 @@ class RealtimeVoiceSession:
                                 name=f"rt-tool-transcript-{self.session_id}",
                             )
                     else:
+                        await self._ensure_turn_started()
                         await self._handle_tool_call(event)
                 elif event.type == "turn_complete":
                     if self._pending_tool_events:

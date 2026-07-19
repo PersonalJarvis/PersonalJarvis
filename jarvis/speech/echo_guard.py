@@ -8,7 +8,7 @@ speaker echo that slipped every acoustic gate, never a turn to answer.
 Without this, ONE missed false barge loops forever: reply → echo transcribed
 → brain answers itself → new reply → new echo (the Mac test machine's
 multi-turn self-conversation, 2026-07-18). Conservative by design:
-near-total containment in the assistant's own recent words is required, so a
+total fuzzy containment in the assistant's own recent words is required, so a
 genuine user answer that ADDS anything is always kept (fail-open).
 
 The logic originated as pipeline-private methods (BUG-084); it lives here so
@@ -34,7 +34,6 @@ class SelfEchoGuard:
     WINDOW_S = 6.0
     REF_TTL_S = 30.0
     MIN_TOKENS = 3
-    MIN_OVERLAP = 0.8
     # 0.8, not lower: at 0.75 near-misses like "gut"→"guten" (ratio exactly
     # 0.75) count as contained and a genuine short user answer built from the
     # assistant's own words plus one inflected token would be eaten. Real STT
@@ -93,11 +92,13 @@ class SelfEchoGuard:
         outside that window a user may echo the assistant verbatim all they
         want. Tokens match fuzzily (``difflib``-ratio ≥ ``FUZZY_CUTOFF``)
         because STT garbles echo (see the ratio anchors at ``FUZZY_CUTOFF``
-        above). Utterances shorter than ``MIN_TOKENS`` are never judged —
-        short commands ("stopp") must always reach their handlers. References
-        are checked per spoken phrase plus the concatenation of the two newest
+        above), but every utterance token must still match. One genuinely novel
+        token can change the meaning of a short follow-up and therefore fails
+        open. Utterances shorter than ``MIN_TOKENS`` are never judged — short
+        commands ("stopp") must always reach their handlers. References are
+        checked per spoken phrase plus the concatenation of the two newest
         phrases, so an echo spanning a sentence boundary still matches without
-        building a big vocabulary union that common words could false-match.
+        building a large session-wide vocabulary union.
         """
         if self.activity_ns <= 0:
             return False
@@ -114,17 +115,16 @@ class SelfEchoGuard:
         candidates = list(fresh)
         if len(fresh) >= 2:
             candidates.append(fresh[-2] + fresh[-1])
-        allowed_novel = len(utterance) // 6
         for reference in candidates:
-            matched = sum(
-                1
+            if all(
+                token in reference
+                or difflib.get_close_matches(
+                    token,
+                    reference,
+                    n=1,
+                    cutoff=self.FUZZY_CUTOFF,
+                )
                 for token in utterance
-                if token in reference
-                or difflib.get_close_matches(token, reference, n=1, cutoff=self.FUZZY_CUTOFF)
-            )
-            if (
-                matched / len(utterance) >= self.MIN_OVERLAP
-                and (len(utterance) - matched) <= allowed_novel
             ):
                 return True
         return False
