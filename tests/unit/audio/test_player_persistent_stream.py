@@ -22,10 +22,12 @@ These tests pin that contract.
 from __future__ import annotations
 
 import asyncio
+import threading
 from collections.abc import AsyncIterator
 
 import pytest
 
+import jarvis.audio.player as player_module
 from jarvis.audio.player import AudioPlayer
 from jarvis.core.protocols import AudioChunk
 
@@ -176,6 +178,39 @@ async def test_stop_is_idempotent_when_no_stream(monkeypatch) -> None:
     assert player._active_stream is None
     player.stop()  # must not raise
     player.stop()  # idempotent
+
+
+@pytest.mark.asyncio
+async def test_stop_rejects_stream_that_finishes_opening_after_cancel(
+    monkeypatch,
+) -> None:
+    """A worker-thread stream open cannot resurrect stopped playback."""
+
+    player, events = _make_player(monkeypatch)
+    open_entered = threading.Event()
+    release_open = threading.Event()
+
+    def delayed_open(needed_rate: int):
+        events.append(f"open@{needed_rate}")
+        open_entered.set()
+        assert release_open.wait(timeout=1.0)
+        return object(), needed_rate
+
+    monkeypatch.setattr(player, "_open_output_stream", delayed_open)
+    if player_module.sd is not None:
+        monkeypatch.setattr(player_module.sd, "stop", lambda: None)
+
+    pcm = b"\x01\x00" * 4000
+    play_task = asyncio.create_task(player.play_chunks(_one_chunk(pcm)))
+    assert await asyncio.to_thread(open_entered.wait, 1.0)
+
+    player.stop()
+    release_open.set()
+
+    assert await asyncio.wait_for(play_task, timeout=1.0) is False
+    assert [event for event in events if event == "close"] == ["close"]
+    assert [event for event in events if event.startswith("write@")] == []
+    assert player._active_stream is None
 
 
 @pytest.mark.asyncio

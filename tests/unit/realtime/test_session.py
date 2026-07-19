@@ -4695,13 +4695,27 @@ async def test_transport_death_rebuilds_the_session_in_place():
 
 @pytest.mark.asyncio
 async def test_audio_send_timeout_rebuilds_without_ending_the_call(monkeypatch):
-    """A write-only Gemini stall must heal even while receive stays open."""
+    """A write-only stall and a later stale timeout preserve the live call."""
     import jarvis.realtime.session as session_module
 
-    monkeypatch.setattr(session_module, "_AUDIO_SEND_TIMEOUT_S", 0.01)
+    class _ObservedWriteStalledSession(WriteStalledSession):
+        def __init__(self):
+            super().__init__([])
+            self.send_entered = [asyncio.Event(), asyncio.Event()]
+            self._send_count = 0
+
+        async def send_audio(self, chunk):
+            del chunk
+            index = self._send_count
+            self._send_count += 1
+            self.send_entered[index].set()
+            await asyncio.Event().wait()
+
+    stalled = _ObservedWriteStalledSession()
+    monkeypatch.setattr(session_module, "_AUDIO_SEND_TIMEOUT_S", 0.02)
     provider = RebuildingProvider(
         [
-            lambda: WriteStalledSession([]),
+            lambda: stalled,
             lambda: StayOpenSession([]),
         ]
     )
@@ -4721,17 +4735,24 @@ async def test_audio_send_timeout_rebuilds_without_ending_the_call(monkeypatch):
     first_send = asyncio.create_task(
         sess.handle_audio_frame(b"\x00\x01" * 16)
     )
-    await asyncio.sleep(0.01)
+    await asyncio.wait_for(stalled.send_entered[0].wait(), timeout=0.5)
+    # ``wait_for`` captured the short deadline for send one. Give send two a
+    # longer deadline so the first timeout deterministically rebuilds the
+    # transport before the overlapping stale timeout is delivered.
+    monkeypatch.setattr(session_module, "_AUDIO_SEND_TIMEOUT_S", 0.15)
     overlapping_send = asyncio.create_task(
         sess.handle_audio_frame(b"\x01\x02" * 16)
     )
-    await asyncio.gather(first_send, overlapping_send)
+    await asyncio.wait_for(stalled.send_entered[1].wait(), timeout=0.5)
+    await first_send
     await _wait_until(lambda: provider.open_calls == 2)
+    await overlapping_send
 
     assert sess._pump_task is pump
     assert pump is not None and not pump.done()
     assert not sess.failed
     assert provider.sessions[0].closed
+    assert provider.open_calls == 2
     assert len([item for item in jsons if item.get("type") == "audio_ready"]) == 2
 
     await sess.handle_audio_frame(b"\x02\x03" * 16)

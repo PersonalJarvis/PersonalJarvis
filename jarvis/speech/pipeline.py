@@ -6102,6 +6102,14 @@ class SpeechPipeline:
         barge_feed_executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix=f"rt-barge-feed-{session_id}"
         )
+        # Provider PCM is owned by ``playback``; the independent surface-TTS
+        # fallback used to bypass that adapter and was awaited inline. A barge
+        # then stopped PortAudio but left the TTS producer alive, so its next
+        # chunk reopened the stream and resumed untracked speech. Keep explicit
+        # ownership of that producer so every output-cancel boundary can stop
+        # generation before it aborts the shared player.
+        surface_playback_task: asyncio.Task[Any] | None = None
+        surface_playback_epoch = 0
         turn_complete = asyncio.Event()
         speaking = False
         post_output_echo_guard_until = 0.0
@@ -6149,6 +6157,25 @@ class SpeechPipeline:
             _warm_barge_detector(), name=f"rt-barge-warm-{session_id}"
         )
 
+        async def _cancel_output_playback() -> None:
+            """Cancel surface generation and provider playback as one unit."""
+
+            nonlocal surface_playback_epoch, surface_playback_task
+            # Invalidate the parent callback before cancelling its child. A new
+            # surface fallback may start while the old callback is unwinding;
+            # only the newest epoch may close the shared speaking segment.
+            surface_playback_epoch += 1
+            surface_task = surface_playback_task
+            surface_playback_task = None
+            if surface_task is not None and not surface_task.done():
+                # Cancel before AudioPlayer.stop(): a blocked native write can
+                # still unwind after the abort, but the owning coroutine can no
+                # longer advance its async generator and reopen the stream.
+                surface_task.cancel()
+            await playback.cancel()
+            if surface_task is not None:
+                await asyncio.gather(surface_task, return_exceptions=True)
+
         async def _send_binary(pcm: bytes) -> None:
             nonlocal post_output_echo_guard_until
             nonlocal semantic_turn_committed, speaking
@@ -6162,6 +6189,7 @@ class SpeechPipeline:
 
         async def _send_json(message: dict[str, Any]) -> None:
             nonlocal semantic_turn_committed, speaking
+            nonlocal surface_playback_epoch, surface_playback_task
             kind = str(message.get("type", ""))
             if kind == "audio_ready":
                 if speaking:
@@ -6219,12 +6247,12 @@ class SpeechPipeline:
                 await self._set_turn_state(TurnTakingState.PROCESSING)
             elif kind == "tts_cancel":
                 _close_output_segment(preserve_echo_tail=False)
-                await playback.cancel()
+                await _cancel_output_playback()
                 await self._set_turn_state(TurnTakingState.LISTENING)
             elif kind == "hangup":
                 semantic_turn_committed = True
                 _close_output_segment(preserve_echo_tail=False)
-                await playback.cancel()
+                await _cancel_output_playback()
             elif kind == "turn_complete":
                 semantic_turn_committed = True
                 await playback.finish_turn()
@@ -6275,7 +6303,9 @@ class SpeechPipeline:
                     # AudioPlayer as an independent last mile. The existing mic
                     # pump and local barge detector remain active, so this does
                     # not open a second microphone or replay the user's request.
-                    await playback.cancel()
+                    await _cancel_output_playback()
+                    surface_playback_epoch += 1
+                    active_surface_epoch = surface_playback_epoch
                     speaking = True
                     barge_detector.start_output()
                     # Pre-synthesis registration mirrors _speak (BUG-084): the
@@ -6284,6 +6314,11 @@ class SpeechPipeline:
                     # (BUG-089).
                     self._register_assistant_speech(cleaned)
                     await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
+                    if surface_playback_epoch != active_surface_epoch:
+                        # A cancel can arrive while the state callback yields,
+                        # before there is a child playback task to own. Its
+                        # epoch invalidates this render before synthesis starts.
+                        return
                     try:
                         # Voice-identity continuity: the realtime session names
                         # the voice it was speaking with, so this last mile does
@@ -6330,7 +6365,30 @@ class SpeechPipeline:
                                 )
                             except TypeError:
                                 chunks = surface_tts.synthesize(cleaned)
-                        playback_result = await self._player.play_chunks(chunks)
+                        active_surface_task = asyncio.create_task(
+                            self._player.play_chunks(
+                                chunks,
+                                should_play=lambda: (
+                                    surface_playback_epoch
+                                    == active_surface_epoch
+                                ),
+                            ),
+                            name=f"rt-surface-tts-{session_id}",
+                        )
+                        surface_playback_task = active_surface_task
+                        try:
+                            playback_result = await active_surface_task
+                        except asyncio.CancelledError:
+                            current_task = asyncio.current_task()
+                            if current_task is not None and current_task.cancelling():
+                                raise
+                            # A concurrent local barge-in cancels the owned child
+                            # task, not this provider-pump callback. The turn stays
+                            # alive and simply records no spoken receipt.
+                            playback_result = False
+                        finally:
+                            if surface_playback_task is active_surface_task:
+                                surface_playback_task = None
                         if self._playback_confirmed(playback_result):
                             self._emit_spoken(
                                 cleaned,
@@ -6344,10 +6402,11 @@ class SpeechPipeline:
                             exc,
                         )
                     finally:
-                        _close_output_segment(
-                            preserve_echo_tail=speaking,
-                        )
-                        await self._set_turn_state(TurnTakingState.LISTENING)
+                        if surface_playback_epoch == active_surface_epoch:
+                            _close_output_segment(
+                                preserve_echo_tail=speaking,
+                            )
+                            await self._set_turn_state(TurnTakingState.LISTENING)
             elif kind == "provider_error":
                 log.warning("Realtime desktop status: %s", message)
 
@@ -6564,6 +6623,9 @@ class SpeechPipeline:
         finally:
             if getattr(self, "_active_realtime_handle", None) is session:
                 self._active_realtime_handle = None
+            # Invalidate even when synthesis is paused before child-task
+            # creation; terminal teardown must own that pre-playback window too.
+            await _cancel_output_playback()
             barge_detector.stop_output()
             barge_feed_executor.shutdown(wait=False, cancel_futures=True)
             if not barge_warm_task.done():

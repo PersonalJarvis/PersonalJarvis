@@ -25,8 +25,10 @@ class _FakePlayer:
         self.pcm: list[bytes] = []
         self.stopped = 0
 
-    async def play_chunks(self, chunks) -> None:
+    async def play_chunks(self, chunks, *, should_play=None) -> None:
         async for chunk in chunks:
+            if should_play is not None and not should_play():
+                return
             self.pcm.append(chunk.pcm)
 
     def stop(self) -> None:
@@ -332,7 +334,10 @@ async def test_unsafe_output_cancel_stops_playback_and_returns_to_listening(
     monkeypatch.setattr(pipeline_mod, "MicrophoneCapture", lambda **_kwargs: _SilentMic())
 
     task = asyncio.create_task(pipe._active_realtime_session())
-    await asyncio.wait_for(cancel_delivered.wait(), timeout=0.5)
+    # Session construction lazily imports the realtime stack and can exceed a
+    # 0.5 s wall-clock budget when this test follows other audio tests on the
+    # slower macOS CI runner. The event itself remains the deterministic gate.
+    await asyncio.wait_for(cancel_delivered.wait(), timeout=2.0)
     await asyncio.sleep(0)
 
     assert pipe._player.stopped >= 1
@@ -345,7 +350,7 @@ async def test_unsafe_output_cancel_stops_playback_and_returns_to_listening(
     ]
 
     pipe._hangup_event.set()
-    assert await asyncio.wait_for(task, timeout=0.5) == HANGUP_HOTKEY
+    assert await asyncio.wait_for(task, timeout=1.0) == HANGUP_HOTKEY
     assert built["session"].end_reason == HANGUP_HOTKEY
 
 
@@ -403,6 +408,188 @@ async def test_error_spoken_renders_through_realtime_scoped_surface_tts(
     assert [text for text, _lang in surface_tts.calls] == ["The grounded reply."]
     assert pipeline_tts.calls == []
     assert surface_pcm in pipe._player.pcm
+
+    pipe._hangup_event.set()
+    assert await asyncio.wait_for(task, timeout=0.5) == HANGUP_HOTKEY
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "cancel_before_first_chunk",
+    [True, False],
+    ids=("during-synthesis", "between-chunks"),
+)
+async def test_tts_cancel_stops_surface_generator_before_it_can_reopen_output(
+    monkeypatch: pytest.MonkeyPatch,
+    cancel_before_first_chunk: bool,
+) -> None:
+    """A local barge-in owns both PortAudio and the surface-TTS producer.
+
+    Stopping only the shared player left the async producer alive. Its next
+    chunk reopened PortAudio after the turn had returned to LISTENING, creating
+    untracked zombie speech and blocking the realtime callback behind it.
+    """
+
+    pipe = _pipe()
+    first_pcm = b"\x11\x00" * 32
+    zombie_pcm = b"\x22\x00" * 32
+    synthesis_started = asyncio.Event()
+    first_chunk_consumed = asyncio.Event()
+    release_first = asyncio.Event()
+    release_second = asyncio.Event()
+    generator_closed = asyncio.Event()
+    cancel_delivered = asyncio.Event()
+    spoken_receipts: list[str] = []
+    pipe._emit_spoken = (  # type: ignore[method-assign]
+        lambda text, *_args, **_kwargs: spoken_receipts.append(text)
+    )
+
+    class _TwoChunkSurfaceTTS:
+        def synthesize(
+            self,
+            _text: str,
+            *,
+            language_code: str | None = None,
+        ):
+            del language_code
+
+            async def _chunks():
+                try:
+                    synthesis_started.set()
+                    if cancel_before_first_chunk:
+                        await release_first.wait()
+                    yield AudioChunk(
+                        pcm=first_pcm,
+                        sample_rate=24_000,
+                        timestamp_ns=0,
+                    )
+                    first_chunk_consumed.set()
+                    await release_second.wait()
+                    yield AudioChunk(
+                        pcm=zombie_pcm,
+                        sample_rate=24_000,
+                        timestamp_ns=0,
+                    )
+                finally:
+                    generator_closed.set()
+
+            return _chunks()
+
+    surface_tts = _TwoChunkSurfaceTTS()
+    monkeypatch.setattr(
+        "jarvis.plugins.tts.build_realtime_surface_tts",
+        lambda _cfg, _provider: surface_tts,
+    )
+
+    class _SurfaceCancelSession(_HandshakeOnlyRealtimeSession):
+        async def handle_control(self, message) -> None:
+            await super().handle_control(message)
+            surface_callback = asyncio.create_task(
+                self._send_json(
+                    {
+                        "type": "error_spoken",
+                        "text": "A grounded answer with two audio chunks.",
+                        "language": "en",
+                    }
+                )
+            )
+            if cancel_before_first_chunk:
+                await synthesis_started.wait()
+            else:
+                await first_chunk_consumed.wait()
+
+            await self._send_json({"type": "tts_cancel"})
+            release_first.set()
+            release_second.set()
+            await asyncio.wait_for(surface_callback, timeout=0.5)
+            cancel_delivered.set()
+
+    def _build(**kwargs):
+        return _SurfaceCancelSession(kwargs["send_binary"], kwargs["send_json"])
+
+    monkeypatch.setattr("jarvis.realtime.factory.build_realtime_session", _build)
+    monkeypatch.setattr(
+        pipeline_mod,
+        "MicrophoneCapture",
+        lambda **_kwargs: _SilentMic(),
+    )
+
+    task = asyncio.create_task(pipe._active_realtime_session())
+    await asyncio.wait_for(cancel_delivered.wait(), timeout=0.5)
+    await asyncio.sleep(0)
+
+    assert (first_pcm in pipe._player.pcm) is not cancel_before_first_chunk
+    assert zombie_pcm not in pipe._player.pcm
+    assert generator_closed.is_set()
+    assert spoken_receipts == []
+    assert pipe._player.stopped >= 1
+    assert not task.done(), "surface cancellation must not end the live call"
+
+    pipe._hangup_event.set()
+    assert await asyncio.wait_for(task, timeout=0.5) == HANGUP_HOTKEY
+
+
+@pytest.mark.asyncio
+async def test_tts_cancel_invalidates_surface_render_before_task_creation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A cancel during the speaking-state callback prevents late synthesis."""
+
+    pipe = _pipe()
+    surface_tts = _FakeTTS(b"\x33\x00" * 32)
+    speaking_state_entered = asyncio.Event()
+    release_speaking_state = asyncio.Event()
+    cancel_delivered = asyncio.Event()
+
+    async def _set_state(state) -> None:
+        pipe._test_states.append(state)
+        if state == pipeline_mod.TurnTakingState.JARVIS_SPEAKING:
+            speaking_state_entered.set()
+            await release_speaking_state.wait()
+
+    pipe._set_turn_state = _set_state  # type: ignore[method-assign]
+    monkeypatch.setattr(
+        "jarvis.plugins.tts.build_realtime_surface_tts",
+        lambda _cfg, _provider: surface_tts,
+    )
+
+    class _PrePlaybackCancelSession(_HandshakeOnlyRealtimeSession):
+        async def handle_control(self, message) -> None:
+            await super().handle_control(message)
+            surface_callback = asyncio.create_task(
+                self._send_json(
+                    {
+                        "type": "error_spoken",
+                        "text": "This render must never start.",
+                        "language": "en",
+                    }
+                )
+            )
+            await speaking_state_entered.wait()
+            await self._send_json({"type": "tts_cancel"})
+            release_speaking_state.set()
+            await asyncio.wait_for(surface_callback, timeout=0.5)
+            cancel_delivered.set()
+
+    def _build(**kwargs):
+        return _PrePlaybackCancelSession(
+            kwargs["send_binary"], kwargs["send_json"]
+        )
+
+    monkeypatch.setattr("jarvis.realtime.factory.build_realtime_session", _build)
+    monkeypatch.setattr(
+        pipeline_mod,
+        "MicrophoneCapture",
+        lambda **_kwargs: _SilentMic(),
+    )
+
+    task = asyncio.create_task(pipe._active_realtime_session())
+    await asyncio.wait_for(cancel_delivered.wait(), timeout=0.5)
+
+    assert surface_tts.calls == []
+    assert pipe._player.pcm == []
+    assert pipe._test_states[-1] == pipeline_mod.TurnTakingState.LISTENING
+    assert not task.done(), "pre-playback cancellation must not end the live call"
 
     pipe._hangup_event.set()
     assert await asyncio.wait_for(task, timeout=0.5) == HANGUP_HOTKEY

@@ -6673,3 +6673,87 @@ and user-facing outcome as four separate facts. Never infer approval from a
 file, never discard a valid decision because a presentation field is verbose,
 never review stale attempt logs, and never collapse retained unsigned work into
 an unexplained error.
+
+---
+
+## BUG-097: realtime replies cut off after two seconds, resumed as untracked audio, then ended the call (CRITICAL, FIXED IN CODE 2026-07-19; LIVE DEPLOYMENT PENDING)
+
+**Symptom (macOS live forensic, platform-neutral code path).** Long replies were
+cut off roughly two seconds after first audio even though the user had not
+interrupted. Audio could then resume after the surface had returned to
+LISTENING, the user's next speech produced no visible transcript or answer, and
+the call ended with `hangup_reason=error`. The immediately preceding call had
+the same signature. The affected process was running managed-install commit
+`35fda998`, at least 25 commits behind the development line at diagnosis, so
+this is also a confirmed device-parity layer-1 version lag rather than a new
+macOS-only diagnosis.
+
+**Last five stored turns in session `163fca8b` (18:31-18:34).**
+
+| Turn | Outcome | Evidence |
+|---|---|---|
+| 4 | Cut off | First audio at 18:32:41.288; local VAD falsely declared barge-in 1.545 s later. Speaker echo was subsequently transcribed as the user's input. |
+| 6 | Completed | Surface TTS rendered the full 436-character reply and emitted `SpeechSpoken`. |
+| 7 | Completed | Native realtime reply completed; PortAudio reported a first-write underflow. |
+| 8 | Completed | The 21.5 s native reply completed; PortAudio again reported only a first-write underflow. |
+| 9 | Cut off, resumed, hung up | First audio at 18:34:25.732; false barge-in 1.607 s later; `OutputStream` reopened after cancellation; microphone send timed out; the call ended as an error. |
+
+Session `957b7fce` immediately before it reproduced the same sequence: first
+audio, false local barge-in after 1.736 s, post-cancel stream reopen, microphone
+send timeout, error hangup. This repetition and the stream timestamps rule out a
+random provider sentence boundary.
+
+**Root causes.** Three independent lifecycle defects chained together:
+
+1. `DesktopRealtimeBargeInDetector` began its 1.5 s grace window at the logical
+   SPEAKING transition. Surface synthesis and stream setup consumed about one
+   second of that window before physical playback existed. The detector then
+   had too little real speaker-echo calibration and classified the assistant's
+   own output as user speech.
+2. Surface fallback TTS called `AudioPlayer.play_chunks()` outside
+   `DesktopRealtimePlayback` ownership. `tts_cancel` stopped PortAudio but did
+   not cancel the async TTS producer. Its next chunk reopened the stream and
+   produced the untracked post-cancel speech.
+3. The old managed install treated the later write-only provider stall as a
+   terminal microphone error. The development line already contains the
+   in-place, key/provider-neutral transport rebuild and stale-timeout guard from
+   `b9023134` and `a1657225`; the running process contained neither.
+
+**Fix.** Commit `363be37c` starts grace and adaptive echo calibration from
+`level_tap.playback_active()`, so synthesis latency cannot consume it. The
+surface fallback now owns its complete playback task, invalidates older renders
+with an epoch, cancels the producer before stopping the shared player, and
+awaits generator shutdown. `AudioPlayer` independently generation-guards its
+worker-thread stream setup: if `stop()` wins while PortAudio is still opening,
+the late handle is closed instead of being published as the active stream. A
+terminal session teardown invalidates the pre-task synthesis window as well.
+The existing in-place transport recovery then keeps a write-only stall and any
+overlapping stale timeout from ending an otherwise healthy call.
+
+**Pause attribution.** The last five turns contain no logged mid-reply provider
+gap or embedded-silence event at the existing 400 ms threshold, so their
+reported half-second pauses cannot be reconstructed honestly from the available
+event granularity. Earlier same-day sessions do prove 400-600 ms provider gaps
+and embedded silent PCM; those remain the separate BUG-087 audio-flow issue.
+This fix removes the deterministic cut/restart/hangup chain but does not claim
+that every provider-generated pause is gone.
+
+**Guards and parity.** Detector tests delay synthesis past the old grace window
+and prove that a full physical-playback grace still follows. Surface tests
+cancel both before the first chunk and between chunks, require generator
+closure, reject a spoken receipt, forbid the second chunk, and keep the live
+call open. A pre-task cancel test pins the state-callback race. Audio-player
+coverage stops playback while a worker thread is opening PortAudio and proves
+the late stream is closed without one write. The transport test now forces two
+overlapping send deadlines, lets the first rebuild the transport, then delivers
+the second as a stale timeout and verifies the fresh session still accepts
+audio. These paths are pure Python plus the existing PortAudio abstraction and
+contain no OS branch; `stop()` remains an honest no-op without PortAudio on a
+headless install. Hardware validation on the updated managed installation is
+still required before changing the status to live-verified.
+
+**Class rule.** A cancel boundary owns the producer, buffer, device stream, and
+any in-flight stream-open operation. Stopping only the current device handle is
+not cancellation: an async producer or worker thread can recreate it after the
+surface has already changed state. Playback grace begins at physical playback,
+not at intent to play.
