@@ -11,6 +11,14 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ### Fixed
 
+- **macOS: Jarvis Bar hover controls now react and remain stable.** The
+  non-activating Qt panel could miss mouse-move events, while replacing its
+  alpha input mask emitted a false leave as the pill expanded. The result was
+  an unresponsive or flickering hover state whose close and microphone controls
+  could not be used reliably. The panel now explicitly accepts mouse movement
+  and reconciles the real cursor against a stable pill footprint, preserving
+  distinct mouse-out and mouse-over visuals during idle, listening, thinking,
+  and speaking states (BUG-095).
 - **macOS: the Jarvis Bar now follows the Dock's real visibility instead of an
   invisible work-area boundary.** Fullscreen Spaces can hide the Dock while Qt
   continues to reserve its 57-pixel strip, which prevented the bar from being

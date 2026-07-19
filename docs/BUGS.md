@@ -6532,3 +6532,51 @@ occupancy. For overlays that may enter fullscreen content, keep user intent
 separate from temporary collision avoidance, preserve unrelated safe-area edges,
 and detect the obstacle's live presentation state through a capability-gated
 native probe. Never persist a transient clamp as the user's new preference.
+
+---
+
+## BUG-095: macOS Jarvis Bar hover effects and controls do not react reliably (HIGH, FIXED 2026-07-19)
+
+**Symptom (physical-Mac field report).** Moving the pointer onto the Qt Jarvis
+Bar often produced no visible hover transition. When it did transition, the
+expanded state could disappear immediately, leaving the close and microphone
+controls unavailable. The failure affected both the idle pill and active voice
+states, so macOS did not expose the same clear mouse-out versus mouse-over
+presentation as the established desktop surface.
+
+**Root cause.** Two native behaviors compounded. First, the non-activating
+`NSPanel` did not explicitly request mouse-move delivery, so Cocoa could omit an
+Enter or Move notification while another application remained active. Second,
+BUG-093 correctly constrained hit testing to the current non-transparent pixels,
+but the input mask changes on every eased pill-size transition. Cocoa can emit a
+Leave while replacing that mask even though the physical pointer is still over
+the bar. The old Qt handlers trusted every Enter and Leave synchronously, so one
+false Leave reversed the hover animation and shrank the hit region beneath the
+pointer.
+
+**Fix.** The native panel now accepts mouse-moved events without becoming key or
+activating its helper process. A lightweight 32 ms UI timer also reads Qt's real
+global cursor position, which covers stationary pointers and omitted native
+notifications. The collapsed state's current alpha mask remains the acquisition
+region, so transparent padding still passes through and cannot trigger hover.
+After acquisition, a deterministic target-pill footprint retains the state while
+the pill expands. Leaving that footprint restores the normal presentation. The
+same state machine runs in idle, listen, think, and speak modes; hiding the
+surface clears hover, and an active drag cannot leave stale controls behind.
+
+**Guards.** Qt surface tests prove the non-activating native panel requests mouse
+movement, transparent padding cannot acquire hover, mask churn cannot cancel a
+real hover, leaving the visible pill restores the non-hover state, hiding clears
+stale state, and all four voice modes follow the same two-state contract. The
+renderer suite separately proves that the mouse-over frame differs visually in
+idle, listening, thinking, and speaking modes. A physical Cocoa smoke placed a
+temporary bar under a stationary cursor and then moved the window away, observing
+`idle_over=True`, `speak_over=True`, and `speak_out=False` without activating the
+helper application.
+
+**Class rule.** Do not treat toolkit Enter/Leave notifications as authoritative
+when the window's native hit-test region changes under the pointer. Acquire only
+through visible pixels, retain against a stable intended interaction footprint,
+and reconcile with the real cursor. Non-activating overlays must explicitly
+prove both states in every visual mode: pointer outside means normal rendering;
+pointer on the bar means controls visible and usable.

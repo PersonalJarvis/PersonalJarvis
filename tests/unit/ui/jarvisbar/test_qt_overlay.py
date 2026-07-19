@@ -30,6 +30,22 @@ class _Rect:
     def height(self) -> int:
         return self._values[3]
 
+    def contains(self, point: _Point) -> bool:
+        x, y, width, height = self._values
+        return x <= point.x() < x + width and y <= point.y() < y + height
+
+
+class _Point:
+    def __init__(self, x: int, y: int) -> None:
+        self._x = x
+        self._y = y
+
+    def x(self) -> int:
+        return self._x
+
+    def y(self) -> int:
+        return self._y
+
 
 def test_surface_state_is_safe_before_qt_is_started(
     monkeypatch: pytest.MonkeyPatch,
@@ -341,6 +357,153 @@ def test_non_cocoa_qt_backend_never_enters_the_appkit_bridge(
     surface._configure_macos_nonactivating_window_ui()  # noqa: SLF001
 
     assert surface._native_window is None  # noqa: SLF001
+
+
+def test_macos_native_panel_accepts_mouse_moves_without_activation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _App:
+        @staticmethod
+        def platformName() -> str:  # noqa: N802 - Qt-compatible double
+            return "cocoa"
+
+    class _Window:
+        @staticmethod
+        def winId() -> int:  # noqa: N802 - Qt-compatible double
+            return 42
+
+    class _NativeWindow:
+        def __init__(self) -> None:
+            self.accepts_mouse_moves = False
+
+        @staticmethod
+        def styleMask() -> int:  # noqa: N802 - AppKit-compatible double
+            return 0
+
+        def setStyleMask_(self, _mask: int) -> None: ...
+
+        def setBecomesKeyOnlyIfNeeded_(self, _enabled: bool) -> None: ...
+
+        def setHidesOnDeactivate_(self, _enabled: bool) -> None: ...
+
+        def setAcceptsMouseMovedEvents_(self, enabled: bool) -> None:
+            self.accepts_mouse_moves = enabled
+
+    native_window = _NativeWindow()
+    native_view = SimpleNamespace(window=lambda: native_window)
+    monkeypatch.setattr(qt_overlay.sys, "platform", "darwin")
+    monkeypatch.setitem(
+        sys.modules,
+        "objc",
+        SimpleNamespace(objc_object=lambda **_kwargs: native_view),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "AppKit",
+        SimpleNamespace(NSWindowStyleMaskNonactivatingPanel=128),
+    )
+    surface = qt_overlay.QtJarvisBarOverlay()
+    surface._app = _App()  # type: ignore[assignment] # noqa: SLF001
+    surface._window = _Window()  # type: ignore[assignment] # noqa: SLF001
+
+    surface._configure_macos_nonactivating_window_ui()  # noqa: SLF001
+
+    assert surface._native_window is native_window  # noqa: SLF001
+    assert native_window.accepts_mouse_moves is True
+
+
+@pytest.mark.parametrize("mode", ["idle", "listen", "think", "speak"])
+def test_hover_poll_tracks_distinct_mouse_out_and_mouse_over_states(
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    class _Mask:
+        @staticmethod
+        def contains(point: _Point) -> bool:
+            center_x = renderer.WIN_W // 2
+            center_y = round(renderer.pill_center_y(renderer.COLLAPSED_H))
+            return _Rect(center_x - 5, center_y - 3, 10, 6).contains(point)
+
+    class _Window:
+        def __init__(self) -> None:
+            self.updates = 0
+
+        @staticmethod
+        def isVisible() -> bool:  # noqa: N802 - Qt-compatible double
+            return True
+
+        @staticmethod
+        def mapFromGlobal(point: _Point) -> _Point:  # noqa: N802 - Qt-compatible double
+            return point
+
+        @staticmethod
+        def rect() -> _Rect:
+            return _Rect(0, 0, renderer.WIN_W, renderer.WIN_H)
+
+        def update(self) -> None:
+            self.updates += 1
+
+    center_x = renderer.WIN_W // 2
+    center_y = round(renderer.pill_center_y(renderer.COLLAPSED_H))
+    cursor = [_Point(center_x, center_y)]
+    monkeypatch.setattr(
+        qt_overlay,
+        "_qt",
+        lambda: SimpleNamespace(
+            QtGui=SimpleNamespace(
+                QCursor=SimpleNamespace(pos=lambda: cursor[0]),
+            )
+        ),
+    )
+    window = _Window()
+    surface = qt_overlay.QtJarvisBarOverlay()
+    surface._mode = mode  # noqa: SLF001
+    surface._window = window  # type: ignore[assignment] # noqa: SLF001
+    surface._input_mask = _Mask()  # type: ignore[assignment] # noqa: SLF001
+
+    surface._poll_hover_ui()  # noqa: SLF001
+    assert surface._hovered is True  # noqa: SLF001
+
+    # A point outside the collapsed acquisition mask but inside the stable
+    # hovered pill must survive Cocoa's spurious Leave during setMask().
+    hovered_w, hovered_h = renderer.target_pill_size(mode, True)
+    cursor[0] = _Point(
+        round(center_x - hovered_w / 2.0 + 3),
+        round(renderer.pill_center_y(hovered_h)),
+    )
+    surface._hover_leave_ui()  # noqa: SLF001
+    assert surface._hovered is True  # noqa: SLF001
+
+    # Transparent fixed-window padding is not the bar: leaving the hovered
+    # pill must restore the non-hover state in every voice mode.
+    cursor[0] = _Point(0, 0)
+    surface._poll_hover_ui()  # noqa: SLF001
+    assert surface._hovered is False  # noqa: SLF001
+    assert window.updates == 2
+
+    # Clear padding cannot acquire hover from the collapsed state.
+    cursor[0] = _Point(0, 0)
+    surface._poll_hover_ui()  # noqa: SLF001
+    assert surface._hovered is False  # noqa: SLF001
+
+
+def test_hover_poll_clears_stale_state_when_surface_is_hidden(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    surface = qt_overlay.QtJarvisBarOverlay()
+    surface._hovered = True  # noqa: SLF001
+    surface._desired_visible = False  # noqa: SLF001
+    monkeypatch.setattr(
+        surface,
+        "_pointer_over_bar_ui",
+        lambda: (_ for _ in ()).throw(
+            AssertionError("hidden surface must not inspect the cursor")
+        ),
+    )
+
+    surface._poll_hover_ui()  # noqa: SLF001
+
+    assert surface._hovered is False  # noqa: SLF001
 
 
 def test_clicks_are_forwarded_to_parent_owned_callbacks() -> None:

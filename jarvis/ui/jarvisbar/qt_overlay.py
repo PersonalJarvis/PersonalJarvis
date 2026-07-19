@@ -45,6 +45,8 @@ AUDIBLE_HOLD_S = 0.5
 TARGET_FRAME_MS = 16
 UI_QUEUE_INTERVAL_MS = 20
 Z_ORDER_GUARD_INTERVAL_MS = 500
+HOVER_POLL_INTERVAL_MS = 32
+HOVER_HIT_SLOP_PX = 2
 DRAG_THRESHOLD_PX = 16
 MARGIN_PX = 12
 TASKBAR_GAP_PX = 8
@@ -282,15 +284,11 @@ def _window_class() -> type:
                 painter.end()
 
         def enterEvent(self, event: Any) -> None:  # noqa: N802 - Qt override
-            self._owner._hovered = True
-            self._owner._invalidate_static_frame()
-            self.update()
+            self._owner._hover_enter_ui()
             super().enterEvent(event)
 
         def leaveEvent(self, event: Any) -> None:  # noqa: N802 - Qt override
-            self._owner._hovered = False
-            self._owner._invalidate_static_frame()
-            self.update()
+            self._owner._hover_leave_ui()
             super().leaveEvent(event)
 
         def mousePressEvent(self, event: Any) -> None:  # noqa: N802 - Qt override
@@ -300,6 +298,9 @@ def _window_class() -> type:
             super().mousePressEvent(event)
 
         def mouseMoveEvent(self, event: Any) -> None:  # noqa: N802 - Qt override
+            # A native mouse move is also proof that the pointer reached the
+            # masked bar, even if a non-activating NSPanel omitted Enter.
+            self._owner._hover_enter_ui()
             if self._owner._mouse_move_ui(event):
                 event.accept()
                 return
@@ -364,6 +365,7 @@ class QtJarvisBarOverlay:
         self._frame_timer: Any = None
         self._queue_timer: Any = None
         self._z_timer: Any = None
+        self._hover_timer: Any = None
         self._native_window: Any = None
         self._x = 0
         self._y = 0
@@ -535,6 +537,15 @@ class QtJarvisBarOverlay:
         self._z_timer.timeout.connect(self._z_order_guard_ui)
         self._z_timer.start()
 
+        # A changing alpha mask can make Cocoa emit Leave while the pointer is
+        # still inside the fixed bar window. Polling the real global cursor is
+        # the authoritative hover signal and also covers non-activating panels
+        # that omit Enter/Move notifications.
+        self._hover_timer = q.QtCore.QTimer(self._window)
+        self._hover_timer.setInterval(HOVER_POLL_INTERVAL_MS)
+        self._hover_timer.timeout.connect(self._poll_hover_ui)
+        self._hover_timer.start()
+
         # Submit a complete RGBA frame before the first map.  Qt's translucent
         # backing already starts clear, and paintEvent replaces it atomically.
         self._render_frame_ui()
@@ -637,6 +648,7 @@ class QtJarvisBarOverlay:
         if self._desired_visible and not self._startup_gated:
             self._do_show_ui()
         else:
+            self._set_hovered_ui(False)
             self._window.hide()
 
     def _do_show_ui(self) -> None:
@@ -698,6 +710,9 @@ class QtJarvisBarOverlay:
             )
             native_window.setBecomesKeyOnlyIfNeeded_(True)
             native_window.setHidesOnDeactivate_(False)
+            # WindowDoesNotAcceptFocus keeps the panel non-activating; it must
+            # still request mouse-move delivery so hover controls can react.
+            native_window.setAcceptsMouseMovedEvents_(True)
             self._native_window = native_window
         except Exception:  # noqa: BLE001 - topmost is cosmetic; focus safety wins
             # WindowStaysOnTopHint still supplies the normal ordering. Do not
@@ -727,7 +742,12 @@ class QtJarvisBarOverlay:
             log.debug("Qt Jarvis Bar feedback publisher failed", exc_info=True)
 
     def _stop_ui(self) -> None:
-        for timer in (self._frame_timer, self._queue_timer, self._z_timer):
+        for timer in (
+            self._frame_timer,
+            self._queue_timer,
+            self._z_timer,
+            self._hover_timer,
+        ):
             if timer is not None:
                 timer.stop()
         if self._window is not None:
@@ -739,6 +759,76 @@ class QtJarvisBarOverlay:
     # ------------------------------------------------------------------
     # Position, drag, and gestures
     # ------------------------------------------------------------------
+    def _set_hovered_ui(self, hovered: bool) -> bool:
+        """Apply one stable hover transition and request a fresh frame."""
+        hovered = bool(hovered)
+        if hovered == self._hovered:
+            return False
+        self._hovered = hovered
+        self._invalidate_static_frame()
+        if self._window is not None:
+            self._window.update()
+        return True
+
+    def _pointer_over_bar_ui(self) -> bool:
+        """Read the real cursor, retaining hover across transparent-mask churn.
+
+        Before entry, only the current opaque mask acquires hover so clear
+        window padding remains inert. Once acquired, the stable target pill
+        footprint becomes the retention area. That lets the pill expand beneath
+        the pointer without a mask-generated Leave collapsing it again, while a
+        pointer that genuinely leaves the visible bar restores the normal state.
+        """
+        window = self._window
+        if window is None or not window.isVisible():
+            return False
+        try:
+            q = _qt()
+            local = window.mapFromGlobal(q.QtGui.QCursor.pos())
+            if self._hovered:
+                return self._point_in_hover_footprint_ui(local)
+            input_mask = self._input_mask
+            if input_mask is None:
+                return False
+            return bool(input_mask.contains(local))
+        except Exception:  # noqa: BLE001 - hover is cosmetic and fail-closed
+            return False
+
+    def _point_in_hover_footprint_ui(self, point: Any) -> bool:
+        """Return whether ``point`` is inside the stable hovered pill bounds."""
+        pill_w, pill_h = renderer.target_pill_size(
+            self._mode,
+            hovered=True,
+            muted=self._muted,
+        )
+        center_x = renderer.WIN_W / 2.0
+        center_y = renderer.pill_center_y(float(pill_h))
+        slop = HOVER_HIT_SLOP_PX
+        x = float(point.x())
+        y = float(point.y())
+        return (
+            center_x - pill_w / 2.0 - slop
+            <= x
+            < center_x + pill_w / 2.0 + slop
+            and center_y - pill_h / 2.0 - slop
+            <= y
+            < center_y + pill_h / 2.0 + slop
+        )
+
+    def _poll_hover_ui(self) -> None:
+        if self._startup_gated or not self._desired_visible:
+            self._set_hovered_ui(False)
+            return
+        self._set_hovered_ui(self._pointer_over_bar_ui())
+
+    def _hover_enter_ui(self) -> None:
+        self._set_hovered_ui(True)
+
+    def _hover_leave_ui(self) -> None:
+        # Never trust a raw Leave generated by replacing the native mask. The
+        # cursor poll collapses only after the pointer exits the stable pill.
+        self._poll_hover_ui()
+
     def _geometry_for_screen_ui(
         self,
         screen: Any,
