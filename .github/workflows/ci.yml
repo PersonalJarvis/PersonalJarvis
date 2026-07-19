@@ -138,6 +138,22 @@ jobs:
           fi
           python -m pip install -e ".[telephony]"
 
+      # The monolithic Windows process reached these stateful session tests at
+      # 68%, then spent the rest of the 30-minute job budget in this two-file
+      # block. Run it first in a fresh process with strict exit semantics and
+      # named progress: a real regression stays blocking, while cross-suite
+      # state cannot hide the remaining Windows coverage behind a timeout.
+      - name: Windows realtime session isolation (BLOCKING)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          python -m pytest \
+            tests/unit/realtime/test_session.py \
+            tests/unit/realtime/test_session_self_echo.py \
+            -v -p no:cacheprovider \
+            -m "not skip_ci and not slow and not openclaw_live and not voice_latency and not eval" \
+            --junitxml=realtime-session-report.xml
+
       - name: pytest (JUnit XML)
         shell: bash
         run: |
@@ -147,7 +163,14 @@ jobs:
           # (drop the `|| echo` and pass --strict) only once the backlog is
           # actually green cross-platform — flipping strict first turned the
           # v1.0.6 release head red on 133 long-tolerated failures.
-          python -m pytest tests/ -q -p no:cacheprovider \
+          extra_pytest_args=()
+          if [ "${{ matrix.os }}" = "windows-latest" ]; then
+            extra_pytest_args+=(
+              --ignore=tests/unit/realtime/test_session.py
+              --ignore=tests/unit/realtime/test_session_self_echo.py
+            )
+          fi
+          python -m pytest tests/ "${extra_pytest_args[@]}" -q -p no:cacheprovider \
             -m "not skip_ci and not slow and not openclaw_live and not voice_latency and not eval" \
             --continue-on-collection-errors \
             --junitxml=report.xml \
