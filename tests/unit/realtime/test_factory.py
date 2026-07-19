@@ -187,3 +187,41 @@ def test_build_passes_every_keyed_family_for_handshake_fallback(monkeypatch):
         "gemini-live",
     ]
     assert session._half_duplex is True
+
+
+def test_same_family_delegate_chain_logs_ap22_warning(caplog):
+    """BUG-089: realtime + whole brain chain on ONE family = one quota hit
+    silences both tiers; the build names the risk and the in-app fix."""
+    import logging
+
+    from jarvis.realtime.factory import _warn_on_same_family_delegate_chain
+
+    cfg = SimpleNamespace(
+        brain=SimpleNamespace(
+            primary="gemini",
+            deep_brain="antigravity",
+            routing_provider="gemini",
+            local_fallback="gemini",
+        )
+    )
+    with caplog.at_level(logging.WARNING, logger="jarvis.realtime.factory"):
+        _warn_on_same_family_delegate_chain(cfg, "gemini-live")
+    assert any("AP-22" in record.message for record in caplog.records)
+
+
+def test_cross_family_delegate_chain_stays_quiet(caplog):
+    import logging
+
+    from jarvis.realtime.factory import _warn_on_same_family_delegate_chain
+
+    cfg = SimpleNamespace(
+        brain=SimpleNamespace(
+            primary="gemini",
+            deep_brain=None,
+            routing_provider="claude-api",
+            local_fallback="openrouter",
+        )
+    )
+    with caplog.at_level(logging.WARNING, logger="jarvis.realtime.factory"):
+        _warn_on_same_family_delegate_chain(cfg, "gemini-live")
+    assert not [record for record in caplog.records if "AP-22" in record.message]

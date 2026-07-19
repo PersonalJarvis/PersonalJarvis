@@ -76,6 +76,65 @@ def realtime_available_provider(cfg: Any) -> str | None:
     return str(getattr(provider, "name", "") or "") or None
 
 
+def _provider_family(provider_id: str) -> str:
+    """Credential/quota family of a provider id (AP-22 diagnostics only)."""
+    pid = (provider_id or "").strip().lower()
+    aliases = {
+        "codex": "openai",
+        "openai-api": "openai",
+        "openai-realtime": "openai",
+        "antigravity": "gemini",
+        "gemini-live": "gemini",
+        "google": "gemini",
+        "claude-api": "anthropic",
+        "claude-code": "anthropic",
+    }
+    return aliases.get(pid, pid.split("-")[0])
+
+
+def _warn_on_same_family_delegate_chain(cfg: Any, realtime_provider: str) -> None:
+    """AP-22 visibility: one quota hit must not kill realtime AND the brain.
+
+    When every configured brain provider resolves to the realtime provider's
+    own credential family, a single 429/402 after turn one takes down BOTH
+    tiers at once — the provider-down half of the Mac 2026-07-18 self-talk
+    loop (BUG-089). Log-only by design: chain resolution stays key-aware and
+    realtime-scoped (strict mode separation), so the durable fix is a key of
+    another family, added in-app.
+    """
+    try:
+        realtime_family = _provider_family(realtime_provider)
+        brain_cfg = getattr(cfg, "brain", None)
+        chain = [
+            entry
+            for entry in (
+                str(value or "").strip()
+                for value in (
+                    getattr(brain_cfg, "primary", None),
+                    getattr(brain_cfg, "deep_brain", None),
+                    getattr(brain_cfg, "routing_provider", None),
+                    getattr(brain_cfg, "local_fallback", None),
+                )
+            )
+            if entry
+        ]
+        if not realtime_family or not chain:
+            return
+        if all(_provider_family(entry) == realtime_family for entry in chain):
+            log.warning(
+                "AP-22: the realtime provider %r and EVERY configured brain "
+                "provider (%s) share the %r credential family — one quota or "
+                "auth failure silences both tiers at once. Add an API key of "
+                "a different family in the API-Keys view to give the "
+                "delegate chain a cross-family fallback.",
+                realtime_provider,
+                ", ".join(sorted(set(chain))),
+                realtime_family,
+            )
+    except Exception:  # noqa: BLE001, S110 — diagnostics must never block the build
+        pass
+
+
 def build_realtime_session(
     *,
     cfg: Any,
@@ -101,6 +160,9 @@ def build_realtime_session(
         if not providers:
             log.info("Realtime voice has no credential-ready provider; using pipeline mode.")
             return None
+        _warn_on_same_family_delegate_chain(
+            cfg, str(getattr(providers[0], "name", "") or "")
+        )
 
         from jarvis.realtime.session import RealtimeVoiceSession
 
