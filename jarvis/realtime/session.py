@@ -828,6 +828,13 @@ class RealtimeVoiceSession:
         self._last_audio_emit_monotonic = 0.0
         self._last_audio_emit_turn = ""
         self._embedded_silence_ms = 0.0
+        # A write-only transport stall does not necessarily wake the provider
+        # receive iterator. Queue a rebuild request for the long-lived pump so
+        # it can cancel that iterator and reopen the session without ending the
+        # desktop microphone task (BUG-071 follow-up).
+        self._transport_rebuild_requests: asyncio.Queue[tuple[Any, str]] = (
+            asyncio.Queue()
+        )
         # Monotonic timestamps of in-place transport rebuilds (BUG-071),
         # pruned to the rolling _TRANSPORT_REBUILD_WINDOW_S budget window.
         self._transport_rebuild_times: list[float] = []
@@ -1061,9 +1068,10 @@ class RealtimeVoiceSession:
             return
         if not pcm16:
             return
+        target_session = self._session
         try:
             await asyncio.wait_for(
-                self._session.send_audio(
+                target_session.send_audio(
                     AudioChunk(
                         pcm=pcm16,
                         sample_rate=self._input_sample_rate,
@@ -1077,6 +1085,23 @@ class RealtimeVoiceSession:
                 "Realtime provider stopped accepting microphone audio within "
                 f"{_AUDIO_SEND_TIMEOUT_S:.1f}s."
             )
+            if self._transport_death_is_rebuildable(session=target_session):
+                await self._publish_error(
+                    "RealtimeAudioSendTimeout",
+                    message,
+                    recoverable=True,
+                )
+                self._transport_rebuild_requests.put_nowait(
+                    (target_session, message)
+                )
+                log.warning(
+                    "realtime[%s] microphone audio send stalled — requesting "
+                    "an in-place transport rebuild",
+                    self.session_id,
+                )
+                # This frame is already lost. Keep the microphone producer
+                # alive while the session pump swaps in a fresh transport.
+                return
             self._failure_detail = message
             self._failed.set()
             await self._publish_error(
@@ -1237,7 +1262,7 @@ class RealtimeVoiceSession:
         ending the whole session with reason=error.
         """
         while True:
-            rebuild_detail = await self._pump_transport_once()
+            rebuild_detail = await self._pump_transport_or_rebuild_request()
             if rebuild_detail is None or self._ended or self._hangup_reason:
                 return
             if self._end_after_turn:
@@ -1248,6 +1273,61 @@ class RealtimeVoiceSession:
                 return
             if not await self._rebuild_transport(detail=rebuild_detail):
                 return
+
+    async def _pump_transport_or_rebuild_request(self) -> str | None:
+        """Run one receive pass until it ends or an audio write stalls.
+
+        A provider socket can remain blocked in ``receive()`` after its write
+        side stops accepting microphone frames. Keeping this arbitration
+        inside the existing pump task preserves ``wait_finished()`` semantics:
+        a successful reconnect never looks like the whole voice call ended.
+        """
+        transport_task = asyncio.create_task(
+            self._pump_transport_once(),
+            name=f"rt-transport-{self.session_id}",
+        )
+        try:
+            while True:
+                request_task = asyncio.create_task(
+                    self._transport_rebuild_requests.get(),
+                    name=f"rt-rebuild-request-{self.session_id}",
+                )
+                try:
+                    done, _pending = await asyncio.wait(
+                        {transport_task, request_task},
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+                    if request_task in done:
+                        target_session, detail = request_task.result()
+                        self._transport_rebuild_requests.task_done()
+                        if (
+                            target_session is self._session
+                            and self._transport_death_is_rebuildable(
+                                session=target_session
+                            )
+                        ):
+                            if not transport_task.done():
+                                transport_task.cancel()
+                            await asyncio.gather(
+                                transport_task,
+                                return_exceptions=True,
+                            )
+                            return detail
+                        # A normal receive-side rebuild may have won the race.
+                        # Discard that old session's queued write-stall signal
+                        # and keep the current transport pass alive.
+                        if transport_task in done:
+                            return await transport_task
+                        continue
+                    return await transport_task
+                finally:
+                    if not request_task.done():
+                        request_task.cancel()
+                    await asyncio.gather(request_task, return_exceptions=True)
+        finally:
+            if not transport_task.done():
+                transport_task.cancel()
+            await asyncio.gather(transport_task, return_exceptions=True)
 
     async def _pump_transport_once(self) -> str | None:
         """Run one provider transport to its end.
@@ -2012,19 +2092,20 @@ class RealtimeVoiceSession:
                 pass
         return None
 
-    def _transport_death_is_rebuildable(self) -> bool:
+    def _transport_death_is_rebuildable(self, *, session: Any | None = None) -> bool:
         """Whether the just-died transport may be rebuilt in place (BUG-071).
 
         Opt-in per provider session — a capability attribute, never a
         provider name (AP-21): adapters that self-heal internally (the
         openai_realtime BUG-064 stack declares terminal deliberately) keep
         today's terminal semantics. A deliberate end (session ended, voice
-        hangup) or an already-failed session (e.g. the microphone send
-        timeout marked it dead) is never rebuilt; the acknowledged-end_call
-        case is converted to a hangup by the pump loop.
+        hangup) or an already-failed session is never rebuilt; the
+        acknowledged-end_call case is converted to a hangup by the pump loop.
         """
+        candidate = self._session if session is None else session
         return (
-            bool(getattr(self._session, "rebuild_on_transport_death", False))
+            candidate is self._session
+            and bool(getattr(candidate, "rebuild_on_transport_death", False))
             and not self._ended
             and not self._hangup_reason
             and not self._failed.is_set()

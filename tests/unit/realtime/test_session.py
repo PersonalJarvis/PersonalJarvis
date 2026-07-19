@@ -4605,6 +4605,14 @@ class StayOpenSession(FakeSession):
         self._released.set()
 
 
+class WriteStalledSession(StayOpenSession):
+    """Keep receiving while microphone writes block forever."""
+
+    async def send_audio(self, chunk):
+        del chunk
+        await asyncio.Event().wait()
+
+
 class RebuildingProvider(FakeProvider):
     """Serve a scripted sequence of session objects, one per open_session."""
 
@@ -4682,6 +4690,46 @@ async def test_transport_death_rebuilds_the_session_in_place():
     assert not sess.failed
     assert [m for m in jsons if m.get("type") == "provider_error"] == []
     assert len([m for m in jsons if m.get("type") == "audio_ready"]) == 2
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_audio_send_timeout_rebuilds_without_ending_the_call(monkeypatch):
+    """A write-only Gemini stall must heal even while receive stays open."""
+    import jarvis.realtime.session as session_module
+
+    monkeypatch.setattr(session_module, "_AUDIO_SEND_TIMEOUT_S", 0.01)
+    provider = RebuildingProvider(
+        [
+            lambda: WriteStalledSession([]),
+            lambda: StayOpenSession([]),
+        ]
+    )
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="rebuild-audio-send-timeout",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda message: jsons.append(message) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+        browser_sample_rate=16_000,
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    pump = sess._pump_task
+
+    await sess.handle_audio_frame(b"\x00\x01" * 16)
+    await _wait_until(lambda: provider.open_calls == 2)
+
+    assert sess._pump_task is pump
+    assert pump is not None and not pump.done()
+    assert not sess.failed
+    assert provider.sessions[0].closed
+    assert len([item for item in jsons if item.get("type") == "audio_ready"]) == 2
+
+    await sess.handle_audio_frame(b"\x02\x03" * 16)
+    assert len(provider.sessions[1].sent_audio) == 1
+
     await sess.end(reason="test")
 
 
