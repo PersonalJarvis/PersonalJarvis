@@ -77,7 +77,7 @@ Under **Bar & Overlay > Appearance**, choose one of these display styles:
 | Style | What you see | Important limit |
 |---|---|---|
 | **Bar (default)** | A slim status bar for idle, listening, thinking, and speaking states | Available on a supported graphical desktop |
-| **Mascot orb** | The classic on-screen mascot during voice activity | Not available on macOS; a change from another real style normally needs a restart |
+| **Mascot orb** | The classic on-screen mascot during voice activity | Available on a supported graphical desktop; a change from another real style normally needs a restart |
 | **None (hidden)** | No on-screen voice surface | Hiding the current surface can usually apply live |
 
 1. Select the preview card for the style you want.
@@ -87,9 +87,9 @@ Under **Bar & Overlay > Appearance**, choose one of these display styles:
 4. If the restart is refused because missions are running, wait for them to
    finish. Use a forced restart only when you accept that those runs will stop.
 
-On macOS, the Jarvis Bar runs in a separate desktop companion process, while
-the Mascot option falls back to no visible surface. On a machine without a
-display, all styles are saved for a later graphical start but cannot appear
+On macOS, both the Jarvis Bar and the Mascot run in a separate desktop
+companion process so Aqua-Tk owns the process main thread. On a machine without
+a display, all styles are saved for a later graphical start but cannot appear
 immediately.
 
 ### Adjust Bar and Sound Behavior

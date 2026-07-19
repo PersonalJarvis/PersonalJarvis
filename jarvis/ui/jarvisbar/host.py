@@ -19,14 +19,16 @@ Protocol (UTF-8, one JSON object per line):
   optional ``"mascot_path"`` passthrough).
   stdin EOF means the parent died or shut down → the host stops the bar and
   exits, so no ownerless bar can linger on the user's desktop.
-- child → parent (stdout): events — ``{"event": "ready"}`` once the Tk root
-  is initialized, plus user interactions (``mute_toggle``, ``feedback``,
-  ``show_window``). Logging goes to stderr so stdout stays pure protocol.
+- child → parent (stdout): events — ``{"event": "ready"}`` once the surface
+  is initialized, plus user interactions (``talk``, ``hangup``,
+  ``mute_toggle``, ``feedback``, ``show_window``). Logging goes to stderr so
+  stdout stays pure protocol.
 
 The host works on every OS (the parent simply only uses it where in-process
 hosting is impossible). ``JARVIS_BAR_HOST_FAKE=1`` swaps the Tk bar for an
 echo double so the full cross-process pipeline is testable without a display.
 """
+
 from __future__ import annotations
 
 import contextlib
@@ -194,6 +196,9 @@ class _EchoBar:
         self._stop_evt.set()
 
     def set_on_mute_toggle(self, cb: Any) -> None: ...
+    def set_on_voice_action(self, cb: Any) -> None: ...
+    def set_on_talk(self, cb: Any) -> None: ...
+    def set_on_hangup(self, cb: Any) -> None: ...
     def set_feedback_publisher(self, cb: Any) -> None: ...
     def set_on_show_window(self, cb: Any) -> None: ...
 
@@ -274,8 +279,7 @@ def _import_orb_overlay() -> Any:
         from ui.orb.overlay import OrbOverlay
     except Exception as exc:  # noqa: BLE001
         log.error(
-            "mascot-host: cannot import OrbOverlay (%s) — exiting so the "
-            "parent can degrade",
+            "mascot-host: cannot import OrbOverlay (%s) — exiting so the parent can degrade",
             exc,
         )
         raise SystemExit(3) from exc
@@ -285,9 +289,13 @@ def _import_orb_overlay() -> Any:
 def _build_surface(cfg: dict[str, Any]) -> Any:
     if os.environ.get("JARVIS_BAR_HOST_FAKE") == "1":
         return _EchoBar()
-    if sys.platform == "darwin":
-        _hide_dock_icon()
-    if str(cfg.get("surface", "jarvis_bar")) == "mascot":
+    surface_name = str(cfg.get("surface", "jarvis_bar"))
+    if surface_name == "mascot":
+        if sys.platform == "darwin":
+            # The mascot still uses Aqua-Tk, whose TKApplication bootstrap
+            # must precede AppKit (BUG-074). The Qt bar below deliberately
+            # skips this: QApplication must own its own Cocoa lifecycle.
+            _hide_dock_icon()
         orb_overlay_cls = _import_orb_overlay()
         return orb_overlay_cls(
             sticky=False,
@@ -295,14 +303,53 @@ def _build_surface(cfg: dict[str, Any]) -> Any:
             style="mascot",
             mascot_path=cfg.get("mascot_path") or None,
         )
+    kwargs = {
+        key: cfg[key] for key in ("persistent", "accent", "opacity", "startup_gated") if key in cfg
+    }
+    if sys.platform == "darwin":
+        # Aqua-Tk 9 composites RGBA Canvas images with SourceOver semantics:
+        # transparent pixels neither clear its black backing nor erase the
+        # previous animation frame. Use Qt's real translucent backing and
+        # full-frame CompositionMode_Source replacement on macOS only.
+        # Windows/Linux retain their proven Tk color-key implementation.
+        from jarvis.ui.jarvisbar.qt_overlay import QtJarvisBarOverlay
+
+        return QtJarvisBarOverlay(**kwargs)
+
     from jarvis.ui.jarvisbar.overlay import JarvisBarOverlay
 
-    kwargs = {
-        key: cfg[key]
-        for key in ("persistent", "accent", "opacity", "startup_gated")
-        if key in cfg
-    }
     return JarvisBarOverlay(**kwargs)
+
+
+def _wire_surface_events(surface: Any) -> None:
+    """Forward child-owned UI actions to the parent over stdout.
+
+    Talk and hang-up cannot use ``runtime_refs`` in this process: the live
+    SpeechPipeline is registered in the parent desktop process. ``_call``
+    keeps mascot and protocol-double surfaces that lack a bar-only setter
+    compatible with the shared host.
+    """
+
+    def _emit_voice_action(action: str) -> None:
+        normalized = str(action).strip().lower()
+        if normalized in {"talk", "hangup"}:
+            emit(normalized)
+        else:
+            log.warning("bar-host: dropping unknown voice action %r", action)
+
+    # Qt exposes the compact action callback; Tk keeps the two explicit
+    # setters. Wiring both is safe because each surface invokes only the
+    # callback contract it implements.
+    _call(surface, "set_on_voice_action", _emit_voice_action)
+    _call(surface, "set_on_talk", lambda: emit("talk"))
+    _call(surface, "set_on_hangup", lambda: emit("hangup"))
+    _call(surface, "set_on_mute_toggle", lambda: emit("mute_toggle"))
+    _call(
+        surface,
+        "set_feedback_publisher",
+        lambda kind, payload: emit("feedback", kind=kind, payload=payload),
+    )
+    _call(surface, "set_on_show_window", lambda: emit("show_window"))
 
 
 def main() -> int:
@@ -326,23 +373,15 @@ def main() -> int:
         return 2
 
     surface = _build_surface(cfg)
-    surface.set_on_mute_toggle(lambda: emit("mute_toggle"))
-    surface.set_feedback_publisher(
-        lambda kind, payload: emit("feedback", kind=kind, payload=payload)
-    )
-    surface.set_on_show_window(lambda: emit("show_window"))
+    _wire_surface_events(surface)
 
     def _announce_ready() -> None:
         if surface._started.wait(timeout=READY_TIMEOUT_S):  # noqa: SLF001
             emit("ready")
         else:
-            log.error(
-                "bar-host: surface did not initialize within %ss", READY_TIMEOUT_S
-            )
+            log.error("bar-host: surface did not initialize within %ss", READY_TIMEOUT_S)
 
-    threading.Thread(
-        target=_announce_ready, name="barhost-ready", daemon=True
-    ).start()
+    threading.Thread(target=_announce_ready, name="barhost-ready", daemon=True).start()
     threading.Thread(
         target=reader_loop,
         args=(surface, sys.stdin),
@@ -351,8 +390,8 @@ def main() -> int:
         daemon=True,
     ).start()
 
-    # THE point of this process: the Tk mainloop runs on the MAIN thread, the
-    # only thread Aqua-Tk accepts on macOS.
+    # THE point of this process: the platform GUI loop runs on the MAIN thread
+    # (Qt for the macOS bar, Aqua-Tk for the macOS mascot).
     surface.start()
     return 0
 

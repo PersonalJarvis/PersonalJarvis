@@ -6,8 +6,10 @@ dispatch/reader seams in-process with a recording bar, plus one real
 cross-process round-trip using the echo double (JARVIS_BAR_HOST_FAKE=1) so
 the pipes, EOF shutdown and ready handshake are proven without a display.
 """
+
 from __future__ import annotations
 
+import importlib.util
 import io
 import json
 import os
@@ -23,6 +25,12 @@ class _RecordingBar:
     def __init__(self) -> None:
         self.calls: list[tuple] = []
         self._persistent = True
+        self.on_voice_action = None
+        self.on_talk = None
+        self.on_hangup = None
+        self.on_mute_toggle = None
+        self.feedback_publisher = None
+        self.on_show_window = None
 
     def show(self, mode: str = "listen") -> None:
         self.calls.append(("show", mode))
@@ -64,6 +72,24 @@ class _RecordingBar:
     def _on_reset_double_click(self, _event=None) -> None:
         self.calls.append(("reset_position",))
 
+    def set_on_talk(self, callback) -> None:
+        self.on_talk = callback
+
+    def set_on_voice_action(self, callback) -> None:
+        self.on_voice_action = callback
+
+    def set_on_hangup(self, callback) -> None:
+        self.on_hangup = callback
+
+    def set_on_mute_toggle(self, callback) -> None:
+        self.on_mute_toggle = callback
+
+    def set_feedback_publisher(self, callback) -> None:
+        self.feedback_publisher = callback
+
+    def set_on_show_window(self, callback) -> None:
+        self.on_show_window = callback
+
     def stop(self) -> None:
         self.calls.append(("stop",))
 
@@ -103,6 +129,38 @@ def test_dispatch_stop_returns_false_and_unknown_is_tolerated() -> None:
     assert host.dispatch(bar, {"op": "definitely-not-a-real-op"}) is True
 
 
+def test_surface_interactions_are_wired_to_child_events(monkeypatch) -> None:
+    bar = _RecordingBar()
+    emitted: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        host,
+        "emit",
+        lambda event, **payload: emitted.append((event, payload)),
+    )
+
+    host._wire_surface_events(bar)
+    assert bar.on_voice_action is not None
+    assert bar.on_talk is not None
+    assert bar.on_hangup is not None
+    assert bar.on_mute_toggle is not None
+    assert bar.feedback_publisher is not None
+    assert bar.on_show_window is not None
+
+    bar.on_voice_action("talk")
+    bar.on_voice_action("hangup")
+    bar.on_mute_toggle()
+    bar.feedback_publisher("bar", {"value": 1})
+    bar.on_show_window()
+
+    assert emitted == [
+        ("talk", {}),
+        ("hangup", {}),
+        ("mute_toggle", {}),
+        ("feedback", {"kind": "bar", "payload": {"value": 1}}),
+        ("show_window", {}),
+    ]
+
+
 class _SparseSurface:
     """A surface missing several ops (like the mascot OrbOverlay)."""
 
@@ -128,9 +186,7 @@ def test_dispatch_missing_surface_method_is_a_noop() -> None:
 
 def test_reader_loop_survives_ops_the_surface_lacks() -> None:
     surface = _SparseSurface()
-    stream = io.StringIO(
-        '{"op": "set_muted", "muted": true}\n{"op": "show", "mode": "idle"}\n'
-    )
+    stream = io.StringIO('{"op": "set_muted", "muted": true}\n{"op": "show", "mode": "idle"}\n')
     host.reader_loop(surface, stream)
     assert ("show", "idle") in surface.calls
     assert surface.calls[-1] == ("stop",)
@@ -141,33 +197,56 @@ def test_build_surface_mascot_builds_an_orb_overlay(monkeypatch) -> None:
 
     monkeypatch.delenv("JARVIS_BAR_HOST_FAKE", raising=False)
     monkeypatch.setattr(host, "_hide_dock_icon", lambda: None)
-    surface = host._build_surface(
-        {"op": "init", "surface": "mascot", "mascot_path": None}
-    )
+    surface = host._build_surface({"op": "init", "surface": "mascot", "mascot_path": None})
     assert isinstance(surface, OrbOverlay)
 
 
-def test_build_surface_defaults_to_the_jarvis_bar(monkeypatch) -> None:
-    """Regression: an init line without "surface" still builds the bar."""
+def test_build_surface_defaults_to_the_tk_bar_off_macos(monkeypatch) -> None:
+    """Windows/Linux keep the established Tk color-key implementation."""
     from jarvis.ui.jarvisbar.overlay import JarvisBarOverlay
 
     monkeypatch.delenv("JARVIS_BAR_HOST_FAKE", raising=False)
-    monkeypatch.setattr(host, "_hide_dock_icon", lambda: None)
-    surface = host._build_surface(
-        {"op": "init", "persistent": False, "accent": "#123456"}
-    )
+    monkeypatch.setattr(host.sys, "platform", "linux")
+    surface = host._build_surface({"op": "init", "persistent": False, "accent": "#123456"})
     assert isinstance(surface, JarvisBarOverlay)
     assert surface._persistent is False
     assert surface._accent == "#123456"
 
 
+def test_build_surface_uses_qt_bar_on_macos_without_tk_bootstrap(
+    monkeypatch,
+) -> None:
+    """Darwin must never initialize Tk before the Qt Cocoa application."""
+    from jarvis.ui.jarvisbar.qt_overlay import QtJarvisBarOverlay
+
+    monkeypatch.delenv("JARVIS_BAR_HOST_FAKE", raising=False)
+    monkeypatch.setattr(host.sys, "platform", "darwin")
+
+    def fail_tk_bootstrap() -> None:
+        raise AssertionError("macOS Qt bar must not create a Tk bootstrap")
+
+    monkeypatch.setattr(host, "_hide_dock_icon", fail_tk_bootstrap)
+    surface = host._build_surface(
+        {
+            "op": "init",
+            "persistent": False,
+            "accent": "#123456",
+            "opacity": 0.8,
+            "startup_gated": True,
+        }
+    )
+
+    assert isinstance(surface, QtJarvisBarOverlay)
+    assert surface._persistent is False
+    assert surface._accent == "#123456"
+    assert surface._opacity == 0.8
+    assert surface._startup_gated is True
+
+
 def test_reader_loop_survives_junk_and_stops_bar_on_eof() -> None:
     bar = _RecordingBar()
     stream = io.StringIO(
-        "\n"
-        "this is not json\n"
-        '{"op": "show", "mode": "speak"}\n'
-        '{"op": "set_level", "level": 1.0}\n'
+        '\nthis is not json\n{"op": "show", "mode": "speak"}\n{"op": "set_level", "level": 1.0}\n'
     )
     host.reader_loop(bar, stream)  # hard_exit stays None in tests
     assert ("show", "speak") in bar.calls
@@ -223,9 +302,7 @@ def test_host_process_round_trip_with_echo_bar() -> None:
         out, _err = proc.communicate(timeout=30)
         events = [json.loads(line) for line in out.splitlines() if line.strip()]
         echoed = [e for e in events if e.get("event") == "op"]
-        assert any(
-            e.get("op") == "show" and e.get("args") == ["listen"] for e in echoed
-        )
+        assert any(e.get("op") == "show" and e.get("args") == ["listen"] for e in echoed)
         assert proc.returncode == 0
     finally:
         if proc.poll() is None:
@@ -248,21 +325,15 @@ def test_host_process_round_trip_with_mascot_surface() -> None:
     )
     try:
         assert proc.stdin is not None and proc.stdout is not None
-        proc.stdin.write(
-            '{"op": "init", "surface": "mascot", "mascot_path": "assets/m.png"}\n'
-        )
+        proc.stdin.write('{"op": "init", "surface": "mascot", "mascot_path": "assets/m.png"}\n')
         proc.stdin.flush()
         # Wait for the ready handshake before sending ops — otherwise the
         # stop below can end the host before the daemon ready-announce
         # thread ever gets to emit its event.
         ready = json.loads(proc.stdout.readline())
         assert ready.get("event") == "ready"
-        proc.stdin.write(
-            '{"op": "play_animation", "name": "wave", "params": {"x": 1}}\n'
-        )
-        proc.stdin.write(
-            '{"op": "show_listening_transcript", "text": "hi", "duration_ms": 9}\n'
-        )
+        proc.stdin.write('{"op": "play_animation", "name": "wave", "params": {"x": 1}}\n')
+        proc.stdin.write('{"op": "show_listening_transcript", "text": "hi", "duration_ms": 9}\n')
         proc.stdin.write('{"op": "stop"}\n')
         proc.stdin.flush()
         out, _err = proc.communicate(timeout=30)
@@ -275,11 +346,54 @@ def test_host_process_round_trip_with_mascot_surface() -> None:
             for e in echoed
         )
         assert any(
-            e.get("op") == "show_listening_transcript"
-            and e.get("args") == ["hi", 9]
+            e.get("op") == "show_listening_transcript" and e.get("args") == ["hi", 9]
             for e in echoed
         )
         assert proc.returncode == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()
+
+
+@pytest.mark.integration
+@pytest.mark.skipif(
+    sys.platform != "darwin" or importlib.util.find_spec("PySide6") is None,
+    reason="real Darwin Qt host requires PySide6",
+)
+def test_host_process_round_trip_with_qt_bar_offscreen() -> None:
+    """Real macOS host: Qt initializes, renders commands, and exits cleanly."""
+    env = dict(os.environ)
+    env["QT_QPA_PLATFORM"] = "offscreen"
+    proc = subprocess.Popen(
+        [sys.executable, "-m", "jarvis.ui.jarvisbar.host"],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        encoding="utf-8",
+        env=env,
+        cwd=os.getcwd(),
+    )
+    try:
+        assert proc.stdin is not None and proc.stdout is not None
+        proc.stdin.write('{"op":"init","persistent":false,"startup_gated":true}\n')
+        proc.stdin.flush()
+        ready = json.loads(proc.stdout.readline())
+        assert ready.get("event") == "ready"
+
+        for command in (
+            {"op": "release_startup_gate"},
+            {"op": "show", "mode": "speak"},
+            {"op": "set_level", "level": 0.72},
+            {"op": "hide"},
+            {"op": "stop"},
+        ):
+            proc.stdin.write(json.dumps(command) + "\n")
+        proc.stdin.flush()
+        _out, err = proc.communicate(timeout=30)
+
+        assert proc.returncode == 0, err
+        assert "pyimage" not in err.lower()
+        assert "tkinter" not in err.lower()
     finally:
         if proc.poll() is None:
             proc.kill()

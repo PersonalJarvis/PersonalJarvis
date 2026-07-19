@@ -11,6 +11,16 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ### Fixed
 
+- **macOS: the Jarvis Bar is transparent and animation frames no longer pile
+  up.** Aqua-Tk 9 kept an opaque black Canvas backing and composited every new
+  RGBA frame over the old one, producing a rectangle at rest and concentric
+  red/green/gold outlines while speaking. The macOS companion now uses Qt's
+  translucent surface with full-frame alpha replacement; Windows and Linux
+  keep the established Tk color-key path unchanged. Bar clicks are also
+  executed in the parent process again, transparent window padding passes
+  clicks through to the app underneath, the companion no longer steals macOS
+  foreground focus every 500 ms, and parent TTS loudness now reaches the
+  companion equalizer (BUG-093).
 - **macOS: the repeated Keychain password-dialog storm is stopped.** A Control
   key created by an older direct Python launch could make macOS ask for the
   login-keychain password again on every protected request — often dozens of

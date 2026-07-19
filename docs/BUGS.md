@@ -6402,3 +6402,90 @@ model Keychain as one global permission: ownership is per item and anchored to
 the caller's designated requirement. Repair legacy ownership only after one
 user-approved read and only from the verified canonical app; never solve a
 prompt by broadening an ACL to unsigned tools or all applications.
+
+---
+
+## BUG-093: macOS Jarvis Bar has a black rectangle and retains every speaking frame (HIGH, FIXED 2026-07-19)
+
+**Symptom (physical-Mac field report).** Once the missing-image error was fixed,
+the idle pill appeared inside a black rectangular window. Entering an active
+voice state made every eased pill size remain on screen: old outlines formed
+larger concentric red/green/gold capsules around the current frame. The
+rectangle was the fixed `83x37` bar surface; the nested sizes exactly matched
+the renderer's `36x6 -> 53.5x15.5 -> 62.25x20.25 -> ... -> 71x25` transition.
+After the Qt surface removed those visual artifacts, clicks over transparent
+padding around the pill were still swallowed instead of reaching the browser
+or other window underneath. Worse, the companion became macOS' frontmost
+application. Its 500 ms Z-order guard repeatedly reclaimed foreground status,
+so ordinary browser/editor clicks were consumed merely to reactivate that app
+and appeared globally unreliable even when the pointer was nowhere near the
+bar.
+
+**Root cause.** The PIL renderer was correct and returned a complete fresh
+frame each tick. The failure was Aqua-Tk 9's layer-backed Canvas composition:
+an RGBA `PhotoImage` update used source-over behavior, so source pixels with
+alpha zero were no-ops rather than replacements. They could neither erase the
+initial opaque Canvas backing nor clear pixels occupied only by the preceding
+larger frame. Reusing a PhotoImage, deleting/recreating the Canvas item, and
+clearing the `NSWindow` all left the same retained pixels.
+
+BUG-075's AppKit pass was therefore insufficient. The target `NSWindow`, its
+`TKContentView`, and its backing layer were already non-opaque with a clear
+background; the unwanted pixels lived in the Canvas backing store above that
+window background. The separate `master=self._root` fix remains necessary for
+BUG-074's two Tcl interpreters, but it only makes the frames visible and cannot
+change their composition semantics.
+
+**Fix (platform split).** The companion host now selects
+`QtJarvisBarOverlay` on Darwin. It keeps the existing deterministic PIL
+renderer, geometry, modes, startup gate, drag/persistence, opacity, and JSON
+host protocol, but presents each RGBA image on a `WA_TranslucentBackground`
+Qt tool window. Every paint first clears the complete destination under
+`QPainter.CompositionMode_Source`, then draws the new frame. Transparent pixels
+therefore replace old alpha instead of blending over it. Windows and Linux
+still instantiate `JarvisBarOverlay`; their proven Tk color-key/DWM path is not
+changed. The Qt application is created before the host enters macOS accessory
+mode, so no Tk bootstrap is mixed into its Cocoa lifecycle and no extra Dock
+icon is required. Each complete RGBA frame also supplies the top-level Qt
+window's native input mask. Only non-transparent pixels participate in hit
+testing, so the visible pill remains interactive while its rectangular clear
+padding passes mouse events through to the app below. Before `QApplication`
+starts, the companion disables Qt's foreground-application transform. The
+native window is marked as a non-activating `NSPanel`, and the Z-order guard
+uses AppKit's `orderFrontRegardless` instead of `QWidget.raise_()`. This keeps
+the bar above normal windows without making the helper process active; if the
+native bridge is unavailable, the guard skips its cosmetic raise rather than
+stealing focus through the Qt fallback.
+
+**Adjacent subprocess fixes.** The audit found two bugs hidden by the missing
+image. Talk/hang-up/mute clicks were resolved in the child, whose
+`runtime_refs` can never contain the parent SpeechPipeline; they now cross the
+host protocol and execute against the authoritative parent pipeline, including
+the stuck-active recovery guard. `level_tap` is process-local too, so the bus
+bridge now forwards live parent TTS levels through `set_level`; Jarvis' speaking
+bars react to actual output instead of remaining flat.
+
+**Guards.** A headless `QImage` regression starts with an opaque black backing,
+paints a larger shape, then a fully transparent frame, asserting both the black
+corner and old-only shape pixels return to alpha zero. Input-mask regressions
+assert opaque bar pixels remain clickable, clear corners are excluded, and
+every newly rendered eased frame updates the window mask. Z-order regressions
+prove Darwin uses native non-activating ordering and never falls back to Qt's
+focus-stealing raise. A physical-Mac trace activates Finder, waits across
+multiple guard intervals, and confirms Finder remains frontmost while the bar
+stays onscreen. Host-selection tests prove Darwin uses Qt without calling the
+Tk bootstrap and non-Darwin keeps Tk. Interaction tests cover child events
+through parent pipeline actions, and a real `QT_QPA_PLATFORM=offscreen`
+subprocess smoke covers init, ready, state, level, hide, stop, and clean exit.
+The full Jarvis Bar unit suite passes on the physical Mac.
+
+**Class rule.** Window transparency and animated-frame replacement are separate
+contracts, and visual transparency is separate again from input transparency.
+A clear/non-opaque native window does not prove that a child Canvas will erase
+its own backing store or that alpha-zero pixels pass clicks through. For dynamic
+RGBA overlays, test a large frame followed by a smaller or transparent one,
+assert old-only pixels return to alpha zero, and constrain the native hit-test
+region to the visible content. An always-on-top helper must also prove that its
+periodic ordering operation does not activate the helper application. Keep
+compositor workarounds behind a platform backend instead of changing a
+rendering path already proven on another OS.

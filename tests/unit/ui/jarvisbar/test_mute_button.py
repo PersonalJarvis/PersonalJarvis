@@ -6,6 +6,7 @@ OrbBusBridge points at ``VoiceMuteToggleRequested``) and optimistically flips
 the local mirror so the slashed-mic icon shows on the very next frame. The
 authoritative ``VoiceMuteChanged`` is reconciled via ``set_muted``.
 """
+
 from __future__ import annotations
 
 from jarvis.ui.jarvisbar import renderer as R
@@ -32,9 +33,7 @@ def _mic_x() -> int:
 
 
 def _patch_pipeline(monkeypatch, fake) -> None:
-    monkeypatch.setattr(
-        "jarvis.core.runtime_refs.get_speech_pipeline", lambda: fake
-    )
+    monkeypatch.setattr("jarvis.core.runtime_refs.get_speech_pipeline", lambda: fake)
 
 
 def test_mic_click_fires_toggle_and_optimistically_mutes(monkeypatch):
@@ -51,6 +50,19 @@ def test_mic_click_fires_toggle_and_optimistically_mutes(monkeypatch):
     bar._on_click(_mic_x(), hovered=True)
     assert fired == [1, 1]
     assert bar._muted is False  # toggles back
+
+
+def test_mic_callback_does_not_require_a_child_speech_pipeline(monkeypatch):
+    """The macOS host has no pipeline, but its mute IPC callback must fire."""
+    bar = JarvisBarOverlay()
+    fired: list[int] = []
+    bar.set_on_mute_toggle(lambda: fired.append(1))
+    _patch_pipeline(monkeypatch, None)
+
+    bar._on_click(_mic_x(), hovered=True)
+
+    assert fired == [1]
+    assert bar._muted is True
 
 
 def test_mic_click_without_callback_is_noop(monkeypatch):

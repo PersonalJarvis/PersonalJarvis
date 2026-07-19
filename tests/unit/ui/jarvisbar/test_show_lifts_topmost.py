@@ -17,6 +17,7 @@ Repeated wake updates on an already-mapped persistent bar skip all of those
 native style mutations, preventing the old default-size Tk backing surface from
 flashing at the top-left of the screen.
 """
+
 from __future__ import annotations
 
 import jarvis.ui.jarvisbar.overlay as overlay_module
@@ -156,7 +157,10 @@ def test_do_show_mapped_window_skips_all_native_style_mutations() -> None:
     assert bar._static_tick_count == 0  # noqa: SLF001
 
 
-def test_explicit_z_order_reassert_repins_an_already_mapped_window() -> None:
+def test_explicit_z_order_reassert_repins_an_already_mapped_window(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(overlay_module.sys, "platform", "win32")
     bar, root = _bar_with_fake_root(mapped=True)
 
     bar._do_reassert_z_order()  # noqa: SLF001
@@ -198,12 +202,7 @@ def test_win32_native_pin_uses_inner_handle_when_it_is_already_toplevel() -> Non
 
 
 def test_win32_native_pin_failure_is_nonfatal() -> None:
-    assert (
-        _win32_force_topmost(
-            _FakeNativeRoot(), user32=_FakeUser32(succeeds=False)
-        )
-        is False
-    )
+    assert _win32_force_topmost(_FakeNativeRoot(), user32=_FakeUser32(succeeds=False)) is False
 
 
 def test_win32_band_check_detects_visible_non_topmost_window_above_bar() -> None:
@@ -215,9 +214,7 @@ def test_win32_band_check_detects_visible_non_topmost_window_above_bar() -> None
         ex_styles={normal: 0},
     )
 
-    assert _win32_topmost_band_is_healthy(
-        _FakeNativeRoot(), user32=user32
-    ) is False
+    assert _win32_topmost_band_is_healthy(_FakeNativeRoot(), user32=user32) is False
 
 
 def test_win32_band_check_accepts_only_topmost_or_hidden_windows_above() -> None:
@@ -230,9 +227,7 @@ def test_win32_band_check_accepts_only_topmost_or_hidden_windows_above() -> None
         ex_styles={topmost: 0x00000008, hidden_normal: 0},
     )
 
-    assert _win32_topmost_band_is_healthy(
-        _FakeNativeRoot(), user32=user32
-    ) is True
+    assert _win32_topmost_band_is_healthy(_FakeNativeRoot(), user32=user32) is True
 
 
 def test_win32_pin_skips_tk_lift_that_can_leave_the_wrong_z_order_band(
@@ -263,9 +258,7 @@ def test_z_order_guard_repins_mapped_bar_and_rearms(monkeypatch) -> None:
     bar._root = root  # noqa: SLF001
     bar._running = True  # noqa: SLF001
     calls: list[bool] = []
-    monkeypatch.setattr(
-        overlay_module, "_win32_topmost_band_is_healthy", lambda _root: False
-    )
+    monkeypatch.setattr(overlay_module, "_win32_topmost_band_is_healthy", lambda _root: False)
     monkeypatch.setattr(bar, "_do_pin_topmost", lambda: calls.append(True) or "native")
 
     bar._schedule_z_order_guard()  # noqa: SLF001
@@ -282,9 +275,7 @@ def test_z_order_guard_leaves_healthy_win32_band_untouched(monkeypatch) -> None:
     bar._root = root  # noqa: SLF001
     bar._running = True  # noqa: SLF001
     monkeypatch.setattr(overlay_module.sys, "platform", "win32")
-    monkeypatch.setattr(
-        overlay_module, "_win32_topmost_band_is_healthy", lambda _root: True
-    )
+    monkeypatch.setattr(overlay_module, "_win32_topmost_band_is_healthy", lambda _root: True)
     monkeypatch.setattr(
         bar,
         "_do_pin_topmost",
@@ -312,10 +303,13 @@ def test_z_order_guard_never_maps_hidden_bar(monkeypatch) -> None:
     assert root.after_calls
 
 
-def test_do_show_reapplies_transparentcolor_and_alpha_after_topmost() -> None:
+def test_do_show_reapplies_transparentcolor_and_alpha_after_topmost(
+    monkeypatch,
+) -> None:
     """BUG-030 guard: the topmost re-assert must not leave the layered
     color-key/alpha attributes un-reapplied — else a Windows-side drop of
     those attributes on the style mutation shows as a black flash."""
+    monkeypatch.setattr(overlay_module.sys, "platform", "win32")
     bar, root = _bar_with_fake_root()
 
     bar._do_show()  # noqa: SLF001
@@ -342,8 +336,12 @@ def test_do_show_composes_at_zero_alpha_before_becoming_visible() -> None:
     zero_alpha = root.calls.index("wm_attributes:-alpha=0.0")
     mapped = root.calls.index("deiconify")
     composed = root.calls.index("update_idletasks")
-    visible_alpha = len(root.calls) - 1 - root.calls[::-1].index(
-        f"wm_attributes:-alpha={bar._opacity}"  # noqa: SLF001
+    visible_alpha = (
+        len(root.calls)
+        - 1
+        - root.calls[::-1].index(
+            f"wm_attributes:-alpha={bar._opacity}"  # noqa: SLF001
+        )
     )
     assert zero_alpha < mapped < composed < visible_alpha
     assert root.attrs["-alpha"] == bar._opacity  # noqa: SLF001
@@ -371,8 +369,12 @@ def test_do_show_resubmits_prepared_frame_while_alpha_is_zero() -> None:
 
     refreshed = root.calls.index(f"itemconfig:7:{id(photo)}")
     composed = root.calls.index("update_idletasks")
-    visible_alpha = len(root.calls) - 1 - root.calls[::-1].index(
-        f"wm_attributes:-alpha={bar._opacity}"  # noqa: SLF001
+    visible_alpha = (
+        len(root.calls)
+        - 1
+        - root.calls[::-1].index(
+            f"wm_attributes:-alpha={bar._opacity}"  # noqa: SLF001
+        )
     )
     assert refreshed < composed < visible_alpha
 

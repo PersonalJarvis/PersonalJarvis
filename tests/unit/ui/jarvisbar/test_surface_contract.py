@@ -1,5 +1,6 @@
 """JarvisBarOverlay must expose the duck-typed surface OrbBusBridge drives,
 and every method must be safe to call before/without a Tk window."""
+
 from __future__ import annotations
 
 from jarvis.ui.jarvisbar.overlay import JarvisBarOverlay
@@ -18,6 +19,8 @@ REQUIRED = [
     "start_mouth_animation",
     "stop_mouth_animation",
     "set_on_mute_toggle",
+    "set_on_talk",
+    "set_on_hangup",
     "set_feedback_publisher",
     "set_on_show_window",
     "start_in_thread",
@@ -77,8 +80,12 @@ def test_methods_safe_without_tk_window():
     bar.stop_mouth_animation()
 
     bar.set_on_mute_toggle(lambda: None)
+    bar.set_on_talk(lambda: None)
+    bar.set_on_hangup(lambda: None)
     bar.set_feedback_publisher(lambda k, d: None)
     assert bar._on_mute_toggle is not None
+    assert bar._on_talk is not None
+    assert bar._on_hangup is not None
     assert bar._feedback_publisher is not None
 
     bar._on_reset_double_click()  # _root None → safe no-op

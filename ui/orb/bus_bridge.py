@@ -342,10 +342,12 @@ class OrbBusBridge:
                 self._mic_level_unsub = mic_level.subscribe(self._on_mic_level)
             except Exception as exc:  # noqa: BLE001
                 log.warning("OrbBridge mic_level subscribe failed: %s", exc)
-            # Track TTS-output activity so the (silent) mic does not clobber
-            # Jarvis's voice level on the shared set_level while TTS plays. The
-            # surface's OWN level_tap subscription does the actual SPEAKING
-            # set_level; here we only note the recency.
+            # Track AND forward TTS output. In-process surfaces also subscribe
+            # to level_tap themselves, so this is a harmless duplicate there;
+            # the macOS bar/mascot live in a companion process and cannot see
+            # this process-local signal at all. Forwarding here is therefore
+            # load-bearing for cross-process speaking animation, while the
+            # recency timestamp still prevents the mic from clobbering it.
             try:
                 from jarvis.audio import level_tap
 
@@ -370,9 +372,7 @@ class OrbBusBridge:
         root = getattr(self._orb, "_root", None)
         reset_fn = getattr(self._orb, "_on_reset_double_click", None)
         if root is None or reset_fn is None:
-            log.warning(
-                "OrbBridge: reset requested but orb has no _root / _on_reset"
-            )
+            log.warning("OrbBridge: reset requested but orb has no _root / _on_reset")
             return
         try:
             root.after(0, lambda: reset_fn(None))
@@ -421,9 +421,7 @@ class OrbBusBridge:
         the real loop, raising "bound to a different event loop" and leaving the
         mic muted with the voice session frozen in LISTENING (2026-06-28).
         """
-        coro = self._bus.publish(
-            VoiceMuteToggleRequested(source="orb_dblclick_double")
-        )
+        coro = self._bus.publish(VoiceMuteToggleRequested(source="orb_dblclick_double"))
         self._marshal_publish(coro, label="mute-toggle")
 
     def _publish_show_window(self) -> None:
@@ -638,8 +636,7 @@ class OrbBusBridge:
             # a no-op or cut that animation short. Suppressing the *show* is the
             # whole job — the orb simply stays hidden.
             log.info(
-                "OrbBridge: stray %s outside live session suppressed — "
-                "mascot stays hidden.",
+                "OrbBridge: stray %s outside live session suppressed — mascot stays hidden.",
                 state,
             )
             return
@@ -783,9 +780,7 @@ class OrbBusBridge:
         """
         if self._last_state != "LISTENING":
             return
-        if self._listening_transcript_text and getattr(
-            self, "_completion_continuation", False
-        ):
+        if self._listening_transcript_text and getattr(self, "_completion_continuation", False):
             return
         self._listening_transcript_text = ""
         self._last_response_text = ""
@@ -853,9 +848,7 @@ class OrbBusBridge:
         if state == "LISTENING":
             self._show_listening_transcript(self._listening_transcript_text)
         elif state in ("THINKING", "SPEAKING"):
-            self._show_listening_transcript(
-                self._last_response_text or THINKING_BUBBLE_TEXT
-            )
+            self._show_listening_transcript(self._last_response_text or THINKING_BUBBLE_TEXT)
 
     def _show_listening_transcript(self, text: str) -> None:
         show_transcript = getattr(self._orb, "show_listening_transcript", None)
@@ -953,7 +946,8 @@ class OrbBusBridge:
         if self._idle_task and not self._idle_task.done():
             return
         self._idle_task = asyncio.create_task(
-            self._idle_loop(), name="orb-idle-animation-scheduler",
+            self._idle_loop(),
+            name="orb-idle-animation-scheduler",
         )
 
     def _cancel_idle_scheduler(self) -> None:
@@ -979,12 +973,21 @@ class OrbBusBridge:
 
     _TTS_OWNS_BARS_S = 0.5  # mic is muted this long after the last TTS level
 
-    def _note_tts_level(self, _level: float) -> None:
-        """Recency tracker only: TTS just produced an output level, so it is
-        making sound now. The surface's own ``level_tap`` subscription does the
-        actual SPEAKING ``set_level``; we just remember the time so the mic does
-        not clobber it."""
+    def _note_tts_level(self, level: float) -> None:
+        """Forward live TTS loudness and remember that Jarvis owns the bars.
+
+        ``level_tap`` is process-local. The Windows/Linux in-process overlays
+        subscribe directly, but the macOS companion surface cannot, so relying
+        on the surface's own subscription leaves its speaking bars flat. The
+        bridge already spans that process boundary through ``set_level``; send
+        the same normalized value through it and retain the recency guard that
+        suppresses simultaneous silent-mic updates.
+        """
         self._last_tts_level_t = time.monotonic()
+        try:
+            self._orb.set_level(level)
+        except Exception:  # noqa: BLE001
+            log.debug("TTS level forward to surface failed", exc_info=True)
 
     def _on_mic_level(self, level: float) -> None:
         """Forward the live mic loudness to the active surface's bars.
@@ -997,10 +1000,11 @@ class OrbBusBridge:
         state is LISTENING. Works for whichever surface is current."""
         if time.monotonic() - self._last_tts_level_t < self._TTS_OWNS_BARS_S:
             return  # TTS is making sound → it drives the bars, not the silent mic
-        candidate_listening = (
-            self._wake_candidate_active
-            and self._last_state in {"IDLE", "ERROR", "PAUSED"}
-        )
+        candidate_listening = self._wake_candidate_active and self._last_state in {
+            "IDLE",
+            "ERROR",
+            "PAUSED",
+        }
         if self._last_state != "LISTENING" and not candidate_listening:
             return
         try:

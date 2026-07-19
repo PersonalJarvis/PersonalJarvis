@@ -98,6 +98,7 @@ class _DragState:
     offset_y: int
     moved: bool = False
 
+
 # 108x108 — roughly 1/3 smaller than the old 160-px size
 WIN_W = 108
 WIN_H = 108
@@ -164,9 +165,7 @@ def key_to_alpha(img: Image.Image) -> Image.Image:
     contract: only pure ``COLOR_KEY_RGB`` pixels vanish.
     """
     arr = np.asarray(img, dtype=np.uint8)
-    alpha = np.where(
-        (arr == COLOR_KEY_RGB).all(axis=-1), 0, 255
-    ).astype(np.uint8)
+    alpha = np.where((arr == COLOR_KEY_RGB).all(axis=-1), 0, 255).astype(np.uint8)
     return Image.fromarray(np.dstack((arr, alpha)), "RGBA")
 
 
@@ -454,10 +453,14 @@ class MascotRenderer:
             }
 
         left = _extract_from_bbox(
-            cls.ARM_LEFT_BBOX, cls.ARM_LEFT_PIVOT, cls.ARM_LEFT_ERASE_BBOX,
+            cls.ARM_LEFT_BBOX,
+            cls.ARM_LEFT_PIVOT,
+            cls.ARM_LEFT_ERASE_BBOX,
         )
         right = _extract_from_bbox(
-            cls.ARM_RIGHT_BBOX, cls.ARM_RIGHT_PIVOT, cls.ARM_RIGHT_ERASE_BBOX,
+            cls.ARM_RIGHT_BBOX,
+            cls.ARM_RIGHT_PIVOT,
+            cls.ARM_RIGHT_ERASE_BBOX,
         )
 
         # Body without arms: set all pixels inside the dilated arm region
@@ -567,8 +570,7 @@ class MascotRenderer:
             inner_rx = max(0.6, rx - 1.4) * ss
             inner_ry = max(0.4, ry - 1.4) * ss
             draw.ellipse(
-                [big_cx - inner_rx, big_cy - inner_ry,
-                 big_cx + inner_rx, big_cy + inner_ry],
+                [big_cx - inner_rx, big_cy - inner_ry, big_cx + inner_rx, big_cy + inner_ry],
                 fill=self.MOUTH_INNER_COLOR,
             )
 
@@ -636,9 +638,10 @@ class MascotRenderer:
             # (close to the mascot = brighter, outer edge = darker gold).
             intensity = np.clip(
                 (self._glow_mask[halo_mask] - halo_threshold) / (1.0 - halo_threshold),
-                0.0, 1.0,
+                0.0,
+                1.0,
             )
-            # Gold-Gradient: dunkel-warm (80,50,0) → hell-gold (255,210,80)
+            # Gold gradient: dark warm (80, 50, 0) → bright gold (255, 210, 80)
             frame[halo_mask, 0] = (80 + 175 * intensity).astype(np.uint8)
             frame[halo_mask, 1] = (50 + 160 * intensity).astype(np.uint8)
             frame[halo_mask, 2] = (0 + 80 * intensity).astype(np.uint8)
@@ -828,9 +831,7 @@ class MascotRenderer:
             # The new canvas must be large enough that the maximum distance
             # from the pivot to any sprite corner has room in every direction
             # (otherwise the rotation clips sprite pixels).
-            max_dist = int(math.ceil(math.hypot(
-                max(px, sw - px), max(py, sh - py)
-            )))
+            max_dist = int(math.ceil(math.hypot(max(px, sw - px), max(py, sh - py))))
             canvas_size = 2 * max_dist + 4
             canvas = Image.new("RGBA", (canvas_size, canvas_size), (0, 0, 0, 0))
             # The sprite's pivot should land at the canvas center
@@ -999,8 +1000,7 @@ class OrbCommentBubble:
                 import logging
 
                 logging.getLogger("jarvis.orb").warning(
-                    "macOS -transparent unsupported — the comment bubble "
-                    "renders opaque"
+                    "macOS -transparent unsupported — the comment bubble renders opaque"
                 )
                 top.configure(bg=COLOR_KEY_HEX)
         else:
@@ -1024,11 +1024,22 @@ class OrbCommentBubble:
 
         self._top = top
         self._canvas = canvas
+        # Bind named fonts to this Toplevel's interpreter explicitly.  The
+        # macOS host keeps a separate bootstrap Tk root alive before creating
+        # the mascot root; relying on tkinter's process-global default root
+        # would create the fonts in the wrong interpreter and make the bubble
+        # fail as soon as it tries to draw text.
         self._font = tkfont.Font(
-            family=BUBBLE_FONT_FAMILY, size=BUBBLE_FONT_SIZE, weight="bold"
+            root=top,
+            family=BUBBLE_FONT_FAMILY,
+            size=BUBBLE_FONT_SIZE,
+            weight="bold",
         )
         self._transcript_font = tkfont.Font(
-            family=BUBBLE_FONT_FAMILY, size=TRANSCRIPT_BUBBLE_FONT_SIZE, weight="bold"
+            root=top,
+            family=BUBBLE_FONT_FAMILY,
+            size=TRANSCRIPT_BUBBLE_FONT_SIZE,
+            weight="bold",
         )
 
     def show(
@@ -1066,8 +1077,13 @@ class OrbCommentBubble:
 
         # Probe text size by creating a throwaway text item and reading bbox.
         probe_id = self._canvas.create_text(
-            0, 0, text=text, font=self._font, anchor="nw",
-            width=BUBBLE_MAX_WIDTH, fill=BUBBLE_TEXT_HEX,
+            0,
+            0,
+            text=text,
+            font=self._font,
+            anchor="nw",
+            width=BUBBLE_MAX_WIDTH,
+            fill=BUBBLE_TEXT_HEX,
         )
         bbox = self._canvas.bbox(probe_id)
         self._canvas.delete(probe_id)
@@ -1099,31 +1115,49 @@ class OrbCommentBubble:
         self._canvas.delete("all")
 
         self._draw_rounded_rect(
-            1, 1, bubble_w - 1, body_h - 1, BUBBLE_CORNER_RADIUS,
-            fill=BUBBLE_BG_HEX, outline=BUBBLE_BORDER_HEX, width=BUBBLE_BORDER_WIDTH,
+            1,
+            1,
+            bubble_w - 1,
+            body_h - 1,
+            BUBBLE_CORNER_RADIUS,
+            fill=BUBBLE_BG_HEX,
+            outline=BUBBLE_BORDER_HEX,
+            width=BUBBLE_BORDER_WIDTH,
         )
 
         tail_base_y = body_h - 1
         tail_points = [
-            tail_tip_x - tail_half, tail_base_y,
-            tail_tip_x + tail_half, tail_base_y,
-            tail_tip_x, tail_base_y + BUBBLE_TAIL_H,
+            tail_tip_x - tail_half,
+            tail_base_y,
+            tail_tip_x + tail_half,
+            tail_base_y,
+            tail_tip_x,
+            tail_base_y + BUBBLE_TAIL_H,
         ]
         self._canvas.create_polygon(
             tail_points,
-            fill=BUBBLE_BG_HEX, outline=BUBBLE_BORDER_HEX, width=BUBBLE_BORDER_WIDTH,
+            fill=BUBBLE_BG_HEX,
+            outline=BUBBLE_BORDER_HEX,
+            width=BUBBLE_BORDER_WIDTH,
         )
         # Hide the seam between body bottom and tail base.
         self._canvas.create_line(
-            tail_tip_x - tail_half + 1, tail_base_y,
-            tail_tip_x + tail_half - 1, tail_base_y,
-            fill=BUBBLE_BG_HEX, width=BUBBLE_BORDER_WIDTH + 1,
+            tail_tip_x - tail_half + 1,
+            tail_base_y,
+            tail_tip_x + tail_half - 1,
+            tail_base_y,
+            fill=BUBBLE_BG_HEX,
+            width=BUBBLE_BORDER_WIDTH + 1,
         )
 
         self._canvas.create_text(
-            BUBBLE_PADDING_X, BUBBLE_PADDING_Y,
-            text=text, font=self._font, anchor="nw",
-            width=BUBBLE_MAX_WIDTH, fill=BUBBLE_TEXT_HEX,
+            BUBBLE_PADDING_X,
+            BUBBLE_PADDING_Y,
+            text=text,
+            font=self._font,
+            anchor="nw",
+            width=BUBBLE_MAX_WIDTH,
+            fill=BUBBLE_TEXT_HEX,
         )
 
         self._top.deiconify()
@@ -1132,17 +1166,11 @@ class OrbCommentBubble:
         except tk.TclError:
             pass
 
-        self._show_until_t = time.perf_counter() + min(
-            BUBBLE_MIN_SHOW_S, duration_ms / 1000.0
-        )
+        self._show_until_t = time.perf_counter() + min(BUBBLE_MIN_SHOW_S, duration_ms / 1000.0)
         self._dismiss_after_id = self._top.after(duration_ms, self.hide)
 
     def _show_transcript(self, text: str, duration_ms: int) -> None:
-        if (
-            self._top is None
-            or self._canvas is None
-            or self._transcript_font is None
-        ):
+        if self._top is None or self._canvas is None or self._transcript_font is None:
             return
 
         if self._dismiss_after_id is not None:
@@ -1201,24 +1229,38 @@ class OrbCommentBubble:
         self._canvas.delete("all")
 
         self._draw_rounded_rect(
-            1, 1, bubble_w - 1, body_h - 1, BUBBLE_CORNER_RADIUS,
-            fill=BUBBLE_BG_HEX, outline=BUBBLE_BORDER_HEX, width=BUBBLE_BORDER_WIDTH,
+            1,
+            1,
+            bubble_w - 1,
+            body_h - 1,
+            BUBBLE_CORNER_RADIUS,
+            fill=BUBBLE_BG_HEX,
+            outline=BUBBLE_BORDER_HEX,
+            width=BUBBLE_BORDER_WIDTH,
         )
 
         tail_base_y = body_h - 1
         tail_points = [
-            tail_tip_x - tail_half, tail_base_y,
-            tail_tip_x + tail_half, tail_base_y,
-            tail_tip_x, tail_base_y + BUBBLE_TAIL_H,
+            tail_tip_x - tail_half,
+            tail_base_y,
+            tail_tip_x + tail_half,
+            tail_base_y,
+            tail_tip_x,
+            tail_base_y + BUBBLE_TAIL_H,
         ]
         self._canvas.create_polygon(
             tail_points,
-            fill=BUBBLE_BG_HEX, outline=BUBBLE_BORDER_HEX, width=BUBBLE_BORDER_WIDTH,
+            fill=BUBBLE_BG_HEX,
+            outline=BUBBLE_BORDER_HEX,
+            width=BUBBLE_BORDER_WIDTH,
         )
         self._canvas.create_line(
-            tail_tip_x - tail_half + 1, tail_base_y,
-            tail_tip_x + tail_half - 1, tail_base_y,
-            fill=BUBBLE_BG_HEX, width=BUBBLE_BORDER_WIDTH + 1,
+            tail_tip_x - tail_half + 1,
+            tail_base_y,
+            tail_tip_x + tail_half - 1,
+            tail_base_y,
+            fill=BUBBLE_BG_HEX,
+            width=BUBBLE_BORDER_WIDTH + 1,
         )
 
         self._canvas.create_text(
@@ -1274,12 +1316,46 @@ class OrbCommentBubble:
         if self._canvas is None:
             return 0
         points = [
-            x1 + r, y1, x1 + r, y1, x2 - r, y1, x2 - r, y1,
-            x2, y1, x2, y1 + r, x2, y1 + r,
-            x2, y2 - r, x2, y2 - r, x2, y2,
-            x2 - r, y2, x2 - r, y2, x1 + r, y2, x1 + r, y2,
-            x1, y2, x1, y2 - r, x1, y2 - r,
-            x1, y1 + r, x1, y1 + r, x1, y1,
+            x1 + r,
+            y1,
+            x1 + r,
+            y1,
+            x2 - r,
+            y1,
+            x2 - r,
+            y1,
+            x2,
+            y1,
+            x2,
+            y1 + r,
+            x2,
+            y1 + r,
+            x2,
+            y2 - r,
+            x2,
+            y2 - r,
+            x2,
+            y2,
+            x2 - r,
+            y2,
+            x2 - r,
+            y2,
+            x1 + r,
+            y2,
+            x1 + r,
+            y2,
+            x1,
+            y2,
+            x1,
+            y2 - r,
+            x1,
+            y2 - r,
+            x1,
+            y1 + r,
+            x1,
+            y1 + r,
+            x1,
+            y1,
         ]
         return self._canvas.create_polygon(points, smooth=True, **kwargs)
 
@@ -1410,8 +1486,7 @@ class OrbOverlay:
                 import logging
 
                 logging.getLogger("jarvis.orb").warning(
-                    "macOS -transparent unsupported — the mascot will show "
-                    "its key colour"
+                    "macOS -transparent unsupported — the mascot will show its key colour"
                 )
                 self._root.configure(bg=COLOR_KEY_HEX)
         else:
@@ -1468,9 +1543,7 @@ class OrbOverlay:
                 # the orb at the primary anchor and migrate after a brief
                 # visible flash. Single-monitor and primary-pin boots
                 # skip the flash entirely (no visual noise in 99% case).
-                resolved_screen = next(
-                    (s for s in screens if s.name == placement.monitor), None
-                )
+                resolved_screen = next((s for s in screens if s.name == placement.monitor), None)
                 if (
                     len(screens) > 1
                     and resolved_screen is not None
@@ -1481,13 +1554,9 @@ class OrbOverlay:
                         placement.abs_x,
                         placement.abs_y,
                     )
-                    self._root.geometry(
-                        f"{WIN_W}x{WIN_H}+{primary_anchor.x}+{primary_anchor.y}"
-                    )
+                    self._root.geometry(f"{WIN_W}x{WIN_H}+{primary_anchor.x}+{primary_anchor.y}")
                 else:
-                    self._root.geometry(
-                        f"{WIN_W}x{WIN_H}+{placement.abs_x}+{placement.abs_y}"
-                    )
+                    self._root.geometry(f"{WIN_W}x{WIN_H}+{placement.abs_x}+{placement.abs_y}")
             else:
                 # Monitor gone, no screens, or pin on non-primary monitor
                 # while require_primary is set — fall back to default and
@@ -1587,6 +1656,7 @@ class OrbOverlay:
         if self._mic_reactive:
             try:
                 from ui.orb.mic_listener import MicListener
+
                 self._mic = MicListener(on_level=self.set_level)
                 self._mic.start()
             except Exception as exc:
@@ -1605,9 +1675,11 @@ class OrbOverlay:
         taskbar = get_taskbar_info()
         tray_rect = get_tray_notify_rect()
         return compute_mascot_position(
-            screen_w, screen_h,
+            screen_w,
+            screen_h,
             mascot_size=WIN_W,
-            taskbar=taskbar, tray_rect=tray_rect,
+            taskbar=taskbar,
+            tray_rect=tray_rect,
             tray_safe_margin_px=TRAY_SAFE_MARGIN_PX,
             right_edge_margin_px=RIGHT_EDGE_MARGIN_PX,
             overlap_px=TASKBAR_OVERLAP_PX,
@@ -1779,9 +1851,7 @@ class OrbOverlay:
             # The Tk thread must not crash on a downstream bus hiccup.
             import logging
 
-            logging.getLogger("jarvis.orb").warning(
-                "orb show-window callback raised: %r", exc
-            )
+            logging.getLogger("jarvis.orb").warning("orb show-window callback raised: %r", exc)
 
     def _on_mute_double_click(self, _event: tk.Event) -> None:
         """First half of the mute gesture: increment a counter and arm a
@@ -1895,9 +1965,7 @@ class OrbOverlay:
         if self._comment_bubble is not None:
             self._comment_bubble.update_anchor(anchor.x, anchor.y, screen_w)
 
-    def _monitor_at_orb_center(
-        self, screens: list
-    ) -> tuple[tuple[int, int, int, int], str]:
+    def _monitor_at_orb_center(self, screens: list) -> tuple[tuple[int, int, int, int], str]:
         """Return (geometry, device_name) of the monitor containing the orb center."""
         cx = self._mascot_x + WIN_W // 2
         cy = self._mascot_y + WIN_H // 2
@@ -2020,6 +2088,7 @@ class OrbOverlay:
             publisher(mode, observed)
         except Exception:  # noqa: BLE001
             import logging
+
             logging.getLogger("jarvis.orb").debug(
                 "feedback publisher raised; suppressed", exc_info=True
             )
@@ -2033,9 +2102,7 @@ class OrbOverlay:
             remaining_s = self._show_until_t - now
             if remaining_s > 0.001:
                 wait_ms = max(1, int(round(remaining_s * 1000)))
-                self._pending_hide_after_id = self._root.after(
-                    wait_ms, self._actually_hide
-                )
+                self._pending_hide_after_id = self._root.after(wait_ms, self._actually_hide)
             else:
                 self._actually_hide()
 
@@ -2100,16 +2167,12 @@ class OrbOverlay:
             return
         self._enqueue_ui(lambda: bubble.show(text, duration_ms))
 
-    def show_listening_transcript(
-        self, text: str = "", duration_ms: int = 30000
-    ) -> None:
+    def show_listening_transcript(self, text: str = "", duration_ms: int = 30000) -> None:
         """Show the larger live transcript bubble used while the user speaks."""
         bubble = self._comment_bubble
         if bubble is None:
             return
-        self._enqueue_ui(
-            lambda: bubble.show(text, duration_ms, variant="transcript")
-        )
+        self._enqueue_ui(lambda: bubble.show(text, duration_ms, variant="transcript"))
 
     def hide_comment(self) -> None:
         """Hide the speech bubble immediately. Thread-safe."""
@@ -2120,6 +2183,7 @@ class OrbOverlay:
 
     def start_mouth_animation(self, duration_ms: int = 60000) -> None:
         """Run the mascot's open/close mouth animation for `duration_ms`."""
+
         def _start() -> None:
             renderer = self._renderer
             if renderer is not None and hasattr(renderer, "start_mouth_anim"):
@@ -2130,6 +2194,7 @@ class OrbOverlay:
 
     def stop_mouth_animation(self) -> None:
         """Immediately stop the mouth animation. Thread-safe."""
+
         def _stop() -> None:
             renderer = self._renderer
             if renderer is not None and hasattr(renderer, "stop_mouth_anim"):
@@ -2160,9 +2225,11 @@ class OrbOverlay:
             return
         if name not in ANIMATION_REGISTRY:
             import logging
+
             logging.getLogger("jarvis.orb").warning(
                 "play_animation(%r) unknown — available: %s",
-                name, sorted(ANIMATION_REGISTRY),
+                name,
+                sorted(ANIMATION_REGISTRY),
             )
             return
         renderer = self._renderer
@@ -2174,8 +2241,10 @@ class OrbOverlay:
                 renderer.add_animation(anim)
             except Exception:
                 import logging
+
                 logging.getLogger("jarvis.orb").exception(
-                    "play_animation(%r) failed", name,
+                    "play_animation(%r) failed",
+                    name,
                 )
 
         self._enqueue_ui(_start)
@@ -2243,17 +2312,20 @@ class OrbOverlay:
             mascot_path = _resolve_mascot_path(self._mascot_path_hint)
             if mascot_path is None:
                 import logging
+
                 logging.getLogger("jarvis.orb").warning(
                     "Mascot style requested but PNG not found "
                     "(looked in: %s, ENV JARVIS_ORB_MASCOT_PATH, %s) — "
                     "overlay will stay hidden.",
-                    self._mascot_path_hint, DEFAULT_MASCOT_REL,
+                    self._mascot_path_hint,
+                    DEFAULT_MASCOT_REL,
                 )
                 return None
             try:
                 return MascotRenderer(mascot_path)
             except Exception as exc:  # noqa: BLE001
                 import logging
+
                 logging.getLogger("jarvis.orb").warning(
                     "MascotRenderer init failed (%s); overlay will stay hidden.",
                     exc,
@@ -2316,6 +2388,7 @@ class OrbOverlay:
         running into a None root.
         """
         import logging
+
         _log = logging.getLogger("jarvis.orb")
 
         if sys.platform == "darwin":
@@ -2332,6 +2405,7 @@ class OrbOverlay:
                 # pythonw.exe has no stdout → print goes nowhere. The logger
                 # writes to the watchdog log and makes silent deaths visible.
                 _log.exception("Orb thread start failed: %s", exc)
+
         t = threading.Thread(target=_run, name="orb-tk-mainloop", daemon=True)
         t.start()
         ok = self._started.wait(timeout=timeout)
@@ -2354,12 +2428,14 @@ class OrbOverlay:
             img = key_to_alpha(img)
 
         # The PhotoImage must be kept as self._photo — otherwise Tkinter
-        # garbage-collects the image before it gets rendered.
-        self._photo = ImageTk.PhotoImage(img)
+        # garbage-collects the image before it gets rendered.  It must also be
+        # created in this root's Tcl interpreter: the macOS companion process
+        # keeps a separate bootstrap Tk root alive to initialize NSApp, so an
+        # unqualified PhotoImage lands in that other interpreter and the mascot
+        # canvas reports ``image \"pyimageN\" does not exist``.
+        self._photo = ImageTk.PhotoImage(img, master=self._root)
         if self._image_id is None:
-            self._image_id = self._canvas.create_image(
-                0, 0, anchor="nw", image=self._photo
-            )
+            self._image_id = self._canvas.create_image(0, 0, anchor="nw", image=self._photo)
         else:
             self._canvas.itemconfig(self._image_id, image=self._photo)
 
@@ -2405,8 +2481,7 @@ def main() -> int:
         type=str,
         default=None,
         help=(
-            "Optional: explicit path to a mascot PNG "
-            "(otherwise assets/icons/jarvis-gigi-256.png)."
+            "Optional: explicit path to a mascot PNG (otherwise assets/icons/jarvis-gigi-256.png)."
         ),
     )
     parser.add_argument(
@@ -2415,8 +2490,7 @@ def main() -> int:
         default=None,
         help=(
             "Visual QA: plays a specific animation in an endless loop "
-            "(implies --mascot --sticky). Available: "
-            + ", ".join(sorted(ANIMATION_REGISTRY))
+            "(implies --mascot --sticky). Available: " + ", ".join(sorted(ANIMATION_REGISTRY))
         ),
     )
     parser.add_argument(
@@ -2460,8 +2534,10 @@ def main() -> int:
                 time.sleep(wait + 0.6)
                 if cls.duration <= 0:
                     overlay.stop_animation(args.animation)
+
         threading.Thread(target=_loop_anim, daemon=True).start()
     elif args.all_animations:
+
         def _all_demo() -> None:
             overlay._started.wait(timeout=5.0)
             overlay.show(mode="listen")
@@ -2474,6 +2550,7 @@ def main() -> int:
                 if cls.duration <= 0:
                     overlay.stop_animation(name)
                     time.sleep(0.3)
+
         threading.Thread(target=_all_demo, daemon=True).start()
     else:
         # Classic demo (shows the listen/speak switch) when nothing is specified.
