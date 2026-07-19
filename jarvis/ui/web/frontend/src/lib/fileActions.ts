@@ -1,13 +1,11 @@
 /**
  * Native file actions for a file already saved to the user's Downloads folder.
  *
- * Why this exists: dragging a file OUT of the embedded desktop WebView is not
- * reliably possible on any OS (WebView2's HTML5 drag-and-drop is broken;
- * WKWebView/WebKitGTK don't support the Chromium `DownloadURL` drag format). So
- * instead of a broken drag, the UI lets the user reveal the real file in the OS
- * file manager (and drag it natively from there) or open it directly. Both are
- * desktop-only backend calls; on a headless VPS the routes 404 and these return
- * false.
+ * Why this exists: HTML5 cannot reliably drag a real local file out of an
+ * embedded WebView. Windows and macOS use a native drag bridge, while these
+ * actions remain the universal fallback: reveal the saved file in the OS file
+ * manager or open it directly. Both are desktop-only backend calls; on a
+ * headless VPS the routes 404 and these return false.
  */
 
 /** Open the OS file manager with `path` selected. Returns true on success. */

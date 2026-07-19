@@ -3354,9 +3354,10 @@ class DesktopApp:
 
         # Native file drag-out: dragging a saved-download toast drops the REAL
         # file into any app (Explorer, a browser upload zone, a chat). Must be
-        # installed BEFORE webview.start() — it patches the WebView2 UI-thread
-        # message handler so DoDragDrop runs where the mouse press lives. Windows
-        # only for now; a logged no-op elsewhere. Never blocks the window.
+        # installed BEFORE webview.start() — it patches the WebView host's
+        # UI-thread message handler so the OS drag runs where the mouse press
+        # lives. Windows and macOS are native; Linux is a logged no-op until its
+        # GTK source lands. Never blocks the window.
         try:
             from pathlib import Path as _Path
 

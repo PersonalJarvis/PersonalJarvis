@@ -20,6 +20,10 @@ mascot now use a main-thread companion-process host on macOS; rendered images
 and bubble fonts are explicitly bound to the overlay's Tcl interpreter so the
 host's Tk bootstrap root cannot steal them.
 
+**Desktop download follow-up 2026-07-19:** saved-file drag-out now has native
+Windows (OLE/WebView2) and macOS (AppKit/WKWebView) sources. P-15 records the
+remaining GTK source gap; reveal/open actions remain available on Linux.
+
 ## Audit verdict summary
 
 **No hard breakers found.** No feature crashes on macOS or headless Linux;
@@ -53,6 +57,7 @@ experiences today.
 | P-12 | Info | CU legacy | Frozen legacy CU loops are Windows-only, but NOT on the live path (harness force-routes to v2); imports are lazy | `jarvis/cu/loops/screenshot_only_loop.py` et al. | None at runtime |
 | P-13 | Info | Wiki | Wiki DB/vault anchor at `repo_root()` — read-only *wheel* installs would fail writes (not OS-specific; `JARVIS_DATA_DIR` override exists) | `jarvis/memory/wiki/db_path.py:9`, `vault_root.py:59` | None on the advertised install paths |
 | P-14 | Info | CU extras | macOS/Linux actuation and UI trees depend on optional extras (pynput, pyobjc, pyatspi); without them everything degrades honestly to screenshot + pixel-click | `jarvis/cu/actuate/posix.py`, `jarvis/vision/tree_factory.py` | By design (§3); bare install keeps the CU loop functional |
+| P-15 | Low | Desktop downloads | Native drag-out has Windows OLE and macOS AppKit sources but no GTK/WebKitGTK source yet | `jarvis/ui/native_drag.py` | Linux desktop: the saved-file toast keeps reliable **Show in folder** and **Open** actions but is not itself a drag handle; headless: the normal browser download path remains available |
 
 ## Maintenance
 
