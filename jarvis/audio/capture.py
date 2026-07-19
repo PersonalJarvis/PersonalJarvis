@@ -187,8 +187,8 @@ def _fallback_input_devices(primary_idx: int) -> list[int]:
     if not (0 <= primary_idx < len(devices)):
         return []
     primary = devices[primary_idx]
-    primary_name_root = str(primary.get("name", "")).split("(")[0].strip()
-    if not primary_name_root:
+    primary_name = " ".join(str(primary.get("name", "")).casefold().split())
+    if not primary_name:
         return []
     # Other indices with the same device name, sorted by host API preference.
     matches: list[tuple[int, dict]] = []
@@ -197,8 +197,12 @@ def _fallback_input_devices(primary_idx: int) -> list[int]:
             continue
         if dev.get("max_input_channels", 0) <= 0:
             continue
-        name = str(dev.get("name", ""))
-        if primary_name_root.lower() not in name.lower():
+        # Host-API twins carry the same PortAudio device name. Comparing the
+        # complete normalized name matters: common labels such as
+        # ``Microphone (External)`` and ``Microphone (Built-in)`` are different
+        # physical inputs and must not be cached as interchangeable twins.
+        name = " ".join(str(dev.get("name", "")).casefold().split())
+        if name != primary_name:
             continue
         # Same WDM-KS exclusion as _resolve_input_device — fallbacks that
         # the resolver would never have picked in the first place should
@@ -256,6 +260,83 @@ def _os_default_input_name(
     if any(v.lower() in low for v in _INPUT_DEPRIORITIZE):
         return None  # virtual/AI mic as OS default -> fall back to a real mic
     return name
+
+
+def _rank_input_device_candidates(
+    devices: Sequence[dict],
+    hostapis: Sequence[dict],
+    priority: Sequence[str] | None = None,
+) -> list[tuple[int, dict]]:
+    """Return every usable input device in automatic-selection order.
+
+    Keeping the complete ranking separate from ``_resolve_input_device`` lets
+    stream-open recovery move to another physical microphone without inventing
+    a second, subtly different set of platform filters. The first entry remains
+    the normal resolver choice; later entries are recovery candidates only.
+    """
+    user_priority = tuple(p for p in (priority or ()) if p)
+    os_default_name = _os_default_input_name(devices, hostapis)
+    effective_priority = (
+        (*user_priority, os_default_name) if os_default_name else user_priority
+    )
+
+    candidates: list[tuple[int, dict]] = []
+    for idx, dev in enumerate(devices):
+        if dev.get("max_input_channels", 0) <= 0:
+            continue
+        name = str(dev.get("name", ""))
+        if any(blocked.lower() in name.lower() for blocked in _BLOCKED_INPUT_SUBSTRINGS):
+            continue
+        if is_legacy_primary_mapper(idx, hostapis, devices, output=False):
+            continue
+        hostapi_idx = dev.get("hostapi", -1)
+        if 0 <= hostapi_idx < len(hostapis):
+            hostapi_name = hostapis[hostapi_idx].get("name", "")
+            if hostapi_name in _HOSTAPI_BLOCKLIST:
+                continue
+        candidates.append((idx, dev))
+
+    def _hostapi_rank(entry: tuple[int, dict]) -> int:
+        hostapi_idx = entry[1].get("hostapi", -1)
+        if 0 <= hostapi_idx < len(hostapis):
+            hostapi_name = hostapis[hostapi_idx].get("name", "")
+            return _HOSTAPI_PREFERENCE.get(hostapi_name, 99)
+        return 99
+
+    def _name_rank(entry: tuple[int, dict]) -> int:
+        low = str(entry[1].get("name", "")).lower()
+        for rank, substring in enumerate(effective_priority):
+            if substring.lower() in low:
+                return rank
+        rank = len(effective_priority) + len(_INPUT_PRIORITY)
+        for generic_rank, substring in enumerate(_INPUT_PRIORITY):
+            if substring.lower() in low:
+                rank = len(effective_priority) + generic_rank
+                break
+        if any(virtual.lower() in low for virtual in _INPUT_DEPRIORITIZE):
+            rank += 1000
+        return rank
+
+    candidates.sort(key=lambda entry: (_name_rank(entry), _hostapi_rank(entry)))
+    return candidates
+
+
+def _ranked_input_device_indices(
+    priority: Sequence[str] | None = None,
+) -> list[int]:
+    """Enumerate usable microphones in resolver order for open recovery."""
+    try:
+        devices = sd.query_devices()
+        hostapis = sd.query_hostapis()
+    except Exception as exc:  # noqa: BLE001 - recovery remains best-effort
+        _log.debug("Mic recovery enumeration failed: {}", exc)
+        return []
+    return [
+        idx
+        for idx, _device in _rank_input_device_candidates(
+            devices, hostapis, priority
+        )
+    ]
 
 
 # Resolve-result cache: (device_spec, priority) -> (resolved, monotonic_ts).
@@ -442,8 +523,6 @@ def _resolve_input_device(
         )
         # Fall through to the auto-headset heuristic below.
 
-    user_priority = tuple(p for p in (priority or ()) if p)
-
     try:
         devices = sd.query_devices()
         hostapis = sd.query_hostapis()
@@ -455,73 +534,10 @@ def _resolve_input_device(
         )
         return None
 
-    # "Your device first": prefer the user's OS-selected default MICROPHONE over
-    # the generic guesses, UNLESS it is a loopback/monitor, the localized virtual
-    # mapper, or a virtual/AI mic that can go silent — then fall back to the
-    # heuristic so the wake loop gets a real mic. Injected as a NAME so the sort
-    # still picks the mic's best host-API twin (MME) and skips WDM-KS. Ranks
-    # BELOW an explicit input_device_priority.
-    os_default_name = _os_default_input_name(devices, hostapis)
-    effective_priority = (
-        (*user_priority, os_default_name) if os_default_name else user_priority
-    )
-
-    candidates: list[tuple[int, dict]] = []
-    for idx, dev in enumerate(devices):
-        if dev.get("max_input_channels", 0) <= 0:
-            continue
-        name = str(dev.get("name", ""))
-        if any(blocked.lower() in name.lower() for blocked in _BLOCKED_INPUT_SUBSTRINGS):
-            continue
-        # Locale-independent skip of the MME "Sound Mapper" / DirectSound
-        # "Primary Sound Driver" recording mapper (translated display name).
-        if is_legacy_primary_mapper(idx, hostapis, devices, output=False):
-            continue
-        # Drop hostapis that can't serve PortAudio blocking-stream I/O —
-        # WDM-KS makes InputStream.start() raise PaErrorCode -9996 even
-        # when the device enumerates cleanly. Filtering here means the
-        # resolver returns None (→ system default) instead of handing
-        # back a broken index that the wake loop would loop-crash on.
-        hostapi_idx = dev.get("hostapi", -1)
-        if 0 <= hostapi_idx < len(hostapis):
-            hostapi_name = hostapis[hostapi_idx].get("name", "")
-            if hostapi_name in _HOSTAPI_BLOCKLIST:
-                continue
-        candidates.append((idx, dev))
-
-    def _hostapi_rank(entry: tuple[int, dict]) -> int:
-        hostapi_idx = entry[1].get("hostapi", -1)
-        if 0 <= hostapi_idx < len(hostapis):
-            hostapi_name = hostapis[hostapi_idx].get("name", "")
-            return _HOSTAPI_PREFERENCE.get(hostapi_name, 99)
-        return 99
-
-    def _name_rank(entry: tuple[int, dict]) -> int:
-        low = str(entry[1].get("name", "")).lower()
-        # Precedence: explicit user priority, then the OS-selected default mic
-        # (both carried in ``effective_priority``), then the generic list. A
-        # user / OS-default match ranks ahead of every generic match AND is exempt
-        # from the virtual/AI-mic deprioritize below — the OS-default name is only
-        # ever a real mic (``_os_default_input_name`` rejects virtual ones), and
-        # an explicit user name is honored deliberately.
-        for r, sub in enumerate(effective_priority):
-            if sub.lower() in low:
-                return r
-        rank = len(effective_priority) + len(_INPUT_PRIORITY)
-        for r, sub in enumerate(_INPUT_PRIORITY):
-            if sub.lower() in low:
-                rank = len(effective_priority) + r
-                break
-        # Push virtual / AI mics (NVIDIA Broadcast, voice changers, virtual
-        # cables) BEHIND every real hardware mic — they often deliver silence
-        # when their companion app is closed (see _INPUT_DEPRIORITIZE). They are
-        # not blocked, only ranked last, so they still serve as a fallback when
-        # no real mic exists.
-        if any(v.lower() in low for v in _INPUT_DEPRIORITIZE):
-            rank += 1000
-        return rank
-
-    candidates.sort(key=lambda entry: (_name_rank(entry), _hostapi_rank(entry)))
+    # The complete ranking is shared with open-time recovery. Its first entry
+    # preserves the resolver contract: explicit user priority, then the usable
+    # OS default, then generic real-microphone heuristics and host-API ranking.
+    candidates = _rank_input_device_candidates(devices, hostapis, priority)
     if candidates:
         chosen_idx, chosen_dev = candidates[0]
         chosen_hostapi_idx = chosen_dev.get("hostapi", -1)
@@ -597,6 +613,11 @@ class MicrophoneCapture:
             self._device = cached
         else:
             self._device = _resolve_input_device(device, self._device_priority)
+        # Keep the originally resolved microphone separate from the currently
+        # open one. If recovery temporarily moves to another physical input,
+        # the preferred device is tried again on the next capture/restart.
+        self._preferred_device: int | str | None = self._device
+        self._using_physical_fallback = False
         self._sample_rate = sample_rate
         self._blocksize = blocksize
         self._channels = channels
@@ -714,39 +735,58 @@ class MicrophoneCapture:
             self._drops += 1
 
     async def _try_open_stream(self) -> None:
-        """Open loop with host API fallback. Raises on total failure.
+        """Open the preferred mic, then recover through safe alternatives.
 
-        Extracted from __aenter__ so the stall watchdog can reuse the same
-        open logic for restarts.
+        Extracted from ``__aenter__`` so the stall watchdog can reuse the same
+        logic. Automatic/name-based selection may fail over to another physical
+        input; an explicit numeric device remains pinned.
         """
         self._require_microphone_access()
-        attempts: list[int | str | None] = [self._device]
+        preferred_attempts: list[int | str | None] = [self._preferred_device]
         try:
-            if isinstance(self._device, int):
-                attempts.extend(_fallback_input_devices(self._device))
+            if isinstance(self._preferred_device, int):
+                for fallback in _fallback_input_devices(self._preferred_device):
+                    if fallback not in preferred_attempts:
+                        preferred_attempts.append(fallback)
         except Exception as exc:  # noqa: BLE001
-            _log.debug("Mic fallback enumeration failed: {}", exc)
-        # Phase one intentionally preserves the Windows recovery contract: try
-        # 16 kHz on the selected endpoint and every same-device MME/DirectSound
-        # twin before changing the hardware rate. Those host APIs perform their
-        # own reliable conversion and remain preferable to a WASAPI native-rate
-        # stream. Only after every endpoint rejects the contract rate do we try
-        # CoreAudio/ALSA/native rates and resample locally on the CPU.
-        def _open_candidates() -> Iterator[tuple[int | str | None, int]]:
-            for attempt in attempts:
-                yield attempt, self._sample_rate
-            # This half of the generator is lazy: device-rate queries do not run
-            # on the normal 16 kHz fast path. They begin only after every target-
-            # rate endpoint above failed.
-            for attempt in attempts:
+            _log.debug("Mic host-API fallback enumeration failed: {}", exc)
+
+        # A numeric device is an explicit pin. ``None`` and string specs are
+        # automatic/name-based choices, so they may move to another real input
+        # when CoreAudio, ALSA, or a Windows endpoint refuses to reopen after a
+        # completed voice turn.
+        # Preserve the Windows recovery contract within each physical group:
+        # try 16 kHz on the selected endpoint and each same-device host-API twin
+        # before changing the hardware rate. Only after preferred-device target
+        # and native rates fail do we move to another physical microphone.
+        def _open_candidates() -> Iterator[tuple[int | str | None, int, bool]]:
+            for attempt in preferred_attempts:
+                yield attempt, self._sample_rate, False
+            # Lazy: native-rate queries and cross-device enumeration stay off
+            # the normal 16 kHz fast path and therefore do not add latency to a
+            # healthy wake→session microphone handover.
+            for attempt in preferred_attempts:
                 for rate in _native_input_rates(attempt, self._sample_rate):
-                    yield attempt, rate
+                    yield attempt, rate, False
+            if isinstance(self._device_spec, int):
+                return
+            alternate_attempts = [
+                candidate
+                for candidate in _ranked_input_device_indices(self._device_priority)
+                if candidate not in preferred_attempts
+            ]
+            for attempt in alternate_attempts:
+                yield attempt, self._sample_rate, True
+            for attempt in alternate_attempts:
+                for rate in _native_input_rates(attempt, self._sample_rate):
+                    yield attempt, rate, True
 
         last_error: Exception | None = None
         attempt_count = 0
-        for attempt, capture_rate in _open_candidates():
+        for attempt, capture_rate, physical_fallback in _open_candidates():
             attempt_count += 1
             self._require_microphone_access()
+            stream = None
             try:
                 capture_blocksize = (
                     0
@@ -779,9 +819,19 @@ class MicrophoneCapture:
                 stream.start()
                 self._stream = stream
                 self._device = attempt
-                if isinstance(self._device_spec, str):
+                self._using_physical_fallback = physical_fallback
+                if not physical_fallback:
+                    self._preferred_device = attempt
+                if isinstance(self._device_spec, str) and not physical_fallback:
                     _touch_resolve_cache(
                         self._device_spec, self._device_priority, attempt
+                    )
+                if physical_fallback:
+                    _log.warning(
+                        "Preferred microphone device(s) {} could not be opened; "
+                        "using alternative input device {} for this capture.",
+                        preferred_attempts,
+                        attempt,
                     )
                 _log.info(
                     "Mic opened (device={}, capture_sr={}, output_sr={}, "
@@ -795,6 +845,18 @@ class MicrophoneCapture:
                 return
             except Exception as exc:  # noqa: BLE001
                 last_error = exc
+                # ``InputStream`` can be constructed before ``start`` fails.
+                # Close that partial stream so PortAudio/CoreAudio does not keep
+                # a poisoned handle across every subsequent wake-loop retry.
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except Exception as close_exc:  # noqa: BLE001
+                        _log.debug(
+                            "Mic-Open cleanup for device={} ignored ({}).",
+                            attempt,
+                            close_exc,
+                        )
                 # A failed open means the cached/resolved device may be gone —
                 # force the next construction through a fresh full resolve.
                 _invalidate_resolve_cache()
@@ -805,6 +867,7 @@ class MicrophoneCapture:
                     capture_rate,
                     exc,
                 )
+        self._using_physical_fallback = False
         _log.error(
             "Mic-Open failed completely ({} attempt(s)) — last error: {}",
             attempt_count,
@@ -840,7 +903,10 @@ class MicrophoneCapture:
                 # The stream is delivering — keep the resolve cache fresh so a
                 # capture constructed moments after this one closes (the
                 # wake→session handover) skips the ~0.4s device enumeration.
-                if isinstance(self._device_spec, str):
+                if (
+                    isinstance(self._device_spec, str)
+                    and not self._using_physical_fallback
+                ):
                     _touch_resolve_cache(
                         self._device_spec, self._device_priority, self._device
                     )

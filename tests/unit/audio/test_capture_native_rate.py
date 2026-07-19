@@ -43,7 +43,7 @@ async def test_native_rate_fallback_resamples_to_16khz_contract(
     monkeypatch.setattr(capture.sd, "query_devices", fake_query_devices)
     monkeypatch.setattr(capture.sd, "InputStream", fake_input_stream)
 
-    mic = capture.MicrophoneCapture(device=3)
+    mic = capture.MicrophoneCapture(device=3, access_gate=lambda: True)
     mic._loop = asyncio.get_running_loop()
     await mic._try_open_stream()
 
@@ -90,7 +90,7 @@ async def test_16khz_host_api_twin_precedes_native_rate_fallback(monkeypatch) ->
     monkeypatch.setattr(capture.sd, "query_devices", unexpected_native_rate_query)
     monkeypatch.setattr(capture.sd, "InputStream", fake_input_stream)
 
-    mic = capture.MicrophoneCapture(device=10)
+    mic = capture.MicrophoneCapture(device=10, access_gate=lambda: True)
     await mic._try_open_stream()
 
     assert open_calls == [(10, 16_000), (11, 16_000)]
