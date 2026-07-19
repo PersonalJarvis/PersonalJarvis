@@ -6156,6 +6156,7 @@ class BrainManager:
         user_text: str,
         *,
         trace_id: UUID | None = None,
+        use_history: bool = True,
     ) -> str | None:
         """Deterministic explicit wiki-write path (spec A1-A3).
 
@@ -6170,7 +6171,10 @@ class BrainManager:
 
         if self._tool_executor is None:
             return None
-        match = match_wiki_intent(user_text)
+        match = match_wiki_intent(
+            user_text,
+            prior_text=self._previous_user_turn_text(use_history=use_history),
+        )
         if match is None:
             return None
         tool = self._tools.get("wiki-ingest")
@@ -7408,7 +7412,9 @@ class BrainManager:
         # never reinterpret the command as booking or dispatching that noun.
         # Deterministic, model-independent, and confirm-after-write.
         wiki_reply = await self._run_wiki_ingest_fast_path(
-            user_text, trace_id=turn_trace_id,
+            user_text,
+            trace_id=turn_trace_id,
+            use_history=use_history,
         )
         if wiki_reply is not None:
             await self._record_response_side_effects(

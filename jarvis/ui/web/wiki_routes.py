@@ -18,10 +18,10 @@ logical errors. HTTP 404 stays reserved for unknown routes; HTTP 500 only
 fires on unhandled exceptions. The write endpoint uses non-2xx responses when
 nothing was stored so CLI and agent callers cannot mistake a no-op for success.
 
-The module reuses ``PageRepository`` (B1, ``jarvis/memory/wiki/page.py``),
-``VaultIndex`` (B1, ``jarvis/memory/wiki/vault_index.py``) and
-``VaultSearch`` (B5, ``jarvis/memory/wiki/search.py``), and the guarded Wiki
-ingest service. It never writes Wiki files directly.
+The module reuses the tolerant Markdown parser (B1,
+``jarvis/memory/wiki/page.py``), ``VaultSearch`` (B5,
+``jarvis/memory/wiki/search.py``), and the guarded Wiki ingest service. It
+never writes Wiki files directly.
 
 The vault root is read from ``app.state.config.wiki_integration.vault_root``.
 Tests can override the path by setting that attribute directly before the
@@ -32,7 +32,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import time
+from dataclasses import dataclass
 from datetime import UTC
 from pathlib import Path
 from typing import Any
@@ -50,11 +52,10 @@ from jarvis.memory.wiki.integration import (
     get_running_capture_runtime,
     get_running_curator,
 )
-from jarvis.memory.wiki.page import MarkdownPageRepository
+from jarvis.memory.wiki.page import parse_markdown
 from jarvis.memory.wiki.protocols import WikiPage
 from jarvis.memory.wiki.search import VaultSearch
 from jarvis.memory.wiki.telemetry import telemetry as _telemetry
-from jarvis.memory.wiki.vault_index import VaultIndex
 from jarvis.memory.wiki.vault_root import resolve_vault_root
 from jarvis.memory.wiki.wikilink import (
     _canonicalise as _canonicalise_link,  # type: ignore[attr-defined]
@@ -64,13 +65,20 @@ log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/wiki", tags=["wiki"])
 
-# Directories that VaultIndex / page tree walks. Order matters for stable UI.
+# Canonical directories remain first in the tree for response compatibility.
 _PAGE_DIRS: tuple[tuple[str, str], ...] = (
     ("entities", "entity"),
     ("concepts", "concept"),
     ("projects", "project"),
     ("sessions", "session"),
 )
+
+# Frozen history and binary-only storage are not live Wiki pages. Hidden
+# directories (for example .obsidian and .trash) are pruned separately.
+_EXCLUDED_PAGE_DIRS: frozenset[str] = frozenset(
+    {"_archive", "attachments", "90-attachments"}
+)
+_ROOT_FOLDER_NAME = "root"
 
 # Snippet window (chars) for backlink context extraction around the wikilink.
 _BACKLINK_SNIPPET_RADIUS = 80
@@ -160,86 +168,142 @@ def _human_title_from_slug(slug: str) -> str:
 
 
 # ----------------------------------------------------------------------
-# Walking helpers (off-loop)
+# Visible-vault projection (off-loop)
 # ----------------------------------------------------------------------
 
 
-def _walk_tree_sync(vault_root: Path) -> tuple[list[dict[str, Any]], int, float | None]:
-    """Walk the four page directories. Returns (folders, total_pages, log_mtime)."""
+@dataclass(frozen=True, slots=True)
+class _VisiblePage:
+    """One live Markdown page plus filesystem metadata for route responses."""
+
+    page: WikiPage
+    relative_path: Path
+    mtime: float
+    size: int
+
+
+def _visible_path_sort_key(relative_path: Path) -> tuple[int, str]:
+    """Keep canonical page directories first, then root and custom folders."""
+    parts = relative_path.parts
+    top = parts[0] if len(parts) > 1 else ""
+    standard_order = {name: index for index, (name, _) in enumerate(_PAGE_DIRS)}
+    if top in standard_order:
+        rank = standard_order[top]
+    elif not top:
+        rank = len(_PAGE_DIRS)
+    else:
+        rank = len(_PAGE_DIRS) + 1
+    return rank, relative_path.as_posix().casefold()
+
+
+def _scan_visible_pages_sync(vault_root: Path) -> list[_VisiblePage]:
+    """Parse every user-visible Markdown page below ``vault_root``.
+
+    Hidden trees, frozen archive history, and attachment stores are pruned
+    before files are opened. Symlinked files that resolve outside the vault
+    are also ignored so a crafted vault cannot expose unrelated host files.
+    """
+    root = vault_root.resolve()
+    paths: list[tuple[Path, Path]] = []
+    for current, dirnames, filenames in os.walk(root, followlinks=False):
+        dirnames[:] = sorted(
+            (
+                name
+                for name in dirnames
+                if not name.startswith(".")
+                and name.casefold() not in _EXCLUDED_PAGE_DIRS
+            ),
+            key=str.casefold,
+        )
+        current_path = Path(current)
+        for filename in sorted(filenames, key=str.casefold):
+            if filename.startswith(".") or Path(filename).suffix.casefold() != ".md":
+                continue
+            path = current_path / filename
+            try:
+                resolved = path.resolve()
+                resolved.relative_to(root)
+                relative = path.relative_to(root)
+            except (OSError, ValueError):
+                continue
+            paths.append((path, relative))
+
+    paths.sort(key=lambda item: _visible_path_sort_key(item[1]))
+    visible: list[_VisiblePage] = []
+    for path, relative in paths:
+        try:
+            raw = path.read_text(encoding="utf-8", errors="replace")
+            stat = path.stat()
+        except OSError as exc:
+            log.warning("wiki_route_walk_failed: %s - %s", path, exc)
+            continue
+        visible.append(
+            _VisiblePage(
+                page=parse_markdown(raw, path),
+                relative_path=relative,
+                mtime=stat.st_mtime,
+                size=stat.st_size,
+            )
+        )
+    return visible
+
+
+async def _scan_visible_pages(vault_root: Path) -> list[_VisiblePage]:
+    """Build a fresh, non-blocking projection of the active Obsidian vault."""
+    return await asyncio.to_thread(_scan_visible_pages_sync, vault_root)
+
+
+def _folder_name(relative_path: Path) -> str:
+    parent = relative_path.parent
+    return _ROOT_FOLDER_NAME if parent == Path(".") else parent.as_posix()
+
+
+def _folder_kind(name: str, pages: list[_VisiblePage]) -> str:
+    standard_kinds = dict(_PAGE_DIRS)
+    if name in standard_kinds:
+        return standard_kinds[name]
+    kinds = {item.page.page_type for item in pages if item.page.page_type}
+    return next(iter(kinds)) if len(kinds) == 1 else "meta"
+
+
+def _tree_from_visible_pages(
+    visible: list[_VisiblePage],
+) -> tuple[list[dict[str, Any]], float | None]:
+    """Return compatible flat folder buckets plus the root log timestamp."""
+    grouped: dict[str, list[_VisiblePage]] = {name: [] for name, _ in _PAGE_DIRS}
+    log_mtime: float | None = None
+    for item in visible:
+        name = _folder_name(item.relative_path)
+        grouped.setdefault(name, []).append(item)
+        if item.relative_path.as_posix() == "log.md":
+            log_mtime = item.mtime
+
+    standard_names = [name for name, _ in _PAGE_DIRS]
+    extra_names = sorted(
+        (name for name in grouped if name not in standard_names),
+        key=lambda name: (name != _ROOT_FOLDER_NAME, name.casefold()),
+    )
     folders: list[dict[str, Any]] = []
-    total_pages = 0
-    for dirname, kind in _PAGE_DIRS:
-        folder = vault_root / dirname
-        files: list[dict[str, Any]] = []
-        if folder.is_dir():
-            for md_path in sorted(folder.glob("*.md")):
-                if md_path.name.startswith("."):
-                    continue
-                try:
-                    stat = md_path.stat()
-                except OSError as exc:
-                    log.warning("wiki_route_walk_failed: %s — %s", md_path, exc)
-                    continue
-                title = _title_from_disk(md_path)
-                files.append(
-                    {
-                        "slug": md_path.stem,
-                        "title": title,
-                        "mtime": stat.st_mtime,
-                        "size": stat.st_size,
-                    }
-                )
-        total_pages += len(files)
+    for name in [*standard_names, *extra_names]:
+        pages = grouped[name]
+        files = [
+            {
+                "slug": item.page.slug,
+                "title": item.page.frontmatter.get("title") or _title_of(item.page),
+                "mtime": item.mtime,
+                "size": item.size,
+            }
+            for item in pages
+        ]
         folders.append(
             {
-                "name": dirname,
-                "kind": kind,
+                "name": name,
+                "kind": _folder_kind(name, pages),
                 "count": len(files),
                 "files": files,
             }
         )
-
-    log_mtime: float | None = None
-    log_path = vault_root / "log.md"
-    if log_path.is_file():
-        try:
-            log_mtime = log_path.stat().st_mtime
-        except OSError:
-            log_mtime = None
-    return folders, total_pages, log_mtime
-
-
-def _title_from_disk(md_path: Path) -> str:
-    """Cheap H1 extraction without a full parse. Falls back to humanised stem."""
-    try:
-        # Read only the first ~2 KB; an H1 always sits at the top.
-        head = md_path.read_text(encoding="utf-8", errors="replace")[:2048]
-    except OSError:
-        return _human_title_from_slug(md_path.stem)
-    in_frontmatter = False
-    for raw_line in head.splitlines():
-        line = raw_line.rstrip()
-        if line == "---":
-            in_frontmatter = not in_frontmatter
-            continue
-        if in_frontmatter:
-            continue
-        stripped = line.lstrip()
-        if stripped.startswith("# "):
-            return stripped[2:].strip()
-    return _human_title_from_slug(md_path.stem)
-
-
-async def _build_index(vault_root: Path) -> VaultIndex:
-    """Build a freshly scanned ``VaultIndex`` over ``vault_root``.
-
-    Reading is delegated to ``asyncio.to_thread`` inside the repository, so
-    this coroutine can run on the event loop without blocking.
-    """
-    repo = MarkdownPageRepository()
-    index = VaultIndex(repo=repo)
-    await index.scan(vault_root)
-    return index
+    return folders, log_mtime
 
 
 # ----------------------------------------------------------------------
@@ -274,23 +338,13 @@ async def get_tree(request: Request) -> dict[str, Any]:
         }
 
     try:
-        folders, total_pages, log_mtime = await asyncio.to_thread(
-            _walk_tree_sync, vault_root
-        )
+        visible = await _scan_visible_pages(vault_root)
+        folders, log_mtime = _tree_from_visible_pages(visible)
     except Exception as exc:  # noqa: BLE001
         log.warning("wiki_route_failed route=/tree error=%s", exc)
         return {"ok": False, "error": "tree walk failed"}
 
-    total_links = 0
-    try:
-        index = await _build_index(vault_root)
-        for _, kind in _PAGE_DIRS:
-            for page in index.pages_by_type(kind):
-                total_links += len(getattr(page, "wikilinks", ()))
-    except Exception as exc:  # noqa: BLE001
-        log.warning("wiki_route_failed route=/tree (link count) error=%s", exc)
-        # Don't fail the whole response if only the link count is degraded.
-        total_links = 0
+    total_links = sum(len(item.page.wikilinks) for item in visible)
 
     last_curator_run = _format_mtime(log_mtime)
 
@@ -299,7 +353,7 @@ async def get_tree(request: Request) -> dict[str, Any]:
         "vault_root": vault_str,
         "folders": folders,
         "stats": {
-            "total_pages": total_pages,
+            "total_pages": len(visible),
             "total_links": total_links,
             "last_curator_run": last_curator_run,
         },
@@ -352,7 +406,7 @@ async def get_page(slug: str, request: Request) -> dict[str, Any]:
         "frontmatter": dict(page.frontmatter),
         "frontmatter_valid": bool(page.is_schema_valid),
         "body_md": body_md,
-        "wikilinks": [_canonicalise_link(link).rsplit("/", 1)[-1] for link in page.wikilinks],
+        "wikilinks": [_link_slug(link) for link in page.wikilinks],
         "stats": {
             "words": words,
             "bytes": size_bytes,
@@ -373,14 +427,12 @@ async def get_graph(request: Request) -> dict[str, Any]:
         return {"ok": True, "nodes": [], "edges": [], "broken": []}
 
     try:
-        index = await _build_index(vault_root)
+        visible = await _scan_visible_pages(vault_root)
     except Exception as exc:  # noqa: BLE001
         log.warning("wiki_route_failed route=/graph error=%s", exc)
         return {"ok": False, "error": "graph build failed"}
 
-    pages: list[WikiPage] = []
-    for _, kind in _PAGE_DIRS:
-        pages.extend(index.pages_by_type(kind))
+    pages = [item.page for item in visible]
 
     nodes: list[dict[str, Any]] = []
     known_slugs: set[str] = set()
@@ -402,7 +454,7 @@ async def get_graph(request: Request) -> dict[str, Any]:
     for page in pages:
         body = page.body
         for raw_link in page.wikilinks:
-            target_slug = _canonicalise_link(raw_link).rsplit("/", 1)[-1]
+            target_slug = _link_slug(raw_link)
             if not target_slug:
                 continue
             context = _link_context(body, raw_link, target_slug)
@@ -439,12 +491,16 @@ async def get_backlinks(slug: str, request: Request) -> dict[str, Any]:
         return {"ok": True, "slug": slug, "backlinks": []}
 
     try:
-        index = await _build_index(vault_root)
+        visible = await _scan_visible_pages(vault_root)
     except Exception as exc:  # noqa: BLE001
         log.warning("wiki_route_failed route=/backlinks/%s error=%s", slug, exc)
         return {"ok": False, "error": "backlinks lookup failed"}
 
-    sources: list[WikiPage] = index.backlinks_to(slug)
+    sources = [
+        item.page
+        for item in visible
+        if any(_link_slug(link) == slug for link in item.page.wikilinks)
+    ]
     out: list[dict[str, Any]] = []
     for src in sources:
         snippet = _link_context(src.body, slug, slug)
@@ -714,31 +770,10 @@ def _is_safe_slug(slug: str) -> bool:
 
 
 async def _find_page(vault_root: Path, slug: str) -> WikiPage | None:
-    """Locate a page by slug across the four page directories.
-
-    Falls back from the ``VaultIndex`` (which skips schema-invalid pages)
-    to a direct file probe so the UI can still render malformed pages with
-    a warning banner.
-    """
-    index = await _build_index(vault_root)
-    page = index.find_by_slug(slug)
-    if page is not None:
-        return page
-
-    # Fallback: parse a schema-invalid page directly so the UI can show it.
-    repo = MarkdownPageRepository()
-    for dirname, _ in _PAGE_DIRS:
-        candidate = vault_root / dirname / f"{slug}.md"
-        if candidate.is_file():
-            try:
-                return await repo.load(candidate)
-            except Exception as exc:  # noqa: BLE001
-                log.warning(
-                    "wiki_route_failed route=/page/%s parse error=%s",
-                    slug,
-                    exc,
-                )
-                return None
+    """Locate a visible page by slug using the stable projection order."""
+    for item in await _scan_visible_pages(vault_root):
+        if item.page.slug == slug:
+            return item.page
     return None
 
 
@@ -749,6 +784,12 @@ def _relative_to_vault(path: Path, vault_root: Path) -> str:
     except (ValueError, OSError):
         return path.name
     return rel.as_posix()
+
+
+def _link_slug(link: str) -> str:
+    """Reduce a path-qualified Obsidian link to its page slug."""
+    target = _canonicalise_link(link).replace("\\", "/").rsplit("/", 1)[-1]
+    return target[:-3] if target.casefold().endswith(".md") else target
 
 
 def _link_context(body: str, link_target: str, fallback_slug: str) -> str:

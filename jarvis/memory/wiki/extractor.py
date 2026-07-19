@@ -41,6 +41,7 @@ from jarvis.memory.wiki.curator_llm import (
 )
 from jarvis.memory.wiki.grounding import is_unsupported_user_interest_claim
 from jarvis.memory.wiki.journal import CandidateFact, normalise_subjects
+from jarvis.memory.wiki.residence import detect_residence_slug
 from jarvis.memory.wiki.secret_guard import contains_secret
 from jarvis.memory.wiki.telemetry import telemetry
 
@@ -100,6 +101,8 @@ _KNOWN_KINDS = frozenset(
     }
 )
 
+_GRAPH_SUBJECT_KINDS = frozenset({"place"})
+
 
 _SYSTEM_PROMPT = """\
 You extract durable personal-memory facts from one FOCUS USER TURN. Earlier
@@ -136,6 +139,10 @@ Rules:
 - Every element must use the exact focus turn id as evidence_turn_id.
 - "subjects" names who/what the fact is about (e.g. ["person-name"],
   ["personal-jarvis"]). The caller supplies the speaker's exact user slug.
+  For a first-person fact about a named place, person, organization, project,
+  asset, or vehicle, include BOTH the exact user slug and the named topic slug.
+  Example: "I live in San Francisco" uses kind "place" and subjects
+  ["<user-slug>", "san-francisco"].
 - Never include credentials, API keys, passwords, or tokens in a fact.
 - No prose outside the JSON array.
 """
@@ -169,6 +176,10 @@ Rules:
   the disclosed fact and never invent a reason for the question.
 - Resolve pronouns and follow-up clarifications across turns. Prefer one
   complete fact over several fragments.
+- For a first-person fact about a named place, person, organization, project,
+  asset, or vehicle, include BOTH the exact user slug and the named topic slug.
+  A residence in San Francisco uses kind "place" and subject
+  "san-francisco" alongside the exact user slug.
 - Return [] for greetings, questions, commands without durable content,
   transient bodily/status chatter, weather talk, and immediate-task details.
 - Never include credentials, API keys, passwords, or tokens.
@@ -823,6 +834,15 @@ class ConversationFactExtractor:
                 reason = f"malformed JSON array: {exc}"
                 rejection_reasons.append(reason)
                 return reason
+            if not self._has_complete_residence_candidates(
+                parsed,
+                allowed_evidence=allowed_evidence,
+                fallback_evidence=fallback_evidence,
+                evidence_text_by_id=evidence_text_by_id,
+            ):
+                reason = "candidate array lacks a complete residence graph subject"
+                rejection_reasons.append(reason)
+                return reason
             if parsed and not self._has_usable_fact_item(
                 parsed,
                 allowed_evidence=allowed_evidence,
@@ -949,8 +969,18 @@ class ConversationFactExtractor:
         provider chain can ask a different family instead of recording a false
         terminal ``empty`` result.
         """
+        if not self._has_complete_residence_candidates(
+            parsed,
+            allowed_evidence=allowed_evidence,
+            fallback_evidence=fallback_evidence,
+            evidence_text_by_id=evidence_text_by_id,
+        ):
+            telemetry.inc("wiki_candidates_blocked_incomplete_subjects")
+            return False
+
         secret_count = 0
         unsupported_interest_count = 0
+        incomplete_subject_count = 0
         usable = False
         for item in parsed[:max_facts]:
             if not isinstance(item, dict):
@@ -972,6 +1002,15 @@ class ConversationFactExtractor:
                     if isinstance(raw_subjects, list)
                     else ()
                 )
+                kind = item.get("kind")
+                if not isinstance(kind, str) or kind not in _KNOWN_KINDS:
+                    kind = "other"
+                if not self._graph_subjects_complete(
+                    kind=kind,
+                    subjects=subjects,
+                ):
+                    incomplete_subject_count += 1
+                    continue
                 if is_unsupported_user_interest_claim(
                     fact=fact,
                     subjects=subjects,
@@ -988,6 +1027,11 @@ class ConversationFactExtractor:
                 "wiki_candidates_blocked_unsupported_interest",
                 unsupported_interest_count,
             )
+        if incomplete_subject_count:
+            telemetry.inc(
+                "wiki_candidates_blocked_incomplete_subjects",
+                incomplete_subject_count,
+            )
         return usable
 
     def _coerce_facts(
@@ -999,6 +1043,15 @@ class ConversationFactExtractor:
         evidence_text_by_id: dict[str, str],
         max_facts: int,
     ) -> list[CandidateFact]:
+        if not self._has_complete_residence_candidates(
+            parsed,
+            allowed_evidence=allowed_evidence,
+            fallback_evidence=fallback_evidence,
+            evidence_text_by_id=evidence_text_by_id,
+        ):
+            telemetry.inc("wiki_candidates_blocked_incomplete_subjects")
+            return []
+
         facts: list[CandidateFact] = []
         for item in parsed[:max_facts]:
             if not isinstance(item, dict):
@@ -1032,6 +1085,16 @@ class ConversationFactExtractor:
                 evidence_text_by_id.get(evidence, ""),
                 max_chars=_MAX_EVIDENCE_EXCERPT_CHARS,
             ).strip()
+            if not self._graph_subjects_complete(
+                kind=kind,
+                subjects=subjects,
+            ):
+                telemetry.inc("wiki_candidates_blocked_incomplete_subjects")
+                log.info(
+                    "ConversationFactExtractor: dropped graph fact without "
+                    "complete user and topic subjects"
+                )
+                continue
             if is_unsupported_user_interest_claim(
                 fact=fact,
                 subjects=subjects,
@@ -1053,6 +1116,64 @@ class ConversationFactExtractor:
                 )
             )
         return facts
+
+    def _graph_subjects_complete(
+        self,
+        *,
+        kind: str,
+        subjects: tuple[str, ...],
+    ) -> bool:
+        """Require a named topic beyond a lone user slug for graph facts."""
+        if kind not in _GRAPH_SUBJECT_KINDS:
+            return True
+        return self._user_entity_slug in subjects and any(
+            subject != self._user_entity_slug for subject in subjects
+        )
+
+    def _has_complete_residence_candidates(
+        self,
+        parsed: list[Any],
+        *,
+        allowed_evidence: set[str],
+        fallback_evidence: str,
+        evidence_text_by_id: dict[str, str],
+    ) -> bool:
+        """Require one correctly typed user/place candidate per residence turn."""
+        requirements = {
+            evidence: place_slug
+            for evidence, excerpt in evidence_text_by_id.items()
+            if evidence in allowed_evidence
+            and (
+                place_slug := detect_residence_slug(
+                    excerpt.split("\nPrior user context", 1)[0]
+                )
+            )
+        }
+        for evidence, place_slug in requirements.items():
+            complete = False
+            for item in parsed:
+                if not isinstance(item, dict) or item.get("kind") != "place":
+                    continue
+                raw_evidence = item.get("evidence_turn_id")
+                item_evidence = (
+                    raw_evidence.strip()
+                    if isinstance(raw_evidence, str) and raw_evidence.strip()
+                    else fallback_evidence
+                )
+                if item_evidence != evidence:
+                    continue
+                raw_subjects = item.get("subjects")
+                subjects = (
+                    normalise_subjects(raw_subjects)
+                    if isinstance(raw_subjects, list)
+                    else ()
+                )
+                if self._user_entity_slug in subjects and place_slug in subjects:
+                    complete = True
+                    break
+            if not complete:
+                return False
+        return True
 
     def _ensure_brain(self) -> Any:
         """Lazily instantiate the cheap brain; ``None`` when unavailable."""

@@ -96,6 +96,53 @@ def test_latest_transcript_reference_is_anaphoric(text: str) -> None:
     assert match.content is None
 
 
+def test_reported_obsidian_follow_up_resolves_locative_wiki_target() -> None:
+    prior = "Was steht in meiner Obsidian-Wiki drin?"  # i18n-allow
+    match = match_wiki_intent(
+        (
+            "Kannst du bitte einen Eintrag da eintragen, dass ich ziemlich "  # i18n-allow
+            "genervt bin und dass ich in San Francisco "  # i18n-allow
+            "wohne?"  # i18n-allow: production transcript under test
+        ),
+        prior_text=prior,
+    )
+
+    assert match is not None
+    assert match.content is not None
+    assert "genervt" in match.content
+    assert "san francisco" in match.content
+
+
+def test_entry_noun_before_explicit_wiki_target_is_control_syntax() -> None:
+    match = match_wiki_intent(
+        "Kannst du bitte einen Eintrag in mein Wiki eintragen, dass ich "  # i18n-allow
+        "in San Francisco wohne?"  # i18n-allow: production syntax under test
+    )
+
+    assert match is not None
+    assert match.content is not None
+    assert match.content.startswith("ich in san francisco")
+
+
+def test_locative_write_requires_immediate_wiki_context() -> None:
+    text = "Kannst du bitte einen Eintrag da eintragen, dass ich morgen frei habe?"  # i18n-allow
+
+    assert match_wiki_intent(text) is None
+    assert match_wiki_intent(
+        text,
+        prior_text="Was steht morgen in meinem Kalender?",  # i18n-allow
+    ) is None
+
+
+def test_general_wiki_discussion_does_not_authorize_contextual_write() -> None:
+    text = "Kannst du bitte einen Eintrag da eintragen, dass ich morgen frei habe?"  # i18n-allow
+
+    assert match_wiki_intent(
+        text,
+        prior_text="Wie funktioniert ein Wiki?",  # i18n-allow
+    ) is None
+
+
 @pytest.mark.parametrize("text", [
     "Was steht im Wiki über Joy?",           # recall, not write  # i18n-allow
     "Wie funktioniert ein Wiki?",            # general question   # i18n-allow

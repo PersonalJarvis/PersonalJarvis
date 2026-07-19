@@ -53,6 +53,7 @@ from jarvis.memory.wiki.prompt import (
 )
 from jarvis.memory.wiki.protocols import PageUpdate
 from jarvis.memory.wiki.telemetry import telemetry
+from jarvis.memory.wiki.wikilink import extract_wikilinks
 
 if TYPE_CHECKING:
     from jarvis.core.config import JarvisConfig
@@ -66,6 +67,14 @@ log = logging.getLogger(__name__)
 # sessions (conversation facts are durable knowledge, not session digests)
 # and never _archive (frozen).
 _TARGET_DIRS = ("entities", "concepts", "projects")
+
+_GRAPH_TARGET_DIR_BY_KIND = {
+    "person": "entities",
+    "asset": "entities",
+    "place": "entities",
+    "organization": "entities",
+    "project": "projects",
+}
 
 # Numeric claims are a small but damaging hallucination class: a page about an
 # RTX 5070 Ti was once embellished with unsupported "24 GB VRAM" prose.  Keep
@@ -94,8 +103,11 @@ _EXPLICIT_PERSISTENCE_CLAUSE_RE = re.compile(
     r"(?:(?:this|it)\s+)?that\b|"
     r"\b(?:merk(?:e)?\s+dir|notier(?:e)?|speicher(?:e)?|"
     r"halt(?:e)?\s+fest)\s*[,;:]?\s*dass\b|"
-    r"\b(?:fueg(?:e)?|füg(?:e)?)\b.{0,40}?\bhinzu\s*[,;:]?\s*dass\b|"  # i18n-allow: German persistence-clause input vocabulary
-    r"\bhinzuf(?:ue|ü)gen\s*[,;:]?\s*dass\b|"  # i18n-allow: German persistence-clause input vocabulary
+    r"\beintrag(?:en|e|st|t)\b.{0,40}?\bdass\b|"
+    r"\b(?:fueg(?:e)?|füg(?:e)?)\b.{0,40}?"  # i18n-allow: German input vocabulary
+    r"\bhinzu\s*[,;:]?\s*dass\b|"  # i18n-allow: German input vocabulary
+    r"\bhinzuf(?:ue|ü)gen\s*"  # i18n-allow: German input vocabulary
+    r"[,;:]?\s*dass\b|"  # i18n-allow: German input vocabulary
     r"\b(?:recuerda|anota|guarda|registra|añade|anade|agrega)\s*"
     r"[,;:]?\s*que\b"
     r")",
@@ -523,7 +535,18 @@ class Consolidator:
             # superseded one, and a profile update may create the missing
             # topic page in the same batch, for the same candidate.
             is_secondary = cid in judged_ids
-            if is_secondary and decision not in ("invalidate", "add"):
+            required_place_update = (
+                is_secondary
+                and decision == "update"
+                and self._is_required_place_secondary_update(
+                    by_id[cid], item.get("target")
+                )
+            )
+            if (
+                is_secondary
+                and decision not in ("invalidate", "add")
+                and not required_place_update
+            ):
                 continue
             judged_ids.add(cid)
 
@@ -554,14 +577,26 @@ class Consolidator:
                     reason=str(item.get("reason", ""))[:200],
                 )
                 if is_secondary:
-                    companion_by_candidate.setdefault(cid, []).append(update)
-                    secondary_adds.append(target)
+                    if required_place_update:
+                        # The two existing sides of a residence edge are one
+                        # candidate-level transaction: either both links land
+                        # or neither page changes.
+                        updates_by_candidate.setdefault(cid, []).append(update)
+                    else:
+                        companion_by_candidate.setdefault(cid, []).append(update)
+                        secondary_adds.append(target)
+                    if (
+                        target == self._required_graph_target(by_id[cid])
+                        or target
+                        in self._required_place_write_targets(by_id[cid])
+                    ):
+                        required_targets.setdefault(cid, set()).add(target)
                 else:
                     updates_by_candidate.setdefault(cid, []).append(update)
                     write_plan[cid] = (decision, target)
-                    # The candidate's journal verdict tracks ONLY its primary
-                    # (and invalidation) writes — a companion page failure
-                    # must not reject or stall the primary fact.
+                    # The journal always tracks the primary. A graph-mandatory
+                    # companion is added above as a required target; optional
+                    # companion pages retain their best-effort semantics.
                     required_targets.setdefault(cid, set()).add(target)
             else:  # invalidate
                 superseded_by = str(item.get("superseded_by", "") or "").strip()
@@ -585,9 +620,9 @@ class Consolidator:
         for cid in sorted(write_cids, key=row_order.__getitem__):
             # Companion topic pages land FIRST, in their own non-atomic call:
             # the primary body's [[link]] to them then resolves from disk,
-            # and a failing companion can never hold the durable primary
-            # fact hostage — it just logs, and the demoted link heals via
-            # promotion once a later batch creates the page.
+            # and a failing companion can never roll back the durable primary
+            # fact. A graph-mandatory companion keeps the journal row pending
+            # for retry; an optional companion remains best-effort.
             companions = companion_by_candidate.get(cid)
             if companions:
                 companion_result = await self._curator.apply_external_updates(
@@ -610,8 +645,8 @@ class Consolidator:
                 if failed_companions:
                     log.warning(
                         "Consolidator: companion topic page(s) %s for "
-                        "candidate %d did not land — the primary decision "
-                        "proceeds without them",
+                        "candidate %d did not land; the primary write remains "
+                        "durable and mandatory graph work stays pending",
                         ", ".join(failed_companions),
                         cid,
                     )
@@ -751,6 +786,94 @@ class Consolidator:
             return None
         return rel
 
+    def _graph_target(self, row: JournalRow) -> str | None:
+        """Return the canonical or existing topic page for ``row``."""
+        directory = _GRAPH_TARGET_DIR_BY_KIND.get(str(row.kind or ""))
+        if directory is None:
+            return None
+        user_slug = resolve_user_entity_slug(
+            getattr(
+                self._root_cfg.memory.wiki.session_rollup,
+                "user_entity_slug",
+                "",
+            )
+        )
+        topic_slug = next(
+            (
+                subject
+                for subject in row.subjects
+                if subject not in {user_slug, "user"}
+            ),
+            "",
+        )
+        if not topic_slug:
+            return None
+        for candidate_dir in _TARGET_DIRS:
+            candidate = self._vault_root / candidate_dir / f"{topic_slug}.md"
+            if candidate.is_file():
+                return f"{candidate_dir}/{topic_slug}.md"
+        return f"{directory}/{topic_slug}.md"
+
+    def _required_graph_target(self, row: JournalRow) -> str | None:
+        """Return the missing page required to make ``row`` graph-visible."""
+        target = self._graph_target(row)
+        if target is None or (self._vault_root / target).is_file():
+            return None
+        return target
+
+    def _required_place_write_targets(self, row: JournalRow) -> set[str]:
+        """Return user/place pages that must change to establish both links."""
+        if row.kind != "place":
+            return set()
+        graph_target = self._graph_target(row)
+        if graph_target is None:
+            return set()
+        user_slug = resolve_user_entity_slug(
+            getattr(
+                self._root_cfg.memory.wiki.session_rollup,
+                "user_entity_slug",
+                "",
+            )
+        )
+        profile_target = f"entities/{user_slug}.md"
+        topic_slug = Path(graph_target).stem
+        required: set[str] = set()
+        for target, linked_slug in (
+            (graph_target, user_slug),
+            (profile_target, topic_slug),
+        ):
+            path = self._vault_root / target
+            try:
+                body = path.read_text(encoding="utf-8")
+            except OSError:
+                required.add(target)
+                continue
+            if not self._body_links_to_slug(body, linked_slug):
+                required.add(target)
+        return required
+
+    def _is_required_place_secondary_update(
+        self,
+        row: JournalRow,
+        raw_target: Any,
+    ) -> bool:
+        """Allow only the missing half of a residence-link update pair."""
+        target = self._safe_target(raw_target)
+        return (
+            target is not None
+            and target in self._required_place_write_targets(row)
+            and (self._vault_root / target).is_file()
+        )
+
+    @staticmethod
+    def _body_links_to_slug(body: str, slug: str) -> bool:
+        """Return whether ``body`` contains a wikilink to ``slug``."""
+        for raw_link in extract_wikilinks(body):
+            target = raw_link.split("|", 1)[0].strip().removesuffix(".md")
+            if target.rsplit("/", 1)[-1] == slug:
+                return True
+        return False
+
     def _validate_decisions(
         self,
         parsed: list[Any],
@@ -763,8 +886,9 @@ class Consolidator:
         A transport-successful JSON array is not necessarily a usable answer.
         Reject the whole response (and let the provider chain try another
         family) unless every candidate has exactly one valid primary decision.
-        Secondary actions are limited to distinct invalidations and companion
-        "add" pages (the graph-visibility rule) for the same candidate.
+        Secondary actions are limited to distinct invalidations, companion
+        "add" pages, and the exact second existing-page update required to
+        establish a bidirectional residence link.
         """
         expected = {row.id for row in rows}
         by_id = {row.id: row for row in rows}
@@ -786,10 +910,17 @@ class Consolidator:
             if secondary:
                 # Secondary actions: extra invalidations for a contradiction,
                 # or a companion "add" that creates a missing topic page in
-                # the same batch (graph-visibility rule in the prompt).
-                if primary_decisions[cid] == "noop" or decision not in (
-                    "invalidate",
-                    "add",
+                # the same batch. A narrowly-scoped second update is permitted
+                # only when an existing residence page/profile lacks its edge.
+                required_place_update = (
+                    decision == "update"
+                    and self._is_required_place_secondary_update(
+                        by_id[cid], item.get("target")
+                    )
+                )
+                if primary_decisions[cid] == "noop" or (
+                    decision not in ("invalidate", "add")
+                    and not required_place_update
                 ):
                     return "candidate has more than one primary decision"
             else:
@@ -828,7 +959,14 @@ class Consolidator:
             target_path = self._vault_root / target
 
             if decision in ("add", "update"):
-                if secondary and decision != "add":
+                required_place_update = (
+                    secondary
+                    and decision == "update"
+                    and self._is_required_place_secondary_update(
+                        by_id[cid], target
+                    )
+                )
+                if secondary and decision != "add" and not required_place_update:
                     return "secondary decision must be an add or an invalidation"
                 body = item.get("new_body")
                 if not isinstance(body, str) or not body.strip():
@@ -860,6 +998,87 @@ class Consolidator:
 
         if primary_seen != expected:
             return "decision array does not cover every candidate"
+
+        for cid, row in by_id.items():
+            graph_target = self._graph_target(row)
+            if graph_target is None:
+                continue
+            graph_path = self._vault_root / graph_target
+            graph_item = next(
+                (
+                    item
+                    for item in parsed
+                    if item.get("candidate_id") == cid
+                    and item.get("decision") in ("add", "update")
+                    and self._safe_target(item.get("target")) == graph_target
+                ),
+                None,
+            )
+            if not graph_path.is_file():
+                if graph_item is None or graph_item.get("decision") != "add":
+                    return (
+                        "graph-visible fact is missing its required companion page: "
+                        f"{graph_target}"
+                    )
+
+            # Non-place topics retain the missing-page invariant. Residence
+            # additionally requires a durable edge in both directions even
+            # when both pages already existed before this candidate.
+            if row.kind != "place":
+                continue
+            user_slug = resolve_user_entity_slug(
+                getattr(
+                    self._root_cfg.memory.wiki.session_rollup,
+                    "user_entity_slug",
+                    "",
+                )
+            )
+            if graph_item is not None:
+                graph_body = str(graph_item.get("new_body", "") or "")
+            else:
+                try:
+                    graph_body = graph_path.read_text(encoding="utf-8")
+                except OSError:
+                    graph_body = ""
+            if not self._body_links_to_slug(graph_body, user_slug):
+                return "place companion page does not link to the user profile"
+
+            profile_target = f"entities/{user_slug}.md"
+            profile_path = self._vault_root / profile_target
+            profile_item = next(
+                (
+                    item
+                    for item in parsed
+                    if item.get("candidate_id") == cid
+                    and item.get("decision") in ("add", "update")
+                    and self._safe_target(item.get("target")) == profile_target
+                ),
+                None,
+            )
+            if profile_item is not None:
+                profile_body = str(profile_item.get("new_body", "") or "")
+            else:
+                try:
+                    profile_body = profile_path.read_text(encoding="utf-8")
+                except OSError:
+                    profile_body = ""
+            topic_slug = Path(graph_target).stem
+            if not self._body_links_to_slug(profile_body, topic_slug):
+                return "user profile does not link to the place companion page"
+
+            required_place_targets = self._required_place_write_targets(row)
+            proposed_targets = {
+                self._safe_target(item.get("target"))
+                for item in parsed
+                if item.get("candidate_id") == cid
+                and item.get("decision") in ("add", "update")
+            }
+            missing_updates = required_place_targets - proposed_targets
+            if missing_updates:
+                return (
+                    "residence link repair is missing required page update(s): "
+                    + ", ".join(sorted(missing_updates))
+                )
         return None
 
     @staticmethod

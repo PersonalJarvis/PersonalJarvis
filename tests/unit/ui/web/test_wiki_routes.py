@@ -124,6 +124,53 @@ def empty_vault(tmp_path: Path) -> Path:
     return vault
 
 
+@pytest.fixture
+def starter_obsidian_vault(tmp_path: Path) -> Path:
+    """Twelve-page starter vault without any curator page directories."""
+    vault = tmp_path / "vault"
+    pages = {
+        "README.md": "# Vault README\n\nStart at [[Home]].\n",
+        "schema.md": "# Wiki Schema\n\nEditing contract.\n",
+        "log.md": "# Change Log\n\nNo changes yet.\n",
+        "memory.md": "# Memory\n\nLong-term notes.\n",
+        "00-index/Home.md": (
+            "# Home\n\nSee [[Personal Knowledge Management]] and [[README]].\n"
+        ),
+        "10-notes/Evergreen Notes.md": "# Evergreen Notes\n\nDurable ideas.\n",
+        "10-notes/Graph View Visualisation.md": (
+            "# Graph View Visualisation\n\nConnected notes.\n"
+        ),
+        "10-notes/Markdown as Foundation.md": (
+            "# Markdown as Foundation\n\nPlain text lasts.\n"
+        ),
+        "10-notes/Personal Knowledge Management.md": (
+            "# Personal Knowledge Management\n\nA connected knowledge practice.\n"
+        ),
+        "10-notes/Zettelkasten Method.md": (
+            "# Zettelkasten Method\n\nAtomic linked notes.\n"
+        ),
+        "99-templates/Daily Note.md": "# Daily Note\n\nTemplate body.\n",
+        "99-templates/Note Template.md": "# Note Template\n\nTemplate body.\n",
+    }
+    for relative, body in pages.items():
+        path = vault / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(body, encoding="utf-8")
+
+    # These Markdown-shaped decoys are not live pages.
+    for relative in (
+        ".obsidian/internal.md",
+        ".trash/deleted.md",
+        "_archive/retired.md",
+        "attachments/extracted-text.md",
+        "90-attachments/extracted-text.md",
+    ):
+        path = vault / relative
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("# Not visible\n", encoding="utf-8")
+    return vault
+
+
 class _FakeCurator:
     def __init__(self, result: object) -> None:
         self.result = result
@@ -204,6 +251,35 @@ def test_tree_with_missing_vault_returns_empty_ok_response(tmp_path: Path) -> No
     assert body["ok"] is True
     assert body["stats"]["total_pages"] == 0
     assert all(folder["files"] == [] for folder in body["folders"])
+
+
+def test_tree_projects_all_visible_starter_vault_pages(
+    starter_obsidian_vault: Path,
+) -> None:
+    app = _make_app(starter_obsidian_vault)
+    with TestClient(app) as client:
+        response = client.get("/api/wiki/tree")
+
+    body = response.json()
+    assert body["ok"] is True
+    assert body["stats"]["total_pages"] == 12
+    assert body["stats"]["total_links"] == 3
+
+    folders = body["folders"]
+    assert [folder["name"] for folder in folders[:4]] == [
+        "entities",
+        "concepts",
+        "projects",
+        "sessions",
+    ]
+    folders_by_name = {folder["name"]: folder for folder in folders}
+    assert folders_by_name["root"]["count"] == 4
+    assert folders_by_name["00-index"]["count"] == 1
+    assert folders_by_name["10-notes"]["count"] == 5
+    assert folders_by_name["99-templates"]["count"] == 2
+    assert set(folders_by_name).isdisjoint(
+        {".obsidian", ".trash", "_archive", "attachments", "90-attachments"}
+    )
 
 
 # ----------------------------------------------------------------------
@@ -313,6 +389,36 @@ def test_graph_with_broken_wikilink_lists_it_in_broken_bucket(tmp_path: Path) ->
     assert len(body["broken"]) == 1
     assert body["broken"][0]["source"] == "alice"
     assert body["broken"][0]["target"] == "ghost-page"
+
+
+def test_starter_vault_pages_are_readable_and_connected_in_graph(
+    starter_obsidian_vault: Path,
+) -> None:
+    app = _make_app(starter_obsidian_vault)
+    with TestClient(app) as client:
+        graph = client.get("/api/wiki/graph").json()
+        root_page = client.get("/api/wiki/page/README").json()
+        note_page = client.get(
+            "/api/wiki/page/Personal%20Knowledge%20Management"
+        ).json()
+        backlinks = client.get(
+            "/api/wiki/backlinks/Personal%20Knowledge%20Management"
+        ).json()
+
+    assert graph["ok"] is True
+    assert len(graph["nodes"]) == 12
+    node_ids = {node["id"] for node in graph["nodes"]}
+    assert {"README", "Home", "Personal Knowledge Management"} <= node_ids
+    edge_pairs = {(edge["source"], edge["target"]) for edge in graph["edges"]}
+    assert ("Home", "Personal Knowledge Management") in edge_pairs
+    assert ("Home", "README") in edge_pairs
+
+    assert root_page["ok"] is True
+    assert root_page["path"] == "README.md"
+    assert root_page["frontmatter_valid"] is False
+    assert note_page["ok"] is True
+    assert note_page["path"] == "10-notes/Personal Knowledge Management.md"
+    assert {item["slug"] for item in backlinks["backlinks"]} == {"Home"}
 
 
 # ----------------------------------------------------------------------

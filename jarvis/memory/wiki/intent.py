@@ -7,7 +7,9 @@ model-independently.
 
 Pure regex -- no LLM and no IO (AP-9/AP-11). The de/en/es tokens are speech
 recognition input vocabulary (closed-list category 3). Precision remains the
-priority: every match requires both a write verb and an explicit wiki target.
+priority: every match requires both a write verb and either an explicit wiki
+target in the current turn or a locative reference to the immediately prior
+Wiki/Obsidian turn.
 """
 from __future__ import annotations
 
@@ -24,7 +26,8 @@ _TRANSLITERATION = str.maketrans({
 _WRITE_VERB_RE = re.compile(
     r"\b(?:"
     r"schreib\w*|notier\w*|speicher\w*|merk(?:e|st|t)?\s+(?:es\s+)?dir|"
-    r"eintrag\w*|trag\w*|vermerk\w*|hinzufueg\w*|fueg\w*|"  # i18n-allow
+    r"eintrag(?:en|e|st|t|end\w*)|eingetrag\w*|trag\w*|"  # i18n-allow
+    r"vermerk\w*|hinzufueg\w*|fueg\w*|"  # i18n-allow
     r"write|save|note(?:\s+down)?|add|store|put|record|enter|update|"
     r"escrib\w*|guard\w*|anot\w*|apunt\w*|agreg\w*|anad\w*|"
     r"registr\w*|actualiz\w*|pon"
@@ -46,6 +49,27 @@ _WIKI_TARGET_RE = re.compile(
     rf"(?:en|al|a)\s+(?:(?:la|el|mi|tu)\s+)?{_WIKI_NOUN}|"
     rf"(?:das|{_DE_POSSESSIVE}|the|my|your|la|el|mi|tu)\s+{_WIKI_NOUN}"
     rf")\b",
+    re.IGNORECASE,
+)
+
+# A bounded prior turn may establish the destination for a locative follow-up
+# such as "put an entry there". Require a possessive personal-vault reference;
+# a general discussion about how wikis work must never authorise a durable
+# write.  # i18n-allow: multilingual speech-input vocabulary
+_PERSONAL_WIKI_CONTEXT_RE = re.compile(
+    r"(?:"
+    r"\b(?:mein\w*|dein\w*|unser\w*|euer\w*|ihr\w*|my|your|our|"
+    r"mi|mis|tu|tus|nuestro\w*)\b.{0,64}"
+    r"\b(?:wiki(?:[\s-]?system)?|obsidian|vault)\b|"
+    r"\b(?:wiki(?:[\s-]?system)?|obsidian|vault)\b.{0,64}"
+    r"\b(?:mein\w*|dein\w*|unser\w*|euer\w*|ihr\w*|my|your|our|"
+    r"mi|mis|tu|tus|nuestro\w*)\b"
+    r")",
+    re.IGNORECASE,
+)
+_CONTEXTUAL_TARGET_RE = re.compile(
+    r"\b(?:da|dort|darein|da\s+rein|darin|hinein|there|in\s+it|into\s+it|"
+    r"ahi|alli|en\s+eso)\b",
     re.IGNORECASE,
 )
 
@@ -91,7 +115,8 @@ _ANAPHORA = frozenset({
 
 _FILLER_WORDS = frozenset({
     "bitte", "mal", "doch", "kurz", "please", "por", "favor", "que",
-    "dass", "ein", "hinzu",  # i18n-allow: input vocabulary
+    "dass", "ein", "eine", "einen", "einem", "einer", "eintrag", "hinzu",  # i18n-allow
+    "entry", "an",  # i18n-allow: input vocabulary
 })
 
 _LEADING_FILLER_RE = re.compile(
@@ -174,8 +199,17 @@ def _match_target_before_verb(
     return None
 
 
-def match_wiki_intent(user_text: str) -> WikiIntentMatch | None:
-    """Return a match for an explicit wiki-write command, otherwise ``None``."""
+def match_wiki_intent(
+    user_text: str,
+    *,
+    prior_text: str | None = None,
+) -> WikiIntentMatch | None:
+    """Return a match for an explicit or bounded contextual Wiki write.
+
+    ``prior_text`` must be the immediately preceding user turn. It is used only
+    to resolve a locative destination in the current command; content is never
+    copied from it by this matcher.
+    """
     norm = _normalize(user_text)
     if not norm or len(norm) > 600:
         return None
@@ -206,4 +240,18 @@ def match_wiki_intent(user_text: str) -> WikiIntentMatch | None:
         if matched is not None:
             _verb, content = matched
             return WikiIntentMatch(content=content, matched=norm)
+
+    prior_norm = _normalize(prior_text or "")
+    if (
+        prior_norm
+        and len(prior_norm) <= 1_200
+        and _PERSONAL_WIKI_CONTEXT_RE.search(prior_norm)
+    ):
+        for target in _CONTEXTUAL_TARGET_RE.finditer(body):
+            matched = _match_verb_before_target(body, target)
+            if matched is None:
+                matched = _match_target_before_verb(body, target)
+            if matched is not None:
+                _verb, content = matched
+                return WikiIntentMatch(content=content, matched=norm)
     return None

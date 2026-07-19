@@ -1,25 +1,25 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { WSClient } from "@/lib/ws";
 
 /**
  * Live-reload hook for the desktop wiki view.
  *
- * Mounts a WebSocket connection to `/api/wiki/live` and invalidates the
- * all React Query caches that project vault state every time the server
- * connects or pushes a `page_changed` message.
+ * Mounts a WebSocket connection to `/api/wiki/live` and invalidates all
+ * React Query caches that project vault state every time the server connects
+ * or pushes a `page_changed` message.
  *
- * Mount this hook **once** at the WikiView level (not deeper). Switching
- * away from the wiki tab unmounts the hook and closes the socket — that
- * is the desired behaviour: no background polling when the user is on
- * another tab.
+ * Mount this hook once at the WikiView level. Switching away from the wiki
+ * tab unmounts the hook and closes the socket, so no background connection
+ * remains while the user is on another tab.
  *
- * Reconnects use exponential backoff starting at 1 s and capped at
- * 30 s so a flapping server cannot DOS itself.
+ * The shared transport handles reconnect backoff and the one-time-ticket
+ * authentication fallback required by Safari and WKWebView.
  */
 export interface UseWikiLiveResult {
-  /** True while the WS is OPEN. False during connect, reconnect, or after unmount. */
+  /** True while the WebSocket is open. */
   connected: boolean;
-  /** Wall-clock ms of the last forwarded `page_changed` event, or null. */
+  /** Wall-clock milliseconds of the last forwarded event, or null. */
   lastEventAt: number | null;
 }
 
@@ -32,36 +32,31 @@ interface PageChangedMessage {
 
 function isPageChanged(value: unknown): value is PageChangedMessage {
   if (typeof value !== "object" || value === null) return false;
-  const v = value as Record<string, unknown>;
+  const message = value as Record<string, unknown>;
   return (
-    v.type === "page_changed" &&
-    typeof v.slug === "string" &&
-    typeof v.path === "string" &&
-    (v.kind === "created" || v.kind === "modified" || v.kind === "deleted")
+    message.type === "page_changed" &&
+    typeof message.slug === "string" &&
+    typeof message.path === "string" &&
+    (message.kind === "created" ||
+      message.kind === "modified" ||
+      message.kind === "deleted")
   );
 }
 
 function buildWsUrl(): string {
-  // Always derive from the current host so dev (Vite proxy) and prod
-  // (pywebview/launcher on 47821) both work without config.
-  const proto = window.location.protocol === "https:" ? "wss" : "ws";
-  return `${proto}://${window.location.host}/api/wiki/live`;
+  // Derive the URL from the current host so the Vite proxy and packaged
+  // desktop launcher work without separate configuration.
+  const protocol = window.location.protocol === "https:" ? "wss" : "ws";
+  return `${protocol}://${window.location.host}/api/wiki/live`;
 }
 
 export function useWikiLive(): UseWikiLiveResult {
-  const qc = useQueryClient();
+  const queryClient = useQueryClient();
   const [connected, setConnected] = useState(false);
   const [lastEventAt, setLastEventAt] = useState<number | null>(null);
 
-  // Refs so the effect deps stay stable (we only re-run on qc change).
-  const wsRef = useRef<WebSocket | null>(null);
-  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const reconnectAttemptsRef = useRef(0);
-  const mountedRef = useRef(true);
-
   useEffect(() => {
-    mountedRef.current = true;
-    const url = buildWsUrl();
+    let active = true;
 
     const invalidateWikiProjection = () => {
       // Prefix invalidation is intentional for pages, searches, and backlinks.
@@ -75,99 +70,36 @@ export function useWikiLive(): UseWikiLiveResult {
         ["wiki", "page"],
         ["wiki", "backlinks"],
       ]) {
-        void qc.invalidateQueries({ queryKey });
+        void queryClient.invalidateQueries({ queryKey });
       }
     };
 
-    const scheduleReconnect = () => {
-      if (!mountedRef.current) return;
-      // Exponential backoff capped at 30 s, with a small floor at 250 ms
-      // so the first immediate retry on a flap is still snappy.
-      const attempt = reconnectAttemptsRef.current;
-      const delayMs = Math.min(30_000, Math.max(250, 1000 * Math.pow(2, attempt)));
-      reconnectAttemptsRef.current = attempt + 1;
-      reconnectTimerRef.current = setTimeout(() => {
-        reconnectTimerRef.current = null;
-        connect();
-      }, delayMs);
-    };
-
-    const connect = () => {
-      if (!mountedRef.current) return;
-      let ws: WebSocket;
-      try {
-        ws = new WebSocket(url);
-      } catch {
-        // Constructor itself may throw on a malformed URL (jsdom edge
-        // cases). Treat as a close.
-        scheduleReconnect();
-        return;
-      }
-      wsRef.current = ws;
-
-      ws.onopen = () => {
-        if (!mountedRef.current) return;
-        reconnectAttemptsRef.current = 0;
+    const client = new WSClient({
+      url: buildWsUrl(),
+      onOpen: () => {
+        if (!active) return;
         setConnected(true);
         // Recover any events missed while the socket was disconnected.
         invalidateWikiProjection();
-      };
-
-      ws.onmessage = (ev: MessageEvent) => {
-        if (!mountedRef.current) return;
-        let parsed: unknown;
-        try {
-          parsed = JSON.parse(typeof ev.data === "string" ? ev.data : "");
-        } catch {
-          return;
-        }
-        if (!isPageChanged(parsed)) return;
-        // Refresh every projection, including relationship targets whose
-        // backlinks changed even though their own page did not.
+      },
+      onMessage: (message) => {
+        if (!active || !isPageChanged(message)) return;
         invalidateWikiProjection();
         setLastEventAt(Date.now());
-      };
-
-      ws.onclose = () => {
-        if (!mountedRef.current) return;
+      },
+      onClose: () => {
+        if (!active) return;
         setConnected(false);
-        wsRef.current = null;
-        scheduleReconnect();
-      };
+      },
+    });
 
-      ws.onerror = () => {
-        // Some browsers fire error then close; some only fire error.
-        // Force a close so the onclose path runs.
-        try {
-          ws.close();
-        } catch {
-          /* noop */
-        }
-      };
-    };
-
-    connect();
+    client.connect();
 
     return () => {
-      mountedRef.current = false;
-      if (reconnectTimerRef.current !== null) {
-        clearTimeout(reconnectTimerRef.current);
-        reconnectTimerRef.current = null;
-      }
-      const ws = wsRef.current;
-      if (ws !== null) {
-        // Detach onclose first so the cleanup doesn't trigger a reconnect.
-        ws.onclose = null;
-        ws.onerror = null;
-        try {
-          ws.close();
-        } catch {
-          /* noop */
-        }
-        wsRef.current = null;
-      }
+      active = false;
+      client.close();
     };
-  }, [qc]);
+  }, [queryClient]);
 
   return { connected, lastEventAt };
 }

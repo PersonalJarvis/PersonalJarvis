@@ -159,6 +159,61 @@ async def test_happy_path_appends_parsed_facts(journal: CandidateJournal) -> Non
     assert kwargs.get("model") == "gemini-3-flash-preview"
 
 
+@pytest.mark.parametrize(
+    ("incomplete_kind", "incomplete_subjects"),
+    [
+        ("place", ["user"]),
+        ("place", ["san-francisco"]),
+        ("other", ["user", "san-francisco"]),
+    ],
+)
+@pytest.mark.asyncio
+async def test_residence_requires_named_place_subject_and_falls_back(
+    journal: CandidateJournal,
+    incomplete_kind: str,
+    incomplete_subjects: list[str],
+) -> None:
+    incomplete = json.dumps(
+        [
+            {
+                "fact": "The user lives in San Francisco.",
+                "kind": incomplete_kind,
+                "subjects": incomplete_subjects,
+                "evidence_turn_id": "residence-turn",
+            }
+        ]
+    )
+    complete = json.dumps(
+        [
+            {
+                "fact": "The user lives in San Francisco.",
+                "kind": "place",
+                "subjects": ["user", "san-francisco"],
+                "evidence_turn_id": "residence-turn",
+            }
+        ]
+    )
+    registry = ScriptedRegistry(
+        {"gemini": incomplete, "openrouter": complete}
+    )
+    extractor = ConversationFactExtractor(
+        config=_config(), journal=journal, registry=registry,
+    )
+
+    count = await extractor.extract_and_journal(
+        "Ich wohne in San Francisco.",  # i18n-allow: production residence fixture
+        "Noted.",
+        source_label="realtime:residence",
+        turn_hash="residence-turn",
+    )
+
+    assert count == 1
+    assert registry.tried == ["gemini", "openrouter"]
+    row = journal.pending()[0]
+    assert row.kind == "place"
+    assert row.subjects == ("user", "san-francisco")
+
+
 @pytest.mark.asyncio
 async def test_short_input_skips_brain_entirely(journal: CandidateJournal) -> None:
     brain = FakeBrain(_ok_facts_json())

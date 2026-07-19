@@ -15,9 +15,9 @@ parse error, schema mismatch, timeout, brain exception — produces an
 empty ``list[PageUpdate]`` and a logged warning. The orchestrator is
 required to keep running across LLM faults; raising is not an option.
 
-The salience filter (smalltalk → ``[]``) lives in the prompt, not here.
-We trust the LLM to follow the contract; we only validate its JSON
-shape and translate it into ``PageUpdate`` objects.
+The salience filter (smalltalk → ``[]``) lives in the prompt. Structural
+JSON checks and a narrow deterministic graph invariant protect explicit
+residence writes before translating them into ``PageUpdate`` objects.
 
 Reference pattern: ``jarvis/awareness/verdichter.py`` (same brain-via-
 config, timeout-via-wait_for, error-tolerant shape).
@@ -38,10 +38,13 @@ from jarvis.memory.wiki.prompt import (
     build_system_prompt,
     build_user_prompt,
     compute_vault_summary,
+    resolve_user_entity_slug,
     select_top_slugs,
 )
 from jarvis.memory.wiki.protocols import PageUpdate
+from jarvis.memory.wiki.residence import detect_residence_slug
 from jarvis.memory.wiki.telemetry import telemetry
+from jarvis.memory.wiki.wikilink import extract_wikilinks
 
 if TYPE_CHECKING:
     from jarvis.core.config import JarvisConfig, WikiCuratorConfig
@@ -298,6 +301,99 @@ def _parse_updates(raw_text: str) -> list[PageUpdate]:
     return updates
 
 
+def _body_links_to_slug(body: str, slug: str) -> bool:
+    """Return whether a Markdown body links to ``slug`` in any Wiki form."""
+    for raw_link in extract_wikilinks(body):
+        target = raw_link.split("|", 1)[0].strip().removesuffix(".md")
+        if target.rsplit("/", 1)[-1] == slug:
+            return True
+    return False
+
+
+def _existing_entity_body(vault: Any, slug: str) -> str | None:
+    """Return an existing entity body from a real or minimal vault index."""
+    page = None
+    try:
+        page = vault.find_by_slug(slug)
+    except Exception:  # noqa: BLE001 - minimal vault fakes may omit lookup
+        page = None
+    if page is None:
+        try:
+            page = next(
+                (
+                    candidate
+                    for candidate in (vault.pages_by_type("entity") or [])
+                    if getattr(candidate, "slug", "") == slug
+                ),
+                None,
+            )
+        except Exception:  # noqa: BLE001 - semantic validation stays fail-closed
+            page = None
+    if page is None or getattr(page, "page_type", "entity") != "entity":
+        return None
+    path = getattr(page, "path", None)
+    if path is not None:
+        parts = Path(path).parts
+        if len(parts) < 2 or parts[-2:] != ("entities", f"{slug}.md"):
+            return None
+    body = getattr(page, "body", None)
+    return body if isinstance(body, str) else None
+
+
+def _effective_entity_body(
+    updates: list[PageUpdate],
+    *,
+    target: str,
+    slug: str,
+    vault: Any,
+) -> str | None:
+    """Return the proposed body for ``target``, or its current vault body."""
+    for update in reversed(updates):
+        if update.target_path.as_posix() != target:
+            continue
+        if update.operation == "archive":
+            return None
+        return update.new_body
+    return _existing_entity_body(vault, slug)
+
+
+def _semantic_graph_error(
+    source_content: str,
+    updates: list[PageUpdate],
+    *,
+    user_slug: str,
+    vault: Any,
+) -> str | None:
+    """Reject a grounded residence unless both linked graph pages exist."""
+    place_slug = detect_residence_slug(source_content)
+    if place_slug is None:
+        return None
+
+    place_target = f"entities/{place_slug}.md"
+    profile_target = f"entities/{user_slug}.md"
+    place_body = _effective_entity_body(
+        updates,
+        target=place_target,
+        slug=place_slug,
+        vault=vault,
+    )
+    if place_body is None:
+        return f"grounded residence is missing its graph page: {place_target}"
+    profile_body = _effective_entity_body(
+        updates,
+        target=profile_target,
+        slug=user_slug,
+        vault=vault,
+    )
+    if profile_body is None:
+        return f"grounded residence is missing its user profile: {profile_target}"
+    if not _body_links_to_slug(place_body, user_slug):
+        return "residence graph page does not link to the user profile"
+    if not _body_links_to_slug(profile_body, place_slug):
+        return "user profile does not link to the residence graph page"
+    return None
+
+
 class WikiCuratorLLM:
     """Default ``CuratorLLM`` implementation.
 
@@ -394,14 +490,17 @@ class WikiCuratorLLM:
         candidate_slugs = self._collect_candidate_slugs(vault, vault_summary)
         top_slugs = select_top_slugs(source_content, candidate_slugs)
 
-        system_prompt = build_system_prompt(
-            schema_md,
-            vault_summary,
-            user_entity_slug=getattr(
+        user_slug = resolve_user_entity_slug(
+            getattr(
                 self._config.memory.wiki.session_rollup,
                 "user_entity_slug",
                 "",
-            ),
+            )
+        )
+        system_prompt = build_system_prompt(
+            schema_md,
+            vault_summary,
+            user_entity_slug=user_slug,
         )
         user_prompt = build_user_prompt(source_label, source_content, top_slugs)
 
@@ -447,9 +546,18 @@ class WikiCuratorLLM:
                 rejection_reasons.append(reason)
                 return reason
             try:
-                _parse_updates(agg.text)
+                updates = _parse_updates(agg.text)
             except (ValueError, json.JSONDecodeError) as exc:
                 reason = f"malformed update JSON: {exc}"
+                rejection_reasons.append(reason)
+                return reason
+            reason = _semantic_graph_error(
+                source_content,
+                updates,
+                user_slug=user_slug,
+                vault=vault,
+            )
+            if reason is not None:
                 rejection_reasons.append(reason)
                 return reason
             return None

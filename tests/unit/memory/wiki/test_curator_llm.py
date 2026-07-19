@@ -115,6 +115,21 @@ class FakeRegistry:
         return self._brain
 
 
+class ScriptedRegistry:
+    """Return a distinct structured response for each provider family."""
+
+    def __init__(self, responses: dict[str, str]) -> None:
+        self._responses = responses
+        self.tried: list[str] = []
+
+    def available(self) -> set[str]:
+        return set(self._responses)
+
+    def instantiate(self, name: str, **_kwargs: Any) -> FakeBrain:
+        self.tried.append(name)
+        return FakeBrain(self._responses[name])
+
+
 class FakeVault:
     """Minimal ``VaultIndex`` stub with one entry per page type."""
 
@@ -358,6 +373,77 @@ async def test_direct_ingest_real_schema_binds_portable_runtime_user_slug() -> N
     assert 'exact subject slug is ["owner-profile"]' in system
     assert "profile page is entities/owner-profile.md" in system
     assert "ruben" not in system.casefold()
+
+
+@pytest.mark.asyncio
+async def test_direct_residence_falls_back_until_graph_is_bidirectional(
+    tmp_path: Path,
+) -> None:
+    """A profile-only residence response cannot complete explicit ingest."""
+    profile_without_link = (
+        "---\ntype: entity\nentity_kind: person\nslug: owner-profile\n---\n\n"
+        "# Owner Profile\n\n## Facts\n\n- Lives in San Francisco.\n"
+    )
+    profile_with_link = profile_without_link.replace(
+        "- Lives in San Francisco.",
+        "- Lives in [[entities/san-francisco|San Francisco]].",
+    )
+    place_with_link = (
+        "---\ntype: entity\nentity_kind: place\nslug: san-francisco\n---\n\n"
+        "# San Francisco\n\n## Relationships\n\n"
+        "- Residence of [[entities/owner-profile|Owner Profile]].\n"
+    )
+    profile_only = json.dumps(
+        [
+            {
+                "target": "entities/owner-profile.md",
+                "operation": "update",
+                "new_body": profile_without_link,
+                "reason": "record residence on profile",
+            }
+        ]
+    )
+    graph_complete = json.dumps(
+        [
+            {
+                "target": "entities/owner-profile.md",
+                "operation": "update",
+                "new_body": profile_with_link,
+                "reason": "link residence from profile",
+            },
+            {
+                "target": "entities/san-francisco.md",
+                "operation": "create",
+                "new_body": place_with_link,
+                "reason": "create visible residence page",
+            },
+        ]
+    )
+    registry = ScriptedRegistry(
+        {"gemini": profile_only, "openrouter": graph_complete}
+    )
+    llm = WikiCuratorLLM(
+        config=_make_config(primary="gemini", user_entity_slug="owner-profile"),
+        schema_path=_write_schema(tmp_path),
+        registry=registry,
+    )
+
+    updates = await llm.propose_updates(
+        (
+            "ich ziemlich genervt bin und dass ich in "  # i18n-allow: reported transcript fixture
+            "San Francisco wohne"  # i18n-allow: reported residence transcript fixture
+        ),
+        "tool:wiki-ingest",
+        repo=FakeRepo(),
+        vault=FakeVault(),
+    )
+
+    assert registry.tried == ["gemini", "openrouter"]
+    assert llm.provider_name == "openrouter"
+    assert {update.target_path.as_posix() for update in updates} == {
+        "entities/owner-profile.md",
+        "entities/san-francisco.md",
+    }
 
 
 @pytest.mark.asyncio

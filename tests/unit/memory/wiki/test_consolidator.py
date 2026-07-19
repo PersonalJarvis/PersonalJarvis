@@ -380,6 +380,252 @@ def _espresso_project_body() -> str:
     )
 
 
+def _san_francisco_place_body() -> str:
+    today = dt.date.today().isoformat()
+    return (
+        "---\n"
+        "type: entity\n"
+        "entity_kind: place\n"
+        "slug: san-francisco\n"
+        "aliases: [San Francisco]\n"
+        f"created: {today}\n"
+        f"updated: {today}\n"
+        "---\n\n"
+        "# San Francisco\n\n"
+        "## Summary\n\n"
+        "The user's current city of residence.\n\n"
+        "## Facts\n\n"
+        "- The user lives in San Francisco.\n\n"
+        "## Relationships\n\n"
+        "- Home of [[entities/ruben]].\n\n"
+        "## Sources\n\n"
+        "- conversation\n"
+    )
+
+
+@pytest.mark.asyncio
+async def test_residence_profile_only_judge_falls_back_to_linked_place_page(
+    stack,
+) -> None:
+    """A residence is not complete until its own linked graph node lands."""
+    vault_root, _curator, journal = stack
+    _write_aged(vault_root / "entities" / "ruben.md", RUBEN_FULL_BODY)
+    journal.append(
+        [
+            CandidateFact(
+                fact="The user lives in San Francisco.",
+                kind="place",
+                subjects=("ruben", "san-francisco"),
+            )
+        ],
+        source_label="realtime:residence",
+        turn_hash="residence-graph",
+    )
+    cid = journal.pending()[0].id
+    updated_profile = RUBEN_FULL_BODY.replace(
+        "- Enjoys great coffee.\n",
+        "- Enjoys great coffee.\n- Lives in San Francisco.\n",
+    ).replace(
+        "## Relationships\n\n",
+        "## Relationships\n\n- Lives in [[entities/san-francisco]].\n\n",
+    )
+    profile_only = _judge_json(
+        [
+            {
+                "candidate_id": cid,
+                "decision": "update",
+                "target": "entities/ruben.md",
+                "new_body": updated_profile,
+                "reason": "profile note",
+            }
+        ]
+    )
+    linked = _judge_json(
+        [
+            {
+                "candidate_id": cid,
+                "decision": "update",
+                "target": "entities/ruben.md",
+                "new_body": updated_profile,
+                "reason": "profile note",
+            },
+            {
+                "candidate_id": cid,
+                "decision": "add",
+                "target": "entities/san-francisco.md",
+                "new_body": _san_francisco_place_body(),
+                "reason": "graph-visible residence",
+            },
+        ]
+    )
+    registry = ScriptedProviderRegistry(
+        {"gemini": profile_only, "openrouter": linked}
+    )
+
+    label = await _consolidator(
+        stack,
+        FakeBrain([]),
+        config=_config(user_entity_slug="ruben"),
+        registry=registry,
+    ).run_once()
+
+    assert label == "journal-batch:1"
+    assert registry.tried == ["gemini", "openrouter"]
+    profile = (vault_root / "entities" / "ruben.md").read_text(encoding="utf-8")
+    place = (vault_root / "entities" / "san-francisco.md").read_text(
+        encoding="utf-8"
+    )
+    assert "[[entities/san-francisco]]" in profile
+    assert "[[entities/ruben]]" in place
+    assert journal.pending() == []
+
+
+@pytest.mark.asyncio
+async def test_residence_repairs_two_existing_isolated_pages_atomically(stack) -> None:
+    """The narrow secondary-update exception connects both existing pages."""
+    vault_root, _curator, journal = stack
+    _write_aged(vault_root / "entities" / "ruben.md", RUBEN_FULL_BODY)
+    isolated_place = _san_francisco_place_body().replace(
+        "- Home of [[entities/ruben]].\n",
+        "",
+    )
+    _write_aged(
+        vault_root / "entities" / "san-francisco.md",
+        isolated_place,
+    )
+    journal.append(
+        [
+            CandidateFact(
+                fact="The user lives in San Francisco.",
+                kind="place",
+                subjects=("ruben", "san-francisco"),
+            )
+        ],
+        source_label="realtime:existing-residence",
+        turn_hash="existing-residence",
+    )
+    cid = journal.pending()[0].id
+    updated_profile = RUBEN_FULL_BODY.replace(
+        "- Enjoys great coffee.\n",
+        "- Enjoys great coffee.\n- Lives in San Francisco.\n",
+    ).replace(
+        "## Relationships\n\n",
+        "## Relationships\n\n- Lives in [[entities/san-francisco]].\n\n",
+    )
+    updated_place = isolated_place.replace(
+        "## Relationships\n\n",
+        "## Relationships\n\n- Home of [[entities/ruben]].\n\n",
+    )
+    profile_only = _judge_json(
+        [
+            {
+                "candidate_id": cid,
+                "decision": "update",
+                "target": "entities/ruben.md",
+                "new_body": updated_profile,
+            }
+        ]
+    )
+    linked = _judge_json(
+        [
+            {
+                "candidate_id": cid,
+                "decision": "update",
+                "target": "entities/ruben.md",
+                "new_body": updated_profile,
+            },
+            {
+                "candidate_id": cid,
+                "decision": "update",
+                "target": "entities/san-francisco.md",
+                "new_body": updated_place,
+            },
+        ]
+    )
+    registry = ScriptedProviderRegistry(
+        {"gemini": profile_only, "openrouter": linked}
+    )
+
+    label = await _consolidator(
+        stack,
+        FakeBrain([]),
+        config=_config(user_entity_slug="ruben"),
+        registry=registry,
+    ).run_once()
+
+    assert label == "journal-batch:1"
+    assert registry.tried == ["gemini", "openrouter"]
+    assert "[[entities/san-francisco]]" in (
+        vault_root / "entities" / "ruben.md"
+    ).read_text(encoding="utf-8")
+    assert "[[entities/ruben]]" in (
+        vault_root / "entities" / "san-francisco.md"
+    ).read_text(encoding="utf-8")
+    assert journal.pending() == []
+
+
+@pytest.mark.asyncio
+async def test_residence_with_existing_bidirectional_links_needs_one_update(
+    stack,
+) -> None:
+    vault_root, _curator, journal = stack
+    connected_profile = RUBEN_FULL_BODY.replace(
+        "## Relationships\n\n",
+        "## Relationships\n\n- Lives in [[entities/san-francisco]].\n\n",
+    )
+    _write_aged(vault_root / "entities" / "ruben.md", connected_profile)
+    connected_place = _san_francisco_place_body()
+    _write_aged(
+        vault_root / "entities" / "san-francisco.md",
+        connected_place,
+    )
+    journal.append(
+        [
+            CandidateFact(
+                fact="The user feels settled in San Francisco.",
+                kind="place",
+                subjects=("ruben", "san-francisco"),
+            )
+        ],
+        source_label="realtime:connected-residence",
+        turn_hash="connected-residence",
+    )
+    cid = journal.pending()[0].id
+    updated_profile = connected_profile.replace(
+        "- Enjoys great coffee.\n",
+        "- Enjoys great coffee.\n- Feels settled in San Francisco.\n",
+    )
+    brain = FakeBrain(
+        [
+            _judge_json(
+                [
+                    {
+                        "candidate_id": cid,
+                        "decision": "update",
+                        "target": "entities/ruben.md",
+                        "new_body": updated_profile,
+                    }
+                ]
+            )
+        ]
+    )
+
+    label = await _consolidator(
+        stack,
+        brain,
+        config=_config(user_entity_slug="ruben"),
+    ).run_once()
+
+    assert label == "journal-batch:1"
+    assert "Feels settled in San Francisco" in (
+        vault_root / "entities" / "ruben.md"
+    ).read_text(encoding="utf-8")
+    assert (
+        vault_root / "entities" / "san-francisco.md"
+    ).read_text(encoding="utf-8") == connected_place
+    assert journal.pending() == []
+
+
 @pytest.mark.asyncio
 async def test_companion_add_creates_topic_page_beside_profile_update(stack) -> None:
     """Graph-visibility rule: a profile update may CREATE the missing topic
@@ -489,11 +735,74 @@ async def test_failing_companion_add_never_blocks_the_primary_fact(stack) -> Non
 
 
 @pytest.mark.asyncio
+async def test_failing_required_place_companion_keeps_candidate_pending(stack) -> None:
+    vault_root, _curator, journal = stack
+    _write_aged(vault_root / "entities" / "ruben.md", RUBEN_FULL_BODY)
+    journal.append(
+        [
+            CandidateFact(
+                fact="The user lives in San Francisco.",
+                kind="place",
+                subjects=("ruben", "san-francisco"),
+            )
+        ],
+        source_label="realtime:residence-retry",
+        turn_hash="residence-retry",
+    )
+    cid = journal.pending()[0].id
+    updated_profile = RUBEN_FULL_BODY.replace(
+        "- Enjoys great coffee.\n",
+        "- Enjoys great coffee.\n- Lives in San Francisco.\n",
+    ).replace(
+        "## Relationships\n\n",
+        "## Relationships\n\n- Lives in [[entities/san-francisco]].\n\n",
+    )
+    poisoned_place = _san_francisco_place_body().replace(
+        "The user's current city of residence.",
+        "Stored with sk-proj-" + "A" * 24 + ".",
+    )
+    brain = FakeBrain(
+        [
+            _judge_json(
+                [
+                    {
+                        "candidate_id": cid,
+                        "decision": "update",
+                        "target": "entities/ruben.md",
+                        "new_body": updated_profile,
+                    },
+                    {
+                        "candidate_id": cid,
+                        "decision": "add",
+                        "target": "entities/san-francisco.md",
+                        "new_body": poisoned_place,
+                    },
+                ]
+            )
+        ]
+    )
+
+    label = await _consolidator(
+        stack,
+        brain,
+        config=_config(user_entity_slug="ruben"),
+    ).run_once()
+
+    assert label == "journal-transient:1"
+    assert not (vault_root / "entities" / "san-francisco.md").exists()
+    assert "Lives in San Francisco" in (
+        vault_root / "entities" / "ruben.md"
+    ).read_text(encoding="utf-8")
+    assert len(journal.pending()) == 1
+
+
+@pytest.mark.asyncio
 async def test_secondary_update_is_still_rejected(stack) -> None:
     """Only "add" and "invalidate" may ride as secondary actions — a
     secondary "update" of another existing page stays invalid."""
     vault_root, _curator, journal = stack
     _write_aged(vault_root / "entities" / "ruben.md", RUBEN_FULL_BODY)
+    _write_aged(vault_root / "entities" / "lena.md", LENA_BODY)
     journal.append(
         [CandidateFact(
             fact="The user is pursuing a high-end espresso machine.",
@@ -524,7 +833,9 @@ async def test_secondary_update_is_still_rejected(stack) -> None:
     label = await consolidator.run_once()
 
     assert label == "judge-unavailable"  # rejected response, chain exhausted
-    assert not (vault_root / "entities" / "lena.md").exists()
+    assert (
+        vault_root / "entities" / "lena.md"
+    ).read_text(encoding="utf-8") == LENA_BODY
     assert journal.pending() != []  # candidate stays visible for the next pass
 
 

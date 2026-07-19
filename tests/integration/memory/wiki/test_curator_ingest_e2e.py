@@ -24,6 +24,7 @@ from unittest.mock import patch
 import pytest
 import pytest_asyncio
 
+from jarvis.core.events import WikiPageChanged
 from jarvis.memory.wiki.atomic_writer import AtomicWriter
 from jarvis.memory.wiki.curator import WikiCurator
 from jarvis.memory.wiki.curator_llm import WikiCuratorLLM
@@ -58,6 +59,10 @@ async def real_stack(tmp_path: Path):
     llm = WikiCuratorLLM.__new__(WikiCuratorLLM)
     # We bypass __init__ so we don't try to instantiate a real brain;
     # the patched method below is the only entry point we exercise.
+    events: list[WikiPageChanged] = []
+
+    async def publish_event(event: WikiPageChanged) -> None:
+        events.append(event)
 
     curator = WikiCurator(
         repo=repo,
@@ -66,8 +71,9 @@ async def real_stack(tmp_path: Path):
         llm=llm,
         log_writer=log_writer,
         vault_root=vault_root,
+        event_publisher=publish_event,
     )
-    return curator, vault_root, backup_dir
+    return curator, vault_root, backup_dir, events
 
 
 def _entity_body(slug: str, summary_line: str) -> str:
@@ -104,7 +110,7 @@ def _entity_body(slug: str, summary_line: str) -> str:
 @pytest.mark.asyncio
 async def test_ingest_creates_pages_writes_log_and_backup(real_stack):
     """One ingest call → two entity pages + one log entry + one backup."""
-    curator, vault_root, backup_dir = real_stack
+    curator, vault_root, backup_dir, events = real_stack
 
     fake_updates = [
         PageUpdate(
@@ -149,11 +155,16 @@ async def test_ingest_creates_pages_writes_log_and_backup(real_stack):
     backups = list(backup_dir.glob("wiki-*.tar.gz"))
     assert len(backups) == 1
 
+    assert [(event.slug, event.path, event.kind) for event in events] == [
+        ("ruben", "entities/ruben.md", "created"),
+        ("wiki-project", "entities/wiki-project.md", "created"),
+    ]
+
 
 @pytest.mark.asyncio
 async def test_ingest_with_no_proposed_updates_writes_nothing(real_stack):
     """LLM returns ``[]`` → no writes, no backup, no log entry."""
-    curator, vault_root, backup_dir = real_stack
+    curator, vault_root, backup_dir, events = real_stack
 
     with patch.object(curator._llm, "propose_updates", return_value=[]):
         result = await curator.ingest(
@@ -174,3 +185,4 @@ async def test_ingest_with_no_proposed_updates_writes_nothing(real_stack):
 
     # No backup taken.
     assert list(backup_dir.glob("*.tar.gz")) == []
+    assert events == []

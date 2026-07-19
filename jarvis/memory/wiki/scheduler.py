@@ -286,12 +286,20 @@ class CuratorScheduler:
         """
         active = self._journal_fire_task
         if active is not None and not active.done():
-            drain = self._journal_drain_task
-            if drain is not None and not drain.done():
-                self._journal_dirty = True
+            # Mark every request that arrives before the shared fire task is
+            # completely done. The inner drain normally consumes this flag,
+            # while ``_run_scheduled_journal_trigger`` closes the tiny tail
+            # window after the drain's final check but before the outer task
+            # returns. Without that hand-off, a candidate appended as soon as
+            # the previous page appeared on disk could remain pending until a
+            # later turn happened to trigger another drain.
+            self._journal_dirty = True
             return active
 
-        active = asyncio.create_task(self.trigger(TriggerSource.JOURNAL), name=name)
+        active = asyncio.create_task(
+            self._run_scheduled_journal_trigger(),
+            name=name,
+        )
         self._journal_fire_task = active
 
         def _clear(done: asyncio.Task[SchedulerResult]) -> None:
@@ -300,6 +308,14 @@ class CuratorScheduler:
 
         active.add_done_callback(_clear)
         return active
+
+    async def _run_scheduled_journal_trigger(self) -> SchedulerResult:
+        """Run one shared fire task until every late request is observed."""
+        result = await self.trigger(TriggerSource.JOURNAL)
+        while self._journal_dirty:
+            self._journal_dirty = False
+            result = await self.trigger(TriggerSource.JOURNAL)
+        return result
 
     async def shutdown(self, *, timeout_s: float = 5.0) -> None:
         """Drain or cancel journal work before the shared journal is closed."""

@@ -42,7 +42,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from jarvis.core.events import IdleEntered
+from jarvis.core.events import IdleEntered, WikiPageChanged
 
 if TYPE_CHECKING:
     from jarvis.core.bus import EventBus
@@ -318,6 +318,7 @@ async def bootstrap_wiki_integration(
         vault_root=vault_path,
         brain_caller=brain_caller,
         root_config=root_cfg,
+        event_publisher=bus.publish,
     )
 
     # Publish the live curator so the ``wiki-ingest`` tool can find it.
@@ -375,12 +376,14 @@ async def bootstrap_wiki_integration(
     # idempotent skeleton pass; failures never break boot.
     try:
         from jarvis.memory.wiki.profile import ensure_profile_skeleton
+        from jarvis.memory.wiki.prompt import resolve_user_entity_slug
 
-        user_slug = str(getattr(rollup_cfg, "user_entity_slug", "") or "")
-        if user_slug:
-            await ensure_profile_skeleton(
-                vault_root=vault_path, slug=user_slug, curator=curator,
-            )
+        user_slug = resolve_user_entity_slug(
+            getattr(rollup_cfg, "user_entity_slug", "")
+        )
+        await ensure_profile_skeleton(
+            vault_root=vault_path, slug=user_slug, curator=curator,
+        )
     except Exception as exc:  # noqa: BLE001
         log.warning("wiki_integration: profile skeleton pass failed: %s", exc)
 
@@ -823,6 +826,7 @@ def _build_curator(
     vault_root: Path,
     brain_caller: Callable[[str, str], Awaitable[str]] | None,
     root_config: Any | None = None,
+    event_publisher: Callable[[WikiPageChanged], Awaitable[None]] | None = None,
 ) -> Any:
     """Construct a :class:`~jarvis.memory.wiki.curator.WikiCurator` instance.
 
@@ -871,6 +875,7 @@ def _build_curator(
         llm=llm,
         log_writer=log_writer,
         vault_root=vault_root,
+        event_publisher=event_publisher,
     )
 
 

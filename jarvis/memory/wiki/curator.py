@@ -30,7 +30,10 @@ context.
 from __future__ import annotations
 
 import logging
+from collections.abc import Awaitable, Callable
 from pathlib import Path
+
+from jarvis.core.events import WikiPageChanged
 
 from .log_writer import LogWriter
 from .protocols import (
@@ -119,6 +122,11 @@ class WikiCurator:
         and to synthesise a ``WriteResult`` when the LLM returns an
         empty proposal (the writer was never called, so no backup
         was taken).
+    event_publisher:
+        Optional application event publisher. After an app-owned write
+        lands, the curator emits :class:`WikiPageChanged` so an open Wiki
+        view can invalidate its tree and graph without depending on an OS
+        filesystem watcher noticing the curator's atomic rename.
     """
 
     def __init__(
@@ -130,6 +138,7 @@ class WikiCurator:
         llm: CuratorLLM,
         log_writer: LogWriter,
         vault_root: Path,
+        event_publisher: Callable[[WikiPageChanged], Awaitable[None]] | None = None,
     ) -> None:
         self._repo = repo
         self._vault = vault
@@ -137,6 +146,7 @@ class WikiCurator:
         self._llm = llm
         self._log = log_writer
         self._vault_root = Path(vault_root).resolve()
+        self._event_publisher = event_publisher
 
     async def ingest(
         self,
@@ -249,11 +259,60 @@ class WikiCurator:
                     type(exc).__name__,
                 )
 
+            await self._publish_page_changes(updates, result.applied)
+
         return result
 
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    async def _publish_page_changes(
+        self,
+        updates: list[PageUpdate],
+        applied: list[Path],
+    ) -> None:
+        """Best-effort live invalidation for app-owned vault writes."""
+        if self._event_publisher is None:
+            return
+
+        operations = {
+            update.target_path.resolve(): update.operation for update in updates
+        }
+        kinds = {
+            "create": "created",
+            "update": "modified",
+            "rename": "created",
+            "archive": "deleted",
+        }
+        for path in applied:
+            resolved = path.resolve()
+            try:
+                relative = resolved.relative_to(self._vault_root)
+            except ValueError:
+                log.warning(
+                    "WikiCurator: cannot publish out-of-vault applied path %s",
+                    resolved,
+                )
+                continue
+
+            event = WikiPageChanged(
+                slug=relative.stem,
+                path=relative.as_posix(),
+                kind=kinds.get(operations.get(resolved, "update"), "modified"),
+            )
+            try:
+                await self._event_publisher(event)
+            except Exception as exc:  # noqa: BLE001
+                # The page and audit log have already landed. Live UI
+                # invalidation is auxiliary and must never turn that success
+                # into a retry that could duplicate durable information.
+                log.warning(
+                    "WikiCurator: page write succeeded but live event publish "
+                    "failed for %s: %s",
+                    relative.as_posix(),
+                    type(exc).__name__,
+                )
 
     def _anchor_to_vault(self, upd: PageUpdate) -> PageUpdate:
         """Resolve a vault-relative ``target_path`` against the vault root.
