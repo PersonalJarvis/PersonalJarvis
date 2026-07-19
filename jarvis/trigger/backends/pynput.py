@@ -1,4 +1,4 @@
-"""macOS / Linux-X11 hotkey backend via ``pynput`` (AD-8).
+"""Linux-X11 hotkey backend via ``pynput`` (AD-8).
 
 ``pynput`` provides cross-platform global keyboard listeners. This backend maps
 the jarvis combo vocabulary onto pynput key objects and tracks the live
@@ -76,6 +76,18 @@ _MODIFIER_TO_KEY_ATTR = {
     "window": "cmd",
 }
 
+# ``pynput`` reports the right-hand modifier keys with side-specific names
+# (``alt_r``, ``shift_r``, ``cmd_r``), while a generic configured modifier such
+# as ``alt`` must accept either physical side.  The old subset comparison only
+# matched the left aliases (which pynput names simply ``alt``/``shift``/etc.),
+# so the shipped ``right_alt`` PTT default could never fire on Linux-X11.
+_GENERIC_MODIFIER_ALIASES: dict[str, frozenset[str]] = {
+    "ctrl": frozenset({"ctrl", "ctrl_l", "ctrl_r"}),
+    "alt": frozenset({"alt", "alt_l", "alt_r", "alt_gr"}),
+    "shift": frozenset({"shift", "shift_l", "shift_r"}),
+    "cmd": frozenset({"cmd", "cmd_l", "cmd_r"}),
+}
+
 # --------------------------------------------------------------------------
 # Module-level single-listener guard (mirrors the Windows refcount intent):
 # two live HotkeyTriggers must share ONE listener thread, else every press
@@ -102,8 +114,16 @@ def _parse_combo_tokens(normalized: str) -> tuple[str, ...]:
     return tuple(_MODIFIER_TO_KEY_ATTR.get(p, p) for p in parts)
 
 
+def _combo_is_down(tokens: frozenset[str], held: set[str]) -> bool:
+    """Whether every configured token is represented by a held physical key."""
+    return all(
+        bool(_GENERIC_MODIFIER_ALIASES.get(token, frozenset({token})) & held)
+        for token in tokens
+    )
+
+
 class PynputBackend:
-    """``pynput`` global-hotkey backend for macOS / Linux-X11 (AD-8).
+    """``pynput`` global-hotkey backend for Linux-X11 (AD-8).
 
     Satisfies the ``HotkeyBackend`` ``Protocol``. Receives the same normalized
     ``[combo_str, on_press, on_release]`` rows the Windows backend does, so the
@@ -119,6 +139,7 @@ class PynputBackend:
         self._started = False
         self._got_event = False
         self._incremented = False
+        self._teardown_failed = False
         # The live set of canonical tokens currently held down.
         self._held: set[str] = set()
         self._permission_check = lambda: True
@@ -182,7 +203,7 @@ class PynputBackend:
                 combo["down"] = False
             return
         for combo in self._combos:
-            is_down = combo["tokens"].issubset(self._held)
+            is_down = _combo_is_down(combo["tokens"], self._held)
             if is_down and not combo["down"]:
                 combo["down"] = True
                 self._got_event = True
@@ -199,6 +220,13 @@ class PynputBackend:
     def start(self) -> None:
         """Build + start the shared pynput listener. Degrades, never raises."""
         if self._started:
+            return
+        if self._teardown_failed:
+            log.warning(
+                "pynput hotkeys remain disabled after a listener teardown "
+                "failure; restart Jarvis to re-arm them safely. Voice still "
+                "works via the wake word."
+            )
             return
         try:
             from pynput import keyboard  # type: ignore[import-untyped]  # lazy (HN-7)
@@ -288,6 +316,21 @@ class PynputBackend:
             except Exception:  # noqa: BLE001 — teardown must never propagate
                 log.debug("pynput listener.stop() failed (non-fatal)",
                           exc_info=True)
+            try:
+                # A live keybind edit immediately constructs the replacement
+                # listener.  Wait for the old hook thread to leave first so it
+                # cannot emit a second press/release edge after re-arm.
+                listener.join(timeout=2.0)  # type: ignore[attr-defined]
+            except Exception:  # noqa: BLE001 — teardown must never propagate
+                log.debug("pynput listener.join() failed (non-fatal)",
+                          exc_info=True)
+            is_alive = getattr(listener, "is_alive", None)
+            if callable(is_alive) and is_alive():
+                self._teardown_failed = True
+                log.warning(
+                    "pynput hotkey listener did not stop within two seconds; "
+                    "the replacement listener will not be started."
+                )
         self._listener = None
         self._held.clear()
         for combo in self._combos:
@@ -308,4 +351,9 @@ class PynputBackend:
         return self._got_event
 
 
-__all__ = ["PynputBackend", "_parse_combo_tokens", "_reset_listener_state_for_tests"]
+__all__ = [
+    "PynputBackend",
+    "_combo_is_down",
+    "_parse_combo_tokens",
+    "_reset_listener_state_for_tests",
+]

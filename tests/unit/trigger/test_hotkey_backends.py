@@ -23,6 +23,8 @@ from __future__ import annotations
 import inspect
 import logging
 import sys
+import threading
+import types
 
 import pytest
 
@@ -180,6 +182,24 @@ def test_global_backend_two_instances_share_one_checker(fake_gh):
     assert fake_gh.peak_live == 1
 
 
+def test_global_backend_delivers_one_ptt_press_release_pair(fake_gh):
+    """Windows keeps distinct down/up callbacks for a held PTT chord."""
+    from jarvis.trigger.backends.global_hotkeys import GlobalHotkeysBackend
+
+    edges: list[str] = []
+    backend = GlobalHotkeysBackend()
+    backend.register(
+        [["control + alt + l", lambda: edges.append("down"), lambda: edges.append("up")]]
+    )
+    backend.start()
+    fake_gh.fire_press("control + alt + l")
+    fake_gh.fire_release("control + alt + l")
+    backend.stop()
+    backend.unregister()
+
+    assert edges == ["down", "up"]
+
+
 def test_global_backend_unregister_removes_by_string(fake_gh):
     """REGRESSION: unregister must pass combo STRINGS, never the rows."""
     from jarvis.trigger.backends.global_hotkeys import GlobalHotkeysBackend
@@ -335,6 +355,27 @@ def test_pynput_combo_translation_fkeys_passthrough():
     assert _parse_combo_tokens("f3 + f4") == ("f3", "f4")
 
 
+def test_pynput_linux_right_alt_drives_one_ptt_edge_pair():
+    """Linux-X11 reports right Alt as ``alt_r``; generic Alt must match it."""
+    from jarvis.trigger.backends.pynput import PynputBackend
+
+    edges: list[str] = []
+    backend = PynputBackend()
+    backend.register(
+        [["alt + l", lambda: edges.append("down"), lambda: edges.append("up")]]
+    )
+    right_alt = types.SimpleNamespace(char=None, name="alt_r")
+    letter_l = types.SimpleNamespace(char="l", name=None)
+
+    backend._on_press_key(right_alt)
+    backend._on_press_key(letter_l)
+    backend._on_press_key(letter_l)  # OS key repeat must not emit another edge
+    backend._on_release_key(letter_l)
+    backend._on_release_key(right_alt)
+
+    assert edges == ["down", "up"]
+
+
 def test_pynput_backend_register_does_not_import_pynput():
     """register() only stashes rows — no pynput import, so it works here."""
     from jarvis.trigger.backends.pynput import PynputBackend
@@ -343,6 +384,32 @@ def test_pynput_backend_register_does_not_import_pynput():
     backend.register([["control + alt + j", lambda: None, lambda: None]])
     assert backend.received_any_event() is False
     backend.unregister()  # no raise
+
+
+def test_pynput_rearm_refuses_duplicate_when_old_listener_is_stuck(caplog):
+    """Linux keeps wake usable instead of stacking a second global hook."""
+    from jarvis.trigger.backends.pynput import PynputBackend
+
+    class _StuckListener:
+        def stop(self) -> None:
+            return None
+
+        def join(self, timeout=None) -> None:  # noqa: ANN001
+            return None
+
+        def is_alive(self) -> bool:
+            return True
+
+    backend = PynputBackend()
+    backend._listener = _StuckListener()
+    backend._started = True
+    with caplog.at_level(logging.WARNING, logger="jarvis.trigger.backends.pynput"):
+        backend.stop()
+        backend.start()
+
+    assert backend._teardown_failed is True
+    assert backend._listener is None
+    assert "replacement listener" in caplog.text
 
 
 def test_pynput_backend_start_degrades_without_pynput(caplog):
@@ -406,6 +473,12 @@ def _install_fake_pynput(monkeypatch, built: list) -> None:
         def start(self) -> None: ...
 
         def stop(self) -> None: ...
+
+        def join(self, timeout=None) -> None:  # noqa: ANN001
+            return None
+
+        def is_alive(self) -> bool:
+            return False
 
     fake_pynput = types.ModuleType("pynput")
     fake_pynput.keyboard = types.SimpleNamespace(Listener=_FakeListener)
@@ -547,3 +620,129 @@ def test_pynput_backend_revoked_permission_suppresses_live_callback(monkeypatch)
 
     assert fired == []
     assert backend._held == set()
+
+
+# ----------------------------------------------------------------------
+# QuartzHotkeyBackend — edge semantics + leak-free live re-arm (macOS).
+# ----------------------------------------------------------------------
+
+
+def test_quartz_backend_delivers_one_ptt_edge_pair() -> None:
+    """Key repeat and the later modifier release never duplicate PTT edges."""
+    from jarvis.trigger.backends.quartz import QuartzHotkeyBackend
+
+    edges: list[str] = []
+    backend = QuartzHotkeyBackend()
+    backend._permission_check = lambda: True
+    backend.register(
+        [["alt + l", lambda: edges.append("down"), lambda: edges.append("up")]]
+    )
+
+    backend._handle_flags(1 << 19)  # Option/Alt down
+    backend._handle_key_down(0x25)  # physical L
+    backend._handle_key_down(0x25)  # key repeat
+    backend._handle_key_up(0x25)
+    backend._handle_flags(0)  # Option/Alt up after L
+
+    assert edges == ["down", "up"]
+
+
+def _install_fake_quartz(monkeypatch):
+    """Install a Core Foundation event-loop fake for lifecycle tests."""
+    quartz = types.ModuleType("Quartz")
+    quartz.kCGEventKeyDown = 10
+    quartz.kCGEventKeyUp = 11
+    quartz.kCGEventFlagsChanged = 12
+    quartz.kCGEventTapDisabledByTimeout = 13
+    quartz.kCGEventTapDisabledByUserInput = 14
+    quartz.kCGKeyboardEventKeycode = 15
+    quartz.kCGSessionEventTap = 16
+    quartz.kCGHeadInsertEventTap = 17
+    quartz.kCGEventTapOptionListenOnly = 18
+    quartz.kCFRunLoopCommonModes = "common"
+    quartz._local = threading.local()
+    quartz.taps = []
+    quartz.removed_sources = []
+    quartz.wake_calls = 0
+
+    class _Tap:
+        def __init__(self, callback) -> None:  # noqa: ANN001
+            self.callback = callback
+            self.enabled = False
+            self.invalidated = False
+
+    class _Loop:
+        def __init__(self) -> None:
+            self.stopped = False
+            self.wake = threading.Event()
+
+    def _tap_create(_location, _placement, _options, _mask, callback, _refcon):
+        tap = _Tap(callback)
+        quartz.taps.append(tap)
+        return tap
+
+    def _get_loop():
+        loop = _Loop()
+        quartz._local.loop = loop
+        return loop
+
+    def _run_loop():
+        loop = quartz._local.loop
+        while not loop.stopped:
+            loop.wake.wait()
+            loop.wake.clear()
+
+    def _stop_loop(loop):  # noqa: ANN001
+        # Deliberately does not wake the waiter: the production fix must call
+        # CFRunLoopWakeUp as well as CFRunLoopStop before joining.
+        loop.stopped = True
+
+    def _wake_loop(loop):  # noqa: ANN001
+        quartz.wake_calls += 1
+        loop.wake.set()
+
+    quartz.CGEventMaskBit = lambda value: 1 << value
+    quartz.CGEventTapCreate = _tap_create
+    quartz.CFMachPortCreateRunLoopSource = lambda _alloc, tap, _order: ("source", tap)
+    quartz.CFRunLoopGetCurrent = _get_loop
+    quartz.CFRunLoopAddSource = lambda _loop, _source, _mode: None
+    quartz.CFRunLoopRun = _run_loop
+    quartz.CFRunLoopStop = _stop_loop
+    quartz.CFRunLoopWakeUp = _wake_loop
+    quartz.CFRunLoopRemoveSource = (
+        lambda loop, source, mode: quartz.removed_sources.append((loop, source, mode))
+    )
+    quartz.CGEventTapEnable = lambda tap, enabled: setattr(tap, "enabled", enabled)
+    quartz.CFMachPortInvalidate = lambda tap: setattr(tap, "invalidated", True)
+    quartz.CGEventGetIntegerValueField = lambda _event, _field: 0
+    quartz.CGEventGetFlags = lambda _event: 0
+    monkeypatch.setitem(sys.modules, "Quartz", quartz)
+    return quartz
+
+
+def test_quartz_rearm_fully_retires_old_event_tap(monkeypatch) -> None:
+    """A Settings save cannot leave an older tap emitting duplicate edges."""
+    from jarvis.trigger.backends.quartz import QuartzHotkeyBackend
+
+    quartz = _install_fake_quartz(monkeypatch)
+    backend = QuartzHotkeyBackend()
+    backend._permission_check = lambda: True
+    backend.register([["alt + j", None, lambda: None]])
+    backend.start()
+    old_thread = backend._thread
+    old_tap = quartz.taps[-1]
+
+    backend.stop()
+    assert old_tap.enabled is False
+    assert old_tap.invalidated is True
+    assert quartz.removed_sources
+    assert quartz.wake_calls == 1
+    assert old_thread is not None and not old_thread.is_alive()
+
+    backend.unregister()
+    backend.register([["alt + l", lambda: None, lambda: None]])
+    backend.start()
+    assert len(quartz.taps) == 2
+    assert quartz.taps[-1].enabled is True
+    assert old_tap.enabled is False
+    backend.stop()

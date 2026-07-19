@@ -6645,17 +6645,23 @@ class SpeechPipeline:
             hangup_task = asyncio.create_task(self._hangup_event.wait())
             # Background live-transcript feed (cosmetic — the bubble). NOT part
             # of the wait-set: it must never end the session, only mirror what
-            # is being held into the orb bubble. Cancelled + awaited in cleanup.
+            # is being held into the orb bubble. It is quiesced after the input
+            # lease closes so releasing the key always ends capture first.
+            live_stop_event = asyncio.Event()
+            live_inference_active = asyncio.Event()
             live_task = (
                 asyncio.create_task(
-                    self._ptt_live_transcribe(lambda: bytes(buffer)),
+                    self._ptt_live_transcribe(
+                        lambda: bytes(buffer),
+                        stop_event=live_stop_event,
+                        inference_active=live_inference_active,
+                    ),
                     name="ptt-live-transcript",
                 )
                 if self._ptt_partial_interval_s > 0
                 else None
             )
             wait_set = {drain_task, release_task, hangup_task}
-            all_tasks = list(wait_set) + ([live_task] if live_task else [])
             try:
                 done, _pending = await asyncio.wait(
                     wait_set,
@@ -6663,7 +6669,9 @@ class SpeechPipeline:
                     return_when=asyncio.FIRST_COMPLETED,
                 )
             except asyncio.CancelledError:
-                for t in all_tasks:
+                if live_task is not None:
+                    live_stop_event.set()
+                for t in list(wait_set) + ([live_task] if live_task else []):
                     t.cancel()
                 raise
             if not done:
@@ -6672,16 +6680,41 @@ class SpeechPipeline:
                     self._ptt_max_hold_s,
                 )
             hung_up = hangup_task in done or self._hangup_event.is_set()
-            # Stop draining + the live feed and let every task settle. ALL must
-            # be awaited after cancel — leaving any pending throws "Task was
-            # destroyed but it is pending" on the GC pass after the mic closes.
-            for t in all_tasks:
+            # Freeze the cosmetic probe before awaiting any other teardown so
+            # key-up cannot race one more growing-buffer transcription into
+            # flight after capture has ended.
+            live_stop_event.set()
+            # The key-up edge ends CAPTURE immediately.  The cosmetic live-STT
+            # probe is stopped separately below: blindly cancelling an
+            # ``asyncio.to_thread`` local-Whisper call only cancels its asyncio
+            # wrapper, not the native inference.  Starting final STT against the
+            # same model then deterministically raises TranscribeBusy and drops
+            # the submitted prompt (AP-24).
+            for t in wait_set:
                 t.cancel()
-            for t in all_tasks:
+            for t in wait_set:
                 try:
                     await t
-                except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
                     pass
+            if input_buffer is not None:
+                # PTT is one-shot, so it will never replay this capture. Release
+                # a wake-handoff/fallback pump now instead of retaining its mic
+                # lease while final STT and the answer run.
+                await input_buffer.close()
+
+        # The microphone/input lease is closed before waiting for a cosmetic
+        # native transcription to settle: key-up therefore ends recording even
+        # if the partial STT call itself is slow or wedged.
+        if not hung_up:
+            await self._set_turn_state(TurnTakingState.WAITING_FOR_FINAL_TRANSCRIPT)
+        if live_task is not None:
+            await self._stop_ptt_live_transcription(
+                live_task,
+                stop_event=live_stop_event,
+                inference_active=live_inference_active,
+                wait_for_inference=not hung_up,
+            )
 
         if hung_up:
             return HANGUP_HOTKEY
@@ -6704,7 +6737,6 @@ class SpeechPipeline:
         self._carry_pcm = bytearray()
         self._carry_started_monotonic = None
         self._last_endpoint_reason = None
-        await self._set_turn_state(TurnTakingState.WAITING_FOR_FINAL_TRANSCRIPT)
         await self._publish_utterance_captured(pcm)
         # One-shot: run exactly one turn, then end the session regardless of the
         # _handle_utterance return value (it may request continuation, which PTT
@@ -6716,7 +6748,88 @@ class SpeechPipeline:
             return self._session_end_reason or HANGUP_VOICE_PATTERN
         return HANGUP_TURN_COMPLETE
 
-    async def _ptt_live_transcribe(self, snapshot: Callable[[], bytes]) -> None:
+    async def _stop_ptt_live_transcription(
+        self,
+        task: asyncio.Task[None],
+        *,
+        stop_event: asyncio.Event,
+        inference_active: asyncio.Event,
+        wait_for_inference: bool,
+    ) -> None:
+        """Quiesce the cosmetic PTT probe before final STT or wake re-arm.
+
+        Native STT calls running through ``asyncio.to_thread`` cannot be
+        cancelled.  On a normal key release, allow the one already-running
+        probe to finish before the authoritative final transcription starts.
+        Bound that wait by the same ceiling as final STT; a provider exposing
+        ``recover()`` then swaps in a fresh engine/lock before the orphaned call
+        is cancelled, which is the AP-24 recovery contract.  A hard hangup does
+        not wait for cosmetic output, but still recovers a busy native engine so
+        the wake listener never inherits it.
+        """
+        stop_event.set()
+        if task.done():
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                pass
+            return
+
+        timed_out = False
+        if wait_for_inference:
+            try:
+                await asyncio.wait_for(
+                    asyncio.shield(task),
+                    timeout=max(0.1, self._stt_final_timeout_s),
+                )
+                return
+            except TimeoutError:
+                timed_out = True
+                log.warning(
+                    "PTT live transcript did not quiesce within %.1fs; "
+                    "recovering before final transcription.",
+                    self._stt_final_timeout_s,
+                )
+            except asyncio.CancelledError:
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+                    pass
+                raise
+            except Exception:  # noqa: BLE001 — cosmetic probe failure is contained
+                if task.done():
+                    return
+
+        if inference_active.is_set():
+            recover = getattr(self._utterance_stt, "recover", None)
+            if callable(recover):
+                try:
+                    recover()
+                except Exception:  # noqa: BLE001 — cleanup must never drop teardown
+                    log.warning(
+                        "PTT live-transcript STT recovery failed; continuing "
+                        "with provider-level fallback.",
+                        exc_info=True,
+                    )
+            elif timed_out:
+                log.warning(
+                    "PTT live-transcript provider has no recovery hook; "
+                    "cancelling the timed-out probe before final STT."
+                )
+        task.cancel()
+        try:
+            await task
+        except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110
+            pass
+
+    async def _ptt_live_transcribe(
+        self,
+        snapshot: Callable[[], bytes],
+        *,
+        stop_event: asyncio.Event,
+        inference_active: asyncio.Event,
+    ) -> None:
         """Background live-transcript feed for the held push-to-talk audio.
 
         Every ``_ptt_partial_interval_s`` it transcribes the held-so-far buffer
@@ -6725,8 +6838,9 @@ class SpeechPipeline:
         wake-word path's VAD stability probe (PTT bypasses the VAD, so it needs
         its own feed). Purely cosmetic and best-effort: every error is swallowed
         and the loop continues. It NEVER drives the turn — the authoritative
-        transcription is the final one in ``_handle_utterance``. ``_ptt_session``
-        cancels it on release / hangup / max-hold.
+        transcription is the final one in ``_handle_utterance``. On release,
+        ``_ptt_session`` signals ``stop_event`` and lets an in-flight native call
+        settle before final STT, so the two never share one inference engine.
         """
         interval = self._ptt_partial_interval_s
         stt = getattr(self, "_utterance_stt", None)
@@ -6736,16 +6850,27 @@ class SpeechPipeline:
         # near-silence; wait until enough audio has accumulated before probing.
         min_bytes = int(0.4 * 16_000 * 2)
         try:
-            while True:
-                await asyncio.sleep(interval)
+            while not stop_event.is_set():
+                try:
+                    await asyncio.wait_for(stop_event.wait(), timeout=interval)
+                except TimeoutError:
+                    pass
+                if stop_event.is_set():
+                    return
                 pcm = snapshot()
                 if len(pcm) < min_bytes:
                     continue
                 try:
-                    transcript = await stt.transcribe_pcm(pcm)
+                    inference_active.set()
+                    try:
+                        transcript = await stt.transcribe_pcm(pcm)
+                    finally:
+                        inference_active.clear()
                 except Exception as exc:  # noqa: BLE001 — cosmetic, keep going
                     log.debug("PTT live-transcript probe failed: %s", exc)
                     continue
+                if stop_event.is_set():
+                    return
                 text = (getattr(transcript, "text", "") or "").strip() if transcript else ""
                 if not text:
                     continue
