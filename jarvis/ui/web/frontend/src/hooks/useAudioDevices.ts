@@ -5,7 +5,8 @@ import { useCallback, useEffect, useState } from "react";
  * which microphone it listens with. GET /api/settings/audio-devices lists one
  * entry per physical device plus the current [audio] selection; PUT persists
  * a device NAME (or the "auto-headset" sentinel for automatic selection) and
- * live-applies it to the running voice pipeline. Mirrors useTtsVolume.
+ * safely live-applies it when the running audio table already contains it;
+ * newly hot-plugged devices take effect after the next app start.
  */
 export interface AudioDeviceEntry {
   name: string;
@@ -53,6 +54,14 @@ export function useAudioDevices() {
 
   useEffect(() => {
     void refetch();
+  }, [refetch]);
+
+  useEffect(() => {
+    const mediaDevices = navigator.mediaDevices;
+    if (!mediaDevices?.addEventListener) return;
+    const onDeviceChange = () => void refetch();
+    mediaDevices.addEventListener("devicechange", onDeviceChange);
+    return () => mediaDevices.removeEventListener("devicechange", onDeviceChange);
   }, [refetch]);
 
   const select = useCallback(

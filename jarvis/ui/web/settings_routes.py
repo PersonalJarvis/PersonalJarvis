@@ -2464,13 +2464,29 @@ def _selected_audio_devices(request: Request) -> tuple[str, str]:
     return out, inp
 
 
+def _audio_device_available_in_live_table(value: str, *, output: bool) -> bool:
+    """Whether the running PortAudio instance can open an explicit device.
+
+    A fresh Settings probe can see hardware connected after this process
+    initialized PortAudio, while the live table remains frozen.  Such a pick is
+    still persisted, but it must wait for the next app start instead of being
+    falsely reported as live-applied (or resolving to a different old index).
+    """
+    if value == AUDIO_AUTO_DEVICE:
+        return True
+    from jarvis.audio.devices import resolve_device_by_name
+
+    return resolve_device_by_name(value, output=output) is not None
+
+
 @router.get("/audio-devices")
 async def get_audio_devices(request: Request) -> dict[str, object]:
     """Enumerate output/input devices + the current selection for the pickers."""
-    from jarvis.audio.devices import list_devices
+    from jarvis.audio.devices import list_device_options
 
-    outputs = await asyncio.to_thread(lambda: list_devices(output=True))
-    inputs = await asyncio.to_thread(lambda: list_devices(output=False))
+    outputs, inputs = await asyncio.to_thread(
+        lambda: list_device_options(fresh=True)
+    )
     selected_output, selected_input = _selected_audio_devices(request)
     return {
         "available": bool(outputs or inputs),
@@ -2486,7 +2502,26 @@ async def get_audio_devices(request: Request) -> dict[str, object]:
 async def put_audio_devices(
     body: AudioDeviceSelectBody, request: Request
 ) -> dict[str, object]:
-    """Persist + live-apply the audio device selection (name or auto)."""
+    """Persist an audio selection and live-apply it when the table is current."""
+    output_live = (
+        await asyncio.to_thread(
+            _audio_device_available_in_live_table,
+            body.output_device,
+            output=True,
+        )
+        if body.output_device is not None
+        else False
+    )
+    input_live = (
+        await asyncio.to_thread(
+            _audio_device_available_in_live_table,
+            body.input_device,
+            output=False,
+        )
+        if body.input_device is not None
+        else False
+    )
+
     # Best-effort in-memory cfg update so later cfg reads (voice-offline
     # alerts, the voice watchdog restart path) agree pre-restart.
     cfg = _config(request)
@@ -2523,7 +2558,10 @@ async def put_audio_devices(
 
     # Live-apply to the running voice pipeline — no app restart. Best-effort:
     # a headless/down pipeline just means it applies on next start.
-    applied_live = False
+    applied_sides = 0
+    requested_sides = int(body.output_device is not None) + int(
+        body.input_device is not None
+    )
     pipeline = getattr(request.app.state, "speech_pipeline", None)
     if pipeline is not None and hasattr(pipeline, "set_audio_devices"):
         try:
@@ -2534,18 +2572,33 @@ async def put_audio_devices(
             # whole API/WS surface. The INPUT side must stay ON the loop: it
             # only sets an attribute and flips the asyncio wake-reload Event,
             # and asyncio primitives are not thread-safe.
-            if body.output_device is not None:
+            if body.output_device is not None and output_live:
                 await asyncio.to_thread(
                     pipeline.set_audio_devices, output_device=body.output_device
                 )
-            if body.input_device is not None:
+                applied_sides += 1
+            if body.input_device is not None and input_live:
                 pipeline.set_audio_devices(input_device=body.input_device)
-            applied_live = True
+                applied_sides += 1
         except Exception as exc:  # noqa: BLE001 — never fail the save on a live-apply hiccup
             log.warning(
                 "audio-device live-apply failed (persisted; applies on restart): %s",
                 exc,
             )
+    if body.output_device is not None and not output_live:
+        log.info(
+            "audio output %r is not present in the live PortAudio table; "
+            "saved for the next app start",
+            body.output_device,
+        )
+    if body.input_device is not None and not input_live:
+        log.info(
+            "audio input %r is not present in the live PortAudio table; "
+            "saved for the next app start",
+            body.input_device,
+        )
+
+    applied_live = applied_sides == requested_sides
 
     selected_output, selected_input = _selected_audio_devices(request)
     return {

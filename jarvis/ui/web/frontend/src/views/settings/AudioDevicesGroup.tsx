@@ -13,8 +13,9 @@ import { useT } from "@/i18n";
  * listens with). The first option is always "Automatic (recommended)" — the
  * auto-headset resolver; concrete entries are physical devices by display
  * name (stable across reboots, unlike device indices). A pick saves
- * immediately and applies live to the running voice pipeline; the rescan
- * button re-enumerates after plugging in a headset. On a host without audio
+ * immediately and applies live when safe; a device connected after app start
+ * is activated on the next start. The picker rescans on OS device-change
+ * events, while the button remains a manual fallback. On a host without audio
  * hardware the card degrades to a caption instead of empty dropdowns.
  */
 export function AudioDevicesGroup() {
