@@ -835,6 +835,7 @@ class RealtimeVoiceSession:
         self._transport_rebuild_requests: asyncio.Queue[tuple[Any, str]] = (
             asyncio.Queue()
         )
+        self._transport_rebuild_pending: Any | None = None
         # Monotonic timestamps of in-place transport rebuilds (BUG-071),
         # pruned to the rolling _TRANSPORT_REBUILD_WINDOW_S budget window.
         self._transport_rebuild_times: list[float] = []
@@ -1057,6 +1058,8 @@ class RealtimeVoiceSession:
     async def handle_audio_frame(self, pcm_native: bytes) -> None:
         if self._ended or self._session is None or not pcm_native:
             return
+        if self._session is self._transport_rebuild_pending:
+            return
         if self._half_duplex and self._output_active:
             return
         try:
@@ -1085,14 +1088,24 @@ class RealtimeVoiceSession:
                 "Realtime provider stopped accepting microphone audio within "
                 f"{_AUDIO_SEND_TIMEOUT_S:.1f}s."
             )
+            # Another frame can already be awaiting the superseded socket
+            # when the pump finishes the rebuild. Its stale timeout must not
+            # mark the fresh session failed.
+            if (
+                target_session is not self._session
+                or self._ended
+                or self._hangup_reason
+            ):
+                return
             if self._transport_death_is_rebuildable(session=target_session):
+                self._transport_rebuild_pending = target_session
+                self._transport_rebuild_requests.put_nowait(
+                    (target_session, message)
+                )
                 await self._publish_error(
                     "RealtimeAudioSendTimeout",
                     message,
                     recoverable=True,
-                )
-                self._transport_rebuild_requests.put_nowait(
-                    (target_session, message)
                 )
                 log.warning(
                     "realtime[%s] microphone audio send stalled — requesting "
@@ -2139,6 +2152,8 @@ class RealtimeVoiceSession:
             return False
         self._transport_rebuild_times.append(now)
         old_session, self._session = self._session, None
+        if self._transport_rebuild_pending is old_session:
+            self._transport_rebuild_pending = None
         if old_session is not None:
             try:
                 await old_session.close()
