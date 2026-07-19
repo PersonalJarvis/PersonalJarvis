@@ -5,7 +5,7 @@ Root cause (2026-05-28): GET /api/jarvis-agent/status derived ``is_active_brain`
 from ``cfg.brain.primary`` — that is only the lightweight ROUTER brain
 (Gemini). The heavy-task subagent runs on ``[brain.sub_jarvis].provider``
 (claude-api -> ClaudeDirectWorker -> Claude Max OAuth). The UI therefore
-showed "Google Gemini · aktiver Brain" while heavy work ran on Claude.
+showed "Google Gemini · active brain" while heavy work ran on Claude.
 
 These tests pin the active brain to the subagent provider so the displayed
 brain never drifts from the worker that runs (mirrors the routing source in
@@ -383,10 +383,7 @@ def test_claude_api_row_key_set_via_max_oauth(monkeypatch: pytest.MonkeyPatch) -
     import jarvis.core.config as cfg_mod
 
     monkeypatch.setattr(cfg_mod, "get_secret", lambda *_a, **_k: None)
-    monkeypatch.setattr(
-        "jarvis.missions.isolation.env.read_live_claude_oauth_token",
-        lambda: "sk-ant-oat-live",
-    )
+    _patch_claude_oauth(monkeypatch, "valid")
     cfg = load_config()
     row = next(r for r in _status(cfg)["mapping"] if r["jarvis"] == "claude-api")
     assert row["key_set"] is True
@@ -478,6 +475,7 @@ def test_subagent_switch_409_claude_api_no_key_no_oauth(
 
 class _FakeGoogleCli:
     connected_value = True
+    installed_value = True
 
     def __init__(self, *_a, **_k) -> None:  # noqa: ANN002, ANN003
         pass
@@ -486,17 +484,23 @@ class _FakeGoogleCli:
         from jarvis.google_cli.auth_service import GoogleCliAuthStatus
 
         return GoogleCliAuthStatus(
-            installed=True,
+            installed=type(self).installed_value,
             connected=type(self).connected_value,
             mode="oauth-personal",
             cli_kind="agy",
         )
 
 
-def _patch_antigravity(monkeypatch: pytest.MonkeyPatch, *, connected: bool) -> None:
+def _patch_antigravity(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    connected: bool,
+    installed: bool = True,
+) -> None:
     """Stub GoogleCliAuthService at its source so both the status endpoint and
     the switch route (each lazy-imports it) pick up the fake."""
     _FakeGoogleCli.connected_value = connected
+    _FakeGoogleCli.installed_value = installed
     monkeypatch.setattr(
         "jarvis.google_cli.auth_service.GoogleCliAuthService", _FakeGoogleCli
     )
@@ -588,12 +592,31 @@ def test_antigravity_row_key_set_via_gemini_api_key(
 
     _patch_antigravity(monkeypatch, connected=False)
     monkeypatch.setattr(
-        cfg_mod, "get_secret",
-        lambda key, *a, **k: "AIza-fake" if key == "gemini_api_key" else None,
+        cfg_mod,
+        "get_jarvis_agent_secret",
+        lambda provider: "AIza-fake" if provider == "gemini" else None,
     )
     cfg = load_config()
     row = next(r for r in _status(cfg)["mapping"] if r["jarvis"] == "antigravity")
     assert row["key_set"] is True
+
+
+def test_antigravity_row_stays_locked_with_key_but_no_cli(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Gemini key configures Gemini, but cannot install a missing CLI."""
+    import jarvis.core.config as cfg_mod
+
+    _patch_antigravity(monkeypatch, connected=False, installed=False)
+    monkeypatch.setattr(
+        cfg_mod,
+        "get_jarvis_agent_secret",
+        lambda provider: "AIza-fake" if provider == "gemini" else None,
+    )
+    cfg = load_config()
+    row = next(r for r in _status(cfg)["mapping"] if r["jarvis"] == "antigravity")
+    assert row["api_key_set"] is True
+    assert row["key_set"] is False
 
 
 def test_antigravity_row_billing_is_subscription_or_api(
@@ -617,10 +640,10 @@ def test_subagent_switch_accepts_antigravity_via_api_key(
     import jarvis.core.config as cfg_mod
     import jarvis.core.config_writer as config_writer
 
-    monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _p: None)
     monkeypatch.setattr(
-        cfg_mod, "get_secret",
-        lambda key, *a, **k: "AIza-fake" if key == "gemini_api_key" else None,
+        cfg_mod,
+        "get_jarvis_agent_secret",
+        lambda provider: "AIza-fake" if provider == "gemini" else None,
     )
     _patch_antigravity(monkeypatch, connected=False)
     calls: list[str] = []
@@ -633,3 +656,28 @@ def test_subagent_switch_accepts_antigravity_via_api_key(
     assert resp.status_code == 200, resp.text
     assert resp.json()["active"] == "antigravity"
     assert calls == ["antigravity"]
+
+
+def test_jarvis_agent_switch_rejects_antigravity_key_without_cli(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import jarvis.core.config as cfg_mod
+    import jarvis.core.config_writer as config_writer
+
+    monkeypatch.setattr(
+        cfg_mod,
+        "get_jarvis_agent_secret",
+        lambda provider: "AIza-fake" if provider == "gemini" else None,
+    )
+    _patch_antigravity(monkeypatch, connected=False, installed=False)
+    persisted: list[str] = []
+    monkeypatch.setattr(config_writer, "set_worker_provider", persisted.append)
+
+    cfg = load_config()
+    resp = _client(cfg).post(
+        "/api/jarvis-agent/switch", json={"provider": "antigravity", "persist": True}
+    )
+
+    assert resp.status_code == 409
+    assert "not installed" in resp.json()["detail"].lower()
+    assert persisted == []

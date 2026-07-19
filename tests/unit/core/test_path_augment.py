@@ -77,6 +77,17 @@ def test_candidates_are_platform_appropriate():
         assert any(d.endswith(os.path.join(".local", "bin")) for d in dirs)
 
 
+def test_windows_candidates_cover_official_antigravity_installer(
+    tmp_path, monkeypatch
+):
+    local = tmp_path / "LocalAppData"
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+
+    dirs = path_augment._windows_candidates()
+
+    assert str(local / "agy" / "bin") in dirs
+
+
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX candidate shape")
 def test_posix_candidates_cover_the_mac_report(monkeypatch):
     """The 2026-07-18 Mac symptom: claude installed via npm/native installer,

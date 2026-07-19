@@ -47,6 +47,11 @@ from pathlib import Path
 from typing import Any
 
 from jarvis.claude_credentials import ClaudeOAuthSnapshot, freshest_claude_oauth
+from jarvis.core.interactive_terminal import (
+    InteractiveTerminalLaunch,
+    InteractiveTerminalUnavailable,
+    launch_interactive_terminal,
+)
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
 log = logging.getLogger(__name__)
@@ -62,20 +67,29 @@ _BINARY_CANDIDATES: tuple[str, ...] = ("claude", "claude.cmd", "claude.exe")
 # status() a pure file read. A failed probe is cached too, so an absent/hanging
 # claude never re-pays the timeout.
 _VERSION_CACHE: dict[str, str | None] = {}
+_AUTH_LOGIN_CACHE: dict[str, bool] = {}
+
+
+def claude_install_command(platform: str | None = None) -> str:
+    """Official native installer for the current OS."""
+    target = platform or sys.platform
+    if target == "win32":
+        return "irm https://claude.ai/install.ps1 | iex"
+    return "curl -fsSL https://claude.ai/install.sh | bash"
+
+
+def claude_install_hint(platform: str | None = None) -> str:
+    """Display-safe native install command plus the cross-platform npm fallback."""
+    return (
+        f"Install with: {claude_install_command(platform)} "
+        "(npm alternative: npm i -g @anthropic-ai/claude-code)."
+    )
 
 
 def clear_version_cache() -> None:
     """Drop all cached ``claude --version`` results (tests / after a re-install)."""
     _VERSION_CACHE.clear()
-
-
-# Visible-console flag for the interactive login (Windows only). The desktop app
-# runs under pythonw.exe (no console); without a fresh console the user could not
-# see the login prompt.
-if sys.platform == "win32":
-    _NEW_CONSOLE_FLAGS: int = getattr(subprocess, "CREATE_NEW_CONSOLE", 0x00000010)
-else:
-    _NEW_CONSOLE_FLAGS = 0
+    _AUTH_LOGIN_CACHE.clear()
 
 
 # ----------------------------------------------------------------------
@@ -205,8 +219,8 @@ class ClaudeAuthService:
             from jarvis.core.path_augment import ensure_cli_paths
 
             ensure_cli_paths()
-        except Exception:  # noqa: BLE001 — a probe helper must never break status
-            pass
+        except Exception as exc:  # noqa: BLE001 — probe failure must not break status
+            log.debug("CLI PATH augmentation failed during Claude discovery: %s", exc)
 
         candidates = (self._binary_path, *_BINARY_CANDIDATES)
         for name in candidates:
@@ -225,6 +239,8 @@ class ClaudeAuthService:
             proc = subprocess.run(
                 [binary, "--version"],
                 capture_output=True,
+                encoding="utf-8",
+                errors="replace",
                 timeout=4.0,
                 text=True,
                 creationflags=NO_WINDOW_CREATIONFLAGS,
@@ -236,6 +252,35 @@ class ClaudeAuthService:
         version = out or None
         _VERSION_CACHE[binary] = version
         return version
+
+    def _supports_auth_login(self, binary: str) -> bool:
+        """Whether this installed CLI exposes the modern ``auth login`` command."""
+        if binary in _AUTH_LOGIN_CACHE:
+            return _AUTH_LOGIN_CACHE[binary]
+        try:
+            proc = subprocess.run(
+                [binary, "auth", "login", "--help"],
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=4.0,
+                text=True,
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+            )
+            supported = proc.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            supported = False
+        _AUTH_LOGIN_CACHE[binary] = supported
+        return supported
+
+    def _login_argv(self, binary: str) -> list[str]:
+        """Capability-selected login argv, with a first-run fallback for old CLIs."""
+        if self._supports_auth_login(binary):
+            return [binary, "auth", "login", "--claudeai"]
+        # Older Claude Code releases have no auth subcommand. A bare interactive
+        # start is their documented first-run login flow; passing ``/login`` as
+        # a positional argv value incorrectly treats it as an initial prompt.
+        return [binary]
 
     def _credentials_path(self) -> Path:
         return Path(os.path.expanduser("~/.claude/.credentials.json"))
@@ -292,8 +337,7 @@ class ClaudeAuthService:
                 connected=False,
                 mode="unknown",
                 message=(
-                    "Claude CLI is not installed "
-                    "(run: npm i -g @anthropic-ai/claude-code)."
+                    f"Claude CLI is not installed. {claude_install_hint()}"
                 ),
                 binary_path=self._binary_path,
                 error="claude binary not found",
@@ -362,7 +406,7 @@ class ClaudeAuthService:
                     "Claude login token has expired — it refreshes itself the "
                     "next time claude runs: open a terminal and run 'claude' "
                     "once (only if that fails, sign in again via "
-                    "'claude /login' or add an Anthropic API key)."
+                    "'claude auth login --claudeai' or add an Anthropic API key)."
                 ),
                 version=version,
                 subscription_type=sub_type,
@@ -384,30 +428,30 @@ class ClaudeAuthService:
             api_key_present=self._api_key_present,
         )
 
-    def start_login(self) -> subprocess.Popen[bytes]:
+    def start_login(self) -> InteractiveTerminalLaunch:
         """Spawn the ``claude`` CLI in a visible console for the OAuth sign-in.
 
-        Raises if not installed. ``claude`` runs its own browser/device OAuth
-        flow; we spawn it detached with a fresh console so the prompt is reachable
-        under pythonw.exe. Best-effort, mirroring the Codex / Antigravity login.
+        Modern releases expose ``claude auth login --claudeai``. Older releases
+        fall back to a bare first-run session, which prompts for authentication.
+        Both paths run in a real terminal; a headless host returns an honest
+        capability error instead of starting an invisible process.
         """
         binary = self._resolve_binary()
         if binary is None:
             raise FileNotFoundError(
-                "Claude CLI is not installed "
-                "(run: npm i -g @anthropic-ai/claude-code)."
+                f"Claude CLI is not installed. {claude_install_hint()}"
             )
-        log.info("Starting 'claude' interactive login")
-        if sys.platform == "win32":
-            kwargs: dict[str, Any] = {"creationflags": _NEW_CONSOLE_FLAGS}
-        else:
-            kwargs = {
-                "stdout": subprocess.DEVNULL,
-                "stderr": subprocess.DEVNULL,
-                "stdin": subprocess.DEVNULL,
-                "start_new_session": True,
-            }
-        return subprocess.Popen([binary, "/login"], **kwargs)  # noqa: S603 — fixed argv, shell=False
+        argv = self._login_argv(binary)
+        log.info("Starting Claude subscription login in an external terminal")
+        try:
+            return launch_interactive_terminal(argv, title="Claude sign-in")
+        except InteractiveTerminalUnavailable as exc:
+            manual = (
+                "claude auth login --claudeai" if len(argv) > 1 else "claude"
+            )
+            raise InteractiveTerminalUnavailable(
+                f"{exc} Open a terminal and run: {manual}"
+            ) from exc
 
     def logout_blocking(self) -> tuple[bool, str | None]:
         """Disconnect the Claude subscription login by removing its credentials.

@@ -20,18 +20,18 @@ connection booleans.
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from jarvis.claude_auth import ClaudeAuthService
+from jarvis.claude_auth import ClaudeAuthService, claude_install_command
+from jarvis.core.interactive_terminal import InteractiveTerminalUnavailable
 
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["claude"])
-
-_INSTALL_HINT = "npm i -g @anthropic-ai/claude-code"
 
 
 def _real_api_key_present() -> bool:
@@ -68,8 +68,6 @@ async def claude_test() -> dict[str, Any]:
     Re-augments PATH first, so a CLI installed after app start is found without
     a restart. Runs off the event loop — the probe spawns the real binary.
     """
-    import asyncio
-
     from jarvis.agent_cli_probe import test_claude
 
     return (await asyncio.to_thread(test_claude)).to_dict()
@@ -83,18 +81,27 @@ async def claude_login() -> dict[str, Any]:
     if not status.installed:
         raise HTTPException(
             status_code=409,
-            detail={"message": "Claude CLI is not installed", "install_command": _INSTALL_HINT},
+            detail={
+                "message": "Claude CLI is not installed",
+                "install_command": claude_install_command(),
+            },
         )
     try:
-        proc = service.start_login()
+        launch = await asyncio.to_thread(service.start_login)
     except FileNotFoundError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except InteractiveTerminalUnavailable as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(
             status_code=500,
             detail=f"Claude login could not be started: {type(exc).__name__}: {exc}",
         ) from exc
-    return {"ok": True, "pid": proc.pid, "message": "Claude login was started in the terminal"}
+    return {
+        "ok": True,
+        "pid": launch.pid,
+        "message": "Claude login was started in the terminal",
+    }
 
 
 @router.post("/claude/logout")

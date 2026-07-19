@@ -3011,27 +3011,37 @@ async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, A
             "restart_required": True,
         }
 
-    # Antigravity (Google subscription) is a DIRECT worker over the OAuth Google
-    # CLI — no Jarvis-Agent worker-harness slug, no API key. Mirror of the
-    # codex branch: gate on the OAuth login being present, then persist the
-    # "antigravity" slug.
+    # Antigravity is a DIRECT worker over the Google CLI, with subscription OAuth
+    # or API-key billing only after that CLI capability exists. Key-only execution
+    # belongs to the separate Google Gemini provider.
     from jarvis.missions.worker_runtime.provider_map import (
         ANTIGRAVITY_SUBAGENT_CANONICAL,
         ANTIGRAVITY_SUBAGENT_SLUGS,
     )
 
     if provider in ANTIGRAVITY_SUBAGENT_SLUGS:
-        from jarvis.google_cli.auth_service import GoogleCliAuthService
+        from jarvis.google_cli.auth_service import (
+            GoogleCliAuthService,
+            antigravity_provider_ready,
+        )
 
-        # Dual billing (mirror of codex): the Google subscription OAuth login OR
-        # a Gemini API key (per token). Either is enough to run the worker.
-        def _antigravity_connected() -> bool:
-            status = GoogleCliAuthService().status()
-            return status.connected and status.mode == "oauth-personal"
-
-        antigravity_connected = await asyncio.to_thread(_antigravity_connected)
+        # Dual billing (mirror of Codex): subscription OAuth or a Gemini API key,
+        # but both paths stay gated on the local CLI provider being installed.
+        antigravity_status = await asyncio.to_thread(GoogleCliAuthService().status)
         antigravity_key = bool(cfg_mod.get_jarvis_agent_secret("gemini"))
-        if not (antigravity_connected or antigravity_key):
+        if not antigravity_status.installed:
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "Antigravity is not installed — install agy or the Gemini "
+                    "CLI, or select the separate Google Gemini provider for "
+                    "key-only execution."
+                ),
+            )
+        if not antigravity_provider_ready(
+            antigravity_status,
+            api_key_present=antigravity_key,
+        ):
             raise HTTPException(
                 status_code=409,
                 detail=(

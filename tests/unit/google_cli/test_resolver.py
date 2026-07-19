@@ -1,6 +1,8 @@
 """Resolver order + fallback for the official Google agent CLI."""
 from __future__ import annotations
 
+import os
+
 from jarvis.google_cli.resolver import GoogleCli, resolve_google_cli
 
 
@@ -67,10 +69,12 @@ def test_default_npm_bundle_none_when_absent(tmp_path):
     assert _default_npm_bundle(roots=[str(tmp_path)], which=lambda n: None) is None
 
 
-def test_prefers_agy_via_winget_location_when_not_on_path(tmp_path):
-    """winget installs agy.exe but does not put it on the live PATH until a shell
-    restart, so resolve must probe the known install location (like the gemini
-    bundle fallback) and still PREFER agy over the gemini CLI."""
+def test_prefers_agy_via_native_location_when_not_on_path(tmp_path):
+    """A native install can be absent from the live GUI PATH after installation.
+
+    The resolver must probe the known location and still prefer Antigravity over
+    a Gemini CLI that happens to be on PATH.
+    """
     agy = tmp_path / "agy.exe"
     agy.write_text("// stub")
 
@@ -86,7 +90,7 @@ def test_prefers_agy_via_winget_location_when_not_on_path(tmp_path):
     assert cli.argv_prefix == [str(agy)]
 
 
-def test_default_agy_path_finds_winget_binary(tmp_path):
+def test_default_agy_path_finds_native_binary(tmp_path):
     from jarvis.google_cli.resolver import _default_agy_path
 
     links = tmp_path / "WinGet" / "Links"
@@ -94,3 +98,12 @@ def test_default_agy_path_finds_winget_binary(tmp_path):
     (links / "agy.exe").write_text("// stub")
     found = _default_agy_path(roots=[str(links)])
     assert found == str(links / "agy.exe")
+
+
+def test_agy_roots_include_official_windows_location(tmp_path, monkeypatch):
+    from jarvis.google_cli.resolver import _agy_install_roots
+
+    local = tmp_path / "LocalAppData"
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+
+    assert os.path.join(str(local), "agy", "bin") in _agy_install_roots()

@@ -15,23 +15,34 @@ from __future__ import annotations
 import json
 import logging
 import os
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from jarvis.core.interactive_terminal import (
+    InteractiveTerminalLaunch,
+    InteractiveTerminalUnavailable,
+    launch_interactive_terminal,
+)
 from jarvis.google_cli.resolver import GoogleCli, resolve_google_cli
 
 log = logging.getLogger(__name__)
 
-# Visible-console flag for the deliberate, user-initiated login (Windows only).
-# The desktop app runs under pythonw.exe (no console); without a fresh console
-# the user could not see the device/OAuth URL if the auto browser-open fails.
-if sys.platform == "win32":
-    _NEW_CONSOLE_FLAGS: int = getattr(subprocess, "CREATE_NEW_CONSOLE", 0x00000010)
-else:
-    _NEW_CONSOLE_FLAGS = 0
+def antigravity_install_command(platform: str | None = None) -> str:
+    """Official Antigravity installer for the current OS."""
+    target = platform or sys.platform
+    if target == "win32":
+        return "irm https://antigravity.google/cli/install.ps1 | iex"
+    return "curl -fsSL https://antigravity.google/cli/install.sh | bash"
+
+
+def antigravity_install_hint(platform: str | None = None) -> str:
+    """Display-safe Antigravity command plus the cross-platform Gemini fallback."""
+    return (
+        f"Install Antigravity with: {antigravity_install_command(platform)} "
+        "(Gemini CLI alternative: npm i -g @google/gemini-cli)."
+    )
 
 
 def _gemini_home() -> Path:
@@ -131,6 +142,21 @@ class GoogleCliAuthStatus:
         }
 
 
+def antigravity_provider_ready(
+    status: GoogleCliAuthStatus,
+    *,
+    api_key_present: bool,
+) -> bool:
+    """Whether the Antigravity CLI provider can be selected honestly.
+
+    The separate Google Gemini provider owns key-only execution. Antigravity is
+    a CLI provider, so even its optional API-key billing path must not paint the
+    card ready or permit selection when no executable is installed.
+    """
+    oauth_connected = status.connected and status.mode == "oauth-personal"
+    return status.installed and (oauth_connected or api_key_present)
+
+
 class GoogleCliAuthService:
     """Status / login / logout for the official Google agent CLI.
 
@@ -145,8 +171,8 @@ class GoogleCliAuthService:
             from jarvis.core.path_augment import ensure_cli_paths
 
             ensure_cli_paths()
-        except Exception:  # noqa: BLE001 — a probe helper must never break status
-            pass
+        except Exception as exc:  # noqa: BLE001 — probe failure must not break status
+            log.debug("CLI PATH augmentation failed during Google discovery: %s", exc)
         return resolve_google_cli()
 
     def _read_json(self, name: str) -> dict[str, Any]:
@@ -160,10 +186,7 @@ class GoogleCliAuthService:
         cli = self._resolve()
         if cli is None:
             return GoogleCliAuthStatus(
-                message=(
-                    "No Google CLI found — install Antigravity (agy) or the "
-                    "Gemini CLI, then sign in with Google."
-                ),
+                message=f"No Google CLI found. {antigravity_install_hint()}",
                 error="no google cli binary",
             )
 
@@ -207,34 +230,30 @@ class GoogleCliAuthService:
             binary_path=(cli.argv_prefix[0] if cli.argv_prefix else ""),
         )
 
-    def start_login(self) -> subprocess.Popen[bytes]:
+    def start_login(self) -> InteractiveTerminalLaunch:
         """Spawn the official CLI login in a visible console. Raises if absent.
 
         Neither CLI has a dedicated ``login`` subcommand — verified 2026-06-21,
         ``agy login`` simply HANGS (it is not a real subcommand; ``agy help``
         lists only changelog/help/install/models/plugin/update). Both ``agy`` and
         the Gemini CLI drop into the interactive "Sign in with Google" flow on a
-        bare run, so we launch the bare binary. Detached with a fresh console
-        (Windows) / new session (POSIX) so the device/OAuth URL is reachable
-        under pythonw.
+        bare run, so we launch the bare binary in a real external terminal. A
+        headless host fails honestly instead of starting an invisible process.
         """
         cli = self._resolve()
         if cli is None:
             raise FileNotFoundError(
-                "No Google CLI found (install agy or the Gemini CLI)."
+                f"No Google CLI found. {antigravity_install_hint()}"
             )
         argv = list(cli.argv_prefix)  # bare interactive run — no `login` subcommand
         log.info("Starting Google CLI login (interactive bare run, kind=%s)", cli.kind)
-        if sys.platform == "win32":
-            kwargs: dict[str, Any] = {"creationflags": _NEW_CONSOLE_FLAGS}
-        else:
-            kwargs = {
-                "stdout": subprocess.DEVNULL,
-                "stderr": subprocess.DEVNULL,
-                "stdin": subprocess.DEVNULL,
-                "start_new_session": True,
-            }
-        return subprocess.Popen(argv, **kwargs)  # noqa: S603 — fixed argv, shell=False
+        try:
+            return launch_interactive_terminal(argv, title="Google sign-in")
+        except InteractiveTerminalUnavailable as exc:
+            manual = "agy" if cli.kind == "agy" else "gemini"
+            raise InteractiveTerminalUnavailable(
+                f"{exc} Open a terminal and run: {manual}"
+            ) from exc
 
     def logout_blocking(self) -> tuple[bool, str | None]:
         """Disconnect by removing every on-disk OAuth login file.

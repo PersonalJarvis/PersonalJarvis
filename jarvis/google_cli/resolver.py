@@ -119,15 +119,18 @@ def _default_npm_bundle(
     return None
 
 
-def _agy_winget_roots() -> list[str]:
-    """Well-known locations where the winget ``Google.AntigravityCLI`` package and
-    its PATH shim drop ``agy.exe`` (Windows). winget appends ``WinGet\\Links`` to
-    the user PATH only after a shell restart, so the running process / a fresh
-    subprocess does not see ``agy`` on PATH yet — probe the install dirs directly.
+def _agy_install_roots() -> list[str]:
+    """Well-known native Antigravity install locations outside the live PATH.
+
+    The official installer uses ``~/.local/bin`` on POSIX and
+    ``%LOCALAPPDATA%\\agy\\bin`` on Windows. Legacy WinGet locations remain as
+    compatibility probes. Direct probing also protects worker paths that call
+    this resolver without first augmenting the process PATH.
     """
-    roots: list[str] = []
+    roots: list[str] = [os.path.join(os.path.expanduser("~"), ".local", "bin")]
     local = os.environ.get("LOCALAPPDATA")
     if local:
+        roots.insert(0, os.path.join(local, "agy", "bin"))
         roots.append(os.path.join(local, "Microsoft", "WinGet", "Links"))
         pkgs = os.path.join(local, "Microsoft", "WinGet", "Packages")
         with suppress(OSError):
@@ -142,11 +145,13 @@ def _default_agy_path(
     roots: list[str] | None = None,
     isfile: Callable[[str], bool] = os.path.isfile,
 ) -> str | None:
-    """Path to a winget-installed ``agy.exe``, or ``None``. Best-effort, never raises."""
-    for root in roots if roots is not None else _agy_winget_roots():
-        cand = os.path.join(root, "agy.exe")
-        if isfile(cand):
-            return cand
+    """Path to a native ``agy`` binary, or ``None``. Best-effort, never raises."""
+    names = ("agy.exe", "agy") if sys.platform == "win32" else ("agy", "agy.exe")
+    for root in roots if roots is not None else _agy_install_roots():
+        for name in names:
+            cand = os.path.join(root, name)
+            if isfile(cand):
+                return cand
     return None
 
 
@@ -158,7 +163,7 @@ def resolve_google_cli(
 ) -> GoogleCli | None:
     """Resolve the preferred official Google CLI. ``which``/``npm_bundle``/
     ``agy_path`` are injectable seams for tests. Order: Antigravity ``agy`` (on
-    PATH, then its winget install dir) > Gemini CLI (on PATH, then npm bundle)."""
+    PATH, then its native install dirs) > Gemini CLI (on PATH, then npm bundle)."""
     for name in _AGY:
         path = which(name)
         if path:

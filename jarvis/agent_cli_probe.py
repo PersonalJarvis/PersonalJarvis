@@ -80,6 +80,8 @@ def _live_version(argv: list[str]) -> str | None:
         proc = subprocess.run(
             [*argv, "--version"],
             capture_output=True,
+            encoding="utf-8",
+            errors="replace",
             text=True,
             timeout=_VERSION_TIMEOUT_S,
             creationflags=NO_WINDOW_CREATIONFLAGS,
@@ -115,7 +117,7 @@ def test_claude() -> AgentCliTestResult:
     status = claude_auth.ClaudeAuthService().status()
     if not status.installed:
         return _not_installed(
-            "claude", "Install with: npm i -g @anthropic-ai/claude-code", t0
+            "claude", claude_auth.claude_install_hint(), t0
         )
     # status() already paid a fresh (cache-cleared) --version spawn; a None
     # version therefore means the binary exists but did not answer.
@@ -169,7 +171,10 @@ def test_codex(binary_path: str | None = None) -> AgentCliTestResult:
 
 
 def test_antigravity() -> AgentCliTestResult:
-    from jarvis.google_cli.auth_service import GoogleCliAuthService
+    from jarvis.google_cli.auth_service import (
+        GoogleCliAuthService,
+        antigravity_install_hint,
+    )
     from jarvis.google_cli.resolver import resolve_google_cli
 
     t0 = time.monotonic()
@@ -178,7 +183,7 @@ def test_antigravity() -> AgentCliTestResult:
     if cli is None:
         return _not_installed(
             "antigravity",
-            "Install Antigravity (agy) or the Gemini CLI (npm i -g @google/gemini-cli)",
+            antigravity_install_hint(),
             t0,
         )
     # The resolver never runs the binary — do it here so "installed" is proven

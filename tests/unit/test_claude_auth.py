@@ -144,7 +144,7 @@ def test_status_expired_subscription_is_not_connected(tmp_path, monkeypatch) -> 
     assert st.installed is True
     assert st.connected is False
     assert "expired" in st.message.lower()
-    assert "/login" in st.message
+    assert "auth login" in st.message
 
 
 def test_status_expired_oauth_falls_back_to_api_key(tmp_path, monkeypatch) -> None:
@@ -299,3 +299,65 @@ def test_status_never_logs_secret(tmp_path, monkeypatch, caplog) -> None:
     with caplog.at_level("DEBUG"):
         svc.status()
     assert "sk-ant-oat01-SECRET" not in caplog.text
+
+
+def test_install_command_is_platform_specific() -> None:
+    assert claude_auth.claude_install_command("win32").startswith("irm ")
+    assert claude_auth.claude_install_command("darwin").startswith("curl ")
+    assert claude_auth.claude_install_command("linux").startswith("curl ")
+
+
+def test_start_login_uses_modern_auth_command(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    svc = ClaudeAuthService()
+    monkeypatch.setattr(svc, "_resolve_binary", lambda: "/opt/claude")
+    monkeypatch.setattr(svc, "_supports_auth_login", lambda _binary: True)
+
+    def fake_launch(argv, **kwargs):  # noqa: ANN001, ANN003
+        captured["argv"] = argv
+        captured["kwargs"] = kwargs
+        return claude_auth.InteractiveTerminalLaunch(17, "test-terminal")
+
+    monkeypatch.setattr(claude_auth, "launch_interactive_terminal", fake_launch)
+    launch = svc.start_login()
+
+    assert launch.pid == 17
+    assert captured["argv"] == [
+        "/opt/claude",
+        "auth",
+        "login",
+        "--claudeai",
+    ]
+    assert captured["kwargs"] == {"title": "Claude sign-in"}
+
+
+def test_start_login_old_cli_uses_bare_first_run(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+    svc = ClaudeAuthService()
+    monkeypatch.setattr(svc, "_resolve_binary", lambda: "/opt/claude")
+    monkeypatch.setattr(svc, "_supports_auth_login", lambda _binary: False)
+
+    def fake_launch(argv, **_kwargs):  # noqa: ANN001, ANN003
+        captured["argv"] = argv
+        return claude_auth.InteractiveTerminalLaunch(None, "test-terminal")
+
+    monkeypatch.setattr(claude_auth, "launch_interactive_terminal", fake_launch)
+    svc.start_login()
+
+    assert captured["argv"] == ["/opt/claude"]
+
+
+def test_start_login_headless_error_includes_manual_recovery(monkeypatch) -> None:
+    svc = ClaudeAuthService()
+    monkeypatch.setattr(svc, "_resolve_binary", lambda: "/opt/claude")
+    monkeypatch.setattr(svc, "_supports_auth_login", lambda _binary: True)
+
+    def unavailable(*_args, **_kwargs):
+        raise claude_auth.InteractiveTerminalUnavailable("No graphical terminal.")
+
+    monkeypatch.setattr(claude_auth, "launch_interactive_terminal", unavailable)
+    with pytest.raises(
+        claude_auth.InteractiveTerminalUnavailable,
+        match="claude auth login --claudeai",
+    ):
+        svc.start_login()

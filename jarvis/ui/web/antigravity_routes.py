@@ -14,13 +14,18 @@ other routers::
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 import sys
 from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from jarvis.google_cli.auth_service import GoogleCliAuthService
+from jarvis.core.interactive_terminal import InteractiveTerminalUnavailable
+from jarvis.google_cli.auth_service import (
+    GoogleCliAuthService,
+    antigravity_install_command,
+)
 
 log = logging.getLogger(__name__)
 
@@ -30,17 +35,12 @@ router = APIRouter(prefix="/api", tags=["antigravity"])
 def _install_hint() -> str:
     """OS-appropriate install command for an official Google CLI.
 
-    Windows ships ``agy`` via winget (the ``curl … | bash`` script does not run
-    in PowerShell/cmd); macOS/Linux use the install script. The cross-platform
-    Gemini-CLI npm fallback works on every OS, so it is always offered too.
+    Windows uses the official PowerShell installer; macOS/Linux use the official
+    shell installer. The cross-platform Gemini-CLI npm fallback is always
+    offered too.
     """
     npm_fallback = "npm i -g @google/gemini-cli"
-    if sys.platform == "win32":
-        return f"winget install Google.AntigravityCLI   (or: {npm_fallback})"
-    return (
-        "curl -fsSL https://antigravity.google/cli/install.sh | bash"
-        f"   (or: {npm_fallback})"
-    )
+    return f"{antigravity_install_command(sys.platform)}   (or: {npm_fallback})"
 
 
 @router.get("/antigravity/status")
@@ -56,8 +56,6 @@ async def antigravity_test() -> dict[str, Any]:
     Re-augments PATH first, so a CLI installed after app start is found without
     a restart. Runs off the event loop — the probe spawns the real binary.
     """
-    import asyncio
-
     from jarvis.agent_cli_probe import test_antigravity
 
     return (await asyncio.to_thread(test_antigravity)).to_dict()
@@ -74,15 +72,21 @@ async def antigravity_login() -> dict[str, Any]:
             detail={"message": "No Google CLI found", "install_command": _install_hint()},
         )
     try:
-        proc = service.start_login()
+        launch = await asyncio.to_thread(service.start_login)
     except FileNotFoundError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except InteractiveTerminalUnavailable as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(
             status_code=500,
             detail=f"Google login could not be started: {type(exc).__name__}: {exc}",
         ) from exc
-    return {"ok": True, "pid": proc.pid, "message": "Google login was started in the terminal"}
+    return {
+        "ok": True,
+        "pid": launch.pid,
+        "message": "Google login was started in the terminal",
+    }
 
 
 @router.post("/antigravity/logout")
