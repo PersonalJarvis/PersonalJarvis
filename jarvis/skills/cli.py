@@ -1,4 +1,4 @@
-"""Standalone CLI for skill management.
+r"""Standalone CLI for skill management.
 
 Invocation (without touching __main__.py, to avoid merge conflicts with
 Phase 1b):

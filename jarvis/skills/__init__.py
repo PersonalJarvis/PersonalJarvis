@@ -1,4 +1,4 @@
-"""Skill system: Markdown-based user extensions for Jarvis.
+r"""Skill system: Markdown-based user extensions for Jarvis.
 
 Skills are SKILL.md files with a YAML frontmatter + body. They are
 loaded from the skill root directory (`user_skills_dir()`, typically

@@ -1,4 +1,4 @@
-"""Built-in skills for Jarvis.
+r"""Built-in skills for Jarvis.
 
 Each subdirectory contains exactly one `SKILL.md` with YAML frontmatter
 (see `jarvis.skills.schema.SkillFrontmatter`). On first run these skills are
