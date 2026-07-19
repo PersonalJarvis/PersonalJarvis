@@ -6489,3 +6489,46 @@ region to the visible content. An always-on-top helper must also prove that its
 periodic ordering operation does not activate the helper application. Keep
 compositor workarounds behind a platform backend instead of changing a
 rendering path already proven on another OS.
+
+---
+
+## BUG-094: macOS Jarvis Bar cannot enter a hidden Dock strip and stays stranded when the Dock changes state (MEDIUM, FIXED 2026-07-19)
+
+**Symptom (physical-Mac field report).** With the Dock visible, keeping the bar
+above it is correct. After an app enters a fullscreen Space and macOS hides the
+Dock, however, dragging still stops at the old work-area boundary. The blocked
+strip is invisible but remains as tall as the Dock. A bar placed near the real
+screen edge also needs to retreat automatically when the Dock returns rather
+than being covered by it.
+
+**Root cause.** The Qt surface used `QScreen.availableGeometry()` for startup,
+saved-position recovery, and drag release. On the affected `1440x900` Intel Mac,
+Qt reported `(0, 25, 1440, 818)` even while the Dock was absent from Quartz's
+on-screen window catalogue. The resulting 57-pixel bottom reservation was
+therefore stale presentation state, not a real obstacle. The surface also held
+only one position, so temporarily clamping it for a returning Dock would have
+destroyed the user's lower fullscreen preference.
+
+**Fix.** The Darwin Qt backend now compares the complete and available screen
+rectangles, infers the reserved Dock edge (bottom, left, or right), and checks
+the live on-screen Dock window through the optional Quartz capability. A hidden
+Dock restores only its reserved edge; the menu-bar inset is deliberately kept.
+Missing Quartz remains fail-safe and uses Qt's conservative work area. The bar
+stores the user's preferred position separately from its current safe position.
+Its existing 500 ms ordering guard also reconciles geometry: a visible Dock
+moves the bar clear without rewriting the preference, and a hidden Dock restores
+that preference. Reconciliation pauses during an active drag. Windows and Linux
+retain their existing available-work-area behavior.
+
+**Guards.** Pure geometry tests cover bottom, left, and right Dock reservations;
+a Quartz catalogue double proves visibility is scoped to the target display;
+and surface regressions prove visible-Dock retreat, hidden-Dock restoration,
+preferred-position persistence, and drag stability. The physical Mac trace
+confirmed both native states: no on-screen Dock window while hidden, followed by
+an on-screen layer-20 Dock window spanning the target display when revealed.
+
+**Class rule.** A desktop work area is policy, not necessarily current visual
+occupancy. For overlays that may enter fullscreen content, keep user intent
+separate from temporary collision avoidance, preserve unrelated safe-area edges,
+and detect the obstacle's live presentation state through a capability-gated
+native probe. Never persist a transient clamp as the user's new preference.

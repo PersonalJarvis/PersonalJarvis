@@ -11,6 +11,13 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ### Fixed
 
+- **macOS: the Jarvis Bar now follows the Dock's real visibility instead of an
+  invisible work-area boundary.** Fullscreen Spaces can hide the Dock while Qt
+  continues to reserve its 57-pixel strip, which prevented the bar from being
+  dragged to the true bottom of the app. The bar now uses the complete screen
+  edge while the Dock is hidden, retreats above it when it returns, and restores
+  the user's preferred position when it hides again. Menu-bar and multi-display
+  safe areas remain respected (BUG-094).
 - **macOS: the Jarvis Bar is transparent and animation frames no longer pile
   up.** Aqua-Tk 9 kept an opaque black Canvas backing and composited every new
   RGBA frame over the old one, producing a rectangle at rest and concentric

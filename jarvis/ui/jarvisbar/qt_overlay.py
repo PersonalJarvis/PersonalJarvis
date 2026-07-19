@@ -53,6 +53,8 @@ _IDLE_SETTLE_TICKS = 30
 
 _QT: SimpleNamespace | None = None
 
+GeometryBounds = tuple[int, int, int, int]
+
 
 def _prepare_macos_qt_process() -> None:
     """Keep the companion from becoming macOS' foreground application.
@@ -65,6 +67,109 @@ def _prepare_macos_qt_process() -> None:
     """
     if sys.platform == "darwin":
         os.environ["QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM"] = "1"
+
+
+def _geometry_bounds(geometry: Any) -> GeometryBounds:
+    """Return one Qt-like rectangle as ``(x, y, width, height)``."""
+    return (
+        int(geometry.x()),
+        int(geometry.y()),
+        int(geometry.width()),
+        int(geometry.height()),
+    )
+
+
+def _dock_reserved_edge(
+    full: GeometryBounds,
+    available: GeometryBounds,
+) -> str | None:
+    """Infer which non-menu edge macOS reserved for the Dock."""
+    full_x, full_y, full_w, full_h = full
+    avail_x, _avail_y, avail_w, avail_h = available
+    gaps = {
+        "left": max(0, avail_x - full_x),
+        "right": max(0, full_x + full_w - (avail_x + avail_w)),
+        "bottom": max(0, full_y + full_h - (_avail_y + avail_h)),
+    }
+    edge, gap = max(gaps.items(), key=lambda item: item[1])
+    return edge if gap else None
+
+
+def _expand_geometry_for_hidden_dock(
+    full: GeometryBounds,
+    available: GeometryBounds,
+) -> GeometryBounds:
+    """Restore only the hidden Dock edge while preserving the menu-bar inset."""
+    full_x, full_y, full_w, full_h = full
+    avail_x, avail_y, avail_w, avail_h = available
+    edge = _dock_reserved_edge(full, available)
+    if edge == "left":
+        return full_x, avail_y, max(0, avail_x + avail_w - full_x), avail_h
+    if edge == "right":
+        return avail_x, avail_y, max(0, full_x + full_w - avail_x), avail_h
+    if edge == "bottom":
+        return avail_x, avail_y, avail_w, max(0, full_y + full_h - avail_y)
+    return available
+
+
+def _rectangles_overlap(first: GeometryBounds, second: GeometryBounds) -> bool:
+    first_x, first_y, first_w, first_h = first
+    second_x, second_y, second_w, second_h = second
+    return (
+        first_w > 0
+        and first_h > 0
+        and second_w > 0
+        and second_h > 0
+        and first_x < second_x + second_w
+        and second_x < first_x + first_w
+        and first_y < second_y + second_h
+        and second_y < first_y + first_h
+    )
+
+
+def _macos_dock_is_visible_on_screen(screen: GeometryBounds) -> bool | None:
+    """Return whether Quartz currently exposes a visible Dock on ``screen``.
+
+    ``QScreen.availableGeometry()`` keeps reserving the Dock strip while a
+    fullscreen Space hides it. Quartz's on-screen window catalogue reflects
+    the actual presentation state. ``None`` is deliberately fail-safe: if the
+    optional native framework or query is unavailable, callers retain Qt's
+    conservative available geometry.
+    """
+    if sys.platform != "darwin":
+        return None
+    try:
+        import Quartz  # type: ignore[import-not-found] # noqa: PLC0415
+
+        options = (
+            Quartz.kCGWindowListOptionOnScreenOnly
+            | Quartz.kCGWindowListExcludeDesktopElements
+        )
+        windows = Quartz.CGWindowListCopyWindowInfo(
+            options,
+            Quartz.kCGNullWindowID,
+        )
+    except Exception:  # noqa: BLE001 - optional native capability
+        return None
+
+    for window in windows or ():
+        if str(window.get("kCGWindowOwnerName") or "") != "Dock":
+            continue
+        try:
+            if float(window.get("kCGWindowAlpha", 1.0) or 0.0) <= 0.0:
+                continue
+            bounds = window.get("kCGWindowBounds") or {}
+            dock_bounds = (
+                int(bounds.get("X", 0)),
+                int(bounds.get("Y", 0)),
+                int(bounds.get("Width", 0)),
+                int(bounds.get("Height", 0)),
+            )
+        except (AttributeError, TypeError, ValueError):
+            continue
+        if _rectangles_overlap(screen, dock_bounds):
+            return True
+    return False
 
 
 def _qt() -> SimpleNamespace:
@@ -262,6 +367,10 @@ class QtJarvisBarOverlay:
         self._native_window: Any = None
         self._x = 0
         self._y = 0
+        # Keep the user's requested location separate from the temporary safe
+        # location. When a hidden Dock returns, the bar retreats above it; when
+        # the Dock hides again, the requested location is restored automatically.
+        self._preferred_position: tuple[int, int] | None = None
         self._drag: dict[str, Any] | None = None
 
         self._on_mute_toggle: Callable[[], None] | None = None
@@ -533,6 +642,7 @@ class QtJarvisBarOverlay:
     def _do_show_ui(self) -> None:
         if self._window is None or self._startup_gated:
             return
+        self._reconcile_dynamic_position_ui()
         self._invalidate_static_frame()
         self._render_frame_ui()
         self._window.show()
@@ -558,6 +668,7 @@ class QtJarvisBarOverlay:
 
     def _z_order_guard_ui(self) -> None:
         if self._desired_visible:
+            self._reconcile_dynamic_position_ui()
             self._raise_ui()
 
     def _configure_macos_nonactivating_window_ui(self) -> None:
@@ -628,14 +739,51 @@ class QtJarvisBarOverlay:
     # ------------------------------------------------------------------
     # Position, drag, and gestures
     # ------------------------------------------------------------------
-    def _primary_available_geometry_ui(self) -> Any:
+    def _geometry_for_screen_ui(
+        self,
+        screen: Any,
+        *,
+        respect_visible_dock: bool = True,
+    ) -> Any:
+        if screen is None:
+            return None
+        available = screen.availableGeometry()
+        if sys.platform != "darwin":
+            return available
+
+        full = screen.geometry()
+        full_bounds = _geometry_bounds(full)
+        available_bounds = _geometry_bounds(available)
+        dock_visible = (
+            _macos_dock_is_visible_on_screen(full_bounds)
+            if respect_visible_dock
+            else False
+        )
+        if dock_visible is not False:
+            return available
+        expanded = _expand_geometry_for_hidden_dock(full_bounds, available_bounds)
+        if expanded == available_bounds:
+            return available
+        q = _qt()
+        return q.QtCore.QRect(*expanded)
+
+    def _primary_geometry_ui(self, *, respect_visible_dock: bool = True) -> Any:
         app = self._app
         if app is None:
             return None
         screen = app.primaryScreen()
-        return screen.availableGeometry() if screen is not None else None
+        return self._geometry_for_screen_ui(
+            screen,
+            respect_visible_dock=respect_visible_dock,
+        )
 
-    def _screen_geometry_for_point_ui(self, x: int, y: int) -> Any:
+    def _screen_geometry_for_point_ui(
+        self,
+        x: int,
+        y: int,
+        *,
+        respect_visible_dock: bool = True,
+    ) -> Any:
         q = _qt()
         app = self._app
         if app is None:
@@ -643,7 +791,10 @@ class QtJarvisBarOverlay:
         screen = app.screenAt(q.QtCore.QPoint(int(x), int(y)))
         if screen is None:
             screen = app.primaryScreen()
-        return screen.availableGeometry() if screen is not None else None
+        return self._geometry_for_screen_ui(
+            screen,
+            respect_visible_dock=respect_visible_dock,
+        )
 
     def _clamp_to_geometry_ui(self, x: int, y: int, geometry: Any) -> tuple[int, int]:
         if geometry is None:
@@ -660,7 +811,9 @@ class QtJarvisBarOverlay:
         return local_x + geometry.x(), local_y + geometry.y()
 
     def _default_position_ui(self) -> tuple[int, int]:
-        geometry = self._primary_available_geometry_ui()
+        # The preferred location may occupy a currently hidden Dock strip.
+        # The visible position is reconciled against the live safe area below.
+        geometry = self._primary_geometry_ui(respect_visible_dock=False)
         if geometry is None:
             return interaction.default_bottom_center(
                 screen_w=1920,
@@ -682,13 +835,36 @@ class QtJarvisBarOverlay:
         except Exception:  # noqa: BLE001 - placement degrades to the default
             log.debug("Qt Jarvis Bar position load failed", exc_info=True)
         if position is None:
-            self._x, self._y = self._default_position_ui()
-            return
-        geometry = self._screen_geometry_for_point_ui(
+            position = self._default_position_ui()
+        preferred_geometry = self._screen_geometry_for_point_ui(
             position[0] + renderer.WIN_W // 2,
             position[1] + renderer.WIN_H // 2,
+            respect_visible_dock=False,
         )
-        self._x, self._y = self._clamp_to_geometry_ui(position[0], position[1], geometry)
+        self._preferred_position = self._clamp_to_geometry_ui(
+            position[0],
+            position[1],
+            preferred_geometry,
+        )
+        self._x, self._y = self._preferred_position
+        self._reconcile_dynamic_position_ui()
+
+    def _reconcile_dynamic_position_ui(self) -> bool:
+        """Move between preferred and Dock-safe positions without rewriting config."""
+        if self._drag is not None:
+            return False
+        preferred = self._preferred_position or (self._x, self._y)
+        geometry = self._screen_geometry_for_point_ui(
+            preferred[0] + renderer.WIN_W // 2,
+            preferred[1] + renderer.WIN_H // 2,
+        )
+        target = self._clamp_to_geometry_ui(preferred[0], preferred[1], geometry)
+        if target == (self._x, self._y):
+            return False
+        self._x, self._y = target
+        if self._window is not None:
+            self._window.move(self._x, self._y)
+        return True
 
     def _mouse_press_ui(self, event: Any) -> bool:
         q = _qt()
@@ -744,13 +920,17 @@ class QtJarvisBarOverlay:
             self._dispatch_click_ui(float(event.position().x()), hovered=True)
             return True
 
-        geometry = self._screen_geometry_for_point_ui(
+        preferred_geometry = self._screen_geometry_for_point_ui(
             self._x + renderer.WIN_W // 2,
             self._y + renderer.WIN_H // 2,
+            respect_visible_dock=False,
         )
-        self._x, self._y = self._clamp_to_geometry_ui(self._x, self._y, geometry)
-        if self._window is not None:
-            self._window.move(self._x, self._y)
+        self._preferred_position = self._clamp_to_geometry_ui(
+            self._x,
+            self._y,
+            preferred_geometry,
+        )
+        self._reconcile_dynamic_position_ui()
         self._persist_position_ui()
         return True
 
@@ -803,7 +983,12 @@ class QtJarvisBarOverlay:
         try:
             from jarvis.core.config_writer import DEFAULT_CONFIG_FILE  # noqa: PLC0415
 
-            interaction.save_jarvisbar_position(DEFAULT_CONFIG_FILE, self._x, self._y)
+            position = self._preferred_position or (self._x, self._y)
+            interaction.save_jarvisbar_position(
+                DEFAULT_CONFIG_FILE,
+                position[0],
+                position[1],
+            )
         except Exception:  # noqa: BLE001 - position persistence is non-critical
             log.debug("Qt Jarvis Bar position save failed", exc_info=True)
 
@@ -814,15 +999,18 @@ class QtJarvisBarOverlay:
         self._ui_queue.put(self._reset_position_ui)
 
     def _reset_position_ui(self) -> None:
-        self._x, self._y = self._default_position_ui()
-        if self._window is not None:
-            self._window.move(self._x, self._y)
+        self._preferred_position = self._default_position_ui()
+        self._x, self._y = self._preferred_position
+        self._reconcile_dynamic_position_ui()
         self._persist_position_ui()
 
 
 __all__ = [
     "QtJarvisBarOverlay",
+    "_dock_reserved_edge",
+    "_expand_geometry_for_hidden_dock",
     "_input_mask_from_frame",
+    "_macos_dock_is_visible_on_screen",
     "_paint_transparent_frame",
     "_prepare_macos_qt_process",
     "_qimage_from_pil",

@@ -3,12 +3,32 @@
 from __future__ import annotations
 
 import sys
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
 from PIL import Image, ImageDraw
 
 from jarvis.ui.jarvisbar import qt_overlay, renderer
+
+
+class _Rect:
+    """Small QRect-compatible test double."""
+
+    def __init__(self, x: int, y: int, width: int, height: int) -> None:
+        self._values = (x, y, width, height)
+
+    def x(self) -> int:
+        return self._values[0]
+
+    def y(self) -> int:
+        return self._values[1]
+
+    def width(self) -> int:
+        return self._values[2]
+
+    def height(self) -> int:
+        return self._values[3]
 
 
 def test_surface_state_is_safe_before_qt_is_started(
@@ -47,6 +67,200 @@ def test_macos_qt_process_disables_foreground_activation(
     qt_overlay._prepare_macos_qt_process()  # noqa: SLF001
 
     assert qt_overlay.os.environ["QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM"] == "1"
+
+
+def test_hidden_bottom_dock_restores_only_the_dock_strip() -> None:
+    full = (0, 0, 1440, 900)
+    available = (0, 25, 1440, 818)
+
+    assert qt_overlay._dock_reserved_edge(full, available) == "bottom"  # noqa: SLF001
+    assert qt_overlay._expand_geometry_for_hidden_dock(  # noqa: SLF001
+        full,
+        available,
+    ) == (0, 25, 1440, 875)
+
+
+@pytest.mark.parametrize(
+    ("available", "edge", "expanded"),
+    [
+        ((60, 25, 1380, 875), "left", (0, 25, 1440, 875)),
+        ((0, 25, 1380, 875), "right", (0, 25, 1440, 875)),
+    ],
+)
+def test_hidden_side_dock_restores_only_its_reserved_edge(
+    available: tuple[int, int, int, int],
+    edge: str,
+    expanded: tuple[int, int, int, int],
+) -> None:
+    full = (0, 0, 1440, 900)
+
+    assert qt_overlay._dock_reserved_edge(full, available) == edge  # noqa: SLF001
+    assert qt_overlay._expand_geometry_for_hidden_dock(  # noqa: SLF001
+        full,
+        available,
+    ) == expanded
+
+
+def test_macos_dock_visibility_uses_onscreen_windows_on_the_target_display(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    dock_window = {
+        "kCGWindowOwnerName": "Dock",
+        "kCGWindowAlpha": 1.0,
+        "kCGWindowBounds": {"X": 1440, "Y": 0, "Width": 1920, "Height": 1080},
+    }
+    quartz = SimpleNamespace(
+        kCGWindowListOptionOnScreenOnly=1,
+        kCGWindowListExcludeDesktopElements=2,
+        kCGNullWindowID=0,
+        CGWindowListCopyWindowInfo=lambda _options, _window_id: [dock_window],
+    )
+    monkeypatch.setattr(qt_overlay.sys, "platform", "darwin")
+    monkeypatch.setitem(sys.modules, "Quartz", quartz)
+
+    assert qt_overlay._macos_dock_is_visible_on_screen((0, 0, 1440, 900)) is False  # noqa: SLF001
+    assert qt_overlay._macos_dock_is_visible_on_screen((1440, 0, 1920, 1080)) is True  # noqa: SLF001
+
+
+def test_macos_geometry_expands_only_while_dock_is_hidden(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Screen:
+        @staticmethod
+        def geometry() -> _Rect:
+            return _Rect(0, 0, 1440, 900)
+
+        @staticmethod
+        def availableGeometry() -> _Rect:  # noqa: N802 - Qt-compatible double
+            return _Rect(0, 25, 1440, 818)
+
+    monkeypatch.setattr(qt_overlay.sys, "platform", "darwin")
+    monkeypatch.setattr(
+        qt_overlay,
+        "_qt",
+        lambda: SimpleNamespace(QtCore=SimpleNamespace(QRect=_Rect)),
+    )
+    surface = qt_overlay.QtJarvisBarOverlay()
+
+    for probe_result in (True, None):
+        monkeypatch.setattr(
+            qt_overlay,
+            "_macos_dock_is_visible_on_screen",
+            lambda _screen, result=probe_result: result,
+        )
+        visible_or_unknown = surface._geometry_for_screen_ui(_Screen())  # noqa: SLF001
+        assert qt_overlay._geometry_bounds(visible_or_unknown) == (  # noqa: SLF001
+            0,
+            25,
+            1440,
+            818,
+        )
+
+    monkeypatch.setattr(qt_overlay, "_macos_dock_is_visible_on_screen", lambda _screen: False)
+    hidden = surface._geometry_for_screen_ui(_Screen())  # noqa: SLF001
+    assert qt_overlay._geometry_bounds(hidden) == (0, 25, 1440, 875)  # noqa: SLF001
+
+
+def test_non_macos_geometry_keeps_the_existing_available_area(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Screen:
+        @staticmethod
+        def geometry() -> _Rect:
+            raise AssertionError("non-macOS placement must not inspect full geometry")
+
+        @staticmethod
+        def availableGeometry() -> _Rect:  # noqa: N802 - Qt-compatible double
+            return _Rect(10, 20, 1280, 700)
+
+    monkeypatch.setattr(qt_overlay.sys, "platform", "linux")
+    monkeypatch.setattr(
+        qt_overlay,
+        "_macos_dock_is_visible_on_screen",
+        lambda _screen: (_ for _ in ()).throw(
+            AssertionError("non-macOS placement must not probe Quartz")
+        ),
+    )
+    surface = qt_overlay.QtJarvisBarOverlay()
+
+    geometry = surface._geometry_for_screen_ui(_Screen())  # noqa: SLF001
+
+    assert qt_overlay._geometry_bounds(geometry) == (10, 20, 1280, 700)  # noqa: SLF001
+
+
+def test_dynamic_position_retreats_for_dock_and_restores_user_preference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _Window:
+        def __init__(self) -> None:
+            self.moves: list[tuple[int, int]] = []
+
+        def move(self, x: int, y: int) -> None:
+            self.moves.append((x, y))
+
+    safe = _Rect(0, 25, 1440, 818)
+    expanded = _Rect(0, 25, 1440, 875)
+    preferred = (600, expanded.y() + expanded.height() - renderer.WIN_H - qt_overlay.MARGIN_PX)
+    safe_position = (
+        preferred[0],
+        safe.y() + safe.height() - renderer.WIN_H - qt_overlay.MARGIN_PX,
+    )
+    active_geometry = [safe]
+    window = _Window()
+    surface = qt_overlay.QtJarvisBarOverlay()
+    surface._window = window  # type: ignore[assignment] # noqa: SLF001
+    surface._preferred_position = preferred  # noqa: SLF001
+    surface._x, surface._y = preferred  # noqa: SLF001
+    monkeypatch.setattr(
+        surface,
+        "_screen_geometry_for_point_ui",
+        lambda _x, _y, **_kwargs: active_geometry[0],
+    )
+
+    assert surface._reconcile_dynamic_position_ui() is True  # noqa: SLF001
+    assert (surface._x, surface._y) == safe_position  # noqa: SLF001
+    assert surface._preferred_position == preferred  # noqa: SLF001
+
+    active_geometry[0] = expanded
+    assert surface._reconcile_dynamic_position_ui() is True  # noqa: SLF001
+    assert (surface._x, surface._y) == preferred  # noqa: SLF001
+    assert window.moves == [safe_position, preferred]
+
+
+def test_dynamic_position_does_not_move_during_drag(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    surface = qt_overlay.QtJarvisBarOverlay()
+    surface._preferred_position = (600, 850)  # noqa: SLF001
+    surface._x, surface._y = 600, 794  # noqa: SLF001
+    surface._drag = {"moved": True}  # noqa: SLF001
+    monkeypatch.setattr(
+        surface,
+        "_screen_geometry_for_point_ui",
+        lambda *_args, **_kwargs: (_ for _ in ()).throw(
+            AssertionError("screen geometry must not change an active drag")
+        ),
+    )
+
+    assert surface._reconcile_dynamic_position_ui() is False  # noqa: SLF001
+
+
+def test_position_persistence_keeps_preferred_location_when_dock_is_visible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    saved: list[tuple[int, int]] = []
+    surface = qt_overlay.QtJarvisBarOverlay()
+    surface._preferred_position = (600, 851)  # noqa: SLF001
+    surface._x, surface._y = 600, 794  # noqa: SLF001
+    monkeypatch.setattr(
+        qt_overlay.interaction,
+        "save_jarvisbar_position",
+        lambda _path, x, y: saved.append((x, y)),
+    )
+
+    surface._persist_position_ui()  # noqa: SLF001
+
+    assert saved == [(600, 851)]
 
 
 def test_macos_z_order_uses_native_nonactivating_raise(
