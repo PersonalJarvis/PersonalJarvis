@@ -131,6 +131,21 @@ the keychain entries; add `--dry-run` to preview, `--yes` to skip the confirmati
 bash ~/.personal-jarvis/install/uninstall.sh
 ```
 
+Both run the uninstaller **that is already on your disk**. If it is missing or
+refuses to start — installs from 1.1.0 / 1.1.1 shipped one that could not run on
+macOS at all — skip it and use the app's own uninstall directly. Same job, no
+bootstrap involved; add `--dry-run` first to see what it would remove:
+
+```bash
+# macOS · Linux
+~/.personal-jarvis/.venv/bin/python -m jarvis --uninstall
+```
+
+```powershell
+# Windows (PowerShell)
+& "$env:USERPROFILE\.personal-jarvis\.venv\Scripts\python.exe" -m jarvis --uninstall
+```
+
 <details>
 <summary><b>Optional extras, install flags, pipx & manual clone</b></summary>
 
