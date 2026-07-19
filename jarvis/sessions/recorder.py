@@ -175,6 +175,13 @@ class _SessionState:
     total_tokens_out: int = 0
     providers_used: set[str] = field(default_factory=set)
     current_turn: _TurnState | None = None
+    # The most recently FINALIZED turn of this session. A surface-TTS fallback
+    # confirms playback only after its audio fully drained, so its honest
+    # reply-kind SpeechSpoken can arrive AFTER VoiceTurnCompleted already
+    # closed the turn — and even after the NEXT turn opened. Kept so the late
+    # label can be re-attached to the turn that actually spoke instead of
+    # being dropped or stamped onto the wrong turn (BUG-090).
+    last_final_turn: _TurnState | None = None
 
 
 class SessionRecorder:
@@ -309,7 +316,7 @@ class SessionRecorder:
         self._maybe_append_raw(event, kind)
 
     def _on_speech_spoken(self, event: SpeechSpoken) -> None:
-        """Adopt the speaking voice onto the open turn.
+        """Adopt the speaking voice onto the turn that actually spoke.
 
         ``SpeechSpoken`` is the authoritative audible track, so a voice it
         names beats the session-level claim in ``VoiceTurnCompleted`` — that is
@@ -317,15 +324,65 @@ class SessionRecorder:
         (the surface voice spoke, not the session voice). The reply phrase
         wins over supplemental phrases; a supplemental phrase only fills a
         blank.
+
+        Reply-kind events additionally re-attach LATE: a surface-TTS fallback
+        confirms playback only after its audio drained, which can be after the
+        turn was finalized (and after the next turn opened). Dropping it left
+        the fallback turn with no voice label at all in the transcript
+        (session 2026-07-19 07:41, turn 3 — BUG-090).
         """
         assert self._state is not None
-        t = self._state.current_turn
         voice = getattr(event, "voice", None)
-        if t is None or not voice:
+        if not voice:
+            return
+        if event.spoken_kind == SPOKEN_KIND_REPLY:
+            late = self._late_reply_target(event)
+            if late is not None:
+                late.voice_name = str(voice)
+                late.voice_provider = str(
+                    getattr(event, "voice_provider", None) or ""
+                )
+                # The turn row was already written by finalize_turn — persist
+                # the honest label explicitly.
+                self._store.update_turn_voice(
+                    turn_id=late.turn_id,
+                    voice_name=late.voice_name,
+                    voice_provider=late.voice_provider,
+                )
+                return
+        t = self._state.current_turn
+        if t is None or t.finalized:
             return
         if event.spoken_kind == SPOKEN_KIND_REPLY or not t.voice_name:
             t.voice_name = str(voice)
             t.voice_provider = str(getattr(event, "voice_provider", None) or "")
+
+    def _late_reply_target(self, event: SpeechSpoken) -> _TurnState | None:
+        """Finalized turn a late reply-kind ``SpeechSpoken`` belongs to.
+
+        Only the most recently finalized turn qualifies, and only when it has
+        no honest voice label yet AND its recorded reply text matches what was
+        just confirmed audible — so a genuinely new reply for the OPEN turn
+        can never be stolen backwards, and a turn whose voice is already
+        known (provider-voiced realtime, classic in-turn phrase) keeps it.
+        """
+        assert self._state is not None
+        last = self._state.last_final_turn
+        if last is None or last.voice_name:
+            return None
+        spoken = _normalized_reply(getattr(event, "text", "") or "")
+        if not spoken or not _reply_text_matches(spoken, last.jarvis_text):
+            return None
+        cur = self._state.current_turn
+        if (
+            cur is not None
+            and not cur.finalized
+            and _reply_text_matches(spoken, cur.jarvis_text)
+        ):
+            # The open turn already owns this exact reply — normal in-turn
+            # attribution below takes precedence.
+            return None
+        return last
 
     # -----------------------------------------------------------------
     # Session lifecycle
@@ -548,6 +605,9 @@ class SessionRecorder:
         if t.provider:
             self._state.providers_used.add(t.provider)
         t.finalized = True
+        # Late-label anchor: a reply-kind SpeechSpoken confirmed after this
+        # point can still be re-attached to this turn (BUG-090).
+        self._state.last_final_turn = t
 
     # -----------------------------------------------------------------
     # Per-event handlers
@@ -861,6 +921,35 @@ def _normalize_intent_level_to_tier(intent_level: str) -> str:
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+#: Containment (instead of equality) between a spoken phrase and a recorded
+#: reply only counts from this length on — short interjections ("Okay.",
+#: "Fertig.") recur across turns and would false-match. i18n-allow: quoted
+#: German interjection example.
+_REPLY_CONTAINMENT_MIN_CHARS = 16
+
+
+def _normalized_reply(text: str) -> str:
+    """Whitespace/case-insensitive canonical form for reply-text matching."""
+    return " ".join(str(text or "").split()).casefold()
+
+
+def _reply_text_matches(normalized_spoken: str, recorded_reply: str) -> bool:
+    """Whether a confirmed-audible phrase is (part of) a recorded reply.
+
+    The surface path scrubs the reply before speaking it (markdown/URLs
+    dropped), so the audible text may be a strict subset of the recorded
+    transcript — containment counts, but only past a length floor so recurring
+    interjections can never glue onto the wrong turn.
+    """
+    recorded = _normalized_reply(recorded_reply)
+    if not normalized_spoken or not recorded:
+        return False
+    if normalized_spoken == recorded:
+        return True
+    shorter, longer = sorted((normalized_spoken, recorded), key=len)
+    return len(shorter) >= _REPLY_CONTAINMENT_MIN_CHARS and shorter in longer
 
 
 def _payload_for(event: Event) -> dict[str, Any]:

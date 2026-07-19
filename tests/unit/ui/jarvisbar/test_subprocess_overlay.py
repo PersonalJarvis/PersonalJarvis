@@ -5,6 +5,7 @@ the local mirrors (_mode/_persistent/_muted), the ready handshake, event →
 callback dispatch, and the dead-host degrade are proven without spawning a
 process. The real cross-process path is covered in test_host_protocol.py.
 """
+
 from __future__ import annotations
 
 import gc
@@ -334,9 +335,7 @@ class _CrashLoopPopen(_FakePopen):
         self.stdout = _QuicklyDyingStdout()
 
 
-def test_respawn_is_bounded_to_three_attempts_then_gives_up(
-    monkeypatch, caplog
-) -> None:
+def test_respawn_is_bounded_to_three_attempts_then_gives_up(monkeypatch, caplog) -> None:
     """Every attempt uses the crash-prone fake, so each respawned host dies
     again (EOF) a beat later — chaining through all 3 attempts and proving
     the surface gives up instead of looping forever."""
@@ -386,9 +385,7 @@ def test_surface_contract_exposes_every_bridge_method() -> None:
 # --------------------------------------------------------------------- #
 # SubprocessMascotOverlay — the mascot flavor of the same host proxy    #
 # --------------------------------------------------------------------- #
-def _started_mascot(
-    monkeypatch, **kwargs
-) -> tuple[SubprocessMascotOverlay, _FakePopen]:
+def _started_mascot(monkeypatch, **kwargs) -> tuple[SubprocessMascotOverlay, _FakePopen]:
     monkeypatch.setattr(mod.subprocess, "Popen", _FakePopen)
     surface = SubprocessMascotOverlay(**kwargs)
     surface.start_in_thread(timeout=2.0)

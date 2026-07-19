@@ -194,6 +194,281 @@ async def test_unknown_voice_stays_empty_never_guessed(tmp_path) -> None:
         store.close()
 
 
+# ---------------------------------------------------------------------------
+# Late surface-fallback labels (BUG-090, session 2026-07-19 07:41 turn 3).
+# The surface TTS confirms playback only after its audio drained, so its
+# honest reply-kind SpeechSpoken can arrive AFTER VoiceTurnCompleted closed
+# the turn (and even after the next turn opened). The label must land on the
+# turn that actually spoke — never be dropped, never stamp the next turn.
+# ---------------------------------------------------------------------------
+
+# Quoted German product-surface reply under test (voice fixture).
+_FALLBACK_ANSWER = "Du hast morgen einen vollen Terminkalender."  # i18n-allow
+
+
+@pytest.mark.asyncio
+async def test_late_reply_voice_lands_on_the_finalized_turn(tmp_path) -> None:
+    """Turn closed without a voice (provider silent, surface fallback spoke
+    later): the late confirmed-audible label is attached AND persisted."""
+
+    async def scenario(bus):
+        await bus.publish(
+            VoiceTurnStarted(
+                source_layer="realtime.gemini-live",
+                session_id="sess-voice",
+                turn_id="turn-rt-late",
+            )
+        )
+        await bus.publish(
+            VoiceTurnCompleted(
+                source_layer="realtime.gemini-live",
+                session_id="sess-voice",
+                turn_id="turn-rt-late",
+                jarvis_text=_FALLBACK_ANSWER,
+                tier="realtime",
+                provider="gemini-live",
+            )
+        )
+        # Surface fallback playback drained only now.
+        await bus.publish(
+            SpeechSpoken(
+                source_layer="speech.pipeline",
+                text=_FALLBACK_ANSWER,
+                language="de",
+                spoken_kind=SPOKEN_KIND_REPLY,
+                voice="Fenrir",
+                voice_provider="gemini-flash-tts",
+            )
+        )
+
+    turns, store = await _run_session(tmp_path, scenario)
+    try:
+        assert turns
+        assert turns[0].voice_name == "Fenrir"
+        assert turns[0].voice_provider == "gemini-flash-tts"
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_late_reply_voice_does_not_stamp_the_next_open_turn(tmp_path) -> None:
+    """The next user turn is already open when the fallback playback drains:
+    the label still lands on the turn whose reply it was."""
+
+    async def scenario(bus):
+        await bus.publish(
+            VoiceTurnStarted(
+                source_layer="realtime.gemini-live",
+                session_id="sess-voice",
+                turn_id="turn-a",
+            )
+        )
+        await bus.publish(
+            VoiceTurnCompleted(
+                source_layer="realtime.gemini-live",
+                session_id="sess-voice",
+                turn_id="turn-a",
+                jarvis_text=_FALLBACK_ANSWER,
+                tier="realtime",
+                provider="gemini-live",
+            )
+        )
+        await bus.publish(
+            VoiceTurnStarted(
+                source_layer="realtime.gemini-live",
+                session_id="sess-voice",
+                turn_id="turn-b",
+            )
+        )
+        await bus.publish(
+            SpeechSpoken(
+                source_layer="speech.pipeline",
+                text=_FALLBACK_ANSWER,
+                language="de",
+                spoken_kind=SPOKEN_KIND_REPLY,
+                voice="Fenrir",
+                voice_provider="gemini-flash-tts",
+            )
+        )
+        await bus.publish(
+            VoiceTurnCompleted(
+                source_layer="realtime.gemini-live",
+                session_id="sess-voice",
+                turn_id="turn-b",
+                jarvis_text="Etwas ganz anderes.",  # i18n-allow: German voice fixture
+                tier="realtime",
+                provider="gemini-live",
+            )
+        )
+
+    turns, store = await _run_session(tmp_path, scenario)
+    try:
+        assert len(turns) == 2
+        by_id = {t.id: t for t in turns}
+        assert by_id["turn-a"].voice_name == "Fenrir"
+        assert by_id["turn-a"].voice_provider == "gemini-flash-tts"
+        assert by_id["turn-b"].voice_name == ""
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_late_reply_scrubbed_subset_still_matches(tmp_path) -> None:
+    """The surface path scrubs the reply before speaking — the audible text
+    may be a strict subset of the recorded transcript and still counts."""
+
+    async def scenario(bus):
+        await bus.publish(
+            VoiceTurnStarted(
+                source_layer="realtime.gemini-live",
+                session_id="sess-voice",
+                turn_id="turn-scrubbed",
+            )
+        )
+        await bus.publish(
+            VoiceTurnCompleted(
+                source_layer="realtime.gemini-live",
+                session_id="sess-voice",
+                turn_id="turn-scrubbed",
+                jarvis_text=f"**Wichtig:** {_FALLBACK_ANSWER}",  # i18n-allow: German voice fixture
+                tier="realtime",
+                provider="gemini-live",
+            )
+        )
+        await bus.publish(
+            SpeechSpoken(
+                source_layer="speech.pipeline",
+                text=_FALLBACK_ANSWER,
+                language="de",
+                spoken_kind=SPOKEN_KIND_REPLY,
+                voice="Fenrir",
+                voice_provider="gemini-flash-tts",
+            )
+        )
+
+    turns, store = await _run_session(tmp_path, scenario)
+    try:
+        assert turns
+        assert turns[0].voice_name == "Fenrir"
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_late_reply_never_overwrites_an_honest_label(tmp_path) -> None:
+    """A turn whose speaking voice is already recorded keeps it — a late
+    reply-kind event only ever fills a blank."""
+
+    async def scenario(bus):
+        await bus.publish(
+            VoiceTurnStarted(
+                source_layer="realtime.gemini-live",
+                session_id="sess-voice",
+                turn_id="turn-voiced",
+            )
+        )
+        await bus.publish(
+            VoiceTurnCompleted(
+                source_layer="realtime.gemini-live",
+                session_id="sess-voice",
+                turn_id="turn-voiced",
+                jarvis_text=_FALLBACK_ANSWER,
+                tier="realtime",
+                provider="gemini-live",
+                voice="Fenrir",
+                voice_provider="gemini-live",
+            )
+        )
+        await bus.publish(
+            SpeechSpoken(
+                source_layer="speech.pipeline",
+                text=_FALLBACK_ANSWER,
+                language="de",
+                spoken_kind=SPOKEN_KIND_REPLY,
+                voice="Charon",
+                voice_provider="gemini-flash-tts",
+            )
+        )
+
+    turns, store = await _run_session(tmp_path, scenario)
+    try:
+        assert turns
+        assert turns[0].voice_name == "Fenrir"
+        assert turns[0].voice_provider == "gemini-live"
+    finally:
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_short_interjection_prefers_the_open_turn(tmp_path) -> None:
+    """A short recurring reply ("Okay.") spoken for the OPEN turn must not
+    glue backwards onto a voiceless previous turn with the same text."""
+
+    async def scenario(bus):
+        from jarvis.core.events import ResponseGenerated
+
+        await bus.publish(
+            VoiceTurnStarted(
+                source_layer="realtime.gemini-live",
+                session_id="sess-voice",
+                turn_id="turn-old",
+            )
+        )
+        await bus.publish(
+            VoiceTurnCompleted(
+                source_layer="realtime.gemini-live",
+                session_id="sess-voice",
+                turn_id="turn-old",
+                jarvis_text="Okay.",
+                tier="realtime",
+                provider="gemini-live",
+            )
+        )
+        await bus.publish(
+            VoiceTurnStarted(
+                source_layer="realtime.gemini-live",
+                session_id="sess-voice",
+                turn_id="turn-new",
+            )
+        )
+        await bus.publish(
+            ResponseGenerated(
+                source_layer="realtime.gemini-live",
+                text="Okay.",
+                language="de",
+            )
+        )
+        await bus.publish(
+            SpeechSpoken(
+                source_layer="speech.pipeline",
+                text="Okay.",
+                language="de",
+                spoken_kind=SPOKEN_KIND_REPLY,
+                voice="Charon",
+                voice_provider="gemini-flash-tts",
+            )
+        )
+        await bus.publish(
+            VoiceTurnCompleted(
+                source_layer="realtime.gemini-live",
+                session_id="sess-voice",
+                turn_id="turn-new",
+                jarvis_text="Okay.",
+                tier="realtime",
+                provider="gemini-live",
+            )
+        )
+
+    turns, store = await _run_session(tmp_path, scenario)
+    try:
+        assert len(turns) == 2
+        by_id = {t.id: t for t in turns}
+        assert by_id["turn-old"].voice_name == ""
+        assert by_id["turn-new"].voice_name == "Charon"
+    finally:
+        store.close()
+
+
 def test_markdown_export_prints_the_voice_note() -> None:
     session = VoiceSessionRow(id="s1", started_ms=1_700_000_000_000)
     turn = VoiceTurnRow(

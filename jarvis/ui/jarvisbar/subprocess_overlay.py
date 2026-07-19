@@ -22,6 +22,7 @@ original contract: it stays hidden until the next overlay swap or app
 restart. Deliberately defines no ``_root`` attribute so the bridge's reset
 path early-returns (same contract as ``NullOverlay``).
 """
+
 from __future__ import annotations
 
 import json
@@ -226,9 +227,7 @@ class SubprocessBarOverlay:
     # these, so the proxy saves the IPC round-trip and no-ops locally too.
     def play_animation(self, name: str, **params: Any) -> None: ...
     def stop_animation(self, name: str) -> None: ...
-    def show_listening_transcript(
-        self, text: str = "", duration_ms: int = 30000
-    ) -> None: ...
+    def show_listening_transcript(self, text: str = "", duration_ms: int = 30000) -> None: ...
     def hide_comment(self) -> None: ...
     def start_mouth_animation(self, duration_ms: int = 60000) -> None: ...
     def stop_mouth_animation(self) -> None: ...
@@ -236,9 +235,7 @@ class SubprocessBarOverlay:
     def set_on_mute_toggle(self, callback: Callable[[], None] | None) -> None:
         self._on_mute_toggle = callback
 
-    def set_feedback_publisher(
-        self, callback: Callable[[str, dict], None] | None
-    ) -> None:
+    def set_feedback_publisher(self, callback: Callable[[str, dict], None] | None) -> None:
         self._feedback_publisher = callback
 
     def set_on_show_window(self, callback: Callable[[], None] | None) -> None:
@@ -470,9 +467,7 @@ class SubprocessMascotOverlay(SubprocessBarOverlay):
     def stop_animation(self, name: str) -> None:
         self._send({"op": "stop_animation", "name": str(name)})
 
-    def show_listening_transcript(
-        self, text: str = "", duration_ms: int = 30000
-    ) -> None:
+    def show_listening_transcript(self, text: str = "", duration_ms: int = 30000) -> None:
         self._send(
             {
                 "op": "show_listening_transcript",

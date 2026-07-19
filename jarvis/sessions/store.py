@@ -340,6 +340,27 @@ class SessionStore:
                 ),
             )
 
+    def update_turn_voice(
+        self,
+        *,
+        turn_id: str,
+        voice_name: str,
+        voice_provider: str,
+    ) -> None:
+        """Late voice-label update for an already-finalized turn (BUG-090).
+
+        A surface-TTS fallback confirms playback only after its audio drained,
+        so the honest "this voice actually spoke" signal can arrive after
+        ``finalize_turn`` wrote the row. Only the two voice columns move —
+        every other finalized value stays untouched.
+        """
+        with self._lock:
+            self._c.execute(
+                "UPDATE voice_turns SET voice_name = ?, voice_provider = ? "
+                "WHERE id = ?",
+                (voice_name, voice_provider, turn_id),
+            )
+
     # --- Events -------------------------------------------------------
 
     def append_event(

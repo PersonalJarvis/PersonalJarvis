@@ -9,6 +9,36 @@ versioning per [SemVer](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [1.1.1] — 2026-07-19
+
+### Fixed
+
+- **macOS: realtime voice no longer talks to itself.** On built-in speakers
+  next to the built-in mic, the assistant's own playback could come back as
+  a "user" turn and be answered — spiralling into an endless two-voice
+  self-conversation (BUG-089). Realtime sessions now recognize their own
+  recently spoken words (including every canned error phrase) and drop the
+  echo before it can start a turn; a genuine answer that adds anything new
+  always gets through.
+- **Outage apologies stop repeating themselves.** When no language model is
+  reachable, the spoken "I can't reach my language model" notice now comes
+  at most once per half minute instead of on every turn — repeats complete
+  silently and honestly in the log.
+- **The emergency fallback voice keeps the caller's voice profile.** When
+  the realtime voice dies mid-call and a reply is re-rendered locally, the
+  substitute voice now matches the session voice's gender instead of
+  hard-flipping to a male default — no more "second assistant" joining the
+  call.
+- **Smoother replies while you can interrupt.** The local interrupt
+  detector's per-frame inference moved off the audio loop — one less
+  stutter source on slower machines.
+- **macOS: the status bar comes back after a crash.** The out-of-process
+  bar host now respawns itself (bounded, with honest logging) instead of
+  staying invisible for the rest of the session.
+- The session build warns when the realtime provider and every configured
+  brain provider share one credential family — the setup in which a single
+  quota error silences both at once.
+
 ## [1.1.0] — 2026-07-18
 
 ### Added

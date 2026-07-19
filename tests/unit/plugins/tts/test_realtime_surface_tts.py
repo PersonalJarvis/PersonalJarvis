@@ -98,6 +98,34 @@ def test_untagged_unknown_voice_still_falls_back_to_charon() -> None:
     assert tts._default_voice == "Charon"
 
 
+def test_surface_fallback_renders_one_take_with_the_config_drift_knobs() -> None:
+    """BUG-090: Gemini TTS is generative — one generation per SENTENCE let the
+    2026-07-19 fallback re-roll the delivery mid-answer and flip the voice's
+    gender past the Fenrir pin. The emergency re-render is always ONE take and
+    inherits the [tts] drift knobs the pipeline instance already honors."""
+    cfg = _cfg()
+    cfg.tts.seed = 7
+    cfg.tts.temperature = 0.7
+    with override_provider_secrets({"gemini-live": "rt-scoped-key"}):
+        tts = build_realtime_surface_tts(cfg, "gemini-live")
+    assert isinstance(tts, GeminiFlashTTS)
+    assert tts._chunk_by_sentence is False
+    assert tts._seed == 7
+    assert tts._temperature == 0.7
+
+
+def test_surface_fallback_is_one_take_even_without_configured_knobs() -> None:
+    """A fresh install without the [tts] drift knobs still gets the one-take
+    profile — voice identity is the fallback's entire purpose (§3: never
+    assume the maintainer's config)."""
+    with override_provider_secrets({"gemini-live": "rt-scoped-key"}):
+        tts = build_realtime_surface_tts(_cfg(), "gemini-live")
+    assert isinstance(tts, GeminiFlashTTS)
+    assert tts._chunk_by_sentence is False
+    assert tts._seed is None
+    assert tts._temperature is None
+
+
 def test_keyless_realtime_provider_yields_no_surface_tts() -> None:
     with override_provider_secrets({"gemini-live": None}):
         assert build_realtime_surface_tts(_cfg(), "gemini-live") is None

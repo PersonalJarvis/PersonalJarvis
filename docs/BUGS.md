@@ -6167,3 +6167,63 @@ offenders, because they are spoken exactly when the system is degraded and
 repeating. And an error phrase that can repeat MUST carry a cooldown: a
 fixed apology re-spoken every few seconds is not honesty, it is fuel for
 whatever loop caused it.
+
+## BUG-090: Surface-TTS fallback flips to a different-gender voice mid-answer AND the turn loses its voice label (HIGH, FIXED 2026-07-19)
+
+**Symptom (live 2026-07-19 07:41, session `4123ba4c`, gemini-live, voice
+pinned Fenrir).** Turn 3 (a delegated calendar question) was audibly spoken
+by a FEMALE voice while every other turn spoke as masculine Fenrir — and the
+exported transcript shows NO voice label at all for exactly that turn, so
+the flip was invisible in the record.
+
+**What actually happened, per the run log.**
+
+1. 07:42:30.112 — the provider produced no audio for the grounded Brain
+   result; the surface TTS fallback (`gemini-flash-tts`) rendered the
+   two-sentence answer.
+2. The fallback instance was built WITHOUT the voice-consistency profile:
+   `build_realtime_surface_tts` passed neither `chunk_by_sentence` (ctor
+   default **True** — one generation PER SENTENCE, confirmed by two synth
+   calls in the log) nor the `[tts]` `seed`/`temperature` drift knobs the
+   pipeline instance has honored since 2026-05-24. Gemini TTS is generative
+   (BUG-086): each extra generation re-rolls the delivery, and the Bavarian
+   dialect persona is exactly the performance cue that pushes the render
+   past the `PrebuiltVoiceConfig` pin — one take came out female.
+3. The honest label was then dropped: the surface path publishes its
+   reply-kind `SpeechSpoken` (voice + provider) only after playback
+   DRAINED (~14 s later) — by then `VoiceTurnCompleted` had finalized the
+   turn (correctly claiming no session voice, `_output_samples_sent == 0`),
+   and the recorder attached `SpeechSpoken` only to an OPEN turn. Result:
+   a spoken turn with an empty `voice_name`.
+
+**Fix (both layers, cross-platform pure Python).**
+
+- **One take + drift knobs:** `build_realtime_surface_tts` now constructs
+  the surface `GeminiFlashTTS` with `chunk_by_sentence=False` (the whole
+  reply is ONE generation; with `[tts].streaming` the single take still
+  streams, so first-audio latency is unchanged) and passes through the
+  `[tts]` `seed`/`temperature` values.
+- **Late label re-attach:** the recorder keeps the session's most recently
+  finalized turn; a reply-kind `SpeechSpoken` that arrives late attaches
+  its voice to that turn — only when the turn has NO voice yet and its
+  recorded reply text matches the confirmed-audible text (equality, or
+  containment past a 16-char floor for scrubbed subsets) and the OPEN turn
+  does not own the same reply. `SessionStore.update_turn_voice` persists
+  the two voice columns post-finalize.
+
+**Guards (run in the `ci.yml` pytest matrix on Linux/Windows/macOS).**
+`tests/unit/plugins/tts/test_realtime_surface_tts.py` (one-take profile
+with and without configured knobs),
+`tests/unit/sessions/test_turn_voice_label.py` (late label lands on the
+finalized turn + persists; never stamps the next open turn; scrubbed-subset
+match; never overwrites an honest label; short interjections prefer the
+open turn).
+
+**Class rule (extends BUG-086's).** A voice instance whose sole purpose is
+IDENTITY (an emergency re-render of a session voice) must be built with the
+strictest consistency profile the engine offers — never the engine's
+convenience defaults; every extra generation is another dice roll. And the
+authoritative "this voice actually spoke" signal must be attachable to the
+turn it describes even when playback outlives the turn — a label that can
+only land on an open turn silently disappears exactly when the fallback
+path (the interesting case) is slow.
