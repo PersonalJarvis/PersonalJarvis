@@ -8,12 +8,19 @@ stdin. Child events (mute toggle, feedback, show-window) stream back on
 stdout and are dispatched to the callbacks the bridge registered, so the
 bridge wiring is reused unchanged.
 
-Failure contract: if the host cannot spawn or dies, every method degrades to
-a one-log no-op (``NullOverlay`` behavior) — the bar is cosmetic and must
-never take the app down with it. No auto-restart in this first cut; a dead
-host stays down until the next overlay swap / app restart. Deliberately
-defines no ``_root`` attribute so the bridge's reset path early-returns
-(same contract as ``NullOverlay``).
+Failure contract: while the host is down, every method degrades to a one-log
+no-op (``NullOverlay`` behavior) — the bar is cosmetic and must never take
+the app down with it. Revised 2026-07-18: a live Mac test hit a host death
+mid-session and the bar stayed hidden for the rest of it, so a dead host now
+gets a BOUNDED auto-respawn — up to ``_RESPAWN_MAX_ATTEMPTS`` attempts per
+``SubprocessBarOverlay`` instance lifetime, each preceded by a
+``_RESPAWN_BACKOFF_SECONDS`` non-blocking backoff (scheduled on its own
+daemon thread, never the caller's) — after which the last known
+visibility/mode/mute/level state is re-applied so the bar comes back looking
+right instead of blank. Once every attempt is spent the bar reverts to the
+original contract: it stays hidden until the next overlay swap or app
+restart. Deliberately defines no ``_root`` attribute so the bridge's reset
+path early-returns (same contract as ``NullOverlay``).
 """
 from __future__ import annotations
 
@@ -22,6 +29,7 @@ import logging
 import subprocess
 import sys
 import threading
+import time
 from collections.abc import Callable
 from typing import IO, Any
 
@@ -40,6 +48,14 @@ class SubprocessBarOverlay:
     # Overridable per surface so a host's pump threads are identifiable.
     _EVENTS_THREAD_NAME = "jarvisbar-host-events"
     _STDERR_THREAD_NAME = "jarvisbar-host-stderr"
+    _RESPAWN_THREAD_NAME = "jarvisbar-host-respawn"
+
+    # Bounded auto-respawn (revised 2026-07-18, see module docstring): total
+    # attempts per instance lifetime and the non-blocking backoff between
+    # them. A death that follows a respawn within seconds still consumes an
+    # attempt — the bound itself is what keeps a crash loop from spinning.
+    _RESPAWN_MAX_ATTEMPTS = 3
+    _RESPAWN_BACKOFF_SECONDS = 5.0
 
     def __init__(
         self,
@@ -54,11 +70,17 @@ class SubprocessBarOverlay:
         self._startup_gated = bool(startup_gated)
         self._mode = "idle"
         self._muted = False
+        self._visible = False
+        self._last_level: float | None = None
         self._proc: subprocess.Popen[str] | None = None
         self._send_lock = threading.Lock()
         self._ready = threading.Event()
         self._stopping = False
         self._dead_logged = False
+        self._respawn_lock = threading.Lock()
+        self._respawn_attempts = 0
+        self._respawn_succeeded = threading.Event()
+        self._respawn_exhausted = threading.Event()
         self._on_mute_toggle: Callable[[], None] | None = None
         self._feedback_publisher: Callable[[str, dict], None] | None = None
         self._on_show_window: Callable[[], None] | None = None
@@ -70,10 +92,28 @@ class SubprocessBarOverlay:
         """Spawn the bar host process (name kept for the surface contract)."""
         if self._proc is not None and self._proc.poll() is None:
             return
+        self._spawn_process(timeout)
+
+    def _spawn_process(self, timeout: float) -> bool:
+        """Popen the host, wire its pump threads, and wait for its ready line.
+
+        Shared by the initial ``start_in_thread`` call and every bounded
+        respawn attempt. Returns whether the Popen call itself succeeded —
+        a ready-wait timeout is logged but still counts as a live process
+        (matches the pre-respawn behavior of ``start_in_thread``).
+        """
+        self._ready.clear()
+        # Reset the death debounce BEFORE the new process (and its pump
+        # thread) exist, not after: resetting it only once this method
+        # returns would race the new pump thread's own EOF detection —
+        # a host that dies again in the instant after spawning could find
+        # ``_dead_logged`` still True from the PREVIOUS death and silently
+        # swallow its own.
+        self._dead_logged = False
         try:
             from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
-            self._proc = subprocess.Popen(  # noqa: S603 — fixed argv, own venv
+            proc = subprocess.Popen(  # noqa: S603 — fixed argv, own venv
                 [sys.executable, "-m", _HOST_MODULE],
                 stdin=subprocess.PIPE,
                 stdout=subprocess.PIPE,
@@ -86,31 +126,43 @@ class SubprocessBarOverlay:
         except Exception:  # noqa: BLE001 — cosmetic surface; degrade, never raise
             log.exception("JarvisBar host spawn failed — bar runs as a no-op")
             self._proc = None
-            return
+            return False
+        self._proc = proc
 
         self._write_line(self._init_payload())
 
+        # Use the LOCAL ``proc`` reference for both threads, not ``self._proc``
+        # again — a fast enough death can already have a respawn attempt
+        # reassigning ``self._proc`` (or ``stop()`` clearing it) by the time
+        # the second thread starts, and these two threads belong to THIS
+        # specific process regardless of what ``self._proc`` points to next.
         threading.Thread(
             target=self._pump_events,
-            args=(self._proc.stdout,),
+            args=(proc.stdout,),
             name=self._EVENTS_THREAD_NAME,
             daemon=True,
         ).start()
         threading.Thread(
             target=self._pump_stderr,
-            args=(self._proc.stderr,),
+            args=(proc.stderr,),
             name=self._STDERR_THREAD_NAME,
             daemon=True,
         ).start()
 
         if not self._ready.wait(timeout=timeout):
             log.error("JarvisBar host not ready within %.1fs", timeout)
+        return True
 
     def stop(self) -> None:
+        # Flip this BEFORE the no-proc early return: a spawn failure or a
+        # host death may already have a bounded respawn attempt sleeping on
+        # its own thread, and that thread's only guard against firing later
+        # is this flag — it must be set even when there is no live process
+        # to tear down right now.
+        self._stopping = True
         proc = self._proc
         if proc is None:
             return
-        self._stopping = True
         try:
             self._send({"op": "stop"})
             if proc.stdin is not None:
@@ -145,9 +197,11 @@ class SubprocessBarOverlay:
         if mode not in _MODES:
             return
         self._mode = mode
+        self._visible = True
         self._send({"op": "show", "mode": mode})
 
     def hide(self) -> None:
+        self._visible = False
         self._send({"op": "hide"})
 
     def reassert_z_order(self) -> None:
@@ -161,7 +215,8 @@ class SubprocessBarOverlay:
         return released
 
     def set_level(self, level: float) -> None:
-        self._send({"op": "set_level", "level": float(level)})
+        self._last_level = float(level)
+        self._send({"op": "set_level", "level": self._last_level})
 
     def set_muted(self, muted: bool) -> None:
         self._muted = bool(muted)
@@ -226,13 +281,109 @@ class SubprocessBarOverlay:
             self._log_dead_once()
 
     def _log_dead_once(self) -> None:
-        if self._stopping or self._dead_logged:
+        """Single choke point for every "the host is gone" detection site.
+
+        ``_dead_logged`` debounces the three call sites (``_send``,
+        ``_write_line``, the ``_pump_events`` EOF) for one death; it is reset
+        once a respawn succeeds so the NEXT death is detected fresh. Also the
+        entry point for the bounded auto-respawn: schedules the next attempt
+        while attempts remain, otherwise logs the same honest give-up message
+        the surface always used to log unconditionally. The check-then-act
+        sequence (debounce, attempt bound, counter increment, thread start)
+        runs under ``_respawn_lock`` — the events pump thread and a caller
+        thread doing ``show()``/``set_level()``/etc. can both observe the
+        same death at once, and without the lock a lost update could double
+        -schedule the same attempt number or race ``_spawn_process`` itself.
+        """
+        with self._respawn_lock:
+            if self._stopping or self._dead_logged:
+                return
+            self._dead_logged = True
+            proc = self._proc
+            exit_code = proc.poll() if proc is not None else None
+
+            if self._respawn_attempts >= self._RESPAWN_MAX_ATTEMPTS:
+                # Log BEFORE setting the event: a waiter unblocked by the
+                # event must never observe this method as "not done yet".
+                log.warning(
+                    "JarvisBar host process is gone (exit code %s) and all "
+                    "%d/%d respawn attempts are spent — the bar stays hidden "
+                    "until the next overlay swap or app restart.",
+                    exit_code,
+                    self._respawn_attempts,
+                    self._RESPAWN_MAX_ATTEMPTS,
+                )
+                self._respawn_exhausted.set()
+                return
+
+            self._respawn_attempts += 1
+            attempt = self._respawn_attempts
+            log.warning(
+                "JarvisBar host process is gone (exit code %s) — scheduling "
+                "respawn attempt %d/%d in %.0fs.",
+                exit_code,
+                attempt,
+                self._RESPAWN_MAX_ATTEMPTS,
+                self._RESPAWN_BACKOFF_SECONDS,
+            )
+            threading.Thread(
+                target=self._respawn_after_backoff,
+                args=(attempt,),
+                name=f"{self._RESPAWN_THREAD_NAME}-{attempt}",
+                daemon=True,
+            ).start()
+
+    def _respawn_after_backoff(self, attempt: int) -> None:
+        """Wait out the backoff, then respawn — runs on its own daemon thread.
+
+        Never touches the caller's thread or the app's event loop: the sleep
+        and the Popen call both happen here. A death within the backoff
+        window (``stop()`` called while waiting) aborts the attempt instead
+        of spawning a host nobody wants anymore.
+        """
+        time.sleep(self._RESPAWN_BACKOFF_SECONDS)
+        if self._stopping:
             return
-        self._dead_logged = True
+
+        if not self._spawn_process(timeout=3.0):
+            # The Popen call itself failed; treat it as another death so the
+            # same bounded logic decides whether to try again or give up.
+            # ``_spawn_process`` already reset ``_dead_logged`` up front.
+            self._log_dead_once()
+            return
+
+        if self._stopping:
+            # stop() raced with this respawn — tear the fresh host back down
+            # instead of leaving an orphaned process behind.
+            self.stop()
+            return
+
         log.warning(
-            "JarvisBar host process is gone — the bar stays hidden until the "
-            "next overlay swap or app restart."
+            "JarvisBar host respawned successfully (attempt %d/%d) — "
+            "re-applying the last known bar state.",
+            attempt,
+            self._RESPAWN_MAX_ATTEMPTS,
         )
+        self._respawn_succeeded.set()
+        self._reapply_desired_state()
+
+    def _reapply_desired_state(self) -> None:
+        """Restore visibility/mode/mute/level onto a freshly respawned host.
+
+        ``_init_payload()`` (re-sent inside ``_spawn_process``) already
+        carries persistent/accent/opacity/startup_gated straight from the
+        current instance attributes, so only the state this class mirrors
+        OUTSIDE the init line — shown/hidden, mode, mute, last level — needs
+        a dedicated re-send here.
+        """
+        if self._visible:
+            self._send({"op": "show", "mode": self._mode})
+        else:
+            self._send({"op": "hide"})
+        if self._muted:
+            self._send({"op": "set_muted", "muted": True})
+        if self._last_level is not None:
+            self._send({"op": "set_level", "level": self._last_level})
 
     def _pump_events(self, stream: IO[str] | None) -> None:
         if stream is None:
@@ -298,6 +449,7 @@ class SubprocessMascotOverlay(SubprocessBarOverlay):
 
     _EVENTS_THREAD_NAME = "orb-host-events"
     _STDERR_THREAD_NAME = "orb-host-stderr"
+    _RESPAWN_THREAD_NAME = "orb-host-respawn"
 
     def __init__(self, mascot_path: str | None = None) -> None:
         super().__init__()

@@ -7,15 +7,37 @@ process. The real cross-process path is covered in test_host_protocol.py.
 """
 from __future__ import annotations
 
+import gc
 import io
 import json
 import threading
+
+import pytest
 
 from jarvis.ui.jarvisbar import subprocess_overlay as mod
 from jarvis.ui.jarvisbar.subprocess_overlay import (
     SubprocessBarOverlay,
     SubprocessMascotOverlay,
 )
+
+
+@pytest.fixture(autouse=True)
+def _neutralize_pending_bar_respawns():
+    """Guard against a fake-host artifact leaking a real subprocess spawn.
+
+    Every fake host's scripted stdout is a finite ``io.StringIO`` that EOFs
+    right after its scripted lines — read by the real event pump as "the
+    host is gone" and, since BUG respawn support, bounded-scheduled onto its
+    own background thread. That is harmless while THIS test's ``Popen`` fake
+    is still monkeypatched in, but the thread's backoff can outlive the test:
+    once monkeypatch reverts, a still-sleeping thread would call the REAL
+    ``subprocess.Popen``. Mark every proxy created during the test as
+    stopping once it ends so no pending respawn thread ever fires for real.
+    """
+    yield
+    for obj in gc.get_objects():
+        if isinstance(obj, SubprocessBarOverlay):
+            obj._stopping = True
 
 
 class _FakeStdin:
@@ -186,6 +208,172 @@ def test_stop_sends_stop_closes_stdin_and_waits(monkeypatch) -> None:
     assert surface._proc is None
 
 
+# --------------------------------------------------------------------- #
+# Bounded auto-respawn (2026-07-18 revision — see module docstring)     #
+# --------------------------------------------------------------------- #
+class _SteadyStdout:
+    """Stdout that blocks after "ready" instead of EOF-ing right away.
+
+    The base ``_FakePopen.stdout`` is a finite ``io.StringIO`` that ends the
+    instant its scripted lines are consumed — a fine stand-in for "the wire
+    protocol works" tests, but it also means EVERY fake host "dies" (EOF)
+    within a moment of spawning, which is exactly what the crash-loop tests
+    below want. The respawn tests that need exactly ONE controlled death use
+    this steady stream instead, so they are not racing the base fake's own
+    built-in quick death.
+    """
+
+    def __init__(self, ready_line: str = '{"event": "ready"}\n') -> None:
+        self._sent_ready = False
+        self._ready_line = ready_line
+        self._closed = threading.Event()
+
+    def __iter__(self) -> _SteadyStdout:
+        return self
+
+    def __next__(self) -> str:
+        if not self._sent_ready:
+            self._sent_ready = True
+            return self._ready_line
+        self._closed.wait()  # block like a live process's open stdout pipe
+        raise StopIteration
+
+    def close(self) -> None:
+        self._closed.set()
+
+
+class _SteadyPopen(_FakePopen):
+    """``_FakePopen`` whose stdout stays open until explicitly torn down."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.stdout = _SteadyStdout()
+
+    def kill(self) -> None:
+        super().kill()
+        self.stdout.close()
+
+    def wait(self, timeout: float | None = None) -> int:
+        self.stdout.close()
+        return super().wait(timeout=timeout)
+
+
+def test_host_death_triggers_respawn_and_reapplies_desired_state(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(mod.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(mod.subprocess, "Popen", _SteadyPopen)
+    surface = SubprocessBarOverlay()
+    surface.start_in_thread(timeout=2.0)
+    proc = _FakePopen.last
+    assert proc is not None
+
+    surface.show("speak")
+    surface.set_muted(True)
+    surface.set_level(0.6)
+    proc._returncode = 1  # the host died
+    surface.set_level(0.9)  # a call against the dead proc triggers detection
+
+    assert surface._respawn_succeeded.wait(timeout=2.0)
+    new_proc = _FakePopen.last
+    assert new_proc is not proc  # a fresh host process was spawned
+
+    sent = new_proc.sent()
+    assert sent[0] == {
+        "op": "init",
+        "persistent": True,
+        "accent": "#e7c46e",
+        "startup_gated": False,
+    }
+    # Last known state (shown in "speak", muted, last level 0.9) re-applied.
+    assert [m["op"] for m in sent[1:]] == ["show", "set_muted", "set_level"]
+    assert sent[1] == {"op": "show", "mode": "speak"}
+    assert sent[2] == {"op": "set_muted", "muted": True}
+    assert sent[3] == {"op": "set_level", "level": 0.9}
+    assert surface._respawn_attempts == 1
+    surface.stop()
+
+
+class _QuicklyDyingStdout:
+    """Emits "ready", then EOFs after a brief REAL delay.
+
+    ``mod.time.sleep`` gets monkeypatched to instant in these tests (so the
+    5s production backoff doesn't slow them down) — but ``mod.time`` IS the
+    same module object this test file imports, so a plain ``time.sleep(...)``
+    in this fake would ALSO be neutered by that same monkeypatch.
+    ``threading.Event().wait(timeout=...)`` uses its own timing and is
+    unaffected, giving the spawning thread genuine wall-clock room to finish
+    its own post-spawn bookkeeping (ready-wait, success log, reapply) before
+    this stdout's EOF fires the next chained attempt — without it, multiple
+    attempts race each other and can observe a torn ``self._proc``.
+    """
+
+    def __init__(self, delay: float = 0.05) -> None:
+        self._lines = iter(('{"event": "ready"}\n',))
+        self._delay = delay
+        self._settled = False
+
+    def __iter__(self) -> _QuicklyDyingStdout:
+        return self
+
+    def __next__(self) -> str:
+        try:
+            return next(self._lines)
+        except StopIteration:
+            if not self._settled:
+                self._settled = True
+                threading.Event().wait(timeout=self._delay)
+            raise
+
+
+class _CrashLoopPopen(_FakePopen):
+    """``_FakePopen`` that dies again a beat after "ready", not instantly."""
+
+    def __init__(self, *args, **kwargs) -> None:
+        super().__init__(*args, **kwargs)
+        self.stdout = _QuicklyDyingStdout()
+
+
+def test_respawn_is_bounded_to_three_attempts_then_gives_up(
+    monkeypatch, caplog
+) -> None:
+    """Every attempt uses the crash-prone fake, so each respawned host dies
+    again (EOF) a beat later — chaining through all 3 attempts and proving
+    the surface gives up instead of looping forever."""
+    monkeypatch.setattr(mod.time, "sleep", lambda _seconds: None)
+    monkeypatch.setattr(mod.subprocess, "Popen", _CrashLoopPopen)
+    surface = SubprocessBarOverlay()
+    with caplog.at_level("WARNING", logger="jarvis.ui.jarvisbar"):
+        surface.start_in_thread(timeout=2.0)
+        assert surface._respawn_exhausted.wait(timeout=2.0)
+
+    assert surface._respawn_attempts == 3
+    assert "respawn attempts are spent" in caplog.text
+    surface.stop()
+
+
+def test_quick_respawn_death_still_consumes_an_attempt(monkeypatch) -> None:
+    """A respawned host that dies again almost immediately must still count
+    against the bound — otherwise a crash loop would spawn forever."""
+    monkeypatch.setattr(mod.time, "sleep", lambda _seconds: None)
+    spawned: list[_FakePopen] = []
+
+    class _CountingPopen(_CrashLoopPopen):
+        def __init__(self, *args, **kwargs) -> None:
+            super().__init__(*args, **kwargs)
+            spawned.append(self)
+
+    monkeypatch.setattr(mod.subprocess, "Popen", _CountingPopen)
+    surface = SubprocessBarOverlay()
+    surface.start_in_thread(timeout=2.0)
+    assert surface._respawn_exhausted.wait(timeout=2.0)
+
+    # Initial spawn + exactly 3 bounded respawns, each dying within its own
+    # scripted EOF before the bound gave up — no unbounded crash loop.
+    assert len(spawned) == 4
+    surface.stop()
+
+
 def test_surface_contract_exposes_every_bridge_method() -> None:
     from tests.unit.ui.jarvisbar.test_surface_contract import REQUIRED
 
@@ -259,8 +447,13 @@ def test_mascot_pump_threads_use_orb_host_names(monkeypatch) -> None:
             super().__init__(*args, **kwargs)
 
     monkeypatch.setattr(mod.threading, "Thread", _NamedThread)
-    _started_mascot(monkeypatch)
+    # _SteadyPopen (not the base fake) so the host doesn't EOF and schedule a
+    # respawn thread — this test only cares about the two spawn-time threads.
+    monkeypatch.setattr(mod.subprocess, "Popen", _SteadyPopen)
+    surface = SubprocessMascotOverlay()
+    surface.start_in_thread(timeout=2.0)
     assert names == ["orb-host-events", "orb-host-stderr"]
+    surface.stop()
 
 
 def test_mascot_dead_host_degrades_to_noop_without_raising(monkeypatch) -> None:
