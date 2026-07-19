@@ -67,6 +67,11 @@ _HANGUP_BUFFER_MAX_CHARS = 300
 # be dated (estimated playback drain, BUG-089). Bounds a runaway estimate
 # from a mis-reported sample rate; real replies stay far below it.
 _ECHO_HORIZON_MAX_S = 120.0
+# One canned outage/recovery notice per window, aligned with the brain
+# chain's RateLimitTracker cooldown: while the chain is cooling down, every
+# turn would re-speak the same apology — exactly the audio the self-talk
+# loop feeds on (BUG-089). Repeats inside the window stay silent + logged.
+_OUTAGE_NOTICE_COOLDOWN_S = 30.0
 # Declared to the realtime model alongside the bridge tools, but handled by
 # the session itself: ending the call is surface lifecycle (like the hotkey),
 # not a risk-tiered Jarvis tool, and must work even without a tool bridge.
@@ -800,6 +805,7 @@ class RealtimeVoiceSession:
         # a turn — otherwise the brain answers its own speaker echo forever.
         self._echo_guard = SelfEchoGuard()
         self._echo_playback_horizon = 0.0
+        self._last_outage_notice_at = float("-inf")
         self._provider_output_probe = ""
         self._executed_tool_names: set[str] = set()
         self._direct_tool_results: list[tuple[str, dict[str, Any]]] = []
@@ -2538,6 +2544,47 @@ class RealtimeVoiceSession:
             or self._executed_tool_names
         )
 
+    def _outage_notice_allowed(self) -> bool:
+        """One canned outage/recovery notice per cooldown window.
+
+        Returns True and stamps the window when speaking is allowed; False
+        means the caller must stay silent AND keep the phrase out of
+        ``_output_transcript`` — the audible record must never claim words
+        the user did not hear (BUG-056 class).
+        """
+        now = time.monotonic()
+        if now - self._last_outage_notice_at >= _OUTAGE_NOTICE_COOLDOWN_S:
+            self._last_outage_notice_at = now
+            return True
+        return False
+
+    def _suppress_repeated_outage_notice(
+        self, turn_state: _DelegateTurnState
+    ) -> bool:
+        """True when this turn's reply is a repeat provider-down apology.
+
+        One outage notice per window is honest; re-speaking it on every turn
+        is the self-talk loop's fuel (BUG-089): each spoken apology can echo
+        back as the next "user" turn while the chain's rate-limit cooldown
+        never expires. Suppression marks the turn delivered so nothing is
+        spoken and the late-result queue stays empty. A turn with pending
+        native tool calls is never suppressed — the provider protocol
+        requires those calls to be answered.
+        """
+        if turn_state.pending_tool_calls:
+            return False
+        if not bool(getattr(self._brain, "_last_turn_all_failed", False)):
+            return False
+        if self._outage_notice_allowed():
+            return False
+        turn_state.delivery_started = True
+        log.info(
+            "realtime[%s] provider-down notice suppressed (repeat within %.0fs)",
+            self.session_id,
+            _OUTAGE_NOTICE_COOLDOWN_S,
+        )
+        return True
+
     async def _recover_empty_provider_turn(self) -> bool:
         """Route a content-bearing turn away from a provider's empty response.
 
@@ -2569,9 +2616,18 @@ class RealtimeVoiceSession:
 
         if not self._last_user_text:
             if self._input_turn_observed:
-                fallback_text = self._gate.fallback_phrase()
-                self._output_transcript.append(fallback_text)
-                await self._send_json(self._surface_speech_message(fallback_text))
+                if self._outage_notice_allowed():
+                    fallback_text = self._gate.fallback_phrase()
+                    self._output_transcript.append(fallback_text)
+                    await self._send_json(
+                        self._surface_speech_message(fallback_text)
+                    )
+                else:
+                    log.info(
+                        "realtime[%s] empty-turn recovery notice suppressed "
+                        "(repeat within cooldown)",
+                        self.session_id,
+                    )
             return False
 
         if self._direct_tool_results:
@@ -2617,14 +2673,32 @@ class RealtimeVoiceSession:
         if self._executed_tool_names:
             from jarvis.voice.action_phrases import action_phrase
 
-            fallback_text = action_phrase("cu_done", self._language)
-            self._output_transcript.append(fallback_text)
-            await self._send_json(self._surface_speech_message(fallback_text))
+            if self._outage_notice_allowed():
+                fallback_text = action_phrase("cu_done", self._language)
+                self._output_transcript.append(fallback_text)
+                await self._send_json(
+                    self._surface_speech_message(fallback_text)
+                )
+            else:
+                log.info(
+                    "realtime[%s] empty-turn recovery notice suppressed "
+                    "(repeat within cooldown)",
+                    self.session_id,
+                )
             return False
         if self._brain is None:
-            fallback_text = self._gate.fallback_phrase()
-            self._output_transcript.append(fallback_text)
-            await self._send_json(self._surface_speech_message(fallback_text))
+            if self._outage_notice_allowed():
+                fallback_text = self._gate.fallback_phrase()
+                self._output_transcript.append(fallback_text)
+                await self._send_json(
+                    self._surface_speech_message(fallback_text)
+                )
+            else:
+                log.info(
+                    "realtime[%s] empty-turn recovery notice suppressed "
+                    "(repeat within cooldown)",
+                    self.session_id,
+                )
             return False
 
         self._delegate_required_for_turn = True
@@ -3681,6 +3755,19 @@ class RealtimeVoiceSession:
         if self._delegate_turn_is_active(turn_id, turn_state) and succeeded:
             self._executed_tool_names.add(str(_DELEGATE_DECLARATION["name"]))
         if self._ended or self._session is None:
+            return
+        if self._suppress_repeated_outage_notice(turn_state):
+            if not bool(
+                getattr(
+                    self._session, "creates_responses_automatically", False
+                )
+            ):
+                # No response was requested for this turn and none will be:
+                # close the turn locally so the surface leaves PROCESSING
+                # (same local-boundary pattern as the held-turn_complete and
+                # rebuild paths).
+                await self._send_json({"type": "turn_complete"})
+                await self._publish_turn_completed()
             return
         if not self._delegate_turn_is_active(turn_id, turn_state):
             self._queue_late_delegate_result(turn_state)
