@@ -123,10 +123,12 @@ jobs:
 
       # The import gate above PROVES the €5-VPS base install imports clean (no
       # Windows APIs, no system libs). Only AFTER that proof do we install the
-      # system libraries + test-only packages the *test suite* needs to RUN — these
+      # system libraries + optional packages the *test suite* needs to RUN — these
       # are NOT part of the base-install contract. libportaudio2 backs sounddevice
-      # (a base dep that lazy-imports PortAudio); hypothesis + twilio are imported
-      # by some test modules that lack an importorskip guard (pre-existing).
+      # (a base dep that lazy-imports PortAudio); twilio is imported by some test
+      # modules that lack an importorskip guard (pre-existing). Test-only Python
+      # packages, including Hypothesis, come from the [dev] extra above so the
+      # documented development install is exercised without hidden supplements.
       - name: System + test-only deps (to run the suite, not part of the base proof)
         shell: bash
         run: |
@@ -134,7 +136,6 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y libportaudio2
           fi
-          python -m pip install hypothesis
           python -m pip install -e ".[telephony]"
 
       - name: pytest (JUnit XML)
