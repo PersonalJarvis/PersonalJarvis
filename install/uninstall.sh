@@ -133,9 +133,26 @@ else
     RC=0
 fi
 
-# The Python step returns 1 when the user cancels at its prompt. Respect that.
-if [ "$RC" -ne 0 ]; then
+# Map the Python step's exit code HONESTLY. It returns 1 when the user
+# declines at its prompt and 2 when the folder is not a Jarvis install - it
+# printed the reason itself in both cases. ANY OTHER code means it CRASHED,
+# most often a venv whose interpreter stopped resolving after a system Python
+# upgrade (on macOS/Homebrew: "dyld: Library not loaded: @rpath/Python3...").
+# Reporting a crash as "cancelled" hides a real failure behind a user-choice
+# message and leaves the install standing with no clue why - which is exactly
+# how a broken uninstall reads as "it just does nothing".
+if [ "$RC" -eq 1 ]; then
     note 'Cancelled — nothing was changed.'
+    exit 1
+elif [ "$RC" -eq 2 ]; then
+    exit 2
+elif [ "$RC" -ne 0 ]; then
+    err "The cleanup step failed (exit $RC) — nothing was changed."
+    note 'Its own error is printed above. On macOS the usual cause is a venv'
+    note 'broken by a system/Homebrew Python upgrade.'
+    note 'To remove Jarvis anyway:'
+    note "  rm -rf \"$INSTALL_DIR\""
+    note 'Saved API keys then stay in your OS keychain under "personal-jarvis".'
     exit "$RC"
 fi
 

@@ -838,7 +838,14 @@ if [ "$skip_node" -eq 1 ]; then
 else
     node_ok=0
     if command -v node >/dev/null 2>&1; then
-        node_major=$(node --version 2>/dev/null | sed -E 's/^v?([0-9]+).*/\1/')
+        # `|| node_major=""` is load-bearing: under `set -e` + `pipefail` a
+        # node that EXISTS but exits non-zero kills the whole installer right
+        # here, silently, two phases before the end. `command -v` only proves
+        # the name resolves - an asdf/volta/nvm shim with no version selected
+        # (126), an x86_64 binary on arm64 (126), or a Gatekeeper-killed one
+        # (137) all pass that test and then fail. Node is OPTIONAL, so a
+        # broken one must degrade to "not found", never abort the install.
+        node_major=$(node --version 2>/dev/null | sed -E 's/^v?([0-9]+).*/\1/') || node_major=""
         if [ -n "$node_major" ] && [ "$node_major" -ge 18 ] 2>/dev/null; then
             node_ok=1
         fi
