@@ -407,6 +407,11 @@ def capture_stable_frame(
         return raw
 
     deadline = time.monotonic() + max(0.0, stability_timeout_s)
+    # One permission probe per FRAME, not per re-grab: the stability loop can
+    # re-grab ~8 times inside 1.2 s, and a grant cannot plausibly be revoked
+    # and matter within that window — the engine independently re-probes
+    # before every dispatched action, which is the check that prevents blind
+    # input after a revocation.
     _require_macos_screen_recording_permission()
     current = guarded_grab()
     stable = False
@@ -415,7 +420,6 @@ def capture_stable_frame(
         if remaining <= 0:
             break
         sleep(min(max(0.01, stability_interval_s), remaining))
-        _require_macos_screen_recording_permission()
         nxt = guarded_grab()
         if not frames_differ(current, nxt):
             current = nxt

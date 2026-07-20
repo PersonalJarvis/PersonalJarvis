@@ -63,6 +63,11 @@ class WindowInfo:
     title: str
     minimized: bool = False
     handle: int | None = None
+    #: Owning process id, when the platform probe knows it. Only the macOS
+    #: foreground path fills this today; it lets the CU foreground guard use
+    #: app-level identity where per-window handles churn (see
+    #: ``jarvis.cu.target_guard.window_signature``).
+    pid: int | None = None
 
 
 # ----------------------------------------------------------------------
@@ -942,11 +947,16 @@ def _foreground_window_macos() -> WindowInfo | None:
                 or entry.get("kCGWindowOwnerName")
                 or ""
             )
-            return WindowInfo(title=title, handle=number or None)
+            owner_pid = front_pid or _macos_window_pid(entry)
+            return WindowInfo(
+                title=title, handle=number or None, pid=owner_pid or None,
+            )
         except (TypeError, ValueError):
             continue
     title = get_foreground_title()
-    return WindowInfo(title=title) if title else None
+    if not title:
+        return None
+    return WindowInfo(title=title, pid=front_pid or None)
 
 
 def _foreground_window_linux() -> WindowInfo | None:

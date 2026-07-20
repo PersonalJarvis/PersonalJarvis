@@ -20,6 +20,19 @@ def window_signature(
 ) -> tuple[Any, ...]:
     if window is None:
         return ("none",)
+    pid = getattr(window, "pid", None)
+    if pid:
+        # App-level identity. Only the macOS foreground probe fills ``pid``:
+        # there the per-window handle is the CGWindowID of the frontmost
+        # layer-0 window, which churns on focus changes INSIDE the same app
+        # (an address-bar suggestions dropdown is its own layer-0 window, and
+        # frame rects move with it). Comparing on the owning app keeps the
+        # guard's purpose — catching a cross-app focus steal between the
+        # screenshot and the action — without refusing every click->type
+        # batch (live incident 2026-07-20: 9 REFUSED actions in two runs).
+        # Windows/Linux probes leave ``pid`` unset and keep the stable
+        # per-window handle+rect identity.
+        return ("app", int(pid))
     handle = getattr(window, "handle", None)
     if handle:
         return ("handle", int(handle), rect)

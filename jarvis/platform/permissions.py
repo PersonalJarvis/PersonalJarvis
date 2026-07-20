@@ -233,6 +233,10 @@ class SystemPermissionPort:
         # only for the current process and therefore clears exactly when the
         # required app restart has happened.
         self._restart_required: set[PermissionId] = set()
+        # Static per process: the main bundle and its on-disk path cannot
+        # change while this process runs. Caching it is NOT a cached
+        # permission probe — every TCC state read in _state() stays live.
+        self._bundle_identity_cache: tuple[str | None, str | None, bool, bool] | None = None
 
     @property
     def platform(self) -> PlatformName:
@@ -245,23 +249,18 @@ class SystemPermissionPort:
             log.debug("Native permission framework %s is unavailable.", module, exc_info=True)
             return None
 
-    def _app_identity(self) -> tuple[AppIdentity, bool]:
-        if self.platform != "darwin":
-            from .probes import display_present
+    def _bundle_identity(self) -> tuple[str | None, str | None, bool, bool]:
+        """``(bundle_id, bundle_path, launched_as_bundle, stable)``, cached.
 
-            return (
-                AppIdentity(
-                    app_name=APP_NAME,
-                    expected_bundle_id=EXPECTED_BUNDLE_ID,
-                    bundle_id=None,
-                    bundle_path=None,
-                    launched_as_bundle=False,
-                    stable=False,
-                    foreground=False,
-                ),
-                not display_present(),
-            )
-
+        Computed once per process: NSBundle metadata and the two
+        ``Path.resolve`` calls cannot change for a running process, and the
+        hot Computer-Use path probes permissions before every grab and every
+        input action — recomputing this each time cost two filesystem
+        resolutions plus ObjC bridge round trips per probe. The live TCC
+        grant states are deliberately NOT cached (see :meth:`_state`).
+        """
+        if self._bundle_identity_cache is not None:
+            return self._bundle_identity_cache
         bundle_id: str | None = None
         bundle_path: str | None = None
         foundation = self._load("Foundation")
@@ -284,6 +283,31 @@ class SystemPermissionPort:
             except (OSError, ValueError):
                 canonical_path = False
         stable = bundle_id == EXPECTED_BUNDLE_ID and launched_as_bundle and canonical_path
+        self._bundle_identity_cache = (bundle_id, bundle_path, launched_as_bundle, stable)
+        return self._bundle_identity_cache
+
+    def _stable_identity(self) -> bool:
+        """The cached static half of the runtime-access gate (darwin only)."""
+        return self._bundle_identity()[3]
+
+    def _app_identity(self) -> tuple[AppIdentity, bool]:
+        if self.platform != "darwin":
+            from .probes import display_present
+
+            return (
+                AppIdentity(
+                    app_name=APP_NAME,
+                    expected_bundle_id=EXPECTED_BUNDLE_ID,
+                    bundle_id=None,
+                    bundle_path=None,
+                    launched_as_bundle=False,
+                    stable=False,
+                    foreground=False,
+                ),
+                not display_present(),
+            )
+
+        bundle_id, bundle_path, launched_as_bundle, stable = self._bundle_identity()
         foreground = False
         headless = True
         appkit = self._load("AppKit")
@@ -417,9 +441,11 @@ class SystemPermissionPort:
         resolved = PermissionId(permission_id)
         if self.platform != "darwin":
             return self._state(resolved) in _READY_STATES
-        identity, _headless = self._app_identity()
+        # Only the STATIC identity half gates runtime access — skip the
+        # AppKit foreground probe _app_identity() also performs; its result
+        # was never consulted here and it costs a window-server round trip.
         return (
-            identity.stable
+            self._stable_identity()
             and resolved not in self._restart_required
             and self._state(resolved) is PermissionState.GRANTED
         )
@@ -429,8 +455,7 @@ class SystemPermissionPort:
         requirements = FEATURE_REQUIREMENTS[feature]
         if self.platform != "darwin":
             return all(self._state(item) in _READY_STATES for item in requirements)
-        identity, _headless = self._app_identity()
-        return identity.stable and all(
+        return self._stable_identity() and all(
             item not in self._restart_required and self._state(item) is PermissionState.GRANTED
             for item in requirements
         )

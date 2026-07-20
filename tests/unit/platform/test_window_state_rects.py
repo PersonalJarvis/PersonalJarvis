@@ -77,6 +77,7 @@ def test_macos_foreground_window_is_first_normal_layer_window(monkeypatch):
 def test_macos_without_quartz_degrades_to_title_only(monkeypatch):
     monkeypatch.setattr(ws, "detect_platform", lambda: "darwin")
     monkeypatch.setitem(sys.modules, "Quartz", None)  # import -> ImportError
+    monkeypatch.setitem(sys.modules, "AppKit", None)  # no frontmost pid either
     monkeypatch.setattr(ws, "get_foreground_title", lambda: "Inbox")
     win = ws.foreground_window()
     assert win == WindowInfo(title="Inbox")

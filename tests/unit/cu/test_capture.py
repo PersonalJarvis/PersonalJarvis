@@ -112,15 +112,15 @@ def test_macos_screen_recording_denial_stops_before_grab(monkeypatch):
 
 
 @pytest.mark.real_tcc_gate
-def test_macos_screen_recording_is_rechecked_before_each_grab(monkeypatch):
+def test_macos_screen_recording_revoked_fails_before_any_grab(monkeypatch):
     from jarvis.platform.permissions import PermissionState
 
-    states = [True, False]
-    calls = {"grab": 0}
+    calls = {"grab": 0, "probe": 0}
 
     class _RevokedPort:
         def runtime_access_granted(self, _permission_id):
-            return states.pop(0)
+            calls["probe"] += 1
+            return False
 
         def state(self, _permission_id):
             return PermissionState.NOT_GRANTED
@@ -138,8 +138,42 @@ def test_macos_screen_recording_is_rechecked_before_each_grab(monkeypatch):
     with pytest.raises(RuntimeError, match="Screen Recording"):
         capture_stable_frame(_monitor(), grab=grab, sleep=lambda _s: None)
 
-    assert calls["grab"] == 1
-    assert states == []
+    assert calls["grab"] == 0
+    assert calls["probe"] == 1
+
+
+@pytest.mark.real_tcc_gate
+def test_macos_screen_recording_is_probed_once_per_frame(monkeypatch):
+    # The stability loop can re-grab many times inside one frame; the
+    # permission probe must run once per FRAME, not per re-grab — the engine
+    # re-probes before every dispatched action, which is the revocation gate.
+    from jarvis.platform.permissions import PermissionState
+
+    calls = {"grab": 0, "probe": 0}
+
+    class _GrantedPort:
+        def runtime_access_granted(self, _permission_id):
+            calls["probe"] += 1
+            return True
+
+        def state(self, _permission_id):
+            return PermissionState.GRANTED
+
+    monkeypatch.setattr("jarvis.platform.detect_platform", lambda: "darwin")
+    monkeypatch.setattr(
+        "jarvis.platform.permissions.get_system_permission_port",
+        lambda: _GrantedPort(),
+    )
+
+    def grab(_bbox):
+        calls["grab"] += 1
+        return _solid((192, 108), (10, 20, 30))
+
+    frame = capture_stable_frame(_monitor(), grab=grab, sleep=lambda _s: None)
+
+    assert frame.stable is True
+    assert calls["grab"] == 2
+    assert calls["probe"] == 1
 
 
 def test_capture_guard_rechecks_window_identity_around_each_grab():
