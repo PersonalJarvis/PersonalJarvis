@@ -1024,6 +1024,9 @@ class OpenAIRealtimeProvider:
     """Structural provider entry point for the OpenAI Realtime family."""
 
     name = "openai-realtime"
+    # Optional provider capability consumed by the shared session fallback.
+    # This is account/quota metadata, not a provider-name feature gate.
+    credential_family = "openai"
     supports_realtime = True
     input_sample_rate = _INPUT_RATE
     output_sample_rate = _OUTPUT_RATE
