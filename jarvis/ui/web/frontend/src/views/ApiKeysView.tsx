@@ -211,31 +211,40 @@ export function ApiKeysView() {
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="flex h-full min-h-0 flex-col">
       <ViewHeader
         icon={<KeyRound className="h-4 w-4 text-primary" />}
         title={t("apikeys_view.title")}
         subtitle={t("apikeys_view.subtitle")}
-      />
-
-      <EngineModeSwitch
-        mode={engineMode}
-        liveMode={liveMode}
-        realtimeAvailable={realtimeAvailable}
-        statusKnown={statusKnown}
-        sessionActive={sessionActive}
-        activeSessionMode={activeSessionMode}
-        activeSessionProvider={activeSessionProvider}
-        activeSessionModel={activeSessionModel}
-        transitioning={transitioning}
-        onSelect={setEngineMode}
-        onSetVoiceMode={setVoiceMode}
-        onOpenRecommendedTab={openRecommendedTab}
+        right={
+          <EngineModeSwitch
+            mode={engineMode}
+            liveMode={liveMode}
+            realtimeAvailable={realtimeAvailable}
+            onSelect={setEngineMode}
+            onSetVoiceMode={setVoiceMode}
+          />
+        }
       />
 
       <CategoryTabs active={active} onSelect={setActive} health={health} tabs={modeTabs} />
 
-      <div className="flex-1 overflow-y-auto scrollbar-jarvis p-6">
+      <div
+        data-testid="api-keys-provider-scroll"
+        className="min-h-0 flex-1 overflow-y-auto scrollbar-jarvis px-4 py-4"
+      >
+        <VoiceEngineContext
+          mode={engineMode}
+          realtimeAvailable={realtimeAvailable}
+          statusKnown={statusKnown}
+          sessionActive={sessionActive}
+          activeSessionMode={activeSessionMode}
+          activeSessionProvider={activeSessionProvider}
+          activeSessionModel={activeSessionModel}
+          transitioning={transitioning}
+          liveMode={liveMode}
+          onOpenRecommendedTab={openRecommendedTab}
+        />
         {/* Readability: the provider cards used to stretch across the full
             window width (2000px+ on wide screens). One centered measure keeps
             every card scannable; the key prop re-runs the rise animation on
@@ -301,45 +310,26 @@ export function ApiKeysView() {
  * - The segment currently being VIEWED but not live gets a subtle outline
  *   only (no fill) — it's a transient look, not "on".
  * - Realtime with no key configured anywhere (`!realtimeAvailable`) reads
- *   muted with an "add a key" caption below; it stays clickable (opens the
- *   Realtime tab so the user can add one) but never gets the fill.
- * - One caption line under the control describes the VIEWED engine in plain
- *   words, so "Pipeline vs Realtime" needs no prior knowledge.
+ *   muted; it stays clickable (opens the Realtime tab so the user can add one)
+ *   but never gets the fill.
+ * - The explanatory copy lives in `VoiceEngineContext` inside the provider
+ *   scroller, keeping this always-visible header control one compact row.
  */
 function EngineModeSwitch({
   mode,
   liveMode,
   realtimeAvailable,
-  statusKnown,
-  sessionActive,
-  activeSessionMode,
-  activeSessionProvider,
-  activeSessionModel,
-  transitioning,
   onSelect,
   onSetVoiceMode,
-  onOpenRecommendedTab,
 }: {
   mode: VoiceEngineMode;
   /** The live `[voice].mode` value — determines the filled/active segment. */
   liveMode: string;
   /** Whether SOME realtime family (OpenAI/Gemini) has a key configured. */
   realtimeAvailable: boolean;
-  /** False while the voice-mode status fetch has not succeeded yet: the
-   *  availability is UNKNOWN then, and the hint must say so instead of
-   *  falsely claiming "needs an API key" on a slow/broken backend moment. */
-  statusKnown: boolean;
-  /** What the currently open voice session actually uses. */
-  sessionActive: boolean;
-  activeSessionMode: "pipeline" | "realtime" | null;
-  activeSessionProvider: string;
-  activeSessionModel: string;
-  transitioning: boolean;
   onSelect: (mode: VoiceEngineMode) => void;
   /** Persists `[voice].mode` — gated per the rule above. */
   onSetVoiceMode: (mode: string) => void;
-  /** Opens the tab a recommendation row names (view navigation only). */
-  onOpenRecommendedTab: (tab: RecommendationTab) => void;
 }) {
   const t = useT();
   // Realtime leads as the recommended default. Pipeline follows with an
@@ -350,6 +340,115 @@ function EngineModeSwitch({
   ];
   const liveIndex = liveMode === "realtime" ? 0 : 1;
   const liveModeAvailable = liveMode !== "realtime" || realtimeAvailable;
+
+  function handleSelect(seg: VoiceEngineMode) {
+    onSelect(seg);
+    if (seg === "pipeline" || realtimeAvailable) {
+      onSetVoiceMode(seg);
+    }
+  }
+
+  return (
+    <div
+      data-testid="voice-engine-header-control"
+      role="group"
+      aria-label={t("apikeys_view.voice_engine_label")}
+      className="shrink-0"
+    >
+      <div className="relative grid min-w-56 grid-cols-2 rounded-lg border border-border bg-card/40 p-0.5">
+        {liveModeAvailable && (
+          <span
+            data-testid="voice-engine-live-thumb"
+            aria-hidden="true"
+            className="absolute inset-y-0.5 left-0.5 w-[calc(50%-0.125rem)] rounded-md bg-primary shadow-[0_0_14px_rgba(255,214,10,0.22)] transition-transform duration-200 ease-out"
+            style={{ transform: `translateX(${liveIndex * 100}%)` }}
+          />
+        )}
+        {segments.map((seg) => {
+          const isLive = liveModeAvailable && liveMode === seg.key;
+          const isViewedOnly = mode === seg.key && !isLive;
+          const needsKey = seg.key === "realtime" && !realtimeAvailable;
+          const isRecommended = seg.key === "realtime";
+          const Icon = seg.icon;
+          return (
+            <button
+              key={seg.key}
+              type="button"
+              onClick={() => handleSelect(seg.key)}
+              aria-pressed={mode === seg.key}
+              className={cn(
+                "relative z-10 inline-flex items-center justify-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                isLive
+                  ? "text-primary-foreground"
+                  : isViewedOnly
+                    ? "text-foreground ring-1 ring-border"
+                    : needsKey
+                      ? "text-muted-foreground/60 hover:text-muted-foreground"
+                      : "text-muted-foreground hover:text-foreground",
+              )}
+            >
+              <Icon aria-hidden="true" className="h-3 w-3" />
+              <span className="whitespace-nowrap">{seg.label}</span>
+              <span
+                className={cn(
+                  "whitespace-nowrap rounded-full px-1 py-px text-[8px] font-semibold uppercase tracking-wide",
+                  isRecommended
+                    ? isLive
+                      ? "bg-primary-foreground/20 text-primary-foreground"
+                      : "bg-primary/15 text-primary"
+                    : isLive
+                      ? "border border-primary-foreground/30 bg-primary-foreground/10 text-primary-foreground"
+                      : "border border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
+                )}
+              >
+                {t(
+                  isRecommended
+                    ? "apikeys_view.mode_recommended"
+                    : "apikeys_view.not_recommended",
+                )}
+              </span>
+              {isLive && (
+                <span className="sr-only">{t("apikeys_view.mode_active_badge")}</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Compact, scrollable context for the header-level engine control. Keeping
+ * explanatory copy and recommendations inside the provider scroller gives the
+ * fixed viewport back to provider cards on laptop-height windows, while the
+ * switch itself remains immediately reachable in the main header.
+ */
+function VoiceEngineContext({
+  mode,
+  realtimeAvailable,
+  statusKnown,
+  sessionActive,
+  activeSessionMode,
+  activeSessionProvider,
+  activeSessionModel,
+  transitioning,
+  liveMode,
+  onOpenRecommendedTab,
+}: {
+  mode: VoiceEngineMode;
+  realtimeAvailable: boolean;
+  statusKnown: boolean;
+  sessionActive: boolean;
+  activeSessionMode: "pipeline" | "realtime" | null;
+  activeSessionProvider: string;
+  activeSessionModel: string;
+  transitioning: boolean;
+  liveMode: string;
+  onOpenRecommendedTab: (tab: RecommendationTab) => void;
+}) {
+  const t = useT();
   const runtimeDetail = [activeSessionProvider, activeSessionModel]
     .filter(Boolean)
     .join(" · ");
@@ -364,147 +463,80 @@ function EngineModeSwitch({
           : t("apikeys_view.runtime_idle");
   const runtimeMatchesSelection =
     !sessionActive || activeSessionMode === null || activeSessionMode === liveMode;
-
-  function handleSelect(seg: VoiceEngineMode) {
-    onSelect(seg);
-    if (seg === "pipeline" || realtimeAvailable) {
-      onSetVoiceMode(seg);
-    }
-  }
+  const modeDescription =
+    mode === "realtime" && !realtimeAvailable
+      ? t(
+          statusKnown
+            ? "apikeys_view.mode_needs_key"
+            : "apikeys_view.mode_status_unknown",
+        )
+      : mode === "realtime"
+        ? t("apikeys_view.mode_desc_realtime")
+        : t("apikeys_view.mode_desc_pipeline");
 
   return (
-    <div className="border-b border-border px-6 pt-4 pb-4">
-      <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-3">
-        <div className="min-w-0">
-          <h2 className="font-display text-sm font-semibold text-foreground">
+    <section
+      data-testid="voice-engine-context"
+      className="mx-auto mb-4 w-full max-w-4xl rounded-xl border border-border bg-card/25 px-3 py-2"
+      aria-label={t("apikeys_view.voice_engine_label")}
+    >
+      <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-1.5">
+        <div
+          className="flex min-w-64 flex-1 items-center gap-2 overflow-hidden text-xs"
+          title={`${t("apikeys_view.voice_engine_desc")} ${modeDescription}`}
+        >
+          <Volume2 aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-primary" />
+          <span className="shrink-0 font-medium text-foreground">
             {t("apikeys_view.voice_engine_label")}
-          </h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            {t("apikeys_view.voice_engine_desc")}
-          </p>
-        </div>
-
-        {mode === "realtime" && (
-          <RecommendedSetupPanel onOpenTab={onOpenRecommendedTab} />
-        )}
-
-        <div className="shrink-0">
-          {/* Two equal segments over one sliding thumb: the thumb tracks the
-              LIVE engine, so its glide IS the switch feedback. */}
-          {/* w-auto + equal columns: the container grows with the widest
-              segment and its guidance badge instead of clipping it;
-              the sliding thumb stays correct at any width. */}
-          <div className="relative grid w-auto min-w-64 grid-cols-2 rounded-xl border border-border bg-card/40 p-1">
-            {liveModeAvailable && (
-              <span
-                data-testid="voice-engine-live-thumb"
-                aria-hidden="true"
-                className="absolute inset-y-1 left-1 w-[calc(50%-0.25rem)] rounded-lg bg-primary shadow-[0_0_18px_rgba(255,214,10,0.25)] transition-transform duration-200 ease-out"
-                style={{ transform: `translateX(${liveIndex * 100}%)` }}
-              />
+          </span>
+          <span aria-hidden="true" className="text-border">·</span>
+          <span className="min-w-0 truncate text-muted-foreground">
+            {modeDescription}
+            {mode === "realtime" && (
+              <span className="text-amber-500/90">
+                {` · ${t("apikeys_view.mode_realtime_preview")}`}
+              </span>
             )}
-            {segments.map((seg) => {
-              const isLive = liveModeAvailable && liveMode === seg.key;
-              const isViewedOnly = mode === seg.key && !isLive;
-              const needsKey = seg.key === "realtime" && !realtimeAvailable;
-              const isRecommended = seg.key === "realtime";
-              const Icon = seg.icon;
-              return (
-                <button
-                  key={seg.key}
-                  type="button"
-                  onClick={() => handleSelect(seg.key)}
-                  aria-pressed={mode === seg.key}
-                  className={cn(
-                    "relative z-10 inline-flex items-center justify-center gap-1.5 rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-                    isLive
-                      ? "text-primary-foreground"
-                      : isViewedOnly
-                        ? "text-foreground ring-1 ring-border"
-                        : needsKey
-                          ? "text-muted-foreground/60 hover:text-muted-foreground"
-                          : "text-muted-foreground hover:text-foreground",
-                  )}
-                >
-                  <Icon aria-hidden="true" className="h-3.5 w-3.5" />
-                  {seg.label}
-                  <span
-                    className={cn(
-                      "whitespace-nowrap rounded-full px-1.5 py-px text-[9px] font-semibold uppercase tracking-wide",
-                      isRecommended
-                        ? isLive
-                          ? "bg-primary-foreground/20 text-primary-foreground"
-                          : "bg-primary/15 text-primary"
-                        : isLive
-                          ? "border border-primary-foreground/30 bg-primary-foreground/10 text-primary-foreground"
-                          : "border border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400",
-                    )}
-                  >
-                    {t(
-                      isRecommended
-                        ? "apikeys_view.mode_recommended"
-                        : "apikeys_view.not_recommended",
-                    )}
-                  </span>
-                  {isLive && (
-                    <span className="sr-only">{t("apikeys_view.mode_active_badge")}</span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-          <p className="mt-1.5 max-w-64 text-right text-[11px] leading-snug text-muted-foreground">
-            {mode === "realtime" && !realtimeAvailable
-              ? t(
-                  statusKnown
-                    ? "apikeys_view.mode_needs_key"
-                    : "apikeys_view.mode_status_unknown",
-                )
-              : mode === "realtime"
-                ? t("apikeys_view.mode_desc_realtime")
-                : t("apikeys_view.mode_desc_pipeline")}
-          </p>
-          {mode === "realtime" && (
-            <p className="mt-1 max-w-64 text-right text-[11px] leading-snug text-amber-500/90">
-              {t("apikeys_view.mode_realtime_preview")}
-            </p>
-          )}
-          <div
-            className="mt-2 flex max-w-64 items-start justify-end gap-1.5 text-right text-[11px] leading-snug"
-            aria-live="polite"
-            data-testid="voice-engine-runtime-status"
+          </span>
+        </div>
+        <div
+          className="flex shrink-0 items-center gap-1.5 text-[11px] leading-snug"
+          aria-live="polite"
+          data-testid="voice-engine-runtime-status"
+        >
+          <span
+            aria-hidden="true"
+            className={cn(
+              "h-1.5 w-1.5 shrink-0 rounded-full",
+              transitioning
+                ? "animate-pulse bg-amber-400 motion-reduce:animate-none"
+                : runtimeMatchesSelection
+                  ? "bg-emerald-400"
+                  : "bg-amber-400",
+            )}
+          />
+          <span
+            className={cn(
+              runtimeMatchesSelection && !transitioning
+                ? "text-muted-foreground"
+                : "text-amber-300",
+            )}
           >
-            <span
-              aria-hidden="true"
-              className={cn(
-                "mt-1 h-1.5 w-1.5 shrink-0 rounded-full",
-                transitioning
-                  ? "animate-pulse bg-amber-400 motion-reduce:animate-none"
-                  : runtimeMatchesSelection
-                    ? "bg-emerald-400"
-                    : "bg-amber-400",
-              )}
-            />
-            <span
-              className={cn(
-                runtimeMatchesSelection && !transitioning
-                  ? "text-muted-foreground"
-                  : "text-amber-300",
-              )}
-            >
-              {runtimeText}
-            </span>
-          </div>
+            {runtimeText}
+          </span>
         </div>
       </div>
-    </div>
+
+      {mode === "realtime" && (
+        <RecommendedSetupPanel onOpenTab={onOpenRecommendedTab} />
+      )}
+    </section>
   );
 }
 
 /**
  * The maintainer's personal pick for the three provider slots of the REALTIME
- * tab set, shown in the voice-engine header band only while that tab set is
+ * tab set, shown in the scrollable engine context only while that tab set is
  * being viewed — the picks name Realtime-mode tabs, so surfacing them next to
  * the Pipeline tabs would point at tabs that are not even on screen
  * (maintainer feedback 2026-07-17). Same contract as the per-card
@@ -554,33 +586,31 @@ function RecommendedSetupPanel({
   return (
     <div
       data-testid="recommended-setup-panel"
-      className="min-w-0 max-w-xl flex-1 basis-80 rounded-xl border border-primary/25 bg-primary/[0.05] px-4 py-2.5"
+      className="mt-2 flex min-w-0 items-center gap-2 border-t border-primary/20 pt-2"
     >
-      <p className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+      <p className="flex shrink-0 items-center gap-1.5 text-[11px] font-medium text-foreground">
         <Sparkles aria-hidden="true" className="h-3.5 w-3.5 shrink-0 text-primary" />
         {t("apikeys_view.reco_title")}
       </p>
-      <ul className="mt-1.5 space-y-0.5">
+      <ul className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto scrollbar-jarvis">
         {rows.map((row) => {
           const Icon = row.icon;
           return (
-            <li key={row.tab}>
+            <li key={row.tab} className="shrink-0">
               <button
                 type="button"
                 onClick={() => onOpenTab(row.tab)}
                 data-testid={`reco-row-${row.tab}`}
-                aria-label={`${t("apikeys_view.reco_title")}: ${row.label} — ${row.pick}`}
-                className="flex w-full items-start gap-2 rounded-lg px-1.5 py-1 text-left text-xs leading-snug transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label={`${t("apikeys_view.reco_title")}: ${row.label} — ${row.pick}. ${row.why}`}
+                title={row.why}
+                className="inline-flex items-center gap-1.5 whitespace-nowrap rounded-md border border-primary/15 bg-primary/[0.04] px-2 py-1 text-[11px] leading-none transition-colors hover:bg-primary/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
                 <Icon
                   aria-hidden="true"
-                  className="mt-0.5 h-3.5 w-3.5 shrink-0 text-primary/80"
+                  className="h-3 w-3 shrink-0 text-primary/80"
                 />
-                <span className="min-w-0">
-                  <span className="text-muted-foreground">{row.label}: </span>
-                  <span className="font-medium text-foreground">{row.pick}</span>
-                  <span className="text-muted-foreground"> — {row.why}</span>
-                </span>
+                <span className="text-muted-foreground">{row.label}:</span>
+                <span className="font-medium text-foreground">{row.pick}</span>
               </button>
             </li>
           );
@@ -626,9 +656,12 @@ function CategoryTabs({
   const showJarvisKey = tabs.includes("jarvis-key");
   const showAdvanced = tabs.includes("advanced");
   return (
-    <div className="border-b border-border px-6 py-3">
-      <div role="tablist" className="flex flex-wrap items-center gap-1.5">
-        <div className="flex flex-wrap items-center gap-1 rounded-xl border border-border bg-card/40 p-1">
+    <div
+      data-testid="api-keys-category-tabs"
+      className="shrink-0 overflow-x-auto border-b border-border px-4 py-2 scrollbar-jarvis"
+    >
+      <div role="tablist" className="flex min-w-max flex-nowrap items-center gap-1.5">
+        <div className="flex flex-nowrap items-center gap-1 rounded-xl border border-border bg-card/40 p-1">
           {coreTabs.map((key) => (
             <TabButton
               key={key}
@@ -718,7 +751,7 @@ function TabButton({
       onClick={onClick}
       title={title}
       className={cn(
-        "relative inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-medium transition-colors",
+        "relative inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap rounded-lg px-3 py-1.5 text-sm font-medium transition-colors",
         muted
           ? selected
             ? "bg-secondary text-foreground ring-1 ring-border"
@@ -764,11 +797,11 @@ function CategoryHero({
   description: string;
 }) {
   return (
-    <div className="mb-6 flex items-start gap-3">
-      <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-border bg-secondary/40 text-primary">
-        <Icon className="h-5 w-5" />
+    <div className="mb-4 flex items-start gap-2.5">
+      <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-border bg-secondary/40 text-primary">
+        <Icon className="h-4 w-4" />
       </div>
-      <div className="min-w-0 pt-0.5">
+      <div className="min-w-0">
         <h3 className="font-display text-base font-semibold tracking-tight">
           {title}
         </h3>
@@ -786,12 +819,12 @@ function CategoryHero({
  */
 function GuidancePanel({ title, body }: { title: string; body: string }) {
   return (
-    <div className="mb-5 flex items-start gap-3 rounded-xl border border-primary/25 bg-primary/[0.05] px-4 py-3">
+    <div className="mb-3 flex items-start gap-2.5 rounded-xl border border-primary/25 bg-primary/[0.05] px-3 py-2">
       <Sparkles aria-hidden="true" className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-      <div className="min-w-0 text-xs leading-relaxed">
-        <p className="font-medium text-foreground">{title}</p>
-        <p className="mt-0.5 text-muted-foreground">{body}</p>
-      </div>
+      <p className="min-w-0 text-xs leading-relaxed">
+        <span className="font-medium text-foreground">{title}</span>
+        <span className="text-muted-foreground"> · {body}</span>
+      </p>
     </div>
   );
 }

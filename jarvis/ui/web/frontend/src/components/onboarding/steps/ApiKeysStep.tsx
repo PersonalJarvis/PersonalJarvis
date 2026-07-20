@@ -34,8 +34,8 @@ export function ApiKeysStep({ goNext }: StepProps) {
           <img
             src={GUIDE_SCREENSHOT}
             alt={t("onboarding.api_keys.screenshot_alt")}
-            width={2048}
-            height={1040}
+            width={2560}
+            height={1305}
             className="h-full w-full object-cover"
             decoding="async"
             draggable={false}
@@ -44,11 +44,11 @@ export function ApiKeysStep({ goNext }: StepProps) {
           <div
             data-testid="api-keys-marker"
             aria-hidden="true"
-            className="pointer-events-none absolute left-[0.3%] top-[48.7%] h-[5.6%] w-[10.7%] rounded-md border-2 border-primary bg-primary/10 shadow-[0_0_0_3px_rgba(231,196,110,0.18)]"
+            className="pointer-events-none absolute left-[0.3%] top-[49.5%] h-[3.1%] w-[10.5%] rounded-md border-2 border-primary bg-primary/10 shadow-[0_0_0_3px_rgba(231,196,110,0.18)]"
           />
           <span
             aria-hidden="true"
-            className="pointer-events-none absolute left-[10.2%] top-[47.2%] flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground shadow-lg"
+            className="pointer-events-none absolute left-[10.1%] top-[48.5%] flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground shadow-lg"
           >
             1
           </span>
@@ -56,11 +56,11 @@ export function ApiKeysStep({ goNext }: StepProps) {
           <div
             data-testid="voice-mode-marker"
             aria-hidden="true"
-            className="pointer-events-none absolute left-[83.4%] top-[8.2%] h-[6.2%] w-[15.8%] rounded-md border-2 border-primary bg-primary/10 shadow-[0_0_0_3px_rgba(231,196,110,0.18)]"
+            className="pointer-events-none absolute left-[84.8%] top-[4.3%] h-[3.2%] w-[14.4%] rounded-md border-2 border-primary bg-primary/10 shadow-[0_0_0_3px_rgba(231,196,110,0.18)]"
           />
           <span
             aria-hidden="true"
-            className="pointer-events-none absolute left-[82.6%] top-[6.7%] flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground shadow-lg"
+            className="pointer-events-none absolute left-[84%] top-[3.5%] flex h-6 w-6 items-center justify-center rounded-full bg-primary text-xs font-bold text-primary-foreground shadow-lg"
           >
             2
           </span>

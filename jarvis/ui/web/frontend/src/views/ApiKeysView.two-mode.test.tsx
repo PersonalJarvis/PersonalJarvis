@@ -45,6 +45,7 @@ vi.mock("@/hooks/useVoiceMode", () => ({
   useVoiceMode: () => ({
     mode: mockVoiceMode,
     realtimeAvailable: mockRealtimeAvailable,
+    statusKnown: true,
     sessionActive: mockSessionActive,
     activeSessionMode: mockActiveSessionMode,
     activeSessionProvider: "",
@@ -69,6 +70,22 @@ afterEach(() => {
 });
 
 describe("ApiKeysView two-mode", () => {
+  it("keeps the mode switch in the header and scrolls its context with providers", () => {
+    render(<ApiKeysView />);
+
+    const headerControl = screen.getByTestId("voice-engine-header-control");
+    const providerScroll = screen.getByTestId("api-keys-provider-scroll");
+    const context = screen.getByTestId("voice-engine-context");
+    const categoryTabs = screen.getByTestId("api-keys-category-tabs");
+
+    expect(headerControl.closest("header")).not.toBeNull();
+    expect(providerScroll.contains(context)).toBe(true);
+    expect(providerScroll.className).toContain("min-h-0");
+    expect(categoryTabs.className).toContain("overflow-x-auto");
+    expect(screen.getByRole("tablist").className).toContain("min-w-max");
+    expect(screen.getAllByTestId("voice-engine-runtime-status")).toHaveLength(1);
+  });
+
   it("defaults to Pipeline mode showing Brain/Voice/Subagents tabs, no Realtime tab", () => {
     render(<ApiKeysView />);
     expect(screen.getByRole("tab", { name: /brain/i })).toBeTruthy();

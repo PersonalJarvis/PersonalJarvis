@@ -1,6 +1,6 @@
 /**
  * Component tests for the "Personal recommendation" panel in the voice-engine
- * header band (RecommendedSetupPanel).
+ * scrollable engine context (RecommendedSetupPanel).
  *
  * The panel is a presentation-only hint (AP-21) for the REALTIME tab set: it
  * lists the maintainer's pick for Realtime / Tool Model / Jarvis-Agents, so it
@@ -71,6 +71,11 @@ describe("ApiKeysView recommended-setup panel", () => {
   it("lists the three maintainer picks once the Realtime tab set is viewed", () => {
     render(<ApiKeysView />);
     openRealtimeView();
+    expect(
+      screen
+        .getByTestId("api-keys-provider-scroll")
+        .contains(screen.getByTestId("recommended-setup-panel")),
+    ).toBe(true);
     expect(panel().getByText("OpenAI Realtime")).toBeTruthy();
     expect(panel().getByText("Gemini 3.5 Flash")).toBeTruthy();
     expect(panel().getByText("ChatGPT or Claude Max subscription")).toBeTruthy();
