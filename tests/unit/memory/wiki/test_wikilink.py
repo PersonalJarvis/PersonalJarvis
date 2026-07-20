@@ -76,6 +76,43 @@ def test_extract_adjacent_links() -> None:
     assert extract_wikilinks("[[a]][[b]]") == ("a", "b")
 
 
+def test_extract_ignores_inline_code_spans() -> None:
+    # Quoted example links in docs (schema.md style) are not live links.
+    body = "Use `[[wikilinks]]` or the short form `[[ruben]]` in prose."
+    assert extract_wikilinks(body) == ()
+
+
+def test_extract_ignores_fenced_code_blocks() -> None:
+    body = (
+        "Log format:\n"
+        "```\n"
+        "- pages touched: [[entities/x]], [[concepts/y]]\n"
+        "```\n"
+        "Real link: [[alice]].\n"
+    )
+    assert extract_wikilinks(body) == ("alice",)
+
+
+def test_extract_lone_open_bracket_in_code_span_does_not_swallow_prose() -> None:
+    # Regression: a bare ``[[`` inside inline code once absorbed the whole
+    # sentence up to the next real closing ``]]``, creating a phantom link
+    # target that was half a paragraph long.
+    body = (
+        "typing `[[` should surface candidates instantly, and all sit on "
+        "top of [[Markdown as Foundation]]. The [[Graph View Visualisation]] "
+        "becomes a diagnostic."
+    )
+    assert extract_wikilinks(body) == (
+        "Markdown as Foundation",
+        "Graph View Visualisation",
+    )
+
+
+def test_extract_tilde_fence_and_unclosed_fence_ignored() -> None:
+    body = "~~~\n[[inside]]\n~~~\n[[real]]\n```\n[[dangling]]"
+    assert extract_wikilinks(body) == ("real",)
+
+
 def test_extract_link_with_internal_whitespace_preserved() -> None:
     # Internal whitespace inside the slug is preserved (no normalisation).
     # The schema discourages it but the parser tolerates anything that is

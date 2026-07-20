@@ -36,6 +36,43 @@ SEARCHABLE_DIRS: tuple[str, ...] = ("entities", "concepts", "projects", "session
 # A leading ``+`` (one-or-more) prevents matching ``[[]]``.
 _WIKILINK_RE = re.compile(r"(?<!\\)\[\[([^\]\n]+)\]\]")
 
+# Code is documentation, not linkage: Obsidian renders neither inline code
+# spans nor fenced blocks as live links, and the vault's own ``schema.md``
+# quotes example links (`` `[[wikilinks]]` ``) in code throughout. Matching
+# inside code once produced phantom graph nodes for every quoted example —
+# including one whose "target" was half a sentence, because a lone ``[[``
+# inside an inline span absorbed all prose up to the next real ``]]``.
+_INLINE_CODE_RE = re.compile(r"(`+)([^`\n]+?)\1")
+_FENCE_OPEN_RE = re.compile(r"^[ \t]{0,3}(`{3,}|~{3,})")
+
+
+def _blank_code_regions(body: str) -> str:
+    """Replace fenced code blocks and inline code spans with spaces.
+
+    Offsets and newlines are preserved so callers that search the original
+    body for context (snippets, backlinks) stay aligned.
+    """
+    lines: list[str] = []
+    fence_char = ""
+    for line in body.splitlines(keepends=True):
+        match = _FENCE_OPEN_RE.match(line)
+        if fence_char:
+            lines.append(_blank_keep_newline(line))
+            if match and match.group(1)[0] == fence_char:
+                fence_char = ""
+            continue
+        if match:
+            fence_char = match.group(1)[0]
+            lines.append(_blank_keep_newline(line))
+            continue
+        lines.append(_INLINE_CODE_RE.sub(lambda m: " " * len(m.group(0)), line))
+    return "".join(lines)
+
+
+def _blank_keep_newline(line: str) -> str:
+    stripped = line.rstrip("\r\n")
+    return " " * len(stripped) + line[len(stripped):]
+
 
 def extract_wikilinks(body: str) -> tuple[str, ...]:
     """Return all wikilink targets in ``body`` in source order.
@@ -43,11 +80,12 @@ def extract_wikilinks(body: str) -> tuple[str, ...]:
     The returned strings are in *canonical form*: the alias (the part
     after ``|``) is stripped, but any directory prefix is preserved.
     Duplicates are kept — a page that references ``[[ruben]]`` twice
-    yields a 2-tuple. Escaped links (``\\[[ignored]]``) and empty links
-    (``[[]]``) are not returned.
+    yields a 2-tuple. Escaped links (``\\[[ignored]]``), empty links
+    (``[[]]``), and links inside inline code or fenced code blocks are
+    not returned.
     """
     out: list[str] = []
-    for match in _WIKILINK_RE.finditer(body):
+    for match in _WIKILINK_RE.finditer(_blank_code_regions(body)):
         target = _canonicalise(match.group(1))
         if target:
             out.append(target)

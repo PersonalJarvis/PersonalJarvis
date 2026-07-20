@@ -406,9 +406,11 @@ def test_starter_vault_pages_are_readable_and_connected_in_graph(
         ).json()
 
     assert graph["ok"] is True
-    assert len(graph["nodes"]) == 12
+    # Template scaffolding stays out of the graph (10 of the 12 tree pages).
+    assert len(graph["nodes"]) == 10
     node_ids = {node["id"] for node in graph["nodes"]}
     assert {"README", "Home", "Personal Knowledge Management"} <= node_ids
+    assert node_ids.isdisjoint({"Daily Note", "Note Template"})
     edge_pairs = {(edge["source"], edge["target"]) for edge in graph["edges"]}
     assert ("Home", "Personal Knowledge Management") in edge_pairs
     assert ("Home", "README") in edge_pairs
@@ -419,6 +421,51 @@ def test_starter_vault_pages_are_readable_and_connected_in_graph(
     assert note_page["ok"] is True
     assert note_page["path"] == "10-notes/Personal Knowledge Management.md"
     assert {item["slug"] for item in backlinks["backlinks"]} == {"Home"}
+
+
+def test_template_placeholder_titles_fall_back_to_filename(tmp_path: Path) -> None:
+    """Obsidian template files carry unrendered ``{{...}}`` placeholders as
+    their H1. The tree must show the filename instead of the placeholder,
+    and the templates folder must not leak nodes or phantom link targets
+    into the graph."""
+    vault = tmp_path / "vault"
+    templates = vault / "99-templates"
+    templates.mkdir(parents=True)
+    (templates / "Daily Note.md").write_text(
+        "---\ntags: [daily]\ncreated: {{date:YYYY-MM-DD}}\n---\n\n"
+        "# {{date:dddd, MMMM Do YYYY}}\n\n## Plan\n\n-\n",
+        encoding="utf-8",
+    )
+    (templates / "Note Template.md").write_text(
+        "---\ntags: []\n---\n\n# {{title}}\n\n## See Also\n\n- [[…]]\n- [[…]]\n",
+        encoding="utf-8",
+    )
+    _write_page(
+        vault,
+        "entities",
+        "alice",
+        page_type="entity",
+        body="# Alice\n\n## Summary\nA person.\n",
+    )
+
+    app = _make_app(vault)
+    with TestClient(app) as client:
+        tree = client.get("/api/wiki/tree").json()
+        graph = client.get("/api/wiki/graph").json()
+
+    folders_by_name = {folder["name"]: folder for folder in tree["folders"]}
+    template_titles = {
+        f["slug"]: f["title"] for f in folders_by_name["99-templates"]["files"]
+    }
+    assert template_titles == {
+        "Daily Note": "Daily Note",
+        "Note Template": "Note Template",
+    }
+
+    assert graph["ok"] is True
+    assert {node["id"] for node in graph["nodes"]} == {"alice"}
+    assert graph["edges"] == []
+    assert graph["broken"] == []  # no phantom "…" targets from template bodies
 
 
 # ----------------------------------------------------------------------

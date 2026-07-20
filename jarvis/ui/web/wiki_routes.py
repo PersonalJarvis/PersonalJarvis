@@ -78,6 +78,12 @@ _PAGE_DIRS: tuple[tuple[str, str], ...] = (
 _EXCLUDED_PAGE_DIRS: frozenset[str] = frozenset(
     {"_archive", "attachments", "90-attachments"}
 )
+# Template scaffolding stays browsable in the tree but never enters the
+# graph: its bodies are unrendered placeholders (``{{title}}``, ``[[…]]``),
+# so every "link" would materialise as a phantom node.
+_TEMPLATE_DIRS: frozenset[str] = frozenset(
+    {"templates", "_templates", "99-templates"}
+)
 _ROOT_FOLDER_NAME = "root"
 
 # Snippet window (chars) for backlink context extraction around the wikilink.
@@ -156,6 +162,21 @@ def _title_of(page: WikiPage) -> str:
         if stripped.startswith("# "):
             return stripped[2:].strip()
     return page.slug.replace("-", " ").replace("_", " ").title()
+
+
+def _display_title(page: WikiPage) -> str:
+    """Frontmatter title, else H1, else humanised slug — never a placeholder.
+
+    Template pages carry unrendered Obsidian placeholders (``{{title}}``,
+    ``{{date:dddd, MMMM Do YYYY}}``) as their H1; showing those verbatim in
+    the tree or graph reads as junk, so any candidate containing ``{{``
+    falls through to the next source.
+    """
+    for candidate in (str(page.frontmatter.get("title") or ""), _title_of(page)):
+        candidate = candidate.strip()
+        if candidate and "{{" not in candidate:
+            return candidate
+    return _human_title_from_slug(page.slug)
 
 
 def _kind_of(page: WikiPage) -> str:
@@ -289,7 +310,7 @@ def _tree_from_visible_pages(
         files = [
             {
                 "slug": item.page.slug,
-                "title": item.page.frontmatter.get("title") or _title_of(item.page),
+                "title": _display_title(item.page),
                 "mtime": item.mtime,
                 "size": item.size,
             }
@@ -393,7 +414,7 @@ async def get_page(slug: str, request: Request) -> dict[str, Any]:
         size_bytes = len(page.body.encode("utf-8"))
 
     rel_path = _relative_to_vault(page_path, vault_root)
-    title = page.frontmatter.get("title") or _title_of(page)
+    title = _display_title(page)
     body_md = page.body
     words = len(body_md.split())
 
@@ -432,7 +453,14 @@ async def get_graph(request: Request) -> dict[str, Any]:
         log.warning("wiki_route_failed route=/graph error=%s", exc)
         return {"ok": False, "error": "graph build failed"}
 
-    pages = [item.page for item in visible]
+    pages = [
+        item.page
+        for item in visible
+        if not (
+            len(item.relative_path.parts) > 1
+            and item.relative_path.parts[0].casefold() in _TEMPLATE_DIRS
+        )
+    ]
 
     nodes: list[dict[str, Any]] = []
     known_slugs: set[str] = set()
@@ -445,7 +473,7 @@ async def get_graph(request: Request) -> dict[str, Any]:
             {
                 "id": slug,
                 "kind": _kind_of(page),
-                "title": page.frontmatter.get("title") or _title_of(page),
+                "title": _display_title(page),
             }
         )
 
@@ -507,7 +535,7 @@ async def get_backlinks(slug: str, request: Request) -> dict[str, Any]:
         out.append(
             {
                 "slug": src.slug,
-                "title": src.frontmatter.get("title") or _title_of(src),
+                "title": _display_title(src),
                 "snippet": snippet,
             }
         )
