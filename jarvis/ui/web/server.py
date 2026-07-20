@@ -27,6 +27,7 @@ from loguru import logger
 from pydantic import ValidationError
 
 from jarvis import __version__
+from jarvis.core.branding import CONFIG_FILE_NAME
 from jarvis.core.bus import EventBus, get_default_bus
 from jarvis.core.config import JarvisConfig
 from jarvis.core.events import (
@@ -2801,7 +2802,7 @@ class WebServer:
         That section is NOT in the Pydantic tree (see assumption A-2 in the
         Phase-7 bootstrap), hence tomllib directly.
         """
-        toml_path = Path("jarvis.toml")
+        toml_path = Path(CONFIG_FILE_NAME)
         if not toml_path.exists():
             return {}
         try:

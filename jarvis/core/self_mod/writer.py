@@ -45,6 +45,7 @@ from pydantic import ValidationError as PydanticValidationError
 from tomlkit import TOMLDocument
 from tomlkit.items import AbstractTable
 
+from jarvis.core.branding import CONFIG_FILE_NAME
 from jarvis.core.bus import EventBus
 from jarvis.core.config import (
     JarvisConfig,
@@ -78,7 +79,7 @@ _LOG = logging.getLogger(__name__)
 
 # Plan-§AD-6 / §7.2: Backup directory lives directly next to `jarvis.toml`.
 DEFAULT_BACKUP_SUBDIR = ".backups"
-BACKUP_FILE_GLOB = "jarvis.toml.*.bak"
+BACKUP_FILE_GLOB = f"{CONFIG_FILE_NAME}.*.bak"
 BACKUP_TS_FORMAT = "%Y%m%dT%H%M%S_%fZ"
 
 
@@ -526,7 +527,7 @@ class AtomicConfigWriter:
         # mkstemp writes the final .bak file directly; uniqueness is OS-guaranteed.
         fd, target_name = tempfile.mkstemp(
             suffix=".bak",
-            prefix=f"jarvis.toml.{ts}.",
+            prefix=f"{CONFIG_FILE_NAME}.{ts}.",
             dir=str(self._backup_dir),
         )
         target = Path(target_name)

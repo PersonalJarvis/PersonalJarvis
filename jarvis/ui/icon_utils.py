@@ -17,6 +17,26 @@ from typing import Any
 
 from loguru import logger
 
+from jarvis.core.branding import (
+    LINUX_DESKTOP_ENTRY_FILE_NAME as LINUX_DESKTOP_ENTRY_NAME,
+)
+from jarvis.core.branding import (
+    LINUX_WM_CLASS,
+    WINDOWS_BRANDED_LAUNCHER_DIR_NAME,
+)
+from jarvis.core.branding import (
+    PRODUCT_NAME as APP_DISPLAY_NAME,
+)
+from jarvis.core.branding import (
+    WINDOWS_APP_USER_MODEL_ID as APP_USER_MODEL_ID,
+)
+from jarvis.core.branding import (
+    WINDOWS_BRANDED_LAUNCHER_FILE_NAME as BRANDED_LAUNCHER_EXE_NAME,
+)
+from jarvis.core.branding import (
+    WINDOWS_SHORTCUT_FILE_NAME as START_MENU_SHORTCUT_NAME,
+)
+
 _WM_SETICON = 0x0080
 _ICON_SMALL = 0
 _ICON_BIG = 1
@@ -33,8 +53,6 @@ _LR_DEFAULTSIZE = 0x00000040
 _GCLP_HICON = -14
 _GCLP_HICONSM = -34
 
-APP_USER_MODEL_ID = "PersonalJarvis.PersonalJarvis"
-
 # The friendly name Windows shows on taskbar hover and in the jump-list header.
 # This is a *different* layer from the AUMID grouping key above: the key only
 # groups the button. The name is resolved by matching the running window's AUMID
@@ -44,11 +62,8 @@ APP_USER_MODEL_ID = "PersonalJarvis.PersonalJarvis"
 # (``pythonw.exe`` -> "Python"), which is the "taskbar says Python" symptom.
 # (The HKCU ``DisplayName`` registered below is the *toast-notification*
 # identity, a separate surface — it does NOT name the taskbar button.)
-APP_DISPLAY_NAME = "Personal Jarvis"
-
 # Start-Menu shortcut whose *file name* becomes the taskbar button name. The
 # launcher module is the relaunch target so a fresh click reopens the app.
-START_MENU_SHORTCUT_NAME = "Personal Jarvis.lnk"
 _LAUNCHER_MODULE = "jarvis.ui.web.launcher"
 # IID_IPropertyStore — the COM interface for reading/writing a .lnk's AUMID.
 _IID_IPROPERTYSTORE = "{886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99}"
@@ -62,7 +77,6 @@ _IID_IPROPERTYSTORE = "{886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99}"
 # the Python logo on the taskbar no matter how much window-icon work we do; the
 # ONLY fix is to launch from an exe whose embedded icon is the mascot. See
 # ``ensure_branded_launcher_exe`` + ``maybe_reexec_through_branded_launcher``.
-BRANDED_LAUNCHER_EXE_NAME = "PersonalJarvis.exe"
 # Set in the child's env when we re-exec through the branded exe, so the child
 # does not re-exec again (loop guard).
 _BRANDED_LAUNCH_ENV = "JARVIS_BRANDED_LAUNCH"
@@ -233,7 +247,7 @@ def _user_launcher_dir() -> Path | None:
     local = os.environ.get("LOCALAPPDATA")
     if not local:
         return None
-    return Path(local) / "PersonalJarvis" / "bin"
+    return Path(local) / WINDOWS_BRANDED_LAUNCHER_DIR_NAME / "bin"
 
 
 def _branded_launcher_candidates() -> list[Path]:
@@ -1005,9 +1019,6 @@ def set_window_icon_for_pid(pid: int, ico_path: Path) -> bool:
 # (jarvis/autostart/linux.py). Keep the two in lock-step: the desktop maps a
 # running window to its launcher entry — and thus shows the entry's ``Icon=`` on
 # the taskbar/dock — only when the window's WM_CLASS matches ``StartupWMClass``.
-LINUX_WM_CLASS = "personal-jarvis"
-
-
 def pin_linux_wm_class(name: str = LINUX_WM_CLASS) -> bool:
     """Pin the X11/Wayland window-class of subsequently-created windows.
 
@@ -1041,9 +1052,6 @@ def pin_linux_wm_class(name: str = LINUX_WM_CLASS) -> bool:
 # ``$XDG_DATA_HOME/applications``. The autostart entry under
 # ``~/.config/autostart`` is a different surface (login launch only) and is
 # NOT consulted for icon binding or app search.
-LINUX_DESKTOP_ENTRY_NAME = "personal-jarvis.desktop"
-
-
 def _default_linux_applications_dir() -> Path:
     xdg = os.environ.get("XDG_DATA_HOME", "").strip()
     base = Path(xdg) if xdg else Path.home() / ".local" / "share"

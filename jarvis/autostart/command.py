@@ -18,6 +18,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from jarvis.core.branding import MACOS_APP_DIR_NAME
 from jarvis.core.config import PROJECT_ROOT
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
@@ -88,7 +89,7 @@ def resolve_launch_spec(cfg: object | None = None) -> LaunchSpec:
         # identity used by Spotlight and manual launches. Never fall back to a
         # raw interpreter: that would create a second TCC identity and make
         # grants appear to vanish. Missing bundles fail closed until repaired.
-        bundle = Path.home() / "Applications" / "Personal Jarvis.app"
+        bundle = Path.home() / "Applications" / MACOS_APP_DIR_NAME
         program = "/usr/bin/open"
         try:
             from jarvis.setup.macos_app_bundle import (

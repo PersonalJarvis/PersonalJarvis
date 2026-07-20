@@ -44,6 +44,7 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
+from jarvis.core.branding import OFFICIAL_REPO_URL
 from jarvis.core.config import get_secret
 
 log = logging.getLogger(__name__)
@@ -69,7 +70,7 @@ _ENV_KEY = "DISCORD_FEEDBACK_WEBHOOK_URL"
 # Public fallback for every downloader when the operator-only Discord webhook
 # is not configured (the default — that credential belongs to the project
 # maintainer, not to the end user running this install).
-_GITHUB_ISSUES_URL = "https://github.com/PersonalJarvis/PersonalJarvis/issues"
+_GITHUB_ISSUES_URL = f"{OFFICIAL_REPO_URL}/issues"
 
 
 # ----------------------------------------------------------------------

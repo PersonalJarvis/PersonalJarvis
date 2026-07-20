@@ -50,7 +50,11 @@ $ErrorActionPreference = 'Stop'
 [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 
 # ------------------------------------------------------------------- pins
-$EXPECTED_REPO            = 'PersonalJarvis/PersonalJarvis'
+$EXPECTED_REPO = "$env:JARVIS_OFFICIAL_REPO_SLUG"
+if (-not $EXPECTED_REPO) { $EXPECTED_REPO = 'PersonalJarvis/PersonalJarvis' }
+if ($EXPECTED_REPO -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
+    throw 'JARVIS_OFFICIAL_REPO_SLUG must be an exact owner/repository slug'
+}
 $EXPECTED_WORKFLOW_PATH   = '.github/workflows/sign-installer.yml'
 $EXPECTED_OIDC_ISSUER     = 'https://token.actions.githubusercontent.com'
 $COSIGN_VERSION           = 'v2.4.1'
@@ -159,7 +163,8 @@ $EXPECTED_SLSA_SOURCE_URI = "github.com/$EXPECTED_REPO"
 # The constant below is the actual source of truth, baked into this signed
 # verifier. Drift means either the layout was modified or the pin is stale -
 # both are fail-closed.
-$EXPECTED_INTOTO_IDENTITY_REGEXP = '^https://github\.com/PersonalJarvis/PersonalJarvis/\.github/workflows/sign-installer\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._-]+)?$'
+$ExpectedRepoRegex = [regex]::Escape($EXPECTED_REPO)
+$EXPECTED_INTOTO_IDENTITY_REGEXP = "^https://github\.com/$ExpectedRepoRegex/\.github/workflows/sign-installer\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._-]+)?$"
 
 # Filename of the SLSA L3 provenance attestation. The release uploads
 # this file under exactly this name; SA-2 owns the workflow contract.

@@ -42,6 +42,7 @@ if sys.platform == "win32":
 
 from filelock import FileLock, Timeout
 
+from jarvis.core.branding import PRODUCT_NAME as WINDOW_TITLE
 from jarvis.core.config import DATA_DIR, JarvisConfig, load_config
 
 if TYPE_CHECKING:
@@ -54,8 +55,6 @@ if TYPE_CHECKING:
 
 LOCK_FILE_PATH = DATA_DIR / "jarvis.lock"
 META_FILE_PATH = DATA_DIR / ".jarvis-running"
-WINDOW_TITLE = "Personal Jarvis"
-
 #: Timeout for the initial lock acquire, in seconds. 0 = non-blocking,
 #: so we detect a running process immediately and focus it instead of
 #: waiting silently.

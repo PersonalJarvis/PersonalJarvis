@@ -39,6 +39,8 @@ from urllib.parse import urlsplit
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
+from jarvis.core.branding import OFFICIAL_REPO_URL
+
 log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/socials", tags=["socials"])
@@ -72,7 +74,7 @@ def _seed_entries() -> list[dict[str, Any]]:
     """
     raw = [
         ("discord", "Discord", "https://discord.gg/x7USduHxbc"),
-        ("github", "GitHub (Repo)", "https://github.com/PersonalJarvis/PersonalJarvis"),
+        ("github", "GitHub (Repo)", OFFICIAL_REPO_URL),
         ("github", "GitHub (Profile)", "https://github.com/PersonalJarvis"),
         # X: the project's public X presence. Maintainer directive 2026-07-18:
         # the former @PersonalJarvis account is defunct; the project posts from

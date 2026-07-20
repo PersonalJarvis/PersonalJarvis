@@ -36,13 +36,22 @@ import sys
 import tempfile
 from pathlib import Path
 
+from jarvis.core.branding import (
+    MACOS_APP_DIR_NAME as APP_DIR_NAME,
+)
+from jarvis.core.branding import (
+    MACOS_APP_NAME as APP_NAME,
+)
+from jarvis.core.branding import (
+    MACOS_BUNDLE_ID as BUNDLE_ID,
+)
+from jarvis.core.branding import (
+    MACOS_EXECUTABLE_NAME,
+)
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
 log = logging.getLogger(__name__)
 
-APP_NAME = "Personal Jarvis"
-APP_DIR_NAME = f"{APP_NAME}.app"
-BUNDLE_ID = "com.personal-jarvis.desktop"
 # 2: stub launcher sets only LC_CTYPE (BUG-079 — LC_ALL leaked a de_DE
 # LC_NUMERIC into native libs; libvosk then emitted malformed JSON). Bumping
 # forces existing bundles through a rebuild on the next ensure pass.
@@ -82,12 +91,12 @@ def last_error() -> str | None:
     return _LAST_ERROR
 
 
-_MIC_USAGE = "Personal Jarvis listens on this microphone for your wake word and voice commands."
+_MIC_USAGE = f"{APP_NAME} listens on this microphone for your wake word and voice commands."
 _SCREEN_CAPTURE_USAGE = (
-    "Personal Jarvis captures the screen only when you ask it to see or control applications."
+    f"{APP_NAME} captures the screen only when you ask it to see or control applications."
 )
 _APPLE_EVENTS_USAGE = (
-    "Personal Jarvis lowers Music/Spotify volume while you dictate and restores it afterwards."
+    f"{APP_NAME} lowers Music/Spotify volume while you dictate and restores it afterwards."
 )
 
 
@@ -353,7 +362,7 @@ def _write_cross_platform_fixture_bundle(bundle: Path) -> Path:
     resources = contents / "Resources"
     macos_dir.mkdir(parents=True)
     resources.mkdir(parents=True)
-    executable_name = "PersonalJarvis"
+    executable_name = MACOS_EXECUTABLE_NAME
     executable = macos_dir / executable_name
     executable.write_bytes(b"\xcf\xfa\xed\xfeJARVIS_TEST_FIXTURE\n")
     executable.chmod(executable.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
@@ -523,7 +532,7 @@ def _build_native_bundle(install_root: Path, work_dir: Path) -> Path:
     macos_dir.mkdir(parents=True)
     resources.mkdir(parents=True)
 
-    executable_name = "PersonalJarvis"
+    executable_name = MACOS_EXECUTABLE_NAME
     plist = _bundle_plist()
     plist["CFBundleExecutable"] = executable_name
     icon_stem = _try_build_icns(resources)

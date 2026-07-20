@@ -17,6 +17,12 @@ import sys
 import sysconfig
 from pathlib import Path
 
+from jarvis.core.branding import (
+    DESKTOP_OUTPUT_MIRROR_DIR_NAME,
+    FALLBACK_USER_DATA_DIR_NAME,
+    WINDOWS_USER_DATA_DIR_NAME,
+)
+
 
 def user_data_dir() -> Path:
     """App data directory in the user context.
@@ -29,8 +35,8 @@ def user_data_dir() -> Path:
     """
     base = os.environ.get("LOCALAPPDATA")
     if base:
-        return Path(base) / "Jarvis"
-    return Path.home() / ".jarvis"
+        return Path(base) / WINDOWS_USER_DATA_DIR_NAME
+    return Path.home() / FALLBACK_USER_DATA_DIR_NAME
 
 
 def user_skills_dir() -> Path:
@@ -150,7 +156,7 @@ def user_outputs_dir() -> Path:
 
 def desktop_mirror_dir() -> Path:
     """Desktop junction root for direct access to sub-agent outputs."""
-    return Path.home() / "Desktop" / "Jarvis-Output"
+    return Path.home() / "Desktop" / DESKTOP_OUTPUT_MIRROR_DIR_NAME
 
 
 def ensure_session_output_dir(slug: str) -> tuple[Path, Path]:

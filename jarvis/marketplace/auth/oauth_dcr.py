@@ -33,6 +33,7 @@ from urllib.parse import urlencode, urlsplit, urlunsplit
 
 import httpx
 
+from jarvis.core.branding import OFFICIAL_REPO_URL, PRODUCT_NAME
 from jarvis.marketplace.auth.base import (
     AuthSession,
     FlowResult,
@@ -63,8 +64,8 @@ class DcrConfig:
     fallback_authorization_endpoint: str | None = None
     fallback_token_endpoint: str | None = None
     fallback_registration_endpoint: str | None = None
-    client_name: str = "Personal Jarvis"
-    client_uri: str = "https://github.com/PersonalJarvis/PersonalJarvis"
+    client_name: str = PRODUCT_NAME
+    client_uri: str = OFFICIAL_REPO_URL
     timeout_seconds: int = 10
 
 

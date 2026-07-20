@@ -7,9 +7,14 @@
  * fallback chain in {@link shareToX}.
  */
 import { toBlob } from "html-to-image";
+import {
+  OFFICIAL_REPO_LABEL,
+  OFFICIAL_REPO_URL,
+  PRODUCT_NAME,
+} from "@/lib/branding";
 
-export const REPO_URL = "https://github.com/PersonalJarvis/PersonalJarvis";
-export const REPO_LABEL = "github.com/PersonalJarvis/PersonalJarvis";
+export const REPO_URL = OFFICIAL_REPO_URL;
+export const REPO_LABEL = OFFICIAL_REPO_LABEL;
 
 export interface ShareStats {
   userWords: number;
@@ -88,7 +93,7 @@ export async function copyImageToClipboard(
 export function buildShareText(stats: ShareStats): string {
   const nf = (n: number) => n.toLocaleString("en-US");
   return (
-    `I've spoken ${nf(stats.userWords)} words to my Personal Jarvis across ` +
+    `I've spoken ${nf(stats.userWords)} words to my ${PRODUCT_NAME} across ` +
     `${nf(stats.sessionCount)} conversations — ${stats.conversationHours.toFixed(1)} h of voice. ` +
     `Build your own:`
   );

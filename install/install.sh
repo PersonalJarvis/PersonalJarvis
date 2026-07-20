@@ -17,7 +17,16 @@
 
 set -euo pipefail
 
-REPO_URL="${JARVIS_INSTALL_REPO:-https://github.com/PersonalJarvis/PersonalJarvis.git}"
+# Standalone bootstrap projections of jarvis/core/branding.py. The branding
+# contract test rejects drift because this script runs before Python is installed.
+OFFICIAL_REPO_SLUG="${JARVIS_OFFICIAL_REPO_SLUG:-PersonalJarvis/PersonalJarvis}"
+if [[ ! "$OFFICIAL_REPO_SLUG" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+    printf 'JARVIS_OFFICIAL_REPO_SLUG must be an exact owner/repository slug\n' >&2
+    exit 2
+fi
+REPO_URL="${JARVIS_INSTALL_REPO:-https://github.com/${OFFICIAL_REPO_SLUG}.git}"
+CONFIG_FILE_NAME="jarvis.toml"
+MACOS_AUTOSTART_LABEL="com.personal-jarvis.autostart"
 BRANCH="${JARVIS_INSTALL_REF:-main}"
 INSTALL_DIR="${JARVIS_INSTALL_DIR:-$HOME/.personal-jarvis}"
 PREREQUISITE_MODE="${JARVIS_INSTALL_PREREQS:-ask}"
@@ -1034,7 +1043,7 @@ salvage_reclone() {
     note "moved the old directory to $stale_backup (nothing was deleted)"
     fetch_payload || exit 1
     local item
-    for item in data jarvis.toml .env; do
+    for item in data "$CONFIG_FILE_NAME" .env; do
         if [ -e "$stale_backup/$item" ] && [ ! -e "$INSTALL_DIR/$item" ]; then
             if cp -R "$stale_backup/$item" "$INSTALL_DIR/$item" 2>/dev/null; then
                 note "kept your $item from the previous install"
@@ -1118,7 +1127,7 @@ if [ -x "$VENV_PYTHON" ]; then
         note 'stopped the running Jarvis app for the update'
     fi
     if [ "$(uname -s 2>/dev/null)" = "Darwin" ]; then
-        launchctl unload "$HOME/Library/LaunchAgents/com.personal-jarvis.autostart.plist" >/dev/null 2>&1 || true
+        launchctl unload "$HOME/Library/LaunchAgents/${MACOS_AUTOSTART_LABEL}.plist" >/dev/null 2>&1 || true
     fi
 fi
 

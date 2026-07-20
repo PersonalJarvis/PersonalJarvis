@@ -28,13 +28,21 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
-log = logging.getLogger(__name__)
-
-MANAGED_MARKER = ".jarvis-managed-install"
-WINDOWS_UNINSTALL_SUBKEY = (
-    r"Software\Microsoft\Windows\CurrentVersion\Uninstall\PersonalJarvis"
+from jarvis.core.branding import (
+    LINUX_DESKTOP_ENTRY_FILE_NAME,
+    OFFICIAL_REPO_URL,
+    PRODUCT_NAME,
+    WINDOWS_APP_USER_MODEL_ID,
+    WINDOWS_SHORTCUT_FILE_NAME,
 )
-WINDOWS_APP_USER_MODEL_ID = "PersonalJarvis.PersonalJarvis"
+from jarvis.core.branding import (
+    MANAGED_INSTALL_MARKER as MANAGED_MARKER,
+)
+from jarvis.core.branding import (
+    WINDOWS_UNINSTALL_REGISTRY_SUBKEY as WINDOWS_UNINSTALL_SUBKEY,
+)
+
+log = logging.getLogger(__name__)
 
 
 def _windows_aumid_subkey(aumid: str) -> str:
@@ -127,13 +135,13 @@ def windows_uninstall_values(
         str(script),
     ]
     values: dict[str, str | int] = {
-        "DisplayName": "Personal Jarvis",
+        "DisplayName": PRODUCT_NAME,
         "DisplayVersion": version or _version(),
-        "Publisher": "Personal Jarvis contributors",
+        "Publisher": f"{PRODUCT_NAME} contributors",
         "InstallLocation": str(install_dir),
         "UninstallString": subprocess.list2cmdline(base),
         "QuietUninstallString": subprocess.list2cmdline([*base, "--yes"]),
-        "URLInfoAbout": "https://github.com/PersonalJarvis/PersonalJarvis",
+        "URLInfoAbout": OFFICIAL_REPO_URL,
         "NoModify": 1,
         "NoRepair": 1,
     }
@@ -210,7 +218,7 @@ def _remove_windows_desktop_integration(
     warnings: list[str] = []
     programs = programs_dir or _windows_programs_dir()
     if programs is not None:
-        shortcut = programs / "Personal Jarvis.lnk"
+        shortcut = programs / WINDOWS_SHORTCUT_FILE_NAME
         try:
             shortcut.unlink(missing_ok=True)
         except OSError as exc:
@@ -229,7 +237,9 @@ def _linux_applications_dir() -> Path:
 
 
 def _remove_linux_desktop_entry(applications_dir: Path | None = None) -> bool:
-    entry = (applications_dir or _linux_applications_dir()) / "personal-jarvis.desktop"
+    entry = (
+        applications_dir or _linux_applications_dir()
+    ) / LINUX_DESKTOP_ENTRY_FILE_NAME
     try:
         entry.unlink(missing_ok=True)
         return True
@@ -304,7 +314,7 @@ def ensure_desktop_integration(
         ):
             artifacts.append("installed_apps_registration")
         else:
-            warnings.append("could not register Personal Jarvis in Installed Apps")
+            warnings.append(f"could not register {PRODUCT_NAME} in Installed Apps")
     elif plat == "macos":
         try:
             from jarvis.setup import macos_app_bundle
@@ -427,7 +437,9 @@ def main(argv: list[str] | None = None) -> int:
     # Route log.warning detail to stderr so the installer can surface the real
     # failure reason; the --json contract stays: JSON is the last stdout line.
     logging.basicConfig(level=logging.INFO, stream=sys.stderr)
-    parser = argparse.ArgumentParser(description="Repair Personal Jarvis desktop registration")
+    parser = argparse.ArgumentParser(
+        description=f"Repair {PRODUCT_NAME} desktop registration"
+    )
     parser.add_argument("--install-dir", type=Path, default=None)
     parser.add_argument("--remove", action="store_true")
     parser.add_argument("--allow-unmanaged", action="store_true")
@@ -445,9 +457,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.json:
         print(json.dumps(report.to_dict(), sort_keys=True))
     elif report.ok:
-        print("Personal Jarvis desktop registration is ready.")
+        print(f"{PRODUCT_NAME} desktop registration is ready.")
     else:
-        print("Personal Jarvis desktop registration is incomplete.", file=sys.stderr)
+        print(f"{PRODUCT_NAME} desktop registration is incomplete.", file=sys.stderr)
         for warning in report.warnings:
             print(f"- {warning}", file=sys.stderr)
     return 0 if report.ok else 1

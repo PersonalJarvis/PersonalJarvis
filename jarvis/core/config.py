@@ -38,6 +38,7 @@ from jarvis.awareness.config import AwarenessConfig
 # wake-engine enum + the default phrase.
 from jarvis.speech.wake_constants import DEFAULT_WAKE_PHRASE, WAKE_ENGINES
 
+from .branding import CONFIG_FILE_NAME, KEYRING_SERVICE_NAME
 from .protocols import RiskTier
 
 # AckBrainConfig lives under jarvis.brain.ack_brain.config. We cannot
@@ -54,7 +55,7 @@ if TYPE_CHECKING:
 # ----------------------------------------------------------------------
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_CONFIG_FILE = PROJECT_ROOT / "jarvis.toml"
+DEFAULT_CONFIG_FILE = PROJECT_ROOT / CONFIG_FILE_NAME
 PROFILES_DIR = PROJECT_ROOT / "profiles"
 DATA_DIR = PROJECT_ROOT / "data"
 ASSETS_DIR = PROJECT_ROOT / "assets"
@@ -122,7 +123,7 @@ def resolve_config_path() -> Path:
         return Path(override.strip())
     return DEFAULT_CONFIG_FILE
 
-KEYRING_SERVICE = "personal-jarvis"
+KEYRING_SERVICE = KEYRING_SERVICE_NAME
 
 # Provider-secrets are intentionally kept out of TOML. Keep the accepted
 # Credential-Manager slots and ENV fallbacks in one place so pre-boot checks,

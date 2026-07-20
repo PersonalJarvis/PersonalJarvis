@@ -18,12 +18,17 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any
 
+from jarvis.core.branding import (
+    MACOS_APP_NAME as APP_NAME,
+)
+from jarvis.core.branding import (
+    MACOS_BUNDLE_ID as EXPECTED_BUNDLE_ID,
+)
+
 from . import PlatformName, detect_platform
 
 log = logging.getLogger(__name__)
 
-EXPECTED_BUNDLE_ID = "com.personal-jarvis.desktop"
-APP_NAME = "Personal Jarvis"
 _SYSTEM_SETTINGS_BUNDLE_ID = "com.apple.systempreferences"
 
 

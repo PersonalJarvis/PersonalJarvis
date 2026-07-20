@@ -58,7 +58,14 @@ function Stop-JarvisProcesses([string]$Root) {
     Write-Ok "Stopped the running Jarvis app ($($Procs.Count) process(es))."
 }
 
-$InstallDir = if ($env:JARVIS_INSTALL_DIR) { $env:JARVIS_INSTALL_DIR } else { Join-Path $env:USERPROFILE '.personal-jarvis' }
+# Standalone fallback projections of jarvis/core/branding.py. These remain
+# available even when a broken venv prevents importing the installed package.
+$DefaultInstallDirName = '.personal-jarvis'
+$WindowsShortcutFileName = 'Personal Jarvis.lnk'
+$WindowsUninstallRegistrySubkey = 'Software\Microsoft\Windows\CurrentVersion\Uninstall\PersonalJarvis'
+$WindowsAppUserModelId = 'PersonalJarvis.PersonalJarvis'
+
+$InstallDir = if ($env:JARVIS_INSTALL_DIR) { $env:JARVIS_INSTALL_DIR } else { Join-Path $env:USERPROFILE $DefaultInstallDirName }
 $VenvPython = Join-Path $InstallDir '.venv\Scripts\python.exe'
 
 Write-Step 'Uninstall Personal Jarvis'
@@ -87,11 +94,11 @@ if (Test-Path -LiteralPath $VenvPython) {
         if ($ans -ne 'yes') { Write-Note 'Cancelled.'; exit 1 }
     }
     if ($env:APPDATA) {
-        $Shortcut = Join-Path $env:APPDATA 'Microsoft\Windows\Start Menu\Programs\Personal Jarvis.lnk'
+        $Shortcut = Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\$WindowsShortcutFileName"
         Remove-Item -LiteralPath $Shortcut -Force -ErrorAction SilentlyContinue
     }
-    Remove-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Uninstall\PersonalJarvis' -Recurse -Force -ErrorAction SilentlyContinue
-    Remove-Item -LiteralPath 'Registry::HKEY_CURRENT_USER\Software\Classes\AppUserModelId\PersonalJarvis.PersonalJarvis' -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath "Registry::HKEY_CURRENT_USER\$WindowsUninstallRegistrySubkey" -Recurse -Force -ErrorAction SilentlyContinue
+    Remove-Item -LiteralPath "Registry::HKEY_CURRENT_USER\Software\Classes\AppUserModelId\$WindowsAppUserModelId" -Recurse -Force -ErrorAction SilentlyContinue
     Write-Ok 'Removed the desktop app registration.'
     $Rc = 0
 }

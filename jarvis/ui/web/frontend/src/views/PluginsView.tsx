@@ -22,6 +22,7 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { openExternalUrl } from "@/lib/openExternal";
 import { robustCopy } from "@/lib/clipboard";
+import { PRODUCT_NAME } from "@/lib/branding";
 
 // Wave hero image restored. The previous "kill image entirely" attempt
 // felt too flat; the CSS-only gradient lacked atmospheric depth. Edge
@@ -1415,7 +1416,7 @@ function OAuthRedirectDialog({
               <Loader2 className="h-8 w-8 animate-spin text-primary" />
               <div>
                 <p className="text-sm font-medium text-foreground">
-                  Authorize Personal Jarvis in your browser
+                  Authorize {PRODUCT_NAME} in your browser
                 </p>
                 <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
                   A browser tab opened for {pluginName}. Sign in if prompted,

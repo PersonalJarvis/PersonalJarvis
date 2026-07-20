@@ -27,13 +27,22 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
+
+from jarvis.core.branding import (  # noqa: E402 - script source path above
+    PRODUCT_NAME,
+    WINDOWS_APP_USER_MODEL_ID,
+    WINDOWS_SHORTCUT_FILE_NAME,
+)
+
 ICON_DIR = PROJECT_ROOT / "assets" / "icons"
 ICON_PATH = ICON_DIR / "jarvis.ico"
 RUN_BAT = PROJECT_ROOT / "run.bat"
 
-SHORTCUT_NAME = "Personal Jarvis.lnk"
-APP_USER_MODEL_ID = "PersonalJarvis.PersonalJarvis"
-DESCRIPTION = "Personal Jarvis — voice-controlled meta-orchestrator"
+SHORTCUT_NAME = WINDOWS_SHORTCUT_FILE_NAME
+APP_USER_MODEL_ID = WINDOWS_APP_USER_MODEL_ID
+DESCRIPTION = f"{PRODUCT_NAME} — voice-controlled meta-orchestrator"
 
 # Jarvis launcher module (pywebview window, no console)
 LAUNCHER_MODULE = "jarvis.ui.web.launcher"
@@ -56,9 +65,9 @@ def startup_path() -> Path:
 
 
 def generate_icon() -> None:
-    """Jarvis-Icon: Matte-Schwarz-Kreis, gelber Signal-Sparkle, sanftes Glow.
+    """Jarvis icon: matte black circle, yellow signal sparkle, soft glow.
 
-    Design entspricht dem Frontend-Theme (#0A0A0A + #FFD60A).
+    The design matches the frontend theme (#0A0A0A + #FFD60A).
     """
     ICON_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -74,7 +83,7 @@ def generate_icon() -> None:
 
     draw = ImageDraw.Draw(master)
 
-    # Hauptkreis — matte Schwarz mit gelbem Ring
+    # Main circle: matte black with a yellow ring.
     pad = 32
     draw.ellipse(
         (pad, pad, size - pad, size - pad),
