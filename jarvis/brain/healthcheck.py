@@ -42,7 +42,10 @@ class HealthResult:
 _PROBE_REQUEST = BrainRequest(
     messages=(BrainMessage(role="user", content="hi"),),
     max_tokens=8,
-    temperature=0.0,
+    # A connectivity probe does not need deterministic sampling. Some current
+    # reasoning/tool models accept only their default temperature of 1, so
+    # forcing 0 here turns a healthy provider into a false integration error.
+    temperature=1.0,
     stream=True,
 )
 

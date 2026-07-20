@@ -1,9 +1,10 @@
-"""OpenAI token-parameter retry (field bug: valid key read as "Not working").
+"""OpenAI-compatible parameter retries for explicit API capability rejections.
 
 Newer OpenAI models 400-reject the legacy ``max_tokens`` ("Use
 'max_completion_tokens' instead"); OpenAI-compatible servers often only know
-``max_tokens``. The shared base must send the legacy name first and switch
-exactly once on the server's explicit rejection — never on unrelated errors.
+``max_tokens``. Some reasoning/tool models also accept only their default
+temperature. The shared base adapts each field only after an explicit rejection
+and never retries unrelated errors.
 """
 from __future__ import annotations
 
@@ -16,6 +17,19 @@ _OPENAI_400 = (
     "'max_tokens' is not supported with this model. Use "
     "'max_completion_tokens' instead.\", 'type': 'invalid_request_error', "
     "'param': 'max_tokens', 'code': 'unsupported_parameter'}}"
+)
+
+_OPENAI_TEMPERATURE_400 = (
+    "Error code: 400 - {'error': {'message': \"Unsupported value: 'temperature' "
+    "does not support 0 with this model. Only the default (1) value is "
+    "supported.\", 'type': 'invalid_request_error', 'param': 'temperature', "
+    "'code': 'unsupported_value'}}"
+)
+
+_OPENAI_STREAM_OPTIONS_400 = (
+    "Error code: 400 - {'error': {'message': \"Unsupported parameter: "
+    "'stream_options'.\", 'type': 'invalid_request_error', "
+    "'param': 'stream_options', 'code': 'unsupported_parameter'}}"
 )
 
 
@@ -35,6 +49,22 @@ class _FakeClient:
         return "stream"
 
 
+class _SequenceClient:
+    def __init__(self, errors: list[Exception]) -> None:
+        self.calls: list[dict] = []
+        self._errors = list(errors)
+        chat = type("Chat", (), {})()
+        chat.completions = type("Completions", (), {})()
+        chat.completions.create = self._create
+        self.chat = chat
+
+    async def _create(self, **kwargs):
+        self.calls.append(kwargs)
+        if self._errors:
+            raise self._errors.pop(0)
+        return "stream"
+
+
 async def test_max_tokens_rejection_retries_with_max_completion_tokens() -> None:
     client = _FakeClient(RuntimeError(_OPENAI_400))
     result = await _create_with_token_param_retry(
@@ -47,10 +77,65 @@ async def test_max_tokens_rejection_retries_with_max_completion_tokens() -> None
     assert client.calls[1].get("max_completion_tokens") == 8
 
 
+async def test_default_only_temperature_rejection_retries_without_temperature() -> None:
+    client = _FakeClient(RuntimeError(_OPENAI_TEMPERATURE_400))
+    result = await _create_with_token_param_retry(
+        client, {"model": "m", "max_tokens": 8, "temperature": 0.0}
+    )
+
+    assert result == "stream"
+    assert len(client.calls) == 2
+    assert client.calls[0]["temperature"] == 0.0
+    assert "temperature" not in client.calls[1]
+    assert client.calls[1]["max_tokens"] == 8
+
+
+async def test_api_rejected_stream_options_retries_without_usage_option() -> None:
+    client = _FakeClient(RuntimeError(_OPENAI_STREAM_OPTIONS_400))
+    result = await _create_with_token_param_retry(
+        client,
+        {
+            "model": "m",
+            "max_tokens": 8,
+            "stream": True,
+            "stream_options": {"include_usage": True},
+        },
+    )
+
+    assert result == "stream"
+    assert len(client.calls) == 2
+    assert "stream_options" not in client.calls[1]
+
+
+async def test_multiple_explicit_rejections_are_adapted_once_each() -> None:
+    client = _SequenceClient(
+        [RuntimeError(_OPENAI_400), RuntimeError(_OPENAI_TEMPERATURE_400)]
+    )
+    result = await _create_with_token_param_retry(
+        client, {"model": "m", "max_tokens": 8, "temperature": 0.0}
+    )
+
+    assert result == "stream"
+    assert len(client.calls) == 3
+    assert client.calls[1]["max_completion_tokens"] == 8
+    assert client.calls[1]["temperature"] == 0.0
+    assert client.calls[2]["max_completion_tokens"] == 8
+    assert "temperature" not in client.calls[2]
+
+
 async def test_unrelated_errors_are_not_retried() -> None:
     client = _FakeClient(RuntimeError("Error code: 401 - invalid api key"))
     with pytest.raises(RuntimeError, match="401"):
         await _create_with_token_param_retry(client, {"model": "m", "max_tokens": 8})
+    assert len(client.calls) == 1
+
+
+async def test_temperature_validation_error_is_not_misread_as_unsupported() -> None:
+    client = _FakeClient(RuntimeError("temperature must be between 0 and 2"))
+    with pytest.raises(RuntimeError, match="between 0 and 2"):
+        await _create_with_token_param_retry(
+            client, {"model": "m", "temperature": 3.0}
+        )
     assert len(client.calls) == 1
 
 
