@@ -51,6 +51,8 @@ def test_unknown_uninstalled_app_is_flagged_not_found_not_misheard(monkeypatch):
     """A plausible but uninstalled name -> 'not found', NOT 'STT-Misshearing'."""
     monkeypatch.setattr(oa.shutil, "which", lambda _n: None)
     monkeypatch.setattr(oa, "_resolve_via_start_menu", lambda _names: None)
+    monkeypatch.setattr(oa, "launch_services_can_open", lambda _names: None)
+    monkeypatch.setattr(oa, "desktop_entry_exists", lambda _names: None)
 
     ok, _reason, kind = _is_plausible_app_name("Photoshoppy")
 
@@ -61,12 +63,14 @@ def test_unknown_uninstalled_app_is_flagged_not_found_not_misheard(monkeypatch):
 async def test_execute_not_found_message_has_no_misshearing_claim(monkeypatch):
     monkeypatch.setattr(oa.shutil, "which", lambda _n: None)
     monkeypatch.setattr(oa, "_resolve_via_start_menu", lambda _names: None)
+    monkeypatch.setattr(oa, "launch_services_can_open", lambda _names: None)
+    monkeypatch.setattr(oa, "desktop_entry_exists", lambda _names: None)
 
     res = await OpenAppTool().execute({"app_name": "Photoshoppy"}, _ctx())
 
     assert res.success is False
-    assert "Misshearing" not in (res.error or "")
-    assert "nicht gefunden" in (res.error or "").lower()
+    assert "mishearing" not in (res.error or "").lower()
+    assert "was not found" in (res.error or "").lower()
 
 
 async def test_execute_hallucination_still_flagged_as_misheard(monkeypatch):
@@ -79,11 +83,54 @@ async def test_execute_hallucination_still_flagged_as_misheard(monkeypatch):
     )
 
     assert res.success is False
-    assert "Misshearing" in (res.error or "")
+    assert "mishearing" in (res.error or "").lower()
 
 
 def test_whitelisted_app_still_plausible(monkeypatch):
     monkeypatch.setattr(oa, "KNOWN_APPS", oa._KNOWN_APPS_WIN)
     ok, _reason, kind = _is_plausible_app_name("notepad")
+    assert ok is True
+    assert kind == ""
+
+
+# ---------------------------------------------------------------------------
+# Per-OS installed-app registry probes (macOS Launch Services, Linux .desktop)
+# ---------------------------------------------------------------------------
+
+def test_launch_services_app_is_plausible(monkeypatch):
+    """An installed macOS app known only to Launch Services must pass the gate.
+
+    Live incident 2026-07-20: 'Google Chrome' (installed, launchable via
+    `open -a`) was rejected, forcing the mission into pixel-clicking
+    Spotlight for four extra steps.
+    """
+    monkeypatch.setattr(oa.shutil, "which", lambda _n: None)
+    monkeypatch.setattr(oa, "_resolve_via_start_menu", lambda _names: None)
+    monkeypatch.setattr(
+        oa, "launch_services_can_open",
+        lambda names: "Google Chrome"
+        if any("google chrome" in n.lower() for n in names) else None,
+    )
+    monkeypatch.setattr(oa, "desktop_entry_exists", lambda _names: None)
+
+    ok, _reason, kind = _is_plausible_app_name("Google Chrome")
+
+    assert ok is True
+    assert kind == ""
+
+
+def test_desktop_entry_app_is_plausible(monkeypatch):
+    """A Linux GUI app registered only as a .desktop entry must pass the gate."""
+    monkeypatch.setattr(oa.shutil, "which", lambda _n: None)
+    monkeypatch.setattr(oa, "_resolve_via_start_menu", lambda _names: None)
+    monkeypatch.setattr(oa, "launch_services_can_open", lambda _names: None)
+    monkeypatch.setattr(
+        oa, "desktop_entry_exists",
+        lambda names: "google-chrome"
+        if any("chrome" in n.lower() for n in names) else None,
+    )
+
+    ok, _reason, kind = _is_plausible_app_name("chrome-unlisted")
+
     assert ok is True
     assert kind == ""

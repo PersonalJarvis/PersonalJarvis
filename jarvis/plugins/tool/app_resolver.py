@@ -16,12 +16,15 @@ real error when it can't).
 """
 from __future__ import annotations
 
+import logging
 import os
 import shutil
 from dataclasses import dataclass
 from typing import Literal
 
 from jarvis.platform import detect_platform
+
+logger = logging.getLogger(__name__)
 
 try:  # Windows-only stdlib module; the package must still import on a Linux VPS.
     import winreg  # type: ignore[import]
@@ -267,6 +270,87 @@ def _resolve_windows(
     # open_app has already vetted that this is a whitelisted/known name, so this
     # only fires for entries the OS resolver couldn't pin to a path.
     return LaunchTarget("startfile", raw)
+
+
+def launch_services_can_open(candidates: set[str]) -> str | None:
+    """Return the first name macOS Launch Services can resolve, else ``None``.
+
+    ``open -Ra <name>`` reveals-without-launching: exit 0 means an installed
+    ``.app`` bundle answers to that display name (case-insensitive, any
+    install location — /Applications, ~/Applications, DMG-dragged copies).
+    This is the macOS sibling of the Windows Start-Menu probe: apps like
+    "Google Chrome" are neither on ``PATH`` nor in the short whitelist, and
+    without this probe the plausibility gate rejected genuinely installed
+    apps, forcing missions into pixel-clicking Spotlight instead (live
+    incident 2026-07-20). Non-darwin hosts and all failures return ``None``.
+    """
+    if detect_platform() != "darwin":
+        return None
+    import subprocess  # noqa: PLC0415
+
+    from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS  # noqa: PLC0415
+
+    for name in candidates:
+        cleaned = (name or "").strip()
+        if not cleaned:
+            continue
+        try:
+            proc = subprocess.run(
+                ["open", "-Ra", cleaned],
+                capture_output=True,
+                timeout=5,
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+            )
+        except Exception:  # noqa: BLE001, S112 — best-effort probe, gate stays honest
+            logger.debug("open -Ra probe failed for %r", cleaned, exc_info=True)
+            continue
+        if proc.returncode == 0:
+            return cleaned
+    return None
+
+
+_LINUX_DESKTOP_ENTRY_DIRS = (
+    "~/.local/share/applications",
+    "/usr/share/applications",
+    "/usr/local/share/applications",
+    "/var/lib/flatpak/exports/share/applications",
+)
+
+
+def desktop_entry_exists(candidates: set[str]) -> str | None:
+    """Return the ``.desktop`` id whose stem matches a candidate, else ``None``.
+
+    Linux sibling of the Start-Menu/Launch-Services probes: GUI apps
+    installed via .deb/.rpm/flatpak register a desktop entry but are often
+    absent from ``PATH``. Matching is on the exact file stem or the stem with
+    vendor prefixes stripped (``google-chrome`` answers to ``chrome`` only as
+    a full token, never as a substring — ``disc`` must not match
+    ``discord``). Non-Linux hosts return ``None``.
+    """
+    if detect_platform() != "linux":
+        return None
+    from pathlib import Path  # noqa: PLC0415
+
+    tokens = {
+        (c or "").strip().lower().replace(" ", "-") for c in candidates
+    } - {""}
+    if not tokens:
+        return None
+    for root in _LINUX_DESKTOP_ENTRY_DIRS:
+        base = Path(root).expanduser()
+        try:
+            entries = list(base.glob("*.desktop"))
+        except OSError:
+            continue
+        for entry in entries:
+            stem = entry.stem.lower()
+            if stem in tokens:
+                return entry.stem
+            # Vendor-prefixed ids: org.mozilla.firefox, google-chrome.
+            parts = set(stem.replace(".", "-").split("-"))
+            if any(token in parts for token in tokens):
+                return entry.stem
+    return None
 
 
 def _resolve_darwin(normalized_without_exe: str) -> LaunchTarget:

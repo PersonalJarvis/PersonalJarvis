@@ -272,4 +272,38 @@ async def test_open_app_rejects_hallucinated_name_before_resolution_or_launch(
     )
 
     assert result.success is False
-    assert "abgelehnt" in (result.error or "")
+    assert "rejected" in (result.error or "")
+
+
+# ---------------------------------------------------------------------------
+# Per-OS installed-app registry probes
+# ---------------------------------------------------------------------------
+
+def test_launch_services_probe_is_none_off_darwin(monkeypatch):
+    from jarvis.plugins.tool import app_resolver as ar
+
+    monkeypatch.setattr(ar, "detect_platform", lambda: "win32")
+    assert ar.launch_services_can_open({"google chrome"}) is None
+
+
+def test_desktop_entry_probe_is_none_off_linux(monkeypatch):
+    from jarvis.plugins.tool import app_resolver as ar
+
+    monkeypatch.setattr(ar, "detect_platform", lambda: "darwin")
+    assert ar.desktop_entry_exists({"chrome"}) is None
+
+
+def test_desktop_entry_probe_matches_stem_and_vendor_tokens(monkeypatch, tmp_path):
+    from jarvis.plugins.tool import app_resolver as ar
+
+    (tmp_path / "google-chrome.desktop").write_text("[Desktop Entry]")
+    (tmp_path / "org.mozilla.firefox.desktop").write_text("[Desktop Entry]")
+    monkeypatch.setattr(ar, "detect_platform", lambda: "linux")
+    monkeypatch.setattr(ar, "_LINUX_DESKTOP_ENTRY_DIRS", (str(tmp_path),))
+
+    assert ar.desktop_entry_exists({"google-chrome"}) == "google-chrome"
+    assert ar.desktop_entry_exists({"chrome"}) == "google-chrome"
+    assert ar.desktop_entry_exists({"firefox"}) == "org.mozilla.firefox"
+    # A prefix must never match a different app (disc -> discord class).
+    assert ar.desktop_entry_exists({"chro"}) is None
+    assert ar.desktop_entry_exists({"slack"}) is None

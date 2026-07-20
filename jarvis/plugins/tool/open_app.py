@@ -20,6 +20,8 @@ from jarvis.core.protocols import ExecutionContext, ToolResult
 from jarvis.platform import detect_platform, window_state
 from jarvis.plugins.tool.app_resolver import (
     _resolve_via_start_menu,
+    desktop_entry_exists,
+    launch_services_can_open,
     resolve_app_launch_target,
 )
 
@@ -154,18 +156,22 @@ _HALLUCINATION_RE = re.compile(
 
 
 def _is_plausible_app_name(app_name: str) -> tuple[bool, str, str]:
-    """Prueft ob ``app_name`` plausibel ist.
+    """Check whether ``app_name`` is plausible.
 
-    Returns ``(ok, reason, kind)``. ``reason`` ist leerer String wenn
-    ``ok=True``. ``kind`` klassifiziert die Ablehnung fuer eine passende
-    Fehlermeldung: ``"misheard"`` (wirkt wie STT-Halluzination — Rueckfrage an
-    den User) oder ``"not_found"`` (plausibler Name, nur nicht installiert —
-    voller Pfad / genauer Name noetig). ``""`` wenn ``ok=True``.
+    Returns ``(ok, reason, kind)``. ``reason`` is an empty string when
+    ``ok=True``. ``kind`` classifies the rejection so the caller can pick a
+    fitting error message: ``"misheard"`` (looks like an STT hallucination —
+    ask the user back) or ``"not_found"`` (plausible name, just not
+    installed — a full path / exact name is needed). ``""`` when ``ok=True``.
     """
     if _HALLUCINATION_RE.search(app_name):
-        return False, "enthaelt Werbe-/Outro-Marker (wirkt wie STT-Misshearing)", "misheard"
+        return False, "contains ad/outro markers (looks like an STT mishearing)", "misheard"
     if not _APP_NAME_RE.match(app_name):
-        return False, "Format unplausibel (zu lang, Komma-Liste oder Sonderzeichen)", "misheard"
+        return (
+            False,
+            "implausible format (too long, comma list, or special characters)",
+            "misheard",
+        )
 
     # Layer 2: Whitelist ODER URL ODER Pfad ODER PATH-Resolve
     low = app_name.lower().removesuffix(".exe")
@@ -178,17 +184,28 @@ def _is_plausible_app_name(app_name: str) -> tuple[bool, str, str]:
         return True, "", ""
     if shutil.which(app_name):
         return True, "", ""
-    # Layer 3: Start-Menu shortcut. Many installed apps register ONLY a
-    # per-user .lnk (Electron/Tauri/Squirrel builds: Discord, Slack, and the
-    # user's own desktop apps like BridgeSpace/BridgeVoice) — absent from both
-    # the whitelist and PATH. The resolver already follows these; mirror it
-    # here so the gate is not blinder than the launcher (live failure
-    # 2026-06-16: a real installed app was rejected as a misshearing).
-    if _resolve_via_start_menu({low, app_name.strip()}) is not None:
+    # Layer 3: the per-OS installed-app registry, so the gate is never
+    # blinder than the launcher (live failure 2026-06-16: a real installed
+    # app was rejected as a misshearing).
+    # - Windows: Start-Menu shortcuts. Many installed apps register ONLY a
+    #   per-user .lnk (Electron/Tauri/Squirrel builds: Discord, Slack) —
+    #   absent from both the whitelist and PATH.
+    # - macOS: Launch Services (`open -Ra`). "Google Chrome" is neither on
+    #   PATH nor in the short whitelist, yet `open -a` launches it fine —
+    #   rejecting it forced missions into pixel-clicking Spotlight (live
+    #   incident 2026-07-20).
+    # - Linux: desktop entries (.deb/.rpm/flatpak GUI apps off PATH).
+    candidates = {low, app_name.strip()}
+    if _resolve_via_start_menu(candidates) is not None:
+        return True, "", ""
+    if launch_services_can_open(candidates) is not None:
+        return True, "", ""
+    if desktop_entry_exists(candidates) is not None:
         return True, "", ""
     return (
         False,
-        f"'{app_name}' nicht gefunden (weder Whitelist, PATH noch Startmenue)",
+        f"'{app_name}' was not found (not in the whitelist, on PATH, or in "
+        "the OS app registry)",
         "not_found",
     )
 
@@ -197,19 +214,20 @@ class OpenAppTool:
     name: str = "open_app"
     risk_tier: str = "monitor"
     description: str = (
-        "Öffnet eine Windows-Anwendung per Namen (z.B. 'notepad', 'calc', 'chrome') "
-        "oder eine Datei/URL."
+        "Opens an application on this computer by name (e.g. 'notepad', "
+        "'calc', 'chrome', 'Google Chrome') or opens a file/URL. Works on "
+        "Windows, macOS, and Linux."
     )
     schema: dict[str, Any] = {
         "type": "object",
         "properties": {
             "app_name": {
                 "type": "string",
-                "description": "Name der Anwendung oder Pfad/URL",
+                "description": "Name of the application, or a path/URL",
             },
             "arguments": {
                 "type": "string",
-                "description": "Optionale CLI-Argumente",
+                "description": "Optional CLI arguments",
                 "default": "",
             },
             "reuse_existing": {
@@ -229,31 +247,31 @@ class OpenAppTool:
         app_name = (args.get("app_name") or "").strip()
         cli_args = (args.get("arguments") or "").strip()
         if not app_name:
-            return ToolResult(success=False, output=None, error="app_name fehlt")
+            return ToolResult(success=False, output=None, error="app_name is missing")
 
         ok, reason, kind = _is_plausible_app_name(app_name)
         if not ok:
-            # Error-Message mit expliziter Handlungsanweisung an das Brain.
-            # Differenziert nach Ablehnungsgrund — ein plausibler, nur nicht
-            # installierter Name darf NICHT als STT-Misshearing abgetan werden
-            # (das schickte den Agenten in die falsche Richtung).
+            # Error message with an explicit instruction to the brain,
+            # differentiated by rejection kind — a plausible but simply
+            # not-installed name must NOT be brushed off as an STT
+            # mishearing (that sent the agent in the wrong direction).
             if kind == "not_found":
                 hint = (
-                    "Die App ist nicht installiert/auffindbar. Falls sie "
-                    "existiert, gib den vollen Pfad zur .exe an; sonst frage "
-                    "den User nach dem genauen App-Namen. Rufe open_app NICHT "
-                    "erneut mit dem selben Wert auf."
+                    "The app is not installed/findable. If it exists, pass "
+                    "the full path to its executable; otherwise ask the user "
+                    "for the exact app name. Do NOT call open_app again with "
+                    "the same value."
                 )
             else:
                 hint = (
-                    "Wahrscheinlich STT-Misshearing. Frage den User kurz: "
-                    "'Welche App genau, Ruben?' — rufe open_app NICHT erneut "
-                    "mit dem selben Wert auf."
+                    "Probably an STT mishearing. Briefly ask the user which "
+                    "app exactly they meant — do NOT call open_app again "
+                    "with the same value."
                 )
             return ToolResult(
                 success=False,
                 output=None,
-                error=f"App-Name '{app_name[:80]}' abgelehnt ({reason}). {hint}",
+                error=f"App name '{app_name[:80]}' rejected ({reason}). {hint}",
             )
 
         # Already-running short-circuit: if the app is open, focus its existing
