@@ -23,14 +23,26 @@ CandidateStatus = Literal["pending", "consolidated", "rejected", "skipped"]
 CURATOR_DECISIONS: tuple[str, ...] = ("add", "update", "noop", "invalidate")
 CuratorDecision = Literal["add", "update", "noop", "invalidate"]
 
+# Evidence basis of one candidate fact ("explicit" = user asserted it,
+# "behavioral" = first-person lived-experience report, "inferred" = reserved
+# for a future cross-session reflection pass — nothing emits it yet). SQL
+# CHECK lives in 0009_wiki_candidate_basis.sql. Like the decisions, these
+# strings never render in the UI, so there is no TypeScript layer; add the TS
+# mirror + extend the parity test before ever surfacing them (BUG-008).
+FACT_BASES: tuple[str, ...] = ("explicit", "behavioral", "inferred")
+FactBasis = Literal["explicit", "behavioral", "inferred"]
+
 # Runtime drift assertions (mirror the jarvis/memory/constants.py pattern):
 # importing this module with a drifted tuple/Literal pair fails immediately.
 assert set(CANDIDATE_STATUSES) == set(CandidateStatus.__args__)  # type: ignore[attr-defined]
 assert set(CURATOR_DECISIONS) == set(CuratorDecision.__args__)  # type: ignore[attr-defined]
+assert set(FACT_BASES) == set(FactBasis.__args__)  # type: ignore[attr-defined]
 
 __all__ = [
     "CANDIDATE_STATUSES",
     "CURATOR_DECISIONS",
+    "FACT_BASES",
     "CandidateStatus",
     "CuratorDecision",
+    "FactBasis",
 ]

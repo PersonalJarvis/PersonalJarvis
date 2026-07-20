@@ -13,14 +13,17 @@ from pathlib import Path
 from jarvis.memory.wiki.constants import (
     CANDIDATE_STATUSES,
     CURATOR_DECISIONS,
+    FACT_BASES,
     CandidateStatus,
     CuratorDecision,
+    FactBasis,
 )
 
-_MIGRATION = (
-    Path(__file__).resolve().parents[4]
-    / "jarvis" / "memory" / "migrations" / "0005_wiki_candidate_journal.sql"
+_MIGRATIONS_DIR = (
+    Path(__file__).resolve().parents[4] / "jarvis" / "memory" / "migrations"
 )
+_MIGRATION = _MIGRATIONS_DIR / "0005_wiki_candidate_journal.sql"
+_BASIS_MIGRATION = _MIGRATIONS_DIR / "0009_wiki_candidate_basis.sql"
 
 
 def _check_values(sql: str, column: str) -> set[str]:
@@ -37,12 +40,18 @@ def _check_values(sql: str, column: str) -> set[str]:
 def test_python_tuple_matches_literal() -> None:
     assert set(CANDIDATE_STATUSES) == set(CandidateStatus.__args__)  # type: ignore[attr-defined]
     assert set(CURATOR_DECISIONS) == set(CuratorDecision.__args__)  # type: ignore[attr-defined]
+    assert set(FACT_BASES) == set(FactBasis.__args__)  # type: ignore[attr-defined]
 
 
 def test_sql_check_matches_python_tuples() -> None:
     sql = _MIGRATION.read_text(encoding="utf-8")
     assert _check_values(sql, "status") == set(CANDIDATE_STATUSES)
     assert _check_values(sql, "decision") == set(CURATOR_DECISIONS)
+
+
+def test_basis_sql_check_matches_python_tuple() -> None:
+    sql = _BASIS_MIGRATION.read_text(encoding="utf-8")
+    assert _check_values(sql, "basis") == set(FACT_BASES)
 
 
 def test_telemetry_counter_names_follow_decisions() -> None:

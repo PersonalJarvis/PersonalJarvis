@@ -53,7 +53,36 @@ def test_append_then_pending_roundtrip(journal: CandidateJournal) -> None:
     assert rows[0].session_id == ""
     assert rows[1].evidence_turn_id == ""
     assert rows[0].source_label == "voice-fact:123"
+    assert rows[0].basis == "explicit"
+    assert rows[0].salience == 3
     assert journal.backlog_count() == 2
+
+
+def test_basis_and_salience_roundtrip_and_normalisation(
+    journal: CandidateJournal,
+) -> None:
+    journal.append(
+        [
+            CandidateFact(
+                fact="The user plays golf actively with friends.",
+                kind="activity",
+                subjects=("ruben", "golf"),
+                basis="behavioral",
+                salience=4,
+            ),
+            CandidateFact(
+                fact="The user drinks water.",
+                basis="made-up-basis",
+                salience=99,
+            ),
+        ],
+        source_label="s",
+        turn_hash="basis-roundtrip",
+    )
+    rows = journal.pending()
+    assert (rows[0].basis, rows[0].salience) == ("behavioral", 4)
+    # Unknown basis coerces to explicit; salience clamps into 1..5.
+    assert (rows[1].basis, rows[1].salience) == ("explicit", 5)
 
 
 def test_append_blocks_secret_shaped_candidate_defense_in_depth(
@@ -107,7 +136,7 @@ def test_migration_0008_adds_grounding_excerpt_store_to_existing_database(
         )
         conn.execute("PRAGMA user_version = 7")
 
-        assert run_migrations_sync(conn) == 8
+        assert run_migrations_sync(conn) == 9
 
         columns = {
             row[1]
@@ -118,6 +147,43 @@ def test_migration_0008_adds_grounding_excerpt_store_to_existing_database(
         assert "evidence_excerpt" in columns
     finally:
         conn.close()
+
+
+def test_migration_0009_adds_basis_store_to_existing_database(
+    tmp_path: Path,
+) -> None:
+    db = tmp_path / "legacy-basis.db"
+    conn = sqlite3.connect(db)
+    try:
+        conn.execute("PRAGMA user_version = 8")
+
+        assert run_migrations_sync(conn) == 9
+
+        columns = {
+            row[1]
+            for row in conn.execute(
+                "PRAGMA table_info(wiki_candidate_basis)"
+            ).fetchall()
+        }
+        assert {"candidate_id", "basis", "salience"} <= columns
+    finally:
+        conn.close()
+
+
+def test_legacy_rows_without_basis_read_back_as_explicit(tmp_path: Path) -> None:
+    """Rows journaled before migration 0009 default to explicit/3 on read."""
+    db = tmp_path / "legacy-rows.db"
+    journal = CandidateJournal(db)
+    try:
+        journal.append(_facts()[:1], source_label="s", turn_hash="h")
+        journal._conn.execute(  # noqa: SLF001 - simulate a pre-0009 row
+            "DELETE FROM wiki_candidate_basis"
+        )
+        journal._conn.commit()  # noqa: SLF001
+        row = journal.pending()[0]
+        assert (row.basis, row.salience) == ("explicit", 3)
+    finally:
+        journal.close()
 
 
 def test_standalone_journal_then_numbered_migrations_is_idempotent(
@@ -140,8 +206,8 @@ def test_standalone_journal_then_numbered_migrations_is_idempotent(
         )
         conn.executescript(schema.read_text(encoding="utf-8"))
 
-        assert run_migrations_sync(conn) == 8
-        assert run_migrations_sync(conn) == 8
+        assert run_migrations_sync(conn) == 9
+        assert run_migrations_sync(conn) == 9
     finally:
         conn.close()
 
@@ -203,7 +269,7 @@ def test_development_column_excerpt_is_copied_without_migration_collision(
             / "schema.sql"
         )
         conn.executescript(schema.read_text(encoding="utf-8"))
-        assert run_migrations_sync(conn) == 8
+        assert run_migrations_sync(conn) == 9
     finally:
         conn.close()
 
@@ -330,6 +396,14 @@ def test_sql_check_rejects_invalid_status(journal: CandidateJournal) -> None:
     with pytest.raises(sqlite3.IntegrityError):
         conn.execute(
             "UPDATE wiki_candidate_journal SET decision = 'delete'"
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "UPDATE wiki_candidate_basis SET basis = 'vibes'"
+        )
+    with pytest.raises(sqlite3.IntegrityError):
+        conn.execute(
+            "UPDATE wiki_candidate_basis SET salience = 6"
         )
 
 

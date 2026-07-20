@@ -9,7 +9,7 @@ file (cross-platform, no new dependency — CLOUD.md doctrine) and survives
 restarts, so a crash between extraction and consolidation never loses a
 fact.
 
-Schema source of truth: migrations ``0005`` through ``0008`` under
+Schema source of truth: migrations ``0005`` through ``0009`` under
 ``jarvis/memory/migrations`` (applied by ``run_migrations`` for
 RecallStore-opened databases, and executed idempotently here for standalone
 opens — the same pattern as ``fts_index``).
@@ -35,7 +35,7 @@ from typing import Literal
 
 from jarvis.core.redact import safe_preview
 
-from .constants import CandidateStatus, CuratorDecision
+from .constants import FACT_BASES, CandidateStatus, CuratorDecision
 from .secret_guard import contains_secret
 
 log = logging.getLogger(__name__)
@@ -46,6 +46,7 @@ _MIGRATION_FILES = (
     _MIGRATIONS_DIR / "0006_wiki_extraction_audit.sql",
     _MIGRATIONS_DIR / "0007_wiki_candidate_capture.sql",
     _MIGRATIONS_DIR / "0008_wiki_candidate_evidence_excerpt.sql",
+    _MIGRATIONS_DIR / "0009_wiki_candidate_basis.sql",
 )
 
 CaptureStatus = Literal["started", "filtered", "empty", "candidates", "failed"]
@@ -85,6 +86,10 @@ _KNOWN_ERROR_CODES = frozenset(
 )
 
 
+_DEFAULT_BASIS = "explicit"
+_DEFAULT_SALIENCE = 3
+
+
 @dataclass(frozen=True, slots=True)
 class CandidateFact:
     """One atomic fact proposed by the Stage-1 extractor."""
@@ -94,6 +99,8 @@ class CandidateFact:
     subjects: tuple[str, ...] = ()
     evidence_turn_id: str = ""
     evidence_excerpt: str = ""
+    basis: str = _DEFAULT_BASIS
+    salience: int = _DEFAULT_SALIENCE
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +119,8 @@ class JournalRow:
     session_id: str
     review_key: str
     status: CandidateStatus
+    basis: str = _DEFAULT_BASIS
+    salience: int = _DEFAULT_SALIENCE
 
 
 class CandidateJournal:
@@ -325,6 +334,11 @@ class CandidateJournal:
                     ),
                 ),
             )
+            conn.execute(
+                "INSERT INTO wiki_candidate_basis "
+                "(candidate_id, basis, salience) VALUES (?, ?, ?)",
+                (candidate_id, fact.basis, fact.salience),
+            )
             if review_key is not None:
                 conn.execute(
                     "INSERT INTO wiki_candidate_capture (candidate_id, review_key) "
@@ -363,13 +377,15 @@ class CandidateJournal:
                 "j.kind, j.subjects, COALESCE(e.evidence_turn_id, ''), "
                 "COALESCE(x.evidence_excerpt, ''), "
                 "COALESCE(a.session_id, ''), COALESCE(c.review_key, ''), "
-                "j.status "
+                "j.status, "
+                "COALESCE(b.basis, 'explicit'), COALESCE(b.salience, 3) "
                 "FROM wiki_candidate_journal AS j "
                 "LEFT JOIN wiki_candidate_evidence AS e ON e.candidate_id = j.id "
                 "LEFT JOIN wiki_candidate_evidence_excerpt AS x "
                 "ON x.candidate_id = j.id "
                 "LEFT JOIN wiki_candidate_capture AS c ON c.candidate_id = j.id "
                 "LEFT JOIN wiki_extraction_audit AS a ON a.review_key = c.review_key "
+                "LEFT JOIN wiki_candidate_basis AS b ON b.candidate_id = j.id "
             )
             if keys is None:
                 cur = conn.execute(
@@ -406,6 +422,8 @@ class CandidateJournal:
                         session_id=row[9],
                         review_key=row[10],
                         status=row[11],
+                        basis=row[12],
+                        salience=int(row[13]),
                     )
                 )
             return out
@@ -740,6 +758,8 @@ def _normalise_candidates(
                     candidate.evidence_excerpt,
                     max_chars=_MAX_EVIDENCE_CHARS,
                 ).strip(),
+                basis=_safe_basis(candidate.basis),
+                salience=_clamp_salience(candidate.salience),
             )
         )
     if rejected_secret:
@@ -748,6 +768,19 @@ def _normalise_candidates(
             rejected_secret,
         )
     return tuple(accepted)
+
+
+def _safe_basis(value: object) -> str:
+    basis = str(value or "").strip().lower()
+    return basis if basis in FACT_BASES else _DEFAULT_BASIS
+
+
+def _clamp_salience(value: object) -> int:
+    try:
+        salience = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return _DEFAULT_SALIENCE
+    return max(1, min(5, salience))
 
 
 def normalise_subjects(subjects: Sequence[object]) -> tuple[str, ...]:
