@@ -370,28 +370,6 @@ on Discord first. Come say hi and help shape where it goes.
   <a href="https://github.com/PersonalJarvis/PersonalJarvis">GitHub</a>
 </p>
 
-## Sponsors
-
-Personal Jarvis is independent and self-funded — sponsorship goes straight into provider
-costs, infrastructure, and development time. The wall is empty; want to be the first?
-Reach out on [Discord](https://discord.gg/x7USduHxbc) or [X](https://x.com/Ruben_Luetke).
-
-<p align="center">
-  <a href="https://github.com/sponsors/PersonalJarvis"><img alt="Sponsor" src="https://img.shields.io/badge/Sponsor-♥-FFD60A?style=for-the-badge&logo=githubsponsors&logoColor=0A0A0A&labelColor=0A0A0A" /></a>
-</p>
-
-<details>
-<summary><b>Sponsor tiers</b></summary>
-
-| Tier | You get |
-|---|---|
-| **Backer** | Your name in this README + a supporter role on Discord |
-| **Supporter** | The above + a link to your project or profile |
-| **Sponsor** | The above + your logo on the sponsor wall |
-| **Partner** | The above + a seat at the roadmap table |
-
-</details>
-
 ## Contributing
 
 Pull requests are welcome — **[`CONTRIBUTING.md`](CONTRIBUTING.md)** has the full guide.
