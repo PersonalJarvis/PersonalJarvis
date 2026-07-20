@@ -1244,6 +1244,56 @@ async def test_numeric_value_already_in_existing_page_remains_valid(stack) -> No
     assert "installed in the desktop" in content
 
 
+def test_source_citation_uuid_in_inline_code_is_not_a_numeric_claim() -> None:
+    """A schema-style Sources line cites opaque ids in inline code
+    (``session `f260abcc-…```` ). Fragmenting those ids into pseudo-numbers
+    once rejected every provider for citing its own source reference."""
+    row = SimpleNamespace(
+        fact="The user uses Safari as their web browser.",
+        evidence_excerpt=(
+            "Evidence user turn [e4fa3a8e-13c4-40c9-ae04-8e88bf702b6a]: "
+            "open Safari please"
+        ),
+        subjects=("user", "safari"),
+    )
+    body = (
+        "# Safari\n\n## Summary\n\nThe user's web browser.\n\n"
+        "## Sources\n\n"
+        "- Realtime transcript: session "
+        "`f260abcc-b5a3-4c38-9502-3f6473ba0ae9`, turn "
+        "`8cf7b42d-5229-4617-91fe-d406b1e4fe6d`.\n"
+    )
+    assert (
+        Consolidator._unsupported_numeric_values(
+            body, row=row, existing_path=None
+        )
+        == set()
+    )
+
+
+def test_numbers_copied_from_shown_neighbour_page_are_grounded() -> None:
+    """A number the judge copied from a page in its own input is a
+    cross-reference, not an invention; only truly new numbers are flagged."""
+    row = SimpleNamespace(
+        fact="Lena lives in Hamburg.",
+        evidence_excerpt="",
+        subjects=("lena",),
+    )
+    body = "# Hamburg\n\nLena (born 1994) lives here.\n"
+    assert Consolidator._unsupported_numeric_values(
+        body, row=row, existing_path=None
+    ) == {"1994"}
+    assert (
+        Consolidator._unsupported_numeric_values(
+            body,
+            row=row,
+            existing_path=None,
+            neighbours=["# Lena\n\n- Born 1994.\n"],
+        )
+        == set()
+    )
+
+
 @pytest.mark.asyncio
 async def test_range_rendering_of_grounded_endpoints_is_accepted(stack) -> None:
     """"5 to 6 million" evidence grounds a "5-6 million" page rendering.

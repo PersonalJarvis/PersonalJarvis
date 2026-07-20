@@ -82,6 +82,12 @@ _GRAPH_TARGET_DIR_BY_KIND = {
 # response and try another provider without a second model call.
 _NUMERIC_VALUE_RE = re.compile(r"(?<!\d)\d+(?:[.,:/-]\d+)*(?:\s*%)?(?!\d)")
 _ORDERED_LIST_PREFIX_RE = re.compile(r"^\s*\d+[.)]\s+")
+# Inline code carries identifiers (``session `f260abcc-…```` in a Sources
+# line), not numeric claims about the world. Fragmenting a cited UUID into
+# pseudo-numbers once wedged the whole provider chain: every judge that
+# followed the schema's citation style was rejected for "unsupported"
+# digit runs of its own source reference.
+_INLINE_CODE_SPAN_RE = re.compile(r"(`+)([^`\n]+?)\1")
 _SCHEMA_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}\Z")
 _SCHEMA_DATE_FIELDS = frozenset(
     {"created", "updated", "started", "last_activity", "valid_until"}
@@ -982,6 +988,7 @@ class Consolidator:
                     body,
                     row=by_id[cid],
                     existing_path=target_path if target_path.is_file() else None,
+                    neighbours=neighbours.values(),
                 )
                 if unsupported:
                     values = ", ".join(sorted(unsupported))
@@ -1140,16 +1147,22 @@ class Consolidator:
         *,
         row: JournalRow,
         existing_path: Path | None,
+        neighbours: Iterable[str] = (),
     ) -> set[str]:
         """Return model-added numeric values with no grounded source.
 
         Candidate facts, their exact user-evidence excerpt, safe subject slugs,
-        and the current target page are authoritative.  ISO dates in the
+        the current target page, and the neighbour bodies the judge was shown
+        are authoritative — a number copied from a page in the judge's own
+        input is a cross-reference, not an invention, and rejecting it would
+        burn every provider on a correct answer.  ISO dates in the
         schema's date frontmatter fields are bookkeeping rather than factual
         prose and are allowed; the normal create/update path supplies today's
         date there.  Markdown ordered-list indices are formatting, not claims.
         """
-        grounded_text = "\n".join((row.fact, row.evidence_excerpt, *row.subjects))
+        grounded_text = "\n".join(
+            (row.fact, row.evidence_excerpt, *row.subjects, *neighbours)
+        )
         grounded = cls._numeric_values(grounded_text)
         today = _dt.date.today()
         # The Stage-2 prompt explicitly supplies this temporal context.  The
@@ -1223,6 +1236,7 @@ class Consolidator:
                 ):
                     continue
             claim_text = _ORDERED_LIST_PREFIX_RE.sub("", raw_line)
+            claim_text = _INLINE_CODE_SPAN_RE.sub(" ", claim_text)
             values.update(
                 match.group(0).replace(" ", "")
                 for match in _NUMERIC_VALUE_RE.finditer(claim_text)
