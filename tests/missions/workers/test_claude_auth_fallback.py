@@ -161,6 +161,10 @@ def _pin_claude_spawn(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(cdw, "create_worker_subprocess", _fake_exec)
     monkeypatch.setattr(cdw, "_resolve_claude_argv_prefix", lambda: ["claude"])
     monkeypatch.setattr(
+        "jarvis.claude_auth.claude_cli_supports_safe_mode",
+        lambda _prefix: False,
+    )
+    monkeypatch.setattr(
         cdw,
         "_resolve_provider_chain",
         lambda **_k: (_FallbackStep("claude-api", "claude-opus-4-8"),),
@@ -252,6 +256,10 @@ async def test_success_clears_claude_auth_dead(
 
     monkeypatch.setattr(cdw, "create_worker_subprocess", _fake_exec)
     monkeypatch.setattr(cdw, "_resolve_claude_argv_prefix", lambda: ["claude"])
+    monkeypatch.setattr(
+        "jarvis.claude_auth.claude_cli_supports_safe_mode",
+        lambda _prefix: False,
+    )
     monkeypatch.setattr(
         cdw,
         "_resolve_provider_chain",

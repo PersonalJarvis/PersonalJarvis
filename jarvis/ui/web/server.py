@@ -985,24 +985,28 @@ class WebServer:
                 api_key_set = dedicated_key_set or shared_key_set
                 oauth_connected = False
                 oauth_stale = False
-                # Claude Max users authenticate the subagent via the LIVE OAuth
-                # login in ~/.claude/.credentials.json (read by ClaudeDirectWorker),
-                # not a stored API key — count that as configured so a fresh
-                # Claude-Max user (only ran `claude login`) is not falsely locked.
-                # An EXPIRED-in-place access token still counts as a configured
-                # login: `claude` refreshes it automatically the next time it
-                # runs, so locking the card would tell a logged-in Max user
-                # "not connected" (Windows test-machine report 2026-07-18). The
-                # spawn-time viability gate keeps re-reading the live file.
+                # Claude subscription auth is owned by the CLI. Its status
+                # command covers platform-native stores such as macOS Keychain;
+                # the legacy bearer-file check only preserves the recoverable
+                # expired state for older Linux/Windows installs.
                 if mapping.jarvis == "claude-api":
                     try:
+                        from jarvis.claude_auth import ClaudeAuthService
                         from jarvis.claude_credentials import (
                             freshest_claude_oauth,
                         )
 
+                        auth_status = await asyncio.to_thread(
+                            ClaudeAuthService().status
+                        )
+                        oauth_connected = bool(
+                            auth_status.connected
+                            and auth_status.mode == "subscription"
+                        )
                         snapshot_status = freshest_claude_oauth().status
-                        oauth_connected = snapshot_status == "valid"
-                        oauth_stale = snapshot_status == "expired"
+                        oauth_stale = (
+                            not oauth_connected and snapshot_status == "expired"
+                        )
                     except Exception:  # noqa: BLE001
                         oauth_connected = False
                         oauth_stale = False

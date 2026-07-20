@@ -112,6 +112,10 @@ async def test_non_claude_provider_runs_on_claude_not_refused(
         cdw, "_resolve_provider_chain",
         lambda *a, **k: (_FallbackStep(provider, model),),
     )
+    monkeypatch.setattr(
+        "jarvis.claude_auth.claude_cli_supports_safe_mode",
+        lambda _prefix: False,
+    )
 
     captured: dict[str, Any] = {}
 
@@ -154,6 +158,56 @@ async def test_non_claude_provider_runs_on_claude_not_refused(
     # 4. The run completes normally.
     assert getattr(final, "is_error", None) is False
     assert final.result == "OK"
+
+
+@pytest.mark.asyncio
+async def test_safe_mode_preserves_native_auth_without_loading_user_config(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Modern Claude keeps Keychain auth while safe mode disables customizations."""
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    monkeypatch.setattr(
+        cdw,
+        "_resolve_provider_chain",
+        lambda *a, **k: (_FallbackStep("claude-api", "claude-opus-4-8"),),
+    )
+    monkeypatch.setattr(cdw, "_resolve_claude_argv_prefix", lambda: ["claude"])
+    monkeypatch.setattr(
+        "jarvis.claude_auth.claude_cli_supports_safe_mode",
+        lambda _prefix: True,
+    )
+    captured: dict[str, Any] = {}
+
+    async def _fake_exec(*args: Any, **kwargs: Any) -> _OkProc:
+        captured["argv"] = list(args)
+        captured["env"] = dict(kwargs["env"])
+        return _OkProc(_RESULT_LINE)
+
+    monkeypatch.setattr(cdw.asyncio, "create_subprocess_exec", _fake_exec)
+    env = {
+        "HOME": "/Users/tester",
+        "USER": "tester",
+        "CLAUDE_CONFIG_DIR": str(tmp_path / "isolated-claude"),
+    }
+
+    events: list[Any] = []
+    async for event in ClaudeDirectWorker().spawn(
+        "do the task",
+        worktree=tmp_path,
+        env=env,
+        job=_Job(),
+        worker_id="native-auth",
+        log_dir=tmp_path / "logs-native-auth",
+        first_output_timeout_s=5.0,
+        timeout_s=5.0,
+    ):
+        events.append(event)
+
+    assert events[-1].is_error is False
+    assert "--safe-mode" in captured["argv"]
+    assert "CLAUDE_CONFIG_DIR" not in captured["env"]
+    assert captured["env"]["HOME"] == "/Users/tester"
+    assert captured["env"]["USER"] == "tester"
 
 
 def test_resolve_claude_model_never_returns_foreign_slug() -> None:

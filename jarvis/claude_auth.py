@@ -2,27 +2,16 @@
 
 Personal Jarvis talks to Anthropic's ``claude`` (Claude Code) CLI in two roles:
 
-* **Subagent** (heavy-task worker) via the ``claude`` binary using the **Claude
-  Max subscription** (``claude`` stores an OAuth bearer in
-  ``<config dir>/.credentials.json``, resolved across all candidate config
-  dirs by :mod:`jarvis.claude_credentials`; no per-call billing — it runs
-  against the plan's included usage).
+* **Jarvis-Agent** (heavy-task worker) via the ``claude`` binary using a Claude
+  subscription login (no per-call API billing).
 * **Brain provider** via the Anthropic Messages API using an **Anthropic API key**
   (separate, billed per token on the Anthropic account).
 
-This module reports an honest snapshot of the CLI's own auth state (subscription
-OAuth vs API key), and exposes the connected account email + subscription tier so
-the UI can render "Connected as <email>" exactly like the Codex / Antigravity
-subscription cards. It is the Anthropic sibling of :mod:`jarvis.codex_auth` and
-:mod:`jarvis.google_cli.auth_service`.
-
-Email source: ``claude`` keeps the access bearer (no identity) in the
-credentials file, but the signed-in account identity lives in a SEPARATE
-file, ``.claude.json`` under ``oauthAccount`` (``emailAddress``,
-``displayName``, ``organizationName``) — the sibling ``~/.claude.json`` for
-the default config dir, or inside a custom ``CLAUDE_CONFIG_DIR``. The
-subscription tier (``max`` / ``pro``) is in the credentials file under
-``claudeAiOauth.subscriptionType``.
+The CLI's own ``auth status --json`` command is the primary source of truth.
+That matters cross-platform: current Claude Code stores credentials in the
+macOS Keychain, while Linux, Windows, and older releases may expose a
+``.credentials.json`` file. The file parser remains as a compatibility fallback
+when an older CLI has no auth-status command or the probe cannot run.
 
 Cross-platform (CLOUD.md Rule #1): pure stdlib, ``pathlib``-only, degrades to a
 clean "not installed" / "not connected" snapshot on any host where the ``claude``
@@ -37,11 +26,15 @@ account email and subscription tier.
 """
 from __future__ import annotations
 
+import getpass
 import json
 import logging
 import os
+import shutil
 import subprocess
 import sys
+import time
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -63,11 +56,17 @@ _BINARY_CANDIDATES: tuple[str, ...] = ("claude", "claude.cmd", "claude.exe")
 
 # Process-lifetime cache of ``claude --version`` keyed by resolved binary path.
 # The version is invariant while the app runs, but a cold Node-shim spawn is the
-# single most expensive part of ``status()``; caching it keeps every later
-# status() a pure file read. A failed probe is cached too, so an absent/hanging
-# claude never re-pays the timeout.
+# single most expensive part of ``status()``; caching it leaves only the short-
+# TTL auth probe on later calls. A failed version probe is cached too, so an
+# absent/hanging Claude install never re-pays that timeout.
 _VERSION_CACHE: dict[str, str | None] = {}
 _AUTH_LOGIN_CACHE: dict[str, bool] = {}
+_AUTH_LOGOUT_CACHE: dict[str, bool] = {}
+_AUTH_STATUS_CACHE: dict[
+    tuple[str, str, str, str, str], tuple[float, ClaudeCliAuthSnapshot | None]
+] = {}
+_SAFE_MODE_CACHE: dict[tuple[str, ...], bool] = {}
+_AUTH_STATUS_TTL_S = 5.0
 
 
 def claude_install_command(platform: str | None = None) -> str:
@@ -87,9 +86,12 @@ def claude_install_hint(platform: str | None = None) -> str:
 
 
 def clear_version_cache() -> None:
-    """Drop all cached ``claude --version`` results (tests / after a re-install)."""
+    """Drop cached Claude CLI probes (tests / install or login changes)."""
     _VERSION_CACHE.clear()
     _AUTH_LOGIN_CACHE.clear()
+    _AUTH_LOGOUT_CACHE.clear()
+    _AUTH_STATUS_CACHE.clear()
+    _SAFE_MODE_CACHE.clear()
 
 
 # ----------------------------------------------------------------------
@@ -140,6 +142,138 @@ def _subscription_label(sub_type: str | None) -> str:
     if normalized == "pro":
         return "Claude Pro"
     return f"Claude {sub_type}"
+
+
+@dataclass(frozen=True)
+class ClaudeCliAuthSnapshot:
+    """Display-safe result from ``claude auth status --json``.
+
+    The command may include identity metadata, but never returns the OAuth
+    bearer. Keep this type deliberately narrow so callers cannot accidentally
+    turn an auth probe into a credential transport.
+    """
+
+    logged_in: bool
+    auth_method: str | None = None
+    subscription_type: str | None = None
+    api_provider: str | None = None
+    email: str | None = None
+
+
+def _optional_text(value: object) -> str | None:
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def _cli_credential_env() -> dict[str, str] | None:
+    """Supply the POSIX account name native credential lookups require.
+
+    GUI launchers normally set ``USER``, but sanitized app environments may not.
+    Claude's macOS Keychain lookup treats a missing value as logged out. Returning
+    ``None`` preserves normal inheritance when no repair is needed.
+    """
+    if os.name != "posix" or os.environ.get("USER"):
+        return None
+    try:
+        user = getpass.getuser().strip()
+    except (OSError, KeyError):
+        return None
+    if not user:
+        return None
+    env = dict(os.environ)
+    env["USER"] = user
+    return env
+
+
+def _parse_cli_auth_status(raw: str) -> ClaudeCliAuthSnapshot | None:
+    """Parse Claude's JSON auth status, tolerating a harmless banner line."""
+    candidates = [raw.strip(), *(line.strip() for line in reversed(raw.splitlines()))]
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            data = json.loads(candidate)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(data, dict) or not isinstance(data.get("loggedIn"), bool):
+            continue
+        return ClaudeCliAuthSnapshot(
+            logged_in=data["loggedIn"],
+            auth_method=_optional_text(data.get("authMethod")),
+            subscription_type=_optional_text(data.get("subscriptionType")),
+            api_provider=_optional_text(data.get("apiProvider")),
+            email=_optional_text(data.get("email")),
+        )
+    return None
+
+
+def claude_cli_argv_prefix(binary: str) -> list[str]:
+    """Return a shell-free argv prefix for a resolved Claude CLI binary.
+
+    Windows npm installs expose ``claude.cmd``. Running the adjacent JavaScript
+    entry point through Node avoids ``cmd.exe`` quoting and metacharacter bugs;
+    native binaries and shims on macOS/Linux are invoked directly.
+    """
+    path = Path(binary)
+    node = shutil.which("node") or shutil.which("node.exe")
+    if node:
+        cli_dir = path.resolve().parent
+        for candidate in (
+            cli_dir / "node_modules" / "@anthropic-ai" / "claude-code" / "cli.js",
+            cli_dir / "node_modules" / "@anthropic-ai" / "claude-code" / "cli.mjs",
+            cli_dir / "cli.js",
+            cli_dir / "claude.mjs",
+        ):
+            try:
+                if candidate.is_file():
+                    return [node, str(candidate)]
+            except OSError:
+                continue
+    return [binary]
+
+
+def claude_cli_supports_safe_mode(argv_prefix: Sequence[str]) -> bool:
+    """Capability-probe Claude's customization-free, auth-preserving mode.
+
+    ``--safe-mode`` lets a worker keep the user's native login (including the
+    macOS Keychain) while disabling user hooks, plugins, skills, and project
+    instructions. Older CLIs fall back to the isolated-config/token path.
+    """
+    key = tuple(argv_prefix)
+    if key in _SAFE_MODE_CACHE:
+        return _SAFE_MODE_CACHE[key]
+    try:
+        proc = subprocess.run(
+            [*key, "--help"],
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            timeout=4.0,
+            text=True,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+        )
+        output = f"{proc.stdout or ''}\n{proc.stderr or ''}"
+        supported = proc.returncode == 0 and "--safe-mode" in output
+    except (OSError, subprocess.SubprocessError):
+        supported = False
+    _SAFE_MODE_CACHE[key] = supported
+    return supported
+
+
+def claude_native_auth_env(env: Mapping[str, str]) -> dict[str, str]:
+    """Expose the user's real Claude auth store to a safe-mode subprocess.
+
+    ``build_worker_env`` points ``CLAUDE_CONFIG_DIR`` at a hook-free mission
+    directory for older CLIs. Safe mode itself disables customizations, so a
+    modern CLI instead restores the user's custom config directory (when one is
+    configured) or removes the mission override to use the platform default.
+    """
+    result = dict(env)
+    user_config_dir = os.environ.get("CLAUDE_CONFIG_DIR", "").strip()
+    if user_config_dir:
+        result["CLAUDE_CONFIG_DIR"] = user_config_dir
+    else:
+        result.pop("CLAUDE_CONFIG_DIR", None)
+    return result
 
 
 # ----------------------------------------------------------------------
@@ -194,7 +328,7 @@ class ClaudeAuthService:
 
     ``api_key_present`` is injected by the caller (provider routes already know
     whether a stored Anthropic API key exists) so this module stays free of the
-    credential-manager import and remains a pure auth-file reader.
+    credential-manager import and never reads or returns a stored API key.
     """
 
     def __init__(
@@ -210,8 +344,6 @@ class ClaudeAuthService:
 
     def _resolve_binary(self) -> str | None:
         """Full path to the ``claude`` binary, or ``None`` when absent."""
-        import shutil
-
         # A CLI installed AFTER app start (or into a dir the GUI PATH never
         # had, e.g. the native installer's ~/.local/bin) must still be found —
         # idempotent stat probes, no subprocess.
@@ -237,7 +369,7 @@ class ClaudeAuthService:
             return _VERSION_CACHE[binary]
         try:
             proc = subprocess.run(
-                [binary, "--version"],
+                [*self._cli_argv_prefix(binary), "--version"],
                 capture_output=True,
                 encoding="utf-8",
                 errors="replace",
@@ -253,13 +385,56 @@ class ClaudeAuthService:
         _VERSION_CACHE[binary] = version
         return version
 
+    def _cli_argv_prefix(self, binary: str) -> list[str]:
+        """Shell-free invocation prefix (test seam for Windows npm shims)."""
+        return claude_cli_argv_prefix(binary)
+
+    def _probe_cli_auth(self, binary: str) -> ClaudeCliAuthSnapshot | None:
+        """Ask the installed CLI for its native auth state, with a short TTL.
+
+        A parsed JSON body is authoritative even when the command exits nonzero
+        (some CLI releases use that exit status for ``loggedIn: false``). A
+        missing command, timeout, or malformed body returns ``None`` so older
+        releases continue through the on-disk compatibility parser.
+        """
+        prefix = self._cli_argv_prefix(binary)
+        cache_key = (
+            "\0".join(prefix),
+            os.environ.get("CLAUDE_CONFIG_DIR", ""),
+            os.environ.get("HOME", ""),
+            os.environ.get("USERPROFILE", ""),
+            os.environ.get("USER", ""),
+        )
+        now = time.monotonic()
+        cached = _AUTH_STATUS_CACHE.get(cache_key)
+        if cached is not None and now - cached[0] < _AUTH_STATUS_TTL_S:
+            return cached[1]
+        try:
+            proc = subprocess.run(
+                [*prefix, "auth", "status", "--json"],
+                env=_cli_credential_env(),
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=6.0,
+                text=True,
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+            )
+            snapshot = _parse_cli_auth_status(proc.stdout or "")
+            if snapshot is None:
+                snapshot = _parse_cli_auth_status(proc.stderr or "")
+        except (OSError, subprocess.SubprocessError):
+            snapshot = None
+        _AUTH_STATUS_CACHE[cache_key] = (now, snapshot)
+        return snapshot
+
     def _supports_auth_login(self, binary: str) -> bool:
         """Whether this installed CLI exposes the modern ``auth login`` command."""
         if binary in _AUTH_LOGIN_CACHE:
             return _AUTH_LOGIN_CACHE[binary]
         try:
             proc = subprocess.run(
-                [binary, "auth", "login", "--help"],
+                [*self._cli_argv_prefix(binary), "auth", "login", "--help"],
                 capture_output=True,
                 encoding="utf-8",
                 errors="replace",
@@ -273,14 +448,35 @@ class ClaudeAuthService:
         _AUTH_LOGIN_CACHE[binary] = supported
         return supported
 
+    def _supports_auth_logout(self, binary: str) -> bool:
+        """Whether the CLI can remove its own platform-native credentials."""
+        if binary in _AUTH_LOGOUT_CACHE:
+            return _AUTH_LOGOUT_CACHE[binary]
+        try:
+            proc = subprocess.run(
+                [*self._cli_argv_prefix(binary), "auth", "logout", "--help"],
+                capture_output=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=4.0,
+                text=True,
+                creationflags=NO_WINDOW_CREATIONFLAGS,
+            )
+            supported = proc.returncode == 0
+        except (OSError, subprocess.SubprocessError):
+            supported = False
+        _AUTH_LOGOUT_CACHE[binary] = supported
+        return supported
+
     def _login_argv(self, binary: str) -> list[str]:
         """Capability-selected login argv, with a first-run fallback for old CLIs."""
+        prefix = self._cli_argv_prefix(binary)
         if self._supports_auth_login(binary):
-            return [binary, "auth", "login", "--claudeai"]
+            return [*prefix, "auth", "login", "--claudeai"]
         # Older Claude Code releases have no auth subcommand. A bare interactive
         # start is their documented first-run login flow; passing ``/login`` as
         # a positional argv value incorrectly treats it as an initial prompt.
-        return [binary]
+        return prefix
 
     def _credentials_path(self) -> Path:
         return Path(os.path.expanduser("~/.claude/.credentials.json"))
@@ -345,11 +541,59 @@ class ClaudeAuthService:
             )
 
         version = self._probe_version(binary)
+        cli_auth = self._probe_cli_auth(binary)
         snapshot = self._oauth_snapshot()
-        sub_type = snapshot.subscription_type
+        sub_type = (
+            cli_auth.subscription_type
+            if cli_auth is not None and cli_auth.subscription_type
+            else snapshot.subscription_type
+        )
         oauth_expired = snapshot.status == "expired"
 
-        if snapshot.status == "valid":
+        if cli_auth is not None and cli_auth.logged_in:
+            method = (cli_auth.auth_method or "").lower().replace("-", "_")
+            if "api" in method and "key" in method:
+                log.info("claude status: installed=True connected=True mode=api_key")
+                return ClaudeAuthStatus(
+                    installed=True,
+                    connected=True,
+                    mode="api_key",
+                    message="Connected via Anthropic API key.",
+                    version=version,
+                    account_label="Anthropic API key",
+                    user_email=cli_auth.email,
+                    binary_path=binary,
+                    api_key_present=self._api_key_present,
+                )
+
+            file_email, _name = _account_from_claude_json(
+                _read_json(self._identity_path(snapshot.config_dir))
+            )
+            email = cli_auth.email or file_email
+            label = _subscription_label(sub_type)
+            message = f"Connected via {label} ({email})." if email else (
+                f"Connected via {label}."
+            )
+            log.info(
+                "claude status: installed=True connected=True mode=subscription"
+            )
+            return ClaudeAuthStatus(
+                installed=True,
+                connected=True,
+                mode="subscription",
+                message=message,
+                version=version,
+                account_label=label,
+                user_email=email,
+                subscription_type=sub_type,
+                binary_path=binary,
+                api_key_present=self._api_key_present,
+            )
+
+        # Older Claude Code releases have no machine-readable auth command.
+        # Preserve the file-backed path for Linux/Windows and legacy installs,
+        # but never let a stale file override an explicit ``loggedIn: false``.
+        if cli_auth is None and snapshot.status == "valid":
             email, _name = _account_from_claude_json(
                 _read_json(self._identity_path(snapshot.config_dir))
             )
@@ -389,7 +633,7 @@ class ClaudeAuthService:
         if oauth_expired:
             # Honest expired-state (2026-07-06): the bearer exists but died in
             # place — presence-only reporting showed a green "Connected via
-            # Claude Max" card while every subagent spawn 401'd. The ADVICE
+            # Claude Max" card while every Jarvis-Agent spawn 401'd. The ADVICE
             # matters though: a stale ACCESS token refreshes automatically the
             # next time `claude` runs — a full re-login is only needed when
             # that refresh fails (Windows test-machine confusion 2026-07-18:
@@ -441,33 +685,78 @@ class ClaudeAuthService:
             raise FileNotFoundError(
                 f"Claude CLI is not installed. {claude_install_hint()}"
             )
+        modern_login = self._supports_auth_login(binary)
         argv = self._login_argv(binary)
         log.info("Starting Claude subscription login in an external terminal")
         try:
-            return launch_interactive_terminal(argv, title="Claude sign-in")
+            launch = launch_interactive_terminal(argv, title="Claude sign-in")
         except InteractiveTerminalUnavailable as exc:
-            manual = (
-                "claude auth login --claudeai" if len(argv) > 1 else "claude"
-            )
+            manual = "claude auth login --claudeai" if modern_login else "claude"
             raise InteractiveTerminalUnavailable(
                 f"{exc} Open a terminal and run: {manual}"
             ) from exc
+        clear_version_cache()
+        try:
+            from jarvis.claude_auth_state import clear_claude_auth_dead
+
+            clear_claude_auth_dead()
+        except Exception:  # noqa: BLE001,S110 — optional recovery state
+            pass
+        return launch
 
     def logout_blocking(self) -> tuple[bool, str | None]:
-        """Disconnect the Claude subscription login by removing its credentials.
+        """Disconnect through the CLI, with an old-release file fallback.
 
-        Returns ``(ok, error)``. Removes ONLY ``~/.claude/.credentials.json`` (the
-        bearer file) — never ``~/.claude.json``, which holds the user's whole
-        Claude Code config + project history. A missing file counts as success
-        (already logged out). Deliberately DEFAULT-DIR only: a login owned by
-        an external profile manager (custom ``CLAUDE_CONFIG_DIR``) also feeds
-        that manager's own live sessions — deleting it here would log those
-        out behind the user's back, so the card may keep reporting connected
-        after a disconnect on such a host.
+        The CLI owns the platform-specific credential store, including the
+        macOS Keychain. Only when ``auth logout`` is unavailable do we remove
+        the legacy default bearer file; ``~/.claude.json`` is never deleted.
         """
+        binary = self._resolve_binary()
+        if binary is not None and self._supports_auth_logout(binary):
+            try:
+                proc = subprocess.run(
+                    [*self._cli_argv_prefix(binary), "auth", "logout"],
+                    env=_cli_credential_env(),
+                    capture_output=True,
+                    encoding="utf-8",
+                    errors="replace",
+                    timeout=15.0,
+                    text=True,
+                    creationflags=NO_WINDOW_CREATIONFLAGS,
+                )
+            except (OSError, subprocess.SubprocessError) as exc:
+                return False, f"Claude logout could not run: {type(exc).__name__}"
+            if proc.returncode != 0:
+                return False, f"Claude logout failed with exit code {proc.returncode}"
+            clear_version_cache()
+            try:
+                from jarvis.claude_auth_state import clear_claude_auth_dead
+
+                clear_claude_auth_dead()
+            except Exception:  # noqa: BLE001,S110 — optional recovery state
+                pass
+            return True, None
+
         creds = self._credentials_path()
         try:
             creds.unlink(missing_ok=True)
+            clear_version_cache()
             return True, None
         except OSError as exc:
             return False, f"could not remove Claude credentials: {exc}"
+
+
+def usable_native_claude_subscription() -> ClaudeAuthStatus | None:
+    """Return a subscription status that a customization-free worker can use.
+
+    A connected native account alone is insufficient: without ``--safe-mode``
+    an older CLI would need Jarvis' isolated config to avoid user hooks, which
+    hides platform-native credentials such as the macOS Keychain. Returning
+    ``None`` makes the worker resolver continue through the legacy token/API-key
+    and cross-family paths.
+    """
+    status = ClaudeAuthService().status()
+    if not (status.connected and status.mode == "subscription"):
+        return None
+    prefix = claude_cli_argv_prefix(status.binary_path)
+    return status if claude_cli_supports_safe_mode(prefix) else None

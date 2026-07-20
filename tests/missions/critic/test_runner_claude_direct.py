@@ -122,6 +122,7 @@ def _patch_direct(
     *,
     stdout: str | bytes,
     returncode: int = 0,
+    safe_mode: bool = False,
 ) -> dict[str, Any]:
     """Force the claude-direct branch and capture the spawn call.
 
@@ -150,6 +151,10 @@ def _patch_direct(
         "jarvis.missions.workers.claude_direct_worker."
         "_resolve_claude_argv_prefix",
         lambda: ["claude"],
+    )
+    monkeypatch.setattr(
+        "jarvis.claude_auth.claude_cli_supports_safe_mode",
+        lambda _prefix: safe_mode,
     )
 
     async def fake(*args: Any, **kwargs: Any) -> _FakeProc:
@@ -197,6 +202,40 @@ async def test_claude_direct_path_approves_when_resolver_picks_claude_api(
     assert argv[argv.index("--model") + 1] == "claude-sonnet-4-6"
     # The openclaw worker must NOT have been spawned -- no openclaw.json gets written.
     assert not (tmp_path / "openclaw.json").exists()
+
+
+@pytest.mark.asyncio
+async def test_claude_critic_safe_mode_keeps_native_login_environment(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+    captured = _patch_direct(
+        monkeypatch,
+        stdout=_valid_verdict_json("approve"),
+        safe_mode=True,
+    )
+    env = {
+        "HOME": "/Users/tester",
+        "USER": "tester",
+        "CLAUDE_CONFIG_DIR": str(tmp_path / "isolated-claude"),
+    }
+
+    verdict = await CriticRunner().run(
+        mission_prompt="Build X",
+        worker_diff="diff",
+        worker_log="log",
+        prior_reflections="",
+        iteration=0,
+        worktree=tmp_path,
+        env=env,
+    )
+
+    assert verdict.verdict == "approve"
+    assert "--safe-mode" in captured["argv"]
+    spawn_env = captured["kwargs"]["env"]
+    assert "CLAUDE_CONFIG_DIR" not in spawn_env
+    assert spawn_env["HOME"] == "/Users/tester"
+    assert spawn_env["USER"] == "tester"
 
 
 @pytest.mark.parametrize("provider,foreign_model", [

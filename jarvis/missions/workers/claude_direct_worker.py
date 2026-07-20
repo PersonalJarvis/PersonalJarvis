@@ -37,10 +37,10 @@ Spawn discipline mirrors GeminiWorker / SubJarvisWorker:
 - ``ANTHROPIC_OAUTH_TOKEN`` + ``ANTHROPIC_API_KEY`` injected by
   ``_env_builder`` in ``jarvis.missions.init``.
 
-Authentication: claude CLI reads OAuth tokens from ``~/.claude/.credentials.json``
-in the user's profile. The env-builder copies the bearer to both
-``ANTHROPIC_API_KEY`` and ``ANTHROPIC_OAUTH_TOKEN`` so the binary works
-regardless of which env var the CLI happens to check first.
+Authentication: current Claude Code can retain its platform-native login while
+``--safe-mode`` disables user hooks and plugins. Older releases keep the
+isolated-config path and authenticate through an explicitly injected OAuth
+token or API key.
 """
 
 from __future__ import annotations
@@ -232,23 +232,12 @@ def _resolve_claude_argv_prefix() -> list[str]:
     Falls back to the bare shim only when node + mjs aren't both
     resolvable.
     """
-    node = shutil.which("node") or shutil.which("node.exe")
-    if node:
-        for name in ("claude.cmd", "claude.exe", "claude"):
-            cli = shutil.which(name)
-            if not cli:
-                continue
-            cli_dir = Path(cli).resolve().parent
-            for candidate in (
-                cli_dir / "node_modules" / "@anthropic-ai" / "claude-code" / "cli.js",
-                cli_dir / "node_modules" / "@anthropic-ai" / "claude-code" / "cli.mjs",
-                cli_dir / "cli.js",
-                cli_dir / "claude.mjs",
-            ):
-                if candidate.is_file():
-                    return [node, str(candidate)]
     bare = _resolve_claude_binary()
-    return [bare] if bare else ["claude"]
+    if bare is None:
+        return ["claude"]
+    from jarvis.claude_auth import claude_cli_argv_prefix
+
+    return claude_cli_argv_prefix(bare)
 
 
 def _build_mcp_config_args(config_dir: Path, mcp_servers: dict[str, Any] | None) -> list[str]:
@@ -446,8 +435,17 @@ class ClaudeDirectWorker:
         # subscription can't reach it (live mission 019ec615, 2026-06-14:
         # claude-fable-5 "is currently unavailable").
         argv_prefix = _resolve_claude_argv_prefix()
+        from jarvis.claude_auth import (
+            claude_cli_supports_safe_mode,
+            claude_native_auth_env,
+        )
+
+        safe_mode = await asyncio.to_thread(
+            claude_cli_supports_safe_mode, argv_prefix
+        )
         cmd: list[str] = [
             *argv_prefix,
+            *(["--safe-mode"] if safe_mode else []),
             "--print",
             "--output-format",
             "stream-json",
@@ -488,15 +486,21 @@ class ClaudeDirectWorker:
         # gracefully when the host process is in a job that forbids breakaway
         # (WinError 5, live mission 019ec602 2026-06-14).
         t0 = time.perf_counter()
+        spawn_env = dict(env)
+        if safe_mode:
+            # The native account may live in the macOS Keychain and is scoped
+            # to the user's real config. Safe mode disables customizations
+            # without hiding that credential store. Older CLIs retain the
+            # isolated config plus explicitly injected-token path.
+            spawn_env = claude_native_auth_env(spawn_env)
+        if broker_binding is not None:
+            spawn_env = broker_binding.apply_environment(spawn_env)
+
         try:
             proc = await create_worker_subprocess(
                 cmd,
                 cwd=str(worktree),
-                env=(
-                    broker_binding.apply_environment(env)
-                    if broker_binding is not None
-                    else env
-                ),
+                env=spawn_env,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,

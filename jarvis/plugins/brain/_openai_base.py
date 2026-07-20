@@ -358,8 +358,91 @@ async def stream_complete(
             })
 
 
+_UNSUPPORTED_ERROR_MARKERS = (
+    "unsupported_parameter",
+    "unsupported_value",
+    "unsupported parameter",
+    "unsupported value",
+    "does not support",
+    "not supported",
+)
+
+
+def _error_metadata(exc: Exception) -> tuple[str, str, str]:
+    """Return normalized ``(parameter, code, message)`` without SDK coupling."""
+    parameter = str(getattr(exc, "param", "") or "").strip().lower()
+    code = str(getattr(exc, "code", "") or "").strip().lower()
+    body = getattr(exc, "body", None)
+    if isinstance(body, dict):
+        error = body.get("error", body)
+        if isinstance(error, dict):
+            parameter = str(error.get("param") or parameter).strip().lower()
+            code = str(error.get("code") or code).strip().lower()
+    return parameter, code, str(exc).lower()
+
+
+def _explicitly_rejects_parameter(exc: Exception, parameter: str) -> bool:
+    """Whether an API error explicitly rejects one request parameter.
+
+    OpenAI SDK errors expose ``param``/``code`` on some versions and only an
+    embedded response body on others. OpenAI-compatible gateways often expose
+    neither, so the message fallback remains intentionally narrow: the field
+    name and an explicit unsupported marker must both be present.
+    """
+    rejected_parameter, code, message = _error_metadata(exc)
+    unsupported = code in {"unsupported_parameter", "unsupported_value"} or any(
+        marker in message for marker in _UNSUPPORTED_ERROR_MARKERS
+    )
+    if not unsupported:
+        return False
+    if rejected_parameter:
+        return rejected_parameter == parameter
+    return parameter in message
+
+
+def _compatible_retry_kwargs(
+    exc: Exception,
+    kwargs: dict[str, Any],
+    adaptations: set[str],
+) -> tuple[dict[str, Any], str] | None:
+    """Build one safe retry after an explicit model/API capability rejection."""
+    message = str(exc).lower()
+    if "max_tokens" in kwargs and "max_tokens" not in adaptations:
+        rejected_max_tokens = (
+            "max_completion_tokens" in message
+            or _explicitly_rejects_parameter(exc, "max_tokens")
+        )
+        if rejected_max_tokens:
+            retry_kwargs = dict(kwargs)
+            retry_kwargs["max_completion_tokens"] = retry_kwargs.pop("max_tokens")
+            return retry_kwargs, "max_tokens"
+
+    # Sampling is optional. If a model accepts only its own default, omission
+    # is the capability-safe fallback and preserves the provider's chosen value.
+    if (
+        "temperature" in kwargs
+        and "temperature" not in adaptations
+        and _explicitly_rejects_parameter(exc, "temperature")
+    ):
+        retry_kwargs = dict(kwargs)
+        retry_kwargs.pop("temperature", None)
+        return retry_kwargs, "temperature"
+
+    # Inline usage accounting is optional and not implemented by every
+    # OpenAI-compatible server even when the installed SDK accepts the kwarg.
+    if (
+        "stream_options" in kwargs
+        and "stream_options" not in adaptations
+        and _explicitly_rejects_parameter(exc, "stream_options")
+    ):
+        retry_kwargs = dict(kwargs)
+        retry_kwargs.pop("stream_options", None)
+        return retry_kwargs, "stream_options"
+    return None
+
+
 async def _create_with_token_param_retry(client: Any, kwargs: dict[str, Any]) -> Any:
-    """``chat.completions.create`` with a one-shot token-parameter retry.
+    """Create a chat stream with bounded, rejection-driven compatibility retries.
 
     Newer OpenAI models reject the legacy ``max_tokens`` with a 400
     ``unsupported_parameter`` error ("Use 'max_completion_tokens' instead"),
@@ -368,25 +451,34 @@ async def _create_with_token_param_retry(client: Any, kwargs: dict[str, Any]) ->
     the server's EXPLICIT rejection keeps both families working without
     pinning model names (AP-21). Field-found: a valid OpenAI key read as
     "Not working" in the provider test because of this 400.
+
+    The same capability negotiation applies to optional ``temperature`` and
+    ``stream_options`` fields. Each field is adapted at most once and only
+    after the API explicitly rejects it, so authentication, billing, model,
+    tool-schema, and network failures are never hidden or retried.
     """
-    try:
-        return await client.chat.completions.create(**kwargs)
-    except TypeError:
-        # SDK-level kwarg problems belong to the caller's stream_options
-        # handling — never ours.
-        raise
-    except Exception as exc:  # noqa: BLE001 — inspect the API error, re-raise unrelated
-        message = str(exc)
-        rejected_max_tokens = "max_tokens" in kwargs and (
-            "max_completion_tokens" in message
-            or ("unsupported_parameter" in message and "'max_tokens'" in message)
-        )
-        if not rejected_max_tokens:
+    current_kwargs = kwargs
+    adaptations: set[str] = set()
+    while True:
+        try:
+            return await client.chat.completions.create(**current_kwargs)
+        except TypeError:
+            # SDK-level kwarg problems belong to the caller's stream_options
+            # handling — never ours.
             raise
-        log.info(
-            "provider rejected 'max_tokens' — retrying once with "
-            "'max_completion_tokens'."
-        )
-        retry_kwargs = dict(kwargs)
-        retry_kwargs["max_completion_tokens"] = retry_kwargs.pop("max_tokens")
-        return await client.chat.completions.create(**retry_kwargs)
+        except Exception as exc:  # noqa: BLE001 — inspect, adapt, or re-raise
+            retry = _compatible_retry_kwargs(exc, current_kwargs, adaptations)
+            if retry is None:
+                raise
+            current_kwargs, field = retry
+            adaptations.add(field)
+            if field == "max_tokens":
+                log.info(
+                    "provider rejected 'max_tokens' — retrying with "
+                    "'max_completion_tokens'."
+                )
+            else:
+                log.info(
+                    "provider rejected optional '%s' — retrying without it.",
+                    field,
+                )

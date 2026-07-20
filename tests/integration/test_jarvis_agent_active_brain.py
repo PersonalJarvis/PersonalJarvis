@@ -370,12 +370,11 @@ def test_subagent_switch_409_codex_when_not_connected(
     assert persisted == []
 
 
-# --- Claude Max OAuth as a subagent credential (no API key needed) ---------
-# The ClaudeDirectWorker authenticates via the live Claude Max OAuth login in
-# ~/.claude/.credentials.json (read_live_claude_oauth_token), NOT a stored
-# Anthropic API key. A fresh Claude-Max user who only ran `claude login` must
-# therefore see claude-api unlocked + selectable, mirroring the codex/agy OAuth
-# rows above. Source of the worker auth: missions/init.py::_worker_factory.
+# --- Claude subscription as a Jarvis-Agent credential (no API key needed) ---
+# The CLI status covers platform-native auth (including macOS Keychain), while
+# the bearer-file parser supports older Linux/Windows releases. A user who only
+# signed into Claude must see claude-api unlocked and selectable, mirroring the
+# Codex/Antigravity subscription rows above.
 
 
 def test_claude_api_row_key_set_via_max_oauth(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -390,12 +389,23 @@ def test_claude_api_row_key_set_via_max_oauth(monkeypatch: pytest.MonkeyPatch) -
 
 
 def _patch_claude_oauth(monkeypatch: pytest.MonkeyPatch, status: str) -> None:
-    """Stub the freshest-login snapshot the claude-api row reads."""
+    """Stub both modern CLI status and the legacy bearer-file fallback."""
     from types import SimpleNamespace
+
+    from jarvis.claude_auth import ClaudeAuthService, ClaudeAuthStatus
 
     monkeypatch.setattr(
         "jarvis.claude_credentials.freshest_claude_oauth",
         lambda **_k: SimpleNamespace(status=status),
+    )
+    monkeypatch.setattr(
+        ClaudeAuthService,
+        "status",
+        lambda self: ClaudeAuthStatus(
+            installed=True,
+            connected=status == "valid",
+            mode="subscription" if status == "valid" else "unknown",
+        ),
     )
 
 

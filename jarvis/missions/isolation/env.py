@@ -17,6 +17,7 @@ is no cross-talk between parallel missions.
 """
 from __future__ import annotations
 
+import getpass
 import json
 import logging
 import ntpath
@@ -80,7 +81,8 @@ def _repair_windows_worker_path(
 # - SystemRoot: Windows internals; cmd.exe/python.exe need it.
 # - TEMP: subprocesses may need to create temporary files.
 # - USERPROFILE: claude/codex write their configs under %USERPROFILE%/.claude and .codex.
-# - LOCALAPPDATA: VSCode-Extensions, npm caches, ms-playwright cache liegen dort.
+# - USER/USERNAME: native credential stores can key lookups to the OS account.
+# - LOCALAPPDATA: VSCode extensions, npm caches, and Playwright caches live there.
 # - APPDATA: npm-installed CLIs (gemini, claude) resolve their tool/skill bundles
 #   via %APPDATA%/Roaming/npm. Without this, the `gemini` CLI falls back to a
 #   stripped-down "generalist" agent that has NO file-writing tools — the worker
@@ -93,6 +95,9 @@ _ALLOWLIST_SYSTEM_VARS: tuple[str, ...] = (
     "SystemRoot",
     "TEMP",
     "USERPROFILE",
+    "USER",
+    "LOGNAME",
+    "USERNAME",
     "LOCALAPPDATA",
     "APPDATA",
     # POSIX (macOS/Linux): claude/codex resolve their credential + config files
@@ -102,6 +107,7 @@ _ALLOWLIST_SYSTEM_VARS: tuple[str, ...] = (
     # ~/.codex/auth.json -> auth failure. Harmless on Windows (usually unset).
     "HOME",
     "XDG_CONFIG_HOME",
+    "TMPDIR",
 )
 
 
@@ -138,6 +144,17 @@ def build_worker_env(
         value = os.environ.get(key)
         if value is not None:
             env[key] = value
+
+    # macOS Keychain-backed Claude auth needs the POSIX account name. GUI or
+    # supervisor launchers can provide HOME while omitting USER; derive only
+    # that display-safe OS identity rather than inheriting the full environment.
+    if os.name == "posix" and env.get("HOME") and not env.get("USER"):
+        try:
+            user = getpass.getuser().strip()
+        except (OSError, KeyError):
+            user = ""
+        if user:
+            env["USER"] = user
 
     # Fixed defaults — non-negotiable
     env["NO_COLOR"] = "1"
@@ -185,8 +202,11 @@ def build_worker_env(
     # APPROVED missions streamed past it. A non-interactive worker needs ZERO
     # plugins/hooks/skills, so the clean config eliminates the hang vector
     # entirely (and cross-platform — on Linux/macOS the same hook runs bash
-    # directly). Auth then comes from CLAUDE_CODE_OAUTH_TOKEN below (the
-    # credentials file lives in the *user's* ~/.claude, not here).
+    # directly). Auth then comes from CLAUDE_CODE_OAUTH_TOKEN below. Newer
+    # Claude Code workers remove this override at spawn time and use
+    # ``--safe-mode``: customizations stay disabled while the native credential
+    # store (including the macOS Keychain) remains visible. Older CLIs retain
+    # this isolated path.
     env["CLAUDE_CONFIG_DIR"] = str(_seed_worker_claude_config(run_dir))
     # The external `openclaw` CLI reads `<MISSION_STATE_DIR>/openclaw.json` to
     # find `agents.defaults.workspace`; without that redirect, file_write/edit
