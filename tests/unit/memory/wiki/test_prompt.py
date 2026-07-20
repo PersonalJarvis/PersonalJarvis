@@ -332,14 +332,15 @@ def test_system_prompt_demands_empty_array_for_smalltalk() -> None:
     )
 
 
-def test_system_prompt_tells_curator_to_prefer_writing_when_in_doubt() -> None:
-    """Forgetting a fact is the worse failure mode -- prompt must say so."""
+def test_system_prompt_carries_the_asymmetric_curation_bar() -> None:
+    """Recall-protected for personal facts, precision-biased elsewhere."""
 
-    prompt = build_system_prompt("schema body", vault_summary=None).lower()
-    # Anchor phrase; if the wording shifts in future revisions, update
-    # this assertion together with the prompt.
-    assert "when in doubt" in prompt
-    assert "forgetting" in prompt or "un-forget" in prompt
+    prompt = " ".join(build_system_prompt("schema body", vault_summary=None).split())
+    # Anchor phrases; if the wording shifts in future revisions, update
+    # these assertions together with the prompt.
+    assert "forgetting is the worse failure" in prompt
+    assert "writing junk is the worse failure" in prompt
+    assert "when in doubt with no strong personal anchor, skip it" in prompt
 
 
 def test_system_prompt_requires_self_disclosure_for_topic_memory() -> None:
@@ -349,8 +350,10 @@ def test_system_prompt_requires_self_disclosure_for_topic_memory() -> None:
     assert '"What are the benefits of Vitamin D?"' in prompt
     assert '"Tell me about Monaco."' in prompt
     assert "both require `[]`" in prompt
-    assert '"I own a yacht." and "I plan to attend Monaco."' in prompt
-    assert "after direct self-disclosure is established" in prompt
+    assert '"I own a yacht."' in prompt
+    assert '"I plan to attend Monaco."' in prompt
+    assert "Topic choice alone never qualifies" in prompt
+    assert "first-person lived-experience report" in prompt
 
 
 def test_system_prompt_has_no_maintainer_specific_user_target() -> None:
@@ -423,12 +426,14 @@ def test_consolidator_prompt_rechecks_question_derived_user_claims() -> None:
 
     system, user = build_consolidator_prompt([candidate], {})
 
-    assert "evidence must explicitly assert or confirm that relationship" in system
+    assert "evidence must assert or confirm that relationship" in system
     assert '"What are the benefits of Vitamin D?"' in system
     assert '"Tell me about Monaco."' in system
     assert 'both examples require "noop"' in system
     assert '"I own a yacht." and "I plan to attend Monaco."' in system
     assert "What are the benefits of Vitamin D?" in user
+    # Rows without basis metadata render the explicit/3 defaults.
+    assert "basis=explicit salience=3" in user
 
 
 def test_consolidator_prompt_carries_the_graph_visibility_rule() -> None:

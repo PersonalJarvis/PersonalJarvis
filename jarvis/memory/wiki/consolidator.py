@@ -75,6 +75,9 @@ _GRAPH_TARGET_DIR_BY_KIND = {
     "place": "entities",
     "organization": "entities",
     "project": "projects",
+    # A recurring sport/hobby the user practices is a standing theme of
+    # their life — graph-visible under concepts/ (for example golf).
+    "activity": "concepts",
 }
 
 # Numeric claims are a small but damaging hallucination class: a page about an
@@ -800,13 +803,20 @@ class Consolidator:
         session_id = str(row.session_id or "").strip()
         if not turn_id:
             return body
+        # Non-explicit provenance is part of the citation: a reader (and a
+        # later upgrade pass) can see the fact was inferred from behaviour,
+        # not asserted verbatim.
+        basis = str(getattr(row, "basis", "") or "").strip().lower()
+        basis_suffix = (
+            f" (basis: {basis})" if basis and basis != "explicit" else ""
+        )
         if session_id:
             marker = (
                 f"- Realtime transcript: session `{session_id}`, "
-                f"turn `{turn_id}`."
+                f"turn `{turn_id}`{basis_suffix}."
             )
         else:
-            marker = f"- Conversation transcript: turn `{turn_id}`."
+            marker = f"- Conversation transcript: turn `{turn_id}`{basis_suffix}."
         if marker in body:
             return body
 
@@ -1337,6 +1347,12 @@ class Consolidator:
                         required.add(normalised)
                     continue
                 if closing >= 0 and index <= closing:
+                    continue
+                if normalised.endswith("*(inferred)*"):
+                    # Behavioral/inferred lines are upgradeable by design: a
+                    # later explicit assertion may rewrite them (dropping the
+                    # marker) or an explicit contradiction may remove them.
+                    # Everything else keeps byte-level protection.
                     continue
                 required.add(normalised)
             return required

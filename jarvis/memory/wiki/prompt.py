@@ -76,13 +76,16 @@ any update.
   blockers.
 - Relationships: who-knows-whom, family, employer, collaborator.
 
-The user must explicitly assert or confirm their durable relationship to a
-topic. "I own a yacht." and "I plan to attend Monaco." are worth saving. If a
-question also contains self-disclosure, retain only the disclosed fact and do
-not infer why the user asked. When in doubt after direct self-disclosure is
-established: write the note. Forgetting a grounded fact is a strictly worse
-failure than adding a slightly-too-eager one (the user can always edit or
-archive a wiki page; they cannot un-forget).
+The user must assert or confirm their durable relationship to a topic —
+either explicitly ("I own a yacht.", "I plan to attend Monaco.") or through a
+first-person lived-experience report ("I love being out on golf courses with
+my buddies" grounds that the user plays and enjoys golf). Topic choice alone
+never qualifies. If a question also contains self-disclosure, retain only the
+disclosed fact and do not infer why the user asked. Quality bar: this is a
+curated map of the user's life, not a transcript archive. For facts the user
+asserted about themselves, their people, possessions, health, habits, and
+projects, forgetting is the worse failure. For everything else, writing junk
+is the worse failure — when in doubt with no strong personal anchor, skip it.
 
 ## Output Contract (binding)
 
@@ -444,7 +447,7 @@ excerpt does not directly support the fact, or evidence is unavailable, choose
 "noop" with an unsupported-evidence reason. Existing pages help decide where
 supported knowledge belongs, but cannot make an unsupported candidate true.
 For a claimed user interest, preference, habit, plan, intent, identity, or
-ownership, the evidence must explicitly assert or confirm that relationship.
+ownership, the evidence must assert or confirm that relationship.
 A topic mention, one-off question, search, or information request is not direct
 support. "What are the benefits of Vitamin D?" does not establish a supplement
 interest or plan. "Tell me about Monaco." does not establish interest, travel
@@ -452,6 +455,24 @@ plans, attendance, residence, or preference; both examples require "noop".
 By contrast, "I own a yacht." and "I plan to attend Monaco." are explicit
 self-disclosures that may be stored. If a question contains a self-disclosure,
 judge only the disclosed clause and never invent a reason for the question.
+
+Evidence bases: each candidate carries basis=explicit|behavioral|inferred and
+salience=1-5 (how central the fact is to the user's own life).
+- basis=explicit: the user literally asserted the fact.
+- basis=behavioral: the user described first-person lived experience — doing,
+  practicing, or enjoying something — without naming it as a preference. Store
+  it phrased from the evidence (for example "Plays golf with friends;
+  describes it with enthusiasm") and end that page bullet with the exact
+  marker *(inferred)*. When a later candidate provides an explicit assertion
+  for the same fact, upgrade the line: rewrite it and drop the marker. An
+  explicit contradiction may remove an *(inferred)* line outright (the only
+  permitted line deletion) or use "invalidate" for a whole superseded page.
+- Topic questions and one-off mentions still require "noop" regardless of the
+  claimed basis; a basis label never overrides the evidence rules above.
+- Curation bar by salience: candidates with salience 1-2 (world knowledge,
+  trivia) prefer "noop" — junk on the map is the worse failure there. For
+  asserted personal facts (salience 3-5), prefer "add"/"update" — the user
+  cannot recover a fact the wiki never stored.
 
 Explicit persistence requests are binding across all supported conversation
 languages (English, German, and Spanish):
@@ -502,10 +523,12 @@ Decision semantics:
   organization, place) that only appears as a line on ANOTHER page — for
   example the user's profile — is NOT already known; "add" its own entity
   page and cross-link it instead of choosing "noop".
-  For an evidence-supported durable fact, prefer "add" or "update" over
-  "noop": the user can edit or archive an over-eager page, but cannot
-  recover a fact the wiki never stored. You are the binding cleanliness
-  gate for durability and evidence, not a brake on wiki growth.
+  You are the curation gate of a person-centric wiki, asymmetric by design:
+  for an evidence-supported fact about the user's identity, people,
+  possessions, health, habits, or projects, prefer "add"/"update" over
+  "noop" — the user cannot recover a fact the wiki never stored. For world
+  knowledge, one-off topics, and salience 1-2 candidates, prefer "noop" —
+  junk on the map is the worse failure there.
   Provide only "candidate_id", "decision", "reason".
 - "invalidate": the fact CONTRADICTS a shown page so that page (or
   statement) is now outdated. Provide "target" (the superseded page) and
@@ -526,6 +549,13 @@ existing page, ALSO emit a secondary "add" for that topic page in the same
 batch and cross-link it with the profile in both directions. Do not create
 topic pages for one-off mentions, smalltalk themes, or unsupported guesses
 — the evidence rules above still apply.
+
+Enrichment routing (binding): when a candidate's subjects name a topic that
+already has its own page (the user's car, a sport, a person), the primary
+"update" targets THAT topic page — new detail about the topic belongs there.
+The user profile keeps at most a one-line [[wikilink]] bullet to the topic;
+profile bullets must not accumulate detail that belongs on a linked topic
+page.
 
 A grounded residence is always graph-visible: use kind `place`, require the
 candidate subjects to contain both the exact user slug and the named place
@@ -611,8 +641,11 @@ def build_consolidator_prompt(
         subjects = ", ".join(getattr(row, "subjects", ()) or ()) or "-"
         evidence_turn_id = str(getattr(row, "evidence_turn_id", "") or "")
         evidence_excerpt = str(getattr(row, "evidence_excerpt", "") or "")
+        basis = str(getattr(row, "basis", "") or "explicit")
+        salience = int(getattr(row, "salience", 3) or 3)
         parts.append(
-            f"candidate_id={row.id} kind={row.kind} subjects=[{subjects}]\n"
+            f"candidate_id={row.id} kind={row.kind} subjects=[{subjects}] "
+            f"basis={basis} salience={salience}\n"
             f"  proposed_fact={json.dumps(str(row.fact), ensure_ascii=False)}\n"
             f"  user_evidence_turn_id={json.dumps(evidence_turn_id)}\n"
             "  user_evidence_excerpt="

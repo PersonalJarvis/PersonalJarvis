@@ -2287,3 +2287,243 @@ async def test_empty_journal_is_a_cheap_noop(stack) -> None:
     label = await consolidator.run_once()
     assert label == "journal-empty"
     assert brain.received_requests == []
+
+
+# ---------------------------------------------------------------------------
+# Evidence-tiered curation: *(inferred)* markers, basis provenance, activity
+# ---------------------------------------------------------------------------
+
+RUBEN_WITH_INFERRED_GOLF = RUBEN_FULL_BODY.replace(
+    "- Enjoys great coffee.\n",
+    "- Enjoys great coffee.\n- Plays golf with friends *(inferred)*\n",
+)
+
+
+def _golf_concept_body() -> str:
+    today = dt.date.today().isoformat()
+    return (
+        "---\n"
+        "type: concept\n"
+        "slug: golf\n"
+        "aliases: [Golf]\n"
+        f"created: {today}\n"
+        f"updated: {today}\n"
+        "---\n\n"
+        "# Golf\n\n"
+        "## Summary\n\n"
+        "A sport the user plays actively with friends.\n\n"
+        "## Definition\n\n"
+        "Recurring outdoor activity of the user.\n\n"
+        "## Examples\n\n"
+        "- Weekend rounds with friends.\n\n"
+        "## Related\n\n"
+        "- [[entities/ruben|The user]]\n\n"
+        "## Sources\n\n"
+        "- conversation\n"
+    )
+
+
+@pytest.mark.asyncio
+async def test_inferred_marker_line_may_be_rewritten_on_explicit_upgrade(
+    stack,
+) -> None:
+    """An *(inferred)* bullet is upgradeable: a later explicit assertion may
+    rewrite it (dropping the marker) without tripping the preservation guard."""
+    vault_root, _curator, journal = stack
+    page = vault_root / "entities" / "ruben.md"
+    _write_aged(page, RUBEN_WITH_INFERRED_GOLF)
+    journal.append(
+        [CandidateFact(
+            fact="Golf is the user's favourite sport.",
+            kind="preference", subjects=("ruben",),
+            evidence_turn_id="golf-upgrade",
+            evidence_excerpt=(
+                "Evidence user turn [golf-upgrade]: "
+                "Golf is genuinely my favourite sport."
+            ),
+        )],
+        source_label="realtime:golf-upgrade", turn_hash="golf-upgrade",
+    )
+    cid = journal.pending()[0].id
+
+    upgraded = RUBEN_WITH_INFERRED_GOLF.replace(
+        "- Plays golf with friends *(inferred)*\n",
+        "- Golf is the user's favourite sport.\n",
+    )
+    brain = FakeBrain([_judge_json([{
+        "candidate_id": cid,
+        "decision": "update",
+        "target": "entities/ruben.md",
+        "new_body": upgraded,
+        "reason": "explicit assertion upgrades the inferred line",
+    }])])
+
+    label = await _consolidator(
+        stack, brain, config=_config(user_entity_slug="ruben"),
+    ).run_once()
+
+    assert label == "journal-batch:1"
+    content = page.read_text(encoding="utf-8")
+    assert "- Golf is the user's favourite sport." in content
+    assert "*(inferred)*" not in content
+    assert "- Enjoys great coffee." in content  # unmarked content survived
+    assert journal.pending() == []
+
+
+@pytest.mark.asyncio
+async def test_unmarked_line_deletion_is_still_rejected_beside_marker_lines(
+    stack,
+) -> None:
+    """The guard exemption is bounded to the literal *(inferred)* marker: a
+    judge dropping an unmarked fact still falls back to a grounded provider."""
+    vault_root, _curator, journal = stack
+    page = vault_root / "entities" / "ruben.md"
+    _write_aged(page, RUBEN_WITH_INFERRED_GOLF)
+    journal.append(
+        [CandidateFact(
+            fact="Golf is the user's favourite sport.",
+            kind="preference", subjects=("ruben",),
+        )],
+        source_label="realtime:golf-destructive", turn_hash="golf-destructive",
+    )
+    cid = journal.pending()[0].id
+
+    destructive = RUBEN_WITH_INFERRED_GOLF.replace(
+        "- Enjoys great coffee.\n- Plays golf with friends *(inferred)*\n",
+        "- Golf is the user's favourite sport.\n",
+    )
+    preserved = RUBEN_WITH_INFERRED_GOLF.replace(
+        "- Plays golf with friends *(inferred)*\n",
+        "- Golf is the user's favourite sport.\n",
+    )
+    registry = ScriptedProviderRegistry(
+        {
+            "gemini": _judge_json([{
+                "candidate_id": cid,
+                "decision": "update",
+                "target": "entities/ruben.md",
+                "new_body": destructive,
+            }]),
+            "openrouter": _judge_json([{
+                "candidate_id": cid,
+                "decision": "update",
+                "target": "entities/ruben.md",
+                "new_body": preserved,
+            }]),
+        }
+    )
+
+    label = await _consolidator(
+        stack,
+        FakeBrain([]),
+        registry=registry,
+        config=_config(user_entity_slug="ruben"),
+    ).run_once()
+
+    assert label == "journal-batch:1"
+    assert registry.tried == ["gemini", "openrouter"]
+    content = page.read_text(encoding="utf-8")
+    assert "- Enjoys great coffee." in content
+    assert "- Golf is the user's favourite sport." in content
+
+
+@pytest.mark.asyncio
+async def test_source_marker_carries_behavioral_basis(stack) -> None:
+    vault_root, _curator, journal = stack
+    journal.append(
+        [CandidateFact(
+            fact="The user plays golf actively with friends.",
+            kind="activity", subjects=("ruben", "golf"),
+            evidence_turn_id="golf-turn",
+            evidence_excerpt=(
+                "Evidence user turn [golf-turn]: I love being out on golf "
+                "courses with my buddies, playing this sport actively."
+            ),
+            basis="behavioral", salience=4,
+        )],
+        source_label="realtime:golf-behavioral", turn_hash="golf-behavioral",
+    )
+    cid = journal.pending()[0].id
+
+    brain = FakeBrain([_judge_json([{
+        "candidate_id": cid,
+        "decision": "add",
+        "target": "concepts/golf.md",
+        "new_body": _golf_concept_body(),
+        "reason": "recurring activity page",
+    }])])
+
+    label = await _consolidator(
+        stack, brain, config=_config(user_entity_slug="ruben"),
+    ).run_once()
+
+    assert label == "journal-batch:1"
+    content = (vault_root / "concepts" / "golf.md").read_text(encoding="utf-8")
+    assert "turn `golf-turn` (basis: behavioral)." in content
+    # The judge saw the basis/salience metadata on the candidate line.
+    user_prompt = brain.received_requests[0].messages[0].content
+    assert "basis=behavioral salience=4" in user_prompt
+
+
+@pytest.mark.asyncio
+async def test_activity_candidate_requires_companion_concept_page(stack) -> None:
+    """A profile-only decision for a named recurring activity is invalid: the
+    graph-companion invariant demands concepts/<topic>.md in the same batch."""
+    vault_root, _curator, journal = stack
+    _write_aged(vault_root / "entities" / "ruben.md", RUBEN_FULL_BODY)
+    journal.append(
+        [CandidateFact(
+            fact="The user plays golf actively with friends.",
+            kind="activity", subjects=("ruben", "golf"),
+            basis="behavioral", salience=4,
+        )],
+        source_label="realtime:golf-companion", turn_hash="golf-companion",
+    )
+    cid = journal.pending()[0].id
+
+    profile_only = RUBEN_FULL_BODY.replace(
+        "- Enjoys great coffee.\n",
+        "- Enjoys great coffee.\n"
+        "- Plays golf actively with friends *(inferred)*\n",
+    )
+    with_companion = _judge_json([
+        {
+            "candidate_id": cid,
+            "decision": "update",
+            "target": "entities/ruben.md",
+            "new_body": profile_only,
+            "reason": "profile note",
+        },
+        {
+            "candidate_id": cid,
+            "decision": "add",
+            "target": "concepts/golf.md",
+            "new_body": _golf_concept_body(),
+            "reason": "companion activity page (graph visibility)",
+        },
+    ])
+    registry = ScriptedProviderRegistry(
+        {
+            "gemini": _judge_json([{
+                "candidate_id": cid,
+                "decision": "update",
+                "target": "entities/ruben.md",
+                "new_body": profile_only,
+                "reason": "profile note without companion",
+            }]),
+            "openrouter": with_companion,
+        }
+    )
+
+    label = await _consolidator(
+        stack,
+        FakeBrain([]),
+        registry=registry,
+        config=_config(user_entity_slug="ruben"),
+    ).run_once()
+
+    assert label == "journal-batch:1"
+    assert registry.tried == ["gemini", "openrouter"]
+    assert (vault_root / "concepts" / "golf.md").is_file()
+    profile = (vault_root / "entities" / "ruben.md").read_text(encoding="utf-8")
+    assert "- Plays golf actively with friends *(inferred)*" in profile
