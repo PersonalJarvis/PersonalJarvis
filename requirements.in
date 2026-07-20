@@ -118,7 +118,7 @@ tenacity>=9.0
 # Web search — real DuckDuckGo SERP for the search_web tool (key-free, pure
 # Python, cross-platform). Lazy-imported, so a minimal install without it
 # degrades to the DuckDuckGo Instant-Answer fallback.
-ddgs==9.14.3
+ddgs==9.14.4
 
 # MCP (Model Context Protocol)
 # Floor 1.28.1: three high-severity advisories in the MCP SDK's HTTP/WS
