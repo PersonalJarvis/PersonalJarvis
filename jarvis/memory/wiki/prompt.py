@@ -549,8 +549,11 @@ Page-type templates (frontmatter keys are mandatory):
 
 Linking rules:
 - Cross-link related pages with [[wikilinks]] in their Relationships /
-  Related sections — when a fact connects two pages, update BOTH if both
-  are shown to you.
+  Related sections. A candidate carries at most ONE "update": when a fact
+  connects two EXISTING pages, place the link inside that single updated
+  page and do NOT emit a second "update" for the other page — the only
+  two-update exception is the residence-link repair above. A secondary
+  "add" page may of course link back to the page you update.
 - Only link pages that exist or that you create in THIS batch; anything
   else write as plain text.
 - The user's profile page (the user entity) is the preferred "update"

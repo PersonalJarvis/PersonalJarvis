@@ -832,11 +832,66 @@ async def test_secondary_update_is_still_rejected(stack) -> None:
 
     label = await consolidator.run_once()
 
-    assert label == "judge-unavailable"  # rejected response, chain exhausted
+    assert label == "judge-rejected:1"  # rejected response, chain exhausted
     assert (
         vault_root / "entities" / "lena.md"
     ).read_text(encoding="utf-8") == LENA_BODY
     assert journal.pending() != []  # candidate stays visible for the next pass
+
+
+@pytest.mark.asyncio
+async def test_rejected_batch_bisects_so_one_poison_candidate_cannot_wedge_the_queue(
+    stack,
+) -> None:
+    """When EVERY provider fails validation on a multi-row batch, the batch
+    is bisected like a truncated one: healthy candidates drain in their own
+    single-row batches instead of being held hostage forever."""
+    vault_root, _curator, journal = stack
+    _write_aged(vault_root / "entities" / "ruben.md", RUBEN_FULL_BODY)
+    _write_aged(vault_root / "entities" / "lena.md", LENA_BODY)
+    journal.append(
+        [
+            CandidateFact(fact="Lena lives in Hamburg.", kind="person", subjects=("lena",)),
+            CandidateFact(fact="The user enjoys great coffee.", subjects=("ruben",)),
+        ],
+        source_label="voice:poison-batch",
+        turn_hash="poison-batch",
+    )
+    first, second = [row.id for row in journal.pending()]
+
+    # Call 1 (full batch): illegal double-update -> rejected by validation.
+    # Calls 2+3 (bisected halves): legal noops.
+    brain = FakeBrain([
+        _judge_json([
+            {
+                "candidate_id": first,
+                "decision": "update",
+                "target": "entities/lena.md",
+                "new_body": LENA_BODY,
+                "reason": "profile note",
+            },
+            {
+                "candidate_id": first,
+                "decision": "update",
+                "target": "entities/ruben.md",
+                "new_body": RUBEN_FULL_BODY,
+                "reason": "illegal second update",
+            },
+            {"candidate_id": second, "decision": "noop", "reason": "known"},
+        ]),
+        _judge_json([
+            {"candidate_id": first, "decision": "noop", "reason": "known"},
+        ]),
+        _judge_json([
+            {"candidate_id": second, "decision": "noop", "reason": "known"},
+        ]),
+    ])
+    consolidator = _consolidator(stack, brain)
+
+    label = await consolidator.run_once()
+
+    assert label == "journal-batch:2"
+    assert journal.pending() == []
 
 
 @pytest.mark.asyncio
@@ -1708,7 +1763,7 @@ async def test_unsafe_superseded_by_cannot_inject_frontmatter(stack) -> None:
 
     label = await _consolidator(stack, brain).run_once()
 
-    assert label == "judge-unavailable"
+    assert label == "judge-rejected:1"
     assert old_page.read_text(encoding="utf-8") == LENA_BODY
     assert [row.id for row in journal.pending()] == [cid]
 

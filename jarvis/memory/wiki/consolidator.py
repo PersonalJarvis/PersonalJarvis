@@ -130,6 +130,7 @@ class _BatchOutcome:
     transient: int = 0
     unavailable: bool = False
     truncated: bool = False
+    rejected: int = 0
 
     def merge(self, other: _BatchOutcome) -> _BatchOutcome:
         return _BatchOutcome(
@@ -138,6 +139,7 @@ class _BatchOutcome:
             transient=self.transient + other.transient,
             unavailable=self.unavailable or other.unavailable,
             truncated=self.truncated or other.truncated,
+            rejected=self.rejected + other.rejected,
         )
 
 
@@ -225,6 +227,8 @@ class Consolidator:
             return "judge-truncated"
         if outcome.unavailable:
             return "judge-unavailable"
+        if outcome.rejected and not outcome.processed:
+            return f"judge-rejected:{outcome.rejected}"
         if outcome.transient:
             return f"journal-transient:{outcome.transient}"
         if outcome.deferred:
@@ -243,10 +247,13 @@ class Consolidator:
             # Provider timeout/unavailability is not a content verdict. Keep
             # every candidate pending for the next bounded trigger.
             return _BatchOutcome(unavailable=True)
-        if decisions == "truncated":
+        if decisions in ("truncated", "rejected"):
             if len(rows) == 1:
-                # A single overlong result remains observable and retryable;
-                # never convert an output cap into terminal data loss.
+                # A single overlong or judge-rejected result remains
+                # observable and retryable; never convert it into terminal
+                # data loss.
+                if decisions == "rejected":
+                    return _BatchOutcome(rejected=1)
                 return _BatchOutcome(truncated=True)
             midpoint = len(rows) // 2
             left = await self._process_rows(rows[:midpoint])
@@ -341,7 +348,12 @@ class Consolidator:
     async def _judge(
         self, rows: list[JournalRow], neighbours: dict[str, str],
     ) -> list[dict[str, Any]] | str | None:
-        """One batched LLM call. Returns decisions, "truncated", or None."""
+        """One batched LLM call.
+
+        Returns the decision list, ``"truncated"`` (output-cap hit),
+        ``"rejected"`` (every provider answered but failed validation),
+        or ``None`` (no provider reachable).
+        """
         user_slug = resolve_user_entity_slug(
             getattr(
                 self._root_cfg.memory.wiki.session_rollup,
@@ -420,6 +432,14 @@ class Consolidator:
                 )
                 telemetry.inc("wiki_writes_blocked_truncated")
                 return "truncated"
+            if rejection_reasons:
+                # At least one provider answered but every answer failed
+                # validation. Retrying the identical batch would burn the
+                # chain on the same verdict forever; bisecting isolates a
+                # poison candidate to a single-row batch while the rest of
+                # the queue keeps draining.
+                telemetry.inc("wiki_writes_blocked_rejected")
+                return "rejected"
             return None
         agg, self._resolved_provider = result
 
@@ -928,7 +948,11 @@ class Consolidator:
                     decision not in ("invalidate", "add")
                     and not required_place_update
                 ):
-                    return "candidate has more than one primary decision"
+                    return (
+                        f"candidate {cid} has more than one primary decision "
+                        f"(primary={primary_decisions[cid]}, "
+                        f"extra={decision} -> {item.get('target', '')!r})"
+                    )
             else:
                 primary_seen.add(cid)
                 primary_decisions[cid] = decision
