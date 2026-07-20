@@ -5,7 +5,11 @@ engine — it injects exact Unicode codepoints regardless of the active keyboard
 layout (e.g. German QWERTZ) and is far more robust into webview/Tauri text
 inputs than pyautogui's layout-dependent virtual-key approach. pyautogui is kept
 as a best-effort fallback on Windows and remains the primary engine on other
-platforms. Risk tier: safe — text input into the active window is reversible (Ctrl+Z).
+platforms. Risk tier: safe — text input into the active window is reversible
+(Ctrl+Z). That rationale leans on the foreground guard pinning the RIGHT
+window: the CU engine holds a strict per-frame window signature and only
+relaxes it for same-app churn after an action of its own batch (see
+``jarvis.cu.target_guard``); this tool's own re-check mirrors that contract.
 """
 from __future__ import annotations
 
