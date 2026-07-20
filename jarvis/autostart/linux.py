@@ -16,17 +16,24 @@ import logging
 import os
 from pathlib import Path
 
+from jarvis.core.branding import (
+    LINUX_APP_NAME as _APP_NAME,
+)
+from jarvis.core.branding import (
+    LINUX_DESKTOP_ENTRY_FILE_NAME as _ENTRY_NAME,
+)
+from jarvis.core.branding import (
+    LINUX_WM_CLASS as _WM_CLASS,
+)
+
 from .protocol import AutostartStatus, LaunchSpec
 
 log = logging.getLogger(__name__)
 
-_ENTRY_NAME = "personal-jarvis.desktop"
-_APP_NAME = "Personal Jarvis"
 # The X11/Wayland window-class token the running window is pinned to (see
 # ``jarvis.ui.icon_utils.pin_linux_wm_class``). ``StartupWMClass`` must match it
 # for the desktop to map the running window to THIS .desktop entry — and thus
 # show its ``Icon=`` on the taskbar/dock instead of the generic python3 icon.
-_WM_CLASS = "personal-jarvis"
 
 
 def _icon_value() -> str | None:

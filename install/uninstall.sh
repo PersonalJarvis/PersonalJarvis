@@ -18,7 +18,14 @@
 
 set -euo pipefail
 
-INSTALL_DIR="${JARVIS_INSTALL_DIR:-$HOME/.personal-jarvis}"
+# Standalone fallback projections of jarvis/core/branding.py. These remain
+# available even when a broken venv prevents importing the installed package.
+DEFAULT_INSTALL_DIR_NAME=".personal-jarvis"
+MACOS_APP_DIR_NAME="Personal Jarvis.app"
+LINUX_DESKTOP_ENTRY_FILE_NAME="personal-jarvis.desktop"
+KEYRING_SERVICE_NAME="personal-jarvis"
+
+INSTALL_DIR="${JARVIS_INSTALL_DIR:-$HOME/$DEFAULT_INSTALL_DIR_NAME}"
 VENV_PYTHON="$INSTALL_DIR/.venv/bin/python"
 
 if [ -t 1 ]; then
@@ -123,10 +130,10 @@ else
     fi
     case "$(uname -s)" in
         Darwin)
-            rm -rf -- "$HOME/Applications/Personal Jarvis.app"
+            rm -rf -- "$HOME/Applications/$MACOS_APP_DIR_NAME"
             ;;
         Linux)
-            rm -f -- "${XDG_DATA_HOME:-$HOME/.local/share}/applications/personal-jarvis.desktop"
+            rm -f -- "${XDG_DATA_HOME:-$HOME/.local/share}/applications/$LINUX_DESKTOP_ENTRY_FILE_NAME"
             ;;
     esac
     ok 'Removed the desktop app registration.'
@@ -152,7 +159,7 @@ elif [ "$RC" -ne 0 ]; then
     note 'broken by a system/Homebrew Python upgrade.'
     note 'To remove Jarvis anyway:'
     note "  rm -rf \"$INSTALL_DIR\""
-    note 'Saved API keys then stay in your OS keychain under "personal-jarvis".'
+    note "Saved API keys then stay in your OS keychain under \"$KEYRING_SERVICE_NAME\"."
     exit "$RC"
 fi
 

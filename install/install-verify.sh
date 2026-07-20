@@ -65,9 +65,15 @@ set -euo pipefail
 # sync with install/TRUST_ROOT.md. Bumping any of them is a deliberate
 # documented event, not a maintenance task.
 
-# Owning repo (for the OIDC identity regex). Users running a fork must
-# rebuild the verifier with their fork's slug.
-readonly EXPECTED_REPO="PersonalJarvis/PersonalJarvis"
+# Owning repo (for the OIDC identity regex). The override supports an official
+# repository move while keeping the current identity as the fail-closed default.
+readonly DEFAULT_OFFICIAL_REPO_SLUG="PersonalJarvis/PersonalJarvis"
+EXPECTED_REPO="${JARVIS_OFFICIAL_REPO_SLUG:-$DEFAULT_OFFICIAL_REPO_SLUG}"
+if [[ ! "$EXPECTED_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]]; then
+    printf 'JARVIS_OFFICIAL_REPO_SLUG must be an exact owner/repository slug\n' >&2
+    exit 2
+fi
+readonly EXPECTED_REPO
 
 # Path of the signing workflow inside the source repo. Pinned so an
 # attacker who adds a *different* workflow that signs with the same OIDC
@@ -236,7 +242,9 @@ readonly EXPECTED_SLSA_SOURCE_URI="github.com/${EXPECTED_REPO}"
 # into this signed verifier. We byte-compare the layout's regexp against
 # this constant on every release; drift means either the layout was
 # modified or the pin is stale; both are fail-closed.
-readonly EXPECTED_INTOTO_IDENTITY_REGEXP='^https://github\.com/PersonalJarvis/PersonalJarvis/\.github/workflows/sign-installer\.yml@refs/tags/v[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9._-]+)?$'
+_expected_repo_regex="${EXPECTED_REPO//./\\.}"
+readonly EXPECTED_INTOTO_IDENTITY_REGEXP="^https://github\\.com/${_expected_repo_regex}/\\.github/workflows/sign-installer\\.yml@refs/tags/v[0-9]+\\.[0-9]+\\.[0-9]+(-[A-Za-z0-9._-]+)?$"
+unset _expected_repo_regex
 
 # Filename of the SLSA L3 provenance attestation emitted by the workflow.
 # Decoupled from the artifact name so the verifier survives a workflow

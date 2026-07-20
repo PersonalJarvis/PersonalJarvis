@@ -26,7 +26,9 @@ from http.cookies import CookieError, SimpleCookie
 from typing import Any, Literal
 from urllib.parse import parse_qs, urlsplit
 
-COOKIE_NAME = "jarvis_session"
+from jarvis.core.branding import CONFIG_FILE_NAME, SESSION_COOKIE_NAME
+
+COOKIE_NAME = SESSION_COOKIE_NAME
 
 _LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
 _SAFE_HTTP_METHODS = frozenset({"GET", "HEAD"})
@@ -78,7 +80,7 @@ def _read_browser_login_required_from_config() -> bool:
         repo_root = os.path.dirname(
             os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
         )
-        path = os.path.join(repo_root, "jarvis.toml")
+        path = os.path.join(repo_root, CONFIG_FILE_NAME)
     if not os.path.exists(path):
         return False
     try:

@@ -683,6 +683,57 @@ async def test_companion_add_creates_topic_page_beside_profile_update(stack) -> 
 
 
 @pytest.mark.asyncio
+async def test_companion_add_before_profile_update_is_the_same_legal_shape(
+    stack,
+) -> None:
+    """Array order carries no semantics: {add companion, update profile} in
+    that order must validate exactly like the reverse (live 2026-07-20:
+    gemini emitted add-first for every retry and the whole chain burned on
+    a correct answer)."""
+    vault_root, _curator, journal = stack
+    _write_aged(vault_root / "entities" / "ruben.md", RUBEN_FULL_BODY)
+    journal.append(
+        [CandidateFact(
+            fact="The user is pursuing a high-end espresso machine for the kitchen.",
+            kind="preference", subjects=("ruben", "espresso-machine"),
+        )],
+        source_label="realtime-aggressive:4", turn_hash="h-espresso-4",
+    )
+    cid = journal.pending()[0].id
+
+    updated_profile = RUBEN_FULL_BODY.replace(
+        "- Enjoys great coffee.\n",
+        "- Enjoys great coffee.\n"
+        "- Pursuing a high-end espresso machine for the kitchen.\n",
+    )
+    brain = FakeBrain([_judge_json([
+        {
+            "candidate_id": cid,
+            "decision": "add",
+            "target": "projects/espresso-machine.md",
+            "new_body": _espresso_project_body(),
+            "reason": "companion topic page listed first",
+        },
+        {
+            "candidate_id": cid,
+            "decision": "update",
+            "target": "entities/ruben.md",
+            "new_body": updated_profile,
+            "reason": "profile note listed second",
+        },
+    ])])
+    consolidator = _consolidator(stack, brain)
+
+    label = await consolidator.run_once()
+
+    assert label == "journal-batch:1"
+    assert (vault_root / "projects" / "espresso-machine.md").is_file()
+    profile = (vault_root / "entities" / "ruben.md").read_text(encoding="utf-8")
+    assert "- Pursuing a high-end espresso machine for the kitchen." in profile
+    assert journal.pending() == []
+
+
+@pytest.mark.asyncio
 async def test_failing_companion_add_never_blocks_the_primary_fact(stack) -> None:
     """The companion topic page is a bonus, not a hostage-taker: when it is
     refused (here: secret guard), the primary profile update still lands and

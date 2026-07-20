@@ -33,11 +33,11 @@ from typing import Any
 
 import httpx
 
+from jarvis.core.branding import WINDOWS_MUTEX_NAME as MUTEX_NAME
 from jarvis.core.paths import ensure_user_dirs
 
 logger = logging.getLogger(__name__)
 
-MUTEX_NAME = "Global\\PersonalJarvis_v1"
 SESSION_FILENAME = "session.json"
 #: POSIX primary-claim lock file (flock'd exclusively by the primary). Distinct
 #: from the launcher's ``acquire_single_instance_lock`` file so the two

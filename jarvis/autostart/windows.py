@@ -39,6 +39,15 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from jarvis.core.branding import (
+    WINDOWS_AUTOSTART_DESCRIPTION,
+)
+from jarvis.core.branding import (
+    WINDOWS_AUTOSTART_TASK_NAME as TASK_NAME,
+)
+from jarvis.core.branding import (
+    WINDOWS_SHORTCUT_FILE_NAME as _SHORTCUT_NAME,
+)
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
 from .protocol import AutostartStatus, LaunchSpec
@@ -46,12 +55,10 @@ from .protocol import AutostartStatus, LaunchSpec
 log = logging.getLogger(__name__)
 
 # Scheduled-task identity. A stable name so reconcile can find/refresh it.
-TASK_NAME = "Personal Jarvis Autostart"
 # How long after login the task waits before launching — lets the desktop settle
 # without the multi-minute Explorer startup throttle.
 _LOGON_DELAY_SECONDS = 20
 
-_SHORTCUT_NAME = "Personal Jarvis.lnk"
 # Divergent names the old wizard/install paths used — removed on every write so
 # Jarvis never auto-starts twice.
 _LEGACY_NAMES = ("Jarvis.lnk", "Jarvis.bat", "Personal Jarvis.bat")
@@ -128,7 +135,7 @@ def build_register_task_script(
         "-MultipleInstances IgnoreNew\n"
         f"  Register-ScheduledTask -TaskName '{task_name}' -Action $action "
         "-Trigger $trigger -Principal $principal -Settings $settings "
-        "-Description 'Personal Jarvis (Autostart)' -Force | Out-Null\n"
+        f"-Description '{WINDOWS_AUTOSTART_DESCRIPTION}' -Force | Out-Null\n"
         "  exit 0\n"
         "} catch { exit 1 }\n"
     )
@@ -195,7 +202,7 @@ def build_create_script(link: Path, spec: LaunchSpec, *, icon: str | None = None
         f"$sc.TargetPath = '{spec.program}'\n"
         f"$sc.Arguments = '{args}'\n"
         f"$sc.WorkingDirectory = '{spec.working_dir}'\n"
-        "$sc.Description = 'Personal Jarvis (Autostart)'\n"
+        f"$sc.Description = '{WINDOWS_AUTOSTART_DESCRIPTION}'\n"
         f"{icon_line}"
         f"$sc.WindowStyle = {window_style}\n"
         "$sc.Save()\n"

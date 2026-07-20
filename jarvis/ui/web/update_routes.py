@@ -49,6 +49,12 @@ from typing import Any, Literal
 
 from fastapi import APIRouter, HTTPException
 
+from jarvis.core.branding import (
+    MANAGED_INSTALL_MARKER,
+    OFFICIAL_RELEASES_LATEST_API_URL,
+    OFFICIAL_REPO_SLUG,
+    UPDATER_USER_AGENT,
+)
 from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
 
 log = logging.getLogger(__name__)
@@ -58,11 +64,11 @@ router = APIRouter(prefix="/api/update", tags=["update"])
 # The ONE official public repo this updater will ever pull from. The managed
 # guard verifies the installed checkout's ``origin`` resolves here before any
 # ``git reset --hard`` runs, so a dev checkout or a fork can never be self-reset.
-_OFFICIAL_REPO_SLUG = "PersonalJarvis/PersonalJarvis"
-_RELEASES_LATEST_API = "https://api.github.com/repos/PersonalJarvis/PersonalJarvis/releases/latest"
+_OFFICIAL_REPO_SLUG = OFFICIAL_REPO_SLUG
+_RELEASES_LATEST_API = OFFICIAL_RELEASES_LATEST_API_URL
 # Written by install/installer.py into the checkout root. Its presence is one
 # half of "this copy is safe to self-update".
-_MARKER_NAME = ".jarvis-managed-install"
+_MARKER_NAME = MANAGED_INSTALL_MARKER
 _PENDING_UPDATE_NAME = ".jarvis-update-pending.json"
 _UPDATE_RESULT_NAME = ".jarvis-update-result.json"
 
@@ -313,7 +319,7 @@ async def _fetch_latest_release() -> dict[str, Any] | None:
                 _RELEASES_LATEST_API,
                 headers={
                     "Accept": "application/vnd.github+json",
-                    "User-Agent": "PersonalJarvis-Updater",
+                    "User-Agent": UPDATER_USER_AGENT,
                 },
             )
         if resp.status_code != 200:

@@ -314,3 +314,19 @@ video/*.png
 # Ad-hoc generated deliverables (presentations, exports) — never ship
 /outputs/
 /test_output.txt
+
+# --- Privacy: captures of the maintainer's LIVE personal vault ---------------
+# These screenshots/frames show real vault pages (relocation planning, finances,
+# health notes, and named third parties). The distribution denylist has always
+# withheld them; they are untracked here so they cannot be re-added by accident.
+# Regenerate any needed capture against a STAGED demo vault, never the live one.
+/assets/screenshots/view-wiki.png
+/video/qa-wiki/
+
+# Internal trademark/brand risk assessment. A self-authored record of known,
+# deferred IP risk — keep it private; the public posture is TRADEMARK.md.
+/docs/legal/trademark-brand-audit-*.html
+
+# Author email map. Its stated purpose is to keep private addresses out of the
+# public index, but the file itself publishes them in plaintext.
+/.mailmap

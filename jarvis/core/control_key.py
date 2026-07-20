@@ -38,17 +38,23 @@ import threading
 from pathlib import Path
 
 from jarvis.core import config as cfg
+from jarvis.core.branding import (
+    CONTROL_KEY_PREFIX as KEY_PREFIX,
+)
+from jarvis.core.branding import (
+    MACOS_APP_NAME as _MACOS_APP_NAME,
+)
+from jarvis.core.branding import (
+    MACOS_BUNDLE_ID as _MACOS_BUNDLE_ID,
+)
 
 logger = logging.getLogger(__name__)
 
-KEY_PREFIX = "jctl_"
 KEYRING_SLOT = "jarvis_control_api_key"
 ENV_VAR = "JARVIS_CONTROL_API_KEY"
 _FILE_NAME = ".control_api_key"
 _MACOS_OWNER_FILE_NAME = ".control_api_key.macos-owner"
 _TOKEN_BYTES = 32  # 256-bit
-_MACOS_APP_NAME = "Personal Jarvis"
-_MACOS_BUNDLE_ID = "com.personal-jarvis.desktop"
 
 # Authentication runs on every protected HTTP request. Reading a macOS
 # Keychain item's secret data on every comparison used to produce one password

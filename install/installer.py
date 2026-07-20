@@ -48,6 +48,16 @@ import sys
 import sysconfig
 from pathlib import Path
 
+_SOURCE_ROOT = Path(__file__).resolve().parent.parent
+if str(_SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SOURCE_ROOT))
+
+from jarvis.core.branding import (  # noqa: E402 - bootstrap source path above
+    MACOS_APP_NAME,
+    MANAGED_INSTALL_MARKER,
+    PRODUCT_NAME,
+)
+
 # CLAUDE.md: new CLI modules must use UTF-8 stdout or stick to ASCII. Without
 # this, the Rich panels render fine but inline bullets break on cp1252 cmd.exe.
 if hasattr(sys.stdout, "reconfigure"):
@@ -259,7 +269,7 @@ def write_managed_marker(*, with_desktop: bool) -> None:
     the load-bearing safety guard for the whole updater. Best-effort: a marker
     failure must never fail the install (it only disables in-app updates).
     """
-    marker = repo_root() / ".jarvis-managed-install"
+    marker = repo_root() / MANAGED_INSTALL_MARKER
     payload = {
         "managed": True,
         "install_path": str(repo_root()),
@@ -413,7 +423,7 @@ def step_pip_install(*, with_desktop: bool, with_voice_local: bool, dry_run: boo
 
 def is_update_run() -> bool:
     """True when this checkout was already installer-managed (re-run = update)."""
-    return (repo_root() / ".jarvis-managed-install").exists()
+    return (repo_root() / MANAGED_INSTALL_MARKER).exists()
 
 
 def step_models(*, full_profile: bool, dry_run: bool) -> None:
@@ -703,7 +713,7 @@ def step_launch(*, headless: bool, dry_run: bool) -> None:
             # The install itself is complete; launch through LaunchServices
             # by app name instead of failing the whole run. Ported from the Mac
             # line (BUG-066 there; the local register merged it as BUG-078).
-            cmd = ["/usr/bin/open", "-a", "Personal Jarvis"]
+            cmd = ["/usr/bin/open", "-a", MACOS_APP_NAME]
             msg = "the Desktop App"
         else:
             bundle = macos_app_bundle_path()
@@ -744,12 +754,14 @@ def step_summary(*, no_launch: bool, update: bool, headless: bool) -> None:
     """
     rows: list[tuple[str, str, str]] = [("Installed to", str(repo_root()), "muted")]
     if sys.platform == "win32":
-        rows.append(("Start again", 'Windows search -> "Personal Jarvis"', "brand"))
+        rows.append(("Start again", f'Windows search -> "{PRODUCT_NAME}"', "brand"))
     elif sys.platform == "darwin":
-        rows.append(("Start again", 'Spotlight → "Personal Jarvis" (app in ~/Applications)', "brand"))
+        rows.append(
+            ("Start again", f'Spotlight → "{PRODUCT_NAME}" (app in ~/Applications)', "brand")
+        )
         rows.append(("Permissions", "macOS asks on first launch - approve each prompt", "muted"))
     elif sys.platform.startswith("linux") and not (headless or is_headless_linux()):
-        rows.append(("Start again", 'app menu -> "Personal Jarvis"', "brand"))
+        rows.append(("Start again", f'app menu -> "{PRODUCT_NAME}"', "brand"))
     else:
         rows.append(("Start again", ".venv/bin/python -m jarvis.ui.web.launcher", "brand"))
         rows.append(("", "(in the install folder)", "muted"))
@@ -764,7 +776,7 @@ def step_summary(*, no_launch: bool, update: bool, headless: bool) -> None:
         rows.append(("Next", "the app opens with a one-time setup guide", "muted"))
         rows.append(("", "(language, wake word, API keys) - it never shows again", "muted"))
 
-    title = f"Personal Jarvis is {'updated' if update else 'ready'}"
+    title = f"{PRODUCT_NAME} is {'updated' if update else 'ready'}"
     key_w = 13
     # Widths are computed on the PLAIN text (markup added only when printing),
     # so the right border always lines up.
@@ -790,7 +802,7 @@ def step_summary(*, no_launch: bool, update: bool, headless: bool) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="installer.py",
-        description="Personal Jarvis Stage-2 installer",
+        description=f"{PRODUCT_NAME} Stage-2 installer",
     )
     parser.add_argument("--no-wizard", action="store_true",
                         help="deprecated no-op: the installer never runs the terminal "

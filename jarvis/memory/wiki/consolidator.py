@@ -121,6 +121,24 @@ _EXPLICIT_PERSISTENCE_CLAUSE_RE = re.compile(
 )
 
 
+def _canonical_decision_order(parsed: list[Any]) -> list[Any]:
+    """Stable-sort ``update`` decisions ahead of everything else.
+
+    The judge's array order carries no semantics, but primary/secondary
+    classification is positional: ``{add companion, update profile}`` in
+    that order once read the add as the primary and rejected the update
+    as an illegal second primary — while the identical pair in reverse
+    order was the legal companion shape. Canonicalising makes both
+    orderings validate (and execute) identically.
+    """
+    return sorted(
+        parsed,
+        key=lambda item: (
+            0 if isinstance(item, dict) and item.get("decision") == "update" else 1
+        ),
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class _BatchOutcome:
     """Internal Stage-2 result without collapsing transient states."""
@@ -404,7 +422,7 @@ class Consolidator:
                 rejection_reasons.append(reason)
                 return reason
             try:
-                parsed = _extract_json_array(agg.text)
+                parsed = _canonical_decision_order(_extract_json_array(agg.text))
             except ValueError as exc:
                 reason = f"malformed JSON array: {exc}"
                 rejection_reasons.append(reason)
@@ -463,7 +481,11 @@ class Consolidator:
             "Consolidator: judge returned %d decision(s) for %d candidate(s) "
             "in %dms", len(parsed), len(rows), duration_ms,
         )
-        return [item for item in parsed if isinstance(item, dict)]
+        return [
+            item
+            for item in _canonical_decision_order(parsed)
+            if isinstance(item, dict)
+        ]
 
     # ------------------------------------------------------------------
     # decision execution

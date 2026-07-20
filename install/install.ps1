@@ -195,7 +195,15 @@ function Write-Err([string]$Text)    { Write-Host "$Gut  $Red$Crs $Text$Rst" }
 Write-Banner
 
 # ----------------------------------------------------------------- config
-$RepoUrl    = if ($env:JARVIS_INSTALL_REPO) { $env:JARVIS_INSTALL_REPO } else { 'https://github.com/PersonalJarvis/PersonalJarvis.git' }
+# Standalone bootstrap projections of jarvis/core/branding.py. The branding
+# contract test rejects drift because this script runs before Python is installed.
+$OfficialRepoSlug = "$env:JARVIS_OFFICIAL_REPO_SLUG"
+if (-not $OfficialRepoSlug) { $OfficialRepoSlug = 'PersonalJarvis/PersonalJarvis' }
+if ($OfficialRepoSlug -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
+    throw 'JARVIS_OFFICIAL_REPO_SLUG must be an exact owner/repository slug'
+}
+$RepoUrl    = if ($env:JARVIS_INSTALL_REPO) { $env:JARVIS_INSTALL_REPO } else { "https://github.com/$OfficialRepoSlug.git" }
+$ConfigFileName = 'jarvis.toml'
 $Branch     = if ($env:JARVIS_INSTALL_REF)  { $env:JARVIS_INSTALL_REF }  else { 'main' }
 $InstallDir = if ($env:JARVIS_INSTALL_DIR)  { $env:JARVIS_INSTALL_DIR }  else { Join-Path $env:USERPROFILE '.personal-jarvis' }
 $PrerequisiteMode = if ($env:JARVIS_INSTALL_PREREQS) { $env:JARVIS_INSTALL_PREREQS.ToLowerInvariant() } else { 'ask' }
@@ -648,7 +656,7 @@ function Invoke-SalvageReclone {
     }
     Write-Note "moved the old directory to $StaleBackup (nothing was deleted)"
     if (-not (Invoke-FetchPayload)) { exit 1 }
-    foreach ($Item in @('data', 'jarvis.toml', '.env')) {
+    foreach ($Item in @('data', $ConfigFileName, '.env')) {
         $Old = Join-Path $StaleBackup $Item
         $New = Join-Path $InstallDir $Item
         if ((Test-Path $Old) -and -not (Test-Path $New)) {

@@ -29,8 +29,10 @@ import threading
 import time
 from pathlib import Path
 
+from jarvis.core.branding import MACOS_APP_DIR_NAME, MANAGED_INSTALL_MARKER
+
 LAUNCHER_MODULE = "jarvis.ui.web.launcher"
-MANAGED_MARKER = ".jarvis-managed-install"
+MANAGED_MARKER = MANAGED_INSTALL_MARKER
 PENDING_UPDATE_FILENAME = ".jarvis-update-pending.json"
 UPDATE_RESULT_FILENAME = ".jarvis-update-result.json"
 _REVISION_RE = re.compile(r"^[0-9a-fA-F]{7,64}$")
@@ -46,7 +48,7 @@ def build_launch_command(executable: str) -> list[str]:
     """
     fallback = [executable, "-m", LAUNCHER_MODULE]
     if sys.platform == "darwin":
-        bundle = Path.home() / "Applications" / "Personal Jarvis.app"
+        bundle = Path.home() / "Applications" / MACOS_APP_DIR_NAME
         try:
             from jarvis.setup.macos_app_bundle import (
                 macos_app_bundle_is_launchable,

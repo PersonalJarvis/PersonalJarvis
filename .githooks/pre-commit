@@ -123,4 +123,24 @@ if [ -f "$privkey" ]; then
     fi
 fi
 
+# --- DISTRIBUTION-DENYLIST gate (FAIL-CLOSED on NEW additions) ----------------
+# The denylist withholds paths that must never ship: live-vault captures,
+# internal process docs, personal scratch. It lost its enforcement when the
+# snapshot build was retired (2026-07-17, keys-only), and ~600 withheld files
+# went public unnoticed. This blocks a withheld path the moment it is ADDED —
+# the backlog is deliberately not checked here (see --report for that), so the
+# gate stays quiet on normal work. rc 1 = confirmed block.
+denylist="scripts/ci/check_denylist_not_tracked.py"
+if [ -f "$denylist" ]; then
+    "$PY" "$denylist" --staged </dev/null
+    if [ "$?" -eq 1 ]; then
+        echo ""
+        echo "pre-commit BLOCKED: DENYLIST gate — this change tracks a withheld path."
+        echo "  Keep the file untracked (add it to .gitignore), or edit the denylist"
+        echo "  in the SAME commit if the entry is genuinely wrong."
+        echo "  Bypass once with:  git commit --no-verify"
+        exit 1
+    fi
+fi
+
 exit 0

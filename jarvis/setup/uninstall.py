@@ -48,6 +48,7 @@ from rich.panel import Panel
 from rich.theme import Theme
 
 from jarvis.core import config as cfg
+from jarvis.core.branding import CONFIG_FILE_NAME
 from jarvis.setup.wizard import SECRETS
 
 # Same Charcoal + Gold palette as install/installer.py and the first-run wizard,
@@ -78,7 +79,7 @@ class UninstallPlan:
 
     @property
     def config_file(self) -> Path:
-        return self.install_dir / "jarvis.toml"
+        return self.install_dir / CONFIG_FILE_NAME
 
     @property
     def data_dir(self) -> Path:

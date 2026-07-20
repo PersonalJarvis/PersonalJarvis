@@ -86,6 +86,20 @@ def test_remote_is_official_accepts_only_exact_repo() -> None:
     assert not u._remote_is_official("https://github.com/evil/PersonalJarvis.git")
 
 
+def test_remote_override_still_rejects_lookalike_repos(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(u, "_OFFICIAL_REPO_SLUG", "RenamedOrg/RenamedRepo")
+    assert u._remote_is_official("https://github.com/RenamedOrg/RenamedRepo.git")
+    assert not u._remote_is_official(
+        "https://github.com/RenamedOrg/RenamedRepoEvil.git"
+    )
+    assert not u._remote_is_official("https://github.com/evil/RenamedRepo.git")
+    assert not u._remote_is_official(
+        "https://github.com/PersonalJarvis/PersonalJarvis.git"
+    )
+
+
 # --------------------------------------------------------------------------- #
 # GET /api/update/status
 # --------------------------------------------------------------------------- #

@@ -163,10 +163,10 @@ def test_bootstrap_fallbacks_remove_registration_without_the_venv() -> None:
     windows = (root / "install" / "uninstall.ps1").read_text(encoding="utf-8")
     posix = (root / "install" / "uninstall.sh").read_text(encoding="utf-8")
 
-    assert "CurrentVersion\\Uninstall\\PersonalJarvis" in windows
-    assert "Start Menu\\Programs\\Personal Jarvis.lnk" in windows
-    assert "$HOME/Applications/Personal Jarvis.app" in posix
-    assert "applications/personal-jarvis.desktop" in posix
+    assert "$WindowsUninstallRegistrySubkey" in windows
+    assert "$WindowsShortcutFileName" in windows
+    assert "$HOME/Applications/$MACOS_APP_DIR_NAME" in posix
+    assert "applications/$LINUX_DESKTOP_ENTRY_FILE_NAME" in posix
 
 
 def test_bootstraps_stop_the_running_app_and_retry_the_delete() -> None:

@@ -31,6 +31,7 @@ import { cn } from "@/lib/utils";
 import { useMemo, useState } from "react";
 import { useT } from "@/i18n";
 import { BrowserRealtimeControl } from "@/components/voice/BrowserRealtimeControl";
+import { PRODUCT_NAME } from "@/lib/branding";
 
 interface NavItem {
   id: SectionId;
@@ -247,7 +248,7 @@ export function Sidebar() {
               }
               width={40}
               height={40}
-              alt="Personal Jarvis"
+              alt={PRODUCT_NAME}
               className="shrink-0"
               onError={() => {
                 if (logoRetry < LOGO_RETRY_MAX) {

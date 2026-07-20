@@ -19,6 +19,8 @@ import signal
 import sys
 import time
 
+from jarvis.core.branding import CONFIG_FILE_NAME
+
 # Boot-profiling anchor (opt-in via JARVIS_BOOT_PROFILE=1). ``main()`` stamps the
 # earliest in-process moment our code runs; ``_run_headless`` emits one
 # authoritative ``BOOT_READY_MS=<n>`` line once the backend is fully serving so
@@ -223,7 +225,7 @@ def _fast_admin_port() -> int:
             repo_root = os.path.dirname(
                 os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             )
-            path = os.path.join(repo_root, "jarvis.toml")
+            path = os.path.join(repo_root, CONFIG_FILE_NAME)
         if os.path.exists(path):
             with open(path, "rb") as fh:
                 data = tomllib.load(fh)
@@ -249,7 +251,7 @@ def _fast_auth_token_env() -> str:
             repo_root = os.path.dirname(
                 os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             )
-            path = os.path.join(repo_root, "jarvis.toml")
+            path = os.path.join(repo_root, CONFIG_FILE_NAME)
         if os.path.exists(path):
             with open(path, "rb") as fh:
                 data = tomllib.load(fh)
@@ -275,7 +277,7 @@ def _fast_vite_dev_url(force_dev: bool) -> str | None:
             repo_root = os.path.dirname(
                 os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
             )
-            path = os.path.join(repo_root, "jarvis.toml")
+            path = os.path.join(repo_root, CONFIG_FILE_NAME)
         if os.path.exists(path):
             with open(path, "rb") as fh:
                 ui = tomllib.load(fh).get("ui", {})

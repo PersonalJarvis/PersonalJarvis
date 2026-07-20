@@ -22,11 +22,12 @@ import subprocess
 import sys
 from pathlib import Path
 
+from jarvis.core.branding import MACOS_AUTOSTART_LABEL as _LABEL
+
 from .protocol import AutostartStatus, LaunchSpec
 
 log = logging.getLogger(__name__)
 
-_LABEL = "com.personal-jarvis.autostart"
 _ENTRY_NAME = f"{_LABEL}.plist"
 
 

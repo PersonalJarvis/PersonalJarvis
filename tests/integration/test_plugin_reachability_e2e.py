@@ -44,7 +44,7 @@ def test_gmail_requests_are_reachable_not_refused():
     requests -- they resolve and fall through to the tool-use loop."""
     reg = _registry_with_gmail()
     for utt in [
-        "Schick eine Email an harald@gmx.de mit dem Betreff Hallo",  # i18n-allow
+        "Schick eine Email an harald@example.com mit dem Betreff Hallo",  # i18n-allow
         "lies meine letzte Mail aus dem Postfach",  # i18n-allow
         "check mein Postfach",  # i18n-allow
     ]:
