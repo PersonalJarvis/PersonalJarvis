@@ -9,10 +9,6 @@ No real CLI, PTY, or network is touched — the backend is faked.
 """
 from __future__ import annotations
 
-import pytest
-
-import os
-
 from jarvis.google_cli.pty_runner import (
     PtyRunResult,
     extract_cli_answer,
@@ -115,7 +111,7 @@ def test_extract_strips_trailing_lone_spinner_glyph():
 
 # ---- repair_agy_path ------------------------------------------------------
 # agy spawns cmd.exe + npm internally (MCP servers); in a degraded environment
-# (PATH stripped of System32 / Node) that fails with "chcp nicht erkannt". The  # i18n-allow
+# (PATH stripped of System32 / Node) that fails with "chcp not recognized". The
 # child PATH must carry the standard Windows system dirs.
 
 
@@ -125,14 +121,14 @@ def test_repair_path_adds_system32_when_missing():
         is_windows=True,
         system_root=r"C:\Windows",
     )
-    parts = [p.lower() for p in out.split(os.pathsep)]
+    parts = [p.lower() for p in out.split(";")]
     assert r"c:\windows\system32" in parts
     assert r"c:\windows\system32\wbem" in parts
     assert r"c:\some\other" in parts.__str__() or r"c:\some\other" in parts
 
 
 def test_repair_path_idempotent_when_present():
-    existing = os.pathsep.join([r"C:\Windows\System32", r"C:\Windows\System32\Wbem", r"C:\Windows"])
+    existing = ";".join([r"C:\Windows\System32", r"C:\Windows\System32\Wbem", r"C:\Windows"])
     out = repair_agy_path(existing, is_windows=True, system_root=r"C:\Windows")
     # No duplicate System32 entries.
     assert out.lower().count(r"c:\windows\system32".lower()) == existing.lower().count(
@@ -144,7 +140,7 @@ def test_repair_path_includes_node_dir_when_given():
     out = repair_agy_path(
         "", is_windows=True, system_root=r"C:\Windows", node_dir=r"C:\Program Files\nodejs"
     )
-    assert r"c:\program files\nodejs" in [p.lower() for p in out.split(os.pathsep)]
+    assert r"c:\program files\nodejs" in [p.lower() for p in out.split(";")]
 
 
 def test_repair_path_noop_on_posix():
@@ -227,11 +223,11 @@ def test_run_passes_env_and_cwd_to_backend():
     run_cli_over_pty(
         ("agy", "--print", "x"),
         timeout_s=5.0,
-        cwd="/tmp/work",
+        cwd="/work",
         env={"PATH": "/safe"},
         backend=backend,
     )
-    assert backend.spawn_kwargs["cwd"] == "/tmp/work"
+    assert backend.spawn_kwargs["cwd"] == "/work"
     assert backend.spawn_kwargs["env"] == {"PATH": "/safe"}
 
 

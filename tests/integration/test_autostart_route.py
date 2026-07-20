@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 import jarvis.autostart as autostart
 import jarvis.platform.capabilities as caps_mod
-from jarvis.autostart.protocol import AutostartStatus
+from jarvis.autostart.protocol import AutostartStatus, LaunchSpec
 from jarvis.core.bus import EventBus
 from jarvis.core.config import JarvisConfig
 from jarvis.platform.capabilities import Capabilities
@@ -81,6 +81,15 @@ def server() -> Iterator[WebServer]:
 def fake_manager(monkeypatch: pytest.MonkeyPatch) -> _FakeManager:
     mgr = _FakeManager(supported=True)
     monkeypatch.setattr(autostart, "make_autostart_manager", lambda caps: mgr)
+    monkeypatch.setattr(
+        autostart,
+        "resolve_launch_spec",
+        lambda _cfg: LaunchSpec(
+            program="/usr/bin/python3",
+            args=("-m", "jarvis.ui.web.launcher"),
+            working_dir="/fake/personal-jarvis",
+        ),
+    )
     monkeypatch.setattr(caps_mod, "detect_capabilities", lambda: _caps())
     return mgr
 

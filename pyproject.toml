@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "personal-jarvis"
-version = "1.1.1"
+version = "1.1.2"
 description = "Voice-driven meta-orchestrator that turns one spoken request into a fleet of self-checking AI agents"
 requires-python = ">=3.11,<3.15"
 readme = "README.md"
@@ -624,12 +624,12 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
-    "phase5: Phase-5-Integration-Tests (isoliert fahrbar via `pytest -m phase5`).",
+    "phase5: Phase 5 integration tests (run in isolation with `pytest -m phase5`).",
     "skip_ci: tests that need real desktop/admin/live clicking — not run in CI.",
-    "e2e: Phase-7-End-to-End-Tests (Plan-§7.6, manuell via `pytest -m e2e`).",
-    "voice_latency: Phase-L Voice-Latency-Tests (Plan §6.1; manuell via `pytest -m voice_latency`).",
-    "eval: Phase-8.6 Eval-Harness — Golden-Query-Suite (manuell via `pytest -m eval`).",
-    "slow: Lang laufende Tests (Eval, E2E) — vom Standard-Run via `pytest -m 'not slow'` ausgeschlossen.",
+    "e2e: Phase 7 end-to-end tests (Plan §7.6; run manually with `pytest -m e2e`).",
+    "voice_latency: Phase L voice-latency tests (Plan §6.1; run manually with `pytest -m voice_latency`).",
+    "eval: Phase 8.6 evaluation harness and golden-query suite (run manually with `pytest -m eval`).",
+    "slow: Long-running evaluation and E2E tests excluded by `pytest -m 'not slow'`.",
     "integration: Integration tests that spawn real subprocesses or hit live external services (e.g. Codex CLI ChatGPT OAuth). Self-skip when prerequisites are missing; run explicitly via `pytest -m integration`.",
     "real_tcc_gate: opts a Computer-Use test back into the real macOS Screen-Recording gate that tests/unit/cu/conftest.py neutralizes by default.",
 ]

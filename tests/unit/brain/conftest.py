@@ -18,6 +18,7 @@ def _isolate_capability_registry():
     reg = get_registry()
     with reg._lock:  # noqa: SLF001 — test-only snapshot of the singleton
         snapshot = dict(reg._caps)  # noqa: SLF001
+        reg._caps.clear()  # noqa: SLF001
     try:
         yield
     finally:

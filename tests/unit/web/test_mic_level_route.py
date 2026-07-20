@@ -18,6 +18,14 @@ class _PermissionPort:
         return self.allowed
 
 
+@pytest.fixture(autouse=True)
+def _default_to_permissionless_test_platform(monkeypatch):
+    """Keep generic route tests independent of this Mac's TCC state."""
+    import jarvis.ui.web.settings_routes as settings_routes
+
+    monkeypatch.setattr(settings_routes.sys, "platform", "linux")
+
+
 @pytest.fixture
 def client(monkeypatch):
     import jarvis.speech.diagnose as d

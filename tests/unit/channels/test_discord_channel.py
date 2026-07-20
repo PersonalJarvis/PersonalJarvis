@@ -171,7 +171,11 @@ def test_is_allowed_require_mention_passes_with_mention() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_pair_first_dm_claims_empty_allowlist() -> None:
+def test_pair_first_dm_claims_empty_allowlist(
+    tmp_path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("JARVIS_CONFIG", str(tmp_path / "jarvis.toml"))
     cfg = DiscordConfig(enabled=True, allowed_user_ids=[], pair_on_first_dm=True)
     ch = _make_channel(cfg)
     assert ch._pair_first_dm(_make_message(user_id=777)) is True  # noqa: SLF001

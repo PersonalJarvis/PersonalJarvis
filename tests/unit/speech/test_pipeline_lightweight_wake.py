@@ -38,6 +38,12 @@ def _cfg_groq() -> SimpleNamespace:
     return SimpleNamespace(stt=STTConfig(provider="groq-api"))
 
 
+@pytest.fixture(autouse=True)
+def _configured_groq_credential(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep provider selection independent of credentials on the test host."""
+    monkeypatch.setenv("GROQ_API_KEY", "test-groq-key")
+
+
 def test_lightweight_mode_instantiates_no_faster_whisper() -> None:
     pipe = SpeechPipeline(
         tts=FakeTTS(),

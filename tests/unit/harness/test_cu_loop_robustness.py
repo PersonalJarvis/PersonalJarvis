@@ -253,6 +253,13 @@ def _isolate_host(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     # Keep the UI-tree-source singleton hermetic between tests.
     monkeypatch.setattr(loop_mod, "_UI_TREE_SOURCE", None, raising=False)
+    # Never inspect or focus a real window named in a test prompt. Dedicated
+    # target-focus tests provide their own fake window inventory.
+    monkeypatch.setattr(
+        loop_mod,
+        "_focus_task_target_window",
+        lambda _ctx, _prompt: None,
+    )
     # Neutralize the post-open_app settle probe suite-wide (it sleeps up to
     # 1 s per launch on empty fake titles). The dedicated settle tests
     # re-enable it with their own explicit timeout/poll values.

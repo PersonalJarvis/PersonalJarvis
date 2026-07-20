@@ -14,7 +14,11 @@ import pytest
 
 from jarvis.brain.manager import BrainManager
 from jarvis.core.bus import EventBus
-from jarvis.core.config import BrainTierConfig, JarvisConfig, load_config
+from jarvis.core.config import (
+    BrainProviderConfig,
+    BrainTierConfig,
+    JarvisConfig,
+)
 
 # One representative non-default frontier model per configured brain provider.
 # Gemini is only one row — model selection must resolve for EVERY provider.
@@ -26,8 +30,24 @@ PROVIDER_FAST_DEEP_CASES = [
 ]
 
 
+@pytest.fixture(autouse=True)
+def _all_test_providers_have_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep model-chain assertions independent of the host's key store."""
+    monkeypatch.setattr(
+        "jarvis.core.config.get_secret_any",
+        lambda _candidates: "test-key",
+    )
+
+
+def _config(provider: str = "gemini") -> JarvisConfig:
+    cfg = JarvisConfig()
+    cfg.brain.router = BrainTierConfig(provider=provider)
+    cfg.brain.providers[provider] = BrainProviderConfig()
+    return cfg
+
+
 def test_router_keeps_fast_model_when_fallback_is_same_provider() -> None:
-    cfg = load_config()
+    cfg = _config()
     # Real-world shape: gemini FAST primary + gemini PRO fallback (same provider).
     cfg.brain.router.provider = "gemini"
     cfg.brain.router.model = "gemini-3.5-flash"
@@ -40,10 +60,21 @@ def test_router_keeps_fast_model_when_fallback_is_same_provider() -> None:
     assert mgr._fast_model("gemini") == "gemini-3.5-flash"
 
 
+def test_provider_model_drives_router_when_tier_model_is_omitted() -> None:
+    """A fresh install keeps the model selected through the provider UI."""
+    cfg = _config()
+    cfg.brain.router.model = None
+    cfg.brain.providers["gemini"].model = "gemini-3.5-flash-ui-choice"
+
+    mgr = BrainManager.from_tier_config("router", cfg, EventBus())
+
+    assert mgr._fast_model("gemini") == "gemini-3.5-flash-ui-choice"
+
+
 def test_router_fallback_chain_still_offers_pro_as_failover() -> None:
     # Fixing the clobber must NOT drop the pro failover from the chain — flash
     # is primary, pro remains the gemini-tier failover.
-    cfg = load_config()
+    cfg = _config()
     cfg.brain.router.provider = "gemini"
     cfg.brain.router.model = "gemini-3.5-flash"
     cfg.brain.router.fallback_provider = "gemini"
@@ -60,7 +91,7 @@ def test_router_caps_thinking_budget_without_touching_global_config() -> None:
     # The router (dispatcher) must not "think" for seconds. The cap lives on the
     # deep-copied router config only — the global config (used by workers/critic)
     # keeps its full-reasoning default.
-    cfg = load_config()
+    cfg = _config()
     cfg.brain.router.provider = "gemini"
     cfg.brain.router.model = "gemini-3.5-flash"
 
@@ -106,7 +137,7 @@ def test_user_selected_deep_model_drives_the_deep_chain() -> None:
     the deep-tier model is steered by [brain.providers.<p>].deep_model, and the
     router-config build must NOT clobber that selection.
     """
-    cfg = load_config()
+    cfg = _config()
     cfg.brain.router.provider = "gemini"
     cfg.brain.router.model = "gemini-3.5-flash"
     # The user explicitly picks a non-default deep model for Gemini.
@@ -130,7 +161,7 @@ def test_user_selected_fast_model_resolves_for_every_provider(
     for EVERY brain provider when that provider is the active router brain. The
     fast/router model is steered by [brain.router].model and must survive the
     same-provider-fallback clobber for all of them."""
-    cfg = load_config()
+    cfg = _config(provider)
     cfg.brain.router.provider = provider
     cfg.brain.router.model = fast_pick
     cfg.brain.router.fallback_provider = provider
@@ -150,7 +181,7 @@ def test_user_selected_deep_model_resolves_for_every_provider(
     whatever model the user picks per provider is the one a deep turn runs on
     (and thus the one published on the brain turn and shown in the transcript).
     The router-config build must not clobber deep_model for any provider."""
-    cfg = load_config()
+    cfg = _config(provider)
     cfg.brain.providers[provider].deep_model = deep_pick
 
     mgr = BrainManager.from_tier_config("router", cfg, EventBus())

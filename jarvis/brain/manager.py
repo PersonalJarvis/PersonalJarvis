@@ -2177,12 +2177,20 @@ class BrainManager:
         #   in the in-memory config before _fast_model/_deep_model could read it
         #   (live forensic 2026-06-29: ~5€ OpenRouter key drained on Opus + Haiku).
         #   AP-21/AP-22, open-source single-key §3.
-        # - If no override: respect tier_cfg.model, then fall back to the default.
+        # - If no override: respect tier_cfg.model, then the provider pick, then
+        #   fall back to the default. Fresh installs have no [brain.router]
+        #   block, so ignoring providers.<name>.model here would overwrite the
+        #   model selected in the UI on every boot.
         if provider_override:
             override_pc = (local_config.brain.providers or {}).get(effective_provider)
             explicit_model = getattr(override_pc, "model", None) or None
         else:
-            explicit_model = tier_cfg.model
+            provider_pc = (local_config.brain.providers or {}).get(effective_provider)
+            explicit_model = (
+                tier_cfg.model
+                or getattr(provider_pc, "model", None)
+                or None
+            )
         resolved_model = _resolve_tier_model(tier, effective_provider, explicit_model)
         if resolved_model and effective_provider in (local_config.brain.providers or {}):
             local_config.brain.providers[effective_provider].model = resolved_model
@@ -7077,8 +7085,6 @@ class BrainManager:
         # generic cross-provider probing so runtime matches healthcheck order.
         available = set(self._registry.available())
         for name, configured_model in self._configured_fallbacks:
-            if name == active:
-                continue
             if name not in available:
                 continue
             m_fast = self._fast_model(name)
