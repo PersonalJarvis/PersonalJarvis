@@ -1293,6 +1293,135 @@ async def test_idle_session_renders_external_update_as_realtime_spoken_track():
 
 
 @pytest.mark.asyncio
+async def test_user_speech_during_silent_external_update_reclaims_the_turn():
+    """BUG-103: real user input during a still-silent readback owns the turn.
+
+    Live forensic 2026-07-20 17:50: a late action-result injection raced the
+    user's next utterance. The turn kept its readback state, so it completed
+    on the external-update track — the user's answer (already spoken by the
+    surface TTS fallback) was re-published as a second spoken event and the
+    turn produced no ResponseGenerated/VoiceTurnCompleted record at all,
+    which the transcript view rendered as the same reply twice.
+    """
+    provider = TextResultGatedProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="What can I do?",
+                is_final=True,
+            ),
+            RealtimeEvent(
+                type="output_transcript_delta",
+                text="Here is what you can do.",
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    bus = FakeBus()
+    sess = RealtimeVoiceSession(
+        session_id="reclaimed-update",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=bus,
+        surface="desktop",
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    accepted = await sess.deliver_announcement(
+        text="Research completed successfully.",
+        language="en",
+        spoken_kind="subagent",
+    )
+    await sess.wait_finished()
+    await sess.end(reason="test")
+
+    assert accepted is True
+    # The unrendered readback was dropped; nothing may claim it was spoken,
+    # and the user's answer must not surface twice under the readback kind.
+    assert not any(
+        isinstance(event, SpeechSpoken) and event.spoken_kind == "subagent"
+        for event in bus.events
+    )
+    # The turn belongs to the user: full user-turn record chain.
+    assert any(isinstance(event, VoiceTurnStarted) for event in bus.events)
+    responses = [
+        event for event in bus.events if isinstance(event, ResponseGenerated)
+    ]
+    assert [event.text for event in responses] == ["Here is what you can do."]
+    completed = [
+        event for event in bus.events if isinstance(event, VoiceTurnCompleted)
+    ]
+    assert len(completed) == 1
+    assert completed[0].user_text == "What can I do?"
+    assert completed[0].jarvis_text == "Here is what you can do."
+
+
+@pytest.mark.asyncio
+async def test_hijacked_external_update_turn_completes_on_the_user_track():
+    """BUG-103 belt-and-braces: a delegate turn inside a readback turn wins.
+
+    Even when the abort-on-user-speech path is bypassed (e.g. the readback had
+    already started rendering when the user barged in and a delegate answered
+    the new utterance), turn completion must publish the user track exactly
+    once instead of re-publishing the answer under the readback kind.
+    """
+    from jarvis.realtime.session import (
+        _DelegateTurnState,
+        _ExternalUpdateState,
+    )
+
+    bus = FakeBus()
+    sess = RealtimeVoiceSession(
+        session_id="hijacked-update",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _message: asyncio.sleep(0),
+        provider=FakeProvider([]),
+        config=_cfg(),
+        bus=bus,
+        surface="desktop",
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    sess._turn_id = "hijacked-turn"
+    sess._last_user_text = "What can I do?"
+    sess._output_transcript = ["Here is what you can do."]
+    sess._output_samples_sent = 0
+    sess._delegate_turns["hijacked-turn"] = _DelegateTurnState(
+        deterministic=True,
+        result_complete=True,
+        result_success=True,
+        delivery_started=True,
+        last_reply="Here is what you can do.",
+        user_text="What can I do?",
+    )
+    sess._external_update = _ExternalUpdateState(
+        source_text="Old late action result.",
+        language="en",
+        spoken_kind="action_result",
+    )
+
+    await sess._publish_turn_completed()
+    await sess.end(reason="test")
+
+    assert not any(
+        isinstance(event, SpeechSpoken)
+        and event.spoken_kind == "action_result"
+        for event in bus.events
+    )
+    responses = [
+        event for event in bus.events if isinstance(event, ResponseGenerated)
+    ]
+    assert [event.text for event in responses] == ["Here is what you can do."]
+    completed = [
+        event for event in bus.events if isinstance(event, VoiceTurnCompleted)
+    ]
+    assert len(completed) == 1
+    assert completed[0].user_text == "What can I do?"
+    assert sess._external_update is None
+
+
+@pytest.mark.asyncio
 async def test_busy_realtime_session_refuses_external_update_for_classic_fallback():
     provider = FakeProvider([])
     sess = RealtimeVoiceSession(

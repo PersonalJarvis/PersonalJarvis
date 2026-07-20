@@ -1556,6 +1556,50 @@ class RealtimeVoiceSession:
                         # The user audibly opened this turn — a fallback-era
                         # suppression of stale provider output ends here.
                         self._drop_provider_output_until_user_turn = False
+                        if (
+                            self._external_update is not None
+                            and self._output_samples_sent == 0
+                        ):
+                            # Real user input landed while a trusted out-of-band
+                            # readback (late action result / announcement) was
+                            # still silent: the injection raced the user's next
+                            # utterance, so the turn belongs to the user now
+                            # (BUG-103: keeping the readback state made the turn
+                            # complete on the readback track — the user's answer
+                            # was re-published as a second spoken event and the
+                            # turn's VoiceTurnCompleted record was skipped). The
+                            # readback's action already ran; only its spoken
+                            # confirmation is lost, and the provider's now-stale
+                            # rendering stays inaudible until a response for
+                            # THIS turn exists.
+                            log.info(
+                                "realtime[%s] user speech pre-empted a silent "
+                                "out-of-band readback (%s) — the turn belongs "
+                                "to the user",
+                                self.session_id,
+                                self._external_update.spoken_kind,
+                            )
+                            self._external_update = None
+                            self._response_requested_for_turn = False
+                            if bool(
+                                getattr(
+                                    self._session,
+                                    "isolates_response_generations",
+                                    False,
+                                )
+                            ):
+                                # Only an adapter that can tell the stale
+                                # readback generation from the next response
+                                # gets the suppression; on any other adapter
+                                # the flag would never clear and deafen the
+                                # user's own answer.
+                                self._drop_provider_output_until_new_response = (
+                                    True
+                                )
+                            if self._turn_id:
+                                # The turn opened silently for the readback;
+                                # announce it now that it is a real user turn.
+                                await self._publish_turn_started()
                         await self._ensure_turn_started()
                     new_language = self._language
                     if transcript:
@@ -3107,6 +3151,18 @@ class RealtimeVoiceSession:
         answer = "".join(self._output_transcript).strip()
         delegate_state = self._delegate_turns.pop(self._turn_id, None)
         external_update = self._external_update
+        if external_update is not None and delegate_state is not None:
+            # A real user turn (delegate dispatch) ran inside what began as an
+            # out-of-band readback turn — the readback was superseded (BUG-103).
+            # Completing on the readback track here would publish the answer
+            # the surface already spoke a second time and skip the turn's
+            # ResponseGenerated/VoiceTurnCompleted record entirely.
+            log.info(
+                "realtime[%s] out-of-band readback superseded by a user turn "
+                "— completing on the user track",
+                self.session_id,
+            )
+            external_update = None
         response_text = answer or (
             delegate_state.last_reply if delegate_state is not None else ""
         )

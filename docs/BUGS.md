@@ -7051,3 +7051,60 @@ shuffles invisible, unplug + default move visible), one refresh per settled
 change, probe outage fails open, refresh order (quiesce → re-init →
 invalidate → re-resolve), watchdog heartbeat backdating. Physical
 plug/unplug validation on macOS/Windows/Linux remains pending.
+
+---
+
+## BUG-103: late action-result readback races the user's next utterance — the same answer is spoken twice in two different voices and doubles in the transcript (HIGH, FIXED 2026-07-20)
+
+**Symptom.** Realtime voice session `31dd0f25-8102-4159-83ca-466d6c1bb450`
+(2026-07-20 17:49, Gemini Live, delegate tool mode): one answer was rendered
+by the surface TTS fallback voice (`gemini-flash-tts`, ~30 s) while the rest
+of the session used the live provider voice, and the transcript view showed
+the identical reply text twice in a row. The recorded `voice_turns` row for
+that turn was completely empty (no user text, no reply).
+
+**Reconstruction (event-log forensic).**
+
+1. A barged delegate turn's Brain result outlived its provider turn and was
+   correctly queued as a late follow-up
+   (`_queue_late_delegate_result`).
+2. The flush found the session "at rest" ~1 s after the turn closed and
+   injected the readback (`_speak_late_delegate_result`: sets
+   `_external_update(spoken_kind="action_result")`, opens a SILENT turn) —
+   exactly as the user drew breath to continue talking.
+3. The user's next utterance landed INSIDE that readback turn. The provider
+   interrupted the still-silent readback, the deterministic delegate answered
+   the user, the provider then failed to render that grounded result, and the
+   surface TTS fallback spoke it (the first, different voice).
+4. At turn completion the STALE `_external_update` still owned the turn:
+   `_publish_turn_completed` took the external-readback branch, re-published
+   the fallback answer as a second `SpeechSpoken(action_result)` (the
+   duplicate transcript line), published NO `ResponseGenerated`, and skipped
+   `VoiceTurnCompleted` entirely (the empty recorder row).
+
+**Fix (`jarvis/realtime/session.py`).**
+
+1. **User speech reclaims a silent readback turn.** When a real input
+   transcript arrives while `_external_update` is set and no readback audio
+   has played (`_output_samples_sent == 0`), the readback is dropped (its
+   action already ran; only the spoken confirmation is lost, logged), the
+   deferred `VoiceTurnStarted` is published, the turn's response request is
+   reset, and — only on adapters that isolate response generations — the
+   provider's now-stale readback rendering is withheld until a response for
+   the user's turn exists.
+2. **Belt-and-braces at completion.** `_publish_turn_completed` treats a turn
+   that carries BOTH an external update and a delegate turn state as a user
+   turn: the superseded readback track is discarded so the answer is
+   published exactly once (`ResponseGenerated` + `VoiceTurnCompleted`),
+   never re-surfaced under the readback kind.
+
+**Class rule.** An out-of-band injection into a live duplex session can
+always race the user's next utterance — "at rest" is a snapshot, not a
+reservation. Any state that lets a non-user prompt own a turn must be
+surrendered the moment genuine user input arrives in that turn, and turn
+completion must never let a stale out-of-band marker swallow a real user
+turn's record.
+
+**Guards.** `tests/unit/realtime/test_session.py::
+test_user_speech_during_silent_external_update_reclaims_the_turn` and
+`::test_hijacked_external_update_turn_completes_on_the_user_track`.
