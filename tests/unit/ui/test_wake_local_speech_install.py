@@ -1,7 +1,7 @@
 """POST/GET /api/settings/wake-word/enable-local-speech — the in-app installer
-that pulls faster-whisper so ANY wake phrase works on a fresh install.
+that pulls faster-whisper and its wake checkpoint for any phrase.
 
-The install itself (pip) is mocked; these lock the endpoint's state machine:
+The package and model downloads are mocked; these lock the endpoint state:
 - already installed  → done/already, no pip call
 - fresh install      → pip runs, status flips to done
 - pip failure        → status reports error with the reason
@@ -40,7 +40,7 @@ class _SyncThread:
 
 def test_already_installed_returns_done_without_pip(monkeypatch) -> None:
     _reset_state()
-    monkeypatch.setattr(sr, "_local_whisper_available", lambda: True)
+    monkeypatch.setattr(sr, "_local_speech_ready", lambda: True)
     called = []
     monkeypatch.setattr(
         "jarvis.setup.dependencies.install_pip_package",
@@ -57,28 +57,40 @@ def test_already_installed_returns_done_without_pip(monkeypatch) -> None:
 
 def test_fresh_install_runs_pip_and_status_flips_to_done(monkeypatch) -> None:
     _reset_state()
-    monkeypatch.setattr(sr, "_local_whisper_available", lambda: False)
+    ready = {"engine": False, "model": False}
+    monkeypatch.setattr(sr, "_local_speech_ready", lambda: ready["model"])
+    monkeypatch.setattr(sr, "_local_whisper_available", lambda: ready["engine"])
+    monkeypatch.setattr(sr, "_local_wake_model_name", lambda: "base")
     packages: list[str] = []
+    models: list[str] = []
 
     def fake_install(pkg, **_kw):
         packages.append(pkg)
+        ready["engine"] = True
         return True, "install reported success"
 
+    def fake_download(name: str) -> None:
+        models.append(name)
+        ready["model"] = True
+
     monkeypatch.setattr("jarvis.setup.dependencies.install_pip_package", fake_install)
+    monkeypatch.setattr(sr, "_download_local_wake_model", fake_download)
     monkeypatch.setattr(sr.threading, "Thread", _SyncThread)
 
     client = _client()
     post = client.post("/api/settings/wake-word/enable-local-speech").json()
     assert post["state"] == "running"
     assert packages == [sr._LOCAL_SPEECH_PACKAGE]
+    assert models == ["base"]
 
     status = client.get("/api/settings/wake-word/enable-local-speech/status").json()
     assert status["state"] == "done"
-    assert "success" in status["message"]
+    assert "wake model 'base'" in status["message"]
 
 
 def test_pip_failure_is_reported_as_error(monkeypatch) -> None:
     _reset_state()
+    monkeypatch.setattr(sr, "_local_speech_ready", lambda: False)
     monkeypatch.setattr(sr, "_local_whisper_available", lambda: False)
 
     def fake_install(pkg, **_kw):
@@ -96,10 +108,10 @@ def test_pip_failure_is_reported_as_error(monkeypatch) -> None:
 
 
 def test_status_reports_available_when_present(monkeypatch) -> None:
-    # Present but this process never ran the installer (installed manually or in a
-    # prior run) → status is truthful without a restart.
+    # Present but this process never ran the installer (installed manually or in
+    # a prior run) → status is truthful without a restart.
     _reset_state()
-    monkeypatch.setattr(sr, "_local_whisper_available", lambda: True)
+    monkeypatch.setattr(sr, "_local_speech_ready", lambda: True)
 
     status = _client().get(
         "/api/settings/wake-word/enable-local-speech/status"
@@ -109,11 +121,26 @@ def test_status_reports_available_when_present(monkeypatch) -> None:
     assert status["state"] == "done"
 
 
+def test_done_state_without_readable_model_becomes_retryable_error(monkeypatch) -> None:
+    _reset_state()
+    sr._local_speech_install["state"] = "done"
+    sr._local_speech_install["message"] = "download reported success"
+    monkeypatch.setattr(sr, "_local_speech_ready", lambda: False)
+
+    status = _client().get(
+        "/api/settings/wake-word/enable-local-speech/status"
+    ).json()
+
+    assert status["available"] is False
+    assert status["state"] == "error"
+    assert "not readable" in status["message"]
+
+
 def test_available_pack_reapplies_current_wake_plan_live(monkeypatch) -> None:
     from jarvis.core.config import WakeWordConfig
 
     _reset_state()
-    monkeypatch.setattr(sr, "_local_whisper_available", lambda: True)
+    monkeypatch.setattr(sr, "_local_speech_ready", lambda: True)
 
     class _Pipeline:
         plan = None
@@ -149,7 +176,9 @@ def test_install_is_wheel_only_for_end_users(monkeypatch) -> None:
     # BUG-059: pip must never fall back to a source build on an end-user
     # machine (av needs FFmpeg dev libs) — the route pins only_binary=True.
     _reset_state()
+    monkeypatch.setattr(sr, "_local_speech_ready", lambda: False)
     monkeypatch.setattr(sr, "_local_whisper_available", lambda: False)
+    monkeypatch.setattr(sr, "_download_local_wake_model", lambda _name: None)
     kwargs: list[dict] = []
 
     def fake_install(pkg, **kw):
@@ -161,3 +190,59 @@ def test_install_is_wheel_only_for_end_users(monkeypatch) -> None:
     _client().post("/api/settings/wake-word/enable-local-speech")
     assert kwargs and kwargs[0].get("only_binary") is True
     _reset_state()
+
+
+def test_existing_engine_still_downloads_missing_wake_checkpoint(monkeypatch) -> None:
+    _reset_state()
+    ready = {"model": False}
+    monkeypatch.setattr(sr, "_local_speech_ready", lambda: ready["model"])
+    monkeypatch.setattr(sr, "_local_whisper_available", lambda: True)
+    monkeypatch.setattr(sr, "_local_wake_model_name", lambda: "base")
+    pip_calls: list[str] = []
+    models: list[str] = []
+
+    monkeypatch.setattr(
+        "jarvis.setup.dependencies.install_pip_package",
+        lambda pkg, **_kw: pip_calls.append(pkg) or (True, "unexpected"),
+    )
+
+    def fake_download(name: str) -> None:
+        models.append(name)
+        ready["model"] = True
+
+    monkeypatch.setattr(sr, "_download_local_wake_model", fake_download)
+    monkeypatch.setattr(sr.threading, "Thread", _SyncThread)
+
+    client = _client()
+    client.post("/api/settings/wake-word/enable-local-speech")
+    status = client.get(
+        "/api/settings/wake-word/enable-local-speech/status"
+    ).json()
+
+    assert pip_calls == []
+    assert models == ["base"]
+    assert status["state"] == "done"
+    assert status["available"] is True
+
+
+def test_model_download_failure_is_reported_as_error(monkeypatch) -> None:
+    _reset_state()
+    monkeypatch.setattr(sr, "_local_speech_ready", lambda: False)
+    monkeypatch.setattr(sr, "_local_whisper_available", lambda: True)
+    monkeypatch.setattr(sr, "_local_wake_model_name", lambda: "base")
+    monkeypatch.setattr(
+        sr,
+        "_download_local_wake_model",
+        lambda _name: (_ for _ in ()).throw(OSError("model mirror down")),
+    )
+    monkeypatch.setattr(sr.threading, "Thread", _SyncThread)
+
+    client = _client()
+    client.post("/api/settings/wake-word/enable-local-speech")
+    status = client.get(
+        "/api/settings/wake-word/enable-local-speech/status"
+    ).json()
+
+    assert status["state"] == "error"
+    assert status["available"] is False
+    assert "model mirror down" in status["message"]

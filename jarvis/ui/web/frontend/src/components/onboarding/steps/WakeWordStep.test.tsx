@@ -1,6 +1,10 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 vi.mock("@/i18n", () => ({ useT: () => (k: string) => k }));
+const localSpeech = vi.hoisted(() => ({
+  onInstalled: undefined as (() => void) | undefined,
+  startInstall: vi.fn(),
+}));
 const saveWakeWord = vi.fn().mockResolvedValue({ ok: true, degraded: false });
 const setWakeActivation = vi.fn().mockResolvedValue({
   ok: true,
@@ -10,10 +14,13 @@ const setWakeActivation = vi.fn().mockResolvedValue({
 });
 vi.mock("@/hooks/useWakeWord", () => ({
   useWakeWord: () => ({ saveWakeWord, setWakeActivation }),
-  useLocalSpeechInstall: () => ({
-    status: { state: "idle", message: "", available: true },
-    install: vi.fn(),
-  }),
+  useLocalSpeechInstall: (onInstalled?: () => void) => {
+    localSpeech.onInstalled = onInstalled;
+    return {
+      status: { state: "idle", message: "", available: true },
+      install: localSpeech.startInstall,
+    };
+  },
 }));
 import { WakeWordStep } from "./WakeWordStep";
 afterEach(() => {
@@ -21,6 +28,8 @@ afterEach(() => {
   saveWakeWord.mockClear();
   saveWakeWord.mockResolvedValue({ ok: true, degraded: false });
   setWakeActivation.mockClear();
+  localSpeech.startInstall.mockClear();
+  localSpeech.onInstalled = undefined;
 });
 
 const onb = {
@@ -117,6 +126,41 @@ it("wake-word path: a degraded save does NOT advance and offers the local-speech
   expect(setWakeActivation).not.toHaveBeenCalled();
 
   fireEvent.click(screen.getByRole("button", { name: "onboarding.wake_word.continue_anyway" }));
+  await waitFor(() => expect(setWakeActivation).toHaveBeenCalledWith(true));
+  expect(goNext).toHaveBeenCalled();
+});
+
+it("wake-word path: completed local install clears the stale degraded warning", async () => {
+  saveWakeWord
+    .mockResolvedValueOnce({ ok: true, degraded: true })
+    .mockResolvedValue({ ok: true, degraded: false });
+  const { goNext } = renderStep();
+  selectWakeMode();
+
+  fireEvent.change(screen.getByRole("textbox"), { target: { value: "Nova" } });
+  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(screen.getByRole("button", { name: "onboarding.wake_word.cta" }));
+
+  await screen.findByText("settings_view.wake_word.needs_whisper_hint");
+  fireEvent.click(
+    screen.getByRole("button", {
+      name: "settings_view.wake_word.enable_local_button",
+    }),
+  );
+  expect(localSpeech.startInstall).toHaveBeenCalledOnce();
+
+  act(() => localSpeech.onInstalled?.());
+
+  await waitFor(() =>
+    expect(screen.queryByText("settings_view.wake_word.needs_whisper_hint")).toBeNull(),
+  );
+  expect(
+    screen.queryByRole("button", { name: "onboarding.wake_word.continue_anyway" }),
+  ).toBeNull();
+
+  // The normal CTA re-validates the already-persisted phrase and activates it.
+  fireEvent.click(screen.getByRole("button", { name: "onboarding.wake_word.cta" }));
+  await waitFor(() => expect(saveWakeWord).toHaveBeenCalledTimes(2));
   await waitFor(() => expect(setWakeActivation).toHaveBeenCalledWith(true));
   expect(goNext).toHaveBeenCalled();
 });

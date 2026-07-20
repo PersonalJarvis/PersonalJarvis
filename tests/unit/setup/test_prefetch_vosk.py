@@ -22,6 +22,56 @@ def test_prefetch_calls_vosk_ensure(monkeypatch):
     assert rc == 0
 
 
+def test_full_prefetch_downloads_every_onboarding_language(monkeypatch):
+    """The desktop installer runs before the user chooses a UI language."""
+    seen: list[str | None] = []
+
+    monkeypatch.setattr(
+        prefetch,
+        "_ensure_vosk",
+        lambda language, **_kw: seen.append(language) or object(),
+        raising=False,
+    )
+    monkeypatch.setattr(
+        prefetch,
+        "_supported_vosk_languages",
+        lambda: ("en", "de", "es"),
+    )
+    monkeypatch.setattr(prefetch, "_faster_whisper_available", lambda: False)
+
+    rc = prefetch.prefetch_all(
+        echo=lambda _line: None,
+        all_wake_languages=True,
+    )
+
+    assert rc == 0
+    assert seen == ["en", "de", "es"]
+
+
+def test_full_prefetch_continues_after_one_language_fails(monkeypatch):
+    seen: list[str | None] = []
+
+    def fake_ensure(language, **_kw):
+        seen.append(language)
+        return None if language == "de" else object()
+
+    monkeypatch.setattr(prefetch, "_ensure_vosk", fake_ensure, raising=False)
+    monkeypatch.setattr(
+        prefetch,
+        "_supported_vosk_languages",
+        lambda: ("en", "de", "es"),
+    )
+    monkeypatch.setattr(prefetch, "_faster_whisper_available", lambda: False)
+
+    rc = prefetch.prefetch_all(
+        echo=lambda _line: None,
+        all_wake_languages=True,
+    )
+
+    assert rc == 1
+    assert seen == ["en", "de", "es"]
+
+
 def test_vosk_none_result_marks_prefetch_failed(monkeypatch):
     """A non-fatal fetch miss (offline mirror, etc.) must flip the honest rc."""
     monkeypatch.setattr(prefetch, "_ensure_vosk", lambda *_a, **_kw: None, raising=False)

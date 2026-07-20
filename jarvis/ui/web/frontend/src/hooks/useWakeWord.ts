@@ -185,7 +185,7 @@ export function useLocalSpeechInstall(onInstalled?: () => void) {
       setStatus(data);
       if (data.state === "done" || data.state === "error") {
         stopPoll();
-        if (data.state === "done") onInstalledRef.current?.();
+        if (data.state === "done" && data.available) onInstalledRef.current?.();
       }
     } catch {
       // Transient network blip during a long install — keep polling.

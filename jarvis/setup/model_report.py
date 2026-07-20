@@ -13,13 +13,12 @@ install):
   "absent", never as a raised exception. The report can always be produced.
 - **No network.** The faster-whisper cache probe uses ``local_files_only`` so it
   never triggers a download while merely *checking*.
-- **Honest optionality.** ``required`` separates the models the DEFAULT voice
-  path needs (bundled neural wake backbone + Silero VAD — both ship in-repo)
-  from the optional ones (the per-language Vosk custom-wake model and the local
-  Whisper models, which are downloaded / behind the ``[full]`` profile). A
-  missing optional model is a pending download, not a failure — so
-  ``report_complete`` gates only on the required set and never sabotages an
-  install that legitimately runs cloud speech.
+- **Profile-aware optionality.** ``required`` separates the models the DEFAULT
+  voice path needs from optional local models. When the advertised ``[full]``
+  desktop installer asks for a full-profile report, every supported Vosk
+  language and the local Whisper wake model become required, so its completion
+  message cannot hide a partial model download. The cloud/headless report keeps
+  those artifacts optional.
 
 Seams (module-level functions) keep the heavy imports lazy and let tests inject
 fakes without a real config, network, or model cache — same style as
@@ -31,6 +30,7 @@ from __future__ import annotations
 import importlib.util
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from functools import partial
 from typing import Any
 
 
@@ -73,6 +73,12 @@ def _wake_language(cfg: Any) -> str | None:
     return resolve_wake_language(cfg)
 
 
+def _supported_wake_languages() -> tuple[str, ...]:
+    from jarvis.speech.wake_model_fetch import VOSK_MODELS
+
+    return tuple(VOSK_MODELS)
+
+
 def _vosk_present(language: str | None, data_dir: str | None) -> bool:
     from jarvis.speech.wake_model_fetch import vosk_model_present
 
@@ -108,7 +114,7 @@ def _whisper_cached(name: str) -> bool:
     network. Any failure (not cached, lib missing, odd cache layout) reads as
     "not present".
     """
-    from faster_whisper.utils import download_model  # type: ignore[import-not-found]
+    from faster_whisper.utils import download_model  # type: ignore[import-not-found,import-untyped]
 
     download_model(name, local_files_only=True)
     return True
@@ -137,7 +143,12 @@ def _safe(fn: Callable[[], Any], default: Any) -> Any:
         return default
 
 
-def voice_model_report(cfg: Any | None = None, *, data_dir: str | None = None) -> list[ModelStatus]:
+def voice_model_report(
+    cfg: Any | None = None,
+    *,
+    data_dir: str | None = None,
+    full_profile: bool = False,
+) -> list[ModelStatus]:
     """Verify, read-only, which voice models are actually ready on disk.
 
     ``cfg`` defaults to the live config (loaded via the same path the runtime
@@ -188,39 +199,83 @@ def voice_model_report(cfg: Any | None = None, *, data_dir: str | None = None) -
         )
     items.append(ModelStatus("end-of-speech detection", vad_present, vad_detail, required=True))
 
-    # 3. Custom-wake model (Vosk, per language) — downloaded once, optional.
-    lang = _safe(lambda: _wake_language(cfg), None) if cfg is not None else None
-    vosk_ok = bool(_safe(lambda: _vosk_present(lang, data_dir), False))
-    items.append(
-        ModelStatus(
-            f"custom-wake model '{lang or 'default'}'",
-            vosk_ok,
-            "ready" if vosk_ok else "not downloaded yet - the app fetches it on first use",
-            required=False,
+    # 3. Custom-wake model (Vosk, per language). A default/cloud report checks
+    # only the configured language and treats it as optional. The full desktop
+    # installer runs before onboarding, so it must prove every selectable
+    # language is cached instead of silently validating only the English default.
+    if full_profile:
+        supported = _safe(_supported_wake_languages, None)
+        if supported:
+            wake_languages: tuple[str | None, ...] = supported
+        else:
+            wake_languages = ()
+            items.append(
+                ModelStatus(
+                    "custom-wake language catalog",
+                    False,
+                    "MISSING from the package - cannot verify the full voice profile",
+                    required=True,
+                )
+            )
+    else:
+        lang = _safe(lambda: _wake_language(cfg), None) if cfg is not None else None
+        wake_languages = (lang,)
+    for lang in wake_languages:
+        vosk_ok = bool(_safe(partial(_vosk_present, lang, data_dir), False))
+        items.append(
+            ModelStatus(
+                f"custom-wake model '{lang or 'default'}'",
+                vosk_ok,
+                "ready"
+                if vosk_ok
+                else (
+                    "not downloaded yet - re-run the installer or retry in the app"
+                    if full_profile
+                    else "not downloaded yet - the app fetches it on first use"
+                ),
+                required=full_profile,
+            )
         )
-    )
 
-    # 4. Local speech recognition (faster-whisper) — optional; cloud is default.
+    # 4. Local speech recognition (faster-whisper). It remains optional for the
+    # cloud/headless report, but the advertised full profile promises this path.
     if not bool(_safe(_faster_whisper_available, False)):
         items.append(
             ModelStatus(
                 "local speech model",
                 False,
-                "not installed - cloud speech is the default "
-                "(install the [full] profile for offline speech)",
-                required=False,
+                (
+                    "MISSING from the [full] profile - re-run the installer"
+                    if full_profile
+                    else "not installed - cloud speech is the default "
+                    "(install the [full] profile for offline speech)"
+                ),
+                required=full_profile,
             )
         )
     else:
-        needed = _safe(lambda: _whisper_models_needed(cfg), []) if cfg is not None else []
+        fallback_models = ["base"] if full_profile else []
+        needed = (
+            _safe(lambda: _whisper_models_needed(cfg), fallback_models)
+            if cfg is not None
+            else fallback_models
+        )
+        if full_profile and not needed:
+            needed = fallback_models
         for name in needed:
-            cached = bool(_safe(lambda n=name: _whisper_cached(n), False))
+            cached = bool(_safe(partial(_whisper_cached, name), False))
             items.append(
                 ModelStatus(
                     f"local speech model '{name}'",
                     cached,
-                    "ready" if cached else "not downloaded yet - the app fetches it on first use",
-                    required=False,
+                    "ready"
+                    if cached
+                    else (
+                        "not downloaded yet - re-run the installer or retry in the app"
+                        if full_profile
+                        else "not downloaded yet - the app fetches it on first use"
+                    ),
+                    required=full_profile,
                 )
             )
 

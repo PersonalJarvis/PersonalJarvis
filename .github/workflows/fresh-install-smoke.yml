@@ -30,6 +30,10 @@ on:
       - 'install/install.sh'
       - 'pyproject.toml'
       - 'requirements.txt'
+      - 'jarvis/__main__.py'
+      - 'jarvis/setup/prefetch.py'
+      - 'jarvis/setup/model_report.py'
+      - 'jarvis/speech/wake_model_fetch.py'
       - '.github/workflows/fresh-install-smoke.yml'
 
 # A new push to the same ref cancels the previous in-flight run so a burst of
@@ -71,7 +75,7 @@ jobs:
       matrix:
         os: ${{ fromJSON(needs.configure.outputs.os-matrix) }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 20
+    timeout-minutes: 30
 
     steps:
       - name: Checkout
@@ -84,20 +88,26 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Run the REAL installer end-to-end (headless, no launch)
+      - name: Run the REAL installer end-to-end (runner-appropriate profile)
         shell: bash
         run: |
           set -euo pipefail
           # Reproduce exactly what install.sh does after the git clone: a venv,
-          # the bootstrap deps, then hand off to installer.py. --no-launch keeps
-          # the runner from spawning a server we don't tear down here (a dedicated
-          # step below boots + probes it). The installer is non-interactive by
-          # design now — no wizard flag needed.
+          # the bootstrap deps, then hand off to installer.py. Ordinary Linux
+          # pushes prove the headless/base floor. A manually-requested macOS leg
+          # proves the advertised desktop [full] profile AND its complete model
+          # prefetch; running that leg headless used to leave this exact install
+          # contract untested. --no-launch keeps the runner from spawning a server
+          # we don't tear down here (a dedicated step below boots + probes it).
           python -m venv .venv
           . .venv/bin/activate
           python -m pip install --upgrade pip
           python -m pip install rich packaging
-          python install/installer.py --headless --no-launch | tee install.log
+          if [ "${{ matrix.os }}" = "macos-latest" ]; then
+            python install/installer.py --with-desktop --no-launch | tee install.log
+          else
+            python install/installer.py --headless --no-launch | tee install.log
+          fi
           # The installer must never prompt: fail if anything interactive leaked in.
           if grep -Eiq "input\(|\? \[y/n\]|press enter" install.log; then
             echo "installer output contains an interactive prompt marker"; exit 8

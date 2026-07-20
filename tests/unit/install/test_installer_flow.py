@@ -106,6 +106,27 @@ def test_headless_pip_plan_stays_base_floor(capsys) -> None:
     assert ".[desktop]" not in out
 
 
+def test_full_profile_prefetches_every_wake_language(capsys) -> None:
+    installer.step_models(full_profile=True, dry_run=True)
+    out = capsys.readouterr().out
+    assert "--prefetch-all-wake-languages" in out
+
+
+def test_headless_prefetch_keeps_only_configured_wake_language(capsys) -> None:
+    installer.step_models(full_profile=False, dry_run=True)
+    out = capsys.readouterr().out
+    assert "--prefetch" in out
+    assert "--prefetch-all-wake-languages" not in out
+
+
+def test_macos_fresh_install_ci_exercises_advertised_full_profile() -> None:
+    workflow = (REPO / ".github" / "workflows" / "fresh-install-smoke.yml").read_text(
+        encoding="utf-8"
+    )
+    assert 'if [ "${{ matrix.os }}" = "macos-latest" ]; then' in workflow
+    assert "installer.py --with-desktop --no-launch" in workflow
+
+
 def test_full_profile_failure_stops_desktop_install(monkeypatch) -> None:
     results = iter([0, 0, 1])
     monkeypatch.setattr(installer, "run_quiet", lambda *args, **kwargs: next(results))

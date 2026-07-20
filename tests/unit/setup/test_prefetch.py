@@ -41,6 +41,26 @@ def test_download_failure_is_nonfatal(monkeypatch) -> None:
     assert any("first launch" in line for line in lines)  # honest fallback note
 
 
+def test_broken_config_still_prefetches_packaged_wake_model(monkeypatch) -> None:
+    downloaded: list[str] = []
+    monkeypatch.setattr(prefetch, "_wakeword_bundle_present", lambda: True)
+    monkeypatch.setattr(prefetch, "_faster_whisper_available", lambda: True)
+    monkeypatch.setattr(prefetch, "_download_whisper_model", downloaded.append)
+    monkeypatch.setattr(
+        prefetch,
+        "_whisper_models_needed",
+        lambda: (_ for _ in ()).throw(RuntimeError("config unreadable")),
+    )
+    monkeypatch.setattr(prefetch, "_ensure_vosk", lambda *_a, **_kw: object())
+    lines: list[str] = []
+
+    rc = prefetch.prefetch_all(echo=lines.append)
+
+    assert rc == 1
+    assert downloaded == ["base"]
+    assert any("packaged 'base'" in line for line in lines)
+
+
 def test_whisper_models_needed_includes_utterance_model_for_local_provider(
     monkeypatch,
 ) -> None:

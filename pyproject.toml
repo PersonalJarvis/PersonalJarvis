@@ -73,8 +73,10 @@ dependencies = [
     # Vosk is Apache-2.0, torch-free, ~7 MB wheel with bundled libvosk, official
     # CPU wheels for macOS and Linux x86+ARM plus Windows x86/x64. Upstream does
     # not ship Windows ARM64, so that one target skips Vosk and retains the
-    # ONNX/browser/cloud wake paths. The per-language model (~45 MB)
-    # is fetched once at setup into data/wake_models/vosk/<lang>/, NOT bundled.
+    # ONNX/browser/cloud wake paths. Each per-language model is ~45 MB and is
+    # fetched into data/wake_models/vosk/<lang>/, NOT bundled. The advertised
+    # full installer caches every onboarding language; headless/base setup keeps
+    # only its configured language.
     # Lazy-imported in vosk_kws_provider.py; base `import jarvis` stays clean.
     # CAP below 0.3.45: that release ships NO macOS wheel (linux/win only), so a
     # floor above 0.3.44 bricks every Mac install (AP-23; caught by the CI

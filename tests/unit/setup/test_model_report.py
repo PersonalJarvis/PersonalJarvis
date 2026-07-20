@@ -87,6 +87,80 @@ def test_pending_vosk_download_is_optional_not_a_failure(monkeypatch) -> None:
     assert mr.report_complete(items) is True  # required set is still satisfied
 
 
+def test_full_profile_requires_every_onboarding_wake_model(monkeypatch) -> None:
+    _patch_bundled(monkeypatch)
+    monkeypatch.setattr(mr, "_supported_wake_languages", lambda: ("en", "de", "es"))
+    monkeypatch.setattr(mr, "_vosk_present", lambda lang, _data: lang != "es")
+    monkeypatch.setattr(mr, "_faster_whisper_available", lambda: True)
+    monkeypatch.setattr(mr, "_whisper_models_needed", lambda _cfg: ["base"])
+    monkeypatch.setattr(mr, "_whisper_cached", lambda _name: True)
+
+    items = mr.voice_model_report(_Cfg(), full_profile=True)
+
+    wake = [i for i in items if "custom-wake model" in i.label]
+    assert [i.label for i in wake] == [
+        "custom-wake model 'en'",
+        "custom-wake model 'de'",
+        "custom-wake model 'es'",
+    ]
+    assert all(i.required for i in wake)
+    assert mr.report_complete(items) is False
+
+
+def test_full_profile_requires_local_whisper_and_cached_wake_model(monkeypatch) -> None:
+    _patch_bundled(monkeypatch)
+    monkeypatch.setattr(mr, "_supported_wake_languages", lambda: ("en", "de", "es"))
+    monkeypatch.setattr(mr, "_vosk_present", lambda *_a, **_kw: True)
+    monkeypatch.setattr(mr, "_faster_whisper_available", lambda: True)
+    monkeypatch.setattr(mr, "_whisper_models_needed", lambda _cfg: ["base"])
+    monkeypatch.setattr(mr, "_whisper_cached", lambda _name: False)
+
+    items = mr.voice_model_report(_Cfg(), full_profile=True)
+
+    local = next(i for i in items if "local speech model 'base'" in i.label)
+    assert local.required is True
+    assert local.present is False
+    assert mr.report_complete(items) is False
+
+
+def test_full_profile_verifies_base_when_config_cannot_load(monkeypatch) -> None:
+    _patch_bundled(monkeypatch)
+    monkeypatch.setattr(mr, "_load_config", lambda: None)
+    monkeypatch.setattr(mr, "_supported_wake_languages", lambda: ("en", "de", "es"))
+    monkeypatch.setattr(mr, "_vosk_present", lambda *_a, **_kw: True)
+    monkeypatch.setattr(mr, "_faster_whisper_available", lambda: True)
+    checked: list[str] = []
+    monkeypatch.setattr(
+        mr,
+        "_whisper_cached",
+        lambda name: checked.append(name) or True,
+    )
+
+    items = mr.voice_model_report(full_profile=True)
+
+    assert checked == ["base"]
+    local = next(i for i in items if "local speech model 'base'" in i.label)
+    assert local.required is True and local.present is True
+
+
+def test_full_profile_fails_closed_when_language_catalog_cannot_load(monkeypatch) -> None:
+    _patch_bundled(monkeypatch)
+    monkeypatch.setattr(
+        mr,
+        "_supported_wake_languages",
+        lambda: (_ for _ in ()).throw(RuntimeError("catalog unavailable")),
+    )
+    monkeypatch.setattr(mr, "_faster_whisper_available", lambda: True)
+    monkeypatch.setattr(mr, "_whisper_models_needed", lambda _cfg: ["base"])
+    monkeypatch.setattr(mr, "_whisper_cached", lambda _name: True)
+
+    items = mr.voice_model_report(_Cfg(), full_profile=True)
+
+    catalog = next(i for i in items if "language catalog" in i.label)
+    assert catalog.required is True and catalog.present is False
+    assert mr.report_complete(items) is False
+
+
 def test_installed_whisper_reports_cache_hit_per_model(monkeypatch) -> None:
     _patch_bundled(monkeypatch)
     monkeypatch.setattr(mr, "_vosk_present", lambda *_a, **_kw: True)

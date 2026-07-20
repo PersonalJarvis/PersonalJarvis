@@ -41,7 +41,14 @@ export function WakeWordStep({ onb, goNext }: StepProps) {
   // user's own word). We DON'T advance silently in that case — we tell the
   // user and offer the one-click local-speech install, or an honest opt-out.
   const [degraded, setDegraded] = useState(false);
-  const { status: install, install: startInstall } = useLocalSpeechInstall();
+  const { status: install, install: startInstall } = useLocalSpeechInstall(() => {
+    // The first save already persisted the phrase. Once the recovery installer
+    // has both the engine and its model, discard that stale degraded verdict and
+    // let the normal CTA re-check + activate it. This prevents the contradictory
+    // "model installed" plus "continue anyway" state from lingering on screen.
+    setDegraded(false);
+    setErr(null);
+  });
   // Mic verification (Task 7): a live dBFS read from the desktop app's own
   // capture path (the same one the wake-word detector listens on) — never
   // blocks the save/acknowledge below, it just surfaces an honest signal so a

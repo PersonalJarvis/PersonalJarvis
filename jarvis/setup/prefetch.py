@@ -57,6 +57,13 @@ def _vosk_language() -> str | None:
         return None
 
 
+def _supported_vosk_languages() -> tuple[str, ...]:
+    """Every language a user can select during first-run onboarding."""
+    from jarvis.speech.wake_model_fetch import VOSK_MODELS
+
+    return tuple(VOSK_MODELS)
+
+
 def _whisper_models_needed() -> list[str]:
     """The faster-whisper model names the CURRENT config would load at runtime.
 
@@ -74,17 +81,23 @@ def _whisper_models_needed() -> list[str]:
 def _download_whisper_model(name: str) -> None:
     """Fetch one faster-whisper model into the standard HuggingFace cache —
     the exact cache ``WhisperModel(name)`` resolves at runtime."""
-    from faster_whisper.utils import download_model  # type: ignore[import-not-found]
+    from faster_whisper.utils import download_model  # type: ignore[import-not-found,import-untyped]
 
     download_model(name)
 
 
-def prefetch_all(echo: Callable[[str], None] = print) -> int:
+def prefetch_all(
+    echo: Callable[[str], None] = print,
+    *,
+    all_wake_languages: bool = False,
+) -> int:
     """Prefetch every artifact the default voice path needs. 0 = complete.
 
     Returns 1 when at least one download failed — callers keep going (the
     runtime lazy-download remains the safety net), the exit code just keeps
-    the installer's summary honest.
+    the installer's summary honest. The advertised desktop installer passes
+    ``all_wake_languages=True`` because onboarding has not selected a language
+    yet; the headless/base path keeps only its configured language.
     """
     # Tame the Hugging Face downloader BEFORE it is imported (both env vars
     # are read at import time): no tqdm progress bars — they shred the
@@ -106,16 +119,34 @@ def prefetch_all(echo: Callable[[str], None] = print) -> int:
             "on first use"
         )
 
-    # Any-word wake model (vosk_kws): fetch the per-language model once so a
-    # custom wake word resolves to the reliable engine instead of stt_match.
-    lang = _vosk_language()
-    try:
-        out = _ensure_vosk(lang, echo=echo)
-        if out is None:
+    # Any-word wake model (vosk_kws): the full desktop installer runs BEFORE
+    # onboarding knows whether the user will choose English, German, or Spanish,
+    # so it caches every supported language. The internal headless/base path
+    # keeps its configured language to preserve the small-server floor.
+    languages: tuple[str | None, ...]
+    if all_wake_languages:
+        try:
+            languages = _supported_vosk_languages()
+        except Exception as exc:  # noqa: BLE001 — keep the current-language fallback
             failed = True
-    except Exception as exc:  # noqa: BLE001 — honest note, never fatal
-        failed = True
-        echo(f"wake model: could not provision ({exc}); it will retry at first run")
+            echo(
+                f"wake-language catalog could not be read ({exc}); "
+                "prefetching the configured language only"
+            )
+            languages = (_vosk_language(),)
+    else:
+        languages = (_vosk_language(),)
+    for lang in languages:
+        try:
+            out = _ensure_vosk(lang, echo=echo)
+            if out is None:
+                failed = True
+        except Exception as exc:  # noqa: BLE001 — honest note, never fatal
+            failed = True
+            echo(
+                f"wake model '{lang or 'default'}': could not provision ({exc}); "
+                "it will retry at first run"
+            )
 
     if not _faster_whisper_available():
         echo(
@@ -124,7 +155,16 @@ def prefetch_all(echo: Callable[[str], None] = print) -> int:
         )
         return 1 if failed else 0
 
-    for name in _whisper_models_needed():
+    try:
+        whisper_models = _whisper_models_needed()
+    except Exception as exc:  # noqa: BLE001 — cache the safe packaged floor
+        failed = True
+        whisper_models = ["base"]
+        echo(
+            f"speech-model config could not be read ({exc}); "
+            "prefetching the packaged 'base' wake model"
+        )
+    for name in whisper_models:
         echo(f"downloading speech model '{name}' (one-time, cached for every later start)")
         try:
             _download_whisper_model(name)

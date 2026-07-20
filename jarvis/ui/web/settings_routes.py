@@ -597,6 +597,42 @@ def _local_whisper_available() -> bool:
     return importlib.util.find_spec("faster_whisper") is not None
 
 
+def _local_wake_model_name() -> str:
+    """Configured faster-whisper wake checkpoint, with the packaged default."""
+    try:
+        from jarvis.core.config import load_config
+
+        cfg = load_config()
+        name = str(getattr(getattr(cfg, "stt", None), "wake_model", "base") or "base")
+        return name.strip() or "base"
+    except Exception:  # noqa: BLE001 — recovery install must keep a safe default
+        return "base"
+
+
+def _local_wake_model_cached(name: str) -> bool:
+    """Read-only cache probe; never downloads while a status route is polling."""
+    try:
+        from jarvis.setup.model_report import _whisper_cached
+
+        return bool(_whisper_cached(name))
+    except Exception:  # noqa: BLE001 — an uncertain cache is not ready
+        return False
+
+
+def _download_local_wake_model(name: str) -> None:
+    """Download the same checkpoint and cache layout the main installer uses."""
+    from jarvis.setup.prefetch import _download_whisper_model
+
+    _download_whisper_model(name)
+
+
+def _local_speech_ready() -> bool:
+    """True only when both the engine package and its wake model are usable."""
+    return _local_whisper_available() and _local_wake_model_cached(
+        _local_wake_model_name()
+    )
+
+
 # --- Local-speech (any-phrase wake) opt-in install --------------------------
 # ``faster-whisper`` powers the ``stt_match`` wake path — the ONLY local way to
 # detect an arbitrary, user-invented wake phrase. It is a torch-FREE opt-in
@@ -605,9 +641,10 @@ def _local_whisper_available() -> bool:
 # every extra (2026-05-18, "Groq Whisper API is the new default"), so a fresh
 # install could not use a custom wake word at all and silently degraded to the
 # bundled "Hey Rhasspy" model. This endpoint pulls the package from INSIDE the
-# app so any wake word works everywhere without dropping to a shell — the §3
-# "recoverable in-app" contract. The spec is pinned to the [local-voice] extra
-# in pyproject.toml so the two never drift.
+# app and downloads its configured wake checkpoint so any wake word works
+# everywhere without dropping to a shell — the §3 "recoverable in-app"
+# contract. The spec is pinned to the [local-voice] extra in pyproject.toml so
+# the two never drift.
 _LOCAL_SPEECH_PACKAGE = "faster-whisper>=1.0"
 
 _local_speech_install_lock = threading.Lock()
@@ -616,7 +653,7 @@ _local_speech_install: dict[str, str] = {"state": "idle", "message": ""}
 
 
 def _run_local_speech_install() -> None:
-    """Blocking pip install, run on a daemon thread; updates shared state."""
+    """Install the engine and wake checkpoint on a daemon worker thread."""
     import importlib
 
     from jarvis.setup.dependencies import install_pip_package
@@ -625,11 +662,22 @@ def _run_local_speech_install() -> None:
     # back to a source build (av needs FFmpeg dev libs, ctranslate2 a
     # toolchain). No wheel for this Python/OS → fail fast with the honest
     # classify_pip_failure diagnosis instead (BUG-059).
-    ok, message = install_pip_package(_LOCAL_SPEECH_PACKAGE, only_binary=True)
-    # Let this same process's find_spec see the freshly-installed package, so the
-    # status endpoint flips to available without a restart (the wake PIPELINE
-    # still needs a restart to actually use it — the UI says so).
+    if _local_whisper_available():
+        ok, message = True, "Local speech engine already installed."
+    else:
+        ok, message = install_pip_package(_LOCAL_SPEECH_PACKAGE, only_binary=True)
+    # Let this same process's find_spec see the freshly-installed package. Once
+    # its model is cached, the status endpoint reapplies the wake plan live when
+    # a desktop speech pipeline is present.
     importlib.invalidate_caches()
+    if ok:
+        model_name = _local_wake_model_name()
+        try:
+            _download_local_wake_model(model_name)
+            message = f"Local speech engine and wake model '{model_name}' are ready."
+        except Exception as exc:  # noqa: BLE001 — surface an honest retry state
+            ok = False
+            message = f"Could not download wake model '{model_name}': {exc}"
     with _local_speech_install_lock:
         _local_speech_install["state"] = "done" if ok else "error"
         _local_speech_install["message"] = message
@@ -638,13 +686,13 @@ def _run_local_speech_install() -> None:
 
 @router.post("/wake-word/enable-local-speech")
 async def enable_local_speech(request: Request) -> dict[str, object]:
-    """Install the local-speech pack (faster-whisper) so ANY wake word works.
+    """Install faster-whisper plus its wake model so any wake word works.
 
     Idempotent and non-blocking: returns immediately with a ``state`` the UI
     polls via the status endpoint. A second call while a run is in flight does
     not start a duplicate install.
     """
-    if _local_whisper_available():
+    if _local_speech_ready():
         return {
             "state": "done",
             "already": True,
@@ -671,14 +719,19 @@ async def enable_local_speech(request: Request) -> dict[str, object]:
 @router.get("/wake-word/enable-local-speech/status")
 async def enable_local_speech_status(request: Request) -> dict[str, object]:
     """Report the local-speech install progress + whether the pack is present."""
-    available = _local_whisper_available()
+    available = _local_speech_ready()
     with _local_speech_install_lock:
         state = _local_speech_install["state"]
         message = _local_speech_install["message"]
-    # Present but this process never ran the installer (e.g. installed manually,
-    # or a prior run before a restart) → report done so the UI is truthful.
+    # Ready but this process never ran the installer (e.g. installed manually,
+    # or by a prior app run) → report done so the UI is truthful.
     if available and state in ("idle", "running"):
         state = "done"
+    elif state == "done" and not available:
+        # A successful downloader exit is not enough if the cache cannot be
+        # opened afterwards. Keep the UI in a retryable, honest state.
+        state = "error"
+        message = "The local speech install finished, but its wake model is not readable."
     applied_live = False
     if available:
         try:

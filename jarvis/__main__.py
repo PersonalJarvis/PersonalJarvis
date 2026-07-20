@@ -89,6 +89,13 @@ def _build_parser() -> argparse.ArgumentParser:
              "Used by the installer so the first launch has nothing left to fetch.",
     )
     parser.add_argument(
+        "--prefetch-all-wake-languages",
+        action="store_true",
+        dest="prefetch_all_wake_languages",
+        help="With --prefetch, cache wake models for every supported onboarding "
+             "language. Used by the full desktop installer.",
+    )
+    parser.add_argument(
         "--verify-models",
         action="store_true",
         dest="verify_models",
@@ -532,7 +539,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.prefetch:
         from jarvis.setup.prefetch import prefetch_all
 
-        return prefetch_all()
+        return prefetch_all(
+            all_wake_languages=bool(args.prefetch_all_wake_languages),
+        )
     if args.verify_models:
         from jarvis.setup.model_report import (
             format_report,

@@ -416,11 +416,16 @@ def is_update_run() -> bool:
     return (repo_root() / ".jarvis-managed-install").exists()
 
 
-def step_models(*, dry_run: bool) -> None:
+def step_models(*, full_profile: bool, dry_run: bool) -> None:
     phase("5/6", "Voice models")
     note("downloading everything the voice pipeline needs, so the first")
     note("launch is ready immediately - nothing is fetched at startup")
     cmd = [str(venv_python()), "-m", "jarvis", "--prefetch"]
+    if full_profile:
+        # Onboarding has not selected a language yet. Cache every supported
+        # wake language so English, German, and Spanish are all ready on the
+        # first launch; the internal headless/base path stays intentionally small.
+        cmd.append("--prefetch-all-wake-languages")
     if dry_run:
         console.print(f"[muted]│    (dry-run) {' '.join(cmd)}[/]")
         return
@@ -438,10 +443,10 @@ def step_models(*, dry_run: bool) -> None:
         label="downloading voice models (the long step - a few hundred MB)",
         cwd=repo_root(),
     )
-    verify_models()
+    verify_models(full_profile=full_profile)
 
 
-def verify_models() -> None:
+def verify_models(*, full_profile: bool = False) -> None:
     """Print a per-model truth: what is on disk, what is pending, what is missing.
 
     Runs the read-only report inside the venv's Python — the interpreter that
@@ -452,7 +457,7 @@ def verify_models() -> None:
     probe = (
         "from jarvis.setup.model_report import "
         "voice_model_report, report_complete, format_report\n"
-        "items = voice_model_report()\n"
+        f"items = voice_model_report(full_profile={full_profile!r})\n"
         "print('\\n'.join(format_report(items)))\n"
         "import sys; sys.exit(0 if report_complete(items) else 3)\n"
     )
@@ -482,7 +487,8 @@ def verify_models() -> None:
             console.print(f"[muted]│      {tail}[/]")
         return
     if result.returncode == 0:
-        ok("everything the default voice path needs is present")
+        profile = "full voice profile" if full_profile else "default voice path"
+        ok(f"everything the {profile} needs is present")
     else:
         console.print("[bad]│    Some required voice models are missing - re-run "
                       "the installer or check your connection.[/]")
@@ -832,7 +838,7 @@ def main(argv: list[str] | None = None) -> int:
             dry_run=args.dry_run,
         )
 
-    step_models(dry_run=args.dry_run)
+    step_models(full_profile=with_desktop, dry_run=args.dry_run)
 
     phase("6/6", "Finish & launch")
     step_worker_cli(dry_run=args.dry_run)
