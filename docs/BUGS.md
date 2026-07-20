@@ -6837,3 +6837,46 @@ Tool Model API credential.
 auth/billing/quota failure retires its explicit credential family for that call
 before recovery chooses another candidate; a UI health probe must never be
 mistaken for evidence that the active voice transport died.
+
+---
+
+## BUG-099: Jarvis Bar barely reacts to loud speech and sometimes jumps on soft input (MEDIUM, FIXED IN CODE 2026-07-20; HARDWARE VALIDATION PENDING)
+
+**Symptom (desktop field report).** During an active voice session, the gold
+equalizer strokes can remain only slightly taller than their resting height
+even while the user speaks very loudly. At other times a much softer sound
+produces a disproportionately large swing. The field screenshot supplied with
+the report shows the loud-speech case: all strokes remain near minimum height.
+
+**Root cause.** The shared `LevelNormalizer` divided each noise-gated RMS frame
+by an adaptive peak. Any sample above the prior peak immediately became both
+the new numerator and denominator, so even a soft sound could redefine itself
+as `1.0`. Conversely, one click, clipped frame, or other transient could raise
+the denominator by an order of magnitude. Its `0.997` per-frame decay then
+held ordinary speech near the bottom of the meter for seconds. A reproduced
+sequence of one `0.5` RMS transient followed by `0.05` RMS speech still read
+about `0.10` after 30 speech frames. The renderer's additional easing correctly
+smoothed that faulty input; it was not the source of the inversion.
+
+**Fix.** The adaptive quiet-frame noise gate remains, but samples above it now
+map through a fixed logarithmic visual range of approximately -72 dBFS to
+-12 dBFS. A gentle response curve preserves useful movement on quiet laptop
+microphones while retaining a clear ordering between soft, normal, and loud
+speech. Fast attack and slower release still prevent flicker. The same mapping
+now drives the native microphone channel, TTS output, the standalone mascot
+listener, and browser-owned realtime capture, so no surface keeps the faulty
+peak behavior.
+
+**Guards and platform parity.** Regression tests require soft input to remain
+below full scale, normal and loud speech to occupy successively higher bands,
+and ordinary speech to recover within six frames after a clipped impulse. The
+Python mapper feeds the Windows and Linux Tk bar directly and crosses the
+existing companion IPC to the macOS Qt bar. The TypeScript port covers browser
+capture on remote and headless installations. No platform-specific capture API
+or device assumption changed. Physical voice validation is still required on
+all three desktop platforms before removing the pending qualifier.
+
+**Class rule.** A visual loudness meter may adapt its noise gate, but it must
+not normalize every newly observed peak to full scale. Peak auto-gain is useful
+for recognition input; it destroys the relative amplitude information that a
+user-facing level indicator exists to show.

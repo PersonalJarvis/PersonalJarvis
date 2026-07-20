@@ -6,6 +6,7 @@ jarvis-bar overlay registers a sink; the audio player publishes the per-flush
 RMS. When no sink is registered, publishing is a cheap no-op (the player also
 skips the RMS computation entirely via ``has_subscribers()``).
 """
+
 from __future__ import annotations
 
 import logging
@@ -27,9 +28,10 @@ _lock = threading.Lock()
 _audible_until = 0.0
 _subscribers: list[Callable[[float], None]] = []
 
-# Adaptive normalizer for the TTS output: raw speech RMS is only ~0.05-0.15, so
-# publishing it un-normalized made the bars reach barely 10% (looked static).
-# Same adaptive peak/gain as the mic path so Jarvis's voice drives full bars.
+# Shared logarithmic normalizer for TTS output: raw speech RMS is only
+# ~0.05-0.15, so publishing it un-normalized made the bars reach barely 10%.
+# The wide dB range also preserves sentence dynamics instead of flattening each
+# newly observed peak to full scale.
 _norm = LevelNormalizer()
 
 
@@ -68,9 +70,9 @@ def publish(level: float) -> None:
 def feed(rms: float) -> None:
     """Normalize a raw TTS output RMS into a reactive 0..1 level and publish it.
 
-    This is what the player should call (not ``publish``): the adaptive
-    normalizer maps Jarvis's speech to the full bar range, mirroring the mic
-    path. ``publish`` stays for raw passthrough / tests.
+    This is what the player should call (not ``publish``): the logarithmic
+    normalizer maps Jarvis's speech across the full bar range, mirroring the
+    mic path. ``publish`` stays for raw passthrough / tests.
     """
     publish(_norm.push(float(rms)))
 

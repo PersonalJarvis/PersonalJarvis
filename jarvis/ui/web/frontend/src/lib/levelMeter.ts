@@ -1,18 +1,19 @@
 // Client-side input-level normalizer for the browser realtime surface.
 //
-// Simplified port of the backend LevelNormalizer (jarvis/audio/mic_level.py):
-// adaptive noise floor (EMA on quiet frames), peak auto-gain (fast attack,
-// slow decay), and attack-fast / release-slow output smoothing so the level
-// indicator pulses naturally instead of flickering. Raw RMS comes from the
-// capture worklet on float32 samples in [-1, 1], the same scale the backend
-// uses, so both surfaces behave alike.
+// Port of the backend LevelNormalizer (jarvis/audio/mic_level.py): adaptive
+// noise floor, a volume-faithful logarithmic range, and attack-fast /
+// release-slow output smoothing. Raw RMS comes from the capture worklet on
+// float32 samples in [-1, 1], the same scale the backend uses, so native and
+// browser surfaces behave alike.
 
 const MIN_NOISE_FLOOR = 0.0002;
-const MIN_PEAK = 0.004;
+const METER_FLOOR_RMS = 0.00025;
+const METER_CEILING_RMS = 0.25;
+const METER_LOG_SPAN = Math.log(METER_CEILING_RMS / METER_FLOOR_RMS);
+const METER_CURVE = 1.15;
 
 export class LevelMeter {
   private noiseFloor = 0.005;
-  private peak = MIN_PEAK;
   private smoothed = 0;
 
   /** Normalize one raw RMS sample to a reactive 0..1 level. */
@@ -26,12 +27,13 @@ export class LevelMeter {
 
     const speechThreshold = this.noiseFloor * 3.0;
     const gated = Math.max(0, value - speechThreshold);
-
-    if (gated > this.peak) this.peak = gated;
-    else this.peak *= 0.997;
-    this.peak = Math.max(this.peak, MIN_PEAK);
-
-    const raw = Math.min(1, gated / this.peak);
+    let raw = 0;
+    if (gated >= METER_CEILING_RMS) {
+      raw = 1;
+    } else if (gated > METER_FLOOR_RMS) {
+      const position = Math.log(gated / METER_FLOOR_RMS) / METER_LOG_SPAN;
+      raw = position ** METER_CURVE;
+    }
 
     if (raw > this.smoothed) {
       // attack fast
@@ -45,7 +47,6 @@ export class LevelMeter {
 
   reset(): void {
     this.noiseFloor = 0.005;
-    this.peak = MIN_PEAK;
     this.smoothed = 0;
   }
 }

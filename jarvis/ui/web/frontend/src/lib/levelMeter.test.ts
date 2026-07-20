@@ -2,6 +2,12 @@ import { describe, expect, it } from "vitest";
 
 import { LevelMeter } from "./levelMeter";
 
+function pushFrames(meter: LevelMeter, rms: number, frames: number): number {
+  let level = 0;
+  for (let i = 0; i < frames; i++) level = meter.push(rms);
+  return level;
+}
+
 describe("LevelMeter", () => {
   it("stays near zero on silence", () => {
     const meter = new LevelMeter();
@@ -17,6 +23,31 @@ describe("LevelMeter", () => {
     let level = 0;
     for (let i = 0; i < 10; i++) level = meter.push(0.05);
     expect(level).toBeGreaterThan(0.3);
+  });
+
+  it("preserves soft, normal, and loud input differences", () => {
+    const meter = new LevelMeter();
+    pushFrames(meter, 0.0008, 60);
+
+    const soft = pushFrames(meter, 0.02, 12);
+    const normal = pushFrames(meter, 0.06, 12);
+    const loud = pushFrames(meter, 0.2, 12);
+
+    expect(soft).toBeGreaterThan(0.3);
+    expect(soft).toBeLessThan(0.7);
+    expect(normal).toBeGreaterThan(soft + 0.12);
+    expect(loud).toBeGreaterThan(normal + 0.12);
+    expect(loud).toBeGreaterThan(0.9);
+  });
+
+  it("does not let one impulse suppress the following voice", () => {
+    const meter = new LevelMeter();
+    pushFrames(meter, 0.0008, 60);
+
+    meter.push(0.5);
+    const recovered = pushFrames(meter, 0.06, 6);
+
+    expect(recovered).toBeGreaterThan(0.65);
   });
 
   it("attacks faster than it releases", () => {

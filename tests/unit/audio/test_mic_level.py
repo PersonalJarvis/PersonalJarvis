@@ -1,7 +1,16 @@
 """mic_level: normalize per-frame RMS into a reactive 0..1 level + pub/sub."""
+
 from __future__ import annotations
 
 from jarvis.audio import mic_level
+from jarvis.audio.mic_level import LevelNormalizer
+
+
+def _push_frames(meter: LevelNormalizer, rms: float, frames: int) -> float:
+    level = 0.0
+    for _ in range(frames):
+        level = meter.push(rms)
+    return level
 
 
 def test_no_subscriber_is_noop_and_reports_empty():
@@ -29,7 +38,7 @@ def test_feed_publishes_and_reacts_to_loudness():
     assert 0.0 <= quiet <= 1.0
     assert 0.0 <= loud <= 1.0
     assert loud > quiet  # the bars must react to voice loudness
-    assert loud > 0.3    # a clearly audible level, not stuck near zero
+    assert loud > 0.3  # a clearly audible level, not stuck near zero
 
     unsub()
     assert mic_level.has_subscribers() is False
@@ -63,10 +72,41 @@ def test_quiet_laptop_mic_speech_is_clearly_visible():
     for _ in range(80):
         mic_level.feed(0.0005)  # quiet laptop hiss — floor settles here
     for _ in range(15):
-        mic_level.feed(0.004)   # normal speech on that mic
+        mic_level.feed(0.004)  # normal speech on that mic
 
     assert got[-1] > 0.25, f"speech on a quiet mic reads near-dead: {got[-1]:.3f}"
     mic_level.reset_for_tests()
+
+
+def test_meter_preserves_quiet_normal_and_loud_differences():
+    """The display must follow volume instead of auto-gaining every new peak.
+
+    The old adaptive-peak ratio made soft speech, normal speech, and loud speech
+    converge to 1.0. That produced false full swings and left no extra movement
+    when the user actually raised their voice.
+    """
+    meter = LevelNormalizer()
+    _push_frames(meter, 0.0008, 60)
+
+    soft = _push_frames(meter, 0.02, 12)
+    normal = _push_frames(meter, 0.06, 12)
+    loud = _push_frames(meter, 0.20, 12)
+
+    assert 0.3 < soft < 0.7
+    assert normal > soft + 0.12
+    assert loud > normal + 0.12
+    assert loud > 0.9
+
+
+def test_one_impulse_does_not_suppress_following_voice():
+    """A click or clipped frame must not poison the next seconds of metering."""
+    meter = LevelNormalizer()
+    _push_frames(meter, 0.0008, 60)
+
+    meter.push(0.5)
+    recovered = _push_frames(meter, 0.06, 6)
+
+    assert recovered > 0.65
 
 
 def test_muted_mic_stays_dark():
