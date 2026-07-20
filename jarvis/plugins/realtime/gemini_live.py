@@ -384,6 +384,11 @@ class GeminiLiveProvider:
     """Structural provider entry point for the Gemini Live family."""
 
     name = "gemini-live"
+    # Optional provider capability consumed by the shared session fallback.
+    # Every adapter that draws from the same account quota must expose the
+    # same value so a terminal billing/auth failure is not retried through an
+    # alias backed by the very same credential family (AP-22).
+    credential_family = "gemini"
     supports_realtime = True
     input_sample_rate = _INPUT_RATE
     output_sample_rate = _OUTPUT_RATE

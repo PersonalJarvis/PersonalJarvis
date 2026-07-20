@@ -6757,3 +6757,83 @@ any in-flight stream-open operation. Stopping only the current device handle is
 not cancellation: an async producer or worker thread can recreate it after the
 surface has already changed state. Playback grace begins at physical playback,
 not at intent to play.
+
+---
+
+## BUG-098: one exhausted Google project breaks both Gemini Live and the Tool Model mid-call, then reconnects the same dead account (CRITICAL, FIXED IN CODE 2026-07-20; LIVE DEPLOYMENT PENDING)
+
+**Symptom.** Realtime session `bfd8a2f1-9b0f-4aae-8108-eca925acc79b`
+ran normally for almost four minutes, then two consecutive public-knowledge
+questions received improvised connection-error apologies. The API-Keys view
+subsequently showed both of these failures:
+
+- Google Gemini REST: HTTP `429`, `RESOURCE_EXHAUSTED`, project monthly
+  spending cap exceeded.
+- Gemini Live: WebSocket close `1011`, with the same project monthly spending
+  cap message.
+
+The two cards did not identify two integration defects. They exercised two
+Google transports backed by the same account/quota family after one project
+budget became unavailable.
+
+**Reconstruction.** The Live WebSocket opened successfully at 08:51:01 CEST
+and remained open until the user ended the call at 08:54:52. The session itself
+did not receive a `1011`. Five earlier public-fact turns were unnecessarily
+delegated to the Gemini Tool Model and succeeded, consuming 95,957 input tokens
+plus 606 output tokens. At 08:54:34 the next delegated REST request returned the
+monthly-cap `429`; the Brain chain correctly dead-listed Gemini but had no
+second credential-ready, tool-capable API family. At 08:54:44 the retry found
+an empty Tool Model chain, and Gemini TTS also returned `429`. A concurrent
+API-Keys health sweep then opened a new Gemini Live probe, which Google rejected
+with `1011`; that probe produced the second card message.
+
+**Root causes.** Four independent gaps amplified one legitimate provider
+account state:
+
+1. The canonical billing classifier recognized qualified limits and quotas but
+   not Google's exact `spending cap` wording, especially when the Live close had
+   no HTTP status code.
+2. Runtime transport recovery treated any exception from a rebuild-capable
+   Gemini session as a transient wire death. It reopened the provider chain
+   from candidate zero without retiring the failed credential family, so a
+   terminal account failure could spend all three reconnect attempts on the
+   same account.
+3. The realtime model called `jarvis_action` for ordinary public facts despite
+   its tool directive. The handler trusted that optional model decision even
+   when both the local transcript and normalized request were provably native
+   factual questions.
+4. A non-empty Brain provider-down apology was counted as a successful
+   delegated action result. The realtime model then re-rendered that failure as
+   free-form speech, hiding the structured failure state.
+
+**Fix.** `spending cap` and `spend cap` now classify as `no_credits`. First-party
+realtime adapters expose optional `credential_family` metadata; the shared
+session keeps call-local blocked provider/family sets, overrides misleading
+recoverable flags for auth/billing failures, and crosses to the next viable
+family without ending the call. Unknown `1006` transport failures retain the
+existing same-provider rebuild, while a terminal account failure with no
+alternate fails once instead of reconnecting three times. Rebuilds preserve the
+existing bounded history seed, output-language decision, surface turn boundary,
+and fresh `audio_ready` contract.
+
+The delegate handler now rejects only narrowly proven public factual questions
+when both the transcript and the provider-normalized request remain native.
+Ambiguous actions, advice, current/private/local evidence, voice confirmations,
+and the vague-follow-up recovery path still reach the Brain. Finally,
+`_last_turn_all_failed` makes a non-empty outage phrase an honest failed tool
+result rather than a successful action.
+
+**Guards and parity.** Tests pin the exact REST `429` and Live `1011` messages,
+Gemini-to-OpenAI and OpenAI-to-Gemini mid-call crossings, one terminal failure
+when no alternate exists, preservation of generic `1006` reconnect behavior,
+the public-knowledge rejection, the vague-Wiki counterexample, and truthful
+delegate failure payloads. The logic is transport-neutral Python with no OS
+branch. A user still needs an independently funded API key from another family
+for automatic crossing; ChatGPT/Codex subscription OAuth remains correctly
+limited to Jarvis-Agent workers and is not presented as an OpenAI Realtime or
+Tool Model API credential.
+
+**Class rule.** Credential readiness is not account health. A runtime
+auth/billing/quota failure retires its explicit credential family for that call
+before recovery chooses another candidate; a UI health probe must never be
+mistaken for evidence that the active voice transport died.

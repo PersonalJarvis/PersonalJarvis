@@ -24,6 +24,15 @@ from jarvis.brain.action_honesty import (
     has_deferred_action_claim,
 )
 from jarvis.brain.output_filter import scrub_for_voice
+from jarvis.brain.provider_test import (
+    BAD_KEY,
+    MODEL_UNAVAILABLE,
+    NO_CREDITS,
+    NOT_CONFIGURED,
+    RATE_LIMITED,
+    UNREACHABLE,
+    classify_provider_error,
+)
 from jarvis.brain.turn_planner import TurnPlan, plan_turn
 from jarvis.core.protocols import AudioChunk, BrainMessage
 from jarvis.core.redact import safe_preview
@@ -129,6 +138,30 @@ _EMBEDDED_SILENCE_PEAK = 200
 # of reconnect-storming.
 _TRANSPORT_REBUILD_WINDOW_S = 120.0
 _TRANSPORT_REBUILD_MAX_PER_WINDOW = 3
+_CREDENTIAL_TERMINAL_STATUSES = frozenset(
+    {BAD_KEY, NO_CREDITS, NOT_CONFIGURED}
+)
+_PROVIDER_FAILOVER_STATUSES = frozenset(
+    {MODEL_UNAVAILABLE, RATE_LIMITED, UNREACHABLE}
+)
+# Narrow proof that a native turn is an ordinary factual question. This is
+# intentionally not a generic "planner said native" check: advice, deictic
+# follow-ups, and ambiguous action phrases also stay native so the realtime
+# model can disambiguate them with a tool call. The multilingual tokens are
+# literal speech-input matching data.  # i18n-allow: supported input vocabulary
+_PUBLIC_KNOWLEDGE_QUESTION_RE = re.compile(
+    r"^\s*(?:"
+    r"who\b|where\b|when\b|which\b|"
+    r"what\s+(?:is|are|was|were|did|does|has|have)\b|"
+    r"how\s+(?:many|much|old|large|big|far)\b|"
+    r"wer\b|wo\b|wann\b|welch\w*\b|"
+    r"was\s+(?:ist|sind|war|waren|hat|haben|macht|machte)\b|"  # i18n-allow: input
+    r"wie\s+(?:viel|viele|alt|gross|groß|weit)\b|"  # i18n-allow: input
+    r"quien\b|donde\b|cuando\b|cual\w*\b|cuant\w*\b|"
+    r"que\s+(?:es|son|fue|eran|hizo|hace|tiene|tienen)\b"
+    r")",
+    re.IGNORECASE,
+)
 
 
 def _pcm16_peak(pcm: bytes) -> int:
@@ -139,6 +172,12 @@ def _pcm16_peak(pcm: bytes) -> int:
     samples = array.array("h")
     samples.frombytes(pcm[:usable])
     return max(max(samples), -min(samples))
+
+
+def _is_public_knowledge_question(text: str) -> bool:
+    return bool(_PUBLIC_KNOWLEDGE_QUESTION_RE.search(str(text or "").strip()))
+
+
 # A realtime bridge is useful only for a genuinely long delegated turn. Starting
 # a second provider response after two seconds made ordinary 5-7 second searches
 # slower: the trusted result had to wait for the interim response lifecycle to
@@ -782,6 +821,11 @@ class RealtimeVoiceSession:
         self._ended = False
         self._browser_session_started = False
         self._provider_errors: list[str] = []
+        # Session-local only: a quota/auth failure must immediately cross to a
+        # different credential family, but it must not mutate the process-wide
+        # plugin registry or leak one user's account state into another call.
+        self._blocked_provider_ids: set[str] = set()
+        self._blocked_credential_families: set[str] = set()
         self._failed = asyncio.Event()
         self._failure_detail = ""
         self._active_model = ""
@@ -956,10 +1000,72 @@ class RealtimeVoiceSession:
         )
         return model, voice
 
+    @staticmethod
+    def _provider_id(provider: Any) -> str:
+        return str(getattr(provider, "name", "") or "unknown").strip().casefold()
+
+    def _credential_family(self, provider: Any) -> str:
+        """Return optional account/quota metadata without name-based gating.
+
+        First-party adapters declare ``credential_family`` explicitly. An
+        older third-party adapter remains compatible and is isolated under its
+        own provider id, so a failure cannot accidentally suppress an unrelated
+        plugin merely because their names look similar (AP-21/AP-22).
+        """
+        explicit = str(
+            getattr(provider, "credential_family", "") or ""
+        ).strip().casefold()
+        return explicit or f"provider:{self._provider_id(provider)}"
+
+    def _provider_is_available(self, provider: Any) -> bool:
+        return (
+            self._provider_id(provider) not in self._blocked_provider_ids
+            and self._credential_family(provider)
+            not in self._blocked_credential_families
+        )
+
+    def _has_viable_alternate(self, current: Any) -> bool:
+        return any(
+            candidate is not current and self._provider_is_available(candidate)
+            for candidate in self._providers
+        )
+
+    def _prepare_cross_provider_fallback(
+        self,
+        provider: Any,
+        message: str,
+        *,
+        terminal: bool,
+    ) -> tuple[str, bool]:
+        """Retire a failed candidate and report whether another one remains.
+
+        Billing, quota, and authentication failures retire the explicit
+        credential family for the rest of this call. Transient provider/model
+        failures cross only when an alternate is already available; otherwise
+        a rebuild-capable adapter retains its existing same-provider recovery.
+        A terminal provider event always retires that provider because replaying
+        a terminal event through the same session cannot make it healthy.
+        """
+        status = classify_provider_error(message)
+        if status in _CREDENTIAL_TERMINAL_STATUSES:
+            self._blocked_credential_families.add(
+                self._credential_family(provider)
+            )
+        elif terminal or (
+            status in _PROVIDER_FAILOVER_STATUSES
+            and self._has_viable_alternate(provider)
+        ):
+            self._blocked_provider_ids.add(self._provider_id(provider))
+        else:
+            return status, False
+        return status, self._has_viable_alternate(provider)
+
     async def _open(self) -> None:
         loop = asyncio.get_running_loop()
         deadline = loop.time() + _PROVIDER_HANDSHAKE_TOTAL_TIMEOUT_S
-        for index, provider in enumerate(self._providers):
+        for provider in self._providers:
+            if not self._provider_is_available(provider):
+                continue
             model, voice = self._active_provider_selection(provider)
             input_rate = int(getattr(provider, "input_sample_rate", 16_000) or 16_000)
             output_rate = int(getattr(provider, "output_sample_rate", 24_000) or 24_000)
@@ -990,7 +1096,11 @@ class RealtimeVoiceSession:
                 history=self._history_seed(),
             )
             try:
-                providers_left = len(self._providers) - index
+                providers_left = sum(
+                    1
+                    for candidate in self._providers
+                    if self._provider_is_available(candidate)
+                )
                 remaining = max(0.0, deadline - loop.time())
                 if remaining <= 0:
                     raise TimeoutError("realtime handshake budget exhausted")
@@ -1021,6 +1131,11 @@ class RealtimeVoiceSession:
                 provider_id = str(getattr(provider, "name", "unknown") or "unknown")
                 detail = f"{type(exc).__name__}: {safe_preview(exc, max_chars=700)}"
                 self._provider_errors.append(f"{provider_id}: {detail}")
+                status, _alternate_ready = self._prepare_cross_provider_fallback(
+                    provider,
+                    detail,
+                    terminal=True,
+                )
                 log.warning("Realtime provider %s handshake failed: %s", provider_id, detail)
                 try:
                     await self._send_json(
@@ -1028,6 +1143,7 @@ class RealtimeVoiceSession:
                             "type": "provider_fallback",
                             "provider": provider_id,
                             "error": detail,
+                            "status": status,
                         }
                     )
                 except Exception:  # noqa: BLE001, S110 — status is best-effort
@@ -2015,15 +2131,41 @@ class RealtimeVoiceSession:
                     message = safe_preview(
                         event.error or "provider error", max_chars=800
                     )
-                    recoverable = bool(getattr(event, "recoverable", False))
+                    declared_recoverable = bool(
+                        getattr(event, "recoverable", False)
+                    )
+                    status = classify_provider_error(message)
+                    # A provider may label a failed response as recoverable
+                    # even though its account says there is no money/quota or
+                    # the key is invalid. Retrying that same credential family
+                    # cannot recover and caused the live 1011 reconnect storm.
+                    recoverable = (
+                        declared_recoverable
+                        and status not in _CREDENTIAL_TERMINAL_STATUSES
+                    )
+                    failover_ready = False
+                    if not recoverable:
+                        status, failover_ready = (
+                            self._prepare_cross_provider_fallback(
+                                self._provider,
+                                message,
+                                terminal=True,
+                            )
+                        )
                     log.warning(
                         "realtime[%s] %s provider error: %s",
                         self.session_id,
-                        "recoverable" if recoverable else "terminal",
+                        (
+                            "recoverable"
+                            if recoverable or failover_ready
+                            else "terminal"
+                        ),
                         message,
                     )
                     await self._publish_error(
-                        "RealtimeProviderError", message, recoverable=recoverable
+                        "RealtimeProviderError",
+                        message,
+                        recoverable=recoverable or failover_ready,
                     )
                     if recoverable:
                         await self._send_json(
@@ -2046,6 +2188,26 @@ class RealtimeVoiceSession:
                     for chunk in final_chunks:
                         await self._emit_audio(chunk)
                     self._gate.drain()
+                    if failover_ready:
+                        provider_id = str(
+                            getattr(self._provider, "name", "unknown")
+                            or "unknown"
+                        )
+                        self._provider_errors.append(
+                            f"{provider_id}: {message}"
+                        )
+                        await self._send_json(
+                            {
+                                "type": "provider_fallback",
+                                "provider": provider_id,
+                                "error": message,
+                                "status": status,
+                            }
+                        )
+                        return (
+                            f"{provider_id} became unavailable ({status}); "
+                            "switching realtime provider"
+                        )
                     self._failure_detail = message
                     self._failed.set()
                     await self._send_json(
@@ -2096,12 +2258,42 @@ class RealtimeVoiceSession:
         except Exception as exc:  # noqa: BLE001 — AP-20: never re-read a dead transport
             message = safe_preview(exc, max_chars=800) or "Realtime receive loop ended"
             log.warning("realtime[%s] pump ended", self.session_id, exc_info=True)
+            same_provider_rebuild = self._transport_death_is_rebuildable()
+            status, failover_ready = self._prepare_cross_provider_fallback(
+                self._provider,
+                message,
+                terminal=not same_provider_rebuild,
+            )
+            credential_terminal = status in _CREDENTIAL_TERMINAL_STATUSES
+            can_recover = failover_ready or (
+                same_provider_rebuild and not credential_terminal
+            )
             await self._publish_error(
                 type(exc).__name__,
                 message,
-                recoverable=True,
+                recoverable=can_recover,
             )
-            if self._transport_death_is_rebuildable():
+            if failover_ready:
+                provider_id = str(
+                    getattr(self._provider, "name", "unknown") or "unknown"
+                )
+                self._provider_errors.append(f"{provider_id}: {message}")
+                try:
+                    await self._send_json(
+                        {
+                            "type": "provider_fallback",
+                            "provider": provider_id,
+                            "error": message,
+                            "status": status,
+                        }
+                    )
+                except Exception:  # noqa: BLE001, S110 — status is best-effort
+                    pass
+                return (
+                    f"{provider_id} transport failed ({status}); "
+                    "switching realtime provider"
+                )
+            if same_provider_rebuild and not credential_terminal:
                 return message
             self._failure_detail = message
             self._failed.set()
@@ -3445,6 +3637,44 @@ class RealtimeVoiceSession:
             and call_id
             and wire_name == str(_DELEGATE_DECLARATION["name"])
         ):
+            provider_request = str(arguments.get("request", "") or "").strip()
+            local_plan = self._plan_turn(self._last_user_text)
+            provider_plan = self._plan_turn(provider_request)
+            if (
+                not self._delegate_required_for_turn
+                and not local_plan.requires_orchestrator
+                and not provider_plan.requires_orchestrator
+                and _is_public_knowledge_question(self._last_user_text)
+                and _is_public_knowledge_question(
+                    provider_request or self._last_user_text
+                )
+            ):
+                # Provider prompt compliance is not a correctness boundary.
+                # Gemini called jarvis_action for ordinary public-knowledge
+                # questions in the 2026-07-20 live run, consuming ~96k Tool
+                # Model input tokens before the shared Google cap stopped the
+                # call. Reject the unnecessary action and keep the answer in
+                # the already-open realtime model. A provider that adds real
+                # private/current/local intent to its normalized request still
+                # reaches the orchestrator (the vague-Wiki gate-miss path).
+                log.info(
+                    "realtime[%s] rejected unnecessary delegate call for a "
+                    "native realtime turn",
+                    self.session_id,
+                )
+                await self._session.send_tool_result(
+                    call_id,
+                    wire_name,
+                    {
+                        "success": False,
+                        "error": (
+                            "No Jarvis action is needed. Answer the user's "
+                            "general-knowledge request directly in this "
+                            "realtime response."
+                        ),
+                    },
+                )
+                return
             turn_id = self._turn_id
             turn_state = self._delegate_turns.setdefault(
                 turn_id,
@@ -3477,8 +3707,7 @@ class RealtimeVoiceSession:
                 return
             turn_state.pending_tool_calls.append((call_id, wire_name))
             if not turn_state.user_text:
-                request = str(arguments.get("request", "") or "")
-                turn_state.user_text = self._last_user_text or request
+                turn_state.user_text = self._last_user_text or provider_request
             if not turn_state.dispatch_started:
                 self._start_delegate(turn_id, turn_state)
             await self._coalesce_ready_delegate_result(turn_state)
@@ -3802,7 +4031,10 @@ class RealtimeVoiceSession:
                 )
                 or ""
             ).strip()
-            if reply:
+            brain_chain_failed = bool(
+                getattr(self._brain, "_last_turn_all_failed", False)
+            )
+            if reply and not brain_chain_failed:
                 turn_state.last_reply = reply
                 result: dict[str, Any] = {
                     "success": True,
@@ -3812,7 +4044,11 @@ class RealtimeVoiceSession:
             else:
                 result = {
                     "success": False,
-                    "error": "The delegated action returned no grounded result.",
+                    "error": (
+                        "No configured Tool Model completed the delegated turn."
+                        if brain_chain_failed
+                        else "The delegated action returned no grounded result."
+                    ),
                 }
                 succeeded = False
         except TimeoutError:
@@ -4010,14 +4246,21 @@ class RealtimeVoiceSession:
                 )
                 or ""
             ).strip()
-            if reply:
+            brain_chain_failed = bool(
+                getattr(self._brain, "_last_turn_all_failed", False)
+            )
+            if reply and not brain_chain_failed:
                 turn_state.last_reply = reply
                 result: dict[str, Any] = {"success": True, "spoken_reply": reply}
                 succeeded = True
             else:
                 result = {
                     "success": False,
-                    "error": "The delegated action returned no grounded result.",
+                    "error": (
+                        "No configured Tool Model completed the delegated turn."
+                        if brain_chain_failed
+                        else "The delegated action returned no grounded result."
+                    ),
                 }
             if self._delegate_turns.get(turn_id) is turn_state:
                 if succeeded:

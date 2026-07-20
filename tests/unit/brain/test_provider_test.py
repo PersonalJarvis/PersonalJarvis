@@ -93,6 +93,24 @@ def test_openai_insufficient_quota_429_is_no_credits() -> None:
     assert classify_provider_error(msg) == "no_credits"
 
 
+@pytest.mark.parametrize(
+    "msg",
+    (
+        (
+            "ClientError: 429 Too Many Requests. Your project has exceeded "
+            "its monthly spending cap. status: RESOURCE_EXHAUSTED"
+        ),
+        (
+            "APIError: 1011 None. Your project has exceeded its monthly "
+            "spending cap. Please go to AI Studio to manage your project"
+        ),
+    ),
+)
+def test_gemini_monthly_spending_cap_is_no_credits(msg: str) -> None:
+    """REST 429 and Live 1011 are the same terminal account state."""
+    assert classify_provider_error(msg) == "no_credits"
+
+
 def test_plain_429_rate_limit_is_rate_limited() -> None:
     msg = "RateLimitError: Error code: 429 - rate limit exceeded, please slow down"
     assert classify_provider_error(msg) == "rate_limited"

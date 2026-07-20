@@ -70,7 +70,9 @@ _HTTP_CODE_RE = re.compile(r"\b([45]\d\d)\b")
 BILLING_LIMIT_MARKERS = (
     "credit",            # "credit balance too low", "used all available credits"
     "spending limit",
+    "spending cap",
     "spend limit",
+    "spend cap",
     "key limit",         # OpenRouter per-key cap: "Key limit exceeded (total limit)"
     "total limit",       # OpenRouter per-key cap (the parenthetical)
     "credit limit",

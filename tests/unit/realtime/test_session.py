@@ -3418,6 +3418,82 @@ async def test_gate_miss_lets_the_model_reach_the_wiki_through_jarvis_action():
 
 
 @pytest.mark.asyncio
+async def test_native_knowledge_turn_rejects_unnecessary_jarvis_action():
+    """A realtime model cannot spend Tool Model quota on public knowledge."""
+    from jarvis.brain.turn_planner import plan_turn
+
+    utterance = "Where does Aliko Dangote live?"
+    assert plan_turn(utterance).requires_orchestrator is False
+
+    brain = FakeBrain(replies=("This must not be called.",))
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text=utterance,
+                is_final=True,
+            ),
+            RealtimeEvent(
+                type="tool_call",
+                call_id="c-native",
+                tool_name="jarvis_action",
+                tool_args={"request": utterance},
+            ),
+            RealtimeEvent(
+                type="output_transcript_delta",
+                text="He lives in Lagos.",
+                is_final=True,
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+
+    assert brain.calls == []
+    result = provider.session.tool_results[0][2]
+    assert result["success"] is False
+    assert "Answer" in result["error"]
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_provider_down_apology_is_not_reported_as_delegate_success():
+    """A non-empty Brain outage phrase is still a failed Tool Model turn."""
+    brain = FakeBrain(replies=("The model connection is unavailable.",))
+    brain._last_turn_all_failed = True
+    provider = FakeProvider(
+        [
+            RealtimeEvent(
+                type="input_transcript",
+                text="What is there?",
+                is_final=True,
+            ),
+            RealtimeEvent(
+                type="tool_call",
+                call_id="c-down",
+                tool_name="jarvis_action",
+                tool_args={"request": "What is in my wiki?"},
+            ),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = _session(provider, brain=brain)
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await sess.wait_finished()
+    await asyncio.sleep(0.02)
+
+    result = provider.session.tool_results[0][2]
+    assert result["success"] is False
+    assert "Tool Model" in result["error"]
+    assert result["spoken_reply"] != "The model connection is unavailable."
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
 async def test_garbled_wiki_follow_up_inherits_session_context_and_delegates():
     """The exact forensic STT output must not depend on model tool discretion."""
     utterance = "Was steht im Mainim drin?"  # i18n-allow: exact German forensic STT
@@ -4690,6 +4766,131 @@ async def test_transport_death_rebuilds_the_session_in_place():
     assert not sess.failed
     assert [m for m in jsons if m.get("type") == "provider_error"] == []
     assert len([m for m in jsons if m.get("type") == "audio_ready"]) == 2
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_gemini_live_spending_cap_crosses_family_without_retrying():
+    """The live 1011 spending-cap close must cross from Gemini to OpenAI."""
+    gemini = RebuildingProvider(
+        [
+            lambda: DyingSession(
+                [],
+                error=(
+                    "1011 None. Your project has exceeded its monthly "
+                    "spending cap. Please go to AI Studio to manage your project"
+                ),
+            )
+        ]
+    )
+    gemini.name = "gemini-live"
+    gemini.credential_family = "gemini"
+    openai = RebuildingProvider([lambda: StayOpenSession([])])
+    openai.name = "openai-realtime"
+    openai.credential_family = "openai"
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="gemini-cap-cross-family",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda message: jsons.append(message) or asyncio.sleep(0),
+        providers=[gemini, openai],
+        config=_cfg(),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await _wait_until(lambda: openai.open_calls == 1)
+
+    assert gemini.open_calls == 1
+    assert sess.active_provider == "openai-realtime"
+    assert not sess.failed
+    assert [m for m in jsons if m.get("type") == "provider_error"] == []
+    fallback = next(
+        m
+        for m in jsons
+        if m.get("type") == "provider_fallback"
+        and m.get("provider") == "gemini-live"
+    )
+    assert fallback["status"] == "no_credits"
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_openai_insufficient_quota_event_crosses_to_gemini():
+    """A failed response.done can be account-terminal despite recoverable=True."""
+    openai = RebuildingProvider(
+        [
+            lambda: FakeSession(
+                [
+                    RealtimeEvent(
+                        type="error",
+                        error=(
+                            "RateLimitError: 429 insufficient_quota; check your "
+                            "plan and billing details"
+                        ),
+                        recoverable=True,
+                    )
+                ]
+            )
+        ]
+    )
+    openai.name = "openai-realtime"
+    openai.credential_family = "openai"
+    gemini = RebuildingProvider([lambda: StayOpenSession([])])
+    gemini.name = "gemini-live"
+    gemini.credential_family = "gemini"
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="openai-quota-cross-family",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda message: jsons.append(message) or asyncio.sleep(0),
+        providers=[openai, gemini],
+        config=_cfg(),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await _wait_until(lambda: gemini.open_calls == 1)
+
+    assert openai.open_calls == 1
+    assert sess.active_provider == "gemini-live"
+    assert not sess.failed
+    assert [m for m in jsons if m.get("type") == "provider_error"] == []
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_terminal_account_failure_without_alternate_does_not_reconnect():
+    """No alternate means one honest failure, not three futile reconnects."""
+    gemini = RebuildingProvider(
+        [
+            lambda: DyingSession(
+                [],
+                error=(
+                    "1011 None. Your project has exceeded its monthly "
+                    "spending cap"
+                ),
+            )
+        ]
+    )
+    gemini.name = "gemini-live"
+    gemini.credential_family = "gemini"
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="gemini-cap-no-alternate",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda message: jsons.append(message) or asyncio.sleep(0),
+        provider=gemini,
+        config=_cfg(),
+        bus=None,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await asyncio.wait_for(sess.wait_finished(), timeout=2)
+
+    assert sess.failed
+    assert gemini.open_calls == 1
+    assert len([m for m in jsons if m.get("type") == "provider_error"]) == 1
     await sess.end(reason="test")
 
 
