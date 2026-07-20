@@ -5,34 +5,28 @@ created: 2026-05-12
 
 # Home
 
-Welcome to the Personal Jarvis knowledge vault. This is a worked example of a small, densely linked Obsidian wiki — each note connects to several others so the graph view reveals structure at a glance.
+Welcome to your Personal Jarvis knowledge vault. Jarvis fills this wiki
+automatically as you talk to it: durable facts, people, tools, places, and
+projects from your conversations become linked Markdown pages here.
 
-## Index
-
-### Foundational Concepts
-
-- [[Personal Knowledge Management]] — the umbrella practice
-- [[Zettelkasten Method]] — the original recipe
-- [[Evergreen Notes]] — the modern reinterpretation
-
-### Substrate and Tooling
-
-- [[Markdown as Foundation]] — why the format outlives any editor
-- [[Graph View Visualisation]] — the feedback loop that makes PKM stick
-
-## How to Read This Vault
-
-Open any note above; every internal `[[link]]` is clickable. Use **Ctrl+P** to jump between notes by name, and **Ctrl+G** (or the icon in the left sidebar) to open the graph view.
-
-## Vault Map
+## Where knowledge lives
 
 ```
+entities/         ← people, tools, devices, places, organizations
+concepts/         ← recurring themes and standing decisions
+projects/         ← things you are actively pursuing
+sessions/         ← per-session digests (mid-term memory)
 00-index/         ← you are here
-10-notes/         ← the wiki entries themselves
-90-attachments/   ← images and PDFs (empty starter)
-99-templates/     ← templates for new notes
+90-attachments/   ← images and PDFs
+99-templates/     ← templates for notes you add yourself
 ```
 
----
+The vault starts almost empty on purpose — it grows from what you actually
+say. Open the graph view (**Ctrl+G**) to watch your memory take shape, and
+jump between pages by name with **Ctrl+P**. Every `[[link]]` is clickable.
 
-*Last updated: 2026-05-12*
+## Editing by hand
+
+This is a normal Obsidian vault: you can add, edit, and link your own notes
+freely. The maintenance rules Jarvis follows when it writes are documented
+in [[schema]] at the vault root.
