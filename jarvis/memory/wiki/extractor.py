@@ -39,7 +39,7 @@ from jarvis.memory.wiki.curator_llm import (
     _resolve_provider_and_model,
     instantiate_curator_brain,
 )
-from jarvis.memory.wiki.grounding import is_unsupported_user_interest_claim
+from jarvis.memory.wiki.grounding import classify_user_attitude_evidence
 from jarvis.memory.wiki.journal import CandidateFact, normalise_subjects
 from jarvis.memory.wiki.residence import detect_residence_slug
 from jarvis.memory.wiki.secret_guard import contains_secret
@@ -73,10 +73,14 @@ _MAX_EVIDENCE_TURN_ID_CHARS = 80
 # the user turn has a durable first-person/relationship/project signal. The
 # binding Stage-2 judge still decides whether anything reaches the vault.
 _DURABLE_CUE_RE = re.compile(
-    r"(?i)\b(?:my|our|i\s+(?:am|own|prefer|love|hate|work|live|decided|plan)"
+    r"(?i)\b(?:my|our|i\s+(?:am|own|prefer|love|hate|work|live|decided|plan"
+    r"|play|go|train|meet)"
+    r"|every\s+(?:day|week|weekend|morning|evening)"
     r"|mein(?:e|er|en|em|es)?|unser(?:e|er|en|em|es)?"
-    r"|ich\s+(?:bin|habe|besitze|mag|liebe|hasse|arbeite|wohne|plane)"
+    r"|ich\s+(?:bin|habe|besitze|mag|liebe|hasse|arbeite|wohne|plane"
+    r"|spiele|gehe|trainiere|treffe)|jede[nrs]?"
     r"|mi|mis|nuestro|nuestra|soy|tengo|prefiero|trabajo|vivo"
+    r"|juego|voy|entreno|cada"
     r"|friend|partner|wife|husband|boss|mother|father"
     r"|freund|partnerin|ehefrau|ehemann|chef|mutter|vater"
     r"|amigo|amiga|pareja|esposa|esposo|jefe|madre|padre"
@@ -89,6 +93,7 @@ _KNOWN_KINDS = frozenset(
     {
         "identity",
         "preference",
+        "activity",
         "person",
         "project",
         "decision",
@@ -104,32 +109,59 @@ _KNOWN_KINDS = frozenset(
 _GRAPH_SUBJECT_KINDS = frozenset({"place"})
 
 
+def _candidate_salience(item: dict[str, Any]) -> int:
+    """Model-scored 1-5 personal salience, clamped; missing/garbage -> 3."""
+    try:
+        salience = int(item.get("salience", 3))
+    except (TypeError, ValueError):
+        return 3
+    return max(1, min(5, salience))
+
+
 _SYSTEM_PROMPT = """\
 You extract durable personal-memory facts from one FOCUS USER TURN. Earlier
 turns and assistant replies are context for resolving references only.
 
 Return ONLY a JSON array. Each element: {"fact": "<one self-contained
-sentence>", "kind": "<identity|preference|person|project|decision|event|asset|
-place|organization|relationship|other>", "subjects":
-["<lowercase-kebab-slug>", ...], "evidence_turn_id": "<focus turn id>"}.
+sentence>", "kind": "<identity|preference|activity|person|project|decision|
+event|asset|place|organization|relationship|other>", "subjects":
+["<lowercase-kebab-slug>", ...], "evidence_turn_id": "<focus turn id>",
+"basis": "<explicit|behavioral>", "salience": <integer 1-5>}.
 
 Rules:
-- A fact must still be useful weeks later: identity, preferences, people,
-  relationships, owned assets or vehicles, places, organizations, projects,
-  decisions, plans, and biographical events. Rephrase it so it stands alone.
+- A fact must still be useful weeks later: identity, preferences, recurring
+  activities and habits, people, relationships, owned assets or vehicles,
+  places, organizations, projects, decisions, plans, and biographical events.
+  Rephrase it so it stands alone.
 - Explicit ownership or naming is durable even when phrased briefly, for
   example "I own the yacht" or "My yacht is named Aurora".
-- A topic mention, one-off question, or request for information is NOT evidence
-  of the user's lasting interest, preference, habit, plan, intent, identity, or
-  ownership. "What are the benefits of Vitamin D?" yields []; do not infer a
-  supplement interest or plan. "Tell me about Monaco." yields []; do not infer
-  interest in Monaco, travel plans, attendance, residence, or preference.
-- Store a user relationship to a topic only when the user explicitly asserts
-  or confirms it. "I own a yacht." and "I plan to attend Monaco." are durable
-  self-disclosures. If a question also contains a self-disclosure, extract only
-  the disclosed fact and never invent a reason for the question.
-- Recall-biased applies only after the user has grounded a durable fact; it
-  never permits turning topic choice into a personal-memory claim.
+- "basis" grades the evidence. "explicit": the user directly asserted the
+  fact ("I own a yacht.", "Golf is my favourite sport."). "behavioral": the
+  user described first-person lived experience — doing, practicing, or
+  enjoying something — without naming it as a preference or habit. "I love
+  being out on golf courses with my buddies, playing this sport actively"
+  grounds {"fact": "The user plays golf actively with friends and enjoys
+  it", "kind": "activity", "basis": "behavioral"}. Habitual markers ("every
+  Saturday", "again", "as usual") in a first-person report count as
+  behavioral grounding. Never label a lived-experience inference "explicit".
+- "salience" scores how central the fact is to the USER's own life:
+  5 = core identity, close people, health. 4 = possessions, recurring habits
+  and activities, active projects. 3 = peripheral personal facts. 2 = world
+  knowledge loosely tied to the user. 1 = trivia. Score user-centrality,
+  never interestingness.
+- A topic mention, one-off question, or request for information grounds
+  NOTHING — no basis rescues it. "What are the benefits of Vitamin D?"
+  yields []; do not infer a supplement interest or plan.
+  "Tell me about Monaco." yields []; do not infer interest in Monaco,
+  travel plans, attendance, residence, or preference. Never manufacture a
+  personal connection from curiosity.
+- If a question also contains a self-disclosure, extract only the disclosed
+  fact and never invent a reason for the question.
+- Quality bar: you feed a curated map of the user's life, not a transcript
+  archive. For facts the user explicitly asserted about themselves, their
+  people, possessions, health, habits, and projects, forgetting is the worse
+  failure. For everything else, writing junk is the worse failure — when in
+  doubt about a fact with no strong personal anchor, return [].
 - Return [] for smalltalk, pure questions, commands without durable content,
   fleeting bodily/status chatter, or turns that only concern the immediate
   task. "I need the bathroom" is not durable memory.
@@ -140,9 +172,9 @@ Rules:
 - "subjects" names who/what the fact is about (e.g. ["person-name"],
   ["personal-jarvis"]). The caller supplies the speaker's exact user slug.
   For a first-person fact about a named place, person, organization, project,
-  asset, or vehicle, include BOTH the exact user slug and the named topic slug.
-  Example: "I live in San Francisco" uses kind "place" and subjects
-  ["<user-slug>", "san-francisco"].
+  asset, vehicle, or recurring activity, include BOTH the exact user slug and
+  the named topic slug. Example: "I live in San Francisco" uses kind "place"
+  and subjects ["<user-slug>", "san-francisco"].
 - Never include credentials, API keys, passwords, or tokens in a fact.
 - No prose outside the JSON array.
 """
@@ -153,9 +185,10 @@ Extract durable personal-memory facts that individual-turn review may have
 missed because the meaning emerged across several turns.
 
 Return ONLY a JSON array. Each element: {"fact": "<one self-contained
-sentence>", "kind": "<identity|preference|person|project|decision|event|asset|
-place|organization|relationship|other>", "subjects":
-["<lowercase-kebab-slug>", ...], "evidence_turn_id": "<exact user turn id>"}.
+sentence>", "kind": "<identity|preference|activity|person|project|decision|
+event|asset|place|organization|relationship|other>", "subjects":
+["<lowercase-kebab-slug>", ...], "evidence_turn_id": "<exact user turn id>",
+"basis": "<explicit|behavioral>", "salience": <integer 1-5>}.
 
 Rules:
 - Use only statements asserted or explicitly confirmed by the USER as facts.
@@ -163,23 +196,38 @@ Rules:
 - Every fact must cite the exact user turn that supports it. If no user turn
   supports a claim, omit it.
 - Preserve durable identity, people, relationships, ownership and names of
-  assets or vehicles, places, organizations, projects, preferences, decisions,
-  plans, and biographical events that remain useful weeks later.
-- A topic mention, one-off question, or request for information is NOT evidence
-  of the user's lasting interest, preference, habit, plan, intent, identity, or
-  ownership. "What are the benefits of Vitamin D?" yields []; do not infer a
-  supplement interest or plan. "Tell me about Monaco." yields []; do not infer
-  interest in Monaco, travel plans, attendance, residence, or preference.
-- Store a user relationship to a topic only when the user explicitly asserts
-  or confirms it. "I own a yacht." and "I plan to attend Monaco." are durable
-  self-disclosures. If a question also contains a self-disclosure, extract only
-  the disclosed fact and never invent a reason for the question.
+  assets or vehicles, places, organizations, projects, preferences, recurring
+  activities, decisions, plans, and biographical events that remain useful
+  weeks later.
+- "basis" grades the evidence. "explicit": the user directly asserted the
+  fact. "behavioral": the user described first-person lived experience —
+  doing, practicing, or enjoying something — without naming it as a
+  preference or habit; habitual markers ("every Saturday", "again", "as
+  usual") in a first-person report count as behavioral grounding. Never
+  label a lived-experience inference "explicit".
+- "salience" scores how central the fact is to the USER's own life:
+  5 = core identity, close people, health. 4 = possessions, recurring habits
+  and activities, active projects. 3 = peripheral personal facts. 2 = world
+  knowledge loosely tied to the user. 1 = trivia. Score user-centrality,
+  never interestingness.
+- A topic mention, one-off question, or request for information grounds
+  NOTHING — no basis rescues it. "What are the benefits of Vitamin D?"
+  yields []; do not infer a supplement interest or plan.
+  "Tell me about Monaco." yields []; do not infer interest in Monaco,
+  travel plans, attendance, residence, or preference.
+- If a question also contains a self-disclosure, extract only the disclosed
+  fact and never invent a reason for the question.
+- Quality bar: you feed a curated map of the user's life, not a transcript
+  archive. For facts the user explicitly asserted about themselves, their
+  people, possessions, health, habits, and projects, forgetting is the worse
+  failure. For everything else, writing junk is the worse failure — when in
+  doubt about a fact with no strong personal anchor, omit it.
 - Resolve pronouns and follow-up clarifications across turns. Prefer one
   complete fact over several fragments.
 - For a first-person fact about a named place, person, organization, project,
-  asset, or vehicle, include BOTH the exact user slug and the named topic slug.
-  A residence in San Francisco uses kind "place" and subject
-  "san-francisco" alongside the exact user slug.
+  asset, vehicle, or recurring activity, include BOTH the exact user slug and
+  the named topic slug. A residence in San Francisco uses kind "place" and
+  subject "san-francisco" alongside the exact user slug.
 - Return [] for greetings, questions, commands without durable content,
   transient bodily/status chatter, weather talk, and immediate-task details.
 - Never include credentials, API keys, passwords, or tokens.
@@ -981,6 +1029,7 @@ class ConversationFactExtractor:
         secret_count = 0
         unsupported_interest_count = 0
         incomplete_subject_count = 0
+        low_salience_count = 0
         usable = False
         for item in parsed[:max_facts]:
             if not isinstance(item, dict):
@@ -1011,13 +1060,16 @@ class ConversationFactExtractor:
                 ):
                     incomplete_subject_count += 1
                     continue
-                if is_unsupported_user_interest_claim(
+                if self._effective_basis(
                     fact=fact,
                     subjects=subjects,
                     evidence_excerpt=evidence_text_by_id.get(evidence, ""),
-                    user_slug=self._user_entity_slug,
-                ):
+                    claimed_basis=item.get("basis"),
+                ) is None:
                     unsupported_interest_count += 1
+                    continue
+                if _candidate_salience(item) < self._min_salience():
+                    low_salience_count += 1
                     continue
                 usable = True
         if secret_count:
@@ -1031,6 +1083,11 @@ class ConversationFactExtractor:
             telemetry.inc(
                 "wiki_candidates_blocked_incomplete_subjects",
                 incomplete_subject_count,
+            )
+        if low_salience_count:
+            telemetry.inc(
+                "wiki_candidates_blocked_low_salience",
+                low_salience_count,
             )
         return usable
 
@@ -1095,15 +1152,23 @@ class ConversationFactExtractor:
                     "complete user and topic subjects"
                 )
                 continue
-            if is_unsupported_user_interest_claim(
+            basis = self._effective_basis(
                 fact=fact,
                 subjects=subjects,
                 evidence_excerpt=evidence_excerpt,
-                user_slug=self._user_entity_slug,
-            ):
+                claimed_basis=item.get("basis"),
+            )
+            if basis is None:
                 log.info(
                     "ConversationFactExtractor: dropped unsupported user-interest "
                     "candidate"
+                )
+                continue
+            salience = _candidate_salience(item)
+            if salience < self._min_salience():
+                log.info(
+                    "ConversationFactExtractor: dropped low-salience candidate "
+                    "(%d < %d)", salience, self._min_salience(),
                 )
                 continue
             facts.append(
@@ -1113,9 +1178,53 @@ class ConversationFactExtractor:
                     subjects=subjects,
                     evidence_turn_id=evidence,
                     evidence_excerpt=evidence_excerpt,
+                    basis=basis,
+                    salience=salience,
                 )
             )
         return facts
+
+    def _min_salience(self) -> int:
+        """Configured Stage-1 personal-salience floor, clamped to 1..5."""
+        try:
+            configured = int(getattr(self._cfg, "min_salience", 3))
+        except (TypeError, ValueError):
+            configured = 3
+        return max(1, min(5, configured))
+
+    def _effective_basis(
+        self,
+        *,
+        fact: str,
+        subjects: tuple[str, ...],
+        evidence_excerpt: str,
+        claimed_basis: object,
+    ) -> str | None:
+        """Deterministic floor under the model's claimed evidence basis.
+
+        Returns the effective basis, or ``None`` when the claim is ungrounded
+        (or behavioral inference is disabled). The classifier can DOWNGRADE a
+        claimed "explicit" to "behavioral" — the model must never launder a
+        lived-experience inference into an explicit assertion — but a model
+        that honestly labels its own output "behavioral" keeps that label.
+        """
+        graded = classify_user_attitude_evidence(
+            fact=fact,
+            subjects=subjects,
+            evidence_excerpt=evidence_excerpt,
+            user_slug=self._user_entity_slug,
+        )
+        if graded is None:
+            return None
+        claimed = str(claimed_basis or "").strip().lower()
+        basis = claimed if claimed in {"explicit", "behavioral"} else "explicit"
+        if graded == "behavioral":
+            basis = "behavioral"
+        if basis == "behavioral" and not bool(
+            getattr(self._cfg, "behavioral_inference", True)
+        ):
+            return None
+        return basis
 
     def _graph_subjects_complete(
         self,

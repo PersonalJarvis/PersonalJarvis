@@ -142,7 +142,7 @@ _FIRST_PERSON_EXPERIENCE_RE = re.compile(
     # de folded: "ich spiele/gehe/fahre...", "wir spielen...", "ich war/bin",
     # "ich ... gern(e)", "jeden Samstag", "ich ... immer/oft"
     r"\bich\s+(?:spiele|gehe|fahre|laufe|trainiere|treffe|besuche|"  # i18n-allow: input vocabulary
-    r"verbringe|koche|sammle|male|wandere|schwimme|klettere|war|bin)\b|"  # i18n-allow: input vocabulary
+    r"verbringe|koche|sammle|male|wandere|schwimme|klettere|war|bin)\b|"  # i18n-allow: input vocab
     r"\bwir\s+(?:spielen|gehen|fahren|treffen|trainieren)\b|"  # i18n-allow: input vocabulary
     r"\bich\s+[^.!?;,\n]{0,60}\bgerne?\b|"  # i18n-allow: input vocabulary
     r"\bich\s+[^.!?;,\n]{0,60}\b(?:immer|meistens|oft|staendig)\b|"  # i18n-allow: input vocabulary

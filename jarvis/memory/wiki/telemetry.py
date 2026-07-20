@@ -62,6 +62,7 @@ DEFAULT_COUNTERS: tuple[str, ...] = (
     # Wave-2 two-stage curator quality counters (B8). Decision names follow
     # constants.CURATOR_DECISIONS (parity-tested).
     "wiki_candidates_extracted",
+    "wiki_candidates_blocked_low_salience",
     "wiki_consolidator_add",
     "wiki_consolidator_update",
     "wiki_consolidator_noop",

@@ -413,10 +413,13 @@ async def test_turn_prompt_blocks_topic_question_personal_inferences(
     assert journal.pending() == []
     system = brain.received_requests[0].system
     assert "topic mention, one-off question, or request for information" in system
-    assert '"What are the benefits of Vitamin D?" yields []' in system
-    assert '"Tell me about Monaco." yields []' in system
-    assert '"I own a yacht." and "I plan to attend Monaco."' in system
-    assert "never permits turning topic choice into a personal-memory claim" in system
+    assert "no basis rescues it" in system
+    assert '"What are the benefits of Vitamin D?"' in system
+    assert '"Tell me about Monaco."' in system
+    assert "personal connection from curiosity" in system
+    assert 'lived-experience inference "explicit"' in system
+    assert "Score user-centrality" in system
+    assert "writing junk is the worse failure" in system
 
 
 @pytest.mark.parametrize(
@@ -718,9 +721,12 @@ async def test_session_sweep_prompt_blocks_topic_to_plan_inference(
     assert count == 0
     assert journal.pending() == []
     system = brain.received_requests[0].system
-    assert '"What are the benefits of Vitamin D?" yields []' in system
-    assert '"Tell me about Monaco." yields []' in system
-    assert '"I own a yacht." and "I plan to attend Monaco."' in system
+    assert "topic mention, one-off question, or request for information" in system
+    assert "no basis rescues it" in system
+    assert '"What are the benefits of Vitamin D?"' in system
+    assert '"Tell me about Monaco."' in system
+    assert 'lived-experience inference "explicit"' in system
+    assert "writing junk is the worse failure" in system
 
 
 @pytest.mark.asyncio
@@ -842,3 +848,256 @@ async def test_session_chunk_boundary_keeps_user_reference_context(
     evidence = journal.pending()[0].evidence_excerpt
     assert "Prior user context [turn-16]: I own a yacht." in evidence
     assert "Evidence user turn [turn-17]: It is called Aurora." in evidence
+
+
+# ---------------------------------------------------------------------------
+# Evidence-tiered extraction: basis, salience floor, and the behavioral path
+# ---------------------------------------------------------------------------
+
+_GOLF_TURN = (
+    "I love being out on golf courses with my buddies, "
+    "playing this sport actively."
+)
+
+
+def _config_with_extractor(**overrides: Any) -> JarvisConfig:
+    from jarvis.core.config import ExtractorConfig
+
+    return JarvisConfig(
+        brain=BrainConfig(
+            primary="gemini",
+            providers={"gemini": BrainProviderConfig(model="gemini-3.1-pro-preview")},
+        ),
+        memory=MemoryConfig(
+            wiki=WikiMemoryConfig(extractor=ExtractorConfig(**overrides))
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_behavioral_lived_experience_yields_behavioral_candidate(
+    journal: CandidateJournal,
+) -> None:
+    turn_id = "golf-behavioral"
+    brain = FakeBrain(
+        json.dumps(
+            [
+                {
+                    "fact": "The user plays golf actively with friends and enjoys it.",
+                    "kind": "activity",
+                    "subjects": ["user", "golf"],
+                    "evidence_turn_id": turn_id,
+                    "basis": "behavioral",
+                    "salience": 4,
+                }
+            ]
+        )
+    )
+    extractor = ConversationFactExtractor(
+        config=_config(), journal=journal, registry=FakeRegistry(brain),
+    )
+
+    count = await extractor.extract_and_journal(
+        _GOLF_TURN,
+        "Sounds like a great weekend.",
+        source_label="realtime:golf",
+        turn_hash=turn_id,
+    )
+
+    assert count == 1
+    row = journal.pending()[0]
+    assert row.fact == "The user plays golf actively with friends and enjoys it."
+    assert row.kind == "activity"
+    assert row.basis == "behavioral"
+    assert row.salience == 4
+
+
+@pytest.mark.asyncio
+async def test_model_claimed_explicit_basis_is_downgraded_to_behavioral(
+    journal: CandidateJournal,
+) -> None:
+    turn_id = "golf-downgrade"
+    brain = FakeBrain(
+        json.dumps(
+            [
+                {
+                    "fact": "The user plays golf regularly with friends.",
+                    "kind": "activity",
+                    "subjects": ["user", "golf"],
+                    "evidence_turn_id": turn_id,
+                    "basis": "explicit",
+                    "salience": 4,
+                }
+            ]
+        )
+    )
+    extractor = ConversationFactExtractor(
+        config=_config(), journal=journal, registry=FakeRegistry(brain),
+    )
+
+    count = await extractor.extract_and_journal(
+        "I was out on the golf course again on Saturday with my buddies.",
+        "Nice.",
+        source_label="realtime:golf-downgrade",
+        turn_hash=turn_id,
+    )
+
+    assert count == 1
+    # The evidence is a lived-experience report, not a literal assertion:
+    # the model must not launder the inference into an explicit basis.
+    assert journal.pending()[0].basis == "behavioral"
+
+
+@pytest.mark.asyncio
+async def test_low_salience_world_trivia_is_dropped(
+    journal: CandidateJournal,
+) -> None:
+    from jarvis.memory.wiki.telemetry import telemetry
+
+    turn_id = "trivia"
+    blocked_before = telemetry.get("wiki_candidates_blocked_low_salience")
+    registry = ScriptedRegistry(
+        {
+            "gemini": json.dumps(
+                [
+                    {
+                        "fact": "The Eiffel Tower is located in Paris.",
+                        "kind": "other",
+                        "subjects": ["eiffel-tower"],
+                        "evidence_turn_id": turn_id,
+                        "basis": "explicit",
+                        "salience": 1,
+                    }
+                ]
+            ),
+            "openrouter": "[]",
+        }
+    )
+    extractor = ConversationFactExtractor(
+        config=_config(), journal=journal, registry=registry,
+    )
+
+    count = await extractor.extract_and_journal(
+        "We talked about the Eiffel Tower being in Paris for my project notes.",
+        "Indeed it is.",
+        source_label="realtime:trivia",
+        turn_hash=turn_id,
+    )
+
+    assert count == 0
+    assert journal.pending() == []
+    assert telemetry.get("wiki_candidates_blocked_low_salience") > blocked_before
+
+
+@pytest.mark.asyncio
+async def test_min_salience_floor_is_configurable(
+    journal: CandidateJournal,
+) -> None:
+    turn_id = "salience-floor"
+    brain = FakeBrain(
+        json.dumps(
+            [
+                {
+                    "fact": "The user keeps project notes about Paris landmarks.",
+                    "kind": "project",
+                    "subjects": ["user"],
+                    "evidence_turn_id": turn_id,
+                    "basis": "explicit",
+                    "salience": 2,
+                }
+            ]
+        )
+    )
+    extractor = ConversationFactExtractor(
+        config=_config_with_extractor(min_salience=1),
+        journal=journal,
+        registry=FakeRegistry(brain),
+    )
+
+    count = await extractor.extract_and_journal(
+        "I keep project notes about Paris landmarks.",
+        "Noted.",
+        source_label="realtime:salience-floor",
+        turn_hash=turn_id,
+    )
+
+    assert count == 1
+    assert journal.pending()[0].salience == 2
+
+
+@pytest.mark.asyncio
+async def test_behavioral_inference_flag_off_restores_blocking(
+    journal: CandidateJournal,
+) -> None:
+    turn_id = "golf-flag-off"
+    registry = ScriptedRegistry(
+        {
+            "gemini": json.dumps(
+                [
+                    {
+                        "fact": "The user plays golf regularly with friends.",
+                        "kind": "activity",
+                        "subjects": ["user", "golf"],
+                        "evidence_turn_id": turn_id,
+                        "basis": "behavioral",
+                        "salience": 4,
+                    }
+                ]
+            ),
+            "openrouter": "[]",
+        }
+    )
+    extractor = ConversationFactExtractor(
+        config=_config_with_extractor(behavioral_inference=False),
+        journal=journal,
+        registry=registry,
+    )
+
+    count = await extractor.extract_and_journal(
+        "I was out on the golf course again on Saturday with my buddies.",
+        "Nice.",
+        source_label="realtime:golf-flag-off",
+        turn_hash=turn_id,
+    )
+
+    assert count == 0
+    assert journal.pending() == []
+
+
+@pytest.mark.asyncio
+async def test_monaco_question_never_gains_behavioral_basis(
+    journal: CandidateJournal,
+) -> None:
+    """A topic question grounds nothing even when the model claims behavioral."""
+    turn_id = "monaco-behavioral-claim"
+    registry = ScriptedRegistry(
+        {
+            "gemini": json.dumps(
+                [
+                    {
+                        "fact": "The user is interested in Monaco.",
+                        "kind": "preference",
+                        "subjects": ["user", "monaco"],
+                        "evidence_turn_id": turn_id,
+                        "basis": "behavioral",
+                        "salience": 4,
+                    }
+                ]
+            ),
+            "openrouter": "[]",
+        }
+    )
+    extractor = ConversationFactExtractor(
+        config=_config(), journal=journal, registry=registry,
+    )
+
+    count = await extractor.extract_and_journal(
+        "Tell me about Monaco.",
+        "Monaco is a city-state on the French Riviera.",
+        source_label="realtime:monaco-behavioral-claim",
+        turn_hash=turn_id,
+    )
+
+    assert count == 0
+    assert registry.tried == ["gemini", "openrouter"]
+    assert journal.pending() == []

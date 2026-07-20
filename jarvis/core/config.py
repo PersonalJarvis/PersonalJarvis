@@ -1131,6 +1131,14 @@ class ExtractorConfig(BaseModel):
     min_user_chars: int = 12
     max_output_tokens: int = 800
     timeout_s: float = 30.0
+    # Personal-salience floor (1-5): candidates the model scores below this
+    # are dropped in Stage 1. 3 keeps peripheral personal facts and drops
+    # world-knowledge trivia; raise it for a leaner vault.
+    min_salience: int = 3
+    # Rollback switch to the pre-basis regime: when False, behavioral
+    # (lived-experience) grounding is treated as ungrounded and only
+    # explicit assertions survive.
+    behavioral_inference: bool = True
 
 
 class WikiMemoryConfig(BaseModel):
@@ -2789,9 +2797,16 @@ def _ensure_keyring_backend() -> None:
         elif sys.platform == "darwin" and not getattr(
             current_backend, "_jarvis_platform_wrapper", False
         ):
-            from .keychain_bundle import DarwinBundleKeyringBackend
+            from .keychain_bundle import (
+                DarwinBundleKeyringBackend,
+                darwin_security_cli_vault,
+            )
 
-            keyring.set_keyring(DarwinBundleKeyringBackend(current_backend))
+            keyring.set_keyring(
+                DarwinBundleKeyringBackend(
+                    current_backend, cli=darwin_security_cli_vault()
+                )
+            )
     except Exception:  # noqa: BLE001, S110 -- a missing keyring must never break boot
         pass
 
@@ -2836,9 +2851,14 @@ def _try_restore_platform_keyring_backend() -> bool:
         if sys.platform == "darwin" and not getattr(
             candidate, "_jarvis_platform_wrapper", False
         ):
-            from .keychain_bundle import DarwinBundleKeyringBackend
+            from .keychain_bundle import (
+                DarwinBundleKeyringBackend,
+                darwin_security_cli_vault,
+            )
 
-            candidate = DarwinBundleKeyringBackend(candidate)
+            candidate = DarwinBundleKeyringBackend(
+                candidate, cli=darwin_security_cli_vault()
+            )
             keyring_mod.set_keyring(candidate)
 
         # A read-only probe was insufficient on Windows: WinVault could read an
