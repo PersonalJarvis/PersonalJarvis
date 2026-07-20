@@ -14,7 +14,14 @@
  * Replaces the legacy `MemoryView` (`data/core_memory.json` flat memory).
  */
 import { Suspense, lazy, useCallback, useEffect, useState } from "react";
-import { FileText, Network, Notebook, RefreshCw } from "lucide-react";
+import {
+  FileText,
+  Maximize2,
+  Minimize2,
+  Network,
+  Notebook,
+  RefreshCw,
+} from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 
 import { ViewHeader } from "@/views/ChatsView";
@@ -58,10 +65,11 @@ export function WikiView(): JSX.Element {
   useWikiLive();
   const [selectedSlug, setSelectedSlug] = useState<string | null>(null);
   const [centreTab, setCentreTab] = useState<CentreTab>("graph");
+  const [isGraphExpanded, setIsGraphExpanded] = useState(false);
   const [toast, setToast] = useState<WikiToast | null>(null);
-  // Sub-Agent 5: the setup walkthrough opens with the status payload the
-  // pill last saw. The hint object also reseeds whenever the user reopens
-  // the dialog so step-2-vs-step-3 starts from the most recent reality.
+  // The setup walkthrough opens with the status payload the pill last saw.
+  // The hint object also reseeds whenever the user reopens the dialog so
+  // step-2-vs-step-3 starts from the most recent reality.
   const [setupHint, setSetupHint] = useState<ObsidianStatusType | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [isReindexing, setIsReindexing] = useState(false);
@@ -90,12 +98,15 @@ export function WikiView(): JSX.Element {
   // When a slug is selected (via tree click, graph click, or wikilink),
   // automatically swap to the page tab.
   useEffect(() => {
-    if (selectedSlug) setCentreTab("page");
+    if (selectedSlug) {
+      setCentreTab("page");
+      setIsGraphExpanded(false);
+    }
   }, [selectedSlug]);
 
-  // Sub-Agent 6: on first ever visit to the Wiki tab, auto-open the
-  // Obsidian setup walkthrough — but only if the user has never marked
-  // it as completed AND the current status says action is required.
+  // On the first visit to the Wiki tab, auto-open the Obsidian setup
+  // walkthrough — but only if the user has never marked it as completed
+  // AND the current status says action is required.
   // Both requests run in parallel; AbortController cancels them if the
   // component unmounts before the network round trip finishes.
   useEffect(() => {
@@ -167,6 +178,7 @@ export function WikiView(): JSX.Element {
         showToast(t("wiki_view.page_not_found"));
         return;
       }
+      setIsGraphExpanded(false);
       setSelectedSlug(slug);
     },
     // knownSlugs is recomputed each render; intentional, the Set is small.
@@ -217,10 +229,10 @@ export function WikiView(): JSX.Element {
           onClose={() => setDialogOpen(false)}
           initialStatus={setupHint}
           onComplete={async () => {
-            // Sub-Agent 6: only when the user EXPLICITLY confirms the
-            // setup worked ("Hat geklappt"); never on Escape / outside
-            // click. Fire-and-forget — the route never 5xx's and a
-            // failed mark just means the wizard re-opens next visit.
+            // Only when the user explicitly confirms that setup worked;
+            // never on Escape or an outside click. Fire-and-forget — the
+            // route never returns a 5xx, and a failed mark only means the
+            // wizard reopens on the next visit.
             try {
               await fetch("/api/setup/state/obsidian-seen", {
                 method: "POST",
@@ -245,14 +257,21 @@ export function WikiView(): JSX.Element {
       ) : !treeQuery.isLoading && totalPages === 0 ? (
         <EmptyState />
       ) : (
-        <div className="flex flex-1 min-h-0 overflow-hidden">
-          <TreeSidebar
-            selectedSlug={selectedSlug}
-            onSelect={handleSelect}
-          />
+        <div
+          id="wiki-workspace"
+          className="flex flex-1 min-h-0 overflow-hidden"
+          data-testid="wiki-workspace"
+          data-graph-expanded={isGraphExpanded ? "true" : "false"}
+        >
+          {!isGraphExpanded && (
+            <TreeSidebar
+              selectedSlug={selectedSlug}
+              onSelect={handleSelect}
+            />
+          )}
 
           <section className="flex flex-1 min-w-0 flex-col bg-background">
-            <div className="flex border-b border-border bg-card/40">
+            <div className="flex items-stretch border-b border-border bg-card/40">
               <TabButton
                 active={centreTab === "graph"}
                 onClick={() => setCentreTab("graph")}
@@ -261,7 +280,10 @@ export function WikiView(): JSX.Element {
               />
               <TabButton
                 active={centreTab === "page"}
-                onClick={() => setCentreTab("page")}
+                onClick={() => {
+                  setCentreTab("page");
+                  setIsGraphExpanded(false);
+                }}
                 icon={<FileText className="h-3.5 w-3.5" />}
                 label={
                   selectedSlug
@@ -270,6 +292,39 @@ export function WikiView(): JSX.Element {
                 }
                 disabled={!selectedSlug}
               />
+              {centreTab === "graph" && (
+                <button
+                  type="button"
+                  className="ml-auto mr-2 my-1.5 inline-flex items-center gap-1.5 self-center rounded-md border border-border bg-background/70 px-2.5 py-1.5 text-xs text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60"
+                  onClick={() => setIsGraphExpanded((expanded) => !expanded)}
+                  aria-controls="wiki-workspace"
+                  aria-expanded={isGraphExpanded}
+                  aria-label={t(
+                    isGraphExpanded
+                      ? "wiki_graph.restore_view_title"
+                      : "wiki_graph.expand_view_title",
+                  )}
+                  title={t(
+                    isGraphExpanded
+                      ? "wiki_graph.restore_view_title"
+                      : "wiki_graph.expand_view_title",
+                  )}
+                  data-testid="wiki-graph-expand-toggle"
+                >
+                  {isGraphExpanded ? (
+                    <Minimize2 className="h-3.5 w-3.5" aria-hidden />
+                  ) : (
+                    <Maximize2 className="h-3.5 w-3.5" aria-hidden />
+                  )}
+                  <span>
+                    {t(
+                      isGraphExpanded
+                        ? "wiki_graph.restore"
+                        : "wiki_graph.expand",
+                    )}
+                  </span>
+                </button>
+              )}
             </div>
 
             <div className="flex-1 min-h-0 overflow-y-auto">
@@ -302,15 +357,19 @@ export function WikiView(): JSX.Element {
             </div>
           </section>
 
-          {selectedSlug ? (
-            <BacklinksPanel slug={selectedSlug} onSelect={handleSelect} />
-          ) : (
-            <aside className="flex h-full w-[380px] shrink-0 flex-col border-l border-border bg-card/40 p-4">
-              <div className="rounded-lg border border-border bg-secondary/30 p-4 text-xs text-muted-foreground">
-                {t("wiki_view.backlinks_hint")}
-              </div>
-            </aside>
-          )}
+          {!isGraphExpanded &&
+            (selectedSlug ? (
+              <BacklinksPanel slug={selectedSlug} onSelect={handleSelect} />
+            ) : (
+              <aside
+                className="flex h-full w-[380px] shrink-0 flex-col border-l border-border bg-card/40 p-4"
+                data-testid="wiki-backlinks-placeholder"
+              >
+                <div className="rounded-lg border border-border bg-secondary/30 p-4 text-xs text-muted-foreground">
+                  {t("wiki_view.backlinks_hint")}
+                </div>
+              </aside>
+            ))}
         </div>
       )}
 

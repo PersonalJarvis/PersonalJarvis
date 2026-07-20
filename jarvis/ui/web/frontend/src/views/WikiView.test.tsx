@@ -221,6 +221,39 @@ describe("WikiView — populated tree", () => {
     expect(conceptsButton!.textContent).toContain("0");
   });
 
+  it("expands the Memory Map across the wiki workspace and restores the side panels", async () => {
+    renderWithClient(<WikiView />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("wiki-tree-sidebar")).toBeDefined();
+    });
+
+    const workspace = screen.getByTestId("wiki-workspace");
+    const expandButton = screen.getByRole("button", {
+      name: "Expand the Memory Map",
+    });
+    expect(workspace.getAttribute("data-graph-expanded")).toBe("false");
+    expect(expandButton.getAttribute("aria-controls")).toBe("wiki-workspace");
+    expect(expandButton.getAttribute("aria-expanded")).toBe("false");
+    expect(screen.queryByTestId("wiki-backlinks-placeholder")).not.toBeNull();
+
+    fireEvent.click(expandButton);
+
+    expect(workspace.getAttribute("data-graph-expanded")).toBe("true");
+    expect(screen.queryByTestId("wiki-tree-sidebar")).toBeNull();
+    expect(screen.queryByTestId("wiki-backlinks-placeholder")).toBeNull();
+
+    const restoreButton = screen.getByRole("button", {
+      name: "Restore the standard wiki layout",
+    });
+    expect(restoreButton.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(restoreButton);
+
+    expect(workspace.getAttribute("data-graph-expanded")).toBe("false");
+    expect(screen.queryByTestId("wiki-tree-sidebar")).not.toBeNull();
+    expect(screen.queryByTestId("wiki-backlinks-placeholder")).not.toBeNull();
+  });
+
   it("clicking a leaf in the tree switches to the page tab and loads the page", async () => {
     renderWithClient(<WikiView />);
 
