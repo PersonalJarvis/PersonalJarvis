@@ -604,6 +604,7 @@ def _stt_retry_delay(exc: BaseException | None, attempt: int) -> float:
 
 _SESSION_START_BUFFER_MAX_BYTES = 16_000 * 2 * 30  # 30 s of mono PCM16
 _REALTIME_POST_OUTPUT_ECHO_GUARD_S = 0.5
+_REALTIME_OUTPUT_LATENCY_CAP_S = 5.0
 
 
 def _feed_live_mic_level(chunk: AudioChunk) -> None:
@@ -6110,6 +6111,7 @@ class SpeechPipeline:
         # generation before it aborts the shared player.
         surface_playback_task: asyncio.Task[Any] | None = None
         surface_playback_epoch = 0
+        terminal_output_closed = False
         turn_complete = asyncio.Event()
         speaking = False
         post_output_echo_guard_until = 0.0
@@ -6120,14 +6122,21 @@ class SpeechPipeline:
         # answer a late speaker echo of realtime output (BUG-089).
         assistant_transcript_parts: list[str] = []
 
+        def _reported_output_latency_s() -> float:
+            try:
+                latency = float(getattr(self._player, "output_latency_s", 0.0))
+            except (TypeError, ValueError):
+                return 0.0
+            return min(_REALTIME_OUTPUT_LATENCY_CAP_S, max(0.0, latency))
+
         def _close_output_segment(*, preserve_echo_tail: bool) -> None:
             """Keep half-duplex protection through physical speaker drain."""
             nonlocal post_output_echo_guard_until, speaking
             was_audible = speaking or bool(assistant_transcript_parts)
             speaking = False
-            # The physical drain has completed here (callers await
-            # playback.finish_turn() first), so the guard's activity stamp is
-            # accurate at this moment.
+            # The provider queue has drained here, but a persistent PortAudio
+            # stream may still hold up to one reported device-latency of audio.
+            # Include that hardware horizon before the ordinary acoustic tail.
             if assistant_transcript_parts:
                 self._register_assistant_speech(
                     " ".join(assistant_transcript_parts)
@@ -6136,8 +6145,14 @@ class SpeechPipeline:
             elif was_audible:
                 self._touch_assistant_speech_activity()
             if preserve_echo_tail:
-                post_output_echo_guard_until = (
-                    time.monotonic() + _REALTIME_POST_OUTPUT_ECHO_GUARD_S
+                output_latency_s = _reported_output_latency_s()
+                guard_s = _REALTIME_POST_OUTPUT_ECHO_GUARD_S + output_latency_s
+                post_output_echo_guard_until = time.monotonic() + guard_s
+                log.info(
+                    "Realtime echo tail armed for %.3fs "
+                    "(device output latency %.3fs).",
+                    guard_s,
+                    output_latency_s,
                 )
                 return
             post_output_echo_guard_until = 0.0
@@ -6157,10 +6172,13 @@ class SpeechPipeline:
             _warm_barge_detector(), name=f"rt-barge-warm-{session_id}"
         )
 
-        async def _cancel_output_playback() -> None:
+        async def _cancel_output_playback(*, terminal: bool = False) -> None:
             """Cancel surface generation and provider playback as one unit."""
 
             nonlocal surface_playback_epoch, surface_playback_task
+            nonlocal terminal_output_closed
+            if terminal:
+                terminal_output_closed = True
             # Invalidate the parent callback before cancelling its child. A new
             # surface fallback may start while the old callback is unwinding;
             # only the newest epoch may close the shared speaking segment.
@@ -6172,19 +6190,26 @@ class SpeechPipeline:
                 # still unwind after the abort, but the owning coroutine can no
                 # longer advance its async generator and reopen the stream.
                 surface_task.cancel()
-            await playback.cancel()
+            if terminal:
+                await playback.close()
+            else:
+                await playback.cancel()
             if surface_task is not None:
                 await asyncio.gather(surface_task, return_exceptions=True)
 
         async def _send_binary(pcm: bytes) -> None:
             nonlocal post_output_echo_guard_until
             nonlocal semantic_turn_committed, speaking
+            if terminal_output_closed:
+                return
             semantic_turn_committed = True
             if not speaking:
                 post_output_echo_guard_until = 0.0
                 speaking = True
                 barge_detector.start_output()
                 await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
+            if terminal_output_closed:
+                return
             await playback.send_binary(pcm)
 
         async def _send_json(message: dict[str, Any]) -> None:
@@ -6267,6 +6292,8 @@ class SpeechPipeline:
                 ):
                     turn_complete.set()
             elif kind == "error_spoken":
+                if terminal_output_closed:
+                    return
                 semantic_turn_committed = True
                 text = str(message.get("text", "") or "").strip()
                 language = _phrase_lang(
@@ -6304,6 +6331,8 @@ class SpeechPipeline:
                     # pump and local barge detector remain active, so this does
                     # not open a second microphone or replay the user's request.
                     await _cancel_output_playback()
+                    if terminal_output_closed:
+                        return
                     surface_playback_epoch += 1
                     active_surface_epoch = surface_playback_epoch
                     speaking = True
@@ -6314,7 +6343,10 @@ class SpeechPipeline:
                     # (BUG-089).
                     self._register_assistant_speech(cleaned)
                     await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
-                    if surface_playback_epoch != active_surface_epoch:
+                    if (
+                        terminal_output_closed
+                        or surface_playback_epoch != active_surface_epoch
+                    ):
                         # A cancel can arrive while the state callback yields,
                         # before there is a child playback task to own. Its
                         # epoch invalidates this render before synthesis starts.
@@ -6625,7 +6657,10 @@ class SpeechPipeline:
                 self._active_realtime_handle = None
             # Invalidate even when synthesis is paused before child-task
             # creation; terminal teardown must own that pre-playback window too.
-            await _cancel_output_playback()
+            try:
+                await _cancel_output_playback(terminal=True)
+            except Exception as exc:  # noqa: BLE001 -- teardown remains best-effort
+                log.warning("Realtime terminal playback close failed: %s", exc)
             barge_detector.stop_output()
             barge_feed_executor.shutdown(wait=False, cancel_futures=True)
             if not barge_warm_task.done():
@@ -6653,18 +6688,14 @@ class SpeechPipeline:
                     pass
             if session is not None:
                 await session.end(reason=reason)
-            if reason != "shutdown":
-                # A provider failure tears the session down while already
-                # scrub-cleared PCM can still sit in the local playback queue.
-                # Drain it (bounded) instead of hard-stopping so the spoken
-                # reply keeps every word that was already safe to say.
-                # User-initiated stops (hangup/barge-in) have cancel()ed the
-                # queue earlier, which makes this a fast no-op for them.
-                try:
-                    await asyncio.wait_for(playback.finish_turn(), timeout=15.0)
-                except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110 - teardown
-                    pass
-            await playback.close()
+            # ``session.end`` quiesces the provider pump. Close once more to
+            # collect any callback that had already crossed the surface
+            # boundary when terminal teardown began. ``close`` is idempotent
+            # and permanently rejects later audio.
+            try:
+                await _cancel_output_playback(terminal=True)
+            except Exception as exc:  # noqa: BLE001 -- teardown remains best-effort
+                log.warning("Realtime final playback cleanup failed: %s", exc)
 
     async def _ptt_session(
         self, *, input_buffer: _SessionInputBuffer | None = None

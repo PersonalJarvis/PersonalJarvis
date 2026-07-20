@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import time
 from collections import deque
 from collections.abc import AsyncIterator, Callable
@@ -12,6 +13,8 @@ import numpy as np
 
 from jarvis.audio.vad import VAD_FRAME_SAMPLES, SileroEndpointer
 from jarvis.core.protocols import AudioChunk
+
+log = logging.getLogger("jarvis.realtime.desktop")
 
 
 class DesktopRealtimeBargeInDetector:
@@ -303,9 +306,10 @@ class DesktopRealtimePlayback:
         self._finish_timeout_s = max(1.0, float(finish_timeout_s))
         self._queue: asyncio.Queue[AudioChunk | None] | None = None
         self._task: asyncio.Task[None] | None = None
+        self._closed = False
 
     async def send_binary(self, pcm: bytes) -> None:
-        if not pcm:
+        if not pcm or self._closed:
             return
         if self._task is None or self._task.done():
             self._queue = asyncio.Queue(maxsize=self._max_queue_chunks)
@@ -313,6 +317,11 @@ class DesktopRealtimePlayback:
                 self._player.play_chunks(self._chunks(self._queue)),
                 name="realtime-desktop-playback",
             )
+            # A terminal surface cancellation can race a provider callback
+            # that is already unwinding. Always retrieve the native playback
+            # result even if that callback loses its final await; explicit
+            # ``finish_turn`` callers still receive the same exception.
+            self._task.add_done_callback(self._observe_playback_result)
         assert self._queue is not None
         await self._queue.put(
             AudioChunk(pcm=bytes(pcm), sample_rate=self._sample_rate, timestamp_ns=0)
@@ -398,7 +407,22 @@ class DesktopRealtimePlayback:
             # playback exception while the task unwinds.
 
     async def close(self) -> None:
+        # Terminal close differs from an ordinary barge-in ``cancel``: later
+        # provider callbacks belong to a dead voice surface and must never
+        # create a fresh OutputStream after teardown has started.
+        self._closed = True
         await self.cancel()
+
+    @staticmethod
+    def _observe_playback_result(task: asyncio.Task[None]) -> None:
+        if task.cancelled():
+            return
+        try:
+            exc = task.exception()
+        except asyncio.CancelledError:
+            return
+        if exc is not None:
+            log.debug("Realtime desktop playback task ended with %r", exc)
 
     def _detach(
         self,

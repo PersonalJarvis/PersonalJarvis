@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import threading
 import time
 from collections.abc import AsyncIterator, Callable, Sequence
@@ -43,6 +44,7 @@ _PortAudioError: type[BaseException] = sd.PortAudioError if sd is not None else 
 
 TTS_SAMPLE_RATE = 24_000  # Gemini 3.1 Flash TTS output rate
 TTS_WRITE_BUFFER_MS = 120
+_MAX_REPORTED_OUTPUT_LATENCY_S = 5.0
 
 
 class _PlaybackSuperseded(RuntimeError):
@@ -486,6 +488,33 @@ class AudioPlayer:
             self._stream_state_lock = lock
         return lock
 
+    @property
+    def output_latency_s(self) -> float:
+        """Return the active device's bounded PortAudio output latency.
+
+        Blocking ``OutputStream.write()`` returns after PortAudio accepts a
+        buffer, not necessarily after the device has made every accepted frame
+        audible. Realtime half-duplex uses this value to keep microphone audio
+        local until that hardware buffer has drained. Missing, malformed, or
+        implausible backend values fail safely to zero so headless and test
+        players retain the conservative fixed tail guard.
+        """
+
+        try:
+            with self._get_stream_state_lock():
+                stream = getattr(self, "_active_stream", None)
+                if stream is None:
+                    return 0.0
+                raw_latency = getattr(stream, "latency", 0.0)
+            if isinstance(raw_latency, (tuple, list)):
+                raw_latency = raw_latency[-1] if raw_latency else 0.0
+            latency = float(raw_latency)
+        except (AttributeError, TypeError, ValueError, _PortAudioError):
+            return 0.0
+        if not math.isfinite(latency) or latency <= 0.0:
+            return 0.0
+        return min(latency, _MAX_REPORTED_OUTPUT_LATENCY_S)
+
     def invalidate_device_cache(self) -> None:
         """Forget every cached device_rate and tear down the active stream.
 
@@ -702,6 +731,8 @@ class AudioPlayer:
         arr: np.ndarray,
         source_rate: int,
         device_rate: int,
+        *,
+        playback_generation: int | None = None,
     ) -> None:
         """Int16 mono → float32 device channels + resample + ``stream.write()``.
 
@@ -764,7 +795,27 @@ class AudioPlayer:
         block = max(1, int(device_rate * 0.06))
         for start in range(0, arr_out.shape[0], block):
             out = arr_out[start:start + block]
-            underflowed = stream.write(out)
+            try:
+                underflowed = stream.write(out)
+            except _PortAudioError:
+                # ``stop()`` deliberately aborts the native stream while this
+                # blocking write may still be running in a worker thread. Core
+                # Audio and several Windows backends report that expected abort
+                # as a PortAudio error. Suppress it only when the generation or
+                # stream owner proves cancellation won; a live-device failure
+                # still propagates to the caller.
+                if playback_generation is None:
+                    raise
+                with self._get_stream_state_lock():
+                    cancelled = (
+                        getattr(self, "_playback_generation", 0)
+                        != playback_generation
+                        or getattr(self, "_active_stream", None) is not stream
+                    )
+                if not cancelled:
+                    raise
+                log.debug("PortAudio write ended after playback cancellation")
+                return
             # Playback progress for the pipeline stall watchdog: a healthy
             # ~60 ms sub-block returns well inside the watchdog's stall window;
             # only a wedged device leaves ``last_write_ns`` frozen. ``getattr``
@@ -968,8 +1019,21 @@ class AudioPlayer:
                 # level per flush). Nothing to feed here.
                 self.last_write_owner_task_id = owner_task_id
                 await asyncio.to_thread(
-                    self._write_samples, stm, arr, pending_rate, dev_rate
+                    self._write_samples,
+                    stm,
+                    arr,
+                    pending_rate,
+                    dev_rate,
+                    playback_generation=playback_generation,
                 )
+                with stream_state_lock:
+                    playback_superseded = (
+                        getattr(self, "_playback_generation", 0)
+                        != playback_generation
+                        or getattr(self, "_active_stream", None) is not stm
+                    )
+                if playback_superseded:
+                    return False
                 # First audible sample reached PortAudio — tell the bus so the
                 # mascot mouth + SPEAKING bubble sync to actual audio start
                 # instead of the speculative SPEAKING state-transition.

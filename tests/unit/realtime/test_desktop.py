@@ -114,6 +114,23 @@ async def test_cancel_stops_player_and_discards_queued_audio():
 
 
 @pytest.mark.asyncio
+async def test_close_is_terminal_and_rejects_late_provider_audio() -> None:
+    """A dead desktop surface cannot be reopened by a stale callback."""
+
+    player = FakePlayer()
+    playback = DesktopRealtimePlayback(player)
+
+    await playback.send_binary(b"\x01\x00" * 8)
+    await playback.finish_turn()
+    await playback.close()
+    await playback.send_binary(b"\x09\x00" * 8)
+    await playback.finish_turn()
+
+    assert [chunk.pcm for chunk in player.chunks] == [b"\x01\x00" * 8]
+    assert player.stopped == 1
+
+
+@pytest.mark.asyncio
 async def test_cancel_can_interrupt_a_turn_already_draining() -> None:
     stop_event = asyncio.Event()
 

@@ -6880,3 +6880,62 @@ all three desktop platforms before removing the pending qualifier.
 not normalize every newly observed peak to full scale. Peak auto-gain is useful
 for recognition input; it destroys the relative amplitude information that a
 user-facing level indicator exists to show.
+
+---
+
+## BUG-100: high-latency speaker drain becomes a phantom user turn, and terminal teardown leaks a PortAudio task (CRITICAL, FIXED IN CODE 2026-07-20; HARDWARE VALIDATION PENDING)
+
+**Symptom.** Realtime voice session
+`fe594a99-3d8b-4b37-bb62-d481f02ba595` answered normally, then transcribed the
+last words coming from its own speakers as new user input. The assistant reply
+ending in `Was ansteht.` was followed by a user-role transcript containing
+exactly `Was ansteht.`. Earlier sessions show the same suffix pattern with
+`Bescheid.` and `dir?`. <!-- i18n-allow: forensic quotes from runtime voice transcripts -->
+The same run also emitted an unobserved task exception while the hotkey ended
+playback: `sounddevice.PortAudioError: Internal PortAudio error [PaErrorCode
+-9986]`.
+
+**Reconstruction.** The affected Mac used its built-in speakers and microphone.
+PortAudio reported `0.869 s` of output latency, while the realtime half-duplex
+tail was a fixed `0.5 s`. `DesktopRealtimePlayback.finish_turn()` established
+that queued PCM had been accepted by the output stream, but did not establish
+that the physical device buffer was silent. The microphone therefore reopened
+about `0.369 s` before the reported hardware horizon ended. One- and two-word
+suffixes also fall below the text `SelfEchoGuard` minimum of three tokens, so
+the later transcript layer correctly did not guess that those short utterances
+were echo. Separately, terminal cancellation aborted a blocking native write
+while a provider callback was still unwinding. That callback could recreate
+the desktop playback task, and Core Audio surfaced the intentional abort as
+PortAudio error `-9986` after its owner had already detached.
+
+**Fix.** `AudioPlayer` now exposes the active stream's validated, bounded
+PortAudio output latency. Every completed realtime output segment keeps
+microphone frames local for that device latency plus the existing acoustic
+tail. The local CPU barge-in detector remains active throughout the interval,
+so confirmed human speech is forwarded immediately instead of being muted with
+the echo. Missing or malformed latency metadata falls back to zero and retains
+the conservative fixed tail.
+
+`DesktopRealtimePlayback.close()` is now terminal: it latches the surface
+closed before cancellation, rejects every later provider PCM callback, and
+observes detached task results. Pipeline teardown closes this boundary before
+quiescing the provider and repeats the idempotent close after `session.end()`.
+`AudioPlayer` tags native writes with their playback generation and suppresses
+a PortAudio write error only when the generation or stream owner proves that
+an intentional cancellation already won; unrelated live-device failures still
+propagate.
+
+**Guards and platform parity.** Regression coverage reproduces a `150 ms`
+device latency against a deliberately expired fixed guard, proves both the
+speaker suffix and an immediate real interruption stay on the correct paths,
+rejects PCM delivered by `session.end()`, and raises PortAudio `-9986` from a
+write concurrently aborted by `stop()`. The output-latency property is part of
+PortAudio's cross-platform stream contract and adds no macOS-only import or
+device selection. Windows and Linux use the same path; a headless player with
+no active stream reports zero and retains the fixed guard. Physical validation
+on updated macOS, Windows, and Linux installations remains pending.
+
+**Class rule.** Queue drain is not acoustic drain. A half-duplex boundary must
+cover the output device's reported hardware latency, while terminal teardown
+must seal every producer callback before aborting its native stream. Expected
+abort errors may be suppressed only with positive ownership evidence.

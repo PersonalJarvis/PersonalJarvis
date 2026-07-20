@@ -68,7 +68,7 @@ def _make_player(monkeypatch) -> tuple[AudioPlayer, list[str]]:
     def fake_close(stream):
         events.append("close")
 
-    def fake_write(stream, arr, src_rate, dev_rate):
+    def fake_write(stream, arr, src_rate, dev_rate, **_kwargs):
         events.append(f"write@{src_rate}")
 
     monkeypatch.setattr(player, "_open_output_stream", fake_open)
@@ -178,6 +178,108 @@ async def test_stop_is_idempotent_when_no_stream(monkeypatch) -> None:
     assert player._active_stream is None
     player.stop()  # must not raise
     player.stop()  # idempotent
+
+
+def test_output_latency_reports_the_active_stream_value(monkeypatch) -> None:
+    """Half-duplex callers can cover a device buffer longer than 500 ms."""
+
+    player, _ = _make_player(monkeypatch)
+
+    class _HighLatencyStream:
+        latency = 0.869
+
+    player._active_stream = _HighLatencyStream()
+
+    assert player.output_latency_s == pytest.approx(0.869)
+
+
+@pytest.mark.asyncio
+async def test_stop_absorbs_expected_portaudio_error_from_inflight_write(
+    monkeypatch,
+) -> None:
+    """A native write aborted by this playback generation is not a failure."""
+
+    player, _ = _make_player(monkeypatch)
+    monkeypatch.setattr(
+        player,
+        "_write_samples",
+        AudioPlayer._write_samples.__get__(player, AudioPlayer),
+    )
+    write_entered = threading.Event()
+    release_write = threading.Event()
+
+    class _AbortRaceStream:
+        latency = 0.869
+
+        def write(self, _samples) -> bool:
+            write_entered.set()
+            assert release_write.wait(timeout=1.0)
+            raise player_module._PortAudioError(
+                "Internal PortAudio error",
+                -9986,
+            )
+
+        def abort(self) -> None:
+            release_write.set()
+
+        def close(self) -> None:
+            return None
+
+    stream = _AbortRaceStream()
+    monkeypatch.setattr(
+        player,
+        "_open_output_stream",
+        lambda needed_rate: (stream, needed_rate),
+    )
+    if player_module.sd is not None:
+        monkeypatch.setattr(player_module.sd, "stop", lambda: None)
+
+    play_task = asyncio.create_task(
+        player.play_chunks(_one_chunk(b"\x01\x00" * 4_000))
+    )
+    assert await asyncio.to_thread(write_entered.wait, 1.0)
+
+    player.stop()
+
+    assert await asyncio.wait_for(play_task, timeout=1.0) is False
+
+
+@pytest.mark.asyncio
+async def test_live_portaudio_write_error_still_propagates(monkeypatch) -> None:
+    """Cancellation handling must not hide an active device failure."""
+
+    player, _ = _make_player(monkeypatch)
+    monkeypatch.setattr(
+        player,
+        "_write_samples",
+        AudioPlayer._write_samples.__get__(player, AudioPlayer),
+    )
+
+    class _FailingStream:
+        latency = 0.2
+
+        def write(self, _samples) -> bool:
+            raise player_module._PortAudioError("Output device failed", -9986)
+
+        def abort(self) -> None:
+            return None
+
+        def close(self) -> None:
+            return None
+
+    stream = _FailingStream()
+    monkeypatch.setattr(
+        player,
+        "_open_output_stream",
+        lambda needed_rate: (stream, needed_rate),
+    )
+    if player_module.sd is not None:
+        monkeypatch.setattr(player_module.sd, "stop", lambda: None)
+
+    with pytest.raises(player_module._PortAudioError, match="Output device failed"):
+        await player.play_chunks(_one_chunk(b"\x01\x00" * 4_000))
+
+    player.stop()
 
 
 @pytest.mark.asyncio

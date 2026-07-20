@@ -24,6 +24,7 @@ class _FakePlayer:
     def __init__(self) -> None:
         self.pcm: list[bytes] = []
         self.stopped = 0
+        self.output_latency_s = 0.0
 
     async def play_chunks(self, chunks, *, should_play=None) -> None:
         async for chunk in chunks:
@@ -867,6 +868,11 @@ async def test_post_output_echo_tail_stays_local_and_preserves_immediate_user(
     """Hardware playback tail must not become a phantom realtime turn."""
     pipe = _pipe()
     pipe._continue_listening_after_response = True
+    # The old fixed 10 ms guard has expired before the microphone yields at
+    # 50 ms. The active device's 150 ms PortAudio latency must keep both the
+    # echo and a confirmed immediate user interruption local until then.
+    monkeypatch.setattr(pipeline_mod, "_REALTIME_POST_OUTPUT_ECHO_GUARD_S", 0.01)
+    pipe._player.output_latency_s = 0.15
     output_finished = asyncio.Event()
     echo_pcm = b"\x01\x00" * 32
     user_pcm = b"\x02\x00" * 32
@@ -968,6 +974,62 @@ async def test_post_output_echo_tail_stays_local_and_preserves_immediate_user(
     assert detector_inputs == [echo_pcm, user_pcm]
     assert session.audio_frames == [forwarded]
     assert {"type": "barge_in"} in session.controls
+
+
+@pytest.mark.asyncio
+async def test_terminal_teardown_rejects_audio_from_late_provider_callback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A provider unwinding after hotkey cannot resurrect the output stream."""
+
+    pipe = _pipe()
+    pipe._continue_listening_after_response = True
+    initial_pcm = b"\x01\x00" * 32
+    late_pcm = b"\x09\x00" * 32
+    output_sent = asyncio.Event()
+    built: dict[str, object] = {}
+
+    class _LateOnEndSession(_HandshakeOnlyRealtimeSession):
+        async def handle_control(self, message) -> None:
+            self.controls.append(message)
+            await self._send_json(
+                {
+                    "type": "audio_ready",
+                    "provider": "fake-live",
+                    "input_sample_rate": 16_000,
+                    "output_sample_rate": 24_000,
+                }
+            )
+            await self._send_binary(initial_pcm)
+            output_sent.set()
+
+        async def end(self, *, reason: str = "") -> None:
+            self.end_reason = reason
+            # Simulates a callback already queued by the provider while the
+            # terminal hotkey boundary is quiescing its receive pump.
+            await self._send_binary(late_pcm)
+
+    def _build(**kwargs):
+        session = _LateOnEndSession(kwargs["send_binary"], kwargs["send_json"])
+        built["session"] = session
+        return session
+
+    monkeypatch.setattr("jarvis.realtime.factory.build_realtime_session", _build)
+    monkeypatch.setattr(
+        pipeline_mod,
+        "MicrophoneCapture",
+        lambda **_kwargs: _SilentMic(),
+    )
+
+    task = asyncio.create_task(pipe._active_realtime_session())
+    await asyncio.wait_for(output_sent.wait(), timeout=1.0)
+    await asyncio.sleep(0)
+    pipe._hangup_event.set()
+
+    assert await asyncio.wait_for(task, timeout=1.0) == HANGUP_HOTKEY
+    assert initial_pcm in pipe._player.pcm
+    assert late_pcm not in pipe._player.pcm
+    assert built["session"].end_reason == HANGUP_HOTKEY
 
 
 @pytest.mark.asyncio
