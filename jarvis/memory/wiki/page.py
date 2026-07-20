@@ -187,6 +187,99 @@ def parse_sections(body: str) -> tuple[tuple[str, str], ...]:
     return tuple(out)
 
 
+_SOURCES_HEADING_RE = re.compile(r"^##\s+Sources\s*$")
+_SOURCE_ID_RE = re.compile(r"`([^`\s]+)`")
+_DEGENERATE_SOURCE_PAIR_RE = re.compile(
+    r"session\s+`([^`]+)`\s*,\s*turn\s+`\1`"
+)
+
+
+def normalise_sources_section(text: str) -> str:
+    """Deterministically tidy the ``## Sources`` section of a page.
+
+    Judge models synthesise citation bullets imperfectly: duplicated
+    lines, blank-line gaps between bullets, fabricated pairs citing one
+    id as both session AND turn, and single-id bullets repeating a turn
+    already cited by a full pair. The consolidator's preservation guard
+    would otherwise lock that noise into the page forever — every later
+    update that tidies it gets rejected as "removes existing page
+    content" (live 2026-07-20: ``entities/user.md`` became unwritable).
+    Normalising keeps the section canonical so there is nothing left for
+    a model to tidy.
+
+    Applied transforms, bullets only, first Sources section only:
+
+    * ``session `X`, turn `X``` (same id) → ``turn `X``` — the pair was
+      fabricated; the turn reference itself is kept.
+    * exact duplicates (whitespace-normalised) collapse to the first;
+    * a bullet citing exactly one id is dropped when a bullet with two
+      or more ids already cites that id;
+    * blank lines between bullets collapse.
+
+    Prose lines inside the section and everything outside it pass
+    through verbatim. Pure text transform — no I/O, no LLM (AP-9/11).
+    """
+    lines = text.splitlines()
+    heading_index = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if _SOURCES_HEADING_RE.match(line.strip())
+        ),
+        None,
+    )
+    if heading_index is None:
+        return text
+    end = next(
+        (
+            index
+            for index in range(heading_index + 1, len(lines))
+            if lines[index].lstrip().startswith("#")
+        ),
+        len(lines),
+    )
+
+    bullets: list[str] = []
+    prose: list[str] = []
+    seen: set[str] = set()
+    for line in lines[heading_index + 1 : end]:
+        if not line.strip():
+            continue
+        if not line.lstrip().startswith("- "):
+            prose.append(line)
+            continue
+        bullet = _DEGENERATE_SOURCE_PAIR_RE.sub(r"turn `\1`", line)
+        key = " ".join(bullet.split())
+        if key in seen:
+            continue
+        seen.add(key)
+        bullets.append(bullet)
+
+    strong_ids = {
+        cited_id
+        for bullet in bullets
+        for ids in (_SOURCE_ID_RE.findall(bullet),)
+        if len(set(ids)) >= 2
+        for cited_id in ids
+    }
+    kept = [
+        bullet
+        for bullet in bullets
+        if not (
+            len(set(_SOURCE_ID_RE.findall(bullet))) == 1
+            and _SOURCE_ID_RE.findall(bullet)[0] in strong_ids
+        )
+    ]
+
+    section = [lines[heading_index], "", *kept, *prose]
+    if end < len(lines):
+        section.append("")
+    out = "\n".join([*lines[:heading_index], *section, *lines[end:]])
+    if text.endswith("\n") and not out.endswith("\n"):
+        out += "\n"
+    return out
+
+
 # ──────────────────────────────────────────────────────────────────────
 # internals
 # ──────────────────────────────────────────────────────────────────────
@@ -280,6 +373,7 @@ __all__ = [
     "parse_markdown",
     "render_page",
     "parse_sections",
+    "normalise_sources_section",
     "DIR_TO_TYPE",
     "REQUIRED_KEYS",
     "CANONICAL_SECTIONS",

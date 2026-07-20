@@ -983,7 +983,11 @@ class WikiCuratorConfig(BaseModel):
     # needs several thousand tokens (live 2026-07-17: 4000 truncated on
     # every provider and stalled the whole chain).
     max_output_tokens: int = 8000
-    timeout_s: float = 90.0
+    # Background path — latency-insensitive. CLI-login providers (codex
+    # via ChatGPT OAuth) regularly need >90 s for a full 8-candidate
+    # batch with complete page bodies; a timeout that always fires turns
+    # the fallback provider into a 90 s tax on every failed primary.
+    timeout_s: float = 180.0
 
 
 class SessionRollupConfig(BaseModel):

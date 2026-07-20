@@ -1350,6 +1350,54 @@ async def test_numeric_value_already_in_existing_page_remains_valid(stack) -> No
     assert "installed in the desktop" in content
 
 
+@pytest.mark.asyncio
+async def test_update_may_drop_sources_noise_the_normaliser_strips(stack) -> None:
+    """A page carrying pre-normalisation Sources junk (duplicate bullets,
+    fabricated session==turn pairs) must not hold itself hostage: an
+    update that tidies exactly what the write-path normaliser strips
+    anyway passes the preservation guard."""
+    vault_root, _curator, journal = stack
+    junky = LENA_BODY.replace(
+        "## Sources\n\n- conversation\n",
+        "## Sources\n\n"
+        "- Realtime transcript: session `s1`, turn `t1`.\n"
+        "\n"
+        "- Realtime transcript: session `s1`, turn `t1`.\n"
+        "- Realtime transcript: session `t1`, turn `t1`.\n",
+    )
+    _write_aged(vault_root / "entities" / "lena.md", junky)
+    journal.append(
+        [CandidateFact(fact="Lena enjoys hiking.", kind="person", subjects=("lena",))],
+        source_label="voice:tidy-update",
+        turn_hash="tidy-update",
+    )
+    cid = journal.pending()[0].id
+
+    tidied = LENA_BODY.replace(
+        "- Lena lives in Hamburg.\n",
+        "- Lena lives in Hamburg.\n- Lena enjoys hiking.\n",
+    ).replace(
+        "## Sources\n\n- conversation\n",
+        "## Sources\n\n- Realtime transcript: session `s1`, turn `t1`.\n",
+    )
+    brain = FakeBrain([_judge_json([{
+        "candidate_id": cid,
+        "decision": "update",
+        "target": "entities/lena.md",
+        "new_body": tidied,
+        "reason": "merge + tidy",
+    }])])
+    consolidator = _consolidator(stack, brain)
+
+    label = await consolidator.run_once()
+
+    assert label == "journal-batch:1"
+    content = (vault_root / "entities" / "lena.md").read_text(encoding="utf-8")
+    assert "- Lena enjoys hiking." in content
+    assert content.count("session `s1`, turn `t1`") == 1
+    assert journal.pending() == []
+
+
 def test_source_citation_uuid_in_inline_code_is_not_a_numeric_claim() -> None:
     """A schema-style Sources line cites opaque ids in inline code
     (``session `f260abcc-…```` ). Fragmenting those ids into pseudo-numbers

@@ -36,6 +36,7 @@ from pathlib import Path
 from jarvis.core.events import WikiPageChanged
 
 from .log_writer import LogWriter
+from .page import normalise_sources_section
 from .protocols import (
     AtomicWriter,
     CuratorLLM,
@@ -217,6 +218,24 @@ class WikiCurator:
         # text, never left dangling. Deterministic, regex only, no LLM,
         # no I/O — mirrors the session-rollup post-pass.
         updates = self._demote_dangling_links(updates)
+
+        # ----- 1c. canonicalise Sources citations ----------------------
+        # Deterministic tidy of the ## Sources section (dedupe, drop
+        # fabricated session==turn pairs, collapse gaps) so judge noise
+        # never lands on disk — where the consolidator's preservation
+        # guard would otherwise require every later update to keep it.
+        updates = [
+            upd
+            if (tidied := normalise_sources_section(upd.new_body)) == upd.new_body
+            else PageUpdate(
+                target_path=upd.target_path,
+                operation=upd.operation,
+                new_body=tidied,
+                rename_from=upd.rename_from,
+                reason=upd.reason,
+            )
+            for upd in updates
+        ]
 
         # ----- 2. hand the proposal to the writer ----------------------
         # The writer takes the snapshot, applies each update via

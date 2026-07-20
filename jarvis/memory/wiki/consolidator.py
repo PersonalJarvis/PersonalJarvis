@@ -47,6 +47,7 @@ from jarvis.memory.wiki.curator_llm import (
 )
 from jarvis.memory.wiki.intent import match_wiki_intent
 from jarvis.memory.wiki.journal import JournalRow, normalise_subjects
+from jarvis.memory.wiki.page import normalise_sources_section
 from jarvis.memory.wiki.prompt import (
     build_consolidator_prompt,
     resolve_user_entity_slug,
@@ -1302,11 +1303,19 @@ class Consolidator:
         schema-valid full-page replacement may therefore change ``updated:``
         metadata and add content, but it may not silently delete identity
         metadata, headings, prose, facts, links, or source lines.
+
+        Both sides are compared through ``normalise_sources_section``: the
+        write path canonicalises Sources citations anyway, so noise the
+        normaliser strips from the CURRENT page is not required to survive
+        — otherwise a page carrying pre-normalisation junk rejects every
+        tidying update forever (the live user.md wedge of 2026-07-20).
         """
         try:
             current = path.read_text(encoding="utf-8")
         except OSError:
             return False
+        current = normalise_sources_section(current)
+        proposed = normalise_sources_section(proposed)
 
         def _required_lines(raw: str) -> set[str]:
             lines = raw.splitlines()

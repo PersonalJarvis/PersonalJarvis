@@ -17,6 +17,7 @@ from jarvis.memory.wiki.page import (
     DIR_TO_TYPE,
     REQUIRED_KEYS,
     MarkdownPageRepository,
+    normalise_sources_section,
     parse_markdown,
     parse_sections,
     render_page,
@@ -468,3 +469,59 @@ def test_repository_render_round_trip(tmp_path: Path) -> None:
     text = repo.render(page)
     re_parsed = asyncio.run(repo.parse(text, _entity_page(tmp_path)))
     assert re_parsed == page
+
+
+# ──────────────────────────────────────────────────────────────────────
+# normalise_sources_section
+# ──────────────────────────────────────────────────────────────────────
+
+
+def test_sources_normaliser_collapses_gaps_and_duplicates() -> None:
+    body = (
+        "# User\n\n## Facts\n\n- A fact.\n\n## Sources\n\n"
+        "- Realtime transcript: session `aaa`, turn `bbb`.\n"
+        "\n"
+        "- Realtime transcript: session `aaa`, turn `bbb`.\n"
+        "- Realtime transcript: session `ccc`, turn `ddd`.\n"
+    )
+    out = normalise_sources_section(body)
+    assert out == (
+        "# User\n\n## Facts\n\n- A fact.\n\n## Sources\n\n"
+        "- Realtime transcript: session `aaa`, turn `bbb`.\n"
+        "- Realtime transcript: session `ccc`, turn `ddd`.\n"
+    )
+
+
+def test_sources_normaliser_rewrites_fabricated_session_turn_pair() -> None:
+    body = "## Sources\n\n- Realtime transcript: session `xxx`, turn `xxx`.\n"
+    out = normalise_sources_section(body)
+    assert "- Realtime transcript: turn `xxx`.\n" in out
+    assert "session `xxx`" not in out
+
+
+def test_sources_normaliser_drops_single_id_bullet_subsumed_by_pair() -> None:
+    body = (
+        "## Sources\n\n"
+        "- Realtime transcript: session `sss`, turn `ttt`.\n"
+        "- User evidence turn `ttt`.\n"
+        "- User evidence turn `zzz`.\n"
+    )
+    out = normalise_sources_section(body)
+    assert "- User evidence turn `ttt`.\n" not in out
+    # An id no pair covers keeps its own line.
+    assert "- User evidence turn `zzz`.\n" in out
+
+
+def test_sources_normaliser_without_sources_section_is_identity() -> None:
+    body = "# Page\n\n## Facts\n\n- 1\n- 1\n"
+    assert normalise_sources_section(body) == body
+
+
+def test_sources_normaliser_preserves_following_sections() -> None:
+    body = (
+        "## Sources\n\n- a `x1`, b `y1`.\n- a `x1`, b `y1`.\n\n"
+        "## Appendix\n\nKeep me.\n"
+    )
+    out = normalise_sources_section(body)
+    assert out.endswith("## Appendix\n\nKeep me.\n")
+    assert out.count("- a `x1`, b `y1`.") == 1
