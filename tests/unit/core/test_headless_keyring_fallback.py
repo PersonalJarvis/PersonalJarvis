@@ -135,7 +135,16 @@ def test_ensure_keyring_backend_leaves_working_os_keyring_untouched(monkeypatch)
 
     cfg._ensure_keyring_backend()
 
-    assert "kr" not in called, "a working OS keyring must NOT be replaced by the file fallback"
+    if sys.platform == "darwin":
+        # BUG-103: on macOS a working OS keyring is wrapped in the
+        # single-Keychain-item bundle backend (never replaced by the file
+        # fallback), so the process-global keyring IS re-set here.
+        kr = called.get("kr")
+        assert kr is not None, "a viable macOS keyring must be wrapped in the bundle backend"
+        assert not getattr(kr, "_jarvis_file_backend", False)
+        assert getattr(kr, "_jarvis_platform_wrapper", False)
+    else:
+        assert "kr" not in called, "a working OS keyring must NOT be replaced by the file fallback"
 
 
 def test_delete_secret_succeeds_on_file_backend_only_host(monkeypatch, tmp_path):

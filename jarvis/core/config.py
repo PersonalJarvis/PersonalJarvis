@@ -2682,6 +2682,12 @@ def _is_platform_keyring_backend(backend: Any) -> bool:
     """Return whether *backend* is a real platform credential-store candidate."""
     if backend is None or getattr(backend, "_jarvis_file_backend", False):
         return False
+    if getattr(backend, "_jarvis_platform_wrapper", False):
+        # DarwinBundleKeyringBackend (macOS Keychain item-count collapse,
+        # BUG-103) wraps the real platform backend rather than subclassing
+        # it. Delegate the check to the wrapped instance instead of
+        # inspecting class/module names against an unpinned library (AP-28).
+        return _is_platform_keyring_backend(getattr(backend, "_inner", None))
     try:
         # ``fail.Keyring`` advertises zero priority. Use that capability rather
         # than an isinstance check against unpinned third-party internals.
@@ -2755,6 +2761,13 @@ def _ensure_keyring_backend() -> None:
     read/write is handled at runtime by ``get_secret``/``set_secret``/
     ``delete_secret`` via ``_install_file_cred_backend``. Any error is swallowed —
     a missing keyring must never break boot.
+
+    On macOS, a viable platform backend is additionally wrapped in
+    ``DarwinBundleKeyringBackend`` (BUG-103) so every Jarvis secret collapses
+    into ONE Keychain item instead of one item per credential slot — an
+    unsigned interpreter otherwise re-prompts "Always Allow" separately for
+    each of the ~10 provider slots the pre-boot key check reads. Windows and
+    Linux never wrap, so their behavior is unchanged.
     """
     global _KEYRING_BACKEND_READY
     if _KEYRING_BACKEND_READY:
@@ -2763,12 +2776,19 @@ def _ensure_keyring_backend() -> None:
     try:
         import keyring
 
-        if not _is_platform_keyring_backend(keyring.get_keyring()):
+        current_backend = keyring.get_keyring()
+        if not _is_platform_keyring_backend(current_backend):
             _install_file_cred_backend(
                 "no OS credential store available (headless host)",
                 retain_platform_backend=False,
             )
-    except Exception:  # noqa: BLE001
+        elif sys.platform == "darwin" and not getattr(
+            current_backend, "_jarvis_platform_wrapper", False
+        ):
+            from .keychain_bundle import DarwinBundleKeyringBackend
+
+            keyring.set_keyring(DarwinBundleKeyringBackend(current_backend))
+    except Exception:  # noqa: BLE001, S110 -- a missing keyring must never break boot
         pass
 
 
@@ -2803,6 +2823,19 @@ def _try_restore_platform_keyring_backend() -> bool:
         candidate = keyring_mod.get_keyring()
         if not _is_platform_keyring_backend(candidate):
             raise RuntimeError("platform backend discovery found no usable backend")
+
+        # ``init_backend()`` just installed the RAW auto-detected backend
+        # (unwrapped — it replaces whatever the process-global keyring
+        # pointed at). Re-wrap it on macOS before the probe below runs, so
+        # the probe proves the bundle lifecycle rather than the raw
+        # per-item backend (BUG-103).
+        if sys.platform == "darwin" and not getattr(
+            candidate, "_jarvis_platform_wrapper", False
+        ):
+            from .keychain_bundle import DarwinBundleKeyringBackend
+
+            candidate = DarwinBundleKeyringBackend(candidate)
+            keyring_mod.set_keyring(candidate)
 
         # A read-only probe was insufficient on Windows: WinVault could read an
         # old value while every write failed with error 1312. Use a unique,

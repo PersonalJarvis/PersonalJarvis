@@ -7,12 +7,26 @@ shadows the newly saved value on the next process start.
 
 from __future__ import annotations
 
+import sys
+
 import keyring
 import keyring.backend
 import pytest
 
 import jarvis.core.config as cfg
 from jarvis.marketplace.token_store import Tokens, TokenStore
+
+
+@pytest.fixture(autouse=True)
+def _force_non_darwin_platform(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests exercise the platform-agnostic file/platform swap and
+    recovery logic with fake in-memory backends; they assert on the RAW
+    backend's stored keys directly, so they must behave identically no
+    matter which host OS actually runs the suite. Force a non-darwin
+    platform so BUG-103's macOS Keychain-bundle wrapping (a separate
+    concern, covered by ``test_keychain_bundle.py`` and
+    ``test_headless_keyring_fallback.py``) never engages here."""
+    monkeypatch.setattr(sys, "platform", "linux")
 
 
 class _MemoryBackend(keyring.backend.KeyringBackend):

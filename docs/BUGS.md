@@ -7108,3 +7108,25 @@ turn's record.
 **Guards.** `tests/unit/realtime/test_session.py::
 test_user_speech_during_silent_external_update_reclaims_the_turn` and
 `::test_hijacked_external_update_turn_completes_on_the_user_track`.
+
+---
+
+## BUG-103: one macOS Keychain permission dialog PER stored secret — boot triggers a 5-10 dialog storm (HIGH, FIXED 2026-07-20)
+
+**Symptom.** Every boot on the Mac popped a stack of Keychain dialogs
+("python3.12 wants to use your confidential information ... cannot verify
+authenticity"), one per stored provider key — the pre-boot key check reads
+~10 slots, and the unsigned venv python keeps "Always allow" from sticking
+durably across binary updates.
+
+**Fix (`jarvis/core/keychain_bundle.py`).** On macOS the platform keyring
+backend is wrapped in `DarwinBundleKeyringBackend`: ALL Jarvis secrets live
+in ONE Keychain item (`__jarvis_vault__`, JSON map) with a process-local
+cache. One item → one dialog → one "Always allow", ever. Legacy per-key
+items migrate into the vault on first read and are deleted so they stop
+prompting. Malformed vault JSON self-disables the wrapper (delegates to the
+inner backend, never destroys data); migration errors fail open. Windows
+and Linux paths are untouched (`sys.platform == "darwin"` gates every
+wrap); the existing write/read/delete backend probe runs THROUGH the
+wrapper, proving the vault lifecycle. Guards:
+`tests/unit/core/test_keychain_bundle.py`.
