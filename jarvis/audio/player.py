@@ -28,7 +28,7 @@ else:
     except Exception:  # noqa: BLE001 — sounddevice/PortAudio (libportaudio2) absent (headless/slim)
         sd = None  # type: ignore[assignment]
 
-from jarvis.audio import echo_reference, level_tap
+from jarvis.audio import echo_reference, level_tap, topology
 from jarvis.audio.device_select import is_legacy_primary_mapper
 from jarvis.audio.gain import apply_output_gain, clamp_volume
 from jarvis.core.events import AudioOutFirst
@@ -694,15 +694,19 @@ class AudioPlayer:
                 # slowdown" to this 10 ms drain. 0.2 s matches the buffer
                 # depth used by LiveKit-Agents / Pipecat / RealtimeTTS for
                 # TTS-streaming on WASAPI shared mode.
-                stream = sd.OutputStream(
-                    samplerate=target_rate,
-                    device=self._device,
-                    channels=stream_channels,
-                    dtype="float32",
-                    blocksize=0,
-                    latency=0.2,
-                )
-                stream.start()
+                # Guarded against the hot-swap watcher's PortAudio re-init
+                # window (BUG-102): a stream born between _terminate and
+                # _initialize is a native fault.
+                with topology.stream_open_guard():
+                    stream = sd.OutputStream(
+                        samplerate=target_rate,
+                        device=self._device,
+                        channels=stream_channels,
+                        dtype="float32",
+                        blocksize=0,
+                        latency=0.2,
+                    )
+                    stream.start()
                 self._stream_channels = stream_channels
                 self._device_rate_cache[cache_key] = target_rate
                 log.info(

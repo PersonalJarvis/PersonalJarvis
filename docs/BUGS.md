@@ -7003,3 +7003,51 @@ module contract), `tests/unit/speech/test_echo_guard.py` +
 `tests/unit/realtime/test_session_self_echo.py` (strict short judgment is
 barge-scoped; replay of session c77b7a88's turns 4/5). Physical validation on
 the Mac speakers+mic setup remains pending.
+
+---
+
+## BUG-102: audio devices frozen at process start — plugging or pulling a headset lags and breaks voice until restart (HIGH, FIXED IN CODE 2026-07-20; HARDWARE VALIDATION PENDING)
+
+**Symptom.** Mac live test 2026-07-20: plugging wired headphones into the
+MacBook made the whole voice loop lag heavily; unplugging them left voice
+broken AND laggy until an app restart. The settings pinned the microphone to
+the jack's device by name while output stood on automatic.
+
+**Reconstruction.** PortAudio freezes its device table at initialization —
+the process never sees devices arriving or leaving, on ANY OS. Three layers
+degrade at once. (1) The persistent output stream keeps writing to the
+no-longer-default or vanished device: blocking writes stall for seconds,
+watchdogs fire, everything downstream feels laggy. (2) The mic stall
+watchdog does reopen after ~3 s of silence — but only against the STALE
+table, so it retries the dead endpoint forever and can never find the newly
+arrived one. (3) Boot-time device settling (`device_init`) and the Settings
+rescan (out-of-process probe) both exist, but NOTHING watched the topology
+at runtime.
+
+**Fix (`jarvis/audio/topology.py`, cross-platform by construction).**
+A post-ready watcher polls the existing out-of-process device probe (safe
+while this process holds live streams) every 5 s and reduces each snapshot
+to a name-based signature (devices + default pair — never indices). On a
+settled change it performs the ONE safe refresh sequence: discard every
+registered capture stream and the player's stream FIRST (re-init with live
+streams is the BUG-058 native-fault path), re-initialize PortAudio under the
+established re-init lock, then invalidate every resolve/device cache and
+re-resolve the configured output spec. Reopening is owned by the existing
+self-healers: the mic watchdog fires on its next one-second tick (heartbeat
+backdated by `discard_native_stream`) and the player reopens lazily on the
+next playback. Every native stream open now holds `stream_open_guard()` so
+no stream can be born between terminate and initialize. Headless installs
+short-circuit before ever spawning the probe. Nothing runs on the boot
+critical path (AP-26).
+
+**Class rule.** PortAudio's device table is immutable per initialization:
+any long-running voice process MUST either watch topology and re-init
+(coordinated, streams quiesced first) or accept death on the first hot-swap.
+A name-pinned device is an automatic choice by contract — when it vanishes,
+resolution falls over to a real device and comes back when the name returns.
+
+**Guards.** `tests/unit/audio/test_topology.py`: signature identity (index
+shuffles invisible, unplug + default move visible), one refresh per settled
+change, probe outage fails open, refresh order (quiesce → re-init →
+invalidate → re-resolve), watchdog heartbeat backdating. Physical
+plug/unplug validation on macOS/Windows/Linux remains pending.

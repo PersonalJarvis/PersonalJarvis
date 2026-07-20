@@ -30,6 +30,7 @@ else:
     except Exception:  # noqa: BLE001 — sounddevice/PortAudio (libportaudio2) absent (headless/slim)
         sd = None  # type: ignore[assignment]
 
+from jarvis.audio import topology
 from jarvis.audio.device_select import is_legacy_primary_mapper
 from jarvis.core.protocols import AudioChunk
 
@@ -808,15 +809,38 @@ class MicrophoneCapture:
                         capture_rate, self._sample_rate, self._channels
                     )
                 )
-                stream = sd.InputStream(
-                    device=attempt,
-                    channels=self._channels,
-                    samplerate=capture_rate,
-                    blocksize=capture_blocksize,
-                    dtype=DTYPE,
-                    callback=self._callback,
+                # The guard keeps this open out of the PortAudio re-init
+                # window of the hot-swap watcher (BUG-102): a stream born
+                # between _terminate and _initialize is a native fault. The
+                # open runs OFF the event loop so a refresh holding the
+                # guard stalls only this open, never the whole loop.
+                def _guarded_open(
+                    device: int | str | None, rate: int, blocksize: int
+                ) -> Any:
+                    with topology.stream_open_guard():
+                        opened = sd.InputStream(
+                            device=device,
+                            channels=self._channels,
+                            samplerate=rate,
+                            blocksize=blocksize,
+                            dtype=DTYPE,
+                            callback=self._callback,
+                        )
+                        try:
+                            opened.start()
+                        except BaseException:
+                            # The failed native stream must not leak — the
+                            # outer candidate loop only sees the exception.
+                            try:
+                                opened.close()
+                            except Exception:  # noqa: BLE001, S110
+                                pass
+                            raise
+                        return opened
+
+                stream = await asyncio.to_thread(
+                    _guarded_open, attempt, capture_rate, capture_blocksize
                 )
-                stream.start()
                 self._stream = stream
                 self._device = attempt
                 self._using_physical_fallback = physical_fallback
@@ -923,30 +947,10 @@ class MicrophoneCapture:
             old_stream = self._stream
             self._stream = None
             if old_stream is not None:
-                # A stalled callback stream cannot drain gracefully.  In
-                # particular, CoreAudio may leave ``InputStream.stop()``
-                # blocked inside PortAudio for minutes after an endpoint or
-                # power-state transition.  Abort discards the dead native
-                # stream immediately, matching AudioPlayer's established
-                # device-wedge recovery contract.  Every sounddevice stream
-                # exposes ``abort``; the ``stop`` fallback keeps lightweight
-                # test/third-party stream doubles compatible.
-                discard_method = "abort"
-                try:
-                    abort = getattr(old_stream, "abort", None)
-                    if callable(abort):
-                        abort()
-                    else:
-                        discard_method = "stop"
-                        old_stream.stop()
-                except Exception as exc:  # noqa: BLE001
-                    _log.debug(
-                        "Mic-Restart: {}() ignored ({}).", discard_method, exc
-                    )
-                try:
-                    old_stream.close()
-                except Exception as exc:  # noqa: BLE001
-                    _log.debug("Mic-Restart: close() ignored ({}).", exc)
+                # A stalled callback stream cannot drain gracefully — see
+                # ``_discard_stream`` (abort-first, CoreAudio ``stop()`` can
+                # block for minutes after an endpoint transition).
+                self._discard_stream(old_stream)
             try:
                 await self._try_open_stream()
                 _log.info("Mic-Restart #{} succeeded.", self._restart_count)
@@ -963,6 +967,51 @@ class MicrophoneCapture:
             # Reset the heartbeat — grace window for the first frame after reopen.
             self._last_chunk_monotonic = time.monotonic()
 
+    def discard_native_stream(self) -> None:
+        """Drop the native stream so the stall watchdog reopens it (BUG-102).
+
+        Called by the topology watcher (worker thread) right before a
+        PortAudio re-init: the old stream belongs to the dying PortAudio
+        instance and must not survive it. Backdating the heartbeat makes the
+        watchdog fire on its next one-second tick instead of waiting out the
+        full stall threshold, so the audible mic gap stays minimal.
+        """
+        stream, self._stream = self._stream, None
+        if stream is not None:
+            self._discard_stream(stream)
+        if not isinstance(self._device_spec, int):
+            # Indices renumber across a PortAudio re-init; retrying the stale
+            # resolved index first could silently open a DIFFERENT physical
+            # device. Re-enter name/auto resolution against the fresh table.
+            self._preferred_device = self._device_spec
+        self._last_chunk_monotonic = min(
+            self._last_chunk_monotonic,
+            time.monotonic() - self._STALL_THRESHOLD_S - 1.0,
+        )
+
+    @staticmethod
+    def _discard_stream(stream: Any) -> None:
+        """Abort-then-close a (possibly wedged) native stream, never raising.
+
+        Abort discards the dead native stream immediately; CoreAudio can
+        leave ``stop()`` blocked for minutes after an endpoint transition.
+        The ``stop`` fallback keeps lightweight test doubles compatible.
+        """
+        discard_method = "abort"
+        try:
+            abort = getattr(stream, "abort", None)
+            if callable(abort):
+                abort()
+            else:
+                discard_method = "stop"
+                stream.stop()
+        except Exception as exc:  # noqa: BLE001
+            _log.debug("Mic discard: {}() ignored ({}).", discard_method, exc)
+        try:
+            stream.close()
+        except Exception as exc:  # noqa: BLE001
+            _log.debug("Mic discard: close() ignored ({}).", exc)
+
     async def __aenter__(self) -> MicrophoneCapture:
         self._loop = asyncio.get_running_loop()
         await self._try_open_stream()
@@ -971,9 +1020,13 @@ class MicrophoneCapture:
         self._watchdog_task = asyncio.create_task(
             self._stream_watchdog(), name="mic-stall-watchdog"
         )
+        # Visible to the hot-swap watcher so a PortAudio re-init can quiesce
+        # this stream first (BUG-102).
+        topology.register_capture(self)
         return self
 
     async def __aexit__(self, *exc_info) -> None:
+        topology.unregister_capture(self)
         self._closed = True
         watchdog = self._watchdog_task
         self._watchdog_task = None

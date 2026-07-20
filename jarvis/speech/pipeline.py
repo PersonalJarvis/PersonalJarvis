@@ -1864,6 +1864,7 @@ class SpeechPipeline:
         # 7-24 s starved warm-up (see ``_warmup_phase_a``). Kept on the instance
         # so a graceful shutdown can cancel + await it.
         self._deferred_warmup_task: asyncio.Task | None = None
+        self._audio_topology_task: asyncio.Task | None = None
 
         # ContinuationBuffer (Spec docs/superpowers/specs/
         # 2026-05-25-incomplete-prompt-completion-design.md): coalesces a
@@ -4094,6 +4095,7 @@ class SpeechPipeline:
             "_warmup_background_task",
             "_warmup_ready_cue_task",
             "_deferred_warmup_task",
+            "_audio_topology_task",
         ):
             task = getattr(self, attr, None)
             if task is None:
@@ -4101,7 +4103,14 @@ class SpeechPipeline:
             if not task.done():
                 task.cancel()
             try:
-                await task
+                # Bounded: a wedged native call inside a background worker
+                # (e.g. a PortAudio re-init mid-refresh) must not hang the
+                # whole shutdown; the orphaned worker dies with the process.
+                await asyncio.wait_for(asyncio.shield(task), timeout=2.0)
+            except TimeoutError:
+                log.warning(
+                    "Warm-up background task %s did not stop within 2s.", attr
+                )
             except (asyncio.CancelledError, Exception):  # noqa: BLE001 — shutdown swallow
                 pass
             setattr(self, attr, None)
@@ -4146,6 +4155,14 @@ class SpeechPipeline:
             self._warmup_phase_b(), name="warmup-confirmation-audio"
         )
         log.info("Warm-up Phase A complete — confirmation audio rendering in background.")
+
+    def _log_audio_topology_done(self, task: asyncio.Task) -> None:
+        """A silently dead hot-swap watcher must leave a diagnostic (BUG-102)."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            log.warning("Audio topology watcher died: %s", exc)
 
     def _log_warmup_ready_cue_done(self, task: asyncio.Task) -> None:
         try:
@@ -4300,6 +4317,23 @@ class SpeechPipeline:
                 self._play_ready_cue(), name="warmup-ready-cue"
             )
             self._warmup_ready_cue_task.add_done_callback(self._log_warmup_ready_cue_done)
+            # Hot-swap watcher (BUG-102): starts only AFTER honest readiness —
+            # never on the boot critical path (AP-26). Polls the out-of-process
+            # device probe and refreshes PortAudio when a headset is plugged
+            # in or pulled, so mic and speaker follow the user's devices at
+            # runtime on every OS instead of dying on a frozen device table.
+            # ``getattr`` default keeps ``__new__``-built test/hot-reload
+            # instances (which skip ``__init__``) working.
+            if getattr(self, "_audio_topology_task", None) is None:
+                from jarvis.audio.topology import watch_topology
+
+                self._audio_topology_task = asyncio.create_task(
+                    watch_topology(self._player, self._output_device),
+                    name="audio-topology-watch",
+                )
+                self._audio_topology_task.add_done_callback(
+                    self._log_audio_topology_done
+                )
         finally:
             # Never orphan the concurrently-started TTS init: if this deferred
             # task is cancelled (desktop shutdown) before the ``await tts_task``
