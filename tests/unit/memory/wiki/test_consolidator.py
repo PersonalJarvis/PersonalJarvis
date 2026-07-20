@@ -1574,6 +1574,73 @@ async def test_noop_marks_row_without_writing(stack) -> None:
 
 
 @pytest.mark.asyncio
+async def test_companion_add_under_duplicate_candidate_satisfies_graph_check(
+    stack,
+) -> None:
+    """Near-duplicate captures of one fact may split the profile update and
+    the companion topic-page add across their two candidate_ids; the batch
+    still creates the required page and must validate."""
+    vault_root, _curator, journal = stack
+    _write_aged(vault_root / "entities" / "ruben.md", RUBEN_FULL_BODY)
+    journal.append(
+        [
+            CandidateFact(
+                fact="The user uses Safari as their web browser.",
+                kind="asset", subjects=("ruben", "safari"),
+            ),
+            CandidateFact(
+                fact="The user uses Safari as their web browser.",
+                kind="asset", subjects=("ruben", "safari"),
+            ),
+        ],
+        source_label="realtime-session-sweep:dupes", turn_hash="h-safari-dupes",
+    )
+    first, second = [row.id for row in journal.pending()]
+
+    updated_profile = RUBEN_FULL_BODY.replace(
+        "- Enjoys great coffee.\n",
+        "- Enjoys great coffee.\n- Uses Safari as the web browser.\n",
+    )
+    safari_body = (
+        "---\n"
+        "type: entity\n"
+        "entity_kind: tool\n"
+        "slug: safari\n"
+        "aliases: [Safari]\n"
+        f"created: {dt.date.today().isoformat()}\n"
+        f"updated: {dt.date.today().isoformat()}\n"
+        "---\n\n"
+        "# Safari\n\n## Summary\n\nThe user's web browser.\n\n"
+        "## Facts\n\n- Used as the primary web browser.\n\n"
+        "## Relationships\n\n- Used by [[entities/ruben|the user]].\n\n"
+        "## Sources\n\n- conversation\n"
+    )
+    brain = FakeBrain([_judge_json([
+        {
+            "candidate_id": first,
+            "decision": "update",
+            "target": "entities/ruben.md",
+            "new_body": updated_profile,
+            "reason": "profile note",
+        },
+        {
+            "candidate_id": second,
+            "decision": "add",
+            "target": "entities/safari.md",
+            "new_body": safari_body,
+            "reason": "topic page under the duplicate candidate",
+        },
+    ])])
+    consolidator = _consolidator(stack, brain)
+
+    label = await consolidator.run_once()
+
+    assert label == "journal-batch:2"
+    assert (vault_root / "entities" / "safari.md").is_file()
+    assert journal.pending() == []
+
+
+@pytest.mark.asyncio
 async def test_noop_on_graph_visible_fact_without_topic_page_is_accepted(stack) -> None:
     """A noop primary may not carry secondary writes, so the graph-visibility
     check must not demand a companion page for a nooped candidate — otherwise

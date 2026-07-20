@@ -1064,12 +1064,17 @@ class Consolidator:
             if graph_target is None:
                 continue
             graph_path = self._vault_root / graph_target
+            # Any candidate in the batch may carry the companion write: near-
+            # duplicate captures of one fact tempt the judge into putting the
+            # profile update under one candidate_id and the topic-page "add"
+            # under its twin — the batch as a whole still creates the page,
+            # and demanding a per-candidate copy would reject that correct
+            # answer (and force duplicate adds of the same target).
             graph_item = next(
                 (
                     item
                     for item in parsed
-                    if item.get("candidate_id") == cid
-                    and item.get("decision") in ("add", "update")
+                    if item.get("decision") in ("add", "update")
                     and self._safe_target(item.get("target")) == graph_target
                 ),
                 None,
