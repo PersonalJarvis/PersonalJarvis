@@ -65,7 +65,11 @@ def _resolved_target(slug: str, root: Path | None = None) -> Path:
     slug validator were bypassed.
     """
     base = root.resolve() if root is not None else _resolve_user_skills_root()
-    candidate = (base / slug).resolve()
+    # Treat both separator styles as path syntax on every host. Without this,
+    # a Windows traversal such as ``..\..\outside`` is only a literal filename
+    # when a security test runs on POSIX, even though it escapes after the same
+    # artifact is moved to Windows.
+    candidate = (base / slug.replace("\\", "/")).resolve()
     try:
         candidate.relative_to(base)
     except ValueError as exc:

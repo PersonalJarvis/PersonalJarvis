@@ -82,7 +82,8 @@ async def test_execute_hallucination_still_flagged_as_misheard(monkeypatch):
     assert "Misshearing" in (res.error or "")
 
 
-def test_whitelisted_app_still_plausible():
+def test_whitelisted_app_still_plausible(monkeypatch):
+    monkeypatch.setattr(oa, "KNOWN_APPS", oa._KNOWN_APPS_WIN)
     ok, _reason, kind = _is_plausible_app_name("notepad")
     assert ok is True
     assert kind == ""

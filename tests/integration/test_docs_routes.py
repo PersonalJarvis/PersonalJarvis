@@ -277,15 +277,16 @@ def test_open_doc_in_editor(
     monkeypatch,
     doc_root: Path,
 ) -> None:
-    """Patch the Windows-only launcher and verify path resolution."""
-    import os as os_module
+    """Patch the cross-platform launcher and verify path resolution."""
+    from jarvis.platform import open_path
 
-    calls: list[str] = []
+    calls: list[Path] = []
 
-    def fake_startfile(path: str) -> None:
+    def fake_open_file(path: Path) -> bool:
         calls.append(path)
+        return True
 
-    monkeypatch.setattr(os_module, "startfile", fake_startfile, raising=False)
+    monkeypatch.setattr(open_path, "open_file", fake_open_file)
     resp = client.post("/api/docs/router-discipline/open")
     assert resp.status_code == 200
     data = resp.json()
@@ -293,6 +294,7 @@ def test_open_doc_in_editor(
     assert data["path"] == "concept-routing.md"
     assert str(doc_root) not in client.get("/api/docs").text
     assert len(calls) == 1
+    assert calls[0] == (doc_root / "docs" / "concept-routing.md").resolve()
 
 
 def test_open_doc_in_editor_unknown_slug(client: TestClient) -> None:

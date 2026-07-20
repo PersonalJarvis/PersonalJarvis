@@ -47,6 +47,18 @@ def _claude_cli_viable_by_default(monkeypatch: pytest.MonkeyPatch) -> None:
         lambda: True,
     )
 
+    # A WebServer or CLI-registry test may seed the process-wide capability
+    # singleton before this module runs. Start every critic-path test with a
+    # fresh registry so unrelated tool capabilities cannot change its verdict.
+    import jarvis.core.capabilities as capability_module
+
+    previous_registry = capability_module._registry_instance
+    capability_module._registry_instance = None
+    try:
+        yield
+    finally:
+        capability_module._registry_instance = previous_registry
+
 
 def _valid_verdict_json(verdict: str = "approve") -> str:
     """A schema-valid CriticVerdict as the raw text claude --print prints.
@@ -64,7 +76,9 @@ def _valid_verdict_json(verdict: str = "approve") -> str:
         "issues": [],
         "correction_instruction": "" if verdict == "approve" else "fix x",
         "summary": "ok" if verdict == "approve" else "needs fix",
-        "summary_de": "ok" if verdict == "approve" else "muss korrigiert werden",  # i18n-allow (German value under summary_de field)
+        "summary_de": (
+            "ok" if verdict == "approve" else "muss korrigiert werden"  # i18n-allow
+        ),
         "confidence": 0.9,
         "suggested_next_action": "accept" if verdict == "approve" else "retry",
     })

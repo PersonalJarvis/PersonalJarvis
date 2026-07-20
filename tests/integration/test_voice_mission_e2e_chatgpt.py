@@ -1,4 +1,4 @@
-"""Live end-to-end integration test for the Welle-6 ChatGPT worker/critic.
+"""Live end-to-end integration test for the Wave-6 ChatGPT worker/critic.
 
 This test drives a real Personal Jarvis mission through the entire
 Phase-6 stack -- ``bootstrap_missions`` boots the MissionManager,
@@ -76,6 +76,7 @@ def _codex_logged_in() -> bool:
 
 pytestmark = [
     pytest.mark.integration,
+    pytest.mark.slow,
     pytest.mark.skipif(
         not _codex_logged_in(),
         reason="requires Codex ChatGPT OAuth",
@@ -83,8 +84,8 @@ pytestmark = [
 ]
 
 
-_PROOF_FILENAME = "welle6_e2e_proof.md"
-_PROOF_CONTENT = "Welle 6 voice mission OK"
+_PROOF_FILENAME = "wave6_e2e_proof.md"
+_PROOF_CONTENT = "Wave 6 voice mission OK"
 _MISSION_PROMPT = (
     f"Create a file {_PROOF_FILENAME} with EXACTLY this single line: "
     f"{_PROOF_CONTENT}"
@@ -133,7 +134,6 @@ def short_root(request: pytest.FixtureRequest) -> Path:
     ``prune_and_sweep_leaked`` helper sweeps stale leaked dirs older
     than 6h on the next mission bootstrap anyway.
     """
-    import shutil as _shutil
     import uuid as _uuid
 
     base = Path("C:/tmp/p-jarvis-e2e") / _uuid.uuid4().hex[:8]
@@ -265,13 +265,13 @@ async def test_chatgpt_mission_writes_proof_file_and_reaches_approved(
         else:
             # Secondary path: extract from the captured diff.patch.
             # A `git diff` "new file" hunk for our proof file looks like:
-            #   diff --git a/welle6_e2e_proof.md b/welle6_e2e_proof.md
+            #   diff --git a/wave6_e2e_proof.md b/wave6_e2e_proof.md
             #   new file mode 100644
             #   index ...
             #   --- /dev/null
-            #   +++ b/welle6_e2e_proof.md
+            #   +++ b/wave6_e2e_proof.md
             #   @@ -0,0 +1 @@
-            #   +Welle 6 voice mission OK
+            #   +Wave 6 voice mission OK
             # We pluck the added lines (those starting with "+" but not
             # "+++") for the target file and verify exact match.
             diffs = list(mission_dir.rglob("diff.patch")) + list(

@@ -48,7 +48,9 @@ def test_config():
 async def test_webserver_starts_and_stops(test_config):
     WebServer = _try_import_webserver()
     srv = WebServer(test_config)
-    await srv.start()
+    # Bind an ephemeral port so a running Jarvis instance cannot collide with
+    # the smoke test on the configured admin API port.
+    await srv.start(port=0)
     try:
         assert getattr(srv, "running", True), "WebServer.running should be True"
     finally:
@@ -61,7 +63,7 @@ def test_rest_api_health(test_config):
     srv = WebServer(test_config)
     app = getattr(srv, "app", None)
     if app is None:
-        pytest.skip("WebServer.app Attribut fehlt")
+        pytest.skip("WebServer.app attribute is missing")
     with TestClient(app) as client:
         r = client.get("/api/health")
         assert r.status_code == 200
@@ -75,7 +77,7 @@ def test_rest_api_plugins(test_config):
     srv = WebServer(test_config)
     app = getattr(srv, "app", None)
     if app is None:
-        pytest.skip("WebServer.app Attribut fehlt")
+        pytest.skip("WebServer.app attribute is missing")
     with TestClient(app) as client:
         r = client.get("/api/plugins")
         assert r.status_code == 200
@@ -91,7 +93,7 @@ def test_websocket_event_echo(test_config):
     srv = WebServer(test_config)
     app = getattr(srv, "app", None)
     if app is None:
-        pytest.skip("WebServer.app Attribut fehlt")
+        pytest.skip("WebServer.app attribute is missing")
     with TestClient(app) as client:
         try:
             ws_ctx = client.websocket_connect("/ws")
@@ -101,7 +103,7 @@ def test_websocket_event_echo(test_config):
             welcome = ws.receive_json()
             assert welcome.get("type") == "welcome"
 
-            # Feuere ein Event via REST-Debug-Endpoint
+            # Emit an event through the REST debug endpoint.
             r = client.post("/api/debug/emit-test-event")
             if r.status_code == 404:
                 pytest.skip("debug endpoint /api/debug/emit-test-event not implemented")

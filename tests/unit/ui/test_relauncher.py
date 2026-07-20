@@ -90,7 +90,8 @@ def test_wait_times_out_when_pid_never_dies():
     assert out is False
 
 
-def test_main_waits_then_spawns_fresh_launcher():
+def test_main_waits_then_spawns_fresh_launcher(monkeypatch):
+    monkeypatch.setattr(relauncher.sys, "platform", "linux")
     spawned: list[dict] = []
 
     def fake_spawn(cmd, **kwargs):

@@ -17,13 +17,22 @@ import time
 import types
 from uuid import uuid4
 
-import pytest
-
 # Ensure mss.exception is importable for the fake (it is a real dep).
 import mss.exception as _mss_exception
+import pytest
 
 from jarvis.core.protocols import Observation
 from jarvis.vision.context_provider import VisionContextProvider
+
+
+@pytest.fixture(autouse=True)
+def _screen_recording_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep BitBlt tests independent of the macOS TCC state of the host."""
+    import jarvis.vision.screenshot as screenshot_module
+
+    monkeypatch.setattr(
+        screenshot_module, "warn_if_screen_recording_denied", lambda: False
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -271,8 +280,8 @@ async def test_refresh_loop_bitblt_does_not_spam_log(tmp_path, monkeypatch, capl
     """
     monkeypatch.setitem(sys.modules, "mss", _make_fake_mss_fail_module())
 
-    from jarvis.vision.screenshot import ScreenshotSource  # noqa: PLC0415
     from jarvis.vision.engine import VisionEngine  # noqa: PLC0415
+    from jarvis.vision.screenshot import ScreenshotSource  # noqa: PLC0415
 
     # Build a real engine using a real ScreenshotSource (but with fake mss).
     # The UIA tree source is a simple null fake so it never errors.

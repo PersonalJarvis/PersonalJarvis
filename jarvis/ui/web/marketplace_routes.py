@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -19,6 +20,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 
+from jarvis.core.process_utils import resolve_executable
 from jarvis.marketplace.auth import (
     DcrConfig,
     DeviceFlowConfig,
@@ -205,12 +207,12 @@ def _mcp_live(
                 return False, hint
         return True, None
     if transport == "stdio":
-        import shutil
-
         install = mcp.get("install") or []
         launcher = str(install[0]) if install else ""
-        if launcher and shutil.which(launcher):
-            return True, None
+        if launcher:
+            resolved = resolve_executable(launcher)
+            if resolved != launcher or Path(resolved).is_file():
+                return True, None
         return False, (launcher or None)
     return False, None
 

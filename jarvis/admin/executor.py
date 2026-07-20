@@ -436,7 +436,14 @@ class AdminExecutor:
     # ------------------------------------------------------------------
 
     async def _do_read_registry(self, op: ReadRegistryOp) -> dict[str, Any]:
-        import winreg
+        try:
+            import winreg
+        except ImportError:
+            return {
+                "success": False,
+                "error_code": "registry_unsupported",
+                "error_message": "Windows Registry is unavailable on this platform.",
+            }
 
         def _do_read() -> dict[str, Any]:
             hive = _hive_constant(op.hive)
@@ -487,7 +494,14 @@ class AdminExecutor:
         *,
         hive_override: str | None,
     ) -> dict[str, Any]:
-        import winreg
+        try:
+            import winreg
+        except ImportError:
+            return {
+                "success": False,
+                "error_code": "registry_unsupported",
+                "error_message": "Windows Registry is unavailable on this platform.",
+            }
 
         hive_name = hive_override if hive_override else "HKCU"
 
@@ -768,4 +782,3 @@ class AdminExecutor:
             "error_message": (stderr or stdout) if not success else None,
             "result": {"exit_code": rc, "action": op.action, "label": op.label},
         }
-

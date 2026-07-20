@@ -7,16 +7,18 @@ configs without the section must still load cleanly.
 from __future__ import annotations
 
 import tomllib
+from pathlib import Path
 
 from jarvis.core.config import (
-    DEFAULT_CONFIG_FILE,
+    JarvisConfig,
     RouterVisionConfig,
-    load_config,
 )
+
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_router_vision_config_defaults():
-    """RouterVisionConfig liefert ohne jegliche TOML-Daten die dokumentierten Defaults."""
+    """RouterVisionConfig provides documented defaults without TOML data."""
     cfg = RouterVisionConfig()
     assert cfg.enabled is False  # latency fix: opt-in only (default changed)
     assert cfg.refresh_interval_s == 2.0
@@ -24,50 +26,44 @@ def test_router_vision_config_defaults():
     assert cfg.capture_mode == "screenshot"
     assert cfg.max_image_kb == 500
     assert cfg.pause_on_idle is True
-    # Voice-Phrasen DE+EN — Privacy-Mode + Resume.
+    # German and English runtime phrases for privacy mode and resume.
     assert cfg.voice_pause_phrase_de == "privacy"
     assert cfg.voice_pause_phrase_en == "privacy mode"
     assert cfg.voice_resume_phrase_de == "du darfst wieder sehen"
     assert cfg.voice_resume_phrase_en == "vision back on"
-    # Sanity: enthaelt die Plan-Schluesselbegriffe.
+    # Sanity check for the defining intent words.
     assert "privacy" in cfg.voice_pause_phrase_de
     assert "vision" in cfg.voice_resume_phrase_en
 
 
-def test_router_vision_config_loaded_from_jarvis_toml():
-    """Loads the global jarvis.toml via tomllib AND via load_config() and
-    checks that `[brain.router.vision]` correctly lands in RouterVisionConfig.
+def test_public_example_loads_without_router_vision_override():
+    """The public example loads without requiring a private jarvis.toml."""
+    toml_path = REPO_ROOT / "jarvis.toml.example"
+    assert toml_path.exists(), f"public config example not found at {toml_path}"
 
-    Two-layer test:
-      1. Raw TOML — guarantees the section exists with the expected keys.
-      2. load_config() — guarantees Pydantic auto-unmarshals the section
-         into `cfg.brain.router.vision` (RouterVisionConfig).
-    """
-    toml_path = DEFAULT_CONFIG_FILE
-    assert toml_path.exists(), f"jarvis.toml not found at {toml_path}"
-
-    # 1. Raw-TOML layer — section exists with the plan values.
     with toml_path.open("rb") as f:
         data = tomllib.load(f)
-    vsec = data["brain"]["router"]["vision"]
-    assert vsec["enabled"] is False  # latency fix: opt-in only (default changed)
-    assert vsec["capture_mode"] == "screenshot"
-    assert vsec["refresh_interval_s"] == 2.0
-    assert vsec["max_staleness_s"] == 2.0
-    assert vsec["max_image_kb"] == 500
-    assert vsec["pause_on_idle"] is True
-    assert vsec["voice_pause_phrase_de"] == "privacy"
-    assert vsec["voice_pause_phrase_en"] == "privacy mode"
-    assert vsec["voice_resume_phrase_de"] == "du darfst wieder sehen"
-    assert vsec["voice_resume_phrase_en"] == "vision back on"
+    cfg = JarvisConfig.model_validate(data)
+    assert cfg.brain.router is None
 
-    # 2. load_config()-Layer — Pydantic-Auto-Unmarshal landet im richtigen Feld.
-    cfg = load_config(toml_path)
-    assert cfg.brain.router is not None, "brain.router-Section fehlt in jarvis.toml"
-    vision = cfg.brain.router.vision
-    assert isinstance(vision, RouterVisionConfig)
-    assert vision.enabled is False  # latency fix: opt-in only (default changed)
-    assert vision.capture_mode == "screenshot"
-    assert vision.refresh_interval_s == 2.0
-    assert vision.voice_pause_phrase_de == "privacy"
-    assert vision.voice_resume_phrase_en == "vision back on"
+
+def test_router_vision_section_is_unmarshalled_into_typed_config():
+    """An explicit nested section lands in RouterVisionConfig."""
+    cfg = JarvisConfig.model_validate(
+        {
+            "brain": {
+                "router": {
+                    "provider": "gemini",
+                    "vision": {
+                        "enabled": True,
+                        "refresh_interval_s": 3.5,
+                        "capture_mode": "screenshot",
+                    }
+                }
+            }
+        }
+    )
+
+    assert isinstance(cfg.brain.router.vision, RouterVisionConfig)
+    assert cfg.brain.router.vision.enabled is True
+    assert cfg.brain.router.vision.refresh_interval_s == 3.5

@@ -28,7 +28,11 @@ def test_spotify_aliases_resolve_to_protocol_startfile_target(name: str) -> None
 
 
 @pytest.mark.parametrize("name", ["terminal", "windows terminal", "windowsterminal"])
-def test_windows_terminal_aliases_resolve_to_wt_executable(name: str) -> None:
+def test_windows_terminal_aliases_resolve_to_wt_executable(
+    name: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app_resolver, "detect_platform", lambda: "win32")
     assert resolve_app_launch_target(name) == LaunchTarget("executable", "wt")
 
 
@@ -57,7 +61,11 @@ def test_microsoft_store_is_in_the_windows_app_whitelist() -> None:
 
 
 @pytest.mark.parametrize("name", ["powershell", "pwsh", "cmd"])
-def test_shell_names_remain_direct_executable_targets(name: str) -> None:
+def test_shell_names_remain_direct_executable_targets(
+    name: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(app_resolver, "detect_platform", lambda: "win32")
     assert resolve_app_launch_target(name) == LaunchTarget("executable", name)
 
 
@@ -69,6 +77,7 @@ def test_app_paths_hit_resolves_to_absolute_executable(
     Regression for the silent-no-op bug: ``os.startfile("chrome")`` did nothing
     (Chrome is not on PATH), so the launch had to be pinned to a real path.
     """
+    monkeypatch.setattr(app_resolver, "detect_platform", lambda: "win32")
     fake = r"C:\Program Files\Google\Chrome\Application\chrome.exe"
     monkeypatch.setattr(
         app_resolver, "_resolve_via_app_paths", lambda exe: fake if exe == "chrome.exe" else None
@@ -80,6 +89,7 @@ def test_exe_alias_maps_voice_name_to_real_executable_basename(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """'edge'/'word' must be looked up under their real exe names."""
+    monkeypatch.setattr(app_resolver, "detect_platform", lambda: "win32")
     queried: list[str] = []
 
     def _spy(exe: str) -> str | None:
@@ -97,6 +107,7 @@ def test_path_resolution_when_not_in_app_paths(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Built-ins like notepad/calc resolve via PATH to an absolute exe."""
+    monkeypatch.setattr(app_resolver, "detect_platform", lambda: "win32")
     monkeypatch.setattr(app_resolver, "_resolve_via_app_paths", lambda exe: None)
     monkeypatch.setattr(
         app_resolver.shutil,
@@ -112,6 +123,7 @@ def test_falls_back_to_startfile_when_unresolvable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Truly unknown names degrade to the shell (last-resort startfile)."""
+    monkeypatch.setattr(app_resolver, "detect_platform", lambda: "win32")
     monkeypatch.setattr(app_resolver, "_resolve_via_app_paths", lambda exe: None)
     monkeypatch.setattr(app_resolver.shutil, "which", lambda name: None)
     assert resolve_app_launch_target("frobnicator") == LaunchTarget("startfile", "frobnicator")
@@ -229,6 +241,7 @@ async def test_open_app_uses_resolved_executable_target_before_launch(
 ) -> None:
     popen_calls: list[list[str]] = []
 
+    monkeypatch.setattr(app_resolver, "detect_platform", lambda: "win32")
     monkeypatch.delattr(os, "startfile", raising=False)
     monkeypatch.setattr(subprocess, "Popen", lambda args, **kwargs: popen_calls.append(args))
 

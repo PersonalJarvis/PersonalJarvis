@@ -16,22 +16,33 @@ import pytest
 
 from jarvis.brain.manager import BrainManager
 from jarvis.core.bus import EventBus
-from jarvis.core.config import load_config
+from jarvis.core.config import BrainTierConfig, load_config
+
+
+@pytest.fixture(autouse=True)
+def _all_test_providers_have_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep chain-order tests independent of the host's private key store."""
+    monkeypatch.setattr(
+        "jarvis.core.config.get_secret_any",
+        lambda _candidates: "test-key",
+    )
 
 
 def _cfg(*, primary: str, provider: str, fallback_provider: str | None):
     cfg = load_config()
     cfg.brain.primary = primary
-    cfg.brain.router.provider = provider
-    cfg.brain.router.fallback_provider = fallback_provider
+    cfg.brain.router = BrainTierConfig(
+        provider=provider,
+        fallback_provider=fallback_provider,
+    )
     return cfg
 
 
 def test_deep_brain_follows_override_when_no_explicit_split() -> None:
     # primary=claude-api overrides the tier default gemini; fallback==provider
     # means there is NO deliberate cross-provider deep split → deep must follow
-    # claude-api. (claude-api is used because the chain builder drops providers
-    # without a configured key; claude-api is keyed in this environment.)
+    # claude-api. The fixture supplies synthetic credentials so this assertion
+    # never depends on a maintainer machine's private key store.
     cfg = _cfg(primary="claude-api", provider="gemini", fallback_provider="gemini")
     mgr = BrainManager.from_tier_config("router", cfg, EventBus(), provider_override="claude-api")
 

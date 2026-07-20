@@ -137,6 +137,9 @@ async def test_happy_path_flash_brain_publishes_preamble() -> None:
 async def test_happy_path_announcement_handler_calls_tts_once() -> None:
     """The _on_announcement handler is the entry point into TTS — verify the
     preamble flows through it exactly once and reaches synthesize()."""
+    async def _not_delivered_via_realtime(*_args: Any, **_kwargs: Any) -> bool:
+        return False
+
     stub = SimpleNamespace(
         _ack_brain=MagicMock(),  # truthy → suppression branch skipped for ack_brain
         _player=MagicMock(),
@@ -147,6 +150,10 @@ async def test_happy_path_announcement_handler_calls_tts_once() -> None:
         _output_language=lambda lang, text: lang,  # language resolver
         _emit_spoken=lambda *a, **kw: None,         # session-log hook
         _bcp47=lambda lang: lang,                   # BCP-47 converter
+        _deliver_announcement_via_realtime=_not_delivered_via_realtime,
+        _realtime_session_owns_voice=lambda: False,
+        _register_assistant_speech=lambda _text: None,
+        _playback_confirmed=lambda _result: True,
     )
     stub._tts.synthesize = MagicMock(return_value=iter([b"audio-chunk"]))
 

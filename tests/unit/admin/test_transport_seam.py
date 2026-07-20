@@ -75,7 +75,9 @@ async def test_signed_envelope_roundtrips_through_fake_transport():
         assert resp.op_id == op.op_id
         if not resp.success:
             assert resp.error_code in (
-                "registry_key_not_found", "registry_read_failed",
+                "registry_key_not_found",
+                "registry_read_failed",
+                "registry_unsupported",
             )
         # The fake actually carried the raw signed envelope.
         assert transport.roundtrips, "transport.roundtrip was never invoked"

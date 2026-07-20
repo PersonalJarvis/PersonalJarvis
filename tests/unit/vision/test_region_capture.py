@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from jarvis.vision import screenshot as screenshot_module
 from jarvis.vision.screenshot import capture_region, region_bbox_around
 
 
@@ -25,7 +26,7 @@ def test_region_bbox_clamps_to_virtual_bounds() -> None:
     assert bb["width"] >= 1 and bb["height"] >= 1
 
 
-def test_capture_region_returns_jpeg_bytes() -> None:
+def test_capture_region_returns_jpeg_bytes(monkeypatch) -> None:
     import pytest
 
     pytest.importorskip("PIL")  # Pillow lives in the [desktop] extra (cloud-first)
@@ -34,6 +35,9 @@ def test_capture_region_returns_jpeg_bytes() -> None:
         w, h = bbox["width"], bbox["height"]
         return ((w, h), b"\x10\x20\x30" * (w * h))  # solid RGB fill
 
+    monkeypatch.setattr(
+        screenshot_module, "warn_if_screen_recording_denied", lambda: False
+    )
     data = capture_region(
         {"left": 0, "top": 0, "width": 8, "height": 8}, grab=fake_grab
     )
@@ -41,7 +45,7 @@ def test_capture_region_returns_jpeg_bytes() -> None:
     assert len(data) > 10
 
 
-def test_capture_region_png_format() -> None:
+def test_capture_region_png_format(monkeypatch) -> None:
     import pytest
 
     pytest.importorskip("PIL")
@@ -50,6 +54,9 @@ def test_capture_region_png_format() -> None:
         w, h = bbox["width"], bbox["height"]
         return ((w, h), b"\xaa\xbb\xcc" * (w * h))
 
+    monkeypatch.setattr(
+        screenshot_module, "warn_if_screen_recording_denied", lambda: False
+    )
     data = capture_region(
         {"left": 0, "top": 0, "width": 4, "height": 4},
         image_format="png",

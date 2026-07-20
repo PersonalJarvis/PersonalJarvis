@@ -19,15 +19,17 @@ import pytest
 
 from jarvis.brain.manager import BrainManager
 from jarvis.core.bus import EventBus
-from jarvis.core.config import load_config
+from jarvis.core.config import BrainTierConfig, load_config
 from jarvis.core.events import SecretConfigured
 
 
 def _cfg(*, primary: str):
     cfg = load_config()
     cfg.brain.primary = primary
-    cfg.brain.router.provider = primary
-    cfg.brain.router.fallback_provider = primary
+    cfg.brain.router = BrainTierConfig(
+        provider=primary,
+        fallback_provider=primary,
+    )
     return cfg
 
 

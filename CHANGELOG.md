@@ -2,15 +2,44 @@
 
 All notable changes in Personal Jarvis.
 
-Format based on [Keep a Changelog](https://keepachangelog.com/de/1.1.0/),
-versioning per [SemVer](https://semver.org/lang/de/).
+Format based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+versioning per [SemVer](https://semver.org/).
 
 ---
 
 ## [Unreleased]
 
+## [1.1.2] — 2026-07-20
+
 ### Fixed
 
+- **Audio input and voice-output devices now stay accurate after hardware
+  changes.** The settings picker refreshes safely when microphones, speakers,
+  headsets, or virtual devices are connected or removed, shows the actual
+  input/output devices on the current OS, and preserves a valid selection
+  without requiring an app restart.
+- **Wake, push-to-talk, and realtime voice recover instead of going silent.**
+  Wake-microphone reopen failures and stalled reads now trigger bounded
+  recovery, push-to-talk release is reliable, microphone-send stalls rebuild
+  cleanly, stale rebuild timeouts are ignored, and novel follow-up speech is
+  preserved while self-playback and barge-in are cancelled atomically.
+- **Fresh-install model choices and fallbacks are respected.** A model selected
+  through the provider UI is no longer overwritten when no explicit router
+  section exists, same-provider fallback models remain available, coding-CLI
+  readiness/login state is truthful, and tests no longer inherit a maintainer
+  machine's private provider configuration or credentials.
+- **Mission results and desktop workflows fail honestly and remain usable.**
+  Mission outcome handling, connected coding-CLI flows, saved-file drag-out,
+  and macOS Computer-Use indicator behavior were hardened across success,
+  retry, and unavailable-capability paths.
+- **Wiki capture uses one canonical entity taxonomy.** Bundled vault templates,
+  graph ingestion, and desktop rendering now agree on entity types, while
+  newly captured facts surface consistently in the graph.
+- **Cross-platform setup and validation are more portable.** Non-Windows
+  Registry operations return an explicit unsupported result, subprocess and
+  stdio checks recognize the running virtual-environment interpreter without
+  relying on PATH, and simulated Windows paths keep Windows separators on
+  macOS/Linux CI. Skill-draft traversal checks now reject both separator styles.
 - **macOS: Jarvis Bar hover controls now react and remain stable.** The
   non-activating Qt panel could miss mouse-move events, while replacing its
   alpha input mask emitted a false leave as the pill expanded. The result was

@@ -9,9 +9,8 @@ from __future__ import annotations
 
 from jarvis.brain.manager import BrainManager, get_tier_default_model
 from jarvis.core.bus import EventBus
-from jarvis.core.config import BrainProviderConfig, load_config
+from jarvis.core.config import BrainProviderConfig, BrainTierConfig, load_config
 from jarvis.harness import screenshot_only_loop as sol
-
 
 # --- config field -----------------------------------------------------------
 
@@ -42,31 +41,33 @@ def test_brain_provider_config_voice_defaults_empty():
 
 def test_cu_model_prefers_pinned_cu_model():
     cfg = load_config()
-    cfg.brain.router.provider = "gemini"
-    cfg.brain.providers["gemini"].model = "gemini-3.5-flash"
-    cfg.brain.providers["gemini"].cu_model = "gemini-3.1-pro-preview"
+    cfg.brain.router = BrainTierConfig(provider="gemini")
+    cfg.brain.providers["gemini"] = BrainProviderConfig(
+        model="gemini-3.5-flash",
+        cu_model="gemini-3.1-pro-preview",
+    )
     mgr = BrainManager.from_tier_config("router", cfg, EventBus())
     assert mgr._cu_model("gemini") == "gemini-3.1-pro-preview"
 
 
 def test_cu_model_falls_back_to_main_model_when_unset():
     cfg = load_config()
-    cfg.brain.router.provider = "gemini"
-    cfg.brain.providers["gemini"].model = "gemini-3.5-flash"
-    cfg.brain.providers["gemini"].cu_model = None
+    cfg.brain.router = BrainTierConfig(provider="gemini")
+    cfg.brain.providers["gemini"] = BrainProviderConfig(
+        model="gemini-3.5-flash",
+        cu_model=None,
+    )
     mgr = BrainManager.from_tier_config("router", cfg, EventBus())
     assert mgr._cu_model("gemini") == "gemini-3.5-flash"
 
 
 def test_cu_model_falls_back_to_router_default_for_absent_provider():
     cfg = load_config()
-    cfg.brain.router.provider = "gemini"
+    cfg.brain.router = BrainTierConfig(provider="gemini")
     mgr = BrainManager.from_tier_config("router", cfg, EventBus())
     # A provider with no [brain.providers.<p>] block resolves to the router default.
-    assert mgr._cu_model("openrouter") == (
-        cfg.brain.providers.get("openrouter").cu_model
-        or cfg.brain.providers.get("openrouter").model
-        or get_tier_default_model("router", "openrouter")
+    assert mgr._cu_model("openrouter") == get_tier_default_model(
+        "router", "openrouter"
     )
 
 
