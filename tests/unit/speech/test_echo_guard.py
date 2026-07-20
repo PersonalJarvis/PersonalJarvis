@@ -98,3 +98,59 @@ def test_forced_touch_resets_the_horizon() -> None:
     guard.register("Das freut mich zu hören.")  # i18n-allow: voice fixture
     guard.touch(time.time_ns() - int(60e9), force=True)
     assert guard.is_echo("freut mich zu hören") is False  # i18n-allow
+
+
+# --- BUG-101: short truncated echo phantoms ---------------------------------
+
+
+def test_single_word_echo_of_active_playback_is_flagged() -> None:
+    # Session c77b7a88 turn 4: the mic heard the assistant's own
+    # "Thanksgiving" while the answer about Thanksgiving was still playing.
+    guard = SelfEchoGuard()
+    guard.register(
+        "An Thanksgiving kommt traditionell die ganze Familie zusammen"  # i18n-allow: voice fixture
+    )
+    assert guard.is_echo("Thanksgiving", judge_short=True) is True
+    # Without the barge-capture opt-in, short utterances stay exempt.
+    assert guard.is_echo("Thanksgiving") is False
+
+
+def test_truncated_two_word_echo_matches_final_prefix() -> None:
+    # Session c77b7a88 turn 5: the capture window cut the echo mid-word —
+    # "Voraus, wo" ← "voraus, wofür sie dankbar sind".  # i18n-allow: forensic quote
+    guard = SelfEchoGuard()
+    guard.register(
+        "reihum voraus, wofür sie dankbar sind"  # i18n-allow: voice fixture
+    )
+    assert guard.is_echo("Voraus, wo", judge_short=True) is True
+
+
+def test_short_command_never_matches_an_inflected_reference() -> None:
+    # "stopp" must reach its handler even while the assistant is saying
+    # "stoppen" — short judgment is exact, never fuzzy.
+    guard = SelfEchoGuard()
+    guard.register("Soll ich die Wiedergabe stoppen?")  # i18n-allow: voice fixture
+    assert guard.is_echo("stopp", judge_short=True) is False
+
+
+def test_tiny_interjections_are_never_judged() -> None:
+    guard = SelfEchoGuard()
+    guard.register("Ja, das ist ein Feiertag")  # i18n-allow: voice fixture
+    assert guard.is_echo("ja", judge_short=True) is False
+
+
+def test_short_utterance_with_novel_word_fails_open() -> None:
+    guard = SelfEchoGuard()
+    guard.register(
+        "An Thanksgiving kommt die Familie zusammen"  # i18n-allow: voice fixture
+    )
+    assert guard.is_echo("welches Wetter", judge_short=True) is False  # i18n-allow: user fixture
+
+
+def test_short_prefix_rule_applies_only_to_the_final_token() -> None:
+    # A leading truncated token is not the capture-cut pattern; fail open.
+    guard = SelfEchoGuard()
+    guard.register(
+        "reihum voraus, wofür sie dankbar sind"  # i18n-allow: voice fixture
+    )
+    assert guard.is_echo("wo voraus", judge_short=True) is False  # i18n-allow: scrambled probe

@@ -40,6 +40,20 @@ class SelfEchoGuard:
     # echo garble sits above 0.8:
     # "misch"→"mich" 0.89, "hörn"→"hören" 0.89.  # i18n-allow: garble anchors
     FUZZY_CUTOFF = 0.8
+    # BUG-101: utterances below MIN_TOKENS used to be exempt entirely — and
+    # the observed during-playback echo phantoms are exactly that short (the
+    # barge capture window truncates the echo: a lone "Thanksgiving", a cut
+    # "Voraus, wo" of the assistant's own "voraus, wofür ...").  # i18n-allow: forensic quotes
+    # Short utterances are therefore judged on explicit caller opt-in
+    # (``judge_short=True``, barge-capture context only), and STRICTLY:
+    # exact token containment (no fuzzy matching — a garbled token fails open), a
+    # single-token utterance must be a substantial word (length floor below)
+    # so interjections ("ja", "ok") always reach their handlers, and only the
+    # FINAL token of a multi-token utterance may match as a word prefix
+    # (the capture cuts mid-word). Exactness is also what keeps command words
+    # safe: "stopp" never strictly matches a spoken "stoppen".  # i18n-allow: command anchors
+    SHORT_SINGLE_TOKEN_MIN_LEN = 4
+    SHORT_PREFIX_MIN_LEN = 2
 
     def __init__(self) -> None:
         # (slot, tokens, registered_ns); slot=None entries are append-only.
@@ -85,7 +99,7 @@ class SelfEchoGuard:
         else:
             self.activity_ns = max(self.activity_ns, stamp)
 
-    def is_echo(self, text: str) -> bool:
+    def is_echo(self, text: str, *, judge_short: bool = False) -> bool:
         """True when ``text`` is (fuzzily) contained in recent assistant speech.
 
         Only consulted while playback activity is recent (``WINDOW_S``);
@@ -94,8 +108,14 @@ class SelfEchoGuard:
         because STT garbles echo (see the ratio anchors at ``FUZZY_CUTOFF``
         above), but every utterance token must still match. One genuinely novel
         token can change the meaning of a short follow-up and therefore fails
-        open. Utterances shorter than ``MIN_TOKENS`` are never judged — short
-        commands ("stopp") must always reach their handlers. References are
+        open. Utterances shorter than ``MIN_TOKENS`` are by default never
+        judged — a short user ANSWER is legitimately built from the
+        assistant's own words, e.g. answering a yes/no offer with the
+        offer's own verb, and
+        must always reach its handler. Only a caller that KNOWS the input
+        originated from a local barge capture during active playback (the
+        echo path, BUG-101) opts in via ``judge_short=True``, which applies
+        the STRICT rules of ``_strictly_contained``. References are
         checked per spoken phrase plus the concatenation of the two newest
         phrases, so an echo spanning a sentence boundary still matches without
         building a large session-wide vocabulary union.
@@ -106,7 +126,17 @@ class SelfEchoGuard:
         if now_ns - self.activity_ns > int(self.WINDOW_S * 1e9):
             return False
         utterance = self.tokens(text)
-        if len(utterance) < self.MIN_TOKENS:
+        if not utterance:
+            return False
+        strict_short = len(utterance) < self.MIN_TOKENS
+        if strict_short and not judge_short:
+            return False
+        if (
+            strict_short
+            and len(utterance) == 1
+            and len(utterance[0]) < self.SHORT_SINGLE_TOKEN_MIN_LEN
+        ):
+            # Interjections and command words ("ja", "ok") are never judged.
             return False
         ttl_ns = int(self.REF_TTL_S * 1e9)
         fresh = [tokens for _slot, tokens, ref_ns in self._refs if now_ns - ref_ns <= ttl_ns]
@@ -116,7 +146,10 @@ class SelfEchoGuard:
         if len(fresh) >= 2:
             candidates.append(fresh[-2] + fresh[-1])
         for reference in candidates:
-            if all(
+            if strict_short:
+                if self._strictly_contained(utterance, reference):
+                    return True
+            elif all(
                 token in reference
                 or difflib.get_close_matches(
                     token,
@@ -128,3 +161,29 @@ class SelfEchoGuard:
             ):
                 return True
         return False
+
+    @classmethod
+    def _strictly_contained(
+        cls, utterance: list[str], reference: list[str]
+    ) -> bool:
+        """Exact-containment judgment for sub-``MIN_TOKENS`` utterances.
+
+        Every token must appear verbatim in the reference; only the FINAL
+        token of a multi-token utterance may instead be a prefix of a
+        reference word, because the barge capture window cuts echo mid-word
+        ("wo" ← "wofür"). No fuzzy matching: one  # i18n-allow: forensic quote
+        garbled or novel token means this is not provably our echo, and the
+        guard fails open.
+        """
+        for index, token in enumerate(utterance):
+            if token in reference:
+                continue
+            is_final_of_many = len(utterance) > 1 and index == len(utterance) - 1
+            if (
+                is_final_of_many
+                and len(token) >= cls.SHORT_PREFIX_MIN_LEN
+                and any(word.startswith(token) for word in reference)
+            ):
+                continue
+            return False
+        return True

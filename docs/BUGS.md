@@ -6939,3 +6939,67 @@ on updated macOS, Windows, and Linux installations remains pending.
 cover the output device's reported hardware latency, while terminal teardown
 must seal every producer callback before aborting its native stream. Expected
 abort errors may be suppressed only with positive ownership evidence.
+
+---
+
+## BUG-101: loud speaker echo defeats the barge-in energy floor mid-answer — the assistant interrupts itself and answers its own words (CRITICAL, FIXED IN CODE 2026-07-20; HARDWARE VALIDATION PENDING)
+
+**Symptom.** Realtime voice session `c77b7a88-61b3-475d-98b1-7119bee0f03d`
+(Mac built-in speakers + built-in mic, 2026-07-20): while the assistant was
+speaking about Thanksgiving, a barge-in fired with user text `Thanksgiving` —
+a word only the speakers were saying — truncating the answer. The next
+answer's own opening (`...voraus, wofür sie dankbar sind`) <!-- i18n-allow: forensic quote --> then came back as
+the "user" turn `Voraus, wo...`, truncating that answer too. <!-- i18n-allow: forensic quotes from runtime voice transcripts -->
+Unlike BUG-100 (echo after the turn's speaker drain) this echo confirmed
+DURING active playback, through the barge path.
+
+**Reconstruction.** The desktop barge detector's only acoustic echo defense
+is a LEVEL discriminator: the adaptive RMS floor (BUG-084) learned during the
+1.5 s grace window. Speech has dynamics — on a strongly coupled speaker/mic
+pair the answer's louder syllables jump the learned 90th-percentile × 1.4
+floor after the grace window closes, Silero (which cannot tell whose voice it
+hears) confirms sustained speech, and the confirmed echo is forwarded as a
+user barge: playback cancel + phantom turn. The text backstop
+(`SelfEchoGuard`) deliberately never judged utterances under three tokens, and
+barge captures truncate echo to exactly such fragments (`Thanksgiving` = 1
+token, `Voraus, wo` = 2). <!-- i18n-allow: forensic tokens under test -->
+
+**Fix (three layers, all word-, language-, and OS-agnostic).**
+
+1. **Output envelope reference** (`jarvis/audio/echo_reference.py`):
+   `AudioPlayer._write_samples` records a timestamped RMS per ~60 ms played
+   block — the process's own ground truth of what the speakers emit. No OS
+   audio API, no model; identical on Windows/macOS/Linux.
+2. **Correlation gate in the barge detector**
+   (`DesktopRealtimeBargeInDetector._candidate_matches_output_envelope`):
+   before a confirmed candidate may cancel playback, its per-frame RMS series
+   is Pearson-correlated against the played envelope across the plausible
+   device-latency lag window (≤ 1.75 s, covering the 0.869 s worst case from
+   BUG-100). Correlation is scale-invariant — volume, mic gain, and distance
+   drop out; only the temporal loudness SHAPE decides. A match ≥ 0.70 is our
+   own echo: suppressed, detector stays armed. Every guard fails OPEN (no
+   reference, flat envelopes, snapshot error → the barge stands), so a real
+   user can always interrupt.
+3. **Strict short-echo judgment, barge-scoped** (`SelfEchoGuard`,
+   `RealtimeVoiceSession`): only when the input originated from a
+   surface-confirmed local barge during playback (`judge_short=True`), sub-3-
+   token transcripts are judged with EXACT containment (no fuzzy), a length-4
+   floor for single tokens, and a final-token prefix rule for mid-word cuts
+   (`wo` ← `wofür`). Ordinary short answers <!-- i18n-allow: forensic token -->
+   ("stopp" answering "Soll ich stoppen?") never <!-- i18n-allow: command fixture --> see the strict path — the
+   BUG-084 fail-open doctrine stands. <!-- i18n-allow: command fixture -->
+
+**Class rule (extends AP-27's lesson to barge-in).** A level threshold can
+never separate two voices sharing one microphone, and a transcript-content
+rule alone must stay fail-open — but the process OWNS the output signal, and
+correlating against that reference is the word-agnostic discriminator that
+needs no threshold tuned per room. When output audio exists, judge suspected
+echo against what was actually played, in the signal domain first.
+
+**Guards.** `tests/unit/realtime/test_desktop.py` (gate suppresses tracking
+candidates, passes uncorrelated speech, fails open without reference, stays
+armed after suppression), `tests/unit/audio/test_echo_reference.py` (tap +
+module contract), `tests/unit/speech/test_echo_guard.py` +
+`tests/unit/realtime/test_session_self_echo.py` (strict short judgment is
+barge-scoped; replay of session c77b7a88's turns 4/5). Physical validation on
+the Mac speakers+mic setup remains pending.

@@ -387,3 +387,96 @@ def test_grace_frames_calibrate_but_never_become_preroll() -> None:
     assert len(detector._pre_buffer) == 0
     assert detector._candidate_frames == []
     assert model.calls == 0
+
+
+# --- BUG-101: output-envelope correlation gate -------------------------------
+
+
+def _ramp_reference(now: float, *, span_s: float = 2.5) -> list[tuple[float, float, float]]:
+    """A played-output envelope rising linearly until ``now`` (60 ms blocks)."""
+    block = 0.06
+    count = int(span_s / block)
+    return [
+        (now - span_s + index * block, block, 0.001 + 0.002 * index)
+        for index in range(count)
+    ]
+
+
+def _corr_detector(
+    snapshot, probabilities: int = 12
+) -> DesktopRealtimeBargeInDetector:
+    model = FakeVadModel([0.99] * probabilities)
+    detector = DesktopRealtimeBargeInDetector(
+        min_frame_rms=0.0,
+        grace_s=0,
+        consecutive_frames=12,
+        pre_speech_frames=2,
+        echo_reference_snapshot=snapshot,
+        model=model,
+    )
+    detector.warmup()
+    detector.start_output()
+    return detector
+
+
+def test_echo_gate_suppresses_candidate_tracking_the_output_envelope() -> None:
+    import time as _time
+
+    now = _time.monotonic()
+    reference = _ramp_reference(now + 0.5)
+    # Candidate loudness rises linearly exactly like the played output — a
+    # shifted linear ramp correlates ~1.0 at some lag in the search window.
+    ramp = _pcm_frames(*[1000 * (index + 1) for index in range(12)])
+
+    detector = _corr_detector(lambda _window: reference)
+    assert detector.feed(ramp) is None
+    # Suppressed as echo, but the detector stays armed for a real user.
+    assert detector.active is True
+
+
+def test_echo_gate_passes_candidate_uncorrelated_with_output() -> None:
+    import time as _time
+
+    now = _time.monotonic()
+    reference = _ramp_reference(now + 0.5)
+    # Alternating loud/quiet speech does not track the rising output ramp.
+    alternating = _pcm_frames(
+        *[9000 if index % 2 == 0 else 1500 for index in range(12)]
+    )
+
+    detector = _corr_detector(lambda _window: reference)
+    detected = detector.feed(alternating)
+    assert detected == alternating
+    assert detector.active is False
+
+
+def test_echo_gate_fails_open_without_reference_data() -> None:
+    ramp = _pcm_frames(*[1000 * (index + 1) for index in range(12)])
+    detector = _corr_detector(lambda _window: [])
+    assert detector.feed(ramp) == ramp
+
+
+def test_echo_gate_fails_open_when_snapshot_raises() -> None:
+    def _broken(_window: float) -> list[tuple[float, float, float]]:
+        raise RuntimeError("tap unavailable")
+
+    ramp = _pcm_frames(*[1000 * (index + 1) for index in range(12)])
+    detector = _corr_detector(_broken)
+    assert detector.feed(ramp) == ramp
+
+
+def test_echo_gate_suppression_keeps_scanning_for_real_speech() -> None:
+    import time as _time
+
+    now = _time.monotonic()
+    reference = _ramp_reference(now + 1.0)
+    ramp = _pcm_frames(*[1000 * (index + 1) for index in range(12)])
+    alternating = _pcm_frames(
+        *[9000 if index % 2 == 0 else 1500 for index in range(12)]
+    )
+
+    detector = _corr_detector(lambda _window: reference, probabilities=24)
+    assert detector.feed(ramp) is None
+    detected = detector.feed(alternating)
+    assert detected is not None
+    assert detector.active is False

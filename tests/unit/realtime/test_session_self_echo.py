@@ -379,3 +379,83 @@ async def test_barge_in_resets_the_horizon():
     await sess._barge_in(interrupt_provider=False)
     lead_ns = sess._echo_guard.activity_ns - time.time_ns()
     assert lead_ns < int(1e9), "horizon must collapse to ~now after a barge"
+
+
+class GatedInputFakeSession(FakeSession):
+    """Holds back the input transcript until the test releases it."""
+
+    def __init__(self, events):
+        super().__init__(events)
+        self.input_gate = asyncio.Event()
+
+    async def receive(self):
+        for event in self._events:
+            if getattr(event, "type", "") == "input_transcript":
+                await self.input_gate.wait()
+            yield event
+            await asyncio.sleep(0)
+
+
+class GatedInputFakeProvider(FakeProvider):
+    session_cls = GatedInputFakeSession
+
+
+def _bug101_events():
+    return [
+        RealtimeEvent(
+            type="output_transcript_delta",
+            # i18n-allow: voice fixture
+            text="An Thanksgiving kommt traditionell die ganze Familie zusammen.",
+        ),
+        RealtimeEvent(
+            type="audio_delta",
+            audio=AudioChunk(pcm=b"\x01\x02" * 2_400, sample_rate=24000, timestamp_ns=0),
+        ),
+        RealtimeEvent(
+            type="input_transcript",
+            # Session c77b7a88 turn 4: the barge capture forwarded the
+            # speakers' own word, truncated to a single token.
+            text="Thanksgiving",
+            is_final=True,
+        ),
+        RealtimeEvent(type="turn_complete"),
+    ]
+
+
+async def _run_with_barge(provider, *, send_barge: bool):
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="echo-test",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda message: jsons.append(message) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16000})
+    await asyncio.sleep(0.05)
+    if send_barge:
+        await sess.handle_control({"type": "barge_in"})
+    provider.session.input_gate.set()
+    await asyncio.sleep(0.05)
+    await sess.end(reason="test")
+    return provider.session, jsons
+
+
+@pytest.mark.asyncio
+async def test_short_barge_capture_echo_is_dropped():
+    """BUG-101: a barge-forwarded single word of our own speech is no turn."""
+    fake, jsons = await _run_with_barge(
+        GatedInputFakeProvider(_bug101_events()), send_barge=True
+    )
+    assert fake.response_requests == 0
+    assert _user_transcripts(jsons) == []
+
+
+@pytest.mark.asyncio
+async def test_same_short_input_without_barge_context_stays_a_turn():
+    """The strict short judgment is barge-scoped: ordinary short input passes."""
+    fake, jsons = await _run_with_barge(
+        GatedInputFakeProvider(_bug101_events()), send_barge=False
+    )
+    assert _user_transcripts(jsons)

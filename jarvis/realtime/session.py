@@ -849,6 +849,12 @@ class RealtimeVoiceSession:
         # a turn — otherwise the brain answers its own speaker echo forever.
         self._echo_guard = SelfEchoGuard()
         self._echo_playback_horizon = 0.0
+        # BUG-101: while this horizon is armed, the next final input transcript
+        # originated from the surface's LOCAL barge capture during active
+        # playback — the one context where a sub-3-token utterance may be
+        # judged (strictly) as our own truncated speaker echo. Ordinary short
+        # answers after playback never see the strict path.
+        self._local_barge_short_echo_until = 0.0
         self._last_outage_notice_at = float("-inf")
         self._provider_output_probe = ""
         self._executed_tool_names: set[str] = set()
@@ -979,6 +985,11 @@ class RealtimeVoiceSession:
             await self._publish_ready()
             self._start_pump()
         elif kind == "barge_in":
+            # Surface-confirmed local barge during playback: the audio that
+            # follows may be the speakers' own echo that beat the acoustic
+            # gates. Arm the strict short-echo judgment for the transcript
+            # this capture produces (BUG-101).
+            self._local_barge_short_echo_until = time.monotonic() + 6.0
             await self._begin_user_speech_turn()
             await self._barge_in()
         elif kind == "audio_stop":
@@ -1481,7 +1492,15 @@ class RealtimeVoiceSession:
                         echo_probe = " ".join(
                             (*self._user_transcript_parts, transcript)
                         ).strip()
-                        if self._echo_guard.is_echo(echo_probe):
+                        judge_short = (
+                            time.monotonic() < self._local_barge_short_echo_until
+                        )
+                        # One strict judgment per barge capture: consume the
+                        # window so later ordinary short answers are exempt.
+                        self._local_barge_short_echo_until = 0.0
+                        if self._echo_guard.is_echo(
+                            echo_probe, judge_short=judge_short
+                        ):
                             log.info(
                                 "realtime[%s] dropped provider-transcribed "
                                 "self-echo before it became a turn: %r",

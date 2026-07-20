@@ -28,7 +28,7 @@ else:
     except Exception:  # noqa: BLE001 — sounddevice/PortAudio (libportaudio2) absent (headless/slim)
         sd = None  # type: ignore[assignment]
 
-from jarvis.audio import level_tap
+from jarvis.audio import echo_reference, level_tap
 from jarvis.audio.device_select import is_legacy_primary_mapper
 from jarvis.audio.gain import apply_output_gain, clamp_volume
 from jarvis.core.events import AudioOutFirst
@@ -538,6 +538,9 @@ class AudioPlayer:
         if stream is not None:
             self._close_output_stream(stream)
         self._device_rate_cache.clear()
+        # A swapped device also invalidates the played-envelope record: echo
+        # correlation against a vanished device's output is meaningless.
+        echo_reference.reset()
 
     def set_device(self, device: int | str | None) -> None:
         """Re-resolve the output device and drop any cached state tied to
@@ -834,6 +837,14 @@ class AudioPlayer:
                 pre = arr_f[start:start + block]  # PRE-gain RMS for the visualizer
                 if pre.size:
                     level_tap.feed(float(np.sqrt(np.mean(np.square(pre)))))
+            # Echo-reference envelope (BUG-101): the barge-in detector needs
+            # what the speakers actually emit, so record the POST-gain block.
+            # One RMS + deque append per ~60 ms block — no model, no OS API.
+            if out.size:
+                echo_reference.record(
+                    float(np.sqrt(np.mean(np.square(out)))),
+                    out.shape[0] / device_rate,
+                )
 
     def _close_output_stream(self, stream: sd.OutputStream) -> None:
         """Flush and stop: ``stream.stop()`` blocks until the buffer is empty."""
