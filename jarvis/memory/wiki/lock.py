@@ -149,10 +149,19 @@ class VaultLock:
 
         owner_pid, owner_ts = self._parse_lock_content(content)
 
-        if owner_ts is not None:
+        if owner_pid is not None and not self._pid_alive(owner_pid):
+            # The owner died without releasing (crash, app restart mid-run).
+            # Waiting out the timestamp window would stall every curator
+            # trigger for stale_after seconds on each restart.
+            log.warning(
+                "VaultLock: owner pid %d is gone — stealing its lock at %s",
+                owner_pid,
+                self._path,
+            )
+        elif owner_ts is not None:
             age = time.time() - owner_ts
             if -_FUTURE_TOLERANCE_S <= age <= self._stale_after:
-                # Lock is fresh — do not steal.
+                # Lock is fresh and its owner is alive — do not steal.
                 return False
             if age < 0:
                 # Far-future timestamp: a pre-fix monotonic remnant or a
@@ -195,6 +204,30 @@ class VaultLock:
         except FileExistsError:
             # Another process grabbed it between our unlink and create.
             return False
+
+    @staticmethod
+    def _pid_alive(pid: int) -> bool:
+        """Return whether the lock owner's PID is a live process.
+
+        POSIX only: ``os.kill(pid, 0)`` probes liveness without delivering
+        a signal. On Windows ``os.kill`` cannot probe — any non-CTRL
+        "signal" TERMINATES the target — so the probe reports "alive"
+        there and the wall-clock staleness window stays the only steal
+        path (tracked in docs/os-parity.md).
+        """
+        if os.name != "posix":
+            return True
+        if pid <= 0:
+            return False
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return False
+        except OSError:
+            # EPERM and friends: the process exists but belongs to another
+            # user — alive for our purposes.
+            return True
+        return True
 
     @staticmethod
     def _parse_lock_content(content: str) -> tuple[int | None, float | None]:

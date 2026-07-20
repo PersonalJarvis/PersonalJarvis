@@ -58,6 +58,7 @@ experiences today.
 | P-13 | Info | Wiki | Wiki DB/vault anchor at `repo_root()` — read-only *wheel* installs would fail writes (not OS-specific; `JARVIS_DATA_DIR` override exists) | `jarvis/memory/wiki/db_path.py:9`, `vault_root.py:59` | None on the advertised install paths |
 | P-14 | Info | CU extras | macOS/Linux actuation and UI trees depend on optional extras (pynput, pyobjc, pyatspi); without them everything degrades honestly to screenshot + pixel-click | `jarvis/cu/actuate/posix.py`, `jarvis/vision/tree_factory.py` | By design (§3); bare install keeps the CU loop functional |
 | P-15 | Low | Desktop downloads | Native drag-out has Windows OLE and macOS AppKit sources but no GTK/WebKitGTK source yet | `jarvis/ui/native_drag.py` | Linux desktop: the saved-file toast keeps reliable **Show in folder** and **Open** actions but is not itself a drag handle; headless: the normal browser download path remains available |
+| P-16 | Low | Wiki | `VaultLock` dead-owner fast-steal is POSIX-only (`os.kill(pid, 0)` liveness probe; on Windows `os.kill` cannot probe — a non-CTRL signal terminates the target) | `jarvis/memory/wiki/lock.py::_pid_alive` | Windows: a lock left by a crashed/restarted process is stolen only after the `stale_after_seconds` wall-clock window (300 s) — the pre-fix behavior everywhere; a Win32 `OpenProcess` probe could close this |
 
 ## Maintenance
 

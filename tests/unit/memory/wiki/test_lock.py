@@ -10,8 +10,12 @@ clock); the in-process acquire deadline loop may keep monotonic.
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 import time
 from pathlib import Path
+
+import pytest
 
 from jarvis.memory.wiki.lock import VaultLock
 
@@ -48,6 +52,26 @@ def test_fresh_lock_is_not_stolen(tmp_path: Path) -> None:
     lock = VaultLock(path, stale_after_seconds=300)
     assert lock.acquire(timeout_s=0.1) is False
     assert path.exists()
+
+
+def test_fresh_lock_of_dead_owner_is_stolen_immediately_on_posix(
+    tmp_path: Path,
+) -> None:
+    """An app restart mid-run leaves a fresh-looking lock owned by a dead
+    PID; waiting out the staleness window stalled every curator trigger
+    for five minutes per restart. POSIX probes liveness and steals at
+    once; Windows keeps the wall-clock window (docs/os-parity.md P-16)."""
+    if os.name != "posix":
+        pytest.skip("dead-owner fast-steal is POSIX-only")
+    proc = subprocess.Popen(
+        [sys.executable, "-c", "pass"],
+    )
+    proc.wait()
+    path = tmp_path / "curator.lock"
+    _write_lock(path, time.time(), pid=proc.pid)
+    lock = VaultLock(path, stale_after_seconds=300)
+    assert lock.acquire(timeout_s=0.1) is True
+    lock.release()
 
 
 def test_future_timestamp_is_treated_as_corrupt_and_stolen(tmp_path: Path) -> None:
