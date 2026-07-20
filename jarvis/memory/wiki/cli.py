@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
+import os
 import sys
 from pathlib import Path
 
@@ -163,6 +164,54 @@ def _run_cleanup(vault_root: Path, *, apply: bool) -> int:
         print(f"          ~ {p.relative_to(vault_root)}")
     if report.total_changes == 0:
         print("        (nothing to clean — vault is already tidy)")
+    return 0
+
+
+async def _run_recurate_profile(vault_root: Path, *, apply: bool) -> int:
+    """Async body of the ``recurate-profile`` subcommand (ADR-0029 cleanup).
+
+    Re-judges the ONE user profile page under the asymmetric curation bar:
+    keep supported personal facts, move topic detail to topic pages, drop
+    world-knowledge trivia. Dry-run by default; ``--apply`` snapshots the
+    whole vault first and writes all-or-nothing.
+    """
+    from jarvis.core.config import load_config
+
+    from .recurate import recurate_profile
+
+    # os.path instead of Path.is_dir: no blocking pathlib call in async code
+    # (ASYNC240) for the one line this subcommand adds.
+    if not os.path.isdir(vault_root):
+        print(f"ERROR: vault not found: {vault_root}", file=sys.stderr)
+        return 1
+
+    curator = _build_curator(vault_root)
+    await curator._vault.scan(vault_root)    # noqa: SLF001 — CLI wiring
+    report = await recurate_profile(
+        vault_root=vault_root,
+        config=load_config(),
+        curator=curator,
+        apply=apply,
+        backup_dir=DEFAULT_BACKUP_DIR,
+    )
+
+    mode = "APPLIED" if report.applied else "DRY-RUN (pass --apply to write)"
+    print(f"PROFILE RE-CURATION  {mode}  profile: {report.profile_rel}")
+    if report.error:
+        print(f"ERROR: {report.error}", file=sys.stderr)
+        return 1
+    if report.backup_path:
+        print(f"        backup:    {report.backup_path}")
+    if not report.proposals:
+        print("        (judge proposed no changes — profile is already clean)")
+        return 0
+    print(f"        proposals: {len(report.proposals)}")
+    for update in report.proposals:
+        print(f"          {update.operation:8s}  {update.target_path}")
+        if update.reason:
+            print(f"                    reason: {update.reason}")
+    if not report.applied:
+        print("        (dry-run — nothing written)")
     return 0
 
 
@@ -312,6 +361,30 @@ def main(argv: list[str] | None = None) -> int:
         help="Enable DEBUG-level logging.",
     )
 
+    p_recurate = subparsers.add_parser(
+        "recurate-profile",
+        help="One-shot ADR-0029 cleanup: re-judge the user profile page — "
+             "keep personal facts, move topic detail to topic pages, drop "
+             "world-knowledge trivia. Dry-run by default.",
+    )
+    p_recurate.add_argument(
+        "--vault",
+        type=Path,
+        default=DEFAULT_VAULT,
+        help=f"Vault root (default: {DEFAULT_VAULT}).",
+    )
+    p_recurate.add_argument(
+        "--apply",
+        action="store_true",
+        help="Snapshot the vault and write the proposals (all-or-nothing). "
+             "Omit for a dry-run report.",
+    )
+    p_recurate.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable DEBUG-level logging.",
+    )
+
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -324,6 +397,11 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "cleanup":
         return _run_cleanup(args.vault.resolve(), apply=bool(args.apply))
+
+    if args.command == "recurate-profile":
+        return asyncio.run(
+            _run_recurate_profile(args.vault.resolve(), apply=bool(args.apply))
+        )
 
     if args.command == "ingest":
         return asyncio.run(
