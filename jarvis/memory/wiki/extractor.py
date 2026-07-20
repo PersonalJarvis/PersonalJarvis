@@ -34,6 +34,7 @@ from jarvis.brain.provider_registry import BrainProviderRegistry
 from jarvis.brain.streaming import aggregate, is_length_truncated
 from jarvis.core.protocols import BrainMessage, BrainRequest
 from jarvis.core.redact import safe_preview
+from jarvis.memory.wiki.constants import DEFAULT_SALIENCE
 from jarvis.memory.wiki.curator_llm import (
     _extract_json_array,
     _resolve_provider_and_model,
@@ -76,15 +77,15 @@ _DURABLE_CUE_RE = re.compile(
     r"(?i)\b(?:my|our|i\s+(?:am|own|prefer|love|hate|work|live|decided|plan"
     r"|play|go|train|meet)"
     r"|every\s+(?:day|week|weekend|morning|evening)"
-    r"|mein(?:e|er|en|em|es)?|unser(?:e|er|en|em|es)?"
-    r"|ich\s+(?:bin|habe|besitze|mag|liebe|hasse|arbeite|wohne|plane"
-    r"|spiele|gehe|trainiere|treffe)|jede[nrs]?"
+    r"|mein(?:e|er|en|em|es)?|unser(?:e|er|en|em|es)?"  # i18n-allow: input vocab
+    r"|ich\s+(?:bin|habe|besitze|mag|liebe|hasse|arbeite|wohne|plane"  # i18n-allow: input vocab
+    r"|spiele|gehe|trainiere|treffe)|jede[nrs]?"  # i18n-allow: input vocab
     r"|mi|mis|nuestro|nuestra|soy|tengo|prefiero|trabajo|vivo"
     r"|juego|voy|entreno|cada"
     r"|friend|partner|wife|husband|boss|mother|father"
-    r"|freund|partnerin|ehefrau|ehemann|chef|mutter|vater"
+    r"|freund|partnerin|ehefrau|ehemann|chef|mutter|vater"  # i18n-allow: input vocab
     r"|amigo|amiga|pareja|esposa|esposo|jefe|madre|padre"
-    r"|project|projekt|proyecto)\b"
+    r"|project|projekt|proyecto)\b"  # i18n-allow: input vocab
 )
 
 # Valid candidate kinds. Anything else degrades to "other" (soft vocab —
@@ -106,15 +107,20 @@ _KNOWN_KINDS = frozenset(
     }
 )
 
+# Kinds whose Stage-1 candidates are HARD-dropped without both the user slug
+# and a topic slug. Deliberately place-only: a residence always names a place,
+# but an activity can be generic ("The user exercises regularly" has no topic
+# page) — for activities the companion-page invariant stays a Stage-2 soft
+# rule that applies only when subjects DO name a topic.
 _GRAPH_SUBJECT_KINDS = frozenset({"place"})
 
 
 def _candidate_salience(item: dict[str, Any]) -> int:
-    """Model-scored 1-5 personal salience, clamped; missing/garbage -> 3."""
+    """Model-scored 1-5 personal salience, clamped; missing/garbage -> default."""
     try:
-        salience = int(item.get("salience", 3))
+        salience = int(item.get("salience", DEFAULT_SALIENCE))
     except (TypeError, ValueError):
-        return 3
+        return DEFAULT_SALIENCE
     return max(1, min(5, salience))
 
 

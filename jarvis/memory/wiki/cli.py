@@ -27,7 +27,6 @@ from __future__ import annotations
 import argparse
 import asyncio
 import logging
-import os
 import sys
 from pathlib import Path
 
@@ -178,12 +177,6 @@ async def _run_recurate_profile(vault_root: Path, *, apply: bool) -> int:
     from jarvis.core.config import load_config
 
     from .recurate import recurate_profile
-
-    # os.path instead of Path.is_dir: no blocking pathlib call in async code
-    # (ASYNC240) for the one line this subcommand adds.
-    if not os.path.isdir(vault_root):
-        print(f"ERROR: vault not found: {vault_root}", file=sys.stderr)
-        return 1
 
     curator = _build_curator(vault_root)
     await curator._vault.scan(vault_root)    # noqa: SLF001 — CLI wiring
@@ -399,8 +392,12 @@ def main(argv: list[str] | None = None) -> int:
         return _run_cleanup(args.vault.resolve(), apply=bool(args.apply))
 
     if args.command == "recurate-profile":
+        vault_root = args.vault.resolve()
+        if not vault_root.is_dir():
+            print(f"ERROR: vault not found: {vault_root}", file=sys.stderr)
+            return 1
         return asyncio.run(
-            _run_recurate_profile(args.vault.resolve(), apply=bool(args.apply))
+            _run_recurate_profile(vault_root, apply=bool(args.apply))
         )
 
     if args.command == "ingest":

@@ -32,6 +32,7 @@ from jarvis.brain.streaming import aggregate, is_length_truncated
 from jarvis.core.protocols import BrainMessage, BrainRequest
 
 from .cleanup import _full_snapshot
+from .constants import INFERRED_MARKER
 from .curator_llm import _extract_json_array
 from .journal import normalise_subjects
 from .prompt import resolve_user_entity_slug
@@ -73,6 +74,11 @@ Return ONLY a JSON array of update objects, no prose, no code fences:
 - Preserve the ## Sources section content of every page you touch.
 - Never write credentials or secrets. Never touch sessions/ or _archive/.
 """
+
+
+# Drift guard: the recurate prompt must reference the same literal marker
+# the preservation guard exempts (constants.INFERRED_MARKER).
+assert INFERRED_MARKER in _RECURATE_SYSTEM
 
 
 @dataclass(slots=True)

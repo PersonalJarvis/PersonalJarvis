@@ -32,6 +32,16 @@ CuratorDecision = Literal["add", "update", "noop", "invalidate"]
 FACT_BASES: tuple[str, ...] = ("explicit", "behavioral", "inferred")
 FactBasis = Literal["explicit", "behavioral", "inferred"]
 
+# Default personal-salience score for candidates without one. Mirrored by the
+# SQL DEFAULT in 0009_wiki_candidate_basis.sql — keep both in sync.
+DEFAULT_SALIENCE = 3
+
+# The literal bullet suffix marking a behavioral/inferred page line. The
+# consolidator prompt teaches it, the preservation guard exempts exactly it,
+# and the recurate prompt preserves it — prompt.py/recurate.py assert their
+# prompt text still carries this exact token (drift guard).
+INFERRED_MARKER = "*(inferred)*"
+
 # Runtime drift assertions (mirror the jarvis/memory/constants.py pattern):
 # importing this module with a drifted tuple/Literal pair fails immediately.
 assert set(CANDIDATE_STATUSES) == set(CandidateStatus.__args__)  # type: ignore[attr-defined]
@@ -41,7 +51,9 @@ assert set(FACT_BASES) == set(FactBasis.__args__)  # type: ignore[attr-defined]
 __all__ = [
     "CANDIDATE_STATUSES",
     "CURATOR_DECISIONS",
+    "DEFAULT_SALIENCE",
     "FACT_BASES",
+    "INFERRED_MARKER",
     "CandidateStatus",
     "CuratorDecision",
     "FactBasis",

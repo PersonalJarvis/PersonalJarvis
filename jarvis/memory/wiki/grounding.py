@@ -108,7 +108,25 @@ _NEGATIVE_CANDIDATE_RE = re.compile(
     r"\b(?:"
     r"not|never|no\s+longer"
     r")\s+(?:interested|curious|keen|a\s+fan|likes?|loves?|enjoys?|"
-    r"prefers?|follows?)\b|\b(?:dislikes?|hates?|avoids?)\b",
+    r"prefers?|follows?|plays?|practi[cs]es?|trains?|does)\b"
+    r"|\b(?:dislikes?|hates?|avoids?)\b"
+    r"|\b(?:stopped|quit|gave\s+up)\b",
+    re.IGNORECASE,
+)
+
+# Cessation assertions ground a NEGATIVE habit/attitude claim ("The user no
+# longer plays golf.") the way a positive assertion grounds a positive one.
+# Without this path such claims could never ground at all and a plainly
+# stated "I quit playing golf" would be silently dropped.
+_CESSATION_ASSERTION_RE = re.compile(
+    r"(?:"
+    r"\bi\s+(?:quit|stopped|gave\s+up)\b|"
+    r"\bi\s+(?:don.?t|do\s+not)\s+[^.!?;,\n]{0,50}\banymore\b|"
+    r"\bi\s+no\s+longer\b|"
+    r"\bich\s+[^.!?;,\n]{0,60}\bnicht\s+mehr\b|"  # i18n-allow: input vocab
+    r"\bich\s+habe\s+[^.!?;,\n]{0,50}\baufgeh(?:oe|o)rt\b|"  # i18n-allow: input vocab
+    r"\bya\s+no\s+\w+|\bdej[eo]\s+de\b"
+    r")",
     re.IGNORECASE,
 )
 
@@ -150,7 +168,11 @@ _FIRST_PERSON_EXPERIENCE_RE = re.compile(
     # es folded: "juego/voy/entreno...", "cada sabado", "siempre/suelo"
     r"\b(?:yo\s+)?(?:juego|voy|entreno|corro|nado|cocino|paso|quedo|"
     r"asisto|visito|estuve|estaba)\b|"
-    r"\bcada\s+\w+|\bsiempre\b|\bsuelo\b"
+    r"\bcada\s+\w+|\bsiempre\b|\bsuelo\b|"
+    r"\b(?:una\s+vez|dos\s+veces)\s+(?:a|por)\s+(?:la\s+)?\w+|"
+    # frequency phrases: "once/twice a week", "einmal pro Woche"
+    r"\b(?:once|twice)\s+a\s+(?:day|week|month|year)\b|"
+    r"\b(?:einmal|zweimal|mehrmals)\s+(?:pro|die|im)\s+\w+"  # i18n-allow: input vocab
     r")",
     re.IGNORECASE,
 )
@@ -189,17 +211,22 @@ def _asserted_interest_polarities(focus_text: str) -> set[bool]:
     return polarities
 
 
-def _behavioral_experience_grounded(focus_text: str) -> bool:
-    """True when a declarative focus clause reports first-person experience."""
+def _declarative_clause_matches(focus_text: str, pattern: re.Pattern[str]) -> bool:
+    """True when a declarative (non-question) focus clause matches."""
     folded = _fold(focus_text)
     for match in _CLAUSE_RE.finditer(folded):
         clause = match.group(1).strip(" \t¿¡")
         terminal = match.group(2)
         if not clause or terminal == "?" or _QUESTION_PREFIX_RE.match(clause):
             continue
-        if _FIRST_PERSON_EXPERIENCE_RE.search(clause):
+        if pattern.search(clause):
             return True
     return False
+
+
+def _behavioral_experience_grounded(focus_text: str) -> bool:
+    """True when a declarative focus clause reports first-person experience."""
+    return _declarative_clause_matches(focus_text, _FIRST_PERSON_EXPERIENCE_RE)
 
 
 def classify_user_attitude_evidence(
@@ -249,8 +276,13 @@ def classify_user_attitude_evidence(
     focus = focus_user_evidence(evidence_excerpt)
     if expected_polarity in _asserted_interest_polarities(focus):
         return "explicit"
-    if expected_polarity and _behavioral_experience_grounded(focus):
-        return "behavioral"
+    if expected_polarity:
+        if _behavioral_experience_grounded(focus):
+            return "behavioral"
+    elif _declarative_clause_matches(focus, _CESSATION_ASSERTION_RE):
+        # "I quit playing golf" / "I don't play golf anymore" is an explicit
+        # first-person statement even though it names no interest verb.
+        return "explicit"
     return None
 
 

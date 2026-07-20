@@ -1133,7 +1133,9 @@ class ExtractorConfig(BaseModel):
     timeout_s: float = 30.0
     # Personal-salience floor (1-5): candidates the model scores below this
     # are dropped in Stage 1. 3 keeps peripheral personal facts and drops
-    # world-knowledge trivia; raise it for a leaner vault.
+    # world-knowledge trivia; raise it for a leaner vault. The default equals
+    # jarvis/memory/wiki/constants.py DEFAULT_SALIENCE (unscored candidates
+    # sit exactly on the floor).
     min_salience: int = 3
     # Rollback switch to the pre-basis regime: when False, behavioral
     # (lived-experience) grounding is treated as ungrounded and only

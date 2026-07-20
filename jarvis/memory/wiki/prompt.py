@@ -26,6 +26,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
+from jarvis.memory.wiki.constants import INFERRED_MARKER as _INFERRED_MARKER
 from jarvis.memory.wiki.journal import normalise_subjects
 
 # Output-contract block appended to schema.md inside the system prompt.
@@ -598,6 +599,12 @@ Linking rules:
   the entity page in this batch.
 - Never write credentials or secrets. No prose outside the JSON array.
 """
+
+
+# Drift guard: the preservation-guard exemption in consolidator.py matches
+# exactly constants.INFERRED_MARKER — the prompt must teach the same literal
+# token, or upgraded lines stop being exempt (fail-safe but broken UX).
+assert _INFERRED_MARKER in _CONSOLIDATOR_SYSTEM
 
 
 def build_consolidator_prompt(

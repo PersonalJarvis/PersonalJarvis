@@ -35,7 +35,12 @@ from typing import Literal
 
 from jarvis.core.redact import safe_preview
 
-from .constants import FACT_BASES, CandidateStatus, CuratorDecision
+from .constants import (
+    DEFAULT_SALIENCE,
+    FACT_BASES,
+    CandidateStatus,
+    CuratorDecision,
+)
 from .secret_guard import contains_secret
 
 log = logging.getLogger(__name__)
@@ -87,7 +92,7 @@ _KNOWN_ERROR_CODES = frozenset(
 
 
 _DEFAULT_BASIS = "explicit"
-_DEFAULT_SALIENCE = 3
+_DEFAULT_SALIENCE = DEFAULT_SALIENCE
 
 
 @dataclass(frozen=True, slots=True)

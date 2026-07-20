@@ -121,3 +121,38 @@ def test_multilingual_topic_question_stays_blocked() -> None:
         "Erzaehl mir was ueber Monaco?",  # i18n-allow: input vocabulary under test
         subjects=(_USER, "monaco"),
     ) is None
+
+
+def test_cessation_habit_claim_classifies_explicit() -> None:
+    assert _classify(
+        "The user no longer plays golf.",
+        "I don't play golf anymore, I quit last year.",
+    ) == "explicit"
+    assert _classify(
+        "The user stopped playing golf.",
+        "I stopped playing golf.",
+    ) == "explicit"
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    [
+        "Ich spiele nicht mehr Golf.",  # i18n-allow: input vocabulary under test
+        "Ich habe mit Golf aufgehoert.",  # i18n-allow: input vocabulary under test
+        "Ya no juego al golf.",
+    ],
+)
+def test_multilingual_cessation_claims_classify_explicit(evidence: str) -> None:
+    assert _classify(
+        "The user no longer plays golf.",
+        evidence,
+    ) == "explicit"
+
+
+def test_ungrounded_cessation_claim_stays_blocked() -> None:
+    # A negative habit claim with no cessation statement in the evidence
+    # (e.g. inferred from a topic question) still grounds nothing.
+    assert _classify(
+        "The user no longer plays golf.",
+        "Tell me about golf courses in Monaco.",
+    ) is None

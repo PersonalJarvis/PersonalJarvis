@@ -39,7 +39,7 @@ from typing import TYPE_CHECKING, Any
 from jarvis.brain.provider_registry import BrainProviderRegistry
 from jarvis.brain.streaming import aggregate, is_length_truncated
 from jarvis.core.protocols import BrainMessage, BrainRequest
-from jarvis.memory.wiki.constants import CURATOR_DECISIONS
+from jarvis.memory.wiki.constants import CURATOR_DECISIONS, INFERRED_MARKER
 from jarvis.memory.wiki.curator_llm import (
     _extract_json_array,
     _resolve_provider_and_model,
@@ -1348,7 +1348,7 @@ class Consolidator:
                     continue
                 if closing >= 0 and index <= closing:
                     continue
-                if normalised.endswith("*(inferred)*"):
+                if normalised.endswith(INFERRED_MARKER):
                     # Behavioral/inferred lines are upgradeable by design: a
                     # later explicit assertion may rewrite them (dropping the
                     # marker) or an explicit contradiction may remove them.

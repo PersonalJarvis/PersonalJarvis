@@ -18,6 +18,7 @@ CREATE TABLE IF NOT EXISTS wiki_candidate_basis (
         REFERENCES wiki_candidate_journal(id) ON DELETE CASCADE,
     basis         TEXT NOT NULL DEFAULT 'explicit'
         CHECK (basis IN ('explicit', 'behavioral', 'inferred')),
+    -- DEFAULT mirrors jarvis/memory/wiki/constants.py DEFAULT_SALIENCE.
     salience      INTEGER NOT NULL DEFAULT 3
         CHECK (salience BETWEEN 1 AND 5)
 );
