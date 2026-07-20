@@ -53,8 +53,23 @@ from .role_map import normalize_role
 logger = logging.getLogger(__name__)
 
 # Same retry ladder as the Windows source: shrink the traversal depth on
-# node-overflow rather than ship a 5000-node tree to the model.
+# node-overflow rather than ship a 5000-node tree to the model. The ladder is
+# applied at PRUNE time over one deep walk — re-walking the native tree per
+# rung tripled the AX IPC cost exactly on the huge trees (browsers) where the
+# ladder triggers.
 _DEPTH_RETRY_LADDER: tuple[int, ...] = (6, 5, 4)
+
+#: Wall-clock budget for one native AX walk. Every node costs ~8 AX IPC round
+#: trips; browser trees can exceed the whole observe timeout. On expiry the
+#: walk returns the PARTIAL tree collected so far (front-most windows are
+#: walked first, so the visible chrome of the app is what survives) instead
+#: of burning the caller's full ``UIA_TIMEOUT_S`` in an uncancellable thread.
+_TRAVERSAL_TIME_BUDGET_S = 1.2
+
+#: Hard cap on raw nodes collected by one walk — the prune keeps at most
+#: ``DEFAULT_MAX_NODES`` (150) anyway; collecting tens of thousands of raw
+#: nodes only spends IPC on data the ladder is guaranteed to throw away.
+_MAX_RAW_NODES = 6000
 
 # Onboarding message surfaced once when the macOS Accessibility permission is
 # missing — English-only, per the Output Language Policy + AD-13.
@@ -129,21 +144,23 @@ class AXTreeSource:
                 self._detect_primary_monitor_bounds
             )
 
-        nodes_before = 0
+        # ONE native walk at the deepest rung; the retry ladder then shrinks
+        # the depth at prune time over the same raw nodes. A raw node carries
+        # its depth, and prune's first filter is exactly the depth cut — the
+        # pruned result is identical to a shallower re-walk without paying
+        # the AX IPC again.
+        traverse_fn = self._traverser or self._traverse_via_pyobjc
+        window_title, active_pid, raw_nodes = await asyncio.to_thread(
+            traverse_fn,
+            _DEPTH_RETRY_LADDER[0],
+            window_title_filter,
+        )
+        nodes_before = len(raw_nodes)
         depth_used = _DEPTH_RETRY_LADDER[0]
         pruned: list[RawNode] = []
-        window_title = ""
-        active_pid = 0
         for depth in _DEPTH_RETRY_LADDER:
             if cancel_token is not None and cancel_token.is_cancelled():
                 raise RuntimeError(f"cancelled: {cancel_token.reason}")
-            traverse_fn = self._traverser or self._traverse_via_pyobjc
-            window_title, active_pid, raw_nodes = await asyncio.to_thread(
-                traverse_fn,
-                depth,
-                window_title_filter,
-            )
-            nodes_before = len(raw_nodes)
             pruned = prune_tree(
                 raw_nodes,
                 max_depth=depth,
@@ -297,7 +314,15 @@ class AXTreeSource:
 
         nodes: list[RawNode] = []
         try:
-            _ax_flatten(root, depth=0, max_depth=max_depth, parent_index=-1, out=nodes)
+            _ax_flatten(
+                root,
+                depth=0,
+                max_depth=max_depth,
+                parent_index=-1,
+                out=nodes,
+                deadline=time.monotonic() + _TRAVERSAL_TIME_BUDGET_S,
+                max_nodes=_MAX_RAW_NODES,
+            )
         except Exception:  # noqa: BLE001
             logger.warning("AX traversal aborted", exc_info=True)
 
@@ -426,6 +451,8 @@ def _ax_flatten(
     max_depth: int,
     parent_index: int,
     out: list[RawNode],
+    deadline: float | None = None,
+    max_nodes: int | None = None,
 ) -> None:
     """Recursive depth-first flatten of an AX element into ``RawNode``.
 
@@ -434,8 +461,17 @@ def _ax_flatten(
     as a structural node so the parent hierarchy survives, but with an empty
     role string — the role-whitelist prune then removes it (it is never the
     interesting-roots root, which prune always keeps).
+
+    ``deadline`` (``time.monotonic`` timestamp) and ``max_nodes`` bound the
+    walk: on either limit the flatten stops descending and the caller gets
+    the partial tree collected so far — parents always precede children, so
+    the partial list is structurally valid for pruning.
     """
     if depth > max_depth:
+        return
+    if max_nodes is not None and len(out) >= max_nodes:
+        return
+    if deadline is not None and time.monotonic() >= deadline:
         return
     try:
         native_role = str(_ax_copy_attr(element, _AX_ROLE) or "")
@@ -504,6 +540,8 @@ def _ax_flatten(
             max_depth=max_depth,
             parent_index=my_index,
             out=out,
+            deadline=deadline,
+            max_nodes=max_nodes,
         )
 
 

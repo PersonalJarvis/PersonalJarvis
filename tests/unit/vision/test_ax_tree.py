@@ -270,3 +270,47 @@ async def test_real_pyobjc_capture() -> None:
     # Real AX capture needs pyobjc + a granted Accessibility permission.
     pytest.importorskip("Quartz")
     pytest.skip("requires a real macOS Accessibility grant — Wave 4 live sign-off")
+
+
+# ---------------------------------------------------------------------------
+# Traversal bounds: single walk per observe, deadline, raw-node cap
+# ---------------------------------------------------------------------------
+
+@pytest.mark.asyncio
+async def test_observe_walks_the_native_tree_exactly_once_despite_ladder() -> None:
+    # Overflowing trees used to be re-walked per ladder rung (depths 6, 5, 4)
+    # — 3x the AX IPC exactly when the tree is huge. The ladder now shrinks
+    # the depth at prune time over ONE walk.
+    calls: list[int] = []
+    real = build_fake_ax_traverser(make_canned_ax_tree())
+
+    def counting_traverser(depth: int, flt: str | None):
+        calls.append(depth)
+        return real(depth, flt)
+
+    src = AXTreeSource(traverser=counting_traverser, permission_check=lambda: True)
+    await src.observe()
+    assert calls == [6]
+
+
+def test_flatten_deadline_returns_partial_tree(monkeypatch) -> None:
+    root = make_canned_ax_tree()
+    clock = iter([100.0, 100.0, 999.0, 999.0, 999.0, 999.0, 999.0, 999.0])
+    monkeypatch.setattr(
+        "jarvis.vision.ax_tree.time.monotonic", lambda: next(clock, 999.0),
+    )
+    nodes: list = []
+    _ax_flatten(
+        root, depth=0, max_depth=6, parent_index=-1, out=nodes, deadline=100.5,
+    )
+    # The walk stopped early but what was collected is structurally valid:
+    # parents precede children and the root survived.
+    assert 1 <= len(nodes) < 5
+    assert nodes[0].bounds == (0, 0, 800, 600)  # the root, flattened first
+
+
+def test_flatten_max_nodes_cap_stops_collection() -> None:
+    root = make_canned_ax_tree()
+    nodes: list = []
+    _ax_flatten(root, depth=0, max_depth=6, parent_index=-1, out=nodes, max_nodes=2)
+    assert len(nodes) == 2
