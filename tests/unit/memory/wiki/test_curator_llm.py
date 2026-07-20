@@ -765,6 +765,10 @@ async def test_propose_updates_uses_default_registry_if_none_injected(
         "instantiate",
         _fake_instantiate,
     )
+    monkeypatch.setattr(
+        "jarvis.memory.wiki.provider_chain.credential_ready_wiki_providers",
+        lambda *, available, **_kwargs: set(available),
+    )
 
     llm = WikiCuratorLLM(
         config=cfg,

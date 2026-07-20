@@ -14,8 +14,8 @@ Scope of this module:
     (case-insensitive, trailing-slash tolerant — Windows-friendly).
 
 What this module deliberately does NOT do:
-  * No mutation of ``obsidian.json`` (that lives in Sub-Agent 2's writer).
-  * No FastAPI / HTTP surface (that is Sub-Agent 3's route).
+  * No mutation of ``obsidian.json`` (that belongs to the setup writer).
+  * No FastAPI / HTTP surface (that belongs to the setup route).
   * No subprocess launches of Obsidian.exe.
   * No network calls.
 
@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import logging
+import ntpath
 import os
 import secrets
 import shutil
@@ -118,16 +119,18 @@ def _candidate_install_paths(platform: str | None = None) -> list[Path]:
 
     local_appdata = os.environ.get("LOCALAPPDATA")
     if local_appdata:
-        candidates.append(Path(local_appdata) / "Programs" / "Obsidian" / "Obsidian.exe")
+        candidates.append(
+            Path(ntpath.join(local_appdata, "Programs", "Obsidian", "Obsidian.exe"))
+        )
 
     program_files = os.environ.get("PROGRAMFILES")
     if program_files:
-        candidates.append(Path(program_files) / "Obsidian" / "Obsidian.exe")
+        candidates.append(Path(ntpath.join(program_files, "Obsidian", "Obsidian.exe")))
 
     # Note: env var name on Windows literally contains parentheses.
     program_files_x86 = os.environ.get("PROGRAMFILES(X86)")
     if program_files_x86:
-        candidates.append(Path(program_files_x86) / "Obsidian" / "Obsidian.exe")
+        candidates.append(Path(ntpath.join(program_files_x86, "Obsidian", "Obsidian.exe")))
 
     return candidates
 
@@ -155,7 +158,7 @@ def _probe_uninstall_registry() -> Path | None:
             continue
         if not install_location:
             continue
-        exe = Path(install_location) / "Obsidian.exe"
+        exe = Path(ntpath.join(install_location, "Obsidian.exe"))
         if exe.exists():
             return exe
     return None

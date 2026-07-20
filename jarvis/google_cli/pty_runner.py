@@ -18,6 +18,7 @@ token is never read to make our own HTTP request.
 """
 from __future__ import annotations
 
+import ntpath
 import os
 import re
 import sys
@@ -108,18 +109,18 @@ def repair_agy_path(
         return path or ""
     root = system_root or os.environ.get("SystemRoot") or os.environ.get("windir") or r"C:\Windows"
     needed = [
-        os.path.join(root, "System32"),
-        os.path.join(root, "System32", "Wbem"),
+        ntpath.join(root, "System32"),
+        ntpath.join(root, "System32", "Wbem"),
         root,
     ]
     if node_dir:
         needed.append(node_dir)
-    parts = [p for p in (path or "").split(os.pathsep) if p]
-    have = {p.rstrip("\\").lower() for p in parts}
-    prefix = [d for d in needed if d.rstrip("\\").lower() not in have]
+    parts = [p for p in (path or "").split(";") if p]
+    have = {p.rstrip("\\/").lower() for p in parts}
+    prefix = [d for d in needed if d.rstrip("\\/").lower() not in have]
     if not prefix:
         return path or ""
-    return os.pathsep.join([*prefix, *parts])
+    return ";".join([*prefix, *parts])
 
 
 @dataclass(frozen=True)

@@ -109,8 +109,10 @@ def test_ax_permission_windows_always_true(monkeypatch):
 
 
 def test_ax_permission_macos_unknown_without_pyobjc(monkeypatch):
+    import sys
+
     _force_platform(monkeypatch, "darwin")
-    # ApplicationServices import will fail on a non-mac box → None (unknown).
+    monkeypatch.setitem(sys.modules, "ApplicationServices", None)
     assert probes.ax_permission_granted() is None
 
 

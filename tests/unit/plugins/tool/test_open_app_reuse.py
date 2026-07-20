@@ -68,6 +68,7 @@ async def test_launches_when_not_running(monkeypatch):
 
 async def test_multi_instance_app_always_launches(monkeypatch):
     calls = _stub_launch(monkeypatch)
+    monkeypatch.setattr(oa, "KNOWN_APPS", oa._KNOWN_APPS_WIN)
     monkeypatch.setattr(oa.window_state, "is_app_running", lambda n: WindowInfo("File Explorer"))
     raised: list = []
     monkeypatch.setattr(

@@ -18,7 +18,6 @@ import inspect
 import io
 import json
 import wave
-from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from importlib import metadata as importlib_metadata
 from pathlib import Path
@@ -170,9 +169,7 @@ def test_groq_transcribe_uploads_wav_and_parses_response(monkeypatch):
     provider, _ = _build_groq(monkeypatch, handler)
 
     chunks = [FakeChunk(pcm=_fake_pcm(0.5))]
-    result = asyncio.get_event_loop().run_until_complete(
-        provider.transcribe(_async_iter(chunks))
-    )
+    result = asyncio.run(provider.transcribe(_async_iter(chunks)))
 
     assert result.text == "Hallo Welt"
     assert result.language == "de"
@@ -198,9 +195,7 @@ def test_groq_empty_audio_returns_empty_transcript_without_http(monkeypatch):
         return httpx.Response(500, text="should not be called")
 
     provider, _ = _build_groq(monkeypatch, handler)
-    result = asyncio.get_event_loop().run_until_complete(
-        provider.transcribe(_async_iter([]))
-    )
+    result = asyncio.run(provider.transcribe(_async_iter([])))
     assert result.text == ""
     assert result.confidence == 0.0
     assert calls["n"] == 0
@@ -219,7 +214,7 @@ def test_groq_stream_transcribe_yields_single_final(monkeypatch):
             out.append(t)
         return out
 
-    results = asyncio.get_event_loop().run_until_complete(drive())
+    results = asyncio.run(drive())
     assert len(results) == 1
     assert results[0].text == "Test"
     assert results[0].language == "en"
@@ -241,9 +236,7 @@ def test_groq_raises_when_api_key_missing(monkeypatch):
     provider = GroqWhisperAPI(http_client=_make_mock_client(handler))
     chunks = [FakeChunk(pcm=_fake_pcm(0.2))]
     with pytest.raises(RuntimeError, match="GROQ_API_KEY"):
-        asyncio.get_event_loop().run_until_complete(
-            provider.transcribe(_async_iter(chunks))
-        )
+        asyncio.run(provider.transcribe(_async_iter(chunks)))
 
 
 def test_groq_wraps_pcm_into_valid_wav_container(monkeypatch):
@@ -256,7 +249,7 @@ def test_groq_wraps_pcm_into_valid_wav_container(monkeypatch):
 
     provider, _ = _build_groq(monkeypatch, handler)
     chunks = [FakeChunk(pcm=_fake_pcm(0.4))]
-    asyncio.get_event_loop().run_until_complete(provider.transcribe(_async_iter(chunks)))
+    asyncio.run(provider.transcribe(_async_iter(chunks)))
 
     # Extract the WAV blob from the multipart body and re-parse it with `wave`.
     body = captured["body"]
@@ -282,9 +275,7 @@ def test_groq_segmentless_response_confidence_defaults(monkeypatch):
 
     provider, _ = _build_groq(monkeypatch, handler)
     chunks = [FakeChunk(pcm=_fake_pcm(0.2))]
-    result = asyncio.get_event_loop().run_until_complete(
-        provider.transcribe(_async_iter(chunks))
-    )
+    result = asyncio.run(provider.transcribe(_async_iter(chunks)))
     assert result.text == "hi"
     assert result.language == "en"
     assert result.confidence == 1.0

@@ -2,7 +2,7 @@
 
 Plan acceptance criteria §7.5:
 - Spawn produces a valid SKILL.md in draft state
-- state=draft is forced even when Sub-Jarvis wrongly writes `active`
+- state=draft is forced even when a Jarvis-Agent wrongly writes `active`
 - Validation retry works with concrete Pydantic feedback
 - Name clash produces a suffix, no overwrite
 - Draft skill doesn't trigger (negative test with TriggerMatcher)
@@ -66,7 +66,7 @@ def _good_response_json(**overrides) -> str:
 
 
 # ----------------------------------------------------------------------
-# SkillDraft Schema (Plan-§AD-9 + Slug-Hardening)
+# SkillDraft schema (Plan-§AD-9 + slug hardening)
 # ----------------------------------------------------------------------
 
 
@@ -111,7 +111,7 @@ class TestSkillDraftSchema:
 
 
 # ----------------------------------------------------------------------
-# write_draft — state=draft Forcierung (Plan-§AD-8)
+# write_draft — state=draft enforcement (Plan-§AD-8)
 # ----------------------------------------------------------------------
 
 
@@ -132,7 +132,7 @@ class TestWriteDraft:
     def test_state_active_in_draft_is_forced_to_draft(
         self, user_skills_root: Path
     ) -> None:
-        """Plan-§AD-8: Sub-Jarvis output state="active" is unconditionally
+        """Plan-§AD-8: Jarvis-Agent output state="active" is unconditionally
         overwritten to "draft" when writing.
         """
         draft = _draft(state="active")
@@ -179,7 +179,7 @@ class TestPathTraversalDefense:
 
 
 # ----------------------------------------------------------------------
-# safe_lint_skill_body (Plan-§7.5 Sicherheits-Lint)
+# safe_lint_skill_body (Plan-§7.5 security lint)
 # ----------------------------------------------------------------------
 
 
@@ -274,7 +274,7 @@ class TestSafeLint:
 
 
 # ----------------------------------------------------------------------
-# SkillAuthoringRunner — Sub-Jarvis-Mock + Validation-Loop
+# SkillAuthoringRunner — Jarvis-Agent mock + validation loop
 # ----------------------------------------------------------------------
 
 
@@ -320,10 +320,10 @@ class TestRunnerHappyPath:
 
 
 class TestRunnerForcedStateOverride:
-    def test_subjarvis_active_yields_forced_override_audit(
+    def test_jarvis_agent_active_yields_forced_override_audit(
         self, user_skills_root: Path, audit: SelfModAudit
     ) -> None:
-        """Plan-AC §7.5: state=draft is forced even when Sub-Jarvis returns 'active'."""
+        """Plan-AC §7.5: state=draft is forced when a Jarvis-Agent returns 'active'."""
         async def fake_spawn(prompt: str) -> str:
             return _good_response_json(state="active")
 

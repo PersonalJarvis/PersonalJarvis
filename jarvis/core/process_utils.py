@@ -30,6 +30,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 
 if sys.platform == "win32":
     NO_WINDOW_CREATIONFLAGS: int = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
@@ -55,7 +56,18 @@ def resolve_executable(name: str) -> str:
     if not name:
         return name
     resolved = shutil.which(name)
-    return resolved or name
+    if resolved:
+        return resolved
+
+    # A caller may launch the app as ``.venv/bin/python`` without activating
+    # that environment, so the running interpreter's directory is absent from
+    # PATH. Treat its exact basename as resolvable even in that valid setup.
+    if (
+        Path(name).name == name
+        and Path(sys.executable).name.casefold() == name.casefold()
+    ):
+        return str(Path(sys.executable).resolve())
+    return name
 
 
 __all__ = ["NO_WINDOW_CREATIONFLAGS", "resolve_executable"]

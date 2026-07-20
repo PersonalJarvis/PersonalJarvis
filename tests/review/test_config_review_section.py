@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from jarvis.core.config import ReviewConfig, ReviewRubricConfig
+from jarvis.core.config import JarvisConfig, ReviewConfig, ReviewRubricConfig
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
@@ -81,16 +81,13 @@ def test_rubric_items_not_empty() -> None:
 # ----------------------------------------------------------------------
 
 
-def test_jarvis_toml_review_section_exists_and_validates() -> None:
-    """End-to-end: the real jarvis.toml must have a [review] section
-    that ReviewConfig.model_validate accepts."""
-    jarvis_toml = REPO_ROOT / "jarvis.toml"
+def test_example_config_uses_valid_review_defaults() -> None:
+    """The public example remains valid when the review section is omitted."""
+    jarvis_toml = REPO_ROOT / "jarvis.toml.example"
     assert jarvis_toml.exists()
 
     raw = tomllib.loads(jarvis_toml.read_text(encoding="utf-8"))
-    assert "review" in raw, "jarvis.toml has no [review] section"
-
-    cfg = ReviewConfig.model_validate(raw["review"])
+    cfg = JarvisConfig.model_validate(raw).review
     # Values from Plan §6.4
     assert cfg.enabled is True
     assert cfg.max_iterations == 3

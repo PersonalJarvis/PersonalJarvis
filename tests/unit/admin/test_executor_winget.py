@@ -8,6 +8,7 @@ Important:
 from __future__ import annotations
 
 import asyncio
+import sys
 
 import pytest
 
@@ -17,6 +18,7 @@ from jarvis.admin.schema import (
     ReadRegistryOp,
     StartServiceOp,
     UninstallWingetOp,
+    WriteRegistryHkcuOp,
 )
 
 
@@ -152,5 +154,22 @@ async def test_read_registry_hkcu_environment_smoke(monkeypatch):
     assert resp.success in (True, False)
     if not resp.success:
         assert resp.error_code in (
-            "registry_key_not_found", "registry_read_failed",
+            "registry_key_not_found",
+            "registry_read_failed",
+            "registry_unsupported",
         )
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="non-Windows degradation path")
+@pytest.mark.asyncio
+async def test_write_registry_degrades_honestly_off_windows():
+    resp = await AdminExecutor().execute(
+        WriteRegistryHkcuOp(
+            key_path=r"Software\PersonalJarvisTest",
+            value_name="Sample",
+            value_data="value",
+        )
+    )
+    assert resp.success is False
+    assert resp.error_code == "registry_unsupported"
+    assert resp.error_message == "Windows Registry is unavailable on this platform."
