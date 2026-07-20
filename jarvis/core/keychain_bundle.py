@@ -75,6 +75,15 @@ _SAFE_CLI_TOKEN = re.compile(r"^[A-Za-z0-9._-]+$")
 # The written payload is standard base64 (never starts with ``-``, contains no
 # whitespace/quotes), so it is safe on a ``security -i`` line after ``-w``.
 _SAFE_CLI_VALUE = re.compile(r"^[A-Za-z0-9+/=]+$")
+# Any base64-ish run long enough to be (part of) a secret payload. Applied to
+# CLI stderr before it may enter an exception message: the write command's
+# input line carries the WHOLE encoded vault, and a CLI parser echoing its
+# failing input into stderr must never let that reach a log line (AP-2/AP-12).
+_REDACT_PATTERN = re.compile(r"[A-Za-z0-9+/=]{16,}")
+
+
+def _redact(text: str) -> str:
+    return _REDACT_PATTERN.sub("<redacted>", text)
 
 
 class SecurityCliVaultError(RuntimeError):
@@ -133,7 +142,8 @@ class SecurityCliVault:
         if proc.returncode == _SECURITY_NOT_FOUND_EXIT:
             return None
         raise SecurityCliVaultError(
-            f"security CLI read exited {proc.returncode}: {proc.stderr.strip()!r}"
+            f"security CLI read exited {proc.returncode}: "
+            f"{_redact(proc.stderr.strip())!r}"
         )
 
     def write(self, service: str, account: str, value: str) -> None:
@@ -150,6 +160,11 @@ class SecurityCliVault:
                 "vault payload is not clean base64; refusing CLI interpolation"
             )
         self.delete(service, account)
+        # ``-U`` is deliberate defense-in-depth for the case where the delete
+        # above silently failed to remove a stuck item: the in-place update
+        # may then need the OLD item's ACL consent (one dialog) or fail
+        # cleanly into the inner-backend fallback — both beat a hard
+        # duplicate-item error.
         command = (
             f"add-generic-password -U -A -s {service} -a {account} -w {value}\n"
         )
@@ -166,7 +181,8 @@ class SecurityCliVault:
             raise SecurityCliVaultError(f"security CLI write failed: {exc}") from exc
         if proc.returncode != 0:
             raise SecurityCliVaultError(
-                f"security CLI write exited {proc.returncode}: {proc.stderr.strip()!r}"
+                f"security CLI write exited {proc.returncode}: "
+                f"{_redact(proc.stderr.strip())!r}"
             )
         # ``security -i`` can swallow a failing sub-command's exit status;
         # trust only a verified read-back.
@@ -290,15 +306,24 @@ class DarwinBundleKeyringBackend(_KeyringBackendBase):  # type: ignore[valid-typ
             return None, False
         return (parsed, True) if isinstance(parsed, dict) else (None, False)
 
-    def _load_locked(self, service: str) -> dict[str, str]:
+    def _load_locked(self, service: str, *, refresh: bool = False) -> dict[str, str]:
         """Return the parsed vault dict for *service*, loading it once.
 
         Caller must hold ``self._lock``. On a JSON-decode error, sets
         ``self._bundle_unusable`` and returns an empty dict without touching
         the stored item.
+
+        ``refresh=True`` bypasses the cache and re-reads the stored item:
+        every mutation path uses it so a concurrent WRITE from another
+        process (main app, worker, CLI) is picked up before this process's
+        read-modify-write, shrinking the cross-process lost-update window
+        from "since this process first read the vault" to milliseconds.
+        There is still no cross-process lock — two writes landing inside the
+        same window remain last-writer-wins, the same residual race the
+        pre-vault per-item store had for a single slot.
         """
         cached = self._cache.get(service)
-        if cached is not None:
+        if cached is not None and not refresh:
             return cached
         raw: str | None = None
         used_cli = False
@@ -331,10 +356,12 @@ class DarwinBundleKeyringBackend(_KeyringBackendBase):  # type: ignore[valid-typ
             return {}
         bundle = {str(k): str(v) for k, v in parsed.items()}
         self._cache[service] = bundle
-        if used_cli and not was_base64:
+        if used_cli and not was_base64 and not refresh:
             # A keyring-written legacy vault, just read through the CLI (the
             # one-time consent dialog, if any, already happened). Rewrite it
             # with the any-application ACL so no process ever prompts again.
+            # Skipped on a refresh load: those callers persist right after
+            # anyway, which performs the same format upgrade.
             try:
                 self._save_locked(service, bundle)
             except Exception:  # noqa: BLE001 -- upgrade is best-effort
@@ -415,7 +442,7 @@ class DarwinBundleKeyringBackend(_KeyringBackendBase):  # type: ignore[valid-typ
 
     def _migrate_legacy(self, service: str, key: str, value: str) -> None:
         with self._lock:
-            bundle = self._load_locked(service)
+            bundle = self._load_locked(service, refresh=True)
             if self._bundle_unusable:
                 # Nothing to migrate into; leave the legacy item alone.
                 return
@@ -437,7 +464,7 @@ class DarwinBundleKeyringBackend(_KeyringBackendBase):  # type: ignore[valid-typ
             self._inner.set_password(service, key, value)
             return
         with self._lock:
-            bundle = self._load_locked(service)
+            bundle = self._load_locked(service, refresh=True)
             if self._bundle_unusable:
                 self._inner.set_password(service, key, value)
                 return
@@ -454,7 +481,7 @@ class DarwinBundleKeyringBackend(_KeyringBackendBase):  # type: ignore[valid-typ
 
         removed_from_bundle = False
         with self._lock:
-            bundle = self._load_locked(service)
+            bundle = self._load_locked(service, refresh=True)
             if self._bundle_unusable:
                 self._inner.delete_password(service, key)
                 return

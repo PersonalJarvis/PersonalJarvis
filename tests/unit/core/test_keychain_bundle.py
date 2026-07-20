@@ -440,6 +440,85 @@ def test_security_cli_vault_rejects_non_base64_payloads() -> None:
 # ---------------------------------------------------------------------------
 
 
+def test_cli_error_messages_redact_base64_payload_runs() -> None:
+    """The write command's input line carries the WHOLE encoded vault; a CLI
+    error echoing its input must never leak it into an exception/log line."""
+    from jarvis.core.keychain_bundle import _redact
+
+    secret_b64 = base64.b64encode(b'{"anthropic_api_key": "sk-ant-tops3cret"}')
+    stderr = f"security: parse error near {secret_b64.decode()} on line 1"
+    assert secret_b64.decode() not in _redact(stderr)
+    assert "<redacted>" in _redact(stderr)
+
+
+def test_mutations_refresh_from_store_so_concurrent_writes_survive(
+    inner: FakeInnerBackend, cli: FakeSecurityCli
+) -> None:
+    """Two wrapper instances (two processes) writing DIFFERENT keys: the
+    second write must pick up the first one's key from the store instead of
+    clobbering the vault with its own stale snapshot."""
+    first = DarwinBundleKeyringBackend(inner, cli=cli)
+    second = DarwinBundleKeyringBackend(inner, cli=cli)
+
+    # Both processes load the (empty) vault first.
+    assert first.get_password(SERVICE, "anthropic_api_key") is None
+    assert second.get_password(SERVICE, "groq_api_key") is None
+
+    first.set_password(SERVICE, "anthropic_api_key", "sk-ant-1")
+    second.set_password(SERVICE, "groq_api_key", "gsk-2")
+
+    decoded = json.loads(
+        base64.b64decode(cli.items[(SERVICE, VAULT_ACCOUNT)], validate=True)
+    )
+    assert decoded == {"anthropic_api_key": "sk-ant-1", "groq_api_key": "gsk-2"}, (
+        "the second writer must refresh-load before mutating, not overwrite "
+        "the vault with its stale process-local snapshot"
+    )
+
+
+def test_ensure_keyring_backend_wires_the_cli_store_on_darwin(
+    inner: FakeInnerBackend, cli: FakeSecurityCli, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The production wiring itself: on darwin, ``_ensure_keyring_backend``
+    must install the wrapper WITH the security-CLI store. Dropping the
+    ``cli=`` kwarg (or the factory silently returning ``None``) would
+    reopen BUG-103 while every direct-construction test stays green."""
+    import sys
+
+    import keyring
+    import keyring.backend
+
+    from jarvis.core import config as cfg
+    from jarvis.core import keychain_bundle as kb
+
+    class _FakePlatformBackend(keyring.backend.KeyringBackend):
+        priority = 5  # type: ignore[assignment]
+
+        def get_password(self, service: str, key: str) -> str | None:
+            return inner.get_password(service, key)
+
+        def set_password(self, service: str, key: str, value: str) -> None:
+            inner.set_password(service, key, value)
+
+        def delete_password(self, service: str, key: str) -> None:
+            inner.delete_password(service, key)
+
+    original = keyring.get_keyring()
+    try:
+        keyring.set_keyring(_FakePlatformBackend())
+        monkeypatch.setattr(sys, "platform", "darwin")
+        monkeypatch.setattr(kb, "darwin_security_cli_vault", lambda: cli)
+        monkeypatch.setattr(cfg, "_KEYRING_BACKEND_READY", False)
+
+        cfg._ensure_keyring_backend()
+
+        installed = keyring.get_keyring()
+        assert isinstance(installed, DarwinBundleKeyringBackend)
+        assert installed._cli is cli
+    finally:
+        keyring.set_keyring(original)
+
+
 def test_wrapper_is_accepted_by_keyring_set_keyring(
     inner: FakeInnerBackend,
 ) -> None:
