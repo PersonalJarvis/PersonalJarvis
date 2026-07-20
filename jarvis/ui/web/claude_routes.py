@@ -1,11 +1,11 @@
 """REST routes for the Claude (Anthropic) subscription connect flow.
 
-Dual billing, mirror of Codex / Antigravity: the heavy-task subagent runs over
-the **Claude Max subscription** (the ``claude`` CLI's OAuth login in
-``~/.claude/.credentials.json`` — no per-token bill) OR over an **Anthropic API
-key** (billed per token). This module surfaces an honest snapshot of which one is
-live, plus the connected account email + subscription tier, so the Subagent card
-can render "Connected as <email>" exactly like the Codex / Antigravity cards.
+Dual billing, mirror of Codex / Antigravity: the heavy-task Jarvis-Agent runs over
+the **Claude subscription** (the ``claude`` CLI's platform-native login — no
+per-token API bill) OR over an **Anthropic API key** (billed per token). This
+module surfaces an honest snapshot of which one is live, plus the connected
+account email + subscription tier, so the Jarvis-Agent card can render
+"Connected as <email>" exactly like the Codex / Antigravity cards.
 
 This is the Anthropic sibling of ``/api/codex/*``
 (:mod:`jarvis.ui.web.provider_routes`) and ``/api/antigravity/*``
@@ -58,7 +58,7 @@ def _service() -> ClaudeAuthService:
 @router.get("/claude/status")
 async def claude_status() -> dict[str, Any]:
     """Honest snapshot of the Claude login (installed / connected / account)."""
-    return _service().status().to_dict()
+    return (await asyncio.to_thread(_service().status)).to_dict()
 
 
 @router.post("/claude/test")
@@ -77,7 +77,7 @@ async def claude_test() -> dict[str, Any]:
 async def claude_login() -> dict[str, Any]:
     """Start the interactive Claude sign-in in a terminal. 409 if no CLI is found."""
     service = _service()
-    status = service.status()
+    status = await asyncio.to_thread(service.status)
     if not status.installed:
         raise HTTPException(
             status_code=409,
@@ -106,9 +106,9 @@ async def claude_login() -> dict[str, Any]:
 
 @router.post("/claude/logout")
 async def claude_logout() -> dict[str, Any]:
-    """Disconnect the Claude subscription login (removes the on-disk bearer)."""
+    """Disconnect the Claude subscription through its native CLI credential store."""
     service = _service()
-    ok, error = service.logout_blocking()
+    ok, error = await asyncio.to_thread(service.logout_blocking)
     if not ok:
         raise HTTPException(status_code=500, detail=error or "Claude logout failed")
     return {"ok": True, "message": "Claude was disconnected"}

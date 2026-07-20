@@ -8,6 +8,7 @@ depends on a real ``claude`` install or the user's real credentials.
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -15,7 +16,9 @@ import pytest
 from jarvis import claude_auth, claude_credentials
 from jarvis.claude_auth import (
     ClaudeAuthService,
+    ClaudeCliAuthSnapshot,
     _account_from_claude_json,
+    _parse_cli_auth_status,
     _subscription_label,
 )
 
@@ -53,6 +56,8 @@ def _service(
     )
     monkeypatch.setattr(svc, "_resolve_binary", lambda: binary)
     monkeypatch.setattr(svc, "_probe_version", lambda _b: "claude 1.2.3")
+    # File-backed cases model an older CLI whose auth-status command is absent.
+    monkeypatch.setattr(svc, "_probe_cli_auth", lambda _b: None)
     monkeypatch.setattr(svc, "_credentials_path", lambda: creds_path)
     monkeypatch.setattr(svc, "_claude_json_path", lambda: claude_json_path)
     return svc
@@ -79,6 +84,32 @@ def test_subscription_label_maps_known_tiers() -> None:
     assert _subscription_label(None) == "Claude subscription"
 
 
+def test_parse_cli_auth_status_reads_current_claude_shape() -> None:
+    snapshot = _parse_cli_auth_status(
+        json.dumps(
+            {
+                "loggedIn": True,
+                "authMethod": "claude.ai",
+                "subscriptionType": "max",
+                "apiProvider": "firstParty",
+                "email": "user@example.com",
+            }
+        )
+    )
+    assert snapshot == ClaudeCliAuthSnapshot(
+        logged_in=True,
+        auth_method="claude.ai",
+        subscription_type="max",
+        api_provider="firstParty",
+        email="user@example.com",
+    )
+
+
+@pytest.mark.parametrize("raw", ["", "not json", "{}", '{"loggedIn": "yes"}'])
+def test_parse_cli_auth_status_rejects_malformed_or_ambiguous_data(raw: str) -> None:
+    assert _parse_cli_auth_status(raw) is None
+
+
 # -- status() integration ----------------------------------------------
 
 
@@ -97,6 +128,53 @@ def test_status_subscription_with_email(tmp_path, monkeypatch) -> None:
     assert st.subscription_type == "max"
     assert st.account_label == "Claude Max"
     assert "ruben@example.com" in st.message
+
+
+def test_status_uses_native_cli_login_when_no_credentials_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Current macOS Claude Code stores OAuth in Keychain, not a JSON file."""
+    svc = _service(tmp_path, monkeypatch, creds=None, claude_json=None)
+    monkeypatch.setattr(
+        svc,
+        "_probe_cli_auth",
+        lambda _b: ClaudeCliAuthSnapshot(
+            logged_in=True,
+            auth_method="claude.ai",
+            subscription_type="max",
+            api_provider="firstParty",
+            email="keychain-user@example.com",
+        ),
+    )
+
+    st = svc.status()
+
+    assert st.connected is True
+    assert st.mode == "subscription"
+    assert st.subscription_type == "max"
+    assert st.user_email == "keychain-user@example.com"
+    assert st.account_label == "Claude Max"
+
+
+def test_cli_logged_out_is_authoritative_over_stale_file(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    svc = _service(
+        tmp_path,
+        monkeypatch,
+        creds={"claudeAiOauth": {"accessToken": "sk-ant-oat01-stale"}},
+        claude_json=None,
+    )
+    monkeypatch.setattr(
+        svc,
+        "_probe_cli_auth",
+        lambda _b: ClaudeCliAuthSnapshot(logged_in=False, auth_method="none"),
+    )
+
+    st = svc.status()
+
+    assert st.connected is False
+    assert st.mode == "unknown"
 
 
 def test_status_api_key_when_no_oauth(tmp_path, monkeypatch) -> None:
@@ -235,6 +313,7 @@ def test_status_connected_via_fresh_profile_when_default_is_stale(
     )
     monkeypatch.setattr(svc, "_resolve_binary", lambda: "/usr/bin/claude")
     monkeypatch.setattr(svc, "_probe_version", lambda _b: "claude 1.2.3")
+    monkeypatch.setattr(svc, "_probe_cli_auth", lambda _b: None)
     st = svc.status()
     assert st.connected is True
     assert st.mode == "subscription"
@@ -361,3 +440,114 @@ def test_start_login_headless_error_includes_manual_recovery(monkeypatch) -> Non
         match="claude auth login --claudeai",
     ):
         svc.start_login()
+
+
+def test_cli_auth_probe_accepts_logged_out_json_with_nonzero_exit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    svc = ClaudeAuthService()
+    monkeypatch.setattr(svc, "_cli_argv_prefix", lambda _b: ["node", "cli.js"])
+    calls: list[list[str]] = []
+
+    def fake_run(argv, **_kwargs):  # noqa: ANN001, ANN003
+        calls.append(list(argv))
+        return subprocess.CompletedProcess(
+            argv,
+            1,
+            stdout='{"loggedIn":false,"authMethod":"none"}',
+            stderr="",
+        )
+
+    monkeypatch.setattr(claude_auth.subprocess, "run", fake_run)
+
+    snapshot = svc._probe_cli_auth("/opt/claude.cmd")
+
+    assert snapshot == ClaudeCliAuthSnapshot(
+        logged_in=False,
+        auth_method="none",
+    )
+    assert calls == [["node", "cli.js", "auth", "status", "--json"]]
+
+
+def test_safe_mode_capability_probe_is_cached(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = 0
+
+    def fake_run(argv, **_kwargs):  # noqa: ANN001, ANN003
+        nonlocal calls
+        calls += 1
+        return subprocess.CompletedProcess(
+            argv,
+            0,
+            stdout="Options:\n  --safe-mode  Disable customizations",
+            stderr="",
+        )
+
+    monkeypatch.setattr(claude_auth.subprocess, "run", fake_run)
+
+    assert claude_auth.claude_cli_supports_safe_mode(["claude"]) is True
+    assert claude_auth.claude_cli_supports_safe_mode(["claude"]) is True
+    assert calls == 1
+
+
+def test_windows_cmd_resolves_to_adjacent_node_entrypoint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    npm_dir = tmp_path / "npm"
+    cli_script = npm_dir / "node_modules" / "@anthropic-ai" / "claude-code" / "cli.js"
+    cli_script.parent.mkdir(parents=True)
+    cli_script.write_text("// test entrypoint", encoding="utf-8")
+    binary = npm_dir / "claude.cmd"
+    binary.write_text("@echo off", encoding="utf-8")
+    monkeypatch.setattr(
+        claude_auth.shutil,
+        "which",
+        lambda name: "C:/Program Files/nodejs/node.exe" if name == "node" else None,
+    )
+
+    prefix = claude_auth.claude_cli_argv_prefix(str(binary))
+
+    assert prefix == ["C:/Program Files/nodejs/node.exe", str(cli_script)]
+
+
+def test_native_auth_env_restores_custom_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", "/profiles/claude-work")
+
+    result = claude_auth.claude_native_auth_env(
+        {"CLAUDE_CONFIG_DIR": "/mission/isolated", "USER": "tester"}
+    )
+
+    assert result["CLAUDE_CONFIG_DIR"] == "/profiles/claude-work"
+    assert result["USER"] == "tester"
+
+
+def test_native_auth_env_removes_mission_override_for_default_profile(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CLAUDE_CONFIG_DIR", raising=False)
+
+    result = claude_auth.claude_native_auth_env(
+        {"CLAUDE_CONFIG_DIR": "/mission/isolated", "USER": "tester"}
+    )
+
+    assert "CLAUDE_CONFIG_DIR" not in result
+
+
+def test_logout_uses_cli_native_credential_store(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    svc = ClaudeAuthService()
+    monkeypatch.setattr(svc, "_resolve_binary", lambda: "/opt/claude")
+    monkeypatch.setattr(svc, "_supports_auth_logout", lambda _b: True)
+    monkeypatch.setattr(svc, "_cli_argv_prefix", lambda _b: ["/opt/claude"])
+    calls: list[list[str]] = []
+
+    def fake_run(argv, **_kwargs):  # noqa: ANN001, ANN003
+        calls.append(list(argv))
+        return subprocess.CompletedProcess(argv, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(claude_auth.subprocess, "run", fake_run)
+
+    assert svc.logout_blocking() == (True, None)
+    assert calls == [["/opt/claude", "auth", "logout"]]

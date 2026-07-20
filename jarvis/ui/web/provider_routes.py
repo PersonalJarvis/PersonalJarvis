@@ -855,17 +855,26 @@ def _claude_worker_display_label(*, default: str) -> str:
     the Claude subscription OAuth login whenever one exists — a degraded
     banner blaming the "API-Key" then reads as nonsense to a subscription
     user (2026-07-10 report: "I selected the subscription, the key is
-    irrelevant"). Presence of ANY OAuth bearer, live or expired-in-place,
-    means the user is on the subscription path. Offline + cheap; any probe
-    failure keeps the spec label rather than breaking the health check.
+    irrelevant"). The CLI status is authoritative because current macOS
+    releases keep the login in Keychain rather than a plaintext bearer file;
+    the file probe remains only for an expired legacy login. Any failure keeps
+    the spec label rather than breaking the health check.
     """
     try:
+        from jarvis.claude_auth import ClaudeAuthService
         from jarvis.claude_credentials import freshest_claude_oauth
 
+        status = ClaudeAuthService().status()
+        subscription_connected = status.connected and status.mode == "subscription"
         oauth_status = freshest_claude_oauth().status
     except Exception:  # noqa: BLE001
+        subscription_connected = False
         oauth_status = "absent"
-    return "Claude (subscription)" if oauth_status != "absent" else default
+    return (
+        "Claude (subscription)"
+        if subscription_connected or oauth_status != "absent"
+        else default
+    )
 
 
 def _selected_jarvis_agent_provider(cfg: Any) -> str | None:

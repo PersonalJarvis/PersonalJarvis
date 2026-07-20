@@ -1,6 +1,7 @@
 """Tests for build_worker_env — strict allowlist + fixed defaults + optional keys."""
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from unittest.mock import patch
 
@@ -514,12 +515,36 @@ def test_home_and_xdg_passed_through_for_posix_auth(tmp_path: Path) -> None:
     fake_env = {
         "PATH": "/usr/bin:/bin",
         "HOME": "/home/jarvis",
+        "USER": "jarvis",
+        "LOGNAME": "jarvis",
         "XDG_CONFIG_HOME": "/home/jarvis/.config",
+        "TMPDIR": "/home/jarvis/.tmp",
     }
     with patch.dict("os.environ", fake_env, clear=True):
         env = build_worker_env(run_dir=tmp_path)
     assert env["HOME"] == "/home/jarvis"
+    assert env["USER"] == "jarvis"
+    assert env["LOGNAME"] == "jarvis"
     assert env["XDG_CONFIG_HOME"] == "/home/jarvis/.config"
+    assert env["TMPDIR"] == "/home/jarvis/.tmp"
+
+
+def test_posix_user_is_derived_when_gui_environment_omits_it(
+    tmp_path: Path,
+) -> None:
+    if os.name != "posix":
+        pytest.skip("POSIX account fallback is not used on Windows")
+    fake_env = {"PATH": "/usr/bin:/bin", "HOME": "/home/jarvis"}
+    with (
+        patch.dict("os.environ", fake_env, clear=True),
+        patch(
+            "jarvis.missions.isolation.env.getpass.getuser",
+            return_value="derived-user",
+        ),
+    ):
+        env = build_worker_env(run_dir=tmp_path)
+
+    assert env["USER"] == "derived-user"
 
 
 def test_classic_api_key_does_not_set_claude_code_oauth_token(tmp_path: Path) -> None:

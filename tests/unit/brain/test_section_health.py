@@ -229,6 +229,7 @@ class TestSubagentSectionHealth:
         import json
 
         from jarvis import claude_credentials
+        from jarvis.claude_auth import ClaudeAuthService, ClaudeAuthStatus
         from jarvis.ui.web import provider_routes as pr
 
         (tmp_path / ".credentials.json").write_text(
@@ -245,6 +246,11 @@ class TestSubagentSectionHealth:
         monkeypatch.setattr(
             claude_credentials, "claude_config_dirs", lambda: [tmp_path]
         )
+        monkeypatch.setattr(
+            ClaudeAuthService,
+            "status",
+            lambda self: ClaudeAuthStatus(installed=True, connected=False),
+        )
         monkeypatch.setattr(pr, "_worker_usable", lambda p: False)
         monkeypatch.setattr(pr, "_worker_flagged_dead", lambda p: True)
         monkeypatch.setattr(
@@ -258,11 +264,17 @@ class TestSubagentSectionHealth:
         self, monkeypatch, tmp_path
     ) -> None:
         from jarvis import claude_credentials
+        from jarvis.claude_auth import ClaudeAuthService, ClaudeAuthStatus
         from jarvis.ui.web import provider_routes as pr
 
         # No OAuth bearer anywhere → the user really is on the API-key path.
         monkeypatch.setattr(
             claude_credentials, "claude_config_dirs", lambda: [tmp_path]
+        )
+        monkeypatch.setattr(
+            ClaudeAuthService,
+            "status",
+            lambda self: ClaudeAuthStatus(installed=True, connected=False),
         )
         monkeypatch.setattr(pr, "_worker_usable", lambda p: False)
         monkeypatch.setattr(pr, "_worker_flagged_dead", lambda p: True)

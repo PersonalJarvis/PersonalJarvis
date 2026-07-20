@@ -505,22 +505,18 @@ def _claude_cli_auth_viable() -> bool:
     """True when the ``claude`` CLI has a REACHABLE auth surface for a worker.
 
     Binary presence alone is NOT viability (2026-07-06 incident): the worker
-    runs ``claude --print`` pinned to an isolated CLAUDE_CONFIG_DIR, so its
-    ONLY auth surface is the credential Jarvis injects — a live non-expired
-    OAuth bearer (``CLAUDE_CODE_OAUTH_TOKEN``) or a classic Anthropic API key.
-    An OAuth token that expired in place (nothing refreshes ``~/.claude`` on a
-    host whose interactive sessions use a different config dir) is a
-    deterministic 401 on every spawn, while ``claude status`` still says
-    connected (presence-only check).
+    must have one of three executable auth surfaces:
 
-    Three gates, all cheap and offline:
     1. the process-local ``claude_auth_dead`` flag (a worker PROVED the current
        credential dead this session — fingerprinted, so a fresh login/key
        re-enables Claude instantly);
-    2. a live, non-expired OAuth login in ``~/.claude/.credentials.json``;
-    3. failing that, a CLASSIC (non-``sk-ant-oat``) stored Anthropic API key —
-       a stored ``sk-ant-oat`` is a stale OAuth copy that would be routed to
-       the OAuth slot and 401.
+    2. a live file-backed OAuth bearer for the legacy isolated-config path, or
+       a native CLI account plus the ``--safe-mode`` capability (preserves the
+       macOS Keychain while disabling hooks/plugins);
+    3. failing that, a classic (non-``sk-ant-oat``) Anthropic API key.
+
+    The CLI probes are tightly timed and process-cached. A probe failure is not
+    fatal: the cross-family worker resolver continues to another usable family.
     """
     from jarvis.claude_auth_state import claude_auth_dead, credential_fingerprint
     from jarvis.missions.isolation.env import (
@@ -531,6 +527,26 @@ def _claude_cli_auth_viable() -> bool:
     if live_claude_oauth_status() == "valid":
         token = read_live_claude_oauth_token()
         return not claude_auth_dead(current_fingerprint=credential_fingerprint(token))
+
+    try:
+        from jarvis.claude_auth import usable_native_claude_subscription
+
+        status = usable_native_claude_subscription()
+        if status is not None:
+            account_marker = ":".join(
+                (
+                    "native-claude-account",
+                    status.binary_path,
+                    status.user_email or "",
+                    status.subscription_type or "",
+                )
+            )
+            return not claude_auth_dead(
+                current_fingerprint=credential_fingerprint(account_marker)
+            )
+    except Exception:  # noqa: BLE001,S110 — optional native auth path
+        pass
+
     try:
         from jarvis.core.config import get_jarvis_agent_secret
 
@@ -1039,7 +1055,20 @@ async def bootstrap_missions(
         )
         if live_oat:
             anthropic_key = live_oat
-        elif anthropic_key and anthropic_key.startswith("sk-ant-oat"):
+        elif live_provider in {"claude", "claude-api"}:
+            # Current macOS Claude Code stores the subscription in Keychain,
+            # so no bearer file exists to inject. When the CLI confirms that
+            # native login and supports auth-preserving safe mode, do not let a
+            # separately stored API key override subscription billing via the
+            # ANTHROPIC_API_KEY environment variable.
+            try:
+                from jarvis.claude_auth import usable_native_claude_subscription
+
+                if usable_native_claude_subscription() is not None:
+                    anthropic_key = None
+            except Exception:  # noqa: BLE001,S110 — optional native auth path
+                pass
+        if not live_oat and anthropic_key and anthropic_key.startswith("sk-ant-oat"):
             # 2026-07-06: no live (non-expired) OAuth login, and the stored
             # credential is itself an OAuth bearer — i.e. a STALE copy of a
             # login that no longer exists. Injecting it is a guaranteed 401

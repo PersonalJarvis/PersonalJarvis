@@ -1710,13 +1710,21 @@ class CriticRunner:
         uses the user's Claude Max subscription instead of the paid
         Messages-API path that the Jarvis-Agent worker routes through by default.
         """
+        from jarvis.claude_auth import (
+            claude_cli_supports_safe_mode,
+            claude_native_auth_env,
+        )
         from jarvis.missions.workers.claude_direct_worker import (
             _resolve_claude_argv_prefix,
         )
 
         argv_prefix = _resolve_claude_argv_prefix()
+        safe_mode = await asyncio.to_thread(
+            claude_cli_supports_safe_mode, argv_prefix
+        )
         cmd: list[str] = [
             *argv_prefix,
+            *(["--safe-mode"] if safe_mode else []),
             "--print",
             # 2026-05-24 fix: was "--permission-mode plan". Plan mode makes
             # claude --print treat the request as a *planning* task and emit
@@ -1742,6 +1750,12 @@ class CriticRunner:
             adversarial_reframe,
         )
 
+        spawn_env = dict(env)
+        if safe_mode:
+            # Preserve the platform-native account (macOS Keychain included)
+            # while safe mode disables user hooks/plugins/project settings.
+            spawn_env = claude_native_auth_env(spawn_env)
+
         t0 = time.perf_counter()
         # Per-mission process containment (AP-10): mirrors ClaudeDirectWorker,
         # whose orchestrator wraps the whole spawn in ``async with job:``. A
@@ -1759,7 +1773,7 @@ class CriticRunner:
                 proc = await create_worker_subprocess(
                     cmd,
                     cwd=str(worktree),
-                    env=env,
+                    env=spawn_env,
                     stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.PIPE,
