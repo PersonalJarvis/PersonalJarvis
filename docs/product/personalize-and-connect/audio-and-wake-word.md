@@ -128,7 +128,7 @@ the required files are present.
 
 If no local engine can serve your phrase, Jarvis does not pretend to listen and
 does not substitute a hidden wake phrase. Wake activation stays unavailable,
-and you can use the configured Call or push-to-talk shortcut instead.
+and you can use the configured Call shortcut instead.
 
 ## How It Fits Together
 

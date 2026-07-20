@@ -2565,7 +2565,7 @@ class DesktopApp:
             from loguru import logger as _wlog
             if not wake_plan.wake_available:
                 _wlog.info(
-                    "Wake-word OFF: no local model for {!r} — hotkey / push-to-talk "
+                    "Wake-word OFF: no local model for {!r} — the Call shortcut "
                     "is the activation. {}",
                     wake_plan.phrase,
                     wake_plan.message,
@@ -2739,7 +2739,7 @@ class DesktopApp:
                 #     neural model can't detect the phrase, so OWW is OFF and the
                 #     RollingWhisperWake transcript-match IS the wake path.
                 #   - no local model for the user's word (wake_plan.wake_available
-                #     False) -> arm NOTHING; hotkey / push-to-talk is the only
+                #     False) -> arm NOTHING; the Call shortcut is the only
                 #     activation. The product rule (2026-07-04): a wake word needs
                 #     a local model, never a silent branded fallback.
                 # vosk_kws rides the same detector slot/loop as OWW (the

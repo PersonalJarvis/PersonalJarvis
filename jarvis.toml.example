@@ -30,7 +30,6 @@ name = ""
 # ── Voice trigger (optional; irrelevant on a headless/browser-only host) ──
 [trigger]
 wake_word_enabled = true     # always-on wake listener (needs a mic)
-hotkey = "ctrl+right_alt+j"  # push-to-talk; safe combo on all OSes
 single_turn_mode = false     # false = conversation stays open until "hang up"/idle
 
 [trigger.wake_word]

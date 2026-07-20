@@ -3,9 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { useKeybinds } from "./useHotkey";
 
 const FULL = {
-  keybinds: { call: "f3+f4", hangup: "f1+f2", ptt: "ctrl+right_alt+j" },
-  defaults: { call: "f3+f4", hangup: "f1+f2", ptt: "ctrl+right_alt+j" },
-  push_to_talk: true,
+  keybinds: { call: "f3+f4", hangup: "f1+f2" },
+  defaults: { call: "f3+f4", hangup: "f1+f2" },
   suggestions: [],
   restart_required: true,
 };

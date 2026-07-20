@@ -17,7 +17,7 @@ related: [audio-and-wake-word, languages-and-voices, sessions-and-run-inspector,
 
 A voice conversation turns spoken audio into a useful reply or action, then
 speaks the result back to you. You can start it with a wake phrase, a voice
-control in the app, or a push-to-talk shortcut.
+control in the app, or the configurable Call shortcut.
 
 Jarvis offers two voice engines. **Pipeline** handles listening, answering, and
 speaking as separate steps. **Realtime** keeps those parts in one live audio
@@ -74,7 +74,7 @@ voice setup, it can contain one turn or remain open for several.
 | Conversation feel | Clear, separate stages after you finish speaking | More immediate back-and-forth and live interruption |
 | Service choices | Input, assistant, and output can use separate compatible choices | Requires a compatible live voice choice |
 | Speech Dictionary | Applies to the recognized request | Does not currently rewrite the live session's transcript |
-| Push-to-talk | Used for push-to-talk turns | Push-to-talk currently uses Pipeline even when Realtime is selected |
+| Call shortcut | Starts a normal voice session through Pipeline | The shortcut uses Pipeline even when Realtime is selected |
 | If startup fails | The affected stage can use another configured compatible choice or report that it is unavailable | Jarvis can use another compatible live choice, then fall back to Pipeline before the turn starts |
 | Current scope | Broadest feature coverage | Research preview; some tools and features are not yet available |
 
@@ -143,7 +143,7 @@ session is Realtime, Pipeline, or a Pipeline fallback.
 
 | What you see | What it usually means | What to do |
 |---|---|---|
-| The wake phrase does nothing | Wake activation, its language, or the microphone is not ready | Run **Test wake word**, then use the app's voice control or push-to-talk while you review the wake setup |
+| The wake phrase does nothing | Wake activation, its language, or the microphone is not ready | Run **Test wake word**, then use the app's voice control or Call shortcut while you review the wake setup |
 | **Listening** appears, but the request is wrong or empty | The wrong microphone is selected, the level is too low, or speech recognition could not understand the turn | Check **Audio devices**, try one short request, and add repeated Pipeline mistakes to **Dictionary** |
 | Realtime is selected, but the runtime line says Pipeline | No compatible live session could open for this call | Review the Realtime category in **API Keys & Providers**; keep using the working Pipeline fallback or choose Pipeline explicitly |
 | A Realtime call ends after an error | The live path failed after Jarvis had already accepted part of the turn | Start a fresh call; use Pipeline if the failure repeats so Jarvis does not replay a possible action |

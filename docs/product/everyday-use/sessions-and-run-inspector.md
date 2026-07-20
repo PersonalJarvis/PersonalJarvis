@@ -104,7 +104,7 @@ so check it carefully before sending it to anyone.
 ## How It Fits Together
 
 1. **A voice request starts the record.** Wake activation, the voice control,
-   or push-to-talk opens a voice session. Speech recognition supplies the text
+   or the Call shortcut opens a voice session. Speech recognition supplies the text
    shown for your side of the turn.
 2. **Jarvis answers or acts.** The active Brain provider may answer directly,
    use a tool, request approval, create a task, or hand longer work to a

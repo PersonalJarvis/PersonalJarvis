@@ -1,4 +1,4 @@
-"""GET/PUT /api/settings/keybinds — editable Call/Hangup/Talk keybinds."""
+"""GET/PUT /api/settings/keybinds — editable Call/Hangup keybinds."""
 from __future__ import annotations
 
 from types import SimpleNamespace
@@ -23,16 +23,20 @@ def _client(**trig) -> TestClient:
     return TestClient(app)
 
 
-def test_get_returns_all_three_plus_defaults() -> None:
+def test_get_returns_call_and_hangup_plus_defaults() -> None:
     body = _client().get("/api/settings/keybinds").json()
     assert body["keybinds"] == {
         "call": "f3+f4",
         "hangup": "f1+f2",
-        "ptt": "ctrl+right_alt+j",
     }
-    assert body["defaults"]["call"] == "f3+f4"
+    assert body["defaults"] == {"call": "f3+f4", "hangup": "f1+f2"}
+    assert "push_to_talk" not in body
     assert body["restart_required"] is True
     assert len(body["suggestions"]) >= 3
+
+
+def test_retired_ptt_hotkey_route_is_not_mounted() -> None:
+    assert _client().get("/api/settings/ptt-hotkey").status_code == 404
 
 
 def test_put_call_accepts_and_normalizes_case() -> None:
@@ -58,6 +62,14 @@ def test_put_rejects_unknown_action() -> None:
     resp = _client().put(
         "/api/settings/keybinds",
         json={"action": "mute", "hotkey": "f7+f8", "persist": False},
+    )
+    assert resp.status_code == 400
+
+
+def test_put_rejects_retired_ptt_action() -> None:
+    resp = _client().put(
+        "/api/settings/keybinds",
+        json={"action": "ptt", "hotkey": "ctrl+alt+m", "persist": False},
     )
     assert resp.status_code == 400
 
@@ -151,7 +163,7 @@ def test_put_live_apply_failure_still_persists(monkeypatch) -> None:
     client.app.state.speech_pipeline = _BoomPipeline()
     resp = client.put(
         "/api/settings/keybinds",
-        json={"action": "ptt", "hotkey": "ctrl+alt+m", "persist": True},
+        json={"action": "call", "hotkey": "ctrl+alt+m", "persist": True},
     )
     body = resp.json()
     assert resp.status_code == 200
@@ -230,10 +242,10 @@ def test_put_empty_hotkey_live_applies_empty_list() -> None:
     client.app.state.speech_pipeline = _FakePipeline()
     resp = client.put(
         "/api/settings/keybinds",
-        json={"action": "ptt", "hotkey": "", "persist": False},
+        json={"action": "call", "hotkey": "", "persist": False},
     )
     assert resp.json()["applied_live"] is True
-    assert calls == [{"ptt": []}]
+    assert calls == [{"call": []}]
 
 
 def test_get_reflects_cleared_keybind() -> None:

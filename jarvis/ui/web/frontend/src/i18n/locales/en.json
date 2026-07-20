@@ -1087,7 +1087,7 @@
       },
       "input_monitoring": {
         "title": "Input Monitoring",
-        "description": "Required for global push-to-talk and keyboard shortcuts."
+        "description": "Required for global keyboard shortcuts."
       },
       "event_posting": {
         "title": "Input control",
@@ -1204,8 +1204,6 @@
     "rows": {
       "wake_word_title": "Wake Word",
       "wake_word_description": "Activation word for voice mode.",
-      "ptt_title": "Push-to-Talk Hotkey",
-      "ptt_description": "Hold to talk, release to send. Works without the wake word.",
       "privacy_title": "Privacy Mode",
       "privacy_description": "Hybrid: STT local (Whisper), TTS/Brain cloud.",
       "privacy_value": "Hybrid",
@@ -1221,7 +1219,7 @@
       "title": "Wake Word",
       "description": "Activation phrase for voice mode. Type your own.",
       "activation_title": "Activate wake word",
-      "activation_hint": "On: Jarvis is always listening for your word (needs a local model). Off: activate with a keyboard shortcut (push-to-talk).",
+      "activation_hint": "On: Jarvis is always listening for your word (needs a local model). Off: activate with the Call keyboard shortcut.",
       "activation_saved": "Wake-word activation updated immediately.",
       "phrase_label": "Wake phrase",
       "phrase_placeholder": "e.g. Jonas",
@@ -1237,7 +1235,7 @@
       "saved": "Wake word saved",
       "restart_required": "Restart required to take effect.",
       "degraded_warning": "The chosen phrase isn't supported by the selected engine — it will fall back to a different engine.",
-      "needs_whisper_hint": "This phrase needs a local engine. Install the local speech pack below — until then the wake word stays off and you activate via hotkey / push-to-talk.",
+      "needs_whisper_hint": "This phrase needs a local engine. Install the local speech pack below — until then the wake word stays off and you activate with the Call shortcut.",
       "derived_name": "Your assistant will be called: {0}",
       "engine_options": {
         "auto": "Auto (recommended)",
@@ -1310,22 +1308,11 @@
       "reset_done": "Reset to the default system prompt",
       "applies_next_turn": "Applies on your assistant's next message — no restart needed."
     },
-    "hotkey": {
-      "title": "Push-to-Talk Hotkey",
-      "description": "Click Record and press your key combination — hold it to talk, release to send. Or pick a safe suggestion below.",
-      "record": "Record",
-      "recording": "Press your keys now… (Esc to cancel)",
-      "suggestions_label": "Suggestions",
-      "save": "Save hotkey",
-      "saved": "Hotkey saved",
-      "restart_required": "Restart required to take effect."
-    },
     "keybinds": {
       "title": "Voice Keybinds",
-      "description": "Set the keys for Call, Hangup and Talk (push-to-talk). Click Record and press your combination — or click keys on the on-screen keyboard. Changes apply instantly.",
+      "description": "Set the keys for Call and Hangup. Click Record and press your combination — or click keys on the on-screen keyboard. Changes apply instantly.",
       "call_label": "Call (answer / start talking)",
       "hangup_label": "Hangup",
-      "talk_label": "Talk / Push-to-talk",
       "record": "Record",
       "stop": "Stop",
       "recording": "Press your keys…",
@@ -1711,9 +1698,9 @@
       "mode_wake_title": "Wake word",
       "mode_wake_body": "Say your own word any time — always listening. Needs a small local model for your exact word.",
       "mode_shortcut_title": "Keyboard shortcut",
-      "mode_shortcut_body": "No wake word — hold a key to talk, release to send (push-to-talk).",
+      "mode_shortcut_body": "No wake word — press the Call shortcut to start a voice session.",
       "back_to_choice": "Back",
-      "shortcut_note": "You'll activate {name} with a keyboard shortcut instead of a wake word. You can set up the exact key anytime in Settings → Voice Keybinds.",
+      "shortcut_note": "You'll activate {name} with the Call shortcut instead of a wake word. You can configure it anytime in Settings → Voice Keybinds.",
       "shortcut_cta": "Continue",
       "title": "Pick your wake word",
       "body": "Choose the word that wakes your assistant. \"Hey\" stays fixed — you pick the rest.",

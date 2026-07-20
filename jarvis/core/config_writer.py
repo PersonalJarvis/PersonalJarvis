@@ -479,19 +479,18 @@ def set_codex_binary_path(binary_path: str, *, path: Path = DEFAULT_CONFIG_FILE)
 
 # Voice-keybind action vocabulary. Shared with the keybinds API
 # (jarvis/ui/web/settings_routes.py) and the TS type KeybindAction in the
-# frontend (jarvis/ui/web/frontend/src/hooks/useHotkey.ts). Keep the three in
+# frontend (jarvis/ui/web/frontend/src/hooks/useHotkey.ts). Keep these layers in
 # sync. The mapped value is BOTH the jarvis.toml key under [trigger] AND the
 # TriggerConfig field name (they are intentionally identical).
-KEYBIND_ACTIONS = ("call", "hangup", "ptt")
+KEYBIND_ACTIONS = ("call", "hangup")
 KEYBIND_TOML_KEY = {
     "call": "hotkey_call",
     "hangup": "hotkey_hangup",
-    "ptt": "hotkey",
 }
 
 
 def set_keybind(action: str, hotkey: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
-    """Persist a voice keybind (call / hangup / ptt) to ``[trigger]`` in jarvis.toml.
+    """Persist a voice keybind (call / hangup) to ``[trigger]`` in jarvis.toml.
 
     Toml-only by design (same rationale as the other [trigger] writers — these
     keys are NOT tracked in the drift-guard's reference snapshot, so it never reverts
@@ -505,11 +504,6 @@ def set_keybind(action: str, hotkey: str, *, path: Path = DEFAULT_CONFIG_FILE) -
     except KeyError:
         raise ValueError(f"unknown keybind action: {action!r}") from None
     _patch_table(path, "trigger", key, hotkey)
-
-
-def set_ptt_hotkey(hotkey: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
-    """Backward-compatible alias for ``set_keybind("ptt", ...)``."""
-    set_keybind("ptt", hotkey, path=path)
 
 
 def set_reply_language(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
@@ -591,7 +585,7 @@ def set_wake_word_enabled(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) ->
 
     This is the "how do you activate Jarvis" master switch: True = always-on wake
     word (which requires a local model that matches the user's word — see
-    ``resolve_wake_plan``), False = hotkey / push-to-talk only. It was previously
+    ``resolve_wake_plan``), False = Call shortcut only. It was previously
     settable ONLY by hand-editing jarvis.toml (default False), so a fresh
     downloader could never turn their wake word on in-app.
 

@@ -307,7 +307,7 @@ class OpenWakeWordProvider:
         except ImportError as exc:
             # openwakeword + onnxruntime are BASE deps, so this only happens on a
             # broken/partial install. Degrade to a no-op wake (the pipeline keeps
-            # running; the user can still talk via the app/push-to-talk) instead
+            # running; the user can still talk via the app or Call shortcut) instead
             # of an uncaught ImportError that would take the whole speech pipeline
             # down. Actionable, English, one line.
             self._runtime_unavailable = True

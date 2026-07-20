@@ -14,8 +14,8 @@ cloud. For the engineering rationale behind the detection paths, see
    **Settings → Wake word** changes it any time. The desktop flow fixes the
    "Hey" prefix and you type the rest ("Hey" + your word); a prefixed phrase
    is what keeps the bare word in normal conversation from waking Jarvis.
-   Prefer no wake word at all? The onboarding also offers the
-   push-to-talk / hotkey path instead.
+   Prefer no wake word at all? The onboarding also offers activation through
+   the configurable Call shortcut instead.
 2. **Terminal wizard** — `python -m jarvis --wizard` for SSH / headless
    setups. Headless installs can also complete the same onboarding in the
    browser UI.
@@ -39,8 +39,8 @@ Every phrase goes through the same generic chain — no word is special:
    (tolerates small mishearings). Part of the full install.
 4. **Honest degrade** — if none of these can serve your phrase on this
    machine, the wake word stays **off** and Jarvis says so clearly. There is
-   no hidden fallback word; use the hotkey / push-to-talk until a local
-   engine is available.
+   no hidden fallback word; use the Call shortcut until a local engine is
+   available.
 
 You normally never need to choose an engine by hand — leave it on `auto`.
 
@@ -69,5 +69,5 @@ voice start instead.
 |---|---|
 | Change the wake word | Settings → Wake word (or first-run onboarding) |
 | Best accuracy for your word | Train/supply a custom `.onnx` (`custom_onnx`) |
-| No wake word, manual activation | Choose the push-to-talk / hotkey path |
+| No wake word, manual activation | Choose the Call-shortcut path |
 | Wake word "stopped working" | Run `python -m jarvis.speech.diagnose` |

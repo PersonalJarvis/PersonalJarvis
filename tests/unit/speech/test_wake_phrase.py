@@ -305,9 +305,9 @@ def test_arbitrary_phrase_with_local_whisper_resolves_to_stt_match() -> None:
     assert plan.matcher.search("hey computer") is not None
 
 
-def test_arbitrary_phrase_without_local_whisper_is_hotkey_only() -> None:
+def test_arbitrary_phrase_without_local_whisper_is_call_shortcut_only() -> None:
     # Product rule (2026-07-04): no local model for the user's OWN word -> the
-    # wake word is OFF (hotkey / push-to-talk activation), NOT a silent branded
+    # wake word is OFF (Call-shortcut activation), NOT a silent branded
     # 'Hey Rhasspy' fallback that listens for a word the user never says.
     plan = resolve_wake_plan(_cfg(phrase="Computer"), local_whisper_available=False)
     assert plan.wake_available is False
@@ -315,14 +315,14 @@ def test_arbitrary_phrase_without_local_whisper_is_hotkey_only() -> None:
     assert plan.oww_model_path is None
     assert plan.degraded is True
     assert "computer" in plan.message.lower()
-    # The message must point the user at the real options AND the hotkey.
+    # The message must point the user at the real options and the Call shortcut.
     assert "local" in plan.message.lower() or "onnx" in plan.message.lower()
-    assert "hotkey" in plan.message.lower() or "push-to-talk" in plan.message.lower()
+    assert "call shortcut" in plan.message.lower()
 
 
 def test_wake_available_reflects_whether_a_local_model_exists() -> None:
     # The product rule in one test: an arbitrary word works IF a local model is
-    # available (stt_match via local Whisper), and is hotkey-only otherwise —
+    # available (stt_match via local Whisper), and is Call-shortcut-only otherwise —
     # never a silent branded substitute.
     with_model = resolve_wake_plan(_cfg(phrase="Nebula"), local_whisper_available=True)
     assert with_model.engine == "stt_match"

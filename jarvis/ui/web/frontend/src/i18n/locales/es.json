@@ -1086,7 +1086,7 @@
       },
       "input_monitoring": {
         "title": "Monitorización de entrada",
-        "description": "Necesario para pulsar para hablar y atajos de teclado globales."
+        "description": "Necesario para los atajos de teclado globales."
       },
       "event_posting": {
         "title": "Control de entrada",
@@ -1203,8 +1203,6 @@
     "rows": {
       "wake_word_title": "Palabra de activación",
       "wake_word_description": "Palabra para activar el modo de voz.",
-      "ptt_title": "Atajo Push-to-Talk",
-      "ptt_description": "Mantén pulsado para hablar, suelta para enviar. Funciona sin la palabra de activación.",
       "privacy_title": "Modo Privacidad",
       "privacy_description": "Híbrido: STT local (Whisper), TTS/IA en la nube.",
       "privacy_value": "Híbrido",
@@ -1220,7 +1218,7 @@
       "title": "Palabra de activación",
       "description": "Frase de activación para el modo de voz. Escribe la tuya.",
       "activation_title": "Activar palabra de activación",
-      "activation_hint": "Activado: Jarvis escucha siempre tu palabra (necesita un modelo local). Desactivado: actívalo con un atajo de teclado (pulsar para hablar).",
+      "activation_hint": "Activado: Jarvis escucha siempre tu palabra (necesita un modelo local). Desactivado: actívalo con el atajo de Llamar.",
       "activation_saved": "La activación se actualizó inmediatamente.",
       "phrase_label": "Frase de activación",
       "phrase_placeholder": "p. ej. Jonas",
@@ -1236,7 +1234,7 @@
       "saved": "Palabra de activación guardada",
       "restart_required": "Es necesario reiniciar para que surta efecto.",
       "degraded_warning": "La frase elegida no es compatible con el motor seleccionado — recurrirá a otro motor.",
-      "needs_whisper_hint": "Esta frase necesita un motor local. Instala el paquete de voz local más abajo — hasta entonces la palabra de activación queda desactivada y se activa con el atajo de teclado.",
+      "needs_whisper_hint": "Esta frase necesita un motor local. Instala el paquete de voz local más abajo — hasta entonces la palabra de activación queda desactivada y se activa con el atajo de Llamar.",
       "derived_name": "Tu asistente se llamará: {0}",
       "engine_options": {
         "auto": "Automático (recomendado)",
@@ -1309,22 +1307,11 @@
       "reset_done": "Restablecido al prompt del sistema predeterminado",
       "applies_next_turn": "Se aplica en el próximo mensaje de tu asistente — sin reiniciar."
     },
-    "hotkey": {
-      "title": "Atajo Push-to-Talk",
-      "description": "Pulsa Grabar y presiona tu combinación de teclas — mantén pulsado para hablar, suelta para enviar. O elige una sugerencia segura abajo.",
-      "record": "Grabar",
-      "recording": "Presiona tus teclas ahora… (Esc para cancelar)",
-      "suggestions_label": "Sugerencias",
-      "save": "Guardar atajo",
-      "saved": "Atajo guardado",
-      "restart_required": "Reinicio necesario para que surta efecto."
-    },
     "keybinds": {
       "title": "Atajos de voz",
-      "description": "Configura las teclas para Llamar, Colgar y Hablar (pulsar para hablar). Pulsa Grabar y presiona tu combinación — o haz clic en las teclas del teclado en pantalla. Los cambios se aplican al instante.",
+      "description": "Configura las teclas para Llamar y Colgar. Pulsa Grabar y presiona tu combinación — o haz clic en las teclas del teclado en pantalla. Los cambios se aplican al instante.",
       "call_label": "Llamar (responder / empezar a hablar)",
       "hangup_label": "Colgar",
-      "talk_label": "Hablar / Pulsar para hablar",
       "record": "Grabar",
       "stop": "Detener",
       "recording": "Presiona tus teclas…",
@@ -1710,9 +1697,9 @@
       "mode_wake_title": "Palabra de activación",
       "mode_wake_body": "Di tu propia palabra en cualquier momento — {name} escucha todo el tiempo. Necesita un pequeño modelo local para tu palabra exacta.",
       "mode_shortcut_title": "Atajo de teclado",
-      "mode_shortcut_body": "Sin palabra de activación — mantén pulsada una tecla para hablar y suéltala para enviar (pulsar para hablar).",
+      "mode_shortcut_body": "Sin palabra de activación — pulsa el atajo de Llamar para iniciar una sesión de voz.",
       "back_to_choice": "Atrás",
-      "shortcut_note": "Activarás a {name} con un atajo de teclado en lugar de una palabra de activación. Puedes configurar la tecla exacta en cualquier momento en Ajustes → Atajos de voz.",
+      "shortcut_note": "Activarás a {name} con el atajo de Llamar en lugar de una palabra de activación. Puedes configurarlo en cualquier momento en Ajustes → Atajos de voz.",
       "shortcut_cta": "Continuar",
       "title": "Elige tu palabra de activación",
       "body": "Elige la palabra que activa tu asistente. \"Hey\" queda fija — tú eliges el resto.",

@@ -25,8 +25,8 @@ type MicCheckState = "idle" | "checking" | "done";
  *    model exists for that exact word — if the save comes back `degraded` we do
  *    NOT silently advance, we offer the one-click local-speech install or an
  *    honest "continue anyway" (wake word off until the pack lands).
- *  - "shortcut": no wake word at all — push-to-talk via a keyboard shortcut,
- *    editable later in Settings. This is a first-class option, not a fallback.
+ *  - "shortcut": no wake word at all — the Call keyboard shortcut starts a
+ *    normal voice session and remains editable later in Settings.
  */
 export function WakeWordStep({ onb, goNext }: StepProps) {
   const t = useT();

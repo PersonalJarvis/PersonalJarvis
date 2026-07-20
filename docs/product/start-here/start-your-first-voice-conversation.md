@@ -11,7 +11,7 @@ owner: maintainers
 last_reviewed: 2026-07-15
 phase: "-"
 audience: end-user
-tags: [voice, microphone, wake-word, push-to-talk, realtime, tutorial]
+tags: [voice, microphone, wake-word, keyboard-shortcut, realtime, tutorial]
 related: [voice-conversations, audio-and-wake-word, languages-and-voices, permissions]
 ---
 
@@ -112,7 +112,7 @@ how listening, the Brain, actions, and spoken output form one turn.
 
 ## Check That It Works
 
-Start a voice turn with your saved wake phrase or push-to-talk shortcut. Ask a
+Start a voice turn with your saved wake phrase or Call shortcut. Ask a
 short question. Voice is working when you see **Listening**, then **Thinking**
 or **Speaking**, hear a reply, and finally see **Ready** again.
 
@@ -121,7 +121,7 @@ or **Speaking**, hear a reply, and finally see **Ready** again.
 | What you see | What it usually means | What to do |
 |---|---|---|
 | **Voice starting…** does not change | The voice stack is still warming or did not become available | Wait briefly, then review microphone permission and **Audio devices** |
-| The wake phrase does nothing | Wake activation, language, model, or microphone readiness does not match | Run **Test wake word** and use push-to-talk while you fix the reported item |
+| The wake phrase does nothing | Wake activation, language, model, or microphone readiness does not match | Run **Test wake word** and use the Call shortcut while you fix the reported item |
 | **Listening** appears, but no useful request is heard | The wrong microphone is selected, its level is low, or speech recognition is unavailable | Select the correct input, repeat the microphone check, then try one short request |
 | **Speaking** appears, but you hear nothing | The output device or system volume is wrong | Review **Settings > Audio devices** and the operating-system output volume |
 | Realtime reports that it is unavailable | The live voice connection could not open | Let Jarvis try Pipeline mode; if voice still fails, use **Chats** and review provider status |
@@ -132,7 +132,7 @@ or **Speaking**, hear a reply, and finally see **Ready** again.
 - Read [Voice Conversations](voice-conversations) to understand the complete
   voice turn and how Realtime and Pipeline mode relate.
 - Read [Audio and Wake Word](audio-and-wake-word) to choose devices, tune a wake
-  phrase, or rely on push-to-talk.
+  phrase, or rely on the Call shortcut.
 - Read [Languages and Voices](languages-and-voices) to choose the reply language
   and the voice you hear.
 - Read [Permissions](permissions) when the operating system blocks microphone

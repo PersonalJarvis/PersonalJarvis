@@ -54,7 +54,7 @@ access and the features that depend on it.
 | **Microphone** | Capture local microphone audio | Wake word and local voice input |
 | **Screen Recording** | Capture visible content across connected displays | Computer Use and screen-based vision |
 | **Accessibility** | Read supported interface structure, focus windows, click, and type reliably | Computer Use, window control, and global shortcuts |
-| **Input Monitoring** | Listen for configured system-wide keyboard shortcuts | Global push-to-talk and other global shortcuts |
+| **Input Monitoring** | Listen for configured system-wide keyboard shortcuts | Global voice and other configured shortcuts |
 | **Input Control** | Send mouse and keyboard events | Computer Use |
 
 Grant one item at a time:

@@ -227,7 +227,7 @@ describe("validateCombo", () => {
 
   it("allows sharing a modifier with another action (no chord overlap)", () => {
     expect(
-      validateCombo("ctrl+shift+h", { ptt: "ctrl+right_alt+j" }).status,
+      validateCombo("ctrl+shift+h", { call: "ctrl+right_alt+j" }).status,
     ).toBe("ok");
   });
 });

@@ -3,9 +3,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { KeybindsPanel } from "./SettingsView";
 
 const FULL = {
-  keybinds: { call: "f3+f4", hangup: "f1+f2", ptt: "ctrl+right_alt+j" },
-  defaults: { call: "f3+f4", hangup: "f1+f2", ptt: "ctrl+right_alt+j" },
-  push_to_talk: true,
+  keybinds: { call: "f3+f4", hangup: "f1+f2" },
+  defaults: { call: "f3+f4", hangup: "f1+f2" },
   suggestions: [],
   restart_required: true,
 };
@@ -21,7 +20,7 @@ function stubFetch() {
 
 /** The combo field's visible text with whitespace collapsed ("F3+F4") —
  * works for both the plain string and the kbd-chip rendering. */
-function comboText(action: "call" | "hangup" | "ptt"): string {
+function comboText(action: "call" | "hangup"): string {
   return (
     screen
       .getByTestId(`combo-field-${action}`)
@@ -30,12 +29,14 @@ function comboText(action: "call" | "hangup" | "ptt"): string {
 }
 
 describe("KeybindsPanel", () => {
-  it("renders one row per voice action with its current combo", async () => {
+  it("renders only Call and Hangup rows with their current combos", async () => {
     stubFetch();
     render(<KeybindsPanel />);
-    // The three current combos render (formatted by formatCombo).
+    // The two supported current combos render (formatted by formatCombo).
     await waitFor(() => expect(comboText("call")).toBe("F3+F4"));
     expect(comboText("hangup")).toBe("F1+F2");
+    expect(screen.queryByTestId("combo-field-ptt")).toBeNull();
+    expect(screen.queryByText(/push-to-talk/i)).toBeNull();
   });
 
   it("captures a two-key chord (F7 + F8) pressed simultaneously", async () => {

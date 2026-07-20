@@ -786,7 +786,7 @@ async def get_wake_word(request: Request) -> dict[str, object]:
         "instant_phrases": list(INSTANT_WAKE_PHRASES),
         "local_whisper_available": _local_whisper_available(),
         # The activation master switch: True = always-on wake word (needs a local
-        # model), False = hotkey / push-to-talk only.
+        # model), False = Call shortcut only.
         "enabled": enabled,
     }
 
@@ -888,7 +888,7 @@ async def put_wake_word(body: WakeWordBody, request: Request) -> dict[str, objec
         "resolved_engine": plan.engine,
         "degraded": plan.degraded,
         # False when no local model matches the user's word: the wake word is off
-        # and hotkey / push-to-talk is the activation (product rule 2026-07-04).
+        # and the Call shortcut is the activation.
         "wake_available": plan.wake_available,
         "message": plan.message,
         "persisted": persisted,
@@ -909,8 +909,8 @@ async def set_wake_activation(body: WakeActivationBody, request: Request) -> dic
     master switch (product rule 2026-07-04).
 
     ``True`` = always-on wake word, which REQUIRES a local model matching the
-    user's own word (see ``resolve_wake_plan``); ``False`` = hotkey / push-to-talk
-    only. This was previously settable only by hand-editing jarvis.toml (default
+    user's own word (see ``resolve_wake_plan``); ``False`` = Call shortcut only.
+    This was previously settable only by hand-editing jarvis.toml (default
     False), so a fresh downloader could never enable their wake word in-app.
 
     Persisted to ``[trigger] wake_word_enabled`` and applied to the running voice
@@ -1123,15 +1123,9 @@ async def wake_mic_level(request: Request) -> dict[str, object]:
     }
 
 
-# ---------------------------------------------------------------------------
-# Push-to-talk hotkey (editable). GET current + safe suggestions; PUT to change.
-# Persisted to jarvis.toml [trigger].hotkey; applies on the next voice bootstrap
-# (a Jarvis restart) — the bindings are armed once at SpeechPipeline start.
-# ---------------------------------------------------------------------------
-
-# Curated safe combos for the UI quick-picks. All hold-able (for PTT) and clear
-# of OS-critical shortcuts. The CLAUDE.md guidance is "ctrl+right_alt+<letter>".
-_HOTKEY_SUGGESTIONS = [
+# Curated safe combos for the voice-keybind UI quick-picks. They avoid
+# OS-critical shortcuts and work across the supported desktop platforms.
+_KEYBIND_SUGGESTIONS = [
     "ctrl+right_alt+j",
     "ctrl+right_alt+k",
     "ctrl+right_alt+space",
@@ -1140,72 +1134,12 @@ _HOTKEY_SUGGESTIONS = [
 ]
 
 
-class PttHotkeyBody(BaseModel):
-    hotkey: str = Field(..., min_length=1, max_length=64)
-    persist: bool = Field(default=True, description="Persist to jarvis.toml")
-
-
-@router.get("/ptt-hotkey")
-async def get_ptt_hotkey(request: Request) -> dict[str, object]:
-    from jarvis.core.config import TriggerConfig
-
-    cfg = _config(request)
-    trig = getattr(cfg, "trigger", None) if cfg is not None else None
-    default_hotkey = TriggerConfig().hotkey
-    return {
-        "hotkey": getattr(trig, "hotkey", default_hotkey) if trig else default_hotkey,
-        "push_to_talk": bool(getattr(trig, "push_to_talk", True)) if trig else True,
-        "default": default_hotkey,
-        "suggestions": list(_HOTKEY_SUGGESTIONS),
-    }
-
-
-@router.put("/ptt-hotkey")
-async def put_ptt_hotkey(body: PttHotkeyBody, request: Request) -> dict[str, object]:
-    from jarvis.trigger.hotkey import validate_hotkey
-
-    hotkey = body.hotkey.strip().lower()
-    # Backend is the authority — a browser key-capture cannot be trusted to
-    # filter OS-critical / unusable combos (AltGr detection is unreliable there).
-    ok, reason = validate_hotkey(hotkey)
-    if not ok:
-        raise HTTPException(status_code=400, detail=reason)
-
-    # Best-effort in-memory cfg update so a later cfg read agrees pre-restart.
-    cfg = _config(request)
-    if cfg is not None and getattr(cfg, "trigger", None) is not None:
-        try:
-            cfg.trigger.hotkey = hotkey  # type: ignore[attr-defined]
-        except Exception as exc:  # noqa: BLE001 — frozen model is not an error
-            log.debug("in-memory trigger.hotkey update skipped: %s", exc)
-
-    persisted = False
-    if body.persist:
-        try:
-            from jarvis.core import config_writer
-
-            config_writer.set_ptt_hotkey(hotkey)
-            persisted = True
-        except Exception as exc:  # noqa: BLE001
-            log.warning("ptt-hotkey persist failed: %s", exc)
-
-    return {
-        "ok": True,
-        "hotkey": hotkey,
-        "persisted": persisted,
-        # Bindings are armed once at SpeechPipeline construction (resolve_hotkeys),
-        # so a hotkey change needs a voice restart to take effect.
-        "restart_required": True,
-    }
-
-
 # ---------------------------------------------------------------------------
-# Voice keybinds (editable): Call / Hangup / Talk-PTT. GET all three + defaults;
+# Voice keybinds (editable): Call / Hangup. GET both actions plus defaults;
 # PUT one action at a time. Persisted to jarvis.toml [trigger] AND live-applied
 # to the running voice pipeline (set_keybinds → HotkeyTrigger.rearm), so a
 # change takes effect immediately without a restart; a headless/down pipeline
-# falls back to "applies on next start". The legacy /ptt-hotkey route above
-# stays for backward compatibility.
+# falls back to "applies on next start".
 # ---------------------------------------------------------------------------
 
 
@@ -1223,7 +1157,7 @@ def _keybind_values(trig: object) -> dict[str, str]:
 
 
 class KeybindBody(BaseModel):
-    action: str = Field(..., description="call | hangup | ptt")
+    action: str = Field(..., description="call | hangup")
     hotkey: str = Field(..., max_length=64)
     persist: bool = Field(default=True, description="Persist to jarvis.toml")
 
@@ -1241,9 +1175,8 @@ async def get_keybinds(request: Request) -> dict[str, object]:
     restart_required = pipeline is None or not hasattr(pipeline, "set_keybinds")
     return {
         "keybinds": _keybind_values(trig),
-        "defaults": {"call": d.hotkey_call, "hangup": d.hotkey_hangup, "ptt": d.hotkey},
-        "push_to_talk": bool(getattr(trig, "push_to_talk", True)) if trig else True,
-        "suggestions": list(_HOTKEY_SUGGESTIONS),
+        "defaults": {"call": d.hotkey_call, "hangup": d.hotkey_hangup},
+        "suggestions": list(_KEYBIND_SUGGESTIONS),
         "restart_required": restart_required,
     }
 
@@ -1326,9 +1259,8 @@ async def put_keybind(body: KeybindBody, request: Request) -> dict[str, object]:
     pipeline = getattr(request.app.state, "speech_pipeline", None)
     if pipeline is not None and hasattr(pipeline, "set_keybinds"):
         try:
-            # An empty hotkey re-arms with an EMPTY list, not a list
-            # containing "" — mirrors how the PTT action already represents
-            # "off" internally.
+            # An empty hotkey re-arms with an empty list, not a list containing
+            # "", so clearing a shortcut reliably disables that action.
             pipeline.set_keybinds(**{action: [hotkey] if hotkey else []})
             applied_live = True
         except Exception as exc:  # noqa: BLE001 — never fail the save on a live-apply hiccup

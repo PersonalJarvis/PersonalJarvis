@@ -2079,9 +2079,9 @@ class SpeechPipeline:
 
         if not getattr(plan, "wake_available", True):
             # No local model for the user's OWN word — arm NO detector. This is
-            # the explicit, honest "wake off, use the hotkey" mode (product rule
-            # 2026-07-04), NOT a dead listener: the user activates via hotkey /
-            # push-to-talk. Do NOT fall back to the bundled branded 'Hey Rhasspy'
+            # the explicit, honest "wake off, use the Call shortcut" mode
+            # (product rule 2026-07-04), NOT a dead listener. Do NOT fall back to
+            # the bundled branded 'Hey Rhasspy'
             # model — listening for a word the user never says is the bug we are
             # removing. Installing the local speech pack (any word) or a custom
             # .onnx re-arms the wake via a later set_wake_plan.
@@ -2091,7 +2091,7 @@ class SpeechPipeline:
                 self._whisper_wake._pattern = self._wake_matcher  # noqa: SLF001
             log.info(
                 "Wake-Live-Switch: no local model for %r — wake word OFF; "
-                "hotkey / push-to-talk is the activation. Install the local "
+                "the Call shortcut is the activation. Install the local "
                 "speech pack (works for any word) or supply a custom .onnx to "
                 "enable the wake word.",
                 self._wake_phrase_label,
@@ -2148,7 +2148,7 @@ class SpeechPipeline:
                 # be built. Product rule (2026-07-04): do NOT fall back to a
                 # branded 'Hey Rhasspy' model (listening for a word the user never
                 # says). Arm NO detector — the wake word is OFF and the honest
-                # activation is the hotkey / push-to-talk. This is an explicit,
+                # activation is the Call shortcut. This is an explicit,
                 # user-visible mode, not a silent dead listener; installing or
                 # repairing the local speech pack re-arms the custom phrase via a
                 # later set_wake_plan.
@@ -2156,8 +2156,8 @@ class SpeechPipeline:
                 self._whisper_wake_enabled = False
                 log.warning(
                     "Wake-Live-Switch: stt_match requested but no local Whisper "
-                    "could be built for %r — wake word OFF; use the hotkey / "
-                    "push-to-talk. Install or repair the local speech pack (works "
+                    "could be built for %r — wake word OFF; use the Call shortcut. "
+                    "Install or repair the local speech pack (works "
                     "for any word) or supply a custom .onnx to enable it.",
                     self._wake_phrase_label,
                 )

@@ -13,7 +13,7 @@ export interface WakeWordConfig {
   instant_phrases: string[];
   local_whisper_available: boolean;
   // The activation master switch: true = always-on wake word (needs a local
-  // model for the user's word), false = hotkey / push-to-talk only.
+  // model for the user's word), false = Call shortcut only.
   enabled: boolean;
 }
 
@@ -41,7 +41,7 @@ export interface WakeWordSaveResult {
   resolved_engine: string;
   degraded: boolean;
   // False when no local model matches the user's word: the wake word is off and
-  // hotkey / push-to-talk is the activation.
+  // the Call shortcut is the activation.
   wake_available: boolean;
   message: string;
   persisted: boolean;

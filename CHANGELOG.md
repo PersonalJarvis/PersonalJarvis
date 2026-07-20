@@ -9,6 +9,13 @@ versioning per [SemVer](https://semver.org/).
 
 ## [Unreleased]
 
+### Removed
+
+- **The desktop push-to-talk shortcut has been retired.** Voice Keybinds now
+  contains only Call and Hangup. Legacy push-to-talk values remain readable so
+  existing configuration files still boot, but they are no longer registered
+  or exposed through the Settings API.
+
 ## [1.1.2] — 2026-07-20
 
 ### Fixed

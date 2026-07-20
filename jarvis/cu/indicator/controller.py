@@ -324,8 +324,8 @@ class CUIndicatorController:
             from jarvis.trigger.hotkey import HotkeyTrigger  # noqa: PLC0415
 
             # The bare Escape key is intentionally NOT run through
-            # validate_hotkey(): that guard protects user-configured
-            # push-to-talk combos; this binding exists only while Jarvis
+            # validate_hotkey(): that guard protects user-configured global
+            # shortcuts; this binding exists only while Jarvis
             # itself is typing/clicking.
             trigger = HotkeyTrigger({"cu_cancel": _esc_binding()})
             async with trigger:

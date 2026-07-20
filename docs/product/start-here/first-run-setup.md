@@ -81,8 +81,8 @@ You have two first-class choices:
 
 - **Wake word** keeps the local activation listener ready for a phrase you
   choose.
-- **Keyboard shortcut** uses push-to-talk instead. You can choose the exact
-  shortcut later under **Settings > Voice Keybinds**.
+- **Keyboard shortcut** starts a normal voice session with the Call action.
+  You can choose the exact shortcut later under **Settings > Voice Keybinds**.
 
 If you choose **Keyboard shortcut**, review the note and select **Continue**.
 This avoids an always-ready wake listener and does not require a wake-word
@@ -141,7 +141,7 @@ provider stay unavailable until you return.
 
 ## How It Fits Together
 
-1. You type a message, say a wake word, or use push-to-talk to start a
+1. You type a message, say a wake word, or use the Call shortcut to start a
    request.
 2. Language settings decide how the interface appears and which language
    Jarvis uses for the answer. Microphone and shortcut permissions allow the
@@ -165,8 +165,8 @@ choices: each can fail or be changed without forcing you to redo the others.
 
 Open **Chats**, start a new chat, and send a short greeting. Setup is working
 when your message appears and Jarvis returns an answer in the reply language
-you selected. If you enabled voice, say the saved wake phrase or use your
-push-to-talk shortcut and confirm that the listening state appears.
+you selected. If you enabled voice, say the saved wake phrase or use your Call
+shortcut and confirm that the listening state appears.
 
 ## Troubleshooting
 
@@ -175,7 +175,7 @@ push-to-talk shortcut and confirm that the listening state appears.
 | **Continue** is unavailable on the permissions page | A required macOS permission or restart is still pending | Use **Allow** or **Open Settings**, return to Jarvis, and restart when prompted; or choose **Continue with text only** |
 | The microphone check says it is too quiet or finds no device | The wrong input is selected, its level is low, or no microphone is available | Check the operating-system input device and level, then try again; continue with text if needed |
 | The microphone check says permission is required | Jarvis cannot read the microphone | Grant **Microphone** access in Permissions, then run the check again |
-| The wake phrase is saved but does not activate Jarvis | The local speech pack is missing, the wake listener is off, or the microphone is unavailable | Use push-to-talk, then review **Settings > Wake Word** and install the offered local pack if needed |
+| The wake phrase is saved but does not activate Jarvis | The local speech pack is missing, the wake listener is off, or the microphone is unavailable | Use the Call shortcut, then review **Settings > Wake Word** and install the offered local pack if needed |
 | A provider says **Configured** but requests fail | A saved credential is present, but the account, model, quota, or service may not be working | Select **Test**, follow its result, and try another compatible provider family if one is available |
 | Menus and answers use different languages | Interface and reply language are independent settings | Review both language choices and use **Auto** only when you want replies to follow the conversation |
 
@@ -184,7 +184,7 @@ push-to-talk shortcut and confirm that the listening state appears.
 - Read [Providers and API Keys](providers-and-api-keys) to understand provider
   categories, tests, fallback choices, and safe credential management.
 - Read [Audio and Wake Word](audio-and-wake-word) to tune your microphone,
-  activation phrase, local speech pack, and push-to-talk behavior.
+  activation phrase, local speech pack, and manual shortcut activation.
 - Read [Permissions](permissions) before enabling voice, shortcuts, or
   Computer Use on a new operating system.
 - Follow [Start Your First Chat](start-your-first-chat) for a simple first

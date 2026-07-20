@@ -288,7 +288,10 @@ class WakeWordConfig(BaseModel):
 
 class TriggerConfig(BaseModel):
     wake_word_enabled: bool = False
-    hotkey: str = "ctrl+right_alt+j"
+    # Deprecated compatibility field. Older installs may still carry this
+    # push-to-talk key in jarvis.toml, so the config model continues to accept
+    # it, but the desktop no longer registers or exposes it.
+    hotkey: str = ""
     # Call/answer toggle key. Was hardcoded "f3+f4" in resolve_hotkeys() and at
     # the SpeechPipeline call sites; now user-editable via /api/settings/keybinds.
     hotkey_call: str = "f3+f4"
@@ -318,40 +321,19 @@ class TriggerConfig(BaseModel):
     # site; the constructor default (30 s) stays the safe baseline for a fresh
     # download so an accidental wake never holds the mic open forever.
     session_idle_timeout_s: float = 30.0
-    # When True (default, user mandate 2026-05-29), the configured ``hotkey`` is
-    # a true push-to-talk key: holding it records, releasing it submits the
-    # captured audio as one prompt (one-shot — Jarvis answers once, then the
-    # session ends; the next prompt needs another hold). The VAD silence
-    # endpoint is bypassed for the duration of the hold, so a thinking pause
-    # never cuts the user off mid-sentence. When False, the hotkey falls back to
-    # the legacy toggle: a single press starts a normal wake-style session whose
-    # end is decided by the VAD / idle timeout (the pre-2026-05-29 behaviour).
-    # The F3+F4 chord always stays a toggle regardless of this flag.
-    push_to_talk: bool = True
+    # Deprecated compatibility field, accepted so existing configuration files
+    # keep loading after the desktop push-to-talk feature was removed. Its value
+    # is intentionally ignored by ``resolve_hotkeys``.
+    push_to_talk: bool = False
 
     def resolve_hotkeys(self) -> tuple[tuple[str, ...], tuple[str, ...]]:
-        """Split the configured hotkeys into ``(call_hotkeys, ptt_hotkeys)``
-        for ``SpeechPipeline``.
+        """Return the active call hotkey and an empty legacy PTT slot.
 
-        With ``push_to_talk`` on (default), the configured ``hotkey`` becomes a
-        true push-to-talk key (hold = record, release = submit) and ``hotkey_call``
-        stays a quick wake-style toggle. With it off, ``hotkey`` is a toggle
-        alongside ``hotkey_call`` and there is no PTT (the pre-2026-05-29 wiring).
-        Hangup is a separate value read from ``hotkey_hangup`` at the
-        SpeechPipeline call sites.
-
-        A blank string means the user explicitly cleared that action (Settings
-        Clear button) — filtered out here so an unbound key never reaches
-        ``HotkeyTrigger`` as a bogus single-element tuple containing ``""``.
+        ``SpeechPipeline`` still accepts the two-tuple during the compatibility
+        window, but standard desktop construction never arms push-to-talk. A
+        blank call key means the user explicitly cleared the action in Settings.
         """
-        if self.push_to_talk:
-            call, ptt = (self.hotkey_call,), (self.hotkey,)
-        else:
-            call, ptt = (self.hotkey, self.hotkey_call), ()
-        return (
-            tuple(h for h in call if h.strip()),
-            tuple(h for h in ptt if h.strip()),
-        )
+        return (tuple(h for h in (self.hotkey_call,) if h.strip()), ())
     # When False (default), the local wake path is lightweight: openWakeWord
     # only (~3.5 MB ONNX, CPU-only, bundled in jarvis/assets/wakeword/), no
     # faster-whisper anywhere — no GPU, no ~1 GB model download. When True, the

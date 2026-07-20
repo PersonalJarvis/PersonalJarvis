@@ -1086,7 +1086,7 @@
       },
       "input_monitoring": {
         "title": "Eingabeüberwachung",
-        "description": "Erforderlich für globale Push-to-Talk- und Tastaturkurzbefehle."
+        "description": "Erforderlich für globale Tastaturkurzbefehle."
       },
       "event_posting": {
         "title": "Eingabesteuerung",
@@ -1203,8 +1203,6 @@
     "rows": {
       "wake_word_title": "Wake-Word",
       "wake_word_description": "Aktivierungswort für den Voice-Modus.",
-      "ptt_title": "Push-to-Talk-Hotkey",
-      "ptt_description": "Gedrückt halten zum Sprechen, loslassen zum Senden. Funktioniert ohne Wake-Word.",
       "privacy_title": "Privacy-Mode",
       "privacy_description": "Hybrid: STT lokal (Whisper), TTS/Brain Cloud.",
       "privacy_value": "Hybrid",
@@ -1220,7 +1218,7 @@
       "title": "Wake-Word",
       "description": "Aktivierungsphrase für den Sprachmodus. Tippe deine eigene ein.",
       "activation_title": "Aktivierungswort einschalten",
-      "activation_hint": "An: Jarvis hört ständig auf dein Wort (braucht ein lokales Modell). Aus: aktiviere per Tastenkombination (Push-to-Talk).",
+      "activation_hint": "An: Jarvis hört ständig auf dein Wort (braucht ein lokales Modell). Aus: aktiviere über das Anruf-Tastenkürzel.",
       "activation_saved": "Wake-Word-Aktivierung ist sofort aktualisiert.",
       "phrase_label": "Aktivierungsphrase",
       "phrase_placeholder": "z. B. Jonas",
@@ -1236,7 +1234,7 @@
       "saved": "Wake-Word gespeichert",
       "restart_required": "Neustart erforderlich, damit die Änderung greift.",
       "degraded_warning": "Die gewählte Phrase wird von der ausgewählten Engine nicht unterstützt — sie fällt auf eine andere Engine zurück.",
-      "needs_whisper_hint": "Diese Phrase benötigt eine lokale Engine. Installiere unten das lokale Sprachpaket — bis dahin bleibt das Wake-Word aus und du aktivierst per Hotkey / Push-to-talk.",
+      "needs_whisper_hint": "Diese Phrase benötigt eine lokale Engine. Installiere unten das lokale Sprachpaket — bis dahin bleibt das Wake-Word aus und du aktivierst über das Anruf-Tastenkürzel.",
       "derived_name": "Dein Assistent heißt dann: {0}",
       "engine_options": {
         "auto": "Automatisch (empfohlen)",
@@ -1309,22 +1307,11 @@
       "reset_done": "Auf den Standard-System-Prompt zurückgesetzt",
       "applies_next_turn": "Wirkt ab der nächsten Antwort deines Assistenten — kein Neustart nötig."
     },
-    "hotkey": {
-      "title": "Push-to-Talk-Hotkey",
-      "description": "Klick auf Aufnehmen und drücke deine Tastenkombination — halten zum Sprechen, loslassen zum Senden. Oder wähle unten einen sicheren Vorschlag.",
-      "record": "Aufnehmen",
-      "recording": "Drücke jetzt deine Tasten… (Esc zum Abbrechen)",
-      "suggestions_label": "Vorschläge",
-      "save": "Hotkey speichern",
-      "saved": "Hotkey gespeichert",
-      "restart_required": "Neustart nötig, damit es wirkt."
-    },
     "keybinds": {
       "title": "Sprach-Tastenkürzel",
-      "description": "Lege die Tasten für Anruf, Auflegen und Sprechen (Push-to-Talk) fest. Klick auf Aufnehmen und drücke deine Kombination — oder klick die Tasten auf der Bildschirm-Tastatur an. Änderungen greifen sofort.",
+      "description": "Lege die Tasten für Anruf und Auflegen fest. Klick auf Aufnehmen und drücke deine Kombination — oder klick die Tasten auf der Bildschirm-Tastatur an. Änderungen greifen sofort.",
       "call_label": "Anruf (annehmen / Sprechen starten)",
       "hangup_label": "Auflegen",
-      "talk_label": "Sprechen / Push-to-Talk",
       "record": "Aufnehmen",
       "stop": "Stopp",
       "recording": "Drücke deine Tasten…",
@@ -1710,9 +1697,9 @@
       "mode_wake_title": "Aktivierungswort",
       "mode_wake_body": "Sag jederzeit dein eigenes Wort — {name} hört ständig mit. Braucht ein kleines lokales Modell für genau dein Wort.",
       "mode_shortcut_title": "Tastenkombination",
-      "mode_shortcut_body": "Kein Aktivierungswort — halte eine Taste gedrückt, um zu sprechen, lass los zum Senden (Push-to-Talk).",
+      "mode_shortcut_body": "Kein Aktivierungswort — drücke das Anruf-Tastenkürzel, um eine Sprachsitzung zu starten.",
       "back_to_choice": "Zurück",
-      "shortcut_note": "Du aktivierst {name} stattdessen über eine Tastenkombination statt über ein Aktivierungswort. Die genaue Taste kannst du jederzeit unter Einstellungen → Sprach-Tastenkürzel festlegen.",
+      "shortcut_note": "Du aktivierst {name} über das Anruf-Tastenkürzel statt über ein Aktivierungswort. Du kannst es jederzeit unter Einstellungen → Sprach-Tastenkürzel festlegen.",
       "shortcut_cta": "Weiter",
       "title": "Wähle dein Aktivierungswort",
       "body": "Wähle das Wort, das deinen Assistenten aufweckt. \"Hey\" bleibt fest — den Rest bestimmst du.",

@@ -284,7 +284,7 @@ class WakeWordPlan:
     # the user's OWN chosen word. When no such model is available (no custom
     # ONNX, no local Whisper) we do NOT silently substitute a branded fallback
     # model — we return wake_available=False so the app arms NO detector and the
-    # honest alternative is hotkey / push-to-talk activation. True for every
+    # honest alternative is Call-shortcut activation. True for every
     # real engine (custom_onnx / vosk_kws / stt_match).
     wake_available: bool = True
     # Extracted Vosk model directory for the vosk_kws engine (None otherwise).
@@ -529,7 +529,7 @@ def resolve_wake_plan(
     # forbids silently substituting a branded fallback (the retired degrade
     # made the app listen for a word the user never says). Instead we
     # return wake_available=False: the app arms NO wake detector, and the honest
-    # alternative is hotkey / push-to-talk activation. The user's requested phrase
+    # alternative is Call-shortcut activation. The user's requested phrase
     # is preserved; installing the local speech pack (works for ANY word) or
     # supplying a custom .onnx is what makes the wake word actually fire.
     _phrase_label = phrase or "your wake word"
@@ -545,7 +545,7 @@ def resolve_wake_plan(
         message=(
             f"Wake word '{_phrase_label}' needs a local model. Install the local "
             "speech pack (works for any word) or supply a custom .onnx to enable "
-            "it. Until then the wake word is off — use the hotkey / push-to-talk "
+            "it. Until then the wake word is off — use the Call shortcut "
             "to start a voice turn."
         ),
         verify_prefix=False,

@@ -106,7 +106,7 @@ def _shell_for_set_wake_plan() -> SpeechPipeline:
 def test_set_wake_plan_stt_match_without_whisper_is_hotkey_only(monkeypatch) -> None:
     """A live switch to a custom phrase on a box where the wake Whisper cannot be
     built must NOT fall back to a branded 'Hey Rhasspy' model (product rule
-    2026-07-04). It arms NO detector — wake OFF, hotkey/PTT activation — which is
+    2026-07-04). It arms NO detector — wake OFF, Call-shortcut activation — which is
     a RECOVERABLE parked state (the wake loop parks on _wake_reload_event so a
     later set_wake_plan re-arms it), not the old permanent dead listener."""
     import jarvis.plugins.stt as stt_pkg

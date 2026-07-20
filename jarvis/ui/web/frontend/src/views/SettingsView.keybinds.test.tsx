@@ -17,9 +17,8 @@ vi.mock("@/i18n", async (importOriginal) => {
 
 const { saveKeybind, state } = vi.hoisted(() => {
   const defaultConfig = {
-    keybinds: { call: "f3+f4", hangup: "f1+f2", ptt: "ctrl+right_alt+j" },
-    defaults: { call: "f3+f4", hangup: "f1+f2", ptt: "ctrl+right_alt+j" },
-    push_to_talk: true,
+    keybinds: { call: "f3+f4", hangup: "f1+f2" },
+    defaults: { call: "f3+f4", hangup: "f1+f2" },
     suggestions: [] as string[],
     restart_required: false,
   };
@@ -57,11 +56,11 @@ afterEach(() => {
 });
 
 describe("KeybindsPanel — Clear button", () => {
-  it("renders a Clear button for every bound row", () => {
+  it("renders a Clear button for each supported bound row", () => {
     render(<KeybindsPanel />);
     expect(screen.queryByTestId("clear-keybind-call")).not.toBeNull();
     expect(screen.queryByTestId("clear-keybind-hangup")).not.toBeNull();
-    expect(screen.queryByTestId("clear-keybind-ptt")).not.toBeNull();
+    expect(screen.queryByTestId("clear-keybind-ptt")).toBeNull();
   });
 
   it("clicking Clear saves an empty hotkey for that action", async () => {

@@ -296,13 +296,12 @@ export function validateCombo(
   return { status: "ok" };
 }
 
-export type KeybindAction = "call" | "hangup" | "ptt";
+export type KeybindAction = "call" | "hangup";
 
 /** Response of GET /api/settings/keybinds. */
 export interface KeybindsConfig {
   keybinds: Record<KeybindAction, string>;
   defaults: Record<KeybindAction, string>;
-  push_to_talk: boolean;
   suggestions: string[];
   restart_required: boolean;
 }
@@ -318,10 +317,10 @@ export interface KeybindSaveResult {
 
 /**
  * Loads /api/settings/keybinds and exposes saveKeybind(action, combo). Mirrors
- * useHotkey's fetch/error/loading shape but covers all three voice keybinds
- * (Call / Hangup / Talk-PTT). A rejected save (unsafe combo or a collision with
- * another action) throws with the backend's reason. After a successful save it
- * dispatches 'jarvis:keybinds-changed'.
+ * useHotkey's fetch/error/loading shape but covers both voice keybinds (Call and
+ * Hangup). A rejected save (unsafe combo or a collision with another action)
+ * throws with the backend's reason. After a successful save it dispatches
+ * 'jarvis:keybinds-changed'.
  */
 export function useKeybinds() {
   const [config, setConfig] = useState<KeybindsConfig | null>(null);

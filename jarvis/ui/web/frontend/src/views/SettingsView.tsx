@@ -270,7 +270,7 @@ function WakeWordPanel() {
     data: WakeSelfTestResult | null;
   }>({ state: "idle", data: null });
   // The activation master switch (product rule 2026-07-04): on = always-on wake
-  // word (needs a local model for the user's word), off = hotkey / push-to-talk.
+  // word (needs a local model for the user's word), off = Call shortcut only.
   const [enabled, setEnabled] = useState(false);
   const [togglingActivation, setTogglingActivation] = useState(false);
   // In-app recovery for the degraded-wake-word scenario: downloads the Vosk
@@ -758,15 +758,14 @@ function formatCombo(combo: string): string {
 const _KEYBIND_ROWS: { action: KeybindAction; labelKey: string }[] = [
   { action: "call", labelKey: "settings_view.keybinds.call_label" },
   { action: "hangup", labelKey: "settings_view.keybinds.hangup_label" },
-  { action: "ptt", labelKey: "settings_view.keybinds.talk_label" },
 ];
 
 /**
- * Editable voice keybinds: Call / Hangup / Talk-PTT, one row each. The user
- * clicks Record and presses a combination (captured via eventToCombo), or
- * resets to default, then saves. The backend validator is the authority — an
- * unsafe combo or a collision with another action is rejected with a reason
- * shown as a toast. A successful save surfaces a restart-required hint.
+ * Editable Call and Hangup keybinds, one row each. The user clicks Record and
+ * presses a combination (captured via eventToCombo), or resets to default,
+ * then saves. The backend validator is the authority — an unsafe combo or a
+ * collision with the other action is rejected with a reason shown as a toast.
+ * A successful save surfaces a restart-required hint.
  */
 export function KeybindsPanel() {
   const t = useT();
@@ -809,7 +808,6 @@ const _KB_PLATFORM = detectKeyboardPlatform();
 const _ACTION_LABEL_KEY: Record<KeybindAction, string> = {
   call: "settings_view.keybinds.call_label",
   hangup: "settings_view.keybinds.hangup_label",
-  ptt: "settings_view.keybinds.talk_label",
 };
 
 /** The combo rendered as keycap chips ("Ctrl + F5" → [Ctrl] + [F5]). */
