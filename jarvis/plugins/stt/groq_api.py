@@ -213,6 +213,16 @@ class GroqWhisperAPI:
 def _read_keyring_secret(service: str, username: str) -> str:
     """Best-effort Credential-Manager lookup. Returns ``""`` on any failure."""
     try:
+        # Central backend setup first: on macOS this installs the
+        # single-vault-item wrapper (BUG-103) so this read is served from the
+        # bundled vault instead of a per-item Keychain entry with its own
+        # permission dialog.
+        from jarvis.core.config import _ensure_keyring_backend
+
+        _ensure_keyring_backend()
+    except Exception:  # noqa: BLE001, S110 -- lookup stays best-effort
+        pass
+    try:
         import keyring  # type: ignore[import-not-found]
     except ImportError:
         return ""

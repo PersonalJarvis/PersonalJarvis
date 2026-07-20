@@ -14,12 +14,25 @@ file store at RUNTIME, keeping the "recoverable in-app" guarantee (CLAUDE.md §3
 
 from __future__ import annotations
 
+import sys
+
 import keyring
 import keyring.backend
 import pytest
 from keyring.errors import KeyringLocked
 
 from jarvis.core import config as c
+
+
+@pytest.fixture(autouse=True)
+def _force_non_darwin_platform(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests simulate a LINUX locked-Secret-Service host; on a real Mac
+    the darwin branch of ``_ensure_keyring_backend`` would otherwise wrap the
+    fake locked backend in ``DarwinBundleKeyringBackend`` with the REAL
+    ``security`` CLI vault store — routing test writes into the developer's
+    actual login Keychain. Same convention as
+    ``test_keyring_backend_recovery.py``."""
+    monkeypatch.setattr(sys, "platform", "linux")
 
 
 class _LockedKeyring(keyring.backend.KeyringBackend):

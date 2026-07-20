@@ -10,12 +10,50 @@ OS -- the wrapper class itself has no platform gate; that gate lives only in
 
 from __future__ import annotations
 
+import base64
+import json
+
 import pytest
 from keyring.errors import PasswordDeleteError
 
-from jarvis.core.keychain_bundle import VAULT_ACCOUNT, DarwinBundleKeyringBackend
+from jarvis.core.keychain_bundle import (
+    VAULT_ACCOUNT,
+    DarwinBundleKeyringBackend,
+    SecurityCliVault,
+    SecurityCliVaultError,
+)
 
 SERVICE = "personal-jarvis"
+
+
+def _b64(payload: dict[str, str]) -> str:
+    return base64.b64encode(json.dumps(payload).encode("utf-8")).decode("ascii")
+
+
+class FakeSecurityCli:
+    """In-memory stand-in for the ``security`` CLI vault store."""
+
+    def __init__(self) -> None:
+        self.items: dict[tuple[str, str], str] = {}
+        self.calls: list[tuple[str, ...]] = []
+        self.fail_reads = False
+        self.fail_writes = False
+
+    def read(self, service: str, account: str) -> str | None:
+        self.calls.append(("read", service, account))
+        if self.fail_reads:
+            raise SecurityCliVaultError("simulated CLI read failure")
+        return self.items.get((service, account))
+
+    def write(self, service: str, account: str, value: str) -> None:
+        self.calls.append(("write", service, account))
+        if self.fail_writes:
+            raise SecurityCliVaultError("simulated CLI write failure")
+        self.items[(service, account)] = value
+
+    def delete(self, service: str, account: str) -> None:
+        self.calls.append(("delete", service, account))
+        self.items.pop((service, account), None)
 
 
 class FakeInnerBackend:
@@ -241,3 +279,186 @@ def test_probe_lifecycle_passes_through_wrapper(
 
     bundle.delete_password(SERVICE, probe_key)
     assert bundle.get_password(SERVICE, probe_key) is None
+
+
+# ---------------------------------------------------------------------------
+# security-CLI vault store (BUG-103 v2: partition-list-proof zero-dialog path).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def cli() -> FakeSecurityCli:
+    return FakeSecurityCli()
+
+
+@pytest.fixture
+def cli_bundle(
+    inner: FakeInnerBackend, cli: FakeSecurityCli
+) -> DarwinBundleKeyringBackend:
+    return DarwinBundleKeyringBackend(inner, cli=cli)
+
+
+def test_cli_saves_write_base64_vault_and_never_touch_inner(
+    cli_bundle: DarwinBundleKeyringBackend,
+    inner: FakeInnerBackend,
+    cli: FakeSecurityCli,
+) -> None:
+    cli_bundle.set_password(SERVICE, "anthropic_api_key", "sk-ant-1")
+    cli_bundle.set_password(SERVICE, "groq_api_key", "gsk-2")
+
+    assert inner.values == {}, "with a working CLI the inner keyring stays untouched"
+    raw = cli.items[(SERVICE, VAULT_ACCOUNT)]
+    decoded = json.loads(base64.b64decode(raw, validate=True))
+    assert decoded == {"anthropic_api_key": "sk-ant-1", "groq_api_key": "gsk-2"}
+
+
+def test_cli_base64_vault_roundtrips_across_wrapper_instances(
+    inner: FakeInnerBackend, cli: FakeSecurityCli
+) -> None:
+    first = DarwinBundleKeyringBackend(inner, cli=cli)
+    first.set_password(SERVICE, "groq_api_key", "gsk-secret")
+
+    second = DarwinBundleKeyringBackend(inner, cli=cli)
+    assert second.get_password(SERVICE, "groq_api_key") == "gsk-secret"
+
+
+def test_legacy_plain_json_vault_read_via_cli_is_upgraded_to_base64(
+    cli_bundle: DarwinBundleKeyringBackend, cli: FakeSecurityCli
+) -> None:
+    # A vault item written by the in-process keyring path (plain JSON, per-app
+    # ACL) that the CLI can read after the user's one-time consent.
+    cli.items[(SERVICE, VAULT_ACCOUNT)] = json.dumps({"telegram_bot_token": "123:t"})
+
+    assert cli_bundle.get_password(SERVICE, "telegram_bot_token") == "123:t"
+
+    raw = cli.items[(SERVICE, VAULT_ACCOUNT)]
+    decoded = json.loads(base64.b64decode(raw, validate=True))
+    assert decoded == {"telegram_bot_token": "123:t"}, (
+        "the plain-JSON vault must be rewritten base64-encoded through the "
+        "CLI (fresh -A ACL) on first read"
+    )
+
+
+def test_cli_write_failure_falls_back_to_inner_without_data_loss(
+    cli_bundle: DarwinBundleKeyringBackend,
+    inner: FakeInnerBackend,
+    cli: FakeSecurityCli,
+) -> None:
+    cli.fail_writes = True
+
+    cli_bundle.set_password(SERVICE, "openrouter_api_key", "or-3")
+
+    assert json.loads(inner.values[(SERVICE, VAULT_ACCOUNT)]) == {
+        "openrouter_api_key": "or-3"
+    }
+    assert cli_bundle.get_password(SERVICE, "openrouter_api_key") == "or-3"
+
+
+def test_cli_read_failure_falls_back_to_inner_read(
+    cli_bundle: DarwinBundleKeyringBackend,
+    inner: FakeInnerBackend,
+    cli: FakeSecurityCli,
+) -> None:
+    inner.values[(SERVICE, VAULT_ACCOUNT)] = json.dumps({"groq_api_key": "gsk-4"})
+    cli.fail_reads = True
+
+    assert cli_bundle.get_password(SERVICE, "groq_api_key") == "gsk-4"
+
+
+def test_base64_vault_readable_even_without_cli(
+    inner: FakeInnerBackend,
+) -> None:
+    # A CLI-written vault read by a wrapper WITHOUT a CLI store (e.g. the
+    # security binary vanished): the base64 format must still parse.
+    inner.values[(SERVICE, VAULT_ACCOUNT)] = _b64({"anthropic_api_key": "sk-ant-9"})
+
+    bundle = DarwinBundleKeyringBackend(inner)
+    assert bundle.get_password(SERVICE, "anthropic_api_key") == "sk-ant-9"
+
+
+def test_garbage_that_is_neither_json_nor_base64_json_disables_bundle(
+    cli_bundle: DarwinBundleKeyringBackend, cli: FakeSecurityCli
+) -> None:
+    cli.items[(SERVICE, VAULT_ACCOUNT)] = "%%% definitely not a vault %%%"
+
+    assert cli_bundle.get_password(SERVICE, "anthropic_api_key") is None
+    assert cli.items[(SERVICE, VAULT_ACCOUNT)] == "%%% definitely not a vault %%%", (
+        "a malformed vault item must never be destroyed or overwritten"
+    )
+
+
+def test_legacy_per_key_item_migrates_into_cli_vault(
+    cli_bundle: DarwinBundleKeyringBackend,
+    inner: FakeInnerBackend,
+    cli: FakeSecurityCli,
+) -> None:
+    inner.values[(SERVICE, "discord_bot_token")] = "legacy-token"
+
+    assert cli_bundle.get_password(SERVICE, "discord_bot_token") == "legacy-token"
+
+    assert (SERVICE, "discord_bot_token") not in inner.values
+    decoded = json.loads(
+        base64.b64decode(cli.items[(SERVICE, VAULT_ACCOUNT)], validate=True)
+    )
+    assert decoded == {"discord_bot_token": "legacy-token"}
+
+
+def test_probe_lifecycle_passes_through_cli_vault(
+    cli_bundle: DarwinBundleKeyringBackend, cli: FakeSecurityCli
+) -> None:
+    probe_key = "__jarvis_backend_probe__cafebabe"
+    probe_value = "probe-value-456"
+
+    cli_bundle.set_password(SERVICE, probe_key, probe_value)
+    assert cli_bundle.get_password(SERVICE, probe_key) == probe_value
+
+    cli_bundle.delete_password(SERVICE, probe_key)
+    assert cli_bundle.get_password(SERVICE, probe_key) is None
+
+
+# ---------------------------------------------------------------------------
+# SecurityCliVault interpolation guards (no subprocess involved).
+# ---------------------------------------------------------------------------
+
+
+def test_security_cli_vault_rejects_unsafe_service_and_account_tokens() -> None:
+    vault = SecurityCliVault()
+    with pytest.raises(SecurityCliVaultError):
+        vault.read("bad service with spaces", VAULT_ACCOUNT)
+    with pytest.raises(SecurityCliVaultError):
+        vault.read(SERVICE, "account'with'quotes")
+
+
+def test_security_cli_vault_rejects_non_base64_payloads() -> None:
+    vault = SecurityCliVault()
+    with pytest.raises(SecurityCliVaultError):
+        vault.write(SERVICE, VAULT_ACCOUNT, '{"raw": "json is not allowed"}')
+
+
+# ---------------------------------------------------------------------------
+# The wrapper must be installable through the real ``keyring`` module.
+# ---------------------------------------------------------------------------
+
+
+def test_wrapper_is_accepted_by_keyring_set_keyring(
+    inner: FakeInnerBackend,
+) -> None:
+    """``keyring.set_keyring`` type-checks against ``KeyringBackend`` and
+    REJECTS plain classes with ``TypeError``. The boot path swallows that
+    error fail-open, so a rejected wrapper silently leaves the raw per-item
+    backend active and the whole BUG-103 collapse never engages -- exactly
+    the regression that shipped in the first version of this module. This
+    test installs the wrapper through the real ``keyring`` API and proves
+    reads are actually served through it."""
+    import keyring
+
+    original = keyring.get_keyring()
+    try:
+        keyring.set_keyring(DarwinBundleKeyringBackend(inner))
+        keyring.set_password(SERVICE, "anthropic_api_key", "sk-ant-real-path")
+        assert keyring.get_password(SERVICE, "anthropic_api_key") == "sk-ant-real-path"
+        assert {k for k in inner.values if k[0] == SERVICE} == {
+            (SERVICE, VAULT_ACCOUNT)
+        }, "the write must land in the single vault item, not a per-key item"
+    finally:
+        keyring.set_keyring(original)

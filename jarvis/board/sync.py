@@ -97,6 +97,16 @@ class _KeyringBackend:
 
     def __init__(self) -> None:
         try:
+            # Route through the central backend setup first: on macOS this
+            # installs the single-vault-item wrapper (BUG-103), so board
+            # secrets never become per-item Keychain entries that each pop
+            # their own permission dialog.
+            from jarvis.core.config import _ensure_keyring_backend
+
+            _ensure_keyring_backend()
+        except Exception:  # noqa: BLE001, S110 -- keyring stays best-effort here
+            pass
+        try:
             import keyring
             self._kr = keyring
             self._available = True
@@ -280,7 +290,10 @@ class SyncClient:
             log.info("board sync: registered as %s...", self._pubkey_hex[:8])
             return True
         if resp.status_code in (401, 403):
-            log.warning("board sync: register rejected (%s) — admin_token korrekt?", resp.status_code)
+            log.warning(
+                "board sync: register rejected (%s) — is admin_token correct?",
+                resp.status_code,
+            )
             return False
         log.warning("board sync: register failed status=%s body=%s",
                     resp.status_code, resp.text[:200])

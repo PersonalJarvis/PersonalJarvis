@@ -7119,14 +7119,51 @@ authenticity"), one per stored provider key — the pre-boot key check reads
 ~10 slots, and the unsigned venv python keeps "Always allow" from sticking
 durably across binary updates.
 
-**Fix (`jarvis/core/keychain_bundle.py`).** On macOS the platform keyring
-backend is wrapped in `DarwinBundleKeyringBackend`: ALL Jarvis secrets live
-in ONE Keychain item (`__jarvis_vault__`, JSON map) with a process-local
-cache. One item → one dialog → one "Always allow", ever. Legacy per-key
-items migrate into the vault on first read and are deleted so they stop
-prompting. Malformed vault JSON self-disables the wrapper (delegates to the
-inner backend, never destroys data); migration errors fail open. Windows
-and Linux paths are untouched (`sys.platform == "darwin"` gates every
-wrap); the existing write/read/delete backend probe runs THROUGH the
-wrapper, proving the vault lifecycle. Guards:
+**Fix v1 (`jarvis/core/keychain_bundle.py`) — shipped broken, twice over.**
+On macOS the platform keyring backend is wrapped in
+`DarwinBundleKeyringBackend`: ALL Jarvis secrets live in ONE Keychain item
+(`__jarvis_vault__`, JSON map) with a process-local cache. Legacy per-key
+items migrate into the vault on first read and are deleted. Two independent
+reasons this never stopped the storm:
+
+1. **The wrapper never installed.** It was a plain class, but
+   `keyring.set_keyring` type-checks against `keyring.backend.KeyringBackend`
+   and raised `TypeError` — which the fail-open boot path swallowed, leaving
+   the raw per-item backend silently active. The unit tests called the
+   wrapper directly and never went through `set_keyring`, so they stayed
+   green while production behavior was unchanged.
+2. **One item is still one dialog per PROCESS, forever.** Since macOS Sierra
+   a Keychain item carries a partition list: even an "any application may
+   read" ACL silently admits only Apple-signed tools (verified empirically —
+   an in-process `SecItemCopyMatching` from the unsigned uv/venv python
+   blocks on the consent dialog even for a `-A` item). "Always Allow" binds
+   to a code signature the interpreter does not have, so the grant can never
+   stick: every fresh python process (main app, mission worker, CLI, pytest)
+   re-prompts.
+
+**Fix v2 (same module).** `DarwinBundleKeyringBackend` is now a real
+`KeyringBackend` subclass (guarded by
+`test_wrapper_is_accepted_by_keyring_set_keyring`, which installs it through
+the real `keyring` API), and the vault item's I/O goes through the
+Apple-signed `/usr/bin/security` CLI (`SecurityCliVault`): items are created
+via `security -i add-generic-password -A` (payload streamed over stdin,
+never argv, stored as base64 JSON), read via `find-generic-password -w`,
+replaced delete-then-add. An Apple-signed tool inside the `apple-tool:`
+partition reads/writes a `-A` item with ZERO dialogs, from any process,
+regardless of interpreter signing — verified silent end-to-end on the Mac.
+Base64 doubles as the format marker: a plain-JSON vault (written by the v1
+in-process path) is upgraded to a fresh `-A` item on first CLI read.
+Tradeoff, stated honestly: a `-A` item is readable by any local process
+running as the user — the same trust level as the project's 0600 file-store
+fallback — while staying Keychain-encrypted at rest. Any CLI failure falls
+back to the v1 in-process behavior, never losing data. Reading each
+still-existing legacy per-key item needs the user's consent ONE last time
+(migration), after which it is deleted and never prompts again. Direct
+`keyring` users (`jarvis/board/sync.py`, `jarvis/plugins/stt/groq_api.py`)
+now run `_ensure_keyring_backend()` first so they cannot bypass the vault.
+Windows and Linux paths are untouched (`sys.platform == "darwin"` gates
+every wrap, and `darwin_security_cli_vault()` returns `None` elsewhere);
+the write/read/delete backend probe runs THROUGH the wrapper, proving the
+vault lifecycle. Linux-simulation tests force `sys.platform = "linux"` so
+they can never route into the real Mac Keychain. Guards:
 `tests/unit/core/test_keychain_bundle.py`.
