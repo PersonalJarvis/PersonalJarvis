@@ -31,7 +31,7 @@ def _reg_with_gmail() -> CapabilityRegistry:
 def test_gmail_request_with_domain_noun_resolves_to_gmail():
     reg = _reg_with_gmail()
     for utt in [
-        "Schick eine Email an harald@gmx.de mit dem Betreff Hallo",  # i18n-allow
+        "Schick eine Email an harald@example.com mit dem Betreff Hallo",  # i18n-allow
         "lies meine letzte Mail aus dem Postfach",  # i18n-allow
         "check mein Postfach",  # i18n-allow
     ]:

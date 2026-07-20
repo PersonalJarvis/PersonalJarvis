@@ -2662,7 +2662,7 @@ def test_contact_capabilities_do_not_resolve_external_hard_negatives() -> None:
     reg = get_registry()
     seed_registry(reg)
     for utterance in (
-        "Schick eine Email an harald@gmx.de mit dem Betreff Hallo",
+        "Schick eine Email an harald@example.com mit dem Betreff Hallo",
         "Trag einen Termin morgen 10 Uhr ein",
         "Sende eine WhatsApp an Mama",
         "Bestelle eine Pizza",

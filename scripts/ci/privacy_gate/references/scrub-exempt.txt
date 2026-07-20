@@ -1,13 +1,14 @@
 # Paths exempt from the PII scrub (one gitignore-ish glob per line).
 #
-# .mailmap MUST contain the maintainer's real emails as the left-hand mapping
-# keys — that is how git rewrites them to the GitHub noreply form in the web UI
-# and API (spam-scraping defence). The file documents this trade-off in its own
-# header, and the public repo already ships it by deliberate decision. Scrubbing
-# it would BREAK the protection it provides, so it is exempt from substitution.
-# During `scan` its email/name matches are downgraded to warnings (surfaced in
-# the review) instead of blocking the ship.
-.mailmap
+# 2026-07-20: the `.mailmap` exemption was REMOVED along with the file itself.
+# The reasoning it rested on does not survive scrutiny: `.mailmap` was exempted
+# so it could carry the real addresses as mapping keys, on the theory that this
+# defends against scrapers by rewriting them to the GitHub noreply form in the
+# web UI. But the file is world-readable in the repo, so the addresses were
+# published in plaintext to defend against them being published — the mapping
+# hides them in one view while the source shipped them in another. The file is
+# now untracked (and gitignored); a real address in ANY tracked file is a
+# finding again, with no exempt home. Do not re-add it.
 
 # Maintainer's intentional authorship attribution (explicit decision 2026-06-26;
 # handle switched to @Ruben_Luetke on 2026-07-18):

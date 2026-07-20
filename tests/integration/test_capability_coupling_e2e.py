@@ -5,7 +5,7 @@ Verifies the goal stated in `docs/plans/capability-coupling/SPEC.md`:
     deterministic 'I cannot (yet) do that.'"
 
 Hard-negatives (must produce UNSUPPORTED + zero phantom TTS):
-    1. "Schick eine Email an harald@gmx.de ..."  # i18n-allow
+    1. "Schick eine Email an harald@example.com ..."  # i18n-allow
     2. "Trag einen Termin morgen 10 Uhr ein"  # i18n-allow
     3. "Sende eine WhatsApp an Mama"
     4. "Bestelle eine Pizza"
@@ -44,7 +44,7 @@ def seeded_registry() -> CapabilityRegistry:
 
 
 HARD_NEGATIVE_UTTERANCES = [
-    "Schick eine Email an harald@gmx.de mit dem Betreff Hallo",  # i18n-allow
+    "Schick eine Email an harald@example.com mit dem Betreff Hallo",  # i18n-allow
     "Trag einen Termin morgen 10 Uhr ein",  # i18n-allow
     "Sende eine WhatsApp an Mama",  # i18n-allow
     "Bestelle eine Pizza",  # i18n-allow

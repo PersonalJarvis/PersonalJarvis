@@ -26,7 +26,7 @@ You are the *semantic* half of a two-layer defence. The *deterministic* half is 
 
 **(A) Real secrets / credentials** — API keys (`sk-…`, `sk-ant-…`, `AIza…`, `sk-or-…`, `ghp_/gho_/ghs_`, `AKIA…`, Twilio `AC…`+token, Slack `xox…`, Discord bot tokens, Bearer/JWT with a real payload), OAuth `client_secret`/refresh/access tokens, private keys (`-----BEGIN … PRIVATE KEY-----`), hardcoded passwords, DB connection strings with credentials, webhook URLs carrying a secret token. A real one is the most serious finding — flag it loudly.
 
-**(B) Maintainer identity** — real name in any spelling/casing (`Ruben`/`Rubén`/`Lütke`/`Luetke`), alt name (`Harald`/`Harald Herz`), personal GitHub login (`rubenluetke10-beep`), private emails (`ruben.luetke10@gmail.com`, `harald.herz@gmx.de`), `owner: <personal-name>` frontmatter.  <!-- i18n-allow -->
+**(B) Maintainer identity** — any private email address (a real mailbox at a consumer provider such as gmail/gmx/outlook/web — demo addresses must use `@example.com` per RFC 2606), a personal GitHub login, an alternate real-world name, or `owner: <personal-name>` frontmatter. The deterministic scan in step 1 holds the concrete patterns; this file deliberately does NOT spell them out, because an identity dossier written into a public config publishes exactly what it is meant to protect. The maintainer's author byline in `README.md` and the public X handle are intentional and exempt — see `scrub-exempt.txt`.
 
 **(C) Personal filesystem / machine identifiers** — `C:\Users\Administrator\…`, personal OneDrive paths, the `C--Users-Administrator-…` memory-dir slug, Windows SID (`S-1-5-21-…`), machine/account name, internal GCP/project ids.
 

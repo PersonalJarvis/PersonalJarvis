@@ -8,12 +8,13 @@
 # `pattern` is a Python regex (it is fed straight to re.compile). All rows are
 # re-checked during `scan`: scrub+block-only must be 0 in non-exempt files, else
 # the ship is blocked (a scrub gap is treated as a leak, fail-closed). Matches
-# inside scrub-exempt paths (.mailmap) are downgraded to warnings.
+# inside scrub-exempt paths (see scrub-exempt.txt) are downgraded to warnings.
 #
-# Footprint verified 2026-05-31 against the live working tree: personal Windows
-# paths = 0 hits (already cleaned in place); private emails = .mailmap only
-# (intentional, exempt); real name = ~7 shipping files; GCP id = 0 (kept as a
-# regression guard). The scan double-checks regardless.
+# Footprint re-verified 2026-07-20 against the live working tree: personal
+# Windows paths = 0 hits; private emails = 0 hits (the `.mailmap` exemption and
+# the two rows quoting the addresses were both removed — see the private-email
+# section below); GCP id = 0 (kept as a regression guard). The scan
+# double-checks regardless.
 #
 # 2026-07-03: the maintainer's real name scrub was RE-ACTIVATED (it had been
 # commented out under a "name public" decision, which re-exposed the surname the
@@ -92,13 +93,17 @@ scrub	gen-lang-client-0108934957	<GCP_PROJECT_ID>	personal GCP project id
 # prefix; any RID suffix is preserved so the XML stays SID-shaped as a template.
 scrub	S-1-5-21-420352953-976713421-1014275510	S-1-5-21-0-0-0	windows account SID machine identifier (maintainer box)
 
-# --- private emails: never auto-edited (would break the .mailmap mechanism), --
-# --- but BLOCK if they appear in any non-exempt shipping file ----------------
-block-only	harald\.herz@gmx\.de		private email (must only live in .mailmap)
-block-only	ruben\.luetke10@gmail\.com		private email (must only live in .mailmap)
-
-# --- any other consumer-mailbox address: surface for a human look -----------
-warn	[A-Za-z0-9._%+-]+@(?:gmail|gmx|outlook|hotmail|yahoo|protonmail|proton|web)\.[a-z.]+	consumer email address
+# --- private emails ---------------------------------------------------------
+# 2026-07-20: the two rows that spelled out the maintainer's private addresses
+# were REMOVED. A denylist that quotes the very strings it protects publishes
+# them to everyone who reads the manifest, and this file ships publicly. The
+# generic consumer-mailbox rule below was upgraded from `warn` to `block-only`
+# in the same change: it covers those addresses without naming them, and it is
+# strictly broader. `.mailmap` is no longer tracked (it published the addresses
+# in plaintext too), so there is no longer an exempt home for a real address —
+# demo addresses use @example.com (RFC 2606). Never re-add a literal address
+# here; if a specific mailbox ever needs blocking, keep the pattern generic.
+block-only	[A-Za-z0-9._%+-]+@(?:gmail|gmx|outlook|hotmail|yahoo|protonmail|proton|web)\.[a-z.]+	consumer mailbox address - blocks the ship; add a justified path to scrub-exempt.txt if a demo address is genuinely needed (prefer @example.com, RFC 2606)
 # "Herz" scrub REMOVED 2026-06-27 by maintainer decision: @Ruben_Herz was the
 # INTENTIONAL public build-in-public X handle. 2026-07-18 update: the public
 # handle switched to @Ruben_Luetke (README social links + socials seed + tests)
