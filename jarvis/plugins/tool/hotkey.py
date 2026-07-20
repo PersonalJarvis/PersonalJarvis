@@ -38,9 +38,11 @@ def _send_for_expected_window(
     expected_signature: tuple[Any, ...] | None,
 ) -> None:
     if expected_signature is not None:
-        from jarvis.cu.target_guard import foreground_matches  # noqa: PLC0415
+        from jarvis.cu.target_guard import (  # noqa: PLC0415
+            foreground_matches_or_same_app,
+        )
 
-        if not foreground_matches(expected_signature):
+        if not foreground_matches_or_same_app(expected_signature):
             raise _ForegroundTargetChanged(
                 "foreground window changed after the screenshot"
             )

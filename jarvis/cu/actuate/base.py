@@ -18,6 +18,7 @@ import abc
 import logging
 import os
 import sys
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -391,9 +392,12 @@ def _require_macos_input_permissions() -> None:
 
 #: Process-wide backend instance. Building a PosixActuator constructs pynput
 #: Controllers (keycode tables, layout snapshot) — doing that once per ACTION
-#: was pure per-click overhead. The desktop lock serializes missions, and the
-#: backends hold no per-action state, so one instance serves the process.
+#: was pure per-click overhead. The backends hold no per-action state; the
+#: lock only guards the cache check-and-set (CU missions are additionally
+#: serialized by the harness desktop lock, but the flat click/type/scroll
+#: tools can call this from any worker thread).
 _ACTUATOR_CACHE: Actuator | None = None
+_ACTUATOR_CACHE_LOCK = threading.Lock()
 
 
 def get_actuator() -> Actuator:
@@ -411,9 +415,10 @@ def get_actuator() -> Actuator:
     if os.name == "nt":
         from jarvis.cu.actuate.windows import WindowsActuator  # noqa: PLC0415
 
-        if not isinstance(_ACTUATOR_CACHE, WindowsActuator):
-            _ACTUATOR_CACHE = WindowsActuator()
-        return _ACTUATOR_CACHE
+        with _ACTUATOR_CACHE_LOCK:
+            if not isinstance(_ACTUATOR_CACHE, WindowsActuator):
+                _ACTUATOR_CACHE = WindowsActuator()
+            return _ACTUATOR_CACHE
 
     from jarvis.platform.probes import display_present, is_wayland  # noqa: PLC0415
 
@@ -425,17 +430,19 @@ def get_actuator() -> Actuator:
 
     from jarvis.cu.actuate.posix import PosixActuator  # noqa: PLC0415
 
-    if isinstance(_ACTUATOR_CACHE, PosixActuator):
-        return _ACTUATOR_CACHE
-    try:
-        actuator = PosixActuator()
-    except ActuationUnavailable:
-        raise
-    except Exception as exc:  # noqa: BLE001 — import/init of pynput/pyautogui
-        raise ActuationUnavailable(f"{_NO_BACKEND_MSG} ({exc})") from exc
-    # Only the full pynput backend is retained: a pyautogui-fallback instance
-    # (e.g. the keyboard-layout cache was not primed yet at first use) must
-    # keep retrying pynput on later actions instead of being frozen in.
-    if actuator.name == "posix-pynput":
-        _ACTUATOR_CACHE = actuator
-    return actuator
+    with _ACTUATOR_CACHE_LOCK:
+        if isinstance(_ACTUATOR_CACHE, PosixActuator):
+            return _ACTUATOR_CACHE
+        try:
+            actuator = PosixActuator()
+        except ActuationUnavailable:
+            raise
+        except Exception as exc:  # noqa: BLE001 — import/init of pynput/pyautogui
+            raise ActuationUnavailable(f"{_NO_BACKEND_MSG} ({exc})") from exc
+        # Only the full pynput backend is retained: a pyautogui-fallback
+        # instance (e.g. the keyboard-layout cache was not primed yet at
+        # first use) must keep retrying pynput on later actions instead of
+        # being frozen in.
+        if actuator.name == "posix-pynput":
+            _ACTUATOR_CACHE = actuator
+        return actuator

@@ -27,7 +27,10 @@ from jarvis.cu.actuate.windows import (
 from jarvis.cu.actuate.windows import (
     normalize_virtualdesk as _normalize_virtualdesk,  # noqa: F401 — re-export (tests + callers)
 )
-from jarvis.cu.target_guard import foreground_matches, foreground_signature
+from jarvis.cu.target_guard import (
+    foreground_matches_or_same_app,
+    foreground_signature,
+)
 from jarvis.overlay.virtual_cursor import get_virtual_cursor
 
 
@@ -36,7 +39,10 @@ def _foreground_window_signature() -> tuple[Any, ...]:
 
 
 def _window_signature_matches(expected: tuple[Any, ...]) -> bool:
-    return foreground_matches(expected)
+    # Same-app tolerant (macOS): the engine holds the strict per-frame
+    # baseline; this later re-check must not refuse a batch because our own
+    # click just made a dropdown/sheet the frontmost same-app window.
+    return foreground_matches_or_same_app(expected)
 
 
 def _send_click(button: str, double: bool, abs_xy: tuple[int, int] | None = None) -> None:

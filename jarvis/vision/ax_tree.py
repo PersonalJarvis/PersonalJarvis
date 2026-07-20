@@ -8,7 +8,7 @@ and the model prompt are platform-agnostic. The only macOS-specific work is:
 
 1. Resolving the frontmost application via ``NSWorkspace`` and building its
    ``AXUIElement`` root.
-2. Walking the AX tree depth-first, reading ``kAXRoleAttribute`` /
+2. Walking the AX tree breadth-first, reading ``kAXRoleAttribute`` /
    ``kAXTitleAttribute`` / ``kAXValueAttribute`` / position+size / enabled /
    children, and flattening into ``RawNode``.
 3. Normalizing each native ``AX*`` role onto the canonical UIA vocabulary via
@@ -146,9 +146,12 @@ class AXTreeSource:
 
         # ONE native walk at the deepest rung; the retry ladder then shrinks
         # the depth at prune time over the same raw nodes. A raw node carries
-        # its depth, and prune's first filter is exactly the depth cut — the
-        # pruned result is identical to a shallower re-walk without paying
-        # the AX IPC again.
+        # its depth, and prune's first filter is exactly the depth cut. The
+        # walk is breadth-first, so even when its time/node budget truncates
+        # a huge tree, every SHALLOW element is already collected — the
+        # ladder's shallower rungs therefore see the same nodes a complete
+        # shallower re-walk would have found, without paying the AX IPC
+        # again.
         traverse_fn = self._traverser or self._traverse_via_pyobjc
         window_title, active_pid, raw_nodes = await asyncio.to_thread(
             traverse_fn,
@@ -454,7 +457,7 @@ def _ax_flatten(
     deadline: float | None = None,
     max_nodes: int | None = None,
 ) -> None:
-    """Recursive depth-first flatten of an AX element into ``RawNode``.
+    """Iterative BREADTH-FIRST flatten of an AX element into ``RawNode``.
 
     Roles are normalized to the canonical UIA vocabulary at flatten time
     (AD-10); a role that ``normalize_role`` drops (``None``) is still recorded
@@ -463,86 +466,91 @@ def _ax_flatten(
     interesting-roots root, which prune always keeps).
 
     ``deadline`` (``time.monotonic`` timestamp) and ``max_nodes`` bound the
-    walk: on either limit the flatten stops descending and the caller gets
-    the partial tree collected so far — parents always precede children, so
-    the partial list is structurally valid for pruning.
+    walk. Level order is what makes those bounds SAFE: when the budget runs
+    out, everything shallow — toolbar, address bar, buttons — has already
+    been collected, and only the deepest content layers are dropped. A
+    depth-first walk under the same bounds could burn its whole budget
+    inside one huge web-content subtree and never reach a shallow sibling.
+    Parents always precede children, so the partial list stays structurally
+    valid for pruning.
     """
-    if depth > max_depth:
-        return
-    if max_nodes is not None and len(out) >= max_nodes:
-        return
-    if deadline is not None and time.monotonic() >= deadline:
-        return
-    try:
-        native_role = str(_ax_copy_attr(element, _AX_ROLE) or "")
-        native_subrole = str(_ax_copy_attr(element, _AX_SUBROLE) or "")
-        canonical = normalize_role(native_role, "darwin")
-        role = canonical or ""
+    from collections import deque  # noqa: PLC0415
 
-        is_password = (
-            native_role.casefold() == "axsecuretextfield"
-            or native_subrole.casefold() == "axsecuretextfield"
-        )
-        focused = bool(_ax_copy_attr(element, _AX_FOCUSED) or False)
+    queue: deque[tuple[Any, int, int]] = deque([(element, depth, parent_index)])
+    while queue:
+        current, current_depth, current_parent = queue.popleft()
+        if current_depth > max_depth:
+            continue
+        if max_nodes is not None and len(out) >= max_nodes:
+            return
+        if deadline is not None and time.monotonic() >= deadline:
+            return
+        try:
+            native_role = str(_ax_copy_attr(current, _AX_ROLE) or "")
+            native_subrole = str(_ax_copy_attr(current, _AX_SUBROLE) or "")
+            canonical = normalize_role(native_role, "darwin")
+            role = canonical or ""
 
-        name = _ax_copy_attr(element, _AX_TITLE)
-        if not name and not is_password:
-            name = _ax_copy_attr(element, _AX_VALUE)
-        if not name:
-            name = _ax_copy_attr(element, _AX_DESCRIPTION)
-        name = str(name or "")
+            is_password = (
+                native_role.casefold() == "axsecuretextfield"
+                or native_subrole.casefold() == "axsecuretextfield"
+            )
+            focused = bool(_ax_copy_attr(current, _AX_FOCUSED) or False)
 
-        automation_id = str(_ax_copy_attr(element, _AX_IDENTIFIER) or "")
+            name = _ax_copy_attr(current, _AX_TITLE)
+            if not name and not is_password:
+                name = _ax_copy_attr(current, _AX_VALUE)
+            if not name:
+                name = _ax_copy_attr(current, _AX_DESCRIPTION)
+            name = str(name or "")
 
-        x, y = _ax_point(_ax_copy_attr(element, _AX_POSITION))
-        w, h = _ax_size(_ax_copy_attr(element, _AX_SIZE))
-        bounds = (x, y, max(0, w), max(0, h))
+            automation_id = str(_ax_copy_attr(current, _AX_IDENTIFIER) or "")
 
-        enabled_raw = _ax_copy_attr(element, _AX_ENABLED)
-        enabled = True if enabled_raw is None else bool(enabled_raw)
+            x, y = _ax_point(_ax_copy_attr(current, _AX_POSITION))
+            w, h = _ax_size(_ax_copy_attr(current, _AX_SIZE))
+            bounds = (x, y, max(0, w), max(0, h))
 
-        # L3 value-read: AXValue is the current text of an editable control
-        # (search box, text field). Read separately from the name-fallback above
-        # so the loop can see what a field already holds.
-        value = "" if is_password else str(_ax_copy_attr(element, _AX_VALUE) or "")
-    except Exception:  # noqa: BLE001
-        return
+            enabled_raw = _ax_copy_attr(current, _AX_ENABLED)
+            enabled = True if enabled_raw is None else bool(enabled_raw)
 
-    my_index = len(out)
-    out.append(RawNode(
-        role=role,
-        name=name,
-        automation_id=automation_id,
-        bounds=bounds,
-        enabled=enabled,
-        is_offscreen=False,
-        depth=depth,
-        parent_index=parent_index,
-        value=value,
-        is_password=is_password,
-        focused=focused,
-    ))
+            # L3 value-read: AXValue is the current text of an editable
+            # control (search box, text field). Read separately from the
+            # name-fallback above so the loop can see what a field holds.
+            value = (
+                "" if is_password
+                else str(_ax_copy_attr(current, _AX_VALUE) or "")
+            )
+        except Exception:  # noqa: BLE001, S112 — one broken AX element never
+            # aborts the walk; siblings are still valuable.
+            continue
 
-    if depth >= max_depth:
-        return
+        my_index = len(out)
+        out.append(RawNode(
+            role=role,
+            name=name,
+            automation_id=automation_id,
+            bounds=bounds,
+            enabled=enabled,
+            is_offscreen=False,
+            depth=current_depth,
+            parent_index=current_parent,
+            value=value,
+            is_password=is_password,
+            focused=focused,
+        ))
 
-    children = _ax_copy_attr(element, _AX_CHILDREN)
-    if not children:
-        return
-    try:
-        child_list = list(children)
-    except Exception:  # noqa: BLE001
-        return
-    for child in child_list:
-        _ax_flatten(
-            child,
-            depth=depth + 1,
-            max_depth=max_depth,
-            parent_index=my_index,
-            out=out,
-            deadline=deadline,
-            max_nodes=max_nodes,
-        )
+        if current_depth >= max_depth:
+            continue
+        children = _ax_copy_attr(current, _AX_CHILDREN)
+        if not children:
+            continue
+        try:
+            child_list = list(children)
+        except Exception:  # noqa: BLE001, S112 — unreadable children only end
+            # this branch, not the walk.
+            continue
+        for child in child_list:
+            queue.append((child, current_depth + 1, my_index))
 
 
 __all__ = ["AXTreeSource"]

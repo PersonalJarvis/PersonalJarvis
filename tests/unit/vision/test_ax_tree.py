@@ -314,3 +314,36 @@ def test_flatten_max_nodes_cap_stops_collection() -> None:
     nodes: list = []
     _ax_flatten(root, depth=0, max_depth=6, parent_index=-1, out=nodes, max_nodes=2)
     assert len(nodes) == 2
+
+
+def test_truncated_walk_keeps_shallow_siblings(monkeypatch) -> None:
+    # Breadth-first guarantee: a huge deep subtree visited "first" must not
+    # starve shallow siblings (toolbar/address bar) when the node budget
+    # truncates the walk — the depth-first version lost exactly those.
+    def _leaf(i: int) -> FakeAXElement:
+        return FakeAXElement(role="AXStaticText", title=f"deep-{i}",
+                             position=(0, 0), size=(10, 10))
+
+    huge_web_area = FakeAXElement(
+        role="AXGroup", title="web-content", position=(0, 60), size=(800, 500),
+        children=[
+            FakeAXElement(
+                role="AXGroup", title=f"row-{i}", position=(0, 60),
+                size=(800, 20), children=[_leaf(i)],
+            )
+            for i in range(50)
+        ],
+    )
+    toolbar_button = FakeAXElement(
+        role="AXButton", title="Reload", position=(700, 10), size=(40, 30),
+    )
+    root = FakeAXElement(
+        role="AXWindow", title="Browser", position=(0, 0), size=(800, 600),
+        children=[huge_web_area, toolbar_button],
+    )
+    nodes: list = []
+    _ax_flatten(
+        root, depth=0, max_depth=6, parent_index=-1, out=nodes, max_nodes=10,
+    )
+    assert len(nodes) == 10
+    assert any(n.name == "Reload" for n in nodes)

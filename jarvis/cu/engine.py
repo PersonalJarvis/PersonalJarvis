@@ -64,8 +64,9 @@ from jarvis.cu.geometry import (
 )
 from jarvis.cu.ledger import ActionLedger
 from jarvis.cu.target_guard import (
-    foreground_matches,
+    foreground_matches_or_same_app,
     read_foreground_target,
+    signatures_same_app,
     window_signature,
 )
 from jarvis.cu.verify import (
@@ -336,6 +337,18 @@ async def _live_window_state_signature() -> tuple[Any, ...]:
     return (await asyncio.to_thread(read_foreground_target)).signature
 
 
+def _signature_still_valid(
+    live: tuple[Any, ...], expected: tuple[Any, ...],
+) -> bool:
+    """Post-action signature re-check: exact match or same-app churn.
+
+    Used only where an action of ours ALREADY ran (zoom-refine after a
+    verified click): the click may legitimately have flipped the frontmost
+    same-app window (macOS dropdown/sheet). A cross-app change still fails.
+    """
+    return live == expected or signatures_same_app(expected, live)
+
+
 async def _dispatch_tool(
     ctx: Any, tool_name: str, args: dict[str, Any], trace_id: Any,
 ) -> tuple[bool, str]:
@@ -459,13 +472,14 @@ async def _zoom_refine_point(
     import json as _json  # noqa: PLC0415
     import re as _re  # noqa: PLC0415
 
-    if await _live_window_state_signature() != expected_window_signature:
+    if not _signature_still_valid(
+        await _live_window_state_signature(), expected_window_signature,
+    ):
         return None
     bbox = frame.mapper.region_around(int(x), int(y), _REFINE_RADIUS)
     raw = await asyncio.to_thread(grab_region, bbox)
-    if (
-        raw is None
-        or await _live_window_state_signature() != expected_window_signature
+    if raw is None or not _signature_still_valid(
+        await _live_window_state_signature(), expected_window_signature,
     ):
         return None
     try:
@@ -497,7 +511,9 @@ async def _zoom_refine_point(
     except Exception:  # noqa: BLE001 — refine is strictly best-effort
         log.debug("[cu] zoom refine call failed", exc_info=True)
         return None
-    if await _live_window_state_signature() != expected_window_signature:
+    if not _signature_still_valid(
+        await _live_window_state_signature(), expected_window_signature,
+    ):
         return None
     cleaned = (reply.text or "").strip()
     fence = _re.search(r"```(?:json)?\s*(.+?)\s*```", cleaned, _re.DOTALL)
@@ -697,7 +713,12 @@ async def run_cu_loop(
             def capture_identity_guard(
                 expected: tuple[Any, ...] = pre_capture_window_signature,
             ) -> bool:
-                return foreground_matches(expected)
+                # Same-app tolerant: a dropdown/sheet flipping the frontmost
+                # layer-0 window mid-grab (macOS) does not invalidate the
+                # capture — the stability loop delivers the settled frame and
+                # the ACTION baseline is re-read after capture anyway. Only a
+                # cross-app takeover aborts the observation.
+                return foreground_matches_or_same_app(expected)
 
             monitor = await asyncio.to_thread(
                 select_capture_target,
@@ -736,7 +757,11 @@ async def run_cu_loop(
                     "foreground window identity is unavailable; refusing "
                     "unbound Computer-Use input"
                 )
-            if captured_window_signature != pre_capture_window_signature:
+            if captured_window_signature != pre_capture_window_signature and not (
+                signatures_same_app(
+                    pre_capture_window_signature, captured_window_signature,
+                )
+            ):
                 raise RuntimeError(
                     "foreground window changed during capture; retrying with a fresh frame"
                 )
@@ -927,6 +952,11 @@ async def run_cu_loop(
         # ---- act + verify ---------------------------------------------------
         pointer_used = False
         batch_acted = False  # any executed action invalidates the step frame
+        # Whether an input action of THIS batch already executed successfully.
+        # Gates the same-app re-baseline below: before the first action the
+        # foreground must still be exactly the captured window; after our own
+        # action, same-app churn (a dropdown our click opened) is expected.
+        acted_since_capture = False
         for action in actions:
             if _is_cancelled(cancel_token):
                 yield _final(stderr="[cu] cancelled\n", exit_code=_EXIT_CANCEL)
@@ -1078,16 +1108,35 @@ async def run_cu_loop(
                 break  # re-perceive
 
             if kind in {"click", "click_element", "drag", "scroll", "type", "key"}:
-                if await _live_window_state_signature() != captured_window_signature:
-                    msg = (
-                        f"step {step_idx}: {_summarize_action(action)} REFUSED — "
-                        "the foreground window changed after the screenshot; "
-                        "capturing a fresh frame before acting."
-                    )
-                    history.append(msg)
-                    log.info("[cu] %s", msg)
-                    yield _progress(f"[cu] {msg}")
-                    break
+                live_signature = await _live_window_state_signature()
+                if live_signature != captured_window_signature:
+                    if acted_since_capture and signatures_same_app(
+                        captured_window_signature, live_signature,
+                    ):
+                        # Same app, different frontmost window, AFTER one of
+                        # our own actions: the expected consequence of that
+                        # action (macOS: a click into the address bar makes
+                        # the suggestions dropdown the frontmost layer-0
+                        # window). Refusing here broke every click->type
+                        # batch (live incident 2026-07-20). Re-baseline so
+                        # the rest of the batch lands where the model
+                        # intended; a CROSS-APP steal still breaks the batch,
+                        # and before the FIRST action the check stays strict.
+                        log.debug(
+                            "[cu] same-app foreground churn after own action "
+                            "— re-baselining window signature",
+                        )
+                        captured_window_signature = live_signature
+                    else:
+                        msg = (
+                            f"step {step_idx}: {_summarize_action(action)} REFUSED — "
+                            "the foreground window changed after the screenshot; "
+                            "capturing a fresh frame before acting."
+                        )
+                        history.append(msg)
+                        log.info("[cu] %s", msg)
+                        yield _progress(f"[cu] {msg}")
+                        break
 
             # -- execute ------------------------------------------------------
             t0 = time.monotonic()
@@ -1176,8 +1225,10 @@ async def run_cu_loop(
                                     grab_region, monitor.bbox,
                                 )
                                 if (
-                                    await _live_window_state_signature()
-                                    != captured_window_signature
+                                    not _signature_still_valid(
+                                        await _live_window_state_signature(),
+                                        captured_window_signature,
+                                    )
                                     or monitor_topology_signature(
                                         await asyncio.to_thread(list_monitors),
                                     )
@@ -1415,6 +1466,8 @@ async def run_cu_loop(
             batch_acted = True
             summary = _summarize_action(action)
             if ok:
+                if kind != "wait":
+                    acted_since_capture = True
                 consecutive_failures = 0
                 last_step_had_success = True
                 history.append(

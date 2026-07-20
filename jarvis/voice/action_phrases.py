@@ -142,6 +142,23 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "That took too long on screen (over {secs} seconds) and was cancelled.",
         "es": "Eso tardó demasiado en la pantalla (más de {secs} segundos) y se canceló.",
     },
+    # open_app launch readbacks (deterministic local-action path). The German
+    # column keeps the exact historical wording.
+    "open_app_launched": {
+        "de": "Gestartet: {app}",  # i18n-allow
+        "en": "Launched: {app}",
+        "es": "Iniciado: {app}",
+    },
+    "open_app_launched_raised": {
+        "de": "Gestartet und nach vorn geholt: {app}",  # i18n-allow
+        "en": "Launched and brought to the front: {app}",
+        "es": "Iniciado y traído al frente: {app}",
+    },
+    "open_app_not_found": {
+        "de": "Anwendung '{app}' nicht gefunden.",  # i18n-allow
+        "en": "Application '{app}' was not found.",
+        "es": "No se encontró la aplicación '{app}'.",
+    },
     # Computer-use dispatch — the immediate optimistic ACK.
     "cu_dispatch_ack": {
         "de": "Mach ich. Ich erledige das direkt am Bildschirm "  # i18n-allow

@@ -3,33 +3,55 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 
-from jarvis.cu.target_guard import read_foreground_target, window_signature
+from jarvis.cu.target_guard import (
+    read_foreground_target,
+    signatures_same_app,
+    window_signature,
+)
 from jarvis.platform.window_state import WindowInfo
 
 
 class TestWindowSignature:
-    """App-level identity when the probe knows the owning pid (macOS)."""
+    """Window-precise identity that still exposes the owning app (macOS)."""
 
-    def test_pid_wins_over_handle_and_rect(self):
-        window = WindowInfo("Google Chrome", handle=4021, pid=812)
-        assert window_signature(window, (0, 25, 1440, 875)) == ("app", 812)
+    def test_pid_signature_stays_window_precise(self):
+        # Same app, different window: the SIGNATURES must differ (strict
+        # equality is the engine's pre-first-action baseline — a second
+        # same-app top-level window stealing focus before we acted must
+        # still refuse).
+        main = window_signature(
+            WindowInfo("Google Chrome", handle=4021, pid=812), (0, 25, 1440, 875),
+        )
+        other = window_signature(
+            WindowInfo("Untitled", handle=5177, pid=812), (30, 55, 1440, 875),
+        )
+        assert main != other
+        assert main == ("app", 812, 4021, (0, 25, 1440, 875))
 
-    def test_same_app_window_churn_keeps_signature_stable(self):
+    def test_same_app_churn_is_distinguishable_from_cross_app_steal(self):
         # A click into the address bar spawns a suggestions dropdown: new
-        # frontmost layer-0 CGWindowID, new rect, same owning app. The guard
-        # must NOT see a foreground change (live incident 2026-07-20).
+        # frontmost layer-0 CGWindowID, new rect, same owning app (live
+        # incident 2026-07-20). signatures_same_app separates that from a
+        # different app taking over.
         before = window_signature(
             WindowInfo("Google Chrome", handle=4021, pid=812), (0, 25, 1440, 875),
         )
-        after = window_signature(
+        dropdown = window_signature(
             WindowInfo("", handle=5177, pid=812), (105, 60, 900, 340),
         )
-        assert before == after
+        stealer = window_signature(
+            WindowInfo("Zoom Meeting", handle=9001, pid=990), (200, 200, 800, 600),
+        )
+        assert signatures_same_app(before, dropdown) is True
+        assert signatures_same_app(before, stealer) is False
 
-    def test_cross_app_focus_steal_still_detected(self):
-        chrome = window_signature(WindowInfo("Google Chrome", pid=812), None)
-        stealer = window_signature(WindowInfo("Zoom Meeting", pid=990), None)
-        assert chrome != stealer
+    def test_no_pid_signatures_never_count_as_same_app(self):
+        # Windows/Linux signatures carry no pid — the same-app relaxation
+        # must be a structural no-op there.
+        a = window_signature(WindowInfo("Editor", handle=77), (0, 0, 800, 600))
+        b = window_signature(WindowInfo("Editor", handle=77), (0, 0, 800, 600))
+        assert a == b
+        assert signatures_same_app(a, b) is False
 
     def test_no_pid_keeps_per_window_handle_identity(self):
         # Windows/Linux probes never set pid — their stable hwnd/X11-id plus
@@ -45,6 +67,7 @@ class TestWindowSignature:
 
     def test_none_window_is_none_signature(self):
         assert window_signature(None, None) == ("none",)
+        assert signatures_same_app(("none",), ("none",)) is False
 
 
 def test_foreground_target_reads_window_and_rect_inside_input_space(monkeypatch):

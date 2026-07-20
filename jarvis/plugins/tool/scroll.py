@@ -57,9 +57,11 @@ def _scroll_with_verified_target(
         if not landing.ok:
             raise RuntimeError(landing.detail)
     if expected_window_signature is not None:
-        from jarvis.cu.target_guard import foreground_matches  # noqa: PLC0415
+        from jarvis.cu.target_guard import (  # noqa: PLC0415
+            foreground_matches_or_same_app,
+        )
 
-        if not foreground_matches(expected_window_signature):
+        if not foreground_matches_or_same_app(expected_window_signature):
             raise RuntimeError("foreground window changed after the screenshot")
     actuator.scroll(direction, amount)
 

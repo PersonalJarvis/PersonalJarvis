@@ -22,17 +22,16 @@ def window_signature(
         return ("none",)
     pid = getattr(window, "pid", None)
     if pid:
-        # App-level identity. Only the macOS foreground probe fills ``pid``:
-        # there the per-window handle is the CGWindowID of the frontmost
-        # layer-0 window, which churns on focus changes INSIDE the same app
-        # (an address-bar suggestions dropdown is its own layer-0 window, and
-        # frame rects move with it). Comparing on the owning app keeps the
-        # guard's purpose — catching a cross-app focus steal between the
-        # screenshot and the action — without refusing every click->type
-        # batch (live incident 2026-07-20: 9 REFUSED actions in two runs).
-        # Windows/Linux probes leave ``pid`` unset and keep the stable
-        # per-window handle+rect identity.
-        return ("app", int(pid))
+        # Only the macOS foreground probe fills ``pid``. The signature stays
+        # WINDOW-precise (CGWindowID + rect), but leads with the owning app
+        # so callers can distinguish "a different window of the SAME app took
+        # over" (focus churn our own click caused — an address-bar
+        # suggestions dropdown is its own layer-0 window with its own rect,
+        # live incident 2026-07-20) from a cross-app focus steal, via
+        # :func:`signatures_same_app`. Windows/Linux probes leave ``pid``
+        # unset and keep their stable per-window handle+rect identity.
+        handle = getattr(window, "handle", None)
+        return ("app", int(pid), int(handle) if handle else None, rect)
     handle = getattr(window, "handle", None)
     if handle:
         return ("handle", int(handle), rect)
@@ -68,3 +67,38 @@ def foreground_matches(expected: tuple[Any, ...]) -> bool:
     return bool(expected) and expected[0] != "none" and (
         foreground_signature() == expected
     )
+
+
+def signatures_same_app(
+    a: tuple[Any, ...], b: tuple[Any, ...],
+) -> bool:
+    """Whether two signatures identify windows of the SAME owning app.
+
+    Only macOS signatures carry an app identity (``("app", pid, ...)``);
+    Windows/Linux signatures return ``False`` here, so every same-app
+    relaxation is a structural no-op on those platforms — their per-window
+    hwnd/X11-id identity is stable and needs no tolerance.
+    """
+    return (
+        len(a) >= 2
+        and len(b) >= 2
+        and a[0] == "app"
+        and b[0] == "app"
+        and a[1] == b[1]
+    )
+
+
+def foreground_matches_or_same_app(expected: tuple[Any, ...]) -> bool:
+    """Strict signature match, tolerating same-app window churn (macOS).
+
+    The tolerant matcher for RE-checks that run after the engine's strict
+    per-frame baseline: on macOS the frontmost layer-0 window flips whenever
+    a dropdown/sheet/popover opens — usually as the direct consequence of
+    the action we just executed — and a strict equality re-check
+    milliseconds later would refuse the rest of a legitimate batch. A
+    cross-app focus steal still mismatches.
+    """
+    if not expected or expected[0] == "none":
+        return False
+    current = foreground_signature()
+    return current == expected or signatures_same_app(expected, current)

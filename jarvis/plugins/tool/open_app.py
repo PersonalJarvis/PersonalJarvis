@@ -1,11 +1,11 @@
-"""open_app-Tool: öffnet eine Windows-Anwendung.
+"""open_app tool: opens an application, file, or URL on this computer.
 
-Risk-Tier: monitor — schreibt Toast-Notification, läuft aber ohne Approval.
+Risk tier: monitor — emits a toast notification but runs without approval.
 
-Plausibility-Check (2026-04-24): vor dem OS-Call wird app_name gegen Regex
-+ Whitelist/PATH geprueft. Blockiert STT-Halluzinationen wie
-"WDR mediagroup GmbH im Auftrag des WDR, 2020" die sonst direkt in
-os.startfile landen wuerden.
+Plausibility check (2026-04-24): before the OS call, app_name is vetted
+against a regex + whitelist/PATH/OS-app-registry. Blocks STT hallucinations
+like "WDR mediagroup GmbH im Auftrag des WDR, 2020" that would otherwise
+land directly in os.startfile.
 """
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ from jarvis.plugins.tool.app_resolver import (
     launch_services_can_open,
     resolve_app_launch_target,
 )
+from jarvis.voice.action_phrases import action_phrase, resolve_phrase_language
 
 # Apps for which a second window is normal/expected — never short-circuit these
 # to "already running -> focus"; the user almost always wants a fresh instance.
@@ -32,8 +33,8 @@ _MULTI_INSTANCE_APPS: frozenset[str] = frozenset({
     "terminal", "conhost", "gnome-terminal", "konsole", "xterm",
 })
 
-# Bekannte Apps + haeufige Aliases. Reicht fuer 95% der Voice-Commands;
-# exotische Apps laufen ueber PATH-Resolve oder expliziten Pfad.
+# Known apps + common aliases. Covers ~95% of voice commands;
+# exotic apps go through PATH resolution or an explicit path.
 #
 # The whitelist is platform-conditional (AD-15): it keeps the anti-STT-
 # hallucination gate intact with the correct per-OS names. The plausibility
@@ -49,14 +50,14 @@ _KNOWN_APPS_WIN: frozenset[str] = frozenset({
     # Dev
     "code", "vscode", "pycharm", "idea", "webstorm", "clion", "rider",
     "cursor", "windsurf", "zed",
-    # Kommunikation
+    # Communication
     "outlook", "teams", "slack", "discord", "telegram", "whatsapp", "signal",
     "zoom", "skype",
     # Media
     "spotify", "vlc", "mpv", "potplayer", "obs", "obs64",
     # Office
     "word", "excel", "powerpoint", "onenote", "winword", "excel.exe",
-    # Grafik
+    # Graphics
     "mspaint", "paint", "photoshop", "illustrator", "figma", "gimp", "inkscape",
     # Gaming / Misc
     "steam", "epicgameslauncher", "battle.net", "blender",
@@ -64,7 +65,7 @@ _KNOWN_APPS_WIN: frozenset[str] = frozenset({
     # resolver, see app_resolver._UWP_PROTOCOLS). Whitelisted so the
     # plausibility gate does not reject them as "not found" (live 2026-06-22).
     "microsoft store", "windows store", "store",
-    # Jarvis-intern
+    # Jarvis itself
     "jarvis",
 })
 
@@ -78,18 +79,18 @@ _KNOWN_APPS_DARWIN: frozenset[str] = frozenset({
     # Dev
     "code", "vscode", "pycharm", "idea", "webstorm", "clion", "rider",
     "cursor", "windsurf", "zed", "xcode",
-    # Kommunikation
+    # Communication
     "mail", "messages", "facetime", "teams", "slack", "discord", "telegram",
     "whatsapp", "signal", "zoom", "skype",
     # Media
     "music", "spotify", "vlc", "mpv", "quicktime player", "obs",
     # Office
     "pages", "numbers", "keynote", "word", "excel", "powerpoint", "onenote",
-    # Grafik
+    # Graphics
     "photos", "photoshop", "illustrator", "figma", "gimp", "inkscape",
     # Misc
     "steam", "blender",
-    # Jarvis-intern
+    # Jarvis itself
     "jarvis",
 })
 
@@ -104,7 +105,7 @@ _KNOWN_APPS_LINUX: frozenset[str] = frozenset({
     # Dev
     "code", "vscode", "pycharm", "idea", "webstorm", "clion", "rider",
     "cursor", "windsurf", "zed",
-    # Kommunikation
+    # Communication
     "thunderbird", "evolution", "teams", "slack", "discord", "telegram",
     "telegram-desktop", "signal", "signal-desktop", "zoom", "skype",
     # Media
@@ -112,11 +113,11 @@ _KNOWN_APPS_LINUX: frozenset[str] = frozenset({
     # Office
     "libreoffice", "libreoffice-writer", "libreoffice-calc",
     "libreoffice-impress", "onlyoffice",
-    # Grafik
+    # Graphics
     "eog", "gimp", "inkscape", "krita", "blender",
     # Misc
     "steam", "nautilus-desktop",
-    # Jarvis-intern
+    # Jarvis itself
     "jarvis",
 })
 
@@ -135,16 +136,16 @@ def _select_known_apps() -> frozenset[str]:
 # jarvis.plugins.tool.open_app import KNOWN_APPS`).
 KNOWN_APPS: frozenset[str] = _select_known_apps()
 
-# Regex gegen offensichtlich kaputte app_names:
-# - Max 60 Zeichen
-# - Nur Woerter + Pfad-Zeichen + URL-Schema-Zeichen erlaubt
-# - Keine Komma-Listen oder Satzzeichen-Ketten
+# Regex against obviously broken app_names:
+# - max 60 characters
+# - only word, path, and URL-scheme characters allowed
+# - no comma lists or punctuation chains
 _APP_NAME_RE = re.compile(r"^[\w\-\.\:\/\\ ]{1,60}$")
 
-# STT-Halluzinations-Marker die auf Whisper-Misshearings hindeuten (Werbe-
-# Outros, Copyright-Strings). Doppelter Schutz zusaetzlich zum Pipeline-
-# Level-Guard, falls das Brain direkt aus einem System-Kontext aufgerufen
-# wird (z.B. Text-Chat in der Desktop-App).
+# STT-hallucination markers that indicate Whisper mishearings (advertising
+# outros, copyright strings). Second line of defense in addition to the
+# pipeline-level guard, for when the brain is called directly from a system
+# context (e.g. text chat in the desktop app).
 _HALLUCINATION_RE = re.compile(
     r"\b("
     r"im\s+auftrag\s+des|mediagroup|gmbh|"
@@ -153,6 +154,21 @@ _HALLUCINATION_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+
+
+def _output_language(ctx: ExecutionContext) -> str:
+    """Turn language for the deterministic launch readbacks (de/en/es).
+
+    Prefers the resolved output language the tool-use loop stamps into
+    ``ctx.config`` (honors the ``brain.reply_language`` pin + conversation
+    stickiness); falls back to detecting the user's own words — the same
+    contract as the other deterministic local-action readbacks.
+    """
+    config = getattr(ctx, "config", None)
+    stamped = config.get("output_language") if isinstance(config, dict) else None
+    if stamped:
+        return str(stamped)
+    return resolve_phrase_language(None, ctx.user_utterance)
 
 
 def _is_plausible_app_name(app_name: str) -> tuple[bool, str, str]:
@@ -173,7 +189,7 @@ def _is_plausible_app_name(app_name: str) -> tuple[bool, str, str]:
             "misheard",
         )
 
-    # Layer 2: Whitelist ODER URL ODER Pfad ODER PATH-Resolve
+    # Layer 2: whitelist OR URL OR path OR PATH resolution
     low = app_name.lower().removesuffix(".exe")
     is_url = app_name.startswith(("http://", "https://", "file://"))
     is_path = (
@@ -249,7 +265,10 @@ class OpenAppTool:
         if not app_name:
             return ToolResult(success=False, output=None, error="app_name is missing")
 
-        ok, reason, kind = _is_plausible_app_name(app_name)
+        # Off the event loop: the gate's layer-3 registry probes block (a
+        # subprocess `open -Ra` on macOS, .desktop globs on Linux) and would
+        # otherwise stall voice/WS dispatch for seconds.
+        ok, reason, kind = await asyncio.to_thread(_is_plausible_app_name, app_name)
         if not ok:
             # Error message with an explicit instruction to the brain,
             # differentiated by rejection kind — a plausible but simply
@@ -369,17 +388,20 @@ class OpenAppTool:
                     )
                 except Exception:  # noqa: BLE001 — never fail a successful launch
                     raised = False
-            output = (
-                f"Gestartet und nach vorn geholt: {app_name}"
-                if raised
-                else f"Gestartet: {app_name}"
+            lang = _output_language(ctx)
+            output = action_phrase(
+                "open_app_launched_raised" if raised else "open_app_launched",
+                lang,
+                app=app_name,
             )
             return ToolResult(success=True, output=output)
         except FileNotFoundError:
             return ToolResult(
                 success=False,
                 output=None,
-                error=f"Anwendung '{app_name}' nicht gefunden.",
+                error=action_phrase(
+                    "open_app_not_found", _output_language(ctx), app=app_name,
+                ),
             )
         except OSError as exc:
             return ToolResult(success=False, output=None, error=str(exc))

@@ -94,6 +94,7 @@ def patched(monkeypatch, tmp_path):
         capture_calls=0,           # capture_stable_frame invocations
         foreground_handle=11,
         foreground_rect=(0, 0, 192, 108),
+        foreground_pid=None,       # set to an int for macOS-style app identity
     )
 
     def fake_select_capture_target(
@@ -153,7 +154,11 @@ def patched(monkeypatch, tmp_path):
     monkeypatch.setattr(
         ws,
         "foreground_window",
-        lambda: ws.WindowInfo("Test Window", handle=state.foreground_handle),
+        lambda: ws.WindowInfo(
+            "Test Window",
+            handle=state.foreground_handle,
+            pid=state.foreground_pid,
+        ),
     )
     monkeypatch.setattr(
         ws, "window_frame_rect", lambda _window: state.foreground_rect,
@@ -309,6 +314,99 @@ async def test_foreground_change_after_model_decision_refuses_action(patched):
     assert _final(chunks).exit_code == 5
     assert executor.calls == []
     assert any("foreground window changed" in user for _system, user in brain.calls)
+
+
+async def test_same_app_window_swap_before_first_action_refuses(patched):
+    # macOS app-identity signatures stay WINDOW-precise: a second top-level
+    # window of the SAME app stealing focus between screenshot and the FIRST
+    # action must refuse exactly like a cross-app steal (reviewer regression
+    # for the 2026-07-20 signature redesign).
+    patched.foreground_pid = 812
+
+    class _FocusChangingBrain(FakeBrain):
+        async def complete_text(self, *, system: str, user: str) -> str:
+            reply = await super().complete_text(system=system, user=user)
+            if len(self.calls) == 1:
+                patched.foreground_handle = 22  # same app, different window
+            return reply
+
+    brain = _FocusChangingBrain([
+        '{"action":"click","x":500,"y":500}',
+        '{"action":"fail","reason":"the target window changed"}',
+    ])
+    executor = FakeExecutor()
+
+    chunks = await _run(_ctx(brain, executor))
+
+    assert _final(chunks).exit_code == 5
+    assert executor.calls == []
+    assert any("foreground window changed" in user for _system, user in brain.calls)
+
+
+async def test_same_app_churn_after_own_click_rebaselines_and_type_proceeds(patched):
+    # The live 2026-07-20 failure loop: the click makes a same-app dropdown
+    # the frontmost layer-0 window; the batched type must STILL land instead
+    # of "REFUSED — the foreground window changed after the screenshot".
+    patched.foreground_pid = 812
+    state = patched
+
+    class _ChurningExecutor(FakeExecutor):
+        async def execute(self, tool, args, *, user_utterance, trace_id):
+            result = await super().execute(
+                tool, args, user_utterance=user_utterance, trace_id=trace_id,
+            )
+            if tool["name"] == "click":
+                state.foreground_handle = 5177  # dropdown became frontmost
+            return result
+
+    brain = FakeBrain([
+        '[{"action":"click","x":500,"y":500},'
+        '{"action":"type","text":"https://example.com"}]',
+        '{"action":"fail","reason":"stop here"}',
+    ])
+    executor = _ChurningExecutor()
+
+    chunks = await _run(_ctx(brain, executor))
+
+    _final(chunks)
+    tool_names = [name for (name, _) in executor.calls]
+    assert "click" in tool_names
+    assert "type_text" in tool_names, (
+        "same-app churn caused by our own click must not behead the batch"
+    )
+
+
+async def test_cross_app_steal_after_own_click_still_refuses_type(patched):
+    # The relaxation is app-scoped only: a DIFFERENT app taking over after
+    # our click still breaks the batch before the type.
+    patched.foreground_pid = 812
+    state = patched
+
+    class _StealingExecutor(FakeExecutor):
+        async def execute(self, tool, args, *, user_utterance, trace_id):
+            result = await super().execute(
+                tool, args, user_utterance=user_utterance, trace_id=trace_id,
+            )
+            if tool["name"] == "click":
+                state.foreground_handle = 9001
+                state.foreground_pid = 990  # another app stole focus
+            return result
+
+    brain = FakeBrain([
+        '[{"action":"click","x":500,"y":500},'
+        '{"action":"type","text":"https://example.com"}]',
+        '{"action":"fail","reason":"stop here"}',
+    ])
+    executor = _StealingExecutor()
+
+    chunks = await _run(_ctx(brain, executor))
+
+    _final(chunks)
+    tool_names = [name for (name, _) in executor.calls]
+    assert "click" in tool_names
+    assert "type_text" not in tool_names, (
+        "typing after a cross-app focus steal is the blind-input bug"
+    )
 
 
 async def test_foreground_change_during_capture_discards_stale_frame(
