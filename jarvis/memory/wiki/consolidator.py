@@ -1000,6 +1000,13 @@ class Consolidator:
             return "decision array does not cover every candidate"
 
         for cid, row in by_id.items():
+            if primary_decisions.get(cid) == "noop":
+                # A noop primary may not carry secondary writes (enforced
+                # above), so demanding a companion page or link repair here
+                # would make every legitimate noop on a graph-visible
+                # candidate structurally unanswerable — ALL providers fail
+                # the same check and the row wedges the chain forever.
+                continue
             graph_target = self._graph_target(row)
             if graph_target is None:
                 continue

@@ -1418,6 +1418,36 @@ async def test_noop_marks_row_without_writing(stack) -> None:
 
 
 @pytest.mark.asyncio
+async def test_noop_on_graph_visible_fact_without_topic_page_is_accepted(stack) -> None:
+    """A noop primary may not carry secondary writes, so the graph-visibility
+    check must not demand a companion page for a nooped candidate — otherwise
+    a legitimate noop on a graph-visible kind whose topic page is missing is
+    structurally unanswerable and every provider fails the same validation."""
+    vault_root, _curator, journal = stack
+    journal.append(
+        [CandidateFact(
+            fact="The user has a personal user profile in their Wiki system.",
+            kind="asset", subjects=("user", "wiki-system"),
+        )],
+        source_label="realtime-session-sweep:meta", turn_hash="h-meta",
+    )
+    cid = journal.pending()[0].id
+    assert not (vault_root / "entities" / "wiki-system.md").exists()
+
+    brain = FakeBrain([_judge_json([{
+        "candidate_id": cid, "decision": "noop",
+        "reason": "meta chatter about the wiki itself, not durable knowledge",
+    }])])
+    consolidator = _consolidator(stack, brain)
+
+    label = await consolidator.run_once()
+
+    assert label == "journal-batch:1"
+    assert journal.pending() == []
+    assert not (vault_root / "entities" / "wiki-system.md").exists()
+
+
+@pytest.mark.asyncio
 async def test_topic_question_candidate_is_presented_to_stage2_as_noop(stack) -> None:
     vault_root, _curator, journal = stack
     review_key = "session:v3:topic-question:chunk:000:abc"
