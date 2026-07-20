@@ -777,7 +777,7 @@ def _safe_basis(value: object) -> str:
 
 def _clamp_salience(value: object) -> int:
     try:
-        salience = int(value)  # type: ignore[arg-type]
+        salience = int(value)  # type: ignore[call-overload]
     except (TypeError, ValueError):
         return _DEFAULT_SALIENCE
     return max(1, min(5, salience))
