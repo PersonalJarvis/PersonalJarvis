@@ -102,9 +102,18 @@ deleting it. A provider outage or malformed response is not treated as a fact
 decision; the item can remain waiting or the write can fail visibly.
 
 Automatic review favors information that should still help weeks later, such
-as identity, preferences, relationships, owned items, projects, plans, and
-decisions. Greetings, pure questions, immediate commands, and passing status
-updates should not become long-term notes. This filtering can still miss or
+as identity, preferences, relationships, owned items, recurring activities,
+projects, plans, and decisions. Greetings, pure questions, immediate commands,
+and passing status updates should not become long-term notes. The review also
+scores how central each fact is to your own life, so world-knowledge trivia is
+skipped while personal facts are kept.
+
+Preferences do not have to be stated literally. When you describe first-person
+experience — "I love being out on golf courses with my buddies" — the curator
+may record the inferred habit, marked *(inferred)* on the page with its source
+noted as behavioral. Saying it explicitly later ("Golf is my favourite sport")
+upgrades the note and removes the marker. Asking about a topic ("Tell me about
+Monaco") never creates a personal note. This filtering can still miss or
 misclassify information, so verify important pages and correct them in the
 Markdown vault when needed.
 

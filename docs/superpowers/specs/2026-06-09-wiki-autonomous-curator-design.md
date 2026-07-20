@@ -25,7 +25,7 @@ The Knowledge Wiki was designed as an **autonomous long-term memory** — "the L
 
 | # | Decision | Choice |
 |---|----------|--------|
-| D1 | Memory character | **Completeness with cleanliness** — capture broadly (recall-biased), but zero junk artifacts: no truncation, no dangling links, no duplicates, no prompt leaks. The problem is artifact *quality* + *growth*, not volume. |
+| D1 | Memory character | **Completeness with cleanliness** — capture broadly (recall-biased), but zero junk artifacts: no truncation, no dangling links, no duplicates, no prompt leaks. The problem is artifact *quality* + *growth*, not volume. **Revised 2026-07-20 (ADR-0029):** the uniform recall bias is now asymmetric — recall-protected for personal facts, precision-biased for world knowledge — and behavioral (lived-experience) inference is admitted with `*(inferred)*` provenance; see [ADR-0029](../../adr/0029-evidence-tiered-personal-curation.md). |
 | D2 | What feeds the memory | **Conversation only** — what the user says/asks/decides (voice + chat). Window/app-focus pages are dropped as a memory source. Awareness keeps live situational awareness but no longer writes durable pages. |
 | D3 | Curator model | **User-configurable dedicated model** — a new "Wiki" provider/model card in the settings/API-keys area (mirrors Brain + TTS), reusing the existing provider/model selector. Sensible cheap default, overridable. |
 | D4 | What the curator understands | **Living profile + knowledge graph** — autonomously maintains a structured living profile of the user (identity, preferences, work style, people, active projects, decisions) AND linked topic pages, updating rather than blindly re-creating. Revives structured-fact capture, unified in the one vault. |
