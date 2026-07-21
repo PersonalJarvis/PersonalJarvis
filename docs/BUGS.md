@@ -5917,7 +5917,7 @@ released by a message from the (now dead) transport will wedge; whoever
 declares the old turn finished must broadcast that fact to all surfaces,
 not just to the recorder.
 
-## BUG-086: Realtime voice audibly flips gender between turns while every transcript label reads the same pinned voice (HIGH, MITIGATED 2026-07-18, ESCALATION SHIPPED 2026-07-21, provider-side root cause OPEN)
+## BUG-086: Realtime voice audibly flips gender between turns while every transcript label reads the same pinned voice (HIGH, MITIGATED 2026-07-18, ESCALATION SHIPPED 2026-07-21 AND REVERTED SAME DAY, provider-side root cause OPEN)
 
 **Symptom (live 2026-07-18 17:12, session `f4e8e93d`, gemini-live,
 4 turns).** The audible voice alternated male / female / male /
@@ -5976,9 +5976,25 @@ still injected so the live model keeps conversational context — its own
 (re-)rendering stays withheld via the existing one-reply-one-voice flags.
 The browser surface keeps the native readback: it has no server-side
 rendering for `error_spoken`, and its Web-Speech fallback would be a THIRD
-voice. Guards:
-`tests/unit/realtime/test_session.py::test_generative_voice_provider_delegate_reply_is_spoken_by_the_surface`
-and `::test_generative_voice_provider_keeps_native_readback_on_the_browser_surface`.
+voice.
+
+**Escalation REVERTED (2026-07-21, maintainer live validation failed).**
+The live verdict on the escalation: the `gemini-flash-tts` rendering of
+the pinned voice is audibly a DIFFERENT voice than the live model's native
+rendering of that same voice name — so the escalation turned "occasional
+drift on deep replies" into a GUARANTEED voice flip on every tool-model
+turn (live session 2026-07-21 10:33: every delegated turn spoke
+`Puck @ gemini-flash-tts`, audibly unlike the native `Puck @ gemini-live`
+of plain turns). The maintainer's directive: the session's ONE voice is
+the NATIVE realtime voice. The `renders_pinned_voice` capability and the
+immediate surface claim were removed; delegate replies render natively
+again with the surface TTS strictly as the provider-mute fallback (the
+pre-escalation 2.5 s window), and the injected identity clauses remain
+the drift mitigation. Do not re-add an immediate surface claim — a
+deterministic wrong voice is worse than an occasional drift. Guards:
+`tests/unit/realtime/test_session.py::test_generative_voice_provider_delegate_reply_renders_natively_on_desktop`,
+`::test_generative_voice_provider_mute_still_falls_back_to_surface_tts`,
+`::test_generative_voice_provider_keeps_native_readback_on_the_browser_surface`.
 
 **Still OPEN.**
 
@@ -7231,3 +7247,56 @@ budget was gone. The seed path had never run on this install before
 Guards: `tests/unit/realtime/test_gemini_live.py` (seed declaration +
 terminator + SDK-capability skip + blank-history terminator),
 `tests/unit/realtime/test_session.py::test_second_rapid_rebuild_drops_the_poisoned_history_seed`.
+
+## BUG-105: Computer-Use missions start blind to the conversation — a corrective follow-up launches an operator that only executes the correction's literal words (HIGH, FIXED 2026-07-21)
+
+**Symptom (live 2026-07-21 10:33, realtime voice, gemini-live).** Turn 5:
+"find the latest post of <person> via computer use" — the mission ran in
+Safari and succeeded. Turn 8: "you must do it in my Chrome browser, I'm
+logged in there — you're in Safari." The new mission opened Chrome, saw a
+stale old tab, and declared success: it never knew the actual task was
+opening that post, nor that the previous attempt had used the wrong
+browser. Turn 9 ("you should ALSO open the latest post") went back to
+Safari and died on a login wall.
+
+**Root cause — context is dropped twice on the way into a mission.**
+
+1. **The goal is written context-free by design.** The router prompt
+   (`jarvis/brain/router.py`) mandated `computer_use(goal=<utterance
+   VERBATIM>)` and the tool schema (`computer_use_tool.py`) said "Pass the
+   user's request verbatim as 'goal'". Verbatim protects multi-step
+   requests from paraphrase-loss, but for an ELLIPTICAL follow-up it
+   guarantees ellipsis-loss: the tool-brain HAS the bounded conversation
+   history (`history_override`, session.py `_dispatch_brain_turn`), and
+   was instructed to throw it away.
+2. **The mission itself has no memory of prior missions.** The CU engine's
+   decide prompt contained only `GOAL:` + its own per-run step history;
+   `cu_run_registry` records every mission's goal and outcome for the
+   REST/CLI control surface, but nothing on the launch path ever read it.
+
+**Fix (two layers, all launch routes).**
+
+1. **Self-contained goals** — the router prompt gained an explicit
+   elliptical-follow-up exception (keep the user's words AND fold in the
+   referenced task, target app/browser, and what the previous attempt got
+   wrong), and the `computer_use` tool description/schema now demand one
+   complete self-contained instruction ("the operator sees only this
+   text, never the chat").
+2. **Deterministic prior-mission context** —
+   `cu_run_registry.recent_runs_context()` renders the recently FINISHED
+   runs (≤2, ≤15 min, char-clamped) and `jarvis/cu/engine.py` folds the
+   block into the DECIDE prompt as "EARLIER DESKTOP MISSIONS … context
+   only — do NOT redo them". Route-agnostic (voice fast path, tool-brain,
+   REST/CLI all register runs) and prompt-compliance-free. The done-judge
+   deliberately never sees it: a prior mission's outcome must not count
+   as proof for the current goal.
+
+Guards:
+`tests/unit/harness/test_cu_run_registry.py::test_recent_runs_context_*`,
+`tests/unit/cu/test_engine_loop.py::test_recent_missions_reach_the_decide_prompt_but_not_the_judge`.
+
+**Class rule.** Any sub-system that executes a REQUEST derived from a
+conversation must either receive the conversation's relevant context
+structurally (not by prompt-compliance alone) or have its request
+composed as self-contained — an instruction to pass user words
+"verbatim" must always carry the elliptical-follow-up exception.

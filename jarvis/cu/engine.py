@@ -614,6 +614,22 @@ async def run_cu_loop(
     ledger = ActionLedger()
     history: list[str] = []
     step_idx = 0
+    # Follow-up context (BUG-105): a mission starts blind to the conversation,
+    # so a corrective goal ("do it in my Chrome browser") used to launch an
+    # operator that knew nothing about the task it was correcting — it opened
+    # Chrome on a stale tab and declared success. The run registry records
+    # every mission of this process regardless of launch route (voice fast
+    # path, tool-brain, REST/CLI), so the recently finished tail is the
+    # route-agnostic memory of "what we were just doing". Read once at
+    # mission start (the live registry already lists THIS run as active and
+    # is excluded); decide-prompt only — the done-judge keeps verifying
+    # strictly against the goal, never against prior missions' outcomes.
+    try:
+        from jarvis.harness import cu_run_registry  # noqa: PLC0415
+
+        prior_missions = cu_run_registry.recent_runs_context()
+    except Exception:  # noqa: BLE001 — context is best-effort, never mission-fatal
+        prior_missions = ""
 
     def _final(stdout: str = "", stderr: str = "", exit_code: int = 0) -> HarnessResult:
         profile = profiler.summary(step_idx, t_start)
@@ -872,6 +888,13 @@ async def run_cu_loop(
                 + conv_mod.action_grammar_block()
             )
             lines = [f"GOAL: {goal}"]
+            if prior_missions:
+                lines.append(
+                    "EARLIER DESKTOP MISSIONS of this conversation (context "
+                    "only — they already finished; use them to resolve what "
+                    "an elliptical GOAL refers to, do NOT redo them):\n"
+                    + prior_missions,
+                )
             if _title:
                 lines.append(f"FOREGROUND WINDOW: {_title}")
             if _labels:

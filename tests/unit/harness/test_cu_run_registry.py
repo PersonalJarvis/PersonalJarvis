@@ -111,6 +111,53 @@ def test_list_runs_newest_first() -> None:
 
 
 # ----------------------------------------------------------------------
+# Follow-up context for the next mission (BUG-105)
+# ----------------------------------------------------------------------
+
+def test_recent_runs_context_summarizes_finished_runs_newest_first() -> None:
+    reg.register_run("a", "open the newest post of the profile", CancelToken())
+    reg.finish_run(
+        "a", "finished", exit_code=0,
+        result_text="[cu] done (verified: post visible in Safari)",
+    )
+    reg._RUNS["a"].ended_at -= 120
+    reg.register_run("b", "open Chrome", CancelToken())
+    reg.finish_run("b", "error", exit_code=5, result_text="fail at step-5")
+
+    block = reg.recent_runs_context()
+    lines = block.splitlines()
+    assert len(lines) == 2
+    assert "open Chrome" in lines[0] and "(error)" in lines[0]
+    assert "newest post" in lines[1] and "post visible in Safari" in lines[1]
+
+
+def test_recent_runs_context_excludes_active_old_and_overflow_runs() -> None:
+    # Active (the CURRENT mission registers itself before its loop starts).
+    reg.register_run("live", "the running goal", CancelToken())
+    # Too old to still be "what we were just doing".
+    reg.register_run("stale", "an ancient goal", CancelToken())
+    reg.finish_run("stale", "finished", exit_code=0)
+    reg._RUNS["stale"].ended_at -= reg._CONTEXT_MAX_AGE_S + 60
+    # Three fresh terminal runs — only the newest two may appear.
+    for i in range(3):
+        reg.register_run(f"f{i}", f"goal number {i}", CancelToken())
+        reg.finish_run(f"f{i}", "finished", exit_code=0)
+        reg._RUNS[f"f{i}"].ended_at -= (3 - i)
+
+    block = reg.recent_runs_context()
+    assert "the running goal" not in block
+    assert "an ancient goal" not in block
+    assert len(block.splitlines()) == reg._CONTEXT_MAX_RUNS
+    assert "goal number 2" in block and "goal number 1" in block
+
+
+def test_recent_runs_context_is_empty_without_finished_runs() -> None:
+    assert reg.recent_runs_context() == ""
+    reg.register_run("only-active", "g", CancelToken())
+    assert reg.recent_runs_context() == ""
+
+
+# ----------------------------------------------------------------------
 # Harness integration
 # ----------------------------------------------------------------------
 

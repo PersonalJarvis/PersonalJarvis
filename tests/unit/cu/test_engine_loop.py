@@ -194,6 +194,41 @@ async def test_done_is_verified_and_proof_flows_to_stdout(patched):
     assert "[cu] done (verified: the calculator shows 8)" in final.stdout
 
 
+async def test_recent_missions_reach_the_decide_prompt_but_not_the_judge(patched):
+    """Follow-up context (BUG-105): a corrective goal ('do it in my Chrome
+    browser') starts a mission that is blind to the conversation. The engine
+    folds the registry's recently finished runs into the DECIDE prompt so
+    the operator can resolve what the elliptical goal refers to — while the
+    done-judge keeps verifying strictly against the goal alone, so a prior
+    mission's outcome can never count as proof for this one."""
+    from jarvis.harness import cu_run_registry
+
+    cu_run_registry.clear_runs()
+    cu_run_registry.register_run(
+        "prior1", "open the newest post of the profile on x.com", None,
+    )
+    cu_run_registry.finish_run(
+        "prior1", "finished", exit_code=0,
+        result_text="[cu] done (verified: post visible in Safari)",
+    )
+    try:
+        brain = FakeBrain([
+            '{"action": "done", "reason": "it is visible"}',       # decide
+            '{"done": true, "proof": "the post is open"}',          # judge
+        ])
+        chunks = await _run(_ctx(brain, FakeExecutor()))
+        final = _final(chunks)
+        assert final.exit_code == 0
+        decide_user = brain.calls[0][1]
+        assert "EARLIER DESKTOP MISSIONS" in decide_user
+        assert "open the newest post of the profile" in decide_user
+        assert "post visible in Safari" in decide_user
+        judge_user = brain.calls[-1][1]
+        assert "EARLIER DESKTOP MISSIONS" not in judge_user
+    finally:
+        cu_run_registry.clear_runs()
+
+
 async def test_dispatch_refuses_action_after_screen_permission_revocation(
     monkeypatch,
 ):

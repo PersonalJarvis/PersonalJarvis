@@ -166,6 +166,48 @@ def active_run_count() -> int:
     return sum(1 for r in _RUNS.values() if r.status in ACTIVE_STATUSES)
 
 
+#: Bounds for the follow-up context block below. A mission older than this is
+#: no longer "the thing we were just doing"; the char clamps keep the block a
+#: few prompt lines, never a transcript dump.
+_CONTEXT_MAX_AGE_S = 15 * 60.0
+_CONTEXT_MAX_RUNS = 2
+_CONTEXT_GOAL_MAX = 200
+_CONTEXT_RESULT_MAX = 240
+
+
+def recent_runs_context(now: float | None = None) -> str:
+    """Compact summary of the most recently FINISHED runs, "" when none.
+
+    Follow-up context for the next mission (BUG-105): a desktop mission
+    starts blind to the conversation, so an elliptical follow-up goal
+    ("do it in my Chrome browser") used to launch an operator that knew
+    nothing about the task it was correcting. The registry already records
+    every mission's goal and outcome — this renders the recent tail as a
+    few English prompt lines the engine folds into its decide prompt.
+    Active runs are excluded (the current mission is registered before its
+    loop starts and must not describe itself as prior work).
+    """
+    now_s = time.time() if now is None else float(now)
+    recent: list[str] = []
+    runs = sorted(_RUNS.values(), key=lambda r: r.ended_at or 0.0, reverse=True)
+    for run in runs:
+        if run.status not in TERMINAL_STATUSES or run.ended_at is None:
+            continue
+        age_s = now_s - run.ended_at
+        if age_s < 0 or age_s > _CONTEXT_MAX_AGE_S:
+            continue
+        goal = " ".join(run.goal.split())[:_CONTEXT_GOAL_MAX]
+        result = " ".join(run.result_text.split())[:_CONTEXT_RESULT_MAX]
+        age_min = max(1, round(age_s / 60.0))
+        line = f"- {age_min} min ago ({run.status}): goal was: {goal}"
+        if result:
+            line += f" | outcome: {result}"
+        recent.append(line)
+        if len(recent) >= _CONTEXT_MAX_RUNS:
+            break
+    return "\n".join(recent)
+
+
 def clear_runs() -> None:
     """Test/teardown helper — wipes the registry."""
     _RUNS.clear()

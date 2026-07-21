@@ -111,9 +111,16 @@ class ComputerUseTool:
         "operate any GUI application. Use this for ANY on-screen / app / "
         "desktop action the user asks for (e.g. 'open a terminal', 'open Chrome "
         "and go to gmail', 'click the blue button', 'type X into Notepad', "
-        "'scroll down'). Pass the user's request verbatim as 'goal'. This drives "
-        "the real machine — unlike spawn_worker, which only works in an "
-        "isolated code workspace and cannot touch the desktop."
+        "'scroll down'). The desktop operator canNOT see this conversation: "
+        "'goal' must be one complete, self-contained instruction. Keep the "
+        "user's own words, and when the request corrects or refers back to an "
+        "earlier turn ('do it in my Chrome browser', 'try again', 'also open "
+        "his newest post'), fold the referenced task and its constraints into "
+        "the goal — the underlying objective, the target app/browser/site, "
+        "and what the previous attempt got wrong. An unexpanded 'do it in "
+        "Chrome' just opens Chrome and stops. This drives the real machine — "
+        "unlike spawn_worker, which only works in an isolated code workspace "
+        "and cannot touch the desktop."
     )
     schema: dict[str, Any] = {
         "type": "object",
@@ -121,8 +128,11 @@ class ComputerUseTool:
             "goal": {
                 "type": "string",
                 "description": (
-                    "The desktop action to perform, in the user's own words "
-                    "(e.g. 'open a terminal and start the cloud config')."
+                    "The complete desktop task as ONE self-contained "
+                    "instruction in the user's words, with everything the "
+                    "conversation established folded in (target app/site, "
+                    "the actual objective behind a follow-up correction). "
+                    "The operator sees only this text, never the chat."
                 ),
             },
         },
