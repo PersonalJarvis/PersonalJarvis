@@ -1,6 +1,6 @@
 """User dictionary for speech-to-text — custom vocabulary + misrecognition fixes.
 
-Wispr-Flow-style feature: the user registers words the STT keeps getting wrong
+Dictation-tool-style feature: the user registers words the STT keeps getting wrong
 (proper nouns, brand names, e-mail addresses). An entry is one canonical
 ``word`` plus optional ``misheard`` variants:
 

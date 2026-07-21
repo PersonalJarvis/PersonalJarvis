@@ -1,6 +1,6 @@
 """STT dictionary — store CRUD, transcript correction, provider wrapper.
 
-The dictionary is the Wispr-Flow-style custom-vocabulary feature: plain words
+The dictionary is the dictation-tool-style custom-vocabulary feature: plain words
 canonicalize casing and repair conservative near-misses; explicit misheard
 pairs rewrite known misrecognitions. Corrections are pure string ops on the
 voice hot path, so these tests also pin the false-positive guards that keep

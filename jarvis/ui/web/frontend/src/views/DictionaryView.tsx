@@ -20,7 +20,7 @@ import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
 
 /**
- * "Dictionary" section — the Wispr-Flow-style custom vocabulary for speech
+ * "Dictionary" section — the dictation-tool-style custom vocabulary for speech
  * recognition, as its own sidebar destination. Users add words the STT keeps
  * getting wrong (proper nouns, brand names, e-mail addresses) either as a
  * plain vocabulary word or as an explicit "misheard → correct" fix. Entries
@@ -207,7 +207,7 @@ const inputClass =
   "w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-primary";
 
 /**
- * Add/edit dialog mirroring Wispr Flow: the "correct a misrecognition"
+ * Add/edit dialog: the "correct a misrecognition"
  * toggle switches between a single new-word input and a
  * "misheard → correct spelling" pair.
  */

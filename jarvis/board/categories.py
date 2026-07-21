@@ -1,8 +1,9 @@
 """Single source of truth for Board usage categories.
 
 The six categories answer the question *"what did you use Jarvis FOR"* — the
-honest Jarvis analogue of Wispr Flow's "top apps". Wispr is a dictation overlay
-*inside* other apps, so it can report which application you dictated into.
+honest Jarvis analogue of a dictation overlay's "top apps" panel. A dictation
+overlay lives *inside* other apps, so it can report which application you
+dictated into.
 Jarvis is the agent itself, not an overlay, so the meaningful axis is the *kind
 of task*, derived from the tools that actually ran
 (``voice_turns.tool_calls_json`` and ``ActionExecuted`` events).

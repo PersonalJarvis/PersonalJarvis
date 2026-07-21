@@ -6,8 +6,8 @@ come through fine. Root cause: the plugin was sending only ``model``,
 ``language``, ``temperature`` and ``response_format`` to Groq's Whisper endpoint,
 but never the ``prompt`` parameter. Whisper accepts up to 224 tokens of
 ``prompt`` text and uses it as Bayesian bias on the token distribution — that
-is the same mechanism third-party dictation tools (e.g. Wispr Flow) use to
-keep user-specific vocabulary stable.
+is the same mechanism third-party dictation tools use to keep user-specific
+vocabulary stable.
 
 These tests lock the wiring in place so a future refactor cannot silently drop
 the bias-prompt and re-open the regression.

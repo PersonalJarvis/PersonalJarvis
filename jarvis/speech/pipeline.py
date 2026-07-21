@@ -1347,7 +1347,7 @@ class SpeechPipeline:
         # utterance STT may still exist (cloud provider). Keep that path alive
         # so the Listening bubble does not stay stuck on "...".
         self._probe_stt: Any = self._stt or self._utterance_stt
-        # User STT dictionary (Wispr-Flow-style custom vocabulary): wrap the
+        # User STT dictionary (dictation-tool-style custom vocabulary): wrap the
         # utterance + preview handles so EVERY provider's transcript gets the
         # user's corrections — brain turns, chat dictation, and the live
         # preview alike (pure string ops, hot-path safe). The wake path

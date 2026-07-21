@@ -9,8 +9,8 @@ render it as live bars that move with your voice.
 Why this and not a second mic stream: the old path opened a SECOND
 ``sd.InputStream`` (on the default device) while the STT pipeline already had
 the real mic open — fragile on Windows MME and never actually wired into the
-LISTENING transition. Tapping the audio that is ALREADY flowing is exactly what
-Wispr Flow does, and it's a single stream, no device conflict.
+LISTENING transition. Tapping the audio that is ALREADY flowing is what
+commercial dictation overlays do, and it's a single stream, no device conflict.
 
 Deliberately NOT the EventBus (same rationale as ``level_tap``): ~30 Hz level
 samples would spam the flight-recorder. Zero-cost when nobody subscribes — the

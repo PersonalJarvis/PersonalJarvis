@@ -10,7 +10,8 @@ import { useT } from "@/i18n";
 import { cn } from "@/lib/utils";
 
 /**
- * "What you use Jarvis for" — the honest analogue of Wispr's "top apps".
+ * "What you use Jarvis for" — the honest analogue of a dictation tool's
+ * "top apps" panel.
  * Every one of the six categories is shown (zeros muted at the bottom), each
  * with an icon tile, a smooth share bar, and a count + percentage indicator.
  */

@@ -386,7 +386,7 @@ def _calc_longest_streak(conn: sqlite3.Connection) -> int:
     """Longest run of consecutive days with ``active_events_count > 0``.
 
     Unlike ``_calc_streak`` (which counts back from today and resets on a skip),
-    this scans the whole history for the best run ever — Wispr's "longest
+    this scans the whole history for the best run ever — a classic "longest
     streak" indicator. Pure read, no UI nag.
     """
     rows = conn.execute(

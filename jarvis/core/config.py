@@ -429,7 +429,7 @@ class STTConfig(BaseModel):
     wake_high_accuracy: bool = False
     language: str = "auto"
     # Vocabulary biasing passed to Whisper's ``prompt`` field — the same
-    # mechanism dictation tools like Wispr Flow use to keep proper nouns and
+    # mechanism commercial dictation tools use to keep proper nouns and
     # domain terms stable. Empty string means "no bias", and the cloud STT
     # plugin caps overly-long values internally. Read by the cloud STT
     # plugins (currently Groq); the local FasterWhisperProvider intentionally
