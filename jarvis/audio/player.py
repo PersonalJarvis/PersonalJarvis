@@ -45,6 +45,19 @@ _PortAudioError: type[BaseException] = sd.PortAudioError if sd is not None else 
 TTS_SAMPLE_RATE = 24_000  # Gemini 3.1 Flash TTS output rate
 TTS_WRITE_BUFFER_MS = 120
 _MAX_REPORTED_OUTPUT_LATENCY_S = 5.0
+# Feed-dry stall de-click (live forensic 2026-07-21 08:40: the realtime
+# provider paused audio delivery 1850 ms mid-sentence; the device buffer
+# drained and PortAudio cut the waveform at speech amplitude — audible as a
+# choppy mid-sentence pause with a click/crackle at both edges). The missing
+# audio cannot be conjured locally, but the gap's EDGES can be smoothed:
+# when the chunk feed stays dry longer than FEED_STALL_FADE_S, append a
+# short ramp from the last written sample down to zero, and ramp the first
+# resumed block back in. The timeout must undercut the device-buffer drain
+# (a completed 120 ms write leaves at least ~that much buffered), so the
+# ramp reaches PortAudio before the buffer runs empty; a healthy burst-fed
+# stream never waits this long between chunks.
+FEED_STALL_FADE_S = 0.08
+STALL_EDGE_FADE_MS = 12.0
 
 
 class _PlaybackSuperseded(RuntimeError):
@@ -139,6 +152,25 @@ def _apply_edge_fades(pcm: bytes, sample_rate: int, fade_ms: int = 5) -> bytes:
     arr[:fade_samples] = (arr[:fade_samples].astype(np.float32) * ramp_in).astype(np.int16)
     ramp_out = np.linspace(1.0, 0.0, fade_samples, dtype=np.float32)
     arr[-fade_samples:] = (arr[-fade_samples:].astype(np.float32) * ramp_out).astype(np.int16)
+    return arr.tobytes()
+
+
+def _fade_in_pcm16(pcm: bytes, sample_rate: int, fade_ms: float) -> bytes:
+    """Linear fade-in over the first ``fade_ms`` of int16 mono PCM.
+
+    Used when playback resumes after a feed-dry stall: the drained device
+    buffer was padded with OS silence, so the resumed block would otherwise
+    jump from zero to an arbitrary speech amplitude — an audible click at
+    the gap's trailing edge.
+    """
+    if not pcm:
+        return pcm
+    arr = np.frombuffer(pcm, dtype=np.int16).copy()
+    fade_samples = min(arr.size, max(1, int(sample_rate * fade_ms / 1000.0)))
+    ramp = np.linspace(0.0, 1.0, fade_samples, endpoint=False, dtype=np.float32)
+    arr[:fade_samples] = (
+        arr[:fade_samples].astype(np.float32) * ramp
+    ).astype(np.int16)
     return arr.tobytes()
 
 
@@ -999,9 +1031,11 @@ class AudioPlayer:
             pending = bytearray()
             pending_rate: int | None = None
             first_audio_published = False
+            last_flushed_sample = 0
 
             async def _flush_pending(*, final: bool = False) -> bool:
                 nonlocal pending, pending_rate, first_audio_published
+                nonlocal last_flushed_sample
                 if not pending or pending_rate is None:
                     return True
                 min_bytes = int(pending_rate * TTS_WRITE_BUFFER_MS / 1000) * 2
@@ -1020,6 +1054,10 @@ class AudioPlayer:
                     pending.clear()
                     return False
                 arr = np.frombuffer(pcm, dtype=np.int16)
+                if arr.size:
+                    # Where the written waveform ends — the stall fade-out
+                    # ramps down from here when the feed later runs dry.
+                    last_flushed_sample = int(arr[-1])
                 # Tell the UI how long this block will be audible BEFORE the
                 # blocking write below. _write_samples blocks for the whole
                 # playback with no further level, so the level tap alone makes
@@ -1062,22 +1100,88 @@ class AudioPlayer:
                         log.debug("AudioOutFirst publish failed: %s", exc)
                 return True
 
+            async def _write_stall_fade_out() -> bool:
+                """De-click a feed-dry gap's leading edge.
+
+                Appends a short ramp from the last written sample down to
+                zero so the OS silence that follows the drained buffer
+                continues the waveform instead of cutting it at speech
+                amplitude. A waveform already ending at zero needs none.
+                """
+                nonlocal pending
+                if pending_rate is None or last_flushed_sample == 0:
+                    return True
+                ramp_len = max(
+                    2, int(pending_rate * STALL_EDGE_FADE_MS / 1000.0)
+                )
+                ramp = np.linspace(float(last_flushed_sample), 0.0, ramp_len)
+                pending.extend(ramp.astype(np.int16).tobytes())
+                return await _flush_pending(final=True)
+
             # NOTE: no finally-close — the stream stays open across play_chunks
             # calls and is only torn down by stop() (barge-in) or by the next
             # _ensure_stream call that observes a sample-rate mismatch.
-            async for chunk in _from_first():
-                if not chunk.pcm:
-                    continue
-                if pending_rate is not None and chunk.sample_rate != pending_rate:
-                    if not await _flush_pending(final=True):
+            #
+            # Chunks are pulled through a task so the wait can carry a
+            # timeout WITHOUT cancelling the producer: a timeout means the
+            # feed ran dry longer than the device buffer can hide (provider
+            # paused mid-reply — live forensic 2026-07-21 08:40), so the gap
+            # edges get de-clicked; the pull task keeps waiting and delivers
+            # the resumed chunk intact.
+            feed = _from_first().__aiter__()
+            next_pull: asyncio.Task[AudioChunk] | None = None
+            resume_fade_in = False
+            try:
+                while True:
+                    if next_pull is None:
+                        next_pull = asyncio.ensure_future(feed.__anext__())
+                    done, _ = await asyncio.wait(
+                        {next_pull},
+                        timeout=(
+                            None
+                            if resume_fade_in or pending_rate is None
+                            else FEED_STALL_FADE_S
+                        ),
+                    )
+                    if not done:
+                        # Feed-dry stall: get the partial batch audible now
+                        # (holding it would lengthen the gap), then ramp the
+                        # edge down and wait for the feed to resume.
+                        if not await _flush_pending(final=True):
+                            return False
+                        if not await _write_stall_fade_out():
+                            return False
+                        resume_fade_in = True
+                        continue
+                    pull, next_pull = next_pull, None
+                    try:
+                        chunk = pull.result()
+                    except StopAsyncIteration:
+                        break
+                    if not chunk.pcm:
+                        continue
+                    if (
+                        pending_rate is not None
+                        and chunk.sample_rate != pending_rate
+                    ):
+                        if not await _flush_pending(final=True):
+                            return False
+                    pending_rate = chunk.sample_rate
+                    pcm_in = chunk.pcm
+                    if resume_fade_in:
+                        pcm_in = _fade_in_pcm16(
+                            pcm_in, chunk.sample_rate, STALL_EDGE_FADE_MS
+                        )
+                        resume_fade_in = False
+                    pending.extend(pcm_in)
+                    if not await _flush_pending():
                         return False
-                pending_rate = chunk.sample_rate
-                pending.extend(chunk.pcm)
-                if not await _flush_pending():
+                if not await _flush_pending(final=True):
                     return False
-            if not await _flush_pending(final=True):
-                return False
-            return self.frames_written > 0
+                return self.frames_written > 0
+            finally:
+                if next_pull is not None:
+                    next_pull.cancel()
 
     def abort_active(self) -> None:
         """Force-abort the live OutputStream to unblock a wedged ``stream.write``.
