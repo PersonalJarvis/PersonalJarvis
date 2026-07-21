@@ -220,6 +220,11 @@ def set_tool_model_selection(
                 block = tomlkit.table()
                 providers[provider] = block
             block["tool_model"] = model
+            # Keep the legacy Computer-Use pin in lockstep: the route layer
+            # sets both fields in memory, and resolution falls back to
+            # ``cu_model`` when ``tool_model`` is ever cleared — persisting
+            # only one lets the pair drift apart across a restart.
+            block["cu_model"] = model
 
         out = tomlkit.dumps(doc)
         if had_bom:

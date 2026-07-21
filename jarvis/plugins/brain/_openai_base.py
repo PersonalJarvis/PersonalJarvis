@@ -287,27 +287,52 @@ async def stream_complete(
     reverse_name_map = {safe: original for original, safe in name_map.items()}
     if req.tools:
         kwargs["tools"] = _tools_openai_format(req.tools, name_map)
+    # Reasoning-by-default models (GPT-5.x class) otherwise burn the small
+    # deterministic tool-step budget (CU: 256 tokens) on hidden thought and
+    # stream back empty/truncated JSON — "OpenAI never works as the Tool
+    # Model". Skipped when the caller's extra_body already carries a gateway
+    # reasoning directive (OpenRouter's unified ``reasoning`` object), so the
+    # two knobs never conflict. Models/SDKs that reject the parameter are
+    # recovered by the graded retry in _compatible_retry_kwargs and the
+    # TypeError strip below.
+    effort = getattr(req, "reasoning_effort", None)
+    if effort is not None and not (extra_body and "reasoning" in extra_body):
+        kwargs["reasoning_effort"] = effort
     if extra_body:
-        kwargs.update(extra_body)
+        # As ``extra_body`` — merged into the request JSON by the SDK. A
+        # top-level ``kwargs.update(extra_body)`` raises TypeError on every
+        # modern SDK (create() takes no **kwargs), which killed each
+        # OpenRouter call that carried the reasoning opt-out.
+        kwargs["extra_body"] = dict(extra_body)
 
     # Accumulator for tool-call partials (OpenAI streams per tool_call index)
     tool_buffer: dict[int, dict[str, Any]] = {}
 
-    try:
-        stream = await _create_with_token_param_retry(client, kwargs)
-    except TypeError as exc:
-        # Belt-and-suspenders: if the detection above was wrong for whatever
-        # reason (mocked tests, monkey-patched SDK, exotic forks), retry once
-        # without stream_options. Saves a hard fail when the live API rejects
-        # an unexpected kwarg.
-        if "stream_options" not in kwargs or "stream_options" not in str(exc):
-            raise
-        log.warning(
-            "openai SDK rejected 'stream_options' (%s) — retrying without the kwarg.",
-            exc,
-        )
-        kwargs.pop("stream_options", None)
-        stream = await _create_with_token_param_retry(client, kwargs)
+    # Belt-and-suspenders for SDK-level kwarg gaps: old SDKs know neither
+    # ``stream_options`` (added ~1.30) nor ``reasoning_effort`` (added ~1.58)
+    # and raise TypeError before any request is sent. Strip exactly the kwarg
+    # the SDK named and retry — an ancient SDK may need both stripped.
+    _sdk_optional_kwargs = ("stream_options", "reasoning_effort")
+    stream = None
+    for _ in range(len(_sdk_optional_kwargs) + 1):
+        try:
+            stream = await _create_with_token_param_retry(client, kwargs)
+            break
+        except TypeError as exc:
+            offender = next(
+                (k for k in _sdk_optional_kwargs if k in kwargs and k in str(exc)),
+                None,
+            )
+            if offender is None:
+                raise
+            log.warning(
+                "openai SDK rejected '%s' (%s) — retrying without the kwarg.",
+                offender,
+                exc,
+            )
+            kwargs.pop(offender, None)
+    if stream is None:  # pragma: no cover -- loop always breaks or raises
+        raise RuntimeError("openai stream creation retry loop exhausted")
     async for chunk in stream:
         # Text-Content
         choices = getattr(chunk, "choices", None) or []
@@ -428,6 +453,26 @@ def _compatible_retry_kwargs(
         retry_kwargs.pop("temperature", None)
         return retry_kwargs, "temperature"
 
+    # Reasoning effort degrades in two steps: a model that knows the knob but
+    # not the value "none" (o-series, gpt-5 base) still honors "minimal" —
+    # keeping the thought budget capped, which is the caller's whole intent —
+    # and only a model that rejects the parameter itself loses the cap.
+    if (
+        kwargs.get("reasoning_effort") is not None
+        and _explicitly_rejects_parameter(exc, "reasoning_effort")
+    ):
+        if (
+            kwargs["reasoning_effort"] == "none"
+            and "reasoning_effort:minimal" not in adaptations
+        ):
+            retry_kwargs = dict(kwargs)
+            retry_kwargs["reasoning_effort"] = "minimal"
+            return retry_kwargs, "reasoning_effort:minimal"
+        if "reasoning_effort" not in adaptations:
+            retry_kwargs = dict(kwargs)
+            retry_kwargs.pop("reasoning_effort", None)
+            return retry_kwargs, "reasoning_effort"
+
     # Inline usage accounting is optional and not implemented by every
     # OpenAI-compatible server even when the installed SDK accepts the kwarg.
     if (
@@ -476,6 +521,11 @@ async def _create_with_token_param_retry(client: Any, kwargs: dict[str, Any]) ->
                 log.info(
                     "provider rejected 'max_tokens' — retrying with "
                     "'max_completion_tokens'."
+                )
+            elif field == "reasoning_effort:minimal":
+                log.info(
+                    "provider rejected reasoning_effort='none' — retrying "
+                    "with the lowest supported effort 'minimal'."
                 )
             else:
                 log.info(
