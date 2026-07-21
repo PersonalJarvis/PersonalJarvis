@@ -4723,6 +4723,28 @@ def test_session_instructions_place_preferences_between_persona_and_directives(
     )
 
 
+def test_session_instructions_anchor_clock_and_stale_knowledge_guard(monkeypatch):
+    """The per-turn instructions must carry today's date AND tell the model
+    its training knowledge is older than that date. Without the second half
+    the model asserts pre-cutoff facts as current (live 2026-07-21: a release
+    'planned for 2025' presented as the current state in July 2026)."""
+    from datetime import datetime
+
+    from jarvis.brain import persona_loader
+    from jarvis.realtime import session as session_mod
+
+    monkeypatch.setattr(
+        persona_loader, "load_effective_persona_prompt", lambda: "PERSONA_MARKER"
+    )
+    text = session_mod._session_instructions("en")
+    assert datetime.now().astimezone().strftime("%Y-%m-%d") in text
+    assert "training cutoff" in text
+    # The guard must anchor reasoning on the injected clock, not training years.
+    assert "current date" in text
+    # And it must demand honest dating instead of asserting stale state.
+    assert "as of my last information" in text
+
+
 def test_preferences_block_renders_the_user_file_with_the_realtime_cap(monkeypatch):
     from jarvis.brain import agent_instructions
     from jarvis.realtime import session as session_mod

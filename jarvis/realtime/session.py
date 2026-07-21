@@ -255,7 +255,9 @@ _DELEGATE_DECLARATION: dict[str, Any] = {
         "integration, configuration, or system state. Also call this to "
         "relay the user's answer to a pending confirmation question. Never "
         "call it just to look up general world knowledge, public facts or "
-        "figures, definitions, or smalltalk — answer those directly yourself."
+        "figures, definitions, or smalltalk — answer those directly yourself "
+        "— unless the user explicitly asks you to look up, check, or verify "
+        "the current state of something."
     ),
     "parameters": {
         "type": "object",
@@ -328,8 +330,10 @@ _DELEGATE_DISCOURAGED_DIRECTIVE = (
     "conversation. Answer it directly from your own knowledge now, without "
     "calling any function. Call jarvis_action on this turn ONLY if the "
     "request actually needs the user's own world (their Wiki or personal "
-    "memory, their files, apps, settings, or system state) or performs a "
-    "real action on their computer."
+    "memory, their files, apps, settings, or system state), performs a "
+    "real action on their computer, or explicitly asks you to look up, "
+    "check, or verify current information you may only know in an "
+    "outdated state."
 )
 # A slow action (a Wiki write curates pages through an LLM) outlives the turn
 # that asked for it as soon as the user speaks into the waiting silence. The
@@ -678,6 +682,29 @@ def _session_instructions(
         f"({now.tzname() or 'local time'}). Answer date, weekday, and "
         "time-of-day questions directly from this — never guess."
     )
+    # Stale-world-knowledge guard (live complaint 2026-07-21: asked when a
+    # game ships, the model asserted its pre-cutoff "planned for 2025" state
+    # as current — in July 2026). The realtime model cannot learn new facts
+    # here, but it CAN be made to reason against the clock line instead of
+    # its training years and to label time-sensitive answers as dated. Kept
+    # prompt-only on purpose: the turn planner deliberately keeps world
+    # knowledge native (a delegation costs 12-34 s of silence), so a dated
+    # answer plus an offer to check is the correct trade — never an
+    # automatic web lookup.
+    freshness_line = (
+        "Your built-in world knowledge ends at a training cutoff well BEFORE "
+        "the current date above; assume it is months to years out of date. "
+        "For time-sensitive facts — release dates, announcements, launches, "
+        "versions, prices, current events, sports, officeholders, 'is X out "
+        "yet' — reason from the current date, never from your training time: "
+        "anything your knowledge dates as upcoming may long since have "
+        "happened or changed. Give your best answer clearly marked as "
+        "possibly outdated ('as of my last information, ...') and offer to "
+        "check the current state; never present remembered time-sensitive "
+        "facts as today's state. If the user then asks you to check, look "
+        "up, or verify, that is an explicit action request for your action "
+        "function, not world knowledge."
+    )
     language_name = _LANGUAGE_NAMES.get(language, "the user's language")
     input_language_name = _LANGUAGE_NAMES.get(input_language)
     if input_language_name:
@@ -711,6 +738,7 @@ def _session_instructions(
         _REALTIME_SAFETY_APPENDIX,
         input_directive,
         clock_line,
+        freshness_line,
         (
             "Runtime identity: this voice session is using the Realtime engine"
             + (f", provider {provider}" if provider else "")
