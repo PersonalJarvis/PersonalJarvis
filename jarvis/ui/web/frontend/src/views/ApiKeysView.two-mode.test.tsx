@@ -86,6 +86,14 @@ describe("ApiKeysView two-mode", () => {
     expect(screen.getAllByTestId("voice-engine-runtime-status")).toHaveLength(1);
   });
 
+  it("always shows the one-mode-only API-keys hint in the engine context", () => {
+    render(<ApiKeysView />);
+    const hint = screen.getByTestId("voice-engine-keys-hint");
+    expect(screen.getByTestId("voice-engine-context").contains(hint)).toBe(true);
+    // The load-bearing message: keys are only needed for the SELECTED mode.
+    expect(hint.textContent).toMatch(/only need api keys for the mode you use/i);
+  });
+
   it("defaults to Pipeline mode showing Brain/Voice/Subagents tabs, no Realtime tab", () => {
     render(<ApiKeysView />);
     expect(screen.getByRole("tab", { name: /brain/i })).toBeTruthy();

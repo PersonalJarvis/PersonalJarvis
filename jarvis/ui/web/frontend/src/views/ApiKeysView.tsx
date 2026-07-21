@@ -527,6 +527,13 @@ function VoiceEngineContext({
         </div>
       </div>
 
+      <p
+        data-testid="voice-engine-keys-hint"
+        className="mt-1 text-[11px] leading-snug text-muted-foreground/80"
+      >
+        {t("apikeys_view.mode_keys_hint")}
+      </p>
+
       {mode === "realtime" && (
         <RecommendedSetupPanel onOpenTab={onOpenRecommendedTab} />
       )}
