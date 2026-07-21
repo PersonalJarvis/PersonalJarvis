@@ -297,12 +297,14 @@ def _grow_settle(mode, *, hovered=False, frames=120):
 
 def test_active_conversation_pill_size_vs_open_pill():
     # During a conversation the pill is 2x the hover-open pill, then trimmed to
-    # feel less bulky: 15% off each side (→ 0.70 of 2x width) and 5% off top and
-    # bottom (→ 0.90 of 2x height). Centred, so the idle bar stays in the middle.
+    # feel less bulky: 13% off each side (→ 0.74 of 2x width) and 22% off top
+    # and bottom (→ 0.56 of 2x height — the live pill grows mainly in LENGTH,
+    # calibrated to the good-example screenshot 2026-07-21). Centred, so the
+    # idle bar stays in the middle.
     active = _grow_settle("speak")
     open_pill = _grow_settle("idle", hovered=True)
-    assert active._st.pw == pytest.approx(2 * 0.70 * open_pill._st.pw, rel=0.05)
-    assert active._st.ph == pytest.approx(2 * 0.90 * open_pill._st.ph, rel=0.05)
+    assert active._st.pw == pytest.approx(2 * 0.74 * open_pill._st.pw, rel=0.05)
+    assert active._st.ph == pytest.approx(2 * 0.56 * open_pill._st.ph, rel=0.05)
 
 
 def test_window_is_large_enough_for_the_active_pill():
