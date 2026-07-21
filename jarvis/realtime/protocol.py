@@ -93,13 +93,11 @@ class RealtimeSession(Protocol):
     every completed turn so a provider-internal transport rebuild (e.g. the
     openai_realtime BUG-064 stack) can restore context without a wire call.
 
-    Optional voice-identity capability (probed with ``getattr``, default
-    True when absent): ``renders_pinned_voice: bool``. A session whose
-    native audio generation is a fixed-voice synthesizer that reliably
-    speaks the requested voice keeps the default. A GENERATIVE renderer
-    that can audibly drift from the pinned voice mid-call (BUG-086)
-    declares False; the orchestrator then renders trusted delegate replies
-    through the deterministic surface TTS instead of a native readback.
+    A former optional ``renders_pinned_voice`` voice-identity capability
+    (BUG-086 escalation) was removed 2026-07-21: routing delegate replies
+    to the surface TTS produced an audibly different voice on every
+    tool-model turn. Delegate replies render natively; the surface TTS is
+    only the provider-mute fallback.
     """
 
     session_id: str

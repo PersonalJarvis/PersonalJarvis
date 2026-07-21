@@ -61,10 +61,14 @@ class _GeminiLiveSession:
     # synthesizer: the pinned prebuilt voice is a starting point the model
     # can audibly drift from when the spoken content reads as a performance
     # cue — observed live as gender flips between turns of one call
-    # (BUG-086). Declaring this lets the orchestrator speak trusted delegate
-    # replies through the deterministic same-family surface TTS instead of a
-    # native readback, keeping one voice for the whole call.
-    renders_pinned_voice = False
+    # (BUG-086). A former ``renders_pinned_voice = False`` capability made
+    # the orchestrator claim every delegate reply for the same-family
+    # surface TTS; that escalation was REVERTED (maintainer live verdict
+    # 2026-07-21: the flash-TTS rendering of the pinned voice is audibly a
+    # DIFFERENT voice from the live model's native one, i.e. a guaranteed
+    # voice flip on every tool-model turn). Native readback is primary
+    # again; the identity clauses in the injected prompts remain the drift
+    # mitigation.
 
     def __init__(
         self,

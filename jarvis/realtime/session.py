@@ -2225,6 +2225,12 @@ class RealtimeVoiceSession:
                         # provider failed a second time while rendering it. Hand
                         # the already-computed text to the surface's independent
                         # TTS path; never rerun the user request or its tools.
+                        # Unlike the hold branch above, this one needs no
+                        # readback_verification_active check: it fires only on
+                        # a provider turn_complete with ZERO audio for a
+                        # delivered reply, and shares the surface_fallback_spoken
+                        # flag (set with no await in between) with the readback
+                        # watchdog, so both nets can never speak the same reply.
                         fallback_text = (
                             "".join(self._output_transcript).strip()
                             or self._scrubbed_trusted_reply(delegate_state)
@@ -4373,22 +4379,18 @@ class RealtimeVoiceSession:
         answer twice.
         """
         turn_state.readback_verification_active = True
-        # Voice-identity escalation (BUG-086): a provider session whose native
-        # audio is a GENERATIVE renderer (renders_pinned_voice=False) can
-        # audibly drift from the pinned session voice exactly on these
-        # injected readbacks — the longest, most performance-cue-laden texts
-        # of a call. On the desktop surface the same-family surface TTS speaks
-        # the trusted reply deterministically instead, so every deep reply
-        # keeps the one configured voice for the whole call. The browser
-        # surface keeps the native readback: it has no server-side rendering
-        # for ``error_spoken``, and its Web-Speech fallback would introduce a
-        # THIRD voice — the exact defect this path exists to prevent.
-        surface_owns_readback = self._surface == "desktop" and not bool(
-            getattr(self._session, "renders_pinned_voice", True)
-        )
-        deadline = time.monotonic() + (
-            0.0 if surface_owns_readback else _DELEGATE_READBACK_WAIT_S
-        )
+        # BUG-086 escalation REVERTED (maintainer live verdict 2026-07-21):
+        # claiming every delegate reply for the same-family surface TTS made
+        # EVERY delegated turn speak in an audibly different voice — the
+        # flash-TTS rendering of the pinned voice does not sound like the
+        # live model's native rendering of that same voice, so the "fix"
+        # was a deterministic voice flip on every tool-model turn, worse
+        # than the occasional native drift it prevented. The native realtime
+        # voice is the session's ONE voice: the provider renders the
+        # delegate reply natively, and the surface TTS speaks only when the
+        # provider stays mute past the wait window. Do not re-add an
+        # immediate surface claim keyed on a provider capability flag.
+        deadline = time.monotonic() + _DELEGATE_READBACK_WAIT_S
         while True:
             if (
                 self._ended
@@ -4413,21 +4415,13 @@ class RealtimeVoiceSession:
             return
         turn_state.surface_fallback_spoken = True
         self._drop_provider_output_until_user_turn = True
-        if surface_owns_readback:
-            log.info(
-                "realtime[%s] voice identity: speaking the delegate reply "
-                "through the surface TTS because the provider's native "
-                "renderer does not hold the pinned voice (BUG-086)",
-                self.session_id,
-            )
-        else:
-            log.warning(
-                "realtime[%s] provider rendered no readback for a delivered "
-                "delegate result within %.1fs; speaking it through the "
-                "surface TTS fallback",
-                self.session_id,
-                _DELEGATE_READBACK_WAIT_S,
-            )
+        log.warning(
+            "realtime[%s] provider rendered no readback for a delivered "
+            "delegate result within %.1fs; speaking it through the "
+            "surface TTS fallback",
+            self.session_id,
+            _DELEGATE_READBACK_WAIT_S,
+        )
         await self._send_json(self._surface_speech_message(reply))
 
     def _start_delegate(

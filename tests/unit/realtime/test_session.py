@@ -2212,10 +2212,11 @@ async def test_scrub_trip_during_delegate_readback_speaks_trusted_reply():
 
 
 class _GenerativeVoiceSession(FakeSession):
-    """A provider session whose native audio renderer cannot hold a pinned
-    voice (BUG-086: Gemini Live's generative audio drifts on readbacks)."""
-
-    renders_pinned_voice = False
+    """A provider session whose native audio renderer is generative (BUG-086:
+    Gemini Live's audio can drift on readbacks). The former
+    ``renders_pinned_voice = False`` escalation flag is gone: the surface-TTS
+    claim it triggered spoke every delegate reply in an audibly different
+    voice and was reverted (maintainer live verdict 2026-07-21)."""
 
     def __init__(self, events):
         super().__init__(events)
@@ -2248,18 +2249,68 @@ class _GenerativeVoiceProvider(FakeProvider):
 
 
 @pytest.mark.asyncio
-async def test_generative_voice_provider_delegate_reply_is_spoken_by_the_surface():
-    """Voice identity (BUG-086 escalation): with renders_pinned_voice=False
-    the desktop surface speaks the delegate reply itself, immediately —
-    never waiting out the no-readback window and never letting the
-    provider's generative renderer re-voice the deep answer.
+async def test_generative_voice_provider_delegate_reply_renders_natively_on_desktop():
+    """One voice = the NATIVE realtime voice (BUG-086 escalation reverted):
+    when the provider renders the injected trusted result inside the
+    readback window, the desktop surface must NOT speak it through the
+    surface TTS — the flash-TTS rendering of the pinned voice is audibly a
+    different voice than the live model's, so an immediate surface claim
+    was a guaranteed voice flip on every tool-model turn (maintainer live
+    verdict 2026-07-21).
     """
-    reply = "The deep answer that must keep the pinned voice."
+    reply = "The deep answer that must keep the native voice."
+    spoken_audio = AudioChunk(
+        pcm=b"\x01\x02" * 8, sample_rate=24_000, timestamp_ns=0
+    )
+    jsons: list[dict] = []
+    binaries: list[bytes] = []
+    provider = _GenerativeVoiceProvider(
+        [
+            RealtimeEvent(
+                type="output_transcript_delta", text=reply, is_final=True
+            ),
+            RealtimeEvent(type="audio_delta", audio=spoken_audio),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = RealtimeVoiceSession(
+        session_id="generative-voice-native-readback",
+        send_binary=lambda data: binaries.append(data) or asyncio.sleep(0),
+        send_json=lambda m: jsons.append(m) or asyncio.sleep(0),
+        provider=provider,
+        config=_delegate_cfg("delegate"),
+        brain=FakeBrain(replies=(reply,)),
+        surface="desktop",
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+
+    async def _played():
+        while not binaries:
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(_played(), timeout=5)
+    # Give a wrong surface rendering time to appear before asserting.
+    await asyncio.sleep(0.3)
+    assert binaries == [spoken_audio.pcm]
+    assert not any(m.get("type") == "error_spoken" for m in jsons)
+    # The provider received the trusted result to render.
+    assert provider.session.text_inputs, "trusted result was never injected"
+    provider.session.release.set()
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_generative_voice_provider_mute_still_falls_back_to_surface_tts():
+    """The revert must not lose the mute net: a provider that never renders
+    the injected result still gets the reply spoken via the surface TTS
+    after the readback wait window."""
+    reply = "The answer a mute provider never rendered."
     jsons: list[dict] = []
     binaries: list[bytes] = []
     provider = _GenerativeVoiceProvider([])
     sess = RealtimeVoiceSession(
-        session_id="generative-voice-surface-readback",
+        session_id="generative-voice-mute-fallback",
         send_binary=lambda data: binaries.append(data) or asyncio.sleep(0),
         send_json=lambda m: jsons.append(m) or asyncio.sleep(0),
         provider=provider,
@@ -2274,14 +2325,14 @@ async def test_generative_voice_provider_delegate_reply_is_spoken_by_the_surface
         while not any(m.get("type") == "error_spoken" for m in jsons):
             await asyncio.sleep(0.01)
 
-    # Well inside _DELEGATE_READBACK_WAIT_S (2.5 s): this is the immediate
-    # voice-identity path, not the old provider-mute timeout fallback.
-    await asyncio.wait_for(_spoken(), timeout=1.5)
+    # Must take at least the readback wait window (2.5 s) — an immediate
+    # surface claim would be the reverted escalation sneaking back in.
+    start = asyncio.get_event_loop().time()
+    await asyncio.wait_for(_spoken(), timeout=8)
+    elapsed = asyncio.get_event_loop().time() - start
+    assert elapsed >= 2.0, "surface TTS claimed the reply before the wait window"
     spoken = [m for m in jsons if m.get("type") == "error_spoken"]
     assert [m["text"] for m in spoken] == [reply]
-    # The provider still received the trusted result as conversation context.
-    assert provider.session.text_inputs, "trusted result was never injected"
-    # No native readback audio reached the speakers.
     assert binaries == []
     provider.session.release.set()
     await sess.end(reason="test")
@@ -2330,13 +2381,12 @@ async def test_generative_voice_provider_keeps_native_readback_on_the_browser_su
 
 @pytest.mark.asyncio
 async def test_generative_voice_readback_race_never_speaks_twice():
-    """Pin the ordering invariant of the immediate surface claim: when the
-    provider starts a native readback in the same instant the surface takes
-    the reply, exactly ONE rendering reaches the user — the surface
-    error_spoken or the native audio, never both. The claim's flag-set has
-    no await between check and set, and _emit_audio re-checks the withhold
-    flags right before send; a refactor inserting an await there would
-    break this test.
+    """Pin the one-rendering invariant: when the provider starts a native
+    readback around the same instant the surface fallback takes the reply,
+    exactly ONE rendering reaches the user — the surface error_spoken or
+    the native audio, never both. The claim's flag-set has no await between
+    check and set, and _emit_audio re-checks the withhold flags right
+    before send; a refactor inserting an await there would break this test.
     """
     reply = "One answer, one voice."
     spoken_audio = AudioChunk(
