@@ -46,7 +46,7 @@ that have their own guides.
 | **App settings** | Launch the app when you sign in | The operating-system startup entry is added or removed immediately |
 | **Privacy permissions** | Microphone, screen, accessibility, and input access on macOS | Permission changes may require **Restart now** |
 | **Wake Word** | Activation, phrase, spoken language, and detection engine | Usually live when desktop voice is ready; otherwise on the next voice start |
-| **Thinking pause**, **Volume**, and **Audio devices** | End-of-speech timing, spoken volume, microphone, and speaker | Live with the Pipeline running; otherwise on the next start |
+| **Thinking pause**, **Volume**, and **Audio devices** | End-of-speech timing (Pipeline mode only — in Realtime mode the voice model detects the end of your turn itself), spoken volume, microphone, and speaker | Live with the Pipeline running; otherwise on the next start |
 | **Voice Keybinds** | Call and Hangup shortcuts | Live with the voice Pipeline running; otherwise after a restart |
 | **System Prompt** | The assistant's general style and behavior | On the next message; no restart |
 | **Bar & Overlay** | Display style, idle visibility, music muting, and short sound effects | A mix of live changes and restart-required display swaps |

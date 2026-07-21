@@ -159,6 +159,24 @@ async def test_every_selectable_model_uses_the_valid_ga_session_schema(
 
 
 @pytest.mark.asyncio
+async def test_default_config_keeps_native_server_vad_window(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    holder = _patch_openai_client(monkeypatch)
+    provider = OpenAIRealtimeProvider(api_key="test-key")
+
+    session = await provider.open_session(
+        RealtimeSessionConfig(voice="echo", language="en")
+    )
+    payload = holder["client"].realtime.last_conn.session_updates[0]
+    turn_detection = payload["audio"]["input"]["turn_detection"]
+    # No forced window: OpenAI's native server-VAD default decides the turn
+    # end (the Settings "Thinking pause" endpoints the pipeline only).
+    assert "silence_duration_ms" not in turn_detection
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_text_update_creates_tool_free_audio_response(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
