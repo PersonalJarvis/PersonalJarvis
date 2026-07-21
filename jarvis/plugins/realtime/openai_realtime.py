@@ -197,12 +197,10 @@ def _session_payload(cfg: Any) -> dict[str, Any]:
         # OpenAI's documented manual-response VAD mode.
         "interrupt_response": False,
     }
-    # An unset window (None/0) keeps OpenAI's native server-VAD default so the
-    # realtime model decides the turn end itself; only an explicit override is
-    # forwarded.
-    silence_ms = getattr(cfg, "silence_duration_ms", None)
-    if turn_detection == "server_vad" and silence_ms:
-        turn_detection_config["silence_duration_ms"] = int(silence_ms)
+    if turn_detection == "server_vad":
+        turn_detection_config["silence_duration_ms"] = int(
+            getattr(cfg, "silence_duration_ms", 1_500) or 1_500
+        )
 
     payload: dict[str, Any] = {
         "type": "realtime",
