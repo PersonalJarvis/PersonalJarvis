@@ -53,25 +53,43 @@ _norm = LevelNormalizer()
 # sorted; a mid-stream latency change can misorder neighbors by a few ms, which
 # is visually irrelevant. The dispatcher thread is created lazily on the first
 # delayed feed and then parks on the condition while idle.
+#
+# Cancellation ordering: ``reset_playing`` bumps ``_pending_gen`` (killing every
+# queued item) and publishes its zero under ``_deliver_lock`` — the same lock
+# the dispatcher publishes under after re-checking the generation. Whatever the
+# interleaving, no cancelled level can land AFTER the barge-in zero: either the
+# in-flight item publishes first and the zero overwrites it, or the generation
+# re-check drops it.
 _pending: deque[tuple[float, float]] = deque()
 _pending_cond = threading.Condition(_lock)
+_pending_gen = 0
+_deliver_lock = threading.Lock()
 _dispatcher: threading.Thread | None = None
 
 
 def _dispatch_loop() -> None:
     while True:
-        with _pending_cond:
-            while not _pending:
-                _pending_cond.wait()
-            due, level = _pending[0]
-            wait_s = due - time.monotonic()
-            if wait_s > 0.0:
-                # Re-check after the timed wait: reset_playing() may have
-                # cleared the queue, or an earlier-due item may have arrived.
-                _pending_cond.wait(timeout=wait_s)
-                continue
-            _pending.popleft()
-        publish(level)
+        try:
+            with _pending_cond:
+                while not _pending:
+                    _pending_cond.wait()
+                due, level = _pending[0]
+                wait_s = due - time.monotonic()
+                if wait_s > 0.0:
+                    # Re-check after the timed wait: reset_playing() may have
+                    # cleared the queue, or an earlier-due item may have
+                    # arrived.
+                    _pending_cond.wait(timeout=wait_s)
+                    continue
+                _pending.popleft()
+                gen = _pending_gen
+            with _deliver_lock:
+                with _lock:
+                    cancelled = gen != _pending_gen
+                if not cancelled:
+                    publish(level)
+        except Exception:  # noqa: BLE001 — the dispatcher must never die silently
+            _log.exception("level_tap dispatcher iteration failed")
 
 
 def _schedule(level: float, delay_s: float) -> None:
@@ -161,24 +179,28 @@ def playback_active() -> bool:
 def reset_playing() -> None:
     """Clear the playback window (barge-in / stop): audio was aborted, so the
     UI must not keep showing the speaking equalizer for the cancelled tail.
-    Pending delayed levels belong to that cancelled tail too — drop them and
-    push an honest zero so the bars collapse with the sound."""
-    global _audible_until
+    Pending delayed levels belong to that cancelled tail too — drop them
+    (generation bump kills any in-flight item, see the module ordering note)
+    and push an honest zero so the bars collapse with the sound. The zero is
+    unconditional: even with nothing queued, the last DELIVERED level may be
+    nonzero and would otherwise linger until the renderer's staleness clamp."""
+    global _audible_until, _pending_gen
     _audible_until = 0.0
     with _pending_cond:
-        had_pending = bool(_pending)
         _pending.clear()
+        _pending_gen += 1
         _pending_cond.notify()
-    if had_pending:
+    with _deliver_lock:
         publish(0.0)
 
 
 def reset() -> None:
     """Test helper: drop all subscribers and reset the normalizer."""
-    global _audible_until
+    global _audible_until, _pending_gen
     with _lock:
         _subscribers.clear()
         _pending.clear()
+        _pending_gen += 1
         _pending_cond.notify()
     _norm.reset()
     _audible_until = 0.0

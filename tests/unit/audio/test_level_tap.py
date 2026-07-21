@@ -135,6 +135,40 @@ def test_reset_playing_drops_pending_levels_and_zeroes_the_bars():
         level_tap.reset()
 
 
+def test_reset_playing_zeroes_even_with_nothing_pending():
+    # The zero must be unconditional: with an empty queue the last DELIVERED
+    # level may still be nonzero on the sink, and a barge-in has to collapse
+    # the bars immediately — not after the renderer's staleness clamp.
+    level_tap.reset()
+    got: list[float] = []
+    level_tap.subscribe(got.append)
+    try:
+        level_tap.publish(0.6)  # synchronously delivered, nothing queued
+        level_tap.reset_playing()
+        assert got == [0.6, 0.0]
+    finally:
+        level_tap.reset()
+
+
+def test_no_cancelled_level_ever_lands_after_the_bargein_zero():
+    # Ordering contract of the generation guard + delivery lock: once
+    # reset_playing() returns, its zero is the LAST word — a level scheduled
+    # before the barge-in may at worst land before it, never after.
+    level_tap.reset()
+    got: list[float] = []
+    level_tap.subscribe(got.append)
+    try:
+        for k in range(5):
+            level_tap.publish(0.5 + k * 0.05, delay_s=0.02 + k * 0.02)
+        level_tap.reset_playing()
+        zero_at = len(got) - 1
+        assert got[zero_at] == 0.0
+        time.sleep(0.3)  # give any (buggy) survivor time to fire
+        assert got[zero_at + 1:] == [], "cancelled level delivered after the zero"
+    finally:
+        level_tap.reset()
+
+
 def test_zero_delay_publish_stays_synchronous():
     level_tap.reset()
     got: list[float] = []

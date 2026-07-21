@@ -826,6 +826,10 @@ class AudioPlayer:
         # Bluetooth). Deliver each block's level with that delay so the bar
         # moves WITH the heard voice — including the final ~latency of every
         # sentence, which previously played with the bars already collapsed.
+        # The uniform shift preserves the ~60 ms inter-sample cadence, so the
+        # overlay's audible-hold window is latency-independent. Read ONCE per
+        # buffer: the property takes the stream-state lock stop() also uses —
+        # bounded, benign contention, deliberately not per sub-block.
         level_delay_s = self.output_latency_s if feed_level else 0.0
         # Master output volume: scale the whole buffer once via the shared gain
         # helper (makeup boost + soft limiter above unity, plain attenuation
