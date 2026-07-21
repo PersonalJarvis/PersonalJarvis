@@ -1,8 +1,12 @@
 """Jarvis entry point.
 
 Usage:
-    python -m jarvis                # Starts the tray app (first-run setup
-                                    #   happens in the app's onboarding)
+    python -m jarvis                # Starts the full Desktop App (window +
+                                    #   voice + Orb; first-run setup happens
+                                    #   in the app's onboarding)
+    python -m jarvis serve          # Headless server: API + WS + browser UI
+    python -m jarvis --tray-only    # Legacy tray icon only, no backend
+                                    #   (diagnostic)
     python -m jarvis --wizard       # Terminal setup wizard (explicit opt-in,
                                     #   e.g. SSH-only hosts)
     python -m jarvis --check        # Show hardware analysis only
@@ -14,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import signal
 import sys
 from typing import NoReturn
@@ -59,6 +64,13 @@ def _build_parser() -> argparse.ArgumentParser:
         help=argparse.SUPPRESS,
     )
     parser.add_argument("--debug", action="store_true", help="Debug logging + console attach.")
+    parser.add_argument(
+        "--tray-only",
+        action="store_true",
+        dest="tray_only",
+        help="Start only the legacy tray icon, without the backend, window, or "
+             "voice (diagnostic; the historic pre-desktop default).",
+    )
     # Phase 5:
     parser.add_argument("--phase5-doctor", action="store_true", dest="phase5_doctor",
                         help="Checks Phase-5 prerequisites (admin helper, "
@@ -465,6 +477,35 @@ async def _run_tray_app(debug: bool = False) -> int:
     return 0
 
 
+def _launch_desktop_app(*, debug: bool = False) -> int:
+    """Launch the full Desktop App — the advertised meaning of bare ``jarvis``.
+
+    Delegates to the web launcher (FastAPI + desktop window + voice + Orb),
+    the same app ``run.bat`` / ``run.sh`` / the installer start. Field report
+    2026-07-21: bare ``jarvis`` used to start the legacy tray-only loop, which
+    runs NO backend, no window, no voice — the terminal just sat there
+    apparently loading forever while the website promises the full desktop
+    app. Runs in the foreground; Ctrl+C stops it.
+
+    On a headless Linux host (no display server) a desktop window cannot
+    exist — degrade honestly to the headless server (same as ``jarvis
+    serve``) with a printed note instead of crashing.
+    """
+    from jarvis.ui.web import launcher
+
+    if debug:
+        # Parity with `run.bat --debug` / `run.sh --debug`: the flag is
+        # launcher-local, forwarded as env — argparse there rejects --debug.
+        os.environ.setdefault("JARVIS_DEBUG", "1")
+    if sys.platform.startswith("linux") and not (
+        os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY")
+    ):
+        print("No display server detected — starting the headless server instead.")
+        print("Open the printed URL in a browser (this equals `jarvis serve`).")
+        return launcher.main(["--headless"])
+    return launcher.main([])
+
+
 def _run_control(argv: list[str]) -> int:
     """Forward a control invocation (``jarvis <group> ...``) to the control CLI.
 
@@ -561,7 +602,9 @@ def main(argv: list[str] | None = None) -> int:
         return launcher.main(["--headless"])
     if _should_run_wizard(args.wizard):
         return _cmd_wizard()
-    return asyncio.run(_run_tray_app(debug=args.debug))
+    if args.tray_only:
+        return asyncio.run(_run_tray_app(debug=args.debug))
+    return _launch_desktop_app(debug=args.debug)
 
 
 def _should_run_wizard(wizard_flag: bool) -> bool:
