@@ -1,12 +1,16 @@
-"""Integration-Test: Smart-Fallback durch die Provider-Chain.
+"""Integration test: smart fallback through the provider chain.
 
-Simuliert 429-Szenario: Haiku (primary) scheitert, Opus (deep_model) klappt.
+Simulates the 429 scenario: Haiku (primary) fails, Opus (deep_model) works.
 """
 from __future__ import annotations
 
 import pytest
 
-from jarvis.brain.manager import BrainManager, _PROVIDER_DOWN_PHRASES
+from jarvis.brain.manager import (
+    _PROVIDER_DOWN_CAUSE_PHRASES,
+    _PROVIDER_DOWN_PHRASES,
+    BrainManager,
+)
 from jarvis.core.bus import EventBus
 from jarvis.core.config import BrainProviderConfig, JarvisConfig
 from jarvis.core.events import ResponseGenerated
@@ -40,8 +44,8 @@ async def test_fallback_from_failing_fast_to_deep_model():
 
     result = await manager.generate("hi", use_history=False)
     assert "Opus" in result
-    assert len(failing_haiku.calls) == 1  # einer versucht + gescheitert
-    assert len(working_opus.calls) == 1    # und Fallback hat geklappt
+    assert len(failing_haiku.calls) == 1  # one attempt + failure
+    assert len(working_opus.calls) == 1    # and the fallback worked
 
 
 @pytest.mark.asyncio
@@ -56,12 +60,18 @@ async def test_all_providers_fail_returns_clear_error():
     manager._build_fallback_chain = lambda level: [("claude-subscription", "xyz")]
 
     result = await manager.generate("hi", use_history=False)
-    # Provider chain now returns a randomized agnostic apology from
-    # _PROVIDER_DOWN_PHRASES (voice-safe, no provider names or URLs).
+    # A total chain failure speaks either a cause-aware apology (4539da34:
+    # the FakeBrain's generic error classifies as "unreachable") or, when no
+    # cause is known, a randomized agnostic phrase from _PROVIDER_DOWN_PHRASES.
+    # Both are voice-safe: no provider names or URLs.
     all_down_phrases = [
         phrase
         for phrases in _PROVIDER_DOWN_PHRASES.values()
         for phrase in phrases
+    ] + [
+        phrase
+        for table in _PROVIDER_DOWN_CAUSE_PHRASES.values()
+        for phrase in table.values()
     ]
     assert result in all_down_phrases, (
         f"Expected a provider-down phrase, got: {result!r}"
