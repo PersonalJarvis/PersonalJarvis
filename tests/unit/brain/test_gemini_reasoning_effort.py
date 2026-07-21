@@ -48,11 +48,13 @@ class _FakeGeminiClient:
             "works in thinking mode."
         ),
         reject_thinking_generic: bool = False,
+        reject_everything_generic: bool = False,
     ) -> None:
         self.calls: list[dict[str, Any]] = []
         self.reject_thinking = reject_thinking
         self.reject_message = reject_message
         self.reject_thinking_generic = reject_thinking_generic
+        self.reject_everything_generic = reject_everything_generic
         self.aio = SimpleNamespace(models=self)
 
     async def generate_content_stream(
@@ -66,8 +68,11 @@ class _FakeGeminiClient:
         if self.reject_thinking and config.get("thinking_config") is not None:
             raise RuntimeError(self.reject_message)
         if (
-            self.reject_thinking_generic
-            and config.get("thinking_config") is not None
+            self.reject_everything_generic
+            or (
+                self.reject_thinking_generic
+                and config.get("thinking_config") is not None
+            )
         ):
             # The parameterless rejection shape gemini-3.6-flash produced
             # live 2026-07-21 — no field name, no "thinking" token.
@@ -212,3 +217,84 @@ async def test_parameterless_400_recovers_and_is_remembered() -> None:
     await _drain(provider.complete(_request("none")))
     assert len(fake.calls) == 3
     assert "thinking_config" not in fake.calls[2]
+
+
+@pytest.mark.asyncio
+async def test_unrelated_400_still_propagates_and_forgets_nothing() -> None:
+    """A parameterless 400 whose retry ALSO fails is not the thinking
+    config's fault: the error must propagate and the instance must NOT stop
+    sending ``thinking_config`` on later turns."""
+    provider = GeminiBrain(model="gemini-3.6-flash")
+    fake = _FakeGeminiClient(reject_everything_generic=True)
+    provider._client = fake  # type: ignore[assignment]
+
+    with pytest.raises(RuntimeError, match="invalid argument"):
+        await _drain(provider.complete(_request("none")))
+
+    # One original attempt + one blame-probe retry, then the error surfaced.
+    assert len(fake.calls) == 2
+
+    fake.reject_everything_generic = False
+    await _drain(provider.complete(_request("none")))
+    assert fake.calls[2].get("thinking_config") is not None, (
+        "an unproven blame must not permanently disable thinking_config"
+    )
+
+
+@pytest.mark.asyncio
+async def test_generic_400_with_live_cache_clears_cache_and_blames_nothing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A parameterless 400 while a ``cached_content`` reference is on the
+    wire could be a differently-worded dead-cache rejection: the recovery
+    must clear the cache reference alongside ``thinking_config`` (else the
+    poisoned name survives forever — BUG-019's symptom) and must NOT blame
+    the thinking budget, because with two variables changed the accepted
+    retry proves nothing."""
+    monkeypatch.setenv("JARVIS_GEMINI_CONTEXT_CACHE", "1")
+
+    system_text = "X" * (4096 * 4 + 100)  # above the _MIN_CACHE_TOKENS floor
+    provider = GeminiBrain(model="gemini-3.6-flash")
+    fake = _FakeGeminiClient()
+    provider._client = fake  # type: ignore[assignment]
+    provider._cached_content_name = "cachedContents/dead-id"
+    provider._cache_signature = (str(hash(system_text)), "")
+
+    async def _reject_cache_or_thinking(
+        *, model: str, contents: list[Any], config: dict[str, Any]
+    ) -> Any:
+        fake.calls.append(dict(config))
+        if config.get("cached_content") or config.get("thinking_config"):
+            raise RuntimeError(
+                "400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': "
+                "'Request contains an invalid argument.', 'status': "
+                "'INVALID_ARGUMENT'}}"
+            )
+
+        async def _stream() -> AsyncIterator[Any]:
+            yield SimpleNamespace(text="OK", candidates=[], usage_metadata=None)
+
+        return _stream()
+
+    fake.generate_content_stream = _reject_cache_or_thinking  # type: ignore[method-assign]
+
+    req = BrainRequest(
+        messages=(BrainMessage(role="user", content="ping"),),
+        max_tokens=320,
+        system=system_text,
+        reasoning_effort="none",  # type: ignore[arg-type]
+    )
+    deltas = await _drain(provider.complete(req))
+
+    assert len(fake.calls) == 2
+    assert fake.calls[0].get("cached_content") == "cachedContents/dead-id"
+    assert fake.calls[0].get("thinking_config") is not None
+    assert "cached_content" not in fake.calls[1]
+    assert "thinking_config" not in fake.calls[1]
+    assert any(d.content for d in deltas), "recovered stream must yield text"
+    assert provider._cached_content_name is None, (
+        "the possibly-dead cache reference must be invalidated"
+    )
+    assert provider._rejected_thinking_budgets == set(), (
+        "a two-variable retry must not blame the thinking budget"
+    )

@@ -7483,3 +7483,48 @@ The user hung up via hotkey at 11:55:11.
 Related: BUG-102 (topology refresh), BUG-104 (rebuild seed), BUG-106
 (the answer itself also missed the Gulfstream G800, in service since
 2025 — fact-quality family, tracked there).
+
+## BUG-109: gemini-3.6-flash rejects the forced thinking_budget=0 with a parameterless 400 — every delegated realtime fallback turn bricked (HIGH, FIXED 2026-07-21)
+
+**Symptom (live 2026-07-21 18:27–18:33, sessions `62965e5d`, `dcd9d16a`,
+`43ca9ad6`).** In a realtime call, whenever the provider (Gemini Live) went
+silent after the user finished speaking, the deterministic-delegate fallback
+correctly detected the missing input boundary ("provider input boundary
+missing after 1.50s of stable local transcript") and dispatched the Brain
+chain — but EVERY gemini attempt died with `400 INVALID_ARGUMENT.
+"Request contains an invalid argument."`, OpenAI was quota-dead (429), so
+the user heard the canned outage phrase (or a stale/garbled provider line)
+instead of an answer. Perceived as: "Jarvis keeps listening after I finish
+my sentence and never starts thinking."
+
+**Root cause (reproduced 1:1 against the live API).** The router/tool tier
+hard-caps `thinking_budget = 0` (BUG-LATENCY mandate,
+`jarvis/brain/manager.py`). `gemini-3.5-flash` accepts that;
+`gemini-3.6-flash` — the live install's configured `tool_model` — rejects
+`thinking_config(thinking_budget=0)` with the PARAMETERLESS 400 above: no
+field name, no "thinking" token. The existing capability recovery
+(`_is_thinking_config_rejected_error`) requires "thinking" in the message,
+so it never matched, no retry happened, and the tier failed terminally on
+every call. Repro matrix: `plain`/`tools`/`system` all OK on 3.6;
+`thinking0` and `tools+thinking0` 400 on 3.6; all six OK on 3.5.
+
+**Fix (1299c063 + review follow-up).** In
+`jarvis/plugins/brain/gemini.py`: a parameterless 400 INVALID_ARGUMENT with
+`thinking_config` on the wire retries once without the field (capability
+probe, AP-21 — never a model-name pin). Blame is only remembered (per
+instance, per REJECTED BUDGET VALUE — brain instances are cached per
+(provider, model) and shared across tiers) once the retried request is
+accepted; an unrelated 400 propagates unchanged and disables nothing. If a
+`cached_content` reference was also on the wire, the retry clears and
+invalidates it too (a differently-worded dead-cache 400 must not survive
+the `attempt == 1` gate of the BUG-019 recovery) and then blames nothing —
+with two variables changed the accepted retry proves nothing.
+
+**Guards:** `tests/unit/brain/test_gemini_reasoning_effort.py` (
+`test_parameterless_400_recovers_and_is_remembered`,
+`test_unrelated_400_still_propagates_and_forgets_nothing`,
+`test_generic_400_with_live_cache_clears_cache_and_blames_nothing`).
+
+Related: BUG-019 (stale-cache recovery in the same except block), AP-21
+(capability probes), AP-22 (the single-provider brick this produced live:
+gemini 400 + openai 429 left zero reachable tool-tier families).
