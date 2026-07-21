@@ -425,6 +425,34 @@ def _explicitly_rejects_parameter(exc: Exception, parameter: str) -> bool:
     return parameter in message
 
 
+# (base_url, model) -> optional-param adaptations that endpoint has already
+# explicitly rejected in this process. Providers/models are few, so this
+# stays tiny; process-lifetime staleness is fine — the worst case after a
+# server-side change is one conservative omission, never a failure.
+_PARAM_ADAPTATION_CACHE: dict[tuple[str, str], set[str]] = {}
+
+
+def _apply_adaptation(kwargs: dict[str, Any], field: str) -> dict[str, Any] | None:
+    """Apply one remembered adaptation to *kwargs*; ``None`` when moot."""
+    if field == "max_tokens":
+        if "max_tokens" not in kwargs:
+            return None
+        adapted = dict(kwargs)
+        adapted["max_completion_tokens"] = adapted.pop("max_tokens")
+        return adapted
+    if field == "reasoning_effort:minimal":
+        if kwargs.get("reasoning_effort") != "none":
+            return None
+        adapted = dict(kwargs)
+        adapted["reasoning_effort"] = "minimal"
+        return adapted
+    if field in kwargs:
+        adapted = dict(kwargs)
+        adapted.pop(field, None)
+        return adapted
+    return None
+
+
 def _compatible_retry_kwargs(
     exc: Exception,
     kwargs: dict[str, Any],
@@ -502,8 +530,23 @@ async def _create_with_token_param_retry(client: Any, kwargs: dict[str, Any]) ->
     after the API explicitly rejects it, so authentication, billing, model,
     tool-schema, and network failures are never hidden or retried.
     """
-    current_kwargs = kwargs
+    # Remember which optional params one (endpoint, model) pair has already
+    # rejected, so a tool loop does not pay the same rejection round-trip on
+    # every single step (the CU path calls this dozens of times per mission;
+    # an xAI/NIM model that rejects ``reasoning_effort`` would otherwise eat
+    # up to two extra HTTP 400s per step, and ``max_tokens``-renaming models
+    # one). Keyed by base_url+model — never by provider name (AP-21).
+    cache_key = (
+        str(getattr(client, "base_url", "") or ""),
+        str(kwargs.get("model", "") or ""),
+    )
+    current_kwargs = dict(kwargs)
     adaptations: set[str] = set()
+    for field in _PARAM_ADAPTATION_CACHE.get(cache_key, ()):  # noqa: B007
+        adapted = _apply_adaptation(current_kwargs, field)
+        if adapted is not None:
+            current_kwargs = adapted
+            adaptations.add(field)
     while True:
         try:
             return await client.chat.completions.create(**current_kwargs)
@@ -517,6 +560,7 @@ async def _create_with_token_param_retry(client: Any, kwargs: dict[str, Any]) ->
                 raise
             current_kwargs, field = retry
             adaptations.add(field)
+            _PARAM_ADAPTATION_CACHE.setdefault(cache_key, set()).add(field)
             if field == "max_tokens":
                 log.info(
                     "provider rejected 'max_tokens' — retrying with "

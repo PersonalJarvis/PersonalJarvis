@@ -10,7 +10,14 @@ from __future__ import annotations
 
 import pytest
 
+from jarvis.plugins.brain import _openai_base
 from jarvis.plugins.brain._openai_base import _create_with_token_param_retry
+
+
+@pytest.fixture(autouse=True)
+def _fresh_adaptation_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The rejected-param memory is process-global; isolate it per test."""
+    monkeypatch.setattr(_openai_base, "_PARAM_ADAPTATION_CACHE", {})
 
 _OPENAI_400 = (
     "Error code: 400 - {'error': {'message': \"Unsupported parameter: "

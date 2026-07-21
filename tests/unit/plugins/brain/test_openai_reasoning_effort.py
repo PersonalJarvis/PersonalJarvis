@@ -19,11 +19,20 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
+
 from jarvis.core.protocols import BrainMessage, BrainRequest
+from jarvis.plugins.brain import _openai_base
 from jarvis.plugins.brain._openai_base import (
     _create_with_token_param_retry,
     stream_complete,
 )
+
+
+@pytest.fixture(autouse=True)
+def _fresh_adaptation_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The rejected-param memory is process-global; isolate it per test."""
+    monkeypatch.setattr(_openai_base, "_PARAM_ADAPTATION_CACHE", {})
 
 _REJECT_VALUE_400 = (
     "Error code: 400 - {'error': {'message': \"Unsupported value: "
@@ -121,6 +130,44 @@ async def test_parameter_rejection_drops_the_knob() -> None:
 # ---------------------------------------------------------------------------
 # 3. Old SDKs without the kwarg (TypeError before any request).
 # ---------------------------------------------------------------------------
+
+
+async def test_rejections_are_remembered_per_endpoint_and_model() -> None:
+    """A tool loop calls the same endpoint+model dozens of times per mission;
+    the rejection round-trips must be paid once, not on every step."""
+    first = _SequenceClient(
+        [RuntimeError(_REJECT_VALUE_400), RuntimeError(_REJECT_PARAM_400)]
+    )
+    first.base_url = "https://api.x.ai/v1"
+    await _create_with_token_param_retry(
+        first, {"model": "m", "messages": [], "reasoning_effort": "none"}
+    )
+    assert len(first.calls) == 3
+
+    second = _SequenceClient()
+    second.base_url = "https://api.x.ai/v1"
+    await _create_with_token_param_retry(
+        second, {"model": "m", "messages": [], "reasoning_effort": "none"}
+    )
+    assert len(second.calls) == 1, "remembered adaptations must pre-apply"
+    assert "reasoning_effort" not in second.calls[0]
+
+
+async def test_adaptation_memory_is_scoped_to_the_endpoint() -> None:
+    first = _SequenceClient([RuntimeError(_REJECT_PARAM_400)])
+    first.base_url = "https://api.x.ai/v1"
+    await _create_with_token_param_retry(
+        first, {"model": "m", "messages": [], "reasoning_effort": "none"}
+    )
+
+    other = _SequenceClient()
+    other.base_url = "https://integrate.api.nvidia.com/v1"
+    await _create_with_token_param_retry(
+        other, {"model": "m", "messages": [], "reasoning_effort": "none"}
+    )
+    assert other.calls[0]["reasoning_effort"] == "none", (
+        "another endpoint's rejection must not strip the knob here"
+    )
 
 
 async def test_sdk_typeerror_strips_reasoning_effort_and_retries() -> None:
