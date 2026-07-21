@@ -1042,11 +1042,17 @@ salvage_reclone() {
     fi
     note "moved the old directory to $stale_backup (nothing was deleted)"
     fetch_payload || exit 1
+    # Everything a user can lose: config, credentials file-fallback + DBs
+    # (inside data/), the dotenv, AND the wiki vault (its absence from this
+    # list is what destroyed a user's wiki pages on 2026-07-20). A failed
+    # copy is a loud warning pointing at the backup dir — never silent.
     local item
-    for item in data "$CONFIG_FILE_NAME" .env; do
+    for item in data "$CONFIG_FILE_NAME" .env wiki; do
         if [ -e "$stale_backup/$item" ] && [ ! -e "$INSTALL_DIR/$item" ]; then
-            if cp -R "$stale_backup/$item" "$INSTALL_DIR/$item" 2>/dev/null; then
+            if cp -R "$stale_backup/$item" "$INSTALL_DIR/$item"; then
                 note "kept your $item from the previous install"
+            else
+                err "could NOT carry over $item - it is still safe in $stale_backup/$item; copy it back manually."
             fi
         fi
     done

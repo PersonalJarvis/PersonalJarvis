@@ -410,6 +410,62 @@ def _write_update_result(
         pass
 
 
+#: Precious, small user state that must survive ANY update outcome. Copied to
+#: a sibling directory OUTSIDE the checkout before the first ``git reset`` so
+#: even a catastrophic tree replacement (the 2026-07-20 wipe lost API keys,
+#: config, and wiki pages) can be recovered by hand. Large data/ databases are
+#: deliberately excluded: git never touches untracked files, and a full copy
+#: of a multi-hundred-MB data dir per update is not "best-effort" territory.
+_STATE_SNAPSHOT_ITEMS = (
+    "jarvis.toml",
+    ".env",
+    Path("data") / "credentials.json",
+    Path("wiki") / "obsidian-vault",
+)
+_STATE_SNAPSHOT_KEEP = 3
+
+
+def snapshot_user_state(root: Path) -> Path | None:
+    """Copy precious user state to ``<root>.pre-update-state/<timestamp>/``.
+
+    Best-effort belt-and-suspenders: an update must proceed even when the
+    snapshot fails, and a snapshot failure must never raise. Returns the
+    snapshot directory when at least one item was saved, else ``None``.
+    Old snapshots beyond the newest ``_STATE_SNAPSHOT_KEEP`` are pruned.
+    """
+    import shutil
+
+    base = root.parent / (root.name + ".pre-update-state")
+    stamp = time.strftime("%Y%m%d-%H%M%S")
+    target = base / stamp
+    saved = False
+    for item in _STATE_SNAPSHOT_ITEMS:
+        src = root / item
+        try:
+            if not src.exists():
+                continue
+            dst = target / item
+            dst.parent.mkdir(parents=True, exist_ok=True)
+            if src.is_dir():
+                shutil.copytree(src, dst, dirs_exist_ok=True)
+            else:
+                shutil.copy2(src, dst)
+            saved = True
+        except OSError:
+            logging.getLogger(__name__).warning(
+                "pre-update snapshot could not save %s", src, exc_info=True
+            )
+    if not saved:
+        return None
+    try:
+        stamps = sorted((p for p in base.iterdir() if p.is_dir()), reverse=True)
+        for old in stamps[_STATE_SNAPSHOT_KEEP:]:
+            shutil.rmtree(old, ignore_errors=True)
+    except OSError:
+        pass
+    return target
+
+
 def finalize_pending_update(cwd: str | Path) -> bool:
     """Apply a fetched update while the old app is fully stopped.
 
@@ -427,6 +483,8 @@ def finalize_pending_update(cwd: str | Path) -> bool:
     if not (root / MANAGED_MARKER).is_file() or not (root / ".git").exists():
         pending_path.unlink(missing_ok=True)
         return False
+
+    snapshot_user_state(root)
 
     previous = str(payload["previous_revision"])
     target = str(payload["target_revision"])

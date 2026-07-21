@@ -175,3 +175,89 @@ def test_relauncher_finalizes_before_spawning_new_app(tmp_path: Path) -> None:
 
     assert rc == 0
     assert order == ["finalize", "spawn"]
+
+
+# ---------------------------------------------------------------------------
+# Pre-update user-state snapshot (belt-and-suspenders against tree wipes).
+# ---------------------------------------------------------------------------
+
+
+def _seed_user_state(root: Path) -> None:
+    (root / "jarvis.toml").write_text("[brain]\n", encoding="utf-8")
+    (root / ".env").write_text("GROQ_API_KEY=gsk-x\n", encoding="utf-8")
+    (root / "data").mkdir()
+    (root / "data" / "credentials.json").write_text("{}", encoding="utf-8")
+    vault = root / "wiki" / "obsidian-vault"
+    vault.mkdir(parents=True)
+    (vault / "Home.md").write_text("# Home\n", encoding="utf-8")
+
+
+def test_snapshot_user_state_saves_precious_items_outside_the_checkout(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "install"
+    root.mkdir()
+    _seed_user_state(root)
+
+    target = relauncher.snapshot_user_state(root)
+
+    assert target is not None
+    assert not target.is_relative_to(root), (
+        "the snapshot must live OUTSIDE the checkout so a tree wipe cannot "
+        "take it down too"
+    )
+    assert (target / "jarvis.toml").is_file()
+    assert (target / ".env").is_file()
+    assert (target / "data" / "credentials.json").is_file()
+    assert (target / "wiki" / "obsidian-vault" / "Home.md").is_file()
+
+
+def test_snapshot_user_state_returns_none_when_nothing_to_save(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "install"
+    root.mkdir()
+    assert relauncher.snapshot_user_state(root) is None
+
+
+def test_snapshot_user_state_prunes_to_the_newest_snapshots(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    root = tmp_path / "install"
+    root.mkdir()
+    _seed_user_state(root)
+
+    stamps = iter(["20260101-000001", "20260101-000002", "20260101-000003",
+                   "20260101-000004", "20260101-000005"])
+    monkeypatch.setattr(relauncher.time, "strftime", lambda _fmt: next(stamps))
+    for _ in range(5):
+        assert relauncher.snapshot_user_state(root) is not None
+
+    base = root.parent / (root.name + ".pre-update-state")
+    kept = sorted(p.name for p in base.iterdir())
+    assert kept == ["20260101-000003", "20260101-000004", "20260101-000005"]
+
+
+def test_finalize_pending_update_snapshots_before_touching_git(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _managed_root(tmp_path)
+    _seed_user_state(tmp_path)
+    order: list[str] = []
+
+    def _fake_snapshot(root: Path) -> None:
+        order.append("snapshot")
+
+    def _fake_run(cmd: list[str], **_kw: object) -> int:
+        order.append(" ".join(cmd[:3]))
+        return 1  # first git command fails -> update aborts after snapshot
+
+    monkeypatch.setattr(relauncher, "snapshot_user_state", _fake_snapshot)
+    monkeypatch.setattr(relauncher, "_run_update_command", _fake_run)
+
+    relauncher.finalize_pending_update(tmp_path)
+
+    assert order, "the update must have attempted at least one step"
+    assert order[0] == "snapshot", (
+        "the user-state snapshot must run before the first git command"
+    )

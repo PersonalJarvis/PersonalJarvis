@@ -656,14 +656,20 @@ function Invoke-SalvageReclone {
     }
     Write-Note "moved the old directory to $StaleBackup (nothing was deleted)"
     if (-not (Invoke-FetchPayload)) { exit 1 }
-    foreach ($Item in @('data', $ConfigFileName, '.env')) {
+    # Everything a user can lose: config, credentials file-fallback + DBs
+    # (inside data/), the dotenv, AND the wiki vault (its absence from this
+    # list is what destroyed a user's wiki pages on 2026-07-20). A failed
+    # copy is a loud warning pointing at the backup dir - never silent.
+    foreach ($Item in @('data', $ConfigFileName, '.env', 'wiki')) {
         $Old = Join-Path $StaleBackup $Item
         $New = Join-Path $InstallDir $Item
         if ((Test-Path $Old) -and -not (Test-Path $New)) {
             try {
                 Copy-Item -LiteralPath $Old -Destination $New -Recurse -ErrorAction Stop
                 Write-Note "kept your $Item from the previous install"
-            } catch {}
+            } catch {
+                Write-Err "could NOT carry over $Item - it is still safe in $Old; copy it back manually."
+            }
         }
     }
     Write-Ok 'reinstalled fresh (previous state preserved in the backup dir)'
