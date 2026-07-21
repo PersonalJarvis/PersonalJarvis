@@ -82,6 +82,19 @@ def test_installer_prompts_only_inside_missing_prerequisite_flow() -> None:
         assert forbidden not in py
 
 
+def test_dry_run_includes_the_terminal_command_step(monkeypatch, capsys) -> None:
+    """Fix 2026-07-21: the advertised `jarvis` / `jarvis serve` terminal
+    command must be linked onto PATH in phase 6 — before, pip left the console
+    scripts venv-only and a fresh terminal found nothing on any OS."""
+    monkeypatch.setattr(installer, "write_managed_marker", lambda: None)
+    rc = installer.main(["--dry-run", "--headless"])
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "link the jarvis terminal command" in out
+    # It belongs to the finish phase, after the voice models.
+    assert out.index("link the jarvis terminal command") > out.index("Finish & launch")
+
+
 def test_update_run_is_detected(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(installer, "repo_root", lambda: tmp_path)
     assert installer.is_update_run() is False

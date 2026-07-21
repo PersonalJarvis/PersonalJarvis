@@ -1,6 +1,6 @@
 """Personal Jarvis uninstaller — remove a local install cleanly for a re-test.
 
-A download leaves FOUR things on a machine, and a plain folder-delete only
+A download leaves FIVE things on a machine, and a plain folder-delete only
 gets the first:
 
 1. **The install folder** (``~/.personal-jarvis``) — code, the Python venv,
@@ -13,8 +13,11 @@ gets the first:
 4. **API keys in the OS keyring** (service ``personal-jarvis`` — Windows
    Credential Manager / macOS Keychain / Linux Secret Service) — survive a
    folder delete, so a fresh install would show them as "already set".
+5. **Terminal-command shims in ``~/.local/bin``** (``jarvis`` / ``jarvisctl``
+   / ``jctl``, see ``jarvis/setup/path_integration.py``) — survive a folder
+   delete and would leave a dead ``jarvis`` command on PATH.
 
-This module removes all four (with an explicit confirmation, a ``--dry-run``
+This module removes all five (with an explicit confirmation, a ``--dry-run``
 preview and per-item ``--keep-*`` opt-outs) so "download → test → wipe → re-test"
 is one command. It is intentionally cross-platform and has **no** heavy imports,
 so it runs on a headless VPS as happily as on a laptop.
@@ -76,6 +79,7 @@ class UninstallPlan:
     autostart_entry: str | None
     keyring_keys: list[str] = field(default_factory=list)
     running_pids: list[int] = field(default_factory=list)
+    terminal_shims: list[str] = field(default_factory=list)
 
     @property
     def config_file(self) -> Path:
@@ -332,6 +336,12 @@ def build_plan() -> UninstallPlan:
         running = [p.pid for p in _find_running_instances(install_dir)]
     except Exception:  # noqa: BLE001 — a scan failure must not block the uninstall
         running = []
+    try:
+        from jarvis.setup.path_integration import list_cli_shims
+
+        shims = [str(p) for p in list_cli_shims(install_dir)]
+    except Exception:  # noqa: BLE001 — a shim probe failure must not block the uninstall
+        shims = []
     return UninstallPlan(
         install_dir=install_dir,
         is_jarvis_install=_looks_like_jarvis_install(install_dir),
@@ -339,6 +349,7 @@ def build_plan() -> UninstallPlan:
         autostart_entry=entry,
         keyring_keys=_keyring_keys_present(),
         running_pids=running,
+        terminal_shims=shims,
     )
 
 
@@ -368,6 +379,11 @@ def _print_plan(plan: UninstallPlan, *, keep_keys: bool, keep_folder: bool) -> N
         )
     else:
         lines.append("[brand]•[/] Login autostart: [muted]nothing to remove[/]")
+    if plan.terminal_shims:
+        lines.append(
+            f"[brand]•[/] Remove the [brand.bold]jarvis[/] terminal command "
+            f"({len(plan.terminal_shims)} shim(s) in ~/.local/bin)"
+        )
     lines.append("[brand]•[/] Remove the operating-system app launcher and registration")
     if not keep_keys:
         if plan.keyring_keys:
@@ -405,6 +421,27 @@ def _remove_desktop_registration() -> None:
     except Exception as exc:  # noqa: BLE001 - never abort uninstall on shell cleanup
         _console.print(
             f"    [bad]⚠ could not remove desktop app registration: {escape(str(exc))}[/]"
+        )
+
+
+def _remove_terminal_command(install_dir: Path) -> None:
+    """Delete this install's ``~/.local/bin`` shims — they survive a folder
+    delete and would leave a dead ``jarvis`` command behind. Only shims owned
+    by THIS install are touched; the PATH entry stays (generic shared dir)."""
+    try:
+        from jarvis.setup.path_integration import remove_cli_shims
+
+        removed = remove_cli_shims(install_dir)
+        if removed:
+            _console.print(
+                f"    [ok]→ removed the jarvis terminal command "
+                f"({len(removed)} shim(s)).[/]"
+            )
+        else:
+            _console.print("    [muted]→ terminal command: nothing to remove.[/]")
+    except Exception as exc:  # noqa: BLE001 — never abort the uninstall on this
+        _console.print(
+            f"    [bad]⚠ could not remove the terminal command shims: {escape(str(exc))}[/]"
         )
 
 
@@ -569,6 +606,7 @@ def run_uninstall(
     _stop_running_instances(plan.install_dir)
     _remove_desktop_registration()
     _remove_autostart()
+    _remove_terminal_command(plan.install_dir)
     if not keep_keys:
         _remove_keys(plan.keyring_keys)
     if not keep_folder:

@@ -538,6 +538,41 @@ def step_worker_cli(*, dry_run: bool) -> None:
         note("Jarvis-Agent worker CLI install failed - it can be added later in-app")
 
 
+def step_terminal_command(*, dry_run: bool) -> None:
+    """Finish & launch sub-step: make ``jarvis`` work in the user's terminal.
+
+    The website's "Run it" section advertises ``jarvis`` / ``jarvis serve``,
+    but pip drops the console scripts inside the venv only — never on PATH —
+    so without this step a fresh terminal answers "command not found" on
+    EVERY OS. Links shims into ``~/.local/bin`` and persists that dir on PATH
+    (registry on Windows, shell rc files on POSIX). Best-effort: a failure
+    prints the manual fallback and never fails the install.
+    """
+    if dry_run:
+        console.print(
+            "[muted]│    (dry-run) link the jarvis terminal command into "
+            "~/.local/bin + PATH[/]"
+        )
+        return
+    fallback = venv_python().parent / ("jarvis.exe" if sys.platform == "win32" else "jarvis")
+    try:
+        from jarvis.setup.path_integration import ensure_cli_on_path
+
+        report = ensure_cli_on_path(repo_root())
+    except Exception as exc:  # noqa: BLE001 — never fail the install on this
+        note(f"could not set up the jarvis terminal command ({exc})")
+        note(f"run it directly instead: {fallback}")
+        return
+    for warning in report.warnings:
+        note(rich_escape(warning))
+    if report.ok:
+        suffix = " (open a NEW terminal)" if report.needs_new_terminal else ""
+        ok(f"terminal command ready: jarvis / jarvis serve{suffix}")
+    else:
+        note("the jarvis terminal command could not be linked")
+        note(f"run it directly instead: {fallback}")
+
+
 def _write_desktop_integration_log(result: object) -> Path | None:
     """Persist the registration subprocess output; return the path or None."""
     log_path = repo_root() / "data" / "logs" / "install-desktop-integration.log"
@@ -753,6 +788,7 @@ def step_summary(*, no_launch: bool, update: bool, headless: bool) -> None:
     flat two-rule finale of 2026-07-09 and the free-standing Panel draft).
     """
     rows: list[tuple[str, str, str]] = [("Installed to", str(repo_root()), "muted")]
+    rows.append(("Terminal", "jarvis  ·  jarvis serve   (in a new terminal)", "brand"))
     if sys.platform == "win32":
         rows.append(("Start again", f'Windows search -> "{PRODUCT_NAME}"', "brand"))
     elif sys.platform == "darwin":
@@ -763,8 +799,8 @@ def step_summary(*, no_launch: bool, update: bool, headless: bool) -> None:
     elif sys.platform.startswith("linux") and not (headless or is_headless_linux()):
         rows.append(("Start again", f'app menu -> "{PRODUCT_NAME}"', "brand"))
     else:
-        rows.append(("Start again", ".venv/bin/python -m jarvis.ui.web.launcher", "brand"))
-        rows.append(("", "(in the install folder)", "muted"))
+        rows.append(("Start again", "jarvis serve", "brand"))
+        rows.append(("", "(or .venv/bin/python -m jarvis.ui.web.launcher)", "muted"))
     rows.append(("Update", "re-run the same install one-liner - it updates in place", "muted"))
     if update:
         rows.append(("Next", "your setup and settings are kept - no re-onboarding", "muted"))
@@ -853,6 +889,7 @@ def main(argv: list[str] | None = None) -> int:
     step_models(full_profile=with_desktop, dry_run=args.dry_run)
 
     phase("6/6", "Finish & launch")
+    step_terminal_command(dry_run=args.dry_run)
     step_worker_cli(dry_run=args.dry_run)
     if not step_desktop_integration(enabled=with_desktop, dry_run=args.dry_run):
         sys.exit(4)
