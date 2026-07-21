@@ -5917,7 +5917,7 @@ released by a message from the (now dead) transport will wedge; whoever
 declares the old turn finished must broadcast that fact to all surfaces,
 not just to the recorder.
 
-## BUG-086: Realtime voice audibly flips gender between turns while every transcript label reads the same pinned voice (HIGH, MITIGATED 2026-07-18, provider-side root cause OPEN)
+## BUG-086: Realtime voice audibly flips gender between turns while every transcript label reads the same pinned voice (HIGH, MITIGATED 2026-07-18, ESCALATION SHIPPED 2026-07-21, provider-side root cause OPEN)
 
 **Symptom (live 2026-07-18 17:12, session `f4e8e93d`, gemini-live,
 4 turns).** The audible voice alternated male / female / male /
@@ -5962,12 +5962,29 @@ plain persona turns — a standing session-wide clause in
 `_REALTIME_SAFETY_APPENDIX` ("keep one single, consistent voice for the
 entire conversation; never switch voice, gender, tone").
 
+**Escalation shipped (2026-07-21, maintainer report: the voice still
+flipped mid-call, especially on deep-thinking replies).** Delegate replies
+are no longer read back by the generative native renderer at all: the
+provider session declares the capability `renders_pinned_voice = False`
+(`_GeminiLiveSession`; documented in `jarvis/realtime/protocol.py`,
+default True when absent — a capability gate, never a provider-name pin,
+AP-21), and `RealtimeVoiceSession._verify_delegate_readback` then claims
+the reply for the desktop surface IMMEDIATELY instead of waiting out the
+no-readback window: the same-family surface TTS (`gemini-flash-tts`,
+one-take, pinned session voice) speaks it, while the trusted result is
+still injected so the live model keeps conversational context — its own
+(re-)rendering stays withheld via the existing one-reply-one-voice flags.
+The browser surface keeps the native readback: it has no server-side
+rendering for `error_spoken`, and its Web-Speech fallback would be a THIRD
+voice. Guards:
+`tests/unit/realtime/test_session.py::test_generative_voice_provider_delegate_reply_is_spoken_by_the_surface`
+and `::test_generative_voice_provider_keeps_native_readback_on_the_browser_surface`.
+
 **Still OPEN.**
 
-- The provider can still drift despite instructions; if it does, the next
-  escalation is rendering delegate results through the surface TTS
-  (deterministic voice) instead of native readback — trading first-audio
-  latency for voice identity.
+- Plain (non-delegate) native turns can still drift despite the standing
+  session clause — inherent to a generative renderer; a full fix would
+  abandon native audio entirely.
 - Label honesty: `voice_name` should distinguish "requested" from
   "verified" (classic TTS engines are verified by construction; native
   realtime audio is only ever requested). Until then, treat realtime

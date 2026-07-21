@@ -92,6 +92,14 @@ class RealtimeSession(Protocol):
     The orchestrator calls it with the current bounded call transcript after
     every completed turn so a provider-internal transport rebuild (e.g. the
     openai_realtime BUG-064 stack) can restore context without a wire call.
+
+    Optional voice-identity capability (probed with ``getattr``, default
+    True when absent): ``renders_pinned_voice: bool``. A session whose
+    native audio generation is a fixed-voice synthesizer that reliably
+    speaks the requested voice keeps the default. A GENERATIVE renderer
+    that can audibly drift from the pinned voice mid-call (BUG-086)
+    declares False; the orchestrator then renders trusted delegate replies
+    through the deterministic surface TTS instead of a native readback.
     """
 
     session_id: str

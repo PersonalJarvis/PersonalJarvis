@@ -2211,6 +2211,123 @@ async def test_scrub_trip_during_delegate_readback_speaks_trusted_reply():
     assert binaries == []
 
 
+class _GenerativeVoiceSession(FakeSession):
+    """A provider session whose native audio renderer cannot hold a pinned
+    voice (BUG-086: Gemini Live's generative audio drifts on readbacks)."""
+
+    renders_pinned_voice = False
+
+    def __init__(self, events):
+        super().__init__(events)
+        self.release = asyncio.Event()
+        self._text_sent = asyncio.Event()
+
+    async def receive(self):
+        yield RealtimeEvent(
+            type="input_transcript",
+            text="What is in my Gmail inbox?",
+            is_final=True,
+        )
+        await self._text_sent.wait()
+        for event in self._events:
+            yield event
+            await asyncio.sleep(0)
+        # Keep the duplex stream open so the test controls session teardown.
+        await self.release.wait()
+
+    async def send_text(self, text):
+        await super().send_text(text)
+        self._text_sent.set()
+
+
+class _GenerativeVoiceProvider(FakeProvider):
+    async def open_session(self, cfg):
+        self.opened_with = cfg
+        self.session = _GenerativeVoiceSession(self._events)
+        return self.session
+
+
+@pytest.mark.asyncio
+async def test_generative_voice_provider_delegate_reply_is_spoken_by_the_surface():
+    """Voice identity (BUG-086 escalation): with renders_pinned_voice=False
+    the desktop surface speaks the delegate reply itself, immediately —
+    never waiting out the no-readback window and never letting the
+    provider's generative renderer re-voice the deep answer.
+    """
+    reply = "The deep answer that must keep the pinned voice."
+    jsons: list[dict] = []
+    binaries: list[bytes] = []
+    provider = _GenerativeVoiceProvider([])
+    sess = RealtimeVoiceSession(
+        session_id="generative-voice-surface-readback",
+        send_binary=lambda data: binaries.append(data) or asyncio.sleep(0),
+        send_json=lambda m: jsons.append(m) or asyncio.sleep(0),
+        provider=provider,
+        config=_delegate_cfg("delegate"),
+        brain=FakeBrain(replies=(reply,)),
+        surface="desktop",
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+
+    async def _spoken():
+        while not any(m.get("type") == "error_spoken" for m in jsons):
+            await asyncio.sleep(0.01)
+
+    # Well inside _DELEGATE_READBACK_WAIT_S (2.5 s): this is the immediate
+    # voice-identity path, not the old provider-mute timeout fallback.
+    await asyncio.wait_for(_spoken(), timeout=1.5)
+    spoken = [m for m in jsons if m.get("type") == "error_spoken"]
+    assert [m["text"] for m in spoken] == [reply]
+    # The provider still received the trusted result as conversation context.
+    assert provider.session.text_inputs, "trusted result was never injected"
+    # No native readback audio reached the speakers.
+    assert binaries == []
+    provider.session.release.set()
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_generative_voice_provider_keeps_native_readback_on_the_browser_surface():
+    """The browser surface has no server-side TTS for error_spoken, so a
+    generative-voice provider still reads the delegate reply back natively
+    there — silence would be worse than a possible voice drift.
+    """
+    reply = "The browser hears the native readback."
+    spoken_audio = AudioChunk(
+        pcm=b"\x01\x02" * 8, sample_rate=24_000, timestamp_ns=0
+    )
+    jsons: list[dict] = []
+    binaries: list[bytes] = []
+    provider = _GenerativeVoiceProvider(
+        [
+            RealtimeEvent(
+                type="output_transcript_delta", text=reply, is_final=True
+            ),
+            RealtimeEvent(type="audio_delta", audio=spoken_audio),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = _session(
+        provider,
+        brain=FakeBrain(replies=(reply,)),
+        jsons=jsons,
+        binaries=binaries,
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+
+    async def _played():
+        while not binaries:
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(_played(), timeout=5)
+    assert binaries == [spoken_audio.pcm]
+    assert not any(m.get("type") == "error_spoken" for m in jsons)
+    provider.session.release.set()
+    await sess.end(reason="test")
+
+
 class _ConfirmAwaitingBrain(FakeBrain):
     """FakeBrain that reports a pending two-turn voice confirmation."""
 

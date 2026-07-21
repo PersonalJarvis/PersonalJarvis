@@ -57,6 +57,14 @@ class _GeminiLiveSession:
     # reason=error (BUG-071). This adapter has no in-protocol resume, so the
     # orchestrator may reopen a fresh session in place and continue the call.
     rebuild_on_transport_death = True
+    # Gemini's native audio is a GENERATIVE renderer, not a fixed-voice
+    # synthesizer: the pinned prebuilt voice is a starting point the model
+    # can audibly drift from when the spoken content reads as a performance
+    # cue — observed live as gender flips between turns of one call
+    # (BUG-086). Declaring this lets the orchestrator speak trusted delegate
+    # replies through the deterministic same-family surface TTS instead of a
+    # native readback, keeping one voice for the whole call.
+    renders_pinned_voice = False
 
     def __init__(
         self,
