@@ -402,3 +402,45 @@ def test_capability_canonical_utterances_route_to_orchestrator(
     utterance: str,
 ) -> None:
     assert plan_turn(utterance).path is TurnPath.ORCHESTRATOR
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # Live complaint 2026-07-21: calendar trivia ("Was ist morgen für  # i18n-allow
+        # ein Tag?") was force-delegated twice — 12-34 s of silence for a
+        # question the realtime model answers itself from the current-date
+        # line in its session instructions. Includes the real ASR garble
+        # ("What is tomorrow for day?") from the live transcript.
+        "Was ist morgen für ein Tag?",  # i18n-allow: forensic fixture
+        "Was ist heute für ein Datum?",  # i18n-allow: forensic fixture
+        "Welcher Tag ist morgen?",  # i18n-allow: German speech-input fixture
+        "Welcher Wochentag ist heute?",  # i18n-allow: German fixture
+        "Welches Datum haben wir?",  # i18n-allow: German speech-input fixture
+        "Der Wievielte ist heute?",  # i18n-allow: German speech-input fixture
+        "What day is it today?",
+        "What day is tomorrow?",
+        "What is tomorrow for day?",
+        "What's the date?",
+        "¿Qué día es hoy?",
+    ],
+)
+def test_calendar_trivia_stays_native(utterance: str) -> None:
+    assert plan_turn(utterance).path is TurnPath.NATIVE_REALTIME
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        # Counter-proofs: a time word next to REAL evidence keeps delegating —
+        # weather/news are current data, a planned day is the user's calendar,
+        # and a dated meeting lookup still needs connected evidence.
+        "Wie ist das Wetter morgen?",  # i18n-allow: German speech-input fixture
+        "Was ist morgen geplant?",  # i18n-allow: German speech-input fixture
+        "Was steht heute in den Nachrichten?",  # i18n-allow: German fixture
+        "What's the date of my meeting tomorrow?",
+        "What's in the news today?",
+    ],
+)
+def test_time_words_with_real_evidence_still_delegate(utterance: str) -> None:
+    assert plan_turn(utterance).path is TurnPath.ORCHESTRATOR

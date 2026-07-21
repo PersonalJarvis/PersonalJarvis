@@ -1788,18 +1788,170 @@ _PROVIDER_DOWN_PHRASES: dict[str, tuple[str, ...]] = {
 }
 
 
-def _provider_down_phrase(lang: str, idx: int) -> str:
-    """Localized, provider-agnostic apology for a total brain-chain failure.
+# Cause-aware variants of the total-failure apology (maintainer directive
+# 2026-07-21: "when such an error happens, SAY what it was about"). One
+# spoken sentence per root-cause CATEGORY — still voice-safe (no provider
+# names, no URLs, no billing pages; ADR-0010) but honest about WHY, with the
+# in-app recovery step. Keys mirror the ``kind`` values classified by the
+# provider chain (``_format_provider_chain_error``); an unknown/unlisted kind
+# falls back to the generic rotation above.
+_PROVIDER_DOWN_CAUSE_PHRASES: dict[str, dict[str, str]] = {
+    "missing_key": {
+        "de": (
+            "Entschuldige — für mein Sprachmodell ist gerade kein "  # i18n-allow
+            "API-Schlüssel hinterlegt. Öffne in der Seitenleiste die "  # i18n-allow
+            "API-Keys und trag einen ein, dann geht es sofort weiter."  # i18n-allow
+        ),
+        "en": (
+            "Sorry — no API key is set for my language model right now. "
+            "Open the API keys in the sidebar and add one, and I can "
+            "continue right away."
+        ),
+        "es": (
+            "Lo siento: ahora mismo no hay ninguna clave de API configurada "
+            "para mi modelo de lenguaje. Abre las claves de API en la barra "
+            "lateral y añade una, y podré continuar enseguida."
+        ),
+    },
+    "bad_key": {
+        "de": (
+            "Entschuldige — mein hinterlegter API-Schlüssel wird abgelehnt, "  # i18n-allow
+            "er ist wohl ungültig oder abgelaufen. Bitte ersetze ihn in den "  # i18n-allow
+            "API-Keys in der Seitenleiste."  # i18n-allow
+        ),
+        "en": (
+            "Sorry — my stored API key is being rejected; it looks invalid "
+            "or expired. Please replace it under API keys in the sidebar."
+        ),
+        "es": (
+            "Lo siento: mi clave de API almacenada está siendo rechazada; "
+            "parece inválida o caducada. Sustitúyela en las claves de API "
+            "de la barra lateral."
+        ),
+    },
+    "account_blocked": {
+        "de": (
+            "Entschuldige — das Konto meines Sprachmodells blockiert gerade, "  # i18n-allow
+            "vermutlich ist das Guthaben aufgebraucht oder das Limit "  # i18n-allow
+            "erreicht. Bitte wirf einen Blick auf das Anbieter-Konto."  # i18n-allow
+        ),
+        "en": (
+            "Sorry — my language model's account is blocking right now, "
+            "most likely the credit is used up or a limit was reached. "
+            "Please take a look at the provider account."
+        ),
+        "es": (
+            "Lo siento: la cuenta de mi modelo de lenguaje está bloqueada "
+            "ahora mismo; probablemente se agotó el crédito o se alcanzó un "
+            "límite. Revisa la cuenta del proveedor, por favor."
+        ),
+    },
+    "rate_limit": {
+        "de": (
+            "Entschuldige — mein Anbieter bremst mich gerade wegen zu "  # i18n-allow
+            "vieler Anfragen. Warte einen Moment und frag mich dann "  # i18n-allow
+            "einfach noch einmal."  # i18n-allow
+        ),
+        "en": (
+            "Sorry — my provider is throttling me for too many requests. "
+            "Give it a moment and just ask me again."
+        ),
+        "es": (
+            "Lo siento: mi proveedor me está limitando por demasiadas "
+            "solicitudes. Espera un momento y vuelve a preguntarme."
+        ),
+    },
+    "invalid_model": {
+        "de": (
+            "Entschuldige — das eingestellte Modell wird vom Anbieter nicht "  # i18n-allow
+            "akzeptiert. Bitte prüf die Modell-Auswahl in den Einstellungen."  # i18n-allow
+        ),
+        "en": (
+            "Sorry — the configured model is not accepted by the provider. "
+            "Please check the model selection in the settings."
+        ),
+        "es": (
+            "Lo siento: el modelo configurado no es aceptado por el "
+            "proveedor. Revisa la selección de modelo en los ajustes."
+        ),
+    },
+    "unreachable": {
+        "de": (
+            "Entschuldige — ich erreiche meinen Anbieter gerade nicht, "  # i18n-allow
+            "vermutlich ein Netzwerk- oder Anbieterproblem. Versuch es "  # i18n-allow
+            "gleich bitte noch einmal."  # i18n-allow
+        ),
+        "en": (
+            "Sorry — I can't reach my provider right now, likely a network "
+            "or provider issue. Please try again in a moment."
+        ),
+        "es": (
+            "Lo siento: no puedo comunicarme con mi proveedor ahora mismo; "
+            "probablemente sea un problema de red o del proveedor. Inténtalo "
+            "de nuevo en un momento."
+        ),
+    },
+}
+
+# Priority when several providers failed for different reasons — the FIRST
+# matching kind names the spoken cause. Mirrors the root-cause ordering of
+# ``_format_provider_chain_error`` (missing key beats rate limit, etc.);
+# ``skipped_cooldown`` collapses onto rate_limit and network/other onto
+# ``unreachable``.
+_PROVIDER_DOWN_CAUSE_PRIORITY: tuple[str, ...] = (
+    "missing_key",
+    "bad_key",
+    "account_blocked",
+    "invalid_model",
+    "rate_limit",
+    "unreachable",
+)
+
+
+def _primary_provider_down_cause(
+    errors: list[tuple[str, str, str, str]] | None,
+) -> str | None:
+    """Map a provider-error list onto the single spoken cause category."""
+    if not errors:
+        return None
+    kinds = {kind for _prov, _model, kind, _detail in errors}
+    if "skipped_cooldown" in kinds:
+        kinds.add("rate_limit")
+    if kinds - {
+        "missing_key",
+        "bad_key",
+        "account_blocked",
+        "invalid_model",
+        "rate_limit",
+        "skipped_cooldown",
+        "empty_response",
+    }:
+        # Any unclassified failure (network, timeout, 5xx) reads as
+        # unreachable — the honest generic cause.
+        kinds.add("unreachable")
+    for cause in _PROVIDER_DOWN_CAUSE_PRIORITY:
+        if cause in kinds:
+            return cause
+    return None
+
+
+def _provider_down_phrase(lang: str, idx: int, cause: str | None = None) -> str:
+    """Localized apology for a total brain-chain failure, cause-aware.
 
     ``lang`` is a reply-language code (de/en/es); anything else — notably
-    "auto" — falls back to German (the default locale). ``idx`` rotates
-    deterministically through the three variants so repeated failures in one
-    session don't repeat the identical sentence. Voice-safe by construction:
-    no provider names, no URLs, no jargon (anti-AP-11 / ADR-0010).
+    "auto" — falls back to German (the default locale). When ``cause`` names
+    a known failure category, the phrase states WHY and the in-app recovery
+    step (maintainer directive 2026-07-21) — still without provider names,
+    URLs, or jargon (ADR-0010). Otherwise ``idx`` rotates deterministically
+    through the generic variants so repeated failures in one session don't
+    repeat the identical sentence.
     """
-    variants = _PROVIDER_DOWN_PHRASES.get(
-        (lang or "").strip().lower(), _PROVIDER_DOWN_PHRASES["de"]
-    )
+    lang_key = (lang or "").strip().lower()
+    if cause:
+        cause_table = _PROVIDER_DOWN_CAUSE_PHRASES.get(cause)
+        if cause_table:
+            return cause_table.get(lang_key, cause_table["de"])
+    variants = _PROVIDER_DOWN_PHRASES.get(lang_key, _PROVIDER_DOWN_PHRASES["de"])
     return variants[idx % len(variants)]
 
 
@@ -2940,21 +3092,24 @@ class BrainManager:
             lang = getattr(self, "_turn_detected_lang", "") or lang
         return lang if lang in _REPLY_LANG_NAMES else "de"
 
-    def _next_provider_down_phrase(self) -> str:
+    def _next_provider_down_phrase(self, cause: str | None = None) -> str:
         """Localized 'I can't reach my model' apology + advance the rotation.
 
-        Spoken when the whole provider chain fails. Provider-agnostic and
-        voice-safe (no names/URLs) — the actionable diagnostic is logged, never
-        spoken (live complaint 2026-06-01: the grok/Anthropic billing message
-        was read aloud while Gemini was the active provider).
+        Spoken when the whole provider chain fails. ``cause`` (a classified
+        failure category) makes the phrase state WHY and the in-app fix —
+        still voice-safe, no provider names/URLs — the detailed diagnostic
+        stays logged, never spoken (live complaint 2026-06-01: the grok/
+        Anthropic billing message was read aloud while Gemini was active).
         """
         phrase = _provider_down_phrase(
-            self._resolve_turn_lang(), self._provider_down_idx
+            self._resolve_turn_lang(), self._provider_down_idx, cause
         )
         self._provider_down_idx += 1
         return phrase
 
-    async def _provider_down_reply(self, trace_uuid: UUID) -> str:
+    async def _provider_down_reply(
+        self, trace_uuid: UUID, cause: str | None = None
+    ) -> str:
         """Total-failure apology, ALSO surfaced to the transcript.
 
         Normal calls publish the phrase as ``ResponseGenerated`` so the
@@ -2964,7 +3119,7 @@ class BrainManager:
         NOT appended to conversation history because a provider outage must not
         pollute the LLM context for later turns.
         """
-        phrase = self._next_provider_down_phrase()
+        phrase = self._next_provider_down_phrase(cause)
         # _next_provider_down_phrase already localized the phrase via
         # _resolve_turn_lang; resolving again here is deterministic (same pin /
         # detected-language inputs, the rotation index does not affect language)
@@ -7710,7 +7865,8 @@ class BrainManager:
                 )
             else:
                 log.warning("No brain providers available — spoken fallback used.")
-            return await self._provider_down_reply(trace_uuid)
+            # An all-keyless chain has exactly one honest spoken cause.
+            return await self._provider_down_reply(trace_uuid, cause="missing_key")
 
         history_override = _TURN_HISTORY_OVERRIDE.get()
         history = (
@@ -8285,7 +8441,9 @@ class BrainManager:
                 "Spoken fallback used instead of chain diagnostic: %s",
                 _format_provider_chain_error(provider_errors),
             )
-            return await self._provider_down_reply(trace_uuid)
+            return await self._provider_down_reply(
+                trace_uuid, cause=_primary_provider_down_cause(provider_errors)
+            )
 
         # Text-serialized calls are recovered inside BrainDispatcher's shared
         # ToolUseLoop, where the exact turn-scoped tool surface, deadline,

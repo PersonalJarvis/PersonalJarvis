@@ -87,3 +87,90 @@ class TestNextProviderDownPhraseAutoDetect:
     def test_pin_wins_over_detected_turn_language(self) -> None:
         m = self._manager("de", "en")
         assert m._next_provider_down_phrase() == _PROVIDER_DOWN_PHRASES["de"][0]
+
+
+class TestCauseAwareProviderDownPhrase:
+    """Maintainer directive 2026-07-21: when the chain fails, SAY what it was
+    about — a classified root cause (missing key, dead credit, rate limit, ...)
+    speaks its own honest, in-app-actionable sentence instead of the generic
+    apology. Still voice-safe: no provider names, no URLs, no billing pages.
+    """
+
+    # Provider names and URL/billing jargon stay banned even in cause
+    # phrases; naming the CAUSE ("credit used up") is the whole point, so
+    # "credit"/"Guthaben" are deliberately allowed here.  # i18n-allow
+    _CAUSE_JARGON = (
+        "grok", "anthropic", "openai", "openrouter", "gemini", "xai",
+        "console.", "http", "billing",
+    )
+
+    def test_every_cause_covers_every_supported_language(self) -> None:
+        from jarvis.brain.manager import _PROVIDER_DOWN_CAUSE_PHRASES
+
+        for cause, table in _PROVIDER_DOWN_CAUSE_PHRASES.items():
+            assert set(table) == {"de", "en", "es"}, cause
+
+    def test_cause_phrases_are_voice_safe(self) -> None:
+        from jarvis.brain.manager import _PROVIDER_DOWN_CAUSE_PHRASES
+
+        for cause, table in _PROVIDER_DOWN_CAUSE_PHRASES.items():
+            for lang, phrase in table.items():
+                low = phrase.lower()
+                for bad in self._CAUSE_JARGON:
+                    assert bad not in low, (cause, lang, bad)
+
+    def test_known_cause_selects_cause_phrase(self) -> None:
+        from jarvis.brain.manager import _PROVIDER_DOWN_CAUSE_PHRASES
+
+        got = _provider_down_phrase("en", 0, "missing_key")
+        assert got == _PROVIDER_DOWN_CAUSE_PHRASES["missing_key"]["en"]
+
+    def test_unknown_cause_falls_back_to_generic_rotation(self) -> None:
+        assert _provider_down_phrase("en", 1, "weird_kind") == (
+            _PROVIDER_DOWN_PHRASES["en"][1]
+        )
+
+    def test_unknown_language_falls_back_to_german_cause_phrase(self) -> None:
+        from jarvis.brain.manager import _PROVIDER_DOWN_CAUSE_PHRASES
+
+        got = _provider_down_phrase("fr", 0, "rate_limit")
+        assert got == _PROVIDER_DOWN_CAUSE_PHRASES["rate_limit"]["de"]
+
+
+class TestPrimaryProviderDownCause:
+    @staticmethod
+    def _err(kind: str, prov: str = "p") -> tuple[str, str, str, str]:
+        return (prov, "model", kind, "detail")
+
+    def test_missing_key_beats_rate_limit(self) -> None:
+        from jarvis.brain.manager import _primary_provider_down_cause
+
+        errors = [self._err("rate_limit", "a"), self._err("missing_key", "b")]
+        assert _primary_provider_down_cause(errors) == "missing_key"
+
+    def test_skipped_cooldown_reads_as_rate_limit(self) -> None:
+        from jarvis.brain.manager import _primary_provider_down_cause
+
+        assert (
+            _primary_provider_down_cause([self._err("skipped_cooldown")])
+            == "rate_limit"
+        )
+
+    def test_unclassified_failure_reads_as_unreachable(self) -> None:
+        from jarvis.brain.manager import _primary_provider_down_cause
+
+        assert (
+            _primary_provider_down_cause([self._err("network_error")])
+            == "unreachable"
+        )
+
+    def test_empty_response_only_keeps_generic_phrase(self) -> None:
+        from jarvis.brain.manager import _primary_provider_down_cause
+
+        assert _primary_provider_down_cause([self._err("empty_response")]) is None
+
+    def test_no_errors_keeps_generic_phrase(self) -> None:
+        from jarvis.brain.manager import _primary_provider_down_cause
+
+        assert _primary_provider_down_cause([]) is None
+        assert _primary_provider_down_cause(None) is None

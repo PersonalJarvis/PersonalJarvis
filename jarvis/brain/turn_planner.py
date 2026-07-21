@@ -240,6 +240,29 @@ _ASSISTANT_DAYPLAN_RE = re.compile(
     r"\bque (?:haces|estas haciendo)\b"
     r"(?:[^.?!]{0,24}?\b(?:hoy|manana|ahora)\b)?"
 )
+# Calendar trivia: asking which day/weekday/date it is (today/tomorrow/...)
+# is answerable by the realtime model itself — the session instructions carry
+# the current local date — yet the time word ("morgen", "tomorrow") used to
+# read as a CURRENT_DATA freshness marker and force a 12-34 s delegation
+# (live complaint 2026-07-21: "Was ist morgen für ein Tag?"  # i18n-allow: quoted utterance
+# delegated twice). Like the dayplan idiom, the matched span is removed
+# before the weak scans; a real freshness topic (weather, news, schedule)
+# never matches these shapes and keeps delegating.
+_DATE_TRIVIA_RE = re.compile(
+    # i18n-allow: multilingual speech-input matching data
+    r"\bwas (?:ist|wird|war) (?:heute|morgen|uebermorgen|gestern)"  # i18n-allow: speech input
+    r"[^.?!]{0,24}?\b(?:tag|wochentag|datum)\b|"  # i18n-allow: speech input
+    r"\b(?:welcher|welchen|was fuer ein\w*) (?:tag|wochentag)\b"  # i18n-allow: speech input
+    r"[^.?!]{0,16}?\b(?:ist|haben wir|war)\b(?:[^.?!]{0,16}?"  # i18n-allow: speech input
+    r"\b(?:heute|morgen|uebermorgen|gestern)\b)?|"  # i18n-allow: speech input
+    r"\bwelches datum\b(?:[^.?!]{0,12}?\bhaben wir\b)?|"  # i18n-allow: speech input
+    r"\bder wievielte\b(?:[^.?!]{0,16}?"
+    r"\b(?:heute|morgen|uebermorgen|gestern)\b)?|"
+    r"\bwhat day (?:is|was)(?: it)?(?: (?:today|tomorrow|yesterday))?\b|"
+    r"\bwhat is (?:today|tomorrow|yesterday)(?:'s)? (?:day|date|for day)\b|"
+    r"\bwhat(?:'s| is) the (?:date|day)\b(?: (?:today|tomorrow)\b)?|"
+    r"\bque dia es (?:hoy|manana)\b|\ba que fecha estamos\b"
+)
 
 _FOLLOW_UP_REFERENCE_RE = re.compile(
     r"\b(?:that|there|those|them|inside|what else|findings?|results?|"
@@ -417,10 +440,12 @@ def plan_turn(
     )
     opinion = bool(_OPINION_RE.search(normalized))
     why_question = bool(_WHY_RE.search(normalized))
-    # Remove the assistant-dayplan idiom span so its own words ("machst",
-    # "morgen") cannot feed the weak action/current scans below.
+    # Remove the assistant-dayplan and calendar-trivia idiom spans so their
+    # own words ("machst", "morgen", "tomorrow") cannot feed the weak
+    # action/current scans below.
     # i18n-allow: names the German idiom tokens under suppression
     weak_scan_text = _ASSISTANT_DAYPLAN_RE.sub(" ", normalized)
+    weak_scan_text = _DATE_TRIVIA_RE.sub(" ", weak_scan_text)
 
     action_intent = bool(_ACTION_FALLBACK_RE.search(weak_scan_text))
     if capability_registry is not None:
@@ -432,7 +457,10 @@ def plan_turn(
             pass
 
     lookup = bool(_LOOKUP_SHAPE_RE.search(normalized))
-    private = bool(_OWNERSHIP_RE.search(normalized))
+    # Ownership scans the idiom-stripped text: the only possessive-shaped
+    # token inside a stripped span is the "haben wir" of "Welches Datum
+    # haben wir?" — calendar trivia, not the user's data.  # i18n-allow
+    private = bool(_OWNERSHIP_RE.search(weak_scan_text))
 
     if action_intent and not instructional and not (deliberative or opinion):
         reasons.add(TurnReason.ACTION)
