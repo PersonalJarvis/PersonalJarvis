@@ -63,10 +63,14 @@ class RealtimeSessionConfig:
     # GA Realtime schema rejects requesting text and audio simultaneously.
     modalities: tuple[str, ...] = ("audio",)
     turn_detection: str = "server_vad"       # "server_vad" | "semantic_vad"
-    # Shared with SpeechConfig.vad_silence_ms (the Settings "Thinking pause").
-    # Providers must wait for this much detected silence before committing the
-    # user's turn, so a natural pause cannot start model reasoning early.
-    silence_duration_ms: int = 1500
+    # None (the default) = the provider's NATIVE turn detection decides when
+    # the user's turn ends. The Settings "Thinking pause"
+    # (SpeechConfig.vad_silence_ms) endpoints the classic pipeline only —
+    # forcing it into realtime sessions made the realtime model wait the full
+    # window after every utterance, which reads as "done speaking but still
+    # listening" (maintainer directive 2026-07-21). An explicit int still
+    # overrides the provider default for callers that need a fixed window.
+    silence_duration_ms: int | None = None
     tools: tuple[dict[str, Any], ...] = ()
     # Bounded transcript of the call so far, oldest first, as
     # ``{"role": "user" | "assistant", "text": ...}`` mappings. A fresh
