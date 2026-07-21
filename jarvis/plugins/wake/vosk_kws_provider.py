@@ -480,6 +480,16 @@ class VoskKwsProvider:
 
     name = "vosk_kws"
 
+    # Catch-up contract with the pipeline fanout (``_queue_iter``): Kaldi
+    # streams arbitrary buffer sizes, so when this detector falls behind live
+    # audio (busy desktop CPU — live forensic 2026-07-21: the fanout queue sat
+    # pinned at 50 x 100 ms chunks and every wake was heard ~5 s late), the
+    # pipeline may coalesce up to this many backlogged chunks into ONE
+    # AudioChunk. The per-chunk state machine below is byte-based
+    # (``pending_tail``, ring) and decision-identical either way; batches only
+    # ever form while catching up, never on the caught-up hot path.
+    coalesce_catchup_chunks = 10
+
     def __init__(
         self,
         phrase: str,
@@ -1208,7 +1218,22 @@ class VoskKwsProvider:
                 # decode state stays aligned with the ring.
                 for r in recs.values():
                     self._grammar_hit(r, pcm)
-                if pending_tail < self._confirm_tail_bytes:
+                # A POSITIVE early check is already authoritative for this
+                # candidate (later audio belongs to the session and cannot
+                # revoke it — see _run_early_check). Waiting out the rest of
+                # the confirm tail after that verdict is pure dead time on
+                # every early-confirmed wake (~0.3-0.5 s of perceived spawn
+                # latency), so fire as soon as the verdict lands. A pending,
+                # failed, or negative early task changes nothing: the normal
+                # tail wait + full-window verify below still decide.
+                early_positive = (
+                    self._early_task is not None
+                    and self._early_task.done()
+                    and not self._early_task.cancelled()
+                    and self._early_task.exception() is None
+                    and self._early_task.result() is True
+                )
+                if pending_tail < self._confirm_tail_bytes and not early_positive:
                     continue
                 is_final, conf, hit_path = pending
                 pending = None
@@ -1296,14 +1321,30 @@ class VoskKwsProvider:
                 # de-spoken garbles on the de model yet verifies on en).
                 # Fail-CLOSED via _early_check: an opportunistic rescue must
                 # never fire off a broken sibling (the fail-open contract
-                # protects only the primary confirm).
-                for other in self._model_paths:
-                    if other == hit_path or other not in recs:
-                        continue
-                    if await asyncio.to_thread(self._early_check, window, other):
-                        confirmed = True
-                        fired_path = other
-                        break
+                # protects only the primary confirm). The siblings verify
+                # CONCURRENTLY — each owns its fresh one-shot recognizers
+                # (AP-24-safe: nothing mutable is shared), and the sequential
+                # form paid the SUM of two full verifies right on the fire
+                # path of exactly the phrases the primary model garbles. The
+                # decision is unchanged: the first sibling in configured
+                # order that verifies still wins.
+                others = [
+                    other
+                    for other in self._model_paths
+                    if other != hit_path and other in recs
+                ]
+                if others:
+                    rescues = await asyncio.gather(
+                        *(
+                            asyncio.to_thread(self._early_check, window, other)
+                            for other in others
+                        )
+                    )
+                    for other, rescued in zip(others, rescues, strict=True):
+                        if rescued:
+                            confirmed = True
+                            fired_path = other
+                            break
             if not confirmed:
                 self._stat_suppressed_confirm += 1
                 # Invalidate this generation and defensively retract any stale

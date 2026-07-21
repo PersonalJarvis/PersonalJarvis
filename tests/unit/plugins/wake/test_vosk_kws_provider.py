@@ -637,6 +637,108 @@ async def test_immediate_retry_is_latched_during_reject_backpressure(
     assert p.stats()["backpressure_windows"] == 1
 
 
+# --- spawn latency: early-fire + concurrent sibling rescue ----------------------
+
+
+async def test_positive_early_check_fires_without_waiting_the_full_tail(
+    fake_vosk, monkeypatch
+) -> None:
+    """A positive early check is authoritative — the rest of the confirm tail
+    is dead time (spawn-latency, live 2026-07-21). With a tail far longer than
+    the whole test stream, the old wait-out-the-tail path could never fire;
+    the fire below therefore proves the early verdict alone released it."""
+    p = VoskKwsProvider(
+        "Hey Nova", model_path="fake", keyword="nova", confirm_tail_s=600.0
+    )
+    monkeypatch.setattr(p, "_early_check", lambda window, model_path=None: True)
+
+    fired: list[str] = []
+
+    async def _drive() -> None:
+        async def _iter() -> AsyncIterator[AudioChunk]:
+            for _ in range(12):
+                # Give the early-check worker thread room to land its verdict.
+                await asyncio.sleep(0.02)
+                yield _chunk()
+
+        async for kw in p.detect(_iter()):
+            fired.append(kw)
+
+    await asyncio.wait_for(_drive(), timeout=5.0)
+    assert fired == ["nova"]
+    assert p.stats()["fired"] == 1
+
+
+async def test_negative_early_check_still_waits_for_the_tail(
+    fake_vosk, monkeypatch
+) -> None:
+    """The early-fire fast path must never let a NEGATIVE early check bypass
+    the tail wait: with an over-long tail and a rejecting early check, the
+    stream ends without a fire (the full-window fallback never becomes due)."""
+    p = VoskKwsProvider(
+        "Hey Nova", model_path="fake", keyword="nova", confirm_tail_s=600.0
+    )
+    monkeypatch.setattr(p, "_early_check", lambda window, model_path=None: False)
+
+    fired: list[str] = []
+
+    async def _drive() -> None:
+        async def _iter() -> AsyncIterator[AudioChunk]:
+            for _ in range(12):
+                await asyncio.sleep(0.02)
+                yield _chunk()
+
+        async for kw in p.detect(_iter()):
+            fired.append(kw)
+
+    await asyncio.wait_for(_drive(), timeout=5.0)
+    assert fired == []
+
+
+async def test_sibling_rescue_verifies_siblings_concurrently(
+    fake_vosk, monkeypatch
+) -> None:
+    """Deterministic concurrency proof via a 2-party barrier (same pattern as
+    the grammar/free-decode test): both sibling rescues must be in flight at
+    once. A sequential regression strands the first sibling at the barrier
+    until its timeout breaks the barrier and fails the test hard.
+
+    ``confirm_tail_s=0.0`` disables the early-candidate path so the patched
+    ``_early_check`` is reached ONLY by the rescue calls."""
+    barrier = threading.Barrier(2, timeout=2.0)
+    p = VoskKwsProvider(
+        "Hey Nova",
+        model_path="primary",
+        model_paths=["primary", "sib-a", "sib-b"],
+        keyword="nova",
+        confirm_tail_s=0.0,
+    )
+    for m in ("primary", "sib-a", "sib-b"):
+        p._ensure_model(m)
+    monkeypatch.setattr(
+        p, "_verify_candidate", lambda window, model_path=None: False
+    )
+
+    def _rescue(window, model_path=None):  # noqa: ANN001, ARG001
+        barrier.wait()
+        return True
+
+    monkeypatch.setattr(p, "_early_check", _rescue)
+    fired = await _run_detect(p, [_chunk() for _ in range(12)])
+    assert fired == ["nova"]
+    assert barrier.broken is False, (
+        "the barrier never filled — the sibling rescues ran SEQUENTIALLY, "
+        "not concurrently"
+    )
+
+
+def test_provider_advertises_catchup_coalescing() -> None:
+    """The pipeline's ``_queue_iter`` catch-up batching is capability-gated on
+    this attribute — losing it silently reverts the wake path to grinding
+    through seconds-stale audio 100 ms at a time on a busy CPU."""
+    assert VoskKwsProvider.coalesce_catchup_chunks > 1
+
+
 # --- prewarmed verify-recognizer stock ------------------------------------------
 
 

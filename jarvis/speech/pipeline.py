@@ -1083,12 +1083,51 @@ def _looks_like_complete_smalltalk(text: str) -> bool:
     )
 
 
-async def _queue_iter(q: asyncio.Queue) -> AsyncIterator[AudioChunk]:
-    """Adapt a queue into an async iterator for wake detectors."""
+async def _queue_iter(
+    q: asyncio.Queue, *, coalesce_max_chunks: int = 1
+) -> AsyncIterator[AudioChunk]:
+    """Adapt a queue into an async iterator for wake detectors.
+
+    ``coalesce_max_chunks`` > 1 turns a BACKLOG into catch-up batches: after
+    the blocking get, every chunk already waiting in the queue (up to the cap)
+    is drained non-blocking and concatenated into ONE AudioChunk. A detector
+    that falls behind live audio on a busy desktop CPU (live forensic
+    2026-07-21: oww_q pinned at 50 → the wake word was heard FIVE SECONDS
+    late) then pays its per-chunk loop/decode overhead once per batch instead
+    of once per 100 ms block and catches back up to the present instead of
+    grinding through stale audio at the same rate it arrives. When the
+    consumer is keeping up the queue is empty and every chunk passes through
+    untouched, so the caught-up hot path is byte-identical to before. Only a
+    detector that declares the capability (``coalesce_catchup_chunks``) gets
+    batches — a provider with fixed frame-size expectations keeps the
+    per-chunk contract.
+    """
     while True:
         chunk = await q.get()
         if chunk is None:  # Sentinel
             return
+        if coalesce_max_chunks > 1 and not q.empty():
+            parts = [chunk.pcm]
+            ended = False
+            while len(parts) < coalesce_max_chunks:
+                try:
+                    nxt = q.get_nowait()
+                except asyncio.QueueEmpty:
+                    break
+                if nxt is None:  # Sentinel mid-drain: flush, then end
+                    ended = True
+                    break
+                parts.append(nxt.pcm)
+            if len(parts) > 1:
+                chunk = AudioChunk(
+                    pcm=b"".join(parts),
+                    sample_rate=chunk.sample_rate,
+                    timestamp_ns=chunk.timestamp_ns,
+                    channels=chunk.channels,
+                )
+            if ended:
+                yield chunk
+                return
         yield chunk
 
 
@@ -5374,7 +5413,17 @@ class SpeechPipeline:
             return handoff_buffer
 
         async def _run_oww() -> str:
-            async for kw in self._wake.detect(_queue_iter(oww_queue)):
+            # Capability-gated catch-up: a detector that can consume variable
+            # chunk sizes (vosk_kws) advertises how many backlogged 100 ms
+            # blocks may be coalesced into one catch-up batch, so a busy CPU
+            # never leaves it grinding through seconds-stale audio (the
+            # inconsistent multi-second wake delay, live 2026-07-21).
+            coalesce = max(
+                1, int(getattr(self._wake, "coalesce_catchup_chunks", 1) or 1)
+            )
+            async for kw in self._wake.detect(
+                _queue_iter(oww_queue, coalesce_max_chunks=coalesce)
+            ):
                 return f"oww:{kw}"
             return ""
 
