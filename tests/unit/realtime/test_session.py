@@ -2328,6 +2328,61 @@ async def test_generative_voice_provider_keeps_native_readback_on_the_browser_su
     await sess.end(reason="test")
 
 
+@pytest.mark.asyncio
+async def test_generative_voice_readback_race_never_speaks_twice():
+    """Pin the ordering invariant of the immediate surface claim: when the
+    provider starts a native readback in the same instant the surface takes
+    the reply, exactly ONE rendering reaches the user — the surface
+    error_spoken or the native audio, never both. The claim's flag-set has
+    no await between check and set, and _emit_audio re-checks the withhold
+    flags right before send; a refactor inserting an await there would
+    break this test.
+    """
+    reply = "One answer, one voice."
+    spoken_audio = AudioChunk(
+        pcm=b"\x01\x02" * 8, sample_rate=24_000, timestamp_ns=0
+    )
+    jsons: list[dict] = []
+    binaries: list[bytes] = []
+    provider = _GenerativeVoiceProvider(
+        [
+            RealtimeEvent(
+                type="output_transcript_delta", text=reply, is_final=True
+            ),
+            RealtimeEvent(type="audio_delta", audio=spoken_audio),
+            RealtimeEvent(type="turn_complete"),
+        ]
+    )
+    sess = RealtimeVoiceSession(
+        session_id="generative-voice-readback-race",
+        send_binary=lambda data: binaries.append(data) or asyncio.sleep(0),
+        send_json=lambda m: jsons.append(m) or asyncio.sleep(0),
+        provider=provider,
+        config=_delegate_cfg("delegate"),
+        brain=FakeBrain(replies=(reply,)),
+        surface="desktop",
+    )
+
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+
+    async def _one_rendering():
+        while not binaries and not any(
+            m.get("type") == "error_spoken" for m in jsons
+        ):
+            await asyncio.sleep(0.01)
+
+    await asyncio.wait_for(_one_rendering(), timeout=5)
+    # Give a wrong second rendering time to surface before asserting.
+    await asyncio.sleep(0.3)
+    surface_spoken = [m for m in jsons if m.get("type") == "error_spoken"]
+    native_played = bool(binaries)
+    assert (len(surface_spoken) == 1) != native_played
+    if surface_spoken:
+        assert surface_spoken[0]["text"] == reply
+    provider.session.release.set()
+    await sess.end(reason="test")
+
+
 class _ConfirmAwaitingBrain(FakeBrain):
     """FakeBrain that reports a pending two-turn voice confirmation."""
 
