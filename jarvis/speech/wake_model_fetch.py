@@ -75,12 +75,25 @@ def _normalized_membership_key(language: Any) -> str:
 def resolve_wake_language(cfg: Any) -> str:
     """Best speech language for the wake model.
 
-    Cascade: ``cfg.stt.language`` when it names a concrete supported code (the
-    user explicitly forced a recognition language) -> ``cfg.ui.language`` (the
-    language the user actually chose in onboarding) -> ``DEFAULT_LOCALE``. Both
-    reads are duck-typed (``getattr`` chains) and this never raises, so a
-    missing/odd ``stt``/``ui``/``cfg`` just falls through to the next step.
+    Cascade: ``cfg.trigger.wake_word.language`` when it names a concrete
+    supported code (the user pinned the wake-word language in Settings — an
+    INDEPENDENT choice that must never follow the app display language) ->
+    ``cfg.stt.language`` when concrete (the user forced a recognition
+    language) -> ``cfg.ui.language`` (the language the user chose in
+    onboarding, a sensible default while nothing is pinned) ->
+    ``DEFAULT_LOCALE``. All reads are duck-typed (``getattr`` chains) and this
+    never raises, so a missing/odd ``trigger``/``stt``/``ui``/``cfg`` just
+    falls through to the next step.
     """
+    try:
+        wake_lang = getattr(
+            getattr(getattr(cfg, "trigger", None), "wake_word", None), "language", None
+        )
+    except Exception:  # noqa: BLE001 - duck-typed cfg read must never raise
+        wake_lang = None
+    if _normalized_membership_key(wake_lang) in VOSK_MODELS:
+        return vosk_lang_for(wake_lang)
+
     try:
         stt_lang = getattr(getattr(cfg, "stt", None), "language", None)
     except Exception:  # noqa: BLE001 - duck-typed cfg read must never raise

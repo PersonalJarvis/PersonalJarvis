@@ -270,6 +270,14 @@ class WakeWordConfig(BaseModel):
     engine: str = "auto"
     # Path to a user-supplied/trained .onnx wake model (engine="custom_onnx").
     custom_model_path: str = ""
+    # The language the user SPEAKS their wake word in — an INDEPENDENT setting,
+    # deliberately decoupled from the app display language ([ui].language) and
+    # the general recognition language ([stt].language). "auto" keeps the
+    # legacy cascade (stt -> ui -> default) so existing installs behave
+    # unchanged; a concrete code ("de"/"en"/"es") pins the wake model's
+    # language for good — switching the app language never moves it again.
+    # Resolved by jarvis/speech/wake_model_fetch.py::resolve_wake_language.
+    language: str = "auto"
     # READ-COMPAT ONLY, runtime-ignored since 2026-07-10: the user-facing
     # Sensitivity slider was removed (mandate: always run every wake path at
     # its calibrated-reliable maximum-speed value, identically on every OS —
@@ -291,6 +299,15 @@ class WakeWordConfig(BaseModel):
     def _coerce_engine(cls, value: object) -> str:
         text = str(value or "").strip().lower()
         return text if text in WAKE_ENGINES else "auto"
+
+    @field_validator("language", mode="before")
+    @classmethod
+    def _coerce_language(cls, value: object) -> str:
+        # Normalize only — membership is checked by resolve_wake_language, so an
+        # unknown value simply falls through the cascade instead of failing
+        # validation (a stale/hand-edited config must never brick boot, AP-16).
+        text = str(value or "").strip().lower()
+        return text or "auto"
 
     @field_validator("sensitivity", mode="before")
     @classmethod

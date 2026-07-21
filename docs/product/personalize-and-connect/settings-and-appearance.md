@@ -61,10 +61,12 @@ Read [Languages and Voices](languages-and-voices) before changing several
 language controls at once. Read [Audio Devices and Wake Word](audio-and-wake-word)
 for the complete microphone and wake setup.
 
-The **Which language do you speak?** choice inside Wake Word changes the same
-recognition setting shown as **Voice Recognition Language** under Languages.
-The Wake Word panel asks for a specific spoken language because its local
-detector needs one; changing either control updates the other.
+The **Which language do you speak?** choice inside Wake Word is the wake
+word's own, independent language setting. It only decides which local acoustic
+model listens for your phrase. It does not change the interface language, the
+**Voice Recognition Language** under Languages, or the reply language — and
+none of those change it back. The app can stay in English while your wake word
+is spoken in German.
 
 ### Realtime Voice and Providers
 

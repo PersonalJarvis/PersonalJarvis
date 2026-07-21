@@ -9,6 +9,10 @@ export interface WakeWordConfig {
   engine: string;
   custom_model_path: string;
   fuzzy_match_ratio: number;
+  // The independent wake-word language pin ("auto" = derive a sensible
+  // default; a concrete code pins the acoustic model's language and never
+  // follows the app display language).
+  language: string;
   engines: string[];
   instant_phrases: string[];
   local_whisper_available: boolean;
@@ -119,6 +123,24 @@ export function useWakeWord() {
     [],
   );
 
+  // Pin the wake-word language (PUT /api/settings/wake-language). Applies
+  // immediately: the backend live-swaps the wake plan and provisions the
+  // matching model in the background when it is not on disk yet. Deliberately
+  // its OWN setting — never writes the app display language or the general
+  // STT recognition language.
+  const setWakeLanguage = useCallback(async (language: string): Promise<void> => {
+    const res = await fetch("/api/settings/wake-language", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ language }),
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(body.detail ?? `HTTP ${res.status}`);
+    }
+    window.dispatchEvent(new CustomEvent("jarvis:wake-word-changed"));
+  }, []);
+
   // Turn the always-on wake word ON/OFF (the activation master switch). The
   // backend applies it to a running voice pipeline and only requests a restart
   // when no live desktop voice pipeline exists.
@@ -139,7 +161,7 @@ export function useWakeWord() {
     [],
   );
 
-  return { config, loading, error, refetch, saveWakeWord, setWakeActivation };
+  return { config, loading, error, refetch, saveWakeWord, setWakeLanguage, setWakeActivation };
 }
 
 /**

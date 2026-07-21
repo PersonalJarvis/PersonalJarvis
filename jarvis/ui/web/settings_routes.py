@@ -477,14 +477,32 @@ async def put_stt_language(body: SttLanguageBody, request: Request) -> dict[str,
         except Exception as exc:  # noqa: BLE001 — frozen model is not an error
             log.debug("in-memory cfg.stt.language update skipped: %s", exc)
 
-    # Make "switch language -> it works" TRUE without a restart: re-resolve the
-    # wake word against the NEW language and live-apply it to the running voice
-    # pipeline (a Vosk model is acoustically language-specific, so the language is
-    # what decides whether the wake fires at all). If the matching-language model
-    # is not on disk yet, apply the best available plan now (multilingual
-    # stt_match) and provision the model in the background, then re-apply so it
-    # upgrades to the fast vosk_kws path. Best-effort throughout; a headless/down
-    # pipeline just applies on the next voice start.
+    applied_live = _live_apply_wake_plan(request, log_tag="stt-language")
+
+    return {
+        "ok": True,
+        "language": lang,
+        "persisted": persisted,
+        "applied_live": applied_live,
+        # Only ask for a restart when we could NOT live-apply (no running pipeline).
+        "restart_required": not applied_live,
+    }
+
+
+def _live_apply_wake_plan(request: Request, *, log_tag: str) -> bool:
+    """Re-resolve the wake plan against the CURRENT config and live-apply it.
+
+    Makes "switch language -> it works" TRUE without a restart: re-resolve the
+    wake word against the newly-effective language and live-apply it to the
+    running voice pipeline (a Vosk model is acoustically language-specific, so
+    the language is what decides whether the wake fires at all). If the
+    matching-language model is not on disk yet, apply the best available plan
+    now (multilingual stt_match) and provision the model in the background,
+    then re-apply so it upgrades to the fast vosk_kws path. Best-effort
+    throughout; a headless/down pipeline just applies on the next voice start.
+    Shared by the stt-language and wake-language PUT routes (must be called
+    from a running event loop). Returns True when a live pipeline took the plan.
+    """
     applied_live = False
     try:
         from jarvis.speech import wake_model_fetch as _wmf
@@ -517,18 +535,87 @@ async def put_stt_language(body: SttLanguageBody, request: Request) -> dict[str,
                     if landed is not None:
                         _apply_plan(_resolve_plan())
                 except Exception as exc:  # noqa: BLE001 — background best-effort
-                    log.debug("stt-language background provision skipped: %s", exc)
+                    log.debug("%s background provision skipped: %s", log_tag, exc)
 
             asyncio.create_task(_provision_then_reapply())
     except Exception as exc:  # noqa: BLE001 — never fail the language save on a live hiccup
-        log.warning("stt-language wake live-apply skipped: %s", exc)
+        log.warning("%s wake live-apply skipped: %s", log_tag, exc)
+    return applied_live
+
+
+# ----------------------------------------------------------------------
+# Wake-word language — the language the user SPEAKS their wake word in. An
+# INDEPENDENT setting (maintainer mandate 2026-07-21): it must never follow the
+# app display language ([ui].language) or force the general recognition
+# language ([stt].language). "auto" keeps the legacy cascade (stt -> ui ->
+# default) so untouched installs keep their sensible onboarding default; a
+# concrete code pins the wake model's language for good. Persisted to
+# [trigger.wake_word] language and resolved by resolve_wake_language.
+# ----------------------------------------------------------------------
+
+_WAKE_LANGUAGES: tuple[str, ...] = ("auto", "de", "en", "es")
+
+
+class WakeLanguageBody(BaseModel):
+    language: str = Field(..., min_length=1)
+    persist: bool = Field(default=True, description="Persist as boot default in jarvis.toml")
+
+
+@router.get("/wake-language")
+async def get_wake_language(request: Request) -> dict[str, object]:
+    from jarvis.speech.wake_model_fetch import resolve_wake_language
+
+    cfg = _config(request)
+    ww = getattr(getattr(cfg, "trigger", None), "wake_word", None)
+    pinned = str(getattr(ww, "language", "auto") or "auto").strip().lower()
+    if pinned not in _WAKE_LANGUAGES:
+        pinned = "auto"
+    return {
+        "language": pinned,
+        # What the runtime actually resolves right now (the cascade result) —
+        # lets a client show the effective language while the pin is "auto".
+        "effective_language": resolve_wake_language(cfg),
+        "options": list(_WAKE_LANGUAGES),
+    }
+
+
+@router.put("/wake-language")
+async def put_wake_language(body: WakeLanguageBody, request: Request) -> dict[str, object]:
+    lang = (body.language or "").strip().lower()
+    if lang not in _WAKE_LANGUAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unknown wake language {body.language!r} (allowed: {list(_WAKE_LANGUAGES)})",
+        )
+
+    persisted = False
+    if body.persist:
+        try:
+            from jarvis.core import config_writer
+            from jarvis.core.config import resolve_config_path
+
+            config_writer.set_wake_language(lang, path=resolve_config_path())
+            persisted = True
+        except Exception as exc:  # noqa: BLE001 — persist is best-effort
+            log.warning("wake-language persist failed: %s", exc)
+
+    # Best-effort in-memory update so the live-apply below (and any later cfg
+    # read) already sees the new pin pre-restart.
+    cfg = _config(request)
+    ww = getattr(getattr(cfg, "trigger", None), "wake_word", None)
+    if ww is not None:
+        try:
+            ww.language = lang
+        except Exception as exc:  # noqa: BLE001 — frozen model is not an error
+            log.debug("in-memory wake_word.language update skipped: %s", exc)
+
+    applied_live = _live_apply_wake_plan(request, log_tag="wake-language")
 
     return {
         "ok": True,
         "language": lang,
         "persisted": persisted,
         "applied_live": applied_live,
-        # Only ask for a restart when we could NOT live-apply (no running pipeline).
         "restart_required": not applied_live,
     }
 
@@ -782,6 +869,8 @@ async def get_wake_word(request: Request) -> dict[str, object]:
         "engine": ww.engine,
         "custom_model_path": ww.custom_model_path,
         "fuzzy_match_ratio": ww.fuzzy_match_ratio,
+        # The independent wake-word language pin ("auto" = legacy cascade).
+        "language": str(getattr(ww, "language", "auto") or "auto"),
         "engines": list(WAKE_ENGINES),
         "instant_phrases": list(INSTANT_WAKE_PHRASES),
         "local_whisper_available": _local_whisper_available(),
@@ -817,9 +906,9 @@ async def put_wake_word(body: WakeWordBody, request: Request) -> dict[str, objec
     # Preview the resolved plan so the UI can tell the user immediately whether
     # the chosen phrase will work as-is or degrade (e.g. no local Whisper).
     # Use the SAME concrete language resolver the runtime wake plan and the model
-    # download use (stt.language → ui.language → default), never raw "auto" — a
-    # Vosk model is acoustically language-specific, so selection and provisioning
-    # must agree on the language.
+    # download use (wake_word.language pin → stt.language → ui.language →
+    # default), never raw "auto" — a Vosk model is acoustically
+    # language-specific, so selection and provisioning must agree on the language.
     from jarvis.speech.wake_model_fetch import resolve_wake_language
 
     _cfg_for_lang = _config(request)

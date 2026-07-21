@@ -43,20 +43,22 @@ import { detectKeyboardPlatform } from "@/views/settings/keyboardLayout";
 import { deriveAssistantName } from "@/lib/deriveAssistantName";
 import { WAKE_ENGINES, WAKE_ENGINE_I18N_KEY } from "@/constants/wakeEngines";
 import { useEventStore } from "@/store/events";
-import {
-  useT,
-  useSttLanguage,
-  setSttLanguage,
-  hydrateSttLanguage,
-  type SttLanguage,
-} from "@/i18n";
+import { useT } from "@/i18n";
+
+// The wake-word language pin — its OWN setting ([trigger.wake_word] language),
+// deliberately independent of both the app display language and the general
+// STT recognition language (maintainer mandate 2026-07-21: app in English +
+// wake word spoken in German must be possible, with neither following the
+// other). Mirrors jarvis/ui/web/settings_routes.py::_WAKE_LANGUAGES minus
+// "auto".
+type WakeLanguage = "en" | "de" | "es";
 
 // Concrete spoken languages only — "auto" is deliberately NOT offered here: the
 // wake word must be pinned to the language the user actually speaks (an
-// ambiguous "auto" silently defaults to the interface language, the exact trap
-// that left German speakers deaf). A user on "auto" sees a "choose your
+// ambiguous "auto" silently derives a default from other settings, the exact
+// trap that left German speakers deaf). A user on "auto" sees a "choose your
 // language" placeholder until they pick.
-const WAKE_STT_LANGUAGES: SttLanguage[] = ["en", "de", "es"];
+const WAKE_LANGUAGES: WakeLanguage[] = ["en", "de", "es"];
 
 interface WakeSelfTestResult {
   ok: boolean;
@@ -167,10 +169,10 @@ function LanguageDropdown({
   disabled,
 }: {
   value: string;
-  options: SttLanguage[];
+  options: WakeLanguage[];
   placeholder: string;
-  labelFor: (code: SttLanguage) => string;
-  onChange: (code: SttLanguage) => void;
+  labelFor: (code: WakeLanguage) => string;
+  onChange: (code: WakeLanguage) => void;
   disabled?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -192,7 +194,7 @@ function LanguageDropdown({
   }, [open]);
 
   const selected = (options as string[]).includes(value)
-    ? labelFor(value as SttLanguage)
+    ? labelFor(value as WakeLanguage)
     : null;
 
   return (
@@ -247,19 +249,21 @@ function LanguageDropdown({
 
 function WakeWordPanel() {
   const t = useT();
-  const { config, loading, error, saveWakeWord, refetch, setWakeActivation } = useWakeWord();
+  const { config, loading, error, saveWakeWord, refetch, setWakeLanguage, setWakeActivation } =
+    useWakeWord();
   const pushToast = useEventStore((s) => s.pushToast);
   // In-app installer for the local speech pack (faster-whisper) that unlocks any
   // wake phrase. Refetch the wake config on success so the hint clears.
   const { status: installStatus, install } = useLocalSpeechInstall(refetch);
 
-  // The voice-recognition language IS the wake language: a Vosk model is
-  // acoustically language-specific, so the model must match the language the
-  // user speaks their wake word in. Reuses the existing STT-language machinery
-  // (same backend field the runtime wake plan resolves against) — surfaced here
-  // so the user can fix the #1 cause of a dead wake word without leaving the
-  // panel.
-  const sttLang = useSttLanguage();
+  // The wake-word language pin: a Vosk model is acoustically language-specific,
+  // so the model must match the language the user speaks their wake word in.
+  // Its OWN backend setting ([trigger.wake_word] language) — independent of the
+  // app display language and the general STT recognition language, so switching
+  // either never silently moves the wake model. Local state mirrors the config
+  // for a snappy dropdown; the backend refetch (via jarvis:wake-word-changed)
+  // keeps it truthful.
+  const [wakeLang, setWakeLangLocal] = useState("auto");
   const [phrase, setPhrase] = useState("");
   const [engine, setEngine] = useState<string>("auto");
   const [customModelPath, setCustomModelPath] = useState("");
@@ -288,14 +292,24 @@ function WakeWordPanel() {
     setPhrase(config.phrase);
     setEngine(config.engine || "auto");
     setCustomModelPath(config.custom_model_path ?? "");
+    // ?? "auto" keeps the dropdown controlled even if an older backend omits it.
+    setWakeLangLocal(config.language ?? "auto");
     // ?? false keeps the Switch controlled even if an older backend omits it.
     setEnabled(config.enabled ?? false);
   }, [config]);
 
-  // Reflect the backend's persisted STT/wake language on open.
-  useEffect(() => {
-    void hydrateSttLanguage();
-  }, []);
+  // Pin the wake language: optimistic local update, then persist + live-apply
+  // via the backend. On failure, revert and surface the honest error.
+  async function onPickWakeLanguage(code: WakeLanguage) {
+    const previous = wakeLang;
+    setWakeLangLocal(code);
+    try {
+      await setWakeLanguage(code);
+    } catch (e) {
+      setWakeLangLocal(previous);
+      pushToast("error", (e as Error).message);
+    }
+  }
 
   async function onToggleActivation(next: boolean) {
     setTogglingActivation(true);
@@ -409,7 +423,7 @@ function WakeWordPanel() {
           ok: false,
           phrase,
           engine,
-          language: sttLang,
+          language: wakeLang,
           wake_available: false,
           phrase_in_vocab: null,
           mic_ok: false,
@@ -474,8 +488,10 @@ function WakeWordPanel() {
               and the trap is unintuitive: it is about the language the user
               SPEAKS (their accent/pronunciation), NOT the origin of the word
               ("Ruben" is heard by the German model because the user speaks it
-              in German, not because the name is German). Bound to the shared
-              STT-language machinery so it agrees with the runtime wake plan. */}
+              in German, not because the name is German). Bound to the wake
+              word's OWN language pin ([trigger.wake_word] language) — the app
+              display language and the STT recognition language stay untouched,
+              and neither can move this choice. */}
           <div className="mt-4 rounded-md border border-primary/50 bg-primary/5 p-3">
             <div className="flex items-center gap-2">
               <Languages className="h-4 w-4 shrink-0 text-primary" />
@@ -488,11 +504,11 @@ function WakeWordPanel() {
             </p>
             <div className="mt-2">
               <LanguageDropdown
-                value={sttLang}
-                options={WAKE_STT_LANGUAGES}
+                value={wakeLang}
+                options={WAKE_LANGUAGES}
                 placeholder={t("settings_view.wake_word.language_placeholder")}
                 labelFor={(code) => t(`languages_view.options.${code}.label`)}
-                onChange={(code) => void setSttLanguage(code)}
+                onChange={(code) => void onPickWakeLanguage(code)}
                 disabled={loading}
               />
             </div>

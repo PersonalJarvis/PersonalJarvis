@@ -105,8 +105,57 @@ def test_offline_failure_is_nonfatal(tmp_path):
 
 
 # ---------------------------------------------------------------------------
-# resolve_wake_language: stt.language (if concrete) -> ui.language -> DEFAULT_LOCALE
+# resolve_wake_language: trigger.wake_word.language pin (if concrete) ->
+# stt.language (if concrete) -> ui.language -> DEFAULT_LOCALE
 # ---------------------------------------------------------------------------
+
+
+def _pin(language: str) -> SimpleNamespace:
+    return SimpleNamespace(wake_word=SimpleNamespace(language=language))
+
+
+def test_resolve_wake_language_pin_beats_stt_and_ui():
+    """The explicit wake-word pin is the user's independent choice — it wins
+    over BOTH the recognition language and the app display language (the
+    decoupling mandate 2026-07-21: app in English, wake word in German)."""
+    cfg = SimpleNamespace(
+        trigger=_pin("de"),
+        stt=SimpleNamespace(language="es"),
+        ui=SimpleNamespace(language="en"),
+    )
+    assert wmf.resolve_wake_language(cfg) == "de"
+
+
+def test_resolve_wake_language_ui_change_never_moves_a_pinned_wake_language():
+    """Switching the app display language must not move a pinned wake word."""
+    for ui_lang in ("en", "de", "es"):
+        cfg = SimpleNamespace(
+            trigger=_pin("de"),
+            stt=SimpleNamespace(language="auto"),
+            ui=SimpleNamespace(language=ui_lang),
+        )
+        assert wmf.resolve_wake_language(cfg) == "de"
+
+
+def test_resolve_wake_language_auto_pin_keeps_legacy_cascade():
+    """language='auto' (the default) -> the legacy stt -> ui cascade stands,
+    so untouched installs behave exactly as before."""
+    cfg = SimpleNamespace(
+        trigger=_pin("auto"),
+        stt=SimpleNamespace(language="auto"),
+        ui=SimpleNamespace(language="es"),
+    )
+    assert wmf.resolve_wake_language(cfg) == "es"
+
+
+def test_resolve_wake_language_unsupported_pin_falls_through():
+    """A hand-edited unsupported pin ('fr') must not brick — fall through."""
+    cfg = SimpleNamespace(
+        trigger=_pin("fr"),
+        stt=SimpleNamespace(language="es"),
+        ui=SimpleNamespace(language="de"),
+    )
+    assert wmf.resolve_wake_language(cfg) == "es"
 
 
 def test_resolve_wake_language_uses_concrete_stt_language():

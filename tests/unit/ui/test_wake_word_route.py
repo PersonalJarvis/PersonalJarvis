@@ -42,6 +42,8 @@ def test_get_returns_current_and_options() -> None:
     body = _client().get("/api/settings/wake-word").json()
     assert body["phrase"] == ""
     assert body["engine"] == "auto"
+    # The independent wake-word language pin defaults to the legacy cascade.
+    assert body["language"] == "auto"
     assert "auto" in body["engines"] and "stt_match" in body["engines"]
     assert "Hey Jarvis" not in body["instant_phrases"]  # instant quick-picks are empty
     assert isinstance(body["local_whisper_available"], bool)
@@ -88,6 +90,62 @@ def test_put_without_pipeline_reports_restart_required() -> None:
     ).json()
     assert body["applied_live"] is False
     assert body["restart_required"] is True
+
+
+# ---------------------------------------------------------------------------
+# GET/PUT /api/settings/wake-language — the INDEPENDENT wake-word language pin
+# (decoupling mandate 2026-07-21: it must never follow the app display
+# language, and pinning it must never touch [ui].language or [stt].language).
+# ---------------------------------------------------------------------------
+
+
+def test_get_wake_language_reports_pin_effective_and_options() -> None:
+    body = _client().get("/api/settings/wake-language").json()
+    assert body["language"] == "auto"
+    assert body["options"] == ["auto", "de", "en", "es"]
+    # With no pin and no stt/ui signal the cascade lands on the default.
+    assert body["effective_language"] == "en"
+
+
+def test_put_wake_language_pins_without_touching_ui_or_stt(monkeypatch) -> None:
+    from jarvis.core import config_writer
+    from jarvis.speech import wake_model_fetch
+
+    persisted: list[str] = []
+    monkeypatch.setattr(
+        config_writer, "set_wake_language", lambda lang, path=None: persisted.append(lang)
+    )
+    # The matching model is "already on disk" — no background provisioning task.
+    monkeypatch.setattr(wake_model_fetch, "vosk_model_present", lambda *_a, **_k: True)
+
+    pipe = _FakePipeline()
+    client = _client(wake_word=WakeWordConfig(phrase="Hey Nova"), pipeline=pipe)
+    # An app in ENGLISH with default recognition — the exact coupling scenario.
+    client.app.state.config.ui = SimpleNamespace(language="en")
+    client.app.state.config.stt = SimpleNamespace(language="auto")
+
+    resp = client.put("/api/settings/wake-language", json={"language": "de"})
+    body = resp.json()
+    assert resp.status_code == 200
+    assert body["ok"] is True
+    assert body["language"] == "de"
+    assert body["persisted"] is True
+    assert body["applied_live"] is True
+    assert body["restart_required"] is False
+    assert persisted == ["de"]
+    # The pin landed in-memory and immediately decides the effective language …
+    assert client.app.state.config.trigger.wake_word.language == "de"
+    assert client.get("/api/settings/wake-language").json()["effective_language"] == "de"
+    # … while the app display language and the recognition language are untouched.
+    assert client.app.state.config.ui.language == "en"
+    assert client.app.state.config.stt.language == "auto"
+    # And the live pipeline got a re-resolved plan.
+    assert pipe.applied is not None
+
+
+def test_put_wake_language_rejects_unknown_code() -> None:
+    resp = _client().put("/api/settings/wake-language", json={"language": "klingon"})
+    assert resp.status_code == 400
 
 
 def test_activation_live_applies_without_restart(monkeypatch) -> None:

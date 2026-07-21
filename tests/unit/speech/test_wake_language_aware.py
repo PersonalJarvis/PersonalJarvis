@@ -131,14 +131,24 @@ def test_mismatched_language_no_whisper_is_honest_wake_off(de_model):
 
 
 # --------------------------------------------------------------------------
-# resolve_wake_language cascade (stt → ui → default) — one SoT everywhere
+# resolve_wake_language cascade (wake pin → stt → ui → default) — one SoT
+# everywhere
 # --------------------------------------------------------------------------
 
 
 def test_resolve_wake_language_cascade():
     from jarvis.speech.wake_model_fetch import resolve_wake_language
 
-    # stt.language concrete wins
+    # the explicit wake-word pin wins over everything (the 2026-07-21
+    # decoupling: the wake language must never follow the app language)
+    assert resolve_wake_language(
+        SimpleNamespace(
+            trigger=SimpleNamespace(wake_word=SimpleNamespace(language="de")),
+            stt=SimpleNamespace(language="en"),
+            ui=SimpleNamespace(language="en"),
+        )
+    ) == "de"
+    # stt.language concrete wins while the pin is "auto"
     assert resolve_wake_language(
         SimpleNamespace(stt=SimpleNamespace(language="de"), ui=SimpleNamespace(language="en"))
     ) == "de"
@@ -189,10 +199,10 @@ def test_wake_high_accuracy_defaults_to_cpu():
 
 
 def test_stt_language_list_parity_python_ts():
-    # The wake language selector reuses the STT-language machinery. If the Python
-    # accepted set (settings_routes._STT_LANGUAGES) and the TS SttLanguage union
-    # drift, the Settings dropdown offers a value the backend rejects (or vice
-    # versa). Set-equality (order-independent) so a re-ordering never false-fails.
+    # If the Python accepted set (settings_routes._STT_LANGUAGES) and the TS
+    # SttLanguage union drift, the Languages view offers a value the backend
+    # rejects (or vice versa). Set-equality (order-independent) so a
+    # re-ordering never false-fails.
     import re
 
     from jarvis.ui.web.settings_routes import _STT_LANGUAGES
@@ -208,4 +218,34 @@ def test_stt_language_list_parity_python_ts():
     assert ts_langs == set(_STT_LANGUAGES), (
         f"TS {ts_langs} != Python {set(_STT_LANGUAGES)} — keep the STT language "
         "list in lockstep (settings_routes._STT_LANGUAGES ↔ i18n SttLanguage)."
+    )
+
+
+def test_wake_language_list_parity_python_ts():
+    # The wake-word language is its OWN setting (decoupled from the app display
+    # language and the STT recognition language, 2026-07-21). The Settings
+    # dropdown (SettingsView WAKE_LANGUAGES) deliberately omits "auto" — every
+    # concrete code it offers must be accepted by the backend route
+    # (settings_routes._WAKE_LANGUAGES), and both must stay within the models
+    # the fetcher can actually provision (VOSK_MODELS).
+    import re
+
+    from jarvis.speech.wake_model_fetch import VOSK_MODELS
+    from jarvis.ui.web.settings_routes import _WAKE_LANGUAGES
+
+    ts_path = (
+        Path(__file__).resolve().parents[3]
+        / "jarvis" / "ui" / "web" / "frontend" / "src" / "views" / "SettingsView.tsx"
+    )
+    text = ts_path.read_text(encoding="utf-8")
+    m = re.search(r"const WAKE_LANGUAGES: WakeLanguage\[\]\s*=\s*\[([^\]]+)\]", text)
+    assert m, "WAKE_LANGUAGES const not found in SettingsView.tsx"
+    ts_langs = set(re.findall(r"[\"']([a-z]+)[\"']", m.group(1)))
+    assert ts_langs == set(_WAKE_LANGUAGES) - {"auto"}, (
+        f"TS {ts_langs} != Python {set(_WAKE_LANGUAGES) - {'auto'}} — keep the wake "
+        "language list in lockstep (settings_routes._WAKE_LANGUAGES ↔ "
+        "SettingsView WAKE_LANGUAGES)."
+    )
+    assert set(_WAKE_LANGUAGES) - {"auto"} == set(VOSK_MODELS), (
+        "every pinnable wake language needs a provisionable Vosk model"
     )

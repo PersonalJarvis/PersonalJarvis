@@ -585,6 +585,21 @@ def set_wake_word(
         log.debug("persona-name strip skipped: %s", exc)
 
 
+def set_wake_language(language: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist the wake-word language pin to ``[trigger.wake_word] language``.
+
+    One of ``auto`` | ``de`` | ``en`` | ``es`` (validated by the caller). This is
+    the user's INDEPENDENT wake-word language: a concrete code pins which
+    acoustic model hears the wake word, decoupled from both the app display
+    language (``[ui] language``) and the general recognition language
+    (``[stt] language``); ``auto`` keeps the legacy cascade (stt -> ui ->
+    default). TOML-only by design, same rationale as :func:`set_wake_word`:
+    ``trigger.wake_word`` is deliberately NOT tracked in ``config-soll.json``,  # i18n-allow
+    so a plain atomic write is never reverted and no ENV layer applies.
+    """
+    _patch_wake_word_toml(path, {"language": language})
+
+
 def set_wake_word_enabled(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist the wake-word activation toggle to ``[trigger] wake_word_enabled``.
 

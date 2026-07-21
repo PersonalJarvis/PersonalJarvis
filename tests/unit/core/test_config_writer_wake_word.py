@@ -111,6 +111,32 @@ def test_set_wake_word_creates_section_if_missing(tmp_path: Path) -> None:
     assert ww["engine"] == "stt_match"
 
 
+def test_set_wake_language_writes_the_pin_and_preserves_siblings(tmp_path: Path) -> None:
+    # The independent wake-word language pin (decoupling mandate 2026-07-21):
+    # persisted under [trigger.wake_word] language, TOML-only like set_wake_word,
+    # preserving the phrase, sibling keys, and comments.
+    f = _write(tmp_path)
+    config_writer.set_wake_language("de", path=f)
+    data = _load(f)
+    ww = data["trigger"]["wake_word"]
+    assert ww["language"] == "de"
+    assert ww["phrase"] == "Hey Jarvis"  # sibling wake keys untouched
+    assert data["trigger"]["single_turn_mode"] is False
+    assert "keep this comment" in f.read_text(encoding="utf-8")
+    # And back to the legacy-cascade default.
+    config_writer.set_wake_language("auto", path=f)
+    assert _load(f)["trigger"]["wake_word"]["language"] == "auto"
+
+
+def test_set_wake_language_is_bom_safe_and_creates_section(tmp_path: Path) -> None:
+    f = tmp_path / "jarvis.toml"
+    f.write_bytes(b"\xef\xbb\xbf" + b"[trigger]\nsingle_turn_mode = false\n")
+    config_writer.set_wake_language("es", path=f)
+    raw = f.read_bytes()
+    assert raw.startswith(b"\xef\xbb\xbf"), "BOM must be preserved"
+    assert _load(f)["trigger"]["wake_word"]["language"] == "es"
+
+
 def test_set_wake_word_enabled_toggles_the_activation_switch(tmp_path: Path) -> None:
     # The activation master switch (product rule 2026-07-04): in-app on/off,
     # persisted to [trigger] wake_word_enabled, preserving sibling keys + comments.

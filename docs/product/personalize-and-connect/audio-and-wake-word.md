@@ -89,7 +89,9 @@ still saved; restart the app before testing it.
    Settings field accepts the complete phrase.
 3. Under **Which language do you speak?**, choose the language in which you
    pronounce the phrase. The choices are English, German, and Spanish. Choose
-   based on your speech, not the origin of the name or word.
+   based on your speech, not the origin of the name or word. This choice is
+   independent of the app's display language and the general voice recognition
+   language — switching either of those never moves your wake-word language.
 4. Leave **Detection engine** on **Auto (recommended)**. Auto looks for a local
    option that can serve your exact phrase and current language.
 5. Select **Save wake word**. A running desktop voice pipeline applies the new
