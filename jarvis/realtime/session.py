@@ -1582,6 +1582,29 @@ class RealtimeVoiceSession:
             if not await self._rebuild_transport(detail=rebuild_detail):
                 return
 
+    @staticmethod
+    async def _cancel_and_reap(task: asyncio.Task[Any]) -> None:
+        """Cancel ``task`` and await it with the 1 s heartbeat bound.
+
+        A bare ``await``/``gather`` after ``cancel()`` can hang forever on
+        the Python 3.11 Windows proactor loop: when the cancel lands while
+        the loop has NO timer armed, it can be LOST in the infinite IOCP
+        poll (BUG-081's general form — the same reason the arbitration wait
+        below is bounded). The 1 s timeout guarantees a timer exists, and
+        the re-cancel each round re-delivers the cancellation until it
+        sticks. Live incident: the advised-rebuild request path cancelled
+        the transport task and gathered unbounded — on windows-latest the
+        rebuild never proceeded and session teardown wedged the whole
+        pytest process (CI 2026-07-21).
+        """
+        while True:
+            task.cancel()
+            done, _pending = await asyncio.wait({task}, timeout=1.0)
+            if done:
+                # Consume the outcome so cancelled/failed tasks never warn.
+                await asyncio.gather(task, return_exceptions=True)
+                return
+
     async def _pump_transport_or_rebuild_request(self) -> str | None:
         """Run one receive pass until it ends or an audio write stalls.
 
@@ -1627,12 +1650,7 @@ class RealtimeVoiceSession:
                                 session=target_session
                             )
                         ):
-                            if not transport_task.done():
-                                transport_task.cancel()
-                            await asyncio.gather(
-                                transport_task,
-                                return_exceptions=True,
-                            )
+                            await self._cancel_and_reap(transport_task)
                             return detail
                         # A normal receive-side rebuild may have won the race.
                         # Discard that old session's queued write-stall signal
@@ -1642,13 +1660,9 @@ class RealtimeVoiceSession:
                         continue
                     return await transport_task
                 finally:
-                    if not request_task.done():
-                        request_task.cancel()
-                    await asyncio.gather(request_task, return_exceptions=True)
+                    await self._cancel_and_reap(request_task)
         finally:
-            if not transport_task.done():
-                transport_task.cancel()
-            await asyncio.gather(transport_task, return_exceptions=True)
+            await self._cancel_and_reap(transport_task)
 
     async def _pump_transport_once(self) -> str | None:
         """Run one provider transport to its end.
