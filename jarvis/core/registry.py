@@ -72,6 +72,18 @@ def load(group: str, name: str, protocol: type[Protocol] | None = None) -> type[
         )
 
     ep = candidates[0]
+    # Plugins must not import jarvis.* (structural purity, CLAUDE.md §5), yet
+    # several read credentials straight from the OS keyring. The HOST therefore
+    # prepares the process-wide backend before handing over: on macOS this
+    # installs the single-vault-item wrapper (BUG-103) so a plugin's direct
+    # keyring read never triggers its own per-item Keychain dialog. Idempotent
+    # and swallow-all — a missing keyring must never break plugin loading.
+    try:
+        from .config import _ensure_keyring_backend
+
+        _ensure_keyring_backend()
+    except Exception:  # noqa: BLE001, S110 — best-effort host preparation
+        pass
     try:
         plugin_cls = ep.load()
     except ImportError as exc:
