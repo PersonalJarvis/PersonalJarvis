@@ -10,6 +10,7 @@
 import { Trash2, Users } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 
+import { ExplicitSpawnHint } from "@/components/ExplicitSpawnHint";
 import { useSubAgentStore, type SubAgentTreeSnapshot } from "@/store/jarvisAgents";
 import { DepartureBoard } from "./sub-agents/DepartureBoard";
 import { selectTaskRows } from "./sub-agents/rows";
@@ -108,6 +109,8 @@ export function JarvisAgentsView() {
           {t("subagents_view.clear")}
         </button>
       </header>
+
+      <ExplicitSpawnHint className="shrink-0 border-b border-zinc-800 bg-zinc-900/40 text-zinc-500" />
 
       <div className="flex-1 relative overflow-hidden">
         <DepartureBoard

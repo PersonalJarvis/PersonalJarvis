@@ -13,6 +13,7 @@ import {
 import { cn } from "@/lib/utils";
 import { ViewHeader } from "@/views/ChatsView";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { ExplicitSpawnHint } from "@/components/ExplicitSpawnHint";
 import { PlanStepList } from "@/components/PlanStepList";
 import { HoldToAbortButton } from "@/components/HoldToAbortButton";
 import { RerunButton } from "@/components/RerunButton";
@@ -173,6 +174,8 @@ export function OutputsView() {
         title={t("outputs_view.title")}
         subtitle={t("outputs_view.subtitle")}
       />
+
+      <ExplicitSpawnHint className="shrink-0 border-b border-border bg-card/40" />
 
       <div className="flex flex-1 min-h-0">
         <aside className="flex w-96 shrink-0 flex-col border-r border-border">

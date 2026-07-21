@@ -300,6 +300,7 @@
   },
   "subagents_view": {
     "title": "{name}-Agents",
+    "explicit_spawn_hint": "{name}-Agents starten nur, wenn du ausdrücklich danach fragst — sag z. B. „Spawne einen Agenten dafür“ oder „Mach einen Deep Dive mit einem Agenten“.",
     "stat_active": "aktiv",
     "stat_total": "gesamt",
     "clear": "Leeren",
