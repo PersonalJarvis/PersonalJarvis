@@ -47,10 +47,12 @@ class _FakeGeminiClient:
             "400 INVALID_ARGUMENT. Budget 0 is invalid. This model only "
             "works in thinking mode."
         ),
+        reject_thinking_generic: bool = False,
     ) -> None:
         self.calls: list[dict[str, Any]] = []
         self.reject_thinking = reject_thinking
         self.reject_message = reject_message
+        self.reject_thinking_generic = reject_thinking_generic
         self.aio = SimpleNamespace(models=self)
 
     async def generate_content_stream(
@@ -63,6 +65,17 @@ class _FakeGeminiClient:
         self.calls.append(dict(config))
         if self.reject_thinking and config.get("thinking_config") is not None:
             raise RuntimeError(self.reject_message)
+        if (
+            self.reject_thinking_generic
+            and config.get("thinking_config") is not None
+        ):
+            # The parameterless rejection shape gemini-3.6-flash produced
+            # live 2026-07-21 — no field name, no "thinking" token.
+            raise RuntimeError(
+                "400 INVALID_ARGUMENT. {'error': {'code': 400, 'message': "
+                "'Request contains an invalid argument.', 'status': "
+                "'INVALID_ARGUMENT'}}"
+            )
 
         async def _stream() -> AsyncIterator[Any]:
             yield SimpleNamespace(
@@ -174,3 +187,28 @@ async def test_generic_invalid_argument_recovers_without_the_field() -> None:
     assert fake.calls[0].get("thinking_config") is not None
     assert "thinking_config" not in fake.calls[1]
     assert any(d.content for d in deltas), "recovered stream must yield text"
+
+
+@pytest.mark.asyncio
+async def test_parameterless_400_recovers_and_is_remembered() -> None:
+    """Live 2026-07-21: ``gemini-3.6-flash`` rejects ``thinking_budget=0``
+    with the bare "Request contains an invalid argument." — no "thinking" in
+    the message. The recovery must (a) retry once without ``thinking_config``
+    and yield the answer, and (b) once that retry is accepted, skip the field
+    on every later turn so each delegated realtime turn doesn't pay a doomed
+    extra round trip."""
+    provider = GeminiBrain(model="gemini-3.6-flash")
+    fake = _FakeGeminiClient(reject_thinking_generic=True)
+    provider._client = fake  # type: ignore[assignment]
+
+    deltas = await _drain(provider.complete(_request("none")))
+
+    assert len(fake.calls) == 2
+    assert fake.calls[0].get("thinking_config") is not None
+    assert "thinking_config" not in fake.calls[1]
+    assert any(d.content for d in deltas), "recovered stream must yield text"
+
+    # Second turn: the blame is proven — no thinking_config, no extra 400.
+    await _drain(provider.complete(_request("none")))
+    assert len(fake.calls) == 3
+    assert "thinking_config" not in fake.calls[2]

@@ -118,6 +118,23 @@ def _is_thinking_config_rejected_error(exc: Exception) -> bool:
     return "invalid_argument" in msg or "invalid argument" in msg
 
 
+def _is_generic_invalid_argument_error(exc: Exception) -> bool:
+    """True for Gemini's parameterless 400 INVALID_ARGUMENT rejection.
+
+    Some models reject ``thinking_config.thinking_budget=0`` with the bare
+    "Request contains an invalid argument." — no field name, no "thinking"
+    token — so the targeted predicate above never matches (live 2026-07-21:
+    ``gemini-3.6-flash`` answered every delegated realtime turn this way and
+    the whole tier died unrecovered). The message names nothing, so blame is
+    assigned by the retry itself: dropping ``thinking_config`` and having the
+    request accepted is the capability probe (AP-21).
+    """
+    msg = str(exc).lower()
+    if "400" not in msg:
+        return False
+    return "invalid_argument" in msg or "invalid argument" in msg
+
+
 def _to_gemini_contents(
     messages: tuple[BrainMessage, ...],
     tool_name_map: dict[str, str] | None = None,
@@ -536,6 +553,11 @@ class GeminiBrain:
         # thinking" Gemini 3.x does. ``None`` = SDK default (auto, higher
         # latency). ``0`` = off, ``-1`` = dynamic, ``>0`` = fixed cap.
         self._thinking_budget = thinking_budget
+        # 2026-07-21: some models reject ``thinking_config`` with a
+        # parameterless 400 ("Request contains an invalid argument."). Once
+        # a retry without the field proves that blame, remember it for this
+        # instance so later turns skip the doomed extra round trip.
+        self._thinking_config_unsupported = False
         # Latency-Sprint-2: context-cache name (lazily created on the first
         # call with system+tools). Key: (system_hash, tools_hash) → cache_name.
         # ``_cached_content_name``/``_cache_signature`` hold the most recently
@@ -752,7 +774,10 @@ class GeminiBrain:
             # step failed "unterminated JSON" with thoughts=304 of
             # max_tokens=320. An explicit constructor budget always wins.
             effective_thinking_budget = 0
-        if effective_thinking_budget is not None:
+        if (
+            effective_thinking_budget is not None
+            and not self._thinking_config_unsupported
+        ):
             try:
                 from google.genai import types as _genai_types
                 config_dict["thinking_config"] = _genai_types.ThinkingConfig(
@@ -861,6 +886,10 @@ class GeminiBrain:
         # the from-scratch retry yields no duplicate chunks.
         attempt = 0
         yielded_delta = False
+        # Set when a parameterless 400 forced a retry without
+        # ``thinking_config``; promoted to the instance flag only once the
+        # retried request is accepted (that acceptance IS the blame proof).
+        pending_thinking_config_blame = False
         while True:
             attempt += 1
             try:
@@ -951,6 +980,17 @@ class GeminiBrain:
                         }
                 if final_usage is not None:
                     yield BrainDelta(usage=final_usage)
+                if pending_thinking_config_blame:
+                    # The retry without ``thinking_config`` was accepted, so
+                    # the parameterless 400 is attributed to it. Later turns
+                    # on this instance skip the field (and the extra 400)
+                    # entirely.
+                    self._thinking_config_unsupported = True
+                    log.info(
+                        "Gemini model %s accepts requests only without "
+                        "thinking_config — omitting it from now on",
+                        self._model,
+                    )
                 return
             except Exception as exc:  # noqa: BLE001 — BUG-019 stale-cache recovery
                 if (
@@ -969,21 +1009,37 @@ class GeminiBrain:
                     if tools_payload:
                         config_dict["tools"] = tools_payload
                     continue
+                thinking_config_blamed = _is_thinking_config_rejected_error(exc)
                 if (
                     not yielded_delta
                     and "thinking_config" in config_dict
-                    and _is_thinking_config_rejected_error(exc)
+                    and (
+                        thinking_config_blamed
+                        or _is_generic_invalid_argument_error(exc)
+                    )
                 ):
                     # Some models REQUIRE thinking mode and 400 on budget=0
                     # ("Budget 0 is invalid. This model only works in thinking
-                    # mode."). Capability recovery, not a model-name pin
-                    # (AP-21): drop the config and retry once. Safe: the
-                    # rejection fires before any token is generated.
+                    # mode."); others answer the bare "Request contains an
+                    # invalid argument." (live 2026-07-21: gemini-3.6-flash —
+                    # it bricked every delegated realtime fallback turn).
+                    # Capability recovery, not a model-name pin (AP-21): drop
+                    # the config and retry once. Safe: the rejection fires
+                    # before any token is generated. If something else caused
+                    # the parameterless 400, the retry fails the same way and
+                    # the error still propagates — one extra round trip, no
+                    # behavior change.
                     log.info(
                         "Gemini model %s rejected thinking_config — retrying "
                         "once without it: %s", self._model, exc,
                     )
                     config_dict.pop("thinking_config", None)
+                    if thinking_config_blamed:
+                        # The message names the thinking config — no further
+                        # evidence needed.
+                        self._thinking_config_unsupported = True
+                    else:
+                        pending_thinking_config_blame = True
                     continue
                 if (
                     not yielded_delta
