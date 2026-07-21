@@ -7417,3 +7417,69 @@ explicit-ask pass-through, and the follow-up window).
 browser, phone, telephony) needs a deterministic explicit-ask gate, not
 just prompt discouragement — the model reaches for the most concrete tool
 it sees, and a question must never be answered by performing.
+
+## BUG-108: local speaker death (PortAudio -9986) is misclassified as provider transport death — three answers voiced into a dead output, all reported healthy (CRITICAL, OPEN 2026-07-21)
+
+**Symptom (live 2026-07-21 11:53, session `290b610c`, first call after the
+1b191b88 deploy/restart at 11:52).** The user asked for the best private
+jet currently on the market. The transcript view shows a complete answer
+(G700/Global 7500/Phenom 300E) — but the user heard NOTHING and saw
+nothing during the call. A repair attempt ("Was?") got a confidently
+voiced answer about a **prior question that never existed**: "Du hattest
+mich gerade gefragt, was du beachten solltest, wenn du nach Bora Bora <!-- i18n-allow: quoted live runtime voice output under forensic analysis -->
+auswandern möchtest" — no recorded session ever mentions Bora Bora. <!-- i18n-allow: quoted live runtime voice output under forensic analysis -->
+The user hung up via hotkey at 11:55:11.
+
+**Forensic timeline (desktop log + flight recorder).**
+
+- 11:54:07 turn 0 delegated deterministically (path=orchestrator,
+  reasons=current_data). OpenAI dead (429 quota) → Fallback-Hit
+  gemini-3.5-flash at 11:54:19 — the answer text was real and arrived.
+- 11:54:16 turn 0 completed with `jarvis_text=""`, `hangup_reason=none`
+  (empty but "healthy"). The late delegate result was queued as a
+  follow-up (correct BUG-104-era behavior).
+- 11:54:17 **first playback attempt: `Error opening OutputStream:
+  Internal PortAudio error [PaErrorCode -9986]`** — the local output
+  device ("Externe Kopfhörer", Bluetooth) had vanished at the CoreAudio <!-- i18n-allow: literal CoreAudio device name from the log -->
+  layer. The receive-loop's generic exception handler
+  (`jarvis/realtime/session.py:2551` "pump ended") classified this LOCAL
+  device failure as PROVIDER transport death and rebuilt the Gemini
+  session (1/3).
+- 11:54:20 follow-up turn: Gemini voiced the jet answer
+  (`realtime_first_audio` 861 ms, transcript streamed to the live UI) —
+  into the same dead output stream. Zero audible frames. Turn "completed"
+  after 24.8 s, again `hangup_reason=none`.
+- 11:54:44 rebuild died instantly with the SAME -9986 → retried
+  **without the in-call conversation seed** (2/3).
+- 11:54:54 "Was?" took the native_realtime path. The seed-less session
+  had no in-call context and **fabricated** the Bora-Bora prior topic,
+  voicing it as established conversation history. Playback died again
+  (-9986, 3/3).
+- After hangup, the MIC side proved the device was gone: input device 0
+  failed with the same -9986 three times and capture fell back to
+  device 2 (`jarvis/audio/capture.py:854-887`) — the INPUT path has a
+  multi-candidate fallback; the OUTPUT path has none.
+
+**Four distinct defects.**
+
+1. **Misclassified recovery target.** An output-device open failure is a
+   LOCAL audio problem; rebuilding the provider websocket can never heal
+   it. The handler burned the whole 3-rebuild/120 s budget replaying
+   audio into a dead pipe. Classify `sd.PortAudioError` raised from the
+   playback path separately from transport errors.
+2. **No output-device fallback.** Mirror the capture-side candidate
+   fallback: on open failure, re-resolve the output device (the BT set
+   was gone; built-in speakers were available the whole time).
+3. **No honest zero-frame receipt.** Both answer turns reported healthy
+   and the transcript shows text the user never heard. Same prescription
+   as the 11:01 topology-refresh forensic: a turn whose playback wrote
+   zero frames must not report healthy — surface an explicit "I couldn't
+   play audio" signal (and re-deliver once the output is back).
+4. **Seed-less rebuild fabricates memory.** Dropping the in-call seed is
+   a valid last resort (BUG-104), but the model must then be told the
+   context was lost — otherwise it invents one ("Bora Bora") and asserts
+   it as shared history, which is worse than admitting the gap.
+
+Related: BUG-102 (topology refresh), BUG-104 (rebuild seed), BUG-106
+(the answer itself also missed the Gulfstream G800, in service since
+2025 — fact-quality family, tracked there).
