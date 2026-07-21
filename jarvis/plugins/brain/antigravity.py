@@ -169,7 +169,10 @@ class AntigravityBrain:
     supports_vision: bool = False
 
     def __init__(
-        self, model: str | None = None, structured_prompts: bool = False,
+        self,
+        model: str | None = None,
+        structured_prompts: bool = False,
+        cli_timeout_s: float | None = None,
     ) -> None:
         self._model = model or DEFAULT_MODEL
         # Background/structured callers (the wiki curator tier) set this so
@@ -178,6 +181,14 @@ class AntigravityBrain:
         # made structured output impossible by instruction (live 2026-07-18:
         # every wiki extraction died with "no JSON array found in response").
         self._structured_prompts = bool(structured_prompts)
+        # Slow background callers (wiki Stage-2 judge) pass their own per-call
+        # budget so the internal cap cannot kill a turn the caller is still
+        # willing to wait for; the voice-tier default stays the tight cap.
+        try:
+            budget = float(cli_timeout_s) if cli_timeout_s is not None else 0.0
+        except (TypeError, ValueError):
+            budget = 0.0
+        self._cli_timeout_s = budget if budget > 0 else _CLI_TIMEOUT_S
 
     def can_call_tools(self) -> bool:
         """Runtime tool-calling capability (NOT the static ``supports_tools``).
@@ -249,7 +260,7 @@ class AntigravityBrain:
         fut = loop.run_in_executor(
             None,
             lambda: run_cli_over_pty(
-                tuple(argv), timeout_s=_CLI_TIMEOUT_S, cwd=workdir, env=env
+                tuple(argv), timeout_s=self._cli_timeout_s, cwd=workdir, env=env
             ),
         )
         try:
@@ -271,9 +282,13 @@ class AntigravityBrain:
                 f"Antigravity (Google login) is unavailable: {result.error}"
             )
         if result.timed_out:
-            log.warning("AntigravityBrain(agy/PTY): no answer within %.0fs", _CLI_TIMEOUT_S)
+            log.warning(
+                "AntigravityBrain(agy/PTY): no answer within %.0fs",
+                self._cli_timeout_s,
+            )
             raise RuntimeError(
-                f"Antigravity (Google login) did not answer within {_CLI_TIMEOUT_S:.0f}s."
+                "Antigravity (Google login) did not answer within "
+                f"{self._cli_timeout_s:.0f}s."
             )
         if not result.text:
             log.warning(
@@ -325,7 +340,7 @@ class AntigravityBrain:
                 proc.stdin.close()
 
         comm_task = asyncio.create_task(proc.communicate())
-        deadline = t0 + _CLI_TIMEOUT_S
+        deadline = t0 + self._cli_timeout_s
         stdout_bytes = b""
         stderr_bytes = b""
 
@@ -367,9 +382,13 @@ class AntigravityBrain:
             raise
         except TimeoutError as exc:
             await _kill()
-            log.warning("AntigravityBrain: no answer within %.0fs (killed)", _CLI_TIMEOUT_S)
+            log.warning(
+                "AntigravityBrain: no answer within %.0fs (killed)",
+                self._cli_timeout_s,
+            )
             raise RuntimeError(
-                f"Antigravity (Google login) did not answer within {_CLI_TIMEOUT_S:.0f}s."
+                "Antigravity (Google login) did not answer within "
+                f"{self._cli_timeout_s:.0f}s."
             ) from exc
         finally:
             with suppress(OSError):

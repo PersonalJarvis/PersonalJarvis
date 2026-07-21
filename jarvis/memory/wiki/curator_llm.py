@@ -25,6 +25,7 @@ config, timeout-via-wait_for, error-tolerant shape).
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
 import logging
 import time
@@ -151,7 +152,11 @@ def _resolve_provider_and_model(
 
 
 def instantiate_curator_brain(
-    registry: Any, provider: str, model: str | None,
+    registry: Any,
+    provider: str,
+    model: str | None,
+    *,
+    cli_timeout_s: float | None = None,
 ) -> Any:
     """Instantiate a curator-tier brain with extended thinking DISABLED.
 
@@ -173,7 +178,19 @@ def instantiate_curator_brain(
     # curator tier's JSON contract. Providers whose constructor accepts
     # ``structured_prompts`` forward the contract verbatim instead; the probe
     # is signature acceptance (capability, never a provider name — AP-21).
-    for attempt in ({**kwargs, "structured_prompts": True}, kwargs):
+    # ``cli_timeout_s`` rides the same probe: CLI brains cap each turn with an
+    # internal voice-tier deadline, which must not kill a slow background call
+    # the caller is still willing to wait for (live 2026-07-21: the Stage-2
+    # judge died on every codex run at the internal 90 s cap while the wiki
+    # tier's 180 s budget was half unused).
+    structured: dict[str, Any] = {**kwargs, "structured_prompts": True}
+    if cli_timeout_s is not None and cli_timeout_s > 0:
+        structured["cli_timeout_s"] = float(cli_timeout_s)
+    attempts: list[dict[str, Any]] = [structured]
+    if "cli_timeout_s" in structured:
+        attempts.append({**kwargs, "structured_prompts": True})
+    attempts.append(kwargs)
+    for attempt in attempts:
         try:
             return registry.instantiate(provider, **attempt)
         except TypeError:
@@ -639,7 +656,13 @@ class WikiCuratorLLM:
                 # background JSON work must not burn the token budget on
                 # internal reasoning (see instantiate_curator_brain).
                 brain = await asyncio.to_thread(
-                    instantiate_curator_brain, self._registry, provider, model,
+                    functools.partial(
+                        instantiate_curator_brain,
+                        self._registry,
+                        provider,
+                        model,
+                        cli_timeout_s=float(self._cfg.timeout_s),
+                    ),
                 )
             except Exception as exc:                              # noqa: BLE001
                 logger.warning(

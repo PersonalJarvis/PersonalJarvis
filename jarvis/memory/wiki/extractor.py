@@ -1298,7 +1298,12 @@ class ConversationFactExtractor:
         try:
             # Thinking disabled for Gemini non-pro: extraction is small,
             # deterministic JSON output (see instantiate_curator_brain).
-            self._brain = instantiate_curator_brain(self._registry, provider, model)
+            self._brain = instantiate_curator_brain(
+                self._registry,
+                provider,
+                model,
+                cli_timeout_s=float(self._cfg.timeout_s),
+            )
             self._resolved_provider = provider
             self._resolved_model = model
         except Exception as exc:  # noqa: BLE001

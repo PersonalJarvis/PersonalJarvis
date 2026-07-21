@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from collections.abc import Callable
 from typing import Any
@@ -91,6 +92,21 @@ def _order_by_cooldown(
     return healthy + cooled, [provider for provider, _model in cooled]
 
 
+# Known-safe, content-free failure diagnoses that may ride along with the
+# exception class name in logs and the health surface. Fail-closed allowlist:
+# anything the regex does not recognise stays a bare class name, so raw SDK
+# text (URLs with keys, personal paths, response bodies) can never leak into
+# a persisted record. Added 2026-07-21: the status bar said "codex
+# RuntimeError" while the actual story was "did not answer within 90s".
+_SAFE_DIAGNOSIS_RE = re.compile(
+    r"did not answer within [0-9.]+\s*s|timed? ?out|"
+    r"not (?:installed|logged in|found)|no answer|empty answer|"
+    r"returned no answer|could not be launched|unavailable|"
+    r"rate.?limit(?:ed)?|quota|insufficient credit",
+    re.IGNORECASE,
+)
+
+
 def _exception_summary(exc: Exception) -> str:
     """Return diagnostic class/status metadata without persisting raw SDK text."""
     status = getattr(exc, "status_code", None)
@@ -101,7 +117,9 @@ def _exception_summary(exc: Exception) -> str:
         code = int(status) if status is not None else None
     except (TypeError, ValueError):
         code = None
-    return f"{name} HTTP {code}" if code is not None else name
+    summary = f"{name} HTTP {code}" if code is not None else name
+    diagnosis = _SAFE_DIAGNOSIS_RE.search(str(exc))
+    return f"{summary} ({diagnosis.group(0)})" if diagnosis else summary
 
 def _cli_login_ready(provider: str) -> bool | None:
     """Login-readiness of a subscription-CLI provider; ``None`` = not CLI-backed.
@@ -250,7 +268,9 @@ async def complete_with_fallback(
 
     for index, (provider, model) in enumerate(ordered):
         try:
-            brain = instantiate_curator_brain(registry, provider, model)
+            brain = instantiate_curator_brain(
+                registry, provider, model, cli_timeout_s=timeout_s,
+            )
         except Exception as exc:  # noqa: BLE001 — a bad provider must not abort the chain
             detail = _exception_summary(exc)
             log.warning(

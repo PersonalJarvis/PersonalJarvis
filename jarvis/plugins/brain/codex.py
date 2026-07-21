@@ -141,7 +141,10 @@ class CodexBrain:
     supports_vision: bool = False
 
     def __init__(
-        self, model: str | None = None, structured_prompts: bool = False,
+        self,
+        model: str | None = None,
+        structured_prompts: bool = False,
+        cli_timeout_s: float | None = None,
     ) -> None:
         self._model = model or DEFAULT_MODEL
         self._client: Any = None
@@ -150,6 +153,16 @@ class CodexBrain:
         # conversational "answer in 1-3 plain-text sentences" wrapper — which
         # made structured output impossible by instruction.
         self._structured_prompts = bool(structured_prompts)
+        # Slow background callers (the wiki Stage-2 judge sends ~16k-char
+        # body-aware prompts) pass their own per-call budget; the voice-tier
+        # default stays the tight cap. Live 2026-07-21: the judge died on
+        # every run because the fixed 90 s cap killed codex before the wiki
+        # tier's 180 s budget was half used.
+        try:
+            budget = float(cli_timeout_s) if cli_timeout_s is not None else 0.0
+        except (TypeError, ValueError):
+            budget = 0.0
+        self._cli_timeout_s = budget if budget > 0 else _CLI_TIMEOUT_S
         # Only the API-key path can see images (see the supports_vision note).
         self.supports_vision = bool(self._api_key())
 
@@ -255,7 +268,7 @@ class CodexBrain:
             pass
 
         comm_task = asyncio.create_task(proc.communicate())
-        deadline = t0 + _CLI_TIMEOUT_S
+        deadline = t0 + self._cli_timeout_s
         stdout_bytes = b""
         stderr_bytes = b""
 
@@ -302,10 +315,12 @@ class CodexBrain:
         except TimeoutError as exc:
             await _kill_cli_process()
             log.warning(
-                "CodexBrain CLI: no answer within %.0fs (killed)", _CLI_TIMEOUT_S
+                "CodexBrain CLI: no answer within %.0fs (killed)",
+                self._cli_timeout_s,
             )
             raise RuntimeError(
-                f"Codex (ChatGPT login) did not answer within {_CLI_TIMEOUT_S:.0f}s."
+                "Codex (ChatGPT login) did not answer within "
+                f"{self._cli_timeout_s:.0f}s."
             ) from exc
         finally:
             with suppress(OSError):

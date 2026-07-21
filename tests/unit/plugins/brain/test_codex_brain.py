@@ -161,3 +161,23 @@ async def test_no_oauth_means_the_account_error_is_surfaced(
     with pytest.raises(_StatusError):
         await _collect(brain.complete(_wiki_request()))
     assert calls == []
+
+
+def test_cli_timeout_defaults_to_the_voice_tier_cap() -> None:
+    assert CodexBrain()._cli_timeout_s == codex_module._CLI_TIMEOUT_S
+
+
+def test_cli_timeout_accepts_a_caller_budget() -> None:
+    """Slow background callers (wiki Stage-2 judge) extend the internal cap.
+
+    Live 2026-07-21: the fixed 90 s cap killed every consolidator run while
+    the wiki tier's 180 s budget was half unused — 'Chain failure: codex
+    RuntimeError' with a growing journal backlog.
+    """
+    assert CodexBrain(cli_timeout_s=180.0)._cli_timeout_s == 180.0
+    # Garbage/zero budgets fall back to the voice-tier default.
+    assert CodexBrain(cli_timeout_s=0)._cli_timeout_s == codex_module._CLI_TIMEOUT_S
+    assert (
+        CodexBrain(cli_timeout_s="nope")._cli_timeout_s
+        == codex_module._CLI_TIMEOUT_S
+    )

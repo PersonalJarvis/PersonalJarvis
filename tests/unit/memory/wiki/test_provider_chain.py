@@ -611,3 +611,84 @@ async def test_provider_failures_never_expose_raw_exception_secrets(
     assert secret not in detail
     assert "C:/Users/private" not in detail
     assert secret not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_chain_passes_its_timeout_budget_to_cli_capable_brains() -> None:
+    """The wiki tier's per-call budget reaches the brain constructor.
+
+    Live 2026-07-21: CodexBrain's internal 90 s voice-tier cap killed every
+    Stage-2 judge run although the wiki tier waited 180 s — the chain must
+    hand its own budget down so a CLI brain never times out earlier than
+    the caller ('Chain failure: codex RuntimeError').
+    """
+
+    class _KwargRecordingRegistry:
+        def __init__(self) -> None:
+            self.kwargs_seen: list[dict[str, Any]] = []
+
+        def available(self) -> set[str]:
+            return {"openrouter"}
+
+        def instantiate(self, name: str, **kwargs: Any) -> Any:
+            self.kwargs_seen.append(dict(kwargs))
+            return _FakeBrain(fail=False)
+
+    reg = _KwargRecordingRegistry()
+    result = await complete_with_fallback(
+        registry=reg,
+        chain=[("openrouter", None)],
+        request=object(),
+        timeout_s=180.0,
+        label="test",
+        aggregate=_aggregate,
+    )
+
+    assert result is not None
+    assert reg.kwargs_seen[0].get("cli_timeout_s") == 180.0
+
+
+@pytest.mark.asyncio
+async def test_cli_timeout_kwarg_degrades_for_older_provider_signatures() -> None:
+    """A constructor that rejects cli_timeout_s still gets instantiated."""
+
+    class _LegacyRegistry:
+        def __init__(self) -> None:
+            self.kwargs_seen: list[dict[str, Any]] = []
+
+        def available(self) -> set[str]:
+            return {"openrouter"}
+
+        def instantiate(self, name: str, **kwargs: Any) -> Any:
+            if "cli_timeout_s" in kwargs:
+                raise TypeError("unexpected keyword argument 'cli_timeout_s'")
+            self.kwargs_seen.append(dict(kwargs))
+            return _FakeBrain(fail=False)
+
+    reg = _LegacyRegistry()
+    result = await complete_with_fallback(
+        registry=reg,
+        chain=[("openrouter", None)],
+        request=object(),
+        timeout_s=180.0,
+        label="test",
+        aggregate=_aggregate,
+    )
+
+    assert result is not None
+    assert reg.kwargs_seen  # instantiated without the unsupported kwarg
+
+
+def test_exception_summary_carries_known_safe_diagnosis_only() -> None:
+    """Recognised content-free diagnoses ride along; raw text never does."""
+    from jarvis.memory.wiki import provider_chain as pc
+
+    safe = pc._exception_summary(
+        RuntimeError("Codex (ChatGPT login) did not answer within 90s.")
+    )
+    assert safe == "RuntimeError (did not answer within 90s)"
+
+    raw = pc._exception_summary(
+        RuntimeError("request failed ?key=sk-proj-XYZ at C:/Users/private")
+    )
+    assert raw == "RuntimeError"

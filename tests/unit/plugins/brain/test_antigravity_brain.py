@@ -473,3 +473,15 @@ async def test_complete_agy_pty_unavailable_raises(monkeypatch):
     with pytest.raises(RuntimeError):
         async for _ in brain.complete(_req()):
             pass
+
+
+def test_cli_timeout_accepts_a_caller_budget() -> None:
+    """Background callers may extend the internal CLI cap (wiki judge tier)."""
+    from jarvis.plugins.brain import antigravity as antigravity_module
+    from jarvis.plugins.brain.antigravity import AntigravityBrain
+
+    assert AntigravityBrain(cli_timeout_s=180.0)._cli_timeout_s == 180.0
+    assert (
+        AntigravityBrain()._cli_timeout_s
+        == antigravity_module._CLI_TIMEOUT_S
+    )

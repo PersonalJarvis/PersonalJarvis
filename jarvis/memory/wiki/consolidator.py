@@ -1451,7 +1451,12 @@ class Consolidator:
             # Thinking disabled for Gemini non-pro: the judge must spend its
             # token budget on page bodies, not on internal reasoning (see
             # instantiate_curator_brain).
-            self._brain = instantiate_curator_brain(self._registry, provider, model)
+            self._brain = instantiate_curator_brain(
+                self._registry,
+                provider,
+                model,
+                cli_timeout_s=float(self._curator_cfg.timeout_s),
+            )
             self._resolved_provider = provider
         except Exception as exc:  # noqa: BLE001
             log.warning(
