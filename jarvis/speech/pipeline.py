@@ -605,6 +605,20 @@ def _stt_retry_delay(exc: BaseException | None, attempt: int) -> float:
 _SESSION_START_BUFFER_MAX_BYTES = 16_000 * 2 * 30  # 30 s of mono PCM16
 _REALTIME_POST_OUTPUT_ECHO_GUARD_S = 0.5
 _REALTIME_OUTPUT_LATENCY_CAP_S = 5.0
+# The post-output echo tail splits into two phases. Only its leading part is
+# physically audible speaker audio (the device's reported output latency plus
+# an acoustic-decay/capture-buffering margin); microphone frames captured there
+# are genuine echo territory and stay detector-only. Frames captured in the
+# REMAINDER of the tail are silent-room or user speech: they are buffered and
+# forwarded to the provider when the tail expires instead of being dropped —
+# dropping them was the "the first 1-2 s after Jarvis stops talking are deaf"
+# defect (a user answering immediately lost the whole utterance onset unless
+# it survived the strict local barge confirm).
+_REALTIME_HW_ECHO_TAIL_MARGIN_S = 0.25
+# Bound on buffered tail audio; the tail itself is capped at
+# _REALTIME_POST_OUTPUT_ECHO_GUARD_S + _REALTIME_OUTPUT_LATENCY_CAP_S (~5.5 s
+# of 16 kHz mono PCM16 ≈ 176 kB), so this never truncates in practice.
+_REALTIME_TAIL_PENDING_MAX_BYTES = 256_000
 
 
 def _feed_live_mic_level(chunk: AudioChunk) -> None:
@@ -6198,6 +6212,12 @@ class SpeechPipeline:
         turn_complete = asyncio.Event()
         speaking = False
         post_output_echo_guard_until = 0.0
+        # End of the tail's physically-audible phase (device latency residue);
+        # frames captured past it but still inside the echo guard are buffered
+        # in ``tail_pending`` and flushed once the guard expires.
+        post_output_hw_tail_until = 0.0
+        tail_pending: deque[bytes] = deque()
+        tail_pending_bytes = 0
         semantic_turn_committed = False
         # Per-segment accumulator of the session's assistant transcript
         # deltas: registered with the PIPELINE's own text echo guard when the
@@ -6212,9 +6232,15 @@ class SpeechPipeline:
                 return 0.0
             return min(_REALTIME_OUTPUT_LATENCY_CAP_S, max(0.0, latency))
 
+        def _clear_tail_pending() -> None:
+            nonlocal tail_pending_bytes
+            tail_pending.clear()
+            tail_pending_bytes = 0
+
         def _close_output_segment(*, preserve_echo_tail: bool) -> None:
             """Keep half-duplex protection through physical speaker drain."""
-            nonlocal post_output_echo_guard_until, speaking
+            nonlocal post_output_echo_guard_until, post_output_hw_tail_until
+            nonlocal speaking
             was_audible = speaking or bool(assistant_transcript_parts)
             speaking = False
             # The provider queue has drained here, but a persistent PortAudio
@@ -6230,15 +6256,22 @@ class SpeechPipeline:
             if preserve_echo_tail:
                 output_latency_s = _reported_output_latency_s()
                 guard_s = _REALTIME_POST_OUTPUT_ECHO_GUARD_S + output_latency_s
-                post_output_echo_guard_until = time.monotonic() + guard_s
+                now = time.monotonic()
+                post_output_echo_guard_until = now + guard_s
+                post_output_hw_tail_until = (
+                    now + output_latency_s + _REALTIME_HW_ECHO_TAIL_MARGIN_S
+                )
                 log.info(
                     "Realtime echo tail armed for %.3fs "
-                    "(device output latency %.3fs).",
+                    "(device output latency %.3fs, audible phase %.3fs).",
                     guard_s,
                     output_latency_s,
+                    output_latency_s + _REALTIME_HW_ECHO_TAIL_MARGIN_S,
                 )
                 return
             post_output_echo_guard_until = 0.0
+            post_output_hw_tail_until = 0.0
+            _clear_tail_pending()
             barge_detector.stop_output()
 
         async def _warm_barge_detector() -> None:
@@ -6281,13 +6314,19 @@ class SpeechPipeline:
                 await asyncio.gather(surface_task, return_exceptions=True)
 
         async def _send_binary(pcm: bytes) -> None:
-            nonlocal post_output_echo_guard_until
+            nonlocal post_output_echo_guard_until, post_output_hw_tail_until
             nonlocal semantic_turn_committed, speaking
             if terminal_output_closed:
                 return
             semantic_turn_committed = True
             if not speaking:
                 post_output_echo_guard_until = 0.0
+                post_output_hw_tail_until = 0.0
+                # Frames buffered during the previous turn's tail belong to a
+                # user moment the provider has already moved past; uploading
+                # them under fresh assistant output would interleave stale
+                # audio into the new turn.
+                _clear_tail_pending()
                 speaking = True
                 barge_detector.start_output()
                 await self._set_turn_state(TurnTakingState.JARVIS_SPEAKING)
@@ -6546,8 +6585,32 @@ class SpeechPipeline:
         microphone_task: asyncio.Task[Any] | None = None
         try:
             async with self._session_input_source(input_buffer) as input_chunks:
+                async def _flush_tail_pending() -> None:
+                    """Forward microphone audio buffered during the echo tail.
+
+                    The tail's post-audible phase holds no speaker echo by
+                    construction, so its frames are the user's own words (or
+                    room silence the provider VAD ignores). Delivering them
+                    late — instead of never — is what closes the post-turn
+                    deaf window.
+                    """
+                    nonlocal tail_pending_bytes
+                    if not tail_pending:
+                        return
+                    frames = list(tail_pending)
+                    _clear_tail_pending()
+                    log.info(
+                        "Realtime echo tail expired; forwarding %d buffered "
+                        "microphone frames (%.2fs).",
+                        len(frames),
+                        sum(len(f) for f in frames) / (16_000 * 2),
+                    )
+                    for pcm in frames:
+                        await session.handle_audio_frame(pcm)
+
                 async def _send_microphone() -> None:
                     nonlocal post_output_echo_guard_until, preroll_bytes
+                    nonlocal tail_pending_bytes
                     async for chunk in self._session_input_stream(input_chunks):
                         if not provider_ready.is_set():
                             if (
@@ -6566,9 +6629,9 @@ class SpeechPipeline:
                             buffered = preroll.popleft()
                             preroll_bytes = max(0, preroll_bytes - len(buffered))
                             await session.handle_audio_frame(buffered)
+                        now = time.monotonic()
                         echo_guard_active = bool(
-                            speaking
-                            or time.monotonic() < post_output_echo_guard_until
+                            speaking or now < post_output_echo_guard_until
                         )
                         if echo_guard_active:
                             interrupted_pcm = await asyncio.get_running_loop(
@@ -6581,16 +6644,36 @@ class SpeechPipeline:
                                 # Provider half-duplex remains intact: speaker
                                 # echo, including the hardware playback tail,
                                 # is inspected locally but never uploaded.
+                                # Past the audible phase the frame cannot be
+                                # echo anymore — retain it for the tail flush
+                                # instead of dropping the user's first words.
+                                if (
+                                    not speaking
+                                    and now >= post_output_hw_tail_until
+                                ):
+                                    tail_pending.append(chunk.pcm)
+                                    tail_pending_bytes += len(chunk.pcm)
+                                    while (
+                                        tail_pending_bytes
+                                        > _REALTIME_TAIL_PENDING_MAX_BYTES
+                                        and len(tail_pending) > 1
+                                    ):
+                                        dropped = tail_pending.popleft()
+                                        tail_pending_bytes -= len(dropped)
                                 continue
                             log.info(
                                 "Realtime desktop barge-in confirmed by local CPU VAD"
                             )
+                            # The detector's capture supersedes the buffered
+                            # tail frames (they overlap its pre-speech window).
+                            _clear_tail_pending()
                             post_output_echo_guard_until = 0.0
                             await session.handle_control({"type": "barge_in"})
                             await session.handle_audio_frame(interrupted_pcm)
                             continue
                         if bool(getattr(barge_detector, "active", False)):
                             barge_detector.stop_output()
+                        await _flush_tail_pending()
                         await session.handle_audio_frame(chunk.pcm)
 
                 # A shared capture buffer already owns and meters production
