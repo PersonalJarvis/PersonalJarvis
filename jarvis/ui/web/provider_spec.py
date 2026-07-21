@@ -447,3 +447,25 @@ def get_spec(provider_id: str) -> ProviderSpec | None:
 def all_secret_keys() -> set[str]:
     """Set of all secret keys referenced by the declared provider specs."""
     return {key for spec in PROVIDERS for key in spec.secret_keys}
+
+
+def secret_slot_consumers(slot: str) -> list[str]:
+    """Labels of every provider surface that can read ``slot`` at runtime.
+
+    Union of (a) specs listing the slot literally in ``secret_keys`` and (b)
+    provider families whose runtime fallback chain
+    (``config.PROVIDER_SECRET_CANDIDATES``) contains it. Powers the
+    shared-key delete warning in the API-Keys UI: deleting ``openai_api_key``
+    from the STT card silently disabled the Brain and Tool Model too.
+    """
+    from jarvis.core.config import PROVIDER_SECRET_CANDIDATES
+
+    labels: dict[str, None] = {}
+    for spec in PROVIDERS:
+        if slot in spec.secret_keys:
+            labels.setdefault(spec.label)
+    for family, candidates in PROVIDER_SECRET_CANDIDATES.items():
+        if any(candidate_slot == slot for candidate_slot, _env in candidates):
+            family_spec = get_spec(family)
+            labels.setdefault(family_spec.label if family_spec else family)
+    return list(labels)

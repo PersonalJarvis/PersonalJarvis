@@ -1,12 +1,25 @@
 /**
- * Component tests for ApiKeyForm's new help text + live key-format hint.
+ * Component tests for ApiKeyForm: help text, live key-format hint, and the
+ * fallback-aware credential states (field report 2026-07-21) — a slot the
+ * runtime already serves via the shared family key renders a "covered" note
+ * instead of an empty input, and deleting a slot other surfaces read needs a
+ * second, named confirmation.
  */
-import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 
 import { ApiKeyForm } from "@/components/ApiKeyForm";
+import { deleteSecret } from "@/hooks/useProviders";
+
+vi.mock("@/hooks/useProviders", () => ({
+  deleteSecret: vi.fn(async () => undefined),
+  postSecret: vi.fn(async () => undefined),
+}));
 
 afterEach(cleanup);
+beforeEach(() => {
+  vi.mocked(deleteSecret).mockClear();
+});
 
 describe("ApiKeyForm credential help", () => {
   it("renders the plain-English credential help text", () => {
@@ -76,5 +89,87 @@ describe("ApiKeyForm live key-format hint", () => {
     const input = screen.getByPlaceholderText(/openai_api_key/i);
     fireEvent.change(input, { target: { value: "sk-proj-correct123" } });
     expect(screen.queryByText(/expects a different key/i)).toBeNull();
+  });
+});
+
+describe("ApiKeyForm shared-key covered state", () => {
+  it("renders the covered note instead of an input when a fallback exists", () => {
+    render(
+      <ApiKeyForm
+        secretKey="realtime_openai_api_key"
+        dashboardUrl={null}
+        configured={false}
+        effectiveConfigured={true}
+        sharedWith={["OpenAI"]}
+      />,
+    );
+    expect(screen.queryByLabelText(/enter realtime_openai_api_key/i)).toBeNull();
+    expect(screen.getByText(/shared key/i)).toBeTruthy();
+
+    // The dedicated key stays available as an explicit optional upgrade.
+    fireEvent.click(screen.getByRole("button", { name: /add dedicated key/i }));
+    expect(screen.getByLabelText(/enter realtime_openai_api_key/i)).toBeTruthy();
+  });
+
+  it("still renders the open input when no fallback covers the slot", () => {
+    render(
+      <ApiKeyForm
+        secretKey="nvidia_api_key"
+        dashboardUrl={null}
+        configured={false}
+        effectiveConfigured={false}
+      />,
+    );
+    expect(screen.getByLabelText(/enter nvidia_api_key/i)).toBeTruthy();
+  });
+});
+
+describe("ApiKeyForm shared-key delete confirmation", () => {
+  it("requires a second, named confirmation before deleting a shared slot", async () => {
+    render(
+      <ApiKeyForm
+        secretKey="openai_api_key"
+        dashboardUrl={null}
+        configured={true}
+        sharedWith={["OpenAI Whisper STT", "OpenAI TTS", "OpenAI Codex"]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /delete openai_api_key/i }));
+    expect(deleteSecret).not.toHaveBeenCalled();
+    expect(screen.getByText(/OpenAI Whisper STT/)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: /delete anyway/i }));
+    await waitFor(() => expect(deleteSecret).toHaveBeenCalledWith("openai_api_key"));
+  });
+
+  it("cancel keeps the key and hides the warning", () => {
+    render(
+      <ApiKeyForm
+        secretKey="openai_api_key"
+        dashboardUrl={null}
+        configured={true}
+        sharedWith={["OpenAI TTS"]}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /delete openai_api_key/i }));
+    fireEvent.click(screen.getByRole("button", { name: /cancel/i }));
+    expect(deleteSecret).not.toHaveBeenCalled();
+    expect(screen.queryByText(/OpenAI TTS/)).toBeNull();
+  });
+
+  it("deletes an unshared slot on the first click", async () => {
+    render(
+      <ApiKeyForm
+        secretKey="openrouter_api_key"
+        dashboardUrl={null}
+        configured={true}
+        sharedWith={[]}
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /delete openrouter_api_key/i }));
+    await waitFor(() =>
+      expect(deleteSecret).toHaveBeenCalledWith("openrouter_api_key"),
+    );
   });
 });

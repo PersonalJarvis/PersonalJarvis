@@ -899,6 +899,11 @@
   "apikeys_view": {
     "title": "Claves API y Proveedores",
     "subtitle": "Conecta proveedores y elige qué impulsa cada parte de Jarvis.",
+    "shared_key_covered": "Ya está cubierto por tu clave compartida de esta familia de proveedores — una clave dedicada es opcional.",
+    "add_dedicated_key": "Añadir clave dedicada",
+    "shared_delete_prefix": "Esta clave también la usan:",
+    "shared_delete_suffix": "Al eliminarla, esos proveedores también se desactivan.",
+    "delete_anyway": "Eliminar de todos modos",
     "save": "Guardar",
     "saved": "Guardado",
     "missing": "Falta",

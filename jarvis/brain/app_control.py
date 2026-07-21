@@ -92,6 +92,10 @@ AUTH_PROVIDER_ALIASES: dict[str, str] = {
     "grok": "grok",
     "grok-voice": "grok",
     "openai-realtime": "openai-realtime",
+    # Codex-as-brain accepts its dedicated slot OR the general OpenAI key
+    # (config.PROVIDER_SECRET_CANDIDATES["codex"]); without this entry the
+    # presence check saw only the dedicated slot.
+    "codex": "codex",
 }
 
 # Local providers that need no credential at all. Empty since v1.0.1: the only

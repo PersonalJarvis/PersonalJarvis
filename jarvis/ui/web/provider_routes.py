@@ -302,6 +302,34 @@ def _spec_to_payload(
         active = spec.id == active_stt
 
     secrets_set = {k: bool(cfg_mod.get_secret(k)) for k in spec.secret_keys}
+    # The runtime resolves credentials through family fallback chains
+    # (config.PROVIDER_SECRET_CANDIDATES); the form state must match, or a
+    # single-key install sees a green card WITH an empty "enter a key" box
+    # demanding a second key it does not need (Realtime cards, field report
+    # 2026-07-21). Per-slot: dedicated value present OR the family chain
+    # resolves one. Only single-slot api_key specs get the family OR — a
+    # multi-slot spec (e.g. Twilio) has no meaningful per-slot fallback.
+    secrets_effective = dict(secrets_set)
+    if (
+        spec.auth_mode == "api_key"
+        and len(spec.secret_keys) == 1
+        and not all(secrets_set.values())
+    ):
+        from jarvis.brain.app_control import AUTH_PROVIDER_ALIASES
+
+        alias = AUTH_PROVIDER_ALIASES.get(spec.id, spec.id)
+        try:
+            family_present = bool(cfg_mod.get_provider_secret(alias))
+        except Exception:  # noqa: BLE001 -- unknown family means no fallback
+            family_present = False
+        if family_present:
+            secrets_effective = dict.fromkeys(spec.secret_keys, True)
+    from .provider_spec import secret_slot_consumers
+
+    secret_shared_with = {
+        k: [label for label in secret_slot_consumers(k) if label != spec.label]
+        for k in spec.secret_keys
+    }
     codex_status = None
     if spec.id == "codex":
         codex_status = CodexAuthService(_codex_binary_path()).status().to_dict()
@@ -318,6 +346,11 @@ def _spec_to_payload(
         "auth_mode": spec.auth_mode,
         "secret_keys": list(spec.secret_keys),
         "secrets_set": secrets_set,
+        # Fallback-aware per-slot state + the other surfaces sharing each
+        # slot; the form renders "covered by your shared key" and warns
+        # before deleting a key that other tiers still read.
+        "secrets_effective": secrets_effective,
+        "secret_shared_with": secret_shared_with,
         "dashboard_url": spec.dashboard_url,
         "login_cli": list(spec.login_cli) if spec.login_cli else None,
         "install_hint": spec.install_hint,
@@ -1028,7 +1061,7 @@ def _section_health_fingerprint(
     cartesia_model = cartesia.get("model_id") if isinstance(cartesia, dict) else None
     configuration = (
         ("brain-model", _provider_value("brain", "model")),
-        ("computer-use-model", _provider_value("computer-use", "cu_model")),
+        ("computer-use-model", _provider_value("computer-use", "tool_model")),
         ("tts-model", str(getattr(tts, "model", None) or "")),
         ("tts-voice-de", str(getattr(tts, "voice_de", None) or "")),
         ("tts-voice-en", str(getattr(tts, "voice_en", None) or "")),

@@ -25,6 +25,14 @@ export interface ProviderDescriptor {
   auth_mode: AuthMode;
   secret_keys: string[];
   secrets_set: Record<string, boolean>;
+  /**
+   * Fallback-aware per-slot state: true when the dedicated slot is set OR
+   * the runtime family chain resolves a shared key for it. Optional so
+   * cached older payloads keep parsing.
+   */
+  secrets_effective?: Record<string, boolean>;
+  /** Other provider surfaces (labels) that read the same slot at runtime. */
+  secret_shared_with?: Record<string, string[]>;
   dashboard_url: string | null;
   login_cli: string[] | null;
   install_hint: string | null;

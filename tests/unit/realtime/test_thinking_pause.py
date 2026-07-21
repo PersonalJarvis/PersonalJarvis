@@ -1,11 +1,4 @@
-"""The Settings thinking pause must NOT leak into realtime sessions.
-
-The "Thinking pause" (SpeechConfig.vad_silence_ms) endpoints the classic
-pipeline only. Realtime providers own their native turn detection — forcing
-the pipeline window into a realtime session made the model wait the full
-window after every utterance ("done speaking but still listening",
-maintainer directive 2026-07-21).
-"""
+"""The Settings thinking pause must reach every realtime provider family."""
 
 from __future__ import annotations
 
@@ -82,7 +75,7 @@ def _config(silence_ms: int):
 
 
 @pytest.mark.asyncio
-async def test_pipeline_pause_never_reaches_primary_or_fallback():
+async def test_configured_pause_reaches_primary_and_cross_family_fallback():
     primary = _Provider("first-family", fail=True)
     fallback = _Provider("second-family")
     session = RealtimeVoiceSession(
@@ -95,8 +88,6 @@ async def test_pipeline_pause_never_reaches_primary_or_fallback():
 
     await session.handle_control({"type": "audio_start", "sample_rate": 16_000})
 
-    # Even with a long pipeline Thinking pause configured, every realtime
-    # provider family opens with the provider-native default (None).
-    assert primary.opened_with.silence_duration_ms is None
-    assert fallback.opened_with.silence_duration_ms is None
+    assert primary.opened_with.silence_duration_ms == 2_700
+    assert fallback.opened_with.silence_duration_ms == 2_700
     await session.end(reason="test")

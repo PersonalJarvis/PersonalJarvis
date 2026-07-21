@@ -899,6 +899,11 @@
   "apikeys_view": {
     "title": "API-Keys & Provider",
     "subtitle": "Verbinde Provider und lege fest, was die einzelnen Teile von Jarvis antreibt.",
+    "shared_key_covered": "Bereits über deinen geteilten Schlüssel dieser Provider-Familie abgedeckt — ein eigener Schlüssel ist optional.",
+    "add_dedicated_key": "Eigenen Schlüssel hinterlegen",
+    "shared_delete_prefix": "Dieser Schlüssel wird auch verwendet von:",
+    "shared_delete_suffix": "Beim Löschen werden auch diese Provider deaktiviert.",
+    "delete_anyway": "Trotzdem löschen",
     "save": "Speichern",
     "saved": "Gespeichert",
     "missing": "Fehlt",

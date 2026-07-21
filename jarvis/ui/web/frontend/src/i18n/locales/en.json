@@ -899,6 +899,11 @@
   "apikeys_view": {
     "title": "API Keys & Providers",
     "subtitle": "Connect providers and choose what powers each part of Jarvis.",
+    "shared_key_covered": "Already covered by your shared key from this provider family — a dedicated key is optional.",
+    "add_dedicated_key": "Add dedicated key",
+    "shared_delete_prefix": "This key is also used by:",
+    "shared_delete_suffix": "Deleting it disables those providers too.",
+    "delete_anyway": "Delete anyway",
     "save": "Save",
     "saved": "Saved",
     "missing": "Missing",

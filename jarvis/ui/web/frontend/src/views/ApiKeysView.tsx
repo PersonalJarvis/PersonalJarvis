@@ -1742,6 +1742,8 @@ function AuthWidget({
               secretKey={k}
               dashboardUrl={descriptor.dashboard_url}
               configured={Boolean(descriptor.secrets_set[k])}
+              effectiveConfigured={Boolean(descriptor.secrets_effective?.[k])}
+              sharedWith={descriptor.secret_shared_with?.[k] ?? []}
               credentialHelp={descriptor.credential_help}
               onChanged={onChanged}
               onSavedActivate={onSavedActivate}

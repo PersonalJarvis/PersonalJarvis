@@ -9,10 +9,9 @@ import { useT } from "@/i18n";
  * silence window (how long Jarvis waits in silence before submitting). Range
  * 0.5–5.0 s, step 0.1 s, default 1.5 s. The label tracks the slider live; the
  * PUT fires on release (pointer/key up) so a 0.1 s-step drag does not storm the
- * backend. The change persists to jarvis.toml and applies live to the classic
- * pipeline ONLY (a headless host falls back to "applies on next start").
- * Realtime sessions deliberately ignore it — the realtime model's native turn
- * detection decides the turn end (maintainer directive 2026-07-21).
+ * backend. The change persists to jarvis.toml, applies live to the classic
+ * pipeline, and configures every newly opened Realtime provider session (a
+ * headless host falls back to "applies on next start").
  */
 export function SilenceWindowGroup() {
   const t = useT();
