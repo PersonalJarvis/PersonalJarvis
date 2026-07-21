@@ -118,7 +118,11 @@ class DragTool:
             if expected_raw is None:
                 await asyncio.to_thread(_perform_drag, x1, y1, x2, y2, duration_s)
             else:
-                expected_signature = tuple(expected_raw)
+                from jarvis.cu.target_guard import (  # noqa: PLC0415
+                    coerce_signature,
+                )
+
+                expected_signature = coerce_signature(expected_raw)
                 from jarvis.plugins.tool.click import (  # noqa: PLC0415
                     _window_signature_matches,
                 )

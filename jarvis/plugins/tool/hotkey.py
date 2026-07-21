@@ -111,8 +111,10 @@ class HotkeyTool:
                 output=None,
                 error="Refusing hotkey: invalid captured-window identity.",
             )
+        from jarvis.cu.target_guard import coerce_signature  # noqa: PLC0415
+
         expected_signature = (
-            tuple(expected_raw) if expected_raw is not None else None
+            coerce_signature(expected_raw) if expected_raw is not None else None
         )
 
         from jarvis.cu.actuate.base import is_known_key_name

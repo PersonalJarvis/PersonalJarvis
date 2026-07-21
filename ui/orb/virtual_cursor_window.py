@@ -30,6 +30,7 @@ import logging
 import sys
 import threading
 import time
+from collections.abc import Callable
 
 from jarvis.overlay.virtual_cursor import pulse_state, set_virtual_cursor
 
@@ -89,9 +90,38 @@ def _virtual_screen_rect() -> tuple[int, int, int, int]:
     return int(left), int(top), int(width), int(height)
 
 
+def _resolve_toplevel_hwnd(
+    inner_hwnd: int,
+    *,
+    get_parent: Callable[[int], int] | None = None,
+) -> int:
+    """The HWND Windows actually hit-tests for a Tk toplevel.
+
+    Tk's ``winfo_id()`` returns the INNER ``TkChild`` client window; the
+    window manager (and ``WM_NCHITTEST`` routing) works on its ``TkTopLevel``
+    wrapper parent. Styling the child left the wrapper opaque to input — the
+    overlay then ATE the very clicks it visualizes (its gold center dot sits
+    exactly on the click hotspot). Mirrors the Jarvis-Bar's wrapper
+    resolution (``jarvis/ui/jarvisbar/overlay.py``). Falls back to the inner
+    hwnd when no parent exists.
+    """
+    if get_parent is None:
+        import ctypes
+
+        get_parent = ctypes.windll.user32.GetParent
+    try:
+        parent = int(get_parent(int(inner_hwnd)) or 0)
+    except Exception:  # noqa: BLE001 — resolution is best-effort
+        parent = 0
+    return parent if parent else int(inner_hwnd)
+
+
 def _make_click_through(hwnd: int) -> None:
     """Set WS_EX_LAYERED|TRANSPARENT|TOOLWINDOW|NOACTIVATE so the whole window
     passes input through and never steals focus or shows in alt-tab.
+
+    ``hwnd`` MUST be the TOP-LEVEL wrapper (see :func:`_resolve_toplevel_hwnd`)
+    — extended styles on the inner TkChild do not affect hit-testing.
 
     Win32 quirk (incident 2026-05-26): writing GWL_EXSTYLE on a layered window
     silently invalidates the cached chroma-key that Tk set via
@@ -307,7 +337,10 @@ class TkVirtualCursor:
 
             root.update_idletasks()
             try:
-                hwnd = int(root.winfo_id())
+                # winfo_id() is the inner TkChild; hit-testing happens on its
+                # TkTopLevel wrapper — style THAT one (regression guard:
+                # tests/overlay/test_virtual_cursor_click_through.py).
+                hwnd = _resolve_toplevel_hwnd(int(root.winfo_id()))
                 self._hwnd = hwnd  # captured for shutdown's cross-thread fallback
                 _make_click_through(hwnd)
             except Exception:  # noqa: BLE001

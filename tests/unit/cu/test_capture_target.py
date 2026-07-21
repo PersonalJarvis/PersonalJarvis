@@ -35,10 +35,12 @@ def _wire_window(
     win: WindowInfo | None,
     rect: tuple[int, int, int, int] | None,
     is_shell: bool = False,
+    menu_open: bool = False,
 ) -> None:
     monkeypatch.setattr(ws, "foreground_window", lambda: win)
     monkeypatch.setattr(ws, "is_shell_window", lambda w: is_shell)
     monkeypatch.setattr(ws, "window_frame_rect", lambda w: rect)
+    monkeypatch.setattr(ws, "open_menu_surface_present", lambda: menu_open)
 
 
 def test_monitor_scope_keeps_previous_behaviour(fake_monitor, monkeypatch):
@@ -77,6 +79,16 @@ def test_no_foreground_window_falls_back(fake_monitor, monkeypatch):
 def test_unreadable_rect_falls_back(fake_monitor, monkeypatch):
     # macOS/Linux today: no per-window rect -> keep the monitor framing.
     _wire_window(monkeypatch, win=WindowInfo(title="App"), rect=None)
+    assert select_capture_target("foreground", scope="window") == fake_monitor
+
+
+def test_open_menu_surface_falls_back_to_monitor(fake_monitor, monkeypatch):
+    # A context menu is its own top-level hwnd: a native per-window grab can
+    # NEVER contain it, so the model could not see (or click) the menu it
+    # just opened. While one is open, perception must widen to the monitor
+    # (Windows right-click dead-end, 2026-07-21).
+    _wire_window(monkeypatch, win=WindowInfo(title="Google Chrome", handle=7),
+                 rect=(-2000, 100, 1890, 1040), menu_open=True)
     assert select_capture_target("foreground", scope="window") == fake_monitor
 
 

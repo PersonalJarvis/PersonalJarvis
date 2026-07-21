@@ -161,8 +161,10 @@ class TypeTextTool:
                 output=None,
                 error="Refusing text input: invalid captured-window identity.",
             )
+        from jarvis.cu.target_guard import coerce_signature  # noqa: PLC0415
+
         expected_signature = (
-            tuple(expected_raw) if expected_raw is not None else None
+            coerce_signature(expected_raw) if expected_raw is not None else None
         )
         # Windows: prefer the native KEYEVENTF_UNICODE SendInput path. It injects
         # the exact Unicode codepoint regardless of the active keyboard layout

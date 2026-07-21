@@ -142,16 +142,10 @@ def _rect_to_bounds(rect: object) -> tuple[int, int, int, int]:
     return (left, top, max(0, right - left), max(0, bottom - top))
 
 
-def _win_query_element_at_point(x: int, y: int) -> PointerElement | None:
-    """Windows: ``IUIAutomation.ElementFromPoint`` via pywinauto's comtypes singleton."""
-    from ctypes import wintypes  # noqa: PLC0415
-
-    from pywinauto.uia_defines import IUIA  # noqa: PLC0415
+def _win_element_from_raw(raw: Any) -> PointerElement | None:
+    """Build a :class:`PointerElement` from a raw IUIAutomationElement."""
     from pywinauto.uia_element_info import UIAElementInfo  # noqa: PLC0415
 
-    iuia = IUIA().iuia
-    point = wintypes.POINT(int(x), int(y))
-    raw = iuia.ElementFromPoint(point)
     if raw is None:
         return None
     info = UIAElementInfo(raw)
@@ -159,9 +153,9 @@ def _win_query_element_at_point(x: int, y: int) -> PointerElement | None:
     name = str(getattr(info, "name", "") or "").strip()
     role = str(getattr(info, "control_type", "") or "").strip()
     bounds = _rect_to_bounds(getattr(info, "rectangle", None))
-    # Keyboard-focus state of the LEAF element actually hit (never an
-    # ancestor): the CU click verification uses it as already-in-desired-
-    # state evidence. Best-effort tri-state.
+    # Keyboard-focus state of the LEAF element itself (never an ancestor):
+    # the CU click verification uses it as already-in-desired-state
+    # evidence. Best-effort tri-state.
     try:
         focused: bool | None = bool(raw.CurrentHasKeyboardFocus)
     except Exception:  # noqa: BLE001 — property read is best-effort
@@ -196,6 +190,42 @@ def _win_query_element_at_point(x: int, y: int) -> PointerElement | None:
         source="ax_tree",
         focused=focused,
     )
+
+
+def _win_query_element_at_point(x: int, y: int) -> PointerElement | None:
+    """Windows: ``IUIAutomation.ElementFromPoint`` via pywinauto's comtypes singleton."""
+    from ctypes import wintypes  # noqa: PLC0415
+
+    from pywinauto.uia_defines import IUIA  # noqa: PLC0415
+
+    iuia = IUIA().iuia
+    point = wintypes.POINT(int(x), int(y))
+    return _win_element_from_raw(iuia.ElementFromPoint(point))
+
+
+def _win_query_focused_element() -> PointerElement | None:
+    """Windows: ``IUIAutomation.GetFocusedElement`` — the control that holds
+    keyboard focus, resolved natively and therefore DEPTH-INDEPENDENT (a
+    Chrome omnibox nested below any tree-walk depth still resolves)."""
+    from pywinauto.uia_defines import IUIA  # noqa: PLC0415
+
+    element = _win_element_from_raw(IUIA().iuia.GetFocusedElement())
+    if element is None:
+        return None
+    # GetFocusedElement IS the focus authority — stamp the flag even when
+    # the per-element property read degraded to None.
+    if element.focused is None:
+        element = PointerElement(
+            name=element.name,
+            role=element.role,
+            value=element.value,
+            bounds=element.bounds,
+            app_name=element.app_name,
+            window_title=element.window_title,
+            source=element.source,
+            focused=True,
+        )
+    return element
 
 
 def _win_value(raw: Any) -> str:
@@ -241,7 +271,6 @@ def _ax_query_element_at_point(x: int, y: int) -> PointerElement | None:
     an operator runs scripts/crossplatform on a Mac (see SIGNOFF-LOG).
     """
     from ApplicationServices import (  # noqa: PLC0415
-        AXUIElementCopyAttributeValue,
         AXUIElementCopyElementAtPosition,
         AXUIElementCreateSystemWide,
     )
@@ -250,6 +279,46 @@ def _ax_query_element_at_point(x: int, y: int) -> PointerElement | None:
     err, elem = AXUIElementCopyElementAtPosition(system, float(x), float(y), None)
     if err != 0 or elem is None:
         return None
+    return _ax_element_to_pointer(elem)
+
+
+def _ax_query_focused_element() -> PointerElement | None:
+    """macOS: the system-wide ``kAXFocusedUIElement`` — depth-independent
+    keyboard-focus resolution, mirroring the Windows ``GetFocusedElement``
+    path. Unverified-on-real-desktop until an operator runs
+    scripts/crossplatform on a Mac (see SIGNOFF-LOG)."""
+    from ApplicationServices import (  # noqa: PLC0415
+        AXUIElementCopyAttributeValue,
+        AXUIElementCreateSystemWide,
+    )
+
+    system = AXUIElementCreateSystemWide()
+    err, elem = AXUIElementCopyAttributeValue(
+        system, "AXFocusedUIElement", None,
+    )
+    if err != 0 or elem is None:
+        return None
+    element = _ax_element_to_pointer(elem)
+    if element is None or element.focused is not None:
+        return element
+    # The focused-element attribute IS the focus authority.
+    return PointerElement(
+        name=element.name,
+        role=element.role,
+        value=element.value,
+        bounds=element.bounds,
+        app_name=element.app_name,
+        window_title=element.window_title,
+        source=element.source,
+        focused=True,
+    )
+
+
+def _ax_element_to_pointer(elem: Any) -> PointerElement | None:
+    """Read the standard AX attributes off an ``AXUIElementRef``."""
+    from ApplicationServices import (  # noqa: PLC0415
+        AXUIElementCopyAttributeValue,
+    )
 
     def _attr(name: str) -> str:
         try:
@@ -396,6 +465,38 @@ def _atspi_query_element_at_point(x: int, y: int) -> PointerElement | None:
     )
 
 
+def query_focused_element() -> PointerElement | None:
+    """The control holding keyboard focus, resolved NATIVELY (depth-free).
+
+    Windows: UIA ``GetFocusedElement``; macOS: system-wide
+    ``AXFocusedUIElement`` (behind the same Accessibility permission gate as
+    the point resolver); Linux: no depth-free focus probe exists yet —
+    returns ``None`` (parity gap tracked in docs/os-parity.md). Degrades to
+    ``None`` on any failure and never raises (AD-6).
+    """
+    try:
+        if not detect_capabilities().has_ax_tree:
+            return None
+        plat = detect_platform()
+        if plat == "win32":
+            return _win_query_focused_element()
+        if plat == "darwin":
+            from jarvis.platform.permissions import (  # noqa: PLC0415
+                PermissionId,
+                get_system_permission_port,
+            )
+
+            if not get_system_permission_port().runtime_access_granted(
+                PermissionId.ACCESSIBILITY,
+            ):
+                return None
+            return _ax_query_focused_element()
+        return None
+    except Exception:  # noqa: BLE001 — focus probe is best-effort evidence
+        log.debug("focused-element query failed", exc_info=True)
+        return None
+
+
 __all__ = [
     "PointerResolver",
     "PointQuery",
@@ -404,4 +505,5 @@ __all__ = [
     "AtspiPointerResolver",
     "NullPointerResolver",
     "make_pointer_resolver",
+    "query_focused_element",
 ]

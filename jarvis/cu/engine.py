@@ -66,6 +66,7 @@ from jarvis.cu.ledger import ActionLedger
 from jarvis.cu.target_guard import (
     foreground_matches_or_same_app,
     read_foreground_target,
+    signatures_equivalent,
     signatures_same_app,
     window_signature,
 )
@@ -340,13 +341,59 @@ async def _live_window_state_signature() -> tuple[Any, ...]:
 def _signature_still_valid(
     live: tuple[Any, ...], expected: tuple[Any, ...],
 ) -> bool:
-    """Post-action signature re-check: exact match or same-app churn.
+    """Post-action signature re-check: equivalent identity or same-app churn.
 
     Used only where an action of ours ALREADY ran (zoom-refine after a
     verified click): the click may legitimately have flipped the frontmost
-    same-app window (macOS dropdown/sheet). A cross-app change still fails.
+    same-app window (macOS dropdown/sheet, Windows popup menu). A cross-app
+    change still fails.
     """
-    return live == expected or signatures_same_app(expected, live)
+    return signatures_equivalent(expected, live) or signatures_same_app(
+        expected, live,
+    )
+
+
+#: A popup that opened farther than this (input units) from the click point
+#: is unrelated UI churn, not evidence the click landed. Menus open AT the
+#: cursor; large dropdown flyouts can still anchor a few hundred px away.
+_POPUP_EVIDENCE_RADIUS = 600
+
+
+def _visible_popup_windows_safe() -> tuple[
+    tuple[int, tuple[int, int, int, int]], ...,
+]:
+    """Popup surfaces on screen; empty on failure or non-Windows hosts."""
+    try:
+        from jarvis.platform import window_state  # noqa: PLC0415
+
+        return window_state.visible_popup_windows()
+    except Exception:  # noqa: BLE001 — evidence source is best-effort
+        log.debug("[cu] popup enumeration failed", exc_info=True)
+        return ()
+
+
+def _new_popup_near_click(
+    pre_popups: frozenset[int],
+    post_popups: tuple[tuple[int, tuple[int, int, int, int]], ...],
+    click_xy: tuple[int, int],
+    *,
+    radius: int = _POPUP_EVIDENCE_RADIUS,
+) -> bool:
+    """Did a NEW popup surface (context menu, dropdown) open near the click?
+
+    Positive-only effect evidence: popups that already existed before the
+    click never count, and a new one far from the click point is treated as
+    unrelated churn rather than proof the click landed.
+    """
+    cx, cy = int(click_xy[0]), int(click_xy[1])
+    for hwnd, (left, top, width, height) in post_popups:
+        if hwnd in pre_popups:
+            continue
+        nearest_x = min(max(cx, left), left + width)
+        nearest_y = min(max(cy, top), top + height)
+        if abs(nearest_x - cx) <= radius and abs(nearest_y - cy) <= radius:
+            return True
+    return False
 
 
 async def _dispatch_tool(
@@ -1132,7 +1179,9 @@ async def run_cu_loop(
 
             if kind in {"click", "click_element", "drag", "scroll", "type", "key"}:
                 live_signature = await _live_window_state_signature()
-                if live_signature != captured_window_signature:
+                if not signatures_equivalent(
+                    captured_window_signature, live_signature,
+                ):
                     if acted_since_capture and signatures_same_app(
                         captured_window_signature, live_signature,
                     ):
@@ -1140,11 +1189,14 @@ async def run_cu_loop(
                         # our own actions: the expected consequence of that
                         # action (macOS: a click into the address bar makes
                         # the suggestions dropdown the frontmost layer-0
-                        # window). Refusing here broke every click->type
-                        # batch (live incident 2026-07-20). Re-baseline so
-                        # the rest of the batch lands where the model
-                        # intended; a CROSS-APP steal still breaks the batch,
-                        # and before the FIRST action the check stays strict.
+                        # window; Windows: a click opens a Chromium/WinUI
+                        # popup menu that takes the foreground). Refusing
+                        # here broke every click->type batch (live incident
+                        # 2026-07-20) and every right-click->menu-item batch
+                        # (Windows, 2026-07-21). Re-baseline so the rest of
+                        # the batch lands where the model intended; a
+                        # CROSS-APP steal still breaks the batch, and before
+                        # the FIRST action the check stays strict.
                         log.debug(
                             "[cu] same-app foreground churn after own action "
                             "— re-baselining window signature",
@@ -1169,6 +1221,11 @@ async def run_cu_loop(
                 assert resolved_xy is not None
                 pointer_used = True
                 pre = await asyncio.to_thread(grab_region, monitor.bbox)
+                pre_popups = frozenset(
+                    hwnd for hwnd, _rect in await asyncio.to_thread(
+                        _visible_popup_windows_safe,
+                    )
+                )
                 ok, detail = await _dispatch_tool(
                     ctx, "click",
                     {
@@ -1198,6 +1255,22 @@ async def run_cu_loop(
 
                         if pre is not None and post is not None and frames_differ(pre, post):
                             detail = (detail + " — screen reacted elsewhere").strip()
+                        elif _new_popup_near_click(
+                            pre_popups,
+                            await asyncio.to_thread(_visible_popup_windows_safe),
+                            resolved_xy,
+                        ):
+                            # A context menu / dropdown flyout is its own
+                            # top-level window — it can sit entirely outside
+                            # a window-scoped capture rect, and a whole-
+                            # monitor thumbnail diff is too coarse to see a
+                            # ~250px menu. The click DID land: judging it a
+                            # miss re-fired right-clicks and dismissed the
+                            # very menus they opened (Windows, 2026-07-21).
+                            detail = (
+                                detail
+                                + " — a popup/menu opened in response"
+                            ).strip(" —")
                         elif await verify_click_focus_point(
                             *resolved_xy,
                             capture_area=monitor.width * monitor.height,
@@ -1228,13 +1301,19 @@ async def run_cu_loop(
                             # the target inside a native-resolution zoom crop
                             # and retry ONCE at the refined point. This is the
                             # step behind the ScreenSpot-Pro zoom gains; the
-                            # happy path never pays for it.
-                            refined = await _zoom_refine_point(
-                                ctx, frame, *resolved_xy,
-                                goal=goal,
-                                target=str(action.get("target", "")),
-                                expected_window_signature=captured_window_signature,
-                            )
+                            # happy path never pays for it. LEFT single
+                            # clicks only: re-firing a right/middle click
+                            # dismisses the very menu the first one may have
+                            # opened (an undetected popup), and re-perceiving
+                            # is strictly safer for those buttons.
+                            refined = None
+                            if action["button"] == "left":
+                                refined = await _zoom_refine_point(
+                                    ctx, frame, *resolved_xy,
+                                    goal=goal,
+                                    target=str(action.get("target", "")),
+                                    expected_window_signature=captured_window_signature,
+                                )
                             if refined is not None and (
                                 abs(refined[0] - resolved_xy[0]) > 12
                                 or abs(refined[1] - resolved_xy[1]) > 12

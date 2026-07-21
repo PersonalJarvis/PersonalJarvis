@@ -152,8 +152,15 @@ class ClickElementTool:
                     output=None,
                     error="Refusing click_element: invalid captured-window identity.",
                 )
-            expected_signature = tuple(expected_raw)
-            if observed_signature != expected_signature:
+            from jarvis.cu.target_guard import (  # noqa: PLC0415
+                coerce_signature,
+                signatures_equivalent,
+            )
+
+            expected_signature = coerce_signature(expected_raw)
+            if not signatures_equivalent(
+                expected_signature, observed_signature,
+            ):
                 return ToolResult(
                     success=False,
                     output=None,

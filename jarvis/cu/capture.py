@@ -310,6 +310,18 @@ def select_capture_target(
 
     from jarvis.platform import window_state as ws  # noqa: PLC0415
 
+    # An open context menu / flyout is its own top-level window: a native
+    # per-window grab cannot contain it, and even a rect grab misses the part
+    # that spills outside the window frame. While one is open, the model must
+    # see the whole monitor or it can never click the menu it just opened
+    # (Windows right-click dead-end, 2026-07-21).
+    if ws.open_menu_surface_present():
+        logger.debug(
+            "[cu] open menu surface detected — monitor-scoped capture for "
+            "this frame",
+        )
+        return monitor
+
     with input_space():
         win = ws.foreground_window()
         if win is None or ws.is_shell_window(win):

@@ -28,6 +28,7 @@ from jarvis.cu.actuate.windows import (
     normalize_virtualdesk as _normalize_virtualdesk,  # noqa: F401 — re-export (tests + callers)
 )
 from jarvis.cu.target_guard import (
+    coerce_signature,
     foreground_matches_or_same_app,
     foreground_signature,
 )
@@ -167,7 +168,9 @@ class ClickTool:
                 error="Refusing click: invalid captured-window identity.",
             )
         expected_signature = (
-            tuple(expected_raw) if expected_raw is not None else current_signature
+            coerce_signature(expected_raw)
+            if expected_raw is not None
+            else current_signature
         )
         if not _window_signature_matches(expected_signature):
             return ToolResult(

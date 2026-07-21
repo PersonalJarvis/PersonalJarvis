@@ -201,8 +201,10 @@ class ScrollTool:
                 output=None,
                 error="Refusing scroll: invalid captured-window identity.",
             )
+        from jarvis.cu.target_guard import coerce_signature  # noqa: PLC0415
+
         expected_signature = (
-            tuple(expected_raw) if expected_raw is not None else None
+            coerce_signature(expected_raw) if expected_raw is not None else None
         )
 
         if os.name == "nt":

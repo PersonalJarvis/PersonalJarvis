@@ -72,6 +72,25 @@ def _get_pointer_resolver() -> Any:
     return _POINTER_RESOLVER
 
 
+def _query_focused_element() -> Any:
+    """Seam over the native focused-element probe (tests monkeypatch this)."""
+    from jarvis.vision.element_at_point import (  # noqa: PLC0415
+        query_focused_element,
+    )
+
+    return query_focused_element()
+
+
+async def _focused_element_async() -> Any:
+    """The natively-resolved focused control, or ``None`` (bounded, safe)."""
+    try:
+        return await asyncio.wait_for(
+            asyncio.to_thread(_query_focused_element), timeout=UIA_TIMEOUT_S,
+        )
+    except Exception:  # noqa: BLE001 — focus probe is best-effort evidence
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Pure node inspections (ported from the legacy engine, behavior-identical)
 # ---------------------------------------------------------------------------
@@ -398,14 +417,48 @@ async def foreground_ui_snapshot(
 
 
 async def verify_typed_text(typed: str) -> bool | None:
-    """Fresh tree → :func:`typed_text_landed`. Any error → ``None``."""
+    """Did the typed text land in an editable field? Tri-state, positive-first.
+
+    Two evidence paths:
+
+    1. The walked foreground tree (:func:`typed_text_landed`) — but that walk
+       is depth- and node-capped, and Chrome nests its omnibox BELOW the walk
+       depth, so on browsers the field that actually received the text is
+       often invisible to it (which turned real typed URLs into "did NOT
+       land" false failures — Windows, 2026-07-21).
+    2. The NATIVE focused-element probe (UIA ``GetFocusedElement`` / AX
+       ``AXFocusedUIElement``) — depth-free; its value is read directly off
+       the control that holds keyboard focus.
+
+    The native probe is consulted whenever the walk did not positively
+    confirm, and can only UPGRADE the verdict to ``True`` — it never
+    manufactures a ``False`` (an omnibox may render its value as the
+    highlighted autocomplete suggestion, so a non-matching read is not
+    proof of a miss).
+    """
+    walked: bool | None
     try:
         obs = await asyncio.wait_for(
             _get_ui_tree_source().observe(), timeout=UIA_TIMEOUT_S,
         )
+        walked = typed_text_landed(
+            tuple(getattr(obs, "nodes", ()) or ()), typed,
+        )
     except Exception:  # noqa: BLE001
-        return None
-    return typed_text_landed(tuple(getattr(obs, "nodes", ()) or ()), typed)
+        walked = None
+    if walked is True:
+        return True
+    target = normalize_for_value_match(typed)
+    if len(target) < TYPE_VERIFY_MIN_CHARS:
+        return walked
+    element = await _focused_element_async()
+    if element is not None:
+        value = normalize_for_value_match(
+            str(getattr(element, "value", "") or ""),
+        )
+        if target in value:
+            return True
+    return walked
 
 
 async def verify_click_focus(name: str) -> bool | None:
@@ -424,13 +477,19 @@ async def verify_click_focus_point(
 ) -> bool | None:
     """Is the element at ``(x, y)`` the focused control? Error → ``None``.
 
-    Two evidence paths, positive-only, both cross-platform:
+    Three evidence paths, positive-only, all cross-platform:
 
     1. Native point hit-test (UIA ``ElementFromPoint`` / AX element-at-
        position / AT-SPI ``getAccessibleAtPoint``) — depth- and pruning-
        independent, so it works even where the walked tree cannot reach the
        control (Chrome nests its omnibox below the walk depth).
-    2. Fallback: scan the walked foreground tree
+    2. Native focused-element probe (UIA ``GetFocusedElement`` / AX
+       ``AXFocusedUIElement``): when the hit-test lands on a CONTAINER
+       (Chromium sometimes reports a Pane/Group at the omnibox point), the
+       focused control's own bounds containing the click point is equally
+       strong already-in-desired-state evidence (the BUG-038 rescue
+       regressed exactly here — Windows, 2026-07-21).
+    3. Fallback: scan the walked foreground tree
        (:func:`click_point_in_focused_element`).
 
     Container focus never counts (:data:`_FOCUS_CONTAINER_ROLES`), and a
@@ -460,6 +519,26 @@ async def verify_click_focus_point(
             not capture_area
             or area == 0  # backend reports no bounds: role filter decides
             or area <= max(1, int(capture_area * _FOCUS_MAX_AREA_FRACTION))
+        ):
+            return True
+    focused = await _focused_element_async()
+    if (
+        focused is not None
+        and getattr(focused, "focused", None) is True
+        and str(getattr(focused, "role", "") or "")
+        not in _FOCUS_CONTAINER_ROLES
+    ):
+        fb = getattr(focused, "bounds", None) or (0, 0, 0, 0)
+        f_area = max(0, int(fb[2])) * max(0, int(fb[3]))
+        if (
+            f_area > 0
+            and fb[0] <= int(x) < fb[0] + fb[2]
+            and fb[1] <= int(y) < fb[1] + fb[3]
+            and (
+                not capture_area
+                or f_area
+                <= max(1, int(capture_area * _FOCUS_MAX_AREA_FRACTION))
+            )
         ):
             return True
     try:

@@ -1165,6 +1165,115 @@ def is_shell_window(win: WindowInfo) -> bool:
         return False
 
 
+#: Popup classes that always count as an open menu surface.
+_MENU_WINDOW_CLASSES = frozenset({
+    "#32768",                    # classic Win32 context menu
+    "Xaml_WindowedPopupClass",   # WinUI 3 / Win11 shell flyouts
+})
+
+#: Popup classes that never count (visual chrome, not an interaction surface).
+_POPUP_IGNORE_CLASSES = frozenset({
+    "SysShadow", "tooltips_class32", "Xaml_WindowedPopupShadowClass",
+})
+
+
+def visible_popup_windows() -> tuple[tuple[int, tuple[int, int, int, int]], ...]:
+    """Visible popup surfaces (context menus, dropdown flyouts) on screen.
+
+    Returns ``(hwnd, (left, top, width, height))`` pairs in physical
+    virtual-desktop pixels. Evidence source for the Computer-Use effect
+    check: a right-click whose only visible result is a context menu — its
+    own top-level window, possibly outside a window-scoped capture rect —
+    must not be judged "no visible change".
+
+    Counted: classic menu / WinUI flyout classes, plus visible undecorated
+    ``WS_POPUP`` top-levels owned by the FOREGROUND process (Chromium and
+    Electron render their menus as such popups). Tooltips, menu shadows,
+    and this process's own overlay windows never count. Windows-only; other
+    platforms return an empty tuple (menus there stay inside the app's
+    normal window/layer and are visible to the standard effect check).
+    Best-effort; never raises.
+    """
+    if detect_platform() != "win32":
+        return ()
+    try:
+        import ctypes  # noqa: PLC0415
+        from ctypes import wintypes  # noqa: PLC0415
+
+        user32 = ctypes.windll.user32
+        _GWL_STYLE = -16
+        _WS_POPUP = 0x80000000
+        _WS_CAPTION = 0x00C00000
+        own_pid = os.getpid()
+        foreground = int(user32.GetForegroundWindow() or 0)
+        fg_pid = wintypes.DWORD(0)
+        if foreground:
+            user32.GetWindowThreadProcessId(foreground, ctypes.byref(fg_pid))
+
+        found: list[tuple[int, tuple[int, int, int, int]]] = []
+
+        @ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        def _on_window(hwnd: int, _lparam: int) -> bool:
+            try:
+                if not user32.IsWindowVisible(hwnd) or int(hwnd) == foreground:
+                    return True
+                pid = wintypes.DWORD(0)
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+                if int(pid.value) == own_pid:
+                    return True
+                cls = _window_class_windows(int(hwnd))
+                if cls in _POPUP_IGNORE_CLASSES:
+                    return True
+                is_menu_class = cls in _MENU_WINDOW_CLASSES
+                if not is_menu_class:
+                    if not fg_pid.value or int(pid.value) != int(fg_pid.value):
+                        return True
+                    style = user32.GetWindowLongW(hwnd, _GWL_STYLE) & 0xFFFFFFFF
+                    if not (style & _WS_POPUP) or (
+                        (style & _WS_CAPTION) == _WS_CAPTION
+                    ):
+                        return True
+                rect = wintypes.RECT()
+                if not user32.GetWindowRect(hwnd, ctypes.byref(rect)):
+                    return True
+                width = int(rect.right - rect.left)
+                height = int(rect.bottom - rect.top)
+                # A real menu/flyout has usable size; 1px strips are chrome.
+                if width < 40 or height < 16:
+                    return True
+                found.append(
+                    (int(hwnd), (int(rect.left), int(rect.top), width, height)),
+                )
+            except Exception:  # noqa: BLE001, S110 — skip an unreadable window; per-window logging would spam the enumeration
+                pass
+            return True
+
+        user32.EnumWindows(_on_window, 0)
+        return tuple(found)
+    except Exception:  # noqa: BLE001 — enumeration is best-effort evidence
+        log.debug("visible_popup_windows failed", exc_info=True)
+        return ()
+
+
+def open_menu_surface_present() -> bool:
+    """Whether an unambiguous menu surface (classic menu / flyout class) is
+    open right now. Used by the capture selector: a native per-window grab
+    cannot see a menu (it is its own top-level hwnd), so perception must
+    fall back to monitor scope while one is open — otherwise the model can
+    never see, and therefore never click, the menu it just opened.
+    """
+    if detect_platform() != "win32":
+        return False
+    try:
+        return any(
+            _window_class_windows(hwnd) in _MENU_WINDOW_CLASSES
+            for hwnd, _rect in visible_popup_windows()
+        )
+    except Exception:  # noqa: BLE001
+        log.debug("open_menu_surface_present failed", exc_info=True)
+        return False
+
+
 def window_frame_rect(win: WindowInfo) -> tuple[int, int, int, int] | None:
     """The window's VISIBLE frame ``(left, top, width, height)`` in the
     platform's INPUT UNITS on the virtual desktop, or ``None`` when
@@ -1562,4 +1671,6 @@ __all__ = [
     "window_rect",
     "foreground_window",
     "move_window_to_primary",
+    "visible_popup_windows",
+    "open_menu_surface_present",
 ]
