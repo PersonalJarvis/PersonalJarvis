@@ -25,6 +25,30 @@ def test_bar_heights_grow_with_level():
         assert 4.0 <= h <= 40.0 + 1e-6
 
 
+def test_display_level_rises_nearly_instantly():
+    """The bars must move IN SYNC with the voice: from silence, one frame at
+    full input already produces a clearly moving bar (user report 2026-07-21:
+    the indicator reacted with a visible delay)."""
+    r = R.JarvisBarRenderer()
+    r.render(0.0, "listen", 0.0)
+    r.render(0.016, "listen", 1.0)
+    assert r._st.display_level > 0.5  # noqa: SLF001
+
+
+def test_display_level_snaps_to_exact_zero_after_silence():
+    """After the input level drops to 0 the eased display must reach EXACT 0.0
+    within a few 60 fps frames — a sub-visible tail still animates the bars."""
+    r = R.JarvisBarRenderer()
+    for k in range(10):
+        r.render(k * 0.016, "listen", 0.9)
+    for k in range(10):
+        r.render((10 + k) * 0.016, "listen", 0.0)
+        if r._st.display_level == 0.0:  # noqa: SLF001
+            break
+    assert r._st.display_level == 0.0  # noqa: SLF001
+    assert k <= 8  # ≤ ~150 ms at 60 fps
+
+
 # --- thinking: "orbital core" (replaces the old generic sine wave) -----------
 
 

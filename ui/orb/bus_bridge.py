@@ -458,6 +458,9 @@ class OrbBusBridge:
             # the bar. _last_state untouched (see docstring).
             if not self._wake_candidate_active:
                 self._wake_preview_origin_state = self._last_state
+                # Only on the reveal edge — a repeated candidate while the user
+                # is already speaking must not re-zero the live envelope.
+                self._clear_input_level()
             self._wake_candidate_active = True
             # A fresh input affordance supersedes stale output recency from the
             # preceding turn. Startup no longer plays an ACK, so retaining the
@@ -486,9 +489,15 @@ class OrbBusBridge:
             self._wake_preview_origin_state = prev_state
         self._last_state_trace_id = str(event.trace_id)
         self._suppress_show_until_session = False
+        was_preview = self._wake_candidate_active
         self._wake_candidate_active = False
         self._last_tts_level_t = 0.0
         self._last_state = "LISTENING"
+        if not was_preview and prev_state != "LISTENING":
+            # Fresh reveal (no candidate preview preceded it): drop the wake
+            # word's leftover envelope. After a preview the user may already be
+            # mid-command — re-zeroing would dip the live bars.
+            self._clear_input_level()
         self._orb.show(mode="listen")
         if prev_state in ("IDLE", "ERROR", "PAUSED"):
             self._orb.play_animation("wave")
@@ -525,9 +534,15 @@ class OrbBusBridge:
         self._voice_session_active = True
         prev_state = self._last_state
         self._suppress_show_until_session = False
+        was_preview = self._wake_candidate_active
         self._wake_candidate_active = False
         self._last_tts_level_t = 0.0
         self._last_state = "LISTENING"
+        if not was_preview and prev_state != "LISTENING":
+            # Fresh reveal only (hotkey / call): after a wake preview or the
+            # confirmed wake the envelope was already cleared and the user may
+            # be mid-command — re-zeroing would dip the live bars.
+            self._clear_input_level()
         # Enter the listening look now — robust to a deduplicated LISTENING state.
         self._orb.show(mode="listen")
         if prev_state in ("IDLE", "ERROR", "PAUSED"):
@@ -972,6 +987,23 @@ class OrbBusBridge:
     # --- Live loudness → equalizer bars (mic + TTS precedence) ---------
 
     _TTS_OWNS_BARS_S = 0.5  # mic is muted this long after the last TTS level
+
+    def _clear_input_level(self) -> None:
+        """Zero the mic-level envelope AND the surface bars on a listening
+        reveal. The wake word itself was loud enough to leave a decaying
+        envelope in the normalizer; without this it renders as a phantom
+        swing the instant the bar appears — the bar must only ever show what
+        the user says AFTER it is visible."""
+        try:
+            from jarvis.audio import mic_level
+
+            mic_level.clear()
+        except Exception:  # noqa: BLE001 — visual hygiene must never break the bus
+            log.debug("mic_level clear failed", exc_info=True)
+        try:
+            self._orb.set_level(0.0)
+        except Exception:  # noqa: BLE001
+            log.debug("surface level clear failed", exc_info=True)
 
     def _note_tts_level(self, level: float) -> None:
         """Forward live TTS loudness and remember that Jarvis owns the bars.

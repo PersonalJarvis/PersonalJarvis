@@ -490,9 +490,16 @@ class JarvisBarRenderer:
         # crawling there over a third of a second.
         self._st.pw = ease(self._st.pw, tw, 0.5)
         self._st.ph = ease(self._st.ph, th, 0.5)
+        # Asymmetric level easing: rise almost instantly so the bars move in
+        # sync with the voice, fall fast and snap to dead zero — a lingering
+        # sub-visible tail otherwise keeps the equalizer wiggling in silence.
+        level_target = ext_level if active else 0.0
+        rising = level_target > self._st.display_level
         self._st.display_level = ease(
-            self._st.display_level, ext_level if active else 0.0, 0.35
+            self._st.display_level, level_target, 0.6 if rising else 0.5
         )
+        if not rising and level_target <= 0.0 and self._st.display_level < 0.02:
+            self._st.display_level = 0.0
         pw, ph = self._st.pw, self._st.ph
 
         frame = np.empty((WIN_H, WIN_W, 3), dtype=np.uint8)

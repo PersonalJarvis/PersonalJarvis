@@ -59,6 +59,46 @@ def test_release_smoothing_decays_after_speech_stops():
     mic_level.reset_for_tests()
 
 
+def test_release_snaps_to_dead_zero_within_a_quarter_second():
+    """User report 2026-07-21: after you stop talking the bars keep moving for
+    a moment. The release must reach EXACT zero (not an invisible-but-animated
+    tail) within a few frames (~32 ms each) of true silence."""
+    meter = LevelNormalizer()
+    _push_frames(meter, 0.0008, 60)
+    _push_frames(meter, 0.2, 12)  # loud speech
+
+    levels = [meter.push(0.0008) for _ in range(8)]  # ≤ ~256 ms of audio frames
+    assert 0.0 in levels, f"release never snapped to zero: {levels[-1]:.3f}"
+
+
+def test_clear_drops_envelope_but_keeps_adapted_floor():
+    """clear() kills the wake word's leftover swing without re-arming the
+    conservative default noise floor (which would deafen a quiet mic for the
+    first second of the session)."""
+    meter = LevelNormalizer()
+    _push_frames(meter, 0.0005, 80)  # quiet-mic floor adapts down
+    _push_frames(meter, 0.2, 12)  # the "wake word"
+
+    meter.clear()
+    assert meter.push(0.0005) == 0.0  # no phantom tail on the fresh bar
+
+    # Quiet-mic speech right after clear() must still be visible immediately —
+    # proof the adapted floor survived (reset() would gate it out).
+    assert _push_frames(meter, 0.004, 4) > 0.25
+
+
+def test_breath_and_room_murmur_after_speech_stay_dark():
+    """User report 2026-07-21: the bars swing although 'nothing' is there.
+    Low-level noise just above the adaptive gate (breathing, chair creaks)
+    lands in the squelch band and must render as dead zero."""
+    meter = LevelNormalizer()
+    _push_frames(meter, 0.0005, 80)
+    _push_frames(meter, 0.05, 12)  # normal speech
+    _push_frames(meter, 0.0005, 10)  # silence — envelope drains
+
+    assert _push_frames(meter, 0.002, 10) == 0.0
+
+
 def test_quiet_laptop_mic_speech_is_clearly_visible():
     """Fresh-machine forensics Bug 17: on a quiet laptop input path (hiss
     ~0.0005, speech ~0.004 rms) STT/wake work fine but the bars sat at zero —

@@ -33,11 +33,19 @@ _subscribers: list[Callable[[float], None]] = []
 # range is wide enough for a quiet laptop mic (speech around 0.002-0.006 RMS)
 # and a high-gain headset without making either device load-bearing. Unlike an
 # adaptive peak, it preserves the difference between quiet and loud speech.
-_MIN_NOISE_FLOOR = 0.0002
+_MIN_NOISE_FLOOR = 0.0004
 _METER_FLOOR_RMS = 0.00025
 _METER_CEILING_RMS = 0.25
 _METER_LOG_SPAN = math.log(_METER_CEILING_RMS / _METER_FLOOR_RMS)
 _METER_CURVE = 1.15
+# Display squelch: mapped levels below this render as dead zero. Breaths, chair
+# creaks and room murmur that sneak past the adaptive gate land in this band and
+# used to keep the bars twitching while the user was silent. Real speech — even
+# on a quiet laptop mic (~0.004 RMS → ~0.28 mapped) — sits well above it.
+_DISPLAY_SQUELCH = 0.10
+# Once the input is squelched, snap the decaying envelope straight to zero below
+# this remainder instead of letting an invisible tail keep the bars animating.
+_RELEASE_SNAP = 0.04
 
 
 class LevelNormalizer:
@@ -73,12 +81,23 @@ class LevelNormalizer:
         else:
             position = math.log(gated / _METER_FLOOR_RMS) / _METER_LOG_SPAN
             raw = position**_METER_CURVE
+        if raw < _DISPLAY_SQUELCH:
+            raw = 0.0
 
-        if raw > self._smoothed:  # attack fast
-            self._smoothed = 0.4 * self._smoothed + 0.6 * raw
-        else:  # release slow
-            self._smoothed = 0.75 * self._smoothed + 0.25 * raw
+        # The bars must move IN SYNC with the voice: near-instant attack, a
+        # fast release that bridges syllable gaps, and a hard snap to zero so
+        # silence reads as silence immediately instead of a ~300 ms wiggle-out.
+        if raw > self._smoothed:
+            self._smoothed = 0.15 * self._smoothed + 0.85 * raw
+        else:
+            self._smoothed = 0.45 * self._smoothed + 0.55 * raw
+            if raw == 0.0 and self._smoothed < _RELEASE_SNAP:
+                self._smoothed = 0.0
         return self._smoothed
+
+    def clear(self) -> None:
+        """Zero the display envelope, keeping the adapted noise floor."""
+        self._smoothed = 0.0
 
     def reset(self) -> None:
         self._noise_floor = 0.005
@@ -120,6 +139,16 @@ def feed(rms: float) -> None:
             sink(level)
         except Exception:  # noqa: BLE001 — a bad sink must never break capture
             _log.debug("mic_level sink failed", exc_info=True)
+
+
+def clear() -> None:
+    """Drop the current level envelope, keeping the adapted noise floor.
+
+    Called when the listening bar is revealed (wake candidate / wake word /
+    session start): the wake word itself was loud, and its decaying envelope
+    would otherwise render as a phantom swing the moment the bar appears —
+    the user never sees the wake word, only their command."""
+    _norm.clear()
 
 
 def reset() -> None:

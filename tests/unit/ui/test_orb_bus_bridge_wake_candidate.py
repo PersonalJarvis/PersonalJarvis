@@ -180,6 +180,55 @@ async def test_rejected_candidate_stops_forwarding_wake_mic_level() -> None:
     assert ("set_level", 0.5) not in orb.calls
 
 
+async def test_candidate_reveal_clears_wake_word_envelope() -> None:
+    """The wake word itself is loud; its decaying level envelope must not render
+    as a phantom swing the instant the bar appears (user report 2026-07-21)."""
+    from jarvis.audio import mic_level
+
+    mic_level.reset_for_tests()
+    try:
+        for _ in range(12):
+            mic_level.feed(0.2)  # the spoken wake word
+        orb = _FakeOrb()
+        bridge = _bridge(orb, hide_on_idle=True)
+
+        await bridge._on_wake_candidate(WakeCandidateDetected(active=True))  # noqa: SLF001
+
+        assert ("set_level", 0.0) in orb.calls  # surface bars zeroed on reveal
+        got: list[float] = []
+        mic_level.subscribe(got.append)
+        mic_level.feed(0.0005)  # silence after the wake word
+        assert got[-1] == 0.0  # envelope cleared — no decaying tail
+    finally:
+        mic_level.reset_for_tests()
+
+
+async def test_confirmed_wake_after_preview_does_not_re_zero_live_bars() -> None:
+    """After the candidate preview the user may already be speaking the command;
+    the authoritative WakeWordDetected/VoiceSessionStarted that follow must not
+    dip the live bars by clearing again."""
+    orb = _FakeOrb()
+    bridge = _bridge(orb, hide_on_idle=True)
+
+    await bridge._on_wake_candidate(WakeCandidateDetected(active=True))  # noqa: SLF001
+    orb.calls.clear()
+    await bridge._on_wake_word_detected(WakeWordDetected(keyword="jarvis"))  # noqa: SLF001
+    await bridge._on_session_started(VoiceSessionStarted(session_id="s1"))  # noqa: SLF001
+
+    assert ("set_level", 0.0) not in orb.calls
+
+
+async def test_sessionless_reveal_still_clears_envelope() -> None:
+    """A session revealed WITHOUT a candidate preview (hotkey / call) clears
+    the leftover envelope itself."""
+    orb = _FakeOrb()
+    bridge = _bridge(orb, hide_on_idle=True)
+
+    await bridge._on_session_started(VoiceSessionStarted(session_id="s2"))  # noqa: SLF001
+
+    assert ("set_level", 0.0) in orb.calls
+
+
 @pytest.mark.parametrize("state", ["THINKING", "SPEAKING"])
 async def test_stale_candidate_never_overrides_active_output_bars(state: str) -> None:
     """A defensive stale latch must not clobber thinking or TTS animation."""
