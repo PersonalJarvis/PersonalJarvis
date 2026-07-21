@@ -653,7 +653,13 @@ class BrainRoutingConfig(BaseModel):
 
     # Force-Spawn-Mode: "strict" honours only `force_spawn_phrases`,
     # "permissive" falls back to the legacy spawn_verbs + external markers
-    # heuristic. Default is "strict" per user mandate 2026-05-14.
+    # heuristic. Default is "strict" per user mandate 2026-05-14; since the
+    # 2026-07-21 mandate strict is EXPLICIT-ONLY — a background agent starts
+    # only when the user names the vehicle or a delegation/depth trigger from
+    # `force_spawn_phrases`. The former implicit strict-mode spawns (generic
+    # sub-agent work, heavy-research artifacts, build-a-deliverable) are
+    # retired; non-explicit heavy tasks are answered inline or OFFERED as a
+    # delegation the user confirms (jarvis/brain/spawn_gate.py).
     force_spawn_mode: str = "strict"
 
     # Intelligent router (2026-06-21 user mandate "Jarvis must choose wisely among
@@ -686,16 +692,14 @@ class BrainRoutingConfig(BaseModel):
     # jarvis.missions.init._assemble_worker_mcp_servers.
     worker_mcp_relevance_filter: bool = True
 
-    # Heavy-research force-spawn (live bug 2026-06-14, a long-haul trip-research
-    # turn): a multi-step research/analysis request must be OFFLOADED to a
-    # background mission, not run inline on the deep brain where it blows the
-    # ~20 s voice budget and gets beheaded. Conjunctive gate (precision over
-    # recall): a research/analysis VERB must be present AND a heaviness signal —
-    # a horizon/multi-step marker, OR >= heavy_research_min_verbs_multiclause
-    # verb matches (multi-clause), OR length >= heavy_research_min_chars with a
-    # verb. Length alone never spawns; a quick "recherchier das mal kurz" stays
-    # inline. Strict-mode only, evaluated after every stand-down guard (skills /
-    # open-app / instructional / nav / pointer still win). See ADR-0011.
+    # Heavy-research classifier (live bug 2026-06-14, a long-haul trip-research
+    # turn). Conjunctive gate (precision over recall): a research/analysis VERB
+    # must be present AND a heaviness signal — a horizon/multi-step marker, OR
+    # >= heavy_research_min_verbs_multiclause verb matches (multi-clause), OR
+    # length >= heavy_research_min_chars with a verb. RETIRED from the spawn
+    # decision 2026-07-21 (strict mode is explicit-only; see force_spawn_mode
+    # above) — the fields stay for config compatibility and the classifier
+    # remains available for telemetry/tests. See ADR-0011.
     heavy_research_enabled: bool = True
     heavy_research_verbs: list[str] = Field(default_factory=lambda: [
         "recherchier", "analysier", "untersuch",  # i18n-allow: DE routing verb stems

@@ -1319,6 +1319,44 @@ def test_question_form_never_reaches_generic_work_spawn(utterance: str) -> None:
         reg._caps.update(snapshot)  # noqa: SLF001
 
 
+def test_declarative_info_request_never_force_spawns() -> None:
+    """Live bug 2026-07-21 (voice session 07:46): "Ich will wissen, was heute
+    alles Wichtiges ansteht und wann die beste Zeit ist, um von Deutschland bei
+    Hacker News und Post abzusetzen." dispatched a full background mission —
+    the noun "Post" matched the universal action verb "post", the declarative
+    opener ("Ich will wissen") dodged the question-form stand-down, and the
+    generic-work path spawned. Maintainer mandate from the same day: agents
+    start ONLY on an explicit ask. Strict mode is now explicit-only, so this
+    turn must stay inline; adding an explicit trigger must still spawn."""
+    from jarvis.core.capabilities import get_registry
+    from jarvis.core.capabilities_seed import seed_registry
+
+    reg = get_registry()
+    snapshot = dict(reg._caps)  # noqa: SLF001 — test fixture state restore
+    seed_registry(reg)
+    try:
+        manager, _executor = _manager_with_spawn(force_spawn_mode="strict")
+        utterance = (
+            "Ich will wissen, was heute alles Wichtiges ansteht und wann die "
+            "beste Zeit ist, um von Deutschland bei Hacker News und Post "
+            "abzusetzen."
+        )  # i18n-allow: German voice fixture (the live utterance under test)
+        assert manager._should_force_spawn(utterance) is False, (
+            "a declarative info request must never force-spawn a mission "
+            "(mandate 2026-07-21: explicit ask only)"
+        )
+        explicit = (
+            "Mach mal einen Deep Dive mit einem Agenten zu den heutigen "
+            "Schlagzeilen."
+        )  # i18n-allow: German voice fixture (explicit delegation phrasing)
+        assert manager._should_force_spawn(explicit) is True, (
+            "an explicit 'Deep Dive mit einem Agenten' ask must still spawn"
+        )
+    finally:
+        reg._caps.clear()  # noqa: SLF001
+        reg._caps.update(snapshot)  # noqa: SLF001
+
+
 def test_explicit_trigger_question_still_spawns() -> None:
     """Naming the vehicle stays unambiguous even in question form — the AD-S9
     hoist runs BEFORE the question-form stand-down (user mandate 2026-06-15)."""
@@ -2342,10 +2380,14 @@ def _strict_manager_with_mock_registry(
     return manager
 
 
-def test_generic_work_spawns_natively_in_strict_mode() -> None:
-    """A generic work task (build/analyse/fix) with no capability and no
-    external integration must spawn a sub-agent natively in STRICT mode —
-    without the user uttering an explicit 'Subagent'/'spawn' trigger."""
+def test_generic_work_stays_inline_in_strict_mode() -> None:
+    """A generic work task (build/analyse/fix) WITHOUT an explicit delegation
+    trigger must NOT force-spawn in STRICT mode (maintainer mandate 2026-07-21:
+    agents start only on an explicit ask — the router LLM answers inline or
+    OFFERS delegation via jarvis.brain.spawn_gate). Reverses the 2026-06-01
+    native-spawn contract; note "analysier"/"fix"/"implementier" still spawn
+    the moment the user adds a vehicle/trigger word ("spawn", "Subagent",
+    "deep dive", the depth markers, …)."""
     original = __import__("sys").modules.get("jarvis.core.capabilities")
     try:
         manager = _strict_manager_with_mock_registry()
@@ -2354,8 +2396,9 @@ def test_generic_work_spawns_natively_in_strict_mode() -> None:
             "fix den Bug in der Authentifizierung",
             "implementier eine Funktion die CSV nach JSON konvertiert",
         ):
-            assert manager._should_force_spawn(utterance), (
-                f"generic work {utterance!r} must spawn natively in strict mode"
+            assert not manager._should_force_spawn(utterance), (
+                f"generic work {utterance!r} must NOT spawn without an "
+                "explicit delegation trigger (mandate 2026-07-21)"
             )
     finally:
         if original is not None:
@@ -2411,9 +2454,11 @@ def test_external_integration_without_capability_stays_unsupported() -> None:
 def test_coding_task_mentioning_integration_is_not_refused() -> None:
     """A coding task that merely MENTIONS an integration name as a topic /
     data-type (email validator, calendar parser, Spotify-like player) is generic
-    sub-agent work — NOT a real dispatch. It must spawn, never be refused. The
+    sub-agent work — NOT a real dispatch. It must never be refused. The
     integration name alone is not enough; a real dispatch verb must be present
-    (code-review MAJOR, 2026-06-01)."""
+    (code-review MAJOR, 2026-06-01). Since 2026-07-21 it no longer FORCE-spawns
+    either (strict mode is explicit-only) — the router LLM handles it inline or
+    offers delegation."""
     original = __import__("sys").modules.get("jarvis.core.capabilities")
     try:
         manager = _strict_manager_with_mock_registry()
@@ -2426,8 +2471,9 @@ def test_coding_task_mentioning_integration_is_not_refused() -> None:
                 f"coding task {utterance!r} must not be refused (mentions an "
                 "integration name only as data, not a dispatch target)"
             )
-            assert manager._should_force_spawn(utterance), (
-                f"coding task {utterance!r} must spawn a sub-agent"
+            assert not manager._should_force_spawn(utterance), (
+                f"coding task {utterance!r} must not force-spawn without an "
+                "explicit delegation trigger (mandate 2026-07-21)"
             )
     finally:
         if original is not None:
@@ -2455,13 +2501,15 @@ def test_is_generic_subagent_work_false_on_empty_registry() -> None:
 
 def test_github_work_is_not_treated_as_external_integration() -> None:
     """git/GitHub work is sub-agent-fulfillable (the worker has git + gh), so a
-    'commit and push' / 'open a PR' task must spawn, never be refused."""
+    'commit and push' / 'open a PR' task must never be refused. Since
+    2026-07-21 it no longer FORCE-spawns without an explicit delegation trigger
+    (strict mode is explicit-only)."""
     original = __import__("sys").modules.get("jarvis.core.capabilities")
     try:
         manager = _strict_manager_with_mock_registry()
         utterance = "committe die Aenderungen und mach einen GitHub Pull Request"
         assert manager._check_unsupported_intent(utterance) is None
-        assert manager._should_force_spawn(utterance)
+        assert not manager._should_force_spawn(utterance)
     finally:
         if original is not None:
             __import__("sys").modules["jarvis.core.capabilities"] = original
@@ -2938,35 +2986,41 @@ async def test_external_task_without_trigger_still_refuses() -> None:
     assert reply, "expected an honest refusal reply, got empty"
 
 
-def test_heavy_research_force_spawns_only_when_it_builds_an_artifact() -> None:
-    """Option A (2026-06-15): heavy research force-spawns a mission ONLY when it
-    asks for a BUILT ARTIFACT (a file/report the Worker->Critic pipeline can
-    verify via git diff). Answer-only research routes INLINE via the router's
-    search_web tool.
-
-    Reverses the WS3a contract (2026-06-14): that offloaded the answer-only
-    long-haul trip-research prompt to a mission to dodge the ~20s no-first-frame voice
-    ceiling. That ceiling is now re-armed from `_brain_thinking_heartbeat`, so
-    inline research no longer beheads the turn — and the Worker->Critic pipeline
-    can't grade an answer-only research turn anyway (empty-diff veto ->
-    critic_loop_exhausted, live mission 019ecb56)."""
+def test_heavy_research_never_force_spawns_without_explicit_trigger() -> None:
+    """Maintainer mandate 2026-07-21 (strict mode is explicit-only): heavy
+    research does NOT force-spawn a mission — not even when it asks for a
+    BUILT ARTIFACT — unless the turn carries an explicit delegation trigger
+    (``force_spawn_phrases``: "spawn", "Subagent", "deep dive", the DE depth
+    markers, …). Supersedes Option A (2026-06-15), which offloaded
+    artifact-building research implicitly. The classifiers themselves stay
+    intact (pinned here) — the router LLM uses the inline path or OFFERS
+    delegation via jarvis.brain.spawn_gate."""
     manager, _ = _manager_with_spawn(force_spawn_mode="strict")
-    # Answer-only heavy research -> INLINE (the reversal).
+    # Answer-only heavy research -> INLINE (unchanged since Option A).
     answer_only = _HEAVY_RESEARCH_SHOULD_SPAWN[0]
     assert manager._is_heavy_research(answer_only) is True
     assert manager._should_force_spawn(answer_only) is False, (
-        "answer-only heavy research must route inline (Option A)"
+        "answer-only heavy research must route inline"
     )
-    # Heavy research that BUILDS a file/report -> still a mission (no explicit
-    # phrase; spawns purely via the heavy-research + artefact path).
+    # Heavy research that BUILDS a file/report: classifiers still fire, but the
+    # spawn now requires an explicit delegation trigger.
     artifact = (
         "Research and compare the top five vector databases, then write a "
         "detailed comparison report into a file named compare.md"
     )
     assert manager._is_heavy_research(artifact) is True
     assert manager._research_wants_artifact(artifact) is True
-    assert manager._should_force_spawn(artifact) is True, (
-        "research that builds a verifiable artefact must still force-spawn"
+    assert manager._should_force_spawn(artifact) is False, (
+        "artifact research without an explicit delegation trigger must not "
+        "force-spawn (mandate 2026-07-21)"
+    )
+    # The same request WITH an explicit depth trigger still spawns.
+    explicit = (
+        "Mach einen Deep Dive: research the top five vector databases and "
+        "write a comparison report into compare.md"
+    )
+    assert manager._should_force_spawn(explicit) is True, (
+        "an explicit delegation/depth trigger must still force-spawn"
     )
 
 

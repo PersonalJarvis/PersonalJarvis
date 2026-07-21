@@ -1,18 +1,18 @@
-"""Build-a-deliverable requests must route to a sub-agent MISSION, not the brain.
+"""Build-a-deliverable requests without an explicit delegation trigger stay inline.
 
-Live bug 2026-06-21 (voice session 19:13): "I would like you to build me an HTML
-file ... visualize ... how I can prepare my vacation to Melbourne" fell through to
-the deep brain (Antigravity, a tool-incapable CLI) which — unable to call any tool
-— just asked permission ("should I create the file on your disk?") instead of
-building anything. A build-a-deliverable request (HTML/website/app/report/
-document/visualization/file) is a sub-agent mission: the Worker->Critic pipeline
-verifies the built artifact via git diff.
+History: the 2026-06-21 fix (voice session 19:13, "build me an HTML file ...")
+made build-a-deliverable requests force-spawn a mission deterministically,
+because a tool-incapable talker could not spawn via an LLM tool_call. The
+maintainer mandate 2026-07-21 SUPERSEDES that implicit spawn: a background
+agent starts ONLY on an explicit ask (``force_spawn_phrases``: "spawn",
+"Subagent", "deep dive", the depth markers, …). A build command without
+delegation wording is handled by the router LLM, which answers inline or
+OFFERS a background agent (jarvis.brain.spawn_gate) — the user's confirming
+yes unlocks exactly one spawn.
 
-The fix must be PROVIDER-INDEPENDENT (the deterministic force-spawn gate), because
-a tool-incapable talker (Codex/Antigravity over a subscription CLI) cannot spawn
-via an LLM tool_call at all — the gate is the only spawn path for it. It must NOT
-over-trigger: a build verb is not a screen action, so "open/show the file" stays
-Computer-Use and pure questions/answers stay inline.
+The artifact DISCRIMINATOR (``_research_wants_artifact``) stays intact — it
+still powers the spawn-tool visibility gates — and an explicit trigger wrapped
+around a build request still force-spawns.
 
 Deterministic — no LLM, no real brain.
 """
@@ -57,14 +57,16 @@ FAILING = (
 )
 
 
-def test_build_an_html_file_routes_to_a_mission() -> None:
-    assert _manager()._should_force_spawn(FAILING) is True, (
-        "a build-an-HTML-file request must force-spawn a sub-agent mission, not "
-        "fall through to the (tool-incapable) talker that just asks permission"
+def test_build_an_html_file_no_longer_force_spawns_implicitly() -> None:
+    assert _manager()._should_force_spawn(FAILING) is False, (
+        "a build request without an explicit delegation trigger must not "
+        "force-spawn (mandate 2026-07-21) — the router LLM answers inline or "
+        "offers delegation"
     )
 
 
-# A build-a-deliverable request is a mission — DE + EN, even without a research verb.
+# A build-a-deliverable request WITHOUT delegation wording — DE + EN. Since
+# 2026-07-21 these stay inline (explicit-only strict mode).
 _BUILD_DELIVERABLE = [
     "Build me a website about my startup",
     "Create a PDF report about the AI market",
@@ -76,9 +78,23 @@ _BUILD_DELIVERABLE = [
 
 
 @pytest.mark.parametrize("utterance", _BUILD_DELIVERABLE)
-def test_build_deliverable_force_spawns(utterance: str) -> None:
+def test_build_deliverable_stays_inline_without_trigger(utterance: str) -> None:
+    assert _manager()._should_force_spawn(utterance) is False, (
+        f"build request {utterance!r} must not force-spawn without an "
+        "explicit delegation trigger (mandate 2026-07-21)"
+    )
+
+
+@pytest.mark.parametrize(
+    "utterance",
+    [
+        "Spawne einen Agenten, der mir eine Website über mein Startup baut",  # i18n-allow
+        "Do a deep dive and build me a website about my startup",
+    ],
+)
+def test_build_with_explicit_trigger_still_force_spawns(utterance: str) -> None:
     assert _manager()._should_force_spawn(utterance) is True, (
-        f"build-a-deliverable request {utterance!r} should route to a mission"
+        f"explicit delegation wording in {utterance!r} must still force-spawn"
     )
 
 

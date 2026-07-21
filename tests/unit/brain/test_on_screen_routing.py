@@ -84,12 +84,13 @@ def test_explicit_screen_never_force_spawns(utterance: str) -> None:
     )
 
 
-def test_build_and_show_on_screen_still_spawns_a_mission() -> None:
-    """A build-a-deliverable request that ALSO mentions the screen must still
-    spawn the mission — the build wins over the pc-control stand-down."""
+def test_build_and_show_on_screen_stays_inline_without_trigger() -> None:
+    """A build-a-deliverable request that mentions the screen no longer
+    force-spawns implicitly (mandate 2026-07-21: strict mode is explicit-only)
+    — the router LLM handles it inline or offers delegation."""
     assert _manager()._should_force_spawn(
         "Bau mir eine Website und zeig sie mir am Bildschirm"  # i18n-allow
-    ) is True
+    ) is False
 
 
 def test_screen_knowledge_question_does_not_force_spawn() -> None:

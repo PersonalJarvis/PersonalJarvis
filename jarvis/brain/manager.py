@@ -3941,10 +3941,12 @@ class BrainManager:
         marker, OR >= ``heavy_research_min_verbs_multiclause`` verb matches
         (multi-clause), OR length >= ``heavy_research_min_chars`` with a verb.
         Length alone never spawns, so a quick "recherchier das mal kurz" stays
-        inline. Pure regex (AP-11 safe, cross-platform). The caller
-        (``_should_force_spawn``, strict mode) runs this AFTER every stand-down
-        guard, so skills / open-app / instructional / nav / pointer keep
-        precedence.
+        inline. Pure regex (AP-11 safe, cross-platform).
+
+        RETIRED from the spawn decision 2026-07-21 (strict mode is
+        explicit-only — ``_should_force_spawn`` no longer consults this
+        detector). Kept as a classifier for telemetry/tests and a possible
+        future opt-in.
         """
         cfg = self._config.brain.routing
         if not getattr(cfg, "heavy_research_enabled", True):
@@ -5127,9 +5129,10 @@ class BrainManager:
              opinion/advice question; conversational coaching
              (``_is_conversational_coaching``); pointer; navigation; smalltalk;
              open-app; installed skill; connected-CLI capability; PC control.
-          5. Strict mode (default): heavy research → artifact gate; else
-             generic sub-agent work (``has_action_intent`` & no capability) →
-             True. Permissive mode: action verb / external marker → True.
+          5. Strict mode (default): explicit-only — the explicit trigger
+             already returned True in step 3, so everything else → False
+             (maintainer mandate 2026-07-21). Permissive mode: action verb /
+             external marker → True.
           6. Otherwise → False.
         """
         # A drag-dropped mission recap is a CONVERSATION about a FINISHED job,
@@ -5372,69 +5375,31 @@ class BrainManager:
         # `brain.routing.force_spawn_mode = "permissive"`.
         mode = (self._config.brain.routing.force_spawn_mode or "strict").lower()
         if mode == "strict":
-            # Explicit trigger phrases already returned True above (AD-S9
-            # moved that check ahead of the skill guard for every mode).
-            # 2026-06-01: the sub-agent is the universal capability for generic
-            # work. The capability gate no longer refuses such tasks, so spawn
-            # them natively here — the user must NOT have to say "Subagent". A
-            # request the registry recognises as an action that no capability
-            # resolves AND that needs no SPECIFIC external integration
-            # (mail/calendar/Spotify/social/delivery) is generic sub-agent work.
-            # Live forensic 2026-06-01: a sub-agent task was refused, then only
-            # spawned once the user said "Subagent" explicitly.
-            # Heavy research routing (Option A, 2026-06-15): a research request
-            # whose deliverable is an ANSWER (comparison / overview /
-            # recommendation / summary) is answered INLINE via the router's
-            # search_web tool — fast, and it avoids the empty-diff critic veto the
-            # Worker->Critic pipeline applies to answer-only research (it grades
-            # built artifacts via git diff and cannot verify a spoken answer or a
-            # web citation → critic_loop_exhausted, live mission 019ecb56).
-            # Offload to a mission ONLY when the request asks for a BUILT ARTIFACT
-            # (a file / report) the critic can verify. The inline brain is
-            # protected from the no-first-frame TTS ceiling by
-            # _brain_thinking_heartbeat, so inline research no longer beheads the
-            # voice turn — the reason this offload existed (the long-haul
-            # trip-research turn) is separately fixed. An EXPLICIT mission phrase ("sub-agent"/"deep
-            # dive"/"umfassende"/...) already returned True above (AD-S9 trigger).
-            if self._is_heavy_research(t):
-                return self._research_wants_artifact(t)
-            # A request to BUILD a deliverable (an HTML file / website / app /
-            # report / document / visualization) is a sub-agent MISSION even
-            # without a research verb — the Worker->Critic pipeline verifies the
-            # built artefact via git diff. This fires PROVIDER-INDEPENDENTLY: a
-            # tool-incapable talker (Codex/Antigravity subscription CLI) cannot
-            # spawn via an LLM tool_call, so the deterministic gate is its only
-            # spawn path. Live bug 2026-06-21: "build me an HTML file for my
-            # vacation" fell to the Antigravity deep brain, which (no
-            # tools) only asked permission instead of building. NOT a Computer-Use
-            # trigger: a build verb is not a screen action — "open/show the file"
-            # stays Computer-Use via match_local_action; a bare question is caught
-            # by the instructional guard above. _research_wants_artifact requires
-            # a build verb, so a pure answer ("write a short summary") stays inline.
-            if self._research_wants_artifact(t):
-                return True
-            # A turn in QUESTION form is conversation: the user asks, Jarvis
-            # answers inline (search_web stays available). The generic-work
-            # path rests on has_action_intent, whose verb catalogue collides
-            # with everyday nouns ("Frage" -> "frag", "Buch" -> "buch"), so a
-            # plain knowledge question could still be classified as generic
-            # sub-agent work and force-spawn a full worker (live bug
-            # 2026-07-16, voice session 11:49: "…ganz generelle Frage, wie
-            # viel Geld hat Elon Musk gerade aktuell?" dispatched an Opus
-            # mission for a one-search answer; user mandate: a Jarvis-Agent
-            # needs a command or an explicitly named vehicle, never a
-            # question). Explicit triggers returned True above (AD-S9) and
-            # artifact builds returned just before this, so a question that
-            # genuinely commissions heavy work still spawns; a working
-            # question ("Kannst du X fixen?") keeps LLM discretion — the
-            # spawn tools stay in its surface on action-intent turns.
-            if _is_plain_knowledge_question(t):
-                log.info(
-                    "force-spawn skipped: question-form turn — generic-work "
-                    "path needs a command, answering inline"
-                )
-                return False
-            return self._is_generic_subagent_work(t)
+            # Maintainer mandate 2026-07-21 (voice session 07:46): a background
+            # agent starts ONLY on an explicit request — the user names the
+            # vehicle or a delegation/depth trigger (``force_spawn_phrases``;
+            # the AD-S9 hoist above already returned True for those). Every
+            # IMPLICIT strict-mode spawn path is retired:
+            #   - generic sub-agent work (``_is_generic_subagent_work``,
+            #     2026-06-01): its ``has_action_intent`` verb catalogue collides
+            #     with everyday nouns — the live trigger for this mandate was
+            #     "…wann die beste Zeit ist, um … bei Hacker News und Post
+            #     abzusetzen", where the noun "Post" matched the action verb
+            #     "post" and dispatched a full mission for an info question;
+            #   - heavy research with an artifact deliverable (Option A,
+            #     2026-06-15) and the build-a-deliverable gate (2026-06-21):
+            #     a build command without delegation wording no longer spawns
+            #     silently — the router LLM answers inline or OFFERS a
+            #     background agent (``jarvis.brain.spawn_gate``), and the
+            #     user's confirming yes unlocks exactly one spawn.
+            # The legacy verb/marker heuristic stays available via
+            # ``force_spawn_mode = "permissive"``.
+            log.info(
+                "force-spawn skipped: strict mode is explicit-only — no "
+                "delegation trigger in %r",
+                t[:80],
+            )
+            return False
         if verb_re.search(t):
             return True
         if marker_re.search(t):
@@ -5445,12 +5410,17 @@ class BrainManager:
         """True iff the utterance is generic, sub-agent-fulfillable work.
 
         Mirrors the capability gate's class exactly — an action the registry
-        recognises that no capability resolves — but FLIPS the verdict from
-        "refuse" to "spawn". A specific external integration the worker cannot
-        satisfy (mail/calendar/Spotify/social/delivery) is excluded so it keeps
-        the honest refusal. Defensive: an unavailable/empty registry returns
-        False so the explicit-trigger path stays the sole strict-mode spawn
-        signal (mirrors the empty-registry guard in _check_unsupported_intent).
+        recognises that no capability resolves. A specific external integration
+        the worker cannot satisfy (mail/calendar/Spotify/social/delivery) is
+        excluded so it keeps the honest refusal. Defensive: an unavailable/empty
+        registry returns False (mirrors the empty-registry guard in
+        _check_unsupported_intent).
+
+        RETIRED from the spawn decision 2026-07-21 (strict mode is
+        explicit-only): ``has_action_intent``'s verb catalogue collides with
+        everyday nouns ("Post" → verb "post"), which dispatched a full mission
+        for a plain info question. Kept as a classifier for the refusal gate's
+        mirror logic and tests.
         """
         if requires_external_integration(t):
             return False
@@ -6636,8 +6606,8 @@ class BrainManager:
 
         tid = trace_id or uuid4()
         context_hints: list[str] = [
-            "Deterministically delegated (persona mandate phase 3): "
-            "verb/marker heuristic triggered, smalltalk allowlist did not.",
+            "Deterministically delegated: the user's turn matched an explicit "
+            "delegation trigger (or the opt-in permissive verb heuristic).",
         ]
         # Bug fix 2026-04-30: pass conversation history to the worker so
         # follow-up questions ("erklaer das genauer") do not spawn into a
