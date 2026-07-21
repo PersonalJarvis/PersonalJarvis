@@ -415,6 +415,113 @@ async def test_error_spoken_renders_through_realtime_scoped_surface_tts(
 
 
 @pytest.mark.asyncio
+async def test_error_spoken_while_muted_is_held_and_delivered_on_unmute(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A grounded surface reply that lands while the voice is muted must not
+    be silently discarded (live 2026-07-21 17:45: the orb mute gesture landed
+    0.5 s before the surface fallback and the whole answer was never heard).
+    Mute means quiet NOW — the reply is held and spoken the moment the user
+    unmutes, within the same session."""
+    pipe = _pipe()
+    surface_pcm = b"\x09\x00" * 32
+    surface_tts = _FakeTTS(surface_pcm)
+    monkeypatch.setattr(
+        "jarvis.plugins.tts.build_realtime_surface_tts",
+        lambda _cfg, _provider: surface_tts,
+    )
+    spoken_delivered = asyncio.Event()
+
+    class _ErrorSpokenSession(_HandshakeOnlyRealtimeSession):
+        async def handle_control(self, message) -> None:
+            await super().handle_control(message)
+            await self._send_json(
+                {
+                    "type": "error_spoken",
+                    "text": "Tomorrow is Wednesday.",
+                    "language": "en",
+                }
+            )
+            spoken_delivered.set()
+
+    def _build(**kwargs):
+        return _ErrorSpokenSession(kwargs["send_binary"], kwargs["send_json"])
+
+    monkeypatch.setattr("jarvis.realtime.factory.build_realtime_session", _build)
+    monkeypatch.setattr(pipeline_mod, "MicrophoneCapture", lambda **_kwargs: _SilentMic())
+
+    pipe._muted = True
+    task = asyncio.create_task(pipe._active_realtime_session())
+    await asyncio.wait_for(spoken_delivered.wait(), timeout=2.0)
+    await asyncio.sleep(0.05)
+
+    # Muted: nothing audible yet — but the reply is HELD, not dropped.
+    assert surface_tts.calls == []
+    assert pipe._player.pcm == []
+
+    pipe._muted = False
+
+    async def _wait_for_spoken() -> None:
+        while not surface_tts.calls:  # noqa: ASYNC110 - the fake TTS has no event hook to await
+            await asyncio.sleep(0.05)
+
+    await asyncio.wait_for(_wait_for_spoken(), timeout=2.0)
+    await asyncio.sleep(0.05)
+
+    assert [text for text, _lang in surface_tts.calls] == [
+        "Tomorrow is Wednesday."
+    ]
+    assert surface_pcm in pipe._player.pcm
+
+    pipe._hangup_event.set()
+    assert await asyncio.wait_for(task, timeout=1.0) == HANGUP_HOTKEY
+
+
+@pytest.mark.asyncio
+async def test_held_muted_reply_stays_text_only_when_session_ends_muted(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Ending the session while still muted keeps the held reply text-only
+    (the transcript carries it) and tears down cleanly — no late audio, no
+    leaked watcher task."""
+    pipe = _pipe()
+    surface_tts = _FakeTTS(b"\x0a\x00" * 32)
+    monkeypatch.setattr(
+        "jarvis.plugins.tts.build_realtime_surface_tts",
+        lambda _cfg, _provider: surface_tts,
+    )
+    spoken_delivered = asyncio.Event()
+
+    class _ErrorSpokenSession(_HandshakeOnlyRealtimeSession):
+        async def handle_control(self, message) -> None:
+            await super().handle_control(message)
+            await self._send_json(
+                {
+                    "type": "error_spoken",
+                    "text": "The grounded reply.",
+                    "language": "en",
+                }
+            )
+            spoken_delivered.set()
+
+    def _build(**kwargs):
+        return _ErrorSpokenSession(kwargs["send_binary"], kwargs["send_json"])
+
+    monkeypatch.setattr("jarvis.realtime.factory.build_realtime_session", _build)
+    monkeypatch.setattr(pipeline_mod, "MicrophoneCapture", lambda **_kwargs: _SilentMic())
+
+    pipe._muted = True
+    task = asyncio.create_task(pipe._active_realtime_session())
+    await asyncio.wait_for(spoken_delivered.wait(), timeout=2.0)
+    await asyncio.sleep(0.05)
+
+    pipe._hangup_event.set()
+    assert await asyncio.wait_for(task, timeout=1.0) == HANGUP_HOTKEY
+    assert surface_tts.calls == []
+    assert pipe._player.pcm == []
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "cancel_before_first_chunk",
     [True, False],

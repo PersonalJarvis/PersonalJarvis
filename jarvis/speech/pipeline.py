@@ -6209,6 +6209,11 @@ class SpeechPipeline:
         surface_playback_task: asyncio.Task[Any] | None = None
         surface_playback_epoch = 0
         terminal_output_closed = False
+        # A grounded surface reply that arrived while the voice was muted.
+        # Held (newest wins) and re-delivered on unmute instead of being
+        # silently discarded — see the error_spoken mute branch.
+        held_muted_reply: dict[str, Any] | None = None
+        muted_reply_flush_task: asyncio.Task[Any] | None = None
         turn_complete = asyncio.Event()
         speaking = False
         post_output_echo_guard_until = 0.0
@@ -6312,6 +6317,46 @@ class SpeechPipeline:
                 await playback.cancel()
             if surface_task is not None:
                 await asyncio.gather(surface_task, return_exceptions=True)
+
+        async def _flush_held_reply_on_unmute() -> None:
+            """Deliver the held grounded reply the moment the user unmutes.
+
+            Polling the mute flag keeps this free of bus subscriptions and
+            Tk-thread marshalling; 200 ms is well under the human threshold
+            for "it answered when I unmuted". Replaying through ``_send_json``
+            re-runs the full error_spoken contract (epoch cancel, echo-guard
+            registration, mode-separated TTS resolve) — and if the user
+            re-muted in the gap, the reply is simply held again.
+            """
+            nonlocal held_muted_reply
+            while getattr(self, "_muted", False):
+                if terminal_output_closed:
+                    return
+                await asyncio.sleep(0.2)
+            pending, held_muted_reply = held_muted_reply, None
+            if pending is None or terminal_output_closed:
+                return
+            log.info(
+                "Voice unmuted — delivering the held realtime reply now."
+            )
+            await _send_json(pending)
+
+        def _hold_muted_surface_reply(
+            message: dict[str, Any], cleaned: str
+        ) -> None:
+            nonlocal held_muted_reply, muted_reply_flush_task
+            held_muted_reply = dict(message)
+            log.warning(
+                "Realtime surface reply arrived while voice is muted — "
+                "holding %d chars for delivery on unmute instead of "
+                "dropping the answer.",
+                len(cleaned),
+            )
+            if muted_reply_flush_task is None or muted_reply_flush_task.done():
+                muted_reply_flush_task = asyncio.create_task(
+                    _flush_held_reply_on_unmute(),
+                    name=f"rt-muted-reply-flush-{session_id}",
+                )
 
         async def _send_binary(pcm: bytes) -> None:
             nonlocal post_output_echo_guard_until, post_output_hw_tail_until
@@ -6424,14 +6469,25 @@ class SpeechPipeline:
                 )
                 scrubbed = scrub_for_voice(text, language=language)
                 cleaned = scrubbed.cleaned.strip()
+                if cleaned and getattr(self, "_muted", False):
+                    # Voice muted at delivery time (orb double-double-click):
+                    # this is the GROUNDED answer to a question the user asked
+                    # while unmuted — discarding it makes the whole turn
+                    # inaudible with a transcript that claims Jarvis spoke
+                    # (live 2026-07-21 17:45: mute landed 0.5 s before the
+                    # surface fallback; "Tomorrow is Wednesday." was never
+                    # heard). Mute still means quiet NOW, so hold the reply
+                    # and deliver it the moment the user unmutes.
+                    _hold_muted_surface_reply(message, cleaned)
+                    return
                 surface_tts = (
                     self._resolve_realtime_surface_tts(
                         self._active_realtime_provider
                     )
-                    if cleaned and not getattr(self, "_muted", False)
+                    if cleaned
                     else None
                 )
-                if cleaned and surface_tts is None and not getattr(self, "_muted", False):
+                if cleaned and surface_tts is None:
                     # STRICT mode separation (maintainer mandate 2026-07-17):
                     # a realtime session must never spend pipeline credentials
                     # or speak with the pipeline's [tts] voice — not even as a
@@ -6829,6 +6885,21 @@ class SpeechPipeline:
                 log.warning("Realtime terminal playback close failed: %s", exc)
             barge_detector.stop_output()
             barge_feed_executor.shutdown(wait=False, cancel_futures=True)
+            if muted_reply_flush_task is not None:
+                if not muted_reply_flush_task.done():
+                    muted_reply_flush_task.cancel()
+                try:
+                    await muted_reply_flush_task
+                except (asyncio.CancelledError, Exception):  # noqa: BLE001, S110 - teardown
+                    pass
+            if held_muted_reply is not None:
+                # Honest audible-gap marker: the session ended while the voice
+                # was still muted, so the grounded reply never became audible.
+                # The transcript carries the text.
+                log.warning(
+                    "Realtime session ended while voice was muted — the held "
+                    "reply was never audible; the transcript carries it."
+                )
             if not barge_warm_task.done():
                 barge_warm_task.cancel()
             try:
@@ -10156,27 +10227,35 @@ class SpeechPipeline:
     async def _speak(
         self, text: str, language: str | None = None, *, kind: str = "reply"
     ) -> bool:
-        """Sprich Text aus — mit Barge-in-Monitor.
+        """Speak text aloud — with a barge-in monitor.
 
-        `language` = "de"/"en" (Whisper-Code) wird zu "de-DE"/"en-US" gemappt
-        und an TTS übergeben (voice bleibt gleich — Gemini-Voices sind
-        sprachagnostisch).
+        `language` = "de"/"en" (Whisper code) is mapped to "de-DE"/"en-US"
+        and passed to TTS (the voice stays the same — Gemini voices are
+        language-agnostic).
 
         ``kind`` tags what is being voiced for the Transcription log. The
         default ``"reply"`` is the ordinary brain answer; canned phrases pass
         their specific kind. Both are published only after playback succeeds.
 
-        Parallel zum Playback läuft ``_barge_monitor`` auf einer separaten
-        Mic-Instanz. Erkennt Silero-VAD dort User-Sprache (Threshold 0.8,
-        3 consecutive Frames, 400 ms Grace-Period), wird das Player-Playback
-        sofort gestoppt. Rückgabewert: ``True`` wenn gebargedet wurde.
+        ``_barge_monitor`` runs on a separate mic instance in parallel with
+        playback. When Silero VAD detects user speech there (threshold 0.8,
+        3 consecutive frames, 400 ms grace period), player playback stops
+        immediately. Return value: ``True`` when barged in.
 
         When muted (mascot doubleClick), we short-circuit: no synthesize
         call, no playback. We return ``False`` (no barge-in occurred) so
         callers that branch on ``barged`` behave consistently.
         """
         if getattr(self, "_muted", False):
-            log.debug("_speak suppressed — voice muted")
+            # INFO, not debug: a muted drop makes the whole turn inaudible
+            # while the transcript claims Jarvis spoke — forensics must see
+            # the audible gap without a debug build (live 2026-07-21 17:45).
+            log.info(
+                "_speak suppressed — voice muted (kind=%s, %d chars stay "
+                "text-only)",
+                kind,
+                len(text),
+            )
             return False
         # Double-answer guard (live complaint 2026-06-30): once a timeout /
         # "couldn't finish" notice closed THIS utterance, an ordinary brain
