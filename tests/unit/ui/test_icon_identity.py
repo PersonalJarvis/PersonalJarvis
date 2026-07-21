@@ -347,6 +347,35 @@ def test_ensure_shortcut_routes_through_identity_free_shell_under_msix(
     assert not (tmp_path / START_MENU_SHORTCUT_NAME).exists()
 
 
+@pytest.mark.skipif(sys.platform != "win32", reason="shortcuts are Windows-only")
+def test_identity_free_shell_write_end_to_end(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The generated PowerShell must ACTUALLY run: .lnk written, AUMID tagged.
+
+    Forces the identity branch but lets the real ``powershell.exe`` execute the
+    generated script (WScript.Shell write + Add-Type C# property-store tag), so
+    a broken P/Invoke declaration or PowerShell 5.1 parse error in the script
+    builder cannot ship behind the routing-only test above.
+    """
+    import jarvis.ui.icon_utils as icon_utils
+
+    monkeypatch.setattr(
+        icon_utils, "windows_package_identity", lambda: "TestPkg_1.0_x64__abc"
+    )
+    ok = icon_utils.ensure_start_menu_shortcut(
+        aumid=_TEST_AUMID, programs_dir=tmp_path
+    )
+    assert ok is True
+    lnk = tmp_path / START_MENU_SHORTCUT_NAME
+    assert lnk.is_file()
+    assert _read_shortcut_aumid(lnk) == _TEST_AUMID
+    # Second run must succeed idempotently (steady-state early-exit path).
+    assert icon_utils.ensure_start_menu_shortcut(
+        aumid=_TEST_AUMID, programs_dir=tmp_path
+    )
+
+
 def test_remove_start_menu_shortcut_plain_unlink(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

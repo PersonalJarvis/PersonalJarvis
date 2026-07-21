@@ -92,6 +92,11 @@ _PKEY_APP_USER_MODEL_ID_PID = 5
 _PACKAGE_IDENTITY_PROBED = False
 _PACKAGE_IDENTITY: str | None = None
 
+# Once-per-process guard for the backgrounded Start-Menu ensure on MSIX hosts
+# (``ensure_windows_app_identity`` runs both at desktop_app import and from the
+# launcher — one self-heal spawn is enough).
+_START_MENU_BG_ENSURE_STARTED = False
+
 
 def windows_package_identity() -> str | None:
     """Full MSIX package name when this process runs with package identity.
@@ -219,8 +224,29 @@ def build_shortcut_aumid_script(link: Path, aumid: str) -> str:
     Used wherever a shortcut write already happens in an identity-free
     PowerShell child (the autostart fallback) but the AUMID tag would
     otherwise be written in-process and get virtualized away (BUG-109).
+
+    Reads the current tag first through ``Shell.Application`` (built-in COM, no
+    compilation) and exits early on a match, so the steady-state boot reconcile
+    never pays the ``Add-Type`` C# compile — only a real mismatch does.
     """
-    return "$ErrorActionPreference = 'Stop'\n" + _aumid_tag_snippet(link, aumid)
+    q = _powershell_quote
+    return (
+        "$ErrorActionPreference = 'Stop'\n"
+        f"$dir = Split-Path -Parent {q(str(link))}\n"
+        f"$leaf = Split-Path -Leaf {q(str(link))}\n"
+        "$sh = New-Object -ComObject Shell.Application\n"
+        "$ns = $sh.NameSpace($dir)\n"
+        "if ($ns) {\n"
+        "  $item = $ns.ParseName($leaf)\n"
+        "  if ($item -and ([string]$item.ExtendedProperty('System.AppUserModel.ID')"
+        f" -eq {q(aumid)})) {{\n"
+        "    Write-Output 'JARVIS_AUMID_OK'\n"
+        "    exit 0\n"
+        "  }\n"
+        "}\n"
+        f"{_aumid_tag_snippet(link, aumid)}"
+        "Write-Output 'JARVIS_AUMID_WRITTEN'\n"
+    )
 
 
 def build_start_menu_shortcut_script(
@@ -349,6 +375,14 @@ def _ensure_start_menu_shortcut_via_powershell(
     if result is None:
         return False
     if result.returncode == 0 and "JARVIS_SHORTCUT_" in (result.stdout or ""):
+        if "JARVIS_SHORTCUT_TAG_FAILED" in (result.stdout or ""):
+            # The .lnk itself is written (search/launch work) but the AUMID tag
+            # did not stick — the taskbar button may fall back to the process
+            # description. warning, not debug: this is a real defect signal,
+            # not the usual cosmetic best-effort noise.
+            logger.warning(
+                "Start-Menu shortcut written but its AUMID tag failed: {}", lnk
+            )
         logger.debug("Start-Menu shortcut ensured (identity-free shell): {}", lnk)
         return True
     logger.debug(
@@ -1004,7 +1038,30 @@ def ensure_windows_app_identity(app_id: str = APP_USER_MODEL_ID) -> bool:
     # Name the taskbar button (shortcut) + the toast identity (registry). Both
     # best-effort and must be in place before the AUMID is set + the window
     # appears, so Explorer resolves them on first button creation.
-    ensure_start_menu_shortcut(aumid=app_id, icon_path=ico_arg)
+    if windows_package_identity() is not None:
+        # Store-Python (MSIX) hosts write the shortcut through an identity-free
+        # PowerShell child — a subprocess spawn with a generous timeout that
+        # must never sit on the window-creation path (AP-26). The installer
+        # already wrote the real shortcut at install time, so the boot-time
+        # pass is only a background self-heal; Explorer re-resolves the button
+        # name on the next fresh launch if it lands late. Once per process:
+        # this function runs both at desktop_app import and from the launcher.
+        global _START_MENU_BG_ENSURE_STARTED
+        if not _START_MENU_BG_ENSURE_STARTED:
+            _START_MENU_BG_ENSURE_STARTED = True
+            import threading
+
+            threading.Thread(
+                target=lambda: ensure_start_menu_shortcut(
+                    aumid=app_id, icon_path=ico_arg
+                ),
+                name="jarvis-startmenu-ensure",
+                daemon=True,
+            ).start()
+    else:
+        # In-process pywin32 path: ~50 ms, cheap enough to stay synchronous so
+        # the shortcut exists before the first taskbar button is created.
+        ensure_start_menu_shortcut(aumid=app_id, icon_path=ico_arg)
     register_windows_app_user_model_id(app_id, icon_path=ico_arg)
     try:
         import ctypes

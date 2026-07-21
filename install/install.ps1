@@ -856,6 +856,7 @@ if (Test-Path $VenvPython) {
 # written by it land in the package's hidden LocalCache instead of the real
 # profile. Packages are reinstalled by the installer right after, so dropping
 # the environment loses nothing (twin of install.sh's version-change rebuild).
+# --- store-venv-rebuild begin (extracted by tests/unit/install/test_store_python_preference.py)
 if ((Test-Path $VenvPython) -and -not $prerequisites.Python.IsStore) {
     $VenvCfgPath = Join-Path $VenvPath 'pyvenv.cfg'
     if ((Test-Path $VenvCfgPath) -and ((Get-Content $VenvCfgPath -Raw) -match '(?i)\\WindowsApps\\')) {
@@ -867,6 +868,7 @@ if ((Test-Path $VenvPython) -and -not $prerequisites.Python.IsStore) {
         }
     }
 }
+# --- store-venv-rebuild end
 
 if (-not (Test-Path $VenvPython)) {
     & $pythonExe -m venv $VenvPath
