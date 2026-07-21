@@ -408,9 +408,20 @@ class OpenAppTool:
             # existing browser window; the app-name match would not apply).
             raised = False
             if not is_url and not is_path:
+                # Hard overall cap: the poll (3s) plus a slow AX raise must
+                # never approach the CU dispatcher's 15s action budget — the
+                # launch already succeeded, the raise only softens the
+                # readback.
                 try:
-                    raised, _ = await asyncio.to_thread(
-                        window_state.raise_after_launch, app_name
+                    async with asyncio.timeout(6.0):
+                        raised, _ = await asyncio.to_thread(
+                            window_state.raise_after_launch, app_name
+                        )
+                except TimeoutError:
+                    raised = False
+                    logger.warning(
+                        "[open_app] raise_after_launch for %r exceeded 6s — "
+                        "reporting the launch without the raise", app_name,
                     )
                 except Exception:  # noqa: BLE001 — never fail a successful launch
                     raised = False

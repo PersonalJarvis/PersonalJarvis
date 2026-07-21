@@ -328,6 +328,13 @@ def _select_macos_ax_window(
     fallback for minimized windows whose geometry is unavailable; duplicate
     titles fail closed instead of focusing or resizing an arbitrary sibling.
     """
+    # Bound EVERY candidate before reading its attributes: the messaging
+    # timeout is per-element, and this loop reads geometry/titles of N
+    # windows — with the ~6 s OS default, one busy app with several windows
+    # blew the CU action budget right here (live 2026-07-21, second
+    # occurrence: bounding only root+target was not enough).
+    for window in windows:
+        _macos_bound_ax_messaging(window)
     cg_bounds = _macos_entry_bounds(entry)
     if cg_bounds is not None:
         geometry_matches = [
