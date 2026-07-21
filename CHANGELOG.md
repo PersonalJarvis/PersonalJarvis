@@ -7,7 +7,75 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
-## [Unreleased]
+## [1.1.3] — 2026-07-21
+
+### Added
+
+- **The wiki now learns who you are from how you talk, not only from literal
+  statements.** Captured facts carry an evidence tier (explicit / behavioral)
+  and a personal-salience score: "I love being out on golf courses with my
+  buddies" now yields an `*(inferred)*` profile bullet, while low-value world
+  knowledge stays out of the vault. A one-shot `recurate-profile` CLI
+  (dry-run by default, snapshot first) re-judges an existing profile, and an
+  expandable memory-map view shows the vault's structure (ADR-0029).
+- **Spoken failures now name their real cause**, and calendar trivia
+  ("what day is tomorrow?") is answered natively instead of being delegated.
+
+### Changed
+
+- **The assistant acts only on an explicit ask.** Background agents spawn
+  only when you ask for one (deterministic gate + a notice in the Agents and
+  Outputs views), and Computer-Use missions start only when you explicitly
+  ask for an on-screen action — a knowledge question is answered directly or
+  via web search, never by driving your browser (BUG-107).
+- **One voice per call.** The short-lived escalation that rendered delegated
+  replies through the surface TTS was reverted: the native realtime voice
+  speaks every reply in a session (BUG-086).
+- The API-Keys view uses a compact layout on laptop screens, tells the truth
+  about shared/fallback keys, and warns before deleting a key other features
+  still depend on.
+
+### Fixed
+
+- **Realtime calls survive provider transport resets.** The transport is
+  rebuilt proactively inside Gemini's GoAway window, the rebuild's
+  conversation seed is accepted again (BUG-104), and a raced disconnect no
+  longer kills the call mid-sentence.
+- **Realtime answers are honest and audible.** The live model no longer
+  asserts stale pre-cutoff facts as current, no longer invents niche figures
+  or drifts to a misheard sound-alike entity (BUG-106), no longer replays an
+  already-delivered answer, and the 1-2 s post-turn deaf window on the
+  desktop microphone path is closed. Mid-sentence provider pauses are
+  de-clicked, speaker echo no longer confirms as barge-in or doubles the
+  answer in a second voice, and the voice bars move in sync with the voice.
+- **Computer-Use missions know what they are doing.** A corrective follow-up
+  ("do it in my Chrome browser") now carries the original task and its
+  constraints instead of executing the correction's literal words (BUG-105),
+  and recent missions are visible as context to the next one. macOS action
+  loops are much faster: bounded accessibility-tree walks, a capped
+  focus probe (kills a 15-second open-app stall), and batched actions no
+  longer refused by foreground-signature churn.
+- **macOS Keychain dialogs are quiet again.** Secrets collapse into one vault
+  item accessed through the Apple-signed security CLI — no more
+  password-dialog storms at boot (BUG-103).
+- **Updates preserve your data on every path.** The wiki vault is salvaged
+  and restored across updates and resets, with a snapshot taken first and no
+  silent failures.
+- **Providers and credentials behave on every setup.** Brain tiers can read a
+  realtime-scoped key as a last resort, native Claude subscription login is
+  honored, tool models honor `reasoning_effort` (fixes an OpenAI
+  empty-output crash), rejected optional parameters are remembered per
+  endpoint instead of retried every step, and realtime quota exhaustion
+  falls back across provider families.
+- **The wiki background curator no longer loops.** Judge-rejected batches are
+  bisected, repeated rejections back off and park the poisoned row, a dead
+  session's vault lock is stolen immediately, and template/code scaffolding
+  no longer pollutes the memory map.
+- **Boot and wake are snappier.** The multi-second Vosk wake spawn delay on a
+  busy CPU is gone and heavy imports left the boot path — voice-ready wall
+  time on the reference Mac dropped from ~28 s to ~14.5 s.
+- Fresh installs prefetch complete local voice models, and `open_app`
+  recognizes installed macOS/Linux apps the whitelist misses.
 
 ### Removed
 
