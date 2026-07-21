@@ -48,8 +48,8 @@
   "brain.providers.gemini": {
     "model": "gemini-3.5-flash",
     "deep_model": "gemini-3.1-pro-preview",
-    "tool_model": "gemini-3.5-flash",
-    "cu_model": "gemini-3.5-flash"
+    "tool_model": "gemini-3.6-flash",
+    "cu_model": "gemini-3.6-flash"
   },
   "brain.providers.claude-api": {
     "model": "claude-haiku-4-5-20251001",
@@ -67,7 +67,7 @@
     "provider": "groq-api",
     "model": "whisper-large-v3",
     "bias_prompt": "Jarvis, OpenClaw, Codex, Gemini, Grok, Claude, Anthropic, OpenAI, OpenRouter, Whisper, Wispr Flow, Subagent, Sub-Agent, Mission-Manager, Critic-Loop, Critic, Worker, Router-Brain, Router, Kontrollierer, Voice-Pipeline, Wake-Word, Silero, VAD, TTS, STT, Telemetry, Transkript, Token, Provider, Plugin, Sprechblase, Orb, Mascot, Quip, Browser, Terminal, Repository, Branch, Commit, Push, Pull-Request, Issue, Merge, Refactor, Deployment, Screenshot, Debuggen, Workflow, Microservice, Container, Docker, Kubernetes, FastAPI, React, TypeScript, Python, JSON, Markdown, Logfile, Konfiguration, Endpoint, Webhook, API-Key, Service-Account, Cloud, Google Cloud, Vertex AI, BigQuery, GitHub, Twilio, ElevenLabs, OAuth, Credential Manager, Frontend, Backend, Skript, Daemon, Hangup, Auflegen, Denkpause, submitted, distanziert, erkennt",
-    "language": "en"
+    "language": "de"
   },
   "ack_brain": {
     "enabled": true,
