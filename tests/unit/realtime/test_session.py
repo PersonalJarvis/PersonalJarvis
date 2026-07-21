@@ -4928,20 +4928,29 @@ async def test_gemini_live_spending_cap_crosses_family_without_retrying():
     )
 
     await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
-    await _wait_until(lambda: openai.open_calls == 1)
+    try:
+        # Wait for the COMPLETED fallback (active_provider flipped), never for
+        # open_calls alone: open_session returning is one await ahead of
+        # _open assigning self._provider, and the py3.11 Windows CI leg lost
+        # that race deterministically. The finally matters just as much — an
+        # assert that fires while the pump still lives leaves a task behind
+        # whose shutdown cancel can be LOST on the 3.11 proactor loop
+        # (BUG-081's general form), wedging the whole job until its timeout.
+        await _wait_until(lambda: sess.active_provider == "openai-realtime")
 
-    assert gemini.open_calls == 1
-    assert sess.active_provider == "openai-realtime"
-    assert not sess.failed
-    assert [m for m in jsons if m.get("type") == "provider_error"] == []
-    fallback = next(
-        m
-        for m in jsons
-        if m.get("type") == "provider_fallback"
-        and m.get("provider") == "gemini-live"
-    )
-    assert fallback["status"] == "no_credits"
-    await sess.end(reason="test")
+        assert gemini.open_calls == 1
+        assert openai.open_calls == 1
+        assert not sess.failed
+        assert [m for m in jsons if m.get("type") == "provider_error"] == []
+        fallback = next(
+            m
+            for m in jsons
+            if m.get("type") == "provider_fallback"
+            and m.get("provider") == "gemini-live"
+        )
+        assert fallback["status"] == "no_credits"
+    finally:
+        await sess.end(reason="test")
 
 
 @pytest.mark.asyncio
@@ -4979,13 +4988,18 @@ async def test_openai_insufficient_quota_event_crosses_to_gemini():
     )
 
     await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
-    await _wait_until(lambda: gemini.open_calls == 1)
+    try:
+        # Same discipline as the gemini-cap test above: wait for the
+        # completed flip, and always end the session even when an assert
+        # fires, so no live pump task survives into loop teardown.
+        await _wait_until(lambda: sess.active_provider == "gemini-live")
 
-    assert openai.open_calls == 1
-    assert sess.active_provider == "gemini-live"
-    assert not sess.failed
-    assert [m for m in jsons if m.get("type") == "provider_error"] == []
-    await sess.end(reason="test")
+        assert openai.open_calls == 1
+        assert gemini.open_calls == 1
+        assert not sess.failed
+        assert [m for m in jsons if m.get("type") == "provider_error"] == []
+    finally:
+        await sess.end(reason="test")
 
 
 @pytest.mark.asyncio

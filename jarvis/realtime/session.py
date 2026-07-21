@@ -1433,10 +1433,23 @@ class RealtimeVoiceSession:
                     name=f"rt-rebuild-request-{self.session_id}",
                 )
                 try:
-                    done, _pending = await asyncio.wait(
-                        {transport_task, request_task},
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
+                    while True:
+                        # Bounded wait, deliberately: a bare FIRST_COMPLETED
+                        # wait here can leave the loop with NO timer armed,
+                        # and on the Python 3.11 Windows proactor loop a
+                        # Task.cancel() landing in that state can be LOST
+                        # (BUG-081's general form) — the pump then survives
+                        # even the loop's shutdown cancel-all and the process
+                        # hangs in an infinite IOCP poll. The 1 s heartbeat
+                        # guarantees the task resumes, at which point any
+                        # pending cancellation is finally delivered.
+                        done, _pending = await asyncio.wait(
+                            {transport_task, request_task},
+                            return_when=asyncio.FIRST_COMPLETED,
+                            timeout=1.0,
+                        )
+                        if done:
+                            break
                     if request_task in done:
                         target_session, detail = request_task.result()
                         self._transport_rebuild_requests.task_done()

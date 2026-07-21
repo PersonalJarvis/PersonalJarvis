@@ -143,14 +143,24 @@ jobs:
       # block. Run it first in a fresh process with strict exit semantics and
       # named progress: a real regression stays blocking, while cross-suite
       # state cannot hide the remaining Windows coverage behind a timeout.
+      # 2026-07-20: two consecutive main runs wedged INSIDE this step at the
+      # same test (test_gemini_live_spending_cap_crosses_family_without_retrying)
+      # for 23+ minutes until the 30-minute JOB timeout cancelled everything —
+      # while the identical invocation passes in 16 s on a fast local Windows
+      # box. Until the CI-only race is caught: faulthandler dumps every thread
+      # stack once a single test exceeds 180 s (pytest built-in, no extra dep),
+      # and the STEP timeout returns the job in 15 minutes with that dump in
+      # the log instead of silently eating the whole job budget.
       - name: Windows realtime session isolation (BLOCKING)
         if: matrix.os == 'windows-latest'
+        timeout-minutes: 15
         shell: bash
         run: |
           python -m pytest \
             tests/unit/realtime/test_session.py \
             tests/unit/realtime/test_session_self_echo.py \
             -v -p no:cacheprovider \
+            -o faulthandler_timeout=180 \
             -m "not skip_ci and not slow and not openclaw_live and not voice_latency and not eval" \
             --junitxml=realtime-session-report.xml
 
