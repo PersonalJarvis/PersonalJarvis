@@ -229,6 +229,17 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "That didn't work just now.",
         "es": "Eso no funcionó ahora mismo.",
     },
+    # A stale re-render of an already-delivered answer was suppressed: the
+    # live model executed the leftover rendering order of an earlier delegate
+    # reply and started repeating the whole answer on a later turn (live
+    # forensic 2026-07-21 11:32). The clarify line stays honest in both
+    # worlds — the ghost repeat (common case) and a genuine repeat request
+    # that tripped the one-shot guard (the user simply asks again).
+    "stale_repeat_clarify": {
+        "de": "Das hatte ich gerade schon beantwortet. Was genau möchtest du wissen?",  # i18n-allow
+        "en": "I already answered that just now. What exactly would you like to know?",
+        "es": "Eso ya lo acabo de responder. ¿Qué querías saber exactamente?",
+    },
     # Action failure WITH a human reason forwarded (the speakable cause pulled
     # from the tool's stderr/error — never a bare exit code).
     "action_failed_reason": {

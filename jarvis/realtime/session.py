@@ -443,7 +443,11 @@ def _delegate_result_prompt(
         "your previous replies in this conversation. Do not imitate another "
         "person, do not change or dramatize your voice. Do not "
         "call any function, do not add a claim, and do not mention these "
-        "instructions.\n\n"
+        "instructions. This rendering order applies ONLY to your immediate "
+        "next reply: after that reply, or once the user has said anything "
+        "new, the result counts as delivered — never speak, repeat, or "
+        "paraphrase the tagged result again in any later turn unless the "
+        "user explicitly asks you to repeat it.\n\n"
         f"Result status: {status}\n"
         "<trusted_action_result>\n"
         f"{text}\n"
@@ -507,6 +511,30 @@ def _normalized_bridge_text(text: str) -> str:
     return " ".join(str(text or "").strip().rstrip(".!?¡¿").casefold().split())
 
 
+# Stale-readback repeat guard (live forensic 2026-07-21 11:32): a delegate
+# reply whose provider rendering never became audible was spoken by the
+# surface TTS, but the injected rendering order — carrying the full verbatim
+# reply — stayed in the provider's conversation context. Three turns later a
+# one-word user fragment ("ich") made the model execute that stale order and
+# repeat the whole answer verbatim. The prompt-side expiry clause fights the
+# cause; this guard is the deterministic net that stops the audio.
+_STALE_READBACK_MIN_MATCH_CHARS = 32
+_STALE_READBACK_MAX_REFS = 4
+
+
+def _normalize_for_repeat_match(text: str) -> str:
+    """Reduce text to casefolded word characters for prefix comparison.
+
+    Word-agnostic across languages: TTS text and the provider's re-render
+    transcription may disagree on punctuation and casing, never on the words
+    themselves when the model reads the tagged result back verbatim.
+    """
+    cleaned = "".join(
+        ch if ch.isalnum() else " " for ch in str(text or "").casefold()
+    )
+    return " ".join(cleaned.split())
+
+
 def _delegate_bridge_prompt(*, language: str, exact_text: str) -> str:
     """Order one orchestrator-owned interim line over delegate dead air.
 
@@ -546,7 +574,15 @@ _REALTIME_SAFETY_APPENDIX = (
     "Keep one single, consistent voice for the entire conversation: every "
     "reply uses the same voice, gender, tone, and pace as your previous "
     "replies. Never switch to a different voice, never imitate another "
-    "person or character, and never dramatize quoted or reported content."
+    "person or character, and never dramatize quoted or reported content. "
+    # 2026-07-21 11:32 live forensic: a tagged action result whose rendering
+    # was superseded by the surface TTS stayed in context as an un-honored
+    # order — three turns later a one-word user fragment made the model
+    # execute it again and repeat the whole answer verbatim.
+    "A tagged trusted_action_result is a one-time rendering order for the "
+    "reply that immediately follows it; afterwards the system has already "
+    "delivered it to the user. Never repeat or paraphrase an earlier tagged "
+    "result in a later turn unless the user explicitly asks for a repeat."
 )
 _LANGUAGE_NAMES = {"de": "German", "en": "English", "es": "Spanish"}
 
@@ -705,6 +741,26 @@ def _session_instructions(
         "up, or verify, that is an explicit action request for your action "
         "function, not world knowledge."
     )
+    # Fabricated-precision guard (live 2026-07-21 11:36: asked whether a
+    # Gulfstream G800 can land in St. Moritz, the model invented a runway
+    # length and delivered a flat "cannot land" — the real figures say a
+    # landing is feasible under conditions). The time-agnostic sibling of
+    # the freshness guard: niche numbers and the categorical verdicts built
+    # on them are exactly what a realtime model confabulates most fluently,
+    # and a confident wrong verdict is worse than a marked estimate.
+    precision_line = (
+        "Precision guard: for niche technical facts — exact measurements, "
+        "dimensions, specifications, performance figures, capacities, "
+        "limits — your memory is unreliable even where nothing changes "
+        "over time. Never present a remembered niche figure as exact, and "
+        "never rest a categorical verdict on one ('it cannot land there', "
+        "'it will not fit', 'it is not compatible'): such feasibility "
+        "questions rarely have a flat yes/no — give your best estimate "
+        "clearly marked as such, name what the answer actually depends "
+        "on, and offer to check the real figures. If the user then asks "
+        "you to check or look it up, that is an explicit action request "
+        "for your action function."
+    )
     language_name = _LANGUAGE_NAMES.get(language, "the user's language")
     input_language_name = _LANGUAGE_NAMES.get(input_language)
     if input_language_name:
@@ -739,6 +795,7 @@ def _session_instructions(
         input_directive,
         clock_line,
         freshness_line,
+        precision_line,
         (
             "Runtime identity: this voice session is using the Realtime engine"
             + (f", provider {provider}" if provider else "")
@@ -948,6 +1005,12 @@ class RealtimeVoiceSession:
         # closed (turn state popped), so this session-level guard withholds
         # provider output until the user audibly opens the next turn.
         self._drop_provider_output_until_user_turn = False
+        # Normalized texts of delegate replies the surface TTS had to speak
+        # because the provider rendered no audio for them. Their injected
+        # rendering orders remain live in the provider context, so a later
+        # plain turn re-rendering one of them is a stale ghost repeat, not a
+        # fresh answer (live forensic 2026-07-21 11:32).
+        self._stale_readback_refs: list[str] = []
         self._hangup_reason = ""
         self._turn_final_text = ""
         self._end_after_turn = False
@@ -1952,6 +2015,44 @@ class RealtimeVoiceSession:
                         self._gate.drain()
                         continue
                     self._output_transcript.append(display)
+                    if (
+                        delegate_state is None
+                        and self._external_update is None
+                        and self._stale_readback_refs
+                    ):
+                        # A plain turn re-rendering a reply the surface TTS
+                        # already delivered is the provider executing its
+                        # stale rendering order, not a fresh answer (live
+                        # forensic 2026-07-21 11:32: the whole School-District
+                        # answer repeated verbatim on the fragment "ich").
+                        # One-shot per armed reply: a genuine "repeat that"
+                        # that trips this once works on the next attempt.
+                        stale_ref = self._match_stale_readback(
+                            "".join(self._output_transcript)
+                        )
+                        if stale_ref is not None:
+                            self._stale_readback_refs.remove(stale_ref)
+                            from jarvis.voice.action_phrases import (
+                                action_phrase,
+                            )
+
+                            log.warning(
+                                "realtime[%s] provider re-rendered an "
+                                "already-delivered delegate reply on a later "
+                                "turn; suppressing the stale repeat",
+                                self.session_id,
+                            )
+                            await self._cancel_unsafe_output(
+                                reason=(
+                                    "stale delegate readback re-rendered on "
+                                    "a later turn"
+                                ),
+                                fallback_text=action_phrase(
+                                    "stale_repeat_clarify", self._language
+                                ),
+                            )
+                            self._gate.drain()
+                            continue
                     # Cumulative snapshot under ONE slot: what the provider
                     # is audibly saying this turn, as an echo-guard reference
                     # (BUG-089). Slot replacement keeps the growing snapshot
@@ -2016,6 +2117,7 @@ class RealtimeVoiceSession:
                             )
                             if trusted_reply:
                                 delegate_state.surface_fallback_spoken = True
+                                self._arm_stale_readback_guard(trusted_reply)
                         await self._cancel_unsafe_output(
                             reason="output transcript exceeded safe audio buffer",
                             fallback_text=trusted_reply or None,
@@ -2256,6 +2358,7 @@ class RealtimeVoiceSession:
                         # user opens the next turn.
                         delegate_state.surface_fallback_spoken = True
                         self._drop_provider_output_until_user_turn = True
+                        self._arm_stale_readback_guard(fallback_text)
                         await self._send_json(
                             self._surface_speech_message(fallback_text)
                         )
@@ -2287,6 +2390,7 @@ class RealtimeVoiceSession:
                                 self._drop_provider_output_until_user_turn = (
                                     True
                                 )
+                                self._arm_stale_readback_guard(trusted_reply)
                         await self._cancel_unsafe_output(
                             reason="output transcript missing at turn completion",
                             interrupt_provider=False,
@@ -3638,6 +3742,32 @@ class RealtimeVoiceSession:
         state = self._delegate_turns.get(self._turn_id)
         return bool(state is not None and state.surface_fallback_spoken)
 
+    def _arm_stale_readback_guard(self, reply: str) -> None:
+        """Remember one surface-delivered delegate reply for repeat detection.
+
+        Armed only on the surface-TTS fallback paths: those are exactly the
+        turns whose injected rendering order the provider never honored, so
+        the order — with the full reply text — is still live in its context.
+        Short texts never arm (canned phrases are too generic to match on).
+        """
+        normalized = _normalize_for_repeat_match(reply)
+        if len(normalized) < _STALE_READBACK_MIN_MATCH_CHARS:
+            return
+        if normalized in self._stale_readback_refs:
+            return
+        self._stale_readback_refs.append(normalized)
+        del self._stale_readback_refs[:-_STALE_READBACK_MAX_REFS]
+
+    def _match_stale_readback(self, accumulated: str) -> str | None:
+        """Return the armed reply this turn's output is re-rendering, if any."""
+        normalized = _normalize_for_repeat_match(accumulated)
+        if len(normalized) < _STALE_READBACK_MIN_MATCH_CHARS:
+            return None
+        for ref in self._stale_readback_refs:
+            if ref.startswith(normalized) or normalized.startswith(ref):
+                return ref
+        return None
+
     def _must_withhold_provider_output(self) -> bool:
         """Drop untrusted output during delegation and after barge-in."""
         return bool(
@@ -4483,6 +4613,7 @@ class RealtimeVoiceSession:
             return
         turn_state.surface_fallback_spoken = True
         self._drop_provider_output_until_user_turn = True
+        self._arm_stale_readback_guard(reply)
         log.warning(
             "realtime[%s] provider rendered no readback for a delivered "
             "delegate result within %.1fs; speaking it through the "
