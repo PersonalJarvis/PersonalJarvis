@@ -5769,11 +5769,18 @@ async def test_advised_reconnect_rebuilds_immediately_when_idle():
     )
     await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
     # No turn boundary is ever yielded: the idle call must rebuild at once.
-    await _wait_until(lambda: provider.open_calls == 2)
+    # Wait on the surface-visible observable (the rebuilt transport's
+    # audio_ready), not the provider-side open counter: open_session returns
+    # BEFORE the session publishes audio_ready, and on a slow event loop
+    # (windows-latest CI) asserting right after open_calls==2 raced the
+    # delivery (CI 2026-07-21: 1 audio_ready observed, rebuild fine).
+    await _wait_until(
+        lambda: len([m for m in jsons if m.get("type") == "audio_ready"]) == 2
+    )
 
     assert not sess.failed
     assert [m for m in jsons if m.get("type") == "provider_error"] == []
-    assert len([m for m in jsons if m.get("type") == "audio_ready"]) == 2
+    assert provider.open_calls == 2
     await sess.end(reason="test")
 
 
@@ -5810,15 +5817,19 @@ async def test_advised_reconnect_defers_to_the_turn_boundary_mid_turn():
         bus=None,
     )
     await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
-    await _wait_until(lambda: provider.open_calls == 2)
+    # Same slow-loop race as the idle test: wait for the rebuilt transport's
+    # audio_ready itself, not the provider-side open counter.
+    await _wait_until(
+        lambda: len([m for m in jsons if m.get("type") == "audio_ready"]) == 2
+    )
 
     assert not sess.failed
     assert [m for m in jsons if m.get("type") == "provider_error"] == []
+    assert provider.open_calls == 2
     # The first turn's boundary reached the surface before the rebuild's
     # audio_ready: the reply was never cut mid-turn.
     types = [m.get("type") for m in jsons]
     assert types.index("turn_complete") < len(types) - 1 - types[::-1].index(
         "audio_ready"
     )
-    assert len([m for m in jsons if m.get("type") == "audio_ready"]) == 2
     await sess.end(reason="test")
