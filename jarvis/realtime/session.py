@@ -98,10 +98,16 @@ _END_CALL_DECLARATION: dict[str, Any] = {
 # the router turn itself offloads heavy work to background missions, so a
 # turn that exceeds this is stuck, not busy.
 _DELEGATE_TIMEOUT_S = 90.0
-_DELEGATE_INPUT_BOUNDARY_WAIT_S = 3.0
+# Stability window before a boundary-less dispatch: the surface's own
+# endpointing already closed the utterance before the delegate started, so
+# the old fixed 3.0 s wait round was pure added latency in front of EVERY
+# delegated turn whose provider never sends an input boundary (live
+# 2026-07-21 11:31: all four fallback turns of the morning paid it). The
+# window re-arms while the input transcript is still growing.
+_DELEGATE_INPUT_BOUNDARY_WAIT_S = 1.5
+_DELEGATE_INPUT_BOUNDARY_POLL_S = 0.25
 # A provider that stays completely silent must never veto a delegated turn.
-# Each wait round re-arms only while the input transcript is still growing
-# (the user is audibly mid-utterance); a stable transcript dispatches.
+# The hard cap for a continuously growing transcript is WAIT_S x MAX_ROUNDS.
 _DELEGATE_INPUT_BOUNDARY_MAX_ROUNDS = 6
 _DELEGATE_NATIVE_BOUNDARY_WAIT_S = 1.0
 # Delivering a delegate result does not force the provider to render it:
@@ -4374,34 +4380,47 @@ class RealtimeVoiceSession:
         transcript still growing re-arms the window: the user is audibly
         mid-utterance, and dispatching would act on a partial request.
         """
-        for _ in range(_DELEGATE_INPUT_BOUNDARY_MAX_ROUNDS):
-            transcript_before_wait = self._last_user_text
+        stability_s = _DELEGATE_INPUT_BOUNDARY_WAIT_S
+        poll_s = max(min(_DELEGATE_INPUT_BOUNDARY_POLL_S, stability_s / 2), 0.01)
+        deadline = (
+            time.monotonic() + stability_s * _DELEGATE_INPUT_BOUNDARY_MAX_ROUNDS
+        )
+        stable_since = time.monotonic()
+        last_transcript = self._last_user_text
+        while True:
             try:
                 await asyncio.wait_for(
                     turn_state.input_boundary_ready.wait(),
-                    timeout=_DELEGATE_INPUT_BOUNDARY_WAIT_S,
+                    timeout=poll_s,
                 )
+                return
             except TimeoutError:
-                if turn_state.input_final or (
-                    self._last_user_text == transcript_before_wait
-                ):
-                    log.info(
-                        "realtime[%s] deterministic delegate: provider input "
-                        "boundary missing after %.1fs; dispatching on the "
-                        "stable local transcript",
-                        self.session_id,
-                        _DELEGATE_INPUT_BOUNDARY_WAIT_S,
-                    )
-                    return
-                continue
-            return
-        log.warning(
-            "realtime[%s] deterministic delegate: input transcript kept "
-            "growing through %d wait rounds; dispatching on the newest "
-            "snapshot",
-            self.session_id,
-            _DELEGATE_INPUT_BOUNDARY_MAX_ROUNDS,
-        )
+                pass
+            now = time.monotonic()
+            if self._last_user_text != last_transcript:
+                last_transcript = self._last_user_text
+                stable_since = now
+            elif turn_state.input_final or now - stable_since >= stability_s:
+                # ``input_final`` is boundary evidence by construction (the
+                # provider already responded to this input), so it needs no
+                # further stability margin — only the poll granularity.
+                log.info(
+                    "realtime[%s] deterministic delegate: provider input "
+                    "boundary missing after %.2fs of stable local "
+                    "transcript; dispatching",
+                    self.session_id,
+                    now - stable_since,
+                )
+                return
+            if now >= deadline:
+                log.warning(
+                    "realtime[%s] deterministic delegate: input transcript "
+                    "kept growing through the %.0fs wait cap; dispatching "
+                    "on the newest snapshot",
+                    self.session_id,
+                    stability_s * _DELEGATE_INPUT_BOUNDARY_MAX_ROUNDS,
+                )
+                return
 
     async def _run_deterministic_delegate(
         self,

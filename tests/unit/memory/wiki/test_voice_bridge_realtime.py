@@ -17,6 +17,12 @@ the bridge's realtime ingest contract:
 5. Empty user transcript -> no ingest; empty reply does NOT block the
    aggressive path (the fact lives in the user text).
 6. Aggressive ingests stay rate-limited across realtime turns.
+7. NOTHING extracts while the call is live (AP-9, 2026-07-21): per-turn
+   extraction jobs are deferred and run sequentially at session end,
+   before the completeness sweep — an in-call extraction is an LLM round
+   (plus 429 retries and Codex CLI spawns) on the loop that paces the
+   call's audio, and its journaled candidates trigger in-call
+   consolidator judge rounds on top.
 """
 from __future__ import annotations
 
@@ -164,6 +170,22 @@ async def _drain(journal: CandidateJournal, *, timeout_s: float = 2.0) -> None:
         await asyncio.sleep(0.02)
 
 
+async def _end_session(bus: EventBus, session_id: str = "rt-session") -> None:
+    """Close the live call — extraction is deferred until this boundary."""
+    await bus.publish(
+        VoiceSessionEnded(session_id=session_id, hangup_reason="hotkey")
+    )
+
+
+def _turn_rows(journal: CandidateJournal) -> list[Any]:
+    """Journal rows from per-turn extraction (the sweep rows filtered out)."""
+    return [
+        row
+        for row in journal.pending()
+        if not row.source_label.startswith("realtime-session-sweep")
+    ]
+
+
 async def _wait_for_calls(brain: FakeBrain, count: int, *, timeout_s: float = 2.0) -> None:
     deadline = time.monotonic() + timeout_s
     while brain.call_count < count and time.monotonic() < deadline:  # noqa: ASYNC110
@@ -172,9 +194,15 @@ async def _wait_for_calls(brain: FakeBrain, count: int, *, timeout_s: float = 2.
 
 @pytest.mark.asyncio
 async def test_realtime_turn_feeds_journal_via_aggressive_path(tmp_path: Path) -> None:
-    bus, journal, curator, bridge, _brain = _stack(tmp_path)
+    bus, journal, curator, bridge, brain = _stack(tmp_path)
     try:
         await bus.publish(_realtime_turn(FACT_SENTENCE, "Okay, will do!"))
+        # AP-9: while the call is live, NO extraction round may run — the
+        # job is deferred, not fired.
+        await asyncio.sleep(0.2)
+        assert brain.call_count == 0
+        assert journal.backlog_count() == 0
+        await _end_session(bus)
         await _drain(journal)
     finally:
         bridge.stop()
@@ -191,6 +219,7 @@ async def test_realtime_ack_reply_uses_ack_path(tmp_path: Path) -> None:
     bus, journal, _curator, bridge, _brain = _stack(tmp_path)
     try:
         await bus.publish(_realtime_turn(SHORT_FACT, "Noted."))
+        await _end_session(bus)
         await _drain(journal)
     finally:
         bridge.stop()
@@ -219,16 +248,20 @@ async def test_same_realtime_turn_delivered_twice_journaled_once(tmp_path: Path)
     bus, journal, _curator, bridge, brain = _stack(tmp_path)
     try:
         # Ack path both times — the ack path has no rate limit, so the
-        # second delivery is stopped by the turn-hash gate alone.
+        # second delivery is stopped by the turn-hash gate alone (recorded
+        # at defer time, before any extraction ran).
         await bus.publish(_realtime_turn(FACT_SENTENCE, "Noted."))
-        await _drain(journal)
         await bus.publish(_realtime_turn(FACT_SENTENCE, "Noted."))
-        await asyncio.sleep(0.2)
+        await _end_session(bus)
+        await _wait_for_calls(brain, 2)  # one turn extraction + the sweep
+        await asyncio.sleep(0.1)
     finally:
         bridge.stop()
 
-    assert journal.backlog_count() == 1, "duplicate realtime turn must be deduped by hash"
-    assert brain.call_count == 1
+    assert len(_turn_rows(journal)) == 1, (
+        "duplicate realtime turn must be deduped by hash"
+    )
+    assert brain.call_count == 2
 
 
 @pytest.mark.asyncio
@@ -251,6 +284,7 @@ async def test_empty_reply_does_not_block_aggressive_path(tmp_path: Path) -> Non
     bus, journal, _curator, bridge, _brain = _stack(tmp_path)
     try:
         await bus.publish(_realtime_turn(FACT_SENTENCE, ""))
+        await _end_session(bus)
         await _drain(journal)
     finally:
         bridge.stop()
@@ -269,7 +303,6 @@ async def test_aggressive_path_is_rate_limited_across_realtime_turns(tmp_path: P
     )
     try:
         await bus.publish(_realtime_turn(FACT_SENTENCE, "Okay!"))
-        await _drain(journal)
         await bus.publish(
             _realtime_turn(
                 "My favourite restaurant is the little place at the harbour.",
@@ -277,12 +310,16 @@ async def test_aggressive_path_is_rate_limited_across_realtime_turns(tmp_path: P
                 turn_id="rt-turn-2",
             )
         )
-        await asyncio.sleep(0.2)
+        await _end_session(bus)
+        await _wait_for_calls(brain, 2)  # one turn extraction + the sweep
+        await asyncio.sleep(0.1)
     finally:
         bridge.stop()
 
-    assert journal.backlog_count() == 1, "second aggressive ingest within 60s must be skipped"
-    assert brain.call_count == 1
+    assert len(_turn_rows(journal)) == 1, (
+        "second aggressive ingest within 60s must be skipped"
+    )
+    assert brain.call_count == 2
 
 
 @pytest.mark.asyncio
@@ -291,7 +328,6 @@ async def test_default_reviews_consecutive_realtime_turns(tmp_path: Path) -> Non
     bus, journal, _curator, bridge, brain = _stack(tmp_path)
     try:
         await bus.publish(_realtime_turn(FACT_SENTENCE, "Okay!"))
-        await _drain(journal)
         await bus.publish(
             _realtime_turn(
                 "My favourite restaurant is the little place at the harbour.",
@@ -299,14 +335,14 @@ async def test_default_reviews_consecutive_realtime_turns(tmp_path: Path) -> Non
                 turn_id="rt-turn-2",
             )
         )
-        deadline = time.monotonic() + 2.0
-        while journal.backlog_count() < 2 and time.monotonic() < deadline:  # noqa: ASYNC110
-            await asyncio.sleep(0.02)
+        await _end_session(bus)
+        await _wait_for_calls(brain, 3)  # two turn extractions + the sweep
+        await asyncio.sleep(0.1)
     finally:
         bridge.stop()
 
-    assert journal.backlog_count() == 2
-    assert brain.call_count == 2
+    assert len(_turn_rows(journal)) == 2
+    assert brain.call_count == 3
 
 
 @pytest.mark.asyncio
@@ -314,12 +350,14 @@ async def test_short_yacht_ownership_reaches_extractor_without_ack(tmp_path: Pat
     bus, journal, _curator, bridge, brain = _stack(tmp_path)
     try:
         await bus.publish(_realtime_turn("I own a yacht.", "That sounds exciting."))
-        await _wait_for_calls(brain, 1)
+        await _end_session(bus)
+        await _wait_for_calls(brain, 2)  # one turn extraction + the sweep
+        await asyncio.sleep(0.1)
     finally:
         bridge.stop()
 
-    assert brain.call_count == 1
-    assert journal.capture_summary()["candidates"] == 1
+    assert brain.call_count == 2
+    assert len(_turn_rows(journal)) == 1
 
 
 @pytest.mark.asyncio
@@ -328,12 +366,14 @@ async def test_same_text_in_different_turns_is_reviewed_twice(tmp_path: Path) ->
     try:
         await bus.publish(_realtime_turn(FACT_SENTENCE, "Okay.", turn_id="turn-a"))
         await bus.publish(_realtime_turn(FACT_SENTENCE, "Okay.", turn_id="turn-b"))
-        await _wait_for_calls(brain, 2)
+        await _end_session(bus)
+        await _wait_for_calls(brain, 3)  # two turn extractions + the sweep
+        await asyncio.sleep(0.1)
     finally:
         bridge.stop()
 
-    assert brain.call_count == 2
-    assert journal.backlog_count() == 2
+    assert brain.call_count == 3
+    assert len(_turn_rows(journal)) == 2
 
 
 @pytest.mark.asyncio
@@ -347,7 +387,6 @@ async def test_second_turn_receives_bounded_same_session_context(tmp_path: Path)
                 turn_id="turn-a",
             )
         )
-        await _wait_for_calls(brain, 1)
         await bus.publish(
             _realtime_turn(
                 "It is currently moored in Kiel.",
@@ -355,6 +394,7 @@ async def test_second_turn_receives_bounded_same_session_context(tmp_path: Path)
                 turn_id="turn-b",
             )
         )
+        await _end_session(bus)
         await _wait_for_calls(brain, 2)
     finally:
         bridge.stop()
@@ -371,7 +411,6 @@ async def test_session_end_runs_one_full_realtime_sweep(tmp_path: Path) -> None:
     bus, journal, _curator, bridge, brain = _stack(tmp_path)
     try:
         await bus.publish(_realtime_turn(FACT_SENTENCE, "Okay.", turn_id="turn-a"))
-        await _wait_for_calls(brain, 1)
         await bus.publish(
             VoiceSessionEnded(session_id="rt-session", hangup_reason="hotkey")
         )
@@ -397,7 +436,6 @@ async def test_duplicate_session_end_sweeps_only_once(tmp_path: Path) -> None:
     bus, journal, _curator, bridge, brain = _stack(tmp_path)
     try:
         await bus.publish(_realtime_turn(FACT_SENTENCE, "Okay.", turn_id="turn-a"))
-        await _wait_for_calls(brain, 1)
         await bus.publish(
             VoiceSessionEnded(session_id="rt-session", hangup_reason="hotkey")
         )

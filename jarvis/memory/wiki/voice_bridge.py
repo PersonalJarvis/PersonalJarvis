@@ -72,6 +72,16 @@ log = logging.getLogger(__name__)
 # hash gate makes sure only one extraction fires per distinct turn text.
 _SEEN_HASHES_MAX = 128
 
+# Per-turn extractions captured DURING a live realtime call are deferred and
+# run at session end: each extraction is an LLM round (provider call, 429
+# retry storms, Codex CLI subprocess spawns) on the same event loop that
+# paces the call's audio, and freshly journaled candidates additionally
+# trigger in-call consolidator judge rounds (live 2026-07-21 11:31: a
+# 10.9 s judge round mid-call; the loop-stall forensics measured 481 ms).
+# AP-9: awareness work stays off the voice hot path. Bounded so a session
+# that never ends cannot grow the queue without limit.
+_DEFERRED_MAX_PER_SESSION = 200
+
 
 def _turn_hash(text: str) -> str:
     """Stable hash of a normalised turn text (case/whitespace-insensitive)."""
@@ -154,6 +164,12 @@ class VoiceFactBridge:
         self._unsubs: list[Any] = []
         self._inflight: set[asyncio.Task[Any]] = set()
         self._session_inflight: dict[str, set[asyncio.Task[Any]]] = {}
+        # In-call extraction jobs held back until the session ends (AP-9).
+        # Keyed by session id; each entry is the full argument tuple of one
+        # already-deduped `_extract_safe` run.
+        self._deferred_extractions: dict[
+            str, list[tuple[_PendingTurn, str, str, str, str]]
+        ] = {}
         self._realtime_sessions: dict[str, list[ConversationContextTurn]] = {}
         self._realtime_turn_ids: dict[str, set[str]] = {}
         self._started = False
@@ -234,6 +250,7 @@ class VoiceFactBridge:
         self._session_inflight.clear()
         self._realtime_sessions.clear()
         self._realtime_turn_ids.clear()
+        self._deferred_extractions.clear()
         self._started = False
         return tasks
 
@@ -352,6 +369,29 @@ class VoiceFactBridge:
         session_id = (getattr(event, "session_id", "") or "").strip()
         turns = tuple(self._realtime_sessions.pop(session_id, ()))
         self._realtime_turn_ids.pop(session_id, None)
+        deferred = tuple(self._deferred_extractions.pop(session_id, ()))
+        if deferred and self._extractor is not None:
+            # Registered under the session BEFORE the sweep task is created,
+            # so the sweep's inflight snapshot waits for these turn reviews
+            # exactly as it waited for their in-call predecessors.
+            flush = asyncio.create_task(
+                self._run_deferred_extractions(session_id, deferred),
+                name=f"wiki-realtime-deferred-extract-{session_id[:12]}",
+            )
+            self._inflight.add(flush)
+            flush.add_done_callback(self._inflight.discard)
+            session_tasks = self._session_inflight.setdefault(session_id, set())
+            session_tasks.add(flush)
+
+            def _discard_flush(done: asyncio.Task[Any]) -> None:
+                active = self._session_inflight.get(session_id)
+                if active is None:
+                    return
+                active.discard(done)
+                if not active:
+                    self._session_inflight.pop(session_id, None)
+
+            flush.add_done_callback(_discard_flush)
         if self._extractor is None or not session_id or not turns:
             return
         task = asyncio.create_task(
@@ -460,6 +500,39 @@ class VoiceFactBridge:
             )
             return
 
+        if (
+            pending.origin == "realtime"
+            and pending.session_id
+            and pending.session_id in self._realtime_sessions
+        ):
+            # The call is still live: hold the LLM round back (AP-9). The
+            # turn is already deduped, so it is recorded as seen now — the
+            # queue append cannot fail the way create_task can.
+            queue = self._deferred_extractions.setdefault(
+                pending.session_id, []
+            )
+            if len(queue) >= _DEFERRED_MAX_PER_SESSION:
+                log.warning(
+                    "VoiceFactBridge: deferred-extraction queue full for %s "
+                    "— dropping turn (hash=%s)",
+                    pending.session_id[:12],
+                    review_key[-24:],
+                )
+                return
+            queue.append(
+                (pending, reply_raw, source_kind, turn_hash, review_key)
+            )
+            self._seen_hashes[review_key] = None
+            while len(self._seen_hashes) > _SEEN_HASHES_MAX:
+                self._seen_hashes.popitem(last=False)
+            log.debug(
+                "VoiceFactBridge[%s]: extraction deferred until session end "
+                "(%d queued)",
+                source_kind,
+                len(queue),
+            )
+            return
+
         task = asyncio.create_task(
             self._extract_safe(
                 pending,
@@ -543,6 +616,31 @@ class VoiceFactBridge:
             log.exception(
                 "VoiceFactBridge[%s]: extraction failed, candidates lost.",
                 source_kind,
+            )
+
+    async def _run_deferred_extractions(
+        self,
+        session_id: str,
+        jobs: tuple[tuple[_PendingTurn, str, str, str, str], ...],
+    ) -> None:
+        """Run the call's held-back per-turn extractions, one at a time.
+
+        Sequential on purpose: firing the whole backlog concurrently at
+        hangup would reproduce the in-call 429 retry storms this deferral
+        removes, just compressed into one burst.
+        """
+        log.info(
+            "VoiceFactBridge: running %d deferred extraction(s) for %s",
+            len(jobs),
+            session_id[:12],
+        )
+        for pending, reply_raw, source_kind, turn_hash, review_key in jobs:
+            await self._extract_safe(
+                pending,
+                reply_raw,
+                source_kind=source_kind,
+                turn_hash=turn_hash,
+                review_key=review_key,
             )
 
     async def _sweep_session_safe(

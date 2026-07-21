@@ -18,7 +18,7 @@ from jarvis.core.config import (
     MemoryConfig,
     WikiMemoryConfig,
 )
-from jarvis.core.events import VoiceTurnCompleted
+from jarvis.core.events import VoiceSessionEnded, VoiceTurnCompleted
 from jarvis.core.protocols import BrainDelta, BrainRequest
 from jarvis.memory.wiki.atomic_writer import AtomicWriter
 from jarvis.memory.wiki.consolidator import Consolidator
@@ -35,22 +35,48 @@ from jarvis.memory.wiki.voice_bridge import VoiceFactBridge
 
 
 class _ReviewBrain:
-    """Script both review stages while keeping the production pipeline real."""
+    """Script both review stages while keeping the production pipeline real.
+
+    Responses are routed by REQUEST KIND, not by call order: per-turn
+    extraction is deferred to the session-end boundary (AP-9, 2026-07-21),
+    where the completeness sweep runs concurrently with the judge rounds
+    that freshly journaled candidates trigger — a strict call-order script
+    would race those two. Sweeps re-read already-reviewed turns and answer
+    with an empty candidate array.
+    """
 
     name = "review-brain"
     context_window = 100_000
     supports_tools = False
     supports_vision = False
 
-    def __init__(self, responses: list[str]) -> None:
-        self._responses = list(responses)
+    def __init__(self, extractions: list[str], judgements: list[str]) -> None:
+        self._extractions = list(extractions)
+        self._judgements = list(judgements)
         self.calls = 0
         self.requests: list[BrainRequest] = []
+        self.judge_requests: list[BrainRequest] = []
 
     async def complete(self, request: BrainRequest) -> AsyncIterator[BrainDelta]:
         self.calls += 1
         self.requests.append(request)
-        yield BrainDelta(content=self._responses.pop(0))
+        text = "\n".join(
+            (
+                str(getattr(request, "system", "") or ""),
+                *(
+                    str(getattr(message, "content", "") or "")
+                    for message in request.messages
+                ),
+            )
+        )
+        if "completeness sweep" in text:
+            payload = "[]"
+        elif "Evidence user turn [" in text:
+            self.judge_requests.append(request)
+            payload = self._judgements.pop(0)
+        else:
+            payload = self._extractions.pop(0)
+        yield BrainDelta(content=payload)
         yield BrainDelta(finish_reason="stop")
 
     def estimate_cost(self, request: BrainRequest) -> float:  # pragma: no cover
@@ -113,9 +139,10 @@ def _turn(
     provider: str,
     text: str,
     assistant_text: str = "Thanks for telling me.",
+    session_id: str = "realtime-session",
 ) -> VoiceTurnCompleted:
     return VoiceTurnCompleted(
-        session_id="realtime-session",
+        session_id=session_id,
         turn_id=turn_id,
         user_text=text,
         jarvis_text=assistant_text,
@@ -181,7 +208,7 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
         "Ruben needs to use the bathroom right now.",
         "Ruben owns an aircraft.",
     ]
-    responses = [
+    extractions = [
         json.dumps(
             [
                 {
@@ -195,21 +222,56 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
         json.dumps(
             [
                 {
-                    "candidate_id": 1,
-                    "decision": "add",
-                    "target": "entities/lena.md",
-                    "new_body": _entity_page("lena", facts[0]),
-                    "reason": "new durable person fact",
+                    "fact": facts[1],
+                    "kind": "person",
+                    "subjects": ["noah"],
+                    "evidence_turn_id": "gemini-turn",
                 }
             ]
         ),
         json.dumps(
             [
                 {
-                    "fact": facts[1],
-                    "kind": "person",
-                    "subjects": ["noah"],
-                    "evidence_turn_id": "gemini-turn",
+                    "fact": facts[2],
+                    "kind": "asset",
+                    "subjects": ["aurora"],
+                    "evidence_turn_id": "short-asset-turn",
+                }
+            ]
+        ),
+        # Stage 1 may over-capture; Stage 2 remains the binding slop filter.
+        json.dumps(
+            [
+                {
+                    "fact": facts[3],
+                    "kind": "other",
+                    "subjects": ["ruben"],
+                    "evidence_turn_id": "transient-turn",
+                }
+            ]
+        ),
+        # Hostile Stage 1 copies an assistant guess while citing the valid user
+        # turn. Stage 2 sees the user-only evidence and rejects the claim.
+        json.dumps(
+            [
+                {
+                    "fact": facts[4],
+                    "kind": "asset",
+                    "subjects": ["ruben", "aircraft"],
+                    "evidence_turn_id": "assistant-guess-turn",
+                }
+            ]
+        ),
+    ]
+    judgements = [
+        json.dumps(
+            [
+                {
+                    "candidate_id": 1,
+                    "decision": "add",
+                    "target": "entities/lena.md",
+                    "new_body": _entity_page("lena", facts[0]),
+                    "reason": "new durable person fact",
                 }
             ]
         ),
@@ -227,32 +289,11 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
         json.dumps(
             [
                 {
-                    "fact": facts[2],
-                    "kind": "asset",
-                    "subjects": ["aurora"],
-                    "evidence_turn_id": "short-asset-turn",
-                }
-            ]
-        ),
-        json.dumps(
-            [
-                {
                     "candidate_id": 3,
                     "decision": "add",
                     "target": "entities/aurora.md",
                     "new_body": _asset_page("aurora", facts[2], "ruben"),
                     "reason": "durable owned asset and relationship",
-                }
-            ]
-        ),
-        # Stage 1 may over-capture; Stage 2 remains the binding slop filter.
-        json.dumps(
-            [
-                {
-                    "fact": facts[3],
-                    "kind": "other",
-                    "subjects": ["ruben"],
-                    "evidence_turn_id": "transient-turn",
                 }
             ]
         ),
@@ -262,18 +303,6 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
                     "candidate_id": 4,
                     "decision": "noop",
                     "reason": "transient bodily need has no durable value",
-                }
-            ]
-        ),
-        # Hostile Stage 1 copies an assistant guess while citing the valid user
-        # turn. Stage 2 sees the user-only evidence and rejects the claim.
-        json.dumps(
-            [
-                {
-                    "fact": facts[4],
-                    "kind": "asset",
-                    "subjects": ["ruben", "aircraft"],
-                    "evidence_turn_id": "assistant-guess-turn",
                 }
             ]
         ),
@@ -287,7 +316,7 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
             ]
         ),
     ]
-    brain = _ReviewBrain(responses)
+    brain = _ReviewBrain(extractions, judgements)
     registry = _Registry(brain)
     repository = MarkdownPageRepository()
     vault = VaultIndex(repo=repository)
@@ -334,48 +363,64 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
     )
     bridge.start()
 
-    try:
+    async def _speak_and_hang_up(turn: VoiceTurnCompleted) -> None:
+        """One short call per fact: extraction is deferred to session end
+        (AP-9, 2026-07-21), so the turn only reaches the extractor once its
+        session closes."""
+        await bus.publish(turn)
         await bus.publish(
+            VoiceSessionEnded(
+                session_id=turn.session_id, hangup_reason="hotkey"
+            )
+        )
+
+    try:
+        await _speak_and_hang_up(
             _turn(
                 turn_id="openai-turn",
                 provider="openai-realtime",
                 text="My friend Lena moved to Hamburg last month and lives there now.",
+                session_id="call-1",
             )
         )
         await _wait_for_page(vault_root / "entities" / "lena.md")
-        await bus.publish(
+        await _speak_and_hang_up(
             _turn(
                 turn_id="gemini-turn",
                 provider="gemini-live",
                 text="My colleague Noah works at the city library during the week.",
+                session_id="call-2",
             )
         )
         await _wait_for_page(vault_root / "entities" / "noah.md")
-        await bus.publish(
+        await _speak_and_hang_up(
             _turn(
                 turn_id="short-asset-turn",
                 provider="openai-realtime",
                 text="I own a yacht named Aurora.",
+                session_id="call-3",
             )
         )
         await _wait_for_page(vault_root / "entities" / "aurora.md")
-        await bus.publish(
+        await _speak_and_hang_up(
             _turn(
                 turn_id="transient-turn",
                 provider="gemini-live",
                 text="I need to use the bathroom right now.",
+                session_id="call-4",
             )
         )
-        await _wait_for_idle(brain, journal, calls=8)
-        await bus.publish(
+        await _wait_for_idle(brain, journal, calls=12)
+        await _speak_and_hang_up(
             _turn(
                 turn_id="assistant-guess-turn",
                 provider="openai-realtime",
                 text="What do you think I own?",
                 assistant_text="Perhaps you own an aircraft.",
+                session_id="call-5",
             )
         )
-        await _wait_for_idle(brain, journal, calls=10)
+        await _wait_for_idle(brain, journal, calls=15)
     finally:
         bridge.stop()
         journal.close()
@@ -400,10 +445,11 @@ async def test_consecutive_realtime_reviews_write_to_selected_vault(
         "aircraft" not in path.read_text(encoding="utf-8").lower()
         for path in vault_root.rglob("*.md")
     )
-    final_judge_prompt = brain.requests[-1].messages[0].content
+    final_judge_prompt = brain.judge_requests[-1].messages[0].content
     assert "user_evidence_excerpt=" in final_judge_prompt
     assert "Evidence user turn [assistant-guess-turn]" in final_judge_prompt
     assert "What do you think I own?" in final_judge_prompt
     assert "Perhaps you own an aircraft." not in final_judge_prompt
-    assert brain.calls == 10
+    # 5 deferred turn extractions + 5 judge rounds + 5 session sweeps.
+    assert brain.calls == 15
     assert journal.backlog_count() == 0
