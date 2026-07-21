@@ -95,6 +95,19 @@ def test_dry_run_includes_the_terminal_command_step(monkeypatch, capsys) -> None
     assert out.index("link the jarvis terminal command") > out.index("Finish & launch")
 
 
+def test_summary_never_advertises_a_dead_terminal_command(capsys) -> None:
+    """When the PATH setup failed, the summary must show the venv fallback —
+    advertising `jarvis` again would reproduce the very command-not-found bug."""
+    installer.step_summary(no_launch=False, update=False, headless=True, terminal_ok=False)
+    out = capsys.readouterr().out
+    assert "PATH setup failed" in out
+    assert "jarvis  ·  jarvis serve" not in out
+
+    installer.step_summary(no_launch=False, update=False, headless=True, terminal_ok=True)
+    out = capsys.readouterr().out
+    assert "jarvis  ·  jarvis serve" in out
+
+
 def test_update_run_is_detected(monkeypatch, tmp_path) -> None:
     monkeypatch.setattr(installer, "repo_root", lambda: tmp_path)
     assert installer.is_update_run() is False

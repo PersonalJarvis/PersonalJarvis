@@ -246,8 +246,12 @@ def _posix_profile_files(home: Path, shell: str) -> list[Path]:
         files.append(zshrc)
     if shell == "bash" or bashrc.exists():
         files.append(bashrc)
-    bash_profile = home / ".bash_profile"  # macOS bash login shells skip ~/.profile
-    if bash_profile.exists():
+    # A LOGIN bash (macOS Terminal.app default for bash users) reads
+    # ~/.bash_profile, never ~/.bashrc — so a bash user's file is created
+    # when missing, like the zsh/bash rc above, or the line lands where the
+    # login shell never looks (review finding 2026-07-21).
+    bash_profile = home / ".bash_profile"
+    if shell == "bash" or bash_profile.exists():
         files.append(bash_profile)
     profile = home / ".profile"
     if profile.exists() or not files:
@@ -258,12 +262,18 @@ def _posix_profile_files(home: Path, shell: str) -> list[Path]:
     return files
 
 
-def _profile_block(rc_file: Path) -> str:
+def _profile_block(rc_file: Path, *, created: bool = False) -> str:
     if rc_file.name == "config.fish":
-        line = 'fish_add_path -g "$HOME/.local/bin"'
-    else:
-        line = 'export PATH="$HOME/.local/bin:$PATH"'
-    return f"\n{PROFILE_MARKER}\n{line}\n"
+        return f'\n{PROFILE_MARKER}\nfish_add_path -g "$HOME/.local/bin"\n'
+    lines = []
+    if created and rc_file.name == ".bash_profile":
+        # A NEWLY created ~/.bash_profile SHADOWS ~/.profile (and skips
+        # ~/.bashrc) for login bash shells — source both first so we never
+        # silently disable the user's existing login environment.
+        lines.append('[ -f "$HOME/.profile" ] && . "$HOME/.profile"')
+        lines.append('[ -f "$HOME/.bashrc" ] && . "$HOME/.bashrc"')
+    lines.append('export PATH="$HOME/.local/bin:$PATH"')
+    return "\n" + "\n".join([PROFILE_MARKER, *lines]) + "\n"
 
 
 def _path_contains_dir(path_value: str, bin_dir: Path) -> bool:
@@ -290,12 +300,13 @@ def _ensure_posix_path(
     wrote_any = False
     for rc_file in _posix_profile_files(home, shell):
         try:
-            existing = rc_file.read_text(encoding="utf-8") if rc_file.exists() else ""
+            created = not rc_file.exists()
+            existing = "" if created else rc_file.read_text(encoding="utf-8")
             if PROFILE_MARKER in existing:
                 continue
             rc_file.parent.mkdir(parents=True, exist_ok=True)
             with rc_file.open("a", encoding="utf-8") as handle:
-                handle.write(_profile_block(rc_file))
+                handle.write(_profile_block(rc_file, created=created))
             wrote_any = True
         except OSError as exc:
             warnings.append(f"could not update {rc_file.name} ({exc})")

@@ -194,6 +194,44 @@ def test_posix_foreign_command_is_never_clobbered(tmp_path):
     assert any("different program" in w for w in report.warnings)
 
 
+def test_posix_login_bash_gets_bash_profile_created(tmp_path):
+    """macOS Terminal.app starts bash as a LOGIN shell, which reads
+    ~/.bash_profile and never ~/.bashrc — the file must be created for bash
+    users, and a newly created one must keep sourcing the files it shadows."""
+    install = _make_install(tmp_path, "darwin")
+    home = tmp_path / "home"
+
+    pi.ensure_cli_on_path(
+        install, platform="darwin", home=home,
+        environ={"PATH": "/usr/bin", "SHELL": "/bin/bash"},
+    )
+
+    bash_profile = (home / ".bash_profile").read_text(encoding="utf-8")
+    assert 'export PATH="$HOME/.local/bin:$PATH"' in bash_profile
+    # The fresh file shadows ~/.profile and skips ~/.bashrc for login shells —
+    # it must source both so the user's existing login environment survives.
+    assert '. "$HOME/.profile"' in bash_profile
+    assert '. "$HOME/.bashrc"' in bash_profile
+
+
+def test_posix_existing_bash_profile_is_only_appended(tmp_path):
+    install = _make_install(tmp_path, "darwin")
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / ".bash_profile").write_text("# mine\n", encoding="utf-8")
+
+    pi.ensure_cli_on_path(
+        install, platform="darwin", home=home,
+        environ={"PATH": "/usr/bin", "SHELL": "/bin/bash"},
+    )
+
+    bash_profile = (home / ".bash_profile").read_text(encoding="utf-8")
+    assert bash_profile.startswith("# mine\n")
+    assert 'export PATH="$HOME/.local/bin:$PATH"' in bash_profile
+    # An existing file already runs at login — no shadow-repair sourcing lines.
+    assert '. "$HOME/.profile"' not in bash_profile
+
+
 def test_posix_fish_gets_fish_syntax_not_export(tmp_path):
     install = _make_install(tmp_path, "linux")
     home = tmp_path / "home"

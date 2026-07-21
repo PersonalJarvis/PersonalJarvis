@@ -538,7 +538,7 @@ def step_worker_cli(*, dry_run: bool) -> None:
         note("Jarvis-Agent worker CLI install failed - it can be added later in-app")
 
 
-def step_terminal_command(*, dry_run: bool) -> None:
+def step_terminal_command(*, dry_run: bool) -> bool | None:
     """Finish & launch sub-step: make ``jarvis`` work in the user's terminal.
 
     The website's "Run it" section advertises ``jarvis`` / ``jarvis serve``,
@@ -547,13 +547,17 @@ def step_terminal_command(*, dry_run: bool) -> None:
     EVERY OS. Links shims into ``~/.local/bin`` and persists that dir on PATH
     (registry on Windows, shell rc files on POSIX). Best-effort: a failure
     prints the manual fallback and never fails the install.
+
+    Returns the honest outcome for the final summary (None = dry run):
+    claiming ``jarvis`` works after a failed PATH setup would re-create the
+    exact bug this step exists to fix.
     """
     if dry_run:
         console.print(
             "[muted]│    (dry-run) link the jarvis terminal command into "
             "~/.local/bin + PATH[/]"
         )
-        return
+        return None
     fallback = venv_python().parent / ("jarvis.exe" if sys.platform == "win32" else "jarvis")
     try:
         from jarvis.setup.path_integration import ensure_cli_on_path
@@ -562,15 +566,16 @@ def step_terminal_command(*, dry_run: bool) -> None:
     except Exception as exc:  # noqa: BLE001 — never fail the install on this
         note(f"could not set up the jarvis terminal command ({exc})")
         note(f"run it directly instead: {fallback}")
-        return
+        return False
     for warning in report.warnings:
         note(rich_escape(warning))
     if report.ok:
         suffix = " (open a NEW terminal)" if report.needs_new_terminal else ""
         ok(f"terminal command ready: jarvis / jarvis serve{suffix}")
-    else:
-        note("the jarvis terminal command could not be linked")
-        note(f"run it directly instead: {fallback}")
+        return True
+    note("the jarvis terminal command could not be linked")
+    note(f"run it directly instead: {fallback}")
+    return False
 
 
 def _write_desktop_integration_log(result: object) -> Path | None:
@@ -779,7 +784,13 @@ def step_launch(*, headless: bool, dry_run: bool) -> None:
         sys.exit(4)
 
 
-def step_summary(*, no_launch: bool, update: bool, headless: bool) -> None:
+def step_summary(
+    *,
+    no_launch: bool,
+    update: bool,
+    headless: bool,
+    terminal_ok: bool | None = None,
+) -> None:
     """The finale: a clack-style note box HANGING off the journey gutter.
 
     ``◇  Title ──╮`` header, deep-gold borders, ``├──╯`` foot — the left rail
@@ -788,7 +799,13 @@ def step_summary(*, no_launch: bool, update: bool, headless: bool) -> None:
     flat two-rule finale of 2026-07-09 and the free-standing Panel draft).
     """
     rows: list[tuple[str, str, str]] = [("Installed to", str(repo_root()), "muted")]
-    rows.append(("Terminal", "jarvis  ·  jarvis serve   (in a new terminal)", "brand"))
+    if terminal_ok is False:
+        # The PATH setup failed and said so mid-run — the summary must not
+        # advertise a command that will not resolve (review finding 2026-07-21).
+        scripts = ".venv\\Scripts\\jarvis" if sys.platform == "win32" else ".venv/bin/jarvis"
+        rows.append(("Terminal", f"run {scripts} directly (PATH setup failed)", "muted"))
+    else:
+        rows.append(("Terminal", "jarvis  ·  jarvis serve   (in a new terminal)", "brand"))
     if sys.platform == "win32":
         rows.append(("Start again", f'Windows search -> "{PRODUCT_NAME}"', "brand"))
     elif sys.platform == "darwin":
@@ -799,8 +816,12 @@ def step_summary(*, no_launch: bool, update: bool, headless: bool) -> None:
     elif sys.platform.startswith("linux") and not (headless or is_headless_linux()):
         rows.append(("Start again", f'app menu -> "{PRODUCT_NAME}"', "brand"))
     else:
-        rows.append(("Start again", "jarvis serve", "brand"))
-        rows.append(("", "(or .venv/bin/python -m jarvis.ui.web.launcher)", "muted"))
+        if terminal_ok is False:
+            rows.append(("Start again", ".venv/bin/python -m jarvis.ui.web.launcher", "brand"))
+            rows.append(("", "(in the install folder)", "muted"))
+        else:
+            rows.append(("Start again", "jarvis serve", "brand"))
+            rows.append(("", "(or .venv/bin/python -m jarvis.ui.web.launcher)", "muted"))
     rows.append(("Update", "re-run the same install one-liner - it updates in place", "muted"))
     if update:
         rows.append(("Next", "your setup and settings are kept - no re-onboarding", "muted"))
@@ -889,7 +910,7 @@ def main(argv: list[str] | None = None) -> int:
     step_models(full_profile=with_desktop, dry_run=args.dry_run)
 
     phase("6/6", "Finish & launch")
-    step_terminal_command(dry_run=args.dry_run)
+    terminal_ok = step_terminal_command(dry_run=args.dry_run)
     step_worker_cli(dry_run=args.dry_run)
     if not step_desktop_integration(enabled=with_desktop, dry_run=args.dry_run):
         sys.exit(4)
@@ -898,7 +919,10 @@ def main(argv: list[str] | None = None) -> int:
 
     # Summary FIRST, launch LAST: when the app window appears, the terminal
     # story is already told — and everything the first launch needs is on disk.
-    step_summary(no_launch=args.no_launch, update=update, headless=args.headless)
+    step_summary(
+        no_launch=args.no_launch, update=update, headless=args.headless,
+        terminal_ok=terminal_ok,
+    )
     if not args.no_launch:
         step_launch(headless=args.headless, dry_run=args.dry_run)
     return 0
