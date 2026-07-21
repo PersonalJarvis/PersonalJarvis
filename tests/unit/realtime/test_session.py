@@ -5169,6 +5169,47 @@ async def test_transport_rebuild_storm_fails_honestly():
 
 
 @pytest.mark.asyncio
+async def test_second_rapid_rebuild_drops_the_poisoned_history_seed():
+    """BUG-104: Gemini's server rejected the conversation seed with 1007
+    right after every rebuilt connection reported ready — the client-side
+    seed guard never sees a server-side rejection, so each seeded rebuild
+    died again, three rebuilds burned the whole recovery budget in ~1.5 s,
+    and the call hung up with reason=error mid-sentence. The second rapid
+    death in the window must retry WITHOUT the seed: amnesiac but alive."""
+    from jarvis.core.protocols import BrainMessage
+
+    provider = RebuildingProvider(
+        [
+            lambda: DyingSession([]),
+            lambda: DyingSession([]),
+            lambda: StayOpenSession([]),
+        ]
+    )
+    sess = RealtimeVoiceSession(
+        session_id="rebuild-poisoned-seed",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda _m: asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+    sess._delegate_history = [
+        BrainMessage(role="user", content="what about private law"),
+        BrainMessage(role="assistant", content="private autonomy governs it"),
+    ]
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await _wait_until(lambda: provider.open_calls >= 3)
+
+    assert not sess.failed
+    # Initial open + first rebuild carry the call transcript (BUG-088)...
+    assert provider.opened_cfgs[0].history
+    assert provider.opened_cfgs[1].history
+    # ...but the rebuild after another immediate death goes seedless.
+    assert provider.opened_cfgs[2].history == ()
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
 async def test_idle_stream_end_with_capability_rebuilds_instead_of_ending():
     """A graceful provider close at an idle boundary (Live-API session limit)
     still ends the whole CALL on the desktop surface, so a rebuild-capable

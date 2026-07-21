@@ -277,11 +277,22 @@ async def _seed_history(session: Any, history: tuple[dict[str, str], ...]) -> No
     Gemini fixes conversation state per connection: a mid-call transport
     rebuild (session limit GoAway, 1006 abnormal closure) used to start the
     fresh session with total amnesia, so follow-up questions lost their
-    grounding (BUG-088). ``send_client_content`` with ``turn_complete=False``
-    is Gemini's documented initial-history channel — it appends context
-    without triggering a response generation. Seeding fails open: a session
-    without history is exactly today's behavior and strictly better than no
-    session at all.
+    grounding (BUG-088).
+
+    Gemini 3.1 Live accepts ``client_content`` ONLY as declared initial
+    history: the connection config must set
+    ``history_config.initial_history_in_client_content`` (done in
+    ``open_session``) and the server then processes ``client_content``
+    messages *until* one arrives with ``turn_complete=True`` — only after
+    that boundary is ``realtime_input`` (microphone audio) legal. The first
+    seed implementation sent ``turn_complete=False`` without the
+    declaration; the server closed every rebuilt connection with ``1007
+    invalid argument`` ~70 ms after ready, three rebuilds burned the whole
+    recovery window, and the call ended reason=error mid-sentence (live
+    incident 2026-07-21 08:35, BUG-104).
+
+    Seeding still fails open: a session without history is exactly the
+    pre-BUG-088 behavior and strictly better than no session at all.
     """
     if not history:
         return
@@ -305,9 +316,12 @@ async def _seed_history(session: Any, history: tuple[dict[str, str], ...]) -> No
                     parts=[types.Part(text=text)],
                 )
             )
-        if not turns:
-            return
-        await session.send_client_content(turns=turns, turn_complete=False)
+        # turn_complete=True closes the declared initial-history phase even
+        # when every entry was filtered out — the connection would otherwise
+        # sit in history mode and reject the first microphone frame.
+        await session.send_client_content(
+            turns=turns or None, turn_complete=True
+        )
     except Exception:  # noqa: BLE001 — an amnesiac session beats a dead call
         log.warning(
             "gemini-live: seeding %d prior turns into the fresh session "
@@ -315,6 +329,13 @@ async def _seed_history(session: Any, history: tuple[dict[str, str], ...]) -> No
             len(history),
             exc_info=True,
         )
+        # The connection already declared initial-history mode; exit it even
+        # without content, otherwise the first microphone frame is the next
+        # invalid argument.
+        try:
+            await session.send_client_content(turns=None, turn_complete=True)
+        except Exception:  # noqa: BLE001, S110 — transport is likely dead
+            pass
 
 
 # Gemini function_declarations accept only an OpenAPI-style schema subset.
@@ -421,18 +442,42 @@ class GeminiLiveProvider:
                     voice_name=voice
                 )
             )
+        # An unset window (None/0) omits realtime_input_config entirely so
+        # Gemini's native automatic activity detection decides the turn end;
+        # only an explicit override forces a fixed silence window.
+        silence_ms = getattr(cfg, "silence_duration_ms", None)
+        # Gemini 3.1 rejects client_content (1007, the whole connection dies)
+        # unless the setup declares it as initial history — so the declaration
+        # and the seed travel together, and neither happens without the other
+        # (BUG-104). Probed by SDK capability, never a model-name pin (AP-21):
+        # an SDK without HistoryConfig cannot seed legally, so it opens an
+        # amnesiac session instead of a doomed one.
+        history = tuple(getattr(cfg, "history", ()) or ())
+        history_config_cls = getattr(types, "HistoryConfig", None)
+        seed_declared = bool(history) and history_config_cls is not None
+        if history and not seed_declared:
+            log.warning(
+                "gemini-live: installed google-genai SDK has no HistoryConfig; "
+                "opening the rebuilt session without the %d-turn conversation "
+                "seed",
+                len(history),
+            )
         live_config = types.LiveConnectConfig(
             response_modalities=[types.Modality.AUDIO],
             system_instruction=str(getattr(cfg, "instructions", "") or "") or None,
             input_audio_transcription=types.AudioTranscriptionConfig(),
             output_audio_transcription=types.AudioTranscriptionConfig(),
-            realtime_input_config=types.RealtimeInputConfig(
-                automatic_activity_detection=types.AutomaticActivityDetection(
-                    disabled=False,
-                    silence_duration_ms=int(
-                        getattr(cfg, "silence_duration_ms", 1_500) or 1_500
-                    ),
-                )
+            **(
+                {
+                    "realtime_input_config": types.RealtimeInputConfig(
+                        automatic_activity_detection=types.AutomaticActivityDetection(
+                            disabled=False,
+                            silence_duration_ms=int(silence_ms),
+                        )
+                    )
+                }
+                if silence_ms
+                else {}
             ),
             **(
                 {
@@ -452,6 +497,15 @@ class GeminiLiveProvider:
                 if speech_config
                 else {}
             ),
+            **(
+                {
+                    "history_config": history_config_cls(
+                        initial_history_in_client_content=True
+                    )
+                }
+                if seed_declared
+                else {}
+            ),
         )
         connection_cm = client.aio.live.connect(
             model=str(getattr(cfg, "model", "") or _MODEL),
@@ -466,7 +520,8 @@ class GeminiLiveProvider:
                 if hasattr(result, "__await__"):
                     await result
             raise
-        await _seed_history(session, tuple(getattr(cfg, "history", ()) or ()))
+        if seed_declared:
+            await _seed_history(session, history)
         return _GeminiLiveSession(
             session=session,
             connection_cm=connection_cm,

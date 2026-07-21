@@ -326,6 +326,21 @@ async def test_every_selectable_model_uses_live_audio_and_transcriptions(
 
 
 @pytest.mark.asyncio
+async def test_default_config_keeps_native_activity_detection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    holder = _patch_genai_client(monkeypatch)
+    provider = GeminiLiveProvider(api_key="test-key")
+
+    session = await provider.open_session(RealtimeSessionConfig(voice="Puck"))
+    _selected, config = holder["client"].aio.live.connect_calls[0]
+    # No forced silence window: Gemini's native automatic activity detection
+    # decides the turn end (the Settings "Thinking pause" is pipeline-only).
+    assert config.realtime_input_config is None
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_open_session_uses_current_default_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -508,9 +523,11 @@ def _patch_seedable_genai_client(monkeypatch: pytest.MonkeyPatch) -> dict:
     class _SeedableLiveAPI:
         def __init__(self) -> None:
             self.last_cm: _SeedableConnectCM | None = None
+            self.last_config = None
 
         def connect(self, *, model, config):
-            del model, config
+            del model
+            self.last_config = config
             self.last_cm = _SeedableConnectCM()
             return self.last_cm
 
@@ -535,8 +552,10 @@ async def test_open_session_seeds_prior_call_history(
 ) -> None:
     """BUG-088: a mid-call transport rebuild reopens Gemini with a fresh,
     empty conversation. The open must replay the bounded call transcript via
-    send_client_content(turn_complete=False) — Gemini's initial-history
-    channel — so follow-up questions keep their earlier-turn grounding."""
+    send_client_content — and per BUG-104 the connection must DECLARE the
+    seed (history_config.initial_history_in_client_content) and END it with
+    turn_complete=True, otherwise Gemini 3.1 closes the rebuilt connection
+    with 1007 right after ready and the call dies mid-sentence."""
     holder = _patch_seedable_genai_client(monkeypatch)
     await GeminiLiveProvider(api_key="test-key").open_session(
         RealtimeSessionConfig(
@@ -549,9 +568,12 @@ async def test_open_session_seeds_prior_call_history(
     )
 
     live = holder["client"].aio.live
+    history_config = live.last_config.history_config
+    assert history_config is not None
+    assert history_config.initial_history_in_client_content is True
     calls = live.last_cm.client_content_calls
     assert len(calls) == 1
-    assert calls[0]["turn_complete"] is False
+    assert calls[0]["turn_complete"] is True
     turns = calls[0]["turns"]
     assert [turn.role for turn in turns] == ["user", "model", "user"]
     assert [turn.parts[0].text for turn in turns] == [
@@ -570,7 +592,11 @@ async def test_open_session_without_history_sends_no_client_content(
         RealtimeSessionConfig()
     )
 
-    assert holder["client"].aio.live.last_cm.client_content_calls == []
+    live = holder["client"].aio.live
+    assert live.last_cm.client_content_calls == []
+    # No declared initial history either — the first open of a call must
+    # stay byte-identical to the proven-stable handshake (BUG-104).
+    assert live.last_config.history_config is None
 
 
 @pytest.mark.asyncio
@@ -632,7 +658,52 @@ async def test_history_seed_construction_failure_keeps_the_session_alive(
     )
 
     assert session is not None
+    # The connection declared initial-history mode, so the failed seed must
+    # still be closed out with an empty turn_complete=True — otherwise the
+    # first microphone frame is the next invalid argument (BUG-104).
+    assert holder["client"].aio.live.last_cm.client_content_calls == [
+        {"turns": None, "turn_complete": True}
+    ]
+
+
+@pytest.mark.asyncio
+async def test_sdk_without_history_config_skips_the_seed_entirely(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """BUG-104: on an SDK that cannot DECLARE initial history, sending the
+    seed anyway is a guaranteed server-side 1007 that kills the rebuilt
+    connection. The open must skip the seed (amnesiac but alive) — a
+    capability probe, never a model-name pin (AP-21)."""
+    holder = _patch_seedable_genai_client(monkeypatch)
+
+    from google.genai import types
+
+    monkeypatch.delattr(types, "HistoryConfig")
+    session = await GeminiLiveProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig(history=({"role": "user", "text": "hello"},))
+    )
+
+    assert session is not None
     assert holder["client"].aio.live.last_cm.client_content_calls == []
+
+
+@pytest.mark.asyncio
+async def test_blank_only_history_still_closes_the_declared_seed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A history whose every entry filters out (blank text) still declared
+    initial-history mode at connect — the seed must send the empty
+    turn_complete=True terminator so realtime_input becomes legal."""
+    holder = _patch_seedable_genai_client(monkeypatch)
+    await GeminiLiveProvider(api_key="test-key").open_session(
+        RealtimeSessionConfig(history=({"role": "user", "text": "   "},))
+    )
+
+    live = holder["client"].aio.live
+    assert live.last_config.history_config is not None
+    assert live.last_cm.client_content_calls == [
+        {"turns": None, "turn_complete": True}
+    ]
 
 
 # --- function_declarations schema sanitizing --------------------------------

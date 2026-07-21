@@ -7167,3 +7167,50 @@ the write/read/delete backend probe runs THROUGH the wrapper, proving the
 vault lifecycle. Linux-simulation tests force `sys.platform = "linux"` so
 they can never route into the real Mac Keychain. Guards:
 `tests/unit/core/test_keychain_bundle.py`.
+
+## BUG-104: Gemini 3.1 rejects the rebuild's conversation seed — every transport rebuild dies with 1007 and the call hangs up mid-sentence (CRITICAL, FIXED 2026-07-21)
+
+**Live incident 2026-07-21 08:35 (Mac, realtime session `8f1ea55c`).** Two
+turns in, Gemini's server dropped the Live WebSocket (`1006 abnormal
+closure` — the known BUG-071 idle-drop right after a long surface-TTS
+fallback). The in-place rebuild (BUG-071) reconnected fine, then the
+BUG-088 history seed replayed the call transcript via
+`send_client_content(turns=..., turn_complete=False)` — and Gemini killed
+the fresh connection with `1007 Request contains an invalid argument`
+~70 ms after `ready`. All three rebuilds in the 120 s window failed
+identically, `RealtimeTransportDead` fired, and the call ended with
+`hangup_reason=error` while the user was mid-sentence; the words spoken
+during the death loop were never transcribed (the transport was already
+dead, and the committed-turn guard rightly refuses classic-voice replay).
+
+**Root cause — two API-contract violations in the seed, plus a blind
+guard.** Gemini 3.1 Live (`gemini-3.1-flash-live-preview`) accepts
+`client_content` ONLY as *declared* initial history: (1) the connect config
+must set `history_config.initial_history_in_client_content=True`, and
+(2) the server processes `client_content` until one arrives with
+`turn_complete=True` — only after that boundary is `realtime_input`
+(microphone audio) legal. The seed did neither. And because
+`send_client_content` succeeds client-side (the rejection arrives as a
+server-side close), the seed's fail-open `try/except` never saw the
+failure — the rebuild loop re-poisoned every fresh connection until the
+budget was gone. The seed path had never run on this install before
+(first-ever rebuild); it was only ever validated against fakes.
+
+**Fix (3 layers).**
+1. `gemini_live.open_session` declares
+   `history_config(initial_history_in_client_content=True)` whenever a
+   non-empty history seed is present — probed via the SDK's
+   `types.HistoryConfig` capability, never a model-name pin (AP-21); an SDK
+   without it skips the seed (amnesiac but alive).
+2. `_seed_history` ends the seed with `turn_complete=True` (closing the
+   declared history phase so microphone audio becomes legal), also when
+   every entry filtered out, and best-effort closes the phase even when
+   seed construction fails.
+3. `session._rebuild_transport` treats a second rapid death inside the
+   rebuild window as seed poisoning and retries WITHOUT the seed — a
+   server-side rejection can never again burn the whole rebuild budget,
+   for any provider adapter.
+
+Guards: `tests/unit/realtime/test_gemini_live.py` (seed declaration +
+terminator + SDK-capability skip + blank-history terminator),
+`tests/unit/realtime/test_session.py::test_second_rapid_rebuild_drops_the_poisoned_history_seed`.

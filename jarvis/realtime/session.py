@@ -15,6 +15,7 @@ import logging
 import random
 import re
 import time
+from collections import deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
@@ -174,6 +175,59 @@ def _pcm16_peak(pcm: bytes) -> int:
 
 def _is_public_knowledge_question(text: str) -> bool:
     return bool(_PUBLIC_KNOWLEDGE_QUESTION_RE.search(str(text or "").strip()))
+
+
+class _LoopLagProbe:
+    """Sample event-loop scheduling lag so audio-stall logs can tell a
+    silent provider from a starved receive loop.
+
+    The mid-reply stall diagnostic measures the gap between provider audio
+    ARRIVALS — but arrival is when OUR event loop reads the socket. Heavy
+    concurrent work in this process (live run 2026-07-21 08:40: the wiki
+    consolidator finished a 54 s Codex CLI turn right as a 1850 ms
+    "provider sent no audio" stall began) produces the identical signature
+    while the audio sits unread in the socket buffer. One sleeping task
+    measuring its own scheduling delay separates the two: provider silence
+    leaves the loop responsive; a blocked loop lags every task equally.
+    """
+
+    _INTERVAL_S = 0.25
+    _WINDOW_S = 30.0
+
+    def __init__(self) -> None:
+        self._samples: deque[tuple[float, float]] = deque()
+        self._task: asyncio.Task[None] | None = None
+
+    def start(self) -> None:
+        if self._task is None or self._task.done():
+            self._task = asyncio.create_task(
+                self._run(), name="rt-loop-lag-probe"
+            )
+
+    def stop(self) -> None:
+        task = self._task
+        self._task = None
+        if task is not None and not task.done():
+            task.cancel()
+
+    async def _run(self) -> None:
+        while True:
+            before = time.monotonic()
+            await asyncio.sleep(self._INTERVAL_S)
+            now = time.monotonic()
+            lag_ms = max(0.0, (now - before - self._INTERVAL_S) * 1_000.0)
+            self._samples.append((now, lag_ms))
+            cutoff = now - self._WINDOW_S
+            while self._samples and self._samples[0][0] < cutoff:
+                self._samples.popleft()
+
+    def max_lag_ms(self, window_s: float) -> float:
+        """Worst scheduling lag observed within the last ``window_s``."""
+        cutoff = time.monotonic() - max(0.0, float(window_s))
+        return max(
+            (lag for stamp, lag in self._samples if stamp >= cutoff),
+            default=0.0,
+        )
 
 
 # A realtime bridge is useful only for a genuinely long delegated turn. Starting
@@ -875,6 +929,7 @@ class RealtimeVoiceSession:
         self._last_audio_emit_monotonic = 0.0
         self._last_audio_emit_turn = ""
         self._embedded_silence_ms = 0.0
+        self._loop_lag = _LoopLagProbe()
         # A write-only transport stall does not necessarily wake the provider
         # receive iterator. Queue a rebuild request for the long-lived pump so
         # it can cancel that iterator and reopen the session without ending the
@@ -886,6 +941,10 @@ class RealtimeVoiceSession:
         # Monotonic timestamps of in-place transport rebuilds (BUG-071),
         # pruned to the rolling _TRANSPORT_REBUILD_WINDOW_S budget window.
         self._transport_rebuild_times: list[float] = []
+        # BUG-104: a history seed the provider's SERVER rejects kills every
+        # rebuilt connection right after ready — the client-side seed guard
+        # never sees the rejection, so repeated rapid deaths retry seedless.
+        self._suppress_history_seed = False
 
     def _resolve_lang(self, *, text: str) -> str:
         brain = getattr(self._config, "brain", None)
@@ -1103,8 +1162,14 @@ class RealtimeVoiceSession:
                 # Empty at the first open of a call; after an in-place
                 # transport rebuild (or a mid-call cross-family fallback) it
                 # carries the bounded call transcript so the fresh provider
-                # session keeps understanding follow-up turns (BUG-088).
-                history=self._history_seed(),
+                # session keeps understanding follow-up turns (BUG-088) —
+                # unless a rapid rebuild death loop marked the seed as
+                # poisoned (BUG-104), then an amnesiac session beats none.
+                history=(
+                    ()
+                    if self._suppress_history_seed
+                    else self._history_seed()
+                ),
             )
             try:
                 providers_left = sum(
@@ -1178,6 +1243,7 @@ class RealtimeVoiceSession:
 
     def _start_pump(self) -> None:
         if self._pump_task is None or self._pump_task.done():
+            self._loop_lag.start()
             self._pump_task = asyncio.create_task(
                 self._pump(), name=f"rt-pump-{self.session_id}"
             )
@@ -2427,6 +2493,22 @@ class RealtimeVoiceSession:
             )
             return False
         self._transport_rebuild_times.append(now)
+        # Second-or-later rebuild inside the window: the previous rebuilt
+        # transport died again almost immediately. The dominant cause is a
+        # server-side rejection of the conversation seed (1007 right after
+        # ready — invisible to the client-side seed guard, live incident
+        # 2026-07-21 08:35, BUG-104). Retry without the seed: an amnesiac
+        # session keeps the call alive instead of burning the whole rebuild
+        # budget and hanging up mid-sentence.
+        if len(self._transport_rebuild_times) >= 2 and not (
+            self._suppress_history_seed
+        ):
+            self._suppress_history_seed = True
+            log.warning(
+                "realtime[%s] rebuilt transport died again right away — "
+                "retrying without the in-call conversation seed",
+                self.session_id,
+            )
         old_session, self._session = self._session, None
         if self._transport_rebuild_pending is old_session:
             self._transport_rebuild_pending = None
@@ -4584,11 +4666,21 @@ class RealtimeVoiceSession:
             gap_ms = (now - self._last_audio_emit_monotonic) * 1_000.0
             if gap_ms >= _AUDIO_FLOW_STALL_LOG_MS:
                 held_ms = float(getattr(self._gate, "last_hold_ms", 0.0) or 0.0)
-                cause = (
-                    "the transcript needed to clear this audio arrived late"
-                    if held_ms >= gap_ms * 0.6
-                    else "the provider sent no audio for this span"
-                )
+                loop_lag_ms = self._loop_lag.max_lag_ms(gap_ms / 1_000.0 + 1.0)
+                if held_ms >= gap_ms * 0.6:
+                    cause = "the transcript needed to clear this audio arrived late"
+                elif loop_lag_ms >= gap_ms * 0.5:
+                    # Arrival is when OUR loop reads the socket: a lag this
+                    # close to the gap means the audio sat unread while this
+                    # process was busy — not a silent provider.
+                    cause = (
+                        "this process's event loop stalled "
+                        f"{int(loop_lag_ms)} ms in the same window — the "
+                        "audio likely sat unread in the socket, not missing "
+                        "from the provider"
+                    )
+                else:
+                    cause = "the provider sent no audio for this span"
                 log.info(
                     "realtime[%s] mid-reply audio stalled %d ms before this "
                     "chunk (scrub-gate hold %d ms, %d ms still gated) — %s",
@@ -4653,6 +4745,7 @@ class RealtimeVoiceSession:
         if self._ended:
             return
         self._ended = True
+        self._loop_lag.stop()
         self._cancel_tool_transcript_wait()
         if self._end_call_timer is not None and not self._end_call_timer.done():
             self._end_call_timer.cancel()
