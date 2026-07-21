@@ -31,9 +31,12 @@ class GrokFlashAck:
 
     def _ensure_client(self) -> Any:
         if self._client is None:
+            # Configured slot first, family resolver as last resort — mirrors
+            # the Gemini adapter (grok has no realtime slot, but the resolver
+            # also covers the xai_api_key alias).
             api_key = cfg.get_secret(
                 self._config.api_key_secret, env_fallback="GROK_API_KEY"
-            )
+            ) or cfg.get_provider_secret("grok")
             if not api_key:
                 raise RuntimeError(
                     f"No Grok API key in keyring/env "

@@ -28,9 +28,11 @@ class OpenAIMiniAck:
 
     def _ensure_client(self) -> Any:
         if self._client is None:
+            # Configured slot first, family resolver (incl. the Realtime
+            # card's scoped key) as last resort — mirrors the Gemini adapter.
             api_key = cfg.get_secret(
                 self._config.api_key_secret, env_fallback="OPENAI_API_KEY"
-            )
+            ) or cfg.get_provider_secret("openai")
             if not api_key:
                 raise RuntimeError(
                     f"No OpenAI API key in keyring/env "

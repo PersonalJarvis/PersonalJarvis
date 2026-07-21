@@ -53,6 +53,25 @@ def test_falls_back_to_gemini_when_only_gemini_key_present(
     assert type(provider).__name__ == "GeminiFlashAck"
 
 
+def test_falls_back_to_gemini_when_only_a_realtime_scoped_key_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A single-key install whose only credential came from the Realtime card
+    must still resolve the Flash tier to that family (2026-07-21 Mac forensic:
+    the strict slot scoping bricked every non-realtime brain tier)."""
+
+    def _fake_get_secret(key: str, env_fallback: str | None = None) -> str | None:
+        return "rt-test" if key == "realtime_gemini_api_key" else None
+
+    monkeypatch.setattr("jarvis.core.config.get_secret", _fake_get_secret)
+
+    ack_cfg = make_ack_config(provider="follow_brain")
+    provider = _build_flash_provider(_jcfg(brain_primary="claude-api"), ack_cfg)
+
+    assert ack_cfg.provider == "gemini"
+    assert type(provider).__name__ == "GeminiFlashAck"
+
+
 def test_falls_back_to_ollama_when_no_key_present_at_all(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -131,7 +131,13 @@ KEYRING_SERVICE = KEYRING_SERVICE_NAME
 # provider is configured.
 PROVIDER_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
     "claude-api": (("anthropic_api_key", "ANTHROPIC_API_KEY"),),
-    "openai": (("openai_api_key", "OPENAI_API_KEY"),),
+    # The trailing realtime slot is a LAST-RESORT cross-read for single-key
+    # installs (see the comment above "openai-realtime" below); the generic
+    # slot always wins when both exist.
+    "openai": (
+        ("openai_api_key", "OPENAI_API_KEY"),
+        ("realtime_openai_api_key", "JARVIS_REALTIME_OPENAI_API_KEY"),
+    ),
     # Codex-as-brain uses its own key slot, falling back to the general OpenAI key.
     "codex": (
         ("codex_openai_api_key", "OPENAI_API_KEY"),
@@ -148,15 +154,23 @@ PROVIDER_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
         ("gemini_api_key", "GEMINI_API_KEY"),
         ("google_aistudio_api_key", "GOOGLE_AIStudio_API_KEY"),
         ("google_api_key", "GOOGLE_API_KEY"),
+        ("realtime_gemini_api_key", "JARVIS_REALTIME_GEMINI_API_KEY"),
     ),
     "grok": (
         ("grok_api_key", "GROK_API_KEY"),
         ("xai_api_key", "XAI_API_KEY"),
     ),
     # Realtime owns dedicated slots. The generic family slots remain trailing
-    # read-only compatibility fallbacks for upgraded installations; a key saved
-    # from the Realtime card is therefore never visible to Brain or Jarvis-Agent
-    # resolution.
+    # read-only compatibility fallbacks for upgraded installations. The reverse
+    # direction exists too (see the trailing realtime slots on "openai" and
+    # "gemini" above): a user whose ONLY credential was saved from the Realtime
+    # card must still get a working Brain/Tool-Model of the same family — the
+    # strict one-way scoping bricked every delegated deep turn on such an
+    # install ("Kein Brain-Key gefunden" while  # i18n-allow: quoted diagnostic
+    # Gemini-Live answered smalltalk, Mac forensic 2026-07-21). Precedence is
+    # unchanged whenever a generic family key exists: dedicated slots win on
+    # their own surface, generic slots win for Brain, and the cross-read only
+    # fires as last resort.
     "openai-realtime": (
         ("realtime_openai_api_key", "JARVIS_REALTIME_OPENAI_API_KEY"),
         ("openai_api_key", "OPENAI_API_KEY"),
@@ -174,7 +188,10 @@ PROVIDER_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
 # Jarvis-Agent API credentials are independently replaceable from the Agent
 # tab. Generic provider slots remain a final compatibility fallback so existing
 # installations keep working, but scoped Agent keys always win and are never
-# consumed by Brain or Realtime.
+# consumed by Brain or Realtime. (Because these tuples splice the family
+# candidates, a realtime-only key reaches the Agent tier through the same
+# last-resort cross-read as the Brain tier — intentional: a single-key
+# install must never brick a core path.)
 JARVIS_AGENT_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
     "claude-api": (
         ("jarvis_agent_anthropic_api_key", "JARVIS_AGENT_ANTHROPIC_API_KEY"),
@@ -3070,7 +3087,8 @@ def get_jarvis_agent_secret(provider: str) -> str | None:
     """Return the effective API key for one Jarvis-Agent provider.
 
     A dedicated Agent slot wins. Generic provider credentials are read only as
-    an upgrade compatibility fallback; Realtime-only slots are never candidates.
+    an upgrade compatibility fallback; a Realtime-scoped key of the same family
+    is the last resort (single-key installs must not brick the Agent tier).
     OAuth-backed Agent providers keep resolving their login separately.
     """
     candidates = JARVIS_AGENT_SECRET_CANDIDATES.get(provider, ())

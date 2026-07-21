@@ -176,16 +176,24 @@ def test_pipeline_tts_credential_map_lists_no_realtime_slots() -> None:
             )
 
 
-def test_realtime_slots_exist_only_under_realtime_provider_ids() -> None:
-    """Static guard: dedicated realtime slots live ONLY under the realtime
-    provider ids, so brain / Jarvis-Agent / pipeline resolution (which key off
-    their own family ids) can structurally never reach them."""
+def test_realtime_slots_are_only_trailing_fallbacks_outside_realtime_ids() -> None:
+    """Static guard: outside the realtime provider ids, a dedicated realtime
+    slot may appear ONLY as the last (trailing) candidate of its family.
+
+    The trailing cross-read is deliberate (2026-07-21 Mac forensic: an install
+    whose only key came from the Realtime card had every delegated Brain turn
+    brick on "Kein Brain-Key gefunden"),  # i18n-allow: quoted log diagnostic
+    but it must never outrank a generic
+    family key — and pipeline TTS keeps its own realtime-free candidate table
+    (guarded above)."""
     for provider, candidates in PROVIDER_SECRET_CANDIDATES.items():
-        for keyring_key, _env in candidates:
+        if provider in _REALTIME_PROVIDER_IDS:
+            continue
+        for position, (keyring_key, _env) in enumerate(candidates):
             if keyring_key.startswith("realtime_"):
-                assert provider in _REALTIME_PROVIDER_IDS, (
-                    f"realtime slot {keyring_key!r} leaked into provider "
-                    f"{provider!r}"
+                assert position == len(candidates) - 1, (
+                    f"realtime slot {keyring_key!r} must be the LAST candidate "
+                    f"of provider {provider!r}, found at index {position}"
                 )
 
 

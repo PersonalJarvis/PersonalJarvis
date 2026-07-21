@@ -1777,14 +1777,22 @@ def _pick_keyed_flash_fallback(ack_cfg: Any) -> str | None:
     (local Ollama) needs no credential and is always considered usable.
     """
     from jarvis.brain.ack_brain.providers import REGISTRY
-    from jarvis.core.config import get_secret
+    from jarvis.core.config import get_provider_secret, get_secret
 
     for name in REGISTRY:
         provider_cfg = getattr(ack_cfg.providers, name, None)
         if provider_cfg is None:
             continue
         secret_name = getattr(provider_cfg, "api_key_secret", None)
-        if secret_name is None or get_secret(secret_name):
+        # The family resolver is the second probe so a credential that lives
+        # only in a scoped slot of the same family (e.g. the Realtime card's
+        # key) still marks the provider usable — the adapters resolve their
+        # key through the same two-step lookup.
+        if (
+            secret_name is None
+            or get_secret(secret_name)
+            or get_provider_secret(name)
+        ):
             return name
     return None
 

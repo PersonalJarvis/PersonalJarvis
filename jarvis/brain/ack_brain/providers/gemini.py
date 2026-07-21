@@ -31,9 +31,13 @@ class GeminiFlashAck:
 
     def _ensure_client(self) -> Any:
         if self._client is None:
+            # The configured slot wins; the family resolver is the fallback so
+            # an install whose only Gemini credential lives in another slot of
+            # the family (e.g. the Realtime card's scoped key) still gets an
+            # ack instead of a silent per-turn failure.
             api_key = cfg.get_secret(
                 self._config.api_key_secret, env_fallback="GEMINI_API_KEY"
-            )
+            ) or cfg.get_provider_secret("gemini")
             if not api_key:
                 raise RuntimeError(
                     f"No Gemini API key in keyring/env "
