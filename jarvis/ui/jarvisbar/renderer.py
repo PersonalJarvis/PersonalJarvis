@@ -68,33 +68,42 @@ _SH = _SCALE * _H  # combined vertical factor
 # (Tk points on macOS). On a small laptop screen (a 14" MacBook is ~1512 Tk
 # points wide) the same fixed size occupies nearly twice the relative width
 # and reads as clunky. ``DISPLAY_SCALE`` adapts the whole geometry to the
-# screen the bar actually lives on: 1.0 (the maintainer-approved look) on
-# anything at least REFERENCE_SCREEN_W x REFERENCE_SCREEN_H, proportionally
-# smaller below that, never under MIN_DISPLAY_SCALE so the controls stay
-# clickable. Scaling happens at RENDER time — the frame is drawn crisply at
-# the scaled size. This is NOT the blurry DPI bitmap upscaling that was
-# explicitly rejected (see overlay.start()'s DPI notes); the DPI strategy
-# there is untouched.
+# screen the bar actually lives on: BASE_DISPLAY_SCALE (the maintainer-
+# approved look) on anything at least REFERENCE_SCREEN_W x
+# REFERENCE_SCREEN_H, proportionally smaller below that, never under
+# MIN_DISPLAY_SCALE so the controls stay clickable. Scaling happens at
+# RENDER time — the frame is drawn crisply at the scaled size. This is NOT
+# the blurry DPI bitmap upscaling that was explicitly rejected (see
+# overlay.start()'s DPI notes); the DPI strategy there is untouched.
 REFERENCE_SCREEN_W = 1920
 REFERENCE_SCREEN_H = 1080
 MIN_DISPLAY_SCALE = 0.55
+# The signed-off size ceiling. The historical constants (scale 1.0) render
+# the idle pill 47 px long on the maintainer's 2560x1440 monitor — judged
+# "too big" against a 40 px good-example screenshot (2026-07-21), while a
+# physical-mm experiment at 0.595 (~29 px) was "too small". 40/47 = 0.85
+# lands exactly on the good example, and the 14" laptop's proportional
+# 0.79 (independently signed off) sits in the same zone — so 0.85 is the
+# approved look on every screen at least the reference size.
+BASE_DISPLAY_SCALE = 0.85
 DISPLAY_SCALE = 1.0
 
 
 def compute_display_scale(screen_w: int, screen_h: int) -> float:
     """Scale factor for the screen the bar lives on (pure, unit-testable).
 
-    Never enlarges beyond 1.0 (big monitors keep the approved look); shrinks
-    proportionally on screens smaller than the reference in either axis;
-    clamps at ``MIN_DISPLAY_SCALE``. Invalid input degrades to 1.0.
+    Never enlarges beyond ``BASE_DISPLAY_SCALE`` (big monitors keep the
+    approved look); shrinks proportionally on screens smaller than the
+    reference in either axis; clamps at ``MIN_DISPLAY_SCALE``. Invalid input
+    degrades to ``BASE_DISPLAY_SCALE``.
     """
     try:
         sw, sh = int(screen_w), int(screen_h)
     except (TypeError, ValueError):
-        return 1.0
+        return BASE_DISPLAY_SCALE
     if sw <= 0 or sh <= 0:
-        return 1.0
-    s = min(1.0, sw / REFERENCE_SCREEN_W, sh / REFERENCE_SCREEN_H)
+        return BASE_DISPLAY_SCALE
+    s = min(BASE_DISPLAY_SCALE, sw / REFERENCE_SCREEN_W, sh / REFERENCE_SCREEN_H)
     return max(MIN_DISPLAY_SCALE, round(s, 3))
 
 

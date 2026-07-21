@@ -6,8 +6,10 @@ small laptop screen the same fixed size reads as clunky (maintainer feedback,
 factor and ``apply_display_scale`` recomputes the module geometry. These tests
 pin three contracts:
 
-1. Screens at least as big as the reference keep the EXACT historical look
-   (scale 1.0 must reproduce the old constants byte-identically).
+1. Screens at least as big as the reference get the signed-off
+   ``BASE_DISPLAY_SCALE`` ceiling (0.85 — measured from the maintainer's
+   too-big/good-example screenshots 2026-07-21); scale 1.0 still reproduces
+   the historical constants byte-identically as the geometry baseline.
 2. Small screens shrink proportionally, bounded by ``MIN_DISPLAY_SCALE``.
 3. The renderer picks up a rescale at instantiation time (no import-time
    freeze) and renders frames at the recomputed window size.
@@ -29,17 +31,22 @@ def _restore_scale():
 # --------------------------------------------------------------------------- #
 # compute_display_scale                                                       #
 # --------------------------------------------------------------------------- #
-def test_reference_and_bigger_screens_keep_scale_one():
-    assert renderer.compute_display_scale(1920, 1080) == 1.0
-    assert renderer.compute_display_scale(2560, 1440) == 1.0
-    assert renderer.compute_display_scale(3840, 2160) == 1.0
+def test_reference_and_bigger_screens_get_the_approved_ceiling():
+    # The ceiling is the signed-off look, NOT 1.0: the historical constants
+    # were judged "too big" (47 px idle pill vs the 40 px good example).
+    assert renderer.BASE_DISPLAY_SCALE == 0.85
+    assert renderer.compute_display_scale(1920, 1080) == renderer.BASE_DISPLAY_SCALE
+    assert renderer.compute_display_scale(2560, 1440) == renderer.BASE_DISPLAY_SCALE
+    assert renderer.compute_display_scale(3840, 2160) == renderer.BASE_DISPLAY_SCALE
 
 
 def test_small_laptop_screen_shrinks_proportionally():
-    # A 14" MacBook is ~1512 Tk points wide → width is the binding axis.
+    # A 14" MacBook is ~1512 Tk points wide → width is the binding axis
+    # (0.7875 < the 0.85 ceiling). This is the independently signed-off
+    # laptop look — the ceiling change must NOT alter it.
     s = renderer.compute_display_scale(1512, 982)
     assert s == pytest.approx(1512 / 1920, abs=0.001)
-    assert s < 1.0
+    assert s < renderer.BASE_DISPLAY_SCALE
 
 
 def test_height_can_be_the_binding_axis():
@@ -52,10 +59,11 @@ def test_tiny_screen_clamps_at_the_floor():
     assert renderer.compute_display_scale(800, 600) == renderer.MIN_DISPLAY_SCALE
 
 
-def test_invalid_screen_degrades_to_one():
-    assert renderer.compute_display_scale(0, 0) == 1.0
-    assert renderer.compute_display_scale(-1, 1080) == 1.0
-    assert renderer.compute_display_scale(None, None) == 1.0  # type: ignore[arg-type]
+def test_invalid_screen_degrades_to_the_approved_ceiling():
+    base = renderer.BASE_DISPLAY_SCALE
+    assert renderer.compute_display_scale(0, 0) == base
+    assert renderer.compute_display_scale(-1, 1080) == base
+    assert renderer.compute_display_scale(None, None) == base  # type: ignore[arg-type]
 
 
 # --------------------------------------------------------------------------- #
