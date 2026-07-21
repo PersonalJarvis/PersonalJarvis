@@ -23,13 +23,29 @@ from jarvis.core.capabilities_seed import seed_registry
 @pytest.fixture()
 def empty_registry():
     """Reset the process-wide registry to the real (empty) boot state, then
-    restore a seeded registry afterwards so later tests are not polluted."""
+    restore a seeded registry afterwards so later tests are not polluted.
+
+    The production brain build under test also installs the process-global
+    SkillContext (loaded with whatever skills the host machine carries).
+    Left in place, it made ``_should_force_spawn``'s installed-skill guard
+    stand down in UNRELATED later tests — the routing suite's
+    'Wie viele PRs sind in jarvis-repo offen?' spawn  # i18n-allow: quoted fixture utterance
+    params failed in every full run while staying green file-scoped. Restore
+    the pre-test context so the build's side effects end with this test.
+    """
+    from jarvis.skills.skill_context import (
+        set_skill_context,
+        try_get_skill_context,
+    )
+
     reg = get_registry()
     reg._caps.clear()  # noqa: SLF001 — deliberately simulate fresh boot
+    prior_skill_ctx = try_get_skill_context()
     try:
         yield reg
     finally:
         seed_registry(reg)  # leave a populated registry for downstream tests
+        set_skill_context(prior_skill_ctx)
 
 
 def test_build_default_brain_seeds_capability_registry(empty_registry) -> None:

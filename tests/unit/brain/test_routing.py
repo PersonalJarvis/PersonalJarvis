@@ -29,6 +29,37 @@ from jarvis.core.protocols import ToolResult
 from jarvis.ui.web.mission_inject import MISSION_INJECT_SOURCE_LAYER
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_capability_registry():
+    """Snapshot/restore the process-global CapabilityRegistry per test.
+
+    ``_should_force_spawn`` consults ``get_registry().resolve_intent`` (the
+    connected-CLI/skill stand-down), so a capability another test file leaves
+    registered flips this module's routing verdicts — in the full suite the
+    'Wie viele PRs sind in jarvis-repo offen?' spawn params  # i18n-allow: quoted fixture utterance
+    failed while every file-scoped run stayed green. These tests pin the
+    heuristic on an UNSEEDED registry; tests that need a capability register
+    it themselves (see the snapshot pattern further down).
+    """
+    from jarvis.core.capabilities import get_registry
+    from jarvis.skills.skill_context import (
+        set_skill_context,
+        try_get_skill_context,
+    )
+
+    reg = get_registry()
+    snapshot = dict(reg._caps)  # noqa: SLF001 — test fixture state restore
+    reg._caps.clear()  # noqa: SLF001
+    prior_skill_ctx = try_get_skill_context()
+    set_skill_context(None)
+    try:
+        yield
+    finally:
+        reg._caps.clear()  # noqa: SLF001
+        reg._caps.update(snapshot)  # noqa: SLF001
+        set_skill_context(prior_skill_ctx)
+
+
 class _FakeTool:
     name = "spawn_worker"
     schema: dict[str, Any] = {}
