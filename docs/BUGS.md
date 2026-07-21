@@ -7366,3 +7366,54 @@ Guards:
 `tests/unit/realtime/test_session.py::test_session_instructions_carry_the_precision_guard`,
 `tests/unit/brain/test_router_prompt_continuity.py`.
 
+## BUG-107: a delegated knowledge question launches Computer Use — the router googles the answer in the user's live browser (HIGH, FIXED 2026-07-21)
+
+**Symptom (live 2026-07-21 11:36, the same voice session as BUG-106).**
+The user asked what runway length the aircraft needs — a pure information
+question, no action requested. The realtime layer correctly delegated the
+turn to the router brain (tool model). The router then called
+`computer_use`: a mission opened Safari on the user's screen, clicked the
+address bar, typed "Gulfstream G100 runway requirements" into Google, read
+the results and announced the answer — ~35 seconds of hijacked desktop
+(`[cu] mission profile: steps=6 total=34.3s`) for a lookup the tool model
+can do invisibly via its own knowledge or `search_web`.
+
+**Root cause.** Nothing enforced "web research never drives the live
+desktop":
+
+1. The `search_web` freshness doctrine actively discourages it for
+   evergreen facts, while the `computer_use` description advertised
+   browser operation ("open Chrome and go to gmail") without ever saying
+   it is not a lookup path — so a model committed to "searching" reached
+   for the browser.
+2. Every existing deterministic guard covered a different tool class: the
+   spawn gate only `spawn_worker`/`multi_spawn`, the research-intent guard
+   only CLI/MCP action tools. `computer_use` had no gate at all.
+
+**Fix — the spawn-gate lesson applied to the desktop (a tool description
+is advice, not enforcement).**
+
+1. **Deterministic gate** `jarvis/brain/cu_gate.py`: an LLM-chosen
+   `computer_use` call executes ONLY when the user's own turn names the
+   desktop vehicle (on-screen action verb or screen/app/browser noun,
+   DE/EN/ES input vocabulary — bare "start"/"type" deliberately excluded:
+   "Start- und Landebahn" and "what type of X" are question forms), OR a
+   Computer-Use mission is active/recently finished
+   (`cu_run_registry.has_recent_run`, 15 min) so the BUG-105 corrective
+   follow-ups ("try again") keep working. Blocked calls return a
+   structured error redirecting the model to answer inline or via
+   `search_web`. Enforced in BOTH consumers: `tool_use_loop` (pipeline +
+   realtime delegate mode) and `realtime/tools.py` (direct tool mode).
+   Empty turns fail OPEN so scheduled/REST desktop missions never brick.
+2. **Advice layers aligned** — the `computer_use` tool description now
+   states "NOT a research tool" with the explicit-browser exception, and
+   the router prompt gained a NEVER-FOR-RESEARCH rule next to the BUG-105
+   exception.
+
+Guards: `tests/unit/brain/test_cu_gate.py` (pins the live utterance, the
+explicit-ask pass-through, and the follow-up window).
+
+**Class rule.** Every tool that acts on the user's visible world (desktop,
+browser, phone, telephony) needs a deterministic explicit-ask gate, not
+just prompt discouragement — the model reaches for the most concrete tool
+it sees, and a question must never be answered by performing.
