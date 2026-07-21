@@ -31,11 +31,14 @@ from jarvis.brain.model_catalog import ModelInfo, catalog_spec, classify_model
 from jarvis.codex_auth import CodexAuthService
 from jarvis.core import config as cfg_mod
 from jarvis.core.events import SecretConfigured
+
 # The canonical slug is re-exported even though this module no longer uses it
 # directly: the anti-drift parity test pins BOTH names to the single source
 # (test_codex_jarvis_agent_parity.py, BUG-008 class).
 from jarvis.missions.worker_runtime.provider_map import (
     CODEX_SUBAGENT_CANONICAL as _CODEX_SUBAGENT_CANONICAL,  # noqa: F401
+)
+from jarvis.missions.worker_runtime.provider_map import (
     CODEX_SUBAGENT_SLUGS as _CODEX_SUBAGENT_SLUGS,
 )
 from jarvis.setup.wizard import SECRETS as WIZARD_SECRETS
