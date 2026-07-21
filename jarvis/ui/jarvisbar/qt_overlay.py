@@ -551,34 +551,9 @@ class QtJarvisBarOverlay:
         screen = app.primaryScreen()
         if screen is not None:
             geometry = screen.geometry()
-            # Constant-physical-size bar: QScreen.physicalSize() is real
-            # millimetres from the OS display info; renderer plausibility
-            # gates fall back to the resolution-relative scale on bogus data.
-            physical_w_mm: float | None = None
-            physical_h_mm: float | None = None
-            try:
-                physical = screen.physicalSize()
-                physical_w_mm = float(physical.width())
-                physical_h_mm = float(physical.height())
-            except Exception:  # noqa: BLE001 — sizing is cosmetic, never block
-                log.debug("QScreen physicalSize probe failed", exc_info=True)
             renderer.apply_display_scale(
-                renderer.resolve_display_scale(
-                    geometry.width(),
-                    geometry.height(),
-                    physical_w_mm,
-                    physical_h_mm,
-                )
+                renderer.compute_display_scale(geometry.width(), geometry.height())
             )
-            if renderer.DISPLAY_SCALE != 1.0:
-                log.info(
-                    "jarvisbar display scale %.3f for screen %sx%s px / %sx%s mm",
-                    renderer.DISPLAY_SCALE,
-                    geometry.width(),
-                    geometry.height(),
-                    physical_w_mm,
-                    physical_h_mm,
-                )
         self._renderer = renderer.JarvisBarRenderer(accent=self._accent)
 
         window_type = _window_class()

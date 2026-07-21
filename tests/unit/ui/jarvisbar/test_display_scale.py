@@ -1,23 +1,15 @@
-"""Screen-adaptive bar geometry (constant physical size across displays).
+"""Screen-adaptive bar geometry (screen-relative sizing).
 
-The bar's pill/window sizes are raw pixels; a raw pixel is a different
-physical size on every display, so a fixed pixel geometry reads "perfect"
-only on the screen it was tuned on (maintainer feedback, 14" MacBook
-2026-07-17; "way too big" on the desktop monitor 2026-07-21).
-``compute_physical_scale`` converts the approved look into the pixel budget
-that reproduces the same MILLIMETRE size on the actual display;
-``compute_display_scale`` stays the resolution-relative fallback for hosts
-with missing/implausible physical data; ``apply_display_scale`` recomputes
-the module geometry. These tests pin four contracts:
+The bar's pill/window sizes are raw pixels tuned on a desktop monitor; on a
+small laptop screen the same fixed size reads as clunky (maintainer feedback,
+14" MacBook 2026-07-17). ``compute_display_scale`` derives a screen-relative
+factor and ``apply_display_scale`` recomputes the module geometry. These tests
+pin three contracts:
 
 1. Screens at least as big as the reference keep the EXACT historical look
-   under the fallback (scale 1.0 reproduces the old constants
-   byte-identically).
+   (scale 1.0 must reproduce the old constants byte-identically).
 2. Small screens shrink proportionally, bounded by ``MIN_DISPLAY_SCALE``.
-3. Physical sizing is self-consistent on the reference laptop, shrinks on
-   physically-coarse monitors, may exceed 1.0 on physically-fine panels, and
-   REFUSES implausible physical data (``None`` → fallback).
-4. The renderer picks up a rescale at instantiation time (no import-time
+3. The renderer picks up a rescale at instantiation time (no import-time
    freeze) and renders frames at the recomputed window size.
 """
 from __future__ import annotations
@@ -67,78 +59,6 @@ def test_invalid_screen_degrades_to_one():
 
 
 # --------------------------------------------------------------------------- #
-# compute_physical_scale / resolve_display_scale                              #
-# --------------------------------------------------------------------------- #
-# The reference laptop panel the approved look was signed off on:
-# 14" MacBook Pro, 1512x982 points on a 302.4x196.4 mm panel.
-_REF = (1512, 982, 302.4, 196.4)
-
-
-def test_physical_scale_reproduces_the_approved_look_on_the_reference_laptop():
-    s = renderer.compute_physical_scale(*_REF)
-    assert s == pytest.approx(renderer.compute_display_scale(1512, 982), abs=0.005)
-
-
-def test_physical_scale_shrinks_on_a_coarse_pixel_desktop_monitor():
-    # 24" 1080p (531x299 mm): each pixel is ~1.4x the reference millimetres,
-    # so the SAME physical bar needs ~40% fewer pixels — this is the exact
-    # "way too big on my monitor" complaint.
-    s = renderer.compute_physical_scale(1920, 1080, 531.0, 299.0)
-    assert s is not None
-    assert s < 0.65
-    ref = renderer.compute_physical_scale(*_REF)
-    assert ref is not None
-    # Same physical width on both screens (pixels x mm-per-pixel).
-    assert s * (531.0 / 1920) == pytest.approx(ref * (302.4 / 1512), rel=0.02)
-
-
-def test_physical_scale_may_exceed_one_on_fine_pixel_panels():
-    # 27" 4K at 100% OS scaling (596x335 mm): physically tiny pixels need
-    # MORE of them for the same millimetres — legal above 1.0 now.
-    s = renderer.compute_physical_scale(3840, 2160, 596.0, 335.0)
-    assert s is not None
-    assert 1.0 < s <= renderer.MAX_DISPLAY_SCALE
-
-
-def test_physical_scale_rejects_implausible_data():
-    assert renderer.compute_physical_scale(1920, 1080, 0.0, 0.0) is None
-    assert renderer.compute_physical_scale(1920, 1080, -531.0, 299.0) is None
-    # Toy values (a projector/VM EDID lying about a 5 cm panel).
-    assert renderer.compute_physical_scale(1920, 1080, 50.0, 30.0) is None
-    # Wall-sized values.
-    assert renderer.compute_physical_scale(1920, 1080, 3000.0, 1700.0) is None
-    # mm aspect wildly off the pixel aspect → synthesized/bogus data.
-    assert renderer.compute_physical_scale(1920, 1080, 531.0, 531.0) is None
-    assert renderer.compute_physical_scale(0, 0, 531.0, 299.0) is None
-    assert (
-        renderer.compute_physical_scale(1920, 1080, "x", "y")  # type: ignore[arg-type]
-        is None
-    )
-
-
-def test_physical_scale_clamps_to_the_floor_and_ceiling():
-    # Enormous physical pixels (32"-class 1080p): clamps at the floor.
-    assert (
-        renderer.compute_physical_scale(1920, 1080, 708.0, 398.0)
-        == renderer.MIN_DISPLAY_SCALE
-    )
-
-
-def test_resolve_prefers_physical_and_falls_back_cleanly():
-    # Plausible mm → the physical result.
-    assert renderer.resolve_display_scale(*_REF) == renderer.compute_physical_scale(
-        *_REF
-    )
-    # Missing or implausible mm → the resolution-relative fallback.
-    assert renderer.resolve_display_scale(1512, 982) == renderer.compute_display_scale(
-        1512, 982
-    )
-    assert renderer.resolve_display_scale(
-        1512, 982, 50.0, 30.0
-    ) == renderer.compute_display_scale(1512, 982)
-
-
-# --------------------------------------------------------------------------- #
 # apply_display_scale                                                         #
 # --------------------------------------------------------------------------- #
 # The maintainer-approved desktop look — scale 1.0 must reproduce these
@@ -175,19 +95,11 @@ def test_scale_recomputes_geometry_and_restores_cleanly():
         assert getattr(renderer, name) == value, name
 
 
-def test_scale_clamps_to_ceiling_and_floor():
-    # Physical sizing may legitimately exceed 1.0 (fine-pixel panels), but
-    # never the ceiling; the floor keeps the controls clickable.
+def test_scale_never_enlarges_and_never_undershoots_the_floor():
     renderer.apply_display_scale(1.4)
-    assert renderer.DISPLAY_SCALE == 1.4
-    renderer.apply_display_scale(3.0)
-    assert renderer.DISPLAY_SCALE == renderer.MAX_DISPLAY_SCALE
+    assert renderer.DISPLAY_SCALE == 1.0
     renderer.apply_display_scale(0.1)
     assert renderer.DISPLAY_SCALE == renderer.MIN_DISPLAY_SCALE
-    # An enlarged geometry still contains its biggest pill.
-    renderer.apply_display_scale(1.4)
-    assert renderer.WIN_W > renderer.ACTIVE_W
-    assert renderer.WIN_H > renderer.ACTIVE_H
 
 
 # --------------------------------------------------------------------------- #

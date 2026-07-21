@@ -600,40 +600,24 @@ class JarvisBarOverlay:
         root = _create_hidden_tk_root(tk)
         self._root = root
 
-        # Screen-adaptive geometry: keep the bar the same PHYSICAL size on
-        # every display. Must run BEFORE the renderer and any window geometry
-        # are derived from the module constants. Tk reports the screen's
-        # millimetres via winfo_screenmm* — real EDID values on a DPI-aware
-        # Windows (GetDeviceCaps HORZSIZE) and on X11/RandR. On macOS aqua-Tk
-        # SYNTHESIZES the mm from a fixed 72-dpi assumption, so the physical
-        # path must not be fed there (the macOS bar is Qt-hosted anyway, see
-        # host.py); the renderer's plausibility gates catch the remaining
-        # bogus-EDID cases and fall back to the resolution-relative scale.
+        # Screen-adaptive geometry (screen-relative): shrink the whole bar on
+        # small screens (a 14" laptop) while big monitors keep the approved
+        # 1.0 look. Must run BEFORE the renderer and any window geometry are
+        # derived from the module constants. Tk reports points on macOS and
+        # physical pixels on a DPI-aware Windows/X11 — both are the right
+        # basis for "how much of this screen would the bar occupy".
         try:
-            physical_w_mm: float | None = None
-            physical_h_mm: float | None = None
-            if sys.platform != "darwin":
-                try:
-                    physical_w_mm = float(root.winfo_screenmmwidth())
-                    physical_h_mm = float(root.winfo_screenmmheight())
-                except Exception:  # noqa: BLE001 — mm probe is best-effort
-                    log.debug("Tk screen-mm probe failed", exc_info=True)
             renderer.apply_display_scale(
-                renderer.resolve_display_scale(
-                    int(root.winfo_screenwidth()),
-                    int(root.winfo_screenheight()),
-                    physical_w_mm,
-                    physical_h_mm,
+                renderer.compute_display_scale(
+                    int(root.winfo_screenwidth()), int(root.winfo_screenheight())
                 )
             )
             if renderer.DISPLAY_SCALE != 1.0:
                 log.info(
-                    "jarvisbar display scale %.3f for screen %sx%s px / %sx%s mm",
+                    "jarvisbar display scale %.3f for screen %sx%s",
                     renderer.DISPLAY_SCALE,
                     root.winfo_screenwidth(),
                     root.winfo_screenheight(),
-                    physical_w_mm,
-                    physical_h_mm,
                 )
         except Exception:  # noqa: BLE001 — sizing is cosmetic; 1.0 is the degrade
             log.debug("jarvisbar display-scale probe failed", exc_info=True)

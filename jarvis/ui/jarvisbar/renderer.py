@@ -63,32 +63,26 @@ _IDLE_H = 0.7  # standby pill is slimmer (less "fat") than the active height
 _SW = _SCALE * _W  # combined horizontal factor
 _SH = _SCALE * _H  # combined vertical factor
 
-# --- screen-adaptive display scale (constant PHYSICAL size) ------------------
+# --- screen-adaptive display scale (screen-relative sizing) ------------------
 # The pill sizes below were tuned on a desktop monitor and are RAW pixels
-# (Tk points on macOS). A raw pixel is a different PHYSICAL size on every
-# display (a 24" 1080p monitor's pixel is ~1.4x the millimetres of a Retina
-# laptop point), so any fixed pixel geometry reads "perfect" on the screen it
-# was tuned on and clunky everywhere else. ``DISPLAY_SCALE`` therefore targets
-# a constant MILLIMETRE size: when the host can report the screen's physical
-# dimensions, ``compute_physical_scale`` converts the approved look into the
-# pixel budget that reproduces the same physical bar on THIS display. When the
-# physical size is unknown or implausible (broken EDID, VMs, projectors), the
-# resolution-relative ``compute_display_scale`` remains the fail-closed
-# fallback. Scaling happens at RENDER time — the frame is drawn crisply at
+# (Tk points on macOS). On a small laptop screen (a 14" MacBook is ~1512 Tk
+# points wide) the same fixed size occupies nearly twice the relative width
+# and reads as clunky. ``DISPLAY_SCALE`` adapts the whole geometry to the
+# screen the bar actually lives on: 1.0 (the maintainer-approved look) on
+# anything at least REFERENCE_SCREEN_W x REFERENCE_SCREEN_H, proportionally
+# smaller below that, never under MIN_DISPLAY_SCALE so the controls stay
+# clickable. Scaling happens at RENDER time — the frame is drawn crisply at
 # the scaled size. This is NOT the blurry DPI bitmap upscaling that was
 # explicitly rejected (see overlay.start()'s DPI notes); the DPI strategy
 # there is untouched.
 REFERENCE_SCREEN_W = 1920
 REFERENCE_SCREEN_H = 1080
 MIN_DISPLAY_SCALE = 0.55
-# Physical sizing may legitimately EXCEED 1.0 (a 4K screen at 100% OS scaling
-# has physically tiny pixels and needs more of them for the same millimetres).
-MAX_DISPLAY_SCALE = 2.0
 DISPLAY_SCALE = 1.0
 
 
 def compute_display_scale(screen_w: int, screen_h: int) -> float:
-    """Resolution-relative fallback scale (pure, unit-testable).
+    """Scale factor for the screen the bar lives on (pure, unit-testable).
 
     Never enlarges beyond 1.0 (big monitors keep the approved look); shrinks
     proportionally on screens smaller than the reference in either axis;
@@ -102,73 +96,6 @@ def compute_display_scale(screen_w: int, screen_h: int) -> float:
         return 1.0
     s = min(1.0, sw / REFERENCE_SCREEN_W, sh / REFERENCE_SCREEN_H)
     return max(MIN_DISPLAY_SCALE, round(s, 3))
-
-
-# The approved look was signed off on a 14" MacBook Pro (1512x982 points,
-# 302.4x196.4 mm panel): 0.2 mm per point. ``compute_physical_scale``
-# reproduces exactly that millimetre geometry on every other display. The
-# reference scale is derived from ``compute_display_scale`` so the physical
-# path and the fallback path agree byte-identically on the reference laptop.
-_REFERENCE_PITCH_MM_PER_PX = 302.4 / 1512.0
-_REFERENCE_PHYSICAL_SCALE = compute_display_scale(1512, 982)
-# Plausibility bounds for host-reported physical data. Outside these, the
-# EDID/toolkit value is treated as garbage and the caller falls back to the
-# resolution-relative scale (fail closed, never a wildly wrong bar).
-_PLAUSIBLE_WIDTH_MM = (100.0, 1600.0)
-_PLAUSIBLE_HEIGHT_MM = (60.0, 1000.0)
-_PLAUSIBLE_PITCH_MM = (0.05, 0.45)
-_PLAUSIBLE_ASPECT_DRIFT = 0.25
-
-
-def compute_physical_scale(
-    screen_w: int,
-    screen_h: int,
-    physical_w_mm: float,
-    physical_h_mm: float,
-) -> float | None:
-    """Scale that keeps the bar the same PHYSICAL (mm) size on this screen.
-
-    Returns ``None`` whenever the reported physical dimensions are missing or
-    implausible — the caller must then fall back to
-    ``compute_display_scale``. Pure and unit-testable.
-    """
-    try:
-        sw, sh = int(screen_w), int(screen_h)
-        pw, ph = float(physical_w_mm), float(physical_h_mm)
-    except (TypeError, ValueError):
-        return None
-    if sw <= 0 or sh <= 0:
-        return None
-    if not (_PLAUSIBLE_WIDTH_MM[0] <= pw <= _PLAUSIBLE_WIDTH_MM[1]):
-        return None
-    if not (_PLAUSIBLE_HEIGHT_MM[0] <= ph <= _PLAUSIBLE_HEIGHT_MM[1]):
-        return None
-    pitch = pw / sw
-    if not (_PLAUSIBLE_PITCH_MM[0] <= pitch <= _PLAUSIBLE_PITCH_MM[1]):
-        return None
-    # The mm aspect ratio must roughly match the pixel aspect ratio; a large
-    # drift means the toolkit synthesized the mm from a DPI assumption or the
-    # EDID is bogus (both real-world failure modes on Tk/X11).
-    aspect_px = sw / sh
-    aspect_mm = pw / ph
-    if abs(aspect_mm / aspect_px - 1.0) > _PLAUSIBLE_ASPECT_DRIFT:
-        return None
-    s = _REFERENCE_PHYSICAL_SCALE * _REFERENCE_PITCH_MM_PER_PX / pitch
-    return max(MIN_DISPLAY_SCALE, min(MAX_DISPLAY_SCALE, round(s, 3)))
-
-
-def resolve_display_scale(
-    screen_w: int,
-    screen_h: int,
-    physical_w_mm: float | None = None,
-    physical_h_mm: float | None = None,
-) -> float:
-    """One entry point for callers: physical-size scale, else the fallback."""
-    if physical_w_mm is not None and physical_h_mm is not None:
-        s = compute_physical_scale(screen_w, screen_h, physical_w_mm, physical_h_mm)
-        if s is not None:
-            return s
-    return compute_display_scale(screen_w, screen_h)
 
 
 # Three pill sizes (width, height), eased between as the state changes:
@@ -202,7 +129,7 @@ def apply_display_scale(scale: float) -> None:
     """
     global DISPLAY_SCALE, COLLAPSED_W, COLLAPSED_H, OPEN_W, OPEN_H
     global ACTIVE_W, ACTIVE_H, _BOTTOM_PAD, WIN_W, WIN_H
-    DISPLAY_SCALE = s = max(MIN_DISPLAY_SCALE, min(MAX_DISPLAY_SCALE, float(scale)))
+    DISPLAY_SCALE = s = max(MIN_DISPLAY_SCALE, min(1.0, float(scale)))
     COLLAPSED_W = round(168 * _SW * _IDLE_W * s)  # standby pill (slightly longer)
     COLLAPSED_H = round(30 * _SH * _IDLE_H * s)  # standby pill (slim)
     OPEN_W = round(284 * _SW * s)  # hover/controls pill (the former "expanded")
