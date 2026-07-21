@@ -100,7 +100,10 @@ def test_health_fingerprint_covers_every_model_selection_surface() -> None:
     """Every model-bearing API surface supersedes an older health snapshot."""
     from jarvis.ui.web import provider_routes as pr
 
-    openrouter = SimpleNamespace(model="brain-a", cu_model="cu-a")
+    # ``tool_model`` is the canonical Tool-Model field; the real
+    # BrainProviderConfig exposes ``cu_model`` only as a property alias of it,
+    # so the fingerprint reads (and this fake carries) the canonical name.
+    openrouter = SimpleNamespace(model="brain-a", tool_model="cu-a")
     realtime = SimpleNamespace(model="realtime-a", voice="voice-a")
     cfg = SimpleNamespace(
         brain=SimpleNamespace(
@@ -126,7 +129,7 @@ def test_health_fingerprint_covers_every_model_selection_surface() -> None:
 
     mutations = (
         (openrouter, "model"),
-        (openrouter, "cu_model"),
+        (openrouter, "tool_model"),
         (cfg.tts, "model"),
         (cfg.tts, "voice_de"),
         (cfg.tts, "voice_en"),
