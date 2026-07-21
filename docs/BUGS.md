@@ -7300,3 +7300,69 @@ conversation must either receive the conversation's relevant context
 structurally (not by prompt-compliance alone) or have its request
 composed as self-contained — an instruction to pass user words
 "verbatim" must always carry the elliptical-follow-up exception.
+
+## BUG-106: confident fact fabrication + garbled-entity drift — the voice stack invents niche figures, researches the wrong aircraft, and contradicts its own search results (HIGH, FIXED IN CODE 2026-07-21; LIVE VALIDATION PENDING)
+
+**Symptom (live 2026-07-21 11:36, realtime voice).** "Kann eine Gulfstream 800 in St. Moritz landen?" <!-- i18n-allow: quoted user utterance under test -->
+produced three stacked failures in one 90-second call:
+
+1. **Fabricated verdict, native turn.** The realtime model answered a flat
+   "no, the runway is far too short for such a large aircraft" and, on the
+   follow-up, asserted "about 1,800 meters" as the runway length. Reality:
+   Samedan's runway is 1,840 m and Gulfstream's published G800 landing
+   distance is ~946 m — a landing is feasible under conditions; the flat
+   "no" was invented, delivered with full confidence.
+2. **Garbled entity taken literally.** The user's next turn arrived from
+   STT as "braucht die Golf braucht die Golf 100 Start- und Landebahn". <!-- i18n-allow: quoted garbled STT transcript under test -->
+   The realtime model's own ack correctly resolved this to "die Gulfstream
+   achthundert" — but the downstream router received the raw transcript,
+   took "Golf 100" literally, and researched the Gulfstream G100, a
+   completely different (retired, super-midsize) aircraft.
+3. **Conclusion contradicting the fresh data.** The router's delivered
+   answer said the G100 needs ~1,644 m of runway "deutlich mehr, als in
+   St. Moritz verfügbar — damit kommst du dort also definitiv nicht weg". <!-- i18n-allow: quoted live reply under test -->
+   1,644 m is LESS than the 1,840 m available: the model bent its own
+   search result to match the fabricated "too short" claim sitting in the
+   conversation history.
+
+**Root causes.**
+
+1. The stale-knowledge guard (417248ee) covers only TIME-SENSITIVE facts.
+   Nothing told the realtime model that its recall of niche technical
+   figures (dimensions, performance data, specs) is unreliable even where
+   nothing changes over time, or that categorical feasibility verdicts
+   ("cannot land / will not fit") must not rest on remembered numbers.
+2. The router prompt had the BUG-105 elliptical-follow-up exception for
+   computer_use goals, but no rule that a speech transcript garbles entity
+   names: a sound-alike variant of an entity under active discussion
+   ("Golf 100" vs the discussed "Gulfstream 800") was treated as a new
+   literal entity in the search query and the answer.
+3. No rule ranked fresh tool data above the assistant's own earlier claims
+   in history, so the earlier fabricated "too short" verdict anchored the
+   interpretation of contradicting search numbers.
+
+**Fix (prompt-side, both brains).**
+
+1. `jarvis/realtime/session.py` — a `precision_line` next to the freshness
+   guard: never present a remembered niche figure as exact, never rest a
+   categorical verdict on one; give a marked estimate, name what the
+   answer depends on, offer to check ("check" then counts as an explicit
+   action request).
+2. `jarvis/brain/router.py` — new SPOKEN-INPUT CONTINUITY section:
+   sound-alike entity variants resolve to the entity under active
+   discussion (in answers, search_web queries, and every goal handed to a
+   tool/worker); switch only on a clearly new entity; ask once when truly
+   ambiguous. And: conclusions must follow from fresh tool data, which
+   outranks the assistant's own prior statements — contradictions are
+   corrected plainly, never bent to match.
+
+**Class rule.** A voice assistant's input is a lossy transcript and its
+recall of niche figures is a language model's, not a database's. Every
+answer layer must (a) rank fresh tool data above remembered figures and
+above its own prior claims, and (b) resolve entities against the live
+conversation, never against the literal garble of one turn.
+
+Guards:
+`tests/unit/realtime/test_session.py::test_session_instructions_carry_the_precision_guard`,
+`tests/unit/brain/test_router_prompt_continuity.py`.
+

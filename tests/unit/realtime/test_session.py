@@ -4795,6 +4795,28 @@ def test_session_instructions_anchor_clock_and_stale_knowledge_guard(monkeypatch
     assert "as of my last information" in text
 
 
+def test_session_instructions_carry_the_precision_guard(monkeypatch):
+    """BUG-106: the freshness guard alone covers only time-sensitive facts.
+    The instructions must also forbid presenting remembered niche figures as
+    exact and resting categorical feasibility verdicts on them (live
+    2026-07-21 11:36: an invented runway length produced a confident,
+    wrong 'cannot land there')."""
+    from jarvis.brain import persona_loader
+    from jarvis.realtime import session as session_mod
+
+    monkeypatch.setattr(
+        persona_loader, "load_effective_persona_prompt", lambda: "PERSONA_MARKER"
+    )
+    text = session_mod._session_instructions("en")
+    assert "Precision guard" in text
+    # Niche figures must never be asserted as exact recall...
+    assert "Never present a remembered niche figure as exact" in text
+    # ...and no flat verdict may be built on one.
+    assert "never rest a categorical verdict" in text
+    # The escape hatch must stay reachable: "check" is an action request.
+    assert "explicit action request" in text
+
+
 def test_preferences_block_renders_the_user_file_with_the_realtime_cap(monkeypatch):
     from jarvis.brain import agent_instructions
     from jarvis.realtime import session as session_mod

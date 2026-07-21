@@ -741,7 +741,7 @@ def _session_instructions(
         "up, or verify, that is an explicit action request for your action "
         "function, not world knowledge."
     )
-    # Fabricated-precision guard (live 2026-07-21 11:36: asked whether a
+    # Fabricated-precision guard (BUG-106, live 2026-07-21 11:36: asked whether a
     # Gulfstream G800 can land in St. Moritz, the model invented a runway
     # length and delivered a flat "cannot land" — the real figures say a
     # landing is feasible under conditions). The time-agnostic sibling of
