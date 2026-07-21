@@ -8,44 +8,42 @@ order: 6
 diataxis: reference
 status: active
 owner: maintainers
-last_reviewed: 2026-07-15
+last_reviewed: 2026-07-21
 phase: "-"
 audience: end-user
 tags: [platforms, windows, macos, linux, headless, requirements, compatibility]
 related: [install-personal-jarvis, permissions, configuration-reference, troubleshooting]
 ---
 
-Personal Jarvis supports Windows, macOS, Linux desktops, and headless Linux.
-The shared app, browser interface, chats, settings, tasks, and Jarvis-Agent
-views are portable. Features that touch the physical computer are more
-specific: a microphone, global shortcut, floating Bar, screen capture, or
-mouse action can work only when the host exposes the matching capability.
+Personal Jarvis runs on Windows, macOS, Linux desktops, and headless Linux.
+Its browser interface, chats, settings, tasks, and Jarvis-Agent views share one
+server across platforms. Hardware-facing features such as local audio, global
+shortcuts, overlays, screen capture, and input control depend on the host.
 
-For that reason, **supported** does not mean that every feature behaves
-identically on every host. Jarvis checks the current operating system,
-display session, installed components, and permissions, then enables the best
-available implementation. An unavailable optional capability should leave the
-rest of the app usable and explain what is missing.
+Jarvis checks the operating system, display, dependencies, and permissions
+before enabling those features. An unavailable capability should leave the
+rest of the app usable and state what is missing.
 
 ## Baseline Requirements
 
 | Requirement | Current support | Why it matters |
 |---|---|---|
-| Operating system | Windows, macOS, or Linux | The installer and runtime select native behavior for these three families |
+| Operating system | 64-bit Windows, macOS, or glibc-based Linux on x86-64 or Arm64 | The dependency gate covers both processor families; the Linux wheel floor is glibc 2.28 |
 | Python | 3.11 through 3.14 | The package requires Python 3.11 or newer and does not yet accept Python 3.15 |
-| Git | Any recent release | The installer fetches Jarvis, and Jarvis-Agent missions use isolated Git worktrees |
+| Git | A working Git command; no minimum version is enforced | The installer fetches Jarvis, and Jarvis-Agent missions use isolated Git worktrees |
 | Internet connection | Required for installation; normally required for online providers and downloads | An already prepared local feature can keep working offline, but online models and services cannot |
 | Writable user storage | Required | Jarvis needs space for its environment, settings, models, logs, and user data |
 
-You also need at least one configured brain provider or supported subscription
-login for AI replies. This is an app connection, not an installation
-prerequisite. Add it inside **API Keys & Providers** after installation.
+AI replies need a provider credential or supported subscription login, added
+in **API Keys & Providers** after installation.
 
-The installer can offer to add missing Python or Git with the host's normal
-package manager. On macOS and Linux, it prefers a Python version with broad
-native speech-package coverage. The project itself accepts Python 3.14, but
-some optional local voice components do not yet publish packages for every
-Python, operating-system, and processor combination.
+The installer can add missing Python or Git through a supported package
+manager. It prefers Python versions with broad local-speech coverage; Python
+3.14 is accepted, but not every optional native voice package supports it.
+
+No Windows or macOS release number is enforced. Windows 11 is the recorded
+live host. The Apple Silicon voice dependency floor supports macOS 13, but no
+live macOS desktop sign-off exists. Older releases are unverified.
 
 ## Install Profiles
 
@@ -54,99 +52,78 @@ Python, operating-system, and processor combination.
 | **Full** | Desktop app, platform-specific desktop components, supported local voice components, telephony support, and chat-channel support | A Windows, macOS, or Linux computer with a graphical desktop |
 | **Headless** | The smaller base application, local server, browser interface, API, and WebSocket service | A Linux server, container, or computer without a display |
 
-The supported one-line installer chooses the full profile on a normal desktop.
-On Linux, it chooses the headless profile when neither an X11 nor Wayland
-display is present. Passing `--headless` selects that profile explicitly.
+The one-line installer chooses **Full** on a desktop. Linux switches to
+**Headless** when neither X11 nor Wayland is present; `--headless` selects it
+explicitly.
 
-The full profile uses platform markers. It installs the components that can
-run on the current operating system and skips incompatible native packages.
-This keeps one installer usable across platforms, but it also means that a
-successful full install does not promise every optional speech engine on every
-processor. The installer stops if the required profile or desktop registration
-fails instead of presenting a partial desktop install as ready.
+Platform markers skip incompatible native packages. A successful full install
+therefore does not promise every optional speech engine. Required profile or
+desktop-registration failures stop installation.
 
-The headless profile deliberately omits desktop extras. It does not create an
-application-menu entry, local overlay, global desktop shortcut, or physical
-mouse and keyboard controller. It starts the browser-based server unless
-launching was disabled.
+Headless omits desktop extras, registration, overlays, global shortcuts, and
+physical input control. It starts the web server unless launch is disabled.
 
 ## Feature Support Matrix
 
 | Feature | Windows desktop | macOS desktop | Linux desktop | Headless Linux |
 |---|---|---|---|---|
-| Web app, chat, settings, Docs, tasks, and outputs | Supported | Supported | Supported | Supported in a browser |
-| Registered desktop app | Supported | Supported app bundle | Supported application-menu entry | Not available |
-| Local microphone and speakers | Supported when devices are available | Permission-dependent | Requires working PortAudio and device access | Not part of the headless surface |
-| Browser voice | Supported by a compatible browser | Supported by a compatible browser | Supported by a compatible browser | Supported; remote microphone use requires HTTPS |
-| Wake word and local speech engines | Capability-dependent | Capability-dependent | Capability-dependent | No local microphone; use a browser or another configured channel |
-| Global voice shortcuts | Supported | Permission-dependent | X11 only when a compatible backend is present; unavailable on Wayland | Not available |
-| Jarvis Bar and mascot | Bar and mascot supported | Bar supported; mascot unavailable | Best effort on a compatible graphical session | No on-screen surface |
-| Computer Use | Supported on a real desktop | Permission-dependent | X11 only and capability-dependent | Not available |
+| Web app, chat, settings, Docs, tasks, outputs | Supported | Supported | Supported | Browser only |
+| Registered desktop app | Supported | App bundle | Application-menu entry | Unavailable |
+| Local microphone and speakers | Device-dependent | Permission-dependent | Needs PortAudio and device access | Unavailable |
+| Browser voice | Browser-dependent | Browser-dependent | Browser-dependent | Supported; remote mic needs HTTPS |
+| Wake word and local speech | Capability-dependent | Capability-dependent | Capability-dependent | Use browser voice or a channel |
+| Global voice shortcuts | Supported | Permission-dependent | X11 with a compatible backend; Full does not install it | Unavailable |
+| Login autostart | Scheduled task or Startup shortcut | LaunchAgent | XDG autostart | Unavailable |
+| Jarvis Bar and mascot | Supported | Supported through a companion | Best effort | No on-screen surface |
+| Computer Use | Supported | Permission-dependent | X11 and capability-dependent | Unavailable |
+| In-app notices | Supported | Supported | Supported | Browser only; no native notification promise |
 
-**Capability-dependent** means Jarvis has an implementation and checks the
-host before using it. A missing dependency, device, display, or permission can
-still make that feature unavailable on one otherwise supported computer.
+**Capability-dependent** means a missing dependency, device, display, or
+permission can disable that feature on an otherwise supported computer.
 
 ## Voice, Audio, and Wake Differences
 
-Local desktop voice needs a usable microphone, speaker, and audio backend.
-Windows and macOS normally provide the operating-system layer. Linux also
-needs the PortAudio system library, commonly provided by a package named
-`libportaudio2`, plus permission to access the selected device. Use
-**Settings > Audio devices > Rescan** after adding or reconnecting hardware.
+Desktop voice needs a microphone, speaker, and audio backend. Linux also needs
+PortAudio, often packaged as `libportaudio2`, and device access. After hardware
+changes, choose **Settings > Audio devices > Rescan devices**.
 
-A graphics processor is optional. The normal profiles do not require PyTorch
-or a GPU, and supported local voice paths can run on the CPU. A compatible GPU
-can accelerate eligible offline speech work; it is not a requirement for
-chat, browser voice, or cloud speech.
+PyTorch and a graphics processor are not required. Supported local voice paths
+run on a CPU; a compatible GPU can accelerate eligible offline speech work.
 
-Some alternate offline speech packages have narrower native support. In
-particular, Windows on ARM and some Python 3.14 combinations cannot install
-every WebRTC or local Whisper component. Jarvis keeps simpler local detection,
-browser voice, or a configured online speech provider available where the
-matching path exists. It should report that an optional engine is unavailable
-rather than fail the whole application.
+Windows on ARM and some Python 3.14 cells lack WebRTC or local Whisper wheels.
+Jarvis reports the unavailable engine while simpler local detection, browser
+voice, or configured online speech remains available where supported.
 
-Browser voice is separate from the host's local audio pipeline. A browser on
-the same computer can use a localhost address. When the browser connects to a
-remote headless server, microphone capture requires a secure HTTPS context;
-plain remote HTTP can still display the text interface, but browsers normally
-block microphone access there.
+Browser voice does not use the server's audio devices. Localhost works over
+HTTP, but a remote browser microphone needs HTTPS. Jarvis listens on loopback
+by default; remote use needs authentication, a non-loopback bind, and a trusted
+proxy or tunnel. Never expose the local service directly. See the
+[Control API Reference](control-api-reference).
 
 ## Desktop and Computer Use Differences
 
-Personal Jarvis takes one capability snapshot when it starts. The snapshot
-checks for a display, a global-hotkey backend, a terminal backend, a desktop
-accessibility tree, an overlay, a readable cursor, and an elevation mechanism.
-Individual probes fail closed to **unavailable** instead of stopping startup.
+At startup, Jarvis records whether the host has a display, hotkey and terminal
+backends, an accessibility tree, an overlay, cursor access, and elevation.
+Failed probes report **unavailable** instead of stopping startup.
 
-Windows uses native UI Automation for named interface elements and native
-input for mouse and keyboard actions. macOS uses the Accessibility and screen
-capture interfaces and therefore needs the matching permissions for Computer
-Use. Linux can use AT-SPI for named interface elements when the distribution's
-accessibility packages and desktop bus are available.
+Windows uses UI Automation and native input. macOS Computer Use needs the
+matching Accessibility and Screen Recording permissions. Linux uses AT-SPI
+when its packages and desktop bus are available. Without a native interface
+tree, screenshots and pixel positions can work but cannot identify controls by
+name.
 
-If a native interface tree is missing, Computer Use can fall back to
-screenshots and pixel positions. That fallback is less descriptive: Jarvis may
-see a button but not know its accessible name. It does not overcome the two
-hard boundaries below:
+- **Wayland:** global shortcuts, cursor access, window control, and synthetic
+  input are restricted. Computer Use refuses unsupported actions; XWayland is
+  not a complete control backend.
+- **Headless:** there is no display to capture or control. Chat, APIs, browser
+  views, missions, and file work still run.
 
-- **Wayland:** global shortcuts, global cursor access, window control, and
-  synthetic mouse or keyboard input are restricted. Computer Use refuses the
-  action honestly; running one app through XWayland does not provide a complete
-  control backend.
-- **Headless:** without a real display there is nothing to capture or control.
-  Text chat, server APIs, browser views, missions, and file work can still run.
+On macOS, grant permissions to **Personal Jarvis**, not Terminal or Python, so
+they stay attached to the app bundle. The Bar and mascot use its desktop
+companion.
 
-On macOS, grant permissions to the installed **Personal Jarvis** app, not to a
-terminal or Python interpreter. The installed app bundle provides the stable
-identity to which macOS attaches the grant. The Jarvis Bar runs through a
-desktop companion; the mascot surface is intentionally unavailable there.
-
-Linux overlays are best effort because display servers and compositors differ.
-On X11 with a display and Tk support, Jarvis can attempt the on-screen surface.
-Otherwise it uses a tray-level or no-visible-surface fallback, while chat and
-voice continue independently.
+Linux overlays are best effort. With no compatible X11, compositor, and Tk
+surface, Jarvis falls back to the tray or no visible surface; chat continues.
 
 ## Optional Components
 
@@ -156,61 +133,84 @@ voice continue independently.
 | Node.js 18 or newer | No | Optional Jarvis-Agent worker command-line tools and some Node-based integrations |
 | GPU | No | Faster eligible offline speech processing |
 | Linux PortAudio library | Only for local Linux audio | Physical microphone and speaker access through the desktop pipeline |
+| Linux `xdotool` and `wmctrl` | Only for full X11 window and input control | Window discovery, focus, movement, and reliable non-ASCII typing; the installer offers these tools when it can |
+| Linux GTK WebKit and GObject Introspection packages | Only for the native Linux app window | The desktop WebView; the browser interface remains available without it |
 | Linux AT-SPI packages and desktop bus | Only for native Linux UI labels | Named interface elements for more reliable Computer Use on X11 |
+| Linux global-hotkey backend | Only for global voice shortcuts on X11 | Shortcut capture; it is not part of the current Linux full-profile dependency set |
+| Xcode Command Line Tools on macOS | Required to build the managed desktop launcher | The installer compiles and signs the local app launcher and stops with an installation hint when `clang` is unavailable |
 | macOS privacy grants | Only for the feature named by each grant | Microphone, global shortcuts, screen capture, accessibility, and input control |
 | Graphical display | Only for desktop surfaces | Desktop window, overlays, screen capture, and physical Computer Use |
+
+## Storage and Network Defaults
+
+The managed installer uses `%USERPROFILE%\.personal-jarvis` on Windows and
+`~/.personal-jarvis` on macOS and Linux. Its Python environment lives inside
+that folder. Normal runtime data uses `%LOCALAPPDATA%\Jarvis` on Windows when
+that location exists and `~/.jarvis` elsewhere. Some managed-install state,
+including the default `jarvis.toml`, remains in the install folder. Read the
+[Configuration Reference](configuration-reference) before changing a path on a
+managed or read-only host.
+
+The local service listens on loopback unless an operator explicitly configures
+a different bind address. A non-loopback listener requires a Control key and
+still needs a trusted network boundary and HTTPS for remote browser audio.
 
 ## Graceful Fallbacks
 
 | Preferred capability is missing | Expected result |
 |---|---|
-| Desktop display | Run the headless server and use the browser interface |
-| Local audio device or backend | Keep text chat; use browser voice or another configured voice channel where available |
-| One native local speech engine | Use another compatible local, browser, or configured online speech path |
-| Global shortcut | Start voice from the app, or use the wake word when local microphone capture works |
-| Native accessibility tree | Use screenshot and pixel-based Computer Use when screen capture and input are otherwise supported |
-| Overlay or tray surface | Continue without an on-screen voice surface |
-| Preferred provider | Cross to another configured provider family when the feature supports it, or show an honest unavailable state |
+| Display | Use the headless server and browser |
+| Local audio | Keep text chat; choose browser voice or a channel |
+| Local speech engine | Choose another installed engine, browser voice, or online speech |
+| Global shortcut | Start voice in the app or use a working wake word |
+| Accessibility tree | Use screenshot and pixel actions when capture and input work |
+| Overlay or tray | Continue without an on-screen voice surface |
+| Preferred provider | Cross provider families when supported, or report unavailable |
 
-Fallback does not mean silent success. A missing capability should produce an
-unavailable status, log message, or refusal that names the boundary. It should
-not claim that a screen action, permission, or connection worked when it did
-not.
+A fallback must not claim success. Jarvis should show an unavailable status,
+log, or refusal that names the missing capability.
+
+## Known Platform Limits
+
+These are the open differences recorded by the current platform audit. They
+are not implied future support.
+
+| ID | Current limit | What you see |
+|---|---|---|
+| P-02 | Wayland has no global idle-time backend | The idle-awareness watcher logs that it cannot start |
+| P-03 | Wayland hides the foreground window | The window-focus watcher logs that it cannot start |
+| P-04 | Linux non-ASCII typing needs `xdotool` | Without it, a warning appears and some characters can be lost |
+| P-05 | Some old or unusual Linux SQLite builds lack full-text search version 5 | Wiki search stops with an installation hint instead of returning incomplete results |
+| P-07 | macOS and Linux audio selection has no host-API preference table | Automatic selection follows operating-system device order and can be less accurate than on Windows |
+| P-10 | macOS cannot reap a mission worker after the orchestrator itself receives an uncatchable kill | Normal cancel and shutdown paths clean up; this narrow crash case can leave a worker for the operating system to adopt |
+| P-12 | Frozen Windows-only Computer Use loops remain in the source but are not on the live path | No current user-facing effect |
+| P-13 | A read-only wheel layout needs an explicit writable data location for two legacy Wiki paths | Managed installs are unaffected; an advanced read-only deployment must set its writable data directory |
+| P-14 | Native macOS and Linux Computer Use depends on optional desktop packages | Missing packages remove named-element access; screenshot and pixel actions remain only when capture and input are available |
+| P-15 | Linux has no native saved-file drag source | **Show in folder** and **Open** work, but the saved-file notice is not a drag handle |
+| P-16 | Windows cannot immediately prove that a Wiki lock owner has died | After a crash, a stale Wiki lock can remain for up to five minutes |
 
 ## Verification Status
 
-Implementation, automated tests, and a live desktop observation prove
-different things. The repository's recorded sign-off includes a Windows
-desktop verification dated 2026-05-30 and a headless Linux base-install and
-import verification in a `python:3.11-slim` container dated 2026-06-20.
-
-The same record does not yet contain a dated live macOS desktop or Linux GUI
-sign-off for global shortcut capture, native accessibility trees, overlays, or
-interactive elevation. Those paths are implemented and capability-gated, but
-should be treated as host-dependent until tested on the specific desktop in
-front of you. This limitation does not apply to the already verified headless
-Linux base path.
+Recorded evidence includes Windows desktop checks from 2026-05-30 and a
+headless `python:3.11-slim` Linux base-install and import check from 2026-06-20.
+It has no dated live macOS or Linux GUI sign-off for hotkeys, accessibility
+trees, overlays, or elevation. Implemented and tested code paths do not prove
+live desktop behavior. The dated checks also do not prove a later release
+candidate.
 
 ## How It Fits Together
 
-1. **The installer chooses a profile.** A desktop gets the full profile;
-   headless Linux gets the server base unless you override the choice.
-2. **Platform markers select installable native components.** Incompatible
-   optional packages are skipped without changing the shared app.
-3. **Startup probes the current host.** Jarvis records what this session can
-   actually provide, including the display, audio-adjacent desktop features,
-   input backends, and accessibility interfaces.
-4. **Permissions and configuration narrow the result.** An installed feature
-   still waits for the required operating-system grant, device selection, and
-   provider connection.
-5. **Each feature selects an implementation or fallback.** Chat can remain
-   healthy while an overlay, shortcut, local speech engine, or screen action is
-   unavailable.
+1. **The installer chooses Full or Headless.** Platform markers skip
+   incompatible optional packages.
+2. **Startup probes the host.** Jarvis records the display, desktop backends,
+   input access, and accessibility interfaces.
+3. **Permissions and settings narrow the result.** A package can be installed
+   while its device, operating-system grant, or provider is unavailable.
+4. **Each feature chooses a working path or refuses honestly.** Chat can stay
+   healthy while a shortcut, overlay, speech engine, or screen action is off.
 
-This is why platform support connects directly to installation, permissions,
-and configuration. The operating system defines what is possible, permissions
-define what is allowed, and your settings choose which available path Jarvis
-uses.
+The operating system sets what is possible, permissions set what is allowed,
+and settings choose among the available paths.
 
 ## Check That It Works
 
@@ -220,32 +220,28 @@ With Personal Jarvis running, check the shared service first:
 jarvis --json system status
 ```
 
-A successful response confirms that the installed command can reach the local
-Jarvis service. It does not prove every optional desktop capability.
+Success confirms that the command reaches Jarvis, not that every desktop
+capability works.
 
-On a desktop, open **Settings > Audio devices** and select **Rescan**. Seeing
-the intended input and output confirms the local audio path; an explicit
-unavailable state is the correct result on a headless host. Then test only the
-feature you plan to use: the wake-word test for wake, the permissions card on
-macOS, or a small reversible Computer Use action on a real X11, macOS, or
-Windows desktop.
+On a desktop, choose **Settings > Audio devices > Rescan devices** and confirm
+the intended devices appear. Then run the relevant **Test wake word** action,
+macOS permission check, or a reversible Computer Use action.
 
-For headless Linux, open the local address printed by the installer and confirm
-that the browser interface loads. Use text first. If the browser is on another
-computer, configure secure remote access before testing its microphone.
+On headless Linux, open the printed local address and test text chat first.
+Configure authenticated HTTPS access before using a remote browser microphone.
 
 ## Troubleshooting
 
 | What you see | Likely boundary | What to do |
 |---|---|---|
-| Installation rejects Python | Python is older than 3.11 or is 3.15 or newer | Use Python 3.11 through 3.14, or let the supported installer choose a compatible version |
-| Linux starts a server instead of a desktop window | No X11 or Wayland display was detected | Use the printed browser address, or start the installer from the intended graphical session |
-| Linux microphone or speakers are unavailable | PortAudio, device access, or the selected device is missing | Install the distribution's PortAudio library, reconnect the device, and use **Rescan** |
-| A macOS shortcut or screen action does nothing | The installed app lacks the matching privacy grant or needs a restart | Review **Settings > Privacy permissions**, grant only the needed access, and restart when asked |
-| Computer Use refuses on Linux | The session is Wayland or has no display | Use an X11 desktop for Computer Use; keep using text, browser, and server features on the current host |
-| Named Linux interface elements are missing | AT-SPI or its desktop bus is unavailable | Install the distribution's accessibility packages and use an X11 desktop session; screenshot fallback may still work |
-| One local voice engine is unavailable after a successful install | No compatible native package exists for this Python, processor, or operating system | Use an available local, browser, or configured online speech path; do not replace unrelated provider credentials |
-| The Bar, mascot, or tray is absent | The selected surface is unsupported, the session has no compatible display, or the compositor rejected it | Keep using the app; choose a supported appearance and restart only if the setting asks |
+| Python is rejected | Outside 3.11 through 3.14 | Let the installer choose, or install a supported version |
+| Linux opens a server | No X11 or Wayland display | Use the printed address, or install from a graphical session |
+| Linux audio is unavailable | PortAudio, access, or device missing | Install PortAudio, reconnect, then choose **Rescan devices** |
+| A macOS shortcut or screen action fails | Privacy grant missing | Review **Settings > Privacy permissions** and restart when asked |
+| Linux Computer Use refuses | Wayland or no display | Use X11; text and browser features still work |
+| Linux control names are missing | AT-SPI or its bus is unavailable | Install accessibility packages; pixel fallback may work |
+| A local voice engine is unavailable | No compatible native package | Choose another local, browser, or online speech path |
+| Bar, mascot, or tray is absent | Surface or compositor unsupported | Keep using the app; change appearance if offered |
 
 ## Next Steps
 

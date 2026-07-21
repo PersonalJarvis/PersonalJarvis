@@ -8,7 +8,7 @@ order: 5
 diataxis: howto
 status: active
 owner: maintainers
-last_reviewed: 2026-07-15
+last_reviewed: 2026-07-21
 phase: "-"
 audience: end-user
 tags: [cli, connections, terminal, tools, automation, safety]
@@ -20,9 +20,33 @@ program that is installed on the same computer. Jarvis finds the program,
 checks whether its account is ready, and exposes it as a tool for matching chat,
 voice, and test requests.
 
-This is different from the **Jarvis CLI**. A CLI connection gives Jarvis access
-to another program and its commands. The Jarvis CLI controls Personal Jarvis
-itself; its commands are listed in the [CLI Reference](cli-reference).
+This is different from using the **Jarvis CLI** yourself. A CLI connection lets
+the assistant invoke a cataloged command-line program as a tool. The Jarvis CLI
+controls Personal Jarvis itself; its commands are listed in the
+[CLI Reference](cli-reference).
+
+The packaged catalog currently contains these tools:
+
+| Category | Command-line tools |
+|---|---|
+| Cloud | Google Cloud CLI, Azure CLI, AWS CLI v2, Cloudflare Wrangler |
+| App hosting | Vercel CLI, Netlify CLI, Heroku CLI, Railway CLI, Fly.io CLI, Render CLI |
+| Backend services | Supabase CLI, Firebase CLI, PlanetScale CLI, Neon CLI |
+| Source control | GitHub CLI, GitLab CLI |
+| Payments | Stripe CLI, Twilio CLI |
+| Containers | Docker CLI, Kubernetes CLI (`kubectl`) |
+| Workspace | Google Workspace CLI (GAM) |
+| Personal Jarvis | Jarvis Control CLI |
+
+Codex, Claude, Antigravity, and the Gemini CLI are not entries in this
+catalog. Their supported subscription sign-ins power background Jarvis-Agent
+work instead of becoming general command tools. Open **Settings > API Keys**,
+then open the Agents tab named after your wake word to connect or test them.
+Codex uses a ChatGPT sign-in, Claude uses a Claude subscription sign-in, and
+Antigravity can use either the `agy` or Gemini CLI for Google sign-in. These
+subscription paths do not become the main Brain. Read
+[Providers and API Keys](providers-and-api-keys) for the API-key alternatives
+and current billing choices.
 
 ## Before You Start
 
@@ -107,7 +131,7 @@ The detail panel offers only the sign-in action declared for that program.
 
 | Sign-in type | What happens |
 |---|---|
-| **Browser Login** | Jarvis opens the program's login command in an external terminal. Complete the browser or device flow and leave Jarvis running while it checks in the background for up to about five minutes. |
+| **Browser Login** | Jarvis opens the program's login command in an external Windows terminal. Complete the browser or device flow and leave Jarvis running while it checks in the background for up to about five minutes. |
 | **API key** | **Set API Key** opens password fields. **Save and validate** tests the values, then stores them through Jarvis's protected credential storage when the check succeeds. |
 | **Existing configuration** | The program reads its own configuration file. No Jarvis sign-in button appears, and installation alone may show **Connected**, so verify access with a read-only request. |
 | **No sign-in** | Finding the installed executable is enough for the row to become **Connected**. |
@@ -137,8 +161,11 @@ well when you need complete removal.
 An exit code of `0` means the program reported success. Other values mean the
 program rejected or could not complete the command; read its error output
 before retrying. Jarvis does not keep full command output in usage history,
-but it does retain the full command, output lengths, and a scrubbed error
-preview. Do not pass credentials as command arguments.
+but it does retain the full command, output lengths, and an error preview with
+recognized secret patterns redacted. Test Hub output is also bounded: normal
+commands return up to 4,000 characters of standard output, help commands return
+up to 16,000, and error output is limited to 2,000 characters. Do not pass
+credentials as command arguments.
 
 CLI execution is non-interactive. A command that waits for a password,
 confirmation prompt, or other terminal input fails or times out. Complete
@@ -162,12 +189,16 @@ you understand its commands and authorization model.
    Jarvis must never run. Add allow patterns only for narrow, well-understood
    read-only commands because a matching allow pattern can make a call safe.
 5. Save the entry, select it in the **Custom** filter, and use **Recheck
-   status**. Remove it with the trash button if the definition is wrong.
+   status**. If you later remove a connected custom entry, use **Disconnect**
+   first when that action is available, remove the entry with its **Remove
+   custom CLI** button, and restart Jarvis so the running assistant drops any
+   tool it already loaded.
 
 A block pattern takes priority over an allow pattern; an allow pattern takes
 priority over the default tier. A custom definition is local metadata, not a
-review or endorsement of the program. Removing it does not uninstall the
-binary, revoke the external account, or erase that program's own files.
+review or endorsement of the program. Removing it hides the catalog definition,
+but does not uninstall the binary, revoke the external account, erase the
+program's own files, or clear its usage history.
 
 ## How It Fits Together
 
@@ -188,7 +219,7 @@ A normal request follows this path:
 | [Workflows and Commands](workflows-and-commands) | A Jarvis command is one stable app operation. A CLI connection exposes an external program whose subcommand is chosen for the request. |
 | [Plugins](plugins) | A plugin is a packaged service connection that may not need a local executable. When both cover the same live-data domain, Jarvis generally prefers the connected local CLI. If that CLI command fails, Jarvis reports the failure instead of silently changing services. |
 | [MCP Connections](mcp-connections) | A Model Context Protocol server advertises a collection of tools over a standard connection. A CLI connection discovers one installed program and runs its commands locally. |
-| [Jarvis-Agents](jarvis-agents) | Connected CLI tools work in the live assistant, but the general CLI catalog is not currently granted automatically to background Jarvis-Agent missions. Use a specifically supported mission connection rather than assuming the worker has the CLI. |
+| [Jarvis-Agents](jarvis-agents) | Connected catalog tools work in the live assistant. Background missions receive a separate, restricted tool grant and do not receive general `cli_*` tools. Codex, Claude, and Google subscription CLIs are supported worker providers only when connected from the Agents tab. |
 | [Credentials and Secrets](credentials-and-secrets) | Jarvis stores protected API-key values; browser-login and configuration files remain under the external program's own storage rules. |
 | [Safety and Approvals](safety-and-approvals) | Service permissions decide what the account can do. Jarvis separately decides whether a proposed command runs, is logged, asks for approval, or stays blocked. |
 

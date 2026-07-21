@@ -8,188 +8,184 @@ order: 1
 diataxis: explanation
 status: active
 owner: maintainers
-last_reviewed: 2026-07-15
+last_reviewed: 2026-07-21
 phase: "-"
 audience: end-user
 tags: [jarvis-agents, missions, workers, outputs, safety, automation]
 related: [tasks-and-reminders, outputs-and-files, skills, safety-and-approvals]
 ---
 
-Jarvis-Agents handle substantial work in the background, such as building a
-file, changing a project, or producing a researched report. Jarvis can hand off
-that work without keeping your chat or voice conversation blocked for the full
-run.
+Jarvis-Agents is the internal name for the background mission system. In the
+app, the visible name follows your assistant name. For example, an assistant
+named Nova shows **Nova-Agents** in the sidebar and **Nova-Agent** on each row.
+If no assistant name is available, the app uses **Assistant-Agents**.
 
-A **Jarvis-Agent** is the worker role that does the job. A **mission** is the
-saved job around it: your request, its progress, the review, the final status,
-and any output files. Ordinary questions and quick actions should stay in the
-main conversation; a mission is for work that genuinely needs more time or
-several steps.
+A mission is a saved background job. It records your request, its progress,
+review result, final status, and any retained files. Agents start only when you
+explicitly ask for one. Quick questions and ordinary actions stay in the main
+conversation.
 
 ## Before You Start
 
-- Open **API Keys > Jarvis-Agents** and make sure one provider card shows
-  **Active**. A subscription login or a dedicated provider key can power the
-  worker. Enter credentials only in the protected fields on that page, never in
-  chat, voice, a mission request, or an output file.
-- If the app says a provider or model change becomes active after a restart,
-  restart before testing a new mission. Work already running keeps the worker
-  it started with.
-- The current mission runner needs Git and a source checkout because every
-  mission receives an isolated working copy. A setup without either one can
-  fail before a worker begins, including for some non-code requests.
-- Connect an external service before asking a Jarvis-Agent to use it. A
-  connected service does not automatically grant every action to every mission.
+- Open **API Keys**, then select the Agents tab named after your assistant,
+  such as **Nova-Agents**. Choose a provider card that shows **active**. You can
+  use a supported subscription login or an API key. Enter credentials only in
+  the protected fields in this view, never in chat, voice, a mission request,
+  or an output file.
+- Follow any restart notice shown after changing the worker model. A provider
+  switch is used by the next mission. Work already running keeps the worker it
+  started with.
+- Install Git. Source-code work also needs a usable source checkout. A
+  standalone report or file can run in a new, empty Git workspace, so it does
+  not require a Personal Jarvis source checkout.
+- Connect an external service before requesting work that needs it. A
+  connection does not give every mission unrestricted access to that service.
 
 ## Start and Follow a Mission
 
-1. **Ask for a concrete deliverable in Chats or by voice.** State what should
-   be produced and how you will judge it. For example, ask for a short report
-   saved as a Markdown file, with the sources and comparison criteria named in
-   the request.
+1. **Ask explicitly in Chats or by voice.** Name the deliverable and how you
+   will judge it. For example: "Start a background agent and create a Markdown
+   report with three options, sources, and a recommendation."
 
-2. **Listen or look for the handoff.** When Jarvis delegates the request, its
-   acknowledgement names a **Jarvis-Agent** and explains that the work is now
-   running in the background. You can continue using the main conversation.
+2. **Wait for the handoff message.** Jarvis confirms that the named agent has
+   taken the task. The mission then runs separately, so you can continue the
+   main conversation.
 
-3. **Open Jarvis-Agents from the sidebar.** The operations board shows the
-   number of active, finished, and failed missions. A row identifies the task,
-   current status, elapsed time, recorded tool-call count, and result summary
-   when one is available.
+3. **Open the Agents entry in the sidebar.** Its label follows your assistant
+   name. The operations board shows totals for active, done, and failed work,
+   plus recorded tool calls. Each row shows the task, status, tool count,
+   runtime, and a short result when one is available.
 
-4. **Expand the mission row.** If details were recorded, you can inspect tool
-   names, short argument or result previews, context hints, and the mission's
-   current result. A mission can remain **ACTIVE** while its work is being
-   reviewed or corrected; active does not always mean the worker is still
-   writing.
+4. **Expand a row for recorded details.** You may see tool names, bounded
+   argument or result previews, context hints, a failure reason, and a trace
+   identifier. A row can remain **ACTIVE** while the result is being reviewed
+   or corrected.
 
-5. **Open Outputs for the retained result.** Jarvis-Agents is a live monitor:
-   completed and failed rows normally leave the board after about one minute.
-   **Outputs** keeps the mission card, status, summary, and approved deliverable
-   files until normal startup cleanup removes mission folders older than 14
-   days. Use the file preview there before opening a generated file elsewhere.
-   Approved files are normally copied to a separate user-visible output folder
-   for longer use.
+5. **Open Outputs for retained results.** The live board uses **ACTIVE**,
+   **DONE**, **FAILED**, and **CANCELLED**. Terminal rows remain there for about
+   60 seconds. Outputs keeps the archive card and files until mission cleanup
+   removes directories older than the configured retention period, which is 14
+   days by default. Approved deliverables are also copied to a user-facing
+   folder when possible: `Jarvis-Outputs` under Downloads on Windows, or
+   `~/jarvis-outputs` on macOS and Linux.
 
-6. **Stop or retry from Outputs when needed.** Hold **Abort mission** on a
-   running card to cancel its mission and worker process. A cancelled card can
-   be continued, while a failed or timed-out card can be restarted. Either
-   action creates a linked new mission and keeps the old attempt until its
-   mission folder reaches the same cleanup boundary.
+6. **Stop or run the request again from Outputs.** Hold **Abort** on a running
+   card to cancel the mission and its worker processes. **Continue** appears on
+   a cancelled card, while **Restart** appears on a failed or timed-out card.
+   Both actions create a new mission linked to the old one and reuse the saved
+   prompt. They do not resume the old process or workspace. The old attempt
+   remains as an audit record until cleanup.
 
-> [!warning] **Clear** on the Jarvis-Agents board only clears the current board
-> display. It does not cancel work, delete output, or remove the saved mission.
-> An active item can appear again when the board refreshes.
+> [!warning] **Clear** on the Agents board clears only the current display. It
+> does not cancel a mission or delete its files. A running row can return after
+> the next board refresh.
 
 ## What Happens During the Work
 
 | Stage | What Jarvis does | What you can observe |
 |---|---|---|
-| **Handoff** | Saves the request as a mission and releases the conversation | A Jarvis-Agent acknowledgement and an active board row |
-| **Plan** | Turns the request into one or more bounded work steps | The task remains active; detailed plans are not shown on the live board |
-| **Isolated work** | Gives each mission step an isolated Git working copy and only the capabilities selected for the mission | Runtime, worker activity, and some tool previews when recorded |
-| **Review** | Checks the draft against the request and can ask for a correction | The row stays active while another attempt runs |
-| **Finish** | Approves the result or records a failure, cancellation, or timeout | **DONE** or **FAILED**, followed by a persistent Outputs card |
+| **Handoff** | Saves the request as a mission and releases the conversation | A handoff message and an **ACTIVE** row |
+| **Plan** | Splits the request into one to five bounded steps | The mission stays active |
+| **Isolated work** | Gives each step its own Git workspace and selected capabilities | Runtime, tool count, and recorded previews |
+| **Review** | Checks evidence against the request and can ask the worker for a correction | The row remains **ACTIVE** during another attempt |
+| **Finish** | Approves the result or records a failure, timeout, or cancellation | A terminal board status and an Outputs card |
 
-The review can make up to three passes. Reaching the limit does not turn an
-unfinished result into success: the mission fails and keeps any safe partial
-artifacts that were archived. A worker timeout with usable work can still be
-reviewed; a timeout with no usable result can trigger another attempt.
+Repository work uses a registered Git worktree. Standalone artifact work uses
+an empty Git workspace. Both are removed after their files and evidence have
+been archived. Worker subprocess trees are contained on Windows, macOS, and
+Linux, and cancellation closes that containment. File and research missions can
+run on a headless server; desktop-only actions still need a graphical session.
 
-The selected Jarvis-Agent provider is the first choice. If that provider is
-unavailable and another configured provider family is reachable, Jarvis can
-move the work to that family. If no compatible worker is reachable, the
-mission fails honestly instead of pretending to have completed.
+Each step gets at most three worker and reviewer iterations. A review that
+still does not approve the result at that point fails the mission. Genuine
+partial files are retained and may appear as **needs review** in Outputs.
+Timeouts also fail honestly. If a timed-out worker left useful files, the
+reviewer can still assess them; without useful output, Jarvis can retry within
+the remaining iterations.
+
+The selected worker provider is the first choice. Before a new attempt, Jarvis
+checks whether that provider is usable and can cross to another configured
+provider family after authentication, quota, or availability failures. The
+reviewer also needs a reachable compatible provider. If no suitable worker or
+reviewer is available, the mission fails instead of reporting success.
+
+The provider setup strip shows its configured time and concurrency limits.
+Missions can queue, and worker, review, budget, or safety limits can end a run
+earlier. Treat the displayed limit as a cap, not a promised runtime.
 
 ### Tools, Connections, and Permissions
 
-A Jarvis-Agent does not receive unrestricted access to the app or your
-computer. It gets a short-lived, mission-specific list of approved
-capabilities. Read-only Wiki tools, explicitly allowed app commands, and tools
-from selected connections can be offered through the main Jarvis process.
-Connection credentials stay with that supervisor path; they are not copied
-into the mission prompt or reported on the operations board.
+An agent receives a short-lived, mission-specific capability grant. Eligible
+read-only Wiki tools, selected app commands, and tools from connected services
+can be offered through the main Jarvis process. Tool objects and credentials
+stay with that supervisor. They are not copied into the worker prompt or shown
+on the operations board.
 
 Every connected action still passes the normal safety policy. Safe actions can
-run, monitored actions are recorded, confirmation-level actions can pause for a
-decision, and blocked actions stay blocked. A Jarvis-Agent cannot start another
-Jarvis-Agent, run a skill recursively, reveal credentials, or change protected
-configuration through its worker tool set.
+run, monitored actions are recorded, and blocked actions remain blocked. An
+action that requires confirmation pauses for one exact decision and expires if
+it is not answered. Agents cannot start another agent, run a skill recursively,
+read credentials, or change protected configuration through the worker grant.
 
-> [!note] The current **Jarvis-Agents** board is a monitor, not the full mission
-> control screen. It cannot start or cancel missions, reopen older history, or
-> decide a paused supervisor tool approval. Until approval controls are exposed
-> there, avoid unattended mission requests that depend on a confirmation-level
-> external action; ask for a local draft or read-only result instead.
+> [!note] The current sidebar opens the operations board, not the separate
+> mission-control view that contains approval controls. You cannot approve a
+> paused tool call from the board or Outputs. For now, avoid unattended missions
+> that depend on a confirmation-level external action. Ask for a read-only or
+> local draft, then perform the external action yourself.
 
 ## How It Fits Together
 
-1. **Chats or voice starts the handoff.** Jarvis answers simple work directly
-   and delegates only a substantial build or multi-step request. A voice
-   session can record that the handoff happened, but the later mission has its
-   own lifecycle.
-2. **A Skill can supply repeatable instructions.** A skill marked for mission
-   execution can turn those instructions into a Jarvis-Agent request. The skill
-   defines the method; the mission owns the isolated work and review. Read
-   [Skills](skills) to understand draft, enabled, inline, and mission skills.
-3. **Tools and connections supply selected capabilities.** A mission can use
-   only the connection and app-command grants made available to it. Safety
-   checks remain in the supervisor, outside the worker's isolated process.
-4. **The reviewer decides whether the work is ready.** Failed tool calls,
-   unfinished files, and rejected drafts cannot be hidden by a confident worker
-   summary. The mission either reaches approval or records a terminal problem.
-5. **Outputs receives the retained result.** The live board is temporary;
-   [Outputs and Files](outputs-and-files) is where you preview deliverables,
-   cancel a run, or start a linked retry while the mission folder remains.
-   Keep the separate delivered copy for anything you need beyond 14 days.
-6. **Tasks can wait for the outcome.** A When-Then task can react when a
-   mission succeeds, fails, or is cancelled. A normal scheduled task does not
-   automatically gain a Jarvis-Agent's isolated workspace or review loop. Read
-   [Tasks and Reminders](tasks-and-reminders) before relying on event-based
-   automation.
-7. **Sessions preserve the starting conversation, not the whole mission.** Run
-   Inspector may show that a voice turn started a Jarvis-Agent. Later worker
-   events and generated files remain under Jarvis-Agents and Outputs.
+1. **Chats or voice starts the mission.** You must explicitly ask for a
+   background agent. Jarvis saves the request and returns the handoff message.
+2. **A skill can provide repeatable instructions.** A skill configured for
+   mission execution can start the same isolated and reviewed workflow. Read
+   [Skills](skills) before enabling generated or mission-based skills.
+3. **Connections provide selected tools.** The supervisor exposes only the
+   mission's allowed capabilities and keeps safety checks outside the worker.
+4. **The reviewer checks the evidence.** A confident worker summary does not
+   override missing files, failed tools, or a rejected review.
+5. **Outputs retains the result.** Use [Outputs and Files](outputs-and-files)
+   to preview files, cancel active work, or create a linked continuation or
+   restart.
+6. **Tasks can react to the outcome.** A When-Then task can listen for a final
+   mission result. A normal scheduled task does not automatically gain an
+   agent workspace or review loop. Read [Tasks and Reminders](tasks-and-reminders)
+   before relying on mission events.
 
 ## Check That It Works
 
-1. Confirm that one card under **API Keys > Jarvis-Agents** is **Active** and
-   that the Jarvis-Agents view shows no provider error banner.
-2. In Chats, ask a Jarvis-Agent to create a small Markdown file containing a
-   three-item, non-sensitive checklist and a one-sentence introduction.
-3. Confirm that Jarvis acknowledges the handoff, then open **Jarvis-Agents** and
-   find one **ACTIVE** row matching the request.
-4. Wait for **DONE**, then open **Outputs**. Confirm that the newest card shows
-   **success** and that the Markdown file can be previewed.
+1. In **API Keys**, open the Agents tab named after your assistant and confirm
+   that one provider card shows **active**.
+2. In Chats, explicitly ask a background agent to create a Markdown file with
+   a one-sentence introduction and a three-item, non-sensitive checklist.
+3. Open the Agents sidebar entry and confirm that one matching row appears as
+   **ACTIVE**, then reaches **DONE**.
+4. Open **Outputs**. Confirm that the newest card shows **success** and that the
+   Markdown file can be previewed.
 
-The path works when the request produces one mission, the live row reaches a
-terminal state, and the approved file can be previewed in Outputs and found in
-the separate user-visible output folder. A spoken completion is helpful but is
-not a file record. The in-app mission card is normally removed after its folder
-passes the 14-day startup-cleanup boundary.
+This verifies dispatch, the live board, review, archive creation, and file
+preview. A spoken completion message is useful, but it is not the file record.
 
 ## Troubleshooting
 
 | What you see | What it usually means | What to do |
 |---|---|---|
-| Jarvis answers directly and no mission appears | The request looked like a quick question or single action | Ask for a concrete multi-step deliverable and explicitly request a background Jarvis-Agent |
-| **No Jarvis-Agent provider is reachable** | The active worker login or key is missing, expired, out of quota, or unavailable, and no fallback family is ready | Open **API Keys > Jarvis-Agents**, reconnect or add a different provider family, set it active, and restart if prompted |
-| The board is empty after a completed run | Finished rows are temporary, or the live connection refreshed after the row expired | Open **Outputs** for the retained mission and files; do not use the board as history |
-| A mission stays **ACTIVE** for a long time | It may be queued, reviewing a draft, correcting work, or waiting on a slow provider | Check the health banner and Outputs status; hold **Abort mission** in Outputs if you no longer want the run |
-| The mission fails before a worker starts | Git, the source checkout, the mission service, or the worker program is unavailable | Use the supported installer, confirm the app starts from a Git checkout, restart normally, and try one small file task |
-| Work pauses or fails around an external action | The tool needed approval, was not granted to the mission, or was blocked | Never paste a credential into the request; cancel and retry with a read-only or local-draft goal, or perform the external action yourself |
-| The result has a summary but no file | The request was informational, no deliverable was archived, or the worker failed before saving it | Ask for a named file and success criteria, then use **Restart** only after fixing the recorded failure |
+| Jarvis answers directly and no mission appears | The request did not explicitly ask for an agent | Ask for a background agent and name a concrete deliverable |
+| The board reports that no provider is reachable | The selected login or key is missing, expired, out of quota, or unavailable, and no fallback family is usable | Open **API Keys**, reconnect the selected provider or activate another family, then try a small mission |
+| The board is empty after a completed run | Terminal rows leave the live board after about 60 seconds | Open **Outputs** for the retained card and files |
+| A mission stays **ACTIVE** for a long time | It can be queued, working, under review, correcting a draft, or waiting on a provider | Check the provider banner and Outputs card; hold **Abort** if you no longer want the run |
+| A mission fails before useful work appears | Git, a required source checkout, the selected worker, or the reviewer was unavailable; a tool may also have required an approval the visible board cannot provide | Read the recorded reason, fix that prerequisite, then use **Restart** or request a read-only or local result |
 
-For repeated startup, provider, or connection failures, follow the main
-[Troubleshooting](troubleshooting) guide.
+For repeated startup, provider, or connection failures, follow
+[Troubleshooting](troubleshooting).
 
 ## Next Steps
 
-- Read [Outputs and Files](outputs-and-files) to preview approved deliverables,
-  stop active work, and continue or restart a mission safely.
-- Read [Skills](skills) to turn repeatable instructions into inline work or a
-  reviewed background mission.
-- Read [Tasks and Reminders](tasks-and-reminders) to schedule an action or react
-  to a mission's final state.
-- Review [Safety and Approvals](safety-and-approvals) before letting a mission
-  use connected services or make changes outside its isolated files.
+- Read [Outputs and Files](outputs-and-files) to preview retained deliverables
+  and understand where copied files are stored.
+- Read [Skills](skills) to turn repeatable instructions into a reviewed
+  background mission.
+- Read [Tasks and Reminders](tasks-and-reminders) to react to a mission's final
+  state.
+- Review [Safety and Approvals](safety-and-approvals) before a mission uses a
+  connected service or changes anything outside its isolated files.

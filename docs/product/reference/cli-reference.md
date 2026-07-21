@@ -8,7 +8,7 @@ order: 1
 diataxis: reference
 status: active
 owner: maintainers
-last_reviewed: 2026-07-15
+last_reviewed: 2026-07-21
 phase: "-"
 audience: end-user
 tags: [cli, terminal, api, automation, reference]
@@ -55,17 +55,17 @@ external CLI**.
 | Layer | Shape | Current behavior |
 |---|---|---|
 | Curated commands | `jarvis <group> <command>` | Short, human-oriented names for common operations |
-| Dynamic API commands | `jarvis api <tag> <operation>` | Generated from the server's OpenAPI description and covers mounted REST operations |
+| Dynamic API commands | `jarvis api <tag> <operation>` | Built from the target server's OpenAPI description for mounted `GET`, `POST`, `PUT`, `PATCH`, and `DELETE` operations |
 | Launcher commands | bare `jarvis`, `jarvis serve`, and launcher flags | Starts or diagnoses the app rather than calling the control CLI |
 
 `jarvisctl` and `jctl` are control-only aliases. They are especially useful for
 top-level help because `jarvis --help` intentionally shows launcher help, while
-`jarvisctl --help` shows the complete curated control tree.
+`jarvisctl --help` lists the curated control groups.
 
-The dynamic layer fetches its command names from the target server. It keeps a
-local schema cache for up to 24 hours and can use an older cached schema when
-the server is offline. Run `jarvis refresh` to clear that cache before the next
-`jarvis api` call.
+The dynamic layer uses the target server's OpenAPI schema. It reuses a local
+schema cache for up to 24 hours. After that, an `api` invocation tries to fetch
+a new schema and falls back to the older cache if the server is unreachable.
+Run `jarvis refresh` to clear the cache before the next `jarvis api` call.
 
 Use the [generated Jarvis CLI command catalog](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/jarvis-cli-reference.md)
 for the maintained list of curated groups, arguments, and options. It
@@ -85,43 +85,48 @@ take priority over lower rows.
 | 5 | `http://127.0.0.1:47821` and no key if none can be resolved | Local fallback |
 
 For remote access, run `jarvis auth login --url <server-url>` and enter the key
-in the hidden prompt. The CLI verifies it before saving it. `--key -` reads a
-key from standard input for managed automation. Avoid an inline `--key` value:
-shell history and process inspection can expose it.
+in the hidden prompt. The CLI verifies it before saving it. For managed
+automation, `jarvis auth login --url <server-url> --key -` reads the login key
+from standard input. The root-level `--key` option does not read from standard
+input. Avoid an inline key because shell history and process inspection can
+expose it.
 
 The saved profile is a per-user CLI configuration file, not the provider-key
 vault. POSIX systems restrict its file permissions; Windows relies on the user
 profile's access controls. Use `jarvis auth logout` on a shared or retired
 computer.
 
-## Common Flags
+## Common Options
 
-Global flags must appear before the command group.
+Only the root options `--json`, `--url`, and `--key` go before the command
+group. Command options go after the command and are available only when that
+command's help lists them.
 
-| Flag | Meaning |
-|---|---|
-| `--json` | Force machine-readable JSON output |
-| `--url` | Override the target server for this call |
-| `--key` | Override control authentication for this call; avoid inline values |
-| `--dry-run` | Print an exposed mutation's request without sending it |
-| `--yes`, `-y` | Authorize an operation marked dangerous |
-| `--json-body -` | Read a dynamic request body from standard input |
-| `--request-timeout` | Override the read timeout for a dynamic API operation |
-| `--persist` / `--no-persist` | Choose whether a supported setting change survives restart |
+| Option | Scope | Meaning |
+|---|---|---|
+| `--json` | Root | Force machine-readable JSON output |
+| `--url` | Root | Override the target server for this call |
+| `--key` | Root | Override control authentication for this call; avoid inline values |
+| `--dry-run` | Command | Preview the request without sending it when the command exposes this option |
+| `--yes`, `-y` | Command | Authorize an operation classified as dangerous |
+| `--json-body -` | Dynamic API command | Read a JSON request body from standard input |
+| `--request-timeout` | Dynamic API command | Override that operation's HTTP read timeout |
+| `--persist` / `--no-persist` | Supported curated setting command | Choose whether a change survives restart |
 
 Interactive terminals receive readable tables where possible. Piped output
 defaults to JSON even without `--json`, but scripts should pass `--json`
 explicitly so their intent stays clear.
 
 Read-only requests and reversible changes can run immediately. Dangerous
-operations fail unless you add `--yes`; the CLI does not open an interactive
-confirmation prompt. Review `--dry-run` output first when the command supports
-it. That preview can include the request body, so do not share it when the body
+operations fail unless you add `--yes` or explicitly set
+`JARVIS_CLI_ASSUME_YES=1`; the CLI does not open an interactive confirmation
+prompt for them. Review `--dry-run` output first when the command supports it.
+The preview can include the request body, so do not share it when the body
 contains private information.
 
 ## Discover Commands and Help
 
-- Run `jarvisctl --help` for the complete curated control tree.
+- Run `jarvisctl --help` for every curated top-level group.
 - Run `jarvis <group> --help` and `jarvis <group> <command> --help` for exact
   arguments and options.
 - Run `jarvis api --help` to fetch or reuse the dynamic API tree, then continue

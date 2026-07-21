@@ -8,254 +8,309 @@ order: 5
 diataxis: troubleshooting
 status: active
 owner: maintainers
-last_reviewed: 2026-07-15
+last_reviewed: 2026-07-21
 phase: "-"
 audience: end-user
 tags: [troubleshooting, diagnostics, recovery, startup, providers, voice, connections, support]
 related: [install-personal-jarvis, providers-and-api-keys, audio-and-wake-word, platform-support]
 ---
 
-Start with the smallest check that can identify the failing part. Personal
-Jarvis combines a local app, optional online providers, operating-system
-permissions, connected tools, and background work. One of those parts can be
-unavailable while the rest of the app is healthy.
+Personal Jarvis combines a local app, optional online providers, operating
+system permissions, connected tools, and background work. One part can fail
+while the rest of the app remains healthy. Find the affected part before you
+change any settings.
 
-This guide uses visible app controls. Ordinary diagnosis should not require
-deleting data, editing configuration, exposing a local service, or reinstalling.
+The checks below use visible app controls. Routine troubleshooting should not
+require deleting data, editing configuration files, exposing the local API, or
+reinstalling the app.
 
-## Start With the Safest Check
+## Start With a Focused Check
 
-1. **Decide whether one feature or the whole app is affected.** Open an
-   unrelated view. If Docs does not load, try Chats or Settings. If chat fails,
-   try the provider card's **Test** button.
-2. **Read the exact status before changing anything.** **Starting**, **Voice
-   starting**, **Offline**, **Key invalid**, **Reconnect needed**, and
-   **Permission required** point to different layers. Record the wording, not
-   just “it does not work.”
-3. **Use one built-in Retry, Refresh, Recheck, or Test action.** It repeats a
-   focused check without changing unrelated settings.
-4. **Change only the failing layer.** A working chat provider does not prove
-   that speech, Realtime, the Tool Model, or Jarvis-Agents can work. Test the
-   category that owns the symptom.
-5. **Restart only when the app asks, or when several views have lost the local
-   connection.** Finish active work first. The global **Restart** control
-   protects running Jarvis-Agent missions; forcing it can stop them.
-6. **Preserve a small, safe record if the problem remains.** Note the view,
-   visible status, approximate time, and the shortest steps that reproduce the
-   problem.
+1. **Find the scope.** Open one unrelated view. If Docs fails, try Chats or
+   Settings. If every view shows **Offline**, treat it as an app connection
+   problem instead of a Docs problem.
+2. **Record the exact status.** **Starting…**, **Voice starting…**, **Offline**,
+   **Key invalid**, **Reconnect needed**, and **Not allowed** point to different
+   causes.
+3. **Use one matching control.** Select the relevant **Try again**, **Test**,
+   **Refresh**, **Reconnect**, or **Recheck status** action once.
+4. **Check the same layer again.** A passing Brain test does not prove that
+   voice, Realtime, a tool connection, or an agent worker is ready.
+5. **Restart only when needed.** Finish active work first. The app asks for a
+   second confirmation if running agent missions would be stopped.
+6. **Keep a small record.** Note the view, exact status, approximate time, and
+   shortest steps that reproduce the problem.
 
-> [!warning] Never put an API key, token, password, recovery code, private
-> configuration file, or unreviewed log into a support message. Screenshots,
-> transcripts, raw run exports, and logs can contain conversation text, file
-> names, account details, and personal paths. Share only a narrow, reviewed,
-> redacted excerpt.
+> [!warning] Never share an API key, token, password, recovery code, private
+> configuration file, or unreviewed log. Screenshots, transcripts, run details,
+> and logs can contain conversation text, file names, account details, and
+> personal paths. Share only a narrow, reviewed, redacted excerpt.
 
-Use this map to choose the first focused check:
-
-| What is affected? | First place to look | First safe action |
+| What is affected? | First place to look | First check |
 |---|---|---|
-| The app window or every view | Global status and startup screen | Wait for the current start once; then use one normal restart or quit and reopen |
-| Docs only | **Docs** loading or error panel | Select **Try again**; use the online Docs link if needed |
-| Chat answers | **API Keys & Providers > Brain** | Run **Test** on the active provider |
-| Wake, listening, or spoken replies | **Settings > Audio devices / Wake Word** and the relevant provider category | Rescan devices or run **Test wake word** |
-| An action is denied | **Settings > Privacy permissions** and the approval message | Grant only the requested access or approve the intended action |
-| A plugin, MCP server, or CLI | **Skills, Plugins & MCPs** or **CLIs** | Refresh, reconnect, reload, or recheck that one connection |
-| A task, mission, or generated file | **Tasks**, **Jarvis-Agents**, and **Outputs** | Read its status or timeline before retrying |
+| The whole app | Top status and startup screen | Let the current start finish once, then restart or quit and reopen |
+| Docs only | **Docs** loading or error panel | Select **Try again** |
+| Chat replies | **API Keys & Providers > Brain** | Run **Test** on the selected provider |
+| Wake, listening, or speech | **Settings > Audio devices** and **Wake Word** | Rescan devices, then run **Test wake word** |
+| An action is denied | The permission card or approval message | Grant or approve only the named access |
+| A plugin, MCP server, or CLI | **Skills, Plugins & MCPs** or **CLIs** | Check that connection's status and one read-only action |
+| A task, agent mission, or file | **Tasks**, the Agents view, or **Outputs** | Read its status or timeline before retrying |
 
 ## Troubleshooting
 
 ### The App Does Not Open, Stays Blank, or Shows Offline
 
-- A name, spinner, or startup message means the desktop shell is alive and the
-  local app is still starting. Let that start finish once. **Voice starting**
-  applies only to voice readiness; text chat can already be available.
-- **Starting** in the app means its live local connection is warming up.
-  **Offline** across several views means that connection was lost. If it does
-  not recover, use the global **Restart** control and confirm once.
-- If one view displays a crash panel, select **Back to Chats**, then reopen the
+- **Starting…** means the live local connection is still warming up.
+  **Voice starting…** refers only to voice readiness, so text chat may already
+  work.
+- If **Offline** appears across several views and does not clear, select the
+  top-bar **Restart** control. The first click changes it to **Confirm
+  restart?**. If missions are active, the app asks **Restart anyway?** before
+  it stops them.
+- If one view shows a crash panel, select **Back to Chats**, then reopen that
   view. A single view crash does not require an immediate app restart.
-- If the entire window remains blank or unresponsive and no recovery control
-  appears, use the normal application **Quit** action and reopen the registered
-  app. Do not start a cycle of repeated restarts.
-- If the app never opens after installation, or its normal launcher is missing,
-  continue with [Install Personal Jarvis](install-personal-jarvis) and
-  [Platform Support](platform-support). A headless host does not provide the
-  same desktop window, audio, or overlay surfaces.
+- If the whole window remains blank or unresponsive, quit the application
+  normally and reopen it once. Repeated restart attempts can hide the original
+  symptom.
+- A headless installation has no native desktop window, local microphone,
+  overlay, or desktop Computer Use. Open its browser interface and see
+  [Platform Support](platform-support) before treating those missing desktop
+  surfaces as a crash.
+- If the normal launcher never appears after installation, follow
+  [Install Personal Jarvis](install-personal-jarvis). Do not delete the data
+  directory as a first repair step.
+
+### An Update or Restart Does Not Finish
+
+Managed official installs show **Update available** only when a newer
+published release is available. Selecting it stages that release and restarts
+the app. If staging finishes but the restart fails, the control changes to
+**Finish update** so you can try the restart again.
+
+- Finish or stop active agent missions before updating. Continuing through
+  **Restart anyway?** can stop them.
+- If the app reports that it rolled back, keep using the restored version and
+  report the exact update message.
+- Manual source checkouts, development installs, and headless processes do not
+  use the desktop managed-update control. Update them through the method used
+  to install them.
+- When one device works and another does not, compare their installed versions
+  first. Then compare provider credentials, selected devices, and settings.
+  Only investigate an operating system gap after the version and setup match.
+
+To print the installed command-line version, run:
+
+```bash
+jarvis version
+```
 
 ### Docs Keep Loading or Show an Error
 
-The desktop Docs library is local. On its first open after an install or update,
-Jarvis may need a moment to build the index. While that happens, the page shows
-an indexing message and visible placeholders instead of an empty screen.
+The desktop Docs library is local. On its first open after an install or
+update, it may show **Building local index…** or **Preparing your
+documentation** while it builds the search index.
 
-- If loading reaches the error panel, select **Try again**. Documentation
-  requests stop waiting after a bounded timeout, so the control should not
-  remain on an endless spinner.
-- If only Docs fails, do not replace a provider key or restart the entire app
-  first. Providers do not build the local documentation index.
-- Use **Open redesigned online docs** to open the hosted copy at
+- If **Documentation could not be loaded** appears, select **Try again**. The
+  app stops waiting after a bounded request timeout instead of keeping an
+  endless loading state.
+- If only Docs fails, do not replace a provider key. Online providers do not
+  build the local documentation index.
+- Select **Open redesigned online docs** to use the hosted copy at
   [personaljarvis.ai/docs](https://personaljarvis.ai/docs/) while the local
   index recovers.
-- If the sidebar is visible but no title matches, clear its filter. Use the
-  magnifying-glass search for full-text results across page content.
-- If both local and hosted Docs fail, separate the checks: the local library
-  depends on the Jarvis app; the hosted copy depends on the browser and
-  internet connection.
+- If the page list is visible but a title is missing, clear the sidebar filter.
+  Use the magnifying-glass search, or `Ctrl+K` on Windows and Linux or
+  `Command+K` on macOS, to search page content.
+- If both copies fail, test them separately. Local Docs depends on the running
+  Jarvis app. Hosted Docs depends on the browser and internet connection.
 
 ### Chat Does Not Answer or Uses the Wrong Provider
 
-Open **API Keys & Providers > Brain** and inspect the active card.
+Open **API Keys & Providers > Brain** and test the provider selected for chat.
+A saved credential, an active selection, and a successful request are separate
+facts.
 
-- **Saved**, **active**, and **Works** are separate states. A stored credential
-  does not prove that the selected account has credit, model access, or a
-  working connection.
-- Run **Test**. **Key invalid**, **Out of credits**, **Rate limited**, **Model
-  unavailable**, **Unreachable**, and **Integration error** each name a more
-  specific recovery path. Correct that account or model, or activate another
-  ready provider family that supports the same capability.
-- If ordinary chat works but a tool action fails, test the **Tool Model** and
-  the connected tool. A Brain answer does not prove that Computer Use, a
-  plugin, or an MCP call is ready.
-- If the message field says **Starting** or **Offline**, address the local app
+- Run **Test**. The current results are **Works**, **No key set**, **Key
+  invalid**, **Out of credits**, **Rate limited**, **Model unavailable**,
+  **Unreachable**, and **Integration error**. Repair that account or select a
+  ready provider that supports the required capability.
+- Jarvis can skip an unavailable provider and cross to another compatible
+  provider family when one is configured. Fallback cannot help if every
+  compatible provider is missing, unavailable, or out of credit.
+- If chat works but a tool action fails, check the **Tool Model** and the tool
+  connection. Their readiness is independent from the Brain card.
+- Agent missions have their own worker connections. Scheduled agent tasks use
+  the worker chosen when the task was created and do not silently move to a
+  different worker later.
+- If the message field shows **Starting…** or **Offline**, fix the local app
   connection before replacing a provider credential.
-- Enter or replace credentials only in the protected provider field. Never
-  paste them into chat, voice, tasks, Docs, or a support report.
+- Enter credentials only in the protected provider field. Never paste them
+  into chat, voice, tasks, Docs, or a support report.
+
+See [Providers and API Keys](providers-and-api-keys) for category-specific
+tests and fallback behavior.
 
 ### Voice Does Not Hear, Understand, Wake, or Speak
 
-Treat voice as a chain and check the first broken step.
+Voice is a chain. Check the first step that fails.
 
-| Symptom | Likely layer | Safe check |
-|---|---|---|
-| **Voice starting** remains visible | Voice components are still warming or could not become ready | Wait once; Chats remain usable. If it never becomes ready, check microphone permission and the selected voice providers. |
-| The wake phrase does nothing | Microphone, permission, wake engine, phrase, or spoken language | Open **Settings > Wake Word**, keep **Auto**, and run **Test wake word**. |
-| The Bar listens but no useful text appears | Input device, speech recognition, or Realtime input | Rescan and select the intended microphone; test **Voice Input** or the selected Realtime connection. |
-| The transcript is correct but no reply is heard | Output device or Voice Output | Check **Settings > Audio devices > Voice output**, then test the active **Voice Output** provider. |
-| Realtime cannot start or ends early | Realtime provider, browser audio, or session connection | End the call, test the Realtime card, and start a new session. Confirm whether the runtime used Pipeline fallback. |
-| The phrase activates during normal conversation | The phrase is too short or common | Use a distinct two- or three-word phrase with a prefix; there is no sensitivity slider. |
+| Symptom | Check |
+|---|---|
+| **Voice starting…** remains visible | Wait for the current warm-up once. If it never clears, check microphone access, the selected input, and the voice provider cards. |
+| The wake phrase does nothing | Open **Settings > Wake Word**, keep **Auto (recommended)** unless you have a reason to choose another engine, and run **Test wake word**. |
+| Listening starts but the transcript is wrong or empty | Select the intended microphone under **Settings > Audio devices**, then use **Rescan devices** if it is missing. |
+| The transcript is correct but no reply is heard | Check the selected output device and the active **Voice Output** provider. |
+| Realtime cannot start or ends early | End the call, test the Realtime provider card, and start a new session. Long gaps can still occur on some Realtime connections. |
+| Normal conversation triggers the wake phrase | Choose a distinct two-word or three-word phrase with a prefix. There is no sensitivity slider. |
+
+**Test wake word** checks the configured engine, model or vocabulary when
+applicable, and microphone level. It does not prove that the engine will
+recognize your spoken phrase. After it passes, say the phrase once for an
+end-to-end check.
 
 On macOS, use **Settings > Privacy permissions** for microphone access and
-restart only when the card asks. A Realtime session started in a browser uses
-that browser's microphone permission and device, not the native desktop audio
-picker. If a voice turn was recorded, **Transcription** and **Run Inspector**
-can show whether speech recognition, a provider, a tool, or spoken output was
-the last recorded stage.
+restart only if the card shows **Restart now**. A Realtime session opened in a
+browser uses that browser's microphone permission and device, not the native
+desktop audio selection.
 
-### A Permission or Approval Blocks the Action
+For a recorded voice turn, **Transcription** and **Run Inspector** can show
+whether speech recognition, a provider, a tool, or spoken output was the last
+recorded stage. They do not diagnose a turn that was never recorded.
 
-An operating-system permission and a Jarvis safety approval answer different
-questions. The operating system decides whether Jarvis may use the microphone,
-screen, accessibility tree, or input control. Jarvis then decides whether a
-particular action is safe, needs confirmation, or must be blocked.
+### A Permission or Approval Blocks an Action
 
-- Open **Settings > Privacy permissions** and act on the named row. Use
-  **Request** or **Open Settings**, then return to Jarvis and restart if shown.
-- If a confirmation asks about a specific action, review the target and effect
-  before approving. Do not weaken a safety rule merely to make an unclear
-  request proceed.
-- If restart is refused, active Jarvis-Agent missions are being protected.
-  Finish or stop them intentionally before trying again.
-- A status of **Allowed** proves the operating-system grant, not that every
-  later action will be approved or supported.
+An operating system permission and a Jarvis safety approval answer different
+questions. The operating system controls microphone, screen, accessibility,
+and input access. Jarvis then decides whether a particular action is safe,
+needs confirmation, or must be blocked.
+
+- On macOS, open **Settings > Privacy permissions** and act on the named row.
+  Current controls include **Allow**, **Open Settings**, **Check again**, and
+  **Restart now**. Current states include **Allowed**, **Not requested**,
+  **Denied**, **Restricted**, **Not allowed**, **Unavailable**, **Not
+  required**, and **Restart pending**.
+- Windows and Linux do not show the macOS permission cards. Use the operating
+  system's own microphone, display, and accessibility controls when the
+  affected feature requires them.
+- Review the exact target and effect before approving an action. Do not weaken
+  a safety rule merely to make an unclear request proceed.
+- **Allowed** proves the operating system grant. It does not prove that the
+  action is supported or that Jarvis will approve every later request.
 
 ### A Plugin, MCP Server, or CLI Is Disconnected
 
-- For a packaged plugin, use **Refresh catalog** and then **Reconnect** when
-  shown. Complete sign-in with the intended account and return to the app.
-- For an MCP server, review its status, reload it, and try one harmless
-  read-only action. Its process, URL, authorization, or tools can be
-  unavailable. Do not paste a missing secret directly
-  into `mcp.json`; prefer the packaged plugin when one exists.
+- For a packaged plugin, select **Refresh catalog** to reread catalog state.
+  It does not repair or update the plugin. Use **Reconnect** when the card
+  shows **Reconnect needed**, complete sign-in with the intended account, and
+  return to the app.
+- For an MCP server, check whether it is enabled and read its connection error.
+  Then try one harmless read-only tool. A server can be running while a tool
+  still lacks permission. Prefer the packaged plugin when one exists, and
+  never place a raw secret in `mcp.json`.
 - For a CLI connection, select **Recheck status** after installation or login.
-  **Connected** can confirm account discovery without proving that a particular
-  command has permission, so test a supported read-only action first.
-- If every connection reports that the backend is unreachable, return to the
-  app-wide startup check. If only one connection fails, repair that service
-  rather than restarting unrelated features.
+  Its states include **connected**, **disconnected**, **not installed**, and
+  **error**. **connected** confirms discovery and account readiness, not every
+  command's authorization, so try one supported read-only action.
+- If every connection says the backend is unreachable, return to the app-wide
+  startup check. If one connection fails, repair that service without changing
+  unrelated providers.
 
-### A Task, Jarvis-Agent, or File Appears Stuck or Missing
+See [Plugins](plugins), [MCP Connections](mcp-connections), and
+[CLI Connections](cli-connections) for their individual setup steps.
+
+### A Task, Agent Mission, or File Appears Stuck or Missing
 
 - In **Tasks**, select **Refresh** and expand the card's Timeline. A scheduled
-  task needs Jarvis to be running when it becomes due; a failed task can point
-  to its Brain, plugin, permission, or action layer.
-- In **Jarvis-Agents**, read the health banner and current mission state before
-  restarting. Longer work can be queued, running, reviewing, or correcting.
-  Test **API Keys & Providers > Jarvis-Agents** if no worker is reachable.
-- Use **Outputs** as the durable place to find mission results. The live
-  Jarvis-Agents board is not a permanent history, and Outputs currently shows
-  the newest cards rather than every historical mission.
-- **This session has no saved files** means the run produced no archived file
-  or failed before archiving. Ask for a named deliverable and success criteria
-  before starting a new attempt.
-- **Restart** on an Outputs card starts a new linked mission attempt. It is not
-  the same as the global app **Restart** button.
-- **Open** and **Reveal in folder** diagnose file-opening problems without
-  rerunning the mission. If a preview is shortened or marked binary, use a
-  suitable local app.
+  task can run one missed occurrence when the scheduler returns, so Jarvis does
+  not have to be running at the exact due time. Work interrupted during
+  shutdown is not automatically repeated.
+- In the Agents view, open the mission row and read its status and detail before
+  restarting. If no worker is ready, check the **Agents** category under
+  **API Keys & Providers**. Subscription CLI workers have a built-in test;
+  API-backed workers are verified with a short mission.
+- The live mission board is not permanent history. **Outputs** keeps a recent
+  set of archived deliverables, not every past mission and not a backup of
+  files delivered elsewhere.
+- **This session has no saved files** means that attempt produced no archived
+  deliverable. Check its mission result before starting a new attempt.
+- **Restart** on an Outputs card creates a new linked mission attempt. It is
+  different from the top-bar **Restart** control. **Continue** does the same
+  for a cancelled attempt.
+- **Open** and **Reveal in folder** are available only when the desktop app can
+  reach the local file. Remote and headless views do not offer a file download.
+  A shortened preview or binary notice is not evidence that the file is
+  damaged.
+
+### The Built-In Checks Are Not Enough
+
+Advanced users can run the read-only command-line doctor:
+
+```bash
+jarvis --doctor
+```
+
+It checks command registration, Brain selection, external agent worker CLIs,
+and Linux Computer Use prerequisites. It is not a complete app, network,
+provider-account, audio, or wake-word test. Use the feature-specific checks
+above for those areas.
 
 ## When to Seek Help
 
 Ask for help when a focused test still fails after one retry, the problem
 returns after one normal restart, the app repeatedly crashes, or a record
-appears lost. Use **Feedback** to open the project's public Discord bug forum;
-an invite button is available if needed.
+appears lost. Open **Feedback**, then choose **Open #report-a-bug**. If needed,
+select **Join Discord first**. Posts in that Discord channel are public. Use
+the project's GitHub Issues page if Discord is unavailable.
 
-Include only what helps another person reproduce the problem:
+Include only what another person needs to reproduce the problem:
 
 - Personal Jarvis version, operating system, and whether you use the desktop
   app, a browser, or a headless host;
-- the affected view and exact visible status or error wording;
+- the affected view and exact visible status or error;
 - the shortest numbered steps, expected result, and actual result;
-- the approximate time and whether the problem affects one feature or all
-  views; and
-- one redacted screenshot or a small reviewed excerpt when it adds evidence.
+- the approximate time and whether one feature or the whole app is affected;
+  and
+- one redacted screenshot or small reviewed excerpt when it adds evidence.
 
 Do not attach a complete log, raw configuration, `.env` file, credential-store
-export, full transcript, or raw Run Inspector JSON unless a trusted maintainer
-requests a specific narrow part and you have reviewed it. If a credential was
-ever exposed, revoke or rotate it with the service first; redacting the later
-message does not make the old value safe again.
+export, full transcript, or raw Run Inspector data. If a credential was ever
+exposed, revoke or rotate it with the provider. Redacting a later message does
+not invalidate the exposed value.
 
 ## How It Fits Together
 
-| Area | Role in troubleshooting | Important boundary |
+| Area | What it can tell you | What it cannot prove |
 |---|---|---|
-| [Find Help in the App](find-help-in-the-app) | Uses the Docs overview, sidebar filter, full-text search, related guides, and online copy to find the right procedure | Reading Docs does not test or change the affected feature |
-| [Sessions and Run Inspector](sessions-and-run-inspector) | Provides read-only evidence for recorded voice turns: transcript, outcome, timing, providers, tools, and errors | It does not contain the full later lifecycle of standalone tasks, missions, or output files |
-| [Settings](settings-and-appearance) | Owns audio devices, wake checks, permissions, app startup, shortcuts, and restart-required choices | Change one relevant control at a time so the result remains attributable |
-| [Privacy and Local Data](privacy-and-local-data) | Explains what transcripts, missions, outputs, audit data, exports, and provider records may contain or retain | A local or exported copy remains separate from anything shared with support |
-| [API Keys & Providers](providers-and-api-keys) | Tests each Brain, speech, Realtime, Tool Model, and Jarvis-Agent connection at its own boundary | A working category does not prove another category works |
-| [CLI Reference](cli-reference) and [Control API Reference](control-api-reference) | Help advanced and headless users find supported discovery, status, and diagnostic operations | Prefer the app first; never expose the local API or put secrets in commands |
-| **Feedback** | Opens the public support channel after you have a safe, reproducible report | Treat anything posted there as shared with other people |
-
-The usual evidence path is: **visible symptom -> focused built-in check ->
-feature record or status -> one safe recovery -> redacted support report if it
-still fails**.
+| [Find Help in the App](find-help-in-the-app) | Which procedure matches the visible symptom | That the affected feature is working |
+| [Sessions and Run Inspector](sessions-and-run-inspector) | What happened during a recorded voice turn | What happened before a turn was recorded or after a separate task started |
+| [Settings](settings-and-appearance) | Selected audio devices, wake setup, and macOS permission state | Provider-account health or approval for a later action |
+| [Privacy and Local Data](privacy-and-local-data) | What local and exported records can contain | That a record is safe to share without review |
+| [API Keys & Providers](providers-and-api-keys) | Whether one provider can complete its own test | That another category or provider can work |
+| **Feedback** | A public place to submit a reproducible report | Private handling of anything you post |
 
 ## Check That It Works
 
 Verify only the path you repaired:
 
-1. Return to the affected view and confirm that its error, warning, or offline
-   state has cleared.
-2. Run its smallest harmless check: reload one Doc, run one provider **Test**,
+1. Return to the affected view and confirm that its error, warning, or
+   **Offline** state has cleared.
+2. Run its smallest harmless check. Reload one Doc, run one provider **Test**,
    use **Test wake word**, recheck one connection, or refresh one task.
-3. Complete one end-to-end action with no external side effect. For chat, send
-   `Reply with: recovery check complete.` For voice, ask one short question and
-   confirm both the transcript and spoken reply.
-4. If it was a voice problem, open **Transcription** and **Run Inspector** and
-   confirm that the new finished session contains the expected turn and a
-   usable outcome.
-5. Stop after the focused check passes. Do not rotate unrelated credentials or
-   change several working settings “just in case.”
+3. Complete one end-to-end action with no external side effect. For chat, ask
+   for a short reply. For voice, ask one short question and confirm the
+   transcript and spoken reply.
+4. If it was a recorded voice problem, open **Transcription** and **Run
+   Inspector** and confirm that the new session contains the expected turn.
+5. Stop when the focused check passes. Do not rotate unrelated credentials or
+   change several working settings as a precaution.
 
 ## Next Steps
 
-- Read [Install Personal Jarvis](install-personal-jarvis) when the app or its
+- Read [Install Personal Jarvis](install-personal-jarvis) if the app or its
   normal launcher never reaches a usable start.
-- Use [Providers and API Keys](providers-and-api-keys) for connection, model,
-  account, quota, and fallback problems.
+- Use [Providers and API Keys](providers-and-api-keys) for account, model,
+  quota, category, and fallback problems.
 - Follow [Audio Devices and Wake Word](audio-and-wake-word) for microphone,
   speaker, wake phrase, and local wake-engine checks.
-- Read [Platform Support](platform-support) before diagnosing a desktop, audio,
-  permission, or headless limitation as an app failure.
+- Read [Platform Support](platform-support) before diagnosing a desktop,
+  audio, permission, or headless limitation as an app failure.

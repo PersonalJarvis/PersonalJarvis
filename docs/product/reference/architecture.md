@@ -8,7 +8,7 @@ order: 5
 diataxis: explanation
 status: active
 owner: maintainers
-last_reviewed: 2026-07-15
+last_reviewed: 2026-07-21
 phase: "-"
 audience: end-user
 tags: [architecture, desktop, web, api, providers, jarvis-agents, data]
@@ -16,15 +16,16 @@ related: [providers-and-api-keys, jarvis-agents, safety-and-approvals, control-a
 ---
 
 Personal Jarvis is one local supervisor with several ways in. The desktop
-window, browser interface, command line, voice pipeline, and connected channels
-are not separate assistants: they reach the same core services and use the same
-configured capabilities where their host supports them.
+window, browser interface, Jarvis CLI, Pipeline and Realtime voice modes, and
+connected channels are not separate assistants. They share core services, but
+each surface can use only the capabilities available to its client and host.
 
-The core decides whether a request needs a local app operation, an answer from a
-Brain provider (the service and model that generate a response), a protected
-tool call, or a background mission. Understanding that choice makes failures
-easier to place: an open window proves that the local server is reachable, but
-it does not prove that speech, providers, tools, or Jarvis-Agents are ready.
+A direct API request already names the operation to run. For a natural-language
+request, the core decides whether to answer through a Brain provider, use a
+protected tool, or start a background mission. A Brain provider is the service
+and model that generate or route a response. An open window proves that the
+local server is reachable, but not that speech, providers, tools, or
+Jarvis-Agents are ready.
 
 ## The System in One View
 
@@ -36,17 +37,11 @@ mission -> live events and saved results -> request surface**
 | Part | What it does | Important boundary |
 |---|---|---|
 | **Request surfaces** | Accept input from the desktop or browser UI, voice, the Jarvis CLI, connected channels, or another trusted client | A surface can expose only the capabilities available on its device and operating system |
-| **Local web server** | Serves the UI and its application programming interface (API); normal request-response calls use REST, while persistent WebSocket connections carry live updates | Desktop and headless server mode share this server, but headless mode has no native window, microphone pipeline, or desktop controls |
+| **Local web server** | Serves the UI and its application programming interface (API); normal request-response calls use REST, while persistent WebSocket connections carry live updates | Desktop and headless mode share this server; headless mode has no native window or host microphone pipeline, but an enabled browser voice session can use the browser's microphone and speaker |
 | **Shared core** | Applies configuration, language, conversation context, capability checks, routing, and cancellation | It coordinates the product; it is not itself an AI model or external account |
 | **Providers and tools** | Supply reasoning, speech, vision, live audio, or a connection to another app or service | A provider sees the content sent to it, and a connected service receives the arguments needed for its action |
 | **Jarvis-Agents** | Run substantial work as saved missions in isolated working copies, followed by review | Missions have their own worker selection, lifecycle, and output; they are not long chat replies |
 | **Data and output** | Keep conversations, memory, mission events, settings, and generated files in purpose-specific stores | Live events and durable history are different; reconnecting surfaces reload saved state |
-
-The local API is the common control plane. The desktop window displays the web
-interface inside a native shell. A browser can display the same interface, and
-the CLI calls authenticated API operations instead of reproducing each feature
-inside the terminal. Voice enters through a speech pipeline and joins the same
-Brain and event flow after transcription.
 
 ## Four Ways a Request Can Run
 
@@ -59,104 +54,181 @@ and recover independently.
 | **Direct local operation** | Open a view, read settings, list documentation, inspect status, or perform a supported app command | The local API or a deterministic handler returns the result. A Brain provider is not required unless that operation explicitly asks one to interpret or generate content. |
 | **Brain answer** | Explain something, continue a conversation, summarize available context, or decide which tool fits | The shared Brain manager selects a suitable model, streams the response when supported, and records the turn. Text and Pipeline voice use the same Brain stack, while their saved text and voice records remain distinct sources shown together in Chats. |
 | **Protected tool call** | Search, control an app, use a connected service, or change something through a Jarvis tool | A tool-capable model can propose the call. Jarvis evaluates the exact tool and arguments, requests approval when required, then runs the call through the supervised executor. A button or direct API operation can have a separate route-specific confirmation path. |
-| **Background mission** | Build a deliverable, change a project, or complete substantial multi-step work | Jarvis saves a mission, plans bounded steps, gives each step an isolated workspace, runs a Jarvis-Agent, reviews the draft, and archives an approved result or an honest failure. |
+| **Background mission** | Build a deliverable, change a project, or complete substantial multi-step work | Jarvis saves a mission, plans bounded steps, runs each step in an isolated workspace, reviews the result, and keeps the mission record plus any archived output. |
 
-Pipeline voice wraps these paths with two additional stages: a speech-to-text
-provider turns audio into text before the shared core runs, and a text-to-speech
-provider turns the final, voice-safe response into audio afterward. Realtime
-voice uses a different live-audio provider path and does not automatically have
-every capability of the Pipeline path.
+Pipeline voice adds speech-to-text before the shared Brain path and
+text-to-speech after the response has been cleaned for speech. Realtime voice
+uses one live-audio provider session. In its normal delegated mode, requests
+about your data or actions return to the shared router through one
+`jarvis_action` bridge, so tool safety and mission dispatch still apply.
+Realtime does not automatically inherit every Pipeline-only feature.
 
-## Shared Core and Replaceable Edges
+The reply language is separate from the interface language. One resolver chooses
+English, German, or Spanish for each turn. An explicit reply-language choice
+wins; otherwise a short interjection keeps the established conversation
+language, a substantive turn follows detected input, and an unclear turn falls
+back to English. The Brain prompt, status phrases, action readbacks, and
+text-to-speech voice are expected to use that same decision.
 
-Jarvis depends on contracts rather than one provider implementation. Brain,
-speech, tool, channel, worker, and Realtime integrations are plugins that state
-what they can do. A capability is a usable feature such as calling tools,
-understanding an image, transcribing speech, or producing audio.
+## Eight Layers and Replaceable Edges
+
+Jarvis uses eight layers. The numbers describe dependency direction, not eight
+separate processes.
+
+| Layer | Reader-facing role | Examples |
+|---|---|---|
+| **L7: Interfaces** | Accept requests and show results | Desktop and browser UI, CLI, channels, notifications |
+| **L6: Supervisor** | Coordinates a turn or mission | State, routing, Brain manager, mission manager |
+| **L5: Harness adapters** | Connect supervised work to an execution environment | Computer Use and Python-script harnesses |
+| **L4: Brain** | Generates, routes, or reviews model-backed work | Brain providers and the short acknowledgement tier |
+| **L3: Intent and risk** | Classifies a request and applies action policy | Intent choice, risk tier, approval, rate-limit tracking |
+| **L2: Speech** | Converts between audio, text, and turn boundaries | Wake detection, voice activity, transcription, speech synthesis |
+| **L1: Audio input and output** | Captures and plays audio | Device selection, routing, playback, sound feedback |
+| **L0: Operating system and hardware** | Supplies physical capabilities | Display, microphone, speakers, input control, accessibility, optional GPU |
+
+Higher layers reach lower layers through protocols, which are small behavioral
+contracts rather than dependencies on one implementation. Components at the
+same level communicate through typed events instead of calling across the
+architecture sideways.
+
+Replaceable integrations are registered as plugins for wake detection,
+speech-to-text, text-to-speech, Brain, Realtime voice, harnesses, tools, and
+channels. A turn-detection plugin slot also exists, but no entry-point provider
+currently ships in that group. Mission worker backends are selected by the
+mission runtime; they are not ordinary provider plugins. A capability is a
+usable feature such as calling tools, understanding an image, transcribing
+speech, or producing audio.
+
+The shared live event stream is called the EventBus internally. Its events are
+immutable records with a trace identifier and a timestamp. The UI bridge,
+speech state, recorders, and other subscribers can observe the same turn, and a
+subscriber exception is logged without failing the publisher. This bus is
+in-process delivery, not durable history. WebSockets forward live updates to
+connected clients, while conversations and missions are saved separately.
+
+## Routing and Provider Fallback
+
+Direct REST operations and deterministic handlers do not need a model to choose
+their action. A natural-language turn first passes high-confidence local gates,
+then the router Brain when model judgment is needed. The router is a dispatcher
+with a curated tool set. It can answer, call an allowed direct tool, or use
+`spawn-worker` for a mission. Spawn tools are not exposed to mission workers,
+which prevents one worker from recursively starting the supervisor path.
 
 For a normal Brain turn, Jarvis starts with the active provider and selected
-model. It can try another suitable model or another connected provider family
-when the first path is missing a credential, unavailable, rate limited, or out
-of credit. A tool turn also needs a model that can actually call tools; a vision
-turn needs image understanding. Fallback never grants a capability that the
-replacement does not have.
+model. It can try another suitable model and then another credential-ready
+provider when the first path has no usable credential, is unavailable, is rate
+limited, or is out of credit. Known unusable providers are skipped for the
+current session or cooldown. A tool turn still needs a model that can call
+tools, and a vision turn needs image understanding. Fallback does not add a
+missing capability or make an unavailable account healthy.
 
-The shared live event stream, called the EventBus internally, lets the UI,
-speech state, recorders, and other interested features observe the same turn.
-Events carry a trace identifier so related work can be followed across layers.
-A failing observer is isolated from the others, but this stream is in-process
-delivery, not durable history. Conversations and missions are saved separately,
-and a reconnected UI fetches their current state from those stores.
+Realtime voice has its own credential-aware provider chain. If no Realtime
+session opens, the caller can use an available Pipeline or classic browser
+voice path. Once a Realtime provider has accepted a meaningful turn, Jarvis does
+not replay the captured audio through another path because that could repeat an
+action.
+
+If every compatible provider fails, Jarvis returns an unavailable or
+provider-down result. It does not treat a local server response as proof that a
+remote model completed the turn.
+
+## Commands, Tools, and Safety
+
+The app-command catalog maps each curated command to one mounted REST endpoint.
+The web UI, CLI, and `app-command` Brain tool therefore share the endpoint's
+schema and behavior. The catalog is a curated subset, not a claim that every
+REST route is safe to call through natural language.
+
+Model-proposed tools run through one supervised executor. It evaluates the
+specific tool and arguments before execution:
+
+- `safe` actions normally run without confirmation.
+- `monitor` actions run with an audit trail, unless a plausibility check asks
+  for confirmation.
+- `ask` actions wait for the user's decision.
+- `block` actions do not run.
+
+A matching blacklist wins. A matching whitelist can downgrade an otherwise
+confirming action to `safe`; otherwise the tool's declared tier applies. An
+operating-system permission, connected-service scope, route confirmation, and
+mission grant remain separate boundaries. Passing one never grants the others.
+
+Mission workers receive a limited, mission-scoped capability grant. Tool
+objects and credentials remain with the supervisor, and a worker request still
+passes through the same executor. Secret, configuration-mutation, skill, and
+recursive mission tools are not exported to workers.
+
+## Jarvis-Agent Missions
+
+A mission has a durable event log and a lifecycle separate from chat. The
+mission decomposer can split the goal into bounded steps. Each step gets a fresh
+workspace:
+
+- A source-dependent task uses a Git worktree based on the source checkout.
+- A repository-independent deliverable can use a lean, empty Git workspace.
+
+The worker writes only in that workspace. The reviewer, called the Critic,
+checks the captured work and can approve, reject, or request a correction. The
+worker and Critic loop is capped at three rounds. Approved files and useful
+partial work are copied into the mission archive before disposable workspaces
+are cleaned up.
+
+Review is a quality gate, not a guarantee that an output is correct. A worker,
+Critic, budget, safety check, or provider can fail. The mission records that
+failure, and Outputs can mark retained partial work as needing review. A task
+that needs the Personal Jarvis source tree also needs Git and a real source
+checkout; a packaged installation without Git history cannot run that kind of
+source-editing mission.
+
+The Jarvis-Agents view shows live agent activity. Mission history and archived
+Outputs are the durable sources to use after a reconnect or restart.
+
+## Readiness and Platform Limits
 
 Jarvis deliberately shows its interface before every heavy subsystem finishes
-warming. This makes the window responsive sooner, but it creates more than one
-readiness level:
+warming. A feature can report **getting ready**, return a temporary `503`, or
+show a setup message while the rest of the app already works. The health route
+proves the web boundary, not a Brain, voice, tool, or mission provider.
 
-- **Server ready** means the UI and health route answer.
-- **Brain ready** means a usable provider stack has finished loading.
-- **Voice ready** means capture, transcription, and speech output are usable.
-- **Mission ready** means the mission store, worker runner, and review path are
-  available.
+Windows, macOS, Linux desktop, and headless Linux share the web server and core.
+Startup probes the host's display, terminal, accessibility, hotkey, cursor, and
+elevation capabilities. Missing optional components or permissions should
+produce an unavailable state or a clearly reported no-op, not a claim that the
+action succeeded.
 
-A feature can therefore report **getting ready**, return a temporary `503`, or
-show a setup message while the rest of the app already works. Persistent
-unavailability is a subsystem problem, not evidence that every layer is down.
+Headless mode keeps the browser UI, REST and WebSocket APIs, text chat, Docs,
+missions, and file work. It has no host desktop window, local wake listener,
+global shortcut, overlay, or physical Computer Use target. Browser voice is a
+separate path: it needs an enabled voice surface, browser microphone permission,
+working providers, and HTTPS when the browser is on another computer. Linux
+Wayland can also prevent global input and desktop control even when a display is
+present.
 
 ## Data, Events, and Trust Boundaries
 
-Jarvis separates data by purpose so one live connection is not treated as the
-source of truth for everything.
+Jarvis separates live state from durable records.
 
 | Data or boundary | Where it belongs | What can leave the local device |
 |---|---|---|
-| **Text and voice history** | Local conversation stores, with separate records presented together in Chats | A provider receives the current request and the context Jarvis includes for that turn |
-| **Memory, profile, and Wiki** | Local database entries and workspace files | Only the relevant context selected for a provider or connected action is sent onward |
-| **Mission history** | A dedicated mission event store that survives UI reconnects and app restarts | The selected worker and reviewer providers receive the mission instructions and review context they need |
-| **Mission files** | Isolated working copies during execution, then archived and user-visible Outputs | A worker tool or connected service can receive file content only when the mission is allowed to use it |
-| **Credentials** | The protected credential layer chosen for the installation, separate from chat and mission prompts | The credential is used to authenticate its service; the UI normally receives status rather than the saved value |
-| **Live state** | In-process events and WebSocket updates | Authenticated remote surfaces can receive the live updates their session is allowed to view |
+| **Chats and memory** | Local conversation, profile, Wiki, and workspace stores | A provider receives only the request and context Jarvis selects for that turn |
+| **Missions and Outputs** | A durable event store plus archived workspace snapshots | Worker and reviewer providers receive the instructions and content needed for their work |
+| **Product Docs** | Local Markdown indexed and served through the Docs API | Reading bundled documentation needs no Brain provider |
+| **Settings and credentials** | Atomic local configuration plus the protected credential layer | Integrations receive the settings and secret needed to authenticate; the UI normally receives status, not the saved secret |
+| **Live state** | In-process events forwarded to clients through WebSockets | Authenticated remote surfaces receive the updates allowed for their session |
 
 > [!warning] Local orchestration does not make a remote provider or connected
 > service local. Review the provider's data policy and the account scopes before
 > sending private conversation, memory, files, screen content, or contact data.
 
-The local server also has its own security boundary. Desktop use normally stays
-on the same computer. A server configured to accept connections from another
-computer must have a Control API key, and protected requests use either an
+Remote access adds another boundary. A server that accepts connections from
+another computer requires a Control API key. Protected routes then use the
 authenticated app session or the credential required by that route. Provider
-credentials and the Control API key have different purposes and cannot replace
-each other.
+credentials cannot replace the Control API key.
 
 ## How It Fits Together
 
-Follow one request from start to finish:
-
-1. **A surface accepts the request.** The desktop or browser UI, voice pipeline,
-   CLI, channel, task, or integration supplies text, audio, or a direct command.
-2. **The local boundary checks the caller.** UI and API traffic passes host,
-   origin, session, and Control API checks that apply to that surface. Voice and
-   local events enter through their own trusted runtime paths.
-3. **Jarvis prepares one turn.** It resolves the output language, loads the
-   conversation context that belongs to the request, and checks which local and
-   connected capabilities are available.
-4. **The core chooses the execution path.** A deterministic operation can run
-   locally. A conversational turn goes to a Brain provider. An action becomes a
-   supervised tool call. Substantial work becomes a saved Jarvis-Agent mission.
-5. **Capability and fallback rules select an edge.** Jarvis prefers your active
-   selection, skips a connection already known to be unusable, and can try a
-   compatible provider family. If nothing fits, it reports the missing or
-   unavailable capability instead of inventing a result.
-6. **Permissions and safety apply where work has effects.** Operating-system
-   access, service scopes, tool risk, approval, and mission grants are separate
-   checks. Passing one does not silently pass the others. Read [Safety and
-   Approvals](safety-and-approvals) for the exact action boundary.
-7. **Results return through live events and direct responses.** The active
-   surface receives text, audio, progress, state changes, or an error. A mission
-   can continue after the originating conversation is free again.
-8. **Durable features save their own record.** Chats save messages, voice saves
-   session turns, memory keeps selected long-term context, and missions keep
-   events plus archived outputs. The live UI can then reconnect without turning
-   the event stream into a database.
+Every surface enters one core, which selects a safe path and returns the result.
 
 ## Check That It Works
 
@@ -182,7 +254,8 @@ Tools, voice, and Jarvis-Agents each need their own feature check.
 | Health is online, but chat, voice, or missions are unavailable | Health proves the web server, not every provider or runtime | Test the relevant category in **API Keys & Providers** and check the dedicated feature page. |
 | A chat message is saved, but no normal answer appears | The Brain failed to build or no connected provider could serve the turn | Open **API Keys & Providers > Brain**, test the active card, and try a ready provider from another compatible family. |
 | An action waits, is denied, or has no effect | A safety decision, operating-system permission, service scope, or route-specific confirmation blocked it | Review the exact request and permission. Do not bypass a block; use [Safety and Approvals](safety-and-approvals) to find the missing boundary. |
-| A mission is missing, stays active, or finishes without the expected file | The request was not delegated, the worker path is unavailable, review is still running, or no deliverable was archived | Open **Jarvis-Agents** for live state and **Outputs** for the durable record, then follow [Jarvis-Agents](jarvis-agents). |
+| Browser voice is absent on a headless host | Browser voice is disabled, the browser lacks microphone permission, the connection is not secure, or a speech provider is unavailable | Keep using text, then check the browser permission, HTTPS, voice mode, and matching provider cards. |
+| A mission is missing, stays active, or finishes without the expected file | The request was not delegated, the worker or Critic is unavailable, review is still running, or only partial work was archived | Open **Jarvis-Agents** for live state and **Outputs** for the durable record, then follow [Jarvis-Agents](jarvis-agents). |
 
 ## Next Steps
 

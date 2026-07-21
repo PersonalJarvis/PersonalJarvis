@@ -8,16 +8,17 @@ order: 4
 diataxis: explanation
 status: active
 owner: maintainers
-last_reviewed: 2026-07-15
+last_reviewed: 2026-07-21
 phase: "-"
 audience: end-user
 tags: [safety, approvals, risk-tiers, permissions, computer-use, automation]
 related: [computer-use, tasks-and-reminders, skills, privacy-and-local-data]
 ---
 
-Jarvis uses a safety decision before a tool can act on your computer or a
-connected account. That decision may let the call run, pause it for a clear
-yes or no, or refuse it.
+Jarvis routes supported model-initiated tool calls through one safety gate
+before they can act on your computer or a connected account. The gate may let
+a call run, pause it for a clear yes or no, or refuse it. A tool path that
+bypasses this gate is a product defect.
 
 This is a gate around **Jarvis tool calls**. It is not a universal sandbox,
 an undo system, or a replacement for operating-system permissions and service
@@ -31,15 +32,13 @@ assign a different level to a read action than to a write action.
 
 | Decision | What happens | What to remember |
 |---|---|---|
-| **Safe** | The call runs without asking first and is recorded | Safe means low-friction, not private, reversible, or guaranteed to succeed |
-| **Monitor** | The call runs without asking first and is recorded for review | Monitor is an audit level, not a preview or pause |
+| **Safe** | The call runs without asking first; captured action records identify it as safe | Safe means low-friction, not private, reversible, or guaranteed to succeed |
+| **Monitor** | The call runs without asking first; captured action records identify it for review | Monitor is an audit level, not a preview or pause |
 | **Ask** | The exact call pauses until an approval path answers; no answer normally becomes a denial after about 60 seconds | Review the destination and arguments before approving |
 | **Block** | The call is refused before the tool runs | Approval cannot override a block |
 
-The decision order is compact:
-
-**proposed tool and arguments -> deny rule -> allow rule -> tool level -> run,
-ask, or block**
+Jarvis checks the proposed tool and arguments in this order: deny rule, allow
+rule, then the tool's own level. It then runs, pauses, or blocks the call.
 
 A matching deny rule always wins. A matching allow rule is standing authority:
 it changes the matching call to **safe**, even when the tool would normally
@@ -55,9 +54,10 @@ an approval prompt.
 
 ## Review an Approval
 
-An approval is intentionally small. It authorizes one paused tool call with
-one trace identifier. It does not authorize the rest of a mission, future
-calls to the same service, or a rewritten set of arguments.
+One approval authorizes one paused tool call with one trace identifier. It does
+not authorize the rest of a mission, future calls to the same service, or a
+rewritten set of arguments. Pending approvals are held in memory, so an app
+shutdown or restart does not preserve authority to run them later.
 
 Before you approve, check:
 
@@ -79,25 +79,49 @@ unrelated next request also abandons the action and repeated unclear replies
 eventually cancel it. In Realtime, give a clear no or close the session when
 you change your mind.
 
-The voice flow has no visible countdown and its pending entry has no separate
-wall-clock expiry. Answer promptly. If you return later or no longer remember
-the exact action, say no and start again.
+The normal voice flow has no visible countdown and its pending entry has no
+separate wall-clock expiry. Answer promptly. If you return later or no longer
+remember the exact action, say no and start again. Realtime also keeps a
+pending action until you clearly answer or close the session; changing the
+subject is not a reliable denial there.
 
 ### Jarvis-Agent Missions
 
 A connected tool used by a Jarvis-Agent remains owned by the supervisor. The
-worker receives a short-lived list of allowed tools, not the saved credential
-or a reusable approval. An ask-level call can pause with the tool name, worker,
+worker receives a short-lived grant for selected tools, not the saved
+credential or a reusable approval. Recursive mission tools, Skill execution,
+secret and configuration tools, host shells, and live desktop controls are not
+included in that grant. An ask-level call can pause with the tool name, worker,
 risk level, reason, a redacted argument preview, and an expiry time. The
 detailed approval panel requires a second click before **Approve and run**;
 **Deny** is immediate.
 
+In the app and spoken updates, the worker name follows your configured wake
+word, such as **Nova-Agent**. With no configured name, the fallback is
+**Assistant-Agent**. This page uses **Jarvis-Agent** for the internal system.
+
 > [!warning]
 > The detailed Missions view and its **Approvals** tab exist in the current
 > frontend, but the main desktop navigation does not expose that view. A global
-> toast can report a pending mission call without giving you a reachable review
-> screen. Do not try to bypass the gate. Let the request expire or deny, and
-> perform the consequential action yourself.
+> toast can report a pending mission call, but the toast has no decision button.
+> Use the supported CLI path below or let the request expire. Do not broaden an
+> allow rule just to make the mission continue.
+
+Replace the uppercase placeholders with the identifiers shown by the toast or
+the first command:
+
+```bash
+jarvis missions tool-approvals MISSION_ID
+jarvis missions deny-tool MISSION_ID TRACE_ID --reason user_denied
+jarvis missions approve-tool MISSION_ID TRACE_ID --yes
+```
+
+The list command shows only live requests. A decision removes that request; a
+wrong mission, unknown trace, or expired request is rejected as not found. The
+approve command requires `--yes` because the CLI marks it as dangerous. These
+commands use the same mission approval API as the hidden panel and resume only
+the matching call. A direct API client does not add the CLI's `--yes` gate, so
+it must apply its own deliberate confirmation before calling the approve route.
 
 Standard text chat also has no general foreground approval panel today. An
 ask-level action started there can wait and then be denied. Use voice for a
@@ -118,7 +142,7 @@ Approving means **try this exact call now**. It does not:
 - make information sent to a remote service local or private.
 
 Operating-system prompts, browser consent, account scopes, in-app destructive
-buttons, and command-line `--yes` prompts are separate controls. Passing one
+buttons, and the CLI's required `--yes` gate are separate controls. Passing one
 does not silently pass the others.
 
 ## Standing Authority and Automation
@@ -130,9 +154,10 @@ Automation changes when you can be present to answer.
 When you create an agent task, a plugin grant set to **Write** or **Full** is
 pre-authorization for that plugin during the task's own run. Matching ask-level
 calls can be approved automatically without waking you. A **Read** grant does
-not provide that standing approval. Treat Write and Full as durable authority,
-review the prompt and schedule together, and remove grants the task no longer
-needs.
+not provide that standing approval. Treat Write and Full as durable authority
+and review the prompt, schedule, and grants together before creating the task.
+The current task view cannot edit an existing grant; cancel and recreate the
+task when you need narrower access.
 
 Cancelling a task prevents later scheduled work, but it is a soft cancel. It
 does not reliably interrupt a Computer Use loop that is already controlling
@@ -168,8 +193,9 @@ important backstop when its Jarvis tier is not specific enough.
 Computer Use is a monitored live-desktop tool, and its mouse and keyboard
 steps are mostly safe or monitored. It does **not** ask before every click or
 keystroke. Screen, accessibility, and input permissions plus foreground-window
-and protected-prompt guards provide additional boundaries, but you should
-still watch the run and avoid sensitive screens.
+checks provide additional boundaries. Login, password, two-factor, CAPTCHA,
+and operating-system elevation screens require human handoff rather than secret
+entry by Jarvis. You should still watch the run and avoid sensitive screens.
 
 To stop a running mission from **Outputs**, hold the stop control until its
 ring completes. For a live voice or Computer Use turn, use the app's hang-up
@@ -193,9 +219,10 @@ A successful action normally passes several independent boundaries:
    the exact call runs, waits, or stops.
 5. **Execution:** the computer or remote service accepts the request and may
    apply its own prompts, limits, charges, and policies.
-6. **Review:** local action events and results can appear in Sessions, the Run
-   Inspector, a task timeline, or mission history. Recording helps explain an
-   action; it does not undo it.
+6. **Review:** captured action events and results can appear in Sessions, the
+   Run Inspector, a task timeline, or mission history. These views show what
+   their active recorder received; they are not a complete, immutable audit log
+   and they cannot undo an action.
 
 This is why a fully connected email account can still produce a denied send,
 and why an approved desktop action can still fail when the operating system
@@ -205,17 +232,20 @@ blocks input.
 
 Use harmless checks rather than creating a real side effect:
 
-1. Ask Jarvis to perform a simple web search. Open **Run Inspector** and check
-   that the tool and result were recorded as a low-risk call.
+1. Start a normal voice session and ask Jarvis to perform a simple web search.
+   Open **Run Inspector** and check that the captured tool call has a low risk
+   level and a result.
 2. Ask Computer Use to open a calculator. Expect it to run as monitored work,
    not to request approval for every step. Watch the desktop and use hang-up or
    the stop control if it leaves the requested task.
-3. During a normal voice request that naturally needs approval, read the
+3. During a normal voice request that naturally needs approval, listen to the
    question and answer **no**. Confirm that no message, call, or other external
    effect occurred. Do not create a real send or purchase merely to test this
    page.
-4. If you maintain a scheduled task, reopen its plugin grants. Confirm that
-   every Write or Full grant is intentional and that read-only tasks use Read.
+4. If you maintain a scheduled task, expand its card and inspect the saved
+   **Spec**. Confirm that every Write or Full grant is intentional and that
+   read-only tasks use Read. Cancel and recreate the task if a grant is too
+   broad.
 
 The Run Inspector may show a risk level, who approved a call, its duration,
 and its outcome when those events were captured. Some automatic and spoken
@@ -228,7 +258,7 @@ approval field is not proof that no standing rule applied.
 |---|---|---|
 | An action ran without asking | It was safe or monitor, a standing allow rule matched, or the connection inherited the monitor default | Review the Run Inspector, external account scopes, and any advanced allow rules |
 | Text chat waits and then reports a denial | The call was ask-level, but text chat has no general approval control | Retry through voice when appropriate, or perform the action yourself |
-| A mission toast says approval is needed, but no Approvals screen is visible | The detailed Missions view is not reachable from the current main navigation | Let it expire; do not broaden an allow rule just to make the mission continue |
+| A mission toast says approval is needed, but no Approvals screen is visible | The detailed Missions view is not reachable from the current main navigation | Use `jarvis missions tool-approvals MISSION_ID`, then deny it or approve the exact trace with `--yes`; otherwise let it expire |
 | A task sent or posted without asking | Its Write or Full plugin grant pre-authorized matching work | Cancel the task, then recreate it with Read or no plugin grant |
 | Computer Use starts immediately | Its outer tool and most desktop steps are monitored or safe | Watch the run; use hang-up or stop when it leaves the requested scope |
 | Approval expired before you decided | The paused call reached its decision timeout | Recheck the target and start a fresh request; never approve a stale description from memory |

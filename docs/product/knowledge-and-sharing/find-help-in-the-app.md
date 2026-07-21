@@ -8,7 +8,7 @@ order: 5
 diataxis: howto
 status: active
 owner: maintainers
-last_reviewed: 2026-07-15
+last_reviewed: 2026-07-21
 phase: "-"
 audience: end-user
 tags: [documentation, help, search, troubleshooting, support]
@@ -21,49 +21,57 @@ understand how two parts work together, or find the safest first response to a
 problem.
 
 The local library is included with your installation and works without an
-internet connection once the app is running. Online documentation, community
-links, and feedback use your browser and therefore need a network connection.
+internet connection while your browser can reach the running Jarvis server.
+Online documentation, community links, and feedback need an internet
+connection. The Docs controls follow your selected interface language, but the
+guide pages are currently written in English.
 
 ## Browse the Local Library
 
 1. Open **Docs** from the app sidebar. On the first visit, **Preparing your
    documentation** can appear while Jarvis builds the local search index.
-2. Start with one of the featured guides, or use **Browse by Topic** to enter a
-   reader journey such as everyday use, configuration, safety, or reference.
+2. Start with one of the featured guides, or choose a card under **Browse by
+   Topic**. A topic card opens the first guide in that ordered section.
 3. Expand or collapse a section in the documentation sidebar, then select a
-   guide by title.
+   guide by title. With a keyboard, use **Tab** to reach controls and **Enter**
+   or **Space** to activate buttons.
 4. Select **Documentation** above the filter, or the **Documentation** item in a
    page breadcrumb, to return to the overview.
 
-The sidebar remembers a short list of recently opened guides on this device.
-That list appears when the filter is empty and helps you return to a page
-without searching again.
+The sidebar keeps up to five recently opened guides in the current browser
+profile. The list appears when the filter is empty. It is not stored in your
+Jarvis account or sent to a documentation service.
+
+Keyboard users can also use the **Skip to documentation content** link. Press
+**Tab** after opening Docs to reveal it, then press **Enter**.
 
 ## Choose the Right Search
 
-The documentation has two search tools. They look similar but answer different
-questions.
+The documentation offers several ways to find a guide or section.
 
 | Tool | Best for | What it checks |
 |---|---|---|
-| Sidebar **Filter title/tag...** | Finding a guide when you know the feature or topic | Guide titles, summaries, and topic tags |
+| Sidebar **Filter title/tag…** | Finding a guide when you know the feature or topic | Guide titles, summaries, slugs, and topic tags |
 | **Search docs** | Finding a term, visible error, setting, or explanation inside a guide | Titles, headings, tags, and complete guide text |
-| **Browse by Topic** | Learning in a sensible order | Reader journeys and their ordered guides |
-| **On this page** | Jumping within the guide you already opened | Level-two and level-three section headings |
+| **Browse by Topic** | Starting with a subject area | The first guide in each ordered documentation section |
+| **On this page** | Jumping within the open guide on a wide window | Level-two and level-three section headings |
 
 To search all guide text:
 
-1. Select the magnifying-glass button beside **Documentation**. You can also
-   press **Ctrl+K** on Windows or Linux, or **Command+K** on macOS, while Docs is
-   open.
+1. Select the **Full-text search** button beside **Documentation**. It has a
+   magnifying-glass icon. You can also press **Ctrl+K** on Windows or Linux, or
+   **Command+K** on macOS, while Docs is open.
 2. Enter one to three distinctive words. A feature name such as `wake word` is
-   usually more useful than a complete sentence.
-3. Review the guide title, section, and highlighted excerpt in each result.
+   usually more useful than a complete sentence. Every entered word must match
+   the same guide.
+3. Review the guide title, section, and excerpt in each result. Matching words
+   in the excerpt are highlighted.
 4. Use the arrow keys to move through results and **Enter** to open one, or
    select a result normally. Press **Escape** to close search.
 
-Search runs against the local library. It does not search your chats, Wiki,
-contacts, output files, the public website, or community posts.
+Search returns up to 20 results from the local library. It opens a selected
+guide at the top, not at the matching sentence. It does not search your chats,
+Wiki, contacts, output files, the public website, or community posts.
 
 ## Move Between Related Guides
 
@@ -75,15 +83,15 @@ Each guide is designed as part of a path rather than as an isolated page.
   input, receives a result, or controls a permission.
 - Use **Related Guides** near the end of a page for the closest follow-on
   topics.
-- Use **Previous** and **Next** at the bottom to continue through the complete
-  reader journey.
+- Use **Previous** and **Next** at the bottom to open adjacent guides in the
+  library order.
 - Check **Last reviewed** to see when the guide was last compared with the
   product.
 
-Internal guide links stay inside Docs. The **Open redesigned online docs**
-button on the overview opens the public documentation in your normal browser.
-The online library can be useful from another device, but it may describe a
-newer release than the version installed on your computer.
+Links to guides in the installed index stay inside Docs. The **Open redesigned
+online docs** button on the overview opens the public documentation in your
+browser. The online library can be useful from another device, but it may not
+match the version installed on your computer.
 
 ## Move From Guidance to Support
 
@@ -97,11 +105,15 @@ Use the [App Command Reference](app-command-reference) when you know the action
 you want but need to find how that action is exposed across voice, chat, the
 desktop app, or command-line tools. It is a catalog, not a diagnosis guide.
 
+There is no separate **Support** or **Diagnostics** view in the sidebar. The
+diagnostic API is a developer tool; Docs and Feedback do not run it or collect
+its output automatically.
+
 For a product bug, idea, or question, open **Feedback** in the main app
-sidebar. The current Feedback view does not submit a form or attach logs from
-Jarvis. It opens the project's **#report-a-bug** forum in Discord and offers a
-separate **Join Discord first** button. If Discord is not suitable, use the
-project's [public issue tracker](https://github.com/PersonalJarvis/PersonalJarvis/issues).
+sidebar. The current Feedback view does not submit an in-app form, run
+diagnostics, or attach logs. It opens the project's **#report-a-bug** forum in
+Discord and offers a separate **Join Discord first** button. If Discord is not
+suitable, use the project's [public issue tracker](https://github.com/PersonalJarvis/PersonalJarvis/issues).
 
 Before posting anywhere public, describe what you expected, what happened,
 and the shortest steps that reproduce it. Remove credentials, recovery codes,
@@ -126,37 +138,38 @@ screens from anything you share.
    the goal and need a command, setting, or supported action without another
    tutorial.
 5. **External help is a deliberate handoff.** Online docs, Discord, and the
-   public issue tracker open outside Jarvis. The Docs index does not send your
-   search terms or local data to those services.
+   public issue tracker open outside Jarvis. The local Docs search does not send
+   your query or guide data to those services.
 
-If the internet is unavailable, the installed guides and their search can
-still work. Online docs and feedback links cannot, but that does not stop chat,
-voice, or other local app areas.
+On a headless installation, open the Jarvis web interface in your own browser.
+The server has no desktop window and cannot open a browser for you, so external
+links fall back to a new tab in that browser. If the internet is unavailable,
+the installed guides and search can still work, but online docs and Feedback
+cannot. Chat and voice availability then depends on your configured providers
+and local capabilities.
 
 ## Check That It Works
 
 1. Open **Docs** and wait until the overview shows the local guide count.
 2. Open full-text search and enter `permissions`.
-3. Confirm that results show a title, section, and highlighted excerpt, then
-   open one result.
+3. Confirm that results show a title, section, and excerpt, then open one
+   result.
 4. Select a heading from **On this page** on a wide window, or use a related
    guide link near the bottom.
 
-Success means the selected guide opens inside Docs and the search result leads
-to the matching part of the local documentation. No provider credential is
-needed for this check.
+Success means the selected guide opens inside Docs. Scroll or use **On this
+page** to reach the relevant section. No provider credential is needed for
+this check.
 
 ## Troubleshooting
 
 | What you see | What it usually means | What to do |
 |---|---|---|
 | **Preparing your documentation** | Jarvis is scanning the installed guides and building search for the first time | Wait a moment. The rest of the app can remain usable while this finishes. |
-| **Documentation could not be loaded** | The local index did not become ready before the request ended, or its files are unavailable | Select **Try again**. You do not need to restart the app for the first retry. |
+| **Documentation could not be loaded** or **Could not load doc.** | The local index or selected file was unavailable, or the request timed out | Select **Try again**. This repeats the request; it is not a manual re-index command. Return to the overview if one guide still fails. |
 | The sidebar filter finds nothing | It checks guide metadata, not every paragraph | Clear the filter, open full-text search, and try one or two feature-specific words. |
 | Full-text search shows no results | All entered words may not occur in one guide, or the local index is not ready | Shorten the query, remove generic words, and wait for the overview to finish loading before trying again. |
-| A guide says **Could not load doc** | The selected page is missing from the current local index or could not be read | Select **Try again**, return to the overview, and search for the topic in another guide. |
 | Online docs or Feedback does not open | The external browser handoff was blocked or the device is offline | Check the network, try the button once more, then open the public site or issue tracker directly in your browser. |
-| Local and online instructions differ | The website may cover a newer release than the installed library | Prefer the local guide for the version you are running, and check its **Last reviewed** date before changing settings. |
 
 ## Next Steps
 

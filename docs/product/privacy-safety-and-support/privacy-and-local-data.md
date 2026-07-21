@@ -8,7 +8,7 @@ order: 1
 diataxis: explanation
 status: active
 owner: maintainers
-last_reviewed: 2026-07-15
+last_reviewed: 2026-07-21
 phase: "-"
 audience: end-user
 tags: [privacy, local-data, retention, deletion, providers, backups]
@@ -36,16 +36,13 @@ A normal request can cross several boundaries:
 2. **Jarvis adds context locally.** Depending on the feature, this can include
    recent conversation history, standing instructions, a Profile summary,
    contact names and relationships, or relevant Wiki excerpts.
-3. **The selected capability processes it.** A local provider works on the
-   Jarvis host. A remote provider or connected service receives the input and
-   context required for its part of the request.
-4. **Tools act within their own boundary.** A local command can stay on the
-   host, while a plugin or Model Context Protocol (MCP) connection can send its
-   arguments to another service. Safety approval controls whether an action may
-   run; it does not make a remote request local.
-5. **Jarvis stores the result that belongs to the feature.** A chat reply,
-   voice transcript, task timeline, mission record, Wiki update, output file,
-   or Board total can be saved in a different local store.
+3. **The selected capability processes it.** Local providers work on the host.
+   Remote providers receive the input and context needed for their part.
+4. **Tools use their own boundary.** A local command can stay on the host, but
+   a plugin or Model Context Protocol (MCP) connection can contact a service.
+   Safety approval does not make that request local.
+5. **Jarvis stores the result.** Replies, transcripts, tasks, missions, Wiki
+   updates, output files, and Board totals can use different local stores.
 
 ## Know What Is Stored
 
@@ -62,12 +59,18 @@ folder, the Wiki vault, the Jarvis-Agent output area, and any exports you save.
 | Wiki and memory | Markdown pages, contact companion notes, candidate facts, a derived search index, archives, and local recovery snapshots | Wiki content persists until changed locally. Curator actions archive instead of hard-delete, and the current Wiki view has no permanent-delete control. |
 | Jarvis-Agents and Outputs | Mission work areas, logs, reviews, diffs, and approved deliverables | Mission output folders older than 14 days are removed during the normal startup cleanup. Files copied to Downloads or another destination are separate and remain there. |
 | Jarvis Board | Daily totals, tool categories, streaks, achievements, generated biography text, and reactions | These derived summaries are local and have no current clear-all control. Older summaries can remain after their source voice sessions are pruned. |
-| Local audit data | Daily event logs and captured screenshot blobs used for diagnostics and replay | The flight recorder is on by default. Screenshot blobs are removed after 10 days by default; the daily event logs do not currently have the same age-based cleanup. |
+| Diagnostics and audit data | A rotating desktop log, daily Flight Recorder events, captured screenshot blobs, and an optional latency log | The desktop log rotates at 10 MB and keeps three rotated files. The Flight Recorder is on by default. Its screenshot blobs are removed after 10 days by default, but its daily event files and the optional latency log have no age-based cleanup. |
 
 The embedded app also keeps small interface preferences, such as panel sizes,
-sound choices, and an optional Board share handle, in browser-style local
-storage. Clearing that storage resets the preferences but does not remove the
-databases and files listed above.
+theme and language choices, sound choices, recent-document entries, and an
+optional Board share handle, in browser-style local storage. Clearing that
+storage resets the preferences but does not remove the databases and files
+listed above.
+
+Jarvis does not automatically sync these local stores between separate
+installations. Devices connected to one server see that server's data, but
+browser preferences stay in each browser profile. Another Jarvis installation
+has separate data unless you copy it or sync its files through another service.
 
 ### Understand What Is Not Saved Together
 
@@ -90,7 +93,7 @@ chat as proof that no local or remote copy exists.
 | Plugins, MCP, and CLI connections | The arguments and context passed to the tool, plus any result it returns | When you or Jarvis runs that connection; a local CLI can itself contact services outside Jarvis |
 | Jarvis-Agents | The mission request, selected files or repository context, scoped tool calls, worker output, and review material | When a remote worker or model handles the mission |
 | Wiki processing | Candidate facts and relevant page excerpts | When a remote Wiki extractor or curator reviews a possible memory update |
-| Board and sharing | A share card when you send it; approved aggregate statistics when optional federation is enabled | Only for the chosen share destination or configured federation, except for the biography limitation below |
+| Board and sharing | A share card when you send it; a request routed through a configured Board federation service when that API is used | Sharing is user-triggered. Enabling federation alone does not start an automatic aggregate upload in the current app. The biography limitation below is separate. |
 | Feedback and community links | Whatever you post or attach, under the destination's rules | The current Feedback screen opens an external community site; Jarvis does not attach the active chat automatically |
 
 Phone calls and connected messaging channels necessarily pass audio or messages
@@ -98,12 +101,11 @@ through their configured services. Once data reaches a provider, channel,
 community, or recipient, its retention and deletion rules apply separately.
 Removing the local Jarvis record does not send a deletion request to them.
 
-An installation can also expose an optional feedback relay through the Control
-API. When an operator has connected that relay and someone uses it, the report
-title and description, an optional screenshot, the app and runtime versions,
-the host operating-system description, and the submission time are sent to
-Discord. The current Feedback screen does not use this relay; it opens the
-community site so you can review and submit the post yourself.
+An optional feedback API relay can send a report title, description, screenshot,
+app and runtime versions, operating-system description, and submission time to
+Discord when an operator configures and uses it. The current Feedback screen
+does not use this relay. It opens the community site for you to review and post
+the report yourself.
 
 > [!warning] Never put a password, API key, recovery code, or other credential
 > into chat, voice, a Wiki page, a task, feedback, or an output file. Use the
@@ -113,7 +115,8 @@ community site so you can review and submit the post yourself.
 ### Current Board Biography Limitation
 
 Viewing or refreshing the Board does not publish its statistics. Optional
-Board federation is also off by default.
+Board federation is off by default, and enabling it alone does not start
+background aggregate synchronization in the current app.
 
 A separate background biography feature is less obvious: after Jarvis has
 enough activity, it can ask the currently selected Brain provider to summarize
@@ -124,16 +127,21 @@ on/off control. Disabling federation does not disable this Brain request.
 
 ### Current Audit and Redaction Limitation
 
-The flight recorder stores the event stream for diagnostics, not only anonymous
+The Flight Recorder stores the event stream for diagnostics, not only anonymous
 counts. Its daily files can contain message text, transcripts, action details,
-provider metadata, and other event fields. The current app has no in-app switch
-or clear button for this store, and only its screenshot blobs have the default
-10-day cleanup.
+provider metadata, and other event fields. The desktop log can also contain
+requests, actions, file paths, and error details. The current app has no in-app
+switch or clear button for these stores, and only the Flight Recorder's
+screenshot blobs have the default 10-day cleanup.
 
 Jarvis masks common credential shapes in selected session previews and refuses
 Wiki writes that match several credential patterns. The flight recorder does
 not pass every event through that same masking step. These guards reduce risk;
 they are not a complete personal-data or secret filter.
+
+Jarvis does not automatically upload the Flight Recorder or desktop log to a
+general telemetry service. They can still leave the host if you copy, attach,
+or share them, or if a connected feature sends relevant diagnostic context.
 
 ## Remove or Back Up Data
 
@@ -145,12 +153,17 @@ they are not a complete personal-data or secret filter.
 | A Profile detail or avatar | Clear the field or remove the avatar in Profile | Earlier Profile observations, Wiki facts, backups, and context already sent to a provider |
 | A contact | Use **Delete** in Contacts | Its Wiki companion page is moved to the Wiki archive; it can retain the name, aliases, relationship, and note, but not phone, email, or street address from the contact record |
 | A task | Cancel it if active, then delete it after it reaches a final state | Mission history, generated outputs, audit events, and actions already completed |
-| A voice session, Board history, or audit log | No item-level removal control is available in the current app | The applicable automatic retention may remove some data later, but not every related or derived record |
+| A voice session, Board history, Flight Recorder event file, or latency log | No item-level removal control is available in the current app | The applicable automatic retention may remove some data later, but not every related or derived record. Desktop log rotation limits old log files, but it is not a privacy erase action. |
 | A saved export or output copy | Delete the file with the operating system or destination app | The original Jarvis record and any copies, backups, recipients, or provider records |
 
 Jarvis does not currently provide one **Export all my data** or **Delete all my
 data** workflow. If complete removal matters, treat each local store, every
 export, every backup, and every connected service as a separate copy.
+
+Do not treat uninstalling the app as complete erasure. Data outside the
+installation folder can remain, including the app user-data folder, a separate
+Wiki vault, Jarvis-Agent outputs, saved exports, browser preferences, backups,
+and copies held by connected services.
 
 ### Back up the full set
 
@@ -162,9 +175,10 @@ For a broader backup, close Jarvis first and include all of these locations in
 your operating-system backup:
 
 - the installation data folder, including conversations, sessions, tasks,
-  missions, Profile files, memory databases, and audit logs;
-- the app user-data folder, including Contacts, Board data, user skills, and
-  preferences;
+  missions, Profile files, memory databases, diagnostic logs, and the optional
+  latency log;
+- the app user-data folder, including Contacts, Board data, user skills, the
+  Profile avatar, and other app-owned files;
 - the active Wiki vault, including its archive and attachments, plus the Wiki
   recovery-snapshot folder if you want rollback history;
 - the Jarvis-Agent output area and any exported copies in Downloads or another
@@ -176,27 +190,19 @@ it for sensitive material.
 
 ## How It Fits Together
 
-1. **Chats and Voice collect requests.** The active Brain may receive recent
-   context, Profile guidance, contact summaries, and Wiki excerpts. Speech and
-   vision services receive only the media needed for their capabilities, but a
-   remote service remains an external boundary.
-2. **Tasks preserve future work.** A scheduled action can later call the Brain,
-   a plugin, MCP server, or CLI. Deleting the task does not undo an action that
-   already ran.
-3. **Profile, Contacts, and Wiki supply durable context.** Profile describes
-   you, Contacts stores an address book, and Wiki keeps longer-lived knowledge.
-   A contact mirror deliberately leaves phone, email, and street address out of
-   the Wiki, but names, relationships, aliases, and notes can be copied there.
-4. **Jarvis-Agents create a separate mission trail.** Their prompts, worker
-   evidence, and files live outside Chats. Approved files appear in Outputs and
-   can be copied again to a user-visible folder.
-5. **Board derives summaries.** It reads supported activity and session records
-   into smaller totals. Sharing those totals is optional, but the background
-   biography can still use the selected Brain provider as described above.
-6. **Feedback is a deliberate external handoff.** The current screen opens a
-   community destination. Review text and screenshots yourself before posting;
-   Jarvis does not treat a safety approval as permission to publish private
-   context.
+1. **Chats and Voice collect requests.** Remote Brain, speech, or vision
+   providers receive the context or media needed for their capabilities.
+2. **Tasks preserve future work.** They can call providers or connections
+   later. Deleting a task does not undo an action that already ran.
+3. **Profile, Contacts, and Wiki supply durable context.** Contact mirroring
+   excludes structured phone, email, and address fields, but can copy names,
+   relationships, aliases, and notes into the Wiki.
+4. **Jarvis-Agents keep a separate mission trail.** Prompts, evidence, and
+   outputs live outside Chats, and exported copies have their own life.
+5. **Board derives summaries.** Share cards leave when you share them. The
+   background biography can still use the selected Brain provider.
+6. **Feedback is an external handoff.** Review text and screenshots before
+   posting them to the community destination.
 
 If a provider or connection is unavailable, the corresponding remote step can
 fail or use another compatible provider you configured. Local records and

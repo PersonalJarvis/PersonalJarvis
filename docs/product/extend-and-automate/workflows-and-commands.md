@@ -8,7 +8,7 @@ order: 7
 diataxis: explanation
 status: active
 owner: maintainers
-last_reviewed: 2026-07-15
+last_reviewed: 2026-07-21
 phase: "-"
 audience: end-user
 tags: [workflows, app-commands, automation, voice, cli, safety]
@@ -17,16 +17,21 @@ related: [tasks-and-reminders, skills, cli-reference, app-command-reference]
 
 Use an **app command** when you want Jarvis to perform one known action now,
 such as showing your tasks, testing a provider, or changing the voice volume.
-The command points to the same validated app action used by the corresponding
-desktop control.
+Each command points to an existing app route with a defined input schema and
+safety level.
 
-Use a **workflow** when you want several fixed steps to run in order, either
-when you start them or on a schedule. A workflow keeps its definition and run
-history locally, so you can inspect which step completed or failed.
+Use a **workflow** when you want several saved steps to run in order, either
+manually or on a schedule. Jarvis stores the definition, supplied inputs, step
+outputs, and errors in its local workflow database.
 
-> [!info] Workflows are experimental. The desktop view can run, enable,
-> inspect, and delete existing custom workflows, but it cannot yet create or
-> edit a workflow. Custom definitions require the CLI or control API.
+App commands and workflows are separate. The Command Registry does not
+currently contain a run-workflow command, so voice and chat cannot reliably
+start a saved workflow by name.
+
+> [!info]
+> Workflows are experimental. The desktop view can inspect, run, enable,
+> disable, and delete existing custom workflows. Creating or changing a
+> definition still requires the CLI or Control API.
 
 ## Choose the Right Building Block
 
@@ -40,14 +45,15 @@ history locally, so you can inspect which step completed or failed.
 | **Connection** | Access to tools from a plugin, MCP server, or command-line app | Jarvis needs a capability; the connection does not define the workflow |
 
 A workflow is not a longer app command. An app command maps one request to one
-validated app action. A workflow loads a saved definition and runs its steps
-sequentially, stopping at the first failure.
+validated app action. A workflow loads a separate saved definition, runs its
+steps sequentially, and stops at the first failure.
 
 ## Use an App Command
 
 You normally do not need to know a command ID. Ask for a concrete action in
-**Chats** or by voice, and Jarvis can select the matching command, validate its
-inputs, call the app, and report the app's actual response.
+**Chats** or by voice. When the active Brain supports tools, Jarvis can select
+the matching command, validate its inputs, call the app, and report the app's
+actual response.
 
 Current command families include these examples:
 
@@ -58,39 +64,43 @@ Current command families include these examples:
 | Work and history | List tasks or missions, read a mission result or recent voice turn, and cancel a task or mission |
 | Knowledge and tools | Store a self-contained fact in the Wiki or list the tools currently available to Jarvis |
 
-The list is curated, not a catalog of every button in the app. Browse the
-reader-friendly [App Command Reference](app-command-reference), or inspect the
-[canonical generated command catalog](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/commands-reference.md)
-for the current source-generated list.
+The registry is curated, so it does not contain every app control. Browse the
+[App Command Reference](app-command-reference) to understand the fields, or
+inspect the
+[generated App Command catalog](https://github.com/PersonalJarvis/PersonalJarvis/blob/main/docs/commands-reference.md)
+for the list generated from the current public registry source. The live
+catalog in your installed version remains authoritative for that installation.
 
-The same capability is available through four surfaces:
+Each registry entry maps the action across four surfaces:
 
-1. **Chat or voice:** ask naturally. Jarvis runs a matching command only when
-   the conversational tool path is available.
-2. **Desktop:** use the control in the command's named app section. The
+1. **Chat or voice:** Ask naturally. Jarvis runs a matching command only when
+   the conversational tool path and the action's dependencies are available.
+2. **Desktop:** Use the control in the command's named app section. The
    desktop does not have a separate command-catalog screen.
-3. **CLI:** use `jarvis commands list` or `jarvis commands show <command-id>`
+3. **CLI:** Use `jarvis commands list` or `jarvis commands show <command-id>`
    to browse the registry. These two commands are read-only; run an action
    through its feature command or the `jarvis api` interface.
-4. **REST:** each command points to one local control route - the validated
+4. **REST:** Each command points to one local control route, the validated
    app address used by the other surfaces. Most people do not need to call it
    directly.
 
 A conversational action is complete only after Jarvis receives success from
 the app. A spoken intention or ordinary prose answer is not proof that a
-setting changed. Consequential commands, including restart and cancellation,
-normally require a separate confirmation. A destructive CLI action requires
-`--yes`; use `--dry-run` to preview a supported request without sending it.
+setting changed. Commands marked **Requires confirmation** wait for a separate
+approval turn, and policy can still block an action. Dangerous CLI operations
+require `--yes`; use `--dry-run` to preview a supported request without
+sending it. A direct REST client does not receive an interactive confirmation
+dialog from registry metadata.
 
 ## Use a Workflow
 
-1. **Open Workflows.** Each card shows its name, Manual or scheduled trigger,
-   step count, active state, last result, and next run when one is planned.
+1. **Open Workflows.** Each card shows its name, Manual or cron trigger, step
+   count, active switch, last-run indicator, and next run when one is planned.
 
 2. **Expand the card before running it.** Review its description, step labels,
-   and recent runs. Labels are only a summary; for a custom or imported
-   workflow, `jarvis workflows show <workflow-id>` is the read-only way to
-   inspect the complete saved definition.
+   and **Recent runs**. Labels are previews. Use
+   `jarvis workflows show <workflow-id>` to inspect the complete saved
+   definition and recent run records.
 
 3. **Check its requirements.** A Brain prompt needs a reachable Brain
    provider. A local command needs the named program and suitable files. An
@@ -100,40 +110,69 @@ normally require a separate confirmation. A destructive CLI action requires
 4. **Select Run now.** A manual run starts immediately and the card refreshes
    as it moves through **pending**, **running**, and then **completed** or
    **failed**. The desktop asks for a URL only when the workflow name contains
-   “URL”; it does not provide a general input form for other custom workflows.
+   `URL`; it does not provide a general input form for other custom workflows.
 
 5. **Open Recent runs.** Expand a run to see the saved output or error for each
    step. A failure ends the sequence; later steps do not run.
 
-6. **Control future runs.** Turning on a scheduled workflow lets the local
-   scheduler start it while Jarvis is running. Turning it off removes its next
-   automatic run, but **Run now** still works as a manual test. The toggle does
-   not stop a run that already started, and there is currently no active-run
-   cancel control.
+6. **Control future runs.** Enable a cron workflow to let the local scheduler
+   start it while Jarvis is running. Schedules currently use the Jarvis host's
+   local time, and the next-run value can take up to one minute to appear.
+   Disable it to clear the next automatic run. **Run now** still works for a
+   disabled workflow.
 
-Seed workflows supplied with Jarvis cannot be deleted from the desktop. A
-custom workflow has a confirmed **Delete** action. The command registry does
-not currently include a dedicated run-workflow command, so the dependable ways
-to start one are the Workflows view or `jarvis workflows run <workflow-id>`.
+The switch does not stop a run that already started, and there is no active-run
+cancel control. Custom workflows have a confirmed **Delete** action. Deleting
+one also deletes its saved run history. Seed workflows cannot be deleted in
+the desktop; deleting one through the CLI or API only removes it until the next
+startup seeds it again.
 
-> [!warning] Treat a workflow definition as trusted automation. Direct local
-> command and Telegram steps do not pause for a fresh approval before each
-> step. Inputs, outputs, and errors remain in local run history. Never place a
-> password, API key, token, or recovery code in a definition or input, and
-> review the data boundary before a workflow sends local content to a provider.
+### Manage Definitions from the CLI or API
 
-Advanced definitions can name a connected-tool step or a Jarvis-Agent step,
-but those two step types are not currently wired into the desktop workflow
-runner and fail when reached. Use a [Skill](skills) for guided connected-tool
-work or a [Jarvis-Agent](jarvis-agents) for longer reviewed work instead. The
-shipped **URL Summary** is also an input-passing demonstration: it reasons from
-the URL text and does not download or read the page.
+| Action | Current supported path | Important limit |
+|---|---|---|
+| List or inspect | `jarvis workflows list` and `jarvis workflows show <workflow-id>` | The desktop shows only step previews and its most recent runs |
+| Create | `jarvis workflows create --def <json>` or `POST /api/workflows` | The desktop has no definition editor |
+| Edit | Submit a complete definition with the same ID through the create route | `PATCH /api/workflows/{workflow_id}` changes only `enabled` |
+| Run | **Run now**, `jarvis workflows run <workflow-id>`, or `POST /api/workflows/{workflow_id}/run` | The curated CLI sends an empty input object |
+| Schedule | Save a five-field cron trigger, then enable the workflow | Only manual and cron triggers are supported |
+| Delete | Desktop **Delete**, `jarvis workflows delete <workflow-id> --yes`, or the REST delete route | Deletion removes the definition and its run history |
+
+Every workflow route also appears under `jarvis api workflows`. The dynamic
+run operation accepts an input object through `--json-body`, as does the REST
+run route. The desktop asks for a `url` input only when the workflow name
+contains `URL`; it has no general input form.
+
+### Know Which Steps Work
+
+| Step type | What it does | Current requirement or limit |
+|---|---|---|
+| Brain prompt | Sends text to the active Brain and saves its reply | A reachable Brain path is required |
+| Speak | Publishes text to the voice output path | The step records success even when no text-to-speech output is available |
+| Local command | Starts one local executable and saves standard output | The program, working directory, and files must exist on the Jarvis host; shell pipes are not interpreted automatically |
+| Telegram message | Sends text through the Telegram Bot API | A configured bot credential and chat ID are required |
+| Tool call | Requests a named registered tool through the safety executor | The current app bootstrap does not attach the required executor, so this step fails when reached |
+| Harness dispatch | Sends a prompt to a named harness, including Jarvis-Agent definitions | The current app bootstrap does not attach a harness manager, so this step fails when reached |
+
+Text fields can use `{{prev.output}}`, `{{step_N.output}}`, and
+`{{input.key}}`. String values in tool arguments support the same substitution.
+Workflows do not currently branch, retry a failed step, or run steps in
+parallel.
+
+> [!warning]
+> Treat a workflow definition as trusted automation. Starting a workflow does
+> not add a fresh approval before each local command or Telegram step. Never
+> place a password, API key, token, or recovery code in a definition or input.
+> Review what may leave the computer before enabling a schedule.
+
+The shipped **URL Summary** demonstrates input substitution only. It reasons
+from the URL text and does not download or read the page.
 
 ## How It Fits Together
 
 1. **A request, button, or schedule starts the path.** Chat and voice can start
-   a curated app command. The desktop or CLI can start a workflow. A schedule
-   can start an enabled workflow while Jarvis is running.
+   a curated app command. The desktop, CLI, or REST API can start a workflow.
+   A cron schedule can start an enabled workflow while Jarvis is running.
 2. **Jarvis chooses one action or one definition.** The command registry maps
    one command to one existing app route and its accepted inputs. A workflow
    instead loads its saved steps and processes them in order.
@@ -144,14 +183,15 @@ the URL text and does not download or read the page.
    feature access.
 4. **Safety applies at the action boundary.** Conversational commands run
    through Jarvis's safety policy before their app route is called, and the CLI
-   adds its own confirmation gate for destructive requests. Workflow steps
-   have the direct-step limitation described above, so review and activation
-   are the important boundary. Read [Safety and Approvals](safety-and-approvals)
-   before automating an external change.
-5. **Unavailable capabilities fail honestly.** A command returns an error when
-   the local app action or required capability is unavailable. A workflow
-   records the failing step and stops; it does not skip ahead and claim the
-   whole sequence completed.
+   adds its own confirmation gate for destructive requests. Direct workflow
+   steps have the limitation described above, so definition review and
+   activation are the safety boundary. Read
+   [Safety and Approvals](safety-and-approvals) before automating an external
+   change.
+5. **Unavailable capabilities fail clearly.** A command returns an error when
+   the app action or required capability is unavailable. A Brain step uses the
+   active provider path and its configured fallbacks. If no provider can
+   answer, the step fails. A workflow records the failing step and stops.
 6. **The result returns to the starting surface.** A command reports the
    server-confirmed outcome in the conversation, desktop, or CLI. A workflow
    stores the overall state and step results under Recent runs.
@@ -160,9 +200,9 @@ the URL text and does not download or read the page.
 
 Check a read-only app command first:
 
-1. In Chats or a voice conversation, ask **“What is my wake word?”**
-2. Confirm that Jarvis returns the phrase currently shown in the app's wake
-   settings. No setting should change and no confirmation should be needed.
+1. Run `jarvis commands show wake-word-get`.
+2. Confirm that the result identifies `GET /api/settings/wake-word` and marks
+   the command as non-dangerous. No setting changes.
 
 Then check the workflow path:
 
@@ -179,13 +219,11 @@ saved run timeline without changing an external account.
 
 | What you see | What it usually means | What to do |
 |---|---|---|
-| Workflows is empty or shows a load error | The local workflow store is still starting or could not open | Wait for app startup, reopen Workflows, and restart normally if the view remains unavailable |
-| A run shows **failed** | The first unsuccessful step lacked its Brain, local program, input, file, or external connection | Expand the run, read the exact failed step, fix that requirement in the app, and run a supervised test |
-| A schedule never starts | The workflow is off, Jarvis was not running, or no next run could be calculated | Turn it on, confirm a next-run time appears, and keep Jarvis running for the test |
-| Jarvis describes an action but nothing changes | The conversational tool path was unavailable or no command actually returned success | Check the relevant desktop setting; retry there or use the documented CLI action instead of trusting the prose reply |
-| A consequential command does not run | It is waiting for approval, the confirmation expired, or safety blocked it | Review the proposed action, answer the confirmation clearly once, or leave it cancelled; never weaken a block to force it through |
-| A custom workflow needs input but no form appears | The desktop currently has only the URL-name input shortcut | Use a workflow with no input, or use the advanced CLI or API path with the definition's documented inputs |
-| A connected-tool or Jarvis-Agent step fails immediately | That step type is defined but is not connected to the desktop workflow runtime | Move the work to a Skill, normal conversation, or Jarvis-Agent mission and keep the workflow disabled |
+| Workflows is empty or shows a load error | The local workflow store is still starting or could not open | Wait for app startup, reopen **Workflows**, and restart normally if the view remains unavailable |
+| A run shows **failed** | The first unsuccessful step lacked its Brain, local program, input, file, connection, or runtime dependency | Expand **Recent runs**, read the exact failed step, fix that requirement, and run a supervised test |
+| A schedule never starts | The workflow is disabled, Jarvis was not running, the cron expression is invalid, or the host time differs from what you expected | Enable it, wait up to one minute for **Next run**, and verify the Jarvis host's local clock |
+| A custom workflow needs input but no form appears | The desktop supports only the workflow-name-based URL shortcut | Use the dynamic CLI or REST run route with an input object, then inspect the saved run input and result |
+| Jarvis describes an app action or workflow run but nothing changes | The conversational tool path was unavailable, no app command returned success, or workflows are not exposed as conversational commands | Check the target state in the desktop, then use the documented CLI or desktop control |
 
 For repeated provider, connection, or startup failures, follow the main
 [Troubleshooting](troubleshooting) guide.

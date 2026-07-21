@@ -8,171 +8,224 @@ order: 6
 diataxis: howto
 status: active
 owner: maintainers
-last_reviewed: 2026-07-16
+last_reviewed: 2026-07-21
 phase: "-"
 audience: end-user
 tags: [control-key, authentication, unlock, browser, security, api-keys]
 related: [credentials-and-secrets, control-api-reference, providers-and-api-keys, troubleshooting]
 ---
 
-Every Personal Jarvis installation protects itself with one private key, the
-**Control Key**. It has exactly two jobs:
+The **Control Key** is the administrator credential for one Personal Jarvis
+installation. You use it to unlock a protected browser and to authenticate the
+Jarvis CLI, trusted agents, and other Control API clients.
 
-- **Unlock the interface.** When you open Jarvis in a normal browser — on the
-  same computer or from another device — a lock screen asks for this key once,
-  then keeps you signed in with a session cookie.
-- **Authenticate local agents.** Terminal tools and coding agents (the Jarvis
-  CLI, Codex, Claude Code) present the same key to drive Jarvis over the
-  Control API instead of clicking through the screen.
+When no existing key or operator-provided seed is available, Jarvis creates a
+random Control Key on first start. The key does not expire on a timer, and
+there is no Jarvis account that can email or reset it. Replacing or regenerating
+it is the way to revoke the old value.
 
-The desktop app itself never asks for the key: it proves it belongs to the
-installation through a private startup handshake.
+> [!warning] The Control Key is the deliberate exception to normal secret
+> visibility in Jarvis. The app can reveal and copy it so that you can recover
+> access and connect trusted clients. Other stored credentials stay masked.
 
-## The Browser Lock Is Optional (Off by Default)
+The desktop app does not ask you to enter the key. It exchanges a private,
+one-use startup token for an app session instead.
 
-Out of the box, a browser **on the computer Jarvis runs on** walks straight
-into the interface — no lock screen, no key. Access from anywhere else
-(another device on your network, a server reached over the internet) always
-requires the Control Key, no matter how this switch is set. Network exposure
-is never opt-out.
+## Before You Start
 
-To require the key on this computer too — for example on a shared machine —
-turn on **Ask for the key in the browser** in the key section (see
-[Find the Key](#find-the-key) below). The confirmation dialog offers to copy
-the key first, and the browser you enable it from stays signed in, so you
-cannot lock yourself out in the same breath. Turning the switch off again
-removes the lock screen for this computer only.
+- Use the installed desktop app, an already authenticated browser, or a
+  browser running directly on the Jarvis computer to manage the key.
+- Use HTTPS for a browser on another device. A direct loopback connection on
+  the Jarvis computer is the only plain HTTP exception.
+- Put the key only into the Jarvis lock screen, the CLI's hidden prompt, or a
+  trusted secret manager. Do not put it in chat, voice input, a URL, source
+  code, screenshots, logs, or an inline shell argument.
 
-One honest limitation: requests arriving through a proxy or forwarding
-service are recognized and still asked for the key, but a plain
-port-forwarding tunnel running **on the Jarvis machine itself** (an SSH
-tunnel, `socat`, a raw TCP relay) is indistinguishable from a local browser.
-If you forward the Jarvis port to a network in any way, turn the browser lock
-**on** first — the forwarded side is then protected by the key like any other
-remote access.
+## Understand the Browser Lock
 
-## You Already Have a Key
+**Ask for the key in the browser** is off by default. While it is off, a direct
+browser connection on the Jarvis computer can open the interface without a
+credential. Both the browser connection and the requested host must be
+loopback, and the request must not contain a standard forwarding indicator.
 
-Nobody sends you a Control Key, and there is no account behind it. The moment
-Jarvis starts for the first time, it generates a long random key **for this
-installation only** and stores it in your operating system's credential store
-(Credential Manager on Windows, Keychain on macOS, Secret Service on Linux),
-with a restricted file in the Jarvis data directory as the fallback on systems
-without such a store. No two installations share a key, and the key never
-leaves your machine by itself.
+Another device or a non-loopback address still has to authenticate. An HTTP
+proxy also stays locked when it preserves the remote host or adds standard
+forwarding headers. After you enter the Control Key once, Jarvis gives that
+browser an HttpOnly session cookie. The browser sends the cookie on later
+requests, not the Control Key.
 
-On macOS, an installation upgraded from an older Python-based launcher may ask
-for the login-keychain password once when it first reads that existing item.
-After you approve that read, Jarvis transfers the item to the installed app's
-verified identity; subsequent app starts and ordinary updates should not ask
-again. Start Jarvis through **Personal Jarvis.app**, not by running its Python
-module directly, so macOS sees the stable app identity.
+Turn on **Ask for the key in the browser** if other people can use the same
+computer. The confirmation includes **Copy** and **Require the key**. Jarvis
+creates a session for the browser that enabled the lock, so that browser stays
+signed in. Turning the switch off restores only the direct local-browser
+bypass.
 
-## Find the Key
+You cannot disable the Control Key itself. The focused `/api/control/*`
+operations still require it as a Bearer credential, including from the same
+computer. Jarvis also refuses to start a non-loopback listener when no Control
+Key exists.
 
-The key lives in its own section, named after your assistant: if your wake
-word is "Nico", the tab is called **Nico Key**.
+> [!warning] A headerless TCP relay on the Jarvis computer, such as a local SSH
+> port forward or raw TCP tunnel, can look exactly like a direct local browser.
+> Turn on **Ask for the key in the browser** before forwarding the Jarvis port.
 
-1. Open Jarvis on the computer it is installed on.
+## Find and Copy the Key
+
+The key has a dedicated tab named after your assistant. For example, a wake
+word named Nico produces the **Nico Key** tab. The neutral first-run label is
+**Assistant Key**.
+
+1. Open the installed Personal Jarvis app or an authenticated browser.
 2. Open **API Keys & Providers**.
-3. Select the key tab named after your assistant (for example **Nico Key**).
-4. Use **Show** to reveal the key, or **Copy** to put it on the clipboard.
+3. Select the tab named **<assistant name> Key**.
+4. Find the **Control Key** card. The key is masked by default.
+5. Select **Show** to reveal it, **Hide** to mask it again, or **Copy** to put
+   it on the clipboard.
 
-The lock screen in the browser points to this same place, so anyone who hits
-it can find their way here.
+Clear the clipboard after you have stored or entered the key. Clipboard
+history and synchronization can copy it to other devices.
 
 ## Unlock Jarvis in a Browser
 
-The lock screen appears when you connect from another device, or on the
-install computer itself once **Ask for the key in the browser** is turned on.
+The lock screen appears for a remote browser and for a local browser when
+**Ask for the key in the browser** is on.
 
-1. Open the Jarvis address in the browser. The lock screen appears.
-2. Paste the Control Key and select **Unlock**.
-3. The browser receives a private session cookie; the key itself is not stored
-   in the browser.
+1. Open the configured Jarvis address. The page shows **Unlock Personal
+   Jarvis**.
+2. Enter the key in **Control Key** and select **Unlock**.
+3. Wait for the Jarvis interface to load. The key field is cleared and the
+   browser receives an HttpOnly, `SameSite=Strict` session cookie.
 
-The exchange requires a direct same-computer connection or an encrypted
-(HTTPS) one, so the key never crosses a sniffable network hop in the clear.
+The exchange works only over HTTPS or a direct loopback connection. The key is
+sent in the request body for this exchange. It is not stored in the session
+cookie and is not accepted from a URL query parameter.
+
+A browser session has no fixed time limit. It ends when the browser discards
+its session cookie or when Jarvis restarts and clears its in-memory session
+list. Replacing or regenerating the Control Key does not revoke a browser
+session that is already signed in.
 
 ## Choose Your Own Key
 
-If you would rather remember the key than copy a generated one:
-
-1. In the key section, select **Choose my own key**.
-2. Enter the new key twice. It must be at least 12 characters long and may use
-   letters, digits, and `. _ ~ -` (no spaces).
+1. In the **Control Key** card, select **Choose my own key**.
+2. Enter the same value in **New Control Key** and **Repeat new Control Key**.
+   Use 12 to 128 characters. Only letters, digits, `.`, `_`, `~`, and `-` are
+   accepted; spaces are not accepted.
 3. Select **Set this key**.
 
-The new key replaces the old one immediately and everywhere: the browser lock
-screen, other devices, and every agent using the old key need the new value.
-Sessions that are already signed in stay signed in.
+The new value becomes active immediately. The previous value can no longer
+create a browser session or authenticate a Bearer request. Update every CLI,
+device, and agent that stored the previous value. Existing browser sessions
+remain signed in.
 
-## Regenerate the Key
+If neither the operating-system credential store nor the restricted file
+fallback accepts the new value, Jarvis reports an error and keeps the previous
+key active.
 
-If the key may have leaked — it appeared in a screenshot, a chat, or a log —
-generate a fresh random one:
+## Generate a New Random Key
 
-1. In the key section, select **Generate random key**.
-2. Confirm the dialog. The old key stops working immediately, everywhere.
-3. Copy the new key and update every device and agent that used the old one.
+Use regeneration when the current value may have appeared in a screenshot,
+chat, log, or other untrusted place.
 
-Regeneration is deliberately behind a confirmation dialog because it is a
-lockout-grade action for every client that still holds the old key.
+1. In the **Control Key** card, select **Generate random key**.
+2. Review the warning and select **Generate new key**.
+3. Select **Copy**, store the new value safely, and update every trusted client
+   that used the previous value.
 
-## On a Headless Server
+The previous key stops authenticating new requests immediately. Existing
+browser sessions remain valid until their cookie is discarded or Jarvis
+restarts. Regeneration therefore revokes the key, but it is not a sign-out
+button for browsers that are already authenticated.
 
-A server installation without a display has no settings screen, so two other
-paths exist:
+## Use the CLI or a Headless Server
 
-- Read the fallback file `.control_api_key` in the Jarvis data directory.
-- Ask a running instance over the loopback interface:
-  `GET /api/control/api-key` (see the
-  [Control API Reference](control-api-reference)).
+On the same computer, the Jarvis CLI discovers the running instance and reads
+the local Control Key through Jarvis's credential resolver. Check the
+connection without printing the key:
 
-A public (non-loopback) listener refuses to start without a key, so a server
-install can never be exposed unlocked by accident.
+```bash
+jarvis --json auth status
+```
 
-## Keep It Safe
+Success includes `"reachable": true`. For a remote instance, save its address
+and key through the hidden prompt:
 
-Treat the Control Key like an administrator password. Whoever has it can
-operate your Jarvis: read settings, switch providers, and use every protected
-operation of the instance. Never put it in chat or voice input, source code,
-URLs, logs, screenshots, documentation, or shell history. Store copies only in
-a trusted password manager.
+```bash
+jarvis auth login --url https://jarvis.example
+```
+
+Do not add the key after `--key` on the command line. An inline value can remain
+in shell history. The CLI also accepts the key from standard input for managed
+automation, but the process supplying it must keep both input and logs private.
+
+A headless installation uses the same key lifecycle as the desktop app. Jarvis
+tries the operating-system credential store first. If it is unavailable, such
+as on a server without Secret Service, it uses a restricted `credentials.json`
+file in the Jarvis data directory. Older or emergency fallback paths may also
+have a `.control_api_key` file, but that file is not guaranteed to exist.
+
+`GET /api/control/api-key` is the intentional clear-value reveal endpoint. It
+accepts an authenticated app session or the current Bearer key. A direct
+loopback caller can also use it while the local browser bypass is enabled. Keep
+its response out of terminal recordings and request logs.
+
+For API requests, send the key in exactly one `Authorization: Bearer` header.
+Do not send it as a query parameter or ordinary cookie. A malformed
+Authorization header is rejected instead of falling back to a valid browser
+cookie.
+
+## Recover Access
+
+1. Return to the computer that runs Jarvis. There is no remote account-recovery
+   service.
+2. On a desktop installation, open the installed app. Its startup token can
+   create a session without the Control Key. Then follow [Find and Copy the
+   Key](#find-and-copy-the-key).
+3. On the same desktop or headless host, try `jarvis --json auth status`. The
+   local CLI resolves the stored key without requiring you to paste it.
+4. If you have neither host access nor an authenticated browser session, the
+   remote interface cannot reveal or reset the key. Regain operating-system
+   access to the Jarvis host first.
+
+On macOS, an upgrade from an older Python launcher may ask for the login
+Keychain password once when the installed app first reads the existing item.
+Approve that read and start Jarvis through **Personal Jarvis.app** so later
+starts use the app's stable identity.
 
 ## How It Fits Together
 
 | Feature | Relationship to the Control Key |
 |---|---|
-| [Credentials and Secrets](credentials-and-secrets) | The key is stored like every other credential — operating-system store first, restricted file fallback — but it is the one value the UI may reveal and copy. |
-| [Control API Reference](control-api-reference) | Agents and scripts present the key as the Bearer credential for `/api/control/*` operations. |
-| [Providers and API Keys](providers-and-api-keys) | Provider keys connect external services to Jarvis; the Control Key protects your own Jarvis. Different credentials for different doors. |
+| [Credentials and Secrets](credentials-and-secrets) | Jarvis stores the key through the same portable credential system, but this is the one credential the interface may reveal and copy. |
+| Browser lock | A locked browser exchanges the key once for an HttpOnly session cookie. Turning off the lock bypasses authentication only for direct local-browser access. |
+| [Control API Reference](control-api-reference) | CLI clients and agents send the key as a Bearer credential. Most focused Control API routes do not accept a browser session instead. |
+| [Providers and API Keys](providers-and-api-keys) | Provider credentials connect Jarvis to outside services. They cannot unlock or administer your Jarvis installation. |
 
 ## Check That It Works
 
-1. Open **API Keys & Providers** and select the key tab named after your
-   assistant.
-2. Select **Show**, then **Copy**.
-3. Open the Jarvis address in a private browser window. On the install
-   computer the interface loads directly unless **Ask for the key in the
-   browser** is on; from another device the lock screen always appears.
-4. If the lock screen appears, paste the key and select **Unlock**. The
-   interface loads, which proves the stored key and the unlock exchange both
-   work.
+1. Open **API Keys & Providers**, select **<assistant name> Key**, and use
+   **Copy** on the **Control Key** card.
+2. Open Jarvis in a private browser window. A remote browser should show the
+   lock screen. A direct local browser shows it only when **Ask for the key in
+   the browser** is on.
+3. Enter the key and select **Unlock**. The interface loads without putting the
+   key in the address bar.
 
 ## Troubleshooting
 
 | What you see | What it usually means | What to do |
 |---|---|---|
-| No lock screen appears on the install computer | Expected — the browser lock is off by default; local browsers walk straight in | Turn on **Ask for the key in the browser** in the key section if you want the lock |
-| The lock screen rejects your key | The key was regenerated or replaced since you copied it | Read the current key in the key section on the install computer and try again |
-| You never received a key | Expected — keys are generated locally, not sent | Follow [Find the Key](#find-the-key) above |
-| **Setting the key failed** | Neither the OS credential store nor the fallback file accepted the new value | Unlock the credential store, check that Jarvis can write to its data directory, and retry; the old key stays active until a new one is stored |
-| An agent or CLI suddenly gets `401` errors | The key was regenerated or replaced after the agent stored it | Update the agent's stored key with the current value |
+| No lock screen appears on the Jarvis computer | The local browser bypass is on by default | Turn on **Ask for the key in the browser** if this is a shared computer |
+| The lock screen rejects the key | The key was replaced, regenerated, or copied incorrectly | Use an existing desktop or browser session to copy the current value, then try again |
+| A CLI or agent starts returning `401` | Its stored key is no longer current, or it did not send one Bearer header | Use the hidden `jarvis auth login` prompt for that target and retry once |
+| **Setting the key failed** appears | Neither available credential store accepted the replacement | Check host storage access and retry; the previous key remains active |
+| `.control_api_key` does not exist on a headless host | The current credential resolver is using the OS store or `credentials.json` instead | Use the same-host CLI or authenticated reveal endpoint; do not assume the compatibility file exists |
 
 ## Next Steps
 
-- Read [Credentials and Secrets](credentials-and-secrets) for how Jarvis
-  stores private values in general.
-- Use the [Control API Reference](control-api-reference) to drive Jarvis from
-  scripts and agents with this key.
+- Read [Credentials and Secrets](credentials-and-secrets) to understand storage,
+  masking, and safe credential replacement.
+- Use the [Control API Reference](control-api-reference) to authenticate trusted
+  scripts and agents without putting the key in a URL.
+- Open [Troubleshooting](troubleshooting) when the host, browser, or CLI cannot
+  reach the intended Jarvis instance.
