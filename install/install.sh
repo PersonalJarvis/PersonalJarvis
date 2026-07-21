@@ -1046,16 +1046,29 @@ salvage_reclone() {
     # (inside data/), the dotenv, AND the wiki vault (its absence from this
     # list is what destroyed a user's wiki pages on 2026-07-20). A failed
     # copy is a loud warning pointing at the backup dir — never silent.
+    # NOTE: a "skip when the destination exists" guard is WRONG for wiki —
+    # the fresh clone ships a tracked seed wiki/ skeleton, so the guard
+    # would silently never restore the user's real vault. Directories that
+    # exist on both sides are overlay-MERGED (user files win over seed).
+    # --- salvage-copy begin (extracted by tests/unit/install/test_install_salvage_copy.py)
     local item
     for item in data "$CONFIG_FILE_NAME" .env wiki; do
-        if [ -e "$stale_backup/$item" ] && [ ! -e "$INSTALL_DIR/$item" ]; then
+        [ -e "$stale_backup/$item" ] || continue
+        if [ ! -e "$INSTALL_DIR/$item" ]; then
             if cp -R "$stale_backup/$item" "$INSTALL_DIR/$item"; then
                 note "kept your $item from the previous install"
             else
                 err "could NOT carry over $item - it is still safe in $stale_backup/$item; copy it back manually."
             fi
+        elif [ -d "$stale_backup/$item" ] && [ -d "$INSTALL_DIR/$item" ]; then
+            if cp -R "$stale_backup/$item/." "$INSTALL_DIR/$item/"; then
+                note "merged your $item from the previous install over the fresh seed"
+            else
+                err "could NOT merge $item - it is still safe in $stale_backup/$item; copy it back manually."
+            fi
         fi
     done
+    # --- salvage-copy end
     ok 'reinstalled fresh (previous state preserved in the backup dir)'
 }
 

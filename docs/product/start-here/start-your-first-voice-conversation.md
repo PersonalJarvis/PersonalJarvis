@@ -8,132 +8,153 @@ order: 6
 diataxis: tutorial
 status: active
 owner: maintainers
-last_reviewed: 2026-07-15
+last_reviewed: 2026-07-21
 phase: "-"
 audience: end-user
 tags: [voice, microphone, wake-word, keyboard-shortcut, realtime, tutorial]
 related: [voice-conversations, audio-and-wake-word, languages-and-voices, permissions]
 ---
 
-Your first voice conversation can be one short turn: start listening, speak,
-and hear the reply. The status below your assistant's name shows what Jarvis
-is doing throughout the turn.
+Start a voice session with your wake word, the Call shortcut, or the idle
+Jarvis Bar. Then ask a question and listen for the reply. The status below your
+assistant's name shows when voice is ready, listening, thinking, or speaking.
 
-Voice is optional. If this computer cannot use a microphone or a compatible
-voice service, you can continue in **Chats** while you review the voice setup.
+This tutorial is for the desktop app. A headless installation has no local
+microphone or Jarvis Bar, but you can still use **Chats** or a connected
+channel.
 
 ## Before You Start
 
 - Open the desktop app and wait for **Voice starting…** to change to
   **Ready**.
-- Make sure a microphone and a speaker or headset are available.
-- Complete first-run setup, including any microphone permission your operating
-  system requests.
-- Connect only the services needed by your chosen voice mode. You do not need
-  to connect every service shown in the app.
+- Connect a microphone and a speaker or headset.
+- Finish first-run setup. On macOS, grant **Microphone** access when the app
+  asks for it. If access is still missing, open **Settings > Permissions**.
+- Set up the services required by your voice mode under **API Keys**. Realtime
+  needs a compatible Realtime provider. Pipeline needs working Voice Input,
+  Brain, and Voice Output paths. You do not need to configure every provider.
 
-> [!warning] Never speak passwords, provider credentials, recovery codes, or
-> other secrets. Enter a required credential only in **API Keys & Providers**.
+> [!warning] Never say a password, API key, recovery code, or other secret.
+> Enter provider credentials only in **API Keys & Providers**.
 
 ## Start Your First Conversation
 
-### 1. Check the microphone
+### 1. Check your audio
 
-During first-run setup, select **Test your microphone**, speak normally, and
-wait for **Sounds good**.
+If you chose a wake word during first-run setup, select **Test your
+microphone**, speak during the check, and look for **Sounds good**.
 
-If setup is already complete, open **Settings > Audio devices**. Choose your
-microphone or keep **Automatic (recommended)**. If you use a wake phrase, also
-open **Settings > Wake Word** and select **Test wake word**. That check confirms
-that the phrase, language, wake engine, and microphone are ready together.
+After setup, open **Settings > Audio devices**. Select your microphone and
+output device, or keep **Automatic (recommended)**. If you use a wake word,
+also open **Settings > Wake Word**, select **Test wake word**, and speak during
+the check. The result reports whether the saved phrase, detection engine,
+recognition language, and microphone signal are ready.
 
 ### 2. Start listening
 
-Use the activation method you chose during setup:
+Use one of these methods:
 
-- **Wake phrase:** Say your saved phrase. Begin your request when the status
-  changes to **Listening** and the Jarvis Bar becomes active.
-- **Talk / Push-to-talk:** Hold your configured shortcut, speak, and release
-  the keys to send the request. The shortcut works without a wake phrase.
+- **Wake word:** Say your saved phrase. Start your request when the sidebar
+  says **Listening** and the Jarvis Bar becomes active.
+- **Call shortcut:** Press the configured Call keys once. The shortcut starts a
+  normal voice session even when wake-word activation is off.
+- **Jarvis Bar:** Select the body of the idle bar to start a session.
 
-You can review or change the **Call**, **Hangup**, and **Talk / Push-to-talk**
-shortcuts under **Settings > Voice Keybinds**.
+**Settings > Voice Keybinds** contains the editable **Call** and **Hangup**
+shortcuts. Call is a one-press action, not push-to-talk. A global shortcut may
+be unavailable on Wayland or another desktop without global-hotkey support; in
+that case, use the wake word or Jarvis Bar.
 
 ### 3. Ask one short question
 
-Speak at a normal volume and finish the request before waiting for the answer.
-For this first check, choose something that needs only a short spoken reply.
+Wait for **Listening**, then speak at a normal volume. For this first check,
+ask something that needs only a short answer.
 
 ### 4. Follow the turn
 
-The normal flow is:
+With the default conversation setting, a normal turn looks like this:
 
-**Ready → Listening → Thinking → Speaking → Ready**
+**Ready → Listening → Thinking → Speaking → Listening**
 
 | Status | What it means | What to do |
 |---|---|---|
-| **Listening** | The microphone is open for this voice turn | Speak your request |
-| **Thinking** | Jarvis is preparing the answer or completing an action | Wait for the result |
-| **Speaking** | The spoken reply is playing | Listen, or end the session if needed |
-| **Ready** | The voice session has ended | Start another turn when you want |
+| **Ready** | Voice is available, but no session is open | Start a session when you want |
+| **Listening** | The microphone is open for the current session | Speak your request or a follow-up |
+| **Thinking** | The assistant is preparing an answer or working on an action | Wait for the result |
+| **Speaking** | A spoken reply or update is playing | Listen, interrupt, or end the session |
+| **Error** | The current voice path could not continue | End the session and review the reported problem |
 
-A longer request may move between **Thinking** and **Speaking** more than once
-while Jarvis gives a brief update and continues the work.
+A quick Realtime answer may pass through **Thinking** very briefly. A longer
+action can move between **Thinking** and **Speaking** while the assistant gives
+an update and continues working.
 
 ### 5. End the conversation
 
-The default voice setup ends the session after the reply. If your setup keeps
-the conversation open, use any one of these controls:
+After a reply, the default conversation setting returns to **Listening** so
+you can ask a follow-up without waking the assistant again. In Pipeline mode,
+the shipped idle timeout ends a quiet session after 30 seconds. A Realtime
+connection can remain open longer, so end it explicitly when you are done.
 
-- Say a clear closing command such as **hang up**.
+To end it sooner, use any one of these controls:
+
+- Say **hang up** or another clear closing command.
 - Press your configured **Hangup** shortcut.
-- Hover over the active Jarvis Bar and select the **X**.
+- Hover over the active Jarvis Bar and select the visible **X**.
 
-The bar returns to its quiet state and the sidebar shows **Ready**.
+If you enabled single-turn behavior, the session returns to **Ready** after
+each reply instead.
 
 ## How It Fits Together
 
-1. [Audio and Wake Word](audio-and-wake-word) supplies the microphone choice
-   and the activation method. [Permissions](permissions) controls whether the
-   operating system lets Jarvis hear the microphone.
-2. In Pipeline mode, voice input becomes text, the Brain prepares the answer,
-   and voice output speaks it. In Realtime mode, one live audio session listens
-   and replies, while longer actions can still use the same Brain.
-3. Both modes publish the same **Listening**, **Thinking**, and **Speaking**
-   states, so the app remains understandable even when the voice engine changes.
-4. [Languages and Voices](languages-and-voices) decides the reply language and
-   speaking voice. It does not replace microphone or provider setup.
-5. If Realtime cannot open before the turn begins, Jarvis tries the classic
-   Pipeline path. If no usable voice path remains, use **Chats** and review the
-   microphone, permission, and provider status instead of repeatedly speaking.
+1. [Audio and Wake Word](audio-and-wake-word) supplies the microphone,
+   speaker, and activation method. [Permissions](permissions) explains the
+   operating-system access that may be required.
+2. Pipeline turns microphone audio into text, sends the text to the Brain, and
+   plays the answer through a Voice Output provider. Realtime uses one live
+   speech-to-speech connection and can delegate longer actions to the Brain.
+3. Both modes feed the same sidebar states, so **Listening**, **Thinking**, and
+   **Speaking** keep the same meaning when the voice engine changes.
+4. **Settings > Languages** separates interface language, speech-recognition
+   language, and reply language. English, German, and Spanish are supported
+   choices. **Auto** follows the current substantive spoken turn and the
+   conversation language; if no language signal is available, the verified
+   fallback is English. [Languages and Voices](languages-and-voices) explains
+   these choices and the provider voice you hear.
+5. Realtime tries its available provider chain. If no Realtime provider can
+   open before a turn is committed, the desktop session changes to Pipeline.
+   A failure after a request or action has already been committed may end the
+   session instead of replaying it and risking a duplicate action. If no usable
+   voice path remains, continue in **Chats** and review audio, permissions, and
+   provider status.
 
 Read [Voice Conversations](voice-conversations) for a fuller explanation of
 how listening, the Brain, actions, and spoken output form one turn.
 
 ## Check That It Works
 
-Start a voice turn with your saved wake phrase or Call shortcut. Ask a
-short question. Voice is working when you see **Listening**, then **Thinking**
-or **Speaking**, hear a reply, and finally see **Ready** again.
+Start a session with your wake word, Call shortcut, or the idle Jarvis Bar. Ask
+a short question. Voice is working when the status changes from **Listening**
+to **Thinking** or **Speaking**, you hear a reply, and it returns to
+**Listening**. End the session with the Hangup shortcut and confirm that the
+status returns to **Ready**.
 
 ## Troubleshooting
 
 | What you see | What it usually means | What to do |
 |---|---|---|
-| **Voice starting…** does not change | The voice stack is still warming or did not become available | Wait briefly, then review microphone permission and **Audio devices** |
-| The wake phrase does nothing | Wake activation, language, model, or microphone readiness does not match | Run **Test wake word** and use the Call shortcut while you fix the reported item |
-| **Listening** appears, but no useful request is heard | The wrong microphone is selected, its level is low, or speech recognition is unavailable | Select the correct input, repeat the microphone check, then try one short request |
-| **Speaking** appears, but you hear nothing | The output device or system volume is wrong | Review **Settings > Audio devices** and the operating-system output volume |
-| Realtime reports that it is unavailable | The live voice connection could not open | Let Jarvis try Pipeline mode; if voice still fails, use **Chats** and review provider status |
-| The status changes to **Error** | The turn could not continue safely | End the session, correct the reported setup problem, and try again |
+| **Voice starting…** does not change, or the status becomes **Error** | The voice stack is still warming or a required audio or provider path is unavailable | Wait briefly, then review **Audio devices**, **Permissions**, and provider status under **API Keys** |
+| The wake word does nothing | Wake activation is off, its local model is missing, the recognition language is wrong, or the microphone signal is too quiet | Run **Test wake word**, follow its reported fix, and use Call or the idle Jarvis Bar meanwhile |
+| The Call shortcut does nothing | The binding is cleared or the desktop cannot register a global hotkey | Review **Settings > Voice Keybinds** and start the session from the idle Jarvis Bar |
+| **Listening** appears but no useful words are captured, or **Speaking** appears without sound | The selected input or output device is wrong, muted, or too quiet | Check both selectors under **Settings > Audio devices**, then check the operating-system input and output levels |
+| Realtime is unavailable | No configured Realtime provider could open a live session | Let the startup fallback use Pipeline when it is available; otherwise use **Chats** and test the selected provider under **API Keys** |
 
 ## Next Steps
 
-- Read [Voice Conversations](voice-conversations) to understand the complete
-  voice turn and how Realtime and Pipeline mode relate.
-- Read [Audio and Wake Word](audio-and-wake-word) to choose devices, tune a wake
-  phrase, or rely on the Call shortcut.
-- Read [Languages and Voices](languages-and-voices) to choose the reply language
-  and the voice you hear.
+- Read [Voice Conversations](voice-conversations) to understand follow-up turns
+  and the difference between Realtime and Pipeline.
+- Read [Audio and Wake Word](audio-and-wake-word) to choose devices, check a
+  wake phrase, or use the Call shortcut.
+- Read [Languages and Voices](languages-and-voices) to choose recognition and
+  reply languages and the voice you hear.
 - Read [Permissions](permissions) when the operating system blocks microphone
   access or another desktop capability.

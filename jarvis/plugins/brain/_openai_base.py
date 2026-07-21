@@ -406,6 +406,28 @@ def _error_metadata(exc: Exception) -> tuple[str, str, str]:
     return parameter, code, str(exc).lower()
 
 
+def _rejection_confidence(exc: Exception, parameter: str) -> str | None:
+    """How confidently an API error rejects one request parameter.
+
+    ``"structured"`` — the error's own ``param``/``code`` metadata names the
+    parameter (safe to remember for the endpoint). ``"message"`` — only the
+    narrow substring fallback matched: field name plus an unsupported marker
+    somewhere in the text. A gateway that concatenates several validation
+    complaints into one message can satisfy that accidentally, so a
+    message-level match may drive ONE retry but must never poison the
+    process-lifetime adaptation cache. ``None`` — no explicit rejection.
+    """
+    rejected_parameter, code, message = _error_metadata(exc)
+    unsupported = code in {"unsupported_parameter", "unsupported_value"} or any(
+        marker in message for marker in _UNSUPPORTED_ERROR_MARKERS
+    )
+    if not unsupported:
+        return None
+    if rejected_parameter:
+        return "structured" if rejected_parameter == parameter else None
+    return "message" if parameter in message else None
+
+
 def _explicitly_rejects_parameter(exc: Exception, parameter: str) -> bool:
     """Whether an API error explicitly rejects one request parameter.
 
@@ -414,15 +436,7 @@ def _explicitly_rejects_parameter(exc: Exception, parameter: str) -> bool:
     neither, so the message fallback remains intentionally narrow: the field
     name and an explicit unsupported marker must both be present.
     """
-    rejected_parameter, code, message = _error_metadata(exc)
-    unsupported = code in {"unsupported_parameter", "unsupported_value"} or any(
-        marker in message for marker in _UNSUPPORTED_ERROR_MARKERS
-    )
-    if not unsupported:
-        return False
-    if rejected_parameter:
-        return rejected_parameter == parameter
-    return parameter in message
+    return _rejection_confidence(exc, parameter) is not None
 
 
 # (base_url, model) -> optional-param adaptations that endpoint has already
@@ -457,60 +471,70 @@ def _compatible_retry_kwargs(
     exc: Exception,
     kwargs: dict[str, Any],
     adaptations: set[str],
-) -> tuple[dict[str, Any], str] | None:
-    """Build one safe retry after an explicit model/API capability rejection."""
+) -> tuple[dict[str, Any], str, bool] | None:
+    """Build one safe retry after an explicit model/API capability rejection.
+
+    Returns ``(retry_kwargs, field, cacheable)``. ``cacheable`` marks
+    adaptations safe to remember per (endpoint, model) for the process:
+    only STRUCTURED rejections qualify — a substring-matched message may
+    drive this one retry but never the cache — and a value-level
+    ``temperature`` complaint qualifies only when the model declares itself
+    default-only ("Only the default (1) value is supported"); an arbitrary
+    out-of-range value must not evict the knob for every later call.
+    """
     message = str(exc).lower()
     if "max_tokens" in kwargs and "max_tokens" not in adaptations:
-        rejected_max_tokens = (
-            "max_completion_tokens" in message
-            or _explicitly_rejects_parameter(exc, "max_tokens")
-        )
-        if rejected_max_tokens:
+        confidence = _rejection_confidence(exc, "max_tokens")
+        if "max_completion_tokens" in message or confidence is not None:
             retry_kwargs = dict(kwargs)
             retry_kwargs["max_completion_tokens"] = retry_kwargs.pop("max_tokens")
-            return retry_kwargs, "max_tokens"
+            # The rename is also cacheable on the server's own "use
+            # max_completion_tokens" hint — that wording is unambiguous.
+            cacheable = confidence == "structured" or "max_completion_tokens" in message
+            return retry_kwargs, "max_tokens", cacheable
 
     # Sampling is optional. If a model accepts only its own default, omission
     # is the capability-safe fallback and preserves the provider's chosen value.
-    if (
-        "temperature" in kwargs
-        and "temperature" not in adaptations
-        and _explicitly_rejects_parameter(exc, "temperature")
-    ):
-        retry_kwargs = dict(kwargs)
-        retry_kwargs.pop("temperature", None)
-        return retry_kwargs, "temperature"
+    if "temperature" in kwargs and "temperature" not in adaptations:
+        confidence = _rejection_confidence(exc, "temperature")
+        if confidence is not None:
+            retry_kwargs = dict(kwargs)
+            retry_kwargs.pop("temperature", None)
+            _, code, _ = _error_metadata(exc)
+            default_only = "only the default" in message
+            cacheable = confidence == "structured" and (
+                code == "unsupported_parameter" or default_only
+            )
+            return retry_kwargs, "temperature", cacheable
 
     # Reasoning effort degrades in two steps: a model that knows the knob but
     # not the value "none" (o-series, gpt-5 base) still honors "minimal" —
     # keeping the thought budget capped, which is the caller's whole intent —
     # and only a model that rejects the parameter itself loses the cap.
-    if (
-        kwargs.get("reasoning_effort") is not None
-        and _explicitly_rejects_parameter(exc, "reasoning_effort")
-    ):
-        if (
-            kwargs["reasoning_effort"] == "none"
-            and "reasoning_effort:minimal" not in adaptations
-        ):
-            retry_kwargs = dict(kwargs)
-            retry_kwargs["reasoning_effort"] = "minimal"
-            return retry_kwargs, "reasoning_effort:minimal"
-        if "reasoning_effort" not in adaptations:
-            retry_kwargs = dict(kwargs)
-            retry_kwargs.pop("reasoning_effort", None)
-            return retry_kwargs, "reasoning_effort"
+    if kwargs.get("reasoning_effort") is not None:
+        confidence = _rejection_confidence(exc, "reasoning_effort")
+        if confidence is not None:
+            cacheable = confidence == "structured"
+            if (
+                kwargs["reasoning_effort"] == "none"
+                and "reasoning_effort:minimal" not in adaptations
+            ):
+                retry_kwargs = dict(kwargs)
+                retry_kwargs["reasoning_effort"] = "minimal"
+                return retry_kwargs, "reasoning_effort:minimal", cacheable
+            if "reasoning_effort" not in adaptations:
+                retry_kwargs = dict(kwargs)
+                retry_kwargs.pop("reasoning_effort", None)
+                return retry_kwargs, "reasoning_effort", cacheable
 
     # Inline usage accounting is optional and not implemented by every
     # OpenAI-compatible server even when the installed SDK accepts the kwarg.
-    if (
-        "stream_options" in kwargs
-        and "stream_options" not in adaptations
-        and _explicitly_rejects_parameter(exc, "stream_options")
-    ):
-        retry_kwargs = dict(kwargs)
-        retry_kwargs.pop("stream_options", None)
-        return retry_kwargs, "stream_options"
+    if "stream_options" in kwargs and "stream_options" not in adaptations:
+        confidence = _rejection_confidence(exc, "stream_options")
+        if confidence is not None:
+            retry_kwargs = dict(kwargs)
+            retry_kwargs.pop("stream_options", None)
+            return retry_kwargs, "stream_options", confidence == "structured"
     return None
 
 
@@ -558,9 +582,10 @@ async def _create_with_token_param_retry(client: Any, kwargs: dict[str, Any]) ->
             retry = _compatible_retry_kwargs(exc, current_kwargs, adaptations)
             if retry is None:
                 raise
-            current_kwargs, field = retry
+            current_kwargs, field, cacheable = retry
             adaptations.add(field)
-            _PARAM_ADAPTATION_CACHE.setdefault(cache_key, set()).add(field)
+            if cacheable:
+                _PARAM_ADAPTATION_CACHE.setdefault(cache_key, set()).add(field)
             if field == "max_tokens":
                 log.info(
                     "provider rejected 'max_tokens' — retrying with "

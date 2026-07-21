@@ -1,36 +1,36 @@
 {
   "path": "desktop (_run_backend, GUI-free driver)",
   "runs": 1,
-  "python": "/Users/joanaluetke/PersonalJarvis/.venv/bin/python3",
-  "vault_pages": 83,
-  "median_wall_ms": 742.7,
-  "median_boot_ready_ms": 103.1,
-  "median_bind_wall_ms": 705.2,
-  "median_voice_ready_wall_ms": 14676.7,
+  "python": "/Users/joanaluetke/PersonalJarvis/.venv/bin/python",
+  "vault_pages": 84,
+  "median_wall_ms": 1966.6,
+  "median_boot_ready_ms": 416.3,
+  "median_bind_wall_ms": 1967.5,
+  "median_voice_ready_wall_ms": 28334.1,
   "voice_ready_wall_ms_runs": [
-    14676.7
+    28334.1
   ],
-  "median_voice_usable_wall_ms": 15265.9,
+  "median_voice_usable_wall_ms": 29735.8,
   "voice_usable_wall_ms_runs": [
-    15265.9
+    29735.8
   ],
-  "median_app_interactive_wall_ms": 15246.6,
+  "median_app_interactive_wall_ms": 29153.1,
   "app_interactive_wall_ms_runs": [
-    15246.6
+    29153.1
   ],
   "wall_ms_runs": [
-    742.7
+    1966.6
   ],
   "boot_ready_ms_runs": [
-    103.1
+    416.3
   ],
   "phase_medians_ms": {
-    "db_app_interactive": 9310.3,
-    "db_pre_webserver": 1286.4,
-    "db_webserver_ctor": 4047.7,
-    "flight_recorder": 0.4,
-    "mission_stack": 36.9,
-    "screenshot_retention": 0.9,
+    "db_app_interactive": 6161.7,
+    "db_pre_webserver": 5726.9,
+    "db_webserver_ctor": 15713.3,
+    "flight_recorder": 0.8,
+    "mission_stack": 600.4,
+    "screenshot_retention": 1.5,
     "uvicorn_serve": 0.0
   },
   "anchor": "spawn -> /api/health responds 200 (= DesktopApp._wait_for_backend success = window creation point)",

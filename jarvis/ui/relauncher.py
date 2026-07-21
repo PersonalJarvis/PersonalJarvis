@@ -450,6 +450,12 @@ def snapshot_user_state(root: Path) -> Path | None:
                 shutil.copytree(src, dst, dirs_exist_ok=True)
             else:
                 shutil.copy2(src, dst)
+                try:
+                    # credentials.json/.env carry secrets; match the 0600
+                    # discipline of their creation sites (no-op on Windows).
+                    os.chmod(dst, 0o600)
+                except OSError:
+                    pass
             saved = True
         except OSError:
             logging.getLogger(__name__).warning(

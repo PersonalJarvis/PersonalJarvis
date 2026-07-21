@@ -8,160 +8,180 @@ order: 4
 diataxis: explanation
 status: active
 owner: maintainers
-last_reviewed: 2026-07-15
+last_reviewed: 2026-07-21
 phase: "-"
 audience: end-user
 tags: [sessions, run-inspector, voice, transcripts, diagnostics, tasks, jarvis-agents, outputs]
 related: [chats, voice-conversations, troubleshooting, privacy-and-local-data]
 ---
 
-**Transcription** and **Run Inspector** are two views of the same recorded
-voice session. Transcription helps you read what was said. Run Inspector helps
-you understand what Jarvis did, which tools or Jarvis-Agents joined the turn,
-and where a delay or failure occurred.
+**Transcription** and **Run Inspector** are two views built from saved voice
+session data. Transcription shows the recognized conversation and recorded
+spoken output. Run Inspector adds the captured routing, tool, timing, approval,
+and error details that can help explain what happened.
 
-Both views are read-only. Opening them does not repeat a request, run a tool,
-or change the result.
+These views do not contain an audio recording, and opening them does not repeat
+a request or run a tool. Copying, downloading, or opening an export creates a
+separate copy of the saved data.
 
 ## Before You Start
 
-Finish at least one voice conversation. Jarvis records voice sessions by
-default, and a completed session gives both views their most reliable data.
-Text-only chats, scheduled task runs, and standalone Jarvis-Agent missions do
-not create Run Inspector entries on their own.
+Complete at least one voice turn. A running session can appear in both views,
+but its turns and totals may still change until the call ends. The local session
+recorder is enabled by default; if its store is disabled or unavailable, Jarvis
+can still handle a request but cannot rebuild these views afterward.
 
-> [!warning] A transcript or raw export can contain your words, tool previews,
-> provider names, and error details. Review it before sharing, and never use
-> voice or chat to provide a password, API key, token, or recovery code.
+Text-only chats, scheduled task runs, and standalone Jarvis-Agent missions do
+not create Run Inspector entries by themselves.
+
+> [!warning] Transcripts and exports can contain your words, provider and model
+> names, tool previews, approval details, and errors. Review an export before
+> sharing it. Never provide a password, API key, token, or recovery code through
+> voice or chat.
 
 ## Choose the Right View
 
 | When you want to know | Open | What you get |
 |---|---|---|
-| What did I say, and what did Jarvis say? | **Transcription** | Voice sessions grouped into turns, including recognized requests, replies, and other spoken messages |
-| Which service answered? | **Transcription** | The provider used for the completed turn, plus available token and cost totals |
-| Did the request succeed? | **Run Inspector** | A **Success**, **Partial**, or **Failed** outcome for the run and each turn |
-| Why was it slow or unsuccessful? | **Run Inspector** | Recorded latency, decisions, tools, approvals, timeline events, and errors |
-| Which feature joined the turn? | **Run Inspector** | **Computer-Use**, **Jarvis-Agent**, **Skill**, and tool badges when those activities were recorded |
+| What did I say, and what reply was recorded? | **Transcription** | Recognized requests, replies, and other recorded spoken phrases, grouped by voice turn |
+| Which voice mode or provider completed the turn? | **Transcription** | Available mode, provider, model, token, cost, voice, and timing details |
+| Did Jarvis record a functional problem? | **Run Inspector** | A **Success**, **Partial**, or **Failed** result, separate from latency status |
+| Why was the turn slow or unsuccessful? | **Run Inspector** | Available latency stages, decisions, approvals, tools, timeline events, and errors |
+| Which capability joined the turn? | **Run Inspector** | Recorded Computer-Use, agent, Skill, and tool badges |
 
-A **session** is the voice conversation around one or more turns. A **run** is
-the inspection view built from that session. Run Inspector does not create a
-second copy of the conversation or perform a second analysis with an AI
-provider; it derives its panels from the events Jarvis already recorded.
+A voice **session** starts with a voice interaction and ends at hangup. It can
+contain several turns. Transcription hides a finished attempt that contains no
+user or assistant text, while Run Inspector may still show that attempt for
+diagnostics.
+
+A **run** is not a second stored conversation. Jarvis builds it when you open
+Run Inspector from the saved session rows and selected events. When available,
+it also matches local command-usage records to a turn. No AI provider performs
+a second analysis, and missing source data stays missing.
+
+**Chats** is a combined history of text threads and meaningful voice sessions.
+A voice item there shows the saved user and assistant turn text. Transcription
+adds voice-specific metadata and supplemental spoken phrases. If you continue a
+voice item by typing, the new message belongs to a text thread; it does not
+rewrite the finished voice session.
 
 ## Review a Voice Session
 
-1. **Open Transcription.** The left list shows recent voice sessions with a
-   preview, time, duration, turn count, and how the session ended. The newest
-   finished session is selected automatically when possible.
-2. **Choose a session.** Select any list item to open its turns. A session
-   marked **running** may still be incomplete, so finish the call before using
-   it as a final record.
-3. **Read the turns.** Each turn separates your recognized request from the
-   assistant reply and other speech that Jarvis actually played. Available
-   provider, model, token, cost, timing, and tool details appear beside the
-   turn rather than inside the conversation text.
-4. **Export only when needed.** Use the Text, Markdown, or JSON row to copy,
-   save, or open the session. The desktop app saves a requested file to your
-   Downloads folder; a browser session uses the browser's download or opens
-   the export in a new tab.
+1. **Open Transcription.** The session list shows the preview, time, duration,
+   turn count, voice mode, and how the call ended. Jarvis selects the newest
+   finished session when one is available.
+2. **Choose a session.** A session labeled **running** is still in progress.
+   End the call before treating its totals as final.
+3. **Read each turn.** Your block contains the recognized request. The
+   assistant block prefers a playback-confirmed reply when one was recorded;
+   otherwise it shows the saved generated reply. Other playback-confirmed
+   phrases appear under **Spoken output**. Available provider, model, token,
+   cost, voice, tool, and timing details appear around the conversation.
+4. **Copy or save one turn if needed.** Use **Copy** or the adjacent download
+   action in that turn's header.
+5. **Export a session when you need a separate copy.** Each **Text**,
+   **Markdown**, and **JSON** row provides actions to copy, download, or open
+   that format.
 
-Text is best for a plain record. Markdown keeps useful structure for notes.
-JSON is intended for detailed inspection and can expose more recorded fields,
-so check it carefully before sending it to anyone.
+Text is a clean dialogue and omits telemetry and technical diagnostics.
+Markdown keeps structure, metadata, spoken-output labels, and available
+technical detail. JSON contains the full saved session header, turns, and raw
+recorded events, so inspect it carefully before sharing.
 
-> [!note] Voice sessions are retained for 30 days by default and are then
-> removed automatically. The current app has no delete action for one voice
-> session. An export is a separate copy that remains until you delete it from
-> its destination. Read [Privacy and Local Data](privacy-and-local-data) before
-> recording or exporting sensitive conversations.
+In the desktop shell, a download is saved to your **Downloads** folder and the
+open action uses a supported local app. In a regular browser, download uses the
+browser and the open action displays the export in a new tab. An unavailable
+local editor does not affect the saved session.
+
+> [!note] On startup, Jarvis removes sessions whose start time is older than
+> the configured retention period, which is 30 days by default. An installation
+> can change or disable that cleanup. There is no action in the current app to
+> delete one voice session. An exported copy remains at its destination until
+> you delete it there.
 
 ## Inspect What Happened
 
-1. **Open Run Inspector.** The newest recorded run is selected automatically.
-   The list shows a preview, turn count, duration, feature badges, and outcome.
-2. **Read outcome and speed separately.** **Success** means the turn produced
-   an answer without a recorded hard failure. **Partial** means Jarvis answered
-   but a tool, action, or other part had a problem. **Failed** means the run did
-   not produce a usable answer. A **slow** label or latency warning describes
-   performance, not whether the result was correct.
-3. **Check Triggered badges.** These show recorded tools and higher-level
-   features involved in that turn. A Jarvis-Agent badge means the voice turn
-   handed work to a Jarvis-Agent; it does not mean every later mission event is
-   stored in this run.
-4. **Expand Metrics & deep dive.** This summary can show total thinking and
-   speaking time, tokens, interruptions, worst latency, cost by provider, and
-   tool counts. A missing value means it was not recorded; it does not by
-   itself mean that the step failed.
-5. **Expand Forensics on a turn.** Review the available latency stages,
-   decision path, tool result, timeline, and error entries. These panels are
-   evidence for troubleshooting, not a promise that every internal event is
-   captured.
-6. **Use Export raw (JSON) carefully.** The export opens the underlying session
-   record, including turns and raw recorded events. It is not a polished report
-   and does not include files created during the work.
+1. **Open Run Inspector.** It selects the newest recorded run. Use the preview
+   and time to find the matching voice session, then read the written outcome
+   in the selected run's header.
+2. **Read outcome and latency separately.** **Success** means the captured data
+   contains no functional problem that changes the outcome. It does not certify
+   that the answer is correct. **Partial** means Jarvis recorded a failed tool,
+   a recoverable error, or an answer alongside a harder problem. **Failed**
+   means it recorded a hard error or denied action without an answer. A
+   **slow** label or latency warning describes speed, not functional outcome.
+3. **Check Triggered badges.** They summarize recorded tools and higher-level
+   capabilities for that turn. The agent badge uses the name derived from your
+   configured assistant name. It means the voice turn handed work to a
+   Jarvis-Agent, not that the run contains the mission's full later history.
+4. **Expand Metrics & deep dive.** When data exists, this section shows total
+   thinking and speaking time, tokens, interruptions, worst latency status,
+   cost by provider, and tool counts. Zero or a missing section can mean that
+   no matching event was recorded.
+5. **Expand Forensics on a turn.** Available panels show latency stages, the
+   decision path, tool status, timeline events, and errors. These panels are a
+   partial record, not a complete log of every internal action.
+6. **Use Export raw (JSON) carefully.** This opens the saved session JSON, not
+   a polished Run Inspector report. Derived outcomes and metrics, matched
+   command-usage data, mission history, and files created during the work are
+   not added to this export.
 
 ## How It Fits Together
 
-1. **A voice request starts the record.** Wake activation, the voice control,
-   or the Call shortcut opens a voice session. Speech recognition supplies the text
-   shown for your side of the turn.
-2. **Jarvis answers or acts.** The active Brain provider may answer directly,
-   use a tool, request approval, create a task, or hand longer work to a
-   Jarvis-Agent. If a preferred provider is unavailable and another compatible
-   provider completes the turn, the completed provider is the one shown in the
-   session details.
-3. **The recorder observes the turn.** It saves selected conversation,
-   timing, decision, action, and error events without controlling the voice
-   pipeline. If recording is unavailable, the request can still run, but these
-   views cannot reconstruct it later.
-4. **Transcription presents the conversation.** Use it as the readable voice
-   history. A voice entry may also appear in **Chats**, but text-chat history is
-   stored separately and does not become a Run Inspector run.
-5. **Run Inspector derives the trace.** It turns the same saved events into
-   outcomes, activity badges, metrics, and forensic panels. It may show that a
-   task was created or a Jarvis-Agent was started during the voice turn.
-6. **The connected feature owns later work.** A scheduled task continues in
-   **Tasks**. A delegated mission continues in **Jarvis-Agents**. Files they
-   create appear in **Outputs**. Those later records do not get folded into the
-   original voice run merely because the voice request started them. A spoken
-   Jarvis-Agent completion can still be attached to the just-finished voice
-   transcript when it arrives after hangup.
+1. **A voice interaction starts a session.** A wake activation, the **Call**
+   shortcut, or **Speak** from a conversation can start it. Speech recognition
+   supplies the text saved for your side of a turn.
+2. **Jarvis answers or acts.** The active Brain can answer, use a tool, request
+   approval, create a task, or hand longer work to a Jarvis-Agent. When a
+   fallback provider completes the turn, the completed provider is saved with
+   the turn when that information is available.
+3. **The recorder observes selected events.** It saves recognized text,
+   responses, spoken phrases, timing, decisions, actions, and errors to the
+   local session store. It does not control the voice pipeline and does not
+   save microphone audio for these views.
+4. **Transcription presents the voice record.** It combines the saved turn
+   fields with recorded spoken phrases. [Chats](chats) can list the same voice
+   session beside separate text threads.
+5. **Run Inspector builds a diagnostic view.** It derives outcomes, activity
+   badges, metrics, and forensic panels from the data that was captured.
+6. **Other features own later work.** A created task continues in **Tasks**. A
+   delegated mission continues in **Jarvis-Agents**, and its files appear in
+   **Outputs**. A terminal agent completion spoken after hangup can attach to
+   the most recently finished voice transcript, provided another session has
+   not started first. The rest of the later lifecycle stays in its own feature.
 
 ## Check That It Works
 
 1. Start a short voice conversation, ask one harmless question, wait for the
    reply, and end the call.
 2. Open **Transcription** and confirm that the newest finished session shows
-   your recognized request and the assistant reply.
+   your recognized request and the recorded assistant reply.
 3. Open **Run Inspector** and select the item with the same preview and time.
-   Confirm that it shows at least one turn and an outcome.
+   Confirm that the header shows an outcome and the run contains the same turn.
 
-The two views work together when they describe the same session: Transcription
-shows the readable exchange, while Run Inspector adds only the details that
-were recorded for that run.
+The views agree when they describe the same saved session. Run Inspector may
+show fewer details when a particular event or matching command record was not
+captured.
 
 ## Troubleshooting
 
 | What you see | What it usually means | What to do |
 |---|---|---|
-| **No sessions yet** after a voice test | The call is still open, no usable turn was recorded, or the recorder is unavailable | End the call, wait briefly, and open Transcription again. Then make one short new voice test. |
-| **Session recorder is disabled** or **Run recorder is disabled** | This installation started without the local session store | The current desktop view has no in-app recorder switch. Follow [Troubleshooting](troubleshooting) or contact the person who manages the installation, then create a new test session; unrecorded sessions cannot be restored. |
-| A running session looks empty or has incomplete totals | The latest turn has not finished and its aggregates are not final | Select the newest finished session or end the current call, then reopen the view. |
-| Run Inspector says **Partial**, but you received an answer | Jarvis answered while a tool, approval, or another recorded part failed | Expand **Forensics**, then review **Tools** and **Errors** for the affected turn. |
-| A transcript exists, but a forensic panel is empty | The older run or active voice path did not emit that kind of event | Use the transcript as the conversation record. Do not treat a missing metric as proof that the action never happened. |
+| **No voice sessions yet** after a voice test | The call is still open, no transcript-bearing turn finished, or the recorder is unavailable | End the call, wait briefly, and reopen Transcription. Then try one short voice turn. |
+| **Session recorder is disabled.** or **Run recorder is disabled.** | This app instance has no available session store | This view has no recorder switch. Check [Troubleshooting](troubleshooting) or ask the person who manages the installation. Unrecorded sessions cannot be restored. |
+| A run appears without a matching Transcription item | The finished voice attempt contains no saved user or assistant text | Use Run Inspector for the available diagnostic events. Transcription intentionally hides empty finished attempts. |
+| A running session has incomplete turns or totals | The active turn has not finished | End the call or select the newest finished session, then reopen the view. |
+| Run Inspector shows **Partial**, but you received an answer | A tool, approval, or another recorded part had a problem | Expand **Forensics**, then review **Tools** and **Errors** for that turn. |
+| A transcript exists, but a forensic panel is empty | That voice path or older session did not record that event type | Use the transcript as the conversation record. A missing panel does not prove that an action never happened. |
 | A task, mission, or generated file is not in the run | Its later lifecycle belongs to another feature | Check **Tasks**, **Jarvis-Agents**, or **Outputs** using the request time and description. |
-| An older voice session disappeared | It passed the default 30-day retention window | Check any export you intentionally saved. The app cannot restore a session after automatic removal. |
+| An older voice session disappeared | It was older than the retention cutoff when Jarvis next started | Check any export you saved. Automatic removal cannot be undone in the app. |
 
 ## Next Steps
 
-- Read [Chats](chats) to understand how text history and voice entries appear
-  together without becoming the same stored record.
-- Read [Voice Conversations](voice-conversations) to see how activation,
-  speech recognition, the Brain, tools, and speech output form a turn.
+- Read [Chats](chats) to understand the combined text and voice history.
+- Read [Voice Conversations](voice-conversations) to learn how a spoken turn
+  moves through speech recognition, the Brain, tools, and speech output.
 - Open [Jarvis-Agents](jarvis-agents) to follow delegated work after the voice
   turn that started it has ended.
-- Use [Outputs and Files](outputs-and-files) to find generated files, which stay
-  separate from transcript and raw-run exports.
-- Review [Privacy and Local Data](privacy-and-local-data) for retention,
-  deletion limits, exports, and records that belong to other features.
+- Review [Privacy and Local Data](privacy-and-local-data) for local storage,
+  retention, deletion limits, and export safety.

@@ -8,7 +8,7 @@ order: 3
 diataxis: howto
 status: active
 owner: maintainers
-last_reviewed: 2026-07-15
+last_reviewed: 2026-07-21
 phase: "-"
 audience: end-user
 tags: [tasks, reminders, scheduling, recurring, automation, approvals]
@@ -40,10 +40,13 @@ connect several prompts, tools, or announcements in a fixed order.
 
 - Keep the Jarvis app running when the task is due. A waiting task is stored
   locally and restored after a normal restart. An overdue task can run when the
-  scheduler starts again, but work that was already running when the app closed
-  is marked **interrupted** instead of being repeated automatically.
+  scheduler starts again. Jarvis runs one overdue occurrence rather than every
+  missed interval. Work that was running when the app closed is marked
+  **interrupted** instead of being repeated automatically.
 - For a task that needs an assistant response, open **API Keys** and confirm
-  that the selected Brain provider shows **Works**.
+  that the Brain provider you want to use shows **Works**. The task uses the
+  provider that is active when it runs, not necessarily the one that was active
+  when you created it.
 - Connect any service you want the task to use under **Skills, Plugins & MCPs**.
   Only plugins that currently show **connected** appear in the task form.
 
@@ -68,12 +71,14 @@ connect several prompts, tools, or announcements in a fixed order.
 
    **Daily** starts at the next selected local time and then repeats every 24
    hours. It is an interval, not a calendar rule, so daylight-saving changes can
-   move the displayed wall-clock time for later runs.
+   move the displayed wall-clock time for later runs. Jarvis schedules the next
+   interval when a run starts. If a run lasts longer than its interval, the next
+   run can overlap it.
 
 5. **Describe the result.** In **What should it do?**, state one clear outcome.
-   Choose **Fast**, **Auto**, or **Deep** under **Model**. Fast and Auto favor a
-   shorter background turn; Deep asks the selected provider for its deeper
-   model when one is available.
+   Choose **Fast**, **Auto**, or **Deep** under **Model**. Fast and Auto both use
+   the active provider's fast model. Deep uses that provider's deep model when
+   one is configured and otherwise uses its fast model.
 
 6. **Allow only the plugins it needs.** Turn on a connected plugin, then choose
    its scope. Leave every unrelated plugin off.
@@ -83,24 +88,31 @@ connect several prompts, tools, or announcements in a fixed order.
 
 After a one-time run succeeds, the badge changes to **done**. After a recurring
 run succeeds, the same card returns to **scheduled** with its next due time.
+Failed runs are not retried automatically.
 
 ## React to a Mission with When-Then
 
 Select **When-Then** under **Trigger** when the action should start after a
 Jarvis-Agent mission **succeeds**, **fails**, or **is cancelled**. You can then
 choose an **Agent task**, **Computer-Use**, or **Just notify me** action. The
-optional **Say when done** field provides a completion announcement.
+optional **Say when done** field publishes a completion announcement after an
+Agent task or Computer-Use action succeeds.
 
 The form also supports the mission replacement fields it displays, such as
-`{result_uri}` and `{mission_id}`. Jarvis replaces a recognized field with the
-matching value from the finished mission. An unrecognized field stays visible
-instead of stopping the task.
+`{result_uri}`, `{summary_en}`, and `{mission_id}`. Jarvis replaces a recognized
+field with the matching value from the finished mission. An unrecognized field
+stays visible instead of stopping the task.
 
-> [!info] **When-Then is currently a preview despite being visible in the
-> task form.** Agent-task actions are wired to the Brain. Computer-Use and
-> Just-notify actions currently lack their required production runner
-> connections and end as **failed**. A standing event rule also changes to
-> **done** after its first match and is not restored after an app restart.
+| Action | Current behavior |
+|---|---|
+| **Agent task** | Runs one isolated Brain turn with the selected model tier and plugin grants. |
+| **Computer-Use** | Runs through the Computer-Use harness. It needs a compatible graphical desktop and can fail when that capability is unavailable. |
+| **Just notify me** | Currently ends as **failed**. The form creates a direct speech action, but the production task runner does not have a text-to-speech connection. |
+
+> [!info] **When-Then is still a preview.** A standing rule can react to later
+> matching missions during the current app session, but its card changes to
+> **done** after the first match. It is not restored after an app restart.
+> Delete the card if you want to stop the rule before then.
 
 ## Choose Plugin Permissions
 
@@ -109,17 +121,22 @@ does not grant a general permission to every task.
 
 | Scope | What it allows during an unattended run |
 |---|---|
-| **Read** | Makes the plugin available for low-risk reading. An action that needs confirmation is not pre-approved and can time out or fail while nobody is present. |
-| **Write** or **Full** | Pre-approves confirmation-level actions from that plugin for this task, so it may send, post, or change data without asking at run time. Blocked actions remain blocked. |
+| **Read** | Makes the plugin available but pre-approves nothing. An action that needs confirmation can time out or fail while nobody is present. |
+| **Write** or **Full** | Makes the plugin available and pre-approves confirmation-level actions from it for this task. It may send, post, or change data without asking at run time. |
 | Plugin off | Keeps that plugin out of the task's available tools. |
 
 Choose the narrowest scope that can finish the job. The app warns you when a
 Write or Full grant can perform an external action unattended.
 
+These are approval scopes, not separate tool catalogs. **Read** does not remove
+write-capable methods from a plugin; the normal safety classification decides
+whether a method needs confirmation. The current runner treats **Write** and
+**Full** the same for unattended approval. A blocked action remains blocked.
+
 ## Review and Manage Tasks
 
 Use **All**, **Active**, **Done**, and **Problems** to filter the list. The view
-refreshes automatically, and **Refresh** requests an immediate update.
+refreshes automatically every three seconds.
 
 Expand a card to see its saved setup and **Timeline**. The timeline records the
 action, result, and failure details. An assistant result remains there even
@@ -127,19 +144,20 @@ when audio output is muted or unavailable.
 
 | State shown in Tasks | What it means | What you can do |
 |---|---|---|
-| **waiting** | The task exists but has not entered the scheduler yet | Refresh and wait for startup to finish |
+| **waiting** | The task is saved but has not entered the scheduler; tasks created in the app normally skip this state | Wait for startup to finish and let the list refresh |
 | **scheduled** | It is waiting for a time, interval, or event | Expand it or select **Cancel** |
-| **running** | Jarvis has started the current action | Watch the Timeline; do not rely on task cancellation to stop a desktop action already in progress |
-| **done** | A one-time run finished successfully | Review the Timeline, then select **Delete** if you no longer need the record |
-| **failed** | The current run could not finish | Read **Last error** and the Timeline before deleting or recreating it |
-| **cancelled** | The task was removed from future scheduling | Review or delete the record |
+| **running** | Jarvis has started the current action | Watch the Timeline or select **Cancel** to signal the running action |
+| **done** | A one-time run succeeded, or a When-Then rule matched at least once | Review the Timeline; note the When-Then preview limit above |
+| **failed** | The current run could not finish and will not retry automatically | Read **Last error** and the Timeline before deleting or recreating it |
+| **cancelled** | Future scheduling was removed and any current run received a cancellation request | Review or delete the record |
 | **interrupted** | The app closed while the task was running | Review the partial timeline, then create a new task if the action is still needed |
 
-**Cancel** is a soft scheduler cancellation. It reliably removes waiting work
-from the queue, but it does not forcibly stop a Computer-Use loop or another
-action that has already begun. Use the affected feature's own stop control when
-one is available. **Delete** becomes available only after the task is in a
-final state.
+**Cancel** removes waiting work and signals the current run. For a running
+Computer-Use action, Jarvis also tries to stop the harness itself. That stop is
+best effort, so use the Computer-Use emergency stop if desktop activity
+continues. Other actions may not stop until their current operation finishes.
+**Delete** becomes available only in a final state and permanently removes the
+task and its Timeline. There is no undo.
 
 ## How It Fits Together
 
@@ -148,9 +166,10 @@ final state.
 2. **Jarvis loads one saved action.** A scheduled prompt runs as an isolated
    Brain turn, without borrowing the current chat history. A When-Then rule can
    instead receive details from the mission that triggered it.
-3. **The current Brain and plugins do the work.** Only the plugins enabled for
-   the task are offered to that turn. A disconnected or unavailable plugin is
-   skipped, so the task may produce a limited answer or fail its intended goal.
+3. **The current Brain and plugins do the work.** The Brain provider that is
+   active at run time handles the turn. Only plugins enabled for the task are
+   offered. A disconnected or unavailable plugin is skipped, so the task may
+   produce a limited answer or fail its intended goal.
 4. **Safety rules still apply.** Read access does not pre-approve a risky
    change. Write or Full grants answer the confirmation gate only for the
    matching task and plugin; an action that Jarvis blocks is never approved by
@@ -162,10 +181,16 @@ final state.
 
 Scheduling and local storage do not require a particular cloud provider or
 desktop operating system. The action itself might. A Brain task currently uses
-the selected Brain provider for that background turn and does not automatically
-switch to another provider family when it fails. Computer-Use also needs a
-compatible graphical desktop. When a required capability is unavailable,
-Jarvis records **failed** rather than claiming the task completed.
+the provider that is active at run time and does not automatically switch to
+another provider family when it fails. Computer-Use also needs a compatible
+graphical desktop. **Just notify me** currently lacks its production speech
+connection. When a required runner or capability is unavailable, Jarvis records
+**failed** rather than claiming the task completed.
+
+A recurring task is re-armed in memory when it starts. If that run fails, the
+card shows **failed**, but the next interval can still run while the app stays
+open. If the app restarts while the card is **failed**, that recurring task is
+not restored. Delete or recreate the task instead of relying on a retry.
 
 Read [Jarvis-Agents](jarvis-agents) for the longer mission path and
 [Workflows and App Commands](workflows-and-commands) for reusable multi-step
@@ -189,11 +214,11 @@ delivery path, not the success record.
 
 | What you see | What it usually means | What to do |
 |---|---|---|
-| **Create task** is disabled or saving fails | A required name, prompt, action text, or date is empty or invalid | Complete every visible required field and choose a future date or a positive delay |
+| **Create task** is disabled or saving fails | A required name, prompt, action text, or date is empty or invalid | Complete every visible required field and choose a valid date or positive delay; a past date becomes due immediately |
 | A plugin is missing from the form | It is not connected, needs you to sign in again, or is not callable | Open **Skills, Plugins & MCPs**, reconnect it, then reopen the task form |
-| A card stays **scheduled** after its due time | The app or task service was not running, or startup is still restoring the queue | Keep the app open, wait for startup to finish, and select **Refresh**; restart normally if the whole Tasks view remains unavailable |
-| The task shows **failed**, or it finishes without a spoken result | The selected Brain, plugin, audio path, or requested capability was unavailable | Expand the Timeline, test the affected connection in the app, choose another ready provider family if needed, then create a fresh one-time check |
-| A cancelled task's desktop action continues | Cancellation removed future scheduling but did not forcibly stop work already in progress | Use the affected feature's own stop control when available, then review the Timeline before deleting the task |
+| A card stays **scheduled** after its due time | The app or task service was not running, or startup is still restoring the queue | Keep the app open, wait for startup to finish, and let the list refresh; restart normally if the whole Tasks view remains unavailable |
+| The task shows **failed**, or it finishes without a spoken result | The Brain, plugin, audio path, runner, or requested capability was unavailable | Read the Timeline first. **Just notify me** is a known runner limitation; for other actions, test the affected connection and recreate the task |
+| A cancelled task's desktop action continues | The best-effort harness stop did not finish the active Computer-Use loop | Use the Computer-Use emergency stop, then review the Timeline before deleting the task |
 
 ## Next Steps
 

@@ -390,12 +390,34 @@ def test_macos_native_panel_accepts_mouse_moves_without_activation(
             self.accepts_mouse_moves = enabled
 
     native_window = _NativeWindow()
-    native_view = SimpleNamespace(window=lambda: native_window)
+
+    class _NativeView:
+        @staticmethod
+        def window() -> _NativeWindow:
+            return native_window
+
+    native_view = _NativeView()
+    installed: dict[str, Any] = {}
+
+    def _selector(callback: Any, **metadata: Any) -> Any:
+        installed["callback"] = callback
+        installed["metadata"] = metadata
+        return SimpleNamespace(callback=callback, metadata=metadata)
+
+    def _class_add_method(cls: type, name: bytes, method: Any) -> None:
+        installed["class"] = cls
+        installed["name"] = name
+        installed["method"] = method
+
     monkeypatch.setattr(qt_overlay.sys, "platform", "darwin")
     monkeypatch.setitem(
         sys.modules,
         "objc",
-        SimpleNamespace(objc_object=lambda **_kwargs: native_view),
+        SimpleNamespace(
+            objc_object=lambda **_kwargs: native_view,
+            selector=_selector,
+            classAddMethod=_class_add_method,
+        ),
     )
     monkeypatch.setitem(
         sys.modules,
@@ -410,6 +432,72 @@ def test_macos_native_panel_accepts_mouse_moves_without_activation(
 
     assert surface._native_window is native_window  # noqa: SLF001
     assert native_window.accepts_mouse_moves is True
+    assert installed["class"] is _NativeView
+    assert installed["name"] == b"acceptsFirstMouse:"
+    assert installed["metadata"] == {
+        "selector": b"acceptsFirstMouse:",
+        "signature": b"c@:@",
+    }
+    assert installed["callback"](native_view, None) is True
+
+
+def test_first_mouse_hook_failure_keeps_native_panel_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing PyObjC mutation seam must not disable the overlay panel."""
+
+    class _App:
+        @staticmethod
+        def platformName() -> str:  # noqa: N802 - Qt-compatible double
+            return "cocoa"
+
+    class _Window:
+        @staticmethod
+        def winId() -> int:  # noqa: N802 - Qt-compatible double
+            return 42
+
+    class _NativeWindow:
+        configured = False
+
+        @staticmethod
+        def styleMask() -> int:  # noqa: N802 - AppKit-compatible double
+            return 0
+
+        def setStyleMask_(self, _mask: int) -> None:
+            self.configured = True
+
+        def setBecomesKeyOnlyIfNeeded_(self, _enabled: bool) -> None: ...
+
+        def setHidesOnDeactivate_(self, _enabled: bool) -> None: ...
+
+        def setAcceptsMouseMovedEvents_(self, _enabled: bool) -> None: ...
+
+    native_window = _NativeWindow()
+    native_view = SimpleNamespace(window=lambda: native_window)
+    monkeypatch.setattr(qt_overlay.sys, "platform", "darwin")
+    monkeypatch.setitem(
+        sys.modules,
+        "objc",
+        SimpleNamespace(
+            objc_object=lambda **_kwargs: native_view,
+            selector=lambda *_args, **_kwargs: (_ for _ in ()).throw(
+                RuntimeError("method injection unavailable")
+            ),
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "AppKit",
+        SimpleNamespace(NSWindowStyleMaskNonactivatingPanel=128),
+    )
+    surface = qt_overlay.QtJarvisBarOverlay()
+    surface._app = _App()  # type: ignore[assignment] # noqa: SLF001
+    surface._window = _Window()  # type: ignore[assignment] # noqa: SLF001
+
+    surface._configure_macos_nonactivating_window_ui()  # noqa: SLF001
+
+    assert surface._native_window is native_window  # noqa: SLF001
+    assert native_window.configured is True
 
 
 @pytest.mark.parametrize("mode", ["idle", "listen", "think", "speak"])

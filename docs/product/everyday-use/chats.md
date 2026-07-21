@@ -8,7 +8,7 @@ order: 1
 diataxis: howto
 status: active
 owner: maintainers
-last_reviewed: 2026-07-15
+last_reviewed: 2026-07-21
 phase: "-"
 audience: end-user
 tags: [chat, conversations, history, context, files, voice]
@@ -16,18 +16,18 @@ related: [sessions-and-run-inspector, outputs-and-files, instructions-and-person
 ---
 
 Use **Chats** for quick questions, follow-up work, and conversations you want
-to revisit. The view combines saved text conversations with recorded voice
-sessions, while keeping generated files and detailed run information in their
-own areas.
+to revisit. The view shows text conversations and, when session recording is
+available, recorded voice conversations. Generated files and detailed run
+information stay in their own views.
 
-This page also explains the current limits of chat history. In the current
-version, what you see during a live conversation and what returns after you
-reopen it are not always the same.
+Chat history has an important limitation: a live text conversation can show
+more than Jarvis restores later. This page explains what is saved so you know
+when to repeat context.
 
 ## Before You Start
 
 - Open **API Keys** and confirm that at least one Brain provider shows
-  **Works**. A provider is the service that prepares Jarvis's answer.
+  **Works**. A provider is the service that answers your request.
 - Wait until the message field is available. You can type while the desktop
   voice feature is still getting ready.
 
@@ -44,14 +44,16 @@ reopen it are not always the same.
    clears. Jarvis creates a new text entry when you send the first message.
 
 3. **Send your request.** Type in the message field, then press **Enter** or
-   choose **Send**. Press **Shift+Enter** to add a line without sending.
+   use the **Send** arrow button. Press **Shift+Enter** to add a line without
+   sending.
 
 4. **Watch the result.** Your message appears immediately. A thinking status
-   may show the current activity, followed by the assistant reply. A tool or a
-   longer job can add more progress before the final result.
+   may show the current activity, followed by a reply labeled with your
+   configured assistant name. A tool or longer job can add progress before the
+   final result.
 
 5. **Continue with a follow-up.** Refer to the current topic instead of
-   repeating it. Jarvis uses the recent live conversation as context while the
+   repeating it. Jarvis keeps recent conversation context in memory while the
    app remains open.
 
 ### Dictate Instead of Typing
@@ -71,14 +73,17 @@ are grouped under **Today**, **Yesterday**, and **Earlier**. A **Text** or
 
 | Action | What you see | What happens to context |
 |---|---|---|
-| Select **New chat** | An empty conversation area | A new text record starts on the first send, but the shared live Brain context is not explicitly cleared. |
-| Open a **Text** entry | Its saved messages return | Recent saved messages replace the Brain's current context for the next reply. |
-| Open a **Voice** entry | The recorded spoken turns appear | The voice transcript becomes context; typing creates a separate text record and leaves the voice record unchanged. |
+| Select **New chat** | An empty conversation area | A new text record starts on the first send, but the live Brain context is not cleared. |
+| Open a **Text** entry | Its saved messages return | Up to 40 recent saved messages replace the Brain's current context for the next reply. |
+| Open a **Voice** entry | The recorded spoken turns appear | Up to 40 recent transcript messages become context; typing creates a separate text record and leaves the voice record unchanged. |
 | Select **Speak in this conversation** | Jarvis starts listening when desktop voice is ready | Recent saved messages are supplied to the voice conversation. |
 | Select **Delete** on a text entry | The text entry disappears | That local text thread and its saved messages are removed. Voice entries cannot be deleted from Chats. |
 
-Drag the divider beside History to change its width. Double-click the divider
-to return to the default width. The chosen width is remembered by the app.
+With pointer input, drag the divider beside History to change its width.
+Double-click the divider to restore the default width. The app remembers the
+chosen width. Resizing is optional, and this version has no keyboard control
+for it. The **Delete** control for a text entry also appears only on pointer
+hover; voice entries have no delete control in Chats.
 
 Text history is stored locally on the machine and survives a normal restart.
 It is not a cross-device chat-sync service. Text threads more than one year old
@@ -87,15 +92,15 @@ rules.
 
 ### Current Context Limits
 
-**New chat is currently an organization boundary, not a guaranteed context
-reset.** It clears the visible panel and starts a different saved thread, but
-it does not call the Brain's history reset. Details from the previous live
-conversation can therefore influence the next reply.
+**New chat separates saved threads, but it does not guarantee a fresh Brain
+context.** It clears the visible panel and starts a different saved thread,
+but details from the previous live conversation can still influence the next
+reply.
 
-Opening an existing entry is a stronger switch because Jarvis replaces its
-live context with the recent messages found in that record. However, the saved
-text record is currently incomplete, as explained below. Do not rely on
-**New chat** to isolate information that must stay separate.
+Opening an existing entry replaces the live Brain context with recent messages
+from that record. The saved text record is currently incomplete, as explained
+below. Do not rely on **New chat** to isolate information that must stay
+separate.
 
 ## Add Files and Other Context
 
@@ -107,11 +112,12 @@ selected text, or link for the next request.
 3. Send a message that explains what you want, such as asking for a summary or
    a comparison.
 
-A drop is silent: it adds context but does not make Jarvis answer on its own.
-Text-based files are read as bounded text, PDF extraction is best effort, and
-images require a Brain provider that can understand images. For an unsupported
-binary file, Jarvis may receive only its name, type, and size. One drop can
-contain up to 25 MB in total.
+A native file, text, or link drop is silent. It adds context but does not make
+Jarvis answer on its own. Text-based files are read up to a size limit, PDF
+text extraction is best effort, and Jarvis can use an image only when the
+answering Brain supports images. For another binary file, Jarvis receives its
+name, type, and size rather than its contents. One drop can contain up to 25 MB
+in total.
 
 Dropped content is temporary live context. It is not copied into the saved
 chat transcript and does not become an **Outputs** file. Add it again after
@@ -130,8 +136,8 @@ can make sense before you leave.
 | A system error shown as a chat message | Yes | Yes, in the text thread |
 | A pre-reply acknowledgement, thinking status, or reasoning trace | Sometimes | No, not as durable chat history |
 | A dropped file, image, link, or selected text | Used as temporary context | No |
-| A recorded voice turn | Yes | Yes, as a separate voice session while retained |
-| A file created by a Jarvis-Agent | Linked from the work result | In **Outputs**, not inside chat history |
+| A recorded voice turn | In the live voice transcript, not necessarily as chat bubbles | Yes, as a separate voice session while retained |
+| A file created by a Jarvis-Agent | May be referenced by the work result | In **Outputs**, not inside chat history |
 
 > [!note] The incoming-message path currently publishes user messages to the
 > live screen but does not write them to the text-chat store. Assistant and
@@ -149,18 +155,19 @@ These areas preserve different parts of the same piece of work:
 
 - **Chats** is the conversation view. Use it for live messages, saved text
   replies, and quick access to voice transcripts.
-- **Sessions and Run Inspector** explains what happened during a recorded
-  voice session or a particular run, including details that do not belong in a
-  simple chat transcript.
+- **Transcription** shows the readable record of a voice session. **Run
+  Inspector** shows recorded timing, tool, decision, and error details for that
+  run.
 - **Outputs** contains files created by Jarvis or Jarvis-Agents. A chat reply
   can point to an output, but the file remains separate so you can preview,
   download, or open it safely.
 - **Instructions and Persona** contains standing guidance that can shape every
   answer. It is different from temporary chat context and from saved history.
 
-Dragging a completed work card from **Outputs** into the Jarvis drop target
-brings a short description of that work into the live conversation. It does
-not move or duplicate the generated files.
+Dragging a work card from **Outputs** into the Jarvis drop target is different
+from dropping a native file. It starts a chat turn that asks Jarvis for a short
+recap based on the card's status, summary, and error details. It does not move,
+duplicate, or attach the generated files.
 
 ## How It Fits Together
 
@@ -169,15 +176,15 @@ not move or duplicate the generated files.
    extra context for the next real message.
 2. **The active Brain prepares the response.** It receives recent live context,
    any resumed messages, temporary dropped content, and your standing
-   instructions. If the preferred provider is unavailable, Jarvis can use
-   another compatible provider you configured; otherwise it shows an honest
-   Brain error.
+   instructions. If the preferred provider is unavailable, Jarvis tries other
+   configured providers that meet the request's needs. If none can answer, the
+   chat shows a Brain error.
 3. **Tools and safety rules can join the turn.** Jarvis may use an available
    tool or ask for confirmation before an action. Longer work can move to a
    Jarvis-Agent while Chats remains the place for conversation.
-4. **The result goes to the matching area.** A direct answer appears in Chats,
-   a spoken exchange is recorded as a voice session, and created files appear
-   in Outputs.
+4. **The result goes to the matching area.** A direct answer appears in Chats.
+   When session recording is available, a spoken exchange appears in
+   Transcription. Files created by Jarvis-Agents appear in Outputs.
 5. **Reopening restores only the saved record.** Jarvis supplies recent stored
    messages to the Brain, but current text-chat persistence can omit the user
    side of the exchange. Repeat missing context before relying on a follow-up.
@@ -198,7 +205,7 @@ saving limitation.
 
 | What you see | What it usually means | What to do |
 |---|---|---|
-| The message field says **Starting** or **Offline** | The local app connection is still warming or unavailable | Wait for startup to finish. If every area stays offline, restart the app normally and check again. |
+| The message field is disabled and shows a startup or offline status | The local app connection is still warming or unavailable | Wait for startup to finish. If every area stays offline, restart the app normally and check again. |
 | Your message appears but no reply arrives | No compatible Brain provider is ready, or the provider or a tool timed out | Open **API Keys**, test the affected provider, and choose another ready provider family when available. Then retry with a short text-only request. |
 | A reopened text chat shows replies but not your prompts | The current incoming-message path did not persist the user messages | Repeat the essential request before continuing and keep important instructions outside chat history. |
 | A new chat still seems to remember the previous topic | **New chat** changed the visible and saved thread but did not clear shared live Brain history | State the new context explicitly. Do not use New chat as an isolation boundary in the current version. |

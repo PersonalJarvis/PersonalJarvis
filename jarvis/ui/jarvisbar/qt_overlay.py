@@ -71,6 +71,50 @@ def _prepare_macos_qt_process() -> None:
         os.environ["QT_MAC_DISABLE_FOREGROUND_APPLICATION_TRANSFORM"] = "1"
 
 
+def _enable_macos_first_mouse(native_view: Any, objc_module: Any) -> bool:
+    """Let the inactive companion panel receive its first mouse-down.
+
+    AppKit normally consumes the first click on a view in an inactive
+    application and uses it only to activate that application.  The Jarvis Bar
+    intentionally lives in a non-activating accessory process, so that default
+    turns the advertised single-click talk action into an accidental
+    double-click.  Qt does not expose ``NSView.acceptsFirstMouse:``; install the
+    narrow native override on Qt's bar-view class instead.
+
+    The companion owns only this overlay window, so the class-level override is
+    process-local and cannot alter the desktop app or other applications.
+    Failure is non-fatal: the panel keeps all of its existing rendering,
+    hover, drag, mute, and hang-up behavior.
+    """
+
+    try:
+        inherited = getattr(native_view, "acceptsFirstMouse_", None)
+        signature = getattr(inherited, "signature", b"c@:@")
+
+        def _accepts_first_mouse(_view: Any, _event: Any) -> bool:
+            return True
+
+        method = objc_module.selector(
+            _accepts_first_mouse,
+            selector=b"acceptsFirstMouse:",
+            signature=signature,
+        )
+        objc_module.classAddMethod(
+            native_view.__class__,
+            b"acceptsFirstMouse:",
+            method,
+        )
+        log.info("Qt Jarvis Bar native first-click handling enabled")
+        return True
+    except Exception:  # noqa: BLE001 - click handling degrades to the Qt default
+        log.warning(
+            "Qt Jarvis Bar could not enable first-click handling; the macOS "
+            "panel may require a second click",
+            exc_info=True,
+        )
+        return False
+
+
 def _geometry_bounds(geometry: Any) -> GeometryBounds:
     """Return one Qt-like rectangle as ``(x, y, width, height)``."""
     return (
@@ -705,6 +749,7 @@ class QtJarvisBarOverlay:
             native_window = native_view.window()
             if native_window is None:
                 raise RuntimeError("Qt did not expose a native NSWindow")
+            _enable_macos_first_mouse(native_view, objc)
             native_window.setStyleMask_(
                 int(native_window.styleMask()) | int(NSWindowStyleMaskNonactivatingPanel)
             )

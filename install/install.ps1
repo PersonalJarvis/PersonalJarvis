@@ -660,15 +660,27 @@ function Invoke-SalvageReclone {
     # (inside data/), the dotenv, AND the wiki vault (its absence from this
     # list is what destroyed a user's wiki pages on 2026-07-20). A failed
     # copy is a loud warning pointing at the backup dir - never silent.
+    # NOTE: a "skip when the destination exists" guard is WRONG for wiki -
+    # the fresh clone ships a tracked seed wiki/ skeleton, so the guard
+    # would silently never restore the user's real vault. Directories that
+    # exist on both sides are overlay-MERGED (user files win over seed).
     foreach ($Item in @('data', $ConfigFileName, '.env', 'wiki')) {
         $Old = Join-Path $StaleBackup $Item
         $New = Join-Path $InstallDir $Item
-        if ((Test-Path $Old) -and -not (Test-Path $New)) {
+        if (-not (Test-Path $Old)) { continue }
+        if (-not (Test-Path $New)) {
             try {
                 Copy-Item -LiteralPath $Old -Destination $New -Recurse -ErrorAction Stop
                 Write-Note "kept your $Item from the previous install"
             } catch {
                 Write-Err "could NOT carry over $Item - it is still safe in $Old; copy it back manually."
+            }
+        } elseif ((Test-Path $Old -PathType Container) -and (Test-Path $New -PathType Container)) {
+            try {
+                Copy-Item -Path (Join-Path $Old '*') -Destination $New -Recurse -Force -ErrorAction Stop
+                Write-Note "merged your $Item from the previous install over the fresh seed"
+            } catch {
+                Write-Err "could NOT merge $Item - it is still safe in $Old; copy it back manually."
             }
         }
     }

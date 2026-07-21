@@ -48,6 +48,31 @@ _REJECT_PARAM_400 = (
 )
 
 
+class _ApiError(RuntimeError):
+    """Structured provider error: carries ``param``/``code`` like the SDK."""
+
+    def __init__(self, message: str, *, param: str, code: str) -> None:
+        super().__init__(message)
+        self.param = param
+        self.code = code
+
+
+def _reject_value_structured() -> _ApiError:
+    return _ApiError(
+        "Unsupported value: 'reasoning_effort' does not support 'none'.",
+        param="reasoning_effort",
+        code="unsupported_value",
+    )
+
+
+def _reject_param_structured() -> _ApiError:
+    return _ApiError(
+        "Unsupported parameter: 'reasoning_effort'.",
+        param="reasoning_effort",
+        code="unsupported_parameter",
+    )
+
+
 class _EmptyStream:
     def __aiter__(self) -> _EmptyStream:
         return self
@@ -132,11 +157,11 @@ async def test_parameter_rejection_drops_the_knob() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_rejections_are_remembered_per_endpoint_and_model() -> None:
+async def test_structured_rejections_are_remembered_per_endpoint_and_model() -> None:
     """A tool loop calls the same endpoint+model dozens of times per mission;
     the rejection round-trips must be paid once, not on every step."""
     first = _SequenceClient(
-        [RuntimeError(_REJECT_VALUE_400), RuntimeError(_REJECT_PARAM_400)]
+        [_reject_value_structured(), _reject_param_structured()]
     )
     first.base_url = "https://api.x.ai/v1"
     await _create_with_token_param_retry(
@@ -153,8 +178,30 @@ async def test_rejections_are_remembered_per_endpoint_and_model() -> None:
     assert "reasoning_effort" not in second.calls[0]
 
 
-async def test_adaptation_memory_is_scoped_to_the_endpoint() -> None:
+async def test_message_only_rejection_retries_but_never_poisons_the_cache() -> None:
+    """A gateway that merely mentions the field in a concatenated error text
+    drives ONE retry; the process-lifetime memory stays untouched, so a
+    different (transient/misattributed) failure cannot permanently strip an
+    optional param from every later call."""
     first = _SequenceClient([RuntimeError(_REJECT_PARAM_400)])
+    first.base_url = "https://gateway.example/v1"
+    await _create_with_token_param_retry(
+        first, {"model": "m", "messages": [], "reasoning_effort": "none"}
+    )
+    assert len(first.calls) == 2
+
+    second = _SequenceClient()
+    second.base_url = "https://gateway.example/v1"
+    await _create_with_token_param_retry(
+        second, {"model": "m", "messages": [], "reasoning_effort": "none"}
+    )
+    assert second.calls[0]["reasoning_effort"] == "none", (
+        "an unstructured message-level match must not be cached"
+    )
+
+
+async def test_adaptation_memory_is_scoped_to_the_endpoint() -> None:
+    first = _SequenceClient([_reject_param_structured()])
     first.base_url = "https://api.x.ai/v1"
     await _create_with_token_param_retry(
         first, {"model": "m", "messages": [], "reasoning_effort": "none"}
@@ -167,6 +214,53 @@ async def test_adaptation_memory_is_scoped_to_the_endpoint() -> None:
     )
     assert other.calls[0]["reasoning_effort"] == "none", (
         "another endpoint's rejection must not strip the knob here"
+    )
+
+
+async def test_out_of_range_temperature_value_is_not_cached_forever() -> None:
+    """``unsupported_value`` on temperature without the default-only wording
+    adapts THIS call but must not evict the knob for the process lifetime."""
+    err = _ApiError(
+        "Unsupported value: 'temperature' must be between 0 and 2.",
+        param="temperature",
+        code="unsupported_value",
+    )
+    first = _SequenceClient([err])
+    first.base_url = "https://api.example/v1"
+    await _create_with_token_param_retry(
+        first, {"model": "m", "messages": [], "temperature": 0.0}
+    )
+    assert "temperature" not in first.calls[1]
+
+    second = _SequenceClient()
+    second.base_url = "https://api.example/v1"
+    await _create_with_token_param_retry(
+        second, {"model": "m", "messages": [], "temperature": 0.5}
+    )
+    assert second.calls[0]["temperature"] == 0.5
+
+
+async def test_default_only_temperature_rejection_is_cached() -> None:
+    err = _ApiError(
+        "Unsupported value: 'temperature' does not support 0 with this model. "
+        "Only the default (1) value is supported.",
+        param="temperature",
+        code="unsupported_value",
+    )
+    first = _SequenceClient([err])
+    first.base_url = "https://api.example/v1"
+    await _create_with_token_param_retry(
+        first, {"model": "m", "messages": [], "temperature": 0.0}
+    )
+
+    second = _SequenceClient()
+    second.base_url = "https://api.example/v1"
+    await _create_with_token_param_retry(
+        second, {"model": "m", "messages": [], "temperature": 0.0}
+    )
+    assert "temperature" not in second.calls[0], (
+        "a declared default-only model keeps the knob omitted without paying "
+        "the rejection again"
     )
 
 
