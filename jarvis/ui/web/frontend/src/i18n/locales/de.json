@@ -1118,7 +1118,7 @@
   "settings_view": {
     "silence_window": {
       "title": "Denkpause",
-      "description": "Wie lange {name} in Stille wartet, bevor er das Gesagte abschickt. Höher stellen, um mehr Zeit zum Innehalten und Zu-Ende-Denken zu haben.",
+      "description": "Wie lange {name} in Stille wartet, bevor er das Gesagte abschickt. Höher stellen, um mehr Zeit zum Innehalten und Zu-Ende-Denken zu haben. Gilt für den Pipeline-Sprachmodus — im Realtime-Modus erkennt das Sprachmodell das Ende deines Satzes selbst.",
       "unit_seconds": "s",
       "reset": "Auf Standard zurücksetzen (1,5 s)",
       "saved_toast": "Denkpause auf {0} gesetzt.",

@@ -32,13 +32,13 @@ def test_session_config_has_selectable_model():
     assert cfg.voice == "echo"
 
 
-def test_session_config_defaults_to_shared_thinking_pause():
-    from jarvis.core.config import SpeechConfig
+def test_session_config_defaults_to_provider_native_turn_detection():
     from jarvis.realtime.protocol import RealtimeSessionConfig
 
-    assert RealtimeSessionConfig().silence_duration_ms == (
-        SpeechConfig().vad_silence_ms
-    ) == 1_500
+    # None = the provider's native turn detection decides the turn end; the
+    # Settings "Thinking pause" endpoints the classic pipeline only
+    # (maintainer directive 2026-07-21).
+    assert RealtimeSessionConfig().silence_duration_ms is None
 
 
 def test_session_config_history_defaults_empty():

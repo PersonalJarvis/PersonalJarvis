@@ -1119,7 +1119,7 @@
   "settings_view": {
     "silence_window": {
       "title": "Thinking pause",
-      "description": "How long {name} waits in silence before it sends what you said. Raise it to give yourself more time to pause and finish a thought.",
+      "description": "How long {name} waits in silence before it sends what you said. Raise it to give yourself more time to pause and finish a thought. Applies to the Pipeline voice mode — in Realtime mode the voice model detects the end of your turn itself.",
       "unit_seconds": "s",
       "reset": "Reset to default (1.5 s)",
       "saved_toast": "Thinking pause set to {0}.",

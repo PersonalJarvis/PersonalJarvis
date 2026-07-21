@@ -1118,7 +1118,7 @@
   "settings_view": {
     "silence_window": {
       "title": "Pausa para pensar",
-      "description": "Cuánto espera {name} en silencio antes de enviar lo que dijiste. Súbelo para darte más tiempo para pausar y terminar una idea.",
+      "description": "Cuánto espera {name} en silencio antes de enviar lo que dijiste. Súbelo para darte más tiempo para pausar y terminar una idea. Se aplica al modo de voz Pipeline — en el modo Realtime, el modelo de voz detecta por sí mismo el final de tu turno.",
       "unit_seconds": "s",
       "reset": "Restablecer al valor predeterminado (1,5 s)",
       "saved_toast": "Pausa para pensar fijada en {0}.",

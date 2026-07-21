@@ -16,6 +16,7 @@ import random
 import re
 import time
 from dataclasses import dataclass, field
+from datetime import datetime
 from typing import Any
 from uuid import uuid4
 
@@ -63,9 +64,6 @@ _MAX_UNSCRUBBED_AUDIO_MS = 15_000
 _PROVIDER_HANDSHAKE_TOTAL_TIMEOUT_S = 12.0
 _AUDIO_SEND_TIMEOUT_S = 2.0
 _TOOL_TRANSCRIPT_WAIT_S = 3.0
-_THINKING_PAUSE_DEFAULT_MS = 1_500
-_THINKING_PAUSE_MIN_MS = 500
-_THINKING_PAUSE_MAX_MS = 5_000
 # Grace window for the model to finish its goodbye after an end_call tool
 # call; if the provider never sends turn_complete, hang up anyway.
 _END_CALL_GRACE_S = 10.0
@@ -353,20 +351,6 @@ def _requires_jarvis_action(text: str) -> bool:
     return plan_turn(text).requires_orchestrator
 
 
-def _configured_thinking_pause_ms(config: Any) -> int:
-    """Return the validated shared Pipeline/Realtime silence window."""
-    raw = getattr(
-        getattr(config, "speech", None),
-        "vad_silence_ms",
-        _THINKING_PAUSE_DEFAULT_MS,
-    )
-    try:
-        value = int(raw)
-    except (TypeError, ValueError):
-        value = _THINKING_PAUSE_DEFAULT_MS
-    return max(_THINKING_PAUSE_MIN_MS, min(_THINKING_PAUSE_MAX_MS, value))
-
-
 def _delegate_result_prompt(
     text: str,
     *,
@@ -628,6 +612,18 @@ def _session_instructions(
     from jarvis.brain.persona_loader import load_effective_persona_prompt
 
     persona = load_effective_persona_prompt().strip()
+    # The block is re-sent with every per-turn session update, so this stays
+    # current across long sessions. Without it the model must either
+    # hallucinate calendar answers or delegate a trivial "what day is
+    # tomorrow" through the orchestrator (12-34 s of silence — live
+    # complaint 2026-07-21); the shared turn planner keeps such calendar
+    # trivia native on the strength of this line.
+    now = datetime.now().astimezone()
+    clock_line = (
+        f"Current local date and time: {now.strftime('%A, %Y-%m-%d %H:%M')} "
+        f"({now.tzname() or 'local time'}). Answer date, weekday, and "
+        "time-of-day questions directly from this — never guess."
+    )
     language_name = _LANGUAGE_NAMES.get(language, "the user's language")
     input_language_name = _LANGUAGE_NAMES.get(input_language)
     if input_language_name:
@@ -660,6 +656,7 @@ def _session_instructions(
         tool_directive,
         _REALTIME_SAFETY_APPENDIX,
         input_directive,
+        clock_line,
         (
             "Runtime identity: this voice session is using the Realtime engine"
             + (f", provider {provider}" if provider else "")
@@ -1098,7 +1095,10 @@ class RealtimeVoiceSession:
                 input_sample_rate=input_rate,
                 output_sample_rate=output_rate,
                 modalities=("audio",),
-                silence_duration_ms=_configured_thinking_pause_ms(self._config),
+                # silence_duration_ms stays at its None default: the realtime
+                # model's native turn detection decides when the user is done.
+                # The Settings "Thinking pause" endpoints the classic pipeline
+                # only (maintainer directive 2026-07-21).
                 tools=self._declared_tools(),
                 # Empty at the first open of a call; after an in-place
                 # transport rebuild (or a mid-call cross-family fallback) it

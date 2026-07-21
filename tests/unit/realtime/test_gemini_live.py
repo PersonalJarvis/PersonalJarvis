@@ -326,6 +326,21 @@ async def test_every_selectable_model_uses_live_audio_and_transcriptions(
 
 
 @pytest.mark.asyncio
+async def test_default_config_keeps_native_activity_detection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    holder = _patch_genai_client(monkeypatch)
+    provider = GeminiLiveProvider(api_key="test-key")
+
+    session = await provider.open_session(RealtimeSessionConfig(voice="Puck"))
+    _selected, config = holder["client"].aio.live.connect_calls[0]
+    # No forced silence window: Gemini's native automatic activity detection
+    # decides the turn end (the Settings "Thinking pause" is pipeline-only).
+    assert config.realtime_input_config is None
+    await session.close()
+
+
+@pytest.mark.asyncio
 async def test_open_session_uses_current_default_model(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
