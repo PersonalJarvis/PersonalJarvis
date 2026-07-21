@@ -11,6 +11,7 @@ All functions are no-ops on non-Windows platforms.
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
 from pathlib import Path
 from typing import Any
@@ -80,6 +81,306 @@ _IID_IPROPERTYSTORE = "{886D8EEB-8CF2-4446-8D02-CDBA1DBDCF99}"
 # Set in the child's env when we re-exec through the branded exe, so the child
 # does not re-exec again (loop guard).
 _BRANDED_LAUNCH_ENV = "JARVIS_BRANDED_LAUNCH"
+
+# System.AppUserModel.ID property key (fmtid + pid) for the PowerShell fallback
+# writer, which cannot import pywin32's ``pscon``.
+_PKEY_APP_USER_MODEL_ID_FMTID = "9F4C2855-9F79-4B39-A8D0-E1D42DE1D5F3"
+_PKEY_APP_USER_MODEL_ID_PID = 5
+
+# Cached MSIX package-identity probe (one Win32 call per process, see
+# ``windows_package_identity``).
+_PACKAGE_IDENTITY_PROBED = False
+_PACKAGE_IDENTITY: str | None = None
+
+
+def windows_package_identity() -> str | None:
+    """Full MSIX package name when this process runs with package identity.
+
+    A venv built from the **Microsoft Store Python** keeps the package identity
+    of its base interpreter — and with it MSIX filesystem virtualization: every
+    in-process write to ``%APPDATA%`` / ``%LOCALAPPDATA%`` is silently redirected
+    into the package's private ``LocalCache`` container. A Start-Menu shortcut
+    written by such a process "exists" for the process itself but never reaches
+    the real Start Menu, so Windows search cannot find the app (BUG-109). Shell
+    artifacts must therefore be written through an identity-free child process
+    whenever this returns a package name.
+
+    Returns ``None`` on non-Windows hosts, for identity-free processes
+    (python.org / winget Python), and on any probe failure.
+    """
+    global _PACKAGE_IDENTITY_PROBED, _PACKAGE_IDENTITY
+    if _PACKAGE_IDENTITY_PROBED:
+        return _PACKAGE_IDENTITY
+    _PACKAGE_IDENTITY_PROBED = True
+    _PACKAGE_IDENTITY = None
+    if sys.platform != "win32":
+        return None
+    try:
+        import ctypes
+
+        error_insufficient_buffer = 122  # ERROR_INSUFFICIENT_BUFFER
+        # APPMODEL_ERROR_NO_PACKAGE (15700) and anything unexpected → None.
+        length = ctypes.c_uint32(0)
+        rc = ctypes.windll.kernel32.GetCurrentPackageFullName(
+            ctypes.byref(length), None
+        )
+        if rc == error_insufficient_buffer and length.value:
+            buf = ctypes.create_unicode_buffer(length.value)
+            rc = ctypes.windll.kernel32.GetCurrentPackageFullName(
+                ctypes.byref(length), buf
+            )
+            if rc == 0:
+                _PACKAGE_IDENTITY = buf.value or None
+    except Exception as exc:  # noqa: BLE001 — a probe failure means "no identity"
+        logger.debug("package-identity probe failed: {}", exc)
+    return _PACKAGE_IDENTITY
+
+
+def _powershell_quote(value: str) -> str:
+    """Single-quote ``value`` for embedding in a PowerShell script."""
+    return "'" + value.replace("'", "''") + "'"
+
+
+# C# interop that writes ``System.AppUserModel.ID`` into a ``.lnk`` property
+# store from plain PowerShell — the identity-free twin of pywin32's
+# ``propsys``/``pscon`` path. Compiled by Windows PowerShell 5.1's bundled C#
+# compiler, so the snippet must stay C#-5 compatible.
+_AUMID_TAG_CSHARP = f"""
+using System;
+using System.Runtime.InteropServices;
+
+namespace JarvisShell {{
+    [StructLayout(LayoutKind.Sequential, Pack = 4)]
+    public struct PropertyKey {{
+        public Guid fmtid;
+        public uint pid;
+        public PropertyKey(Guid f, uint p) {{ fmtid = f; pid = p; }}
+    }}
+    [StructLayout(LayoutKind.Explicit)]
+    public struct PropVariant {{
+        [FieldOffset(0)] public ushort vt;
+        [FieldOffset(8)] public IntPtr pointerValue;
+    }}
+    [ComImport, Guid("{_IID_IPROPERTYSTORE.strip('{}')}"),
+     InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+    public interface IPropertyStore {{
+        uint GetCount(out uint cProps);
+        uint GetAt(uint iProp, out PropertyKey pkey);
+        uint GetValue(ref PropertyKey key, out PropVariant pv);
+        uint SetValue(ref PropertyKey key, ref PropVariant pv);
+        uint Commit();
+    }}
+    public static class ShortcutAumid {{
+        [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
+        private static extern int SHGetPropertyStoreFromParsingName(
+            string pszPath, IntPtr pbc, uint flags, ref Guid riid,
+            out IPropertyStore store);
+        [DllImport("ole32.dll")]
+        private static extern int PropVariantClear(ref PropVariant pvar);
+        public static void Set(string linkPath, string aumid) {{
+            Guid iid = new Guid("{_IID_IPROPERTYSTORE.strip('{}')}");
+            IPropertyStore store;
+            int hr = SHGetPropertyStoreFromParsingName(
+                linkPath, IntPtr.Zero, 2, ref iid, out store);
+            Marshal.ThrowExceptionForHR(hr);
+            PropertyKey key = new PropertyKey(
+                new Guid("{_PKEY_APP_USER_MODEL_ID_FMTID}"),
+                {_PKEY_APP_USER_MODEL_ID_PID});
+            PropVariant pv = new PropVariant();
+            pv.vt = 31;
+            pv.pointerValue = Marshal.StringToCoTaskMemUni(aumid);
+            try {{
+                Marshal.ThrowExceptionForHR((int)store.SetValue(ref key, ref pv));
+                Marshal.ThrowExceptionForHR((int)store.Commit());
+            }} finally {{
+                PropVariantClear(ref pv);
+                Marshal.ReleaseComObject(store);
+            }}
+        }}
+    }}
+}}
+""".strip()
+
+
+def _aumid_tag_snippet(link: Path, aumid: str) -> str:
+    """PowerShell lines that embed the AUMID into ``link``'s property store."""
+    return (
+        "Add-Type -TypeDefinition @'\n"
+        f"{_AUMID_TAG_CSHARP}\n"
+        "'@\n"
+        "[JarvisShell.ShortcutAumid]::Set("
+        f"{_powershell_quote(str(link))}, {_powershell_quote(aumid)})\n"
+    )
+
+
+def build_shortcut_aumid_script(link: Path, aumid: str) -> str:
+    """Pure: standalone PowerShell that AUMID-tags an existing ``.lnk``.
+
+    Used wherever a shortcut write already happens in an identity-free
+    PowerShell child (the autostart fallback) but the AUMID tag would
+    otherwise be written in-process and get virtualized away (BUG-109).
+    """
+    return "$ErrorActionPreference = 'Stop'\n" + _aumid_tag_snippet(link, aumid)
+
+
+def build_start_menu_shortcut_script(
+    link: Path,
+    *,
+    aumid: str,
+    target: Path,
+    arguments: str,
+    working_dir: Path,
+    icon_path: Path | None,
+    description: str,
+) -> str:
+    """Pure: idempotent check-and-write PowerShell for the Start-Menu ``.lnk``.
+
+    The script first reads the existing shortcut through ``WScript.Shell``; when
+    every field already matches it exits without touching the file (and without
+    compiling the C# tagger), so the steady-state boot cost stays one COM read.
+    Otherwise it (re)writes the shortcut and embeds the AUMID. Stdout carries a
+    sentinel (``JARVIS_SHORTCUT_OK`` / ``JARVIS_SHORTCUT_WRITTEN``) so the
+    caller can distinguish success from PowerShell noise.
+    """
+    q = _powershell_quote
+    icon_value = f"{icon_path},0" if icon_path is not None else ""
+    checks = [
+        f"($cur.TargetPath -eq {q(str(target))})",
+        f"($cur.Arguments -eq {q(arguments)})",
+        f"($cur.WorkingDirectory -eq {q(str(working_dir))})",
+    ]
+    if icon_path is not None:
+        checks.append(f"($cur.IconLocation -eq {q(icon_value)})")
+        icon_line = f"$sc.IconLocation = {q(icon_value)}\n"
+    else:
+        icon_line = ""
+    check_expr = " -and ".join(checks)
+    return (
+        "$ErrorActionPreference = 'Stop'\n"
+        f"$link = {q(str(link))}\n"
+        "$ws = New-Object -ComObject WScript.Shell\n"
+        "if (Test-Path -LiteralPath $link) {\n"
+        "  $cur = $ws.CreateShortcut($link)\n"
+        f"  if ({check_expr}) {{\n"
+        "    Write-Output 'JARVIS_SHORTCUT_OK'\n"
+        "    exit 0\n"
+        "  }\n"
+        "}\n"
+        f"$null = New-Item -ItemType Directory -Force -Path {q(str(link.parent))}\n"
+        "$sc = $ws.CreateShortcut($link)\n"
+        f"$sc.TargetPath = {q(str(target))}\n"
+        f"$sc.Arguments = {q(arguments)}\n"
+        f"$sc.WorkingDirectory = {q(str(working_dir))}\n"
+        f"{icon_line}"
+        f"$sc.Description = {q(description)}\n"
+        "$sc.WindowStyle = 1\n"
+        "$sc.Save()\n"
+        # The AUMID tag is reinforcement (taskbar naming); the .lnk itself is
+        # what makes the app searchable/launchable. A tag failure must not turn
+        # a written shortcut into a failed install, so it is best-effort here.
+        "try {\n"
+        f"{_aumid_tag_snippet(link, aumid)}"
+        "} catch {\n"
+        "  Write-Output 'JARVIS_SHORTCUT_TAG_FAILED'\n"
+        "}\n"
+        "Write-Output 'JARVIS_SHORTCUT_WRITTEN'\n"
+    )
+
+
+def _run_identity_free_powershell(
+    script: str, *, timeout: float
+) -> subprocess.CompletedProcess[str] | None:
+    """Run ``script`` in a plain ``powershell.exe`` child; ``None`` on failure.
+
+    ``powershell.exe`` carries no MSIX package identity, so its filesystem
+    writes land in the REAL user profile even when this Python process is
+    virtualized (Store Python). Never raises.
+    """
+    from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS
+
+    try:
+        return subprocess.run(  # noqa: S603 — fixed argv built from our own script
+            [
+                "powershell",
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                script,
+            ],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+        )
+    except Exception as exc:  # noqa: BLE001 — callers degrade, never crash
+        logger.debug("identity-free PowerShell run failed: {}", exc)
+        return None
+
+
+def _ensure_start_menu_shortcut_via_powershell(
+    lnk: Path,
+    *,
+    aumid: str,
+    target: Path,
+    icon: Path,
+    description: str,
+) -> bool:
+    """Write the Start-Menu shortcut through an identity-free PowerShell child.
+
+    Used when this process carries MSIX package identity (Store-Python venv):
+    neither in-process reads nor writes of ``%APPDATA%`` are trustworthy there
+    (both see the package's virtualized view), so the whole check-and-write is
+    delegated to a child that sees the real filesystem — the same mechanism
+    that keeps the autostart fallback ``.lnk`` real (BUG-109).
+    """
+    script = build_start_menu_shortcut_script(
+        lnk,
+        aumid=aumid,
+        target=target,
+        arguments=f"-m {_LAUNCHER_MODULE}",
+        working_dir=Path.home(),
+        icon_path=icon if icon.is_file() else None,
+        description=description,
+    )
+    # Generous timeout: the first write compiles the C# tagger (~seconds); the
+    # steady-state match path is a single COM read.
+    result = _run_identity_free_powershell(script, timeout=90)
+    if result is None:
+        return False
+    if result.returncode == 0 and "JARVIS_SHORTCUT_" in (result.stdout or ""):
+        logger.debug("Start-Menu shortcut ensured (identity-free shell): {}", lnk)
+        return True
+    logger.debug(
+        "identity-free Start-Menu shortcut write failed (rc={}): {}",
+        result.returncode,
+        ((result.stderr or "") + (result.stdout or ""))[-500:],
+    )
+    return False
+
+
+def remove_start_menu_shortcut(lnk: Path) -> bool:
+    """Delete a Start-Menu ``.lnk`` so the REAL file goes away even under MSIX.
+
+    A plain ``Path.unlink`` from a package-identity process only updates the
+    virtualized view — the real shortcut survives and keeps pointing at the
+    uninstalled tree. Route the delete through the identity-free child in that
+    case; plain unlink everywhere else (including non-Windows test callers).
+    """
+    if sys.platform == "win32" and windows_package_identity() is not None:
+        script = (
+            f"Remove-Item -LiteralPath {_powershell_quote(str(lnk))} "
+            "-Force -ErrorAction SilentlyContinue\n"
+            "exit 0\n"
+        )
+        result = _run_identity_free_powershell(script, timeout=30)
+        return result is not None and result.returncode == 0
+    try:
+        lnk.unlink(missing_ok=True)
+        return True
+    except OSError as exc:
+        logger.debug("could not remove Start-Menu shortcut {}: {}", lnk, exc)
+        return False
 
 
 def register_windows_app_user_model_id(
@@ -586,6 +887,28 @@ def ensure_start_menu_shortcut(
     programs = programs_dir or _default_start_menu_programs_dir()
     if programs is None:
         return False
+    pythonw = _pythonw_executable()
+    if pythonw is None:
+        return False
+    ico = icon_path or project_icon_path()
+    lnk = programs / START_MENU_SHORTCUT_NAME
+
+    # MSIX package identity (a venv built from the Microsoft Store Python):
+    # in-process ``%APPDATA%`` writes are virtualized into the package's
+    # private LocalCache and never reach the real Start Menu — the shortcut
+    # would "exist" for this process while Windows search finds nothing
+    # (BUG-109). In-process READS are equally untrustworthy (they see the
+    # virtualized view), so the whole check-and-write goes through an
+    # identity-free PowerShell child. No pywin32 needed on this path.
+    if windows_package_identity() is not None:
+        return _ensure_start_menu_shortcut_via_powershell(
+            lnk,
+            aumid=aumid,
+            target=pythonw,
+            icon=ico,
+            description=display_name,
+        )
+
     try:
         import pywintypes
         from win32com.client import Dispatch
@@ -594,11 +917,6 @@ def ensure_start_menu_shortcut(
         logger.debug("pywin32 unavailable; Start-Menu shortcut not ensured: {}", exc)
         return False
 
-    pythonw = _pythonw_executable()
-    if pythonw is None:
-        return False
-    ico = icon_path or project_icon_path()
-    lnk = programs / START_MENU_SHORTCUT_NAME
     iid = pywintypes.IID(_IID_IPROPERTYSTORE)
 
     # Idempotent BUT self-healing: leave an existing shortcut alone ONLY if it

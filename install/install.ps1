@@ -254,6 +254,23 @@ function Test-PythonCandidate {
     }
 }
 
+function Test-StorePythonSource {
+    param([string]$Exe)
+    # The Microsoft Store Python resolves under ...\Microsoft\WindowsApps\ and
+    # runs with MSIX package identity: its filesystem writes to %APPDATA% /
+    # %LOCALAPPDATA% are silently virtualized into the package's private
+    # LocalCache. Jarvis compensates at runtime (BUG-109), but a non-Store
+    # interpreter gives real shell integration and visible user data, so the
+    # candidate scan prefers one whenever it exists.
+    try {
+        $cmd = Get-Command $Exe -ErrorAction SilentlyContinue
+        $source = if ($cmd -and $cmd.Source) { [string]$cmd.Source } else { [string]$Exe }
+    } catch {
+        $source = [string]$Exe
+    }
+    return ($source -match '(?i)\\WindowsApps\\')
+}
+
 function Find-CompatiblePython {
     $candidates = @()
     if ($env:JARVIS_PYTHON) {
@@ -276,6 +293,7 @@ function Find-CompatiblePython {
     }
 
     $closest = $null
+    $storeFallback = $null
     $seen = @{}
     foreach ($candidate in $candidates) {
         if (-not $candidate) { continue }
@@ -285,19 +303,36 @@ function Find-CompatiblePython {
         $probe = Test-PythonCandidate $candidate
         if ($null -eq $probe) { continue }
         if ($probe.Compatible) {
-            return [pscustomobject]@{
-                Found = $true
-                Exe = $probe.Exe
-                Version = $probe.Version
-                Closest = $closest
+            if (-not (Test-StorePythonSource $candidate)) {
+                return [pscustomobject]@{
+                    Found = $true
+                    Exe = $probe.Exe
+                    Version = $probe.Version
+                    IsStore = $false
+                    Closest = $closest
+                }
             }
+            # Compatible, but the sandboxed Store build: keep scanning for a
+            # normal interpreter and use this one only as the last resort.
+            if ($null -eq $storeFallback) { $storeFallback = $probe }
+            continue
         }
         if ($null -eq $closest) { $closest = $probe }
+    }
+    if ($null -ne $storeFallback) {
+        return [pscustomobject]@{
+            Found = $true
+            Exe = $storeFallback.Exe
+            Version = $storeFallback.Version
+            IsStore = $true
+            Closest = $closest
+        }
     }
     return [pscustomobject]@{
         Found = $false
         Exe = $null
         Version = $null
+        IsStore = $false
         Closest = $closest
     }
 }
@@ -510,6 +545,11 @@ if ($null -eq $prerequisites) {
 }
 $pythonExe = $prerequisites.Python.Exe
 $pythonVer = "Python $($prerequisites.Python.Version)"
+if ($prerequisites.Python.IsStore) {
+    Write-Note 'this Python is the Microsoft Store build, which sandboxes its file access.'
+    Write-Note 'Jarvis compensates automatically; for the smoothest desktop integration,'
+    Write-Note 'install Python from python.org and re-run this installer any time.'
+}
 
 # Node.js 18+ -- powers only the OPTIONAL Jarvis-Agent worker CLIs (Claude
 # Code / Codex) that heavy missions delegate to, plus the Node-based
@@ -807,6 +847,24 @@ if (Test-Path $VenvPython) {
         }
     } catch {
         Write-Note 'could not check for a running Jarvis app - continuing'
+    }
+}
+
+# Rebuild the venv when it was built from the sandboxed Microsoft Store Python
+# and a normal interpreter is now selected (BUG-109): a Store-based venv keeps
+# MSIX file virtualization forever - desktop-shell artifacts and per-user data
+# written by it land in the package's hidden LocalCache instead of the real
+# profile. Packages are reinstalled by the installer right after, so dropping
+# the environment loses nothing (twin of install.sh's version-change rebuild).
+if ((Test-Path $VenvPython) -and -not $prerequisites.Python.IsStore) {
+    $VenvCfgPath = Join-Path $VenvPath 'pyvenv.cfg'
+    if ((Test-Path $VenvCfgPath) -and ((Get-Content $VenvCfgPath -Raw) -match '(?i)\\WindowsApps\\')) {
+        Write-Note 'rebuilding the Python environment (moving off the sandboxed Microsoft Store Python)'
+        try {
+            Remove-Item -LiteralPath $VenvPath -Recurse -Force -ErrorAction Stop
+        } catch {
+            Write-Note 'could not remove the old environment - continuing with it'
+        }
     }
 }
 

@@ -253,10 +253,23 @@ def _tag_shortcut_aumid(link: Path) -> bool:
     diverging from the Start-Menu one. Never raises, never blocks autostart.
     """
     try:
+        from jarvis.ui.icon_utils import (
+            APP_USER_MODEL_ID,
+            build_shortcut_aumid_script,
+            windows_package_identity,
+        )
+
+        if windows_package_identity() is not None:
+            # A Store-Python (MSIX) interpreter's in-process property-store
+            # write is virtualized into the package container and never
+            # reaches the real .lnk this shortcut writer just created via
+            # PowerShell (BUG-109) — tag through the same identity-free
+            # child instead. _run_powershell raises on failure -> False below.
+            _run_powershell(build_shortcut_aumid_script(link, APP_USER_MODEL_ID))
+            return True
+
         import pywintypes  # type: ignore[import-not-found]
         from win32com.propsys import propsys, pscon  # type: ignore[import-not-found]
-
-        from jarvis.ui.icon_utils import APP_USER_MODEL_ID
 
         store = propsys.SHGetPropertyStoreFromParsingName(
             str(link),

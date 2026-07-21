@@ -7483,3 +7483,90 @@ The user hung up via hotkey at 11:55:11.
 Related: BUG-102 (topology refresh), BUG-104 (rebuild seed), BUG-106
 (the answer itself also missed the Gulfstream G800, in service since
 2025 — fact-quality family, tracked there).
+
+---
+
+## BUG-109: Store-Python (MSIX) virtualization swallows the Start-Menu launcher — Windows search finds no app after a clean install (HIGH, FIXED 2026-07-21)
+
+**Symptom (fresh Windows 11 test machine, install 2026-07-21 20:01).**
+The one-liner install completed successfully — phase 6 reported "desktop
+app registered with the operating system", the Installed-Apps registry
+entry and the AppUserModelId key were present, the app launched and ran.
+But searching the Start Menu for the app found NOTHING, on this machine
+only; the same install command on macOS produced a Spotlight-findable
+app. The desktop-integration log even showed the success line
+`Start-Menu shortcut ensured: ...\Start Menu\Programs\Personal Jarvis.lnk`
+— yet no such file existed in the real Start Menu.
+
+**Root cause — MSIX filesystem virtualization, not a failed write.**
+The Stage-1 installer's Python scan tried `python` on PATH first; on
+this machine that resolved to the **Microsoft Store Python 3.13**
+(`PythonSoftwareFoundation.Python.3.13_...` under
+`...\Microsoft\WindowsApps\`). A venv built from the Store Python keeps
+the MSIX **package identity** of its base interpreter, and with it MSIX
+filesystem virtualization: every in-process write to `%APPDATA%` /
+`%LOCALAPPDATA%` is silently redirected (copy-on-write) into the
+package's private container at
+`%LOCALAPPDATA%\Packages\<python-package>\LocalCache\...`. So the
+pywin32 `WScript.Shell`/property-store write in
+`ensure_start_menu_shortcut` genuinely succeeded — into
+`LocalCache\Roaming\Microsoft\Windows\Start Menu\Programs\`, a location
+Explorer and Windows search never read. In-process READS see the same
+virtualized view (`lnk.is_file()` returns `True`), so every self-heal
+check reported the shortcut healthy. Three tells sealed the diagnosis:
+
+1. The **autostart fallback `.lnk` survived** in the real
+   `Programs\Startup\` — it is written through a `powershell.exe`
+   subprocess, which carries no package identity and therefore writes
+   the real filesystem.
+2. The **registry entries were real** (visible from an outside
+   PowerShell) — HKCU registry writes passed through on this host.
+3. `%TEMP%` writes passed through as well — only the profile AppData
+   trees were virtualized, which is why everything else about the app
+   worked and only the shell artifacts vanished. The per-user data dir
+   (`%LOCALAPPDATA%\Jarvis`: skills, memory, logs) also landed in the
+   hidden LocalCache container — consistent for the app itself, but
+   invisible to the user and orphaned if the venv ever moves to a
+   non-Store interpreter.
+
+**Why macOS/Linux never see this.** MSIX virtualization is a
+Windows-packaging mechanism; the macOS `.app` bundle and the Linux
+`.desktop` entry are written into real, shell-visible locations on
+every path.
+
+**Fix (two independent layers).**
+
+1. **Runtime — identity-aware shell-artifact writer**
+   (`jarvis/ui/icon_utils.py`). `windows_package_identity()` probes
+   `GetCurrentPackageFullName`; with identity present,
+   `ensure_start_menu_shortcut` routes the whole check-and-write through
+   an identity-free `powershell.exe` child
+   (`build_start_menu_shortcut_script`: WScript.Shell write + embedded
+   C# `IPropertyStore` AUMID tag — no pywin32 needed), the same
+   mechanism that always kept the autostart `.lnk` real. Neither
+   in-process reads nor writes are trusted under identity. Removal
+   (`remove_start_menu_shortcut`, used by desktop-integration removal)
+   and the autostart AUMID tag are routed the same way — an in-process
+   unlink under identity only updates the virtualized view and would
+   leave the real launcher behind after an uninstall.
+2. **Install-time — prefer a non-Store interpreter**
+   (`install/install.ps1`). The candidate scan classifies
+   `\WindowsApps\` resolutions as Store Python and uses them only as a
+   last resort (with an honest note); when a normal interpreter is
+   selected and the existing venv was Store-based, the venv is rebuilt
+   (packages are reinstalled by the installer right after — twin of
+   install.sh's version-change rebuild), which also migrates future
+   writes out of the hidden container.
+
+**The class rule.** Any artifact that must be visible to the SHELL or to
+OTHER processes (Start Menu, Startup, uninstall entries, exported files)
+must never be written by a process that may carry MSIX package identity
+— write it through an identity-free child, or verify visibility from
+one. "The write succeeded and the file exists" is not proof on Windows:
+*whose view* of the filesystem existed is part of the assertion.
+
+**Guards.**
+`tests/unit/ui/test_icon_identity.py::test_ensure_shortcut_routes_through_identity_free_shell_under_msix`
+(routing under identity), the pure script-builder contract tests
+(quoting, AUMID key, sentinels — platform-neutral), and
+`test_remove_start_menu_shortcut_plain_unlink`.

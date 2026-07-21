@@ -219,10 +219,23 @@ def _remove_windows_desktop_integration(
     programs = programs_dir or _windows_programs_dir()
     if programs is not None:
         shortcut = programs / WINDOWS_SHORTCUT_FILE_NAME
+        # remove_start_menu_shortcut, not a plain unlink: under a Store-Python
+        # (MSIX package identity) venv an in-process unlink only updates the
+        # virtualized view and the REAL Start-Menu launcher survives the
+        # uninstall (BUG-109).
         try:
-            shortcut.unlink(missing_ok=True)
-        except OSError as exc:
-            warnings.append(f"could not remove the Start-menu launcher: {exc}")
+            from jarvis.ui.icon_utils import remove_start_menu_shortcut
+
+            removed = remove_start_menu_shortcut(shortcut)
+        except Exception as exc:  # noqa: BLE001 - degrade to the direct unlink
+            try:
+                shortcut.unlink(missing_ok=True)
+                removed = True
+            except OSError:
+                removed = False
+            log.debug("shortcut removal helper unavailable: %s", exc)
+        if not removed:
+            warnings.append("could not remove the Start-menu launcher")
     if not _delete_windows_registry_key(registry_subkey):
         warnings.append("could not remove the Installed Apps registry entry")
     if not _delete_windows_registry_key(_windows_aumid_subkey(aumid)):
