@@ -357,6 +357,33 @@ def _select_macos_ax_window(
     return None
 
 
+#: Per-call ceiling for AX messages to another app, in seconds. The macOS
+#: default is ~6 s PER CALL, so a busy target (Safari mid-page-load) could
+#: hold a raise/focus sequence of 4-5 AX calls for well over the CU action
+#: timeout — live 2026-07-21: open_app('Safari') burned the full 15 s
+#: _ACT_TIMEOUT_S in exactly this path while Safari was already open.
+_AX_MESSAGING_TIMEOUT_S = 1.5
+
+
+def _macos_bound_ax_messaging(
+    element, timeout_s: float = _AX_MESSAGING_TIMEOUT_S,
+) -> None:
+    """Cap the AX messaging timeout for calls through ``element`` (best-effort).
+
+    Applies to the element it is set on (setting it on the app root bounds the
+    calls made through that root). A missing symbol or native error is
+    ignored — the call sequence then simply keeps the OS default.
+    """
+    try:
+        from ApplicationServices import (  # type: ignore[import-not-found] # noqa: PLC0415
+            AXUIElementSetMessagingTimeout,
+        )
+
+        AXUIElementSetMessagingTimeout(element, float(timeout_s))
+    except Exception:  # noqa: BLE001 — advisory bound only
+        log.debug("AXUIElementSetMessagingTimeout unavailable", exc_info=True)
+
+
 def _find_and_focus_macos(title_contains: str) -> tuple[bool, str]:
     """Activate and AX-raise a matching macOS window without AppleScript.
 
@@ -426,6 +453,7 @@ def _find_and_focus_macos(title_contains: str) -> tuple[bool, str]:
         return False, "macOS refused to activate the matching application."
 
     root = AXUIElementCreateApplication(pid)
+    _macos_bound_ax_messaging(root)
     windows = list(_macos_ax_attr(root, "AXWindows") or [])
     owner_name = str(matched_entry.get("kCGWindowOwnerName") or "")
     target_title = _macos_window_title(matched_entry)
@@ -439,6 +467,8 @@ def _find_and_focus_macos(title_contains: str) -> tuple[bool, str]:
             "The application activated, but its matching AX window was "
             "unavailable or ambiguous."
         )
+    # The timeout is per-element: bound the window element too, not only root.
+    _macos_bound_ax_messaging(target)
     target_title = str(_macos_ax_attr(target, "AXTitle") or target_title)
 
     minimized = bool(_macos_ax_attr(target, "AXMinimized") or False)

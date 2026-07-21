@@ -10,6 +10,7 @@ land directly in os.startfile.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import re
 import shutil
@@ -28,6 +29,8 @@ from jarvis.voice.action_phrases import action_phrase, resolve_phrase_language
 
 # Apps for which a second window is normal/expected — never short-circuit these
 # to "already running -> focus"; the user almost always wants a fresh instance.
+logger = logging.getLogger(__name__)
+
 _MULTI_INSTANCE_APPS: frozenset[str] = frozenset({
     "explorer", "cmd", "powershell", "pwsh", "wt", "windowsterminal",
     "terminal", "conhost", "gnome-terminal", "konsole", "xterm",
@@ -308,19 +311,38 @@ class OpenAppTool:
             or app_name.startswith((".", "\\", "/"))
         )
         if reuse_existing and not is_url and not is_path and low not in _MULTI_INSTANCE_APPS:
-            running = window_state.is_app_running(app_name)
-            if running is not None:
-                # Raise by the known window handle through the HARDENED path —
-                # a plain focus is refused under the Windows foreground-lock, so
-                # an already-open-but-backgrounded app (the WhatsApp report)
-                # stayed behind everything. raise_window defeats that lock.
-                focused, _msg = window_state.raise_window(running)
-                if focused:
-                    return ToolResult(
-                        success=True,
-                        output=f"{app_name} is already running — brought it to the front.",
+            # Off the event loop AND hard-bounded: the macOS raise path talks
+            # AX to the target app, and a busy target once held this for the
+            # CU dispatcher's entire 15 s action timeout (live 2026-07-21,
+            # Safari mid-load). On a timeout we simply fall through to the
+            # normal launch — `open -a` focuses a running app anyway.
+            try:
+                async with asyncio.timeout(4.0):
+                    running = await asyncio.to_thread(
+                        window_state.is_app_running, app_name,
                     )
-                # focus failed (e.g. foreground-lock) -> fall through to launch
+                    focused = False
+                    if running is not None:
+                        # Raise by the known window handle through the
+                        # HARDENED path — a plain focus is refused under the
+                        # Windows foreground-lock, so an already-open-but-
+                        # backgrounded app (the WhatsApp report) stayed
+                        # behind everything. raise_window defeats that lock.
+                        focused, _msg = await asyncio.to_thread(
+                            window_state.raise_window, running,
+                        )
+            except TimeoutError:
+                focused = False
+                logger.warning(
+                    "[open_app] already-running focus probe for %r exceeded "
+                    "4s — falling through to a normal launch", app_name,
+                )
+            if focused:
+                return ToolResult(
+                    success=True,
+                    output=f"{app_name} is already running — brought it to the front.",
+                )
+            # focus failed (e.g. foreground-lock) -> fall through to launch
 
         try:
             launch_target = resolve_app_launch_target(app_name)

@@ -311,6 +311,18 @@ class AXTreeSource:
             logger.debug("AXUIElementCreateApplication failed", exc_info=True)
             return (window_title, pid, [])
 
+        # Bound each AX round trip: the OS default is ~6 s PER CALL, so one
+        # busy app could blow straight through the walk's 1.2 s wall-clock
+        # budget (the deadline is only checked BETWEEN calls). Best-effort.
+        try:
+            from ApplicationServices import (  # type: ignore[import-not-found] # noqa: PLC0415
+                AXUIElementSetMessagingTimeout,
+            )
+
+            AXUIElementSetMessagingTimeout(root, 0.5)
+        except Exception:  # noqa: BLE001 — advisory bound only
+            logger.debug("AXUIElementSetMessagingTimeout unavailable", exc_info=True)
+
         # The engine layer decides whether to discard a non-matching window —
         # hard-filtering here would be more brittle (mirrors the Windows source).
         _ = window_title_filter
