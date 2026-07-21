@@ -45,7 +45,7 @@ def test_switch_dry_run_sends_nothing(capture_api):
 def test_subagent_switch(capture_api):
     runner.invoke(app, ["brain", "subagent-switch", "openai"])
     call = capture_api["calls"][-1]
-    assert call["path"] == "/api/subagent/switch"
+    assert call["path"] == "/api/jarvis-agent/switch"
     assert call["body"]["provider"] == "openai"
 
 
@@ -58,5 +58,5 @@ def test_test_provider(capture_api):
 def test_deep_model(capture_api):
     runner.invoke(app, ["brain", "deep-model", "some-model", "--no-persist"])
     call = capture_api["calls"][-1]
-    assert call["path"] == "/api/subagent/model"
+    assert call["path"] == "/api/jarvis-agent/model"
     assert call["body"] == {"model": "some-model", "persist": False}

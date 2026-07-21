@@ -269,6 +269,9 @@ async def test_switch_codex_allowed_as_subagent(monkeypatch, no_keys):
         installed = True
 
     class _FakeCodexAuthService:
+        def __init__(self, _binary_path=None):
+            pass
+
         def status(self):
             return _Status()
 
@@ -283,6 +286,38 @@ async def test_switch_codex_allowed_as_subagent(monkeypatch, no_keys):
     assert res["tier"] == "subagent"
     assert res["new_provider"] == "openai-codex"
     assert cfg.brain.worker.provider == "openai-codex"
+
+
+async def test_switch_native_claude_subscription_allowed_as_agent(
+    monkeypatch, no_keys
+):
+    """The shared switch accepts native CLI auth when no bearer file exists."""
+    from jarvis.brain.app_control import apply_provider_switch
+    from jarvis.claude_auth import ClaudeAuthStatus
+
+    monkeypatch.setattr(
+        "jarvis.missions.isolation.env.read_live_claude_oauth_token",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "jarvis.claude_auth.usable_native_claude_subscription",
+        lambda: ClaudeAuthStatus(
+            installed=True,
+            connected=True,
+            mode="subscription",
+            binary_path="/opt/claude",
+        ),
+    )
+
+    cfg = make_cfg(sub="gemini")
+    result = await apply_provider_switch(
+        "subagent", "claude-api", cfg=cfg, persist=False
+    )
+
+    assert result["ok"] is True
+    assert result["new_provider"] == "claude-api"
+    assert result["requires_restart"] is True
+    assert cfg.brain.worker.provider == "claude-api"
 
 
 async def test_switch_unknown_tier(configured_keys):

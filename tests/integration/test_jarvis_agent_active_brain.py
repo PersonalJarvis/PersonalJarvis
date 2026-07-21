@@ -104,10 +104,10 @@ def _client(cfg) -> TestClient:
     return TestClient(WebServer(bus=EventBus(), cfg=cfg).app)
 
 
-def test_subagent_switch_persists_and_restart_required(
+def test_subagent_switch_persists_and_applies_to_next_mission(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Switch to a key-present provider: 200, persisted, restart_required."""
+    """A persisted switch is live for the next mission without an app restart."""
     import jarvis.core.config as cfg_mod
     import jarvis.core.config_writer as config_writer
 
@@ -121,12 +121,15 @@ def test_subagent_switch_persists_and_restart_required(
     cfg.brain.primary = "gemini"
     cfg.brain.worker = BrainTierConfig(provider="claude-api", model="")
 
-    resp = _client(cfg).post("/api/jarvis-agent/switch", json={"provider": "gemini", "persist": True})
+    resp = _client(cfg).post(
+        "/api/jarvis-agent/switch",
+        json={"provider": "gemini", "persist": True},
+    )
     assert resp.status_code == 200, resp.text
     body = resp.json()
     assert body["active"] == "gemini"
     assert body["persisted"] is True
-    assert body["restart_required"] is True
+    assert body["restart_required"] is False
     assert calls == ["gemini"], "set_worker_provider must be called with the new provider"
 
 
@@ -154,10 +157,10 @@ def test_subagent_switch_409_when_no_key(monkeypatch: pytest.MonkeyPatch) -> Non
     assert persisted == [], "must not persist a provider that has no key"
 
 
-def test_realtime_only_key_does_not_unlock_jarvis_agent(
+def test_realtime_only_key_unlocks_same_family_jarvis_agent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """A key saved on Realtime must remain invisible to Jarvis-Agents."""
+    """A user's only OpenAI key must keep the same-family Agent usable."""
     import jarvis.core.config as cfg_mod
     import jarvis.core.config_writer as config_writer
 
@@ -177,15 +180,8 @@ def test_realtime_only_key_does_not_unlock_jarvis_agent(
         json={"provider": "openai", "persist": True},
     )
 
-    assert response.status_code == 409
-    row = next(
-        item
-        for item in client.get("/api/jarvis-agent/status").json()["mapping"]
-        if item["jarvis"] == "openai"
-    )
-    assert row["key_set"] is False
-    assert row["dedicated_key_set"] is False
-    assert row["credential_source"] == "none"
+    assert response.status_code == 200, response.text
+    assert response.json()["active"] == "openai"
 
 
 def test_dedicated_jarvis_agent_key_unlocks_provider_without_brain_key(
@@ -458,6 +454,48 @@ def test_subagent_switch_accepts_claude_max_oauth(monkeypatch: pytest.MonkeyPatc
     assert calls == ["claude-api"]
 
 
+def test_subagent_switch_accepts_native_claude_subscription(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A platform-native Claude login is usable even without an exportable token.
+
+    Current Claude Code stores the subscription in the macOS Keychain. The CLI
+    can use that account through its customization-free safe mode, while no
+    ``~/.claude/.credentials.json`` bearer exists for Jarvis to copy.
+    """
+    import jarvis.core.config as cfg_mod
+    import jarvis.core.config_writer as config_writer
+    from jarvis.claude_auth import ClaudeAuthStatus
+
+    monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _p: None)
+    monkeypatch.setattr(
+        "jarvis.missions.isolation.env.read_live_claude_oauth_token",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "jarvis.claude_auth.usable_native_claude_subscription",
+        lambda: ClaudeAuthStatus(
+            installed=True,
+            connected=True,
+            mode="subscription",
+            binary_path="/opt/claude",
+        ),
+    )
+    calls: list[str] = []
+    monkeypatch.setattr(config_writer, "set_worker_provider", calls.append)
+
+    cfg = load_config()
+    response = _client(cfg).post(
+        "/api/jarvis-agent/switch",
+        json={"provider": "claude-api", "persist": True},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["active"] == "claude-api"
+    assert response.json()["restart_required"] is False
+    assert calls == ["claude-api"]
+
+
 def test_subagent_switch_409_claude_api_no_key_no_oauth(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -467,6 +505,10 @@ def test_subagent_switch_409_claude_api_no_key_no_oauth(
     monkeypatch.setattr(cfg_mod, "get_provider_secret", lambda _p: None)
     monkeypatch.setattr(
         "jarvis.missions.isolation.env.read_live_claude_oauth_token", lambda: None
+    )
+    monkeypatch.setattr(
+        "jarvis.claude_auth.usable_native_claude_subscription",
+        lambda: None,
     )
     persisted: list[str] = []
     monkeypatch.setattr(config_writer, "set_worker_provider", lambda n: persisted.append(n))

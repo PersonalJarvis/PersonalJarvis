@@ -34,6 +34,7 @@ layer (``provider_routes``) imports *down* into this module — never the revers
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -59,9 +60,9 @@ def get_spec(provider_id: str) -> Any:
     """Provider spec by id, or ``None`` (thin wrapper over the lazy catalog)."""
     return _catalog().get_spec(provider_id)
 
-# The tiers a provider switch can target. ``brain`` and ``tts`` apply live (no
-# restart); ``stt`` and ``subagent`` are wired once at bootstrap and need a
-# restart to take effect.
+# The tiers a provider switch can target. ``brain`` and ``tts`` apply live;
+# Jarvis-Agent workers re-resolve their provider before each mission. STT is
+# wired once at bootstrap and still needs a restart.
 SWITCHABLE_TIERS: frozenset[str] = frozenset({"brain", "tts", "stt", "subagent"})
 
 # Local providers allowed to stay active in the airgapped privacy profile.
@@ -603,7 +604,11 @@ async def _switch_subagent(
         try:
             from jarvis.codex_auth import CodexAuthService
 
-            codex_status = CodexAuthService().status()
+            codex_cfg = getattr(cfg, "codex", None)
+            binary_path = getattr(codex_cfg, "binary_path", "") or None
+            codex_status = await asyncio.to_thread(
+                CodexAuthService(binary_path).status
+            )
             codex_connected = codex_status.connected
         except Exception:  # noqa: BLE001 — codex CLI absent is just "not connected"
             codex_status = None
@@ -628,26 +633,15 @@ async def _switch_subagent(
                 "error_kind": "missing_credential",
                 "error": (
                     "Codex is not connected — run 'codex login' or save an OpenAI "
-                    "API key first, then switch the subagent."
+                    f"API key first, then switch the {brand}."
                 ),
             }
-        persisted = (
-            _persist(
-                lambda: _import_writer().set_worker_provider(CODEX_SUBAGENT_CANONICAL)
-            )
-            if persist
-            else False
+        return _complete_agent_switch(
+            CODEX_SUBAGENT_CANONICAL,
+            cfg=cfg,
+            persist=persist,
+            old=old,
         )
-        _set_in_memory(cfg, ["brain", "worker", "provider"], CODEX_SUBAGENT_CANONICAL)
-        return {
-            "ok": True,
-            "tier": "subagent",
-            "old_provider": old,
-            "new_provider": CODEX_SUBAGENT_CANONICAL,
-            "persisted": persisted,
-            "applied_live": False,
-            "requires_restart": True,
-        }
 
     if canon in ANTIGRAVITY_SUBAGENT_SLUGS:
         antigravity_status = None
@@ -657,7 +651,9 @@ async def _switch_subagent(
                 antigravity_provider_ready,
             )
 
-            antigravity_status = GoogleCliAuthService().status()
+            antigravity_status = await asyncio.to_thread(
+                GoogleCliAuthService().status
+            )
         except Exception as exc:  # noqa: BLE001 — absent CLI is a normal capability miss
             log.debug("Antigravity CLI readiness probe failed: %s", exc)
         has_key = bool(cfg_mod.get_jarvis_agent_secret("gemini"))
@@ -681,30 +677,15 @@ async def _switch_subagent(
                 "error": (
                     "Antigravity is not connected — sign in with Google "
                     "(install agy or the Gemini CLI and log in) or save a "
-                    f"{brand} Gemini key, then switch the Agent."
+                    f"{brand} Gemini key, then switch the {brand}."
                 ),
             }
-        persisted = (
-            _persist(
-                lambda: _import_writer().set_worker_provider(
-                    ANTIGRAVITY_SUBAGENT_CANONICAL
-                )
-            )
-            if persist
-            else False
+        return _complete_agent_switch(
+            ANTIGRAVITY_SUBAGENT_CANONICAL,
+            cfg=cfg,
+            persist=persist,
+            old=old,
         )
-        _set_in_memory(
-            cfg, ["brain", "worker", "provider"], ANTIGRAVITY_SUBAGENT_CANONICAL
-        )
-        return {
-            "ok": True,
-            "tier": "subagent",
-            "old_provider": old,
-            "new_provider": ANTIGRAVITY_SUBAGENT_CANONICAL,
-            "persisted": persisted,
-            "applied_live": False,
-            "requires_restart": True,
-        }
 
     if canon not in JARVIS_TO_WORKER_SLUG:
         # List EVERY worker-capable provider, not just the API/harness ones —
@@ -718,7 +699,10 @@ async def _switch_subagent(
         return {
             "ok": False,
             "error_kind": "unknown_provider",
-            "error": f"{provider!r} is not a subagent-capable provider. Available: {known}.",
+            "error": (
+                f"{provider!r} is not a {brand}-capable provider. "
+                f"Available: {known}."
+            ),
         }
     has_credential = bool(cfg_mod.get_jarvis_agent_secret(canon))
     if canon == "claude-api" and not has_credential:
@@ -728,28 +712,63 @@ async def _switch_subagent(
             has_credential = bool(read_live_claude_oauth_token())
         except Exception:  # noqa: BLE001
             has_credential = False
+        if not has_credential:
+            try:
+                from jarvis.claude_auth import usable_native_claude_subscription
+
+                native_status = await asyncio.to_thread(
+                    usable_native_claude_subscription
+                )
+                has_credential = native_status is not None
+            except Exception:  # noqa: BLE001 — optional native CLI auth path
+                has_credential = False
     if not has_credential:
         return {
             "ok": False,
             "error_kind": "missing_credential",
             "error": (
                 f"{canon} has no {brand} credential. Save a key on its "
-                f"{brand} card first, then switch the Agent."
+                f"{brand} card first, then switch the {brand}."
             ),
         }
 
-    persisted = (
-        _persist(lambda: _import_writer().set_worker_provider(canon)) if persist else False
+    return _complete_agent_switch(
+        canon,
+        cfg=cfg,
+        persist=persist,
+        old=old,
     )
-    _set_in_memory(cfg, ["brain", "worker", "provider"], canon)
+
+
+def _complete_agent_switch(
+    provider: str, *, cfg: Any, persist: bool, old: str | None
+) -> dict[str, Any]:
+    """Persist and expose one validated Jarvis-Agent provider selection.
+
+    The mission factory re-reads the persisted provider before every new
+    mission, so a successful persisted switch is live without restarting the
+    app. An explicit non-persistent switch remains an in-memory preview only.
+    """
+    persisted = (
+        _persist(lambda: _import_writer().set_worker_provider(provider))
+        if persist
+        else False
+    )
+    if persist and not persisted:
+        return {
+            "ok": False,
+            "error_kind": "persist_failed",
+            "error": "The mission-worker provider could not be saved.",
+        }
+    _set_in_memory(cfg, ["brain", "worker", "provider"], provider)
     return {
         "ok": True,
         "tier": "subagent",
         "old_provider": old,
-        "new_provider": canon,
+        "new_provider": provider,
         "persisted": persisted,
-        "applied_live": False,
-        "requires_restart": True,
+        "applied_live": persisted,
+        "requires_restart": not persisted,
     }
 
 

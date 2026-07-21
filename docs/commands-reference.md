@@ -61,9 +61,9 @@ Switch the dedicated Computer-Use planner provider (screen control), decoupled f
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "switch the computer use provider to gemini"
 
-## `jarvis-agent-switch` — Switch Jarvis-Agent (worker) provider
+## `jarvis-agent-switch` — Switch mission-worker provider
 
-Switch the Jarvis-Agent / worker provider used for missions (e.g. codex to openai). Restart required.
+Switch the provider used for new missions (e.g. codex to openai). The next mission uses the new provider.
 
 - **Endpoint:** `POST /api/jarvis-agent/switch`
 - **Arguments:** `provider` (one of: antigravity, claude-api, codex, gemini, grok, nvidia, openai, openrouter; required); `persist` (boolean; optional)

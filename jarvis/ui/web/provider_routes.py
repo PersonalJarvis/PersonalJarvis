@@ -32,9 +32,6 @@ from jarvis.codex_auth import CodexAuthService
 from jarvis.core import config as cfg_mod
 from jarvis.core.events import SecretConfigured
 from jarvis.missions.worker_runtime.provider_map import (
-    CODEX_SUBAGENT_CANONICAL as _CODEX_SUBAGENT_CANONICAL,
-)
-from jarvis.missions.worker_runtime.provider_map import (
     CODEX_SUBAGENT_SLUGS as _CODEX_SUBAGENT_SLUGS,
 )
 from jarvis.setup.wizard import SECRETS as WIZARD_SECRETS
@@ -547,33 +544,11 @@ def _codex_binary_path(request: Request | None = None) -> str | None:
     return getattr(getattr(cfg, "codex", None), "binary_path", "") or None
 
 
-def _apply_worker_in_memory(request: Request, provider: str) -> None:
-    """Best-effort in-memory update of ``cfg.brain.worker.provider``.
-
-    So the next ``/jarvis-agent/status`` reflects the choice immediately (the
-    worker itself only re-reads at restart). Frozen / detached cfg is not an error.
-    """
-    cfg = _resolve_cfg(request)
-    if cfg is None or getattr(cfg, "brain", None) is None:
-        return
-    sub = getattr(cfg.brain, "worker", None)
-    try:
-        if sub is None:
-            from jarvis.core.config import BrainTierConfig
-
-            cfg.brain.worker = BrainTierConfig(provider=provider)
-        else:
-            sub.provider = provider
-    except Exception as exc:  # noqa: BLE001 — frozen models / detached cfg are not errors
-        log.debug("In-memory worker.provider update skipped: %s", exc)
-
-
 def _apply_worker_model_in_memory(request: Request, model: str) -> None:
     """Best-effort in-memory update of ``cfg.brain.worker.model``.
 
-    Mirrors :func:`_apply_worker_in_memory`; a missing ``worker``
-    block is created with the router primary as provider so the override is
-    never silently dropped.
+    A missing ``worker`` block is created with the router primary as provider,
+    so the override is never silently dropped.
     """
     cfg = _resolve_cfg(request)
     if cfg is None or getattr(cfg, "brain", None) is None:
@@ -2271,7 +2246,9 @@ _SWITCH_ERROR_STATUS: dict[str, int] = {
     "wrong_tier": 400,
     "subagent_only": 409,
     "missing_credential": 409,
+    "subagent_unavailable": 409,
     "airgapped_locked": 403,
+    "persist_failed": 500,
     "switch_failed": 500,
     "switch_not_applied": 500,
 }
@@ -2984,196 +2961,41 @@ async def computer_use_switch(body: SwitchBody, request: Request) -> dict[str, A
 async def jarvis_agent_switch(body: SwitchBody, request: Request) -> dict[str, Any]:
     """Switch the active Jarvis-Agent provider.
 
-    Jarvis-Agents handle heavy tasks separately from the lightweight router
-    brain. The route validates worker-capable providers, requires an API key or
-    OAuth token, persists all drift-guard layers, and updates the live config
-    for immediate UI feedback. Legacy ``sub_jarvis`` identifiers below remain
-    read-time compatibility aliases. A running worker factory is wired once at
-    mission bootstrap, so existing missions require a voice or app restart.
+    Validation is delegated to ``app_control.apply_provider_switch``, the same
+    source used by voice and connected tools. This prevents an auth capability
+    recognized by the worker (for example a platform-native Claude login) from
+    being rejected by a stale route-local credential check. The mission factory
+    re-resolves the persisted provider before every new mission, so a successful
+    switch needs no app restart.
     """
-    from jarvis.missions.worker_runtime.provider_map import (
-        JARVIS_TO_WORKER_SLUG,
-        canonical_worker_provider,
+    from jarvis.brain.app_control import apply_provider_switch
+
+    cfg = _resolve_cfg(request)
+    if cfg is None:
+        raise HTTPException(status_code=503, detail="Configuration is not ready.")
+    result = await apply_provider_switch(
+        "subagent",
+        body.provider,
+        cfg=cfg,
+        persist=body.persist,
     )
-
-    # Normalize (lower/strip + ``openclaw-claude`` -> ``claude-api``) so the
-    # accepted set matches what the UI cards display.
-    provider = canonical_worker_provider(body.provider) or ""
-
-    # Codex is a DIRECT worker (CodexDirectWorker) with no worker-harness slug —
-    # it is not in JARVIS_TO_WORKER_SLUG. Handle it explicitly: it can be backed by
-    # the ChatGPT subscription (OAuth, ``codex login``) OR an OpenAI API key.
-    if provider in _CODEX_SUBAGENT_SLUGS:
-        def _codex_status():  # noqa: ANN202
-            return CodexAuthService(_codex_binary_path(request)).status()
-
-        codex_status = await asyncio.to_thread(_codex_status)
-        codex_connected = bool(codex_status.connected)
-        has_key = bool(
-            cfg_mod.get_secret(
-                "codex_openai_api_key", env_fallback="CODEX_OPENAI_API_KEY"
-            )
-        )
-        if not codex_status.installed:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "Codex CLI is not installed. Install it or choose the OpenAI "
-                    "Jarvis-Agent card for key-only, in-process execution."
-                ),
-            )
-        if not (codex_connected or has_key):
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "Codex is not connected — run 'codex login' (ChatGPT) or save "
-                    "an OpenAI API key first, then activate."
-                ),
-            )
-        persisted = False
-        if body.persist:
-            try:
-                from jarvis.core.config_writer import set_worker_provider
-
-                set_worker_provider(_CODEX_SUBAGENT_CANONICAL)
-                persisted = True
-            except FileNotFoundError as exc:
-                raise HTTPException(status_code=500, detail=str(exc)) from exc
-            except Exception as exc:  # noqa: BLE001
-                raise HTTPException(
-                    status_code=500, detail=f"TOML write failed: {exc}"
-                ) from exc
-        _apply_worker_in_memory(request, _CODEX_SUBAGENT_CANONICAL)
-        await _emit(request, SecretConfigured(key="brain.worker.provider", action="set"))
-        _invalidate_section_health_state(request)
-        return {
-            "ok": True,
-            "active": _CODEX_SUBAGENT_CANONICAL,
-            "persisted": persisted,
-            "restart_required": True,
-        }
-
-    # Antigravity is a DIRECT worker over the Google CLI, with subscription OAuth
-    # or API-key billing only after that CLI capability exists. Key-only execution
-    # belongs to the separate Google Gemini provider.
-    from jarvis.missions.worker_runtime.provider_map import (
-        ANTIGRAVITY_SUBAGENT_CANONICAL,
-        ANTIGRAVITY_SUBAGENT_SLUGS,
-    )
-
-    if provider in ANTIGRAVITY_SUBAGENT_SLUGS:
-        from jarvis.google_cli.auth_service import (
-            GoogleCliAuthService,
-            antigravity_provider_ready,
-        )
-
-        # Dual billing (mirror of Codex): subscription OAuth or a Gemini API key,
-        # but both paths stay gated on the local CLI provider being installed.
-        antigravity_status = await asyncio.to_thread(GoogleCliAuthService().status)
-        antigravity_key = bool(cfg_mod.get_jarvis_agent_secret("gemini"))
-        if not antigravity_status.installed:
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "Antigravity is not installed — install agy or the Gemini "
-                    "CLI, or select the separate Google Gemini provider for "
-                    "key-only execution."
-                ),
-            )
-        if not antigravity_provider_ready(
-            antigravity_status,
-            api_key_present=antigravity_key,
-        ):
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    "Antigravity is not connected — sign in with Google "
-                    "(install agy or the Gemini CLI and log in) or set a Gemini "
-                    "API key, then activate."
-                ),
-            )
-        persisted = False
-        if body.persist:
-            try:
-                from jarvis.core.config_writer import set_worker_provider
-
-                set_worker_provider(ANTIGRAVITY_SUBAGENT_CANONICAL)
-                persisted = True
-            except FileNotFoundError as exc:
-                raise HTTPException(status_code=500, detail=str(exc)) from exc
-            except Exception as exc:  # noqa: BLE001
-                raise HTTPException(
-                    status_code=500, detail=f"TOML write failed: {exc}"
-                ) from exc
-        _apply_worker_in_memory(request, ANTIGRAVITY_SUBAGENT_CANONICAL)
-        await _emit(request, SecretConfigured(key="brain.worker.provider", action="set"))
-        _invalidate_section_health_state(request)
-        return {
-            "ok": True,
-            "active": ANTIGRAVITY_SUBAGENT_CANONICAL,
-            "persisted": persisted,
-            "restart_required": True,
-        }
-
-    if provider not in JARVIS_TO_WORKER_SLUG:
-        known = ", ".join(sorted(JARVIS_TO_WORKER_SLUG))
+    if not result.get("ok"):
         raise HTTPException(
-            status_code=404,
-            detail=(
-                f"'{body.provider}' is not a Jarvis-Agent-capable provider. "
-                f"Available: {known}."
+            status_code=_SWITCH_ERROR_STATUS.get(
+                str(result.get("error_kind")), 500
             ),
+            detail=result.get("error") or "Agent provider switch failed.",
         )
-
-    # Key-Check — a provider without a stored credential cannot be activated.
-    # ``claude-api`` counts the live Claude Max OAuth login (read by the
-    # ClaudeDirectWorker from ~/.claude/.credentials.json) as a credential, so a
-    # fresh Claude-Max user who only ran `claude login` (no stored API key) can
-    # still select it — mirrors the codex/antigravity OAuth branches above.
-    has_credential = bool(cfg_mod.get_jarvis_agent_secret(provider))
-    if not has_credential and provider == "claude-api":
-        try:
-            from jarvis.missions.isolation.env import read_live_claude_oauth_token
-
-            has_credential = bool(read_live_claude_oauth_token())
-        except Exception:  # noqa: BLE001
-            has_credential = False
-    if not has_credential:
-        raise HTTPException(
-            status_code=409,
-            detail=(
-                f"{provider} has no stored credential. "
-                "Add a key on its Jarvis-Agent card before activating it."
-            ),
-        )
-
-    # 3-layer persist. ``persisted`` reflects the ACTUAL disk outcome (AD-OE6).
-    persisted = False
-    if body.persist:
-        try:
-            from jarvis.core.config_writer import set_worker_provider
-
-            set_worker_provider(provider)
-            persisted = True
-        except FileNotFoundError as exc:
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
-        except Exception as exc:  # noqa: BLE001
-            raise HTTPException(
-                status_code=500, detail=f"TOML write failed: {exc}"
-            ) from exc
-
-    # Best-effort in-memory update so the next /jarvis-agent/status reflects the
-    # choice immediately (the worker itself only re-reads on restart).
-    _apply_worker_in_memory(request, provider)
 
     await _emit(request, SecretConfigured(key="brain.worker.provider", action="set"))
 
     _invalidate_section_health_state(request)
     return {
         "ok": True,
-        "active": provider,
-        "persisted": persisted,
-        "restart_required": True,
+        "active": result.get("new_provider", body.provider),
+        "persisted": bool(result.get("persisted")),
+        "old_provider": result.get("old_provider"),
+        "restart_required": bool(result.get("requires_restart")),
     }
 
 

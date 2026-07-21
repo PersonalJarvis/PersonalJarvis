@@ -1,9 +1,9 @@
-"""brain: inspect and switch the active brain + sub-agent providers.
+"""brain: inspect and switch the active brain and mission-worker providers.
 
 Flagship example: `jarvis brain switch openai` changes the active main brain
-provider; `jarvis brain subagent-switch openai` changes the worker/sub-agent
-provider (e.g. Codex -> OpenAI). Switches are reversible (config + live), so they
-proceed without --yes; pass --no-persist to apply live-only.
+provider; `jarvis brain subagent-switch openai` changes the mission-worker
+provider (for example, Codex to OpenAI). Switches are reversible, so they
+proceed without --yes; pass --no-persist to avoid writing the selection.
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from jarvis.cli_ctl import invoke, options
 
 app = typer.Typer(
     no_args_is_help=True,
-    help="Brain providers: status, switch, sub-agent switch, models, test.",
+    help="Brain providers: status, switch, mission-worker switch, models, test.",
 )
 
 _PROVIDER_HELP = (
@@ -56,9 +56,9 @@ def subagent_switch(
     yes: bool = options.yes_opt(),
     dry_run: bool = options.dry_opt(),
 ) -> None:
-    """Switch the sub-agent / worker provider (e.g. Codex -> OpenAI)."""
+    """Switch the mission-worker provider (e.g. Codex -> OpenAI)."""
     invoke.run(
-        "POST", "/api/subagent/switch",
+        "POST", "/api/jarvis-agent/switch",
         body={"provider": provider, "persist": persist},
         assume_yes=yes, dry_run=dry_run, dangerous=False,
     )
@@ -80,9 +80,9 @@ def deep_model(
     yes: bool = options.yes_opt(),
     dry_run: bool = options.dry_opt(),
 ) -> None:
-    """Set the sub-agent deep model."""
+    """Set the mission worker's deep model."""
     invoke.run(
-        "POST", "/api/subagent/model",
+        "POST", "/api/jarvis-agent/model",
         body={"model": model, "persist": persist},
         assume_yes=yes, dry_run=dry_run, dangerous=False,
     )

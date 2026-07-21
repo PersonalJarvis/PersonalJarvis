@@ -219,10 +219,10 @@ def _build_registry() -> tuple[AppCommand, ...]:
         ),
         AppCommand(
             id="jarvis-agent-switch",
-            title="Switch Jarvis-Agent (worker) provider",
+            title="Switch mission-worker provider",
             description=(
-                "Switch the Jarvis-Agent / worker provider used for missions "
-                "(e.g. codex to openai). Restart required."
+                "Switch the provider used for new missions (e.g. codex to "
+                "openai). The next mission uses the new provider."
             ),
             method="POST",
             path="/api/jarvis-agent/switch",

@@ -653,10 +653,10 @@ export async function switchComputerUseProvider(
 
 /**
  * Switches the active heavy-task WORKER provider
- * (`[brain.sub_jarvis].provider`). Persists across 3 layers
+ * (`[brain.worker].provider`; legacy config aliases remain readable). Persists across 3 layers
  * (jarvis.toml + config-soll.json + ENV) so the drift guard doesn't roll (i18n-allow: "soll" is part of the config-soll.json filename)
- * back the switch. The worker reads the provider once at mission bootstrap,
- * so the backend sets `restart_required = true`.
+ * back the switch. The worker re-resolves the provider before every mission,
+ * so the next mission uses the selection without an app restart.
  */
 export async function switchSubagentProvider(
   providerId: string,
@@ -674,7 +674,7 @@ export async function switchSubagentProvider(
 }
 
 /**
- * Pins the dedicated subagent LLM model (`[brain.sub_jarvis].model`).
+ * Pins the dedicated mission-worker LLM model (`[brain.worker].model`).
  * Empty string resets to the active subagent provider's deep model.
  * 3-layer persisted server-side (drift-guard pinned key).
  */
@@ -1096,4 +1096,3 @@ export async function fetchRealtimeVoicePreview(opts: {
   }
   return await res.blob();
 }
-
