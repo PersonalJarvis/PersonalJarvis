@@ -5708,3 +5708,95 @@ async def test_transport_death_after_end_call_converts_to_hangup():
     assert provider.open_calls == 1
     assert any(m.get("type") == "hangup" for m in jsons)
     await sess.end(reason="test")
+
+
+# ---------------------------------------------------------------------------
+# Proactive GoAway reconnect: a provider's pre-disconnect notice rebuilds the
+# transport inside the announced window instead of waiting for the forced
+# close (live 2026-07-21 11:14: the 1008 close raced the recovery chain into
+# a cross-provider fallback whose only alternative was quota-dead, and the
+# call ended reason=error after 17 turns).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_advised_reconnect_rebuilds_immediately_when_idle():
+    provider = RebuildingProvider(
+        [
+            lambda: StayOpenSession(
+                [
+                    RealtimeEvent(
+                        type="error",
+                        error="Gemini Live requested reconnect (time_left=50s)",
+                        recoverable=True,
+                        reconnect_advised=True,
+                    ),
+                ]
+            ),
+            lambda: StayOpenSession([]),
+        ]
+    )
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="goaway-idle-rebuild",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda m: jsons.append(m) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    # No turn boundary is ever yielded: the idle call must rebuild at once.
+    await _wait_until(lambda: provider.open_calls == 2)
+
+    assert not sess.failed
+    assert [m for m in jsons if m.get("type") == "provider_error"] == []
+    assert len([m for m in jsons if m.get("type") == "audio_ready"]) == 2
+    await sess.end(reason="test")
+
+
+@pytest.mark.asyncio
+async def test_advised_reconnect_defers_to_the_turn_boundary_mid_turn():
+    provider = RebuildingProvider(
+        [
+            lambda: StayOpenSession(
+                [
+                    RealtimeEvent(
+                        type="input_transcript", text="hello", is_final=True
+                    ),
+                    # The response for this turn is now pending — the advised
+                    # rebuild must NOT tear the transport down mid-turn.
+                    RealtimeEvent(
+                        type="error",
+                        error="Gemini Live requested reconnect (time_left=50s)",
+                        recoverable=True,
+                        reconnect_advised=True,
+                    ),
+                    RealtimeEvent(type="turn_complete"),
+                ]
+            ),
+            lambda: StayOpenSession([]),
+        ]
+    )
+    jsons = []
+    sess = RealtimeVoiceSession(
+        session_id="goaway-boundary-rebuild",
+        send_binary=lambda _data: asyncio.sleep(0),
+        send_json=lambda m: jsons.append(m) or asyncio.sleep(0),
+        provider=provider,
+        config=_cfg(),
+        bus=None,
+    )
+    await sess.handle_control({"type": "audio_start", "sample_rate": 16_000})
+    await _wait_until(lambda: provider.open_calls == 2)
+
+    assert not sess.failed
+    assert [m for m in jsons if m.get("type") == "provider_error"] == []
+    # The first turn's boundary reached the surface before the rebuild's
+    # audio_ready: the reply was never cut mid-turn.
+    types = [m.get("type") for m in jsons]
+    assert types.index("turn_complete") < len(types) - 1 - types[::-1].index(
+        "audio_ready"
+    )
+    assert len([m for m in jsons if m.get("type") == "audio_ready"]) == 2
+    await sess.end(reason="test")

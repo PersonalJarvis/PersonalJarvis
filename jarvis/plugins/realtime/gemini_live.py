@@ -37,6 +37,7 @@ class _ProviderEvent:
     ms_played: int | None = None
     error: str | None = None
     recoverable: bool = False
+    reconnect_advised: bool = False
     item_id: str | None = None
     call_id: str | None = None
     tool_name: str | None = None
@@ -205,13 +206,16 @@ class _GeminiLiveSession:
                     # to Live-API session limits, not a wire failure. Treating
                     # it as terminal used to end the session with reason=error
                     # while the current reply was still being spoken, dropping
-                    # the buffered tail. Surface it as recoverable; if the
-                    # transport really closes, the pump observes that end
-                    # separately.
+                    # the buffered tail. Surface it as recoverable AND advise
+                    # a proactive rebuild: a client that merely keeps using
+                    # the socket is hard-killed with 1008 when the window
+                    # expires (live 2026-07-21 11:14 — the forced close raced
+                    # the recovery chain and the call ended reason=error).
                     yield _ProviderEvent(
                         type="error",
                         error=f"Gemini Live requested reconnect{suffix}",
                         recoverable=True,
+                        reconnect_advised=True,
                     )
 
             # An iterator that vanishes without a model-turn boundary signals a

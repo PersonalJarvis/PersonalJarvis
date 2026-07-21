@@ -966,6 +966,11 @@ class RealtimeVoiceSession:
             asyncio.Queue()
         )
         self._transport_rebuild_pending: Any | None = None
+        # A provider announced it will close the transport soon (GoAway).
+        # Holds the announcement detail until the next safe boundary, where
+        # the pump rebuilds proactively instead of waiting for the forced
+        # close (which can race the recovery chain and end the call).
+        self._advised_reconnect_detail: str | None = None
         # Monotonic timestamps of in-place transport rebuilds (BUG-071),
         # pruned to the rolling _TRANSPORT_REBUILD_WINDOW_S budget window.
         self._transport_rebuild_times: list[float] = []
@@ -2303,6 +2308,10 @@ class RealtimeVoiceSession:
                         # its goodbye to the end — hang up.
                         await self._finish_with_hangup()
                         break
+                    if self._advised_reconnect_detail is not None:
+                        # The provider's pre-disconnect window is ticking;
+                        # this turn boundary is the safe moment to rebuild.
+                        self._request_advised_rebuild()
                 elif event.type == "error":
                     message = safe_preview(
                         event.error or "provider error", max_chars=800
@@ -2347,6 +2356,8 @@ class RealtimeVoiceSession:
                         await self._send_json(
                             {"type": "provider_warning", "error": message}
                         )
+                        if getattr(event, "reconnect_advised", False):
+                            self._schedule_advised_reconnect(message)
                         continue
                     # A terminal provider failure can strike while the tail of
                     # the current reply is still held by the scrub gate.
@@ -2481,6 +2492,59 @@ class RealtimeVoiceSession:
                 pass
         return None
 
+    def _schedule_advised_reconnect(self, detail: str) -> None:
+        """React to a provider's pre-disconnect notice (GoAway).
+
+        The transport still works, but the server will force-close it when
+        the announced window expires — and that forced close can race the
+        recovery chain into a dead call (live 2026-07-21 11:14: the 1008
+        close escalated to a cross-provider fallback whose only alternative
+        was quota-dead, reason=error after 17 turns). Rebuild proactively:
+        immediately when the call is idle, otherwise at the next turn
+        boundary. If no boundary arrives inside the window, the forced
+        close still lands on the existing reactive rebuild path.
+        """
+        if not self._transport_death_is_rebuildable():
+            return
+        if self._session is self._transport_rebuild_pending:
+            return  # a rebuild is already queued or running
+        self._advised_reconnect_detail = detail
+        if (
+            self._output_active
+            or self._response_requested_for_turn
+            or self._user_speech_active
+        ):
+            log.info(
+                "realtime[%s] provider advised a reconnect — deferring the "
+                "transport rebuild to the next turn boundary (%s)",
+                self.session_id,
+                detail,
+            )
+            return
+        self._request_advised_rebuild()
+
+    def _request_advised_rebuild(self) -> None:
+        """Queue the advised in-place rebuild through the pump arbitration."""
+        detail = self._advised_reconnect_detail
+        self._advised_reconnect_detail = None
+        if detail is None or not self._transport_death_is_rebuildable():
+            return
+        target_session = self._session
+        if target_session is None or (
+            target_session is self._transport_rebuild_pending
+        ):
+            return
+        self._transport_rebuild_pending = target_session
+        self._transport_rebuild_requests.put_nowait(
+            (target_session, f"provider requested reconnect ({detail})")
+        )
+        log.info(
+            "realtime[%s] rebuilding the transport proactively inside the "
+            "provider's reconnect window (%s)",
+            self.session_id,
+            detail,
+        )
+
     def _transport_death_is_rebuildable(self, *, session: Any | None = None) -> bool:
         """Whether the just-died transport may be rebuilt in place (BUG-071).
 
@@ -2580,6 +2644,10 @@ class RealtimeVoiceSession:
         except Exception:  # noqa: BLE001, S110 — surface mirror is best-effort
             pass
         await self._publish_turn_completed()
+        # The dying transport's pre-disconnect notice must not carry over:
+        # the fresh session would otherwise be rebuilt again at its first
+        # turn boundary for no reason.
+        self._advised_reconnect_detail = None
         self._gate = ScrubHoldGate(self._language)
         self._output_active = False
         self._output_samples_sent = 0

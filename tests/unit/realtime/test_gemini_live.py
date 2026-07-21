@@ -113,6 +113,10 @@ async def test_go_away_is_recoverable_and_keeps_the_stream_flowing() -> None:
     errors = [event for event in events if event.type == "error"]
     assert len(errors) == 1
     assert errors[0].recoverable is True
+    # The notice also advises a proactive rebuild: a client that merely
+    # keeps using the socket is hard-killed with 1008 when the announced
+    # window expires (live 2026-07-21 11:14).
+    assert errors[0].reconnect_advised is True
     assert "reconnect" in (errors[0].error or "")
     # The notice must not terminate the stream: the reply that follows it is
     # still delivered.

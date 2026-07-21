@@ -40,6 +40,11 @@ class RealtimeEvent:
     # duplex transport remains usable. It must not end voice ownership or
     # trigger the classic pipeline.
     recoverable: bool = False
+    # The provider announced it will close this transport soon (e.g. a
+    # session-duration GoAway) while the socket still works. The
+    # orchestrator should rebuild the transport in place at the next safe
+    # boundary instead of waiting for the server-forced close.
+    reconnect_advised: bool = False
     item_id: str | None = None
     call_id: str | None = None
     tool_name: str | None = None
