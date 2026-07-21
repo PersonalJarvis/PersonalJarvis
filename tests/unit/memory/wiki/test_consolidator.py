@@ -2527,3 +2527,89 @@ async def test_activity_candidate_requires_companion_concept_page(stack) -> None
     assert (vault_root / "concepts" / "golf.md").is_file()
     profile = (vault_root / "entities" / "ruben.md").read_text(encoding="utf-8")
     assert "- Plays golf actively with friends *(inferred)*" in profile
+
+
+# ---------------------------------------------------------------------------
+# Judge-rejection wedge: bounded retries instead of an endless provider burn
+# (live 2026-07-21: three poison rows re-judged the full chain for ~16 hours).
+# ---------------------------------------------------------------------------
+
+
+def _age_rejection(consolidator: Consolidator, cid: int) -> None:
+    """Move a recorded rejection outside its backoff window."""
+    rounds, _ts = consolidator._judge_rejections[cid]
+    consolidator._judge_rejections[cid] = (rounds, time.monotonic() - 1e9)
+
+
+@pytest.mark.asyncio
+async def test_judge_rejected_row_backs_off_before_the_next_round(stack) -> None:
+    _vault_root, _curator, journal = stack
+    journal.append(
+        [CandidateFact(fact="Lena moved to Hamburg.", kind="person", subjects=("lena",))],
+        source_label="voice-fact:1", turn_hash="h1",
+    )
+    brain = FakeBrain(["not json at all", "still not json"])
+    consolidator = _consolidator(stack, brain)
+
+    first = await consolidator.run_once()
+    second = await consolidator.run_once()
+
+    assert first.startswith("judge-rejected")
+    assert second == "journal-rejection-backoff:1"
+    # The backoff round never reached a provider.
+    assert len(brain.received_requests) == 1
+    assert journal.backlog_count() == 1  # still pending, only cooling down
+
+
+@pytest.mark.asyncio
+async def test_repeatedly_rejected_row_is_parked_as_skipped(stack) -> None:
+    _vault_root, _curator, journal = stack
+    journal.append(
+        [CandidateFact(fact="Lena moved to Hamburg.", kind="person", subjects=("lena",))],
+        source_label="voice-fact:1", turn_hash="h1",
+    )
+    cid = journal.pending()[0].id
+    brain = FakeBrain(["junk 1", "junk 2", "junk 3", "never reached"])
+    consolidator = _consolidator(stack, brain)
+
+    for _round in range(consolidator._MAX_JUDGE_REJECTION_ROUNDS - 1):
+        label = await consolidator.run_once()
+        assert label.startswith("judge-rejected")
+        _age_rejection(consolidator, cid)
+    final = await consolidator.run_once()
+
+    assert final.startswith("judge-rejected")
+    assert journal.backlog_count() == 0  # parked, no longer retried
+    assert journal.pending() == []
+    assert cid not in consolidator._judge_rejections
+    assert len(brain.received_requests) == consolidator._MAX_JUDGE_REJECTION_ROUNDS
+
+
+@pytest.mark.asyncio
+async def test_valid_verdict_clears_the_rejection_history(stack) -> None:
+    vault_root, _curator, journal = stack
+    journal.append(
+        [CandidateFact(fact="Lena moved to Hamburg.", kind="person", subjects=("lena",))],
+        source_label="voice-fact:1", turn_hash="h1",
+    )
+    cid = journal.pending()[0].id
+    brain = FakeBrain([
+        "garbled",
+        _judge_json([{
+            "candidate_id": cid,
+            "decision": "add",
+            "target": "entities/lena.md",
+            "new_body": LENA_BODY,
+            "reason": "new person",
+        }]),
+    ])
+    consolidator = _consolidator(stack, brain)
+
+    first = await consolidator.run_once()
+    _age_rejection(consolidator, cid)
+    second = await consolidator.run_once()
+
+    assert first.startswith("judge-rejected")
+    assert second == "journal-batch:1"
+    assert (vault_root / "entities" / "lena.md").is_file()
+    assert consolidator._judge_rejections == {}

@@ -515,6 +515,13 @@ Decision semantics:
   "target" and the page's complete "new_body" with the fact merged in.
   MAKE THE SMALLEST CORRECT EDIT: every existing fact, section and link
   of the shown body MUST survive unless the candidate directly corrects it.
+  Survival is checked LINE-FOR-LINE, not by meaning: copy every existing
+  line into "new_body" character-for-character and merge by ADDING new
+  lines. Never reword, merge, split, or reformat an existing line — even
+  when the new fact makes it look redundant. An overlapping old line plus
+  a new line is a valid page; a dropped or reworded old line rejects the
+  whole update. (Only a line the candidate directly contradicts may be
+  rewritten, and lines marked as inferred may be upgraded.)
 - "noop": either the vault already knows this OR the candidate is not durable
   enough to store (smalltalk, transient bodily/status chatter, weather,
   assistant-only claims, commands with no separately asserted durable content,

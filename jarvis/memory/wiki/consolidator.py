@@ -168,6 +168,17 @@ class _BatchOutcome:
 class Consolidator:
     """Batched journal drain through the body-aware judge."""
 
+    # A candidate every reachable provider keeps answering for with an
+    # invalid decision is a poison row: retrying it forever burns a full
+    # provider chain (and its latency/cost) on every journal trigger — the
+    # live 2026-07-21 wedge re-judged three rows for ~16 hours. Bound it:
+    # back off between rounds, and park the row as ``skipped`` after this
+    # many judge-rejected rounds so the queue stays honest and cheap. A
+    # process restart grants a fresh set of rounds, so a code/prompt fix
+    # re-opens the row automatically.
+    _MAX_JUDGE_REJECTION_ROUNDS = 3
+    _JUDGE_REJECTION_BACKOFF_S = 600.0
+
     def __init__(
         self,
         *,
@@ -201,6 +212,10 @@ class Consolidator:
         self._on_run_complete = on_run_complete
         self._brain: Any = None
         self._resolved_provider: str | None = None
+        # Per-row judge-rejection history: id -> (rounds, last monotonic ts).
+        # In-memory by design: bounds the burn within one process life while
+        # a restart (usually carrying a fix) retries parked-adjacent rows.
+        self._judge_rejections: dict[int, tuple[int, float]] = {}
 
     # ------------------------------------------------------------------
     # public API
@@ -214,6 +229,17 @@ class Consolidator:
         )
         if not rows:
             return "journal-empty"
+
+        cooling = [row for row in rows if self._in_rejection_backoff(row.id)]
+        if cooling:
+            rows = [row for row in rows if row not in cooling]
+            log.info(
+                "Consolidator: %d candidate(s) wait out the judge-rejection "
+                "backoff this round",
+                len(cooling),
+            )
+        if not rows:
+            return f"journal-rejection-backoff:{len(cooling)}"
 
         # A captured row without persisted user evidence predates the grounded
         # policy. It is unsafe to let Stage 2 guess, and a policy-v3 backfill can
@@ -273,8 +299,10 @@ class Consolidator:
             if len(rows) == 1:
                 # A single overlong or judge-rejected result remains
                 # observable and retryable; never convert it into terminal
-                # data loss.
+                # data loss. Retryable is still bounded: repeat rejections
+                # back off, then park the row (see _note_judge_rejection).
                 if decisions == "rejected":
+                    self._note_judge_rejection(rows[0])
                     return _BatchOutcome(rejected=1)
                 return _BatchOutcome(truncated=True)
             midpoint = len(rows) // 2
@@ -282,6 +310,8 @@ class Consolidator:
             right = await self._process_rows(rows[midpoint:])
             return left.merge(right)
 
+        for row in rows:
+            self._judge_rejections.pop(row.id, None)
         deferred, transient = await self._execute(
             rows,
             decisions,
@@ -293,6 +323,36 @@ class Consolidator:
             deferred=deferred,
             transient=transient,
         )
+
+    def _in_rejection_backoff(self, row_id: int) -> bool:
+        """True while a judge-rejected row waits out its escalating backoff."""
+        history = self._judge_rejections.get(row_id)
+        if history is None:
+            return False
+        rounds, last_ts = history
+        return (time.monotonic() - last_ts) < self._JUDGE_REJECTION_BACKOFF_S * rounds
+
+    def _note_judge_rejection(self, row: JournalRow) -> None:
+        """Record one all-provider judge rejection; park the row at the cap.
+
+        ``skipped`` (not ``rejected``) because the JUDGE never produced a
+        valid decision — the fact itself was not weighed and a backfill or
+        the next process life may still consolidate it.
+        """
+        rounds = self._judge_rejections.get(row.id, (0, 0.0))[0] + 1
+        if rounds >= self._MAX_JUDGE_REJECTION_ROUNDS:
+            self._judge_rejections.pop(row.id, None)
+            self._journal.mark([row.id], status="skipped")
+            telemetry.inc("wiki_consolidator_parked_judge_wedge")
+            log.warning(
+                "Consolidator: parking candidate %d as skipped after %d "
+                "judge-rejected rounds — every provider kept answering with "
+                "invalid decisions; a backfill can re-queue it",
+                row.id,
+                rounds,
+            )
+            return
+        self._judge_rejections[row.id] = (rounds, time.monotonic())
 
     # ------------------------------------------------------------------
     # retrieval
