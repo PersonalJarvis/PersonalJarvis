@@ -25,7 +25,6 @@ from jarvis.plugins.tool.app_resolver import (
     launch_services_can_open,
     resolve_app_launch_target,
 )
-from jarvis.voice.action_phrases import action_phrase, resolve_phrase_language
 
 # Apps for which a second window is normal/expected — never short-circuit these
 # to "already running -> focus"; the user almost always wants a fresh instance.
@@ -167,6 +166,11 @@ def _output_language(ctx: ExecutionContext) -> str:
     stickiness); falls back to detecting the user's own words — the same
     contract as the other deterministic local-action readbacks.
     """
+    # Lazy: importing jarvis.voice.* costs ~2s (echo-confirmation chain) and
+    # this module is a boot-loaded plugin — module scope is the boot path
+    # (AP-26; the pre-push boot-budget gate caught exactly this).
+    from jarvis.voice.action_phrases import resolve_phrase_language  # noqa: PLC0415
+
     config = getattr(ctx, "config", None)
     stamped = config.get("output_language") if isinstance(config, dict) else None
     if stamped:
@@ -410,6 +414,8 @@ class OpenAppTool:
                     )
                 except Exception:  # noqa: BLE001 — never fail a successful launch
                     raised = False
+            from jarvis.voice.action_phrases import action_phrase  # noqa: PLC0415
+
             lang = _output_language(ctx)
             output = action_phrase(
                 "open_app_launched_raised" if raised else "open_app_launched",
@@ -418,6 +424,8 @@ class OpenAppTool:
             )
             return ToolResult(success=True, output=output)
         except FileNotFoundError:
+            from jarvis.voice.action_phrases import action_phrase  # noqa: PLC0415
+
             return ToolResult(
                 success=False,
                 output=None,
