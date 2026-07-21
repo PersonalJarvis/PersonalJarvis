@@ -20,6 +20,11 @@ from collections.abc import Awaitable, Callable
 from typing import Any, Literal
 from uuid import UUID, uuid4
 
+from jarvis.brain.cu_gate import (
+    CU_BLOCKED_MODEL_FEEDBACK,
+    CU_VEHICLE_TOOL_NAMES,
+    llm_computer_use_allowed,
+)
 from jarvis.brain.spawn_gate import (
     SPAWN_BLOCKED_MODEL_FEEDBACK,
     SPAWN_VEHICLE_TOOL_NAMES,
@@ -923,6 +928,33 @@ class ToolUseLoop:
                         "success": False,
                         "output": None,
                         "error": SPAWN_BLOCKED_MODEL_FEEDBACK,
+                    }
+                elif (
+                    tool_name in CU_VEHICLE_TOOL_NAMES
+                    and not llm_computer_use_allowed(user_utterance)
+                ):
+                    # Explicit-desktop gate (live incident 2026-07-21 11:36):
+                    # a pure knowledge question delegated by realtime was
+                    # answered by physically googling in the user's browser.
+                    # An LLM-chosen computer_use runs ONLY when the user's own
+                    # turn asks for an on-screen action (or the conversation is
+                    # still inside a recent desktop episode). Deterministic —
+                    # the tool description alone is advice, not enforcement
+                    # (spawn-gate lesson). See jarvis/brain/cu_gate.py.
+                    log.info(
+                        "tool_use_loop: computer_use blocked — no explicit "
+                        "desktop request in the user turn"
+                    )
+                    await self._publish_guard_denied(
+                        tool_name,
+                        "guard: no explicit desktop request — "
+                        "computer_use not executed",
+                        tid,
+                    )
+                    tool_result_payload = {
+                        "success": False,
+                        "output": None,
+                        "error": CU_BLOCKED_MODEL_FEEDBACK,
                     }
                 elif stt_blocked:
                     # Arg sanity guard: the tool args look like a Whisper

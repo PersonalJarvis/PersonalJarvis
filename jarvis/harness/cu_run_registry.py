@@ -208,6 +208,24 @@ def recent_runs_context(now: float | None = None) -> str:
     return "\n".join(recent)
 
 
+def has_recent_run(max_age_s: float = _CONTEXT_MAX_AGE_S, now: float | None = None) -> bool:
+    """True when a mission is active or ended within ``max_age_s``.
+
+    Consumed by the research-turn computer-use gate (``jarvis.brain.cu_gate``):
+    a vehicle-free corrective follow-up ("try again", "nochmal") may re-drive
+    the desktop only while the conversation is demonstrably still *in* a
+    desktop episode. Registration covers every launch route (voice fast path,
+    LLM tool, REST, scheduled), so this is the one honest signal for that.
+    """  # i18n-allow: quoted German follow-up token the gate matches
+    now_s = time.time() if now is None else float(now)
+    for run in _RUNS.values():
+        if run.status in ACTIVE_STATUSES:
+            return True
+        if run.ended_at is not None and 0 <= now_s - run.ended_at <= max_age_s:
+            return True
+    return False
+
+
 def clear_runs() -> None:
     """Test/teardown helper — wipes the registry."""
     _RUNS.clear()

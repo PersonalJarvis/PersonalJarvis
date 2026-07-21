@@ -120,7 +120,11 @@ class ComputerUseTool:
         "and what the previous attempt got wrong. An unexpanded 'do it in "
         "Chrome' just opens Chrome and stops. This drives the real machine — "
         "unlike spawn_worker, which only works in an isolated code workspace "
-        "and cannot touch the desktop."
+        "and cannot touch the desktop. NOT a research tool: NEVER use it to "
+        "search the web, google something, or look up facts/information — "
+        "answer from your own knowledge or call search_web instead. Only the "
+        "user's explicit wish to see it happen on their screen ('open the "
+        "browser and search for X') makes a web lookup a computer_use task."
     )
     schema: dict[str, Any] = {
         "type": "object",

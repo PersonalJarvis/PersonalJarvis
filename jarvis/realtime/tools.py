@@ -9,6 +9,11 @@ from dataclasses import dataclass
 from typing import Any, cast
 from uuid import UUID, uuid4
 
+from jarvis.brain.cu_gate import (
+    CU_BLOCKED_MODEL_FEEDBACK,
+    CU_VEHICLE_TOOL_NAMES,
+    llm_computer_use_allowed,
+)
 from jarvis.brain.spawn_gate import (
     SPAWN_BLOCKED_MODEL_FEEDBACK,
     SPAWN_VEHICLE_TOOL_NAMES,
@@ -406,6 +411,15 @@ class RealtimeToolBridge:
             # Deterministic — prompt-side discouragement failed repeatedly.
             # See jarvis/brain/spawn_gate.py.
             message = SPAWN_BLOCKED_MODEL_FEEDBACK
+        elif name in CU_VEHICLE_TOOL_NAMES and not llm_computer_use_allowed(
+            user_text
+        ):
+            # Explicit-desktop gate (live incident 2026-07-21 11:36): a pure
+            # knowledge question must never be answered by driving the user's
+            # browser. computer_use runs ONLY when the spoken turn asks for an
+            # on-screen action or a desktop episode is already in progress.
+            # See jarvis/brain/cu_gate.py.
+            message = CU_BLOCKED_MODEL_FEEDBACK
         elif _should_block_action_as_research(
             descriptor,
             name,
