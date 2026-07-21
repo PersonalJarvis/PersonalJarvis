@@ -1,6 +1,8 @@
 """Unit tests for the out-of-band TTS level channel (jarvis.audio.level_tap)."""
 from __future__ import annotations
 
+import time
+
 from jarvis.audio import level_tap
 
 
@@ -76,3 +78,69 @@ def test_note_playing_ignores_nonpositive_and_resets_on_bargein():
     level_tap.reset_playing()  # barge-in discards the tail
     assert level_tap.playback_active() is False
     level_tap.reset()
+
+
+def _wait_for(predicate, timeout_s: float = 2.0) -> bool:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if predicate():
+            return True
+        time.sleep(0.01)
+    return predicate()
+
+
+def test_delayed_publish_arrives_late_not_immediately():
+    # write() returns when PortAudio ACCEPTS a block; the sound is heard one
+    # output latency later. A delayed publish must therefore NOT reach sinks
+    # synchronously, but must land once the delay has elapsed.
+    level_tap.reset()
+    got: list[float] = []
+    level_tap.subscribe(got.append)
+    try:
+        level_tap.publish(0.8, delay_s=0.15)
+        assert got == []  # not delivered at accept time
+        assert _wait_for(lambda: got == [0.8])
+    finally:
+        level_tap.reset()
+
+
+def test_delayed_publishes_preserve_order():
+    level_tap.reset()
+    got: list[float] = []
+    level_tap.subscribe(got.append)
+    try:
+        level_tap.publish(0.2, delay_s=0.05)
+        level_tap.publish(0.4, delay_s=0.08)
+        level_tap.publish(0.6, delay_s=0.11)
+        assert _wait_for(lambda: len(got) == 3)
+        assert got == [0.2, 0.4, 0.6]
+    finally:
+        level_tap.reset()
+
+
+def test_reset_playing_drops_pending_levels_and_zeroes_the_bars():
+    # Barge-in aborts the audible tail; its scheduled levels belong to audio
+    # that will never be heard, so they are dropped and one honest zero
+    # collapses the equalizer with the sound.
+    level_tap.reset()
+    got: list[float] = []
+    level_tap.subscribe(got.append)
+    try:
+        level_tap.publish(0.9, delay_s=5.0)  # far future — must never arrive
+        level_tap.reset_playing()
+        assert _wait_for(lambda: got == [0.0])
+        time.sleep(0.05)
+        assert got == [0.0]
+    finally:
+        level_tap.reset()
+
+
+def test_zero_delay_publish_stays_synchronous():
+    level_tap.reset()
+    got: list[float] = []
+    level_tap.subscribe(got.append)
+    try:
+        level_tap.publish(0.5, delay_s=0.0)
+        assert got == [0.5]  # no thread hop for the no-latency path
+    finally:
+        level_tap.reset()

@@ -5,6 +5,7 @@ real PortAudio device is opened; asserts the per-flush RMS reaches a subscriber.
 """
 from __future__ import annotations
 
+import asyncio
 from types import SimpleNamespace
 
 import numpy as np
@@ -67,3 +68,33 @@ async def test_player_no_publish_without_subscriber():
     # No subscriber registered → must not raise, and the RMS is skipped.
     await _make_player().play_chunks(_one_loud_chunk())
     assert level_tap.has_subscribers() is False
+
+
+class _LatentFakeStream(_FakeStream):
+    """A device that reports real output latency, like Bluetooth on macOS."""
+
+    latency = 0.2
+
+
+async def test_player_delays_levels_by_the_device_output_latency():
+    # write() returns at buffer-accept time; the block is HEARD one output
+    # latency later. The visualizer level must follow the heard timeline: no
+    # sample may reach the sink before the device latency has elapsed.
+    import time
+
+    level_tap.reset()
+    got: list[tuple[float, float]] = []  # (arrival_monotonic, level)
+    level_tap.subscribe(lambda lv: got.append((time.monotonic(), lv)))
+    pl = _make_player()
+    pl._open_output_stream = lambda rate: (_LatentFakeStream(), rate)
+    t0 = time.monotonic()
+    try:
+        await pl.play_chunks(_one_loud_chunk())
+        deadline = time.monotonic() + 2.0
+        while not got and time.monotonic() < deadline:
+            await asyncio.sleep(0.01)
+    finally:
+        level_tap.reset()
+    assert got, "expected the delayed level samples to arrive"
+    first_arrival, _lv = got[0]
+    assert first_arrival - t0 >= 0.15  # ~latency later, never at accept time

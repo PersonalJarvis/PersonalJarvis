@@ -391,6 +391,11 @@ class JarvisBarOverlay:
         # (>= AUDIBLE_LEVEL). Drives the wave↔bars choice in _schedule_frame.
         # 0.0 = "long ago" → starts on the wave, not the bars.
         self._last_audible_t = 0.0
+        # perf_counter() of the last set_level() of ANY value. The frame loop
+        # renders _ext_level only while fresh (renderer.LEVEL_STALE_S): a feed
+        # that stops without sending zero must read as silence, not as bars
+        # frozen dancing on the last sample.
+        self._last_level_rx_t = 0.0
         # monotonic_ns() stamped on every frame tick (alive or dropped). The
         # revival watchdog compares against this to tell a living loop from a
         # silently-dead one. 0 = "no frame has run yet" → the watchdog holds off.
@@ -509,12 +514,13 @@ class JarvisBarOverlay:
         # Direct atomic write (no enqueue) — matches OrbOverlay.set_level.
         lv = 0.0 if level < 0.0 else 1.0 if level > 1.0 else float(level)
         self._ext_level = lv
+        self._last_level_rx_t = time.perf_counter()
         # Remember WHEN real sound last arrived (mic or TTS, both feed here via
         # their level taps). _schedule_frame uses this to show bars while sound
         # is present and the wave during silence. Atomic float write, like
         # _ext_level — safe from the audio/VAD threads with no lock.
         if lv >= AUDIBLE_LEVEL:
-            self._last_audible_t = time.perf_counter()
+            self._last_audible_t = self._last_level_rx_t
 
     # The bar has no text bubble and no mouth — these stay no-ops so the
     # bridge's duck-typed calls remain safe.
@@ -1210,11 +1216,17 @@ class JarvisBarOverlay:
                 # (player._write_samples), so the equalizer reacts to Jarvis's
                 # actual loudness — thin and lively, exactly like it reacts to
                 # your mic. No synthetic floor (that made the bars look
-                # uniformly blocky).
+                # uniformly blocky). A stale sample (the feed stopped without a
+                # zero) renders as silence, never as frozen dancing bars.
+                # getattr default: ``__new__``-built test/hot-reload instances
+                # skip __init__; a missing stamp reads as "never received".
                 img = self._renderer.render(
                     t,
                     effective_mode,
-                    self._ext_level,
+                    renderer.effective_ext_level(
+                        self._ext_level,
+                        now - getattr(self, "_last_level_rx_t", 0.0),
+                    ),
                     hovered=self._hovered,
                     muted=self._muted,
                 )

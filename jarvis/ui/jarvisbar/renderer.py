@@ -289,6 +289,23 @@ _DOTS_SPAN_FRAC = 0.62  # dots span / pill width (matches the bars)
 
 MODES = ("idle", "listen", "speak", "think")
 
+# A level sample is trusted only this long. The feeders (mic ~30-100 ms
+# cadence, TTS ~60 ms blocks) stream continuously while sound exists; when a
+# feed STOPS (bridge state gate, echo suppression, turn commit, mute) no zero
+# arrives and the last sample would otherwise animate the bars forever — the
+# "keeps showing I'm speaking for seconds after I stopped" defect. Comfortably
+# above the slowest healthy cadence so live sound can never flicker stale.
+LEVEL_STALE_S = 0.35
+
+
+def effective_ext_level(
+    ext_level: float, seconds_since_level_rx: float, *, stale_s: float = LEVEL_STALE_S
+) -> float:
+    """The level the frame loop should render: the live sample while fresh,
+    dead zero once the feed has stopped. Pure — shared by the Tk and Qt
+    surfaces so both decay identically."""
+    return float(ext_level) if seconds_since_level_rx <= stale_s else 0.0
+
 
 def pill_center_y(ph: float) -> float:
     """Vertical centre that keeps the pill's BOTTOM edge anchored, so the pill
@@ -618,10 +635,12 @@ class JarvisBarRenderer:
         # Asymmetric level easing: rise almost instantly so the bars move in
         # sync with the voice, fall fast and snap to dead zero — a lingering
         # sub-visible tail otherwise keeps the equalizer wiggling in silence.
+        # 0.8 reaches ~96% of a rising target within two 16 ms frames; the
+        # onset of a word registers the same tick its level sample arrives.
         level_target = ext_level if active else 0.0
         rising = level_target > self._st.display_level
         self._st.display_level = ease(
-            self._st.display_level, level_target, 0.6 if rising else 0.5
+            self._st.display_level, level_target, 0.8 if rising else 0.5
         )
         if not rising and level_target <= 0.0 and self._st.display_level < 0.02:
             self._st.display_level = 0.0

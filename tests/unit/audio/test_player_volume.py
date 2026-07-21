@@ -88,7 +88,7 @@ def test_visualizer_sees_pre_gain_loudness_when_boosted(monkeypatch):
     """
     fed: list[float] = []
     monkeypatch.setattr(level_tap, "has_subscribers", lambda: True)
-    monkeypatch.setattr(level_tap, "feed", lambda v: fed.append(v))
+    monkeypatch.setattr(level_tap, "feed", lambda v, delay_s=0.0: fed.append(v))
     _play(1.0, 20000)  # 100% → boosted output (~1.0 peak)
     raw_rms = 20000 / 32768.0  # ~0.61
     # Every fed value is the raw signal RMS, NOT the boosted/limited output.
