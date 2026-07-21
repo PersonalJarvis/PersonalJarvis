@@ -110,13 +110,15 @@ def test_core_radius_breathes_within_bounds():
 
 def test_core_drifts_instead_of_being_pinned():
     # The user called a position-fixed core "starr" twice — the whole reactor
-    # must float. The drift has to be clearly visible (several px on the
-    # ACTIVE pill) within a short thinking phase (~3 s).
+    # must float. The drift has to be clearly visible within a short thinking
+    # phase (~3 s). Visibility is RELATIVE to the pill (the drift amplitude is
+    # a fraction of the pill size), so the floor scales with the pill width
+    # instead of pinning the absolute pixels of one historical geometry.
     pw, ph = float(R.ACTIVE_W), float(R.ACTIVE_H)
     points = [R.core_drift(t, pw, ph) for t in (0.0, 1.0, 2.0, 3.0)]
     xs = [p[0] for p in points]
     ys = [p[1] for p in points]
-    assert max(xs) - min(xs) >= 2.0  # visibly moves horizontally within 3 s
+    assert max(xs) - min(xs) >= 0.02 * pw  # visibly moves horizontally in 3 s
     assert max(ys) - min(ys) >= 0.8  # and vertically
 
 
@@ -297,13 +299,12 @@ def _grow_settle(mode, *, hovered=False, frames=120):
 
 def test_active_conversation_pill_size_vs_open_pill():
     # During a conversation the pill is 2x the hover-open pill, then trimmed to
-    # feel less bulky: 13% off each side (→ 0.74 of 2x width) and 22% off top
-    # and bottom (→ 0.56 of 2x height — the live pill grows mainly in LENGTH,
-    # calibrated to the good-example screenshot 2026-07-21). Centred, so the
-    # idle bar stays in the middle.
+    # feel less bulky: width keeps 0.518 of 2x, height keeps 0.56 of 2x (two
+    # maintainer calibration rounds 2026-07-21 — slim AND narrow). Centred, so
+    # the idle bar stays in the middle.
     active = _grow_settle("speak")
     open_pill = _grow_settle("idle", hovered=True)
-    assert active._st.pw == pytest.approx(2 * 0.74 * open_pill._st.pw, rel=0.05)
+    assert active._st.pw == pytest.approx(2 * 0.518 * open_pill._st.pw, rel=0.05)
     assert active._st.ph == pytest.approx(2 * 0.56 * open_pill._st.ph, rel=0.05)
 
 

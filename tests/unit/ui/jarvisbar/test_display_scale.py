@@ -70,17 +70,18 @@ def test_invalid_screen_degrades_to_the_approved_ceiling():
 # apply_display_scale                                                         #
 # --------------------------------------------------------------------------- #
 # The geometry baseline — scale 1.0 must reproduce these byte-identically
-# (regression guard for the signed-off proportions). ACTIVE/WIN reflect the
-# slimmer conversation pill calibrated 2026-07-21 (86x18 on the maintainer's
-# 0.85-scaled monitor, matching the 85x18 good-example screenshot).
+# (regression guard for the signed-off proportions). ACTIVE/WIN/COLLAPSED
+# reflect the two 2026-07-21 maintainer calibration rounds: slim active
+# height (18 px on the 0.85-scaled monitor), then -15% per side off the
+# active width (~60 px there) and -5% per side off the idle width (~37 px).
 _HISTORICAL = {
-    "COLLAPSED_W": 48,
+    "COLLAPSED_W": 44,
     "COLLAPSED_H": 8,
     "OPEN_W": 68,
     "OPEN_H": 19,
-    "ACTIVE_W": 101,
+    "ACTIVE_W": 70,
     "ACTIVE_H": 21,
-    "WIN_W": 113,
+    "WIN_W": 82,
     "WIN_H": 35,
 }
 

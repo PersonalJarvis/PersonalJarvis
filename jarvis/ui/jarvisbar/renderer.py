@@ -58,7 +58,7 @@ MUTED_RED = (220, 80, 72)
 _SCALE = 0.30  # overall size (was 0.336; -10% per maintainer feedback)
 _W = 0.8       # 20% narrower than the uniform _SCALE
 _H = 1.2       # taller than the uniform _SCALE (was 1.5; -20% per feedback)
-_IDLE_W = 1.2  # standby pill length — a touch longer so the standby dots fit
+_IDLE_W = 1.08  # standby pill length (was 1.2; -5% per side, maintainer 2026-07-21)
 _IDLE_H = 0.7  # standby pill is slimmer (less "fat") than the active height
 _SW = _SCALE * _W  # combined horizontal factor
 _SH = _SCALE * _H  # combined vertical factor
@@ -114,14 +114,14 @@ def compute_display_scale(screen_w: int, screen_h: int) -> float:
 #              time a voice session is live (listen/speak/think). This is the
 #              "make the bar much bigger while talking" feature.
 # Conversation pill: 2x the open pill, then trimmed so it doesn't read as bulky.
-# Width loses 13% off EACH side (→ 0.74 of 2x); height loses 22% off top AND
-# bottom (→ 0.56 of 2x) — the live pill grows mainly in LENGTH and stays slim.
-# Calibrated against the maintainer's good-example screenshot (2026-07-21):
-# the previous 0.90-of-2x height rendered the live pill 29 px thick on the
-# 2560x1440 monitor and was judged "way too big" next to the 18 px example;
-# these trims land it at 86x18 there (example: 85x18). The pill stays centred,
-# so the idle bar keeps its middle resting spot.
-_ACTIVE_SIDE_TRIM = 0.13  # fraction removed from each side of the 2x width
+# Width keeps 0.518 of 2x; height keeps 0.56 of 2x — the live pill stays slim
+# and only moderately longer than the hover pill. Calibrated in two maintainer
+# rounds (2026-07-21): the height trim killed the "way too big" 29 px
+# thickness (target example: 18 px); the width then still read "much too
+# wide" at 86 px on the 2560x1440 monitor, and the maintainer asked for 15%
+# off each side → 0.74 * 0.70 = 0.518 of 2x (~60 px there). The pill stays
+# centred, so the idle bar keeps its middle resting spot.
+_ACTIVE_SIDE_TRIM = 0.241  # fraction removed from each side of the 2x width
 _ACTIVE_VERT_TRIM = 0.22  # fraction removed from top and bottom of the 2x height
 
 # The pill is anchored by its BOTTOM edge this many px above the window bottom,
@@ -147,7 +147,7 @@ def apply_display_scale(scale: float) -> None:
     COLLAPSED_H = round(30 * _SH * _IDLE_H * s)  # standby pill (slim)
     OPEN_W = round(284 * _SW * s)  # hover/controls pill (the former "expanded")
     OPEN_H = round(52 * _SH * s)
-    ACTIVE_W = round(2 * OPEN_W * (1.0 - 2 * _ACTIVE_SIDE_TRIM))  # 2x * 0.74
+    ACTIVE_W = round(2 * OPEN_W * (1.0 - 2 * _ACTIVE_SIDE_TRIM))  # 2x * 0.518
     ACTIVE_H = round(2 * OPEN_H * (1.0 - 2 * _ACTIVE_VERT_TRIM))  # 2x * 0.56
     _BOTTOM_PAD = max(4, round(_BASE_BOTTOM_PAD * s))
     # The fixed Tk window must contain the largest (ACTIVE) pill + its 2px
