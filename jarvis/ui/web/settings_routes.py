@@ -1992,7 +1992,7 @@ async def put_bar_follow_cursor(
 # release. Range mirrors renderer.USER_SIZE_MIN/MAX (0.5–2.0).
 # ---------------------------------------------------------------------------
 
-_BAR_SIZE_DEFAULT = 1.0
+_BAR_SIZE_DEFAULT = 1.35
 
 
 class BarSizeBody(BaseModel):

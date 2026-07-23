@@ -1432,12 +1432,13 @@ class UIConfig(BaseModel):
     bar_persistent: bool = True
     # Hex accent the bar lights up with during activity (gold on-brand).
     bar_accent: str = "#e7c46e"
-    # Jarvis bar size multiplier (Settings → "Bar size" slider). 1.0 = the
-    # signed-off default look; the whole bar scales proportionally (width AND
-    # height together, shape preserved) below/above it, on top of the
-    # screen-adaptive scale. Range mirrors renderer.USER_SIZE_MIN/MAX (0.5–2.0);
-    # the renderer re-clamps, so this validator only sanitizes a corrupt value.
-    bar_size_scale: float = 1.0
+    # Jarvis bar size multiplier (Settings → "Bar size" slider). The whole bar
+    # scales proportionally (width AND height together, shape preserved) on top
+    # of the physical-size-consistent base scale. Default 1.35 (135%) — the bar
+    # reads a touch small at 100% on high-DPI monitors. Range mirrors
+    # renderer.USER_SIZE_MIN/MAX (0.5–2.0); the renderer re-clamps, so this
+    # validator only sanitizes a corrupt value.
+    bar_size_scale: float = 1.35
     # Follow the mouse across monitors: when on, the on-screen bar hops to
     # whichever monitor the mouse cursor is currently on, keeping the SAME
     # relative spot (so different-sized monitors line up). Off pins it to one

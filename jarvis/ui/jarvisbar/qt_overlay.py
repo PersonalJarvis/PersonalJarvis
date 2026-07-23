@@ -590,7 +590,12 @@ class QtJarvisBarOverlay:
         screen = app.primaryScreen()
         if screen is not None:
             geometry = screen.geometry()
-            self._screen_scale = renderer.compute_display_scale(
+            # macOS keeps resolution-relative sizing (no raw_dpi): its points are
+            # already OS-normalised for perceived size, and QScreen.geometry() is
+            # in points, not physical pixels — mixing a physical-DPI anchor here
+            # would regress the signed-off Mac look. Physical sizing on macOS is a
+            # documented follow-up (renderer.resolve_screen_scale accepts a dpi).
+            self._screen_scale = renderer.resolve_screen_scale(
                 geometry.width(), geometry.height()
             )
         renderer.apply_display_scale(self._screen_scale, user_size=self._user_size_scale)

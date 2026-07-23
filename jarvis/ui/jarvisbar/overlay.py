@@ -165,6 +165,18 @@ HANGUP_CLICK_GUARD_S = 1.0
 CURSOR_MONITOR_POLL_MS = 250
 
 
+def _probe_primary_raw_dpi() -> float | None:
+    """True physical DPI of the primary monitor for physical-size scaling, or
+    ``None`` (→ resolution fallback). Thin, lazily-imported, never-raising wrapper
+    around ``jarvis.platform.monitors.primary_monitor_raw_dpi``."""
+    try:
+        from jarvis.platform.monitors import primary_monitor_raw_dpi
+
+        return primary_monitor_raw_dpi()
+    except Exception:  # noqa: BLE001 — sizing is cosmetic; degrade to resolution
+        return None
+
+
 def _primary_work_area() -> tuple[int, int, int, int] | None:
     """Primary-monitor work area (left, top, right, bottom) EXCLUDING the
     taskbar, via Win32 ``SPI_GETWORKAREA``. None off Windows / on failure so
@@ -646,22 +658,23 @@ class JarvisBarOverlay:
         root = _create_hidden_tk_root(tk)
         self._root = root
 
-        # Screen-adaptive geometry (screen-relative): shrink the whole bar on
-        # small screens (a 14" laptop) while big monitors keep the approved
-        # 1.0 look. Must run BEFORE the renderer and any window geometry are
-        # derived from the module constants. Tk reports points on macOS and
-        # physical pixels on a DPI-aware Windows/X11 — both are the right
-        # basis for "how much of this screen would the bar occupy".
+        # Base geometry scale. PHYSICAL-size-consistent when the monitor's true
+        # DPI is known (Windows/X11 report real physical pixels), so the bar
+        # looks the same size on the glass across monitors of different physical
+        # size; else the resolution-relative fallback. Must run BEFORE the
+        # renderer and any window geometry are derived from the module constants.
         try:
-            self._screen_scale = renderer.compute_display_scale(
-                int(root.winfo_screenwidth()), int(root.winfo_screenheight())
+            raw_dpi = _probe_primary_raw_dpi()
+            self._screen_scale = renderer.resolve_screen_scale(
+                int(root.winfo_screenwidth()), int(root.winfo_screenheight()), raw_dpi
             )
             renderer.apply_display_scale(self._screen_scale, user_size=self._user_size_scale)
             if renderer.DISPLAY_SCALE != 1.0 or self._user_size_scale != 1.0:
                 log.info(
-                    "jarvisbar display scale %.3f (user size %.2f) for screen %sx%s",
+                    "jarvisbar scale %.3f (user size %.2f, raw dpi %s) for screen %sx%s",
                     renderer.DISPLAY_SCALE,
                     self._user_size_scale,
+                    raw_dpi,
                     root.winfo_screenwidth(),
                     root.winfo_screenheight(),
                 )

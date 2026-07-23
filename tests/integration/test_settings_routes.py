@@ -101,7 +101,8 @@ def test_bar_size_get_returns_default_and_range(server: WebServer) -> None:
         resp = client.get("/api/settings/bar-size")
         assert resp.status_code == 200
         body = resp.json()
-        assert body["scale"] == 1.0
+        assert body["scale"] == 1.35  # product default
+        assert body["default"] == 1.35
         assert body["min"] == 0.5
         assert body["max"] == 2.0
 

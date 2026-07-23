@@ -8,6 +8,8 @@ decision logic is what these pin — the native query is monkeypatched.
 """
 from __future__ import annotations
 
+import pytest
+
 from jarvis.platform import monitors as mon
 
 # mss-style: monitors[0] = virtual bounding box, [1:] = physical screens.
@@ -78,3 +80,33 @@ def test_native_primary_origin_never_raises():
         isinstance(result, tuple) and len(result) == 2
         and all(isinstance(v, int) for v in result)
     )
+
+
+# --------------------------------------------------------------------------- #
+# primary_monitor_raw_dpi — physical DPI for physical-size bar scaling          #
+# --------------------------------------------------------------------------- #
+def test_dpi_from_xrandr_line_parses_px_and_mm():
+    # A real "connected primary" line: 3840 px over 630 mm → 25.4*3840/630.
+    line = "DP-1 connected primary 3840x2160+0+0 (normal left inverted) 630mm x 360mm"
+    dpi = mon._dpi_from_xrandr_line(line)
+    assert dpi == pytest.approx(25.4 * 3840 / 630, abs=0.1)
+
+
+def test_dpi_from_xrandr_line_offset_output():
+    # A secondary output offset into the virtual desktop still parses its own px.
+    line = "HDMI-2 connected 2560x1440+3840+0 (normal) 597mm x 336mm"
+    dpi = mon._dpi_from_xrandr_line(line)
+    assert dpi == pytest.approx(25.4 * 2560 / 597, abs=0.1)
+
+
+def test_dpi_from_xrandr_line_none_when_no_physical_size():
+    # 0mm (common on virtual/unknown outputs) or a missing mm report → None.
+    assert mon._dpi_from_xrandr_line("VIRTUAL1 connected 1920x1080+0+0 0mm x 0mm") is None
+    assert mon._dpi_from_xrandr_line("DP-1 connected primary 1920x1080+0+0 (normal)") is None
+    assert mon._dpi_from_xrandr_line("DP-1 disconnected") is None
+
+
+def test_primary_monitor_raw_dpi_never_raises():
+    # Best-effort: a real physical DPI (plausible float) or None on any host.
+    result = mon.primary_monitor_raw_dpi()
+    assert result is None or (isinstance(result, float) and 30.0 < result < 600.0)

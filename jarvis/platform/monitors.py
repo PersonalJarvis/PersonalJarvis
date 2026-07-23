@@ -398,6 +398,154 @@ def _x11_work_area_at(x: int, y: int) -> tuple[int, int, int, int] | None:
     return fallback
 
 
+def primary_monitor_raw_dpi() -> float | None:
+    """Best-effort TRUE physical DPI (raw dots-per-inch, from EDID) of the OS
+    primary monitor — the reliable input for sizing the on-screen bar to a
+    consistent PHYSICAL size across monitors of different physical size.
+
+    Deliberately the monitor's RAW physical DPI, NOT the user's display-scaling
+    (effective DPI) and NOT Tk's ``winfo_screenmm`` — the latter returns a
+    96-DPI-derived FAKE on Windows (mm mirror the resolution, so every monitor
+    looks the same size). ``None`` when it cannot be read (macOS, Wayland,
+    headless, missing/implausible EDID); the caller then keeps the
+    resolution-relative fallback. Never raises.
+
+    - Windows: ``GetDpiForMonitor(primary, MDT_RAW_DPI)``.
+    - Linux/X11: derived from ``xrandr``'s physical-mm report on the primary.
+    - macOS: ``None`` (the Qt bar keeps resolution sizing; macOS points already
+      normalise perceived size — see ``renderer.resolve_screen_scale``).
+    """
+    try:
+        if sys.platform == "win32":
+            return _win_primary_raw_dpi()
+        if sys.platform == "darwin":
+            return None
+        from jarvis.platform.probes import is_wayland  # noqa: PLC0415
+
+        if is_wayland():
+            return None
+        return _x11_primary_raw_dpi()
+    except Exception:  # noqa: BLE001 — best-effort probe; caller keeps a fallback
+        return None
+
+
+def _win_primary_raw_dpi() -> float | None:
+    """``GetDpiForMonitor(primary, MDT_RAW_DPI)`` — the monitor's true physical
+    DPI from EDID, independent of the display-scaling setting.
+
+    The primary monitor's top-left is ``(0, 0)`` by Windows convention, so
+    ``MonitorFromPoint((0,0), MONITOR_DEFAULTTOPRIMARY)`` resolves it. ``shcore``
+    (8.1+) is required; older Windows / any failure → ``None``.
+
+    CRITICAL: ``MDT_RAW_DPI`` is DPI-AWARENESS-dependent — an UNAWARE caller sees
+    the monitor's VIRTUALISED (scaled) resolution and gets a wrong raw DPI (e.g.
+    103 instead of the physical 154 on a 4K@150% panel). A thread-scoped
+    per-monitor DPI pin (restored afterwards, mirroring :func:`_win_work_area_at`)
+    forces the physical reading, matching the DPI-aware Tk thread that renders the
+    bar in physical pixels — so the result is correct no matter the caller's
+    ambient awareness.
+    """
+    import ctypes  # noqa: PLC0415
+    from ctypes import wintypes  # noqa: PLC0415
+
+    user32 = ctypes.windll.user32
+    try:
+        shcore = ctypes.windll.shcore
+    except OSError:  # pre-8.1: no GetDpiForMonitor
+        return None
+
+    class _POINT(ctypes.Structure):
+        _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+    _MONITOR_DEFAULTTOPRIMARY = 0x00000001
+    _MDT_RAW_DPI = 2
+
+    set_ctx = None
+    prev = None
+    try:
+        set_ctx = user32.SetThreadDpiAwarenessContext
+        set_ctx.restype = ctypes.c_void_p
+        set_ctx.argtypes = [ctypes.c_void_p]
+        for context in (-4, -3):  # PER_MONITOR_AWARE_V2, then V1 (1607)
+            prev = set_ctx(ctypes.c_void_p(context))
+            if prev is not None:
+                break
+    except (OSError, AttributeError):  # pre-1607: read unpinned (best-effort)
+        set_ctx = None
+    try:
+        # HMONITOR is pointer-sized: set restype so ctypes doesn't truncate it
+        # on Win64, then re-wrap when passing it on (mirrors _win_work_area_at).
+        user32.MonitorFromPoint.restype = wintypes.HMONITOR
+        hmon = user32.MonitorFromPoint(_POINT(0, 0), _MONITOR_DEFAULTTOPRIMARY)
+        dpi_x = ctypes.c_uint()
+        dpi_y = ctypes.c_uint()
+        hr = shcore.GetDpiForMonitor(
+            wintypes.HMONITOR(hmon), _MDT_RAW_DPI, ctypes.byref(dpi_x), ctypes.byref(dpi_y)
+        )
+    finally:
+        if set_ctx is not None and prev is not None:
+            try:
+                set_ctx(ctypes.c_void_p(prev))
+            except Exception:  # noqa: BLE001,S110 — best-effort DPI-context restore
+                pass
+    if hr != 0 or dpi_x.value <= 0:
+        return None
+    return float(dpi_x.value)
+
+
+def _dpi_from_xrandr_line(line: str) -> float | None:
+    """Raw DPI from one ``xrandr`` ``connected`` line (pure, unit-testable).
+
+    Reads the pixel width from the geometry token (``3840x2160+0+0``) and the
+    physical width from the trailing ``NNNmm x NNNmm``; ``DPI = 25.4 * px / mm``.
+    ``None`` when either is missing or implausible (0mm is common on virtual /
+    unknown outputs).
+    """
+    import re  # noqa: PLC0415
+
+    px_w: int | None = None
+    for tok in line.split():
+        if "x" in tok and "+" in tok:
+            try:
+                px_w = int(tok.split("+")[0].split("x")[0])
+            except (IndexError, ValueError):
+                px_w = None
+            break
+    m = re.search(r"(\d+)\s*mm\s*x\s*(\d+)\s*mm", line)
+    if px_w is None or px_w <= 0 or m is None:
+        return None
+    mm_w = int(m.group(1))
+    if mm_w <= 0:
+        return None
+    return 25.4 * px_w / mm_w
+
+
+def _x11_primary_raw_dpi() -> float | None:
+    """Raw DPI of the primary ``xrandr`` output from its physical-mm report.
+
+    Prefers the ``connected primary`` line, falling back to the first
+    ``connected`` line. ``None`` when ``xrandr`` is missing or reports no size.
+    """
+    from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS  # noqa: PLC0415
+
+    if shutil.which("xrandr") is None:
+        return None
+    try:
+        out = subprocess.run(
+            ["xrandr", "--query"], capture_output=True, text=True, timeout=3.0,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+        ).stdout
+    except Exception:  # noqa: BLE001 — xrandr missing / no display
+        return None
+    connected = [ln for ln in out.splitlines() if " connected " in ln]
+    line = next((ln for ln in connected if " connected primary " in ln), None)
+    if line is None:
+        line = connected[0] if connected else None
+    if line is None:
+        return None
+    return _dpi_from_xrandr_line(line)
+
+
 def native_primary_origin() -> tuple[int, int] | None:
     """Best-effort virtual-desktop top-left ``(x, y)`` of the OS primary monitor,
     or ``None`` when it cannot be determined (headless / Wayland / missing libs).

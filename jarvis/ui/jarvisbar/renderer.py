@@ -88,6 +88,68 @@ MIN_DISPLAY_SCALE = 0.55
 BASE_DISPLAY_SCALE = 0.85
 DISPLAY_SCALE = 1.0
 
+# --- physical-size-consistent scaling (true per-monitor DPI) ------------------
+# The screen-adaptive scale above is RESOLUTION-relative, so two monitors of the
+# SAME resolution but DIFFERENT physical size render the bar at the same pixel
+# size — physically bigger on the bigger monitor. To make the bar look the SAME
+# PHYSICAL SIZE on the glass everywhere, ``compute_physical_scale`` scales by the
+# monitor's TRUE physical DPI instead (from EDID via GetDpiForMonitor(MDT_RAW_DPI)
+# on Windows / xrandr mm on X11 — NOT the OS scaling, and NOT Tk's winfo_screenmm
+# which returns a 96-DPI-derived FAKE on Windows). A physical-mm model was tried
+# and reverted once as "too small" (2026-07-21) because it anchored to a 14"
+# laptop; the fix is anchoring to the maintainer's monitor DPI below, so THAT
+# monitor keeps its exact current look and only physically different monitors
+# adjust. When the true DPI is unavailable/implausible (macOS, Wayland, headless,
+# missing EDID) the caller falls back to the resolution-relative scale.
+REFERENCE_RAW_DPI = 154.0  # calibrated reference physical DPI (~28in 4K desktop);
+# compute_physical_scale returns exactly BASE_DISPLAY_SCALE at this DPI, so the
+# reference monitor is unchanged. Measured live via GetDpiForMonitor(MDT_RAW_DPI).
+MAX_DISPLAY_SCALE = 1.6  # physical sizing may exceed 1.0 on dense (4K/Retina)
+# monitors; bounded so a very dense or MISREPORTED monitor can't produce an absurd
+# bar. The resolution path is separately capped at BASE_DISPLAY_SCALE, so raising
+# this ceiling only affects the physical path.
+PHYSICAL_DPI_MIN = 60.0   # plausibility gate: below → treat DPI as unknown
+PHYSICAL_DPI_MAX = 350.0  # (fail-closed to the resolution fallback)
+
+
+def compute_physical_scale(raw_dpi: float) -> float | None:
+    """Screen scale that holds the bar's PHYSICAL size constant across monitors.
+
+    ``raw_dpi`` is the monitor's TRUE physical dots-per-inch (EDID), NOT the OS
+    display-scaling. Returns ``BASE_DISPLAY_SCALE * raw_dpi / REFERENCE_RAW_DPI``
+    so a denser monitor draws MORE pixels (same physical size) and a coarser one
+    FEWER, clamped to ``[MIN_DISPLAY_SCALE, MAX_DISPLAY_SCALE]``. At
+    ``REFERENCE_RAW_DPI`` it returns exactly ``BASE_DISPLAY_SCALE`` (the reference
+    monitor is unchanged). ``None`` when ``raw_dpi`` is missing / non-finite /
+    implausible, so the caller falls back to ``compute_display_scale``.
+    """
+    try:
+        d = float(raw_dpi)
+    except (TypeError, ValueError):
+        return None
+    if not math.isfinite(d) or not (PHYSICAL_DPI_MIN <= d <= PHYSICAL_DPI_MAX):
+        return None
+    raw = BASE_DISPLAY_SCALE * d / REFERENCE_RAW_DPI
+    return max(MIN_DISPLAY_SCALE, min(MAX_DISPLAY_SCALE, round(raw, 4)))
+
+
+def resolve_screen_scale(
+    screen_w: int, screen_h: int, raw_dpi: float | None = None
+) -> float:
+    """The bar's base screen scale: physical-size-consistent when the monitor's
+    true DPI is known + plausible, else the resolution-relative fallback.
+
+    This is the single entry point the surfaces call — Windows/X11 pass the real
+    per-monitor ``raw_dpi``; macOS (and any host that can't read it) passes
+    ``None`` and gets today's resolution-relative behaviour unchanged.
+    """
+    if raw_dpi is not None:
+        phys = compute_physical_scale(raw_dpi)
+        if phys is not None:
+            return phys
+    return compute_display_scale(screen_w, screen_h)
+
+
 # --- user size preference (the "Bar size" slider) ----------------------------
 # A multiplier applied ON TOP of the screen-adaptive DISPLAY_SCALE, chosen by
 # the user in Settings → "Bar size". 1.0 reproduces the signed-off default
@@ -185,7 +247,11 @@ def apply_display_scale(scale: float, user_size: float | None = None) -> None:
     """
     global DISPLAY_SCALE, USER_SIZE_SCALE, COLLAPSED_W, COLLAPSED_H, OPEN_W, OPEN_H
     global ACTIVE_W, ACTIVE_H, _BOTTOM_PAD, WIN_W, WIN_H
-    DISPLAY_SCALE = s = max(MIN_DISPLAY_SCALE, min(1.0, float(scale)))
+    # Upper clamp is MAX_DISPLAY_SCALE (not 1.0): the physical-size path may
+    # legitimately exceed 1.0 on a dense (4K/Retina) monitor. The resolution
+    # path is separately capped at BASE_DISPLAY_SCALE by compute_display_scale,
+    # so this wider ceiling only ever admits a physical scale.
+    DISPLAY_SCALE = s = max(MIN_DISPLAY_SCALE, min(MAX_DISPLAY_SCALE, float(scale)))
     if user_size is not None:
         USER_SIZE_SCALE = clamp_user_size(user_size)
     g = s * USER_SIZE_SCALE  # effective geometry factor (screen × user size)
