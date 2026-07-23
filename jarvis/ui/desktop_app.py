@@ -2050,6 +2050,9 @@ class DesktopApp:
                         accent=self.cfg.ui.bar_accent,
                         startup_gated=gate_until_voice_ready,
                         size_scale=getattr(self.cfg.ui, "bar_size_scale", 1.0),
+                        follow_cursor_monitor=getattr(
+                            self.cfg.ui, "bar_follow_cursor_monitor", True
+                        ),
                     )
                     surface.start_in_thread()
                     logger.info(
@@ -2099,6 +2102,9 @@ class DesktopApp:
                 accent=self.cfg.ui.bar_accent,
                 startup_gated=gate_until_voice_ready,
                 size_scale=getattr(self.cfg.ui, "bar_size_scale", 1.0),
+                follow_cursor_monitor=getattr(
+                    self.cfg.ui, "bar_follow_cursor_monitor", True
+                ),
             )
         else:  # "mascot" (and any legacy style value)
             from ui.orb.overlay import OrbOverlay
@@ -2173,6 +2179,33 @@ class DesktopApp:
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning("set_bar_size failed")
             return {"ok": True, "applied_live": False, "scale": scale}
+
+    def set_bar_follow_cursor(self, enabled: bool) -> dict[str, object]:
+        """Live-toggle 'follow the mouse to the active monitor'.
+
+        Updates the in-memory config and calls the surface's ``set_follow_cursor``
+        so the running bar starts/stops following the cursor across monitors
+        immediately. Only the bar surface implements it — on the mascot /
+        no-overlay style this reports ``applied_live=False`` (persisted only).
+        """
+        from loguru import logger
+
+        enabled = bool(enabled)
+        try:
+            self.cfg.ui.bar_follow_cursor_monitor = enabled
+        except Exception:  # noqa: BLE001
+            pass
+        bar = getattr(self, "_orb", None)
+        fn = getattr(bar, "set_follow_cursor", None)
+        if not callable(fn):
+            return {"ok": True, "applied_live": False, "enabled": enabled}
+        try:
+            fn(enabled)
+            logger.info("bar_follow_cursor_monitor set live to {}.", enabled)
+            return {"ok": True, "applied_live": True, "enabled": enabled}
+        except Exception as exc:  # noqa: BLE001
+            logger.opt(exception=exc).warning("set_bar_follow_cursor failed")
+            return {"ok": True, "applied_live": False, "enabled": enabled}
 
     def swap_overlay(self, style: str) -> dict[str, object]:
         """Apply an overlay style change at runtime *as far as is Tk-safe*.
@@ -3328,16 +3361,26 @@ class DesktopApp:
             sys.stderr.write("Backend did not start within 45s — aborting.\n")
             return self.shutdown() or 2
 
-        self._window = webview.create_window(
-            WINDOW_TITLE,
-            self._url(),
-            width=1280,
-            height=800,
-            min_size=(900, 600),
-            resizable=True,
-            confirm_close=False,
-            background_color="#0a0e14",
-        )
+        try:
+            self._window = webview.create_window(
+                WINDOW_TITLE,
+                self._url(),
+                width=1280,
+                height=800,
+                min_size=(900, 600),
+                resizable=True,
+                confirm_close=False,
+                background_color="#0a0e14",
+            )
+        except webview.WebViewException as exc:
+            # No native desktop-window backend is available. This is the Linux
+            # case where pywebview needs the system GTK+WebKit packages (gi +
+            # webkit2gtk) that pip cannot install; without them it raises
+            # WebViewException. Degrade gracefully instead of crashing (and
+            # killing the already-serving backend thread). Windows
+            # (gui='edgechromium') and macOS reach this only if their native
+            # backend genuinely cannot start, and behave identically otherwise.
+            return self._degrade_to_browser_ui(exc)
         self._window_visible = True
 
         # Close button = minimize-to-tray (user decision 2026-04-20).
@@ -3400,12 +3443,22 @@ class DesktopApp:
         # webview.start blocks the main thread. func/args gets called after
         # the first load (pywebview-internal), so evaluate_js hits a
         # DOM-ready context.
-        webview.start(
-            func=self._inject_token,
-            args=(self._window,),
-            gui=gui,
-            debug=debug,
-        )
+        #
+        # On Linux, webview.start selects the native GUI backend here and raises
+        # WebViewException when neither GTK+WebKit nor Qt (with Python bindings)
+        # is installed — a system dependency pip cannot provide. Do NOT let that
+        # crash the app or tear down the backend thread that is already serving
+        # the UI: degrade to the browser-UI fallback. No-op on Windows/macOS
+        # where the native backend starts normally.
+        try:
+            webview.start(
+                func=self._inject_token,
+                args=(self._window,),
+                gui=gui,
+                debug=debug,
+            )
+        except webview.WebViewException as exc:
+            return self._degrade_to_browser_ui(exc)
         # webview.start returns once the window is destroyed. A real quit (the
         # X, tray "Quit", or a restart) has set ``_user_requested_quit``; in that
         # case tear every surface down AND guarantee the process dies, so nothing
@@ -3425,6 +3478,60 @@ class DesktopApp:
                 sys.stderr.flush()
             os._exit(code)
         return code
+
+    def _degrade_to_browser_ui(self, exc: BaseException) -> int:
+        """Fallback when no native desktop-window backend is available.
+
+        Reached only when pywebview cannot open a native window — in practice a
+        Linux host missing the system GTK+WebKit packages (``gi`` +
+        ``webkit2gtk``) that pip cannot install. The backend thread is already
+        running and serving the full UI over HTTP, so instead of crashing (which
+        would also kill that daemon thread) we keep it alive and point the user
+        at the local URL, the packages to install, or the ``--headless`` mode.
+
+        Blocks the main thread on the backend thread so the server keeps serving
+        until the user stops it (Ctrl+C) or it exits. Windows/macOS never reach
+        this while their native backend works.
+        """
+        from loguru import logger as _logger
+
+        url = f"http://127.0.0.1:{self.cfg.ui.admin_api_port}"
+        _logger.warning("Native desktop window unavailable: {}", exc)
+        message = (
+            "\n"
+            "Personal Jarvis could not open a native desktop window.\n"
+            f"Reason: {exc}\n"
+            "\n"
+            "The backend is running and already serving the full UI. To use it:\n"
+            f"  - Open this address in a web browser:  {url}\n"
+            "  - Or install the system GTK 3 + WebKit2GTK packages pywebview "
+            "needs and restart\n"
+            "    (Debian/Ubuntu, for example: "
+            "'sudo apt install python3-gi gir1.2-webkit2-4.1').\n"
+            "  - Or re-run without a window using the '--headless' flag.\n"
+            "\n"
+            "Press Ctrl+C to stop the server.\n"
+        )
+        with suppress(Exception):
+            sys.stderr.write(message)
+            sys.stderr.flush()
+
+        # Keep the already-serving backend alive by parking the main thread on
+        # it. Join in short slices so a Ctrl+C (KeyboardInterrupt lands on the
+        # main thread) is honoured promptly instead of after an indefinite wait.
+        thread = self._backend_thread
+        try:
+            if thread is not None and thread is not threading.current_thread():
+                while thread.is_alive():
+                    thread.join(timeout=1.0)
+            else:
+                # No separate backend handle to join (should not happen on this
+                # path): park the main thread so the daemon server keeps serving.
+                while True:
+                    time.sleep(3600)
+        except KeyboardInterrupt:
+            _logger.info("Interrupted — shutting the browser-UI fallback down.")
+        return self.shutdown() or 0
 
     def _start_icon_setter_thread(self) -> None:
         """Polling thread: sets the taskbar/titlebar icon once the HWND exists.

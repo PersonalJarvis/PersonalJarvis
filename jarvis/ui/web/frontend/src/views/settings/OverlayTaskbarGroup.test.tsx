@@ -29,6 +29,9 @@ vi.mock("@/hooks/useOverlayStyle", () => ({
 vi.mock("@/hooks/useBarPersistent", () => ({
   useBarPersistent: () => ({ enabled: true, loading: false, setEnabled: vi.fn() }),
 }));
+vi.mock("@/hooks/useBarFollowCursor", () => ({
+  useBarFollowCursor: () => ({ enabled: true, loading: false, setEnabled: vi.fn() }),
+}));
 vi.mock("@/hooks/useMuteMusic", () => ({
   useMuteMusic: () => ({ enabled: false, loading: false, setEnabled: vi.fn() }),
 }));
@@ -59,17 +62,19 @@ describe("OverlayTaskbarGroup", () => {
     expect(screen.getByText("taskbar_view.behavior_title")).toBeDefined();
   });
 
-  it("renders the overlay-style panel and all three behavior toggles", () => {
+  it("renders the overlay-style panel and all four behavior toggles", () => {
     render(<OverlayTaskbarGroup />);
     expect(screen.getByText("settings_view.overlay_style.title")).toBeDefined();
     expect(screen.getByText("taskbar_view.bar_persistent.title")).toBeDefined();
+    expect(screen.getByText("taskbar_view.follow_cursor.title")).toBeDefined();
     expect(screen.getByText("taskbar_view.mute_music.title")).toBeDefined();
     expect(screen.getByText("taskbar_view.sound_effects.title")).toBeDefined();
   });
 
   it("toggling the sound-effects switch calls the hook with the new value", () => {
     render(<OverlayTaskbarGroup />);
-    // Behavior block order: bar_persistent, mute_music, sound_effects.
+    // Behavior block order: bar_persistent, follow_cursor, mute_music,
+    // sound_effects — so the sound-effects switch is still the last one.
     const switches = screen.getAllByRole("switch");
     fireEvent.click(switches[switches.length - 1]);
     expect(setSoundEffects).toHaveBeenCalledWith(false);

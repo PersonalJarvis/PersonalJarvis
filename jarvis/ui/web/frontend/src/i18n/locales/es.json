@@ -110,6 +110,11 @@
       "description": "Mantén la barra en pantalla incluso inactiva. Desactivado: sin standby — solo aparece cuando dices tu palabra de activación.",
       "saved": "Visibilidad de la barra actualizada."
     },
+    "follow_cursor": {
+      "title": "Seguir el ratón al monitor activo",
+      "description": "La barra salta al monitor donde está tu ratón, manteniendo la misma posición. Desactivado: permanece en un solo monitor.",
+      "saved": "Seguimiento de monitor actualizado."
+    },
     "mute_music": {
       "title": "Silenciar música al dictar",
       "description": "Silencia otras apps (Spotify, navegador…) mientras hablas con tu asistente y las restaura después. La voz del asistente nunca se silencia.",

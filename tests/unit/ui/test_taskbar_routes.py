@@ -9,11 +9,16 @@ from fastapi.testclient import TestClient
 from jarvis.ui.web.settings_routes import router
 
 
-def _client(*, bar_persistent=True, ducking_enabled=False, desktop=None):
+def _client(
+    *, bar_persistent=True, follow_cursor=True, ducking_enabled=False, desktop=None
+):
     app = FastAPI()
     app.include_router(router)
     app.state.config = SimpleNamespace(
-        ui=SimpleNamespace(bar_persistent=bar_persistent),
+        ui=SimpleNamespace(
+            bar_persistent=bar_persistent,
+            bar_follow_cursor_monitor=follow_cursor,
+        ),
         ducking=SimpleNamespace(enabled=ducking_enabled),
     )
     if desktop is not None:
@@ -36,6 +41,27 @@ def test_put_bar_persistent_live(monkeypatch):
     )
     r = _client(desktop=desktop).put(
         "/api/settings/bar-persistent", json={"enabled": False}
+    )
+    assert r.status_code == 200
+    assert applied["v"] is False and r.json()["applied_live"] is True
+
+
+def test_get_bar_follow_cursor():
+    r = _client(follow_cursor=False).get("/api/settings/bar-follow-cursor")
+    assert r.status_code == 200 and r.json()["enabled"] is False
+
+
+def test_put_bar_follow_cursor_live(monkeypatch):
+    import jarvis.core.config_writer as cw
+
+    monkeypatch.setattr(cw, "set_bar_follow_cursor_monitor", lambda v, **k: None)
+    applied = {}
+    desktop = SimpleNamespace(
+        set_bar_follow_cursor=lambda v: applied.setdefault("v", v)
+        or {"applied_live": True}
+    )
+    r = _client(desktop=desktop).put(
+        "/api/settings/bar-follow-cursor", json={"enabled": False}
     )
     assert r.status_code == 200
     assert applied["v"] is False and r.json()["applied_live"] is True

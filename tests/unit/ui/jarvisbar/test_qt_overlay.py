@@ -271,7 +271,7 @@ def test_position_persistence_keeps_preferred_location_when_dock_is_visible(
     monkeypatch.setattr(
         qt_overlay.interaction,
         "save_jarvisbar_position",
-        lambda _path, x, y: saved.append((x, y)),
+        lambda _path, x, y, rel=None: saved.append((x, y)),
     )
 
     surface._persist_position_ui()  # noqa: SLF001

@@ -156,6 +156,14 @@ MIN_FRAME_DELAY_MS = 1
 # reinterpreted as an idle-body click that immediately starts a new session.
 HANGUP_CLICK_GUARD_S = 1.0
 
+# Cursor-monitor follow poll. When enabled, the bar hops to whichever monitor
+# the mouse pointer is currently on (keeping its RELATIVE spot, so a bigger or
+# smaller monitor lines up — see interaction.project_relative). A ~250 ms poll
+# is imperceptible to the user yet costs only one global-pointer read plus one
+# MonitorFromPoint per tick — well off the animation hot path. The poll never
+# fights an in-progress drag and never re-derives a hidden/gated bar's spot.
+CURSOR_MONITOR_POLL_MS = 250
+
 
 def _primary_work_area() -> tuple[int, int, int, int] | None:
     """Primary-monitor work area (left, top, right, bottom) EXCLUDING the
@@ -347,6 +355,7 @@ class JarvisBarOverlay:
         opacity: float = BAR_ALPHA,
         startup_gated: bool = False,
         size_scale: float = 1.0,
+        follow_cursor_monitor: bool = True,
     ) -> None:
         self._persistent = persistent
         self._accent = accent
@@ -393,6 +402,14 @@ class JarvisBarOverlay:
         self._x = 0
         self._y = 0
         self._drag: dict | None = None
+        # Multi-monitor follow: when on, the bar migrates to the monitor under
+        # the mouse. ``_rel_pos`` is the monitor-independent free-space fraction
+        # (the persisted placement truth); ``_cur_work`` is the work area the
+        # bar currently sits on, so the poll can tell when the cursor's monitor
+        # differs and a migration is due. Both are seeded in ``_resolve_position``.
+        self._follow_cursor = bool(follow_cursor_monitor)
+        self._rel_pos: tuple[float, float] | None = None
+        self._cur_work: tuple[int, int, int, int] | None = None
         self._level_unsub: Callable[[], None] | None = None
         self._on_mute_toggle: Callable[[], None] | None = None
         # Interaction callbacks let the macOS companion host forward actions
@@ -517,6 +534,15 @@ class JarvisBarOverlay:
         if self._root is None:
             return
         self._enqueue_ui(lambda s=self._user_size_scale: self._do_apply_size(s))
+
+    def set_follow_cursor(self, enabled: bool) -> None:
+        """Live-toggle 'follow the mouse to the active monitor'.
+
+        A plain flag the cursor-monitor poll reads each tick, so turning it off
+        simply stops future migrations (the bar stays put) and turning it on
+        makes the next poll place it on the monitor under the mouse. Atomic bool
+        write — no Tk marshal needed, like ``set_muted``."""
+        self._follow_cursor = bool(enabled)
 
     def set_on_mute_toggle(self, callback: Callable[[], None] | None) -> None:
         self._on_mute_toggle = callback
@@ -741,6 +767,7 @@ class JarvisBarOverlay:
         self._schedule_ui_queue()
         self._schedule_frame_watchdog()  # independent anti-freeze revival loop
         self._schedule_z_order_guard()
+        self._schedule_cursor_monitor_guard()  # follow the mouse across monitors
         if not self._should_start_withdrawn():
             self._do_show()
         self._started.set()
@@ -764,46 +791,102 @@ class JarvisBarOverlay:
     # ------------------------------------------------------------------ #
     # Tk-thread internals                                                #
     # ------------------------------------------------------------------ #
-    def _resolve_position(self, root: Any) -> None:
+    def _cursor_global(self) -> tuple[int, int] | None:
+        """Best-effort global pointer ``(x, y)`` in the bar's coordinate space.
+
+        ``winfo_pointerxy`` reports the same DPI-aware physical pixels the
+        window geometry uses (the Tk thread is pinned PER_MONITOR_AWARE), so it
+        lines up with :func:`jarvis.platform.monitors.work_area_at`. ``None`` on
+        any failure so callers keep the current placement."""
+        root = self._root
+        if root is None:
+            return None
         try:
-            sw = int(root.winfo_screenwidth())
-            sh = int(root.winfo_screenheight())
+            px, py = root.winfo_pointerxy()
+            return (int(px), int(py))
+        except Exception:  # noqa: BLE001 — pointer probe is best-effort
+            return None
+
+    def _work_area_for_point(self, x: int, y: int) -> tuple[int, int, int, int]:
+        """Work area ``(left, top, width, height)`` of the monitor at ``(x, y)``.
+
+        Degrades exactly like the old default anchor did when no per-monitor
+        info is available: the Windows primary work area (taskbar excluded),
+        then the full primary screen. So a headless/Wayland host keeps the
+        single-monitor behaviour instead of guessing."""
+        try:
+            from jarvis.platform.monitors import work_area_at
+
+            wa = work_area_at(int(x), int(y))
+            if wa is not None:
+                return wa
+        except Exception:  # noqa: BLE001 — monitor probe is best-effort
+            log.debug("jarvisbar work-area probe failed", exc_info=True)
+        primary = _primary_work_area()
+        if primary is not None:
+            wl, wt, wr, wb = primary
+            return (wl, wt, wr - wl, wb - wt)
+        try:
+            return (
+                0,
+                0,
+                int(self._root.winfo_screenwidth()),
+                int(self._root.winfo_screenheight()),
+            )
         except Exception:  # noqa: BLE001
-            sw, sh = 1920, 1080
+            return (0, 0, 1920, 1080)
+
+    def _resolve_position(self, root: Any) -> None:
+        del root  # geometry is derived from the resolved monitor work area
         pos: tuple[int, int] | None = None
+        rel: tuple[float, float] | None = None
         try:
             from jarvis.core.config_writer import DEFAULT_CONFIG_FILE
 
             pos = interaction.load_jarvisbar_position(DEFAULT_CONFIG_FILE)
+            rel = interaction.load_jarvisbar_relative(DEFAULT_CONFIG_FILE)
         except Exception:  # noqa: BLE001
-            pos = None
-        if pos is not None:
-            self._x, self._y = interaction.clamp_to_screen(
-                pos[0],
-                pos[1],
-                screen_w=sw,
-                screen_h=sh,
+            pos, rel = None, None
+
+        # A legacy config stored only the absolute spot: recover its relative
+        # placement from the monitor it belonged to, so an upgrade keeps the
+        # spot (and, in follow mode, reproduces it on the cursor's monitor).
+        if rel is None and pos is not None:
+            pos_work = self._work_area_for_point(pos[0], pos[1])
+            rel = interaction.relative_within(
+                pos[0], pos[1], work=pos_work, bar_w=renderer.WIN_W, bar_h=renderer.WIN_H
+            )
+
+        # Choose the monitor to place on: follow mode boots on the monitor under
+        # the mouse; pinned mode uses the monitor the saved spot belonged to.
+        if self._follow_cursor:
+            anchor = self._cursor_global() or pos or (0, 0)
+        else:
+            anchor = pos or (0, 0)
+        work = self._work_area_for_point(anchor[0], anchor[1])
+
+        if rel is not None:
+            self._x, self._y = interaction.project_relative(
+                rel[0], rel[1], work=work, bar_w=renderer.WIN_W, bar_h=renderer.WIN_H
+            )
+        else:
+            # Fresh install: bottom-centre on the chosen monitor, just above its
+            # taskbar (the work area already excludes the taskbar on Windows).
+            wl, wt, ww, wh = work
+            self._x = wl + (ww - renderer.WIN_W) // 2
+            self._y = wt + wh - renderer.WIN_H - TASKBAR_GAP_PX
+            self._x, self._y = interaction.clamp_to_work_area(
+                self._x,
+                self._y,
+                work=work,
                 bar_w=renderer.WIN_W,
                 bar_h=renderer.WIN_H,
                 margin=MARGIN_PX,
             )
-        else:
-            # Anchor just ABOVE the taskbar (work area), exactly centered —
-            # not on the taskbar. Fall back to the full-screen bottom if the
-            # work area is unavailable (non-Windows / query failure).
-            wa = _primary_work_area()
-            if wa is not None:
-                wl, wt, wr, wb = wa
-                self._x = wl + (wr - wl - renderer.WIN_W) // 2
-                self._y = wb - renderer.WIN_H - TASKBAR_GAP_PX
-            else:
-                self._x, self._y = interaction.default_bottom_center(
-                    screen_w=sw,
-                    screen_h=sh,
-                    bar_w=renderer.WIN_W,
-                    bar_h=renderer.WIN_H,
-                    margin=MARGIN_PX,
-                )
+        self._rel_pos = interaction.relative_within(
+            self._x, self._y, work=work, bar_w=renderer.WIN_W, bar_h=renderer.WIN_H
+        )
+        self._cur_work = work
 
     def _do_apply_size(self, user_scale: float) -> None:
         """Recompute geometry for ``user_scale`` and resize the window (Tk thread).
@@ -848,21 +931,27 @@ class JarvisBarOverlay:
         bottom_y = self._y + old_win_h
         new_x = round(center_x - renderer.WIN_W / 2.0)
         new_y = round(bottom_y - renderer.WIN_H)
-        try:
-            sw = int(self._root.winfo_screenwidth())
-            sh = int(self._root.winfo_screenheight())
-            new_x, new_y = interaction.clamp_to_screen(
-                new_x,
-                new_y,
-                screen_w=sw,
-                screen_h=sh,
-                bar_w=renderer.WIN_W,
-                bar_h=renderer.WIN_H,
-                margin=MARGIN_PX,
-            )
-        except Exception:  # noqa: BLE001 — clamping is best-effort
-            log.debug("jarvisbar resize clamp failed", exc_info=True)
+        # Clamp to the monitor the bar sits on (measured at the new centre), not
+        # the primary screen, so a resize near a secondary-monitor edge stays on
+        # that monitor.
+        work = self._work_area_for_point(
+            new_x + renderer.WIN_W // 2, new_y + renderer.WIN_H // 2
+        )
+        new_x, new_y = interaction.clamp_to_work_area(
+            new_x,
+            new_y,
+            work=work,
+            bar_w=renderer.WIN_W,
+            bar_h=renderer.WIN_H,
+            margin=MARGIN_PX,
+        )
         self._x, self._y = new_x, new_y
+        # The bar size changed, so the relative-spot basis changed: refresh it
+        # from the new geometry so the follow poll keeps the correct fraction.
+        self._cur_work = work
+        self._rel_pos = interaction.relative_within(
+            self._x, self._y, work=work, bar_w=renderer.WIN_W, bar_h=renderer.WIN_H
+        )
         if self._canvas is not None:
             try:
                 self._canvas.config(width=renderer.WIN_W, height=renderer.WIN_H)
@@ -894,6 +983,18 @@ class JarvisBarOverlay:
             # Unusual Tk shims may not expose the query. Prefer an attempted
             # reveal over leaving a genuinely hidden bar unavailable.
             log.debug("jarvisbar mapped-state query failed", exc_info=True)
+
+        # Follow mode: a bar that pops from withdrawn (a non-persistent bar on
+        # wake, or the boot-gated bar's first map) should appear on the monitor
+        # the mouse is on right now, not wherever it was last mapped. The move
+        # runs while still withdrawn so it is invisible.
+        if self._follow_cursor and self._project_onto_cursor_monitor():
+            try:
+                self._root.geometry(
+                    f"{renderer.WIN_W}x{renderer.WIN_H}+{self._x}+{self._y}"
+                )
+            except Exception:  # noqa: BLE001
+                log.debug("jarvisbar follow-monitor reveal move failed", exc_info=True)
 
         # Reveal transaction (BUG-030): the boot-created bar can remain
         # withdrawn for many seconds while voice warms. Its idle renderer has
@@ -1211,6 +1312,78 @@ class JarvisBarOverlay:
                     log.warning("JarvisBar Z-order guard re-arm skipped", exc_info=True)
 
     # ------------------------------------------------------------------ #
+    # Follow the mouse across monitors                                   #
+    # ------------------------------------------------------------------ #
+    def _project_onto_cursor_monitor(self) -> bool:
+        """Re-place the bar on the monitor under the mouse, keeping its spot.
+
+        Returns ``True`` when ``self._x/_y`` changed (the caller then applies the
+        geometry). The bar's RELATIVE spot is projected onto the cursor monitor's
+        work area, so a bigger or smaller monitor keeps the same centred/edge
+        placement (:func:`interaction.project_relative`). Deliberately does NOT
+        check the mapped state — the poll does that, while ``_do_show`` calls
+        this before the window is mapped. Never persists: the relative spot is
+        already the saved truth, so migrating monitors changes nothing durable."""
+        if not self._follow_cursor or self._drag is not None:
+            return False
+        cursor = self._cursor_global()
+        if cursor is None:
+            return False
+        work = self._work_area_for_point(cursor[0], cursor[1])
+        prev_work = self._cur_work
+        self._cur_work = work
+        if work == prev_work:
+            return False  # cursor is on the monitor the bar already lives on
+        rel = self._rel_pos
+        if rel is None:
+            rel = interaction.relative_within(
+                self._x,
+                self._y,
+                work=prev_work or work,
+                bar_w=renderer.WIN_W,
+                bar_h=renderer.WIN_H,
+            )
+        new_x, new_y = interaction.project_relative(
+            rel[0], rel[1], work=work, bar_w=renderer.WIN_W, bar_h=renderer.WIN_H
+        )
+        if (new_x, new_y) == (self._x, self._y):
+            return False
+        self._x, self._y = new_x, new_y
+        return True
+
+    def _schedule_cursor_monitor_guard(self) -> None:
+        """~250 ms after-chain that follows the mouse across monitors.
+
+        Independent of the frame loop and the Z-order guard. It acts only for a
+        mapped, ungated, non-dragging bar with follow enabled; anything else is
+        a pure re-arm. A single check error can never kill the loop (``finally``
+        re-arms), and a deliberate ``stop()`` ends it cleanly."""
+        if not self._running or self._root is None:
+            return
+        try:
+            root = self._root
+            if (
+                self._follow_cursor
+                and not getattr(self, "_startup_gated", False)
+                and self._drag is None
+                and bool(root.winfo_ismapped())
+                and self._project_onto_cursor_monitor()
+            ):
+                root.geometry(f"{renderer.WIN_W}x{renderer.WIN_H}+{self._x}+{self._y}")
+        except Exception:  # noqa: BLE001 - the guard must itself never die
+            log.debug("JarvisBar cursor-monitor guard check failed", exc_info=True)
+        finally:
+            if self._running and self._root is not None:
+                try:
+                    self._root.after(
+                        CURSOR_MONITOR_POLL_MS, self._schedule_cursor_monitor_guard
+                    )
+                except Exception:  # noqa: BLE001
+                    log.warning(
+                        "JarvisBar cursor-monitor guard re-arm skipped", exc_info=True
+                    )
+
+    # ------------------------------------------------------------------ #
     # Drag (reposition) + click (start a voice session)                 #
     # ------------------------------------------------------------------ #
     def _on_press(self, event: Any) -> None:
@@ -1269,21 +1442,36 @@ class JarvisBarOverlay:
             self._on_click(d.get("cx", renderer.WIN_W / 2), hovered=bool(d.get("hovered")))
             return
         try:
-            sw = int(self._root.winfo_screenwidth())
-            sh = int(self._root.winfo_screenheight())
-            self._x, self._y = interaction.clamp_to_screen(
+            # Pin the drop to the monitor it LANDED on (measured at the bar's
+            # centre), NOT the primary screen. Clamping to the primary is exactly
+            # what used to snap a cross-monitor drag back to where it started —
+            # the reported bug. The work-area helper degrades to the full primary
+            # screen when no per-monitor info is available, so single-monitor and
+            # headless hosts keep the old behaviour.
+            work = self._work_area_for_point(
+                self._x + renderer.WIN_W // 2,
+                self._y + renderer.WIN_H // 2,
+            )
+            self._x, self._y = interaction.clamp_to_work_area(
                 self._x,
                 self._y,
-                screen_w=sw,
-                screen_h=sh,
+                work=work,
                 bar_w=renderer.WIN_W,
                 bar_h=renderer.WIN_H,
                 margin=MARGIN_PX,
             )
             self._root.geometry(f"{renderer.WIN_W}x{renderer.WIN_H}+{self._x}+{self._y}")
+            # Remember the drop monitor + the monitor-independent relative spot so
+            # the follow poll reproduces this placement on any other monitor.
+            self._cur_work = work
+            self._rel_pos = interaction.relative_within(
+                self._x, self._y, work=work, bar_w=renderer.WIN_W, bar_h=renderer.WIN_H
+            )
             from jarvis.core.config_writer import DEFAULT_CONFIG_FILE
 
-            interaction.save_jarvisbar_position(DEFAULT_CONFIG_FILE, self._x, self._y)
+            interaction.save_jarvisbar_position(
+                DEFAULT_CONFIG_FILE, self._x, self._y, rel=self._rel_pos
+            )
         except Exception:  # noqa: BLE001
             log.debug("jarvisbar position persist failed", exc_info=True)
 
@@ -1430,18 +1618,35 @@ class JarvisBarOverlay:
         if self._root is None:
             return
         try:
-            sw = int(self._root.winfo_screenwidth())
-            sh = int(self._root.winfo_screenheight())
-            self._x, self._y = interaction.default_bottom_center(
-                screen_w=sw,
-                screen_h=sh,
+            # Reset onto the monitor the bar currently sits on — or, in follow
+            # mode, the one under the mouse — not always the primary. The bar
+            # returns to bottom-centre of the screen the user is actually on.
+            cursor = self._cursor_global() if self._follow_cursor else None
+            anchor = cursor or (
+                self._x + renderer.WIN_W // 2,
+                self._y + renderer.WIN_H // 2,
+            )
+            work = self._work_area_for_point(anchor[0], anchor[1])
+            wl, wt, ww, wh = work
+            self._x = wl + (ww - renderer.WIN_W) // 2
+            self._y = wt + wh - renderer.WIN_H - TASKBAR_GAP_PX
+            self._x, self._y = interaction.clamp_to_work_area(
+                self._x,
+                self._y,
+                work=work,
                 bar_w=renderer.WIN_W,
                 bar_h=renderer.WIN_H,
                 margin=MARGIN_PX,
             )
             self._root.geometry(f"{renderer.WIN_W}x{renderer.WIN_H}+{self._x}+{self._y}")
+            self._cur_work = work
+            self._rel_pos = interaction.relative_within(
+                self._x, self._y, work=work, bar_w=renderer.WIN_W, bar_h=renderer.WIN_H
+            )
             from jarvis.core.config_writer import DEFAULT_CONFIG_FILE
 
-            interaction.save_jarvisbar_position(DEFAULT_CONFIG_FILE, self._x, self._y)
+            interaction.save_jarvisbar_position(
+                DEFAULT_CONFIG_FILE, self._x, self._y, rel=self._rel_pos
+            )
         except Exception:  # noqa: BLE001
             log.debug("jarvisbar reset failed", exc_info=True)

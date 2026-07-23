@@ -1438,6 +1438,13 @@ class UIConfig(BaseModel):
     # screen-adaptive scale. Range mirrors renderer.USER_SIZE_MIN/MAX (0.5–2.0);
     # the renderer re-clamps, so this validator only sanitizes a corrupt value.
     bar_size_scale: float = 1.0
+    # Follow the mouse across monitors: when on, the on-screen bar hops to
+    # whichever monitor the mouse cursor is currently on, keeping the SAME
+    # relative spot (so different-sized monitors line up). Off pins it to one
+    # monitor. Default on. Works on Windows/Linux (Tk bar) and macOS (Qt bar);
+    # a headless / Wayland host with no reliable per-monitor geometry keeps the
+    # single-monitor behaviour. See jarvis/ui/jarvisbar/interaction.py.
+    bar_follow_cursor_monitor: bool = True
     # Remembered "open with" choice for Outputs artifacts: an opener id
     # ("default" = OS default app, "browser", or an editor key like "code").
     # Empty = ask via the chooser dialog on first open. Desktop-only.

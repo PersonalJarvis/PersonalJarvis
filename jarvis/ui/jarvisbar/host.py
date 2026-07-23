@@ -96,6 +96,8 @@ def dispatch(surface: Any, msg: dict[str, Any]) -> bool:
         _call(surface, "set_muted", bool(msg.get("muted", False)))
     elif op == "set_size_scale":
         _call(surface, "set_size_scale", float(msg.get("scale", 1.0)))
+    elif op == "set_follow_cursor":
+        _call(surface, "set_follow_cursor", bool(msg.get("enabled", True)))
     elif op == "set_persistent":
         # Live flag flip — the same plain attribute write the in-process
         # set_bar_persistent path performs (no Tk marshal needed).
@@ -307,7 +309,14 @@ def _build_surface(cfg: dict[str, Any]) -> Any:
         )
     kwargs = {
         key: cfg[key]
-        for key in ("persistent", "accent", "opacity", "startup_gated", "size_scale")
+        for key in (
+            "persistent",
+            "accent",
+            "opacity",
+            "startup_gated",
+            "size_scale",
+            "follow_cursor_monitor",
+        )
         if key in cfg
     }
     if sys.platform == "darwin":

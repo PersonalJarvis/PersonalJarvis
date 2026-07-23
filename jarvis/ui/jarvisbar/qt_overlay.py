@@ -53,6 +53,12 @@ TASKBAR_GAP_PX = 8
 HANGUP_CLICK_GUARD_S = 1.0
 _IDLE_SETTLE_TICKS = 30
 
+# Cursor-monitor follow poll (ms). When enabled, the bar hops to whichever
+# monitor the mouse is on, keeping its RELATIVE spot so a differently-sized
+# monitor lines up (see interaction.project_relative). Cheap — one QCursor.pos()
+# + one screenAt() per tick — and off the animation path.
+CURSOR_MONITOR_POLL_MS = 250
+
 _QT: SimpleNamespace | None = None
 
 GeometryBounds = tuple[int, int, int, int]
@@ -376,6 +382,7 @@ class QtJarvisBarOverlay:
         opacity: float = BAR_ALPHA,
         startup_gated: bool = False,
         size_scale: float = 1.0,
+        follow_cursor_monitor: bool = True,
     ) -> None:
         self._persistent_flag = bool(persistent)
         self._accent = accent
@@ -416,6 +423,7 @@ class QtJarvisBarOverlay:
         self._queue_timer: Any = None
         self._z_timer: Any = None
         self._hover_timer: Any = None
+        self._cursor_timer: Any = None
         self._native_window: Any = None
         self._x = 0
         self._y = 0
@@ -423,6 +431,14 @@ class QtJarvisBarOverlay:
         # location. When a hidden Dock returns, the bar retreats above it; when
         # the Dock hides again, the requested location is restored automatically.
         self._preferred_position: tuple[int, int] | None = None
+        # Multi-monitor follow: migrate the bar to the monitor under the mouse.
+        # ``_rel_pos`` is the monitor-independent free-space fraction (the
+        # persisted placement truth); ``_cur_work`` is the work area the bar
+        # currently sits on, so the poll can tell when the cursor's monitor
+        # differs. Both seeded in ``_resolve_position_ui``.
+        self._follow_cursor = bool(follow_cursor_monitor)
+        self._rel_pos: tuple[float, float] | None = None
+        self._cur_work: GeometryBounds | None = None
         self._drag: dict[str, Any] | None = None
 
         self._on_mute_toggle: Callable[[], None] | None = None
@@ -492,6 +508,14 @@ class QtJarvisBarOverlay:
         grows UPWARD from a fixed bottom-centre so it never drops off-screen."""
         self._user_size_scale = renderer.clamp_user_size(scale)
         self._enqueue_if_started(lambda s=self._user_size_scale: self._apply_size_ui(s))
+
+    def set_follow_cursor(self, enabled: bool) -> None:
+        """Live-toggle 'follow the mouse to the active monitor'.
+
+        A plain flag the cursor-monitor poll reads each tick: off stops future
+        migrations (the bar stays put), on makes the next poll place it on the
+        monitor under the mouse. Atomic bool write, like ``set_muted``."""
+        self._follow_cursor = bool(enabled)
 
     def set_on_mute_toggle(self, callback: Callable[[], None] | None) -> None:
         self._on_mute_toggle = callback
@@ -606,6 +630,12 @@ class QtJarvisBarOverlay:
         self._hover_timer.timeout.connect(self._poll_hover_ui)
         self._hover_timer.start()
 
+        # Follow the mouse across monitors (own timer, off the animation path).
+        self._cursor_timer = q.QtCore.QTimer(self._window)
+        self._cursor_timer.setInterval(CURSOR_MONITOR_POLL_MS)
+        self._cursor_timer.timeout.connect(self._poll_cursor_monitor_ui)
+        self._cursor_timer.start()
+
         # Submit a complete RGBA frame before the first map.  Qt's translucent
         # backing already starts clear, and paintEvent replaces it atomically.
         self._render_frame_ui()
@@ -714,6 +744,10 @@ class QtJarvisBarOverlay:
     def _do_show_ui(self) -> None:
         if self._window is None or self._startup_gated:
             return
+        # Follow mode: a bar popping from hidden should appear on the monitor the
+        # mouse is on right now, not wherever it was last shown.
+        if self._follow_cursor:
+            self._project_onto_cursor_monitor_ui()
         self._reconcile_dynamic_position_ui()
         self._invalidate_static_frame()
         self._render_frame_ui()
@@ -808,6 +842,7 @@ class QtJarvisBarOverlay:
             self._queue_timer,
             self._z_timer,
             self._hover_timer,
+            self._cursor_timer,
         ):
             if timer is not None:
                 timer.stop()
@@ -979,24 +1014,70 @@ class QtJarvisBarOverlay:
 
     def _resolve_position_ui(self) -> None:
         position: tuple[int, int] | None = None
+        rel: tuple[float, float] | None = None
         try:
             from jarvis.core.config_writer import DEFAULT_CONFIG_FILE  # noqa: PLC0415
 
             position = interaction.load_jarvisbar_position(DEFAULT_CONFIG_FILE)
+            rel = interaction.load_jarvisbar_relative(DEFAULT_CONFIG_FILE)
         except Exception:  # noqa: BLE001 - placement degrades to the default
             log.debug("Qt Jarvis Bar position load failed", exc_info=True)
-        if position is None:
-            position = self._default_position_ui()
-        preferred_geometry = self._screen_geometry_for_point_ui(
-            position[0] + renderer.WIN_W // 2,
-            position[1] + renderer.WIN_H // 2,
-            respect_visible_dock=False,
-        )
-        self._preferred_position = self._clamp_to_geometry_ui(
-            position[0],
-            position[1],
-            preferred_geometry,
-        )
+
+        # Recover a relative spot from a legacy absolute-only config so an
+        # upgrade keeps the placement (and reproduces it on the follow monitor).
+        if rel is None and position is not None:
+            legacy_geometry = self._screen_geometry_for_point_ui(
+                position[0] + renderer.WIN_W // 2,
+                position[1] + renderer.WIN_H // 2,
+                respect_visible_dock=False,
+            )
+            if legacy_geometry is not None:
+                rel = interaction.relative_within(
+                    position[0],
+                    position[1],
+                    work=_geometry_bounds(legacy_geometry),
+                    bar_w=renderer.WIN_W,
+                    bar_h=renderer.WIN_H,
+                )
+
+        # Pick the monitor to place on: follow mode → the monitor under the
+        # mouse; otherwise the monitor the saved spot belonged to.
+        geometry: Any = None
+        if self._follow_cursor:
+            geometry = self._cursor_screen_geometry_ui(respect_visible_dock=False)
+        if geometry is None:
+            if position is None:
+                position = self._default_position_ui()
+            geometry = self._screen_geometry_for_point_ui(
+                position[0] + renderer.WIN_W // 2,
+                position[1] + renderer.WIN_H // 2,
+                respect_visible_dock=False,
+            )
+
+        if geometry is not None and rel is not None:
+            work = _geometry_bounds(geometry)
+            self._preferred_position = interaction.project_relative(
+                rel[0], rel[1], work=work, bar_w=renderer.WIN_W, bar_h=renderer.WIN_H
+            )
+            self._cur_work = work
+            self._rel_pos = rel
+        else:
+            if position is None:
+                position = self._default_position_ui()
+            self._preferred_position = self._clamp_to_geometry_ui(
+                position[0],
+                position[1],
+                geometry,
+            )
+            if geometry is not None:
+                self._cur_work = _geometry_bounds(geometry)
+                self._rel_pos = interaction.relative_within(
+                    self._preferred_position[0],
+                    self._preferred_position[1],
+                    work=self._cur_work,
+                    bar_w=renderer.WIN_W,
+                    bar_h=renderer.WIN_H,
+                )
         self._x, self._y = self._preferred_position
         self._reconcile_dynamic_position_ui()
 
@@ -1033,6 +1114,9 @@ class QtJarvisBarOverlay:
             )
             window.setFixedSize(renderer.WIN_W, renderer.WIN_H)
             self._reconcile_dynamic_position_ui()
+            # The bar size changed, so the relative-spot basis changed: refresh
+            # it so the follow poll keeps the right fraction after a resize.
+            self._refresh_rel_from_preferred_ui()
             # Repaint at the new size right away so the input mask + frame track
             # the slider without waiting a frame tick.
             self._invalidate_static_frame()
@@ -1056,6 +1140,65 @@ class QtJarvisBarOverlay:
         if self._window is not None:
             self._window.move(self._x, self._y)
         return True
+
+    # ------------------------------------------------------------------
+    # Follow the mouse across monitors
+    # ------------------------------------------------------------------
+    def _cursor_screen_geometry_ui(self, *, respect_visible_dock: bool = True) -> Any:
+        """Available geometry (QRect) of the screen under the mouse cursor."""
+        q = _qt()
+        if self._app is None:
+            return None
+        try:
+            pos = q.QtGui.QCursor.pos()
+        except Exception:  # noqa: BLE001 - cursor probe is best-effort
+            return None
+        return self._screen_geometry_for_point_ui(
+            int(pos.x()), int(pos.y()), respect_visible_dock=respect_visible_dock
+        )
+
+    def _project_onto_cursor_monitor_ui(self) -> bool:
+        """Re-place the bar on the monitor under the mouse (follow mode).
+
+        Projects the bar's RELATIVE spot onto the cursor monitor's available
+        geometry and reconciles, so a bigger or smaller monitor keeps the same
+        centred/edge placement (:func:`interaction.project_relative`). Returns
+        whether the bar moved. Never persists — the relative spot is already the
+        saved truth, so migrating monitors changes nothing durable."""
+        if self._window is None or not self._follow_cursor or self._drag is not None:
+            return False
+        geometry = self._cursor_screen_geometry_ui()
+        if geometry is None:
+            return False
+        work = _geometry_bounds(geometry)
+        if work == self._cur_work:
+            return False  # cursor is on the monitor the bar already lives on
+        rel = self._rel_pos
+        if rel is None:
+            if self._cur_work is None:
+                self._cur_work = work
+                return False
+            base = self._preferred_position or (self._x, self._y)
+            rel = interaction.relative_within(
+                base[0],
+                base[1],
+                work=self._cur_work,
+                bar_w=renderer.WIN_W,
+                bar_h=renderer.WIN_H,
+            )
+        self._preferred_position = interaction.project_relative(
+            rel[0], rel[1], work=work, bar_w=renderer.WIN_W, bar_h=renderer.WIN_H
+        )
+        self._cur_work = work
+        return self._reconcile_dynamic_position_ui()
+
+    def _poll_cursor_monitor_ui(self) -> None:
+        """~250 ms follow tick: migrate to the monitor under the mouse."""
+        if self._startup_gated or not self._desired_visible or not self._follow_cursor:
+            return
+        if self._drag is not None:
+            return
+        self._project_onto_cursor_monitor_ui()
 
     def _mouse_press_ui(self, event: Any) -> bool:
         q = _qt()
@@ -1121,6 +1264,9 @@ class QtJarvisBarOverlay:
             self._y,
             preferred_geometry,
         )
+        # Pin to the monitor the drop LANDED on and capture its relative spot so
+        # the follow poll can reproduce this placement on any other monitor.
+        self._refresh_rel_from_preferred_ui()
         self._reconcile_dynamic_position_ui()
         self._persist_position_ui()
         return True
@@ -1170,6 +1316,29 @@ class QtJarvisBarOverlay:
         except Exception:  # noqa: BLE001 - a gesture must not kill the UI loop
             log.warning("Qt Jarvis Bar %s callback failed", label, exc_info=True)
 
+    def _refresh_rel_from_preferred_ui(self) -> None:
+        """Recompute ``_rel_pos``/``_cur_work`` from the preferred spot + its screen.
+
+        The monitor-independent relative placement is derived from the current
+        preferred position and the available geometry of the screen it sits on.
+        Called after a drop, a reset, or a resize — anything that changes the
+        absolute spot or the bar size — so the follow poll always projects the
+        correct fraction. A missing screen (e.g. offscreen test plugin) leaves
+        the previous value untouched."""
+        base = self._preferred_position or (self._x, self._y)
+        geometry = self._screen_geometry_for_point_ui(
+            base[0] + renderer.WIN_W // 2,
+            base[1] + renderer.WIN_H // 2,
+            respect_visible_dock=False,
+        )
+        if geometry is None:
+            return
+        work = _geometry_bounds(geometry)
+        self._cur_work = work
+        self._rel_pos = interaction.relative_within(
+            base[0], base[1], work=work, bar_w=renderer.WIN_W, bar_h=renderer.WIN_H
+        )
+
     def _persist_position_ui(self) -> None:
         try:
             from jarvis.core.config_writer import DEFAULT_CONFIG_FILE  # noqa: PLC0415
@@ -1179,6 +1348,7 @@ class QtJarvisBarOverlay:
                 DEFAULT_CONFIG_FILE,
                 position[0],
                 position[1],
+                rel=self._rel_pos,
             )
         except Exception:  # noqa: BLE001 - position persistence is non-critical
             log.debug("Qt Jarvis Bar position save failed", exc_info=True)
@@ -1190,8 +1360,27 @@ class QtJarvisBarOverlay:
         self._ui_queue.put(self._reset_position_ui)
 
     def _reset_position_ui(self) -> None:
-        self._preferred_position = self._default_position_ui()
+        # Reset onto the monitor the bar sits on — or, in follow mode, the one
+        # under the mouse — not always the primary. Bottom-centre of that screen.
+        geometry: Any = None
+        if self._follow_cursor:
+            geometry = self._cursor_screen_geometry_ui(respect_visible_dock=False)
+        if geometry is None:
+            base = self._preferred_position or (self._x, self._y)
+            geometry = self._screen_geometry_for_point_ui(
+                base[0] + renderer.WIN_W // 2,
+                base[1] + renderer.WIN_H // 2,
+                respect_visible_dock=False,
+            )
+        if geometry is not None:
+            gx, gy, gw, gh = _geometry_bounds(geometry)
+            x = gx + (gw - renderer.WIN_W) // 2
+            y = gy + gh - renderer.WIN_H - TASKBAR_GAP_PX
+            self._preferred_position = self._clamp_to_geometry_ui(x, y, geometry)
+        else:
+            self._preferred_position = self._default_position_ui()
         self._x, self._y = self._preferred_position
+        self._refresh_rel_from_preferred_ui()
         self._reconcile_dynamic_position_ui()
         self._persist_position_ui()
 

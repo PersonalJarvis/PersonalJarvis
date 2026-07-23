@@ -155,7 +155,7 @@ def _win_virtual_bounds() -> tuple[int, int, int, int] | None:
         if set_ctx is not None and prev is not None:
             try:
                 set_ctx(ctypes.c_void_p(prev))
-            except Exception:  # noqa: BLE001 — restore is best-effort
+            except Exception:  # noqa: BLE001,S110 — best-effort DPI-context restore
                 pass
     if width <= 0 or height <= 0:
         return None
@@ -215,6 +215,187 @@ def _x11_virtual_bounds() -> tuple[int, int, int, int] | None:
     if width <= 0 or height <= 0:
         return None
     return (0, 0, width, height)
+
+
+def work_area_at(x: int, y: int) -> tuple[int, int, int, int] | None:
+    """Work area ``(left, top, width, height)`` of the monitor containing ``(x, y)``.
+
+    The "work area" excludes the OS taskbar/panel where the platform reports it
+    (Windows ``rcWork``); on macOS/X11 it degrades to the monitor's full bounds.
+    Units match the platform's input space — physical pixels on a
+    per-monitor-DPI-aware Windows thread (the Jarvis Bar's Tk thread is pinned
+    exactly that way, so these coordinates line up with the window geometry),
+    global points on macOS.
+
+    This is the primitive the on-screen bar uses to follow the mouse across
+    monitors and to pin a cross-monitor drag to the screen it lands on. Returns
+    ``None`` when it cannot be determined (headless / Wayland / missing native
+    API) so callers keep the bar where it is instead of guessing. Never raises.
+    """
+    try:
+        if sys.platform == "win32":
+            return _win_work_area_at(x, y)
+        if sys.platform == "darwin":
+            return _macos_work_area_at(x, y)
+        from jarvis.platform.probes import is_wayland  # noqa: PLC0415
+
+        if is_wayland():
+            return None  # no reliable global monitor geometry under Wayland
+        return _x11_work_area_at(x, y)
+    except Exception:  # noqa: BLE001 — best-effort; a probe failure is never fatal
+        return None
+
+
+def _win_work_area_at(x: int, y: int) -> tuple[int, int, int, int] | None:
+    """``rcWork`` of the monitor under ``(x, y)`` via ``MonitorFromPoint``.
+
+    Thread-scoped per-monitor DPI pin (restored afterwards), mirroring
+    :func:`_win_virtual_bounds`, so the metrics are physical pixels even in an
+    unaware host — matching the DPI-aware Tk thread that calls this.
+    ``MONITOR_DEFAULTTONEAREST`` keeps a point just off every monitor mapped to
+    the closest one rather than failing.
+    """
+    import ctypes  # noqa: PLC0415
+    from ctypes import wintypes  # noqa: PLC0415
+
+    user32 = ctypes.windll.user32
+
+    class _RECT(ctypes.Structure):
+        _fields_ = [
+            ("left", ctypes.c_long), ("top", ctypes.c_long),
+            ("right", ctypes.c_long), ("bottom", ctypes.c_long),
+        ]
+
+    class _MONITORINFO(ctypes.Structure):
+        _fields_ = [
+            ("cbSize", wintypes.DWORD), ("rcMonitor", _RECT),
+            ("rcWork", _RECT), ("dwFlags", wintypes.DWORD),
+        ]
+
+    class _POINT(ctypes.Structure):
+        _fields_ = [("x", ctypes.c_long), ("y", ctypes.c_long)]
+
+    _MONITOR_DEFAULTTONEAREST = 0x00000002
+
+    set_ctx = None
+    prev = None
+    try:
+        set_ctx = user32.SetThreadDpiAwarenessContext
+        set_ctx.restype = ctypes.c_void_p
+        set_ctx.argtypes = [ctypes.c_void_p]
+        for context in (-4, -3):  # PER_MONITOR_AWARE_V2, then V1 (1607)
+            prev = set_ctx(ctypes.c_void_p(context))
+            if prev is not None:
+                break
+    except (OSError, AttributeError):  # pre-1607: read unpinned
+        set_ctx = None
+    try:
+        # HMONITOR is pointer-sized: without an explicit restype ctypes returns
+        # a 32-bit c_int and TRUNCATES the handle on Win64. Set ONLY the restype
+        # (stable, process-safe) and re-wrap the returned int as an HMONITOR when
+        # passing it on — deliberately WITHOUT setting argtypes on the shared
+        # GetMonitorInfoW, whose POINTER type would otherwise be bound to this
+        # function-local _MONITORINFO class and break _win_primary_origin's own
+        # call (a different local class) as well as the next call here.
+        user32.MonitorFromPoint.restype = wintypes.HMONITOR
+        hmon = user32.MonitorFromPoint(
+            _POINT(int(x), int(y)), _MONITOR_DEFAULTTONEAREST
+        )
+        info = _MONITORINFO()
+        info.cbSize = ctypes.sizeof(_MONITORINFO)
+        if not user32.GetMonitorInfoW(wintypes.HMONITOR(hmon), ctypes.byref(info)):
+            return None
+        rc = info.rcWork
+        left, top = int(rc.left), int(rc.top)
+        width, height = int(rc.right - rc.left), int(rc.bottom - rc.top)
+    finally:
+        if set_ctx is not None and prev is not None:
+            try:
+                set_ctx(ctypes.c_void_p(prev))
+            except Exception:  # noqa: BLE001,S110 — best-effort DPI-context restore
+                pass
+    if width <= 0 or height <= 0:
+        return None
+    return (left, top, width, height)
+
+
+def _macos_work_area_at(x: int, y: int) -> tuple[int, int, int, int] | None:
+    """Bounds of the ``CGGetActiveDisplayList`` display under ``(x, y)``.
+
+    Full display bounds (not visible-frame): the macOS bar runs on Qt, which
+    resolves the dock/menu-bar-aware available geometry itself, so this Quartz
+    helper only needs to answer "which display" for any other caller. Returns
+    ``None`` when Quartz is unavailable (headless) or no display matches.
+    """
+    try:
+        from Quartz import (  # noqa: PLC0415
+            CGDisplayBounds,
+            CGGetActiveDisplayList,
+        )
+    except Exception:  # noqa: BLE001 — pyobjc not installed
+        return None
+    err, display_ids, count = CGGetActiveDisplayList(16, None, None)
+    if err or not display_ids or not count:
+        return None
+    fallback: tuple[int, int, int, int] | None = None
+    for display in list(display_ids)[:count]:
+        r = CGDisplayBounds(display)
+        left, top = int(r.origin.x), int(r.origin.y)
+        width, height = int(r.size.width), int(r.size.height)
+        if width <= 0 or height <= 0:
+            continue
+        rect = (left, top, width, height)
+        if fallback is None:
+            fallback = rect
+        if left <= x < left + width and top <= y < top + height:
+            return rect
+    return fallback
+
+
+def _x11_work_area_at(x: int, y: int) -> tuple[int, int, int, int] | None:
+    """Rectangle of the ``xrandr`` monitor under ``(x, y)``.
+
+    Full monitor geometry (no panel subtraction — X11 has no single portable
+    work-area query); the bar's own bottom gap keeps it clear of a bottom
+    panel in practice. Returns ``None`` when ``xrandr`` is missing or no
+    monitor contains the point.
+    """
+    import subprocess  # noqa: PLC0415
+
+    from jarvis.core.process_utils import NO_WINDOW_CREATIONFLAGS  # noqa: PLC0415
+
+    if shutil.which("xrandr") is None:
+        return None
+    try:
+        out = subprocess.run(
+            ["xrandr", "--query"], capture_output=True, text=True, timeout=3.0,
+            creationflags=NO_WINDOW_CREATIONFLAGS,
+        ).stdout
+    except Exception:  # noqa: BLE001 — xrandr missing / no display
+        return None
+    fallback: tuple[int, int, int, int] | None = None
+    for line in out.splitlines():
+        if " connected " not in line:
+            continue
+        for tok in line.split():
+            # A geometry token looks like "3840x2160+1920+0".
+            if "x" not in tok or "+" not in tok:
+                continue
+            try:
+                size, off_x, off_y = tok.split("+")
+                width, height = (int(v) for v in size.split("x"))
+                left, top = int(off_x), int(off_y)
+            except (IndexError, ValueError):
+                break
+            if width <= 0 or height <= 0:
+                break
+            rect = (left, top, width, height)
+            if fallback is None:
+                fallback = rect
+            if left <= x < left + width and top <= y < top + height:
+                return rect
+            break  # only the first geometry token on a "connected" line
+    return fallback
 
 
 def native_primary_origin() -> tuple[int, int] | None:

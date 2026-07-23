@@ -110,6 +110,11 @@
       "description": "Keep the bar on screen even when idle. Off: no standby — it only appears when you say your wake word.",
       "saved": "Bar visibility updated."
     },
+    "follow_cursor": {
+      "title": "Follow the mouse to the active monitor",
+      "description": "The bar hops to whichever monitor your mouse is on, keeping the same spot. Off: it stays on one monitor.",
+      "saved": "Follow-monitor updated."
+    },
     "mute_music": {
       "title": "Mute music while dictating",
       "description": "Mute other apps (Spotify, browser…) while you talk to your assistant, then restore them after. The assistant's own voice is never muted.",

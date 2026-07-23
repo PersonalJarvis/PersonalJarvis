@@ -65,6 +65,7 @@ class SubprocessBarOverlay:
         opacity: float | None = None,
         startup_gated: bool = False,
         size_scale: float = 1.0,
+        follow_cursor_monitor: bool = True,
     ) -> None:
         self._persistent_flag = bool(persistent)
         self._accent = accent
@@ -73,6 +74,9 @@ class SubprocessBarOverlay:
         # User "Bar size" multiplier, forwarded in the init line so the host
         # boots at the right size and a bounded respawn restores it.
         self._size_scale = float(size_scale)
+        # "Follow the mouse to the active monitor" preference, forwarded in the
+        # init line so the host boots with it and a bounded respawn restores it.
+        self._follow_cursor_monitor = bool(follow_cursor_monitor)
         self._mode = "idle"
         self._muted = False
         # Mirror what the real host does at construction time. A persistent,
@@ -198,6 +202,7 @@ class SubprocessBarOverlay:
             "accent": self._accent,
             "startup_gated": self._startup_gated,
             "size_scale": self._size_scale,
+            "follow_cursor_monitor": self._follow_cursor_monitor,
         }
         if self._opacity is not None:
             init["opacity"] = float(self._opacity)
@@ -249,6 +254,14 @@ class SubprocessBarOverlay:
         host's init line rather than snapping back to the boot value."""
         self._size_scale = float(scale)
         self._send({"op": "set_size_scale", "scale": self._size_scale})
+
+    def set_follow_cursor(self, enabled: bool) -> None:
+        """Forward a live 'follow the active monitor' toggle to the hosted bar.
+
+        Stored too, so a bounded respawn re-sends the latest value in the fresh
+        host's init line rather than snapping back to the boot value."""
+        self._follow_cursor_monitor = bool(enabled)
+        self._send({"op": "set_follow_cursor", "enabled": self._follow_cursor_monitor})
 
     # The bar draws no text bubble and no mouth — the real surface no-ops
     # these, so the proxy saves the IPC round-trip and no-ops locally too.

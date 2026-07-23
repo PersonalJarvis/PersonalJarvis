@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { Monitor, Eye, Volume2, Bell } from "lucide-react";
+import { Monitor, Eye, Volume2, Bell, MousePointer } from "lucide-react";
 import { Switch } from "@/components/ui/switch";
 import { useOverlayStyle, type OverlayStyle } from "@/hooks/useOverlayStyle";
 import { StylePreview } from "@/components/overlay/OverlayStylePreviews";
 import { useBarPersistent } from "@/hooks/useBarPersistent";
+import { useBarFollowCursor } from "@/hooks/useBarFollowCursor";
 import { BarSizeGroup } from "@/views/settings/BarSizeGroup";
 import { useMuteMusic } from "@/hooks/useMuteMusic";
 import { useSoundEffects } from "@/hooks/useSoundEffects";
@@ -41,6 +42,8 @@ export function OverlayTaskbarGroup() {
         </h4>
         <div className="overflow-hidden rounded-lg border border-border bg-card/60">
           <BarPersistentRow />
+          <div className="mx-4 border-t border-border/60" />
+          <FollowCursorRow />
           <div className="mx-4 border-t border-border/60" />
           <MuteMusicRow />
           <div className="mx-4 border-t border-border/60" />
@@ -107,6 +110,41 @@ function BarPersistentRow() {
       icon={Eye}
       title={t("taskbar_view.bar_persistent.title")}
       description={t("taskbar_view.bar_persistent.description")}
+      checked={enabled ?? true}
+      disabled={loading || saving}
+      onToggle={onToggle}
+    />
+  );
+}
+
+function FollowCursorRow() {
+  const t = useT();
+  const { enabled, loading, setEnabled } = useBarFollowCursor();
+  const pushToast = useEventStore((s) => s.pushToast);
+  const [saving, setSaving] = useState(false);
+
+  async function onToggle(next: boolean) {
+    setSaving(true);
+    try {
+      const res = await setEnabled(next);
+      pushToast(
+        res.applied_live ? "success" : "warning",
+        res.applied_live
+          ? t("taskbar_view.follow_cursor.saved")
+          : t("taskbar_view.restart_required"),
+      );
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <ToggleRow
+      icon={MousePointer}
+      title={t("taskbar_view.follow_cursor.title")}
+      description={t("taskbar_view.follow_cursor.description")}
       checked={enabled ?? true}
       disabled={loading || saving}
       onToggle={onToggle}

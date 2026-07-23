@@ -748,6 +748,18 @@ def set_bar_size_scale(scale: float, *, path: Path = DEFAULT_CONFIG_FILE) -> Non
     _patch_table(path, "ui", "bar_size_scale", max(0.5, min(2.0, f)))
 
 
+def set_bar_follow_cursor_monitor(
+    enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE
+) -> None:
+    """Persist ``[ui] bar_follow_cursor_monitor`` (the 'follow the mouse to the
+    active monitor' toggle).
+
+    TOML-only (not drift-guarded); the Settings route applies it live to the
+    running bar.
+    """
+    _patch_table(path, "ui", "bar_follow_cursor_monitor", bool(enabled))
+
+
 def set_mute_music(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist ``[ducking] enabled`` (the 'mute music while dictating' toggle).
 

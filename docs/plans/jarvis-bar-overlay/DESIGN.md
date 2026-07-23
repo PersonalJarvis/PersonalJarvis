@@ -29,7 +29,18 @@ calm at rest.
 
 - **Default style:** `jarvis_bar`. Mascot orb (`mascot`) and `none` remain selectable.
 - **Position:** bottom-center by default. **Hold-left-mouse + drag** repositions it; the position
-  is persisted (same UX as the current draggable orb).
+  is persisted (same UX as the current draggable orb). Dragging works **across monitors** — the
+  drop is pinned to the monitor it lands on, not snapped back to the primary (the historical
+  multi-monitor drag bug).
+- **Follow the active monitor** (`ui.bar_follow_cursor_monitor`, default on): the bar hops to
+  whichever monitor the mouse is on, keeping the **same relative spot** so different-sized
+  monitors line up. Persistence stores that monitor-independent relative placement (`rel_x`/`rel_y`)
+  as the truth, with the absolute pixel position kept for back-compat and the no-monitor-info
+  fallback. Per-OS monitor geometry: Windows `MonitorFromPoint`+`rcWork`, macOS Qt
+  available-geometry, Linux X11 `xrandr`; Wayland has no reliable global geometry, so the feature
+  degrades to single-monitor there (see `docs/os-parity.md` P-17). Shared placement math lives in
+  `interaction.py` (`relative_within` / `project_relative` / `clamp_to_work_area`), the cross-OS
+  monitor probe in `jarvis/platform/monitors.py` (`work_area_at`).
 - **Single left-click:** starts a voice session — the same entry point as the wake word / the
   push-to-talk hotkey. (Click = "tap to talk"; hold+drag = move. Disambiguated by a press
   duration + movement threshold.)

@@ -109,10 +109,114 @@ def clamp_to_screen(
 
 
 # --------------------------------------------------------------------------- #
+# Multi-monitor placement: relative (free-space) position within a work area  #
+# --------------------------------------------------------------------------- #
+# A monitor "work area" is ``(left, top, width, height)`` in the platform's
+# input units (physical pixels on a per-monitor-DPI-aware Windows thread, Tk
+# points on macOS). The bar's position is reasoned about as a RELATIVE spot
+# inside that rectangle so it reproduces on a differently-sized monitor: the
+# free space (work size minus the bar size) is the basis, so 0.5 is always
+# "centred", 1.0 is "flush to the right/bottom edge", regardless of the
+# monitor's resolution. Storing a raw pixel offset instead would fall off a
+# smaller screen and drift on a larger one — the exact multi-monitor bug this
+# model avoids.
+
+WorkArea = tuple[int, int, int, int]
+
+
+def _clamp01(v: float) -> float:
+    return 0.0 if v < 0.0 else 1.0 if v > 1.0 else float(v)
+
+
+def relative_within(
+    x: int, y: int, *, work: WorkArea, bar_w: int, bar_h: int
+) -> tuple[float, float]:
+    """Bar top-left ``(x, y)`` as free-space fractions inside a work area.
+
+    Returns ``(rel_x, rel_y)`` each clamped to ``[0, 1]``. Degenerate free
+    space (a bar as large as, or larger than, the work area on an axis) yields
+    ``0.0`` on that axis so the value stays finite and in range.
+    """
+    wl, wt, ww, wh = work
+    free_w = ww - bar_w
+    free_h = wh - bar_h
+    rel_x = 0.0 if free_w <= 0 else (x - wl) / free_w
+    rel_y = 0.0 if free_h <= 0 else (y - wt) / free_h
+    return (_clamp01(rel_x), _clamp01(rel_y))
+
+
+def project_relative(
+    rel_x: float, rel_y: float, *, work: WorkArea, bar_w: int, bar_h: int
+) -> tuple[int, int]:
+    """Inverse of :func:`relative_within`: fractions → absolute ``(x, y)``.
+
+    Places the bar on ``work`` so its relative spot matches, keeping it fully
+    inside (the projection over the clamped free space is inherently in-bounds).
+    This is what migrates the bar between monitors of different sizes without
+    it drifting off-screen or losing its centred/edge placement.
+    """
+    wl, wt, ww, wh = work
+    free_w = max(0, ww - bar_w)
+    free_h = max(0, wh - bar_h)
+    x = wl + round(_clamp01(rel_x) * free_w)
+    y = wt + round(_clamp01(rel_y) * free_h)
+    return (int(x), int(y))
+
+
+def clamp_to_work_area(
+    x: int, y: int, *, work: WorkArea, bar_w: int, bar_h: int, margin: int
+) -> tuple[int, int]:
+    """Keep the bar fully inside a work area that may have a non-zero origin.
+
+    The generalisation of :func:`clamp_to_screen` to a specific monitor's work
+    rectangle (a secondary monitor has a non-zero ``left``/``top``). Used when a
+    drag is released so the drop is pinned to the monitor it landed on rather
+    than snapped back to the primary monitor (the historical multi-monitor
+    drag bug).
+    """
+    wl, wt, ww, wh = work
+    min_x, min_y = wl + margin, wt + margin
+    max_x = max(min_x, wl + ww - bar_w - margin)
+    max_y = max(min_y, wt + wh - bar_h - margin)
+    cx = min(max(int(x), min_x), max_x)
+    cy = min(max(int(y), min_y), max_y)
+    return cx, cy
+
+
+# --------------------------------------------------------------------------- #
 # Position persistence ([jarvisbar] section, absolute x/y)                   #
 # --------------------------------------------------------------------------- #
 def load_jarvisbar_position(path: str | Path) -> tuple[int, int] | None:
     """Read [jarvisbar] pos_x/pos_y. Returns None if absent/invalid."""
+    section = _load_jarvisbar_section(path)
+    if section is None:
+        return None
+    x, y = section.get("pos_x"), section.get("pos_y")
+    if isinstance(x, int) and isinstance(y, int):
+        return x, y
+    return None
+
+
+def load_jarvisbar_relative(path: str | Path) -> tuple[float, float] | None:
+    """Read [jarvisbar] rel_x/rel_y (the free-space fractions).
+
+    This is the monitor-independent placement (see :func:`relative_within`): it
+    survives a monitor being resized, unplugged, or the bar migrating to a
+    differently-sized screen, whereas the absolute pos_x/pos_y is only correct
+    on the monitor it was captured on. Returns ``None`` when absent/invalid so
+    callers fall back to the absolute position (older configs have no rel keys).
+    """
+    section = _load_jarvisbar_section(path)
+    if section is None:
+        return None
+    rx, ry = section.get("rel_x"), section.get("rel_y")
+    if isinstance(rx, (int, float)) and isinstance(ry, (int, float)):
+        return (_clamp01(float(rx)), _clamp01(float(ry)))
+    return None
+
+
+def _load_jarvisbar_section(path: str | Path) -> dict | None:
+    """Return the parsed ``[jarvisbar]`` table, or ``None`` if absent/invalid."""
     import tomllib
 
     try:
@@ -124,19 +228,24 @@ def load_jarvisbar_position(path: str | Path) -> tuple[int, int] | None:
     except (UnicodeDecodeError, tomllib.TOMLDecodeError):
         return None
     section = data.get("jarvisbar")
-    if not isinstance(section, dict):
-        return None
-    x, y = section.get("pos_x"), section.get("pos_y")
-    if isinstance(x, int) and isinstance(y, int):
-        return x, y
-    return None
+    return section if isinstance(section, dict) else None
 
 
-def save_jarvisbar_position(path: str | Path, x: int, y: int) -> None:
+def save_jarvisbar_position(
+    path: str | Path,
+    x: int,
+    y: int,
+    *,
+    rel: tuple[float, float] | None = None,
+) -> None:
     """Atomically persist [jarvisbar] pos_x/pos_y, comment- and BOM-safe.
 
-    Reuses ``config_writer._WRITE_LOCK`` so the write serialises with every
-    other jarvis.toml mutation (AP-7). No-op if the config file is missing.
+    When ``rel`` (the monitor-independent free-space fractions) is supplied it
+    is written alongside as ``rel_x``/``rel_y`` — the primary placement truth
+    for multi-monitor migration; the absolute pos stays for back-compat and the
+    no-monitor-info fallback. Reuses ``config_writer._WRITE_LOCK`` so the write
+    serialises with every other jarvis.toml mutation (AP-7). No-op if the config
+    file is missing.
     """
     import os
 
@@ -161,6 +270,9 @@ def save_jarvisbar_position(path: str | Path, x: int, y: int) -> None:
             doc["jarvisbar"] = section
         section["pos_x"] = int(x)
         section["pos_y"] = int(y)
+        if rel is not None:
+            section["rel_x"] = round(_clamp01(rel[0]), 4)
+            section["rel_y"] = round(_clamp01(rel[1]), 4)
         out = tomlkit.dumps(doc)
         if had_bom:
             out = bom + out

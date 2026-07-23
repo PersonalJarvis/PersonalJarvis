@@ -110,6 +110,11 @@
       "description": "Die Bar bleibt auch im Leerlauf sichtbar. Aus: kein Standby — sie erscheint nur, wenn du dein Wake-Word sagst.",
       "saved": "Bar-Sichtbarkeit aktualisiert."
     },
+    "follow_cursor": {
+      "title": "Der Maus zum aktiven Monitor folgen",
+      "description": "Die Bar wechselt auf den Monitor, auf dem gerade deine Maus ist, und behält dieselbe Stelle. Aus: Sie bleibt auf einem Monitor.",
+      "saved": "Monitor-Folgen aktualisiert."
+    },
     "mute_music": {
       "title": "Musik beim Diktieren stummschalten",
       "description": "Andere Apps (Spotify, Browser …) werden stumm, während du mit deinem Assistenten sprichst, und danach wiederhergestellt. Die eigene Stimme des Assistenten wird nie gemutet.",

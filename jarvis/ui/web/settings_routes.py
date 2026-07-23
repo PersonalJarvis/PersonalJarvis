@@ -1927,6 +1927,63 @@ async def put_bar_persistent(body: BoolToggleBody, request: Request) -> dict[str
 
 
 # ---------------------------------------------------------------------------
+# "Follow the mouse to the active monitor" toggle (bar_follow_cursor_monitor):
+# the on-screen bar hops to whichever monitor the mouse is on, keeping its
+# relative spot. Persists to jarvis.toml and live-applies to the running bar.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/bar-follow-cursor")
+async def get_bar_follow_cursor(request: Request) -> dict[str, object]:
+    cfg = _config(request)
+    ui = getattr(cfg, "ui", None)
+    return {"enabled": bool(getattr(ui, "bar_follow_cursor_monitor", True))}
+
+
+@router.put("/bar-follow-cursor")
+async def put_bar_follow_cursor(
+    body: BoolToggleBody, request: Request
+) -> dict[str, object]:
+    enabled = bool(body.enabled)
+    cfg = _config(request)
+    ui = getattr(cfg, "ui", None)
+    if ui is not None:
+        try:
+            ui.bar_follow_cursor_monitor = enabled  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001
+            log.debug("in-memory bar_follow_cursor_monitor update skipped: %s", exc)
+    persisted = False
+    try:
+        from jarvis.core import config_writer
+
+        config_writer.set_bar_follow_cursor_monitor(enabled)
+        persisted = True
+    except Exception as exc:  # noqa: BLE001
+        log.warning(
+            "bar_follow_cursor_monitor persist failed (live apply still attempted): %s",
+            exc,
+        )
+    applied_live = False
+    desktop = getattr(request.app.state, "desktop_app", None)
+    fn = getattr(desktop, "set_bar_follow_cursor", None)
+    if callable(fn):
+        try:
+            res = await asyncio.to_thread(fn, enabled)
+            applied_live = (
+                bool(res.get("applied_live")) if isinstance(res, dict) else bool(res)
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.warning("bar_follow_cursor_monitor live-apply failed: %s", exc)
+    return {
+        "ok": True,
+        "enabled": enabled,
+        "persisted": persisted,
+        "applied_live": applied_live,
+        "restart_required": not applied_live,
+    }
+
+
+# ---------------------------------------------------------------------------
 # "Bar size" slider (ui.bar_size_scale): a proportional multiplier for the
 # on-screen bar (width AND height scale together, shape preserved). Persists to
 # jarvis.toml and live-applies to the running bar via app.state.desktop_app —
