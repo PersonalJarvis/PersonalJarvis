@@ -23,18 +23,19 @@ export function BarSizeGroup() {
 
   // Local slider value in PERCENT (50–200). Mirrors the server scale once GET
   // resolves; the label + the on-screen bar follow it live while dragging.
-  const [pct, setLocalPct] = useState(100);
+  // Pre-GET placeholder = the 135% product default.
+  const [pct, setLocalPct] = useState(135);
   const [saving, setSaving] = useState(false);
   // The last percent we actually PERSISTED — guards an idle mouseUp (no drag)
   // from firing a redundant persist PUT.
-  const committedRef = useRef(100);
+  const committedRef = useRef(135);
   // Live-throttle bookkeeping for the drag stream (persist=false).
   const lastLiveRef = useRef(0);
   const pendingRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const min = Math.round((config?.min ?? 0.5) * 100);
   const max = Math.round((config?.max ?? 2) * 100);
-  const def = Math.round((config?.default ?? 1) * 100);
+  const def = Math.round((config?.default ?? 1.35) * 100);
 
   useEffect(() => {
     if (config) {

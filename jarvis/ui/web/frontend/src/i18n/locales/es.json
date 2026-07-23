@@ -1145,8 +1145,8 @@
     },
     "bar_size": {
       "title": "Tamaño de la barra",
-      "description": "Qué tan grande es la barra en pantalla. Escala de forma proporcional — ancho y alto juntos — así que la barra mantiene su forma y solo cambia su tamaño. Arrastra para redimensionarla en vivo en pantalla.",
-      "reset": "Restablecer al valor predeterminado (100%)",
+      "description": "Qué tan grande es la barra en pantalla. Escala de forma proporcional — ancho y alto juntos — así que la barra mantiene su forma y solo cambia su tamaño, y se adapta al tamaño físico de cada monitor para que se vea igual en cada pantalla. Arrastra para redimensionarla en vivo en pantalla.",
+      "reset": "Restablecer al valor predeterminado (135%)",
       "saved_toast": "Tamaño de la barra fijado en {0}.",
       "restart_caption": "Guardado — se aplica al reiniciar la barra."
     },

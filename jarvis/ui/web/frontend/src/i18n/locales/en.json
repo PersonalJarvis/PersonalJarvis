@@ -1146,8 +1146,8 @@
     },
     "bar_size": {
       "title": "Bar size",
-      "description": "How big the on-screen bar is. It scales proportionally — width and height together — so the bar keeps its shape and only its size changes. Drag to resize it live on screen.",
-      "reset": "Reset to default (100%)",
+      "description": "How big the on-screen bar is. It scales proportionally — width and height together — so the bar keeps its shape and only its size changes, and it adapts to each monitor's physical size so it looks the same on every screen. Drag to resize it live on screen.",
+      "reset": "Reset to default (135%)",
       "saved_toast": "Bar size set to {0}.",
       "restart_caption": "Saved — applies when the bar restarts."
     },
