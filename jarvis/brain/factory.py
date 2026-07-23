@@ -156,6 +156,13 @@ ROUTER_TOOLS = frozenset({
     # MCP server block, so it must be router-visible directly; otherwise a
     # connected calendar is not callable by voice/chat. Never a spawn (AP-5/AP-14).
     "google_calendar",
+    # Google Drive Marketplace plugin (2026-07-23): native REST tool. Replaces
+    # Google's hosted Drive MCP (drivemcp.googleapis.com), which 403s every
+    # data-plane call for consumer @gmail.com accounts (Workspace Developer
+    # Preview). No MCP server block anymore, so it must be router-visible
+    # directly; otherwise a connected Drive is not callable by voice/chat. Never
+    # a spawn (AP-5/AP-14).
+    "google_drive",
     # Computer-Use (Wave 1, 2026-05-29): first-class, clearly-described tool to
     # drive the user's LIVE desktop (open apps, click, type, scroll, operate
     # any GUI). The router previously had no honest desktop path — spawn-worker

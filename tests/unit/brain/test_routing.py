@@ -1898,6 +1898,11 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # as gmail — no MCP server block, so it must be router-visible
             # directly. Full autonomy (writes are monitor, never ask).
             "google_calendar",
+            # Google Drive Marketplace plugin (2026-07-23): native REST tool
+            # replacing Google's hosted Drive MCP (403s consumer accounts). No
+            # MCP server block, so it must be router-visible directly; per-action
+            # risk gating (reads safe, writes monitor, share/delete ask).
+            "google_drive",
             # Computer-Use (Wave 1, 2026-05-29): first-class tool to drive the
             # live desktop. Router-tier only — a direct safe-gated action (the
             # loop gates each action via ToolExecutor, ADR-0008), never a spawn,

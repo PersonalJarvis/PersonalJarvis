@@ -130,10 +130,14 @@ class GmailRestTool:
     name: str = "gmail"
     risk_tier: str = "ask"
     description: str = (
-        "Read and send email from the user's connected Gmail inbox. "
-        "Use for 'check my mail', 'any new emails from X', 'read the last mail', "
-        "'send an email to X'. Actions: list_messages (search the inbox), "
-        "get_message (read one by id), send_message (compose + send). "
+        "Read, send, organize and delete email in the user's connected Gmail "
+        "inbox. Use for 'check my mail', 'any new emails from X', 'read the last "
+        "mail', 'send an email to X', 'archive that', 'mark it read', 'move it to "
+        "trash', 'delete it permanently'. Actions: list_messages (search the "
+        "inbox), get_message (read one by id), send_message (compose + send), "
+        "modify_message (add/remove labels by id — archive = remove 'INBOX', "
+        "mark read = remove 'UNREAD', star = add 'STARRED'), trash_message (move "
+        "to Trash, reversible), delete_message (permanent, irreversible). "
         "Requires the Gmail plugin to be connected in the Plugins view."
     )
     schema: dict[str, Any] = {
@@ -141,15 +145,38 @@ class GmailRestTool:
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["list_messages", "get_message", "send_message"],
+                "enum": [
+                    "list_messages",
+                    "get_message",
+                    "send_message",
+                    "modify_message",
+                    "trash_message",
+                    "delete_message",
+                ],
                 "default": "list_messages",
             },
             "query": {"type": "string", "description": "Gmail search query (list_messages)"},
             "max_results": {"type": "integer", "default": 10},
-            "message_id": {"type": "string", "description": "message id (get_message)"},
+            "message_id": {
+                "type": "string",
+                "description": "message id (get/modify/trash/delete_message)",
+            },
             "to": {"type": "string", "description": "recipient (send_message)"},
             "subject": {"type": "string"},
             "body": {"type": "string"},
+            "add_labels": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "label ids to add (modify_message), e.g. ['STARRED']",
+            },
+            "remove_labels": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "label ids to remove (modify_message): ['INBOX'] archives, "
+                    "['UNREAD'] marks read"
+                ),
+            },
         },
         "required": ["action"],
     }
@@ -224,7 +251,17 @@ class GmailRestTool:
         client = self._pool.client()
         resp = await client.post(f"{_GMAIL_BASE}{path}", json=json_body, headers=headers)
         resp.raise_for_status()
+        # A 204 (e.g. trash returns a body; permanent delete returns 204 no body)
+        # has no JSON — guard so the caller gets a stable ack either way.
+        if resp.status_code == 204 or not resp.content:
+            return {}
         return resp.json()
+
+    async def _delete(self, path: str, headers: dict[str, str]):
+        client = self._pool.client()
+        resp = await client.delete(f"{_GMAIL_BASE}{path}", headers=headers)
+        resp.raise_for_status()
+        return {}
 
     # -- public actions (also directly unit-testable) -----------------------
 
@@ -249,6 +286,32 @@ class GmailRestTool:
             lambda headers: self._post("/messages/send", {"raw": raw}, headers)
         )
 
+    async def modify_message(
+        self,
+        *,
+        message_id: str,
+        add_labels: list[str] | None = None,
+        remove_labels: list[str] | None = None,
+    ) -> dict[str, Any]:
+        body = {
+            "addLabelIds": list(add_labels or []),
+            "removeLabelIds": list(remove_labels or []),
+        }
+        return await self._with_auth_retry(
+            lambda headers: self._post(f"/messages/{message_id}/modify", body, headers)
+        )
+
+    async def trash_message(self, *, message_id: str) -> dict[str, Any]:
+        return await self._with_auth_retry(
+            lambda headers: self._post(f"/messages/{message_id}/trash", {}, headers)
+        )
+
+    async def delete_message(self, *, message_id: str) -> dict[str, Any]:
+        """Permanent, irreversible delete (needs the full ``mail.google.com`` scope)."""
+        return await self._with_auth_retry(
+            lambda headers: self._delete(f"/messages/{message_id}", headers)
+        )
+
     # -- Tool protocol ------------------------------------------------------
 
     def risk_tier_for_args(self, args: dict[str, Any]) -> str:
@@ -263,7 +326,13 @@ class GmailRestTool:
         action = (args.get("action") or "list_messages").strip()
         if action in ("list_messages", "get_message"):
             return "safe"
-        return "ask"
+        # Reversible organization (archive / label / mark read, and Trash — which
+        # Gmail keeps recoverable for 30 days) is audited but unprompted, so a
+        # cleanup pass doesn't nag. Only send (outbound) and permanent delete
+        # (irreversible) keep the two-turn echo-confirm. Unknown → conservative.
+        if action in ("modify_message", "trash_message"):
+            return "monitor"
+        return "ask"  # send_message / delete_message / unknown
 
     async def execute(self, args: dict[str, Any], ctx: ExecutionContext) -> ToolResult:
         action = (args.get("action") or "list_messages").strip()
@@ -285,6 +354,25 @@ class GmailRestTool:
                 out = await self.send_message(
                     to=to, subject=args.get("subject", ""), body=args.get("body", "")
                 )
+            elif action == "modify_message":
+                mid = args.get("message_id")
+                if not mid:
+                    return ToolResult(success=False, output=None, error="message_id missing")
+                out = await self.modify_message(
+                    message_id=mid,
+                    add_labels=args.get("add_labels") or [],
+                    remove_labels=args.get("remove_labels") or [],
+                )
+            elif action == "trash_message":
+                mid = args.get("message_id")
+                if not mid:
+                    return ToolResult(success=False, output=None, error="message_id missing")
+                out = await self.trash_message(message_id=mid)
+            elif action == "delete_message":
+                mid = args.get("message_id")
+                if not mid:
+                    return ToolResult(success=False, output=None, error="message_id missing")
+                out = await self.delete_message(message_id=mid)
             else:
                 return ToolResult(success=False, output=None, error=f"unknown action {action!r}")
         except Exception as exc:  # noqa: BLE001

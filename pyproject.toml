@@ -437,6 +437,15 @@ vercel = "jarvis.plugins.tool.vercel_rest:VercelRestTool"
 # spawn (AP-5/AP-14). Entry-point name matches the catalog native_tool +
 # token-store key "google_calendar".
 google_calendar = "jarvis.plugins.tool.google_calendar_rest:GoogleCalendarRestTool"
+# Google Drive (marketplace plugin, 2026-07-23) — list/read/create/share/delete
+# files via the Drive REST API v3 using the marketplace-stored OAuth token.
+# Native tool because Google's hosted Drive MCP (drivemcp.googleapis.com) is a
+# Workspace Developer-Preview server that answers every data-plane call with 403
+# for consumer @gmail.com accounts (forensic 2026-07-23); the raw REST API works
+# with the same token. Router-tier, per-action risk gating (reads safe, writes
+# monitored, share/delete ask), never a spawn (AP-5/AP-14). Entry-point name
+# matches the catalog native_tool + token-store key "google_drive".
+google_drive = "jarvis.plugins.tool.drive_rest:DriveRestTool"
 screen-snapshot = "jarvis.plugins.tool.screen_snapshot:ScreenSnapshotTool"
 move-mouse = "jarvis.plugins.tool.move_mouse:MoveMouseTool"
 switch-window = "jarvis.plugins.tool.switch_window:SwitchWindowTool"

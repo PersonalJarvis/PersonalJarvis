@@ -256,7 +256,7 @@
     {
       "id": "google_drive",
       "display_name": "Google Drive",
-      "description": "Files Jarvis creates or you share with it (drive.file)",
+      "description": "Search, read, create, share and delete your Drive files",
       "category": "Productivity",
       "logo_slug": "googledrive",
       "featured": false,
@@ -268,23 +268,19 @@
         "client_id": "REPLACE_WITH_JARVIS_GOOGLE_CLIENT_ID",
         "callback_port": 3120,
         "callback_path": "",
-        "scopes": ["https://www.googleapis.com/auth/drive.file"],
+        "scopes": ["https://www.googleapis.com/auth/drive"],
         "scope_separator": "space",
         "user_scopes_only": false,
         "refresh_supported": true,
         "offline_access": true
       },
-      "mcp_server": {
-        "transport": "http",
-        "url": "https://drivemcp.googleapis.com/mcp/v1",
-        "auth_header_template": "Authorization: Bearer ${plugin_google_drive_access_token}"
-      },
-      "post_install_hint_md": "Setup: see docs/marketplace/google-oauth-setup.md. Uses the non-sensitive drive.file scope. Publish the Google consent app to 'In production' so offline access can refresh normally; a 'Testing' grant expires after 7 days. The Drive MCP server is Google's official endpoint (Developer Preview)."
+      "native_tool": "google_drive",
+      "post_install_hint_md": "Setup: see docs/marketplace/google-oauth-setup.md (shares the Google client with Gmail/Calendar). Talks to the Drive REST API v3 directly (Google's hosted Drive MCP is a Workspace-only Developer Preview that 403s consumer accounts). The full 'drive' scope grants read/write/delete over ALL your files and is a Google RESTRICTED scope: in 'Testing' status the refresh grant expires after 7 days, so publish the consent app to 'In production' and complete Google's restricted-scope (CASA) verification for uninterrupted offline access. A user, account, or administrator can still revoke the grant."
     },
     {
       "id": "gmail",
       "display_name": "Gmail",
-      "description": "Read and send mail from your inbox",
+      "description": "Read, send, organize and delete mail in your inbox",
       "category": "Communication",
       "logo_slug": "gmail",
       "featured": false,
@@ -297,8 +293,7 @@
         "callback_port": 3121,
         "callback_path": "",
         "scopes": [
-          "https://www.googleapis.com/auth/gmail.readonly",
-          "https://www.googleapis.com/auth/gmail.send"
+          "https://mail.google.com/"
         ],
         "scope_separator": "space",
         "user_scopes_only": false,

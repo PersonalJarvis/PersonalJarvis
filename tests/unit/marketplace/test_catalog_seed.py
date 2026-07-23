@@ -174,24 +174,33 @@ def test_asana_is_pkce_loopback_with_resource_and_http_mcp() -> None:
     assert spec.mcp_server["url"] == "https://mcp.asana.com/v2/mcp"
 
 
-def test_google_drive_uses_drive_file_scope() -> None:
+def test_google_drive_uses_full_drive_scope_via_native_tool() -> None:
+    # 2026-07-23: Drive moved off Google's hosted Drive MCP (a Workspace
+    # Developer-Preview endpoint that 403s consumer @gmail.com accounts on every
+    # data-plane call) onto a native REST tool. The catalog therefore carries a
+    # native_tool + NO mcp_server, and the full 'drive' scope (all files, per the
+    # "voller Zugriff" mandate) rather than the app-scoped drive.file.
     spec = _seed().by_id("google_drive")
     assert spec is not None
     assert spec.display_name == "Google Drive"
     assert spec.auth.mode == "oauth_pkce_loopback"
-    assert "https://www.googleapis.com/auth/drive.file" in spec.auth.scopes
+    assert spec.auth.scopes == ["https://www.googleapis.com/auth/drive"]
+    assert spec.native_tool == "google_drive"
+    assert spec.mcp_server is None
     assert spec.auth.scope_separator == "space"
     assert spec.auth.callback_path == ""
     assert spec.auth.offline_access is True
 
 
-def test_gmail_pkce_loopback_read_and_send_scopes() -> None:
+def test_gmail_pkce_loopback_full_mail_scope() -> None:
+    # 2026-07-23: Gmail widened to the full mail.google.com scope (read + send +
+    # organize + delete) so the native tool's modify/trash/delete actions have
+    # the grant they need ("voller Zugriff" mandate).
     spec = _seed().by_id("gmail")
     assert spec is not None
     assert spec.display_name == "Gmail"
     assert spec.auth.mode == "oauth_pkce_loopback"
-    assert "https://www.googleapis.com/auth/gmail.readonly" in spec.auth.scopes
-    assert "https://www.googleapis.com/auth/gmail.send" in spec.auth.scopes
+    assert "https://mail.google.com/" in spec.auth.scopes
     assert spec.auth.scope_separator == "space"
     assert spec.auth.callback_path == ""
     assert spec.auth.offline_access is True
