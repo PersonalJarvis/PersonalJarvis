@@ -694,6 +694,25 @@ def _rescan_venv_site_packages() -> None:
     importlib.invalidate_caches()
 
 
+def _relaunch_command(*, headless: bool) -> str:
+    """The exact command a user can type to (re-)open the app by hand.
+
+    A detached ``Popen`` — and macOS LaunchServices ``open`` — reports success
+    the instant the child is spawned, even when no window ever surfaces (a
+    first-launch Gatekeeper/permission prompt stealing focus, the bundle
+    launching into the background, a display-less session). So the launch outro
+    must never *claim* it opened; it always leaves this fallback behind, one
+    honest line per OS. Mirrors the "Start again" rows in step_summary.
+    """
+    if headless or is_headless_linux():
+        return f'{venv_python()} -m jarvis.ui.web.launcher --headless'
+    if sys.platform == "win32":
+        return str(repo_root() / "run.bat")
+    if sys.platform == "darwin":
+        return f'open -a "{MACOS_APP_NAME}"'
+    return f"{venv_python()} -m jarvis.ui.web.launcher"
+
+
 def step_launch(*, headless: bool, dry_run: bool) -> None:
     if headless or is_headless_linux():
         cmd = [str(venv_python()), "-m", "jarvis.ui.web.launcher", "--headless"]
@@ -731,8 +750,10 @@ def step_launch(*, headless: bool, dry_run: bool) -> None:
 
     # └ closes the connected journey the Stage-1 shell opened with ┌.
     console.print(f"[muted]└[/]  [brand]Launching {msg}[/] [muted]— the app takes over from here…[/]")
+    hint = _relaunch_command(headless=headless)
     if dry_run:
-        console.print(f"[muted]│    (dry-run) {' '.join(cmd)}[/]")
+        console.print(f"[muted]     (dry-run) {' '.join(cmd)}[/]")
+        console.print(f"[muted]     If it doesn't open, run:[/] [brand]{hint}[/]")
         return
 
     # We deliberately do not wait for the App — the installer returns control
@@ -741,7 +762,14 @@ def step_launch(*, headless: bool, dry_run: bool) -> None:
         subprocess.Popen(cmd, cwd=repo_root(), close_fds=True)
     except OSError as exc:
         console.print(f"[bad]│    Could not launch: {exc}[/]")
+        console.print(f"[muted]     Open it by hand:[/] [brand]{hint}[/]")
         sys.exit(4)
+
+    # A spawned Popen (and LaunchServices) reports success even when nothing ever
+    # surfaces on screen. Never claim it opened without leaving the manual
+    # command behind — this is the line the user needs when the window never
+    # appears (macOS first-launch permission prompt, background launch, …).
+    console.print(f"[muted]     If it doesn't open, run:[/] [brand]{hint}[/]")
 
 
 def step_summary(*, no_launch: bool, update: bool, headless: bool) -> None:

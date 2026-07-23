@@ -139,7 +139,7 @@ def test_full_profile_failure_stops_desktop_install(monkeypatch) -> None:
         )
 
 
-def test_macos_launch_enters_through_application_bundle(monkeypatch, tmp_path) -> None:
+def test_macos_launch_enters_through_application_bundle(monkeypatch, tmp_path, capsys) -> None:
     launched: dict[str, object] = {}
     bundle = tmp_path / "Personal Jarvis.app"
     monkeypatch.setattr(installer.sys, "platform", "darwin")
@@ -162,6 +162,30 @@ def test_macos_launch_enters_through_application_bundle(monkeypatch, tmp_path) -
     installer.step_launch(headless=False, dry_run=False)
 
     assert launched["cmd"] == ["/usr/bin/open", "-a", str(bundle)]
+    # A spawned Popen reports success even when no window ever surfaces, so the
+    # outro must always leave a manual re-launch command behind (the bug the user
+    # hit: outro said "Launching…" but nothing opened, with no recovery path).
+    out = capsys.readouterr().out
+    assert "If it doesn't open, run:" in out
+    assert 'open -a "Personal Jarvis"' in out
+
+
+def test_launch_fallback_hint_is_shown_on_every_desktop_os(monkeypatch, capsys) -> None:
+    """The manual re-launch line appears on Windows and Linux too, not just mac."""
+    monkeypatch.setattr(installer.subprocess, "Popen", lambda cmd, **kwargs: None)
+
+    monkeypatch.setattr(installer.sys, "platform", "win32")
+    installer.step_launch(headless=False, dry_run=False)
+    win_out = capsys.readouterr().out
+    assert "If it doesn't open, run:" in win_out
+    assert "run.bat" in win_out
+
+    monkeypatch.setattr(installer.sys, "platform", "linux")
+    monkeypatch.setenv("DISPLAY", ":99")
+    installer.step_launch(headless=False, dry_run=False)
+    linux_out = capsys.readouterr().out
+    assert "If it doesn't open, run:" in linux_out
+    assert "jarvis.ui.web.launcher" in linux_out
 
 
 def test_linux_gui_gets_full_profile_and_app_menu_registration(
