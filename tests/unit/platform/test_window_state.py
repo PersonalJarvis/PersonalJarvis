@@ -487,6 +487,64 @@ def test_raise_after_launch_never_raises(monkeypatch):
     assert ok is False
 
 
+def test_raise_after_launch_maximizes_the_exact_window_when_requested(monkeypatch):
+    # maximize=True → the freshly raised window is filled to its monitor, on the
+    # EXACT WindowInfo just found (user request 2026-07-23: a launched app must
+    # not sit tiny in a big desktop).
+    monkeypatch.setattr(ws, "detect_platform", lambda: "win32")
+    win = WindowInfo("New Tab - Google Chrome", handle=4242)
+    monkeypatch.setattr(ws, "list_windows", lambda: [win])
+    monkeypatch.setattr(ws, "_force_foreground_windows", lambda h: True)
+    maximized: list[WindowInfo] = []
+    monkeypatch.setattr(
+        ws, "maximize_window", lambda w: (maximized.append(w), (True, "maximized"))[1]
+    )
+
+    ok, _title = ws.raise_after_launch(
+        "chrome", timeout_s=1.0, poll_s=0.001, maximize=True
+    )
+    assert ok is True
+    assert maximized == [win], "maximize must target the exact window just raised"
+
+
+def test_raise_after_launch_does_not_maximize_by_default(monkeypatch):
+    # Default (no maximize) must NOT touch the window size — protects every
+    # existing caller and the already-running focus path.
+    monkeypatch.setattr(ws, "detect_platform", lambda: "win32")
+    monkeypatch.setattr(
+        ws, "list_windows", lambda: [WindowInfo("Spotify Premium", handle=7)]
+    )
+    monkeypatch.setattr(ws, "_force_foreground_windows", lambda h: True)
+    monkeypatch.setattr(
+        ws,
+        "maximize_window",
+        lambda w: (_ for _ in ()).throw(AssertionError("maximized without opt-in")),
+    )
+
+    ok, _title = ws.raise_after_launch("spotify", timeout_s=1.0, poll_s=0.001)
+    assert ok is True
+
+
+def test_raise_after_launch_skips_maximize_when_raise_fails(monkeypatch):
+    # A failed raise must never maximize — otherwise a stale/sibling foreground
+    # window would be blown up instead of the intended app.
+    monkeypatch.setattr(ws, "detect_platform", lambda: "win32")
+    monkeypatch.setattr(
+        ws, "list_windows", lambda: [WindowInfo("New Tab - Google Chrome", handle=9)]
+    )
+    monkeypatch.setattr(ws, "_force_foreground_windows", lambda h: False)  # raise fails
+    monkeypatch.setattr(
+        ws,
+        "maximize_window",
+        lambda w: (_ for _ in ()).throw(AssertionError("maximized after a failed raise")),
+    )
+
+    ok, _title = ws.raise_after_launch(
+        "chrome", timeout_s=0.05, poll_s=0.001, maximize=True
+    )
+    assert ok is False
+
+
 # --- native macOS maximize -------------------------------------------------
 
 

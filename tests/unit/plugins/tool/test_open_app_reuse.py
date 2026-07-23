@@ -127,6 +127,37 @@ async def test_fresh_launch_raises_window_to_foreground(monkeypatch):
     assert "vorn" in (res.output or "").lower()   # honest readback
 
 
+async def test_fresh_launch_requests_maximize(monkeypatch):
+    # A freshly launched app is maximized so it fills its monitor instead of
+    # sitting tiny in the middle of a big desktop (user request 2026-07-23).
+    _stub_launch(monkeypatch)
+    monkeypatch.setattr(oa.window_state, "is_app_running", lambda n: None)
+    seen: list = []
+    monkeypatch.setattr(
+        oa.window_state, "raise_after_launch",
+        lambda n, **k: (seen.append(k), (True, "New Tab - Google Chrome"))[1],
+    )
+    res = await OpenAppTool().execute({"app_name": "chrome"}, _ctx())
+    assert res.success is True
+    assert seen and seen[0].get("maximize") is True, (
+        "the fresh-launch path must ask raise_after_launch to maximize"
+    )
+
+
+async def test_url_launch_does_not_maximize(monkeypatch):
+    # A URL reuses an existing browser window — it must never be resized.
+    _stub_launch(monkeypatch)
+    monkeypatch.setattr(oa.window_state, "is_app_running", lambda n: None)
+    seen: list = []
+    monkeypatch.setattr(
+        oa.window_state, "raise_after_launch",
+        lambda n, **k: seen.append(k) or (True, n),
+    )
+    res = await OpenAppTool().execute({"app_name": "https://example.com"}, _ctx())
+    assert res.success is True
+    assert seen == []  # raise+maximize both skipped for URLs
+
+
 async def test_raise_miss_keeps_success(monkeypatch):
     # The launch already succeeded; a foreground-raise miss must NOT flip the
     # result to failure — it only softens the readback back to plain "Gestartet".  # i18n-allow: quotes the tool's real (currently German) readback text

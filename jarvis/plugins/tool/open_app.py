@@ -408,6 +408,13 @@ class OpenAppTool:
             # existing browser window; the app-name match would not apply).
             raised = False
             if not is_url and not is_path:
+                # Also MAXIMIZE the freshly launched window so it fills its
+                # monitor instead of sitting tiny in the middle of a big desktop
+                # (user request 2026-07-23: Chrome/apps opened small + off-centre
+                # looked broken). Best-effort inside raise_after_launch: a
+                # fixed-size dialog, Wayland, or a headless session is left as-is,
+                # and it never changes the raise result. Skipped for URLs/paths
+                # (those reuse an existing browser window we must not resize).
                 # Hard overall cap: the poll (3s) plus a slow AX raise must
                 # never approach the CU dispatcher's 15s action budget — the
                 # launch already succeeded, the raise only softens the
@@ -415,7 +422,8 @@ class OpenAppTool:
                 try:
                     async with asyncio.timeout(6.0):
                         raised, _ = await asyncio.to_thread(
-                            window_state.raise_after_launch, app_name
+                            window_state.raise_after_launch, app_name,
+                            maximize=True,
                         )
                 except TimeoutError:
                     raised = False

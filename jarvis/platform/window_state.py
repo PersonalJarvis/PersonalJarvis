@@ -825,6 +825,7 @@ def raise_after_launch(
     *,
     timeout_s: float = _RAISE_POLL_TIMEOUT_S,
     poll_s: float = _RAISE_POLL_INTERVAL_S,
+    maximize: bool = False,
 ) -> tuple[bool, str]:
     """Poll until a window matching ``app_name`` appears, then actively bring it
     to the foreground. Returns ``(raised, title_or_reason)``. Best-effort, never
@@ -839,6 +840,14 @@ def raise_after_launch(
     path; macOS/Linux reuse :func:`focus_window` (by title). Synchronous and
     blocking by design — an async caller wraps it in ``asyncio.to_thread`` (as
     the speech/CU paths already do for :func:`focus_window`).
+
+    When ``maximize`` is set, a successfully raised window is also filled to its
+    own monitor via :func:`maximize_window` (user request 2026-07-23: a freshly
+    launched app — e.g. Chrome — must not sit tiny in the middle of a big
+    desktop). Applied to the EXACT window just found (not the foreground), so it
+    never depends on a readable maximized-state and never touches a sibling
+    window. A fixed-size dialog, Wayland, or a headless session is left as-is by
+    that call, and its result never changes the returned raise status.
     """
     token = _app_token(app_name)
     if len(token) < _MIN_TOKEN_LEN:
@@ -848,7 +857,12 @@ def raise_after_launch(
         while True:
             win = _match_window(app_name, list_windows())
             if win is not None:
-                return raise_window(win)
+                raised, msg = raise_window(win)
+                if raised and maximize:
+                    max_ok, max_msg = maximize_window(win)
+                    if max_ok:
+                        log.info("raise_after_launch maximized '%s': %s", token, max_msg)
+                return raised, msg
             if time.monotonic() >= deadline:
                 return False, (
                     f"no window matching '{token}' appeared within {timeout_s:.0f}s"
