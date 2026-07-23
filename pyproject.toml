@@ -358,6 +358,12 @@ openwakeword = "jarvis.plugins.wake.openwakeword_provider:OpenWakeWordProvider"
 groq-api = "jarvis.plugins.stt.groq_api:GroqWhisperAPI"
 # OpenRouter cloud transcription — reuses the shared openrouter_api_key.
 openrouter-stt = "jarvis.plugins.stt.openrouter_stt:OpenRouterSTT"
+# OpenAI Whisper cloud transcription — reuses the shared openai_api_key.
+openai-api = "jarvis.plugins.stt.openai_api:OpenAIWhisperAPI"
+# Gemini cloud transcription (google-genai inline audio) — reuses the shared
+# Gemini AI-Studio key; the Gemini-only downloader gets voice input with no
+# second credential.
+gemini-api = "jarvis.plugins.stt.gemini_api:GeminiSTT"
 
 [project.entry-points."jarvis.tts"]
 inworld = "jarvis.plugins.tts.inworld_tts:InworldTTS"

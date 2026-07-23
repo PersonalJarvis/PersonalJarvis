@@ -1,4 +1,4 @@
-"""STT provider plugins (faster-whisper, OpenAI, Groq, Deepgram).
+"""STT provider plugins (faster-whisper, Groq, OpenRouter, OpenAI, Gemini).
 
 This package exposes a single ``build_stt_from_config`` factory that turns an
 ``STTConfig`` into the configured ``STTProvider``-conformant instance via the
@@ -32,22 +32,30 @@ _STT_SECRET_CANDIDATES: dict[str, tuple[tuple[str, str], ...]] = {
     # ``openrouter-stt`` (distinct from the ``openrouter`` brain id) to avoid a
     # collision in the shared model-catalog / provider-spec namespaces.
     "openrouter-stt": (("openrouter_api_key", "OPENROUTER_API_KEY"),),
+    # OpenAI Whisper STT reuses the SAME openai_api_key slot as the OpenAI brain.
     "openai-api": (("openai_api_key", "OPENAI_API_KEY"),),
-    "deepgram": (("deepgram_api_key", "DEEPGRAM_API_KEY"),),
-    "deepgram-flux": (("deepgram_api_key", "DEEPGRAM_API_KEY"),),
-    "deepgram-nova3": (("deepgram_api_key", "DEEPGRAM_API_KEY"),),
+    # Gemini STT reuses the SAME AI-Studio key slots as the Gemini brain/TTS, so
+    # the Gemini-only downloader (the recommended-default persona) gets cloud
+    # voice input with no second credential.
+    "gemini-api": (
+        ("gemini_api_key", "GEMINI_API_KEY"),
+        ("google_aistudio_api_key", "GOOGLE_AIStudio_API_KEY"),
+        ("google_api_key", "GOOGLE_API_KEY"),
+    ),
 }
 
 # Cross-family probe order when the configured cloud STT has no usable key: the
 # family the maintainer ships first, then the common BYO-key alternatives. Only a
 # family that BOTH has a key AND is registered as a `jarvis.stt` entry-point is
-# ever chosen (unregistered names — e.g. openai/deepgram today — are skipped, so
-# we never promise an STT we cannot build). This mirrors the TTS factory's
-# `_TTS_CROSS_FAMILY_ORDER`; it is what lets a fresh downloader whose only key is
-# an OpenRouter key (a gateway shared with the brain) get working voice input
-# instead of dead-ending on local faster-whisper the base install never shipped.
+# ever chosen (a keyed-but-unregistered name is skipped, so we never promise an
+# STT we cannot build). Every entry here now HAS a plugin (groq-api, openrouter-
+# stt, openai-api, gemini-api); the dead `deepgram*` names were removed so the
+# resolver can never cross to a non-existent provider. This mirrors the TTS
+# factory's `_TTS_CROSS_FAMILY_ORDER`; it is what lets a fresh downloader whose
+# only key is (say) an OpenAI or Gemini key get working voice input instead of
+# dead-ending on local faster-whisper the base install never shipped.
 _STT_CROSS_FAMILY_ORDER: tuple[str, ...] = (
-    "groq-api", "openrouter-stt", "openai-api", "deepgram",
+    "groq-api", "openrouter-stt", "openai-api", "gemini-api",
 )
 
 
@@ -251,10 +259,70 @@ def build_stt_from_config(stt_cfg: Any) -> Any:
     return _build_local_fallback(stt_cfg, language)
 
 
+# One-time gate so the "no working STT" hint is logged at most once per process
+# (the STT provider is rebuilt whenever a key changes; the hint must not repeat).
+_NO_STT_HINT_EMITTED = False
+
+
+def _faster_whisper_installed() -> bool:
+    """True iff the local ``faster_whisper`` engine is importable on this host.
+
+    A cheap spec probe (no heavy import): ``fwhisper`` imports ``faster_whisper``
+    lazily, so a base/headless install builds a ``FasterWhisperProvider`` fine and
+    only fails on the FIRST transcription. This lets the hint below detect the
+    genuine dead-end (no cloud key AND no local engine) before that happens.
+    """
+    import importlib.util
+
+    return importlib.util.find_spec("faster_whisper") is not None
+
+
+def _any_cloud_stt_key() -> bool:
+    """True iff the host has a usable key for ANY known cloud STT family."""
+    return any(_stt_family_has_key(name) for name in _STT_CROSS_FAMILY_ORDER)
+
+
+def _maybe_hint_no_working_stt() -> None:
+    """Log a one-time, actionable English hint when NO STT can work here.
+
+    Fires only when BOTH are true: no cloud STT key resolves (Groq / OpenRouter /
+    OpenAI / Gemini) AND the local ``faster-whisper`` engine is not installed — the
+    genuine dead-end where voice input silently cannot work. Log-only: it never
+    changes the graceful local-fallback behaviour, and a host that has either a
+    cloud key or the local engine (the maintainer, a keyed downloader) never sees
+    it. The probe is wrapped defensively so a config hiccup can never break the
+    STT build.
+    """
+    global _NO_STT_HINT_EMITTED
+    if _NO_STT_HINT_EMITTED:
+        return
+    try:
+        if _any_cloud_stt_key() or _faster_whisper_installed():
+            return
+    except Exception as exc:  # noqa: BLE001 — a hint probe must never break STT build
+        logger.debug("STT self-recovery hint probe failed ({}); skipping hint.", exc)
+        return
+    _NO_STT_HINT_EMITTED = True
+    logger.warning(
+        "No speech-to-text is available on this host: no cloud STT key is "
+        "configured (Groq / OpenRouter / OpenAI / Gemini) and the local "
+        "faster-whisper engine is not installed, so voice input cannot work. "
+        "To fix it in-app: add a Groq, OpenRouter, OpenAI, or Gemini key in the "
+        "API-Keys view. Or install the local engine via the '[full]' or "
+        "'[local-voice]' extra (e.g. pip install 'personal-jarvis[full]')."
+    )
+
+
 def _build_local_fallback(stt_cfg: Any, language: str | None) -> Any:
     """Construct the key-free local faster-whisper provider (the universal floor)."""
     from jarvis.core.device import resolve_device
     from jarvis.plugins.stt.fwhisper import FasterWhisperProvider
+
+    # Honest self-recovery hint (log-only, does not change the fallback): when
+    # this host has neither a cloud STT key nor the local engine, voice input
+    # cannot work — tell the user exactly how to fix it in-app instead of only
+    # the generic spoken apology later.
+    _maybe_hint_no_working_stt()
 
     # Central CPU-first device resolution (ADR-0024). The utterance provider is
     # latency-tolerant, so its capability verdict is left unverified (None): an
