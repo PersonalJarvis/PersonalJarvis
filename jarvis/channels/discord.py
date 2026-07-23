@@ -149,9 +149,9 @@ class DiscordChannel:
         token = get_secret("discord_bot_token", env_fallback="DISCORD_BOT_TOKEN")
         if not token:
             raise ChannelStartError(
-                "Discord-Token fehlt. Setup: 'python -m jarvis --wizard' und Bot-Token "
-                "von https://discord.com/developers/applications eintragen "
-                "(Message Content Intent aktivieren)."
+                "Discord token missing. Setup: run 'python -m jarvis --wizard' and "
+                "enter the bot token from https://discord.com/developers/applications "
+                "(enable the Message Content Intent)."
             )
 
         try:
@@ -376,7 +376,7 @@ class DiscordChannel:
                 user_id,
                 exc,
             )
-        log.info("Discord first-user pairing: user_id=%s erlaubt", user_id)
+        log.info("Discord first-user pairing: user_id=%s allowed", user_id)
         return True
 
     async def _resolve_friend(self, author: Any) -> Friend | None:
@@ -446,14 +446,14 @@ class DiscordChannel:
         raw = msg.metadata.get("discord_channel_id")
         if raw is None:
             log.warning(
-                "DiscordChannel.send_message ohne discord_channel_id (session=%s); drop",
+                "DiscordChannel.send_message without discord_channel_id (session=%s); drop",
                 msg.session_id,
             )
             return
         try:
             channel_id = int(raw)
         except (TypeError, ValueError):
-            log.warning("Invalider discord_channel_id: %r — drop", raw)
+            log.warning("Invalid discord_channel_id: %r — drop", raw)
             return
         await self._send_text(channel_id, msg.content, language="de")
 

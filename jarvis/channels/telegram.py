@@ -139,8 +139,8 @@ class TelegramChannel:
             token = self._token_from_marketplace_store()
         if not token:
             raise ChannelStartError(
-                "Telegram-Token fehlt. Setup: 'python -m jarvis --wizard' und "
-                "Token von @BotFather (https://t.me/BotFather) eintragen."
+                "Telegram token missing. Setup: run 'python -m jarvis --wizard' and "
+                "enter the token from @BotFather (https://t.me/BotFather)."
             )
 
         # Import python-telegram-bot off the event loop. It is a heavy import
@@ -435,14 +435,14 @@ class TelegramChannel:
         chat_id_raw = msg.metadata.get("telegram_chat_id")
         if chat_id_raw is None:
             log.warning(
-                "TelegramChannel.send_message ohne telegram_chat_id (session=%s); drop",
+                "TelegramChannel.send_message without telegram_chat_id (session=%s); drop",
                 msg.session_id,
             )
             return
         try:
             chat_id = int(chat_id_raw)
         except (TypeError, ValueError):
-            log.warning("Invalider telegram_chat_id: %r — drop", chat_id_raw)
+            log.warning("Invalid telegram_chat_id: %r — drop", chat_id_raw)
             return
         await self._send_text(chat_id, msg.content, language="de")
 
