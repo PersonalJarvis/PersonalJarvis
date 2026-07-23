@@ -1137,6 +1137,13 @@
       "saved_toast": "Lautstärke auf {0} gesetzt.",
       "restart_caption": "Gespeichert — wird beim nächsten Start aktiv."
     },
+    "bar_size": {
+      "title": "Bar-Größe",
+      "description": "Wie groß die Bar auf dem Bildschirm ist. Sie skaliert proportional — Breite und Höhe zusammen — sodass die Bar ihre Form behält und sich nur die Größe ändert. Zum Ändern live am Bildschirm ziehen.",
+      "reset": "Auf Standard zurücksetzen (100%)",
+      "saved_toast": "Bar-Größe auf {0} gesetzt.",
+      "restart_caption": "Gespeichert — wird beim Neustart der Bar aktiv."
+    },
     "audio_devices": {
       "title": "Audiogeräte",
       "description": "Lege fest, wo die Stimme von {name} herauskommt und mit welchem Mikrofon {name} zuhört. Automatisch wählt dein Headset für dich und passt sich an, wenn Geräte kommen und gehen.",

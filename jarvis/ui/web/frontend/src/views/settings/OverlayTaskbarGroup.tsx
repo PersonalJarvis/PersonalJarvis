@@ -4,6 +4,7 @@ import { Switch } from "@/components/ui/switch";
 import { useOverlayStyle, type OverlayStyle } from "@/hooks/useOverlayStyle";
 import { StylePreview } from "@/components/overlay/OverlayStylePreviews";
 import { useBarPersistent } from "@/hooks/useBarPersistent";
+import { BarSizeGroup } from "@/views/settings/BarSizeGroup";
 import { useMuteMusic } from "@/hooks/useMuteMusic";
 import { useSoundEffects } from "@/hooks/useSoundEffects";
 import { useEventStore } from "@/store/events";
@@ -31,6 +32,7 @@ export function OverlayTaskbarGroup() {
           {t("taskbar_view.appearance_title")}
         </h4>
         <OverlayStylePanel />
+        <BarSizeGroup />
       </section>
 
       <section>

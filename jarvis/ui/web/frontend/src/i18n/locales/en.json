@@ -1138,6 +1138,13 @@
       "saved_toast": "Volume set to {0}.",
       "restart_caption": "Saved — applies on next start."
     },
+    "bar_size": {
+      "title": "Bar size",
+      "description": "How big the on-screen bar is. It scales proportionally — width and height together — so the bar keeps its shape and only its size changes. Drag to resize it live on screen.",
+      "reset": "Reset to default (100%)",
+      "saved_toast": "Bar size set to {0}.",
+      "restart_caption": "Saved — applies when the bar restarts."
+    },
     "audio_devices": {
       "title": "Audio devices",
       "description": "Pick where {name}'s voice comes out and which microphone {name} listens with. Automatic picks your headset for you and adapts when devices come and go.",
