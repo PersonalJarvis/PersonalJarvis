@@ -32,7 +32,7 @@ def _type_for_expected_window(
     text: str,
     delay_s: float,
     expected_signature: tuple[Any, ...] | None,
-) -> None:
+) -> Any:
     if expected_signature is not None:
         from jarvis.cu.target_guard import (  # noqa: PLC0415
             foreground_matches_or_same_app,
@@ -42,7 +42,10 @@ def _type_for_expected_window(
             raise _ForegroundTargetChanged(
                 "foreground window changed after the screenshot"
             )
-    sender(text, delay_s=delay_s)
+    # The POSIX backend returns a dropped-character count (0 on full success)
+    # so a caller can be honest when a Unicode type is only partial; Windows
+    # senders return None and their callers ignore it.
+    return sender(text, delay_s=delay_s)
 
 
 def _build_windows_input_types() -> Any:
@@ -229,13 +232,38 @@ class TypeTextTool:
 
         try:
             actuator = get_actuator()
-            await asyncio.to_thread(
+            dropped_raw = await asyncio.to_thread(
                 _type_for_expected_window,
                 actuator.type_text,
                 text,
                 delay_s,
                 expected_signature,
             )
+            # POSIX backends report how many characters could not be typed
+            # (Linux pyautogui fallback drops non-ASCII when `xdotool` is
+            # absent). Be honest instead of always claiming full success.
+            dropped = int(dropped_raw or 0)
+            if dropped >= len(text):
+                return ToolResult(
+                    success=False,
+                    output=None,
+                    error=(
+                        "Could not type the text: its non-ASCII characters "
+                        "(umlauts/accents/CJK) need the 'xdotool' system "
+                        "package on Linux, which pip cannot install. Install "
+                        "xdotool, or use ASCII text."
+                    ),
+                )
+            if dropped > 0:
+                return ToolResult(
+                    success=True,
+                    output=(
+                        f"Typed {len(text) - dropped} of {len(text)} chars "
+                        f"({actuator.name}); dropped {dropped} non-ASCII "
+                        "character(s) — install the 'xdotool' system package "
+                        "on Linux for full Unicode input."
+                    ),
+                )
             return ToolResult(
                 success=True,
                 output=f"Typed {len(text)} chars ({actuator.name})",

@@ -396,7 +396,17 @@ class PosixActuator(Actuator):
             release = Quartz.CGEventCreateMouseEvent(None, up, end, button_id)
             Quartz.CGEventPost(Quartz.kCGHIDEventTap, release)
 
-    def type_text(self, text: str, *, delay_s: float = 0.02) -> None:
+    def type_text(self, text: str, *, delay_s: float = 0.02) -> int:  # type: ignore[override]
+        """Type Unicode text into the focused control.
+
+        Returns the number of requested characters that could NOT actually be
+        typed on this backend (0 on full success). The pyautogui fallback —
+        always used on Linux, where the desktop extras skip pynput — silently
+        DROPS every non-ASCII character; when those cannot be routed through
+        ``xdotool`` either, they are counted and reported here so the caller
+        can stay honest about a partial/failed type instead of claiming a full
+        success (the base contract widens ``None`` -> dropped-count).
+        """
         if self._keyboard is None:
             # pyautogui.typewrite silently DROPS every non-ASCII character
             # (umlauts, eszett, accents, CJK), and Linux always runs on this fallback (the
@@ -405,21 +415,27 @@ class PosixActuator(Actuator):
             # synthesizes arbitrary Unicode on X11 and is provisioned by the
             # installer since deep-dive 2026-07-15 H-01.
             if not text.isascii() and self._xdotool_type(text, delay_s=delay_s):
-                return
+                return 0
+            dropped = 0
             if not text.isascii():
+                # Only non-ASCII codepoints are lost; pyautogui still types the
+                # ASCII portion of a mixed string, so count exactly the losses.
+                dropped = sum(1 for char in text if not char.isascii())
                 logger.warning(
-                    "[cu] typing non-ASCII text via pyautogui — characters "
+                    "[cu] typing non-ASCII text via pyautogui — %d character(s) "
                     "outside ASCII will be dropped (install xdotool or pynput "
                     "for Unicode input).",
+                    dropped,
                 )
             self._pyautogui.typewrite(text, interval=delay_s)
-            return
+            return dropped
         if delay_s <= 0:
             self._keyboard.type(text)
-            return
+            return 0
         for char in text:
             self._keyboard.type(char)
             time.sleep(delay_s)
+        return 0
 
     @staticmethod
     def _xdotool_type(text: str, *, delay_s: float) -> bool:
