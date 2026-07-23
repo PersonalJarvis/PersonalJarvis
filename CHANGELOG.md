@@ -7,6 +7,59 @@ versioning per [SemVer](https://semver.org/).
 
 ---
 
+## [1.1.4] — 2026-07-23
+
+### Added
+
+- **The bar is now yours to size.** A new "Bar size" slider in
+  Settings → Appearance live-resizes the JarvisBar and every surface it owns,
+  remembers your choice, and defaults to a larger, physical-size-consistent
+  135% so the bar looks the same on any screen. It is also reachable over the
+  API (`GET`/`PUT /api/settings/bar-size`).
+- **The bar follows you across monitors.** It moves to the monitor your mouse
+  is on, and dragging it from one screen to another now works correctly.
+- **Two more ways to run speech-to-text on a single key.** OpenAI Whisper and
+  Gemini cloud STT plugins let a downloader whose only credential is an OpenAI
+  or Google key dictate without a separate transcription provider.
+- A discreet, honest hint under the engine switch explains that single-mode
+  is about which API keys you hold, not a lesser mode.
+
+### Changed
+
+- **Opening an app now fills the screen.** `open_app` maximizes a freshly
+  launched window, and also maximizes an already-running one when it is
+  brought to the front.
+
+### Fixed
+
+- **Google Drive works again.** Drive now talks to Google's REST API directly
+  with the full scope instead of the hosted Drive connector, which only served
+  Workspace preview accounts and returned "403" for everyone else.
+- **A single plugin no longer takes the main brain down.** One tool's schema
+  used an object-key constraint (`propertyNames`) that Gemini rejects, which
+  had been failing the whole request and cascading through the provider chain;
+  those constraints are now stripped before the call.
+- **Hanging up from the bar can no longer freeze it or deafen the wake word.**
+  A realtime session's teardown is now time-bounded, so closing a call with
+  the bar's X no longer stalls on a slow provider or leaves the bar stuck
+  "listening".
+- **Escape and hang-up abort an on-screen action instantly**, even mid-step
+  while Computer-Use is still thinking, instead of only between steps.
+- **The wiki stops crying wolf.** A content judgment during curation is no
+  longer misreported as a provider chain failure, so the big red banner no
+  longer appears when nothing is actually broken.
+- Background text jobs cross to a different provider family when the default
+  Claude API path has no key, instead of dead-ending.
+- Telegram and Discord user-facing strings are now English.
+- On Linux, Computer-Use honestly reports characters it had to drop instead of
+  claiming success.
+- The custom wake-word onboarding copy is corrected and now provisions the
+  real Vosk fallback.
+- Delegated action turns answer in the same language as the rest of the
+  conversation.
+- Computer-Use recovers from Gemini's "thinking required" errors and no longer
+  falls back to a blind last-resort vision pass.
+
 ## [1.1.3] — 2026-07-21
 
 ### Added
