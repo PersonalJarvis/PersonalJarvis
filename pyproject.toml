@@ -103,7 +103,12 @@ dependencies = [
     # extras group per the cloud-first doctrine (CLAUDE.md). The base install must
     # boot on a headless Linux VPS without them.
     "psutil>=6.1",
-    "pillow>=11.0",
+    # Floor 12.3.0: a large batch of Pillow image-decoder advisories (JPEG2000
+    # scratch-buffer DoS, McIdas AREA mmap out-of-bounds read, RankFilter/
+    # ImagingExpand heap overflow, and the CVE-2026-54058..59205 cluster) affect
+    # every release through 12.2.x and are all fixed in 12.3.0 — never resolve
+    # lower (Dependabot Pillow alerts).
+    "pillow>=12.3.0",
     "opentelemetry-api>=1.28",
     "opentelemetry-sdk>=1.28",
     "prometheus-client>=0.21",
@@ -146,7 +151,11 @@ dependencies = [
     "num2words>=0.5.13",  # deterministic number->words for the voice path (spoken-safe)
     "jinja2>=3.1",
     "croniter>=6.0",
-    "gitpython>=3.1",
+    # Floor 3.1.51: three high-severity GitPython command-injection / unsafe-clone
+    # advisories (long-option prefix-abbreviation bypass of the CVE-2026-42215
+    # blocklist, joined-short-option gate bypass, argument-vector injection) are
+    # fixed in 3.1.51 — never resolve lower (Dependabot GitPython alerts).
+    "gitpython>=3.1.51",
     # Missing native observers degrade to the registries' existing no-op/polling
     # behavior instead of turning installation into a compiler exercise.
     "watchdog>=5.0; (sys_platform != 'darwin' or python_version < '3.14') and (sys_platform != 'win32' or platform_machine != 'ARM64')",
