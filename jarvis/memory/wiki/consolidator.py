@@ -476,6 +476,14 @@ class Consolidator:
             ),
         )
         rejection_reasons: list[str] = []
+        # Reasons where the model produced WELL-FORMED JSON but the judged
+        # decision merely violated a curation rule (companion page missing,
+        # update-removes-content, unsupported numeric). Truncated / unparseable
+        # output is NOT in here — that is provider-output damage. A content
+        # verdict means the provider is healthy, so the chain must neither cool
+        # it down nor raise a chain-failure banner for it (see
+        # ``complete_with_fallback(content_verdict=...)``).
+        content_verdict_reasons: set[str] = set()
 
         def _validate_response(agg: Any) -> str | None:
             if is_length_truncated(agg.finish_reason, agg.text):
@@ -494,6 +502,7 @@ class Consolidator:
             reason = self._validate_decisions(parsed, rows, neighbours=neighbours)
             if reason is not None:
                 rejection_reasons.append(reason)
+                content_verdict_reasons.add(reason)
                 return reason
             return None
 
@@ -505,6 +514,7 @@ class Consolidator:
             label="Consolidator",
             aggregate=aggregate,
             validate=_validate_response,
+            content_verdict=lambda reason: reason in content_verdict_reasons,
         )
         if result is None:
             if any(reason.startswith("truncated") for reason in rejection_reasons):

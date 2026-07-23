@@ -232,6 +232,7 @@ async def complete_with_fallback(
     validate: Callable[[Any], str | None] | None = None,
     allow_last_rejection: Callable[[str], bool] | None = None,
     allow_lone_rejection: Callable[[str], bool] | None = None,
+    content_verdict: Callable[[str], bool] | None = None,
 ) -> tuple[Any, str] | None:
     """Try each ``(provider, model)`` until one returns an aggregated response.
 
@@ -247,6 +248,19 @@ async def complete_with_fallback(
     opinion available — is accepted as final; a reason outside it stays a
     retryable failure, so one weak provider can never be terminal proof that
     a transcript held no facts.
+
+    ``content_verdict`` classifies a ``validate`` rejection as a deterministic
+    CURATION verdict on WELL-FORMED output (e.g. "companion page missing",
+    "update removes existing content") as opposed to a broken RESPONSE
+    (truncated / unparseable JSON) or a transport failure. A provider hitting a
+    content verdict is HEALTHY — it answered; only the judged decision violated
+    a curation rule. Such a rejection therefore (1) does NOT cool the provider
+    down and (2) does NOT paint the red 'Chain failure' banner: a banner is a
+    PROVIDER-health signal, and one un-consolidatable candidate is not provider
+    damage. The caller's own bounded retry/park handles the candidate quietly.
+    Live 2026-07-23: a single mis-kinded 'cloudflare-plugin' activity candidate
+    demanded a companion page no provider produced, wedging the chain and
+    listing all 8 providers as broken on every journal trigger.
     """
     from jarvis.memory.wiki.curator_llm import instantiate_curator_brain
 
@@ -255,6 +269,10 @@ async def complete_with_fallback(
     # record (spec A5) so "openai 401; gemini 429" is visible, not just a
     # generic "ALL N failed" count.
     failure_summaries: list[str] = []
+    # Healthy providers whose WELL-FORMED answer only failed a curation rule.
+    # Kept out of ``failure_summaries`` so they never cool a provider down or
+    # reach the chain-failure banner (see ``content_verdict`` above).
+    content_rejections: list[str] = []
     allowed_rejection_fallback: tuple[Any, str, str] | None = None
 
     ordered, demoted = _order_by_cooldown(chain)
@@ -359,6 +377,31 @@ async def complete_with_fallback(
                             safe_rejection,
                         )
                         continue
+                    if content_verdict is not None and content_verdict(rejection):
+                        # Well-formed answer, curation rule violated: the
+                        # provider is healthy. Record it for the log, but never
+                        # cool it down or count it as chain damage — that is
+                        # what wedged the chain and lit the banner for one
+                        # un-consolidatable candidate.
+                        content_rejections.append(
+                            f"{provider} rejected content: {safe_rejection}"
+                        )
+                        log.info(
+                            "%s: provider %s answered but its decision failed a "
+                            "curation rule (%s) - trying next provider",
+                            label,
+                            provider,
+                            safe_rejection,
+                        )
+                        try:
+                            telemetry.inc("wiki_provider_output_rejected")
+                        except Exception:  # noqa: BLE001 - telemetry cannot break fallback
+                            log.debug(
+                                "%s: output-rejection telemetry failed",
+                                label,
+                                exc_info=True,
+                            )
+                        continue
                     log.warning(
                         "%s: provider %s returned unusable output (%s) - "
                         "trying next provider",
@@ -419,6 +462,29 @@ async def complete_with_fallback(
         # A lone content verdict this caller does not trust as final: the
         # chain ends as a retryable failure instead of terminal proof.
         failure_summaries.append(f"{provider} unusable output: {safe_rejection}")
+
+    # A red 'Chain failure' banner is a PROVIDER-health signal ("the wiki
+    # pipeline could not reach a working model"). If ANY provider answered
+    # healthily and was rejected only on curation content, the pipeline is not
+    # bricked — a normal fact would have been written — so this is one
+    # un-consolidatable candidate, not provider damage. Suppress the banner
+    # (the caller's bounded park retires the candidate quietly) even when other
+    # rungs were genuinely dead: their 401/timeout is a separate, constant
+    # state surfaced on the API-keys health tab, not a reason to relabel a
+    # working chain as failed. Only a chain with NO healthy answer at all
+    # (below) is a real chain failure.
+    if content_rejections:
+        detail = "; ".join(content_rejections)
+        if failure_summaries:
+            detail += f" | dead rungs (not banner-worthy): {'; '.join(failure_summaries)}"
+        log.info(
+            "%s: chain wrote nothing, but at least one provider answered and was "
+            "rejected only on content (%s). Providers healthy — no chain-failure "
+            "recorded.",
+            label,
+            safe_preview(detail, max_chars=800),
+        )
+        return None
 
     log.error(
         "%s: ALL %d wiki provider(s) failed or returned unusable output — "

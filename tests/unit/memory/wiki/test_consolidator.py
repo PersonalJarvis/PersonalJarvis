@@ -1719,6 +1719,62 @@ async def test_noop_on_graph_visible_fact_without_topic_page_is_accepted(stack) 
 
 
 @pytest.mark.asyncio
+async def test_companion_page_verdict_paints_no_chain_failure_banner(
+    stack, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A mis-kinded graph-visible candidate whose companion page no provider
+    creates is a CONTENT problem, not provider damage. Every healthy provider
+    answering with the same companion-page verdict must NOT light the red
+    'Chain failure' banner — the live 2026-07-23 'cloudflare-plugin' activity
+    wedge listed all 8 providers as broken on every journal trigger while the
+    providers were fine and only one fact was un-consolidatable."""
+    from jarvis.memory.wiki import health as health_module
+    from jarvis.memory.wiki import provider_chain as pc
+    from jarvis.memory.wiki.health import WikiHealth
+
+    pc.reset_provider_failure_memory()
+    isolated_health = WikiHealth()
+    monkeypatch.setattr(health_module, "health", isolated_health)
+
+    vault_root, _curator, journal = stack
+    journal.append(
+        [CandidateFact(
+            fact="The user actively uses a Cloudflare plugin.",
+            kind="activity", subjects=("user", "cloudflare-plugin"),
+        )],
+        source_label="realtime-session-sweep:cf", turn_hash="h-cf",
+    )
+    cid = journal.pending()[0].id
+    assert not (vault_root / "concepts" / "cloudflare-plugin.md").exists()
+
+    # Every provider answers WELL-FORMED JSON but routes the fact to a related
+    # page instead of creating the required concepts/cloudflare-plugin.md
+    # companion — so the graph-visibility rule rejects each one identically.
+    verdict_body = _judge_json([{
+        "candidate_id": cid,
+        "decision": "add",
+        "target": "concepts/cloudflare.md",
+        "new_body": (
+            "---\ntype: concept\nslug: cloudflare\n---\n\n"
+            "## Summary\n\nA content-delivery and security service.\n"
+        ),
+        "reason": "related concept",
+    }])
+    registry = ScriptedProviderRegistry(
+        {"gemini": verdict_body, "codex": verdict_body, "grok": verdict_body}
+    )
+    consolidator = _consolidator(stack, FakeBrain([]), registry=registry)
+
+    label = await consolidator.run_once()
+
+    # The candidate is judge-rejected (bounded park handles it), but the
+    # PROVIDER-health banner must stay clear: the providers are healthy.
+    assert label == "judge-rejected:1"
+    assert registry.tried == ["gemini", "codex", "grok"]  # every provider asked
+    assert isolated_health.snapshot()["last_chain_failure"] is None
+
+
+@pytest.mark.asyncio
 async def test_topic_question_candidate_is_presented_to_stage2_as_noop(stack) -> None:
     vault_root, _curator, journal = stack
     review_key = "session:v3:topic-question:chunk:000:abc"

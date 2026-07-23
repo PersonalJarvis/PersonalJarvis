@@ -466,6 +466,99 @@ async def test_chain_success_clears_the_sticky_health_failure(
     assert isolated_health.snapshot()["last_chain_failure"] is None
 
 
+# --- content verdict != provider failure -------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_content_verdict_from_healthy_provider_raises_no_chain_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A curation CONTENT verdict (companion page missing) on WELL-FORMED output
+    means the provider is HEALTHY — it answered, only the judged decision broke a
+    rule. It must neither cool the provider down nor paint the red 'Chain failure'
+    banner. Live 2026-07-23: a single mis-kinded 'cloudflare-plugin' activity
+    demanded a companion page no provider produced, wedging the chain and listing
+    all 8 providers as broken on every journal trigger."""
+    from jarvis.memory.wiki import health as health_module
+    from jarvis.memory.wiki import provider_chain as pc
+    from jarvis.memory.wiki.health import WikiHealth
+
+    pc.reset_provider_failure_memory()
+    isolated_health = WikiHealth()
+    monkeypatch.setattr(health_module, "health", isolated_health)
+
+    verdict = (
+        "graph-visible fact is missing its required companion page: "
+        "concepts/cloudflare-plugin.md"
+    )
+    reg = _ScriptedRegistry({"codex": "[]", "grok": "[]"})
+    result = await complete_with_fallback(
+        registry=reg,
+        chain=[("codex", None), ("grok", None)],
+        request=object(),
+        timeout_s=5.0,
+        label="Consolidator",
+        aggregate=_aggregate,
+        validate=lambda _agg: verdict,
+        content_verdict=lambda reason: reason == verdict,
+    )
+    assert result is None  # nothing consolidatable this round
+    assert reg.tried == ["codex", "grok"]  # every provider still asked
+    # The banner is a PROVIDER-health signal; healthy providers stay off it.
+    assert isolated_health.snapshot()["last_chain_failure"] is None
+    assert not pc._in_cooldown("codex")  # not demoted for the next 15 minutes
+    assert not pc._in_cooldown("grok")
+
+
+@pytest.mark.asyncio
+async def test_healthy_content_verdict_suppresses_banner_beside_dead_rungs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The live screenshot mixed real failures (claude-api 401, openai 429,
+    timeouts) with content verdicts (codex/grok companion-page). As long as ONE
+    provider answered healthily, the pipeline is not bricked — a normal fact
+    would have been written — so no chain-failure banner, even beside genuinely
+    dead rungs (whose 401/timeout is a separate, constant state)."""
+    from jarvis.memory.wiki import health as health_module
+    from jarvis.memory.wiki import provider_chain as pc
+    from jarvis.memory.wiki.health import WikiHealth
+
+    pc.reset_provider_failure_memory()
+    isolated_health = WikiHealth()
+    monkeypatch.setattr(health_module, "health", isolated_health)
+
+    verdict = (
+        "graph-visible fact is missing its required companion page: "
+        "concepts/cloudflare-plugin.md"
+    )
+
+    class _MixedRegistry:
+        def __init__(self) -> None:
+            self.tried: list[str] = []
+
+        def instantiate(self, name: str, **_kwargs: Any) -> Any:
+            self.tried.append(name)
+            return _FakeBrain(fail=name == "openai")  # openai is a dead rung
+
+    reg = _MixedRegistry()
+    result = await complete_with_fallback(
+        registry=reg,
+        chain=[("codex", None), ("openai", None), ("grok", None)],
+        request=object(),
+        timeout_s=5.0,
+        label="Consolidator",
+        aggregate=_aggregate,
+        validate=lambda agg: verdict if agg.text == "chunk" else None,
+        content_verdict=lambda reason: reason == verdict,
+    )
+    assert result is None
+    assert reg.tried == ["codex", "openai", "grok"]  # tried all three
+    assert isolated_health.snapshot()["last_chain_failure"] is None  # no banner
+    assert not pc._in_cooldown("codex")  # healthy providers uncooled
+    assert not pc._in_cooldown("grok")
+    assert pc._in_cooldown("openai")  # the genuinely dead rung IS cooled
+
+
 # --- failure cooldown: dead rungs stop taxing every call ---------------------
 
 
