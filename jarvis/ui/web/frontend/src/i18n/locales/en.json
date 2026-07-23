@@ -942,7 +942,7 @@
     "mode_needs_key": "Realtime needs an API key — add one below to switch.",
     "mode_desc_pipeline": "Three steps: speech-to-text, the Brain thinks, text-to-speech.",
     "mode_desc_realtime": "One model listens and answers in the same live audio stream.",
-    "mode_keys_hint": "You only need API keys for the mode you use: Realtime runs on a single realtime-capable key, Pipeline uses its own speech and Brain keys.",
+    "mode_keys_hint": "You only set up the one mode you use — Realtime OR Pipeline, never both. Realtime needs one realtime-capable key; Pipeline needs its own Voice Input, Voice Output and Brain keys. Tool Model and {name}-Agents apply to both modes.",
     "mode_realtime_preview": "Research preview — not finished yet. Many tools and features don't work in realtime mode.",
     "runtime_switching": "Restarting the current voice session with the selected engine…",
     "runtime_idle": "No voice session is active. This selection applies to the next one.",

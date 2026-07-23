@@ -942,7 +942,7 @@
     "mode_needs_key": "Realtime braucht einen API-Key — unten einen hinzufügen, dann umschalten.",
     "mode_desc_pipeline": "Drei Schritte: Sprache zu Text, das Brain denkt, Text zu Sprache.",
     "mode_desc_realtime": "Ein Modell hört zu und antwortet im selben Live-Audiostrom.",
-    "mode_keys_hint": "API-Keys brauchst du nur für den Modus, den du nutzt: Realtime läuft mit einem einzigen realtime-fähigen Key, die Pipeline nutzt ihre eigenen Sprach- und Brain-Keys.",
+    "mode_keys_hint": "Du richtest nur den einen Modus ein, den du nutzt — Realtime ODER Pipeline, nie beide. Realtime braucht einen einzigen realtime-fähigen Key; die Pipeline braucht ihre eigenen Keys für Spracheingabe, Sprachausgabe und Brain. Tool Model und {name}-Agents gelten für beide Modi.",
     "mode_realtime_preview": "Research-Preview – noch nicht fertig. Viele Tools und Funktionen laufen im Realtime-Modus noch nicht.",
     "runtime_switching": "Die aktuelle Sprach-Session wird mit der ausgewählten Engine neu gestartet…",
     "runtime_idle": "Keine Sprach-Session ist aktiv. Die Auswahl gilt für die nächste Session.",
