@@ -7,6 +7,7 @@ reaching the plugin badge (caught generically at ``mcp/registry.py``).
 """
 from __future__ import annotations
 
+import asyncio
 import shutil
 
 import pytest
@@ -108,3 +109,39 @@ async def test_start_does_not_which_check_when_launcher_present(monkeypatch) -> 
     client = MCPClient(_stdio_spec(command="npx", name="brave-search"))
     with pytest.raises(RuntimeError, match="boom past the which"):
         await client.start()
+
+
+# --- MCPClient.stop() — bounded so a wedged transport can't hang teardown ----
+
+
+@pytest.mark.asyncio
+async def test_stop_times_out_instead_of_hanging_on_a_stalled_transport(
+    monkeypatch,
+) -> None:
+    """A cross-task ``anyio`` cancel-scope exit can make
+    ``AsyncExitStack.aclose()`` stall for ~20 s before it even errors. ``stop()``
+    MUST bound that so a load-bearing teardown (a realtime voice-session end, app
+    shutdown) can never hang on it — the live 2026-07-23 bug where a bar-X hangup
+    of a realtime session froze the JarvisBar on "listening" and deafened wake
+    until the stalled close gave up.
+    """
+    import jarvis.mcp.client as client_mod
+
+    monkeypatch.setattr(client_mod, "_STOP_TIMEOUT_S", 0.05)
+
+    class _StalledExitStack:
+        async def aclose(self) -> None:
+            # Never completes — models the wedged transport close.
+            await asyncio.Event().wait()
+
+    client = MCPClient(_stdio_spec())
+    client._exit_stack = _StalledExitStack()
+    client._session = object()
+
+    # Bounded by the test itself, so a regression (unbounded stop) FAILS here
+    # instead of hanging the whole suite.
+    await asyncio.wait_for(client.stop(), timeout=2.0)
+
+    # The stall was abandoned and the client reset so a later start() is clean.
+    assert client._exit_stack is None
+    assert client._session is None

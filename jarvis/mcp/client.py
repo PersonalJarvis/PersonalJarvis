@@ -88,6 +88,11 @@ def _read_call_timeout_s() -> float:
 # Module-level so a test can monkeypatch it and call_tool re-reads it each call.
 _CALL_TIMEOUT_S = _read_call_timeout_s()
 
+# Hard ceiling for stop(): the transport's anyio task group can stall for ~20 s
+# on a cross-task cancel-scope exit (see stop()). Module-level so a test can
+# monkeypatch it; stop() re-reads it each call.
+_STOP_TIMEOUT_S = 5.0
+
 # Matches ``$NAME`` secret placeholders inside http header values, e.g.
 # ``"Bearer $ZAPIER_TOKEN"`` → the ``ZAPIER_TOKEN`` group.
 _SECRET_TOKEN_RE = re.compile(r"\$([A-Z_][A-Z0-9_]*)")
@@ -182,11 +187,31 @@ class MCPClient:
             raise
 
     async def stop(self) -> None:
-        """Close the session and transport cleanly."""
+        """Close the session and transport cleanly.
+
+        Bounded by a hard timeout: the MCP SDK's ``streamablehttp_client`` wraps
+        its transport in an ``anyio`` task group whose cancel scope must be
+        entered and exited on the SAME task. When ``aclose()`` runs on a
+        different task than ``start()`` did, the exit both raises
+        ``RuntimeError: Attempted to exit cancel scope in a different task`` AND
+        can stall for ~20 s first while the underlying HTTP stream drains. If
+        that close is awaited unbounded on a load-bearing teardown path (a voice
+        session end, app shutdown), the whole teardown hangs — the live symptom
+        was a bar-X hangup of a realtime session freezing the JarvisBar on
+        "listening" and deafening wake for ~20 s (2026-07-23). Abandon the
+        transport on timeout so no caller can ever hang on it.
+        """
         if self._exit_stack is None:
             return
         try:
-            await self._exit_stack.aclose()
+            await asyncio.wait_for(self._exit_stack.aclose(), timeout=_STOP_TIMEOUT_S)
+        except TimeoutError:
+            log.warning(
+                "MCPClient[%s] stop timed out after %.1fs — abandoning the "
+                "transport so teardown/shutdown cannot hang",
+                self.spec.name,
+                _STOP_TIMEOUT_S,
+            )
         except Exception as e:  # noqa: BLE001
             log.warning("MCPClient[%s] stop error: %s", self.spec.name, e)
         finally:

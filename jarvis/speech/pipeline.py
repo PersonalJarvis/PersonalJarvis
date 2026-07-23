@@ -6853,7 +6853,24 @@ class SpeechPipeline:
                 except (asyncio.CancelledError, Exception):  # noqa: S110 - teardown
                     pass
             if session is not None:
-                await session.end(reason=reason)
+                # Defense in depth around the two bounded closes inside end()
+                # (provider socket 5 s + turn-completed 3 s): should end() ever
+                # stall anywhere else, this outer bound still frees the realtime
+                # finally so the supervisor reaches its own IDLE teardown —
+                # returning _state to IDLE (wake re-arms) and publishing the
+                # SystemStateChanged(IDLE) that repaints the JarvisBar. Without
+                # it a single unbounded await here strands the session ACTIVE.
+                try:
+                    await asyncio.wait_for(
+                        session.end(reason=reason), timeout=8.0
+                    )
+                except TimeoutError:
+                    log.warning(
+                        "Realtime session.end() timed out during teardown; "
+                        "forcing the supervisor back to idle so wake re-arms."
+                    )
+                except Exception as exc:  # noqa: BLE001 — teardown best-effort
+                    log.warning("Realtime session.end() failed: %s", exc)
             # ``session.end`` quiesces the provider pump. Close once more to
             # collect any callback that had already crossed the surface
             # boundary when terminal teardown began. ``close`` is idempotent

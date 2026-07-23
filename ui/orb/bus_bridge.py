@@ -575,6 +575,22 @@ class OrbBusBridge:
             event.hangup_reason,
         )
         self._suppress_show_until_session = True
+        # Defense in depth: a persistent (always-on) bar must drop to its idle
+        # look the instant a session ends, not only when the follow-up
+        # SystemStateChanged(IDLE) arrives. That state edge can be skipped or
+        # delayed — the supervisor's turn-state may never have been a real
+        # LISTENING→IDLE edge (so set_state("IDLE") is a no-op and nothing is
+        # published), or a stalling realtime teardown delays it — which froze
+        # the JarvisBar on its "listening" look after a bar-X hangup (live
+        # 2026-07-23). show(mode="idle") is idempotent and NOT gated by the
+        # suppression latch (that only blocks ACTIVE-state repaints), so the
+        # genuine IDLE transition, if it still arrives, is a harmless same-mode
+        # repaint. The idle-animation scheduler stays owned by that transition.
+        if not self._hide_on_idle:
+            try:
+                self._orb.show(mode="idle")
+            except Exception as exc:  # noqa: BLE001
+                log.debug("session-ended idle repaint failed: %s", exc)
 
     async def _on_voice_boot_status(self, event: VoiceBootStatus) -> None:
         """Release the Jarvis Bar only when voice is genuinely usable.

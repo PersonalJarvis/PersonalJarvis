@@ -5111,11 +5111,33 @@ class RealtimeVoiceSession:
         # transcript text but before its turn_complete marker. Freeze the
         # accumulated values into VoiceTurnCompleted before the logical session
         # end lets SessionRecorder finalize the row.
-        await self._publish_turn_completed()
+        try:
+            await asyncio.wait_for(self._publish_turn_completed(), timeout=3.0)
+        except TimeoutError:
+            log.warning(
+                "realtime[%s] publish_turn_completed timed out during end(); "
+                "continuing teardown",
+                self.session_id,
+            )
+        except Exception:  # noqa: BLE001, S110 — best-effort teardown
+            pass
         self._delegate_turns.clear()
         if self._session is not None:
+            # The provider socket close (e.g. a gemini-live WebSocket) can stall
+            # when the session is torn down moments after it went ready — a bar-X
+            # hangup racing the just-completed handshake. Unbounded, that stall
+            # blocks the whole session end, so the supervisor never returns to
+            # IDLE, the JarvisBar freezes on its "listening" look and wake stays
+            # deaf until the socket eventually gives up (~20 s live 2026-07-23).
+            # Bound it: abandon the socket so the hangup always completes.
             try:
-                await self._session.close()
+                await asyncio.wait_for(self._session.close(), timeout=5.0)
+            except TimeoutError:
+                log.warning(
+                    "realtime[%s] provider close timed out during end(); "
+                    "abandoning the socket so hangup can complete",
+                    self.session_id,
+                )
             except Exception:  # noqa: BLE001, S110 — best-effort teardown
                 pass
         if self._tool_bridge is not None:
