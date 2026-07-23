@@ -2049,6 +2049,7 @@ class DesktopApp:
                         persistent=self.cfg.ui.bar_persistent,
                         accent=self.cfg.ui.bar_accent,
                         startup_gated=gate_until_voice_ready,
+                        size_scale=getattr(self.cfg.ui, "bar_size_scale", 1.0),
                     )
                     surface.start_in_thread()
                     logger.info(
@@ -2097,6 +2098,7 @@ class DesktopApp:
                 persistent=self.cfg.ui.bar_persistent,
                 accent=self.cfg.ui.bar_accent,
                 startup_gated=gate_until_voice_ready,
+                size_scale=getattr(self.cfg.ui, "bar_size_scale", 1.0),
             )
         else:  # "mascot" (and any legacy style value)
             from ui.orb.overlay import OrbOverlay
@@ -2142,6 +2144,35 @@ class DesktopApp:
         except Exception as exc:  # noqa: BLE001
             logger.opt(exception=exc).warning("set_bar_persistent failed")
             return {"ok": True, "applied_live": False}
+
+    def set_bar_size(self, scale: float) -> dict[str, object]:
+        """Live-resize the on-screen bar to a new 'Bar size' multiplier.
+
+        Clamps the value, updates the in-memory config, and calls the surface's
+        ``set_size_scale`` so the bar grows/shrinks immediately (proportionally,
+        shape preserved). Only the bar surface implements it — on the mascot /
+        no-overlay style this reports ``applied_live=False`` (persisted only).
+        """
+        from loguru import logger
+
+        from jarvis.ui.jarvisbar import renderer
+
+        scale = renderer.clamp_user_size(scale)
+        try:
+            self.cfg.ui.bar_size_scale = scale
+        except Exception:  # noqa: BLE001
+            pass
+        bar = getattr(self, "_orb", None)
+        fn = getattr(bar, "set_size_scale", None)
+        if not callable(fn):
+            return {"ok": True, "applied_live": False, "scale": scale}
+        try:
+            fn(scale)
+            logger.info("bar_size_scale set live to {:.2f}.", scale)
+            return {"ok": True, "applied_live": True, "scale": scale}
+        except Exception as exc:  # noqa: BLE001
+            logger.opt(exception=exc).warning("set_bar_size failed")
+            return {"ok": True, "applied_live": False, "scale": scale}
 
     def swap_overlay(self, style: str) -> dict[str, object]:
         """Apply an overlay style change at runtime *as far as is Tk-safe*.

@@ -94,6 +94,8 @@ def dispatch(surface: Any, msg: dict[str, Any]) -> bool:
         _call(surface, "set_level", float(msg.get("level", 0.0)))
     elif op == "set_muted":
         _call(surface, "set_muted", bool(msg.get("muted", False)))
+    elif op == "set_size_scale":
+        _call(surface, "set_size_scale", float(msg.get("scale", 1.0)))
     elif op == "set_persistent":
         # Live flag flip — the same plain attribute write the in-process
         # set_bar_persistent path performs (no Tk marshal needed).
@@ -304,7 +306,9 @@ def _build_surface(cfg: dict[str, Any]) -> Any:
             mascot_path=cfg.get("mascot_path") or None,
         )
     kwargs = {
-        key: cfg[key] for key in ("persistent", "accent", "opacity", "startup_gated") if key in cfg
+        key: cfg[key]
+        for key in ("persistent", "accent", "opacity", "startup_gated", "size_scale")
+        if key in cfg
     }
     if sys.platform == "darwin":
         # Aqua-Tk 9 composites RGBA Canvas images with SourceOver semantics:

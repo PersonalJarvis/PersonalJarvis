@@ -100,8 +100,20 @@ def test_init_line_carries_the_constructor_config(monkeypatch) -> None:
         "persistent": False,
         "accent": "#123456",
         "startup_gated": True,
+        "size_scale": 1.0,
     }
     assert surface._ready.is_set()  # scripted ready event consumed
+
+
+def test_size_scale_rides_the_init_line_and_live_op(monkeypatch) -> None:
+    # A custom boot size is carried on the init line so the host starts at the
+    # right size; a later set_size_scale forwards a live-resize op and updates
+    # the stored value (so a bounded respawn re-sends the latest size).
+    surface, proc = _started_proxy(monkeypatch, size_scale=1.5)
+    assert proc.sent()[0]["size_scale"] == 1.5
+    surface.set_size_scale(0.8)
+    assert proc.sent()[-1] == {"op": "set_size_scale", "scale": 0.8}
+    assert surface._size_scale == 0.8
 
 
 def test_surface_calls_become_wire_ops_and_mirror_locally(monkeypatch) -> None:
@@ -372,6 +384,7 @@ def test_host_death_triggers_respawn_and_reapplies_desired_state(
         "persistent": True,
         "accent": "#e7c46e",
         "startup_gated": False,
+        "size_scale": 1.0,
     }
     # Last known state (shown in "speak", muted, last level 0.9) re-applied.
     assert [m["op"] for m in sent[1:]] == ["show", "set_muted", "set_level"]
@@ -499,6 +512,7 @@ def test_bar_init_payload_is_unchanged_by_the_mascot_variant(monkeypatch) -> Non
         "persistent": True,
         "accent": "#e7c46e",
         "startup_gated": False,
+        "size_scale": 1.0,
     }
     assert not isinstance(surface, SubprocessMascotOverlay)
 

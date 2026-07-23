@@ -64,11 +64,15 @@ class SubprocessBarOverlay:
         accent: str = "#e7c46e",
         opacity: float | None = None,
         startup_gated: bool = False,
+        size_scale: float = 1.0,
     ) -> None:
         self._persistent_flag = bool(persistent)
         self._accent = accent
         self._opacity = opacity
         self._startup_gated = bool(startup_gated)
+        # User "Bar size" multiplier, forwarded in the init line so the host
+        # boots at the right size and a bounded respawn restores it.
+        self._size_scale = float(size_scale)
         self._mode = "idle"
         self._muted = False
         # Mirror what the real host does at construction time. A persistent,
@@ -193,6 +197,7 @@ class SubprocessBarOverlay:
             "persistent": self._persistent_flag,
             "accent": self._accent,
             "startup_gated": self._startup_gated,
+            "size_scale": self._size_scale,
         }
         if self._opacity is not None:
             init["opacity"] = float(self._opacity)
@@ -236,6 +241,14 @@ class SubprocessBarOverlay:
     def set_muted(self, muted: bool) -> None:
         self._muted = bool(muted)
         self._send({"op": "set_muted", "muted": self._muted})
+
+    def set_size_scale(self, scale: float) -> None:
+        """Forward a live "Bar size" change to the hosted surface.
+
+        Stored too, so a bounded respawn re-sends the latest size in the fresh
+        host's init line rather than snapping back to the boot value."""
+        self._size_scale = float(scale)
+        self._send({"op": "set_size_scale", "scale": self._size_scale})
 
     # The bar draws no text bubble and no mouth — the real surface no-ops
     # these, so the proxy saves the IPC round-trip and no-ops locally too.

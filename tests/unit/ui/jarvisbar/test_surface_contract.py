@@ -12,6 +12,7 @@ REQUIRED = [
     "release_startup_gate",
     "set_level",
     "set_muted",
+    "set_size_scale",
     "play_animation",
     "stop_animation",
     "show_listening_transcript",

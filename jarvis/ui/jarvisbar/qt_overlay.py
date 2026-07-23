@@ -375,11 +375,17 @@ class QtJarvisBarOverlay:
         accent: str = "#e7c46e",
         opacity: float = BAR_ALPHA,
         startup_gated: bool = False,
+        size_scale: float = 1.0,
     ) -> None:
         self._persistent_flag = bool(persistent)
         self._accent = accent
         self._opacity = max(0.2, min(1.0, float(opacity)))
         self._startup_gated = bool(startup_gated)
+        # User "Bar size" preference (multiplied on top of the screen-adaptive
+        # scale) + the screen scale captured at start(), so the live "Bar size"
+        # slider can re-derive geometry without re-probing the screen.
+        self._user_size_scale = renderer.clamp_user_size(size_scale)
+        self._screen_scale = 1.0
         self._mode = "idle"
         self._ext_level = 0.0
         self._last_audible_t = 0.0
@@ -478,6 +484,15 @@ class QtJarvisBarOverlay:
         self._muted = bool(muted)
         self._invalidate_static_frame()
 
+    def set_size_scale(self, scale: float) -> None:
+        """Live-resize the bar to a new user "Bar size" multiplier (thread-safe).
+
+        The geometry recompute + window resize run on the Qt main thread via the
+        UI queue. Width AND height scale together (shape preserved), and the bar
+        grows UPWARD from a fixed bottom-centre so it never drops off-screen."""
+        self._user_size_scale = renderer.clamp_user_size(scale)
+        self._enqueue_if_started(lambda s=self._user_size_scale: self._apply_size_ui(s))
+
     def set_on_mute_toggle(self, callback: Callable[[], None] | None) -> None:
         self._on_mute_toggle = callback
 
@@ -551,9 +566,10 @@ class QtJarvisBarOverlay:
         screen = app.primaryScreen()
         if screen is not None:
             geometry = screen.geometry()
-            renderer.apply_display_scale(
-                renderer.compute_display_scale(geometry.width(), geometry.height())
+            self._screen_scale = renderer.compute_display_scale(
+                geometry.width(), geometry.height()
             )
+        renderer.apply_display_scale(self._screen_scale, user_size=self._user_size_scale)
         self._renderer = renderer.JarvisBarRenderer(accent=self._accent)
 
         window_type = _window_class()
@@ -983,6 +999,46 @@ class QtJarvisBarOverlay:
         )
         self._x, self._y = self._preferred_position
         self._reconcile_dynamic_position_ui()
+
+    def _apply_size_ui(self, user_scale: float) -> None:
+        """Recompute geometry for ``user_scale`` and resize the window (Qt thread).
+
+        Runs on the Qt main thread (enqueued by ``set_size_scale``), serialized
+        against the frame timer, so mutating the module geometry globals via
+        ``apply_display_scale`` needs no lock.
+        """
+        window = self._window
+        if window is None:
+            return
+        try:
+            old_win_w, old_win_h = renderer.WIN_W, renderer.WIN_H
+            old_ref = renderer.OPEN_W or 1
+            renderer.apply_display_scale(self._screen_scale, user_size=user_scale)
+            # Snap the eased pill so it matches the new window immediately (no
+            # clip on shrink, no lag on grow) — see the Tk surface for the
+            # rationale.
+            r = self._renderer
+            if r is not None and old_ref:
+                ratio = renderer.OPEN_W / old_ref
+                r._st.pw *= ratio  # noqa: SLF001 — same-object render state
+                r._st.ph *= ratio  # noqa: SLF001
+            # Re-anchor the PREFERRED location by its bottom-centre so the bar
+            # grows upward; the Dock-safe reconcile then clamps the actual spot.
+            pref = self._preferred_position or (self._x, self._y)
+            center_x = pref[0] + old_win_w / 2.0
+            bottom_y = pref[1] + old_win_h
+            self._preferred_position = (
+                round(center_x - renderer.WIN_W / 2.0),
+                round(bottom_y - renderer.WIN_H),
+            )
+            window.setFixedSize(renderer.WIN_W, renderer.WIN_H)
+            self._reconcile_dynamic_position_ui()
+            # Repaint at the new size right away so the input mask + frame track
+            # the slider without waiting a frame tick.
+            self._invalidate_static_frame()
+            self._render_frame_ui()
+        except Exception:  # noqa: BLE001 — a resize hiccup must never crash the bar
+            log.debug("Qt Jarvis Bar live resize failed", exc_info=True)
 
     def _reconcile_dynamic_position_ui(self) -> bool:
         """Move between preferred and Dock-safe positions without rewriting config."""

@@ -346,10 +346,17 @@ class JarvisBarOverlay:
         accent: str = "#e7c46e",
         opacity: float = BAR_ALPHA,
         startup_gated: bool = False,
+        size_scale: float = 1.0,
     ) -> None:
         self._persistent = persistent
         self._accent = accent
         self._opacity = max(0.2, min(1.0, float(opacity)))  # clamp to sane range
+        # User "Bar size" preference (multiplied on top of the screen-adaptive
+        # scale) and the screen-adaptive scale captured at start(). Kept so the
+        # live "Bar size" slider can re-derive the geometry without re-probing
+        # the screen. See renderer.apply_display_scale / set_size_scale.
+        self._user_size_scale = renderer.clamp_user_size(size_scale)
+        self._screen_scale = 1.0
         # The desktop boot path constructs and paints the bar early, while it is
         # still withdrawn, then releases this gate on the honest voice-usable
         # signal. This is stronger than an initial ``withdraw``: every early
@@ -498,6 +505,19 @@ class JarvisBarOverlay:
         atomic bool write — the frame loop reads it; no Tk marshal needed."""
         self._muted = bool(muted)
 
+    def set_size_scale(self, scale: float) -> None:
+        """Live-resize the bar to a new user "Bar size" multiplier.
+
+        Thread-safe: the geometry recompute + window resize run on the Tk
+        thread via the UI queue, so the route/audio threads only hand over a
+        float. Width AND height scale together (the pill's shape is preserved,
+        only its size changes), and the bar grows UPWARD from a fixed
+        bottom-centre so it never drops into the taskbar."""
+        self._user_size_scale = renderer.clamp_user_size(scale)
+        if self._root is None:
+            return
+        self._enqueue_ui(lambda s=self._user_size_scale: self._do_apply_size(s))
+
     def set_on_mute_toggle(self, callback: Callable[[], None] | None) -> None:
         self._on_mute_toggle = callback
 
@@ -607,15 +627,15 @@ class JarvisBarOverlay:
         # physical pixels on a DPI-aware Windows/X11 — both are the right
         # basis for "how much of this screen would the bar occupy".
         try:
-            renderer.apply_display_scale(
-                renderer.compute_display_scale(
-                    int(root.winfo_screenwidth()), int(root.winfo_screenheight())
-                )
+            self._screen_scale = renderer.compute_display_scale(
+                int(root.winfo_screenwidth()), int(root.winfo_screenheight())
             )
-            if renderer.DISPLAY_SCALE != 1.0:
+            renderer.apply_display_scale(self._screen_scale, user_size=self._user_size_scale)
+            if renderer.DISPLAY_SCALE != 1.0 or self._user_size_scale != 1.0:
                 log.info(
-                    "jarvisbar display scale %.3f for screen %sx%s",
+                    "jarvisbar display scale %.3f (user size %.2f) for screen %sx%s",
                     renderer.DISPLAY_SCALE,
+                    self._user_size_scale,
                     root.winfo_screenwidth(),
                     root.winfo_screenheight(),
                 )
@@ -784,6 +804,74 @@ class JarvisBarOverlay:
                     bar_h=renderer.WIN_H,
                     margin=MARGIN_PX,
                 )
+
+    def _do_apply_size(self, user_scale: float) -> None:
+        """Recompute geometry for ``user_scale`` and resize the window (Tk thread).
+
+        Runs on the Tk mainloop thread (enqueued by ``set_size_scale``), so it
+        is serialized against the frame loop — no lock needed on the module
+        geometry globals it mutates via ``apply_display_scale``.
+        """
+        if self._root is None:
+            return
+        try:
+            old_win_w, old_win_h = renderer.WIN_W, renderer.WIN_H
+            old_ref = renderer.OPEN_W or 1  # any pill dim scales by the same factor
+            renderer.apply_display_scale(self._screen_scale, user_size=user_scale)
+            # Snap the eased pill so it matches the new window immediately: no
+            # transient where a still-large pill is clipped by a shrunk window,
+            # and no lag where a small pill floats in a grown window. The
+            # renderer then eases toward the (already-matching) target, so the
+            # pill stays put — the visible change is a clean, instant rescale
+            # that tracks the slider live.
+            r = self._renderer
+            if r is not None and old_ref:
+                ratio = renderer.OPEN_W / old_ref
+                r._st.pw *= ratio  # noqa: SLF001 — same-object render state
+                r._st.ph *= ratio  # noqa: SLF001
+            self._reanchor_after_resize(old_win_w, old_win_h)
+            self._invalidate_static_frame()
+        except Exception:  # noqa: BLE001 — a resize hiccup must never crash the bar
+            log.debug("jarvisbar live resize failed", exc_info=True)
+
+    def _reanchor_after_resize(self, old_win_w: int, old_win_h: int) -> None:
+        """Resize the window + canvas and keep the bar's bottom-centre fixed.
+
+        The pill is bottom-anchored (grows upward), so preserving the window's
+        bottom-centre keeps the resting spot above the taskbar unchanged while
+        a bigger bar simply extends higher. Clamped to the screen so an
+        enlarged bar near a screen edge can never spill off it.
+        """
+        if self._root is None:
+            return
+        center_x = self._x + old_win_w / 2.0
+        bottom_y = self._y + old_win_h
+        new_x = round(center_x - renderer.WIN_W / 2.0)
+        new_y = round(bottom_y - renderer.WIN_H)
+        try:
+            sw = int(self._root.winfo_screenwidth())
+            sh = int(self._root.winfo_screenheight())
+            new_x, new_y = interaction.clamp_to_screen(
+                new_x,
+                new_y,
+                screen_w=sw,
+                screen_h=sh,
+                bar_w=renderer.WIN_W,
+                bar_h=renderer.WIN_H,
+                margin=MARGIN_PX,
+            )
+        except Exception:  # noqa: BLE001 — clamping is best-effort
+            log.debug("jarvisbar resize clamp failed", exc_info=True)
+        self._x, self._y = new_x, new_y
+        if self._canvas is not None:
+            try:
+                self._canvas.config(width=renderer.WIN_W, height=renderer.WIN_H)
+            except Exception:  # noqa: BLE001
+                log.debug("jarvisbar canvas resize failed", exc_info=True)
+        try:
+            self._root.geometry(f"{renderer.WIN_W}x{renderer.WIN_H}+{self._x}+{self._y}")
+        except Exception:  # noqa: BLE001
+            log.debug("jarvisbar geometry resize failed", exc_info=True)
 
     def _do_show(self) -> None:
         if self._root is None:
