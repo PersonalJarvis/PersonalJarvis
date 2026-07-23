@@ -1432,6 +1432,12 @@ class UIConfig(BaseModel):
     bar_persistent: bool = True
     # Hex accent the bar lights up with during activity (gold on-brand).
     bar_accent: str = "#e7c46e"
+    # Jarvis bar size multiplier (Settings → "Bar size" slider). 1.0 = the
+    # signed-off default look; the whole bar scales proportionally (width AND
+    # height together, shape preserved) below/above it, on top of the
+    # screen-adaptive scale. Range mirrors renderer.USER_SIZE_MIN/MAX (0.5–2.0);
+    # the renderer re-clamps, so this validator only sanitizes a corrupt value.
+    bar_size_scale: float = 1.0
     # Remembered "open with" choice for Outputs artifacts: an opener id
     # ("default" = OS default app, "browser", or an editor key like "code").
     # Empty = ask via the chooser dialog on first open. Desktop-only.
@@ -1448,6 +1454,20 @@ class UIConfig(BaseModel):
         if isinstance(v, str) and v.strip().lower() == "whisper_bar":
             return "jarvis_bar"
         return v
+
+    @field_validator("bar_size_scale", mode="before")
+    @classmethod
+    def _clamp_bar_size_scale(cls, v: object) -> object:
+        # Sanitize a persisted "Bar size" value on load: clamp into the
+        # supported 0.5–2.0 range and fall back to 1.0 for a non-numeric /
+        # non-finite value so a corrupt jarvis.toml can never brick the bar.
+        try:
+            f = float(v)  # type: ignore[arg-type]
+        except (TypeError, ValueError):
+            return 1.0
+        if f != f or f in (float("inf"), float("-inf")):  # NaN / ±inf
+            return 1.0
+        return max(0.5, min(2.0, f))
 
 
 class DuckingConfig(BaseModel):

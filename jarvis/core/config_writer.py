@@ -732,6 +732,22 @@ def set_bar_persistent(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> No
     _patch_table(path, "ui", "bar_persistent", bool(enabled))
 
 
+def set_bar_size_scale(scale: float, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
+    """Persist ``[ui] bar_size_scale`` (the 'Bar size' slider).
+
+    TOML-only (not drift-guarded); the Settings route applies it live to the
+    running bar. The value is clamped into the supported 0.5–2.0 range here so
+    a bad request can never write an out-of-range number to disk.
+    """
+    try:
+        f = float(scale)
+    except (TypeError, ValueError):
+        f = 1.0
+    if f != f or f in (float("inf"), float("-inf")):  # NaN / ±inf → default
+        f = 1.0
+    _patch_table(path, "ui", "bar_size_scale", max(0.5, min(2.0, f)))
+
+
 def set_mute_music(enabled: bool, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Persist ``[ducking] enabled`` (the 'mute music while dictating' toggle).
 
