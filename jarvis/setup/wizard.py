@@ -688,36 +688,39 @@ def step_wake_word_setup() -> str:
     The choice is persisted best-effort via
     ``config_writer.set_wake_word(phrase, engine="auto")`` so the voice pipeline
     resolves the right wake engine on the next start. ``engine="auto"`` lets
-    ``resolve_wake_plan()`` decide between the instant pretrained models and the
-    local-Whisper text-match path (see docs/local-wakeword/). A failed write is
-    a printed warning, never a crash — the wizard always reaches the finish.
+    ``resolve_wake_plan()`` pick the offline any-word Vosk engine (a base-install
+    dependency that works for ANY phrase) or, when the optional local-voice
+    models are installed, the higher-accuracy local-Whisper transcript match
+    (see docs/local-wakeword/). No named or bundled wake model ships — the phrase
+    fires only on the user's own full phrase. After saving, this step provisions
+    the offline Vosk fallback best-effort so a base install works out of the box.
+    A failed write or download is a printed warning, never a crash — the wizard
+    always reaches the finish.
     """
-    from jarvis.speech.wake_constants import (
-        DEFAULT_WAKE_PHRASE,
-        INSTANT_WAKE_PHRASES,
-    )
+    from jarvis.speech.wake_constants import DEFAULT_WAKE_PHRASE
 
     _println()
     _println("=" * 60)
     _println(" Step 5 / 8 — Wake word")
     _println("=" * 60)
     _println("Choose the spoken phrase that wakes your assistant. There is no")
-    _println("preset — you type your own (e.g. \"Jonas\").")
+    _println("preset — you type your own (e.g. \"Jonas\"). It fires only on your")
+    _println("full phrase; no branded or bundled name ships with the product.")
     _println()
-    if INSTANT_WAKE_PHRASES:
-        _println("These phrases work instantly and fully offline — no GPU, no")
-        _println("download, lowest latency (pretrained on-device models):")
-        for phrase in INSTANT_WAKE_PHRASES:
-            _println(f"  • {phrase}")
-        _println()
-    _println("A phrase the offline models don't cover (e.g. \"Computer\", \"Athena\")")
-    _println("needs the optional local-Whisper extra (install via")
-    _println("`pip install -e \".[desktop]\"`). Without it, your assistant falls back")
-    _println("to the bundled offline wake word and tells you why — it never pretends")
-    _println("a phrase works when it cannot detect it.")
-    _println()
-    _println("Engine is set to \"auto\": it picks an instant pretrained model when")
-    _println("your phrase matches one, otherwise the Whisper path.")
+    _println("Engine \"auto\" picks the best path available on this machine, in")
+    _println("this order:")
+    _println("  1. Offline any-word engine (Vosk) — works for ANY phrase, CPU-only,")
+    _println("     no extra to install (vosk ships in the base install). It")
+    _println("     downloads a small (~40 MB) language model once, then runs fully")
+    _println("     offline. This is the default and works out of the box.")
+    _println("  2. Higher-accuracy local-Whisper phrase matching — optional. It")
+    _println("     needs the local-voice models: install the advertised full")
+    _println("     profile with `pip install -e \".[full]\"` (or the smaller")
+    _println("     `.[local-voice]` extra). Plain `.[desktop]` does NOT include it.")
+    _println("  3. If no local model can be provisioned at all, the wake word stays")
+    _println("     off and you start a voice turn with the hotkey / Call shortcut.")
+    _println("     The assistant tells you why — it never pretends to hear a phrase")
+    _println("     it cannot detect.")
     _println()
 
     phrase = _ask("Your wake phrase", default=DEFAULT_WAKE_PHRASE)
@@ -727,16 +730,48 @@ def step_wake_word_setup() -> str:
 
         config_writer.set_wake_word(phrase, engine="auto")
         _println(f"→ Wake word saved: \"{phrase}\" (engine: auto).")
-        if phrase not in INSTANT_WAKE_PHRASES:
-            _println("   Note: this is a custom phrase — it needs the local-Whisper")
-            _println("   extra at runtime, otherwise it degrades to the bundled")
-            _println("   offline wake word.")
-        _println("   Takes effect after the next Jarvis restart.")
     except Exception as exc:  # noqa: BLE001
         _println(f"⚠  Could not persist the wake word: {exc}")
         _println("   You can set it later in the desktop Settings UI or in")
         _println("   jarvis.toml under [trigger.wake_word].")
+        return phrase
 
+    # Provision the offline any-word fallback now (best-effort) so the phrase the
+    # user just chose actually works on a base install — not only after the next
+    # desktop boot. Reuses the existing ensure-vosk-model path; it fetches only
+    # the generic per-language Vosk speech model, never a named/bundled/branded
+    # wake model. Any failure (offline, no vosk wheel on this platform) is honest
+    # and non-fatal: the desktop app's off-boot provisioner and the in-app
+    # "Download wake model" button remain the backstops.
+    if phrase.strip():
+        try:
+            from jarvis.speech import wake_model_fetch as wmf
+
+            language = wmf.resolve_wake_language(cfg.load_config())
+            if wmf.vosk_model_present(language):
+                _println(
+                    f"   Offline any-word wake model for '{language}' is already "
+                    "installed — your wake word works out of the box."
+                )
+            else:
+                _println(
+                    "   Setting up the offline any-word wake model so your wake "
+                    "word works without any extra install:"
+                )
+                landed = wmf.ensure_vosk_model(
+                    language, echo=lambda m: _println(f"     {m}")
+                )
+                if landed is None:
+                    _println(
+                        "   Could not fetch it right now — until it downloads, "
+                        "start a voice turn with the hotkey / Call shortcut. It "
+                        "retries automatically on the next start, or from "
+                        "Settings → Wake word → 'Download wake model'."
+                    )
+        except Exception as exc:  # noqa: BLE001 — provisioning is best-effort
+            _println(f"   Offline wake model setup skipped ({exc}).")
+
+    _println("   Takes effect after the next Jarvis restart.")
     return phrase
 
 
