@@ -415,6 +415,15 @@ function EngineModeSwitch({
           );
         })}
       </div>
+      {/* One discreet reminder right where the choice is made: you configure
+          exactly one engine, never both. The per-mode key details live in the
+          VoiceEngineContext copy below, so this stays a single short line. */}
+      <p
+        data-testid="voice-engine-pick-one-hint"
+        className="mt-1 text-right text-[10px] leading-tight text-muted-foreground/70"
+      >
+        {t("apikeys_view.mode_pick_one_hint")}
+      </p>
     </div>
   );
 }
