@@ -40,6 +40,9 @@ def _stub_launch(monkeypatch) -> list:
     )
     monkeypatch.setattr(oa.subprocess, "Popen", lambda *a, **k: calls.append((a, k)))
     monkeypatch.setattr(oa.window_state, "raise_after_launch", lambda n, **k: (False, ""))
+    # Stub maximize to a fast no-op so the reuse-path tests stay deterministic
+    # and host-independent; tests that assert on it re-stub it.
+    monkeypatch.setattr(oa.window_state, "maximize_window", lambda w: (True, "maximized"))
     return calls
 
 
@@ -55,6 +58,38 @@ async def test_focuses_when_already_running(monkeypatch):
     assert "already running" in (res.output or "").lower()
     assert calls == []          # never launched a second instance
     assert raised               # hardened raise was attempted on the existing window
+
+
+async def test_already_running_window_is_also_maximized(monkeypatch):
+    # The live case: Chrome is already open but small. Bringing it to the front
+    # must ALSO maximize it so it fills the screen (user request 2026-07-23).
+    calls = _stub_launch(monkeypatch)
+    running = WindowInfo("New Tab - Google Chrome", handle=555)
+    monkeypatch.setattr(oa.window_state, "is_app_running", lambda n: running)
+    monkeypatch.setattr(oa.window_state, "raise_window", lambda w: (True, w.title))
+    maximized: list = []
+    monkeypatch.setattr(
+        oa.window_state, "maximize_window",
+        lambda w: (maximized.append(w), (True, "maximized"))[1],
+    )
+    res = await OpenAppTool().execute({"app_name": "chrome"}, _ctx())
+    assert res.success is True
+    assert calls == []                 # never launched a second instance
+    assert maximized == [running], "the focused running window must be maximized"
+
+
+async def test_already_running_maximize_failure_keeps_success(monkeypatch):
+    # A maximize miss (fixed dialog / Wayland / no handle) must NOT flip the
+    # focus result — the app was still brought to the front.
+    _stub_launch(monkeypatch)
+    monkeypatch.setattr(
+        oa.window_state, "is_app_running", lambda n: WindowInfo("OBS 30", handle=1)
+    )
+    monkeypatch.setattr(oa.window_state, "raise_window", lambda w: (True, w.title))
+    monkeypatch.setattr(oa.window_state, "maximize_window", lambda w: (False, "no box"))
+    res = await OpenAppTool().execute({"app_name": "obs"}, _ctx())
+    assert res.success is True
+    assert "already running" in (res.output or "").lower()
 
 
 async def test_launches_when_not_running(monkeypatch):

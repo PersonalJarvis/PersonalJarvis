@@ -335,6 +335,22 @@ class OpenAppTool:
                         focused, _msg = await asyncio.to_thread(
                             window_state.raise_window, running,
                         )
+                        if focused:
+                            # ALSO maximize the already-open window (user
+                            # request 2026-07-23: an app Jarvis brings up must
+                            # fill the screen, not stay tiny — the live case was
+                            # a small Chrome that was already running, so the
+                            # fresh-launch maximize never applied). Same-monitor
+                            # only; a fixed dialog / Wayland / headless is left
+                            # as-is. Best-effort — never fails the focus. This is
+                            # narrower than the CU-wide normalize_window the
+                            # maintainer disabled 2026-07-02 (which zoomed EVERY
+                            # foreground window mid-mission): here it is scoped to
+                            # the ONE app open_app was explicitly asked to bring
+                            # up.
+                            await asyncio.to_thread(
+                                window_state.maximize_window, running,
+                            )
             except TimeoutError:
                 focused = False
                 logger.warning(
