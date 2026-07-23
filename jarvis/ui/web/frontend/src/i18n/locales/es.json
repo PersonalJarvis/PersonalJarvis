@@ -942,7 +942,7 @@
     "mode_needs_key": "Tiempo real necesita una clave API — añade una abajo para cambiar.",
     "mode_desc_pipeline": "Tres pasos: voz a texto, el Brain piensa, texto a voz.",
     "mode_desc_realtime": "Un solo modelo escucha y responde en el mismo flujo de audio en vivo.",
-    "mode_pick_one_hint": "Solo configuras un modo.",
+    "mode_pick_one_hint": "Solo necesitas claves API para un modo.",
     "mode_keys_hint": "Tiempo real necesita una única clave compatible; la pipeline necesita sus propias claves de Entrada de voz, Salida de voz e IA. Tool Model y {name}-Agents valen para ambos modos.",
     "mode_realtime_preview": "Research preview: aún sin terminar. Muchas herramientas y funciones todavía no funcionan en modo realtime.",
     "runtime_switching": "Reiniciando la sesión de voz actual con el motor seleccionado…",
