@@ -39,6 +39,18 @@ _log = logging.getLogger(__name__)
 _TIMEOUT_EXIT_CODE = 124
 _CANCEL_EXIT_CODE = 130
 
+# Heartbeat for the per-step cancellation check (Esc / voice hangup / Emergency
+# Stop). The think-phase brain call is ONE long uninterruptible await (15-68 s
+# live), so without this the token is only read at the loop's next
+# is_cancelled() checkpoint and Esc "does nothing" until the current step ends
+# (live 2026-07-23: five Esc presses over 3 s, the mission ran ~9 s more). We
+# POLL the token flag on a short slice instead of awaiting a cancel EVENT on
+# purpose: on the py3.11 Windows proactor loop an event wakeup can be absorbed
+# when no timer is armed (BUG-081), which would make an event-based wait miss
+# the cancel entirely; a bounded slice always re-checks the flag on resume. At
+# 120 ms the abort is perceptually instant yet adds no measurable idle cost.
+_CANCEL_HEARTBEAT_S = 0.12
+
 # Global desktop actuation lock (deep-dive 2026-07-15, H-10). There is ONE
 # physical mouse/keyboard/foreground focus: two missions with DIFFERENT goals
 # used to run concurrently (the tool only dedupes IDENTICAL goals) and raced
@@ -210,6 +222,7 @@ class ComputerUseHarness:
             control_started = False
             lock_acquired = False
             stream = None
+            pending_anext: asyncio.Future | None = None
             try:
                 # H-10: ONE mission drives the desktop at a time. Waiting in
                 # short slices keeps the queue responsive to the mission's own
@@ -265,13 +278,49 @@ class ComputerUseHarness:
                     remaining_s = deadline - time.monotonic()
                     if remaining_s <= 0:
                         raise TimeoutError
-                    try:
-                        chunk = await asyncio.wait_for(
-                            anext(stream),
-                            timeout=remaining_s,
+                    # Drive the next step as a task so a cancel can ABORT the
+                    # in-flight await (the think-phase brain call) the instant
+                    # Esc is pressed, instead of waiting for the step to finish
+                    # and only then hitting the loop's is_cancelled() checkpoint.
+                    # Polled on a short heartbeat (see _CANCEL_HEARTBEAT_S) so a
+                    # proactor-lost cancel wakeup can never strand a running
+                    # mission after Esc.
+                    if pending_anext is None:
+                        pending_anext = asyncio.ensure_future(anext(stream))
+                    slice_s = min(_CANCEL_HEARTBEAT_S, remaining_s)
+                    await asyncio.wait({pending_anext}, timeout=slice_s)
+                    if token.is_cancelled():
+                        pending_anext.cancel()
+                        # Await the settle: the cancel throws CancelledError
+                        # (BaseException) into the step's await, and its own
+                        # error/StopAsyncIteration may surface — swallow all so
+                        # the honest exit-130 below is what the caller sees.
+                        try:
+                            await pending_anext
+                        except asyncio.CancelledError:
+                            pass
+                        except Exception:  # noqa: BLE001 — step is being aborted
+                            _log.debug(
+                                "[cu] in-flight step raised during Esc/cancel "
+                                "abort", exc_info=True,
+                            )
+                        pending_anext = None
+                        end_reason = "cancelled"
+                        final_exit_code = _CANCEL_EXIT_CODE
+                        yield HarnessResult(
+                            stderr="[cu] cancelled\n",
+                            exit_code=_CANCEL_EXIT_CODE,
+                            is_final=True,
                         )
+                        return
+                    if not pending_anext.done():
+                        continue  # heartbeat expired mid-step — re-check cancel
+                    try:
+                        chunk = pending_anext.result()
                     except StopAsyncIteration:
                         return
+                    finally:
+                        pending_anext = None
                     yield chunk
                     if chunk.is_final:
                         final_exit_code = chunk.exit_code
@@ -299,6 +348,21 @@ class ComputerUseHarness:
                     exit_code=final_exit_code,
                     result_text=final_stdout,
                 )
+                # Tear down an in-flight step task before closing the generator
+                # (e.g. invoke() itself was cancelled mid-step): aclose() on a
+                # generator whose anext is still running raises "already
+                # running". Awaiting the cancelled task first settles it.
+                if pending_anext is not None and not pending_anext.done():
+                    pending_anext.cancel()
+                    try:
+                        await pending_anext
+                    except asyncio.CancelledError:
+                        pass
+                    except Exception:  # noqa: BLE001 — step torn down on exit
+                        _log.debug(
+                            "[cu] in-flight step raised during teardown",
+                            exc_info=True,
+                        )
                 if stream is not None:
                     await stream.aclose()
                 if lock_acquired:
