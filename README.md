@@ -40,10 +40,9 @@ Every one of these works today, out of the box.
 ## See it in action
 
 <p align="center">
-  <video
-    src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/personal-jarvis-demo.mp4"
-    poster="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/personal-jarvis-demo-poster.png"
-    controls muted playsinline width="860"></video>
+  <a href="https://www.youtube.com/watch?v=6xoxgNu5fd8">
+    <img src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/personal-jarvis-demo-poster.png" alt="Watch the Personal Jarvis demo — one voice command drives the whole PC" width="860" />
+  </a>
 </p>
 
 <p align="center">
