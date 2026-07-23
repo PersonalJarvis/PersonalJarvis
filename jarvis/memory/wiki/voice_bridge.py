@@ -92,7 +92,7 @@ def _turn_hash(text: str) -> str:
 # Keywords (lowercase, simple substring match) that mark the brain's
 # reply as "yes, I stored this". Keep narrow -- false positives mean
 # noise in the wiki; false negatives are caught by the aggressive path.
-_ACK_KEYWORDS = (  # i18n-allow: German acknowledgement-phrase matching vocabulary
+_ACK_KEYWORDS = (  # i18n-allow: multilingual acknowledgement-phrase matching vocabulary
     "notiert",
     "vermerkt",
     "gespeichert",  # i18n-allow: German acknowledgement-phrase matching vocabulary
@@ -101,6 +101,9 @@ _ACK_KEYWORDS = (  # i18n-allow: German acknowledgement-phrase matching vocabula
     "noted",
     "got it",
     "saved",
+    "anotado",  # i18n-allow: Spanish acknowledgement-phrase matching vocabulary
+    "guardado",  # i18n-allow: Spanish acknowledgement-phrase matching vocabulary
+    "apuntado",  # i18n-allow: Spanish acknowledgement-phrase matching vocabulary
 )
 
 # Minimum length for the ack path to consider the user utterance worth

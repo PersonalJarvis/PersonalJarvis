@@ -3999,6 +3999,10 @@ async def test_delegate_call_dispatches_raw_transcript_with_voice_confirm():
                 "publish_response": False,
                 "use_history": False,
                 "history_override": (),
+                # The session hands the delegate its own resolved output
+                # language so a jarvis_action turn cannot answer in a different
+                # language than the rest of the conversation (English here).
+                "force_output_language": "en",
             },
         )
     ]

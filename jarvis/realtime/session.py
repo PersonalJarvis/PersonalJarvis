@@ -4800,6 +4800,15 @@ class RealtimeVoiceSession:
                 "publish_response": False,
                 "use_history": False,
                 "history_override": tuple(self._delegate_history),
+                # This session already resolved the turn's output language
+                # (self._language drives our own model reply and the recorded
+                # jarvis_lang). Hand that decision to the delegate so a
+                # jarvis_action turn cannot re-derive a different language from a
+                # code-switched transcript and answer in the wrong one (live
+                # 2026-07-23: an English conversation whose memory-save turns
+                # were spoken in German). Unsupported by older managers -> the
+                # signature filter below simply drops it.
+                "force_output_language": self._language,
             }
             try:
                 signature = inspect.signature(generate)

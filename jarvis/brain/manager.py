@@ -7271,6 +7271,7 @@ class BrainManager:
         emit_tool_ack: bool = True,
         publish_response: bool = True,
         history_override: Iterable[BrainMessage] | None = None,
+        force_output_language: str | None = None,
     ) -> str:
         """Generate a turn, optionally leaving its public response event to the caller.
 
@@ -7298,6 +7299,7 @@ class BrainManager:
                 allow_voice_confirm=allow_voice_confirm,
                 prefer_tool_model=prefer_tool_model,
                 emit_tool_ack=emit_tool_ack,
+                force_output_language=force_output_language,
             )
         finally:
             # Keep the last completed turn inspectable for diagnostics/tests,
@@ -7323,6 +7325,7 @@ class BrainManager:
         allow_voice_confirm: bool = False,
         prefer_tool_model: bool = False,
         emit_tool_ack: bool = True,
+        force_output_language: str | None = None,
     ) -> str:
         # 1. Intercept meta-commands (cancel, switch, depth override).
         # User request 2026-04-25: no standardised confirmation phrases
@@ -7357,6 +7360,21 @@ class BrainManager:
         # 2026-06-18); ambiguous text stays "unknown" -> soft mirror; an explicit
         # reply_language pin leaves it empty -> the directive uses the pin.
         self._update_turn_language(user_text)
+
+        # Realtime-delegate language override (live 2026-07-23): the realtime
+        # session is the ONE authoritative resolver for a voice turn — its own
+        # model reply and the recorded jarvis_lang already consume that decision.
+        # A delegated jarvis_action turn must speak the SAME language instead of
+        # re-deriving it here from a possibly code-switched transcript, which let
+        # an English realtime conversation answer a memory-save turn in German
+        # ("Notiert ..."). Pin the caller-forced language so
+        # _reply_language_directive() hard-locks it; an explicit
+        # brain.reply_language pin still wins (checked first in that directive).
+        if (
+            force_output_language in _REPLY_LANG_NAMES
+            and self._reply_language not in _REPLY_LANG_NAMES
+        ):
+            self._turn_detected_lang = force_output_language
 
         # Two-turn voice/chat confirmation resume (turn N+1). MUST run before the
         # cancel-intent intercept: a "nein"/"stop" answer to a pending
