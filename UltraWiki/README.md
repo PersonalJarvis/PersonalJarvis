@@ -24,6 +24,14 @@ Viktoria), **places** (San Francisco), **time** (a specific date is the answer),
 **activity semantics** (dinner ≈ essen ≈ restaurant), and it must read the *right*
 chat thread out of years of history in a few hundred milliseconds.
 
+> **Locked decisions (2026-07-23) — see [`09-decisions-and-handoff-integration.md`](09-decisions-and-handoff-integration.md):**
+> **(D-1)** built inside Jarvis, in Python, reusing the existing ~2/3.
+> **(D-2)** store access via **connection string only — no vector-DB SDK in code**;
+> vector search is a DB extension (`pgvector`/`sqlite-vec`) queried through SQL.
+> **(D-3)** Postgres + pgvector primary, SQLite + sqlite-vec local floor.
+> Doc 09 merges an external architecture handoff and, where it sharpens docs 01–08,
+> **it wins**.
+
 ---
 
 ## The two modes (like Realtime vs Pipeline for the API keys)
@@ -71,6 +79,7 @@ provider-agnostic, key-aware, degrades honestly, runs on a headless Linux box.
 | [`06-deployment-local-cloud.md`](06-deployment-local-cloud.md) | Local vs cloud for every layer, privacy, graceful degradation |
 | [`07-reuse-map-and-gaps.md`](07-reuse-map-and-gaps.md) | What Jarvis already has vs what is genuinely new (the ~1/3 to build) |
 | [`08-roadmap-and-open-questions.md`](08-roadmap-and-open-questions.md) | Phased build order + the decisions only the maintainer can make |
+| [`09-decisions-and-handoff-integration.md`](09-decisions-and-handoff-integration.md) | **Authoritative.** Locked decisions, the external handoff merged in, decision log, kill-list, phase gates, Python-adapted tech reference |
 
 ---
 
