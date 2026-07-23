@@ -250,6 +250,22 @@ _GEMINI_FORBIDDEN_SCHEMA_KEYS: frozenset[str] = frozenset({
     "definitions",       # draft-07 definitions block
     "examples",          # plural — Gemini only accepts singular ``example``
     "const",             # not in Gemini's subset
+    # JSON-schema object-key constraints Gemini's Schema model (extra="forbid")
+    # rejects. A connected MCP/plugin tool can ship these on a free-form object
+    # parameter; left in, ONE such tool schema fails the WHOLE GenerateContent
+    # request with a Pydantic "extra_forbidden" validation error, so the primary
+    # brain (Gemini) dies and the turn falls through the whole provider chain
+    # (live forensic 2026-07-23: functionDeclarations[105].parameters.properties.
+    # anchor.propertyNames → 5 validation errors → gemini down → claude 401 →
+    # openrouter 400 → openai 429 → anti-silence fallback). Dropping the
+    # constraint keeps the tool callable; only the key-name restriction is lost.
+    "propertyNames",     # restricts allowed property names — not in Gemini's subset
+    "patternProperties", # per-pattern property schemas — not in Gemini's subset
+    "unevaluatedProperties",
+    "minProperties",     # object size bounds — not in Gemini's subset
+    "maxProperties",
+    "dependentRequired",
+    "dependentSchemas",
 })
 
 
