@@ -82,7 +82,7 @@ dependencies = [
     # floor above 0.3.44 bricks every Mac install (AP-23; caught by the CI
     # fresh-install smoke's macOS leg 2026-07-07). 0.3.44 is the newest release
     # with wheels for ALL supported OSes (macosx_10_6_universal2 + linux + win).
-    "vosk>=0.3.44,<0.3.45; sys_platform != 'win32' or platform_machine != 'ARM64'",
+    "vosk>=0.3.44,<0.3.46; sys_platform != 'win32' or platform_machine != 'ARM64'",
     # The default VAD runs the bundled Silero ONNX model through base CPU
     # onnxruntime. WebRTC VAD and the local Whisper path (faster-whisper) stay
     # in the [local-voice] extra per the cloud-first doctrine (CLAUDE.md). All
@@ -116,7 +116,7 @@ dependencies = [
     # 9.14.4 newly requires Brotli, which has no Windows ARM64 wheel. 9.14.3
     # retains the same key-free multi-engine search surface without that native
     # dependency; bump only when the full target matrix proves the replacement.
-    "ddgs==9.14.3",
+    "ddgs==9.14.4",
     "aiofiles>=24.1",
     "aiolimiter>=1.1",
     "tenacity>=9.0",
