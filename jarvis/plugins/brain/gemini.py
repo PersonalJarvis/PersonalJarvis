@@ -91,16 +91,31 @@ def _is_stale_context_cache_error(exc: Exception) -> bool:
 def _is_thinking_config_rejected_error(exc: Exception) -> bool:
     """True when the API rejected the ``thinking_config`` itself.
 
-    Thinking-mandatory models answer 400 "Budget 0 is invalid. This model
-    only works in thinking mode." when asked to disable thinking. The
-    concrete exception class differs across ``google-genai`` versions, so we
-    match on the message. Recoverable by retrying once without the field —
-    a capability probe, never a model-name pin (AP-21).
+    Thinking-mandatory models answer 400 when asked to disable thinking
+    (``thinking_budget=0``), in two message shapes both seen live:
+
+    * The SPECIFIC form — "Budget 0 is invalid. This model only works in
+      thinking mode." (thinking-mandatory Pro class, 2026-07-16).
+    * The GENERIC form — a bare "Request contains an invalid argument." /
+      INVALID_ARGUMENT with NO "thinking" or "budget" token at all (live
+      forensic 2026-07-23: ``gemini-3.6-flash`` 400'd every Computer-Use step
+      this way; the vision chain then fell through to a blind last-resort
+      brain that burned ~68 s and the user heard the misleading "couldn't get
+      a valid screen-control response"). Matching only the specific form left
+      the generic one unrecovered.
+
+    The concrete exception class differs across ``google-genai`` versions, so
+    we match on the message. The caller consults this ONLY when a
+    ``thinking_config`` is actually on the wire and no delta has been emitted
+    yet, so treating a pre-stream INVALID_ARGUMENT as a thinking rejection is
+    safe: the retry merely drops ``thinking_config``; an unrelated
+    invalid-argument still fails the retry and degrades normally. A capability
+    probe, never a model-name pin (AP-21).
     """
     msg = str(exc).lower()
-    if "thinking" not in msg:
-        return False
-    return "budget" in msg or "invalid" in msg or "thinking mode" in msg
+    if "thinking" in msg:
+        return "budget" in msg or "invalid" in msg or "thinking mode" in msg
+    return "invalid_argument" in msg or "invalid argument" in msg
 
 
 def _to_gemini_contents(

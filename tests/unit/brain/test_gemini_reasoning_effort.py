@@ -39,9 +39,18 @@ pytest.importorskip("google.genai")
 class _FakeGeminiClient:
     """Records every ``config`` passed to ``generate_content_stream``."""
 
-    def __init__(self, *, reject_thinking: bool = False) -> None:
+    def __init__(
+        self,
+        *,
+        reject_thinking: bool = False,
+        reject_message: str = (
+            "400 INVALID_ARGUMENT. Budget 0 is invalid. This model only "
+            "works in thinking mode."
+        ),
+    ) -> None:
         self.calls: list[dict[str, Any]] = []
         self.reject_thinking = reject_thinking
+        self.reject_message = reject_message
         self.aio = SimpleNamespace(models=self)
 
     async def generate_content_stream(
@@ -53,10 +62,7 @@ class _FakeGeminiClient:
     ) -> AsyncIterator[Any]:
         self.calls.append(dict(config))
         if self.reject_thinking and config.get("thinking_config") is not None:
-            raise RuntimeError(
-                "400 INVALID_ARGUMENT. Budget 0 is invalid. This model only "
-                "works in thinking mode."
-            )
+            raise RuntimeError(self.reject_message)
 
         async def _stream() -> AsyncIterator[Any]:
             yield SimpleNamespace(
@@ -135,6 +141,36 @@ async def test_thinking_mandatory_model_recovers_without_the_field() -> None:
     deltas = await _drain(provider.complete(_request("none")))
 
     assert len(fake.calls) == 2
+    assert fake.calls[0].get("thinking_config") is not None
+    assert "thinking_config" not in fake.calls[1]
+    assert any(d.content for d in deltas), "recovered stream must yield text"
+
+
+@pytest.mark.asyncio
+async def test_generic_invalid_argument_recovers_without_the_field() -> None:
+    """A NEWER thinking-mandatory model (live 2026-07-23: gemini-3.6-flash)
+    rejects ``thinking_budget=0`` with only the GENERIC "Request contains an
+    invalid argument." 400 — no "thinking"/"budget" token. It must still be
+    recognised as a thinking-config rejection and recover via ONE retry
+    without the field, or the whole vision chain falls through to a blind
+    last-resort brain and the user hears "couldn't get a valid screen-control
+    response"."""
+    provider = GeminiBrain(model="gemini-3.6-flash")
+    fake = _FakeGeminiClient(
+        reject_thinking=True,
+        reject_message=(
+            '400 Bad Request. {"error": {"code": 400, "message": "Request '
+            'contains an invalid argument.", "status": "INVALID_ARGUMENT"}}'
+        ),
+    )
+    provider._client = fake  # type: ignore[assignment]
+
+    deltas = await _drain(provider.complete(_request("none")))
+
+    assert len(fake.calls) == 2, (
+        "the generic INVALID_ARGUMENT 400 must trigger exactly one retry "
+        "without thinking_config"
+    )
     assert fake.calls[0].get("thinking_config") is not None
     assert "thinking_config" not in fake.calls[1]
     assert any(d.content for d in deltas), "recovered stream must yield text"

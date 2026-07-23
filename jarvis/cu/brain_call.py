@@ -354,8 +354,21 @@ async def call_vision_brain(
             _log_serving(provider, model)
             return reply
 
-    # Stale-dead-flag resilience: retry every REGISTERED vision provider once.
-    if images_attached:
+    # Stale-dead-flag resilience: retry every REGISTERED vision provider once,
+    # IGNORING transient dead/cooldown flags — BUT only when the normal pass
+    # dispatched NOTHING (``attempted == 0``). That is the one case this rescue
+    # exists for: every vision brain was filtered OUT of the chain (a stale
+    # dead-flag on CU's only eyes, live 2026-06-21). When real vision providers
+    # WERE dispatched and each failed for real (``attempted > 0``), the chain is
+    # genuinely exhausted, not wrongly filtered — resurrecting a provider here
+    # only drags in a brain whose usable path is BLIND (live forensic
+    # 2026-07-23: every real vision provider 400/401'd, the last resort reached
+    # codex whose API key was 429'd so it answered from the image-dropping CLI,
+    # burned ~68 s producing unparseable prose, and surfaced the misleading
+    # exit-2 "couldn't get a valid screen-control response" instead of the
+    # honest exit-3 "no eyes — check your keys/credit"). Skipping it here lets
+    # the CUNoVisionProviderError below carry that honest, actionable readback.
+    if images_attached and attempted == 0:
         already = set(chain) | {(e.provider, e.model) for e in selector.errors}
         for provider, model, brain in iter_last_resort_vision(
             manager, already_tried=already,
