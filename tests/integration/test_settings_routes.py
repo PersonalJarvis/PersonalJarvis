@@ -91,3 +91,69 @@ def test_get_503_without_brain(server: WebServer) -> None:
     with TestClient(server.app) as client:
         resp = client.get("/api/settings/reply-language")
         assert resp.status_code == 503
+
+
+# ---------------------------------------------------------------------------
+# Bar size slider (/api/settings/bar-size)
+# ---------------------------------------------------------------------------
+def test_bar_size_get_returns_default_and_range(server: WebServer) -> None:
+    with TestClient(server.app) as client:
+        resp = client.get("/api/settings/bar-size")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["scale"] == 1.0
+        assert body["min"] == 0.5
+        assert body["max"] == 2.0
+
+
+def test_bar_size_put_persists_and_updates_config(
+    server: WebServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.core import config_writer
+
+    written: list[float] = []
+    monkeypatch.setattr(config_writer, "set_bar_size_scale", lambda s, **kw: written.append(s))
+    with TestClient(server.app) as client:
+        resp = client.put("/api/settings/bar-size", json={"scale": 1.5})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["scale"] == 1.5
+        assert body["persisted"] is True
+        # No live desktop app in this harness → not applied live, restart flagged.
+        assert body["applied_live"] is False
+        assert body["restart_required"] is True
+    assert written == [1.5]
+    assert server.app.state.config.ui.bar_size_scale == 1.5
+
+
+def test_bar_size_put_live_applies_to_the_desktop_app(
+    server: WebServer, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from jarvis.core import config_writer
+
+    monkeypatch.setattr(config_writer, "set_bar_size_scale", lambda s, **kw: None)
+
+    class _FakeDesktop:
+        def __init__(self) -> None:
+            self.applied: list[float] = []
+
+        def set_bar_size(self, scale: float) -> dict[str, object]:
+            self.applied.append(scale)
+            return {"ok": True, "applied_live": True, "scale": scale}
+
+    desktop = _FakeDesktop()
+    server.app.state.desktop_app = desktop
+    with TestClient(server.app) as client:
+        resp = client.put("/api/settings/bar-size", json={"scale": 0.7, "persist": False})
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["applied_live"] is True
+        assert body["restart_required"] is False
+        assert body["persisted"] is False  # persist=false → nothing written to disk
+    assert desktop.applied == [0.7]
+
+
+def test_bar_size_put_rejects_out_of_range(server: WebServer) -> None:
+    with TestClient(server.app) as client:
+        assert client.put("/api/settings/bar-size", json={"scale": 5.0}).status_code == 422
+        assert client.put("/api/settings/bar-size", json={"scale": 0.1}).status_code == 422

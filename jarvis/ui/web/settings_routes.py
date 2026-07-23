@@ -1926,6 +1926,80 @@ async def put_bar_persistent(body: BoolToggleBody, request: Request) -> dict[str
     }
 
 
+# ---------------------------------------------------------------------------
+# "Bar size" slider (ui.bar_size_scale): a proportional multiplier for the
+# on-screen bar (width AND height scale together, shape preserved). Persists to
+# jarvis.toml and live-applies to the running bar via app.state.desktop_app —
+# no restart. The slider streams live PUTs with persist=false while dragging
+# (so the bar resizes on screen in real time) and one persist=true PUT on
+# release. Range mirrors renderer.USER_SIZE_MIN/MAX (0.5–2.0).
+# ---------------------------------------------------------------------------
+
+_BAR_SIZE_DEFAULT = 1.0
+
+
+class BarSizeBody(BaseModel):
+    scale: float = Field(..., ge=0.5, le=2.0)
+    persist: bool = Field(default=True, description="Persist as boot default in jarvis.toml")
+
+
+@router.get("/bar-size")
+async def get_bar_size(request: Request) -> dict[str, object]:
+    cfg = _config(request)
+    ui = getattr(cfg, "ui", None)
+    return {
+        "scale": float(getattr(ui, "bar_size_scale", _BAR_SIZE_DEFAULT)),
+        "default": _BAR_SIZE_DEFAULT,
+        "min": 0.5,
+        "max": 2.0,
+    }
+
+
+@router.put("/bar-size")
+async def put_bar_size(body: BarSizeBody, request: Request) -> dict[str, object]:
+    scale = float(body.scale)  # already range-validated by the Pydantic Field
+    cfg = _config(request)
+    ui = getattr(cfg, "ui", None)
+    if ui is not None:
+        try:
+            ui.bar_size_scale = scale  # type: ignore[attr-defined]
+        except Exception as exc:  # noqa: BLE001
+            log.debug("in-memory bar_size_scale update skipped: %s", exc)
+
+    persisted = False
+    if body.persist:
+        try:
+            from jarvis.core import config_writer
+
+            config_writer.set_bar_size_scale(scale)
+            persisted = True
+        except Exception as exc:  # noqa: BLE001 — persist is best-effort
+            log.warning("bar-size persist failed (live apply still attempted): %s", exc)
+
+    # Live-apply to the running bar so the resize is visible immediately. A
+    # headless / down desktop app falls back to "applies on next start".
+    applied_live = False
+    desktop = getattr(request.app.state, "desktop_app", None)
+    fn = getattr(desktop, "set_bar_size", None)
+    if callable(fn):
+        try:
+            res = await asyncio.to_thread(fn, scale)
+            applied_live = (
+                bool(res.get("applied_live")) if isinstance(res, dict) else bool(res)
+            )
+        except Exception as exc:  # noqa: BLE001 — never fail the save on a live hiccup
+            log.warning("bar-size live-apply failed (persisted; applies on restart): %s", exc)
+
+    return {
+        "ok": True,
+        "scale": scale,
+        "default": _BAR_SIZE_DEFAULT,
+        "persisted": persisted,
+        "applied_live": applied_live,
+        "restart_required": not applied_live,
+    }
+
+
 @router.get("/mute-music")
 async def get_mute_music(request: Request) -> dict[str, object]:
     cfg = _config(request)
