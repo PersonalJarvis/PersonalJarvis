@@ -37,6 +37,19 @@ and it runs everywhere — headless server to full voice desktop.
 
 Every one of these works today, out of the box.
 
+## See it in action
+
+<p align="center">
+  <video
+    src="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/personal-jarvis-demo.mp4"
+    poster="https://github.com/PersonalJarvis/PersonalJarvis/raw/main/assets/demo/personal-jarvis-demo-poster.png"
+    controls muted playsinline width="860"></video>
+</p>
+
+<p align="center">
+  <sub>One voice command, and the Router-Brain takes the screen and does it live &middot; <a href="https://www.youtube.com/watch?v=6xoxgNu5fd8">watch the full demo on YouTube</a></sub>
+</p>
+
 ## Why it's different
 
 | | |
