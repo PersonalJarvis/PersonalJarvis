@@ -23,9 +23,15 @@ from jarvis.ui.jarvisbar import renderer
 
 @pytest.fixture(autouse=True)
 def _restore_scale():
-    """Every test leaves the module at the default 1.0 geometry."""
+    """Every test leaves the module at the default 1.0 geometry.
+
+    Resets BOTH axes — the screen-adaptive scale and the user "Bar size"
+    multiplier — so a test that exercises ``user_size`` cannot leak the
+    enlarged geometry into the next test (``USER_SIZE_SCALE`` is a separate
+    module global that ``apply_display_scale(1.0)`` alone would not reset).
+    """
     yield
-    renderer.apply_display_scale(1.0)
+    renderer.apply_display_scale(1.0, user_size=renderer.USER_SIZE_DEFAULT)
 
 
 # --------------------------------------------------------------------------- #
@@ -130,3 +136,71 @@ def test_render_produces_frames_at_the_scaled_window_size():
     renderer.apply_display_scale(1.0)
     img = renderer.JarvisBarRenderer().render(0.5, "listen", 0.4)
     assert img.size == (_HISTORICAL["WIN_W"], _HISTORICAL["WIN_H"])
+
+
+# --------------------------------------------------------------------------- #
+# user "Bar size" multiplier                                                  #
+# --------------------------------------------------------------------------- #
+def test_default_user_size_reproduces_the_historical_geometry():
+    # The user axis defaults to 1.0, so passing it explicitly must still yield
+    # the byte-identical signed-off geometry (regression guard: the new second
+    # arg must not perturb the default look).
+    renderer.apply_display_scale(1.0, user_size=1.0)
+    for name, value in _HISTORICAL.items():
+        assert getattr(renderer, name) == value, name
+
+
+def test_user_size_scales_width_and_height_together():
+    # The whole geometry multiplies by ONE factor, so the pill's aspect ratio
+    # is preserved — exactly "the shape stays, only the size changes".
+    renderer.apply_display_scale(1.0, user_size=1.0)
+    base_active_w, base_active_h = renderer.ACTIVE_W, renderer.ACTIVE_H
+    base_win_w, base_win_h = renderer.WIN_W, renderer.WIN_H
+
+    renderer.apply_display_scale(1.0, user_size=2.0)
+    # Both axes grow, and grow by (about) the same factor.
+    assert renderer.ACTIVE_W > base_active_w
+    assert renderer.ACTIVE_H > base_active_h
+    assert renderer.WIN_W > base_win_w
+    assert renderer.WIN_H > base_win_h
+    wr = renderer.ACTIVE_W / base_active_w
+    hr = renderer.ACTIVE_H / base_active_h
+    assert abs(wr - 2.0) < 0.06  # ~2x, allowing integer rounding at small px
+    assert abs(hr - 2.0) < 0.12
+    assert abs(wr - hr) < 0.15  # shape preserved: width ratio ≈ height ratio
+
+
+def test_user_size_below_one_shrinks_the_bar():
+    renderer.apply_display_scale(1.0, user_size=1.0)
+    base_win_w = renderer.WIN_W
+    renderer.apply_display_scale(1.0, user_size=0.5)
+    assert renderer.WIN_W < base_win_w
+
+
+def test_user_size_none_keeps_the_current_multiplier():
+    # A screen-scale-only call (user_size omitted) must not reset the user's
+    # chosen size — the two axes are independent.
+    renderer.apply_display_scale(1.0, user_size=2.0)
+    big_win_w = renderer.WIN_W
+    renderer.apply_display_scale(1.0)  # screen scale only, user size untouched
+    assert renderer.WIN_W == big_win_w
+    assert renderer.USER_SIZE_SCALE == 2.0
+
+
+def test_user_size_clamps_to_the_supported_range():
+    assert renderer.clamp_user_size(99.0) == renderer.USER_SIZE_MAX
+    assert renderer.clamp_user_size(0.01) == renderer.USER_SIZE_MIN
+    assert renderer.clamp_user_size(1.25) == 1.25
+    # Corrupt persisted values degrade to the default instead of bricking.
+    assert renderer.clamp_user_size(float("nan")) == renderer.USER_SIZE_DEFAULT
+    assert renderer.clamp_user_size("oops") == renderer.USER_SIZE_DEFAULT  # type: ignore[arg-type]
+    # apply_display_scale folds the clamp in, so an out-of-range request is safe.
+    renderer.apply_display_scale(1.0, user_size=99.0)
+    assert renderer.USER_SIZE_SCALE == renderer.USER_SIZE_MAX
+
+
+def test_user_size_multiplies_on_top_of_the_screen_scale():
+    # The effective factor is screen × user, so a small screen scaled up by the
+    # user meets in the middle. 0.6 screen × 1.5 user == 0.9 effective.
+    renderer.apply_display_scale(0.6, user_size=1.5)
+    assert renderer.OPEN_W == round(68.16 * 0.9)

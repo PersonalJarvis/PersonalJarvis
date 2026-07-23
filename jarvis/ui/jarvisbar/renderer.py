@@ -88,6 +88,38 @@ MIN_DISPLAY_SCALE = 0.55
 BASE_DISPLAY_SCALE = 0.85
 DISPLAY_SCALE = 1.0
 
+# --- user size preference (the "Bar size" slider) ----------------------------
+# A multiplier applied ON TOP of the screen-adaptive DISPLAY_SCALE, chosen by
+# the user in Settings → "Bar size". 1.0 reproduces the signed-off default
+# look byte-identically; below shrinks, above enlarges. Unlike DISPLAY_SCALE
+# (which never enlarges past the approved ceiling because the maintainer's look
+# is the ceiling), THIS axis is the user's explicit choice, so it may exceed
+# 1.0. The frame is still drawn CRISPLY at the larger geometry — every constant
+# is recomputed and the pill is redrawn at the scaled size, exactly like the
+# screen-adaptive path. This is NOT the blurry DPI bitmap upscaling that was
+# rejected (see overlay.start()'s DPI notes); the DPI strategy is untouched.
+# Width AND height scale together (the whole geometry multiplies by one factor),
+# so the pill's shape is preserved and only its size changes.
+USER_SIZE_MIN = 0.5
+USER_SIZE_MAX = 2.0
+USER_SIZE_DEFAULT = 1.0
+USER_SIZE_SCALE = USER_SIZE_DEFAULT
+
+
+def clamp_user_size(user_size: float) -> float:
+    """Clamp a user size multiplier into ``[USER_SIZE_MIN, USER_SIZE_MAX]``.
+
+    Non-numeric / non-finite input degrades to ``USER_SIZE_DEFAULT`` so a
+    corrupt persisted value can never brick the bar geometry.
+    """
+    try:
+        u = float(user_size)
+    except (TypeError, ValueError):
+        return USER_SIZE_DEFAULT
+    if not math.isfinite(u):
+        return USER_SIZE_DEFAULT
+    return max(USER_SIZE_MIN, min(USER_SIZE_MAX, u))
+
 
 def compute_display_scale(screen_w: int, screen_h: int) -> float:
     """Scale factor for the screen the bar lives on (pure, unit-testable).
@@ -131,7 +163,7 @@ _ACTIVE_VERT_TRIM = 0.22  # fraction removed from top and bottom of the 2x heigh
 _BASE_BOTTOM_PAD = 10
 
 
-def apply_display_scale(scale: float) -> None:
+def apply_display_scale(scale: float, user_size: float | None = None) -> None:
     """Recompute every derived geometry constant for ``scale``.
 
     Called once by ``overlay.start()`` (one bar per process) before any
@@ -139,17 +171,31 @@ def apply_display_scale(scale: float) -> None:
     applies 1.0, which reproduces the historical constants byte-identically.
     ``overlay.py`` reads the module attributes dynamically, so the window
     follows the recomputed sizes.
+
+    ``scale`` is the SCREEN-adaptive factor (clamped to ``[MIN_DISPLAY_SCALE,
+    1.0]``). ``user_size`` is the user's "Bar size" preference multiplied on
+    top; ``None`` keeps the current ``USER_SIZE_SCALE`` (so the old single-arg
+    call sites and the module-load call are byte-identical when the user has
+    not changed the size). The effective geometry factor is
+    ``DISPLAY_SCALE * USER_SIZE_SCALE`` — one number multiplies width, height,
+    padding and window alike, so the bar's SHAPE is preserved and only its
+    SIZE changes. The live "Bar size" slider re-invokes this with the same
+    screen scale and a new ``user_size`` (surfaces call it via
+    ``set_size_scale``).
     """
-    global DISPLAY_SCALE, COLLAPSED_W, COLLAPSED_H, OPEN_W, OPEN_H
+    global DISPLAY_SCALE, USER_SIZE_SCALE, COLLAPSED_W, COLLAPSED_H, OPEN_W, OPEN_H
     global ACTIVE_W, ACTIVE_H, _BOTTOM_PAD, WIN_W, WIN_H
     DISPLAY_SCALE = s = max(MIN_DISPLAY_SCALE, min(1.0, float(scale)))
-    COLLAPSED_W = round(168 * _SW * _IDLE_W * s)  # standby pill (slightly longer)
-    COLLAPSED_H = round(30 * _SH * _IDLE_H * s)  # standby pill (slim)
-    OPEN_W = round(284 * _SW * s)  # hover/controls pill (the former "expanded")
-    OPEN_H = round(52 * _SH * s)
+    if user_size is not None:
+        USER_SIZE_SCALE = clamp_user_size(user_size)
+    g = s * USER_SIZE_SCALE  # effective geometry factor (screen × user size)
+    COLLAPSED_W = round(168 * _SW * _IDLE_W * g)  # standby pill (slightly longer)
+    COLLAPSED_H = round(30 * _SH * _IDLE_H * g)  # standby pill (slim)
+    OPEN_W = round(284 * _SW * g)  # hover/controls pill (the former "expanded")
+    OPEN_H = round(52 * _SH * g)
     ACTIVE_W = round(2 * OPEN_W * (1.0 - 2 * _ACTIVE_SIDE_TRIM))  # 2x * 0.518
     ACTIVE_H = round(2 * OPEN_H * (1.0 - 2 * _ACTIVE_VERT_TRIM))  # 2x * 0.56
-    _BOTTOM_PAD = max(4, round(_BASE_BOTTOM_PAD * s))
+    _BOTTOM_PAD = max(4, round(_BASE_BOTTOM_PAD * g))
     # The fixed Tk window must contain the largest (ACTIVE) pill + its 2px
     # outline and the flanking hover controls.
     WIN_W = ACTIVE_W + 12
