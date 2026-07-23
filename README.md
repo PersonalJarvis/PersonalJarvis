@@ -17,19 +17,6 @@
   <b>Talk to your computer — and watch it do the work: an open-source, privacy-first voice agent with full command of your PC.</b>
 </p>
 
-<!--
-  Hero = click-to-play poster linking to the onboarding video on YouTube. The video is
-  NOT committed to the source tree, so a `git clone` never pulls it — only this ~100 KB
-  poster ships; clicking it opens the video on YouTube (which GitHub can't embed inline).
-  Refresh the poster: replace assets/demo/demo-poster.jpg (keep width≈820)
-  Video: https://www.youtube.com/watch?v=FXz1HclXL1g
--->
-<p align="center">
-  <a href="https://www.youtube.com/watch?v=FXz1HclXL1g">
-    <img src="assets/demo/demo-poster.jpg" alt="Personal Jarvis — watch the onboarding video on YouTube (click to play)" width="820" />
-  </a>
-</p>
-
 ---
 
 Not a classical voice assistant: a fast **Router-Brain** listens, decides, and *delegates* —
