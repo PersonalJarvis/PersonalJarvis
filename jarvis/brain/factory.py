@@ -811,28 +811,60 @@ def _phase2_full_brain(
                 # the Anthropic API` every 30 seconds.
                 v_provider = v_cfg.provider
                 v_model = v_cfg.model
-                if (
-                    v_provider == "claude-api"
-                    and config.brain.primary != "claude-api"
-                ):
-                    v_provider = config.brain.primary
-                    primary_cfg = config.brain.providers.get(v_provider)
-                    if primary_cfg is not None:
-                        # Verdichter is short, factual, latency-sensitive
-                        # — pick a lightweight model from the provider's
-                        # config: prefer `model`, fall back to
-                        # `deep_model` only when `model` is missing.
-                        primary_model = (
-                            getattr(primary_cfg, "model", None)
-                            or getattr(primary_cfg, "deep_model", None)
-                        )
-                        if primary_model:
-                            v_model = str(primary_model)
-                    log.info(
-                        "Verdichter provider redirected: claude-api -> %s "
-                        "(brain.primary mandate, BUG-LIVE-04)",
-                        v_provider,
+                # Redirect off the legacy claude-api default in TWO cases:
+                #   (a) the user picked a different `[brain.primary]` (the
+                #       original BUG-LIVE-04 redirect), OR
+                #   (b) primary is STILL the claude-api default but the host has
+                #       NO usable Anthropic credential — then cross to the first
+                #       reachable keyed family (open-source AP-22). Without (b)
+                #       the awareness loop repeat-401's every ~30 s on a machine
+                #       whose only key is elsewhere. This is a read-only
+                #       background build, off the voice hot path (AP-9). Reuses
+                #       the resolver's key-aware family probe, not a hardcoded
+                #       provider list.
+                if v_provider == "claude-api":
+                    from jarvis.brain.resolver import (
+                        _provider_reachable,
+                        _reachable_keyed_families,
                     )
+
+                    redirect_target: str | None = None
+                    if config.brain.primary != "claude-api":
+                        redirect_target = config.brain.primary
+                    elif not _provider_reachable(config, "claude-api"):
+                        families = _reachable_keyed_families(
+                            config, exclude=frozenset({"claude-api"}),
+                        )
+                        if families:
+                            redirect_target = families[0][0]
+                    if redirect_target and redirect_target != "claude-api":
+                        v_provider = redirect_target
+                        primary_cfg = config.brain.providers.get(v_provider)
+                        # Verdichter is short, factual, latency-sensitive — pick
+                        # a lightweight model: the provider's configured `model`,
+                        # then its `deep_model`, then the family's light tier
+                        # default (never leave a claude model id on a non-claude
+                        # provider).
+                        chosen_model = None
+                        if primary_cfg is not None:
+                            chosen_model = (
+                                getattr(primary_cfg, "model", None)
+                                or getattr(primary_cfg, "deep_model", None)
+                            )
+                        if not chosen_model:
+                            from jarvis.brain.manager import get_tier_default_model
+
+                            chosen_model = get_tier_default_model(
+                                "router", v_provider,
+                            ) or get_tier_default_model("deep", v_provider)
+                        if chosen_model:
+                            v_model = str(chosen_model)
+                        log.info(
+                            "Verdichter provider redirected: claude-api -> %s "
+                            "(brain.primary mandate / no usable Anthropic "
+                            "credential, BUG-LIVE-04 + AP-22)",
+                            v_provider,
+                        )
 
                 v_registry = BrainProviderRegistry()
                 v_brain = v_registry.instantiate(v_provider, model=v_model)

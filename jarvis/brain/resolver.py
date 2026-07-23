@@ -213,6 +213,20 @@ def _resolve_chain(config: JarvisConfig) -> list[tuple[str, str | None]]:
             (brain_cfg.local_fallback, brain_cfg.local_fallback_model or None),
         )
 
+    # Stage 5 — key-aware cross-family tail (open-source AP-22). Every stage
+    # above can resolve onto a KEYLESS provider — most often the ``claude-api``
+    # default on a host whose only key is a different family and who never
+    # switched ``[brain.primary]``. ``ClaudeAPIBrain`` instantiates fine without
+    # a key and only 401s at call time, so background bio/persona/skill turns
+    # would repeat-401 forever. Append the families the user ACTUALLY holds a
+    # credential for so the resolve can land on the real key. Reuses the
+    # manager's key-aware probe (PROVIDER_SECRET_CANDIDATES + reachability),
+    # never a fresh hardcoded provider list.
+    chain_providers = {provider for provider, _ in chain}
+    chain.extend(
+        _reachable_keyed_families(config, exclude=frozenset(chain_providers)),
+    )
+
     # Filter duplicates while preserving order
     seen: set[tuple[str, str | None]] = set()
     deduped: list[tuple[str, str | None]] = []
@@ -221,12 +235,90 @@ def _resolve_chain(config: JarvisConfig) -> list[tuple[str, str | None]]:
             continue
         seen.add(entry)
         deduped.append(entry)
+
+    # A keyless claude-api entry (the legacy default) must not short-circuit the
+    # resolve ahead of the user's real key: ClaudeAPIBrain instantiates without a
+    # key and only 401s at call time. Drop claude-api entries ONLY when no usable
+    # Anthropic credential is present AND a reachable keyed family exists to take
+    # over. A deliberately-switched non-claude primary is never touched (it stays
+    # exactly as before), and a host with NO reachable family keeps claude-api so
+    # the failure stays legible.
+    if not _provider_reachable(config, "claude-api"):
+        has_reachable_alternative = any(
+            entry[0] != "claude-api" and _provider_reachable(config, entry[0])
+            for entry in deduped
+        )
+        if has_reachable_alternative:
+            deduped = [entry for entry in deduped if entry[0] != "claude-api"]
     return deduped
 
 
 def _default_for(tier: str, provider: str) -> str:
     """Reads TIER_DEFAULTS_BY_PROVIDER without crashing on an unknown provider."""
     return TIER_DEFAULTS_BY_PROVIDER.get(tier, {}).get(provider, "")
+
+
+def _deep_model_for(config: JarvisConfig, provider: str) -> str | None:
+    """Deep model for *provider*, honoring the user's configured model.
+
+    The user's picked ``[brain.providers[provider]].model`` wins over the
+    hardcoded deep tier default — otherwise a cross-family tail for a model-less
+    OpenRouter user would bill the paid Anthropic default (§3/AP-21), the same
+    precedence the primary stage applies.
+    """
+    provider_cfg = (config.brain.providers or {}).get(provider)
+    picked = (getattr(provider_cfg, "model", "") or "").strip()
+    return picked or _default_for("deep", provider) or None
+
+
+def _provider_reachable(config: JarvisConfig, provider: str) -> bool:
+    """Key-aware reachability, mirroring the BrainManager pre-boot key check.
+
+    A brain provider is reachable when it needs no API key (a local/self-hosted
+    brain carrying no ``PROVIDER_SECRET_CANDIDATES`` entry, e.g. Ollama), when a
+    credential for it is configured, or when it authenticates via an on-disk
+    OAuth login (codex). Same source of truth as the manager dead-list — never a
+    hardcoded provider-name list (AP-22). ``config`` is accepted for signature
+    symmetry with the other resolver helpers and future per-config overrides.
+    """
+    from jarvis.core.config import PROVIDER_SECRET_CANDIDATES, get_provider_secret
+
+    if provider not in PROVIDER_SECRET_CANDIDATES:
+        # No API-key family — a local/self-hosted brain that needs no credential.
+        return True
+    if get_provider_secret(provider):
+        return True
+    from jarvis.brain.manager import _keyless_provider_is_rescued_by_oauth
+
+    return _keyless_provider_is_rescued_by_oauth(provider)
+
+
+def _reachable_keyed_families(
+    config: JarvisConfig, *, exclude: frozenset[str] = frozenset(),
+) -> list[tuple[str, str | None]]:
+    """Key-aware cross-family tail: the brain families the user actually holds a
+    credential for (open-source AP-22).
+
+    Iterates the canonical secrets registry (``PROVIDER_SECRET_CANDIDATES``) —
+    the same source the BrainManager pre-boot dead-list uses — intersected with
+    the registered brain providers and the key-aware reachability probe, so a
+    keyless ``claude-api`` default falls through to the user's real key. Not a
+    fresh hardcoded provider list: order and membership come from the shared
+    registry. ``exclude`` skips families already present in the chain.
+    """
+    from jarvis.core.config import PROVIDER_SECRET_CANDIDATES
+
+    available = set(_get_registry().available())
+    tail: list[tuple[str, str | None]] = []
+    for provider in PROVIDER_SECRET_CANDIDATES:
+        if provider in exclude or provider not in available:
+            # Skip already-chained families and non-brain secret slots
+            # (groq / realtime families are not registered brain providers).
+            continue
+        if not _provider_reachable(config, provider):
+            continue
+        tail.append((provider, _deep_model_for(config, provider)))
+    return tail
 
 
 # ----------------------------------------------------------------------
