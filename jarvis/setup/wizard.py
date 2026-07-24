@@ -427,6 +427,45 @@ SECRETS: list[SecretSpec] = [
         optional=True,
         prompt=False,
     ),
+    # UltraWiki (semantic memory mode) — app-only slots configured from the
+    # UltraWiki settings section, never in the first-run wizard. The Postgres
+    # connection string is a credential (AP-12) and rides the same chain.
+    SecretSpec(
+        key="ultrawiki_db_url",
+        env_fallback="ULTRAWIKI_DB_URL",
+        label="UltraWiki Postgres Connection String",
+        help_url="https://supabase.com/docs/guides/database/connecting-to-postgres",
+        required_for="UltraWiki cloud/self-hosted store (Supabase, AWS RDS, Google Cloud SQL, own server)",
+        optional=True,
+        prompt=False,
+    ),
+    SecretSpec(
+        key="voyage_api_key",
+        env_fallback="VOYAGE_API_KEY",
+        label="Voyage AI API Key",
+        help_url="https://dash.voyageai.com/api-keys",
+        required_for="UltraWiki embeddings / reranking (Voyage)",
+        optional=True,
+        prompt=False,
+    ),
+    SecretSpec(
+        key="cohere_api_key",
+        env_fallback="COHERE_API_KEY",
+        label="Cohere API Key",
+        help_url="https://dashboard.cohere.com/api-keys",
+        required_for="UltraWiki embeddings / reranking (Cohere)",
+        optional=True,
+        prompt=False,
+    ),
+    SecretSpec(
+        key="mistral_api_key",
+        env_fallback="MISTRAL_API_KEY",
+        label="Mistral API Key",
+        help_url="https://console.mistral.ai/api-keys",
+        required_for="UltraWiki embeddings (Mistral)",
+        optional=True,
+        prompt=False,
+    ),
 ]
 
 

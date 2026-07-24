@@ -164,6 +164,13 @@ dependencies = [
     # === F-FRIENDS [F0+F1] · feature/friends-section · ruben-2026-04-30 ===
     # Phase F0 — async SQLite for FriendRegistry (previously transitive via chromadb).
     "aiosqlite>=0.21",
+    # UltraWiki semantic store: sqlite-vec is the loadable SQLite extension that
+    # provides vector search over the local UltraWiki DB (plain SQL, no vector-DB
+    # SDK — UltraWiki/01-architecture.md). Tiny prebuilt wheels for win/mac/linux;
+    # lazy-imported in jarvis/ultrawiki/store.py so base `import jarvis` stays
+    # clean, and search degrades honestly to FTS-only where the extension cannot
+    # load. No Windows ARM64 wheel upstream — same guard marker as vosk (AP-23).
+    "sqlite-vec>=0.1.9; sys_platform != 'win32' or platform_machine != 'ARM64'",
     # Phase F1 — Telegram channel bot via long-polling (ChannelAdapter).
     "python-telegram-bot>=22,<23",
 ]
@@ -197,7 +204,16 @@ dev = [
 # native-engine-minimal floor for CI and tiny headless servers; users are pointed
 # at [full].
 full = [
-    "personal-jarvis[desktop,desktop-macos,telephony,channels,local-voice]",
+    "personal-jarvis[desktop,desktop-macos,telephony,channels,local-voice,ultrawiki-postgres]",
+]
+ultrawiki-postgres = [
+    # UltraWiki cloud/self-hosted store backend: psycopg 3 with bundled binary
+    # wheels reaches any Postgres host (Supabase, AWS RDS, Google Cloud SQL, an
+    # own server) through a plain connection string; vector search arrives as
+    # the pgvector DB extension queried via SQL — no vector-DB SDK (UltraWiki
+    # design D-2). Lazy-imported in jarvis/ultrawiki/store.py; the SQLite floor
+    # stays the universal base path, so this group is opt-in.
+    "psycopg[binary]>=3.2",
 ]
 # Twilio telephony voice agent (call Jarvis on a phone number). Optional extra
 # per the cloud-first doctrine: the base install must boot without it, and the

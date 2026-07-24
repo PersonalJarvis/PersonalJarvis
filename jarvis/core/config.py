@@ -2083,6 +2083,36 @@ class WikiIntegrationConfig(BaseModel):
     fallback_to_direct_ingest: bool = True   # when scheduler is missing
 
 
+class UltraWikiConfig(BaseModel):
+    """UltraWiki — the semantic memory mode (design: UltraWiki/*.md).
+
+    ``enabled`` is the either-or mode switch of the Wiki section (decision
+    D-5): False = the normal wiki captures and answers, True = UltraWiki
+    does. Switching is non-destructive in both directions (D-9).
+
+    Provider slots follow the bring-your-own doctrine (D-2): empty string =
+    unconfigured, chosen deliberately in the activation wizard. The embedding
+    pair is semi-permanent (D-3 — changing it re-embeds the corpus), so it is
+    only ever written through the guarded settings route. The Postgres
+    connection string is a CREDENTIAL and lives in the secret chain under
+    ``ultrawiki_db_url`` (AP-12), never here.
+
+    ``extra="allow"`` is mandatory (AP-16): future sub-keys must survive the
+    self-mod pre-validate round-trip.
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    enabled: bool = False
+    db_backend: str = "sqlite"  # "sqlite" (universal floor) | "postgres"
+    embedding_provider: str = ""  # "ollama" | "gemini" | "openai" | "voyage" | "mistral" | "cohere"
+    embedding_model: str = ""
+    distill_provider: str = ""  # empty = key-aware brain chain decides
+    distill_model: str = ""
+    rerank_provider: str = ""  # empty = rerank stage honestly skipped
+    ollama_endpoint: str = "http://localhost:11434"
+
+
 class WikiContextConfig(BaseModel):
     """Configuration for the wiki context injector (B5 Agent C).
 
@@ -2398,6 +2428,8 @@ class JarvisConfig(BaseModel):
     awareness: AwarenessConfig = Field(default_factory=AwarenessConfig)
     # Phase B5 — wiki write-wiring: SessionRollupWorker + WikiCurator bootstrap (Agent A).
     wiki_integration: WikiIntegrationConfig = Field(default_factory=WikiIntegrationConfig)
+    # UltraWiki — the semantic memory mode of the Wiki section (UltraWiki/*.md).
+    ultrawiki: UltraWikiConfig = Field(default_factory=UltraWikiConfig)
     # Phase B5 — CuratorScheduler (Agent D). Top-level field — Wave-2 cleanup task
     # is to move this into ``WikiIntegrationConfig.scheduler`` and migrate callers.
     wiki_scheduler: SchedulerConfig = Field(default_factory=SchedulerConfig)

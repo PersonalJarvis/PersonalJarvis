@@ -2005,6 +2005,13 @@ sounddevice==0.5.5 \
     --hash=sha256:3861901ddd8230d2e0e8ae62ac320cdd4c688d81df89da036dcb812f757bb3e6 \
     --hash=sha256:cfc6b2c49fb7f555591c78cb8ecf48d6a637fd5b6e1db5fec6ed9365d64b3519
     # via -r requirements.in
+sqlite-vec==0.1.9 ; platform_machine != 'ARM64' or sys_platform != 'win32' \
+    --hash=sha256:1515727990b49e79bcaf75fdee2ffc7d461f8b66905013231251f1c8938e7786 \
+    --hash=sha256:1b62a7f0a060d9475575d4e599bbf94a13d85af896bc1ce86ee80d1b5b48e5fb \
+    --hash=sha256:1d52e30513bae4cc9778ddbf6145610434081be4c3afe57cd877893bad9f6b6c \
+    --hash=sha256:4a28dc12fa4b53d7b1dced22da2488fade444e96b5d16fd2d698cd670675cf32 \
+    --hash=sha256:4e921e592f24a5f9a18f590b6ddd530eb637e2d474e3b1972f9bbeb773aa3cb9
+    # via -r requirements.in
 srt==3.5.3 ; platform_machine != 'ARM64' or sys_platform != 'win32' \
     --hash=sha256:4884315043a4f0740fd1f878ed6caa376ac06d70e135f306a6dc44632eed0cc0
     # via vosk

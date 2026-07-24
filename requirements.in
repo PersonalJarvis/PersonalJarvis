@@ -165,4 +165,6 @@ tomlkit>=0.12
 
 # F-FRIENDS [F0+F1] — async SQLite + Telegram channel
 aiosqlite>=0.21
+# UltraWiki vector search (loadable SQLite extension, lazy-imported; no win-arm64 wheel)
+sqlite-vec>=0.1.9; sys_platform != 'win32' or platform_machine != 'ARM64'
 python-telegram-bot>=22,<23
