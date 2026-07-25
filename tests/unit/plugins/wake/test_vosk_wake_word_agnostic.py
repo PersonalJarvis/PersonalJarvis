@@ -374,3 +374,90 @@ def test_the_competition_grammar_derives_from_the_configured_phrase() -> None:
         "hallo [unk]",
         "[unk]",
     ]
+
+
+# --- the wake spoken in ONE breath with the command (2026-07-25) -------------
+
+
+def test_a_wake_followed_immediately_by_the_command_still_fires(monkeypatch) -> None:
+    """The natural way people address an assistant must not be the hard case.
+
+    The shape gate localises the free ear's words to the phrase span, and that
+    window used to extend 0.3 s PAST the phrase. So any command word starting
+    inside that trailing slack was counted into the candidate, pushed the token
+    count over the phrase's own (``_SHAPE_TOKEN_SLACK`` is 0) and disabled the
+    shape path outright. For an out-of-vocabulary name the spelling path cannot
+    cover that gap either, so BOTH confirm routes failed at once — an isolated
+    call plus a pause fired, while the same call followed by the request did
+    not.
+
+    A command word carries no evidence about the wake call, so the shape gate
+    must not see it. This is word-agnostic: nothing here reads how the name is
+    spelled.
+    """
+    p = VoskKwsProvider("Hey Ruben", model_path="fake", keyword="ruben")
+
+    grammar = {
+        "text": "hey ruben",
+        "result": [
+            {"word": "hey", "start": 0.40, "end": 0.62, "conf": 1.0},
+            {"word": "ruben", "start": 0.62, "end": 1.05, "conf": 1.0},
+        ],
+    }
+    # The free ear could not spell the name ("ruben" -> "erhoben") AND the
+    # user kept talking straight through — the command words begin 0.06 s after
+    # the phrase ends, well inside the old trailing slack.
+    free = {
+        "text": "erhoben wie ist das wetter",  # i18n-allow: recognition content under test
+        "result": [
+            _w("erhoben", 0.40, 1.02, conf=0.6),
+            _w("wie", 1.11, 1.28, conf=1.0),
+            _w("ist", 1.28, 1.42, conf=1.0),
+            _w("das", 1.42, 1.58, conf=1.0),
+            _w("wetter", 1.58, 1.95, conf=1.0),
+        ],
+    }
+
+    monkeypatch.setattr(p, "_take_verify_rec", _stub_take(grammar, free))
+    assert p._verify_window(_loud_window(), fail_open=True) is True
+
+
+def test_room_speech_across_the_phrase_span_is_still_rejected(monkeypatch) -> None:
+    """The narrower shape window must not become a way in for room speech.
+
+    Here the surrounding words OVERLAP the phrase span rather than following
+    it, which is what a forced grammar hit on conversation actually looks like
+    — so they are still counted and the candidate is still rejected.
+    """
+    p = VoskKwsProvider("Hey Ruben", model_path="fake", keyword="ruben")
+
+    grammar = {
+        "text": "hey ruben",
+        "result": [
+            {"word": "hey", "start": 0.30, "end": 0.60, "conf": 1.0},
+            {"word": "ruben", "start": 0.60, "end": 1.60, "conf": 1.0},
+        ],
+    }
+    free = {
+        "text": "die richtigen harte baums gibt",
+        "result": [
+            _w("die", 0.20, 0.35, conf=1.0),
+            _w("richtigen", 0.35, 0.75, conf=1.0),
+            _w("harte", 0.75, 1.05, conf=1.0),
+            _w("baums", 1.05, 1.40, conf=1.0),
+            _w("gibt", 1.40, 1.70, conf=1.0),
+        ],
+    }
+
+    monkeypatch.setattr(p, "_take_verify_rec", _stub_take(grammar, free))
+    assert p._verify_window(_loud_window(), fail_open=True) is False
+
+
+def test_a_bare_interjection_plus_a_command_is_still_not_a_wake() -> None:
+    """The "hey ho" class (live 2026-07-13) sits INSIDE the phrase span, so
+    narrowing the trailing edge cannot resurrect it: the core body after the
+    known prefix is still too short to be a name."""
+    assert candidate_shape_ok(
+        [_w("hey", 0.40, 0.60, conf=1.0), _w("ho", 0.60, 0.68, conf=0.5)],
+        "Hey Ruben",
+    ) is False

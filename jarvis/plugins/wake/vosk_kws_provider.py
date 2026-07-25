@@ -1110,12 +1110,33 @@ class VoskKwsProvider:
                 )
                 return False
 
-            # localise the (already-decoded) free words to the phrase span
+            # localise the (already-decoded) free words to the phrase span.
+            # The SPELLING path keeps the ±0.3 s slack: a sound-alike rendering
+            # of the phrase can straddle the grammar's own boundaries.
             local_words = [
                 w for w in fres.get("result", [])
                 if w.get("end", 0.0) >= span_a and w.get("start", 0.0) <= span_b
             ]
             free_local = " ".join(w.get("word", "") for w in local_words)
+            # The SHAPE path must not see what comes AFTER the phrase. A command
+            # word starting inside the trailing slack is the user's request, not
+            # evidence about the wake call — and counting it pushes the token
+            # count over the phrase's own, which disables the shape path
+            # outright (_SHAPE_TOKEN_SLACK is 0). For an out-of-vocabulary name
+            # the spelling path cannot cover that gap, so both confirm routes
+            # failed at once and the natural way people talk — wake word and
+            # command in ONE breath — was materially less likely to fire than an
+            # isolated call plus a pause.
+            #
+            # Keep the LEADING slack (alignment jitter before the phrase) and
+            # admit any word that OVERLAPS the phrase span, so a name the free
+            # ear stretched past the grammar's end boundary still counts. The
+            # false-wake class this gate exists for ("hey ho", live 2026-07-13)
+            # sits INSIDE the span and is unaffected.
+            shape_words = [
+                w for w in fres.get("result", [])
+                if w.get("end", 0.0) >= span_a and w.get("start", 0.0) <= end_s
+            ]
         except Exception as exc:  # noqa: BLE001 — polarity via fail_open
             log.warning(
                 "vosk-kws: verify failed (%s) — %s.",
@@ -1141,7 +1162,7 @@ class VoskKwsProvider:
         # untouched: a free ear that spelled the phrase still fires instantly.
         ok = sound_confirm(free_local, self._phrase, ratio=self._confirm_ratio)
         by_shape = False
-        if not ok and candidate_shape_ok(local_words, self._phrase):
+        if not ok and candidate_shape_ok(shape_words, self._phrase):
             ok = by_shape = self._shape_competition_ok(pcm, model_path)
             if not ok:
                 self._stat_suppressed_shape_competition += 1
