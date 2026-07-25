@@ -55,10 +55,16 @@ to add the original file here, not to adjust the colour.
 
 ## No original available?
 
-Run the **`design-brand-logo`** skill. It produces a mark that is honest about
-being ours — a clean geometric glyph on the service's own brand colour — rather
-than a bad imitation of a logo we could not obtain. Record it below with
-`own work` as the legal basis.
+Look harder first — this is where a hand-drawn placeholder is usually the wrong
+answer. Cal.com appeared to publish only a horizontal wordmark, so it briefly
+got a drawn calendar glyph; in fact the vendor serves its own square icon at
+`https://cal.com/api/logo?type=icon`. **Check the vendor's own site and icon
+endpoints before concluding a mark does not exist.**
+
+Only when that genuinely turns up nothing, run the **`design-brand-logo`**
+skill. It produces a mark that is honest about being ours — a clean geometric
+glyph on the service's own brand colour — rather than a bad imitation of a logo
+we could not obtain. Record it below with `own work` as the legal basis.
 
 ## Ledger
 
@@ -66,7 +72,7 @@ than a bad imitation of a logo we could not obtain. Record it below with
 |---|---|---|---|
 | airtable | gilbarbara/logos `airtable.svg` | CC0 | 2026-07-25 |
 | asana | gilbarbara/logos `asana-icon.svg` | CC0 | 2026-07-25 |
-| cal_com | drawn for this project - a calendar glyph, not an imitation of the Cal.com wordmark | own work | 2026-07-25 |
+| cal_com | Cal.com's own icon endpoint, `https://cal.com/api/logo?type=icon` (white variant) | vendor asset | 2026-07-25 |
 | canva | svgl `canva.svg` | MIT | 2026-07-25 |
 | clickup | svgl `clickup.svg` | MIT | 2026-07-25 |
 | discord | gilbarbara/logos `discord-icon.svg` | CC0 | 2026-07-25 |

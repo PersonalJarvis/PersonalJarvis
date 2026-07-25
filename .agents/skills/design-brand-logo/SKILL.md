@@ -37,7 +37,11 @@ Try, in order:
   horizontal logotype.
 - **svgl** (MIT):
   `https://cdn.jsdelivr.net/gh/pheralb/svgl@main/static/library/<name>.svg`
-- **The vendor's own brand or press page.** Many publish an SVG directly.
+- **The vendor's own site.** Many serve the square icon from a live endpoint
+  even when the public collections only carry their wordmark — Cal.com serves
+  its at `https://cal.com/api/logo?type=icon`. Try `/logo.svg`, `/icon.svg`,
+  `/api/logo?type=icon`, the `<link rel="icon">` in their homepage HTML, and
+  their brand or press page before giving up.
 
 Take the **icon**, not the wordmark. A logotype shrunk into a 40 px square is
 unreadable; check the `viewBox` and reject anything wider than about 1.45:1.
@@ -52,7 +56,11 @@ Set the right `logo_color` in the catalog and record the decision in the
 
 ## Step 3 — Only now, design one
 
-Applies to a self-hosted or niche service with no published mark.
+Applies to a self-hosted or niche service with no published mark. Be sceptical
+that you are really here: Cal.com looked like this case because the public
+collections only carry its wordmark, and it turned out to serve a perfectly good
+square icon from its own site. A hand-drawn placeholder that replaces an
+obtainable mark is worse than no work at all.
 
 Do **not** approximate a logo you have seen. Guessing at someone's trademark is
 both legally worse and visually obvious. Design something that is clearly a
