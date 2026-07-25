@@ -38,6 +38,17 @@ export const ULTRAWIKI_ACTIVE_JOB_STATUSES: readonly string[] = [
   "running",
 ];
 
+// Mirrors jarvis/ultrawiki/service.py::SYNC_PHASES — WHAT a running job is
+// doing, where `status` only says whether it is doing anything at all.
+export const ULTRAWIKI_SYNC_PHASES = [
+  "queued",
+  "reading",
+  "importing",
+  "reconciling",
+  "finished",
+] as const;
+export type UltraWikiSyncPhase = (typeof ULTRAWIKI_SYNC_PHASES)[number];
+
 // Mirrors jarvis/ultrawiki/connectors/__init__.py::builtin_connectors().
 export const ULTRAWIKI_CONNECTOR_IDS = [
   "obsidian-vault",
@@ -57,17 +68,40 @@ export interface UltraWikiCounts {
   total: number;
 }
 
+/**
+ * What the last FINISHED sync of a source did — persisted in `uw_sync_state`,
+ * so it survives a restart (the job registry does not). `null` means no sync
+ * has ever finished, which is NOT the same as one that found nothing.
+ */
+export interface UltraWikiLastOutcome {
+  finished_at: string;
+  status: UltraWikiJobStatus | string;
+  mode: string;
+  new: number;
+  changed: number;
+  unchanged: number;
+  tombstoned: number;
+}
+
 export interface UltraWikiSource {
   id: string;
   connector: string;
   label: string;
+  /** The integration behind a plugin-bridge source ("plugin:github"). */
+  integration_id?: string;
   consent: UltraWikiConsent | string;
   enabled: boolean;
   areas: string[];
   counts: Partial<UltraWikiCounts> | null;
   sync_state: Record<string, unknown> | null;
+  /** The run currently importing from this source, if any. */
+  active_job?: UltraWikiJob | null;
+  last_outcome?: UltraWikiLastOutcome | null;
   last_sync_at: string | null;
+  /** The sync FAILED — red. */
   last_error: string | null;
+  /** The sync worked but had nothing to import — amber, not an error. */
+  last_notice?: string | null;
 }
 
 export interface UltraWikiJob {
@@ -75,14 +109,41 @@ export interface UltraWikiJob {
   source_id: string;
   mode: string;
   status: UltraWikiJobStatus | string;
+  /** One of ULTRAWIKI_SYNC_PHASES. */
+  phase?: UltraWikiSyncPhase | string;
   started_at: number;
   ended_at: number | null;
   chunks: number;
+  /** Items pulled so far (new + changed + unchanged); tombstones excluded. */
+  items?: number;
   new: number;
   changed: number;
   unchanged: number;
   tombstoned: number;
   error: string;
+}
+
+/** One row of `GET /api/ultrawiki/items` — the stored-contents inventory. */
+export interface UltraWikiItem {
+  id: number;
+  source_id: string;
+  /** The title, or the external id when the connector supplied none. */
+  title: string;
+  state: UltraWikiItemState | string;
+  permalink: string;
+  /** When the item was created AT THE SOURCE. */
+  timestamp_utc: string;
+  /** When UltraWiki stored it (drives the newest-first order). */
+  ingested_at: string;
+  updated_at: string;
+}
+
+export interface UltraWikiItemsPage {
+  items: UltraWikiItem[];
+  /** The UNPAGED total for the active filters. */
+  total: number;
+  limit: number;
+  offset: number;
 }
 
 /** One embedding/rerank option row from `GET /api/ultrawiki/providers`. */
@@ -594,11 +655,49 @@ export function createUltraWikiSource(body: {
   return postJson<UltraWikiSource>("/api/ultrawiki/sources", body);
 }
 
+/**
+ * Answer of `POST /sources/{id}/approve`. Approving IS the import, so the
+ * answer carries the job that is now pulling everything; `job_id` is null when
+ * none could be started and `detail` says why in plain English. A refused
+ * import never costs the user their approval.
+ */
+export interface UltraWikiApproveResponse {
+  source: UltraWikiSource;
+  job_id: string | null;
+  auto_sync: boolean;
+  detail: string;
+}
+
 export function approveUltraWikiSource(
   sourceId: string,
-): Promise<UltraWikiSource> {
-  return postJson<UltraWikiSource>(
-    `/api/ultrawiki/sources/${encodeURIComponent(sourceId)}/approve`,
+  options: { autoSync?: boolean } = {},
+): Promise<UltraWikiApproveResponse> {
+  const query =
+    options.autoSync === false ? "?auto_sync=false" : "";
+  return postJson<UltraWikiApproveResponse>(
+    `/api/ultrawiki/sources/${encodeURIComponent(sourceId)}/approve${query}`,
+  );
+}
+
+/**
+ * One page of the stored inventory. The counts say HOW MANY items exist per
+ * stage; this says WHICH ones — the question "what is even in this database?".
+ */
+export function fetchUltraWikiItems(
+  options: {
+    sourceId?: string;
+    state?: string;
+    limit?: number;
+    offset?: number;
+  } = {},
+): Promise<UltraWikiItemsPage> {
+  const params = new URLSearchParams();
+  if (options.sourceId) params.set("source_id", options.sourceId);
+  if (options.state) params.set("state", options.state);
+  params.set("limit", String(options.limit ?? 50));
+  params.set("offset", String(options.offset ?? 0));
+  return request<UltraWikiItemsPage>(
+    `/api/ultrawiki/items?${params.toString()}`,
   );
 }
 

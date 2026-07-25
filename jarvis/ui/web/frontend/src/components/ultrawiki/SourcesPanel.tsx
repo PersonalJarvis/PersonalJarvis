@@ -1,28 +1,38 @@
 /**
  * Connected-sources panel (design doc 04 "Sources view").
  *
- * Consent is THE gate: every source starts as `pending`, the Approve button
- * is an explicit user action with a short scope description, and a source
- * without approved consent shows NO sync control at all — the backend would
- * refuse the sync anyway (`service.start_sync`), the UI just does not dangle
- * a dead button. Per source: consent badge, per-stage backlog counts, last
- * sync / last error, Approve / Revoke / Sync now.
+ * Consent is THE gate: every source starts as `pending`, and a source without
+ * approved consent shows NO sync control at all — the backend would refuse the
+ * sync anyway (`service.start_sync`), the UI just does not dangle a dead
+ * button. What approval MEANS is now visible: approving imports everything the
+ * source holds right away, the card shows that import running (phase, items
+ * pulled so far, cancel), and once it is done it says how much is in the store
+ * and when it last ran — instead of the ambiguous "Approved / Never synced"
+ * pair that told the user nothing about whether anything had happened.
  *
- * "Add source": connector picker over the five built-ins, a path field for
- * the folder-shaped connectors, area assignment, and — for the
- * plugin-bridge — the connected-integration candidates from
- * `GET /api/ultrawiki/bridge/candidates`, with a "pull adapter pending"
- * candidate marked honestly (registering it works, a sync finds nothing yet).
+ * Errors and notices are deliberately different things and look different: an
+ * error (red) means the sync FAILED, a notice (amber) means it ran fine and had
+ * nothing to import — today that is a plugin-bridge integration whose pull
+ * adapter is not built yet.
+ *
+ * "Add source": connector picker over the five built-ins, a path field for the
+ * folder-shaped connectors, area assignment, and — for the plugin-bridge — the
+ * connected-integration candidates from `GET /api/ultrawiki/bridge/candidates`.
+ * A bridge source is named after the integration the user picked ("GitHub"),
+ * never after the generic bridge, so the list is readable.
  */
 import { useState } from "react";
 import {
+  AlertCircle,
   Check,
   FolderOpen,
+  Info,
   Loader2,
   Plus,
   RefreshCw,
   ShieldCheck,
   ShieldOff,
+  XCircle,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 
@@ -30,9 +40,11 @@ import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
+import { formatRelativeTime } from "@/components/ultrawiki/relativeTime";
 import {
   ULTRAWIKI_CONNECTOR_IDS,
   approveUltraWikiSource,
+  cancelUltraWikiJob,
   createUltraWikiSource,
   fetchUltraWikiAreas,
   fetchUltraWikiBridgeCandidates,
@@ -52,6 +64,9 @@ const CONNECTOR_LABEL_KEY: Record<UltraWikiConnectorId, string> = {
 
 /** Connectors that read a user-chosen folder (config key `root`). */
 const PATH_CONNECTORS: readonly string[] = ["obsidian-vault", "local-folder"];
+
+/** The generic integration gateway — its cards carry the integration's name. */
+const BRIDGE_CONNECTOR = "plugin-bridge";
 
 const CONSENT_BADGE: Record<
   string,
@@ -151,7 +166,18 @@ export function SourcesPanel({
               source={source}
               busy={busySource === source.id}
               onApprove={() =>
-                void run(source.id, () => approveUltraWikiSource(source.id))
+                void run(source.id, async () => {
+                  const result = await approveUltraWikiSource(source.id);
+                  // The backend's detail is the honest explanation whenever no
+                  // import could start (mode off, connector gone) — a situation
+                  // the UI cannot enumerate for itself.
+                  pushToast(
+                    "success",
+                    result.job_id
+                      ? t("ultrawiki.sources.import_started")
+                      : result.detail,
+                  );
+                })
               }
               onRevoke={() =>
                 void run(source.id, () => revokeUltraWikiSource(source.id))
@@ -161,6 +187,9 @@ export function SourcesPanel({
                   await startUltraWikiSync(source.id);
                   pushToast("success", t("ultrawiki.sources.sync_started"));
                 })
+              }
+              onCancelJob={(jobId) =>
+                void run(source.id, () => cancelUltraWikiJob(jobId))
               }
             />
           ))}
@@ -176,17 +205,26 @@ function SourceCard({
   onApprove,
   onRevoke,
   onSync,
+  onCancelJob,
 }: {
   source: UltraWikiSource;
   busy: boolean;
   onApprove: () => void;
   onRevoke: () => void;
   onSync: () => void;
+  onCancelJob: (jobId: string) => void;
 }): JSX.Element {
   const t = useT();
   const consent = String(source.consent);
   const badge = CONSENT_BADGE[consent] ?? CONSENT_BADGE.pending;
   const approved = consent === "approved";
+  const activeJob = source.active_job ?? null;
+  const storedItems = source.counts?.total ?? 0;
+  // The persisted outcome wins over `last_sync_at`: it is the moment a run
+  // actually FINISHED, and it survives a restart.
+  const lastFinished =
+    source.last_outcome?.finished_at ?? source.last_sync_at ?? null;
+  const lastFinishedText = formatRelativeTime(lastFinished, t);
 
   return (
     <li
@@ -214,6 +252,21 @@ function SourceCard({
         </span>
       </div>
 
+      {source.connector === BRIDGE_CONNECTOR && (
+        <p
+          className="mt-0.5 text-[11px] text-muted-foreground"
+          data-testid={`uw-source-bridge-${source.id}`}
+        >
+          {t("ultrawiki.sources.bridge_via")}
+          {source.integration_id
+            ? ` · ${t("ultrawiki.sources.integration").replace(
+                "{0}",
+                source.integration_id,
+              )}`
+            : ""}
+        </p>
+      )}
+
       {source.counts && (
         <dl className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
           {STAGE_KEYS.map(([key, labelKey]) => {
@@ -237,35 +290,117 @@ function SourceCard({
         </dl>
       )}
 
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
-        <span>
-          {source.last_sync_at
-            ? t("ultrawiki.sources.last_sync").replace(
+      {activeJob ? (
+        <div
+          className="mt-2 rounded-lg border border-primary/30 bg-primary/5 p-2.5"
+          data-testid={`uw-source-progress-${source.id}`}
+        >
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
+            <Loader2
+              className="h-3.5 w-3.5 shrink-0 animate-spin text-primary"
+              aria-hidden
+            />
+            <span
+              className="font-medium text-foreground"
+              data-phase={activeJob.phase ?? "queued"}
+            >
+              {t(`ultrawiki.sources.phase_${activeJob.phase ?? "queued"}`)}
+            </span>
+            <span
+              className="text-muted-foreground"
+              data-testid={`uw-source-progress-items-${source.id}`}
+            >
+              {t("ultrawiki.sources.import_items").replace(
                 "{0}",
-                source.last_sync_at,
-              )
-            : t("ultrawiki.sources.never_synced")}
-        </span>
-        {source.areas.length > 0 && (
-          <span>
-            {t("ultrawiki.sources.areas").replace(
-              "{0}",
-              source.areas.join(", "),
-            )}
-          </span>
-        )}
-        {source.last_error && (
-          <span
-            className="text-destructive"
-            data-testid={`ultrawiki-source-error-${source.id}`}
+                String(activeJob.items ?? 0),
+              )}
+            </span>
+            <button
+              type="button"
+              onClick={() => onCancelJob(activeJob.job_id)}
+              disabled={busy}
+              data-testid={`uw-source-cancel-${source.id}`}
+              className="ml-auto inline-flex items-center gap-1 rounded-md border border-border px-1.5 py-0.5 text-foreground hover:bg-muted disabled:opacity-50"
+            >
+              <XCircle className="h-3 w-3" aria-hidden />
+              {t("ultrawiki.sources.cancel_import")}
+            </button>
+          </div>
+          {/* The connector streams — there is no total to divide by, so the
+              bar is deliberately indeterminate and the ticking item count
+              carries the real information. */}
+          <div
+            className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-primary/15"
+            role="progressbar"
+            aria-label={t("ultrawiki.sources.importing")}
           >
-            {t("ultrawiki.sources.last_error").replace(
-              "{0}",
-              source.last_error,
-            )}
+            <div className="h-full w-1/3 animate-pulse rounded-full bg-primary" />
+          </div>
+          <p className="mt-1.5 text-[11px] leading-relaxed text-muted-foreground">
+            {t("ultrawiki.sources.copy_reassurance")}
+          </p>
+        </div>
+      ) : (
+        approved && (
+          <p
+            className="mt-2 text-[11px] text-foreground"
+            data-testid={`uw-source-summary-${source.id}`}
+          >
+            {storedItems > 0
+              ? t("ultrawiki.sources.fully_imported").replace(
+                  "{0}",
+                  String(storedItems),
+                )
+              : t("ultrawiki.sources.nothing_imported_yet")}
+            {lastFinishedText
+              ? ` · ${t("ultrawiki.sources.last_sync_relative").replace(
+                  "{0}",
+                  lastFinishedText,
+                )}`
+              : ""}
+          </p>
+        )
+      )}
+
+      {source.areas.length > 0 && (
+        <p className="mt-1 text-[11px] text-muted-foreground">
+          {t("ultrawiki.sources.areas").replace("{0}", source.areas.join(", "))}
+        </p>
+      )}
+
+      {/* Errors and notices are big enough to read: the old one-line grey text
+          hid both a dead source and a "connected but nothing to import yet"
+          integration behind the same tiny sentence. */}
+      {source.last_error && (
+        <div
+          role="alert"
+          className="mt-2 flex items-start gap-2 rounded-lg border border-destructive/50 bg-destructive/10 p-2.5 text-xs text-destructive"
+          data-testid={`ultrawiki-source-error-${source.id}`}
+        >
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+          <span className="min-w-0">
+            <strong className="block font-medium">
+              {t("ultrawiki.sources.error_label")}
+            </strong>
+            {source.last_error}
           </span>
-        )}
-      </div>
+        </div>
+      )}
+
+      {source.last_notice && (
+        <div
+          className="mt-2 flex items-start gap-2 rounded-lg border border-[#ffb84d]/50 bg-[#ffb84d]/10 p-2.5 text-xs text-[#ffb84d]"
+          data-testid={`ultrawiki-source-notice-${source.id}`}
+        >
+          <Info className="mt-0.5 h-4 w-4 shrink-0" aria-hidden />
+          <span className="min-w-0">
+            <strong className="block font-medium">
+              {t("ultrawiki.sources.notice_label")}
+            </strong>
+            {source.last_notice}
+          </span>
+        </div>
+      )}
 
       <div className="mt-2 flex flex-wrap items-center gap-2">
         {!approved && (
@@ -280,7 +415,7 @@ function SourceCard({
             ) : (
               <ShieldCheck className="mr-1 h-3.5 w-3.5" aria-hidden />
             )}
-            {t("ultrawiki.sources.approve")}
+            {t("ultrawiki.sources.approve_import")}
           </Button>
         )}
         {approved && (
@@ -290,7 +425,7 @@ function SourceCard({
               variant="outline"
               size="sm"
               onClick={onSync}
-              disabled={busy}
+              disabled={busy || Boolean(activeJob)}
               data-testid={`uw-source-sync-${source.id}`}
             >
               <RefreshCw
@@ -348,10 +483,20 @@ function AddSourceForm({
     queryKey: ["ultrawiki", "bridge-candidates"],
     queryFn: fetchUltraWikiBridgeCandidates,
     staleTime: 5_000,
-    enabled: connector === "plugin-bridge",
+    enabled: connector === BRIDGE_CONNECTOR,
   });
 
   const needsPath = PATH_CONNECTORS.includes(connector);
+  const candidates = bridgeQuery.data?.candidates ?? [];
+  const selectedCandidate =
+    candidates.find((candidate) => candidate.id === integrationId) ?? null;
+  // A bridge card is named after the INTEGRATION the user picked. Falling back
+  // to the connector's own name produced a list of identical "Connected
+  // integration" rows nobody could tell apart.
+  const defaultLabel =
+    connector === BRIDGE_CONNECTOR && selectedCandidate
+      ? selectedCandidate.label
+      : t(CONNECTOR_LABEL_KEY[connector]);
 
   function toggleArea(id: string) {
     setSelectedAreas((current) =>
@@ -367,13 +512,13 @@ function AddSourceForm({
     setError("");
     const config: Record<string, unknown> = {};
     if (needsPath && rootPath.trim()) config.root = rootPath.trim();
-    if (connector === "plugin-bridge" && integrationId) {
+    if (connector === BRIDGE_CONNECTOR && integrationId) {
       config.integration_id = integrationId;
     }
     try {
       await createUltraWikiSource({
         connector,
-        label: label.trim() || t(CONNECTOR_LABEL_KEY[connector]),
+        label: label.trim() || defaultLabel,
         config,
         areas: selectedAreas,
       });
@@ -431,7 +576,7 @@ function AddSourceForm({
           type="text"
           value={label}
           onChange={(e) => setLabel(e.target.value)}
-          placeholder={t(CONNECTOR_LABEL_KEY[connector])}
+          placeholder={defaultLabel}
           className={inputCls}
         />
       </label>
@@ -455,7 +600,7 @@ function AddSourceForm({
         </label>
       )}
 
-      {connector === "plugin-bridge" && (
+      {connector === BRIDGE_CONNECTOR && (
         <div>
           <span className="mb-1.5 block text-[10px] uppercase tracking-wider text-muted-foreground">
             {t("ultrawiki.sources.bridge_label")}
@@ -469,13 +614,13 @@ function AddSourceForm({
             <p className="text-xs text-destructive">
               {t("ultrawiki.sources.bridge_load_failed")}
             </p>
-          ) : (bridgeQuery.data?.candidates ?? []).length === 0 ? (
+          ) : candidates.length === 0 ? (
             <p className="text-xs text-muted-foreground">
               {t("ultrawiki.sources.bridge_empty")}
             </p>
           ) : (
             <ul className="space-y-1.5">
-              {(bridgeQuery.data?.candidates ?? []).map((candidate) => {
+              {candidates.map((candidate) => {
                 const selected = integrationId === candidate.id;
                 // The backend states adapter readiness inside `detail`; mark
                 // "pull adapter pending" honestly instead of hiding it.
@@ -576,7 +721,7 @@ function AddSourceForm({
             type="submit"
             disabled={
               submitting ||
-              (connector === "plugin-bridge" && !integrationId) ||
+              (connector === BRIDGE_CONNECTOR && !integrationId) ||
               (needsPath && !rootPath.trim())
             }
             data-testid="ultrawiki-create-source"

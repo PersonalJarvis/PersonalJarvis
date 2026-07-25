@@ -1,9 +1,12 @@
 /**
- * SourcesPanel tests — the consent gate.
+ * SourcesPanel tests — the consent gate and what approval actually DOES.
  *
- * Pins that Approve is an explicit POST to the approve route and that a
- * pending source exposes NO sync control at all (the backend would refuse
- * the sync; the UI must not dangle a dead button).
+ * Pins that Approve is an explicit POST to the approve route, that a pending
+ * source exposes NO sync control at all (the backend would refuse the sync;
+ * the UI must not dangle a dead button), and the visibility half: a running
+ * import shows its phase and ticking item count, a finished one says how much
+ * is stored, a notice is rendered as prominently as an error, and a
+ * plugin-bridge card is identifiable as the integration it actually is.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
@@ -92,8 +95,10 @@ describe("SourcesPanel — consent gate", () => {
   it("fires the approve POST for a pending source and reports the change", async () => {
     const fetchMock = installFetchMock({
       "/api/ultrawiki/sources/src-pending/approve": () => ({
-        ...PENDING,
-        consent: "approved",
+        source: { ...PENDING, consent: "approved" },
+        job_id: "job-1",
+        auto_sync: true,
+        detail: "Importing everything this source holds.",
       }),
     });
     const onChanged = vi.fn();
@@ -158,6 +163,232 @@ describe("SourcesPanel — consent gate", () => {
     });
     await waitFor(() => {
       expect(onChanged).toHaveBeenCalledTimes(1);
+    });
+  });
+});
+
+describe("SourcesPanel — approve imports everything", () => {
+  it("approves with auto-import and reports the started job", async () => {
+    const fetchMock = installFetchMock({
+      "/api/ultrawiki/sources/src-pending/approve": () => ({
+        source: { ...PENDING, consent: "approved" },
+        job_id: "job-7",
+        auto_sync: true,
+        detail: "Importing everything this source holds.",
+      }),
+    });
+    renderWithClient(
+      <SourcesPanel sources={[PENDING]} onChanged={vi.fn()} />,
+    );
+
+    // The button no longer promises a bare flag flip.
+    const approve = screen.getByTestId("uw-source-approve-src-pending");
+    expect(approve.textContent).toContain("import everything");
+
+    fireEvent.click(approve);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/ultrawiki/sources/src-pending/approve",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+    // No auto_sync=false query: the default IS the import.
+    const [url] = fetchMock.mock.calls[0] as [string];
+    expect(url).not.toContain("auto_sync");
+  });
+
+  it("shows the running import with its phase, item count and a cancel button", async () => {
+    const fetchMock = installFetchMock({
+      "/api/ultrawiki/jobs/job-7/cancel": () => ({
+        job_id: "job-7",
+        cancel_requested: true,
+      }),
+    });
+    const importing = source({
+      id: "src-importing",
+      label: "Importing folder",
+      consent: "approved",
+      active_job: {
+        job_id: "job-7",
+        source_id: "src-importing",
+        mode: "backfill",
+        status: "running",
+        phase: "importing",
+        started_at: 0,
+        ended_at: null,
+        chunks: 2,
+        items: 412,
+        new: 400,
+        changed: 10,
+        unchanged: 2,
+        tombstoned: 0,
+        error: "",
+      },
+    });
+
+    renderWithClient(
+      <SourcesPanel sources={[importing]} onChanged={vi.fn()} />,
+    );
+
+    const progress = screen.getByTestId("uw-source-progress-src-importing");
+    expect(progress).toBeDefined();
+    expect(
+      screen.getByTestId("uw-source-progress-items-src-importing").textContent,
+    ).toContain("412");
+    // The phase is the honest "what is it doing", not just "running".
+    expect(progress.textContent).toContain("Importing");
+    // The reassurance the design asks for: this is a COPY.
+    expect(progress.textContent).toContain("COPIED");
+    // A running import hides the finished summary and blocks a second sync.
+    expect(screen.queryByTestId("uw-source-summary-src-importing")).toBeNull();
+    expect(
+      screen
+        .getByTestId("uw-source-sync-src-importing")
+        .hasAttribute("disabled"),
+    ).toBe(true);
+
+    fireEvent.click(screen.getByTestId("uw-source-cancel-src-importing"));
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        "/api/ultrawiki/jobs/job-7/cancel",
+        expect.objectContaining({ method: "POST" }),
+      );
+    });
+  });
+
+  it("replaces the ambiguous 'Never synced' with what is actually stored", () => {
+    installFetchMock({});
+    const done = source({
+      id: "src-done",
+      consent: "approved",
+      counts: {
+        captured: 0,
+        keyword_indexed: 0,
+        embedded: 0,
+        distilled: 120,
+        failed: 0,
+        total: 120,
+      },
+      last_outcome: {
+        finished_at: new Date(Date.now() - 5 * 60_000).toISOString(),
+        status: "done",
+        mode: "backfill",
+        new: 120,
+        changed: 0,
+        unchanged: 0,
+        tombstoned: 0,
+      },
+    });
+
+    renderWithClient(<SourcesPanel sources={[done]} onChanged={vi.fn()} />);
+
+    const summary = screen.getByTestId("uw-source-summary-src-done");
+    expect(summary.textContent).toContain("120");
+    expect(summary.textContent).toContain("5 min ago");
+  });
+});
+
+describe("SourcesPanel — honest error and notice surfaces", () => {
+  it("renders a notice as its own prominent box, not as a failure", () => {
+    installFetchMock({});
+    const noticed = source({
+      id: "src-bridge",
+      connector: "plugin-bridge",
+      label: "GitHub",
+      consent: "approved",
+      integration_id: "plugin:github",
+      last_notice:
+        "This integration is connected, but its pull adapter is not built yet - nothing was imported.",
+    });
+
+    renderWithClient(<SourcesPanel sources={[noticed]} onChanged={vi.fn()} />);
+
+    const notice = screen.getByTestId("ultrawiki-source-notice-src-bridge");
+    expect(notice.textContent).toContain("pull adapter is not built yet");
+    // A notice is NOT an error: no alert box, and it says so.
+    expect(screen.queryByTestId("ultrawiki-source-error-src-bridge")).toBeNull();
+    expect(notice.getAttribute("role")).not.toBe("alert");
+  });
+
+  it("renders a sync failure as an alert", () => {
+    installFetchMock({});
+    const failed = source({
+      id: "src-broken",
+      consent: "approved",
+      last_error: "FileNotFoundError: the vault folder is gone",
+    });
+
+    renderWithClient(<SourcesPanel sources={[failed]} onChanged={vi.fn()} />);
+
+    const error = screen.getByTestId("ultrawiki-source-error-src-broken");
+    expect(error.getAttribute("role")).toBe("alert");
+    expect(error.textContent).toContain("the vault folder is gone");
+  });
+});
+
+describe("SourcesPanel — bridge sources carry a real identity", () => {
+  it("names the card after the integration and says where it comes from", () => {
+    installFetchMock({});
+    const bridge = source({
+      id: "src-gh",
+      connector: "plugin-bridge",
+      label: "GitHub",
+      consent: "approved",
+      integration_id: "plugin:github",
+    });
+
+    renderWithClient(<SourcesPanel sources={[bridge]} onChanged={vi.fn()} />);
+
+    const card = screen.getByTestId("ultrawiki-source-src-gh");
+    expect(card.textContent).toContain("GitHub");
+    const subtitle = screen.getByTestId("uw-source-bridge-src-gh");
+    expect(subtitle.textContent).toContain("plugins / MCP bridge");
+    expect(subtitle.textContent).toContain("plugin:github");
+  });
+
+  it("registers a bridge source under the picked candidate's label", async () => {
+    const created: unknown[] = [];
+    const fetchMock = installFetchMock({
+      "/api/ultrawiki/areas": () => ({ areas: [], total: 0 }),
+      "/api/ultrawiki/bridge/candidates": () => ({
+        candidates: [
+          {
+            id: "plugin:github",
+            kind: "plugin",
+            label: "GitHub",
+            detail: "connected marketplace plugin; pull adapter pending",
+          },
+        ],
+        total: 1,
+      }),
+      "/api/ultrawiki/sources": (init) => {
+        created.push(JSON.parse(String(init?.body ?? "{}")));
+        return { id: "src-new" };
+      },
+    });
+    renderWithClient(<SourcesPanel sources={[]} onChanged={vi.fn()} />);
+
+    fireEvent.click(screen.getByTestId("ultrawiki-add-source-toggle"));
+    fireEvent.change(screen.getByTestId("ultrawiki-connector-select"), {
+      target: { value: "plugin-bridge" },
+    });
+    await waitFor(() => {
+      expect(screen.getByTestId("ultrawiki-bridge-plugin:github")).toBeDefined();
+    });
+    fireEvent.click(screen.getByTestId("ultrawiki-bridge-plugin:github"));
+    fireEvent.click(screen.getByTestId("ultrawiki-create-source"));
+
+    await waitFor(() => {
+      expect(created).toHaveLength(1);
+    });
+    expect(fetchMock).toHaveBeenCalled();
+    // The integration's own name — never the generic bridge label, which made
+    // every bridge card look identical.
+    expect(created[0]).toMatchObject({
+      connector: "plugin-bridge",
+      label: "GitHub",
+      config: { integration_id: "plugin:github" },
     });
   });
 });

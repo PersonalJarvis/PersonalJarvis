@@ -7,12 +7,18 @@
  * every 4 s while a sync job is active (the wiki health polling idiom).
  *
  * Layout: honest degradation banner → staged import-progress strip → the
- * three tabs Ask | Sources | Settings. A dead required slot banners the
- * problem and links to the settings tab — the mode is never flipped silently
- * (design doc 04, mode-switch rules).
+ * four tabs Ask | Sources | Contents | Settings. A dead required slot banners
+ * the problem and links to the settings tab — the mode is never flipped
+ * silently (design doc 04, mode-switch rules).
  */
 import { useState } from "react";
-import { AlertTriangle, MessageCircleQuestion, Plug, Settings2 } from "lucide-react";
+import {
+  AlertTriangle,
+  Database,
+  MessageCircleQuestion,
+  Plug,
+  Settings2,
+} from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 
 import { cn } from "@/lib/utils";
@@ -23,10 +29,11 @@ import {
 } from "@/lib/ultrawikiApi";
 import { AskPanel } from "@/components/ultrawiki/AskPanel";
 import { SourcesPanel } from "@/components/ultrawiki/SourcesPanel";
+import { ContentsPanel } from "@/components/ultrawiki/ContentsPanel";
 import { SlotsPanel } from "@/components/ultrawiki/SlotsPanel";
 import { ImportProgress } from "@/components/ultrawiki/ImportProgress";
 
-type UltraTab = "ask" | "sources" | "settings";
+type UltraTab = "ask" | "sources" | "contents" | "settings";
 
 export function UltraWikiPanel(): JSX.Element {
   const t = useT();
@@ -36,9 +43,11 @@ export function UltraWikiPanel(): JSX.Element {
     queryKey: ["ultrawiki", "status"],
     queryFn: fetchUltraWikiStatus,
     staleTime: 2_000,
-    // Poll every few seconds while a sync job runs, calmly otherwise.
+    // While an import runs its item counter is what the source cards show
+    // ticking, so the poll tightens to a couple of seconds; at rest it stays
+    // calm (the status probe walks credentials in a worker thread).
     refetchInterval: (query) =>
-      hasActiveUltraWikiJobs(query.state.data?.jobs) ? 4_000 : 30_000,
+      hasActiveUltraWikiJobs(query.state.data?.jobs) ? 2_000 : 30_000,
   });
 
   const status = statusQuery.data ?? null;
@@ -132,6 +141,13 @@ export function UltraWikiPanel(): JSX.Element {
           testId="ultrawiki-tab-sources"
         />
         <UltraTabButton
+          active={tab === "contents"}
+          onClick={() => setTab("contents")}
+          icon={<Database className="h-3.5 w-3.5" aria-hidden />}
+          label={t("ultrawiki.panel.tab_contents")}
+          testId="ultrawiki-tab-contents"
+        />
+        <UltraTabButton
           active={tab === "settings"}
           onClick={() => setTab("settings")}
           icon={<Settings2 className="h-3.5 w-3.5" aria-hidden />}
@@ -151,6 +167,12 @@ export function UltraWikiPanel(): JSX.Element {
         )}
         {tab === "sources" && (
           <SourcesPanel sources={status.sources} onChanged={refetch} />
+        )}
+        {tab === "contents" && (
+          <ContentsPanel
+            status={status}
+            onOpenSources={() => setTab("sources")}
+          />
         )}
         {tab === "settings" && (
           <SlotsPanel status={status} onChanged={refetch} />

@@ -2730,7 +2730,8 @@
       "loading": "UltraWiki-Status wird geladen…",
       "status_unavailable": "UltraWiki-Status nicht verfügbar — läuft das Backend?",
       "embedding_dead": "Der Embedding-Slot ist nicht bereit ({0}). Stichwort- und Zeit-Antworten funktionieren weiter; die semantische Suche pausiert, bis der Slot repariert ist.",
-      "open_settings": "Einstellungen öffnen"
+      "open_settings": "Einstellungen öffnen",
+      "tab_contents": "Inhalte"
     },
     "progress": {
       "title": "Import-Pipeline",
@@ -2786,7 +2787,25 @@
       "connector_local_folder": "Lokaler Ordner",
       "connector_conversations": "Unterhaltungen mit {name}",
       "connector_normal_wiki": "Eingebautes Wiki",
-      "connector_plugin_bridge": "Verbundene Integration (Plugins / MCP)"
+      "connector_plugin_bridge": "Verbundene Integration (Plugins / MCP)",
+      "approve_import": "Freigeben & alles importieren",
+      "import_started": "Import gestartet – alles, was diese Quelle enthält, wird kopiert.",
+      "importing": "Importiere",
+      "import_items": "{0} Einträge bisher importiert",
+      "cancel_import": "Import abbrechen",
+      "copy_reassurance": "Alles wird in deinen privaten Wissensspeicher KOPIERT. An der Quelle wird nichts geändert, verschoben oder gelöscht.",
+      "fully_imported": "Vollständig importiert: {0} Einträge",
+      "nothing_imported_yet": "Noch nichts importiert",
+      "last_sync_relative": "letzte Synchronisierung {0}",
+      "error_label": "Synchronisierung fehlgeschlagen",
+      "notice_label": "Hinweis",
+      "bridge_via": "über Plugins / MCP-Brücke",
+      "integration": "Integration: {0}",
+      "phase_queued": "Wartet auf den Start",
+      "phase_reading": "Quelle wird gelesen",
+      "phase_importing": "Importiere",
+      "phase_reconciling": "Prüfe auf entfernte Einträge",
+      "phase_finished": "Wird abgeschlossen"
     },
     "ask": {
       "placeholder": "Frag dein Wissen…",
@@ -2917,6 +2936,31 @@
       "link": "Dieses Projekt verbinden",
       "already_linked": "Eine Supabase-Verbindung ist bereits gespeichert.",
       "save_anyway": "Trotzdem speichern"
+    },
+    "contents": {
+      "title": "Gespeicherte Inhalte",
+      "total": "{0} Einträge gespeichert",
+      "filter_source": "Quelle",
+      "filter_state": "Stufe",
+      "all_sources": "Alle Quellen",
+      "all_states": "Alle Stufen",
+      "col_title": "Eintrag",
+      "col_source": "Quelle",
+      "col_state": "Stufe",
+      "col_loaded": "Geladen",
+      "loaded_ago": "{0}",
+      "showing": "{0} von {1} werden angezeigt",
+      "load_more": "Mehr laden",
+      "loading": "Inhalte werden geladen…",
+      "load_failed": "Die Inhalte konnten nicht geladen werden: {0}",
+      "empty": "Es ist noch nichts gespeichert. Gib eine Quelle frei, dann wird alles importiert, was sie enthält.",
+      "open_sources": "Quellen öffnen"
+    },
+    "time": {
+      "just_now": "gerade eben",
+      "minutes": "vor {0} Min.",
+      "hours": "vor {0} Std.",
+      "days": "vor {0} Tg."
     }
   }
 }

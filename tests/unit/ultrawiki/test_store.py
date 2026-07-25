@@ -865,3 +865,164 @@ async def test_postgres_open_bounds_the_connect_attempt(monkeypatch):
     # An unreachable host must fail fast into the SQLite fallback, never hang
     # the startup path waiting on the OS default timeout.
     assert seen["connect_timeout"] == store_mod.PG_CONNECT_TIMEOUT_S
+
+
+# ---------------------------------------------------------------------------
+# The inventory view (list_items) — what is actually IN the database
+# ---------------------------------------------------------------------------
+
+
+async def test_list_items_pages_newest_ingested_first(store):
+    await add_source(store)
+    await store.upsert_items("src1", [make_item(i) for i in range(5)])
+
+    first, total = await store.list_items(limit=2)
+    second, total_again = await store.list_items(limit=2, offset=2)
+
+    assert total == total_again == 5
+    assert len(first) == len(second) == 2
+    # One batch shares an ingest timestamp, so `id DESC` is what actually
+    # orders it — the newest row of the batch has to come first either way.
+    ids = [row["id"] for row in (*first, *second)]
+    assert ids == sorted(ids, reverse=True)
+    assert set(first[0]) == {
+        "id",
+        "source_id",
+        "state",
+        "permalink",
+        "timestamp_utc",
+        "title",
+        "ingested_at",
+        "updated_at",
+    }
+
+
+async def test_list_items_filters_by_source_and_state(store):
+    await add_source(store, "src1")
+    await add_source(store, "src2")
+    await store.upsert_items("src1", [make_item(i) for i in range(3)])
+    await store.upsert_items("src2", [make_item(10 + i) for i in range(2)])
+    claimed = await store.claim_batch(ItemState.KEYWORD_INDEXED, limit=1)
+    await index_keyword(store, claimed[0])
+
+    only_src2, total_src2 = await store.list_items(source_id="src2")
+    indexed, indexed_total = await store.list_items(state=ItemState.KEYWORD_INDEXED)
+    captured, captured_total = await store.list_items(state="captured")
+
+    assert total_src2 == 2
+    assert {row["source_id"] for row in only_src2} == {"src2"}
+    assert indexed_total == 1 and len(indexed) == 1
+    assert indexed[0]["id"] == claimed[0]["id"]
+    assert captured_total == 4
+
+
+async def test_list_items_excludes_tombstones_unless_asked(store):
+    await add_source(store)
+    await store.upsert_items("src1", [make_item(i) for i in range(3)])
+    await store.upsert_items("src1", [make_item(1, deleted=True)])
+
+    live, live_total = await store.list_items()
+    with_deleted, deleted_total = await store.list_items(include_deleted=True)
+
+    assert live_total == 2
+    assert deleted_total == 3
+    assert len(live) == 2 and len(with_deleted) == 3
+
+
+async def test_list_items_falls_back_to_the_external_id_for_untitled_rows(store):
+    await add_source(store)
+    await store.upsert_items("src1", [make_item(0, title="")])
+
+    rows, _total = await store.list_items()
+
+    assert rows[0]["title"] == "ext-0000"
+
+
+async def test_list_items_rejects_an_unknown_state(store):
+    await add_source(store)
+    with pytest.raises(ValueError, match="unknown item state"):
+        await store.list_items(state="not-a-state")
+
+
+# ---------------------------------------------------------------------------
+# Per-source visibility: the notice column and the persisted sync outcome
+# ---------------------------------------------------------------------------
+
+
+async def test_notice_and_error_are_separate_columns(store):
+    await add_source(store)
+    await store.set_source_status(
+        "src1", last_error="the folder vanished", last_notice="nothing to import"
+    )
+
+    source = await store.get_source("src1")
+    assert source["last_error"] == "the folder vanished"
+    assert source["last_notice"] == "nothing to import"
+
+    # A later healthy sync clears the error without touching the notice.
+    await store.set_source_status("src1", last_error=None)
+    source = await store.get_source("src1")
+    assert source["last_error"] is None
+    assert source["last_notice"] == "nothing to import"
+
+
+async def test_sync_outcome_survives_a_store_reopen(tmp_path):
+    """The job registry is in-memory; the outcome must not be."""
+    db_path = tmp_path / "ultrawiki.db"
+    first = UltraStore(db_path)
+    await add_source(first)
+    await first.record_sync_outcome(
+        "src1",
+        status="done",
+        mode="backfill",
+        finished_at="2026-07-25T09:00:00Z",
+        new=7,
+        changed=2,
+        unchanged=1,
+        tombstoned=3,
+    )
+    await first.close()
+
+    reopened = UltraStore(db_path)
+    try:
+        state = await reopened.get_sync_state("src1")
+    finally:
+        await reopened.close()
+
+    assert state["last_outcome_at"] == "2026-07-25T09:00:00Z"
+    assert state["last_outcome_status"] == "done"
+    assert state["last_outcome_mode"] == "backfill"
+    assert (state["last_new"], state["last_changed"]) == (7, 2)
+    assert (state["last_unchanged"], state["last_tombstoned"]) == (1, 3)
+
+
+async def test_additive_columns_are_added_to_a_pre_existing_database(tmp_path):
+    """A database created before the visibility package must gain the columns.
+
+    The pre-package shape is recreated by DROPping the new columns, which is
+    exactly what an older install's file looks like on disk.
+    """
+    import aiosqlite
+
+    db_path = tmp_path / "ultrawiki.db"
+    seeded = UltraStore(db_path)
+    await add_source(seeded)
+    await seeded.close()
+
+    async with aiosqlite.connect(db_path) as conn:
+        await conn.execute("ALTER TABLE uw_sources DROP COLUMN last_notice")
+        await conn.execute("ALTER TABLE uw_sync_state DROP COLUMN last_new")
+        await conn.commit()
+
+    upgraded = UltraStore(db_path)
+    try:
+        source = await upgraded.get_source("src1")
+        await upgraded.record_sync_outcome(
+            "src1", status="done", mode="backfill", finished_at="2026-07-25T09:00:00Z", new=4
+        )
+        state = await upgraded.get_sync_state("src1")
+    finally:
+        await upgraded.close()
+
+    assert source["last_notice"] is None
+    assert state["last_new"] == 4

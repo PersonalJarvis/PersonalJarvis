@@ -136,7 +136,11 @@ def _activate(env) -> dict:
 
 
 def _approve_and_sync_folder(env) -> tuple[str, str]:
-    """Register + approve + sync a local-folder source; returns (source_id, job_id)."""
+    """Register + approve a local-folder source; returns (source_id, job_id).
+
+    Approving IS the import: the approve answer carries the job id of the full
+    sync it started, so no second call is needed to get data flowing.
+    """
     docs = env.tmp / "docs"
     docs.mkdir(exist_ok=True)
     (docs / "alpha.md").write_text(
@@ -158,11 +162,10 @@ def _approve_and_sync_folder(env) -> tuple[str, str]:
 
     approved = env.client.post(f"/api/ultrawiki/sources/{source_id}/approve")
     assert approved.status_code == 200, approved.text
-    assert approved.json()["consent"] == "approved"
-
-    synced = env.client.post(f"/api/ultrawiki/sources/{source_id}/sync")
-    assert synced.status_code == 201, synced.text
-    return source_id, synced.json()["job_id"]
+    body = approved.json()
+    assert body["source"]["consent"] == "approved"
+    assert body["job_id"], body
+    return source_id, body["job_id"]
 
 
 def _wait_for_job(env, job_id: str, timeout_s: float = 10.0) -> dict:
@@ -654,9 +657,9 @@ def test_cancel_of_a_running_job_succeeds(env, monkeypatch) -> None:
     )
     assert created.status_code == 201, created.text
     source_id = created.json()["id"]
-    env.client.post(f"/api/ultrawiki/sources/{source_id}/approve")
+    # Approving starts the full import itself — that job is the one to cancel.
     job_id = env.client.post(
-        f"/api/ultrawiki/sources/{source_id}/sync"
+        f"/api/ultrawiki/sources/{source_id}/approve"
     ).json()["job_id"]
 
     deadline = time.monotonic() + 5.0
@@ -1086,3 +1089,136 @@ def test_a_dead_model_catalog_degrades_instead_of_500ing(env, monkeypatch) -> No
     body = response.json()
     assert body["models"] == []
     assert "RuntimeError" in body["reason"]
+
+
+# ---------------------------------------------------------------------------
+# Approve = import everything (the core visibility fix)
+# ---------------------------------------------------------------------------
+
+
+def test_approve_answers_with_the_import_it_started(env) -> None:
+    """The approve click used to only flip a flag and leave "Never synced"."""
+    _activate(env)
+    docs = env.tmp / "auto"
+    docs.mkdir(exist_ok=True)
+    (docs / "one.md").write_text("# One\n\nA single note.", encoding="utf-8")
+    source_id = env.client.post(
+        "/api/ultrawiki/sources",
+        json={
+            "connector": "local-folder",
+            "label": "Auto",
+            "config": {"root": str(docs)},
+        },
+    ).json()["id"]
+
+    response = env.client.post(f"/api/ultrawiki/sources/{source_id}/approve")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["source"]["consent"] == "approved"
+    assert body["auto_sync"] is True
+    assert body["job_id"]
+    assert body["detail"]
+    snapshot = _wait_for_job(env, body["job_id"])
+    assert (snapshot["status"], snapshot["new"]) == ("done", 1)
+
+
+def test_approve_with_auto_sync_false_pulls_nothing(env) -> None:
+    _activate(env)
+    response = env.client.post(
+        "/api/ultrawiki/sources/normal-wiki/approve", params={"auto_sync": "false"}
+    )
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["source"]["consent"] == "approved"
+    assert body["job_id"] is None
+    assert body["auto_sync"] is False
+    assert env.client.get("/api/ultrawiki/jobs").json()["total"] == 0
+
+
+def test_status_carries_the_per_source_outcome_after_the_auto_import(env) -> None:
+    _activate(env)
+    source_id, job_id = _approve_and_sync_folder(env)
+    _wait_for_job(env, job_id)
+
+    row = next(
+        source
+        for source in env.client.get("/api/ultrawiki/status").json()["sources"]
+        if source["id"] == source_id
+    )
+
+    assert row["active_job"] is None
+    assert row["last_outcome"]["status"] == "done"
+    assert row["last_outcome"]["new"] == 2
+    assert row["last_outcome"]["finished_at"]
+    assert row["last_notice"] is None
+
+
+# ---------------------------------------------------------------------------
+# The contents view — WHICH items are in the database, not just how many
+# ---------------------------------------------------------------------------
+
+
+def test_items_lists_the_stored_inventory(env) -> None:
+    _activate(env)
+    source_id, job_id = _approve_and_sync_folder(env)
+    _wait_for_job(env, job_id)
+
+    response = env.client.get("/api/ultrawiki/items")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["total"] == 2
+    assert (body["limit"], body["offset"]) == (50, 0)
+    row = body["items"][0]
+    assert row["source_id"] == source_id
+    assert row["state"] == "captured"
+    assert row["permalink"]
+    assert row["ingested_at"] and row["updated_at"]
+    assert {item["title"] for item in body["items"]} == {"alpha", "beta"}
+
+
+def test_items_filter_by_source_and_state(env) -> None:
+    _activate(env)
+    _source_id, job_id = _approve_and_sync_folder(env)
+    _wait_for_job(env, job_id)
+    _drive_pipeline(env)
+
+    distilled = env.client.get(
+        "/api/ultrawiki/items", params={"state": "distilled"}
+    ).json()
+    captured = env.client.get(
+        "/api/ultrawiki/items", params={"state": "captured"}
+    ).json()
+    elsewhere = env.client.get(
+        "/api/ultrawiki/items", params={"source_id": "normal-wiki"}
+    ).json()
+
+    assert distilled["total"] == 2
+    assert captured["total"] == 0
+    assert elsewhere["total"] == 0
+
+
+def test_items_paginate_with_an_honest_total(env) -> None:
+    _activate(env)
+    _source_id, job_id = _approve_and_sync_folder(env)
+    _wait_for_job(env, job_id)
+
+    first = env.client.get("/api/ultrawiki/items", params={"limit": 1}).json()
+    second = env.client.get(
+        "/api/ultrawiki/items", params={"limit": 1, "offset": 1}
+    ).json()
+
+    assert first["total"] == second["total"] == 2  # the total is UNPAGED
+    assert len(first["items"]) == len(second["items"]) == 1
+    assert first["items"][0]["id"] != second["items"][0]["id"]
+
+
+def test_items_reject_an_unknown_state(env) -> None:
+    _activate(env)
+    response = env.client.get(
+        "/api/ultrawiki/items", params={"state": "half-embedded"}
+    )
+    assert response.status_code == 400
+    assert "half-embedded" in response.json()["detail"]

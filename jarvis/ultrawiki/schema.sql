@@ -31,6 +31,11 @@ CREATE TABLE IF NOT EXISTS uw_areas (
     created_at TEXT NOT NULL
 );
 
+-- last_error vs last_notice: an ERROR means the sync failed and the source is
+-- broken until the cause is fixed; a NOTICE means the sync ran fine but had
+-- nothing to import (today: a plugin-bridge integration whose pull adapter is
+-- not built yet). Keeping them apart is what lets the UI colour one red and
+-- the other amber instead of making a healthy source look broken.
 CREATE TABLE IF NOT EXISTS uw_sources (
     id           TEXT PRIMARY KEY,
     connector    TEXT NOT NULL,
@@ -42,16 +47,28 @@ CREATE TABLE IF NOT EXISTS uw_sources (
     enabled      INTEGER NOT NULL DEFAULT 1,
     created_at   TEXT NOT NULL,
     last_sync_at TEXT,
-    last_error   TEXT
+    last_error   TEXT,
+    last_notice  TEXT
 );
 
+-- The last_* outcome block survives restarts, so a card can say "fully
+-- imported: N items, last sync <when>" instead of the ambiguous "Approved /
+-- Never synced" pair. The live job registry is in-memory and empty after a
+-- restart; this is the durable half of the same story.
 CREATE TABLE IF NOT EXISTS uw_sync_state (
     source_id            TEXT PRIMARY KEY
                          REFERENCES uw_sources(id) ON DELETE CASCADE,
     cursor               TEXT,
     backfill_checkpoint  TEXT,
     backfill_complete_at TEXT,
-    last_success_at      TEXT
+    last_success_at      TEXT,
+    last_outcome_at      TEXT,
+    last_outcome_status  TEXT,
+    last_outcome_mode    TEXT,
+    last_new             INTEGER NOT NULL DEFAULT 0,
+    last_changed         INTEGER NOT NULL DEFAULT 0,
+    last_unchanged       INTEGER NOT NULL DEFAULT 0,
+    last_tombstoned      INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS uw_items (

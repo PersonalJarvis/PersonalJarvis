@@ -51,9 +51,11 @@ log = logging.getLogger(__name__)
 
 __all__ = [
     "SYNC_CHUNK_SIZE",
+    "BRIDGE_ADAPTER_PENDING_NOTICE",
     "JOB_ACTIVE_STATUSES",
     "JOB_TERMINAL_STATUSES",
     "PIPELINE_STATES",
+    "SYNC_PHASES",
     "SyncAlreadyRunningError",
     "SyncJob",
     "UltraWikiService",
@@ -70,8 +72,32 @@ PIPELINE_STATES: tuple[str, ...] = (
     "paused",
 )
 
+#: The phases one sync job walks through, in order. Same five-layer drift
+#: discipline as :data:`PIPELINE_STATES`: the TypeScript union in
+#: ``src/lib/ultrawikiApi.ts`` and the progress labels derive from THIS list.
+SYNC_PHASES: tuple[str, ...] = (
+    "queued",
+    "reading",
+    "importing",
+    "reconciling",
+    "finished",
+)
+
 #: Items per ``upsert_items`` transaction / sync-state checkpoint.
 SYNC_CHUNK_SIZE = 200
+
+#: What a plugin-bridge source is told when its integration has no pull
+#: adapter yet: the sync really ran, it really imported nothing, and that is
+#: not the user's fault or a broken credential.
+BRIDGE_ADAPTER_PENDING_NOTICE = (
+    "This integration is connected, but its pull adapter is not built yet - "
+    "nothing was imported. The source stays approved and will import "
+    "automatically once the adapter ships."
+)
+
+#: The connector id of the generic integration bridge (its "no adapter yet"
+#: state is the only one that produces the notice above).
+_BRIDGE_CONNECTOR_ID = "plugin-bridge"
 
 #: The default local sources :meth:`UltraWikiService.activate` registers —
 #: source id == connector id for these singletons.
@@ -93,6 +119,31 @@ def _iso_now() -> str:
 
 def _counts_dict(counts: PipelineCounts) -> dict[str, int]:
     return {**dataclasses.asdict(counts), "total": counts.total}
+
+
+def _last_outcome_of(sync_state: Any) -> dict[str, Any] | None:
+    """What the last FINISHED sync of a source did, or ``None``.
+
+    ``None`` means "no sync has ever finished for this source" — deliberately
+    not a zero-filled block, which would be indistinguishable from an import
+    that ran and found nothing. The live job registry is in-memory and empty
+    after a restart, so this persisted block is what keeps a card from falling
+    back to "Approved / Never synced" for a fully imported source.
+    """
+    if not isinstance(sync_state, dict):
+        return None
+    finished_at = sync_state.get("last_outcome_at")
+    if not finished_at:
+        return None
+    return {
+        "finished_at": str(finished_at),
+        "status": str(sync_state.get("last_outcome_status") or ""),
+        "mode": str(sync_state.get("last_outcome_mode") or ""),
+        "new": int(sync_state.get("last_new") or 0),
+        "changed": int(sync_state.get("last_changed") or 0),
+        "unchanged": int(sync_state.get("last_unchanged") or 0),
+        "tombstoned": int(sync_state.get("last_tombstoned") or 0),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -132,6 +183,9 @@ class SyncJob:
     source_id: str
     mode: str  # "backfill" | "incremental"
     status: str = "queued"
+    #: One of :data:`SYNC_PHASES` — WHAT the job is doing, where ``status``
+    #: says whether it is doing anything at all.
+    phase: str = "queued"
     started_at: float = field(default_factory=time.time)
     ended_at: float | None = None
     chunks: int = 0
@@ -143,6 +197,16 @@ class SyncJob:
     #: The asyncio.Task while the job is active; cleared when it ends.
     task: Any = None
 
+    @property
+    def items(self) -> int:
+        """Items pulled from the source so far.
+
+        Tombstones are excluded: nothing was PULLED for a row that only
+        disappeared at the origin, so counting them would inflate the live
+        "imported N so far" number the card shows.
+        """
+        return self.new + self.changed + self.unchanged
+
     def snapshot(self) -> dict[str, Any]:
         """JSON-safe public view (never exposes the task)."""
         return {
@@ -150,9 +214,11 @@ class SyncJob:
             "source_id": self.source_id,
             "mode": self.mode,
             "status": self.status,
+            "phase": self.phase,
             "started_at": self.started_at,
             "ended_at": self.ended_at,
             "chunks": self.chunks,
+            "items": self.items,
             "new": self.new,
             "changed": self.changed,
             "unchanged": self.unchanged,
@@ -566,11 +632,27 @@ class UltraWikiService:
 
     @staticmethod
     def _source_summary(row: dict[str, Any]) -> dict[str, Any]:
+        """One source's card payload — including whether anything is happening.
+
+        The three fields that make the difference between "Approved / Never
+        synced" and a card a user can read: ``active_job`` (a run in flight,
+        with its phase and the items pulled so far), ``last_outcome`` (what the
+        last finished run did, restart-proof), and ``last_notice`` (it ran, it
+        worked, it had nothing to import — distinct from ``last_error``).
+        """
         counts = row.get("counts")
+        source_id = str(row.get("id") or "")
+        active = _active_job_for(source_id)
+        config = row.get("config") or {}
         return {
             "id": row.get("id"),
             "connector": row.get("connector"),
             "label": row.get("label"),
+            # The integration behind a plugin-bridge source, so the card can
+            # name it instead of showing an opaque generated source id.
+            "integration_id": str(config.get("integration_id") or "")
+            if isinstance(config, dict)
+            else "",
             "consent": row.get("consent"),
             "enabled": row.get("enabled"),
             "areas": row.get("areas", []),
@@ -578,8 +660,11 @@ class UltraWikiService:
             if isinstance(counts, PipelineCounts)
             else counts,
             "sync_state": row.get("sync_state"),
+            "active_job": active.snapshot() if active is not None else None,
+            "last_outcome": _last_outcome_of(row.get("sync_state")),
             "last_sync_at": row.get("last_sync_at"),
             "last_error": row.get("last_error"),
+            "last_notice": row.get("last_notice"),
         }
 
     def _embedding_slot_status(self) -> dict[str, Any]:
@@ -800,7 +885,7 @@ class UltraWikiService:
         await store.upsert_source(
             source_id,
             connector=connector_id,
-            label=label,
+            label=self._resolve_label(connector_id, label, config),
             config=dict(config or {}),
             areas=list(area_ids or []),
         )
@@ -808,8 +893,118 @@ class UltraWikiService:
         assert source is not None
         return source
 
-    async def approve_source(self, source_id: str) -> dict[str, Any]:
-        return await self._set_consent(source_id, ConsentState.APPROVED)
+    @staticmethod
+    def _resolve_label(
+        connector_id: str, label: str, config: dict[str, Any] | None
+    ) -> str:
+        """The name the card carries — the INTEGRATION's, for bridge sources.
+
+        A plugin-bridge source registered under the bridge's own generic name
+        produced a list of identical "Connected Integrations" cards nobody
+        could tell apart. When the caller supplied no real name, the label of
+        the chosen candidate ("GitHub", "Notion", ...) is used instead. The
+        lookup is best-effort: a broken registry keeps the caller's label.
+        """
+        chosen = str(label or "").strip()
+        if connector_id != _BRIDGE_CONNECTOR_ID:
+            return chosen
+        integration_id = str((config or {}).get("integration_id") or "").strip()
+        if not integration_id:
+            return chosen
+        generic = {
+            "",
+            _BRIDGE_CONNECTOR_ID,
+            integration_id.lower(),
+            "connected integration",
+            "connected integrations",
+        }
+        if chosen.lower() not in generic:
+            return chosen
+        try:
+            from jarvis.ultrawiki.connectors import (  # noqa: PLC0415 — lazy (AP-26)
+                plugin_bridge,
+            )
+
+            candidate = next(
+                (
+                    row
+                    for row in plugin_bridge.list_candidates()
+                    if row.get("id") == integration_id
+                ),
+                None,
+            )
+        except Exception:  # noqa: BLE001 — naming is decoration, never a failure
+            log.debug("bridge label lookup failed", exc_info=True)
+            return chosen
+        if candidate is None:
+            return chosen
+        return str(candidate.get("label") or "").strip() or chosen
+
+    async def approve_source(
+        self, source_id: str, *, auto_sync: bool = True
+    ) -> dict[str, Any]:
+        """Grant consent and, by default, import everything the source holds.
+
+        Approving used to only flip a flag: the card said "Approved", stayed on
+        "Never synced", and the user had no way to tell that a second, separate
+        click was still owed. Consent is the gate, so the moment it is granted
+        the natural next step is the FULL import — started here as a normal
+        sync job the user can watch and cancel. ``auto_sync=False`` keeps the
+        old consent-only behaviour for callers that drive their own sync.
+
+        Returns ``{"source", "job_id", "auto_sync", "detail"}``; ``job_id`` is
+        ``None`` whenever no import could be started, and ``detail`` says why
+        in plain English. A refused import NEVER fails the approval — consent
+        was granted and must stay granted.
+        """
+        source = await self._set_consent(source_id, ConsentState.APPROVED)
+        job_id: str | None = None
+        detail = ""
+        if auto_sync:
+            job_id, detail = await self._start_import_after_approval(source)
+        return {
+            "source": source,
+            "job_id": job_id,
+            "auto_sync": bool(auto_sync),
+            "detail": detail,
+        }
+
+    async def _start_import_after_approval(
+        self, source: dict[str, Any]
+    ) -> tuple[str | None, str]:
+        """``(job_id, honest English detail)`` — never raises."""
+        source_id = str(source.get("id") or "")
+        active = _active_job_for(source_id)
+        if active is not None:
+            return active.job_id, (
+                "An import for this source is already running - it keeps going."
+            )
+        try:
+            connector = self._build_connector(str(source.get("connector") or ""))
+        except ValueError as exc:
+            return None, f"Consent was granted, but no import could start: {exc}"
+        if not bool(
+            getattr(getattr(connector, "capabilities", None), "backfill", False)
+        ):
+            return None, (
+                "Consent was granted. This source type cannot read its whole "
+                "history, so nothing was imported automatically."
+            )
+        try:
+            job_id = await self.start_sync(source_id, full=True)
+        except SyncAlreadyRunningError as exc:
+            return exc.job_id, (
+                "An import for this source is already running - it keeps going."
+            )
+        except ValueError as exc:
+            # Mode off, source disabled, connector missing — all honest
+            # refusals the user can fix; the consent itself stands.
+            return None, f"Consent was granted, but no import could start: {exc}"
+        return job_id, (
+            "Importing everything this source holds into your private "
+            "knowledge store. Everything is COPIED - nothing is changed or "
+            "removed at the source."
+        )
 
     async def revoke_source(self, source_id: str) -> dict[str, Any]:
         return await self._set_consent(source_id, ConsentState.REVOKED)
@@ -936,6 +1131,7 @@ class UltraWikiService:
         source_id = job.source_id
         ctx = self._connector_context(source)
         job.status = "running"
+        job.phase = "reading"
         checkpoint = sync_state.get("backfill_checkpoint")
         # Delete-reconcile needs the COMPLETE yielded-id set, which only a
         # backfill running from the very beginning can provide.
@@ -969,6 +1165,7 @@ class UltraWikiService:
                     getattr(getattr(connector, "capabilities", None), "deletes", False)
                 )
                 if full_backfill and deletes_capable:
+                    job.phase = "reconciling"
                     job.tombstoned += await store.reconcile_deletes(
                         source_id, yielded_ids
                     )
@@ -986,10 +1183,17 @@ class UltraWikiService:
             else:
                 await store.set_sync_state(source_id, last_success_at=now)
             await store.set_source_status(
-                source_id, last_sync_at=now, last_error=None
+                source_id,
+                last_sync_at=now,
+                last_error=None,
+                last_notice=self._import_notice_for(source, job),
             )
+            await self._record_outcome(store, job, "done", now)
             job.status = "done"
         except asyncio.CancelledError:
+            # No outcome is recorded here: a cancelled run has no outcome to
+            # report, and shutdown cancels every job right before the store
+            # closes — writing on this path would race that close.
             job.status = "cancelled"
             raise
         except Exception as exc:  # noqa: BLE001 — the job records, never crashes callers
@@ -1000,11 +1204,61 @@ class UltraWikiService:
             job.error = f"{type(exc).__name__}: {exc}"
             try:
                 await store.set_source_status(source_id, last_error=job.error)
+                await self._record_outcome(store, job, "failed", _iso_now())
             except Exception:  # noqa: BLE001 — best-effort bookkeeping
                 log.debug("sync error bookkeeping failed", exc_info=True)
         finally:
             job.ended_at = time.time()
+            job.phase = "finished"
             job.task = None
+
+    @staticmethod
+    async def _record_outcome(
+        store: Any, job: SyncJob, status: str, finished_at: str
+    ) -> None:
+        """Persist the finished job's totals; a failure here never fails the job."""
+        try:
+            await store.record_sync_outcome(
+                job.source_id,
+                status=status,
+                mode=job.mode,
+                finished_at=finished_at,
+                new=job.new,
+                changed=job.changed,
+                unchanged=job.unchanged,
+                tombstoned=job.tombstoned,
+            )
+        except Exception:  # noqa: BLE001 — bookkeeping, never the work itself
+            log.debug("sync outcome bookkeeping failed", exc_info=True)
+
+    @staticmethod
+    def _import_notice_for(source: dict[str, Any], job: SyncJob) -> str | None:
+        """The amber "it worked, there was nothing to take" line, or ``None``.
+
+        A plugin-bridge source whose integration has no pull adapter yet syncs
+        successfully and imports zero items. Until now that left only a log
+        line, so the card showed a green "Approved" source that never grew and
+        gave the user nothing to act on. ``None`` CLEARS any previous notice —
+        the moment an adapter ships and items arrive, the line disappears.
+        """
+        if job.items > 0:
+            return None
+        if str(source.get("connector") or "") != _BRIDGE_CONNECTOR_ID:
+            return None
+        integration_id = str((source.get("config") or {}).get("integration_id") or "")
+        if not integration_id:
+            return None
+        try:
+            from jarvis.ultrawiki.connectors import (  # noqa: PLC0415 — lazy (AP-26)
+                plugin_bridge,
+            )
+
+            if plugin_bridge.has_pull_adapter(integration_id):
+                return None
+        except Exception:  # noqa: BLE001 — an unreadable registry states nothing
+            log.debug("pull-adapter probe failed", exc_info=True)
+            return None
+        return BRIDGE_ADAPTER_PENDING_NOTICE
 
     async def _flush_chunk(
         self,
@@ -1015,6 +1269,7 @@ class UltraWikiService:
     ) -> int | None:
         store = self._require_store()
         counts = await store.upsert_items(source_id, items)
+        job.phase = "importing"
         job.chunks += 1
         job.new += counts.new
         job.changed += counts.changed

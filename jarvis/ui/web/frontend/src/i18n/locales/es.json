@@ -2730,7 +2730,8 @@
       "loading": "Cargando el estado de UltraWiki…",
       "status_unavailable": "El estado de UltraWiki no está disponible — ¿está funcionando el backend?",
       "embedding_dead": "La ranura de embeddings no está lista ({0}). Las respuestas por palabras clave y por fecha siguen funcionando; la búsqueda semántica queda en pausa hasta arreglar la ranura.",
-      "open_settings": "Abrir ajustes"
+      "open_settings": "Abrir ajustes",
+      "tab_contents": "Contenido"
     },
     "progress": {
       "title": "Canal de importación",
@@ -2786,7 +2787,25 @@
       "connector_local_folder": "Carpeta local",
       "connector_conversations": "Conversaciones con {name}",
       "connector_normal_wiki": "Wiki integrado",
-      "connector_plugin_bridge": "Integración conectada (plugins / MCP)"
+      "connector_plugin_bridge": "Integración conectada (plugins / MCP)",
+      "approve_import": "Aprobar e importar todo",
+      "import_started": "Importación iniciada: se está copiando todo lo que contiene esta fuente.",
+      "importing": "Importando",
+      "import_items": "{0} elementos importados hasta ahora",
+      "cancel_import": "Cancelar la importación",
+      "copy_reassurance": "Todo se COPIA en tu almacén de conocimiento privado. En la fuente no se cambia, mueve ni elimina nada.",
+      "fully_imported": "Importado por completo: {0} elementos",
+      "nothing_imported_yet": "Todavía no se ha importado nada",
+      "last_sync_relative": "última sincronización {0}",
+      "error_label": "La sincronización falló",
+      "notice_label": "Aviso",
+      "bridge_via": "a través de plugins / puente MCP",
+      "integration": "Integración: {0}",
+      "phase_queued": "Esperando para empezar",
+      "phase_reading": "Leyendo la fuente",
+      "phase_importing": "Importando",
+      "phase_reconciling": "Comprobando elementos eliminados",
+      "phase_finished": "Finalizando"
     },
     "ask": {
       "placeholder": "Pregunta a tu conocimiento…",
@@ -2917,6 +2936,31 @@
       "link": "Conectar este proyecto",
       "already_linked": "Ya hay una conexión de Supabase guardada.",
       "save_anyway": "Guardar de todos modos"
+    },
+    "contents": {
+      "title": "Contenido almacenado",
+      "total": "{0} elementos almacenados",
+      "filter_source": "Fuente",
+      "filter_state": "Etapa",
+      "all_sources": "Todas las fuentes",
+      "all_states": "Todas las etapas",
+      "col_title": "Elemento",
+      "col_source": "Fuente",
+      "col_state": "Etapa",
+      "col_loaded": "Cargado",
+      "loaded_ago": "{0}",
+      "showing": "Mostrando {0} de {1}",
+      "load_more": "Cargar más",
+      "loading": "Cargando el contenido…",
+      "load_failed": "No se pudo cargar el contenido: {0}",
+      "empty": "Todavía no hay nada almacenado. Aprueba una fuente y se importará todo lo que contenga.",
+      "open_sources": "Abrir Fuentes"
+    },
+    "time": {
+      "just_now": "justo ahora",
+      "minutes": "hace {0} min",
+      "hours": "hace {0} h",
+      "days": "hace {0} d"
     }
   }
 }

@@ -268,6 +268,38 @@ def _placeholders(count: int) -> str:
     return ",".join("?" * count)
 
 
+#: Projection of :meth:`UltraStore.list_items` — the inventory view's row.
+#: An item whose connector supplied no title is listed under its external id
+#: rather than as a blank line the user cannot identify.
+_ITEM_LIST_COLUMNS = (
+    "id, source_id, state, permalink, timestamp_utc,"
+    " COALESCE(NULLIF(title, ''), external_id) AS title,"
+    " created_at AS ingested_at, updated_at"
+)
+
+
+def _item_filter_sql(
+    *,
+    source_id: str | None,
+    state: str | None,
+    include_deleted: bool,
+    mark: str = "?",
+) -> tuple[str, list[Any]]:
+    """``(WHERE clause, params)`` for the item inventory, shared by both
+    backends (``mark`` is the driver's placeholder style)."""
+    clauses: list[str] = []
+    params: list[Any] = []
+    if not include_deleted:
+        clauses.append("deleted_at IS NULL")
+    if source_id:
+        clauses.append(f"source_id = {mark}")
+        params.append(source_id)
+    if state:
+        clauses.append(f"state = {mark}")
+        params.append(state)
+    return (f" WHERE {' AND '.join(clauses)}" if clauses else ""), params
+
+
 def _counts_from_pairs(pairs: Iterable[tuple[str, int]]) -> PipelineCounts:
     by_state = {state.value: 0 for state in ItemState}
     for state_value, count in pairs:
@@ -277,6 +309,34 @@ def _counts_from_pairs(pairs: Iterable[tuple[str, int]]) -> PipelineCounts:
 
 
 _UNSET: Any = object()
+
+#: Columns added AFTER the first shipped schema. They are declared in
+#: ``schema.sql`` (and in :meth:`PostgresStore.ddl_statements`) so a fresh
+#: database gets them from the CREATE, and appended here for databases that
+#: already exist. SQLite has no ``ADD COLUMN IF NOT EXISTS``, so the existing
+#: columns are read from ``PRAGMA table_info`` first — the pattern of
+#: ``jarvis/missions/event_store.py``.
+_ADDITIVE_COLUMNS: tuple[tuple[str, str, str], ...] = (
+    ("uw_sources", "last_notice", "TEXT"),
+    ("uw_sync_state", "last_outcome_at", "TEXT"),
+    ("uw_sync_state", "last_outcome_status", "TEXT"),
+    ("uw_sync_state", "last_outcome_mode", "TEXT"),
+    ("uw_sync_state", "last_new", "INTEGER NOT NULL DEFAULT 0"),
+    ("uw_sync_state", "last_changed", "INTEGER NOT NULL DEFAULT 0"),
+    ("uw_sync_state", "last_unchanged", "INTEGER NOT NULL DEFAULT 0"),
+    ("uw_sync_state", "last_tombstoned", "INTEGER NOT NULL DEFAULT 0"),
+)
+
+#: The persisted per-source outcome of the last finished sync.
+_OUTCOME_COLUMNS: tuple[str, ...] = (
+    "last_outcome_at",
+    "last_outcome_status",
+    "last_outcome_mode",
+    "last_new",
+    "last_changed",
+    "last_unchanged",
+    "last_tombstoned",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -322,7 +382,26 @@ class UltraStore:
             )
 
             await run_migrations(conn, directory=_MIGRATIONS_DIR)
+            await self._apply_column_migrations(conn)
             self._conn = conn
+
+    @staticmethod
+    async def _apply_column_migrations(conn: aiosqlite.Connection) -> None:
+        """Append the :data:`_ADDITIVE_COLUMNS` an older database still lacks."""
+        known: dict[str, set[str]] = {}
+        for table, column, declaration in _ADDITIVE_COLUMNS:
+            if table not in known:
+                cur = await conn.execute(f"PRAGMA table_info({table})")  # noqa: S608 — table names are code-owned literals
+                rows = await cur.fetchall()
+                await cur.close()
+                known[table] = {str(row[1]) for row in rows}
+            if column in known[table]:
+                continue
+            await conn.execute(
+                f"ALTER TABLE {table} ADD COLUMN {column} {declaration}"  # noqa: S608 — code-owned literals
+            )
+            known[table].add(column)
+            log.info("UltraStore migration applied — added %s.%s", table, column)
 
     async def close(self) -> None:
         async with self._lock:
@@ -434,6 +513,7 @@ class UltraStore:
             "created_at": row["created_at"],
             "last_sync_at": row["last_sync_at"],
             "last_error": row["last_error"],
+            "last_notice": row["last_notice"],
         }
 
     async def get_source(self, source_id: str) -> dict[str, Any] | None:
@@ -490,8 +570,16 @@ class UltraStore:
         *,
         last_sync_at: str | None = _UNSET,
         last_error: str | None = _UNSET,
+        last_notice: str | None = _UNSET,
     ) -> None:
-        """Partial update of the per-source sync status columns."""
+        """Partial update of the per-source sync status columns.
+
+        ``last_error`` and ``last_notice`` are deliberately separate: an error
+        means the sync failed, a notice means it ran fine and had nothing to
+        import. Writing a notice into the error column would make a healthy
+        source look broken (and the next successful sync would silently erase
+        it along with the real errors).
+        """
         sets: list[str] = []
         params: list[Any] = []
         if last_sync_at is not _UNSET:
@@ -500,6 +588,9 @@ class UltraStore:
         if last_error is not _UNSET:
             sets.append("last_error = ?")
             params.append(last_error)
+        if last_notice is not _UNSET:
+            sets.append("last_notice = ?")
+            params.append(last_notice)
         if not sets:
             return
         params.append(source_id)
@@ -708,6 +799,42 @@ class UltraStore:
             (source_id, external_id),
         )
         return None if row is None else self._item_row_to_dict(row)
+
+    async def list_items(
+        self,
+        *,
+        source_id: str | None = None,
+        state: ItemState | str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        include_deleted: bool = False,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """One page of the stored inventory + the unpaged total.
+
+        Newest-INGESTED first (``created_at``), not newest-authored: the
+        question this answers is "what did the last import actually put in
+        here", and a decade-old note imported a minute ago belongs at the top.
+        Tombstoned rows stay out unless ``include_deleted`` asks for them —
+        they are no longer part of what the store answers from.
+        """
+        coerced = _coerce_state(state).value if state else None
+        where, params = _item_filter_sql(
+            source_id=source_id, state=coerced, include_deleted=include_deleted
+        )
+        conn = await self._ensure_open()
+        total_row = await self._fetchone(
+            conn,
+            f"SELECT count(*) AS n FROM uw_items{where}",  # noqa: S608 — placeholders only
+            params,
+        )
+        total = int(total_row["n"]) if total_row is not None else 0
+        rows = await self._fetchall(
+            conn,
+            f"SELECT {_ITEM_LIST_COLUMNS} FROM uw_items{where}"  # noqa: S608 — code-owned projection + placeholders
+            " ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+            [*params, max(0, int(limit)), max(0, int(offset))],
+        )
+        return [dict(row) for row in rows], total
 
     async def claim_batch(
         self,
@@ -1425,6 +1552,47 @@ class UltraStore:
                     [*updates.values(), source_id],
                 )
 
+    async def record_sync_outcome(
+        self,
+        source_id: str,
+        *,
+        status: str,
+        mode: str,
+        finished_at: str,
+        new: int = 0,
+        changed: int = 0,
+        unchanged: int = 0,
+        tombstoned: int = 0,
+    ) -> None:
+        """Persist what the last finished sync of *source_id* actually did.
+
+        The live job registry is in-memory and empty after a restart, so
+        without this the card falls back to "Approved / Never synced" for a
+        source that holds thousands of imported items. Written as one block —
+        a half-written outcome would be worse than none.
+        """
+        async with self._txn() as conn:
+            await conn.execute(
+                "INSERT OR IGNORE INTO uw_sync_state (source_id) VALUES (?)",
+                (source_id,),
+            )
+            await conn.execute(
+                "UPDATE uw_sync_state SET last_outcome_at = ?,"
+                " last_outcome_status = ?, last_outcome_mode = ?, last_new = ?,"
+                " last_changed = ?, last_unchanged = ?, last_tombstoned = ?"
+                " WHERE source_id = ?",
+                (
+                    finished_at,
+                    status,
+                    mode,
+                    int(new),
+                    int(changed),
+                    int(unchanged),
+                    int(tombstoned),
+                    source_id,
+                ),
+            )
+
     # -- areas ---------------------------------------------------------------
 
     async def upsert_area(
@@ -1571,12 +1739,26 @@ class PostgresStore:
             " consent TEXT NOT NULL DEFAULT 'pending'"
             f" CHECK (consent IN ({consents})),"
             " enabled BOOLEAN NOT NULL DEFAULT TRUE,"
-            " created_at TEXT NOT NULL, last_sync_at TEXT, last_error TEXT)",
+            " created_at TEXT NOT NULL, last_sync_at TEXT, last_error TEXT,"
+            " last_notice TEXT)",
             "CREATE TABLE IF NOT EXISTS uw_sync_state ("
             " source_id TEXT PRIMARY KEY"
             "  REFERENCES uw_sources(id) ON DELETE CASCADE,"
             " cursor TEXT, backfill_checkpoint TEXT,"
-            " backfill_complete_at TEXT, last_success_at TEXT)",
+            " backfill_complete_at TEXT, last_success_at TEXT,"
+            " last_outcome_at TEXT, last_outcome_status TEXT,"
+            " last_outcome_mode TEXT,"
+            " last_new INTEGER NOT NULL DEFAULT 0,"
+            " last_changed INTEGER NOT NULL DEFAULT 0,"
+            " last_unchanged INTEGER NOT NULL DEFAULT 0,"
+            " last_tombstoned INTEGER NOT NULL DEFAULT 0)",
+            # The same additive columns for databases created before the
+            # visibility package. Postgres HAS `ADD COLUMN IF NOT EXISTS`, so
+            # the SQLite pragma dance is unnecessary here.
+            *(
+                f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS {column} {declaration}"
+                for table, column, declaration in _ADDITIVE_COLUMNS
+            ),
             "CREATE TABLE IF NOT EXISTS uw_items ("
             " id BIGSERIAL PRIMARY KEY,"
             " source_id TEXT NOT NULL REFERENCES uw_sources(id) ON DELETE CASCADE,"
@@ -1773,6 +1955,7 @@ class PostgresStore:
             "created_at": row["created_at"],
             "last_sync_at": row["last_sync_at"],
             "last_error": row["last_error"],
+            "last_notice": row.get("last_notice"),
         }
 
     async def get_source(self, source_id: str) -> dict[str, Any] | None:
@@ -1828,6 +2011,7 @@ class PostgresStore:
         *,
         last_sync_at: str | None = _UNSET,
         last_error: str | None = _UNSET,
+        last_notice: str | None = _UNSET,
     ) -> None:
         conn = await self._ensure_open()
         if last_sync_at is not _UNSET:
@@ -1839,6 +2023,11 @@ class PostgresStore:
             await conn.execute(
                 "UPDATE uw_sources SET last_error = %s WHERE id = %s",
                 (last_error, source_id),
+            )
+        if last_notice is not _UNSET:
+            await conn.execute(
+                "UPDATE uw_sources SET last_notice = %s WHERE id = %s",
+                (last_notice, source_id),
             )
 
     async def delete_source(self, source_id: str, *, purge: bool) -> None:
@@ -2006,6 +2195,38 @@ class PostgresStore:
             (source_id, external_id),
         )
         return None if row is None else self._item_row_to_dict(row)
+
+    async def list_items(
+        self,
+        *,
+        source_id: str | None = None,
+        state: ItemState | str | None = None,
+        limit: int = 50,
+        offset: int = 0,
+        include_deleted: bool = False,
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Postgres twin of the SQLite inventory page (same ordering + total)."""
+        coerced = _coerce_state(state).value if state else None
+        where, params = _item_filter_sql(
+            source_id=source_id,
+            state=coerced,
+            include_deleted=include_deleted,
+            mark="%s",
+        )
+        conn = await self._ensure_open()
+        total_row = await self._fetchone(
+            conn,
+            f"SELECT count(*) AS n FROM uw_items{where}",  # noqa: S608 — placeholders only
+            params,
+        )
+        total = int(total_row["n"]) if total_row is not None else 0
+        rows = await self._fetchall(
+            conn,
+            f"SELECT {_ITEM_LIST_COLUMNS} FROM uw_items{where}"  # noqa: S608 — code-owned projection + placeholders
+            " ORDER BY created_at DESC, id DESC LIMIT %s OFFSET %s",
+            [*params, max(0, int(limit)), max(0, int(offset))],
+        )
+        return [dict(row) for row in rows], total
 
     async def claim_batch(
         self,
@@ -2590,6 +2811,42 @@ class PostgresStore:
                     f'UPDATE uw_sync_state SET "{name}" = %s WHERE source_id = %s',  # noqa: S608 — column name from a code-owned literal dict
                     (value, source_id),
                 )
+
+    async def record_sync_outcome(
+        self,
+        source_id: str,
+        *,
+        status: str,
+        mode: str,
+        finished_at: str,
+        new: int = 0,
+        changed: int = 0,
+        unchanged: int = 0,
+        tombstoned: int = 0,
+    ) -> None:
+        """Postgres twin of the SQLite outcome write (same one-block contract)."""
+        async with self._txn() as conn:
+            await conn.execute(
+                "INSERT INTO uw_sync_state (source_id) VALUES (%s)"
+                " ON CONFLICT (source_id) DO NOTHING",
+                (source_id,),
+            )
+            await conn.execute(
+                "UPDATE uw_sync_state SET last_outcome_at = %s,"
+                " last_outcome_status = %s, last_outcome_mode = %s, last_new = %s,"
+                " last_changed = %s, last_unchanged = %s, last_tombstoned = %s"
+                " WHERE source_id = %s",
+                (
+                    finished_at,
+                    status,
+                    mode,
+                    int(new),
+                    int(changed),
+                    int(unchanged),
+                    int(tombstoned),
+                    source_id,
+                ),
+            )
 
     async def upsert_area(
         self, area_id: str, name: str, *, is_default: bool = False

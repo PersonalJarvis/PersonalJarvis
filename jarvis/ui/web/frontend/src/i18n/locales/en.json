@@ -2731,7 +2731,8 @@
       "loading": "Loading UltraWiki status…",
       "status_unavailable": "UltraWiki status is unavailable — is the backend running?",
       "embedding_dead": "The embedding slot is not ready ({0}). Keyword and time-based answers still work; semantic search is paused until the slot is fixed.",
-      "open_settings": "Open settings"
+      "open_settings": "Open settings",
+      "tab_contents": "Contents"
     },
     "progress": {
       "title": "Import pipeline",
@@ -2787,7 +2788,25 @@
       "connector_local_folder": "Local folder",
       "connector_conversations": "Conversations with {name}",
       "connector_normal_wiki": "Built-in wiki",
-      "connector_plugin_bridge": "Connected integration (plugins / MCP)"
+      "connector_plugin_bridge": "Connected integration (plugins / MCP)",
+      "approve_import": "Approve & import everything",
+      "import_started": "Import started - everything this source holds is being copied in.",
+      "importing": "Importing",
+      "import_items": "{0} items imported so far",
+      "cancel_import": "Cancel import",
+      "copy_reassurance": "Everything is COPIED into your private knowledge store. Nothing is changed, moved, or deleted at the source.",
+      "fully_imported": "Fully imported: {0} items",
+      "nothing_imported_yet": "Nothing imported yet",
+      "last_sync_relative": "last sync {0}",
+      "error_label": "Sync failed",
+      "notice_label": "Heads-up",
+      "bridge_via": "via plugins / MCP bridge",
+      "integration": "Integration: {0}",
+      "phase_queued": "Waiting to start",
+      "phase_reading": "Reading the source",
+      "phase_importing": "Importing",
+      "phase_reconciling": "Checking for removed items",
+      "phase_finished": "Finishing up"
     },
     "ask": {
       "placeholder": "Ask your knowledge…",
@@ -2918,6 +2937,31 @@
       "link": "Connect this project",
       "already_linked": "A Supabase connection is already saved.",
       "save_anyway": "Save anyway"
+    },
+    "contents": {
+      "title": "Stored contents",
+      "total": "{0} items stored",
+      "filter_source": "Source",
+      "filter_state": "Stage",
+      "all_sources": "All sources",
+      "all_states": "All stages",
+      "col_title": "Item",
+      "col_source": "Source",
+      "col_state": "Stage",
+      "col_loaded": "Loaded",
+      "loaded_ago": "{0}",
+      "showing": "Showing {0} of {1}",
+      "load_more": "Load more",
+      "loading": "Loading contents…",
+      "load_failed": "Could not load the contents: {0}",
+      "empty": "Nothing is stored yet. Approve a source and it imports everything it holds.",
+      "open_sources": "Open Sources"
+    },
+    "time": {
+      "just_now": "just now",
+      "minutes": "{0} min ago",
+      "hours": "{0} h ago",
+      "days": "{0} d ago"
     }
   }
 }

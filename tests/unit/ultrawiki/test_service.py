@@ -251,8 +251,9 @@ async def test_approved_sync_ingests_with_checkpoints_and_cursor(service, monkey
 
     source = await service.add_source("fake-conn", "Fake Source")
     source_id = source["id"]
-    approved = await service.approve_source(source_id)
-    assert approved["consent"] == "approved"
+    approved = await service.approve_source(source_id, auto_sync=False)
+    assert approved["source"]["consent"] == "approved"
+    assert approved["job_id"] is None  # auto_sync=False imports nothing
 
     job_id = await service.start_sync(source_id)
     snap = await wait_for_job(service, job_id)
@@ -303,7 +304,7 @@ async def test_cancel_job_mid_stream_stops_the_sync(service, monkeypatch):
     )
 
     source = await service.add_source("blocking-conn", "Blocked Source")
-    await service.approve_source(source["id"])
+    await service.approve_source(source["id"], auto_sync=False)
     job_id = await service.start_sync(source["id"])
 
     await asyncio.wait_for(reached.wait(), timeout=5.0)
@@ -336,7 +337,7 @@ async def test_shutdown_leaves_no_stray_tasks(service, monkeypatch):
     assert pipeline_task is not None and not pipeline_task.done()
 
     source = await service.add_source("blocking-conn", "Blocked Source")
-    await service.approve_source(source["id"])
+    await service.approve_source(source["id"], auto_sync=False)
     job_id = await service.start_sync(source["id"])
     await asyncio.wait_for(reached.wait(), timeout=5.0)
     sync_task = service._sync_tasks[job_id]
@@ -379,7 +380,7 @@ async def test_export_style_source_reingests_on_every_backfill(service, monkeypa
         {"export-conn": lambda: ExportFileConnector(make_items(5), calls)},
     )
     source = await service.add_source("export-conn", "Export File")
-    await service.approve_source(source["id"])
+    await service.approve_source(source["id"], auto_sync=False)
 
     first = await wait_for_job(service, await service.start_sync(source["id"]))
     assert (first["mode"], first["new"]) == ("backfill", 5)
@@ -402,7 +403,7 @@ async def test_full_refresh_resets_the_cursor_and_reconciles_deletes(
 
     source = await service.add_source("fake-conn", "Fake Source")
     source_id = source["id"]
-    await service.approve_source(source_id)
+    await service.approve_source(source_id, auto_sync=False)
     await wait_for_job(service, await service.start_sync(source_id))
     store = service._require_store()
     assert (await store.counts_for_source(source_id)).total == 3
@@ -441,7 +442,7 @@ async def test_second_sync_of_one_source_is_refused_with_the_active_job(
         {"blocking-conn": lambda: BlockingConnector(make_items(3), gate, reached)},
     )
     source = await service.add_source("blocking-conn", "Blocked Source")
-    await service.approve_source(source["id"])
+    await service.approve_source(source["id"], auto_sync=False)
     job_id = await service.start_sync(source["id"])
     await asyncio.wait_for(reached.wait(), timeout=5.0)
 
@@ -476,7 +477,7 @@ async def test_pipeline_state_is_idle_once_an_approved_source_is_drained(
 ):
     patch_connectors(monkeypatch, {"fake-conn": lambda: FakeConnector([], [])})
     source = await service.add_source("fake-conn", "Empty Source")
-    await service.approve_source(source["id"])
+    await service.approve_source(source["id"], auto_sync=False)
     status = await service.status()
     assert status["pipeline"]["state"] == "idle"
     assert "processed" in status["pipeline"]
@@ -487,7 +488,7 @@ async def test_pipeline_state_is_paused_when_the_embedding_slot_blocks(
 ):
     patch_connectors(monkeypatch, {"fake-conn": lambda: FakeConnector(make_items(2), [])})
     source = await service.add_source("fake-conn", "Fake Source")
-    await service.approve_source(source["id"])
+    await service.approve_source(source["id"], auto_sync=False)
     await wait_for_job(service, await service.start_sync(source["id"]))
     # Drive the keyword stage so the backlog sits at the embedding gate.
     store = service._require_store()
@@ -510,7 +511,7 @@ async def test_pipeline_state_is_processing_with_a_claimable_backlog(
 ):
     patch_connectors(monkeypatch, {"fake-conn": lambda: FakeConnector(make_items(4), [])})
     source = await service.add_source("fake-conn", "Fake Source")
-    await service.approve_source(source["id"])
+    await service.approve_source(source["id"], auto_sync=False)
     await wait_for_job(service, await service.start_sync(source["id"]))
 
     status = await service.status()
@@ -550,7 +551,7 @@ async def test_status_reports_the_credential_behind_a_ready_slot(service, monkey
 async def test_requeue_failed_is_exposed_and_scoped(service, monkeypatch):
     patch_connectors(monkeypatch, {"fake-conn": lambda: FakeConnector(make_items(2), [])})
     source = await service.add_source("fake-conn", "Fake Source")
-    await service.approve_source(source["id"])
+    await service.approve_source(source["id"], auto_sync=False)
     await wait_for_job(service, await service.start_sync(source["id"]))
     store = service._require_store()
     for item in await store.claim_batch("keyword_indexed", limit=10):
@@ -597,3 +598,235 @@ async def test_postgres_degradation_never_leaks_the_password(tmp_path, monkeypat
         assert status["backend"]["in_use"] == "sqlite"
     finally:
         await svc.shutdown()
+
+
+# ---------------------------------------------------------------------------
+# Approve = import everything
+# ---------------------------------------------------------------------------
+
+
+async def test_approve_starts_the_full_import_immediately(service, monkeypatch):
+    """Approving IS the import — the click that used to only flip a flag."""
+    patch_connectors(monkeypatch, {"fake-conn": lambda: FakeConnector(make_items(6), [])})
+    source = await service.add_source("fake-conn", "Fake Source")
+
+    approved = await service.approve_source(source["id"])
+
+    assert approved["source"]["consent"] == "approved"
+    assert approved["auto_sync"] is True
+    assert approved["job_id"]
+    assert "COPIED" in approved["detail"]  # nothing is removed at the origin
+    snap = await wait_for_job(service, approved["job_id"])
+    assert (snap["status"], snap["new"]) == ("done", 6)
+    # A full refresh, so deletions are detectable from the very first import.
+    assert snap["mode"] == "backfill"
+    store = service._require_store()
+    assert (await store.counts_for_source(source["id"])).total == 6
+
+
+async def test_approve_without_auto_sync_only_grants_consent(service, monkeypatch):
+    patch_connectors(monkeypatch, {"fake-conn": lambda: FakeConnector(make_items(3), [])})
+    source = await service.add_source("fake-conn", "Fake Source")
+
+    approved = await service.approve_source(source["id"], auto_sync=False)
+
+    assert approved["source"]["consent"] == "approved"
+    assert approved["job_id"] is None
+    assert service.list_jobs() == []
+    store = service._require_store()
+    assert (await store.counts_for_source(source["id"])).total == 0
+
+
+async def test_approve_keeps_consent_when_no_import_can_start(service, monkeypatch):
+    """A refused import must never cost the user their approval."""
+    patch_connectors(monkeypatch, {"fake-conn": lambda: FakeConnector([], [])})
+    source = await service.add_source("fake-conn", "Fake Source")
+    service._cfg.ultrawiki.enabled = False  # start_sync refuses while off
+
+    approved = await service.approve_source(source["id"])
+
+    assert approved["source"]["consent"] == "approved"
+    assert approved["job_id"] is None
+    assert "Consent was granted" in approved["detail"]
+    assert "disabled" in approved["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Per-source progress: the live job and the restart-proof last outcome
+# ---------------------------------------------------------------------------
+
+
+async def test_source_summary_carries_the_last_outcome_after_a_sync(
+    service, monkeypatch
+):
+    patch_connectors(monkeypatch, {"fake-conn": lambda: FakeConnector(make_items(4), [])})
+    source = await service.add_source("fake-conn", "Fake Source")
+    approved = await service.approve_source(source["id"])
+    await wait_for_job(service, approved["job_id"])
+
+    status = await service.status()
+    row = next(s for s in status["sources"] if s["id"] == source["id"])
+
+    assert row["active_job"] is None  # the run finished
+    outcome = row["last_outcome"]
+    assert outcome["status"] == "done"
+    assert outcome["mode"] == "backfill"
+    assert outcome["new"] == 4
+    assert outcome["finished_at"]
+    assert row["last_notice"] is None
+
+
+async def test_source_summary_reports_the_running_job_with_its_phase(
+    service, monkeypatch
+):
+    gate = asyncio.Event()
+    reached = asyncio.Event()
+    patch_connectors(
+        monkeypatch,
+        {"blocking-conn": lambda: BlockingConnector(make_items(250), gate, reached)},
+    )
+    source = await service.add_source("blocking-conn", "Blocked Source")
+    approved = await service.approve_source(source["id"])
+    await asyncio.wait_for(reached.wait(), timeout=5.0)
+
+    status = await service.status()
+    row = next(s for s in status["sources"] if s["id"] == source["id"])
+    active = row["active_job"]
+
+    assert active["job_id"] == approved["job_id"]
+    assert active["status"] == "running"
+    assert active["phase"] == "importing"
+    # Items PULLED so far — the ticking number the progress bar shows.
+    assert active["items"] == 200
+    assert row["last_outcome"] is None  # nothing has finished yet
+
+    gate.set()
+    await wait_for_job(service, approved["job_id"])
+
+
+async def test_a_failed_sync_records_an_honest_outcome(service, monkeypatch):
+    class ExplodingConnector:
+        id = "boom-conn"
+        label = "Exploding Connector"
+        auth = AuthKind.NONE
+        capabilities = ConnectorCapabilities(
+            backfill=True, incremental=IncrementalMode.NONE, deletes=False
+        )
+
+        async def backfill(self, ctx, checkpoint=None):
+            raise RuntimeError("the export file is corrupt")
+            yield  # pragma: no cover — makes this an async generator
+
+        async def incremental(self, ctx, cursor=None):
+            return
+            yield  # pragma: no cover — makes this an async generator
+
+    patch_connectors(monkeypatch, {"boom-conn": ExplodingConnector})
+    source = await service.add_source("boom-conn", "Boom")
+    approved = await service.approve_source(source["id"])
+    await wait_for_job(service, approved["job_id"])
+
+    row = next(
+        s for s in (await service.status())["sources"] if s["id"] == source["id"]
+    )
+    assert row["last_outcome"]["status"] == "failed"
+    assert "corrupt" in row["last_error"]
+
+
+# ---------------------------------------------------------------------------
+# Plugin bridge: real names, and the honest "no pull adapter yet" notice
+# ---------------------------------------------------------------------------
+
+
+def patch_bridge_candidates(
+    monkeypatch: pytest.MonkeyPatch, candidates: list[dict[str, str]]
+) -> None:
+    from jarvis.ultrawiki.connectors import plugin_bridge
+
+    monkeypatch.setattr(plugin_bridge, "list_candidates", lambda: list(candidates))
+
+
+async def test_bridge_source_is_named_after_the_integration(service, monkeypatch):
+    """A list of identical 'Connected Integrations' cards told nobody anything."""
+    patch_bridge_candidates(
+        monkeypatch,
+        [{"id": "plugin:github", "kind": "plugin", "label": "GitHub", "detail": ""}],
+    )
+
+    source = await service.add_source(
+        "plugin-bridge", "", config={"integration_id": "plugin:github"}
+    )
+
+    assert source["label"] == "GitHub"
+
+
+async def test_a_real_bridge_label_is_never_overwritten(service, monkeypatch):
+    patch_bridge_candidates(
+        monkeypatch,
+        [{"id": "plugin:github", "kind": "plugin", "label": "GitHub", "detail": ""}],
+    )
+
+    source = await service.add_source(
+        "plugin-bridge", "Work repos", config={"integration_id": "plugin:github"}
+    )
+
+    assert source["label"] == "Work repos"
+
+
+async def test_a_bridge_sync_without_a_pull_adapter_records_an_honest_notice(
+    service, monkeypatch
+):
+    """Zero imported items used to leave nothing but a log line."""
+    from jarvis.ultrawiki.service import BRIDGE_ADAPTER_PENDING_NOTICE
+
+    patch_bridge_candidates(
+        monkeypatch,
+        [{"id": "mcp:filesystem", "kind": "mcp", "label": "Filesystem", "detail": ""}],
+    )
+    source = await service.add_source(
+        "plugin-bridge", "", config={"integration_id": "mcp:filesystem"}
+    )
+    approved = await service.approve_source(source["id"])
+    await wait_for_job(service, approved["job_id"])
+
+    row = next(
+        s for s in (await service.status())["sources"] if s["id"] == source["id"]
+    )
+    assert row["last_notice"] == BRIDGE_ADAPTER_PENDING_NOTICE
+    # It is a NOTICE, not an error: the sync itself was healthy.
+    assert row["last_error"] is None
+    assert row["last_outcome"]["status"] == "done"
+    assert row["integration_id"] == "mcp:filesystem"
+
+
+async def test_the_notice_disappears_once_the_adapter_ships(service, monkeypatch):
+    from jarvis.ultrawiki.connectors import plugin_bridge
+
+    patch_bridge_candidates(
+        monkeypatch,
+        [{"id": "mcp:filesystem", "kind": "mcp", "label": "Filesystem", "detail": ""}],
+    )
+    source = await service.add_source(
+        "plugin-bridge", "", config={"integration_id": "mcp:filesystem"}
+    )
+    first = await service.approve_source(source["id"])
+    await wait_for_job(service, first["job_id"])
+    assert (await service._require_store().get_source(source["id"]))["last_notice"]
+
+    async def adapter(ctx, checkpoint=None):
+        yield RawItem(
+            external_id="doc-1",
+            body="the adapter shipped",
+            permalink="mcp://filesystem/doc-1",
+            timestamp_utc="2026-07-25T09:00:00Z",
+            title="Doc 1",
+        )
+
+    plugin_bridge.register_pull_adapter("mcp:filesystem", adapter)
+    try:
+        await wait_for_job(service, await service.start_sync(source["id"]))
+    finally:
+        plugin_bridge.unregister_pull_adapter("mcp:filesystem")
+
+    source_row = await service._require_store().get_source(source["id"])
+    assert source_row["last_notice"] is None

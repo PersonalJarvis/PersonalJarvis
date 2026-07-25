@@ -1211,14 +1211,30 @@ async def create_source(body: CreateSourceBody, request: Request) -> dict[str, A
 
 @router.post(
     "/sources/{source_id}/approve",
-    summary="Approve an UltraWiki source",
+    summary="Approve an UltraWiki source and import everything it holds",
     openapi_extra={"x-jarvis-dangerous": True},
 )
-async def approve_source(source_id: str, request: Request) -> dict[str, Any]:
-    """Grant consent for one source — THE gate before any byte is pulled."""
+async def approve_source(
+    source_id: str,
+    request: Request,
+    auto_sync: bool = Query(
+        default=True,
+        description=(
+            "Start the full import immediately (the default). Pass false to "
+            "grant consent only and sync later."
+        ),
+    ),
+) -> dict[str, Any]:
+    """Grant consent for one source — THE gate before any byte is pulled.
+
+    Approval is what the consent contract asks for, so it also STARTS the full
+    import: the answer carries the ``job_id`` of the run that is now pulling
+    everything the source holds (``null`` when none could be started, with
+    ``detail`` saying why). A refused import never fails the approval.
+    """
     service = _service(request)
     try:
-        return await service.approve_source(source_id)
+        return await service.approve_source(source_id, auto_sync=bool(auto_sync))
     except ValueError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -1397,6 +1413,87 @@ async def cancel_job(job_id: str, request: Request) -> dict[str, Any]:
             detail="job has no live task (it is about to start or end)",
         )
     return {"job_id": job_id, "cancel_requested": True}
+
+
+# ---------------------------------------------------------------------------
+# Stored contents — the inventory of what is actually in the database
+# ---------------------------------------------------------------------------
+
+
+class UltraWikiItemRow(BaseModel):
+    """One stored item as the inventory view lists it."""
+
+    id: int
+    source_id: str
+    #: The item's title, or its external id when the connector supplied none —
+    #: never an empty line the user cannot identify.
+    title: str
+    state: str
+    permalink: str
+    #: When the item was created AT THE SOURCE.
+    timestamp_utc: str
+    #: When UltraWiki first stored it (drives the newest-first order).
+    ingested_at: str
+    updated_at: str
+
+
+class UltraWikiItemsPage(BaseModel):
+    """One page of the inventory plus the unpaged total."""
+
+    items: list[UltraWikiItemRow]
+    total: int
+    limit: int
+    offset: int
+
+
+@router.get("/items", summary="List the items stored in the UltraWiki database")
+async def list_items(
+    request: Request,
+    source_id: str = Query(default="", description="Only items of this source"),
+    state: str = Query(
+        default="", description="Only items in this pipeline state"
+    ),
+    limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
+    include_deleted: bool = Query(
+        default=False,
+        description="Also list items that were tombstoned after a full refresh",
+    ),
+) -> UltraWikiItemsPage:
+    """Newest-first inventory of what UltraWiki actually holds, with filters.
+
+    The counts elsewhere say HOW MANY items exist per stage; this says WHICH
+    ones — the question a user asking "what is even in this database?" is
+    actually asking. Tombstoned rows stay out unless asked for: they no longer
+    take part in answers.
+    """
+    service = _service(request)
+    store = await _store_of(service)
+    wanted_state = state.strip()
+    if wanted_state:
+        from jarvis.ultrawiki.types import ItemState  # noqa: PLC0415 — lazy (AP-26)
+
+        if wanted_state not in {member.value for member in ItemState}:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"unknown state {wanted_state!r} (one of: "
+                    f"{', '.join(member.value for member in ItemState)})"
+                ),
+            )
+    rows, total = await store.list_items(
+        source_id=source_id.strip() or None,
+        state=wanted_state or None,
+        limit=limit,
+        offset=offset,
+        include_deleted=bool(include_deleted),
+    )
+    return UltraWikiItemsPage(
+        items=[UltraWikiItemRow(**row) for row in rows],
+        total=total,
+        limit=limit,
+        offset=offset,
+    )
 
 
 # ---------------------------------------------------------------------------
