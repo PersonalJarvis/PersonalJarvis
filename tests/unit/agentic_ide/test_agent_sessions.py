@@ -275,9 +275,9 @@ def test_discovery_without_a_home_directory_returns_nothing(
     assert sessions.discover("codex", str(tmp_path), 0.0) is None
 
 
-def test_claude_needs_no_discovery() -> None:
+def test_claude_needs_no_discovery(tmp_path: Path) -> None:
     """It was told its id at launch, so there is nothing to look for."""
-    assert sessions.discover("claude", "/tmp", 0.0) is None
+    assert sessions.discover("claude", str(tmp_path), 0.0) is None
 
 
 # ------------------------------------------------------------------ storage

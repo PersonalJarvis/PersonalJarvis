@@ -50,6 +50,14 @@ from uuid import uuid4
 
 from loguru import logger
 
+from . import resume_store
+from .agent_sessions import (
+    ResumeHandle,
+    can_resume,
+    discover,
+    launch_extra,
+    resume_argv,
+)
 from .folders import ProjectProfile, probe_project
 from .names import default_names, normalize, resolve
 from .transcript import Transcript
@@ -87,6 +95,18 @@ _SUBMIT_RETRY_AFTER_S = 1.0
 
 # Glyphs an agent TUI draws in front of its input line.
 _INPUT_MARKERS = ("❯", ">", "›")
+
+# How quickly an agent has to die after a RESUME for the resume itself to be the
+# suspect. A conversation the CLI has since pruned makes it print an error and
+# exit almost immediately; a healthy agent that the user quits normally exits
+# with code 0 and is never second-guessed. Past this window an exit is just an
+# exit, and the pane says so.
+RESUME_FAILED_WINDOW_S = 8.0
+
+# When to look for the session id of a CLI that cannot be told one (Codex). It
+# writes its rollout file a beat after launching, so asking immediately finds
+# nothing; two attempts cover a slow machine without turning into polling.
+DISCOVERY_DELAYS_S = (4.0, 12.0)
 
 # Bracketed paste. A TUI that has enabled it receives everything between these
 # markers as ONE pasted block rather than as keystrokes, which is the only way
@@ -274,6 +294,14 @@ class Terminal:
     # rejected the pasted block and the single-line fallback carried it — worth
     # seeing in the log, because it silently costs prompt readability.
     sent_multiline: bool = False
+    # Where this pane's conversation lives inside the coding CLI's own history.
+    # The pane is the window; this is what the window looks at, and it is the
+    # only reason a closed browser is survivable (see .agent_sessions).
+    resume: ResumeHandle | None = None
+    # Did the CURRENT agent process continue that conversation, or start empty?
+    # Reported honestly rather than assumed: a resume can fail, and a user who
+    # is told "resumed" and gets an amnesiac agent has been lied to.
+    resumed: bool = False
     transcript: Transcript = field(default_factory=Transcript)
 
     def to_dict(self) -> dict[str, Any]:
@@ -297,7 +325,23 @@ class Terminal:
             "last_prompt": self.last_prompt,
             "submitted": self.submitted,
             "lines_captured": len(self.transcript.lines()),
+            "resumed": self.resumed,
+            # Whether a handle EXISTS, never the handle itself: it is an
+            # internal pointer into the CLI's history and no client needs it.
+            "has_resume": self.resume is not None,
         }
+
+    def to_snapshot(self) -> resume_store.SnapshotTerminal:
+        """This pane as the resume store remembers it."""
+        return resume_store.SnapshotTerminal(
+            key=self.key,
+            name=self.name,
+            agent=self.agent,
+            column=self.column,
+            slot=self.slot,
+            resume=self.resume,
+            prompts_sent=self.prompts_sent,
+        )
 
 
 @dataclass(slots=True)
@@ -352,6 +396,9 @@ class Registry:
         # without a real pseudo-terminal (and without a coding agent installed).
         self._pty: PtyManager | None = pty_manager
         self._lock = asyncio.Lock()
+        # Background session-id lookups. Held so the loop cannot garbage-collect
+        # a task mid-flight, and cancelled when the workspace closes.
+        self._lookups: set[asyncio.Task[None]] = set()
 
     # ---------------------------------------------------------------- state
     @property
@@ -421,7 +468,9 @@ class Registry:
                 )
 
             # Close a previous session before replacing it, or its PTYs leak.
-            await self._close_locked()
+            # It is replaced, not abandoned, so its resume offer stays until
+            # this workspace writes its own a moment from now.
+            await self._close_locked(forget=False)
 
             pool = default_names(len(requested))
             used: set[str] = set()
@@ -448,38 +497,7 @@ class Registry:
                     )
                 )
 
-            profile = await asyncio.to_thread(probe_project, root)
-
-            # Pre-seed agent trust for this folder so no terminal stops on a
-            # "do you trust this directory?" dialog the user cannot see coming.
-            try:
-                from jarvis.workspace.trust import ensure_trusted
-
-                await asyncio.to_thread(
-                    ensure_trusted, root, sorted({t.agent for t in terminals})
-                )
-            except Exception as exc:  # noqa: BLE001 - trust is a convenience
-                logger.warning("Agentic IDE: pre-trust failed: {}", exc)
-
-            session = Session(
-                id=f"ide_{uuid4().hex[:12]}",
-                folder=str(root),
-                profile=profile,
-                terminals=terminals,
-                created_at=time.time(),
-            )
-            self._session = session
-            # Start indexing the codebase NOW, in a background thread, so the
-            # first spoken instruction can already point the agent at real files
-            # (@path). Deliberately fire-and-forget: nothing waits for it, and a
-            # workspace whose walk is still running just gets a prompt without
-            # file references (AP-26 — no heavy work on an interactive path).
-            try:
-                from . import file_index
-
-                file_index.prime_index(str(root))
-            except Exception as exc:  # noqa: BLE001 - the index is a convenience
-                logger.warning("Agentic IDE: file index not primed: {}", exc)
+            session = await self._open_locked(root, terminals)
             logger.info(
                 "Agentic IDE session started: {} terminals in {}",
                 len(terminals),
@@ -487,17 +505,170 @@ class Registry:
             )
             return session
 
+    async def _open_locked(self, root: Path, terminals: list[Terminal]) -> Session:
+        """Turn a prepared list of panes into THE open session.
+
+        Shared by ``start`` and ``restore`` on purpose. Everything a workspace
+        needs before its first pane connects lives here exactly once — the
+        project probe, the trust pre-seed, the codebase index — so a resumed
+        workspace can never quietly differ from a freshly opened one. Both
+        callers hold ``self._lock`` and have already closed any predecessor.
+        """
+        profile = await asyncio.to_thread(probe_project, root)
+
+        # Pre-seed agent trust for this folder so no terminal stops on a
+        # "do you trust this directory?" dialog the user cannot see coming.
+        try:
+            from jarvis.workspace.trust import ensure_trusted
+
+            await asyncio.to_thread(
+                ensure_trusted, root, sorted({t.agent for t in terminals})
+            )
+        except Exception as exc:  # noqa: BLE001 - trust is a convenience
+            logger.warning("Agentic IDE: pre-trust failed: {}", exc)
+
+        session = Session(
+            id=f"ide_{uuid4().hex[:12]}",
+            folder=str(root),
+            profile=profile,
+            terminals=terminals,
+            created_at=time.time(),
+        )
+        self._session = session
+        # Start indexing the codebase NOW, in a background thread, so the
+        # first spoken instruction can already point the agent at real files
+        # (@path). Deliberately fire-and-forget: nothing waits for it, and a
+        # workspace whose walk is still running just gets a prompt without
+        # file references (AP-26 — no heavy work on an interactive path).
+        try:
+            from . import file_index
+
+            file_index.prime_index(str(root))
+        except Exception as exc:  # noqa: BLE001 - the index is a convenience
+            logger.warning("Agentic IDE: file index not primed: {}", exc)
+        await self._persist()
+        return session
+
+    async def restore(self, snapshot: resume_store.Snapshot) -> Session:
+        """Reopen the workspace a snapshot describes, without starting anything.
+
+        The panes come back with their call-signs, their coding CLIs, their grid
+        coordinates and their resume handles — and in ``pending``, because
+        spawning is not this method's job. The grid attaches its panes the way
+        it always does, and ``attach`` spends the handles. That keeps ONE place
+        where an agent is started; a second spawn path here would drift from it
+        the first time either changed.
+
+        A pane whose CLI is no longer installed is still restored. It shows up
+        as an error the moment it tries to connect, which is a far better
+        outcome than silently dropping a terminal the user expects to see.
+        """
+        async with self._lock:
+            if not snapshot.terminals:
+                raise SessionError("That workspace has no terminals to reopen.")
+
+            root = Path(snapshot.folder).expanduser()  # noqa: ASYNC240
+            try:
+                if not await asyncio.to_thread(root.is_dir):
+                    raise SessionError(
+                        f"{root} is no longer on this machine — that workspace "
+                        "cannot be reopened."
+                    )
+            except OSError as exc:
+                raise SessionError(f"Cannot open {root}: {exc}") from exc
+
+            await self._close_locked(forget=False)
+
+            terminals = [
+                Terminal(
+                    key=entry.key or normalize(entry.name) or f"t{index}",
+                    name=entry.name,
+                    agent=entry.agent,
+                    display_name=AGENT_DISPLAY.get(entry.agent, entry.agent),
+                    index=index,
+                    column=entry.column,
+                    slot=entry.slot,
+                    resume=entry.resume,
+                    prompts_sent=entry.prompts_sent,
+                )
+                for index, entry in enumerate(snapshot.terminals)
+            ]
+            session = await self._open_locked(root, terminals)
+            # Pack the grid: a snapshot can carry gaps if it was written between
+            # a close and its renumbering, and a gap renders as a blank stripe.
+            self._renumber(session)
+            await self._persist()
+            logger.info(
+                "Agentic IDE session resumed: {} terminals in {} ({} with a "
+                "conversation to continue)",
+                len(terminals),
+                root,
+                sum(1 for t in terminals if t.resume is not None),
+            )
+            return session
+
     async def end(self) -> bool:
         async with self._lock:
             existed = self._session is not None
-            await self._close_locked()
+            await self._close_locked(forget=True)
             return existed
 
-    async def _close_locked(self) -> None:
+    # ------------------------------------------------------------- snapshot
+    def snapshot(self) -> resume_store.Snapshot | None:
+        """The open workspace in the form the resume store keeps it, or None."""
+        session = self._session
+        if session is None:
+            return None
+        return resume_store.snapshot_now(
+            session_id=session.id,
+            folder=session.folder,
+            terminals=[t.to_snapshot() for t in session.terminals],
+        )
+
+    async def _persist(self) -> None:
+        """Record the workspace so it can be offered back later.
+
+        Best-effort and off the event loop. A resume point is a convenience;
+        failing to write one must never break the workspace that is running
+        perfectly well right now.
+        """
+        snapshot = self.snapshot()
+        if snapshot is None:
+            return
+        try:
+            await asyncio.to_thread(resume_store.save, snapshot)
+        except Exception as exc:  # noqa: BLE001 - the workspace comes first
+            logger.warning("Agentic IDE: resume snapshot not written: {}", exc)
+
+    async def _forget(self) -> None:
+        """Withdraw the resume offer, best-effort."""
+        try:
+            await asyncio.to_thread(resume_store.clear)
+        except Exception as exc:  # noqa: BLE001 - closing must always succeed
+            logger.warning("Agentic IDE: resume snapshot not cleared: {}", exc)
+
+    async def _close_locked(self, *, forget: bool) -> None:
+        """Tear the workspace down. ``forget`` also withdraws the resume offer.
+
+        The two callers want opposite things. Ending a session is the user
+        saying "I am done", so the offer goes with it — re-offering something
+        somebody deliberately closed is the kind of prompt people learn to click
+        away. Replacing a session (opening or resuming another workspace) must
+        NOT withdraw anything: the new workspace writes its own snapshot a
+        moment later, and clearing in between would lose the offer if that write
+        never happened.
+        """
+        for task in list(self._lookups):
+            task.cancel()
+        self._lookups.clear()
         session = self._session
         self._session = None
         if session is None:
+            if forget:
+                await self._forget()
             return
+        if forget:
+            await self._forget()
         manager = self._pty
         if manager is not None:
             for term in session.terminals:
@@ -538,6 +709,21 @@ class Registry:
         ``on_output(text)`` / ``on_exit(code)`` are awaited in this loop. The
         transcript is fed here, so it keeps filling even if the UI pane is
         closed and reconnects later.
+
+        **This is also where a conversation is continued rather than restarted.**
+        A pane holding a resume handle launches its CLI with the arguments that
+        reopen that conversation; a pane without one starts fresh and keeps
+        whatever handle the launch minted. Putting it here rather than in a
+        dedicated "resume" path is deliberate — every way a pane can come back
+        (reopening the browser, restoring a snapshot, pressing restart on a dead
+        pane) already goes through this one method, so all three continue the
+        conversation and none of them can drift from the others.
+
+        A resume can fail: the CLI may have pruned that conversation, or it may
+        never have had a first message. The agent then prints an error and dies
+        within a second, so an early non-zero exit after a resume drops the
+        handle and starts the pane fresh — once. The pane comes back empty
+        instead of dead, and ``resumed`` says which of the two happened.
         """
         session = self._session
         if session is None:
@@ -559,7 +745,22 @@ class Registry:
             term.error = f"{term.display_name} is not on PATH."
             raise SessionError(term.error)
 
+        continuing = resume_argv(term.agent, term.resume)
+        if continuing is not None:
+            argv = (*argv, *continuing)
+            term.resumed = True
+        else:
+            extra, minted = launch_extra(term.agent)
+            argv = (*argv, *extra)
+            term.resumed = False
+            if minted is not None:
+                term.resume = minted
+
         term.transcript.resize(cols, rows)
+        # Monotonic: a wall clock can jump (NTP, a laptop waking up) and would
+        # then mis-measure how long the agent survived.
+        spawned_at = time.monotonic()
+        recovered = False
 
         async def _output(_tid: str, text: str) -> None:
             term.transcript.feed(text)
@@ -567,9 +768,34 @@ class Registry:
             await on_output(text)
 
         async def _closed(_tid: str, code: int) -> None:
+            nonlocal recovered
+            term.pty_id = None
+            died_young = time.monotonic() - spawned_at < RESUME_FAILED_WINDOW_S
+            # Only a FAILED early exit is blamed on the resume. Quitting an
+            # agent normally exits 0, and restarting a pane the user just closed
+            # would be its own bug.
+            if term.resumed and not recovered and died_young and code != 0:
+                recovered = True
+                logger.warning(
+                    "Agentic IDE: {} could not continue its previous "
+                    "conversation (exit {}) — starting it fresh instead",
+                    term.name,
+                    code,
+                )
+                term.resume = None
+                term.resumed = False
+                try:
+                    await self.attach(key, cols, rows, on_output, on_exit)
+                except SessionError as exc:
+                    logger.warning(
+                        "Agentic IDE: {} could not be restarted: {}", term.name, exc
+                    )
+                else:
+                    # The pane is alive again; telling the viewer it exited
+                    # would flash a dead pane for no reason.
+                    return
             term.status = "exited"
             term.exit_code = code
-            term.pty_id = None
             await on_exit(code)
 
         try:
@@ -593,7 +819,54 @@ class Registry:
         term.exit_code = None
         term.started_at = time.time()
         term.last_output_at = time.time()
+        if term.resume is None and can_resume(term.agent):
+            # A CLI that cannot be told its session id (Codex): find out which
+            # one it just created, shortly from now.
+            self._schedule_lookup(term, session.folder, term.started_at)
+        await self._persist()
         return term
+
+    def _schedule_lookup(self, term: Terminal, folder: str, started_at: float) -> None:
+        """Find a pane's session id a moment after its CLI created it.
+
+        Fire-and-forget, and deliberately not awaited by ``attach``: the pane is
+        already usable, and making the user wait for a filesystem scan to learn
+        something only needed after a restart would be the wrong trade.
+        """
+
+        async def _look() -> None:
+            try:
+                for delay in DISCOVERY_DELAYS_S:
+                    await asyncio.sleep(delay)
+                    session = self._session
+                    if session is None or term not in session.terminals:
+                        return  # the pane (or the workspace) is gone
+                    if term.resume is not None:
+                        return
+                    taken = {
+                        other.resume.id
+                        for other in session.terminals
+                        if other.resume is not None
+                    }
+                    found = await asyncio.to_thread(
+                        discover, term.agent, folder, started_at, taken
+                    )
+                    if found is None:
+                        continue
+                    term.resume = found
+                    logger.debug(
+                        "Agentic IDE: {} is conversation {}", term.name, found.id
+                    )
+                    await self._persist()
+                    return
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 - a convenience, never fatal
+                logger.debug("Agentic IDE: session lookup for {} failed: {}", term.name, exc)
+
+        task = asyncio.ensure_future(_look())
+        self._lookups.add(task)
+        task.add_done_callback(self._lookups.discard)
 
     def write(self, key: str, data: str) -> bool:
         """Raw keystrokes from the pane's own xterm (not the injection path)."""
@@ -720,6 +993,7 @@ class Registry:
             )
             session.terminals.append(term)
             self._renumber(session)
+            await self._persist()
             logger.info(
                 "Agentic IDE: added terminal {} ({}) {} of {}",
                 term.name,
@@ -787,6 +1061,7 @@ class Registry:
             term.status = "exited"
             session.terminals.remove(term)
             self._renumber(session)
+            await self._persist()
             logger.info("Agentic IDE: closed terminal {}", term.name)
             return term
 

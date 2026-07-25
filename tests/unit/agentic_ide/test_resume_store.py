@@ -11,18 +11,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 from jarvis.agentic_ide import resume_store
 from jarvis.agentic_ide.agent_sessions import ResumeHandle
 
-
-@pytest.fixture(autouse=True)
-def _isolated_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Never touch the real per-user data directory from a test."""
-    monkeypatch.setattr(
-        resume_store, "_store_path", lambda: tmp_path / "store" / "last_session.json"
-    )
+# The store itself is redirected to a throwaway file by the package conftest,
+# so nothing here can reach the developer's real data directory.
 
 
 def _snapshot(folder: str) -> resume_store.Snapshot:
