@@ -5599,6 +5599,26 @@ class BrainManager:
         )
         return f"Öffne {label}." if is_de else f"Opening {label}."  # i18n-allow
 
+    def _composer_brain(self) -> Brain | None:
+        """The warm, fast brain the Agentic-IDE prompt composer should use.
+
+        Rewriting one spoken sentence into a prompt is a small job, and the user
+        is waiting to hear it landed. This hands the composer the same fast-tier
+        model the router turn already resolved (cached in ``_brain_cache``, so
+        no construction cost) instead of letting it fall back to the deep chain,
+        which on the live measurement took 7-8 s for the identical rewrite.
+
+        Returns ``None`` when no fast brain can be resolved — the composer then
+        falls back to the shared key-aware chain, and past that to its regex
+        layer, so the instruction is delivered either way.
+        """
+        try:
+            primary = self._config.brain.primary
+            return self._get_brain(primary, self._fast_model(primary))
+        except Exception:  # noqa: BLE001 - the composer has its own fallbacks
+            log.debug("Agentic IDE composer brain unavailable", exc_info=True)
+            return None
+
     async def _run_agentic_ide_fast_path(
         self,
         user_text: str,
@@ -5687,6 +5707,10 @@ class BrainManager:
             terminal_name=term.name,
             agent_display=AGENT_DISPLAY.get(term.agent, term.agent),
             instruction=found.instruction,
+            # The user is waiting to hear "sent to Kai", so the rewrite runs on
+            # the FAST tier this turn is already using — measured 1-3 s against
+            # 7-8 s on the deep chain the composer would otherwise resolve.
+            brain=self._composer_brain(),
         )
         if not composed.text:
             return None

@@ -50,7 +50,13 @@ from .session import MAX_PROMPT_CHARS, sanitize_prompt
 # The composer is not on the voice hot path the way an ack is, but the user is
 # waiting to hear "sent to Kai" — past a few seconds it feels broken. On timeout
 # the deterministic prompt ships, so this bound costs quality, never delivery.
-COMPOSE_TIMEOUT_S = 8.0
+#
+# Measured 2026-07-25 on the live chain: a fast router-tier model answers in
+# 1-3 s, while the deep frontier tier (a thinking model) took 7-8 s for the same
+# rewrite. Callers that hold a fast brain pass it in; 12 s leaves room for the
+# slow path to still succeed rather than silently demoting every composition to
+# the regex fallback, which an 8 s bound did.
+COMPOSE_TIMEOUT_S = 12.0
 
 # How many files may be attached. Enough to point the agent at a feature's
 # surface; few enough that the agent's context is not flooded with guesses.
@@ -194,18 +200,29 @@ async def _llm_compose(
     terminal_name: str,
     agent_display: str,
     candidates: list[str],
+    brain=None,  # noqa: ANN001 - Brain, avoid an import cycle
 ) -> str:
-    """One bounded frontier-chain call that writes the prompt.
+    """One bounded call that writes the prompt.
 
-    Uses ``resolve_frontier_brain`` rather than a pinned provider so the call
-    follows whatever the user actually has configured and keyed, crossing
-    provider families when the primary is dead (AP-21 / AP-22).
+    ``brain`` lets a caller that already holds a warm, FAST model pass it in —
+    the router-tier brain the voice turn is using anyway. That matters: measured
+    on the live chain, a rewrite took 1-3 s there against 7-8 s on the deep
+    frontier tier, which is a thinking model doing far more work than rephrasing
+    one sentence needs.
+
+    Without one (the REST/CLI path, which holds no brain), it falls back to
+    ``resolve_frontier_brain`` — the shared key-aware chain that follows the
+    user's own configuration and crosses provider families when the primary is
+    dead (AP-21 / AP-22), rather than a pinned provider that would brick this
+    for every downloader with a different key.
     """
-    from jarvis.brain.resolver import resolve_frontier_brain
-    from jarvis.core.config import load_config
     from jarvis.core.protocols import BrainMessage, BrainRequest
 
-    brain = resolve_frontier_brain(load_config())
+    if brain is None:
+        from jarvis.brain.resolver import resolve_frontier_brain
+        from jarvis.core.config import load_config
+
+        brain = resolve_frontier_brain(load_config())
 
     profile_lines = "\n".join(session.profile.summary_lines())
     candidate_block = (
@@ -263,8 +280,12 @@ async def compose(
     instruction: str | None = None,
     use_llm: bool = True,
     max_files: int = MAX_FILE_REFERENCES,
+    brain=None,  # noqa: ANN001 - Brain, avoid an import cycle
 ) -> ComposedPrompt:
     """Build the prompt for ``terminal_name`` out of what the user said.
+
+    Pass ``brain`` when you already hold a fast one (see ``_llm_compose``);
+    omitting it resolves the shared key-aware chain.
 
     Never raises: every failure path lands on the deterministic prompt, because
     "the agent got a slightly rougher prompt" is a far better outcome than "your
@@ -295,6 +316,7 @@ async def compose(
                 terminal_name=terminal_name,
                 agent_display=agent_display,
                 candidates=candidates,
+                brain=brain,
             ),
             timeout=COMPOSE_TIMEOUT_S,
         )
