@@ -128,7 +128,7 @@ _OBSERVED_REFUSAL_STATUSES: tuple[str, ...] = ("denied", "cancelled", "timed_out
 _INTEGRITY_STATUSES: tuple[str, ...] = ("outcome_unknown", "active")
 
 
-def _outcome_preview(calls: list["WorkerToolCallOutcome"]) -> str | None:
+def _outcome_preview(calls: list[WorkerToolCallOutcome]) -> str | None:
     if not calls:
         return None
     preview = "; ".join(
