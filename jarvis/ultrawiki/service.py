@@ -376,6 +376,7 @@ class UltraWikiService:
         async with self._start_lock:
             if self._store is None:
                 self._store = await self._open_store()
+                await self._heal_bridge_labels(self._store)
             if self._uw_enabled() and self._pipeline_task is None:
                 from jarvis.ultrawiki.pipeline import (  # noqa: PLC0415 — lazy
                     PipelineWorker,
@@ -893,6 +894,44 @@ class UltraWikiService:
         assert source is not None
         return source
 
+    async def _heal_bridge_labels(self, store: Any) -> None:
+        """One-time self-heal: give pre-existing bridge sources their real name.
+
+        ``_resolve_label`` only runs at creation, so sources registered before
+        it existed keep the generic "Connected integration" label forever —
+        the maintainer connected GitHub and could not tell which card it was.
+        Runs once per store open (not per status poll: the candidate lookup
+        probes live registries); the healed label is PERSISTED, so a source is
+        only ever probed while its label is still generic. Best-effort by
+        design — naming is decoration and must never block startup.
+        """
+        try:
+            rows = await store.list_sources()
+        except Exception:  # noqa: BLE001 — decoration, never a startup failure
+            log.debug("bridge label heal skipped: source listing failed", exc_info=True)
+            return
+        for row in rows:
+            connector_id = str(row.get("connector") or "")
+            if connector_id != _BRIDGE_CONNECTOR_ID:
+                continue
+            stored = str(row.get("label") or "")
+            config = row.get("config") or {}
+            resolved = self._resolve_label(connector_id, stored, config)
+            if resolved == stored:
+                continue
+            try:
+                await store.upsert_source(
+                    str(row.get("id")), connector=connector_id, label=resolved
+                )
+                log.info(
+                    "bridge source %s relabeled %r -> %r",
+                    row.get("id"),
+                    stored,
+                    resolved,
+                )
+            except Exception:  # noqa: BLE001
+                log.debug("bridge label heal failed for %s", row.get("id"), exc_info=True)
+
     @staticmethod
     def _resolve_label(
         connector_id: str, label: str, config: dict[str, Any] | None
@@ -917,6 +956,9 @@ class UltraWikiService:
             integration_id.lower(),
             "connected integration",
             "connected integrations",
+            # The exact label the pre-fix UI stored for every bridge source.
+            "connected integration (plugins / mcp)",
+            "connected integration (plugins/mcp)",
         }
         if chosen.lower() not in generic:
             return chosen

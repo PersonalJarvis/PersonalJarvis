@@ -830,3 +830,46 @@ async def test_the_notice_disappears_once_the_adapter_ships(service, monkeypatch
 
     source_row = await service._require_store().get_source(source["id"])
     assert source_row["last_notice"] is None
+
+
+async def test_generic_bridge_label_heals_on_start(tmp_path, monkeypatch):
+    """A pre-fix bridge source stored under the generic card name gains the
+    real integration label ("GitHub") on the next service start, persisted so
+    the live-registry lookup never runs again for it."""
+    from jarvis.ultrawiki.connectors import plugin_bridge
+
+    monkeypatch.setattr(
+        plugin_bridge,
+        "list_candidates",
+        lambda: [
+            {
+                "id": "plugin:github",
+                "kind": "plugin",
+                "label": "GitHub",
+                "detail": "connected",
+            }
+        ],
+    )
+    svc = UltraWikiService(make_cfg(tmp_path))
+    try:
+        await svc.ensure_started()
+        store = svc._require_store()
+        await store.upsert_source(
+            "plugin-bridge-legacy1",
+            connector="plugin-bridge",
+            label="Connected integration (plugins / MCP)",
+            config={"integration_id": "plugin:github"},
+        )
+        # Heal runs on store OPEN — restart the service to trigger it again.
+        await svc.shutdown()
+        svc2 = UltraWikiService(make_cfg(tmp_path))
+        try:
+            await svc2.ensure_started()
+            row = await svc2._require_store().get_source("plugin-bridge-legacy1")
+            assert row is not None
+            assert row["label"] == "GitHub"
+            assert row["config"]["integration_id"] == "plugin:github"
+        finally:
+            await svc2.shutdown()
+    finally:
+        await svc.shutdown()
