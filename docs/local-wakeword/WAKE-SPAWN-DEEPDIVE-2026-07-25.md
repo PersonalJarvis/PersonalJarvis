@@ -411,6 +411,65 @@ making a working install look model-less and possibly resolving the engine to
 
 ---
 
+## 7a. Implementation status (2026-07-25)
+
+**Shipped.**
+
+| Item | Commit | Note |
+|---|---|---|
+| Wave 0 — engine pinned, orphaned model cleared | (config) | via `PUT /api/settings/wake-word`, `applied_live`, jarvis.toml verified BOM-free |
+| W-1 capability cache | `9707e15e` | −8 s on 28 % of turns; entry requires PROOF (see below) |
+| H-1 Kaldi decode off the loop + `_ensure_model` lock | `25640f1b` | decision bit-identical |
+| H-2 dedicated wake executor (≥2) | `25640f1b` | |
+| H-3 boot awaits stock depth 1 | `2ca72eae` | was 12 recognizer builds + prewarms |
+| H-4 hot-plug watcher 5 s → 30 s + event probe | `2ca72eae` | 6× less steady-state cost, FASTER real hot-plug |
+| H-5 `temperature=0.0` for the wake decode | `2ca72eae` | constructor option, not a kwarg |
+| R-3 anti-aliasing low-pass | `cce4b3b8` | 12 kHz −51 dB, 0.14 % of callback budget |
+| R-4 resolved language + save-time OOV probe | `3e329a50` | |
+| §6 heartbeat states, `stats()`, INFO suppressions | `457f60e3` | write-only |
+
+**Corrections the implementation forced — both worth keeping in mind.**
+
+*W-1 changed shape while being built.* The naive "cache on the rejection" would
+have been a new defect: the provider reports a bare
+`"Request contains an invalid argument."` with no cause, so any unrelated bad
+argument (a malformed tool schema, an oversized context) would have permanently
+stripped the thinking budget from a capable model, with no diagnosable trace.
+The cache therefore records a model only after the retry WITHOUT the field has
+actually completed — proof, not suspicion — and is process-local so a provider
+that gains support is re-probed next start.
+
+*R-1 was implemented, measured, and REVERTED.* Narrowing the shape-gate window
+to `[span_a, end_s]` does fix the real recall defect (a wake spoken in one
+breath with the command loses both confirm routes — verified: the old window
+admits 3 words and rejects, the narrow one admits 1 and accepts). But the
+token-count bound *relies* on surrounding words being counted, so on the
+room-speech fixture the narrow window admits 2 instead of 3, lands exactly ON
+the phrase's token count and ACCEPTS — breaking
+`test_free_words_outside_the_span_cannot_confirm` plus two storm/suppression
+guards. That makes R-1 a recall-vs-precision trade needing the same corpus
+calibration as R-2, not the free win §5 claimed. It survives as a **strict
+xfail** plus an in-code note so the defect stays executable and visible.
+
+**Still open, with the reason.**
+
+- **W-2** (the 1 528 ms deaf window) — the largest single measured term. Not
+  started.
+- **W-3** (bounded realtime microphone) — location confirmed:
+  `pipeline.py:6766` awaits `{microphone, provider, hangup, turn_complete}` with
+  **no timeout**. Deliberately not landed unverified: the timer must reset on
+  Jarvis's own output AND must not cut a background mission short (the classic
+  path solves this with `_live_spawn_watchdogs` + a preserved VAD task; realtime
+  has no equivalent), and a mistake here means hanging up mid-answer — the exact
+  thing the 2026-07-18 mandate forbids. Needs live voice verification.
+- **R-1 / R-2** — both blocked on the recorded-corpus replay.
+- **§6 timestamp chain + the CI eval floor** — not started; the heartbeat/stats
+  half shipped, the `audio_age_ms` half and the triple-floor job did not.
+
+Measured but DISMISSED: the wake language is pinned to `en` while the phrase is
+German — `vosk_model_supports_phrase` reports "Hey Ruben" IN VOCABULARY for BOTH
+installed models, so the pin is harmless here. Do not "fix" it.
+
 ## 8. Sequenced plan
 
 Each wave is independently shippable and leaves the tree green.
