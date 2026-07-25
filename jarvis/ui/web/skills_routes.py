@@ -555,6 +555,227 @@ async def reorder_skills(body: SkillOrderBody, request: Request) -> dict[str, An
     return {"ok": True, "order": prefs.load_order()}
 
 
+# ----------------------------------------------------------------------
+# Match diagnostics — "why did (or didn't) my skill fire?"
+# ----------------------------------------------------------------------
+
+
+class MatchTestRequest(BaseModel):
+    """Body for ``POST /api/skills/match-test``.
+
+    POST rather than GET on purpose: an utterance is free text with umlauts,
+    slashes and newlines, and it has no business in a URL or an access log.
+    """
+
+    utterance: str = Field(..., min_length=1, max_length=2000)
+    lang: str = "auto"
+    include_disabled: bool = False
+
+
+@router.post("/match-test", openapi_extra={"x-jarvis-readonly": True})
+async def match_test(request: Request, body: MatchTestRequest) -> dict[str, Any]:
+    """Dry-run the skill matcher against an utterance and explain the verdict.
+
+    This is the affordance whose absence made the whole problem invisible: the
+    Skills view could list, enable, edit, reorder and link-check skills, but
+    there was no way to ask "would this sentence reach my skill?" short of
+    talking to the assistant and hoping.
+
+    Calls the SAME functions the brain calls — ``evaluate_match`` for the
+    decision, ``evaluate_guards`` for the vetoes, ``autofire_policy`` for
+    capture rights. A panel that re-implemented any of that would eventually
+    disagree with the brain, and a debugger that lies is worse than none.
+
+    Executes NOTHING. No ``render_instructions`` (that evaluates Jinja — a dry
+    run which evaluates templates is not dry), no ``SkillInvoked``, no bus
+    publish. It appends to the decision ring flagged ``dry_run`` so the panel
+    shows it while the durable trail stays honest.
+    """
+    registry = _require_registry(request)
+
+    from jarvis.skills import match_log
+    from jarvis.skills.autofire_policy import classify, may_capture
+    from jarvis.skills.guards import GUARD_ORDER, evaluate_guards
+    from jarvis.skills.match_eval import BAND_NONE, evaluate_match
+    from jarvis.skills.prefs import load_autofire_prefs
+    from jarvis.skills.relevance import get_index
+
+    config = getattr(request.app.state, "config", None)
+    skills_cfg = getattr(config, "skills", None)
+    min_band = str(getattr(skills_cfg, "auto_fire_min_band", "fire"))
+    shadow = bool(getattr(skills_cfg, "relevance_shadow", True))
+    enabled = bool(getattr(skills_cfg, "relevance_enabled", True))
+
+    decision = evaluate_match(
+        registry,
+        body.utterance,
+        lang=body.lang,
+        limit=8,
+        use_relevance=enabled,
+        fire_threshold=getattr(skills_cfg, "fire_threshold", None),
+        hint_threshold=getattr(skills_cfg, "hint_threshold", None),
+    )
+    overrides = load_autofire_prefs()
+
+    def _describe(name: str, band: str, evidence: str) -> dict[str, Any]:
+        try:
+            skill = registry.get(name)
+        except Exception:  # noqa: BLE001
+            return {
+                "skill_name": name,
+                "state": "unknown",
+                "autofire_class": "",
+                "would_fire": False,
+                "vetoed_by": "unknown_skill",
+            }
+        ladder = evaluate_guards(
+            skill, user_text=body.utterance, evidence=evidence
+        )
+        allowed, capture_veto = may_capture(
+            skill, band, override=overrides.get(name), min_band=min_band
+        )
+        veto = ladder.vetoed_by or capture_veto
+        state = getattr(skill.state, "value", skill.state)
+        return {
+            "skill_name": name,
+            "state": str(state),
+            "autofire_class": classify(skill),
+            "auto_fire": overrides.get(name, "auto"),
+            "would_fire": bool(allowed and ladder.passed and band != BAND_NONE),
+            "vetoed_by": veto or None,
+        }
+
+    candidates: list[dict[str, Any]] = []
+    for candidate in decision.candidates:
+        entry = _describe(candidate.skill_name, candidate.band, candidate.evidence)
+        entry.update(
+            {
+                "score": round(float(candidate.score), 4),
+                "band": candidate.band,
+                "source": candidate.source,
+                "reason": candidate.reason,
+                "matched_terms": [
+                    term for term, _ in (candidate.signals or ())
+                ],
+                "signals": {name: value for name, value in (candidate.signals or ())},
+            }
+        )
+        candidates.append(entry)
+
+    # The full ladder for the winner, every guard with its verdict — not just
+    # the one that fired. When the answer is "nothing matched", knowing WHICH of
+    # the checks ate it is the entire point.
+    guards_evaluated: list[dict[str, Any]] = []
+    winner = decision.top.skill_name if decision.top is not None else ""
+    if winner:
+        try:
+            ladder = evaluate_guards(
+                registry.get(winner),
+                user_text=body.utterance,
+                evidence=decision.top.evidence if decision.top else "",
+            )
+            guards_evaluated = [
+                {"guard": r.guard, "verdict": r.verdict, "detail": r.detail or None}
+                for r in ladder.results
+            ]
+        except Exception:  # noqa: BLE001
+            guards_evaluated = []
+    else:
+        guards_evaluated = [
+            {"guard": name, "verdict": "skipped", "detail": None}
+            for name in GUARD_ORDER
+        ]
+
+    top_entry = candidates[0] if candidates else None
+    would_fire = bool(top_entry and top_entry["would_fire"] and not shadow)
+
+    index = get_index(registry, include_inactive=body.include_disabled)
+    match_log.record(
+        utterance=body.utterance,
+        decision=decision,
+        lang=body.lang,
+        vetoed_by=(top_entry or {}).get("vetoed_by") or "",
+        autofire_class=(top_entry or {}).get("autofire_class") or "",
+        fired=False,
+        dry_run=True,
+    )
+
+    return {
+        "utterance": body.utterance,
+        "lang": body.lang,
+        "elapsed_us": decision.elapsed_us,
+        "winner": winner or None,
+        "band": decision.band,
+        "source": decision.source,
+        "margin": round(float(decision.margin), 4),
+        "would_fire": would_fire,
+        "shadow_mode": shadow,
+        "relevance_enabled": enabled,
+        "autofire_class": (top_entry or {}).get("autofire_class") or None,
+        "vetoed_by": (top_entry or {}).get("vetoed_by"),
+        "candidates": candidates,
+        "guards_evaluated": guards_evaluated,
+        "thresholds": {
+            "fire": round(index.fire_threshold, 4),
+            "hint": round(index.hint_threshold, 4),
+            "min_band": min_band,
+        },
+        "corpus": {
+            "skills_indexed": index.size,
+            "distinct_terms": len(index.postings),
+        },
+    }
+
+
+@router.get("/match-log", openapi_extra={"x-jarvis-readonly": True})
+async def match_log_recent(
+    request: Request,
+    limit: int = 50,
+    skill: str = "",
+    fired: bool | None = None,
+) -> dict[str, Any]:
+    """Recent skill-match decisions, newest first.
+
+    Reads the process-local ring — no disk, no query. The ``vetoed_by`` column
+    is the feature: it turns "I said something and nothing happened" into "the
+    definitional guard suppressed plugin-github", which is the difference
+    between a guess and a diagnosis.
+    """
+    from jarvis.skills import match_log
+
+    entries = match_log.recent(limit=limit, skill=skill, fired=fired)
+    return {
+        "total": match_log.size(),
+        "capacity": match_log.MAX_ENTRIES,
+        "entries": [
+            {
+                "utterance_preview": entry.utterance_preview,
+                "utterance_hash": entry.utterance_hash,
+                "lang": entry.lang,
+                "source": entry.source,
+                "band": entry.band,
+                "winner": entry.winner or None,
+                "autofire_class": entry.autofire_class or None,
+                "vetoed_by": entry.vetoed_by or None,
+                "fired": entry.fired,
+                "shadow": entry.shadow,
+                "dry_run": entry.dry_run,
+                "elapsed_us": entry.elapsed_us,
+                "candidates": [
+                    {
+                        "skill_name": c.skill_name,
+                        "score": round(float(c.score), 4),
+                        "band": c.band,
+                        "reason": c.reason,
+                    }
+                    for c in entry.candidates
+                ],
+            }
+            for entry in entries
+        ],
+    }
+
+
 @router.get("/{name}")
 async def get_skill(name: str, request: Request) -> dict[str, Any]:
     reg = _require_registry(request)
