@@ -356,6 +356,21 @@ _RESOLVE_CACHE: dict[tuple[Any, tuple[str, ...]], tuple[Any, float]] = {}
 _RESOLVE_CACHE_FRESH_S = 5.0
 
 
+def _antialias_taps(from_rate: int, to_rate: int, num_taps: int = 33) -> np.ndarray:
+    """Hamming-windowed sinc low-pass just below the TARGET Nyquist.
+
+    Cutoff sits at 0.45 x the target rate (7.2 kHz for a 16 kHz target), which
+    keeps the whole speech band and the wake models' feature range while
+    removing what would otherwise fold into it.
+    """
+    cutoff_hz = 0.45 * to_rate
+    fc = cutoff_hz / from_rate  # cycles per SOURCE sample
+    n = np.arange(num_taps, dtype=np.float64) - (num_taps - 1) / 2.0
+    taps = 2.0 * fc * np.sinc(2.0 * fc * n) * np.hamming(num_taps)
+    total = taps.sum()
+    return taps / total if total else taps
+
+
 class _StreamingPcm16Resampler:
     """Stateful CPU-only resampler for interleaved PCM16 microphone frames.
 
@@ -364,6 +379,19 @@ class _StreamingPcm16Resampler:
     boundary, so the final source frame and fractional position are retained
     for the next callback. NumPy is part of the universal base installation;
     no GPU or optional native inference dependency is involved.
+
+    Downsampling additionally low-pass filters FIRST. Without that, interpolating
+    48 kHz straight down to 16 kHz folds every component above 8 kHz back into
+    the speech band at full amplitude — sibilance, keyboard clatter, fan and
+    coil whine, switching-supply noise. This path is reached only where the
+    native-rate fallback engages (CoreAudio, ALSA/PipeWire), i.e. macOS and
+    Linux; Windows resamples host-side in MME and never gets here. So the entire
+    wake stack — the openWakeWord melspec, the Vosk MFCCs, the Whisper log-mel,
+    and the AP-27 energy constants — was calibrated on clean Windows captures
+    and then deployed on aliased audio. Filtering strictly removes noise that
+    was never in any model's training data, so it cannot trade one corner of the
+    latency/recall/precision triangle for another; it only puts these two OSes
+    on the signal quality Windows already has.
     """
 
     def __init__(self, from_rate: int, to_rate: int, channels: int) -> None:
@@ -377,6 +405,30 @@ class _StreamingPcm16Resampler:
         self._step = self.from_rate / self.to_rate
         self._tail: np.ndarray | None = None
         self._position = 0.0
+        # Only DOWNsampling can alias; upsampling needs no pre-filter.
+        self._taps: np.ndarray | None = (
+            _antialias_taps(self.from_rate, self.to_rate)
+            if self.from_rate > self.to_rate
+            else None
+        )
+        self._filter_tail: np.ndarray | None = None
+
+    def _antialias(self, frames: np.ndarray) -> np.ndarray:
+        """Apply the low-pass, carrying ``taps-1`` frames across callbacks."""
+        taps = self._taps
+        assert taps is not None
+        history = taps.size - 1
+        if self._filter_tail is None:
+            # Prime with the first frame repeated instead of zeros: a
+            # zero-primed filter fades the first ~1 ms of the stream in, which
+            # would be an audible click and a dip in the very first wake window.
+            self._filter_tail = np.repeat(frames[:1], history, axis=0)
+        padded = np.concatenate((self._filter_tail, frames), axis=0)
+        self._filter_tail = padded[-history:].copy() if history else None
+        out = np.empty_like(frames)
+        for channel in range(self.channels):
+            out[:, channel] = np.convolve(padded[:, channel], taps, mode="valid")
+        return out
 
     def process(self, pcm16: bytes) -> bytes:
         if not pcm16:
@@ -389,6 +441,8 @@ class _StreamingPcm16Resampler:
 
         samples = np.frombuffer(pcm16, dtype="<i2").reshape(-1, self.channels)
         frames = samples.astype(np.float64)
+        if self._taps is not None:
+            frames = self._antialias(frames)
         if self._tail is not None:
             frames = np.concatenate((self._tail, frames), axis=0)
         if frames.shape[0] < 2:
