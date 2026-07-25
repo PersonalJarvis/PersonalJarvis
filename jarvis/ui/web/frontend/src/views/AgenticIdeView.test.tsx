@@ -79,6 +79,8 @@ function sessionWith(names: string[], focus = false): api.SessionState {
       instruction_files: ["CLAUDE.md"],
       top_level_dirs: ["src"],
       skills: [],
+      subagents: [],
+      commands: [],
       note: "",
     },
     created_at: 0,

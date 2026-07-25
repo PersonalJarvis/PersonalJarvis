@@ -1080,6 +1080,36 @@ def _is_spawn_feature_reference(user_text: str) -> bool:
     return bool(_SPAWN_FEATURE_RE.search(user_text or ""))
 
 
+def _prompt_sent_line(terminal: str, files: list[str], lang: str) -> str:
+    """Spoken confirmation that an Agentic-IDE terminal received the prompt.
+
+    Deliberately short and pane-named: in a four-pane workspace the only thing
+    the user needs to hear is WHICH agent got it. Naming the attached file when
+    there is exactly one is worth the extra second — it is also the fastest way
+    for the user to catch a wrong file before the agent acts on it.
+    """
+    from jarvis.voice.action_phrases import action_phrase
+
+    if len(files) == 1:
+        return action_phrase(
+            "ide_prompt_sent_one_file", lang, terminal=terminal, file=files[0]
+        )
+    if files:
+        return action_phrase(
+            "ide_prompt_sent_files", lang, terminal=terminal, count=len(files)
+        )
+    return action_phrase("ide_prompt_sent", lang, terminal=terminal)
+
+
+def _terminal_not_running_line(terminal: str, status: str, lang: str) -> str:
+    """Honest readback when the addressed pane is not accepting input."""
+    from jarvis.voice.action_phrases import action_phrase
+
+    return action_phrase(
+        "ide_terminal_not_running", lang, terminal=terminal, status=status
+    )
+
+
 # Conversational coaching: "help me [get better at a soft / cognitive /
 # conversational skill]" — asking, thinking, phrasing, deciding, understanding,
 # expressing, communicating. This is CONVERSATION (Jarvis answers inline and
@@ -5569,6 +5599,113 @@ class BrainManager:
         )
         return f"Öffne {label}." if is_de else f"Opening {label}."  # i18n-allow
 
+    async def _run_agentic_ide_fast_path(
+        self,
+        user_text: str,
+        *,
+        trace_id: UUID | None = None,
+    ) -> str | None:
+        """Deliver a spoken instruction to the addressed Agentic-IDE terminal.
+
+        The Agentic IDE's promise is that talking to a named pane makes that pane
+        work. Leaving that to the LLM's tool choice made it unreliable in exactly
+        the situation it matters most: on 2026-07-25 (voice session 15:47) "let
+        Kai do a deep dive" was swallowed by the force-spawn heuristic and became
+        an invisible background mission, and even without that collision a router
+        that is busy deciding between a dozen tools sometimes just answers in
+        prose. So the delivery is deterministic here, ahead of force-spawn — the
+        same shape as the navigation and local-action fast-paths.
+
+        What is NOT deterministic is the prompt itself: the composer
+        (``agentic_ide.prompt_composer``) rewrites the spoken sentence into a
+        briefed task with ``@file`` references. That is one bounded provider call
+        with a regex fallback, so the instruction is delivered either way.
+
+        Returns ``None`` whenever this turn is not an addressed terminal, so the
+        normal path runs untouched.
+        """
+        try:
+            from jarvis.agentic_ide import intent as ide_intent
+            from jarvis.agentic_ide.session import (
+                AGENT_DISPLAY,
+                SessionError,
+                get_registry,
+            )
+        except Exception:  # noqa: BLE001 - optional surface
+            return None
+
+        try:
+            registry = get_registry()
+            session = registry.session
+            if session is None:
+                return None
+            found = ide_intent.detect(
+                user_text, names=[t.name for t in session.terminals]
+            )
+        except Exception:  # noqa: BLE001 - detection must never break a turn
+            return None
+        if found is None:
+            return None
+        # Naming the spawn vehicle outranks the workspace: "spawn an agent that
+        # helps Kai" is a genuine background-worker request even with a
+        # workspace open. Same test the spawn gate and ``intent.owns_turn`` use,
+        # so the three cannot drift into disagreeing about one utterance.
+        from jarvis.brain.spawn_gate import names_spawn_vehicle
+
+        if names_spawn_vehicle(user_text):
+            return None
+
+        out_lang = resolve_output_language(
+            self._reply_language,
+            "unknown",
+            user_text,
+            default=DEFAULT_LOCALE,
+            conversation_language=self._conversation_language,
+        )
+
+        # A question about a pane is read-only: answer it from what that pane
+        # printed, and let the normal brain path phrase the answer with the
+        # focus-context block (which already carries the transcript tail).
+        if found.kind == ide_intent.KIND_REPORT:
+            return None
+
+        term = session.find(found.terminal)
+        if term is None:
+            return None
+        if term.status != "live" or not term.pty_id:
+            log.info(
+                "Agentic IDE fast-path: %s is %s — nothing sent",
+                term.name, term.status,
+            )
+            return _terminal_not_running_line(term.name, term.status, out_lang)
+
+        from jarvis.agentic_ide.prompt_composer import compose
+
+        composed = await compose(
+            user_text,
+            session=session,
+            terminal_name=term.name,
+            agent_display=AGENT_DISPLAY.get(term.agent, term.agent),
+            instruction=found.instruction,
+        )
+        if not composed.text:
+            return None
+
+        try:
+            await registry.send_prompt(term.name, composed.text)
+        except SessionError as exc:
+            log.info("Agentic IDE fast-path could not send to %s: %s", term.name, exc)
+            return str(exc)
+        except Exception:  # noqa: BLE001 - never crash the turn over a pane
+            log.warning("Agentic IDE fast-path failed", exc_info=True)
+            return None
+
+        log.info(
+            "Agentic IDE fast-path -> %s (composed_by=%s, files=%d)",
+            term.name, composed.composed_by, len(composed.files),
+        )
+        return _prompt_sent_line(term.name, composed.files, out_lang)
+
     def _is_explicit_heavy_request(self, user_text: str) -> bool:
         """Return whether the user semantically requested a heavy worker."""
         text = (user_text or "").strip()
@@ -5689,6 +5826,28 @@ class BrainManager:
                 "force-spawn skipped: auto-spawn feature named, not commanded — inline"
             )
             return False
+        # An open Agentic-IDE terminal that is being ADDRESSED owns the turn.
+        # Checked BEFORE the explicit-trigger hoist for the same reason the two
+        # guards above are: the hoist matches a DEPTH marker, and "let Kai do a
+        # deep dive" carries one while meaning the exact opposite of a background
+        # mission. Live bug 2026-07-25 (voice session 15:47): that sentence
+        # dispatched a Codex worker into a fresh worktree while the terminal
+        # called Kai sat idle and the user saw nothing happen.
+        #
+        # ``owns_turn`` stands down when the user NAMES the spawn vehicle, so an
+        # explicit "spawn an agent that helps Kai" still force-spawns — the
+        # workspace claims ambiguous turns, never explicit delegation.
+        try:
+            from jarvis.agentic_ide.intent import owns_turn as _ide_owns_turn
+
+            if _ide_owns_turn(t):
+                log.info(
+                    "force-spawn skipped: an open Agentic-IDE terminal is "
+                    "addressed — the workspace handles this turn"
+                )
+                return False
+        except Exception:  # noqa: BLE001 — optional surface, never breaks routing
+            pass
         # User mandate (2026-06-15, "when I say subagent it MUST spawn"): an
         # EXPLICIT heavy-work trigger that NAMES the execution vehicle
         # ("subagent", "spawn", "openclaw", "delegate") is an UNAMBIGUOUS request
@@ -7986,6 +8145,26 @@ class BrainManager:
                 trace_id=turn_trace_id,
             )
             return nav_reply
+
+        # Agentic-IDE fast-path: an instruction aimed at a named terminal of the
+        # open coding workspace is DELIVERED to that terminal, deterministically.
+        # Placed before force-spawn — whose depth-marker hoist used to swallow
+        # exactly these turns (live bug 2026-07-25: "let Kai do a deep dive"
+        # dispatched a background mission while Kai sat idle) — and before the
+        # capability gate. Placed AFTER navigation so a section command still
+        # moves the UI even when a pane happens to share that word. Returns None
+        # on every turn that does not address a terminal.
+        ide_reply = await self._run_agentic_ide_fast_path(
+            user_text, trace_id=turn_trace_id,
+        )
+        if ide_reply is not None:
+            await self._record_response_side_effects(
+                user_text=user_text,
+                response_text=ide_reply,
+                use_history=use_history,
+                trace_id=turn_trace_id,
+            )
+            return ide_reply
 
         # Agent-C (capability-coupling): pre-generation capability gate.
         # If the utterance looks like an action request but no registered

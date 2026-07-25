@@ -302,6 +302,30 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "I am not sure what to write to the wiki. Please say it again with the content.",
         "es": "No tengo claro qué escribir en la wiki; dímelo otra vez con el contenido.",
     },
+    # Agentic-IDE terminal delivery (deterministic fast path). Naming the pane
+    # back is the whole confirmation the user gets that the right agent was
+    # addressed — a spoken "sent" without the call-sign would be useless in a
+    # four-pane workspace.
+    "ide_prompt_sent": {
+        "de": "Ist bei {terminal}.",  # i18n-allow
+        "en": "Sent to {terminal}.",
+        "es": "Enviado a {terminal}.",
+    },
+    "ide_prompt_sent_files": {
+        "de": "Ist bei {terminal}, mit {count} Dateien dazu.",  # i18n-allow
+        "en": "Sent to {terminal}, with {count} files attached.",
+        "es": "Enviado a {terminal}, con {count} archivos adjuntos.",
+    },
+    "ide_prompt_sent_one_file": {
+        "de": "Ist bei {terminal}, samt {file}.",  # i18n-allow
+        "en": "Sent to {terminal}, along with {file}.",
+        "es": "Enviado a {terminal}, junto con {file}.",
+    },
+    "ide_terminal_not_running": {
+        "de": "{terminal} läuft gerade nicht ({status}) — ich habe nichts geschickt.",  # i18n-allow
+        "en": "{terminal} is not running right now ({status}) — I sent nothing.",
+        "es": "{terminal} no está en marcha ahora ({status}) — no envié nada.",
+    },
 }
 
 

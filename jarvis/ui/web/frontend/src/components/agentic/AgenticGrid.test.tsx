@@ -101,6 +101,8 @@ function sessionWith(panes: Array<[string, number]>): SessionState {
       instruction_files: [],
       top_level_dirs: [],
       skills: [],
+      subagents: [],
+      commands: [],
       note: "",
     },
     created_at: 0,

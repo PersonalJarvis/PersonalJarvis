@@ -174,6 +174,34 @@ class DelegationOfferWindow:
 OFFER_WINDOW = DelegationOfferWindow()
 
 
+def names_spawn_vehicle(user_text: str) -> bool:
+    """True when the utterance names the background-agent vehicle explicitly.
+
+    Public because the Agentic-IDE turn detector needs the SAME answer this gate
+    uses: a workspace terminal may claim a turn only when the user did *not* ask
+    for a background agent. Sharing the one pattern keeps "spawn an agent that
+    helps Kai" a spawn while "let Kai do it" reaches Kai.
+    """
+    return bool(_DELEGATION_MARKER_RE.search((user_text or "").strip()))
+
+
+def _agentic_ide_claims_turn(text: str) -> bool:
+    """True when an open Agentic-IDE terminal is being addressed instead.
+
+    An agent already runs in a pane the user can see and named; typing the work
+    into it is what they asked for, and dispatching an invisible background
+    worker instead is the live 2026-07-25 defect this guard closes. Import is
+    local and failure-tolerant: the workspace is an optional surface and must
+    never be able to break spawn routing.
+    """
+    try:
+        from jarvis.agentic_ide.intent import owns_turn
+
+        return owns_turn(text)
+    except Exception:  # noqa: BLE001 - optional surface, never fatal to routing
+        return False
+
+
 def llm_spawn_allowed(user_text: str) -> bool:
     """Gate an LLM-chosen spawn tool call against the user's ACTUAL turn.
 
@@ -188,6 +216,17 @@ def llm_spawn_allowed(user_text: str) -> bool:
         return False
     if _is_decline_or_feature_talk(text):
         log.info("spawn gate: decline / feature talk — spawn blocked")
+        return False
+    # An addressed Agentic-IDE terminal outranks a spawn. Checked before the
+    # delegation marker so a depth word inside a terminal instruction ("let Kai
+    # do a deep dive") cannot dispatch a background mission — but AFTER the
+    # decline guard, and ``owns_turn`` itself stands down when the user named the
+    # vehicle, so an explicit "spawn an agent" still spawns.
+    if _agentic_ide_claims_turn(text):
+        log.info(
+            "spawn gate: an open Agentic-IDE terminal is addressed — "
+            "the workspace handles this turn, no background agent"
+        )
         return False
     if _DELEGATION_MARKER_RE.search(text):
         OFFER_WINDOW.disarm()
@@ -230,4 +269,5 @@ __all__ = [
     "SPAWN_VEHICLE_TOOL_NAMES",
     "DelegationOfferWindow",
     "llm_spawn_allowed",
+    "names_spawn_vehicle",
 ]

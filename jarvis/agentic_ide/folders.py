@@ -106,6 +106,8 @@ class ProjectProfile:
     instruction_files: list[str] = field(default_factory=list)
     top_level_dirs: list[str] = field(default_factory=list)
     skills: list[str] = field(default_factory=list)
+    subagents: list[str] = field(default_factory=list)
+    commands: list[str] = field(default_factory=list)
     note: str = ""
 
     def to_dict(self) -> dict:
@@ -125,10 +127,21 @@ class ProjectProfile:
             out.append("Agent instructions present: " + ", ".join(self.instruction_files))
         if self.top_level_dirs:
             out.append("Top-level folders: " + ", ".join(self.top_level_dirs))
-        if self.skills:
-            shown = ", ".join(self.skills[:20])
-            more = "" if len(self.skills) <= 20 else f" (+{len(self.skills) - 20} more)"
-            out.append(f"Skills defined here ({len(self.skills)}): {shown}{more}")
+        # What the agents in this repo can be ASKED for. Knowing that a repo
+        # defines a `publish-new-version` skill or a `code-reviewer` subagent is
+        # the difference between "write a release script" and "run the release
+        # skill" — the second is what the user meant and what the agent in the
+        # pane is actually equipped to do.
+        for label, items in (
+            ("Skills defined here", self.skills),
+            ("Subagents defined here", self.subagents),
+            ("Slash commands defined here", self.commands),
+        ):
+            if not items:
+                continue
+            shown = ", ".join(items[:20])
+            more = "" if len(items) <= 20 else f" (+{len(items) - 20} more)"
+            out.append(f"{label} ({len(items)}): {shown}{more}")
         return out
 
 
@@ -339,10 +352,18 @@ def _git_branch(root: Path) -> str | None:
     return text[:12] or None  # detached HEAD
 
 
-def _collect_skills(root: Path) -> list[str]:
-    """Skill names defined in this repo (``.claude/skills`` / ``.agents/skills``)."""
+def _collect_named(root: Path, kind: str, *, files: bool = False) -> list[str]:
+    """Names defined under ``.claude/<kind>`` / ``.agents/<kind>``.
+
+    Both trees are read because the repo convention is that they mirror each
+    other (``.claude`` canonical, ``.agents`` the tool-neutral twin), and a
+    contributor may have only one of them checked out. Duplicates collapse.
+
+    Skills and subagents are directories; slash commands are Markdown files, so
+    ``files`` switches which entries count and strips the ``.md`` suffix.
+    """
     found: list[str] = []
-    for base in (root / ".claude" / "skills", root / ".agents" / "skills"):
+    for base in (root / ".claude" / kind, root / ".agents" / kind):
         if not base.is_dir():
             continue
         try:
@@ -350,12 +371,29 @@ def _collect_skills(root: Path) -> list[str]:
                 for item in it:
                     if len(found) >= _MAX_SKILLS:
                         break
-                    if item.is_dir(follow_symlinks=False) and not _is_hidden(item.name):
-                        if item.name not in found:
-                            found.append(item.name)
+                    if _is_hidden(item.name):
+                        continue
+                    try:
+                        is_file = item.is_file(follow_symlinks=False)
+                        is_dir = item.is_dir(follow_symlinks=False)
+                    except OSError:
+                        continue
+                    if files and is_file and item.name.endswith(".md"):
+                        name = item.name[:-3]
+                    elif not files and is_dir:
+                        name = item.name
+                    else:
+                        continue
+                    if name not in found:
+                        found.append(name)
         except OSError:
             continue
     return found
+
+
+def _collect_skills(root: Path) -> list[str]:
+    """Skill names defined in this repo (``.claude/skills`` / ``.agents/skills``)."""
+    return _collect_named(root, "skills")
 
 
 def probe_project(path: str | Path) -> ProjectProfile:
@@ -408,6 +446,12 @@ def probe_project(path: str | Path) -> ProjectProfile:
     profile.instruction_files = [f for f in _INSTRUCTION_FILES if f in names]
     profile.top_level_dirs = sorted(dirs, key=str.lower)
     profile.skills = _collect_skills(root)
+    # Subagents and slash commands are both single Markdown files (one per
+    # definition); skills are directories with a SKILL.md inside.
+    profile.subagents = [
+        name for name in _collect_named(root, "agents", files=True) if name != "INDEX"
+    ]
+    profile.commands = _collect_named(root, "commands", files=True)
     return profile
 
 
