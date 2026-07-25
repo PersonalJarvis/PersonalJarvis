@@ -350,6 +350,10 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
         # from the live catalog wins over this.
         "nvidia": "meta/llama-3.3-70b-instruct",
         "mistral": "mistral-small-3.1",
+        # Local providers: no server-side catalog is knowable ahead of time —
+        # empty means "the plugin discovers the first installed model".
+        "ollama": "",
+        "local-openai": "",
     },
     "deep": {
         # Frontier 2026-Q2 — deep brain (user mandate 2026-04-29:
@@ -369,6 +373,9 @@ TIER_DEFAULTS_BY_PROVIDER: dict[str, dict[str, str]] = {
         # NVIDIA NIM deep pick: NVIDIA's own reasoning flagship.
         "nvidia": "nvidia/llama-3.1-nemotron-ultra-253b-v1",
         "mistral": "mistral-large-3",
+        # Local providers: empty = plugin-side discovery (see router tier).
+        "ollama": "",
+        "local-openai": "",
     },
 }
 
