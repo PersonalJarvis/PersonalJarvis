@@ -74,5 +74,12 @@ def load_usage_card(plugin_id: str) -> UsageCard | None:
         for line in front.splitlines():
             key, _, value = line.partition(":")
             if key.strip() == "keywords":
+                # Strip a trailing YAML-style comment. A card's keyword list is
+                # the one place German belongs (it is the matching vocabulary a
+                # German utterance has to hit), so it carries an inline
+                # `i18n-allow` marker for the language gate. Exempting the whole
+                # file instead would also stop checking the card's PROSE, which
+                # must stay English.
+                value = value.split(" #", 1)[0]
                 keywords = [k.strip() for k in value.split(",") if k.strip()]
     return UsageCard(plugin_id=plugin_id, keywords=keywords, body=body.strip())

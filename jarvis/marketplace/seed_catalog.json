@@ -1,5 +1,5 @@
 {
-  "version": 2,
+  "version": 3,
   "schema_version": "2026-05-09",
   "plugins": [
     {
@@ -8,6 +8,7 @@
       "description": "Repos, issues, pull requests and Actions runs",
       "category": "Developer",
       "logo_slug": "github",
+      "logo_color": "24292E",
       "featured": true,
       "longevity": "permanent",
       "longevity_note": "Pick 'No expiration' when you create the token.",
@@ -23,8 +24,7 @@
         "url": "https://api.githubcopilot.com/mcp/",
         "auth_header_template": "Authorization: Bearer $plugin_github_access_token"
       },
-      "post_install_hint_md": "Uses GitHub's hosted MCP server, so Docker is not required. If you use SAML SSO, authorize the token at https://github.com/settings/tokens after connecting.",
-      "logo_color": "24292E"
+      "post_install_hint_md": "Uses GitHub's hosted MCP server, so Docker is not required. If you use SAML SSO, authorize the token at https://github.com/settings/tokens after connecting."
     },
     {
       "id": "vercel",
@@ -32,6 +32,7 @@
       "description": "Deployments, runtime logs, domains and env-vars",
       "category": "Developer",
       "logo_slug": "vercel",
+      "logo_color": "000000",
       "featured": true,
       "longevity": "permanent",
       "longevity_note": "Pick 'No expiration' when you create the token.",
@@ -43,8 +44,7 @@
         "instruction_md": "1. Click 'Create Token'\n2. Name: 'Personal Jarvis'\n3. Choose 'Full Account' or a specific team\n4. Copy the token (shown once)\n5. Paste below"
       },
       "native_tool": "vercel",
-      "future_v2_note": "Apply for mcp.vercel.com client-allowlist; switch mode to hosted_mcp_allowlist when approved.",
-      "logo_color": "000000"
+      "future_v2_note": "Apply for mcp.vercel.com client-allowlist; switch mode to hosted_mcp_allowlist when approved."
     },
     {
       "id": "supabase",
@@ -52,6 +52,7 @@
       "description": "Projects, SQL, Edge Functions, advisors and logs",
       "category": "Developer",
       "logo_slug": "supabase",
+      "logo_color": "3FCF8E",
       "featured": false,
       "longevity": "permanent",
       "auth": {
@@ -66,8 +67,7 @@
         "url": "https://mcp.supabase.com/mcp?read_only=true",
         "auth_header_template": "Authorization: Bearer $plugin_supabase_access_token"
       },
-      "post_install_hint_md": "Uses Supabase's hosted MCP server, so Node.js is not required. Read-only mode is enforced in the server URL.",
-      "logo_color": "3FCF8E"
+      "post_install_hint_md": "Uses Supabase's hosted MCP server, so Node.js is not required. Read-only mode is enforced in the server URL."
     },
     {
       "id": "notion",
@@ -75,6 +75,7 @@
       "description": "Pages, databases and comments — multi-workspace",
       "category": "Knowledge & Reading",
       "logo_slug": "notion",
+      "logo_color": "000000",
       "featured": true,
       "longevity": "self_renewing",
       "auth": {
@@ -97,8 +98,7 @@
         "transport": "http",
         "url": "https://mcp.notion.com/mcp",
         "auth_header_template": "Authorization: Bearer ${plugin_notion_access_token}"
-      },
-      "logo_color": "000000"
+      }
     },
     {
       "id": "slack",
@@ -106,6 +106,7 @@
       "description": "Channels, DMs, search and Canvas drafts",
       "category": "Messaging",
       "logo_slug": "slack",
+      "logo_color": "4A154B",
       "logo_url": "/plugin-assets/slack-logo.svg",
       "featured": true,
       "longevity": "self_renewing",
@@ -139,8 +140,7 @@
         "url": "https://mcp.slack.com/mcp",
         "auth_header_template": "Authorization: Bearer ${plugin_slack_access_token}"
       },
-      "post_install_hint_md": "Slack PKCE apps use user-level scopes only — Jarvis acts as you, not as a bot. If your workspace admin requires approval, the OAuth flow will surface that prompt automatically.",
-      "logo_color": "4A154B"
+      "post_install_hint_md": "Slack PKCE apps use user-level scopes only — Jarvis acts as you, not as a bot. If your workspace admin requires approval, the OAuth flow will surface that prompt automatically."
     },
     {
       "id": "linear",
@@ -148,6 +148,7 @@
       "description": "Issues, projects, cycles and roadmap for software teams",
       "category": "Developer",
       "logo_slug": "linear",
+      "logo_color": "5E6AD2",
       "featured": true,
       "longevity": "self_renewing",
       "auth": {
@@ -160,8 +161,7 @@
         "transport": "http",
         "url": "https://mcp.linear.app/mcp",
         "auth_header_template": "Authorization: Bearer ${plugin_linear_access_token}"
-      },
-      "logo_color": "5E6AD2"
+      }
     },
     {
       "id": "stripe",
@@ -169,6 +169,7 @@
       "description": "Payments, customers, invoices and balance — read-first",
       "category": "Developer",
       "logo_slug": "stripe",
+      "logo_color": "635BFF",
       "featured": false,
       "longevity": "permanent",
       "auth": {
@@ -183,8 +184,7 @@
         "url": "https://mcp.stripe.com",
         "auth_header_template": "Authorization: Bearer ${plugin_stripe_access_token}"
       },
-      "post_install_hint_md": "Restricted key (rk_), validated against GET /v1/balance, sent as a Bearer token to Stripe's hosted MCP server — the documented path for non-OAuth clients (bypasses the OAuth client-allowlist; no Node needed). Read-only is controlled by the key's scope.",
-      "logo_color": "635BFF"
+      "post_install_hint_md": "Restricted key (rk_), validated against GET /v1/balance, sent as a Bearer token to Stripe's hosted MCP server — the documented path for non-OAuth clients (bypasses the OAuth client-allowlist; no Node needed). Read-only is controlled by the key's scope."
     },
     {
       "id": "cloudflare",
@@ -192,6 +192,7 @@
       "description": "Workers, observability logs, analytics and Radar insights",
       "category": "Developer",
       "logo_slug": "cloudflare",
+      "logo_color": "F38020",
       "featured": false,
       "longevity": "self_renewing",
       "auth": {
@@ -210,8 +211,7 @@
         "url": "https://observability.mcp.cloudflare.com/mcp",
         "auth_header_template": "Authorization: Bearer ${plugin_cloudflare_access_token}"
       },
-      "post_install_hint_md": "Defaults to the read-only observability/analytics server. Pick read scopes on Cloudflare's consent screen.",
-      "logo_color": "F38020"
+      "post_install_hint_md": "Defaults to the read-only observability/analytics server. Pick read scopes on Cloudflare's consent screen."
     },
     {
       "id": "discord",
@@ -219,6 +219,7 @@
       "description": "Chat with Jarvis from Discord (your bot)",
       "category": "Messaging",
       "logo_slug": "discord",
+      "logo_color": "5865F2",
       "featured": false,
       "longevity": "permanent",
       "longevity_note": "A bot token stays valid until you reset it in the Discord developer portal.",
@@ -230,8 +231,7 @@
         "validation_endpoint": "https://discord.com/api/v10/users/@me",
         "instruction_md": "1. Open https://discord.com/developers/applications and click 'New Application'.\n2. Go to the 'Bot' page, click 'Reset Token', and copy it (shown once).\n3. Under 'Privileged Gateway Intents', enable 'Message Content Intent' so the bot can read message text.\n4. Invite the bot to your server: OAuth2 -> URL Generator -> scope 'bot' + the permissions you want (View Channels, Read Message History, Send Messages), open the link, pick your server, Authorize.\n5. Paste the bot token below, plus your numeric Discord user id (Developer Mode -> right-click yourself -> Copy User ID) so only you can command the bot."
       },
-      "post_install_hint_md": "This enables the Discord channel — message your bot to talk to Jarvis. Outbound replies pass through the voice scrubber and your allowlist.",
-      "logo_color": "5865F2"
+      "post_install_hint_md": "This enables the Discord channel — message your bot to talk to Jarvis. Outbound replies pass through the voice scrubber and your allowlist."
     },
     {
       "id": "telegram",
@@ -239,6 +239,7 @@
       "description": "Chat with Jarvis from Telegram (your bot)",
       "category": "Messaging",
       "logo_slug": "telegram",
+      "logo_color": "26A5E4",
       "featured": false,
       "longevity": "permanent",
       "longevity_note": "A bot token stays valid until you revoke it in BotFather.",
@@ -250,8 +251,7 @@
         "validation_endpoint": "https://api.telegram.org/bot{token}/getMe",
         "instruction_md": "1. Open @BotFather in Telegram (https://t.me/BotFather).\n2. Send /newbot, pick a name and a username ending in 'bot'.\n3. Copy the token BotFather gives you (looks like 123456789:AAH...).\n4. Paste it below, then send /start to your new bot so it can reach you."
       },
-      "post_install_hint_md": "This enables the Telegram channel — message your bot to talk to Jarvis. Outbound replies pass through the voice scrubber and your allowlist.",
-      "logo_color": "26A5E4"
+      "post_install_hint_md": "This enables the Telegram channel — message your bot to talk to Jarvis. Outbound replies pass through the voice scrubber and your allowlist."
     },
     {
       "id": "asana",
@@ -259,6 +259,7 @@
       "description": "Tasks, projects and workspaces",
       "category": "Lists & Tasks",
       "logo_slug": "asana",
+      "logo_color": "F06A6A",
       "featured": false,
       "longevity": "self_renewing",
       "oauth_client_family": "asana",
@@ -280,8 +281,7 @@
         "url": "https://mcp.asana.com/v2/mcp",
         "auth_header_template": "Authorization: Bearer ${plugin_asana_access_token}"
       },
-      "post_install_hint_md": "Setup: register an OAuth app at https://app.asana.com/0/my-apps, add redirect URI http://127.0.0.1:3119/oauth/callback, and put its Client ID into data/plugin_catalog.json. If Asana rejects the 127.0.0.1 redirect, switch this plugin to pat_paste (token at app.asana.com/0/my-apps, validate https://app.asana.com/api/1.0/users/me).",
-      "logo_color": "F06A6A"
+      "post_install_hint_md": "Setup: register an OAuth app at https://app.asana.com/0/my-apps, add redirect URI http://127.0.0.1:3119/oauth/callback, and put its Client ID into data/plugin_catalog.json. If Asana rejects the 127.0.0.1 redirect, switch this plugin to pat_paste (token at app.asana.com/0/my-apps, validate https://app.asana.com/api/1.0/users/me)."
     },
     {
       "id": "google_drive",
@@ -289,6 +289,7 @@
       "description": "Search, read, create, share and delete your Drive files",
       "category": "Files & Photos",
       "logo_slug": "googledrive",
+      "logo_color": "1FA463",
       "featured": false,
       "longevity": "provider_limited",
       "longevity_note": "Google expires the authorization after 7 days while your own OAuth app is in Testing mode. Publish the app to keep the connection indefinitely.",
@@ -310,8 +311,7 @@
         "offline_access": true
       },
       "native_tool": "google_drive",
-      "post_install_hint_md": "Setup: see docs/marketplace/google-oauth-setup.md (shares the Google client with Gmail/Calendar). Talks to the Drive REST API v3 directly (Google's hosted Drive MCP is a Workspace-only Developer Preview that 403s consumer accounts). The full 'drive' scope grants read/write/delete over ALL your files and is a Google RESTRICTED scope: in 'Testing' status the refresh grant expires after 7 days, so publish the consent app to 'In production' and complete Google's restricted-scope (CASA) verification for uninterrupted offline access. A user, account, or administrator can still revoke the grant.",
-      "logo_color": "1FA463"
+      "post_install_hint_md": "Setup: see docs/marketplace/google-oauth-setup.md (shares the Google client with Gmail/Calendar). Talks to the Drive REST API v3 directly (Google's hosted Drive MCP is a Workspace-only Developer Preview that 403s consumer accounts). The full 'drive' scope grants read/write/delete over ALL your files and is a Google RESTRICTED scope: in 'Testing' status the refresh grant expires after 7 days, so publish the consent app to 'In production' and complete Google's restricted-scope (CASA) verification for uninterrupted offline access. A user, account, or administrator can still revoke the grant."
     },
     {
       "id": "gmail",
@@ -319,6 +319,7 @@
       "description": "Read, send, organize and delete mail in your inbox",
       "category": "Calendar & Mail",
       "logo_slug": "gmail",
+      "logo_color": "EA4335",
       "featured": false,
       "longevity": "provider_limited",
       "longevity_note": "Google expires the authorization after 7 days while your own OAuth app is in Testing mode. Publish the app to keep the connection indefinitely.",
@@ -340,8 +341,7 @@
         "offline_access": true
       },
       "native_tool": "gmail",
-      "post_install_hint_md": "Setup: see docs/marketplace/google-oauth-setup.md (shares the Google client with Drive). In Google 'Testing' status the refresh grant expires after 7 days. Publish the consent app to 'In production' and complete restricted-scope verification when Google requires it so Jarvis can refresh offline access automatically. A user, account, or administrator can still revoke the grant.",
-      "logo_color": "EA4335"
+      "post_install_hint_md": "Setup: see docs/marketplace/google-oauth-setup.md (shares the Google client with Drive). In Google 'Testing' status the refresh grant expires after 7 days. Publish the consent app to 'In production' and complete restricted-scope verification when Google requires it so Jarvis can refresh offline access automatically. A user, account, or administrator can still revoke the grant."
     },
     {
       "id": "google_calendar",
@@ -349,6 +349,7 @@
       "description": "See your schedule and create, move or delete events by voice",
       "category": "Calendar & Mail",
       "logo_slug": "googlecalendar",
+      "logo_color": "1A73E8",
       "featured": true,
       "longevity": "provider_limited",
       "longevity_note": "Google expires the authorization after 7 days while your own OAuth app is in Testing mode. Publish the app to keep the connection indefinitely.",
@@ -370,8 +371,138 @@
         "offline_access": true
       },
       "native_tool": "google_calendar",
-      "post_install_hint_md": "Setup: shares the Google OAuth client with Gmail/Drive. Add the full 'calendar' scope to the OAuth consent screen (it reads events across ALL your calendars, not just the primary one). A 'Testing' refresh grant expires after 7 days; publish the consent app to 'In production' so Jarvis can refresh offline access automatically. A user, account, or administrator can still revoke the grant.",
-      "logo_color": "1A73E8"
+      "post_install_hint_md": "Setup: shares the Google OAuth client with Gmail/Drive. Add the full 'calendar' scope to the OAuth consent screen (it reads events across ALL your calendars, not just the primary one). A 'Testing' refresh grant expires after 7 days; publish the consent app to 'In production' so Jarvis can refresh offline access automatically. A user, account, or administrator can still revoke the grant."
+    },
+    {
+      "id": "todoist",
+      "display_name": "Todoist",
+      "description": "Tasks, projects and due dates by voice",
+      "category": "Lists & Tasks",
+      "logo_slug": "todoist",
+      "logo_color": "E44332",
+      "featured": true,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "discovery_url": "https://ai.todoist.net/.well-known/oauth-protected-resource",
+        "mcp_url": "https://ai.todoist.net/mcp",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://ai.todoist.net/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_todoist_access_token}"
+      },
+      "post_install_hint_md": "Works on the free plan. Reminders and labels are Todoist Pro features, so those requests need a paid Todoist plan."
+    },
+    {
+      "id": "clickup",
+      "display_name": "ClickUp",
+      "description": "Tasks, lists and docs across your spaces",
+      "category": "Lists & Tasks",
+      "logo_slug": "clickup",
+      "logo_color": "7B68EE",
+      "featured": false,
+      "longevity": "permanent",
+      "longevity_note": "ClickUp states its access token does not expire, so this connection needs no renewal. That is a policy rather than a guarantee, so Jarvis still asks you to reconnect if it is ever rejected.",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "discovery_url": "https://mcp.clickup.com/.well-known/oauth-authorization-server",
+        "mcp_url": "https://mcp.clickup.com/mcp",
+        "refresh_supported": false
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.clickup.com/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_clickup_access_token}"
+      }
+    },
+    {
+      "id": "dropbox",
+      "display_name": "Dropbox",
+      "description": "Find, read and share files in your Dropbox",
+      "category": "Files & Photos",
+      "logo_slug": "dropbox",
+      "logo_color": "0061FF",
+      "featured": false,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "discovery_url": "https://mcp.dropbox.com/.well-known/oauth-protected-resource/mcp",
+        "mcp_url": "https://mcp.dropbox.com/mcp",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.dropbox.com/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_dropbox_access_token}"
+      }
+    },
+    {
+      "id": "canva",
+      "display_name": "Canva",
+      "description": "Create, search and export designs",
+      "category": "Media & Creativity",
+      "logo_slug": "canva",
+      "logo_color": "00C4CC",
+      "featured": false,
+      "longevity": "self_renewing",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "discovery_url": "https://mcp.canva.com/.well-known/oauth-authorization-server",
+        "mcp_url": "https://mcp.canva.com/mcp",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.canva.com/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_canva_access_token}"
+      },
+      "post_install_hint_md": "Creating, editing, searching and exporting designs works on every Canva plan. Resizing needs Canva Pro; brand kits and templates need an Enterprise plan."
+    },
+    {
+      "id": "airtable",
+      "display_name": "Airtable",
+      "description": "Records, tables and views in your bases",
+      "category": "Knowledge & Reading",
+      "logo_slug": "airtable",
+      "logo_color": "18BFFF",
+      "featured": false,
+      "longevity": "self_renewing",
+      "longevity_note": "Airtable ends a connection after 60 days without use. Jarvis renews it in the background every 12 hours, so it stays open as long as this machine runs from time to time.",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "discovery_url": "https://airtable.com/.well-known/oauth-authorization-server/oauth2/v1",
+        "mcp_url": "https://mcp.airtable.com",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.airtable.com",
+        "auth_header_template": "Authorization: Bearer ${plugin_airtable_access_token}"
+      }
+    },
+    {
+      "id": "cal_com",
+      "display_name": "Cal.com",
+      "description": "Bookings, availability and event types",
+      "category": "Calendar & Mail",
+      "logo_slug": "caldotcom",
+      "logo_color": "292929",
+      "featured": false,
+      "longevity": "self_renewing",
+      "longevity_note": "Cal.com publishes no token lifetime, so how long this stays connected has not been confirmed. Jarvis renews it in the background and will ask you to reconnect if that ever fails.",
+      "auth": {
+        "mode": "hosted_mcp_oauth_dcr",
+        "discovery_url": "https://mcp.cal.com/.well-known/oauth-authorization-server",
+        "mcp_url": "https://mcp.cal.com/mcp",
+        "refresh_supported": true
+      },
+      "mcp_server": {
+        "transport": "http",
+        "url": "https://mcp.cal.com/mcp",
+        "auth_header_template": "Authorization: Bearer ${plugin_cal_com_access_token}"
+      }
     }
   ]
 }
