@@ -32,6 +32,26 @@ class _Session:
     profile: _Profile = field(default_factory=_Profile)
 
 
+class _Writer:
+    """Stands in for a resolved quality-tier Brain.
+
+    Every test here patches ``_llm_compose``, so this only has to exist — the
+    point is that ``compose`` found a model it considers good enough and did
+    not take the honest-degradation exit.
+    """
+
+
+@pytest.fixture(autouse=True)
+def _writer_available(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A quality-tier writer is reachable unless a test says otherwise.
+
+    Without this the composer would resolve the real provider chain, which on a
+    machine with no keys returns None and sends every test down the
+    deterministic path.
+    """
+    monkeypatch.setattr(prompt_composer, "_resolve_writer", lambda: _Writer())
+
+
 @pytest.fixture()
 def workspace(tmp_path: Path) -> _Session:
     (tmp_path / "jarvis" / "plugins" / "wake").mkdir(parents=True)
@@ -149,20 +169,25 @@ async def test_a_fenced_or_quoted_answer_is_unwrapped(
     assert result.text == "Review the wake word detection."
 
 
-async def test_use_llm_false_sends_the_text_through(workspace: _Session) -> None:
-    """The typed prompt bar must not have its wording rewritten behind the user."""
+async def test_use_llm_false_keeps_the_users_own_wording(workspace: _Session) -> None:
+    """The typed prompt bar must not have its wording rewritten behind the user.
+
+    Asserted on the WORDS surviving rather than on the exact string: the prompt
+    carries a markdown skeleton around them, and what must not happen is the
+    instruction being rephrased, not the skeleton existing.
+    """
     _prime(workspace)
     result = await prompt_composer.compose(
         "run the tests", session=workspace, terminal_name="Kai", use_llm=False
     )
     assert result.composed_by == "raw"
-    assert result.text.startswith("run the tests")
+    assert "run the tests" in result.text
 
 
 async def test_an_index_that_is_not_ready_yet_does_not_block(
     workspace: _Session, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A workspace whose walk is still running ships without references."""
+    """A workspace whose walk is still running ships without file references."""
     file_index.reset_cache()
 
     async def _echo(**kwargs: object) -> str:
@@ -173,4 +198,6 @@ async def test_an_index_that_is_not_ready_yet_does_not_block(
     result = await prompt_composer.compose(
         "review the vosk wake provider", session=workspace, terminal_name="Kai"
     )
-    assert result.text == "Review the wake word detection."
+    # The instruction goes out; with no index there is nothing to attach.
+    assert "wake" in result.text.lower()
+    assert result.files == []

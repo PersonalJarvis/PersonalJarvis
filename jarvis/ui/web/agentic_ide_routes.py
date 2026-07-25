@@ -12,8 +12,11 @@ Endpoints (prefix ``/api/agentic-ide``):
 * ``POST   /session``                    → open a workspace (folder + terminals)
 * ``DELETE /session``                    → close it and stop every agent
 * ``PUT    /mode``                       → focused coding mode on/off
+* ``POST   /terminals``                  → open one more pane (split)
+* ``POST   /terminals/batch``            → open N more panes at once
 * ``GET    /terminals/{name}/report``    → what one named terminal is doing
 * ``POST   /terminals/{name}/prompt``    → type a prompt into it and press Enter
+* ``POST   /terminals/{name}/attach``    → drop/paste files onto a pane
 * ``WS     /pty/{name}``                 → the pane's live terminal stream
 
 ``{name}`` accepts the call-sign ("mika", "Mika") or a spoken phrase containing
@@ -26,7 +29,16 @@ import logging
 from dataclasses import asdict
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    File,
+    Form,
+    HTTPException,
+    Request,
+    UploadFile,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from pydantic import BaseModel, Field
 
 from jarvis.agentic_ide import recents
@@ -40,6 +52,7 @@ from jarvis.agentic_ide.session import (
     SessionError,
     agent_argv,
     get_registry,
+    terminals_added_event,
 )
 
 from .surface_security import credentials_valid
@@ -87,6 +100,21 @@ class AddTerminalRequest(BaseModel):
             "'right' opens a new column beside the anchor, 'down' splits the "
             "anchor's own column and stacks the new pane under it."
         ),
+    )
+
+
+class AddTerminalsRequest(BaseModel):
+    """Open several panes at once (the spoken "five more terminals")."""
+
+    count: int = Field(
+        default=1,
+        ge=1,
+        le=MAX_TERMINALS,
+        description="How many terminals to open, capped by the workspace maximum.",
+    )
+    agent: str | None = Field(
+        default=None,
+        description="Coding agent to run in all of them; defaults to the last pane's.",
     )
 
 
@@ -434,6 +462,48 @@ async def add_terminal(req: AddTerminalRequest) -> dict:
     return {"ok": True, "terminal": term.to_dict(), "state": get_registry().state()}
 
 
+@router.post("/terminals/batch", summary="Open several terminals at once")
+async def add_terminals(request: Request, req: AddTerminalsRequest) -> dict:
+    """Open ``count`` more terminals in the running workspace.
+
+    The batch behind a spoken "open five more Claude Code terminals", and the
+    same call the CLI makes. Placement, call-signs and the agent default are the
+    single-terminal endpoint's — this only repeats it and reports honestly when
+    the workspace cap cut the request short.
+
+    ``capped`` is true when fewer panes were opened than asked for. A client MUST
+    surface that: five requested with three opened is not a plain success.
+    """
+    registry = get_registry()
+    try:
+        created, capped = await registry.add_terminals(req.count, agent=req.agent)
+    except SessionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    # Tell every connected client, so a workspace view that is already open shows
+    # the new panes instead of a stale grid. Best-effort: the panes exist whether
+    # or not a bus is attached (it is not, in tests).
+    session = registry.session
+    bus = getattr(request.app.state, "bus", None)
+    if session is not None and bus is not None and created:
+        try:
+            await bus.publish(
+                terminals_added_event(
+                    session, created, source_layer="agentic_ide_routes"
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 - notification is not the work
+            log.debug("AgenticIdeTerminalsAdded publish failed: %s", exc)
+
+    return {
+        "ok": True,
+        "requested": req.count,
+        "capped": capped,
+        "terminals": [t.to_dict() for t in created],
+        "state": registry.state(),
+    }
+
+
 @router.delete(
     "/terminals/{name}",
     summary="Close one terminal",
@@ -455,6 +525,132 @@ async def terminal_report(name: str, lines: int = 40) -> dict:
         return get_registry().report(name, lines)
     except SessionError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/terminals/{name}/attach", summary="Drop or paste files onto a terminal")
+async def terminal_attach(
+    name: str,
+    files: list[UploadFile] | None = File(default=None),  # noqa: B008
+    paths: str | None = Form(default=None),  # noqa: B008
+    submit: bool = Form(default=False),  # noqa: B008
+    note: str | None = Form(default=None),  # noqa: B008
+) -> dict:
+    """Put dropped or pasted files in front of the agent in terminal ``name``.
+
+    Two inputs, either or both:
+
+    * ``paths`` — newline-separated real paths the browser DID manage to hand
+      over (an Explorer/Finder drag usually carries them). Nothing is copied;
+      one inside the workspace is referenced where it lies, one outside is
+      copied in, because an agent's access to unrelated parts of the disk is
+      neither guaranteed nor silent.
+    * ``files`` — raw bytes, for everything with no path at all: a screenshot
+      pasted from the clipboard, an image dragged off a web page.
+
+    The resulting references are TYPED into the pane, not submitted, so the user
+    can add a sentence before pressing Enter — which is what someone dropping a
+    screenshot almost always wants to do. ``submit=true`` sends it as-is.
+    """
+    from jarvis.agentic_ide import drops
+
+    registry = get_registry()
+    session = registry.session
+    if session is None:
+        raise HTTPException(
+            status_code=409, detail="No Agentic-IDE session is running."
+        )
+    term = session.find(name)
+    if term is None:
+        known = ", ".join(t.name for t in session.terminals) or "none"
+        raise HTTPException(
+            status_code=404, detail=f"No terminal called {name!r}. Running: {known}."
+        )
+
+    references: list[str] = []
+    stored_names: list[str] = []
+    copied = 0
+
+    # 1. Paths that came with the drag. A path already inside the workspace is
+    #    used as it lies; anything else is copied in.
+    to_copy: list[tuple[str, bytes]] = []
+    for raw in (paths or "").splitlines():
+        candidate = raw.strip()
+        if not candidate:
+            continue
+        inside = drops.within_workspace(candidate, session.folder)
+        if inside is not None:
+            references.append(drops.reference(inside, agent=term.agent))
+            stored_names.append(Path(inside).name)
+            continue
+        # expanduser() is string/env work, not a filesystem call; the read
+        # itself goes to a worker thread (a dropped file may live on a slow
+        # network share).
+        resolved = Path(candidate).expanduser()  # noqa: ASYNC240
+        try:
+            data = await asyncio.to_thread(resolved.read_bytes)
+        except OSError as exc:
+            log.info("Agentic IDE attach: unreadable dropped path %r (%s)", candidate, exc)
+            continue
+        to_copy.append((resolved.name, data))
+
+    # 2. Bytes the browser handed over directly.
+    total = 0
+    for upload in files or []:
+        data = await upload.read()
+        total += len(data)
+        if total > drops.MAX_TOTAL_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=(
+                    f"That drop is too large (max "
+                    f"{drops.MAX_TOTAL_BYTES // (1024 * 1024)} MB in total)."
+                ),
+            )
+        if data:
+            to_copy.append((upload.filename or "file", data))
+
+    if to_copy:
+        try:
+            stored = await asyncio.to_thread(drops.store, session.folder, to_copy)
+        except drops.DropError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+        copied = len(stored)
+        for item in stored:
+            references.append(drops.reference(item.relative_path, agent=term.agent))
+            stored_names.append(item.name)
+
+    if not references:
+        raise HTTPException(
+            status_code=422,
+            detail="That drop carried nothing this pane could use.",
+        )
+
+    payload = " ".join(references)
+    if note and note.strip():
+        payload = f"{payload} {note.strip()}"
+
+    try:
+        if submit:
+            await registry.send_prompt(term.name, payload)
+        else:
+            # Typed, not submitted: the user still wants to say what to DO with
+            # the file. A leading space keeps it off whatever they already typed.
+            if not registry.write(term.key, f"{payload} "):
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"{term.name} is not accepting input right now.",
+                )
+    except SessionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    return {
+        "ok": True,
+        "terminal": term.name,
+        "references": references,
+        "files": stored_names,
+        "copied": copied,
+        "submitted": bool(submit),
+    }
 
 
 @router.post("/terminals/{name}/prompt", summary="Send a prompt to one terminal")

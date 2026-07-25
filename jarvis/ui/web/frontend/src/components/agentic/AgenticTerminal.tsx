@@ -38,7 +38,7 @@
  *   redrawing on every keystroke that is both slow and subtly misaligned. The
  *   canvas renderer draws on a grid, which is what a terminal actually is.
  */
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -52,6 +52,7 @@ import {
   Loader2,
   Maximize2,
   Minimize2,
+  Paperclip,
   Rows2,
   RotateCcw,
   X,
@@ -62,6 +63,14 @@ import {
   themeFor,
   type TerminalAppearance,
 } from "./terminalThemes";
+import {
+  extractPaneDrop,
+  extractPasteFiles,
+  isEmptyPayload,
+  nameClipboardFile,
+  type PaneDropPayload,
+} from "./paneDrop";
+import { attachToTerminal } from "@/lib/agenticIdeApi";
 
 export type PaneStatus = "connecting" | "live" | "exited" | "error";
 
@@ -106,6 +115,8 @@ interface AgenticTerminalProps {
   onClose?: () => void;
   /** Disable the split buttons — the workspace is at its terminal limit. */
   splitDisabled?: boolean;
+  /** A dropped or pasted file could not be attached — the grid surfaces it. */
+  onAttachError?: (message: string) => void;
   /** Called when the user asks a dead pane to start a fresh agent. */
   onRestart?: () => void;
   /**
@@ -142,6 +153,7 @@ export function AgenticTerminal({
   agents,
   onClose,
   splitDisabled = false,
+  onAttachError,
   onRestart,
   restartToken = 0,
 }: AgenticTerminalProps) {
@@ -387,16 +399,92 @@ export function AgenticTerminal({
     resizeRef.current?.();
   }, [fontSize]);
 
+  /*
+   * Drag a file onto the pane, or paste a screenshot into it.
+   *
+   * A native terminal writes a dragged file's PATH into the prompt; a browser
+   * cannot, because it never tells a web page where a file lives. So the drop is
+   * read synchronously (a DataTransfer empties the instant this handler
+   * returns — see ./paneDrop), handed to the backend, and what comes back is
+   * already typed into the agent's input.
+   *
+   * Deliberately typed and NOT submitted: someone dropping a screenshot wants to
+   * say what to do with it. The reference appears, the cursor sits after it.
+   */
+  const [dragging, setDragging] = useState(false);
+  const [attaching, setAttaching] = useState(false);
+  const dragDepth = useRef(0);
+
+  const attach = useCallback(
+    async (payload: PaneDropPayload) => {
+      if (isEmptyPayload(payload)) {
+        onAttachError?.("That drop carried no file this pane could use.");
+        return;
+      }
+      setAttaching(true);
+      try {
+        await attachToTerminal(name, payload);
+        termRef.current?.focus();
+      } catch (e) {
+        onAttachError?.((e as Error).message);
+      } finally {
+        setAttaching(false);
+      }
+    },
+    [name, onAttachError],
+  );
+
+  // Clipboard images only — text paste stays with xterm, which already does it
+  // right, and intercepting it would break ordinary copy-paste into the agent.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const onPaste = (event: ClipboardEvent) => {
+      const images = extractPasteFiles(event.clipboardData).map((f) =>
+        nameClipboardFile(f, name),
+      );
+      if (images.length === 0) return;
+      event.preventDefault();
+      void attach({ paths: [], files: images });
+    };
+    container.addEventListener("paste", onPaste);
+    return () => container.removeEventListener("paste", onPaste);
+  }, [attach, name]);
+
   const chrome = PANE_CHROME[appearance];
 
   return (
     <div
       onMouseDown={onFocus}
+      onDragEnter={(e) => {
+        e.preventDefault();
+        // Counted, not a boolean: dragging across the xterm canvas fires
+        // enter/leave for every child element, and a boolean flickers.
+        dragDepth.current += 1;
+        setDragging(true);
+      }}
+      onDragOver={(e) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+      }}
+      onDragLeave={() => {
+        dragDepth.current = Math.max(0, dragDepth.current - 1);
+        if (dragDepth.current === 0) setDragging(false);
+      }}
+      onDrop={(e) => {
+        e.preventDefault();
+        dragDepth.current = 0;
+        setDragging(false);
+        onFocus?.();
+        // Read BEFORE any await — the DataTransfer is gone after this returns.
+        void attach(extractPaneDrop(e.dataTransfer));
+      }}
       className={cn(
         "relative flex h-full w-full flex-col overflow-hidden rounded-xl border transition-shadow",
         focused
           ? "border-primary/60 shadow-[0_0_0_1px_hsl(var(--primary)/0.35),0_8px_24px_-12px_rgba(0,0,0,0.5)]"
           : "shadow-[0_4px_16px_-10px_rgba(0,0,0,0.4)]",
+        dragging && "border-primary shadow-[0_0_0_2px_hsl(var(--primary)/0.5)]",
       )}
       style={{
         background: chrome.shell,
@@ -419,6 +507,25 @@ export function AgenticTerminal({
         splitDisabled={splitDisabled}
       />
       <div ref={containerRef} className="flex-1 overflow-hidden px-2 pb-1 pt-1" />
+      {(dragging || attaching) && (
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/70 backdrop-blur-[2px]">
+          <div className="flex items-center gap-2 rounded-xl border border-primary/50 bg-card px-4 py-2.5 text-sm shadow-lg">
+            {attaching ? (
+              <>
+                <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                <span>Attaching to {name}…</span>
+              </>
+            ) : (
+              <>
+                <Paperclip className="h-4 w-4 text-primary" />
+                <span>
+                  Drop to put it in front of <strong>{name}</strong>
+                </span>
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

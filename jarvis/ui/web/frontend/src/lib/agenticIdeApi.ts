@@ -251,6 +251,43 @@ export async function setFocusMode(enabled: boolean): Promise<boolean> {
   return body.focus_mode;
 }
 
+export interface AttachResult {
+  terminal: string;
+  /** What was typed into the pane — `@path` for Claude Code, a quoted path otherwise. */
+  references: string[];
+  /** File names now in front of the agent. */
+  files: string[];
+  /** How many had to be copied into the workspace (the rest were already there). */
+  copied: number;
+  submitted: boolean;
+}
+
+/**
+ * Put dropped or pasted files in front of the agent in one pane.
+ *
+ * Two inputs because a browser gives you one or the other, never reliably both:
+ * `paths` are the real locations an Explorer/Finder drag usually carries, and
+ * `files` are raw bytes for everything else (a pasted screenshot has no path at
+ * all). Sending both lets the backend skip copying whatever already exists.
+ */
+export async function attachToTerminal(
+  name: string,
+  payload: { files?: File[]; paths?: string[]; note?: string; submit?: boolean },
+): Promise<AttachResult> {
+  const form = new FormData();
+  for (const file of payload.files ?? []) form.append("files", file, file.name);
+  if (payload.paths?.length) form.append("paths", payload.paths.join("\n"));
+  if (payload.note) form.append("note", payload.note);
+  if (payload.submit) form.append("submit", "true");
+
+  const res = await fetch(
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/attach`,
+    { method: "POST", body: form },
+  );
+  if (!res.ok) throw new Error(await detail(res));
+  return (await res.json()) as AttachResult;
+}
+
 export interface PromptResult {
   terminal: string;
   /** What was actually typed into the agent. */

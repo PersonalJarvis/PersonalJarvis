@@ -1,0 +1,109 @@
+import { describe, expect, it } from "vitest";
+import {
+  extractPaneDrop,
+  extractPasteFiles,
+  isEmptyPayload,
+  nameClipboardFile,
+} from "./paneDrop";
+
+/** Minimal DataTransfer stand-in — jsdom has no real one. */
+function dt(opts: {
+  uriList?: string;
+  text?: string;
+  files?: File[];
+}): DataTransfer {
+  return {
+    getData: (type: string) =>
+      type === "text/uri-list" ? (opts.uriList ?? "") : (opts.text ?? ""),
+    files: opts.files ?? [],
+    items: (opts.files ?? []).map((file) => ({
+      kind: "file" as const,
+      type: file.type,
+      getAsFile: () => file,
+    })),
+  } as unknown as DataTransfer;
+}
+
+function file(name: string, type = "image/png", size = 4): File {
+  return new File([new Uint8Array(size)], name, { type });
+}
+
+describe("reading a drop onto a terminal pane", () => {
+  it("takes the real path Explorer and Finder hand over", () => {
+    const payload = extractPaneDrop(dt({ uriList: "file:///C:/work/shot.png\r\n" }));
+    expect(payload.paths).toEqual(["C:/work/shot.png"]);
+  });
+
+  it("takes a POSIX path the same way", () => {
+    expect(extractPaneDrop(dt({ text: "/home/ruben/shot.png" })).paths).toEqual([
+      "/home/ruben/shot.png",
+    ]);
+  });
+
+  it("takes a UNC path", () => {
+    expect(extractPaneDrop(dt({ text: "\\\\nas\\share\\shot.png" })).paths).toEqual([
+      "\\\\nas\\share\\shot.png",
+    ]);
+  });
+
+  it("keeps the bytes when there is no path — a pasted screenshot has none", () => {
+    const payload = extractPaneDrop(dt({ files: [file("image.png")] }));
+    expect(payload.paths).toEqual([]);
+    expect(payload.files.map((f) => f.name)).toEqual(["image.png"]);
+  });
+
+  it("does not send the same file twice when both a path and bytes arrive", () => {
+    // A normal Explorer drag produces exactly this: a path AND a File object.
+    const payload = extractPaneDrop(
+      dt({ uriList: "file:///C:/work/shot.png", files: [file("shot.png")] }),
+    );
+    expect(payload.paths).toEqual(["C:/work/shot.png"]);
+    expect(payload.files).toEqual([]);
+  });
+
+  it("ignores dragged prose, which also arrives as text/plain", () => {
+    // Dragging a selected sentence must not have the backend try to read it
+    // off the disk.
+    const payload = extractPaneDrop(dt({ text: "please look at the wake code" }));
+    expect(isEmptyPayload(payload)).toBe(true);
+  });
+
+  it("ignores a dropped directory, which arrives as an empty type-less entry", () => {
+    const payload = extractPaneDrop(dt({ files: [file("src", "", 0)] }));
+    expect(payload.files).toEqual([]);
+  });
+
+  it("reads several dropped files at once", () => {
+    const payload = extractPaneDrop(
+      dt({ uriList: "file:///C:/a.png\r\nfile:///C:/b.png" }),
+    );
+    expect(payload.paths).toEqual(["C:/a.png", "C:/b.png"]);
+  });
+
+  it("survives a drop with nothing in it", () => {
+    expect(isEmptyPayload(extractPaneDrop(null))).toBe(true);
+    expect(isEmptyPayload(extractPaneDrop(dt({})))).toBe(true);
+  });
+});
+
+describe("reading a paste", () => {
+  it("picks up a clipboard image", () => {
+    expect(extractPasteFiles(dt({ files: [file("image.png")] })).length).toBe(1);
+  });
+
+  it("leaves a text paste to xterm", () => {
+    // No files on the clipboard → nothing for us; xterm handles the text.
+    expect(extractPasteFiles(dt({ text: "some text" }))).toEqual([]);
+  });
+
+  it("renames the generic clipboard name so screenshots stay distinguishable", () => {
+    const renamed = nameClipboardFile(file("image.png"), "Kai");
+    expect(renamed.name).toMatch(/^kai-paste-\d{8}-\d{6}\.png$/);
+  });
+
+  it("keeps a name the user actually chose", () => {
+    expect(nameClipboardFile(file("design-review.png"), "Kai").name).toBe(
+      "design-review.png",
+    );
+  });
+});

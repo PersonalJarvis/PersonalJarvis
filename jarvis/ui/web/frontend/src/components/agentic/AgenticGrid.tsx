@@ -427,6 +427,7 @@ export function AgenticGrid({
                 }
                 onSplit={(direction, agent) => void split(term.name, direction, agent)}
                 onClose={() => setPendingClose(term.name)}
+                onAttachError={(message) => pushToast("error", message)}
                 restartToken={restartTokens[term.name] ?? 0}
                 onRestart={() => restartPane(term.name)}
               />
