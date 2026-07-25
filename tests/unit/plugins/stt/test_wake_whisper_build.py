@@ -259,3 +259,39 @@ def test_wake_cuda_available_survives_corrupt_cache(tmp_path, monkeypatch) -> No
     assert isinstance(value, bool)
     assert json.loads(cache_file.read_text(encoding="utf-8"))["cuda"] == value
     _wake_cuda_available.cache_clear()
+
+
+def test_wake_decode_pins_one_greedy_pass() -> None:
+    """The always-on wake ear must not carry Whisper's temperature-fallback
+    ladder.
+
+    Unbounded, the ladder silently pays up to 6 sequential decodes for one
+    window: measured at 7.7 s on a FAST box, i.e. inside the 8 s abandon cap and
+    past it on weaker hardware — where the timeout drops the model and forces a
+    cold rebuild, extending the deaf gap ("I have to say it three times").
+
+    Pinning it changes no gate and no transcript rule, so AP-27 is untouched:
+    the ladder only re-decodes transcripts that already look degenerate, which
+    the phrase matcher and the no_speech/RMS gates reject anyway.
+    """
+    provider = build_wake_whisper(STTConfig(), cuda_available=False)
+    assert provider._temperature == 0.0
+
+
+def test_wake_decode_does_not_collapse_segments() -> None:
+    """``without_timestamps`` must NOT ride along with the temperature pin.
+
+    Collapsing a window into a single segment changes what
+    ``_reliable_wake_transcript``'s per-segment ``no_speech_prob`` check sees,
+    which shifts the ghost/recall coupling on the very engine AP-27 was written
+    for. Bounding decode WORK is safe; changing the token stream is not.
+    """
+    provider = build_wake_whisper(STTConfig(), cuda_available=False)
+    assert getattr(provider, "_without_timestamps", None) in (None, False)
+
+
+def test_utterance_stt_keeps_the_fallback_ladder() -> None:
+    """The pin is wake-scoped. A bare provider (utterance transcription) must
+    keep faster-whisper's own ladder, where a re-decode buys accuracy on a long,
+    ambiguous utterance and no always-on poll cap is at stake."""
+    assert FasterWhisperProvider()._temperature is None

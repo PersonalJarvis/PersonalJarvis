@@ -294,6 +294,19 @@ class FasterWhisperProvider:
         # OpenMP deadlock that hung the always-on wake transcribe (see
         # ``_new_whisper_model``); set only on the wake model.
         cpu_threads: int = 0,
+        # Whisper's temperature-fallback LADDER. The default re-decodes a window
+        # up to 6 times when a transcript looks degenerate, which is right for
+        # an utterance but ruinous for the ALWAYS-ON wake ear: one window
+        # measured 7.7 s on a fast box — inside the 8 s abandon cap, and past it
+        # on weaker hardware, where the timeout drops the model and forces a
+        # cold rebuild (extended deafness, the "I have to say it three times"
+        # mechanism). A single float pins one greedy pass.
+        #
+        # Deliberately a CONSTRUCTOR option, never a ``transcribe_pcm`` kwarg:
+        # the wake poll's call site has no ``TypeError`` escape, so an unknown
+        # kwarg would become ``recover()`` on every second poll — permanent
+        # deafness on any third-party STT provider.
+        temperature: float | list[float] | tuple[float, ...] | None = None,
     ) -> None:
         self._model_name = model
         self._device = device
@@ -339,6 +352,7 @@ class FasterWhisperProvider:
         self._initial_prompt = initial_prompt
         self._no_speech_threshold = no_speech_threshold
         self._cpu_threads = int(cpu_threads)
+        self._temperature = temperature
         self._model: Any = None  # lazy
         # Serialize the actual ctranslate2 inference. ``transcribe_pcm`` runs
         # ``model.transcribe`` in a worker thread (asyncio.to_thread), and the
@@ -591,12 +605,18 @@ class FasterWhisperProvider:
             self._ensure_model()  # rebuild a fresh model if recover() cleared it
             model = self._model
             assert model is not None
+            # Only pass ``temperature`` when pinned, so the default keeps
+            # faster-whisper's own ladder for utterance transcription.
+            decode_opts: dict[str, Any] = {}
+            if self._temperature is not None:
+                decode_opts["temperature"] = self._temperature
             segments_iter, info = model.transcribe(
                 audio_np,
                 language=effective_lang,
                 beam_size=self._beam_size,
                 vad_filter=self._vad_filter,
                 condition_on_previous_text=False,
+                **decode_opts,
                 # Echo-confirm support: the caller may run one UNPRIMED pass
                 # over the same audio to tell a genuine wake from the prompt
                 # echoing back on noise (2026-07-02 ghost activations).

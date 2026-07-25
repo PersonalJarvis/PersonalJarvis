@@ -54,11 +54,38 @@ _OPEN_LOCK = threading.RLock()
 _captures_lock = threading.Lock()
 _captures: weakref.WeakSet[Any] = weakref.WeakSet()
 
-DEFAULT_POLL_S = 5.0
+# Steady-state cadence. Each probe spawns a full Python + PortAudio subprocess,
+# so the former 5 s poll cost 12 interpreter cold starts per MINUTE for the
+# entire life of the app — ~4-6 % of a core on the fastest supported machine and
+# 20-50 % of one core on the hardware the project actually targets (an
+# Intel-2019 Mac, a dual-core VPS), competing directly with wake inference.
+# Hot-plug reaction does not suffer: ``request_topology_probe`` fires an
+# immediate probe from the signals that really mean "a device vanished".
+DEFAULT_POLL_S = 30.0
 # One burst of CoreAudio/WASAPI events accompanies a single physical plug;
 # wait this long after the first divergent signature so the refresh runs once
 # against the settled topology instead of once per event.
 _SETTLE_S = 1.5
+
+
+# Set while a watcher runs, so a device-loss signal can skip the poll wait.
+_probe_request: asyncio.Event | None = None
+_probe_loop: asyncio.AbstractEventLoop | None = None
+
+
+def request_topology_probe() -> None:
+    """Ask the watcher to probe NOW instead of at the next poll.
+
+    Call this from the signals that actually mean "a device may have vanished"
+    — a mic stall and a failed stream open — so raising the steady-state poll
+    interval costs nothing in hot-plug responsiveness. Safe from any thread,
+    and a silent no-op when no watcher is running (tests, headless).
+    """
+    event, loop = _probe_request, _probe_loop
+    if event is None or loop is None or loop.is_closed():
+        return
+    with contextlib.suppress(RuntimeError):  # loop shutting down
+        loop.call_soon_threadsafe(event.set)
 
 
 def stream_open_guard() -> threading.RLock:
@@ -184,11 +211,17 @@ async def watch_topology(
     injectable for tests; the defaults use the out-of-process device probe
     and :func:`refresh_audio_backend`.
     """
+    global _probe_request, _probe_loop
     probe = probe or _fresh_signature
     refresh = refresh or (lambda: refresh_audio_backend(player, output_device))
+    _probe_request = asyncio.Event()
+    _probe_loop = asyncio.get_running_loop()
     last: str | None = None
     while True:
-        await asyncio.sleep(poll_s)
+        # Wake early when a device-loss signal fires, otherwise poll.
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(_probe_request.wait(), timeout=poll_s)
+        _probe_request.clear()
         signature = await asyncio.to_thread(probe)
         if signature is None:
             # Probe unavailable (headless, worker timeout) — no judgment.

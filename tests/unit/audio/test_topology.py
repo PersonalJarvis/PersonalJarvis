@@ -67,6 +67,53 @@ async def test_watcher_refreshes_once_per_settled_change(monkeypatch) -> None:
 
 
 @pytest.mark.asyncio
+async def test_a_device_loss_signal_probes_without_waiting_for_the_poll() -> None:
+    """The steady-state poll is deliberately slow, so the signals that mean
+    "a device may be gone" (a mic stall, a failed stream open) must be able to
+    skip the wait. Without this, raising the interval would simply make
+    hot-plug recovery that much slower — each probe is a full Python +
+    PortAudio subprocess, which is why the interval has to stay cheap.
+    """
+    probes: list[float] = []
+    task = asyncio.create_task(
+        topology.watch_topology(
+            player=None,
+            poll_s=60.0,  # would never fire inside this test on its own
+            probe=lambda: probes.append(time.monotonic()) or "sig",
+            refresh=lambda: True,
+        )
+    )
+    try:
+        await asyncio.sleep(0.05)
+        assert probes == [], "the slow poll must not have fired yet"
+
+        topology.request_topology_probe()
+        await asyncio.sleep(0.05)
+        assert len(probes) == 1, (
+            "a device-loss signal must trigger an immediate probe instead of "
+            "waiting out the poll interval"
+        )
+
+        # The request is consumed, not sticky — otherwise the watcher would
+        # spin at full speed forever after one stall.
+        await asyncio.sleep(0.05)
+        assert len(probes) == 1, "the request must be one-shot"
+    finally:
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+
+@pytest.mark.asyncio
+async def test_request_probe_is_a_noop_with_no_watcher_running() -> None:
+    """Called from capture's error paths, which run in tests and headless
+    installs where no watcher exists. It must never raise there."""
+    topology._probe_request = None
+    topology._probe_loop = None
+    topology.request_topology_probe()  # must not raise
+
+
+@pytest.mark.asyncio
 async def test_watcher_fails_open_when_probe_returns_none(monkeypatch) -> None:
     monkeypatch.setattr(topology, "_SETTLE_S", 0.0)
     refreshes: list[bool] = []

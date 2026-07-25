@@ -697,8 +697,13 @@ class VoskKwsProvider:
                 return stack.pop()
         return self._build_verify_rec(path, kind, prewarm=False)
 
-    def _replenish_stock(self) -> None:
-        """Top the prewarmed stock back up to target (worker thread only)."""
+    def _replenish_stock(self, target: int | None = None) -> None:
+        """Top the prewarmed stock back up to target (worker thread only).
+
+        ``target`` bounds the depth for THIS pass; boot uses depth 1 so it does
+        not await the full stock (see ``start``).
+        """
+        limit = self._stock_target if target is None else target
         kinds = ("grammar", "free") if self._competition_grammar is None else (
             "grammar", "free", _COMPETITION_KIND,
         )
@@ -707,7 +712,7 @@ class VoskKwsProvider:
                 key = (path, kind)
                 while True:
                     with self._stock_lock:
-                        if len(self._rec_stock.setdefault(key, [])) >= self._stock_target:
+                        if len(self._rec_stock.setdefault(key, [])) >= limit:
                             break
                     try:
                         rec = self._build_verify_rec(path, kind, prewarm=True)
@@ -794,7 +799,15 @@ class VoskKwsProvider:
 
         await asyncio.gather(*(_load_one(path) for path in self._model_paths))
         self._load_attempted = True
-        await asyncio.to_thread(self._replenish_stock)
+        # Await DEPTH ONE per (model, kind) — enough for the first wake's verify
+        # pair to run warm — then top the rest up in the background. Awaiting
+        # the full stock meant boot paid 2 models x 3 kinds x 2 = 12 recognizer
+        # builds, each with its own 0.3 s prewarm decode, before voice became
+        # usable (AP-26: nothing heavier than necessary on the way to
+        # voice-usable). A taker that finds the stock dry already degrades
+        # gracefully to a cold build, so the background remainder is free.
+        await asyncio.to_thread(self._replenish_stock, 1)
+        self._kick_replenish()
 
     async def stop(self) -> None:
         # Invalidate any in-flight early check and retract a shown candidate

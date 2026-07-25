@@ -466,6 +466,20 @@ def _invalidate_resolve_cache() -> None:
     _RESOLVE_CACHE.clear()
 
 
+def _request_topology_probe() -> None:
+    """Nudge the topology watcher to re-probe now (best-effort, never raises).
+
+    Imported lazily: ``topology`` imports this module, so a top-level import
+    would be circular.
+    """
+    try:
+        from jarvis.audio.topology import request_topology_probe
+
+        request_topology_probe()
+    except Exception:  # noqa: BLE001 — a diagnostics nudge must never propagate
+        _log.debug("topology probe request skipped", exc_info=True)
+
+
 def _cached_resolve(
     device_spec: int | str | None, priority: tuple[str, ...]
 ) -> Any | None:
@@ -882,8 +896,11 @@ class MicrophoneCapture:
                             close_exc,
                         )
                 # A failed open means the cached/resolved device may be gone —
-                # force the next construction through a fresh full resolve.
+                # force the next construction through a fresh full resolve, and
+                # ask the topology watcher to look NOW rather than at its next
+                # poll (that is why the poll interval can stay cheap).
                 _invalidate_resolve_cache()
+                _request_topology_probe()
                 _log.warning(
                     "Mic-Open on device={} at {}Hz failed ({}); trying next "
                     "fallback.",
@@ -937,6 +954,7 @@ class MicrophoneCapture:
                 continue
             # Stalled: whatever we knew about the device landscape is suspect.
             _invalidate_resolve_cache()
+            _request_topology_probe()
             self._restart_count += 1
             _log.warning(
                 "Mic stall detected ({:.1f}s without a frame) — restart #{} (device={}).",

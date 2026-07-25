@@ -812,6 +812,20 @@ def build_wake_whisper(
         # stream). NOTE: transcription wake still cannot reach KWS-instant
         # latency — the definitive fix remains a neural KWS model (AP-25).
         cpu_threads=2,
+        # ONE greedy pass per wake window — drop Whisper's 6-step temperature
+        # fallback ladder here. The ladder only re-decodes transcripts that
+        # already look degenerate, which the phrase matcher and the
+        # ``no_speech_prob``/RMS gates reject anyway, while a genuine wake is
+        # decided on the first pass. Unbounded it made a single window cost up
+        # to 7.7 s on a FAST box (measured) — past the 8 s abandon cap on weaker
+        # hardware, where the timeout drops the model and forces a cold rebuild,
+        # extending the deaf gap. Bounding the work changes no gate and no
+        # transcript rule, so AP-27 is untouched. ``without_timestamps`` is
+        # deliberately NOT set alongside it: collapsing the window to a single
+        # segment would change what ``_reliable_wake_transcript``'s per-segment
+        # ``no_speech_prob`` check sees, i.e. shift the ghost/recall coupling on
+        # the very engine AP-27 was written for.
+        temperature=0.0,
     )
 
 
