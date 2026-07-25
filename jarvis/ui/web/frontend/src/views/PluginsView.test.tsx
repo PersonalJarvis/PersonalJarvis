@@ -378,3 +378,93 @@ describe("PluginsView keeps revoked plugins visible", () => {
     ).toBeDefined();
   });
 });
+
+describe("PluginsView category sections are data-driven", () => {
+  function catalogWith(plugins: unknown[], categoryOrder?: string[]) {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input) === "/api/marketplace/plugins") {
+        return {
+          ok: true,
+          status: 200,
+          json: async () => ({
+            version: 1,
+            schema_version: "t",
+            total: plugins.length,
+            connected: 0,
+            category_order: categoryOrder,
+            plugins,
+          }),
+        } as Response;
+      }
+      throw new Error(`unexpected fetch ${String(input)}`);
+    });
+    (globalThis as unknown as { fetch: typeof fetch }).fetch =
+      fetchMock as unknown as typeof fetch;
+  }
+
+  const row = (id: string, category: string, extra: Record<string, unknown> = {}) => ({
+    id,
+    display_name: id,
+    description: "d",
+    category,
+    logo_slug: id,
+    auth: { mode: "pat_paste" },
+    status: "not_connected",
+    live_callable: false,
+    ...extra,
+  });
+
+  it("renders a category the frontend has never heard of instead of crashing", async () => {
+    // The previous fixed record threw on `byCat[category].push(...)`, which
+    // blanked the entire view behind its error boundary. A backend-only
+    // taxonomy change must not be able to do that.
+    catalogWith([row("mystery", "Something Brand New")], ["Developer"]);
+
+    renderPluginsView();
+
+    await waitFor(() => {
+      expect(
+        screen.getByRole("heading", { name: "Something Brand New", level: 2 }),
+      ).toBeDefined();
+    });
+    expect(screen.getByText("mystery")).toBeDefined();
+    // The filter menu is fed by the same data, so it offers the new category too.
+    expect(
+      screen.getByRole("option", { name: "Something Brand New" }),
+    ).toBeDefined();
+  });
+
+  it("orders sections by the catalog's category_order", async () => {
+    catalogWith(
+      [row("b", "Second"), row("a", "First")],
+      ["First", "Second"],
+    );
+
+    renderPluginsView();
+
+    await waitFor(() => {
+      expect(screen.getByRole("heading", { name: "First", level: 2 })).toBeDefined();
+    });
+    const headings = screen
+      .getAllByRole("heading", { level: 2 })
+      .map((h) => h.textContent);
+    expect(headings.indexOf("First")).toBeLessThan(headings.indexOf("Second"));
+  });
+
+  it("states how long the connection lasts before the user connects", async () => {
+    catalogWith([
+      row("forever", "Developer", { longevity: "permanent" }),
+      row("limited", "Developer", {
+        longevity: "provider_limited",
+        longevity_note: "Google asks again every 7 days in Testing mode.",
+      }),
+    ]);
+
+    renderPluginsView();
+
+    await waitFor(() => {
+      expect(screen.getByText("Stays connected")).toBeDefined();
+    });
+    expect(screen.getByText("Sign in again periodically")).toBeDefined();
+  });
+});

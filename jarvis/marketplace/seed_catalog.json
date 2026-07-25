@@ -23,7 +23,8 @@
         "url": "https://api.githubcopilot.com/mcp/",
         "auth_header_template": "Authorization: Bearer $plugin_github_access_token"
       },
-      "post_install_hint_md": "Uses GitHub's hosted MCP server, so Docker is not required. If you use SAML SSO, authorize the token at https://github.com/settings/tokens after connecting."
+      "post_install_hint_md": "Uses GitHub's hosted MCP server, so Docker is not required. If you use SAML SSO, authorize the token at https://github.com/settings/tokens after connecting.",
+      "logo_color": "24292E"
     },
     {
       "id": "vercel",
@@ -42,7 +43,8 @@
         "instruction_md": "1. Click 'Create Token'\n2. Name: 'Personal Jarvis'\n3. Choose 'Full Account' or a specific team\n4. Copy the token (shown once)\n5. Paste below"
       },
       "native_tool": "vercel",
-      "future_v2_note": "Apply for mcp.vercel.com client-allowlist; switch mode to hosted_mcp_allowlist when approved."
+      "future_v2_note": "Apply for mcp.vercel.com client-allowlist; switch mode to hosted_mcp_allowlist when approved.",
+      "logo_color": "000000"
     },
     {
       "id": "supabase",
@@ -64,7 +66,8 @@
         "url": "https://mcp.supabase.com/mcp?read_only=true",
         "auth_header_template": "Authorization: Bearer $plugin_supabase_access_token"
       },
-      "post_install_hint_md": "Uses Supabase's hosted MCP server, so Node.js is not required. Read-only mode is enforced in the server URL."
+      "post_install_hint_md": "Uses Supabase's hosted MCP server, so Node.js is not required. Read-only mode is enforced in the server URL.",
+      "logo_color": "3FCF8E"
     },
     {
       "id": "notion",
@@ -94,7 +97,8 @@
         "transport": "http",
         "url": "https://mcp.notion.com/mcp",
         "auth_header_template": "Authorization: Bearer ${plugin_notion_access_token}"
-      }
+      },
+      "logo_color": "000000"
     },
     {
       "id": "slack",
@@ -135,7 +139,8 @@
         "url": "https://mcp.slack.com/mcp",
         "auth_header_template": "Authorization: Bearer ${plugin_slack_access_token}"
       },
-      "post_install_hint_md": "Slack PKCE apps use user-level scopes only — Jarvis acts as you, not as a bot. If your workspace admin requires approval, the OAuth flow will surface that prompt automatically."
+      "post_install_hint_md": "Slack PKCE apps use user-level scopes only — Jarvis acts as you, not as a bot. If your workspace admin requires approval, the OAuth flow will surface that prompt automatically.",
+      "logo_color": "4A154B"
     },
     {
       "id": "linear",
@@ -155,7 +160,8 @@
         "transport": "http",
         "url": "https://mcp.linear.app/mcp",
         "auth_header_template": "Authorization: Bearer ${plugin_linear_access_token}"
-      }
+      },
+      "logo_color": "5E6AD2"
     },
     {
       "id": "stripe",
@@ -177,7 +183,8 @@
         "url": "https://mcp.stripe.com",
         "auth_header_template": "Authorization: Bearer ${plugin_stripe_access_token}"
       },
-      "post_install_hint_md": "Restricted key (rk_), validated against GET /v1/balance, sent as a Bearer token to Stripe's hosted MCP server — the documented path for non-OAuth clients (bypasses the OAuth client-allowlist; no Node needed). Read-only is controlled by the key's scope."
+      "post_install_hint_md": "Restricted key (rk_), validated against GET /v1/balance, sent as a Bearer token to Stripe's hosted MCP server — the documented path for non-OAuth clients (bypasses the OAuth client-allowlist; no Node needed). Read-only is controlled by the key's scope.",
+      "logo_color": "635BFF"
     },
     {
       "id": "cloudflare",
@@ -203,7 +210,8 @@
         "url": "https://observability.mcp.cloudflare.com/mcp",
         "auth_header_template": "Authorization: Bearer ${plugin_cloudflare_access_token}"
       },
-      "post_install_hint_md": "Defaults to the read-only observability/analytics server. Pick read scopes on Cloudflare's consent screen."
+      "post_install_hint_md": "Defaults to the read-only observability/analytics server. Pick read scopes on Cloudflare's consent screen.",
+      "logo_color": "F38020"
     },
     {
       "id": "discord",
@@ -222,7 +230,8 @@
         "validation_endpoint": "https://discord.com/api/v10/users/@me",
         "instruction_md": "1. Open https://discord.com/developers/applications and click 'New Application'.\n2. Go to the 'Bot' page, click 'Reset Token', and copy it (shown once).\n3. Under 'Privileged Gateway Intents', enable 'Message Content Intent' so the bot can read message text.\n4. Invite the bot to your server: OAuth2 -> URL Generator -> scope 'bot' + the permissions you want (View Channels, Read Message History, Send Messages), open the link, pick your server, Authorize.\n5. Paste the bot token below, plus your numeric Discord user id (Developer Mode -> right-click yourself -> Copy User ID) so only you can command the bot."
       },
-      "post_install_hint_md": "This enables the Discord channel — message your bot to talk to Jarvis. Outbound replies pass through the voice scrubber and your allowlist."
+      "post_install_hint_md": "This enables the Discord channel — message your bot to talk to Jarvis. Outbound replies pass through the voice scrubber and your allowlist.",
+      "logo_color": "5865F2"
     },
     {
       "id": "telegram",
@@ -241,7 +250,8 @@
         "validation_endpoint": "https://api.telegram.org/bot{token}/getMe",
         "instruction_md": "1. Open @BotFather in Telegram (https://t.me/BotFather).\n2. Send /newbot, pick a name and a username ending in 'bot'.\n3. Copy the token BotFather gives you (looks like 123456789:AAH...).\n4. Paste it below, then send /start to your new bot so it can reach you."
       },
-      "post_install_hint_md": "This enables the Telegram channel — message your bot to talk to Jarvis. Outbound replies pass through the voice scrubber and your allowlist."
+      "post_install_hint_md": "This enables the Telegram channel — message your bot to talk to Jarvis. Outbound replies pass through the voice scrubber and your allowlist.",
+      "logo_color": "26A5E4"
     },
     {
       "id": "asana",
@@ -270,7 +280,8 @@
         "url": "https://mcp.asana.com/v2/mcp",
         "auth_header_template": "Authorization: Bearer ${plugin_asana_access_token}"
       },
-      "post_install_hint_md": "Setup: register an OAuth app at https://app.asana.com/0/my-apps, add redirect URI http://127.0.0.1:3119/oauth/callback, and put its Client ID into data/plugin_catalog.json. If Asana rejects the 127.0.0.1 redirect, switch this plugin to pat_paste (token at app.asana.com/0/my-apps, validate https://app.asana.com/api/1.0/users/me)."
+      "post_install_hint_md": "Setup: register an OAuth app at https://app.asana.com/0/my-apps, add redirect URI http://127.0.0.1:3119/oauth/callback, and put its Client ID into data/plugin_catalog.json. If Asana rejects the 127.0.0.1 redirect, switch this plugin to pat_paste (token at app.asana.com/0/my-apps, validate https://app.asana.com/api/1.0/users/me).",
+      "logo_color": "F06A6A"
     },
     {
       "id": "google_drive",
@@ -299,7 +310,8 @@
         "offline_access": true
       },
       "native_tool": "google_drive",
-      "post_install_hint_md": "Setup: see docs/marketplace/google-oauth-setup.md (shares the Google client with Gmail/Calendar). Talks to the Drive REST API v3 directly (Google's hosted Drive MCP is a Workspace-only Developer Preview that 403s consumer accounts). The full 'drive' scope grants read/write/delete over ALL your files and is a Google RESTRICTED scope: in 'Testing' status the refresh grant expires after 7 days, so publish the consent app to 'In production' and complete Google's restricted-scope (CASA) verification for uninterrupted offline access. A user, account, or administrator can still revoke the grant."
+      "post_install_hint_md": "Setup: see docs/marketplace/google-oauth-setup.md (shares the Google client with Gmail/Calendar). Talks to the Drive REST API v3 directly (Google's hosted Drive MCP is a Workspace-only Developer Preview that 403s consumer accounts). The full 'drive' scope grants read/write/delete over ALL your files and is a Google RESTRICTED scope: in 'Testing' status the refresh grant expires after 7 days, so publish the consent app to 'In production' and complete Google's restricted-scope (CASA) verification for uninterrupted offline access. A user, account, or administrator can still revoke the grant.",
+      "logo_color": "1FA463"
     },
     {
       "id": "gmail",
@@ -328,7 +340,8 @@
         "offline_access": true
       },
       "native_tool": "gmail",
-      "post_install_hint_md": "Setup: see docs/marketplace/google-oauth-setup.md (shares the Google client with Drive). In Google 'Testing' status the refresh grant expires after 7 days. Publish the consent app to 'In production' and complete restricted-scope verification when Google requires it so Jarvis can refresh offline access automatically. A user, account, or administrator can still revoke the grant."
+      "post_install_hint_md": "Setup: see docs/marketplace/google-oauth-setup.md (shares the Google client with Drive). In Google 'Testing' status the refresh grant expires after 7 days. Publish the consent app to 'In production' and complete restricted-scope verification when Google requires it so Jarvis can refresh offline access automatically. A user, account, or administrator can still revoke the grant.",
+      "logo_color": "EA4335"
     },
     {
       "id": "google_calendar",
@@ -357,7 +370,8 @@
         "offline_access": true
       },
       "native_tool": "google_calendar",
-      "post_install_hint_md": "Setup: shares the Google OAuth client with Gmail/Drive. Add the full 'calendar' scope to the OAuth consent screen (it reads events across ALL your calendars, not just the primary one). A 'Testing' refresh grant expires after 7 days; publish the consent app to 'In production' so Jarvis can refresh offline access automatically. A user, account, or administrator can still revoke the grant."
+      "post_install_hint_md": "Setup: shares the Google OAuth client with Gmail/Drive. Add the full 'calendar' scope to the OAuth consent screen (it reads events across ALL your calendars, not just the primary one). A 'Testing' refresh grant expires after 7 days; publish the consent app to 'In production' so Jarvis can refresh offline access automatically. A user, account, or administrator can still revoke the grant.",
+      "logo_color": "1A73E8"
     }
   ]
 }
