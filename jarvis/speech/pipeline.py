@@ -5498,18 +5498,52 @@ class SpeechPipeline:
                 Missing output while the watchdog is running exposes a silently
                 failed task, such as a queue deadlock or swallowed exception.
                 """
+                def _detector_state(task: asyncio.Task[Any] | None) -> str:
+                    """alive / parked / FAILED / off.
+
+                    ``DEAD`` used to cover all of "stopped normally",
+                    "cancelled" and "raised", so the log screamed DEAD for the
+                    ENTIRELY NORMAL case of a detector parked while a voice
+                    session owns the microphone — verified against the desktop
+                    logs, where every DEAD window coincides with an active
+                    session and recovers when it ends. That cost a forensic
+                    detour: a healthy state that reads as a crash is worse than
+                    no signal at all.
+                    """
+                    if task is None:
+                        return "off"
+                    if not task.done():
+                        return "alive"
+                    if task.cancelled():
+                        return "parked"
+                    return "FAILED" if task.exception() is not None else "parked"
+
                 while True:
                     await asyncio.sleep(10.0)
-                    oww_alive = oww_task is not None and not oww_task.done()
-                    whisper_alive = whisper_task is not None and not whisper_task.done()
-                    fanout_alive = not fanout_task.done()
+                    # The detector's OWN counters name exactly the failure modes
+                    # a recall complaint has to distinguish (candidates seen,
+                    # gated on energy, suppressed by the confirm, suppressed by
+                    # cooldown, fired). They were maintained and never read, so
+                    # "how many of my wakes were suppressed?" needed a debugger.
+                    # Read-only: nothing here may ever feed a decision.
+                    try:
+                        stats = getattr(self._wake, "stats", None)
+                        detector_stats = stats() if callable(stats) else {}
+                    except Exception:  # noqa: BLE001 — diagnostics never break the loop
+                        detector_stats = {}
                     log.info(
-                        "wake-detectors-heartbeat: fanout=%s oww=%s whisper=%s oww_q=%d wsp_q=%d",
-                        "alive" if fanout_alive else "DEAD",
-                        "alive" if oww_alive else "DEAD" if oww_task else "off",
-                        "alive" if whisper_alive else "DEAD" if whisper_task else "off",
+                        "wake-detectors-heartbeat: fanout=%s oww=%s whisper=%s "
+                        "oww_q=%d wsp_q=%d%s",
+                        "alive" if not fanout_task.done() else "FAILED",
+                        _detector_state(oww_task),
+                        _detector_state(whisper_task),
                         oww_queue.qsize(),
                         whisper_queue.qsize(),
+                        (
+                            " " + " ".join(f"{k}={v}" for k, v in detector_stats.items())
+                            if detector_stats
+                            else ""
+                        ),
                     )
                     # Surface a detector task that exited with an exception.
                     for t in (oww_task, whisper_task):

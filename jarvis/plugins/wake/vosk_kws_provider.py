@@ -613,6 +613,13 @@ class VoskKwsProvider:
         self._stat_early_shown = 0
         self._stat_early_retracted = 0
         self._stat_suppressed_shape_competition = 0
+        # Rate limiter for the verify-suppression log. Every rejection used to
+        # be DEBUG-only, so a dropped GENUINE wake left no production trace at
+        # all: the log could not tell "never heard" from "heard, verified,
+        # rejected at conf 0.88". Surfacing the first few and then every Nth
+        # keeps that diagnosable without turning a candidate storm into a log
+        # flood (same shape as the existing backpressure warning).
+        self._suppress_log_count = 0
 
     # -- lifecycle -----------------------------------------------------------
 
@@ -939,6 +946,22 @@ class VoskKwsProvider:
             return (False, 1.0)  # partials carry no conf; the confirm decides
         return None
 
+    def _log_suppression(self, reason: str, *args: Any) -> None:
+        """Report a verify rejection at INFO for the first few, then every 20th.
+
+        A suppressed candidate is the ONLY evidence that distinguishes a wake
+        that was never heard from one that was heard and thrown away — the
+        difference a "sometimes it does not react" report turns on. Diagnostics
+        only: never reads back into a decision, and never logs transcript TEXT
+        beyond what the caller already passes.
+        """
+        self._suppress_log_count += 1
+        n = self._suppress_log_count
+        if n <= 5 or n % 20 == 0:
+            log.info("vosk-kws: verify SUPPRESSED (#%d) — " + reason, n, *args)
+        else:
+            log.debug("vosk-kws: verify SUPPRESSED — " + reason, *args)
+
     def _grammar_hit_all(
         self, recs: dict[str, Any], pcm: bytes
     ) -> tuple[bool, float, str] | None:
@@ -1079,17 +1102,16 @@ class VoskKwsProvider:
                 if w.get("word") in self._grammar_words
             ]
             if self._phrase.lower() not in gres.get("text", "") or not gwords:
-                log.debug(
-                    "vosk-kws: verify SUPPRESSED — re-score did not re-hear "
-                    "%r (heard %r)",
+                self._log_suppression(
+                    "re-score did not re-hear %r (heard %r)",
                     self._phrase, gres.get("text", "")[:60],
                 )
                 return False
             conf = min(w.get("conf", 0.0) for w in gwords)
             if conf < self._min_final_conf:
-                log.debug(
-                    "vosk-kws: verify SUPPRESSED — re-score conf %.2f < %.2f "
-                    "for %r", conf, self._min_final_conf, self._phrase,
+                self._log_suppression(
+                    "re-score conf %.2f < %.2f for %r",
+                    conf, self._min_final_conf, self._phrase,
                 )
                 return False
             start_s = min(w.get("start", 0.0) for w in gwords)
@@ -1104,9 +1126,9 @@ class VoskKwsProvider:
             rms = float(np.sqrt(np.mean(segment * segment) + 1e-12)) if len(segment) else 0.0
             if rms < self._match_min_rms:
                 self._stat_gated_rms += 1
-                log.debug(
-                    "vosk-kws: verify SUPPRESSED — span rms %.4f < %.4f "
-                    "(silence can never fire)", rms, self._match_min_rms,
+                self._log_suppression(
+                    "span rms %.4f < %.4f (silence can never fire)",
+                    rms, self._match_min_rms,
                 )
                 return False
 

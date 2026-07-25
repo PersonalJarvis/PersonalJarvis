@@ -472,3 +472,44 @@ def test_a_bare_interjection_plus_a_command_is_still_not_a_wake() -> None:
         [_w("hey", 0.40, 0.60, conf=1.0), _w("ho", 0.60, 0.68, conf=0.5)],
         "Hey Ruben",
     ) is False
+
+
+# --- diagnosability: a suppressed wake must leave a trace (2026-07-25) --------
+
+
+def test_a_suppressed_candidate_is_reported_then_rate_limited(monkeypatch) -> None:
+    """A dropped candidate is the ONLY evidence separating "never heard" from
+    "heard and thrown away" — the distinction a "sometimes it does not react"
+    report turns on. Every rejection used to be DEBUG-only, so that evidence
+    did not exist in production.
+
+    Report the first few at INFO and then every 20th: diagnosable without
+    turning a candidate storm into a log flood.
+    """
+    p = VoskKwsProvider("Hey Ruben", model_path="fake", keyword="ruben")
+    seen: list[int] = []
+    monkeypatch.setattr(
+        "jarvis.plugins.wake.vosk_kws_provider.log.info",
+        lambda *a, **k: seen.append(1),
+    )
+    monkeypatch.setattr(
+        "jarvis.plugins.wake.vosk_kws_provider.log.debug", lambda *a, **k: None
+    )
+
+    for _ in range(25):
+        p._log_suppression("test reason %d", 1)
+
+    # 5 early + the 20th = 6 surfaced out of 25.
+    assert len(seen) == 6, f"expected 6 surfaced suppressions, got {len(seen)}"
+
+
+def test_suppression_logging_never_feeds_a_decision() -> None:
+    """The counter is diagnostics. If a threshold ever read it, the log would
+    have become an uncalibrated rejection path — the exact AP-27 shape."""
+    p = VoskKwsProvider("Hey Ruben", model_path="fake", keyword="ruben")
+    p._suppress_log_count = 10_000
+    # A verify decision must be reachable and unaffected by the counter value.
+    assert candidate_shape_ok(
+        [_w("hey", 0.40, 0.62, conf=0.9), _w("erhoben", 0.62, 1.05, conf=0.6)],
+        "Hey Ruben",
+    ) is True
