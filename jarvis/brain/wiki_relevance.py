@@ -229,6 +229,13 @@ def relevant_hits(
       score in this same call. Relative, never absolute: scores are documented
       as incomparable across calls.
 
+    Coverage is judged over title + snippet + frontmatter. Including the
+    frontmatter is load-bearing, not incidental: a page found through a
+    ``search_aliases`` entry (the language bridge — a German question reaching
+    an English page) matches ONLY in the frontmatter column and therefore has
+    no body snippet at all. Judging such a hit on title+snippet alone would
+    discard precisely the hits aliases exist to produce.
+
     Hits are expected to expose ``title``, ``snippet`` and ``score``; anything
     missing an attribute is treated as empty/zero rather than raising, so a
     future hit type cannot break the voice path.
@@ -248,7 +255,11 @@ def relevant_hits(
     for hit, score in zip(hits, scores, strict=False):
         if score < floor:
             continue
-        haystack = _fold(f"{getattr(hit, 'title', '') or ''} {getattr(hit, 'snippet', '') or ''}")
+        haystack = _fold(
+            f"{getattr(hit, 'title', '') or ''} "
+            f"{getattr(hit, 'snippet', '') or ''} "
+            f"{getattr(hit, 'frontmatter', '') or ''}"
+        )
         if sum(1 for term in terms if _covers(haystack, term)) >= needed:
             kept.append(hit)
     return kept

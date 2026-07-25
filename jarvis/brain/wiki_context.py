@@ -318,12 +318,16 @@ class WikiContextInjector:
         chars_used = 0
         hits_included = 0
         for hit in hits:
-            entry = f"**{hit.title}**: {hit.snippet}"
+            # A page found through a frontmatter alias (the language bridge)
+            # has no body snippet by contract — fall back to its leading text
+            # so the entry carries content instead of just a bare title.
+            text = hit.snippet or getattr(hit, "preview", "") or ""
+            entry = f"**{hit.title}**: {text}"
             if chars_used + len(entry) + 1 > self._max_chars:
                 # Try trimming to fit the remaining budget
                 remaining = self._max_chars - chars_used - len(f"**{hit.title}**: ") - 1
                 if remaining >= 40:  # only worth including if enough chars remain
-                    entry = f"**{hit.title}**: {hit.snippet[:remaining]}…"
+                    entry = f"**{hit.title}**: {text[:remaining]}…"
                 else:
                     break
             context_parts.append(entry)

@@ -70,12 +70,26 @@ class SearchHit:
     score:
         Float in [0.0, 1.0].  Higher is better.  Monotonic within a
         single call; not comparable across calls.
+    frontmatter:
+        The page's flattened frontmatter values — the same text the FTS
+        ``frontmatter`` column indexes, including any ``search_aliases``.
+        A hit matched via an alias has NO body snippet, so a consumer
+        judging relevance on title+snippet alone would discard exactly the
+        hits aliases exist to produce; it needs this to see WHY the page
+        matched.  Empty string when the page has no frontmatter.
+    preview:
+        Leading body text of the page, always populated regardless of where
+        the match occurred.  Gives frontmatter-only hits something to show;
+        ``snippet`` keeps its legacy "empty unless the body matched"
+        contract.
     """
 
     title: str
     path: Path
     snippet: str
     score: float
+    frontmatter: str = ""
+    preview: str = ""
 
 
 class VaultSearch:
@@ -202,7 +216,8 @@ class VaultSearch:
                 title,
                 snippet(wiki_fts, 3, '', '', '…', 32) AS snippet,
                 body,
-                bm25(wiki_fts, 0.0, 3.0, 2.0, 1.0, 0.0) AS bm25_score
+                bm25(wiki_fts, 0.0, 3.0, 2.0, 1.0, 0.0) AS bm25_score,
+                frontmatter
             FROM wiki_fts
             WHERE wiki_fts MATCH ?
             ORDER BY bm25_score
@@ -216,7 +231,7 @@ class VaultSearch:
         ]
         hits: list[SearchHit] = []
         for row in cursor:
-            rel_path_str, title, snippet, body, bm25_raw = row
+            rel_path_str, title, snippet, body, bm25_raw, frontmatter = row
             abs_path = self._root / rel_path_str
             score = _normalise_bm25(bm25_raw)
             # SQLite's snippet() returns the body column text even when the
@@ -231,6 +246,8 @@ class VaultSearch:
                     path=abs_path,
                     snippet=snippet or "",
                     score=round(score, 4),
+                    frontmatter=frontmatter or "",
+                    preview=_leading_text(body),
                 )
             )
         log.debug(
@@ -265,6 +282,31 @@ def _build_match_expr(tokens: list[str]) -> str:
     """
     quoted = [f'"{_FTS5_SPECIAL_STRIP_RE.sub("", tok)}"' for tok in tokens]
     return " OR ".join(quoted)
+
+
+#: How much leading body text ``SearchHit.preview`` carries.
+_PREVIEW_CHARS = 200
+
+
+def _leading_text(body: str | None, limit: int = _PREVIEW_CHARS) -> str:
+    """First meaningful prose of a page, for hits with no body snippet.
+
+    Skips the H1 and any blank/heading lines so the preview starts at real
+    content rather than at "# Title" — a frontmatter-only hit otherwise shows
+    the reader nothing it did not already know from the title.
+    """
+    if not body:
+        return ""
+    parts: list[str] = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or stripped.startswith("---"):
+            continue
+        parts.append(stripped)
+        if sum(len(p) for p in parts) >= limit:
+            break
+    text = " ".join(parts)
+    return text[:limit].rstrip() + "…" if len(text) > limit else text
 
 
 def _normalise_bm25(raw: float) -> float:
