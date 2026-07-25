@@ -4,8 +4,8 @@
   "relevance_recall": 1.0,
   "false_fires": 0,
   "known_gaps": 2,
-  "positives_scored": 54,
-  "negatives": 23,
+  "positives_scored": 69,
+  "negatives": 24,
   "per_skill": {
     "cli-gcloud": 1.0,
     "control-api": 0.0,
@@ -23,6 +23,7 @@
     "plugin-gmail": 1.0,
     "plugin-google_calendar": 1.0,
     "plugin-google_drive": 0.5,
+    "plugin-home_assistant": 1.0,
     "plugin-linear": 1.0,
     "plugin-notion": 1.0,
     "plugin-slack": 1.0,

@@ -32,7 +32,7 @@ been undebuggable.
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Literal
 
 # ---------------------------------------------------------------------------
@@ -162,7 +162,14 @@ def _trigger_decision(registry: Any, user_text: str, lang: str) -> MatchDecision
     )
 
 
-def _relevance_decision(registry: Any, user_text: str, *, limit: int) -> MatchDecision:
+def _relevance_decision(
+    registry: Any,
+    user_text: str,
+    *,
+    limit: int,
+    fire_threshold: float | None = None,
+    hint_threshold: float | None = None,
+) -> MatchDecision:
     """Deterministic relevance pass — the paraphrase channel.
 
     Bands are applied HERE rather than inside the scorer, so
@@ -178,6 +185,16 @@ def _relevance_decision(registry: Any, user_text: str, *, limit: int) -> MatchDe
         return MatchDecision()
     if ranking.top is None:
         return MatchDecision()
+    if fire_threshold is not None or hint_threshold is not None:
+        ranking = replace(
+            ranking,
+            fire_threshold=(
+                fire_threshold if fire_threshold is not None else ranking.fire_threshold
+            ),
+            hint_threshold=(
+                hint_threshold if hint_threshold is not None else ranking.hint_threshold
+            ),
+        )
 
     candidates = tuple(
         MatchCandidate(
@@ -223,6 +240,9 @@ def evaluate_match(
     *,
     lang: str = "auto",
     limit: int = 5,
+    use_relevance: bool = True,
+    fire_threshold: float | None = None,
+    hint_threshold: float | None = None,
 ) -> MatchDecision:
     """Decide which skill, if any, owns ``user_text``.
 
@@ -236,6 +256,10 @@ def evaluate_match(
         lang: Language hint forwarded to the trigger matcher; ``"auto"``
             considers every language's triggers.
         limit: How many ranked candidates to keep for diagnostics.
+        use_relevance: When False, only the author's regex triggers run — the
+            exact pre-relevance behaviour, which is what the kill switch buys.
+        fire_threshold: Override the corpus-derived FIRE cut-off.
+        hint_threshold: Override the corpus-derived NARROW cut-off.
 
     Returns:
         A :class:`MatchDecision`. Guards are the caller's job — see
@@ -261,7 +285,17 @@ def evaluate_match(
     if trigger is not None:
         return _stamp(trigger)
 
-    return _stamp(_relevance_decision(registry, user_text, limit=limit))
+    if not use_relevance:
+        return _stamp(MatchDecision())
+    return _stamp(
+        _relevance_decision(
+            registry,
+            user_text,
+            limit=limit,
+            fire_threshold=fire_threshold,
+            hint_threshold=hint_threshold,
+        )
+    )
 
 
 __all__ = [

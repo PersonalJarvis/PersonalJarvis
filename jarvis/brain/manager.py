@@ -4590,35 +4590,91 @@ class BrainManager:
         self._skill_turn_content = content
         self._skill_turn_source = source
 
+    def _skills_config(self) -> Any:
+        """The ``[skills]`` config section.
+
+        Reads ``self._config`` directly rather than through a defensive
+        ``getattr`` chain: an earlier draft looked up a mistyped attribute name
+        and silently fell back to defaults, which left shadow mode permanently
+        on and made every capture test fail for a reason nothing reported. A
+        wrong config read must be a crash, not a quiet behaviour change.
+
+        The section fallback stays, because an older ``jarvis.toml`` parsed by a
+        newer binary genuinely can lack it.
+        """
+        from jarvis.core.config import SkillsConfig
+
+        section = getattr(self._config, "skills", None)
+        return section if section is not None else SkillsConfig()
+
     def _match_skill_for_turn(self, user_text: str, lang: str = "auto") -> Any | None:
         """Deterministic skill-match probe (AD-S3). Returns the matched Skill or None.
 
-        Uses the TriggerMatcher (incl. its tolerant filler-stripping pass) over
-        the live SkillContext registry. Never raises — routing must not break
-        when the skill subsystem is absent (headless/mock boots).
+        Two channels, in strict order, through the ONE shared entry point
+        (``jarvis.skills.match_eval.evaluate_match``):
+
+        1. The author's voice-trigger regex — absolute precedence, unchanged.
+           Every utterance that worked before this method grew a second channel
+           still takes exactly the same path.
+        2. The deterministic relevance scorer — the paraphrase channel. Only
+           reached on a trigger MISS, so it is purely additive.
+
+        The relevance fallback is nested HERE rather than added as another gate
+        in ``generate()`` for one reason: every guard below (definitional
+        question, block tier, and — via the caller — AD-S9 and the local-action
+        stand-down) is then inherited structurally instead of re-implemented,
+        and the call site does not move.
+
+        Never raises — routing must not break when the skill subsystem is
+        absent (headless/mock boots).
         """
+        self._skill_relevance = None
+        self._skill_match_band = "none"
+        self._skill_match_class = ""
         try:
+            from jarvis.skills import guards, match_eval, match_log
+            from jarvis.skills.autofire_policy import classify, may_capture
             from jarvis.skills.skill_context import try_get_skill_context
-            from jarvis.skills.trigger_matcher import TriggerMatcher
 
             ctx = try_get_skill_context()
             if ctx is None:
                 return None
-            res = TriggerMatcher(ctx.registry).match_voice_with_match(
-                user_text, lang=lang
+
+            cfg = self._skills_config()
+            decision = match_eval.evaluate_match(
+                ctx.registry,
+                user_text,
+                lang=lang,
+                limit=max(3, int(getattr(cfg, "narrow_candidates", 3)) + 2),
+                use_relevance=bool(getattr(cfg, "relevance_enabled", True)),
+                fire_threshold=getattr(cfg, "fire_threshold", None),
+                hint_threshold=getattr(cfg, "hint_threshold", None),
             )
-            if res is None:
+            if decision.top is None:
+                self._record_skill_decision(user_text, decision, lang=lang)
                 return None
-            skill = res[0]
-            # Definitional-question guard: a bare-name plugin trigger must not
-            # capture a "was ist <App>?" knowledge turn (2026-06-24 eval).
-            matched_token = res[1].group(0) if res[1] is not None else ""
-            if _is_definitional_question_about(user_text, matched_token):
+
+            try:
+                skill = ctx.registry.get(decision.top.skill_name)
+            except Exception:  # noqa: BLE001
+                self._record_skill_decision(user_text, decision, lang=lang)
+                return None
+
+            # Unchanged guards, now shared by both channels. `evidence` is the
+            # RAW matched span, never a normalized token — the definitional
+            # guard re-escapes it against the original text, so a
+            # transliterated token would blind it on every umlaut word.
+            evidence = decision.top.evidence
+            if _is_definitional_question_about(user_text, evidence):
                 log.info(
                     "skill %s matched token %r but the turn is a definitional "
                     "question about it — not captured (answer it instead)",
                     getattr(skill, "name", "?"),
-                    matched_token,
+                    evidence,
+                )
+                self._record_skill_decision(
+                    user_text, decision, lang=lang,
+                    vetoed_by=guards.VETO_DEFINITIONAL, skill=skill,
                 )
                 return None
             if self._skill_is_blocked(skill):
@@ -4626,10 +4682,137 @@ class BrainManager:
                     "skill %s matched but is block-tier — turn not captured",
                     getattr(skill, "name", "?"),
                 )
+                self._record_skill_decision(
+                    user_text, decision, lang=lang,
+                    vetoed_by=guards.VETO_BLOCK_TIER, skill=skill,
+                )
                 return None
+
+            self._skill_match_band = decision.band
+            self._skill_match_class = classify(skill)
+
+            # A trigger hit keeps its historical unconditional capture: the
+            # author wrote that phrase precisely so it would fire, and changing
+            # that would be a behaviour regression, not a safety win.
+            if decision.source == match_eval.SOURCE_TRIGGER:
+                self._record_skill_decision(
+                    user_text, decision, lang=lang, skill=skill, fired=True,
+                )
+                return skill
+
+            # --- relevance channel: capture is a privilege, not a default ---
+            self._skill_relevance = decision
+            allowed, veto = may_capture(
+                skill,
+                decision.band,
+                override=self._skill_autofire_override(skill),
+                min_band=str(getattr(cfg, "auto_fire_min_band", "fire")),
+            )
+            if not allowed:
+                log.info(
+                    "relevance match %s (band=%s, class=%s) does not capture: %s",
+                    getattr(skill, "name", "?"),
+                    decision.band,
+                    self._skill_match_class,
+                    veto,
+                )
+                self._record_skill_decision(
+                    user_text, decision, lang=lang, vetoed_by=veto, skill=skill,
+                )
+                return None
+
+            if bool(getattr(cfg, "relevance_shadow", True)):
+                # Shadow mode: record what WOULD have happened, change nothing.
+                # The narrowed candidate hint still ships, so the model keeps
+                # the benefit while the maintainer reviews real decisions.
+                log.info(
+                    "relevance match %s (band=%s) SHADOWED — would have captured "
+                    "the turn; review GET /api/skills/match-log",
+                    getattr(skill, "name", "?"),
+                    decision.band,
+                )
+                self._record_skill_decision(
+                    user_text, decision, lang=lang, skill=skill,
+                    vetoed_by=guards.VETO_SHADOW_MODE, shadow=True,
+                )
+                return None
+
+            self._record_skill_decision(
+                user_text, decision, lang=lang, skill=skill, fired=True,
+            )
             return skill
         except Exception:  # noqa: BLE001
             return None
+
+    def _skill_autofire_override(self, skill: Any) -> str | None:
+        """The user's persisted per-skill auto-fire choice, if any."""
+        try:
+            from jarvis.skills.prefs import load_autofire_prefs
+
+            return load_autofire_prefs().get(getattr(skill, "name", ""))
+        except Exception:  # noqa: BLE001
+            return None
+
+    def _record_skill_decision(
+        self,
+        user_text: str,
+        decision: Any,
+        *,
+        lang: str = "auto",
+        vetoed_by: str = "",
+        skill: Any | None = None,
+        fired: bool = False,
+        shadow: bool = False,
+    ) -> None:
+        """Log the decision to the ring and the bus. Never raises, never blocks.
+
+        Emitted on EVERY evaluation, including "nothing matched" and every veto.
+        That completeness is the point: until now each veto was a ``log.info``
+        nobody reads, which is exactly why "my skill never fires" could not be
+        diagnosed.
+        """
+        try:
+            from jarvis.skills import match_log
+            from jarvis.skills.autofire_policy import classify
+
+            autofire_class = classify(skill) if skill is not None else ""
+            match_log.record(
+                utterance=user_text,
+                decision=decision,
+                lang=lang,
+                vetoed_by=vetoed_by,
+                autofire_class=autofire_class,
+                fired=fired,
+                shadow=shadow,
+            )
+        except Exception:  # noqa: BLE001
+            return
+        try:
+            from jarvis.skills.match_log import utterance_hash
+            from jarvis.skills.schema import SkillMatchEvaluated
+
+            top = getattr(decision, "top", None)
+            event = SkillMatchEvaluated(
+                source_layer="brain.manager",
+                utterance_hash=utterance_hash(user_text),
+                lang=lang,
+                source=str(getattr(decision, "source", "none")),
+                band=str(getattr(decision, "band", "none")),
+                winner=str(getattr(top, "skill_name", "") if top is not None else ""),
+                autofire_class=autofire_class,
+                vetoed_by=vetoed_by,
+                fired=fired,
+                shadow=shadow,
+                elapsed_us=int(getattr(decision, "elapsed_us", 0) or 0),
+                candidates=tuple(
+                    (getattr(c, "skill_name", ""), round(float(getattr(c, "score", 0.0)), 4))
+                    for c in (getattr(decision, "candidates", ()) or ())[:3]
+                ),
+            )
+            loop = asyncio.get_running_loop()
+            loop.create_task(self._bus.publish(event))
+        except Exception:  # noqa: BLE001
+            log.debug("SkillMatchEvaluated publish failed", exc_info=True)
 
     def _previous_user_turn_text(self, *, use_history: bool) -> str:
         """Return the latest bounded user message from this task's history."""
@@ -4707,6 +4890,35 @@ class BrainManager:
             "clearly wrong."
         )
 
+    def _skill_stand_downs_allowed(self) -> bool:
+        """May this turn's matched skill suppress the other deterministic paths?
+
+        True for the historical case — an author's trigger, or an
+        instruction-only skill at FIRE — and False for anything the relevance
+        layer merely inferred about a tool-backed skill. In the False case the
+        skill still injects its instructions, but ``run-skill`` stays visible and
+        the local-action gate keeps precedence, which turns a wrong match from a
+        turn hijack into a suggestion the model can decline.
+
+        This distinction is the single most important safety property of the
+        relevance layer: capture is not all-or-nothing.
+        """
+        skill = self._skill_turn_match
+        if skill is None:
+            return False
+        try:
+            from jarvis.skills.autofire_policy import stand_downs_allowed
+            from jarvis.skills.match_eval import BAND_FIRE, SOURCE_TRIGGER
+        except Exception:  # noqa: BLE001
+            return True
+        # An author-written trigger keeps its unconditional historical rights.
+        if getattr(self, "_skill_relevance", None) is None:
+            return True
+        decision = self._skill_relevance
+        if getattr(decision, "source", "") == SOURCE_TRIGGER:
+            return True
+        return stand_downs_allowed(skill, getattr(decision, "band", BAND_FIRE))
+
     def _drop_run_skill_when_inline_injected(self, tools: Any) -> Any:
         """Hide ``run-skill`` once a matched skill's instructions are already on
         the turn context (``_skill_injected_inline``).
@@ -4718,12 +4930,85 @@ class BrainManager:
         model-agnostic: every model just follows the injected instructions, no
         tool call required. No-op when the skill was not inline-injected, or the
         tool set is not a dict (intelligent-router lead path).
+
+        Kept ONLY while the turn's match is entitled to the full stand-down. A
+        relevance-inferred match on a tool-backed skill leaves ``run-skill``
+        visible on purpose: dropping it is what removes the model's ability to
+        signal "wrong skill", and the model needs that escape hatch exactly when
+        nobody stated an intent for this skill.
         """
         if not getattr(self, "_skill_injected_inline", False):
             return tools
         if not isinstance(tools, dict):
             return tools
+        if not self._skill_stand_downs_allowed():
+            return tools
         return {k: v for k, v in tools.items() if k != "run-skill"}
+
+    def _render_skill_candidate_hint(self) -> str | None:
+        """Narrow the skill choice for a turn the matcher did NOT capture.
+
+        The router's real problem was never that skills are invisible — it is
+        that all twenty listed skills look equally plausible while ~26k tokens
+        of tool schemas compete for attention. This block names the one to three
+        that actually scored, right next to the user's message, where recency is
+        worth more than position in a long cached list.
+
+        Deliberately rides the PER-TURN context and never the cached system
+        prefix: rewriting that prefix per turn would break prompt caching on
+        every single turn, which costs far more than it could ever save.
+
+        Returns ``None`` on a captured turn, a dead scorer, or a weak ranking —
+        so the common case adds nothing at all.
+        """
+        decision = getattr(self, "_skill_relevance", None)
+        if decision is None or self._skill_turn_match is not None:
+            return None
+        candidates = getattr(decision, "candidates", ()) or ()
+        if not candidates:
+            return None
+
+        cfg = self._skills_config()
+        limit = max(1, int(getattr(cfg, "narrow_candidates", 3)))
+        try:
+            from jarvis.skills.match_eval import BAND_NONE
+            from jarvis.skills.skill_context import try_get_skill_context
+
+            ctx = try_get_skill_context()
+            if ctx is None:
+                return None
+            registry = ctx.registry
+        except Exception:  # noqa: BLE001
+            return None
+
+        lines: list[str] = []
+        for candidate in candidates:
+            if len(lines) >= limit:
+                break
+            if getattr(candidate, "band", BAND_NONE) == BAND_NONE:
+                continue
+            name = getattr(candidate, "skill_name", "")
+            try:
+                skill = registry.get(name)
+            except Exception:  # noqa: BLE001
+                continue
+            frontmatter = getattr(skill, "frontmatter", None)
+            if frontmatter is None:
+                continue
+            description = (getattr(frontmatter, "description", "") or "").strip()
+            when_to_use = (getattr(frontmatter, "when_to_use", "") or "").strip()
+            blurb = f"{description} {when_to_use}".strip()[:400]
+            lines.append(f"- `{name}` — {blurb}")
+        if not lines:
+            return None
+
+        return (
+            "[Skill candidates] The user's request scored against these "
+            "installed skills. If one genuinely fits, call the `run-skill` tool "
+            "with that name FIRST and follow the returned instructions. If none "
+            "fits, ignore this block entirely and answer normally — these are "
+            "ranked suggestions, not a verdict.\n" + "\n".join(lines)
+        )
 
     def _render_skill_turn_injection(self, user_text: str) -> str | None:
         """Render the matched skill's instructions for direct turn injection.
@@ -7598,10 +7883,19 @@ class BrainManager:
         # gate → None) is untouched.
         if self._skill_turn_match is not None:
             _gate_plan = match_local_action(user_text)
-            if _gate_plan is not None and _gate_plan.mode in (
+            _claiming = _gate_plan is not None and _gate_plan.mode in (
                 LocalActionMode.DIRECT,
                 LocalActionMode.COMPUTER_USE,
-            ):
+            )
+            # A relevance-channel match that is not instruction-only yields to
+            # the desktop gate on ANY plan, not just a claiming one. The author
+            # of a trigger asked for their phrase to win, so trigger matches keep
+            # the narrower historical rule verbatim — this widening is additive
+            # and applies only to the new, inferred channel, where nobody stated
+            # an intent for the skill to beat local control.
+            if not _claiming and _gate_plan is not None and not self._skill_stand_downs_allowed():
+                _claiming = True
+            if _claiming and _gate_plan is not None:
                 log.info(
                     "Skill match %s stands down — the deterministic local-action "
                     "gate claims this turn as %s; Computer-Use owns it "
@@ -7973,7 +8267,18 @@ class BrainManager:
             turn_context = (
                 f"{turn_context}\n\n{_skill_block}" if turn_context else _skill_block
             )
-
+        else:
+            # No capture, but the deterministic scorer may still have found
+            # plausible candidates. Narrowing 20 undifferentiated bullets down
+            # to the 1-3 that actually score is the cheapest part of this whole
+            # change and the part with no blast radius: the model still decides.
+            _narrow_block = self._render_skill_candidate_hint()
+            if _narrow_block:
+                turn_context = (
+                    f"{turn_context}\n\n{_narrow_block}"
+                    if turn_context
+                    else _narrow_block
+                )
         # AI Pointer (deictic push): collect the result of the resolution started
         # above. When the utterance points at the mouse cursor ("was ist das da?")  # i18n-allow
         # the resolved element rides on this turn's context + a tight crop is
@@ -9045,7 +9350,10 @@ class BrainManager:
                     extra_patterns_fn=make_cli_patterns_fn(),
                 )
                 approval = ApprovalWorkflow(self._bus)
-                executor = ToolExecutor(self._bus, evaluator, approval)
+                executor = ToolExecutor(
+                    self._bus, evaluator, approval,
+                    default_timeout_s=self._config.safety.tool_approval_timeout_s,
+                )
 
             harness_manager = HarnessManager(bus=self._bus)
 

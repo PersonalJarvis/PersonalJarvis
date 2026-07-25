@@ -40,6 +40,8 @@ log = logging.getLogger(__name__)
 STATE_ON = "active"
 STATE_OFF = "disabled"
 _LEGAL_STATES = frozenset({STATE_ON, STATE_OFF})
+#: Legal per-skill auto-fire modes; mirrors autofire_policy.AUTO_FIRE_MODES.
+_LEGAL_AUTOFIRE = frozenset({"auto", "always", "never"})
 
 # Serializes the read-modify-write of skill_prefs.json. Callers are sync (FastAPI
 # threadpool / registry reload), so a threading.Lock is the right primitive.
@@ -52,6 +54,12 @@ class SkillPrefs:
 
     order: list[str] = field(default_factory=list)
     state: dict[str, str] = field(default_factory=dict)
+    #: Per-skill deterministic auto-fire choice, ``{name: "auto"|"always"|"never"}``.
+    #: Lives here rather than in frontmatter for the same reason the on/off state
+    #: does: builtin skills need an admin password to edit and are re-copied by
+    #: bootstrap, so a user preference written into their frontmatter would be
+    #: silently reverted.
+    autofire: dict[str, str] = field(default_factory=dict)
 
 
 # ----------------------------------------------------------------------
@@ -71,11 +79,18 @@ def _read_raw() -> dict[str, Any]:
     return data if isinstance(data, dict) else {}
 
 
-def _write_raw(order: list[str], state: dict[str, str]) -> None:
+def _write_raw(
+    order: list[str], state: dict[str, str], autofire: dict[str, str] | None = None
+) -> None:
     """Atomic write: tempfile in the parent dir → ``os.replace``."""
     path = skill_prefs_path()
     payload = json.dumps(
-        {"version": 1, "order": order, "state": state},
+        {
+            "version": 1,
+            "order": order,
+            "state": state,
+            "autofire": autofire or {},
+        },
         ensure_ascii=False,
         indent=2,
     )
@@ -112,7 +127,13 @@ def load_prefs() -> SkillPrefs:
         for name, value in state_raw.items():
             if isinstance(name, str) and value in _LEGAL_STATES:
                 state[name] = value
-    return SkillPrefs(order=order, state=state)
+    autofire_raw = raw.get("autofire")
+    autofire: dict[str, str] = {}
+    if isinstance(autofire_raw, dict):
+        for name, value in autofire_raw.items():
+            if isinstance(name, str) and value in _LEGAL_AUTOFIRE:
+                autofire[name] = value
+    return SkillPrefs(order=order, state=state, autofire=autofire)
 
 
 def load_state_overrides() -> dict[str, str]:
@@ -123,6 +144,11 @@ def load_state_overrides() -> dict[str, str]:
 def load_order() -> list[str]:
     """The user's custom skill order (skill names). Empty when never set."""
     return load_prefs().order
+
+
+def load_autofire_prefs() -> dict[str, str]:
+    """``{skill_name: "auto" | "always" | "never"}``. Empty when never set."""
+    return load_prefs().autofire
 
 
 # ----------------------------------------------------------------------
@@ -136,7 +162,7 @@ def set_state(name: str, on: bool) -> None:
         prefs = load_prefs()
         state = dict(prefs.state)
         state[name] = STATE_ON if on else STATE_OFF
-        _write_raw(prefs.order, state)
+        _write_raw(prefs.order, state, prefs.autofire)
 
 
 def set_order(names: list[str]) -> None:
@@ -144,7 +170,23 @@ def set_order(names: list[str]) -> None:
     clean = [s for s in names if isinstance(s, str)]
     with _LOCK:
         prefs = load_prefs()
-        _write_raw(clean, prefs.state)
+        _write_raw(clean, prefs.state, prefs.autofire)
+
+
+def set_autofire(name: str, mode: str) -> None:
+    """Record the user's deterministic auto-fire choice for ``name``.
+
+    An unknown mode clears the entry rather than persisting garbage, so a bad
+    API call degrades to "use the derived default".
+    """
+    with _LOCK:
+        prefs = load_prefs()
+        autofire = dict(prefs.autofire)
+        if mode in _LEGAL_AUTOFIRE:
+            autofire[name] = mode
+        else:
+            autofire.pop(name, None)
+        _write_raw(prefs.order, prefs.state, autofire)
 
 
 def remove_skill(name: str) -> None:
@@ -153,10 +195,13 @@ def remove_skill(name: str) -> None:
         prefs = load_prefs()
         order = [s for s in prefs.order if s != name]
         state = {k: v for k, v in prefs.state.items() if k != name}
-        _write_raw(order, state)
+        autofire = {k: v for k, v in prefs.autofire.items() if k != name}
+        _write_raw(order, state, autofire)
 
 
 __all__ = [
+    "load_autofire_prefs",
+    "set_autofire",
     "STATE_ON",
     "STATE_OFF",
     "SkillPrefs",

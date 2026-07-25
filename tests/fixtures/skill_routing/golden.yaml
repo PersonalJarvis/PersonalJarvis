@@ -310,6 +310,37 @@ skills:
         lang: en
         min_band: narrow
         source: authored
+      - text: "such den vertrag in meiner dropbox"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "share that dropbox folder with anna"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+
+  plugin-home_assistant:
+    positives:
+      - text: "mach bitte das licht im wohnzimmer aus"
+        channel: relevance
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "turn the kitchen lights off please"
+        channel: relevance
+        lang: en
+        min_band: narrow
+        source: authored
+      - text: "stell die heizung im schlafzimmer auf 21 grad"
+        channel: relevance
+        lang: de
+        min_band: narrow
+        source: authored
+    hard_negatives:
+      - text: "was ist home assistant eigentlich fuer eine software"
+        reason: definitional question about the product, not a request to act
 
   plugin-todoist:
     positives:
@@ -319,6 +350,16 @@ skills:
         min_band: narrow
         source: authored
       - text: "what is on my todoist list today"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+      - text: "setz milch auf meine todoist liste"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "what's due in todoist today"
         channel: trigger
         lang: en
         min_band: narrow
@@ -336,6 +377,16 @@ skills:
         lang: en
         min_band: narrow
         source: authored
+      - text: "zeig mir meine clickup aufgaben"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "create a clickup task for the rewrite"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
 
   plugin-airtable:
     positives:
@@ -345,6 +396,16 @@ skills:
         min_band: narrow
         source: authored
       - text: "read the airtable records for me"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
+      - text: "welche eintraege stehen in meiner airtable basis"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "update that airtable record"
         channel: trigger
         lang: en
         min_band: narrow
@@ -362,6 +423,16 @@ skills:
         lang: en
         min_band: narrow
         source: authored
+      - text: "mach mir ein canva poster fuer den vortrag"
+        channel: trigger
+        lang: de
+        min_band: narrow
+        source: authored
+      - text: "export my canva design as a pdf"
+        channel: trigger
+        lang: en
+        min_band: narrow
+        source: authored
 
   plugin-cal_com:
     positives:
@@ -375,74 +446,6 @@ skills:
         lang: en
         min_band: narrow
         source: authored
-
-  plugin-todoist:
-    positives:
-      - text: "setz milch auf meine todoist liste"
-        channel: trigger
-        lang: de
-        min_band: narrow
-        source: authored
-      - text: "what's due in todoist today"
-        channel: trigger
-        lang: en
-        min_band: narrow
-        source: authored
-
-  plugin-clickup:
-    positives:
-      - text: "zeig mir meine clickup aufgaben"
-        channel: trigger
-        lang: de
-        min_band: narrow
-        source: authored
-      - text: "create a clickup task for the rewrite"
-        channel: trigger
-        lang: en
-        min_band: narrow
-        source: authored
-
-  plugin-dropbox:
-    positives:
-      - text: "such den vertrag in meiner dropbox"
-        channel: trigger
-        lang: de
-        min_band: narrow
-        source: authored
-      - text: "share that dropbox folder with anna"
-        channel: trigger
-        lang: en
-        min_band: narrow
-        source: authored
-
-  plugin-canva:
-    positives:
-      - text: "mach mir ein canva poster fuer den vortrag"
-        channel: trigger
-        lang: de
-        min_band: narrow
-        source: authored
-      - text: "export my canva design as a pdf"
-        channel: trigger
-        lang: en
-        min_band: narrow
-        source: authored
-
-  plugin-airtable:
-    positives:
-      - text: "welche eintraege stehen in meiner airtable basis"
-        channel: trigger
-        lang: de
-        min_band: narrow
-        source: authored
-      - text: "update that airtable record"
-        channel: trigger
-        lang: en
-        min_band: narrow
-        source: authored
-
-  plugin-cal_com:
-    positives:
       - text: "welche buchungen habe ich morgen in calcom"
         channel: trigger
         lang: de

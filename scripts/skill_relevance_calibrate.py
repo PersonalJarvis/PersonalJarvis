@@ -43,6 +43,14 @@ if sys.platform == "win32":  # UTF-8 stdout; cp1252 is the Windows default
             reconfigure(encoding="utf-8", errors="replace")
 
 
+def _guard_veto(registry: object, skill_name: str, text: str, evidence: str) -> str:
+    """The veto the runtime's own guards would return, or "" if none."""
+    from jarvis.skills.guards import evaluate_guards
+
+    skill = registry.get(skill_name)  # type: ignore[attr-defined]
+    return evaluate_guards(skill, user_text=text, evidence=evidence).vetoed_by
+
+
 def _percentile(values: list[float], fraction: float) -> float:
     if not values:
         return 0.0
@@ -94,11 +102,32 @@ def main() -> int:
         if hit is not None:
             positive_scores.append(hit.score)
 
+    # Only negatives that SURVIVE the guards belong in the threshold
+    # calculation. This distinction is load-bearing, and getting it wrong is the
+    # AP-27 trap in miniature: the five strongest-scoring negatives are all
+    # definitional questions ("what is <product>, actually?"), which score high
+    # for the correct reason — the utterance really is about that skill's topic —
+    # and are suppressed by the definitional-question guard, not by a threshold.
+    # Counting them here would recommend raising FIRE from ~1.16 to ~1.59 and
+    # cut relevance recall from 100 % to 29 % while the report still claimed
+    # "zero false positives". Scoring is content-agnostic; the guards are where
+    # semantics belong. Keep them in separate columns.
     negative_scores: list[float] = []
+    guarded_away: list[tuple[float, str, str]] = []
     for negative in (*golden.global_negatives, *golden.hard_negatives):
         ranking = index.rank(negative.text)
-        if ranking.top is not None:
-            negative_scores.append(ranking.top.score)
+        if ranking.top is None:
+            continue
+        winner = ranking.top.name
+        veto = ""
+        try:
+            veto = _guard_veto(registry, winner, negative.text, ranking.top.evidence)
+        except Exception:  # noqa: BLE001
+            veto = ""
+        if veto:
+            guarded_away.append((ranking.top.score, winner, veto))
+            continue
+        negative_scores.append(ranking.top.score)
 
     print()
     print("Score distributions (relevance channel only)")
@@ -113,8 +142,24 @@ def main() -> int:
         print(
             f"  negatives  n={len(negative_scores):3}  "
             f"min={min(negative_scores):.3f}  p75={_percentile(negative_scores, 0.75):.3f}  "
-            f"max={max(negative_scores):.3f}"
+            f"max={max(negative_scores):.3f}   (guard survivors only)"
         )
+    if guarded_away:
+        print()
+        print(
+            f"  {len(guarded_away)} negative(s) scored high but were VETOED by a "
+            "guard, not by a threshold —"
+        )
+        print(
+            "  excluded from the calculation on purpose. Folding them in would "
+            "recommend a"
+        )
+        print(
+            "  much higher FIRE cut-off and quietly destroy recall (AP-27). "
+            "Strongest:"
+        )
+        for score, winner, veto in sorted(guarded_away, reverse=True)[:5]:
+            print(f"     {score:.3f}  {winner:26} vetoed_by={veto}")
 
     # --- the operating point ------------------------------------------------
     print()
