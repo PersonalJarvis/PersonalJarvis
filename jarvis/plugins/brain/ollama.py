@@ -15,8 +15,10 @@ stalling. Tool calling rides the OpenAI-compat layer (``tool_choice`` is not
 used on the pipeline path); reliability is model-dependent — the qwen line is
 the recommended pull.
 
-Model discovery is NATIVE (``/api/tags``): with no configured model the brain
-runs the first installed one, and a model-less server produces an honest
+Model discovery is NATIVE (``/api/tags`` + ``/api/show``): with no configured
+model the brain runs the smallest DOWNLOADED model whose declared capabilities
+match the turn (``completion``, plus ``tools`` for tool turns); ``:cloud``
+references never count as local, and a model-less server produces an honest
 "pull one first" error instead of a hardcoded default that would 404.
 """
 
@@ -92,6 +94,10 @@ class OllamaBrain:
         self._client: Any = None
         self._server_root: str | None = None
         self._credential: str | None = None
+        # Discovery cache per requirement profile (False = plain chat,
+        # True = chat + tools) — a tool-less turn may run a smaller model
+        # than a tool turn without re-asking the server every time.
+        self._discovered: dict[bool, str] = {}
 
     def can_call_tools(self) -> bool:
         return self.supports_tools
@@ -122,10 +128,24 @@ class OllamaBrain:
             )
         return self._client
 
-    async def _resolve_model(self) -> str:
-        """The configured model, else the first installed one (``/api/tags``)."""
+    async def _resolve_model(self, *, need_tools: bool = False) -> str:
+        """The configured model, else the smallest CAPABLE download.
+
+        Hard rules for the silent default (three live incidents 2026-07-25):
+        ``:cloud`` entries are ollama.com-proxied references, not local
+        weights — a "local" brain must never route through them. Among the
+        real downloads the SMALLEST wins (the former first-installed pick
+        landed on a 30B model whose 256k default context needed 45 GB on a
+        32 GB box and froze the whole desktop) — but only one whose DECLARED
+        ``/api/show`` capabilities match the turn: ``completion`` always
+        (bge-m3 would 400 on chat), plus ``tools`` when the request carries
+        tools (deepseek-llm 400s on a tool turn). The user's explicit model
+        pick always overrides this.
+        """
         if self._model:
             return self._model
+        if need_tools in self._discovered:
+            return self._discovered[need_tools]
         root = self._resolve_root()
         try:
             async with httpx.AsyncClient(timeout=CLIENT_TIMEOUT) as client:
@@ -137,20 +157,62 @@ class OllamaBrain:
                 f"Ollama not reachable at {root} — is it running? Start it "
                 "(or install from https://ollama.com/download), then retry."
             ) from exc
-        names = [str(m.get("name") or "").strip() for m in models]
-        names = [n for n in names if n]
-        if not names:
+        local = [
+            m
+            for m in models
+            if (name := str(m.get("name") or "").strip())
+            and not name.endswith(":cloud")
+            and not m.get("remote")
+        ]
+        if not local:
             raise RuntimeError(
-                f"Ollama at {root} has no models installed — run: "
-                f"ollama pull {RECOMMENDED_PULL}, then retry."
+                f"Ollama at {root} has no downloaded models (cloud references "
+                f"do not count) — run: ollama pull {RECOMMENDED_PULL}, then retry."
             )
-        self._model = names[0]
-        log.info("ollama: no model configured — using first installed: %s", self._model)
-        return self._model
+        local.sort(key=lambda m: int(m.get("size") or 0))
+        for m in local:
+            name = str(m.get("name")).strip()
+            caps = await self._capabilities(name, root)
+            if caps is not None:
+                if "completion" not in caps:
+                    continue
+                if need_tools and "tools" not in caps:
+                    continue
+            self._discovered[need_tools] = name
+            log.info(
+                "ollama: no model configured — using smallest capable download (tools=%s): %s",
+                need_tools,
+                name,
+            )
+            return name
+        wanted = "chat + tool calling" if need_tools else "chat"
+        raise RuntimeError(
+            f"None of the models downloaded at {root} supports {wanted} — run: "
+            f"ollama pull {RECOMMENDED_PULL}, then retry."
+        )
+
+    @staticmethod
+    async def _capabilities(name: str, root: str) -> set[str] | None:
+        """DECLARED capabilities of one download via native ``/api/show``.
+
+        Gate on capability, never the model name (AP-21). ``None`` = the probe
+        could not answer — the caller FAILS OPEN and accepts the candidate (a
+        probe glitch must never brick the pick; the real call then errors
+        honestly)."""
+        try:
+            async with httpx.AsyncClient(timeout=CLIENT_TIMEOUT) as client:
+                resp = await client.post(f"{root}/api/show", json={"model": name})
+                resp.raise_for_status()
+                caps = resp.json().get("capabilities")
+        except Exception:  # noqa: BLE001 — probe glitch must not block the pick
+            return None
+        if not isinstance(caps, list):
+            return None
+        return {str(c) for c in caps}
 
     async def complete(self, req: BrainRequest) -> AsyncIterator[BrainDelta]:
         client = self._ensure_client()
-        model = await self._resolve_model()
+        model = await self._resolve_model(need_tools=bool(req.tools))
         async for delta in stream_complete(client, model, req):
             yield delta
 

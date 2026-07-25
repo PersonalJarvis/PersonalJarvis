@@ -24,6 +24,7 @@ frontier resolver's 24 h — fresher is better for a list the user browses), wit
 special case: its public catalog changes daily, so its cache lifetime is capped
 at five minutes even when the general TTL is longer.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -49,9 +50,13 @@ DEFAULT_TTL_HOURS = 6
 # immediate fetch, and an explicitly shorter global TTL continues to win.
 _PROVIDER_TTL_CAP_SECONDS: dict[str, float] = {
     "openrouter": 5 * 60,
+    # Local servers: the installed model set changes with every `ollama pull` /
+    # server restart, and the fetch is a LAN round-trip — keep it near-live.
+    "ollama": 60,
+    "local-openai": 60,
 }
 
-# The API-key brain providers whose catalogs we can enumerate. Codex is excluded
+# The brain providers whose catalogs we can enumerate. Codex is excluded
 # on purpose: it authenticates via the ChatGPT login / a generic OpenAI key and
 # its model id is largely ignored by the ``codex exec`` CLI path — it has no own
 # model picker in the UI (it renders the Codex login widget instead).
@@ -62,30 +67,78 @@ CATALOG_PROVIDERS: tuple[str, ...] = (
     "openrouter",
     "grok",
     "nvidia",
+    # Keyless local providers (2026-07-25): their "catalog" is the live list of
+    # models the user's own server holds — ollama via the native /api/tags,
+    # local-openai via the standard /v1/models.
+    "ollama",
+    "local-openai",
 )
 
-# Endpoint + auth shape per provider. ``auth`` selects how the key is attached:
-#   "x-api-key"  → Anthropic header pair
-#   "bearer"     → Authorization: Bearer (OpenAI-compatible: OpenAI, Grok)
-#   "query"      → ?key= (Gemini)
-#   "bearer_opt" → Authorization: Bearer if a key exists, else anonymous
-#                  (OpenRouter's catalog is public)
-_ENDPOINTS: dict[str, tuple[str, str]] = {
-    "claude-api": ("https://api.anthropic.com/v1/models", "x-api-key"),
-    "openai": ("https://api.openai.com/v1/models", "bearer"),
-    "gemini": (
-        "https://generativelanguage.googleapis.com/v1beta/models",
+
+@dataclass(frozen=True, slots=True)
+class _CatalogEndpoint:
+    """Catalog wiring for one provider.
+
+    ``vendor_base`` is the provider's default base in the SAME convention its
+    brain plugin uses for ``[brain.providers.<id>].base_url`` overrides (with
+    or without ``/v1``, or a bare server root for the local providers), so an
+    override composes with ``path`` exactly like the vendor default does.
+    ``None`` = no vendor default: without a configured override the fetch
+    raises an honest error (local-openai) or resolves dynamically (ollama's
+    OLLAMA_HOST handling). ``auth`` selects how the key is attached:
+
+      "x-api-key"  → Anthropic header pair (key required)
+      "bearer"     → Authorization: Bearer (key required)
+      "query"      → ?key= (Gemini; key required)
+      "bearer_opt" → Authorization: Bearer if a key exists, else anonymous
+                     (public catalogs: OpenRouter, NVIDIA NIM)
+      "none"       → keyless local server; the optional ``secret_slot``
+                     (keyring name, ENV name) is attached as Bearer when set.
+    """
+
+    vendor_base: str | None
+    path: str
+    auth: str
+    secret_slot: tuple[str, str] | None = None
+
+
+# Every fetch resolves the provider's EFFECTIVE base URL through
+# ``cfg.resolve_provider_endpoint`` (team proxy → base_url override → the
+# vendor default here) and appends ``path``. With no override configured the
+# resulting URLs are byte-identical to the former static table — pinned by
+# tests/unit/brain/test_model_catalog_local.py (S3a regression gate).
+_ENDPOINTS: dict[str, _CatalogEndpoint] = {
+    # Anthropic SDK convention: override EXCLUDES /v1 (the SDK appends it).
+    "claude-api": _CatalogEndpoint("https://api.anthropic.com", "/v1/models", "x-api-key"),
+    # OpenAI-compatible convention: override INCLUDES /v1.
+    "openai": _CatalogEndpoint("https://api.openai.com/v1", "/models", "bearer"),
+    # google-genai convention: override is the raw host (SDK appends /v1beta).
+    "gemini": _CatalogEndpoint(
+        "https://generativelanguage.googleapis.com",
+        "/v1beta/models",
         "query",
     ),
-    "openrouter": ("https://openrouter.ai/api/v1/models", "bearer_opt"),
+    "openrouter": _CatalogEndpoint("https://openrouter.ai/api/v1", "/models", "bearer_opt"),
     # xAI uses the OpenAI-compatible ``data[].id`` model roster and requires
     # the same bearer key used for Grok inference.
-    "grok": ("https://api.x.ai/v1/models", "bearer"),
+    "grok": _CatalogEndpoint("https://api.x.ai/v1", "/models", "bearer"),
     # NVIDIA NIM speaks the OpenAI-compatible ``data[].id`` shape. Its catalog is
     # PUBLIC (verified 2026-07-08: an unauthenticated GET returns the full model
     # list), so ``bearer_opt`` like OpenRouter — the picker fills in before a key
     # is entered, and the key is attached when present.
-    "nvidia": ("https://integrate.api.nvidia.com/v1/models", "bearer_opt"),
+    "nvidia": _CatalogEndpoint("https://integrate.api.nvidia.com/v1", "/models", "bearer_opt"),
+    # Ollama: server-root convention (the plugin appends /v1 / /api itself);
+    # vendor default resolves dynamically (OLLAMA_HOST → localhost:11434).
+    "ollama": _CatalogEndpoint(None, "/api/tags", "none"),
+    # Generic local OpenAI-compatible server: no default port is guessable
+    # (transformers serve 8000, llama-server 8080, LM Studio 1234) — the user
+    # sets the base URL on the card; without it the picker stays honestly empty.
+    "local-openai": _CatalogEndpoint(
+        None,
+        "/v1/models",
+        "none",
+        secret_slot=("local_openai_api_key", "LOCAL_OPENAI_API_KEY"),
+    ),
 }
 
 
@@ -126,70 +179,82 @@ def _curated(pairs: list[tuple[str, str]]) -> list[ModelInfo]:
 # offer a years-old model); when a valid key exists the live catalog supersedes
 # this entirely, so a new release still shows up automatically there.
 CURATED_MODELS: dict[str, list[ModelInfo]] = {
-    "claude-api": _curated([
-        ("claude-fable-5", "Claude Fable 5"),
-        ("claude-opus-4-8", "Claude Opus 4.8"),
-        ("claude-sonnet-5", "Claude Sonnet 5"),
-        ("claude-haiku-4-5-20251001", "Claude Haiku 4.5"),
-    ]),
-    "openai": _curated([
-        ("gpt-5.6-sol", "GPT-5.6 Sol (preview)"),
-        ("gpt-5.6-terra", "GPT-5.6 Terra (preview)"),
-        ("gpt-5.6-luna", "GPT-5.6 Luna (preview)"),
-        ("gpt-5.6", "GPT-5.6 (Sol alias, preview)"),
-        ("gpt-5.5", "GPT-5.5"),
-        ("gpt-5.5-pro", "GPT-5.5 Pro"),
-        ("gpt-5.4", "GPT-5.4"),
-        ("gpt-5.4-pro", "GPT-5.4 Pro"),
-        ("gpt-5.4-mini", "GPT-5.4 Mini"),
-        ("gpt-5.4-nano", "GPT-5.4 Nano"),
-    ]),
-    "gemini": _curated([
-        ("gemini-3.5-flash", "Gemini 3.5 Flash"),
-        ("gemini-3.1-pro-preview", "Gemini 3.1 Pro"),
-        ("gemini-3-flash-preview", "Gemini 3 Flash"),
-        ("gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite"),
-        ("gemini-2.5-pro", "Gemini 2.5 Pro"),
-        ("gemini-2.5-flash", "Gemini 2.5 Flash"),
-        ("gemini-flash-lite-latest", "Gemini Flash Lite"),
-    ]),
-    "openrouter": _curated([
-        ("anthropic/claude-fable-5", "Claude Fable 5"),
-        ("anthropic/claude-opus-4.8", "Claude Opus 4.8"),
-        ("anthropic/claude-sonnet-5", "Claude Sonnet 5"),
-        ("anthropic/claude-haiku-4.5", "Claude Haiku 4.5"),
-        ("openai/gpt-5.6-sol-pro", "GPT-5.6 Sol Pro"),
-        ("openai/gpt-5.6-sol", "GPT-5.6 Sol"),
-        ("openai/gpt-5.6-terra-pro", "GPT-5.6 Terra Pro"),
-        ("openai/gpt-5.6-terra", "GPT-5.6 Terra"),
-        ("openai/gpt-5.6-luna-pro", "GPT-5.6 Luna Pro"),
-        ("openai/gpt-5.6-luna", "GPT-5.6 Luna"),
-        ("google/gemini-3.5-flash", "Gemini 3.5 Flash"),
-        ("google/gemini-3.1-pro-preview", "Gemini 3.1 Pro"),
-        ("x-ai/grok-4.20", "Grok 4.20"),
-        ("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro"),
-    ]),
+    "claude-api": _curated(
+        [
+            ("claude-fable-5", "Claude Fable 5"),
+            ("claude-opus-4-8", "Claude Opus 4.8"),
+            ("claude-sonnet-5", "Claude Sonnet 5"),
+            ("claude-haiku-4-5-20251001", "Claude Haiku 4.5"),
+        ]
+    ),
+    "openai": _curated(
+        [
+            ("gpt-5.6-sol", "GPT-5.6 Sol (preview)"),
+            ("gpt-5.6-terra", "GPT-5.6 Terra (preview)"),
+            ("gpt-5.6-luna", "GPT-5.6 Luna (preview)"),
+            ("gpt-5.6", "GPT-5.6 (Sol alias, preview)"),
+            ("gpt-5.5", "GPT-5.5"),
+            ("gpt-5.5-pro", "GPT-5.5 Pro"),
+            ("gpt-5.4", "GPT-5.4"),
+            ("gpt-5.4-pro", "GPT-5.4 Pro"),
+            ("gpt-5.4-mini", "GPT-5.4 Mini"),
+            ("gpt-5.4-nano", "GPT-5.4 Nano"),
+        ]
+    ),
+    "gemini": _curated(
+        [
+            ("gemini-3.5-flash", "Gemini 3.5 Flash"),
+            ("gemini-3.1-pro-preview", "Gemini 3.1 Pro"),
+            ("gemini-3-flash-preview", "Gemini 3 Flash"),
+            ("gemini-3.1-flash-lite", "Gemini 3.1 Flash-Lite"),
+            ("gemini-2.5-pro", "Gemini 2.5 Pro"),
+            ("gemini-2.5-flash", "Gemini 2.5 Flash"),
+            ("gemini-flash-lite-latest", "Gemini Flash Lite"),
+        ]
+    ),
+    "openrouter": _curated(
+        [
+            ("anthropic/claude-fable-5", "Claude Fable 5"),
+            ("anthropic/claude-opus-4.8", "Claude Opus 4.8"),
+            ("anthropic/claude-sonnet-5", "Claude Sonnet 5"),
+            ("anthropic/claude-haiku-4.5", "Claude Haiku 4.5"),
+            ("openai/gpt-5.6-sol-pro", "GPT-5.6 Sol Pro"),
+            ("openai/gpt-5.6-sol", "GPT-5.6 Sol"),
+            ("openai/gpt-5.6-terra-pro", "GPT-5.6 Terra Pro"),
+            ("openai/gpt-5.6-terra", "GPT-5.6 Terra"),
+            ("openai/gpt-5.6-luna-pro", "GPT-5.6 Luna Pro"),
+            ("openai/gpt-5.6-luna", "GPT-5.6 Luna"),
+            ("google/gemini-3.5-flash", "Gemini 3.5 Flash"),
+            ("google/gemini-3.1-pro-preview", "Gemini 3.1 Pro"),
+            ("x-ai/grok-4.20", "Grok 4.20"),
+            ("deepseek/deepseek-v4-pro", "DeepSeek V4 Pro"),
+        ]
+    ),
     # Grok 4.3 is the universal default because Grok 4.5 is not yet available
     # in every region. The authenticated live catalog replaces this fallback.
-    "grok": _curated([
-        ("grok-4.3", "Grok 4.3"),
-        ("grok-4.5", "Grok 4.5"),
-    ]),
+    "grok": _curated(
+        [
+            ("grok-4.3", "Grok 4.3"),
+            ("grok-4.5", "Grok 4.5"),
+        ]
+    ),
     # NVIDIA NIM — the offline fallback when the live /v1/models catalog is
     # unreachable. NVIDIA-hosted current families (Nemotron leads: it is NVIDIA's
     # own). A valid key supersedes this with the live list, so a newly hosted
     # model still shows up automatically.
-    "nvidia": _curated([
-        ("nvidia/llama-3.1-nemotron-ultra-253b-v1", "Nemotron Ultra 253B"),
-        ("nvidia/llama-3.3-nemotron-super-49b-v1.5", "Nemotron Super 49B v1.5"),
-        ("deepseek-ai/deepseek-v4-pro", "DeepSeek V4 Pro"),
-        ("deepseek-ai/deepseek-v4-flash", "DeepSeek V4 Flash"),
-        ("moonshotai/kimi-k2.6", "Kimi K2.6"),
-        ("z-ai/glm-5.2", "GLM-5.2"),
-        ("qwen/qwen3.5-397b-a17b", "Qwen3.5 397B A17B"),
-        ("meta/llama-4-maverick-17b-128e-instruct", "Llama 4 Maverick"),
-        ("mistralai/mistral-large-3-675b-instruct-2512", "Mistral Large 3"),
-    ]),
+    "nvidia": _curated(
+        [
+            ("nvidia/llama-3.1-nemotron-ultra-253b-v1", "Nemotron Ultra 253B"),
+            ("nvidia/llama-3.3-nemotron-super-49b-v1.5", "Nemotron Super 49B v1.5"),
+            ("deepseek-ai/deepseek-v4-pro", "DeepSeek V4 Pro"),
+            ("deepseek-ai/deepseek-v4-flash", "DeepSeek V4 Flash"),
+            ("moonshotai/kimi-k2.6", "Kimi K2.6"),
+            ("z-ai/glm-5.2", "GLM-5.2"),
+            ("qwen/qwen3.5-397b-a17b", "Qwen3.5 397B A17B"),
+            ("meta/llama-4-maverick-17b-128e-instruct", "Llama 4 Maverick"),
+            ("mistralai/mistral-large-3-675b-instruct-2512", "Mistral Large 3"),
+        ]
+    ),
 }
 
 
@@ -222,48 +287,146 @@ TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
     # Inworld — the new premium default (arena-#1 realtime, mid-2026). Voices are
     # multilingual; these native masculine de/en/es voices are the curated pick,
     # kept in sync with DEFAULT_VOICE_* in jarvis/plugins/tts/inworld_tts.py.
-    "inworld": ("voice", _curated([
-        ("Josef", "Josef — German, calm assistant (default)"),
-        ("Johanna", "Johanna — German, warm"),
-        ("Dennis", "Dennis — English, deep narrator"),
-        ("Ashley", "Ashley — English, bright"),
-        ("Diego", "Diego — Spanish, formal"),
-        ("Lupita", "Lupita — Spanish, warm"),
-    ])),
-    "elevenlabs": ("voice", _curated([
-        ("onwK4e9ZLuTAKqWW03F9", "Daniel — British, authoritative (default)"),
-        ("JBFqnCBsd6RMkjVDRZzb", "George — British, deep narrator"),
-        ("IKne3meq5aSn9XLyUdCD", "Charlie — British, mature butler"),
-        ("nPczCjzI2devNBz1zQrb", "Brian — American, deep narrator"),
-        ("pNInz6obpgDQGcFmaJgB", "Adam — American, classic AI voice"),
-    ])),
-    "gemini-flash-tts": ("voice", _ids([
-        "Charon", "Kore", "Orus", "Iapetus", "Rasalgethi", "Algenib",
-        "Algieba", "Fenrir", "Aoede", "Zephyr", "Puck", "Leda",
-        "Callirrhoe", "Autonoe", "Enceladus", "Umbriel", "Despina",
-        "Erinome", "Laomedeia", "Achernar", "Alnilam", "Schedar",
-        "Gacrux", "Pulcherrima", "Achird", "Zubenelgenubi", "Vindemiatrix",
-        "Sadachbia", "Sadaltager", "Sulafat",
-    ])),
-    "grok-voice": ("voice", _ids([
-        "leo", "rex", "sal", "ara", "eve", "carina", "zagan", "helix",
-        "orion", "luna", "iris", "altair", "zenith", "perseus", "helios",
-        "lux", "kepler", "rigel", "cosmo", "celeste", "ursa", "sirius",
-        "lumen", "castor", "naksh", "atlas",
-    ])),
-    "openai-tts": ("voice", _ids([
-        "alloy", "ash", "ballad", "coral", "echo",
-        "fable", "onyx", "nova", "sage", "shimmer", "verse", "marin", "cedar",
-    ])),
-    "google-neural2": ("voice", _ids([
-        "en-US-Neural2-A", "en-US-Neural2-C", "en-US-Neural2-D", "en-US-Neural2-F",
-        "de-DE-Neural2-B", "de-DE-Neural2-C", "de-DE-Neural2-D", "de-DE-Neural2-F",
-    ])),
-    "cartesia": ("model", _curated([
-        ("sonic-3.5", "Sonic 3.5 (stable)"),
-        ("sonic-3", "Sonic 3"),
-        ("sonic-3-latest", "Sonic 3 latest (preview track)"),
-    ])),
+    "inworld": (
+        "voice",
+        _curated(
+            [
+                ("Josef", "Josef — German, calm assistant (default)"),
+                ("Johanna", "Johanna — German, warm"),
+                ("Dennis", "Dennis — English, deep narrator"),
+                ("Ashley", "Ashley — English, bright"),
+                ("Diego", "Diego — Spanish, formal"),
+                ("Lupita", "Lupita — Spanish, warm"),
+            ]
+        ),
+    ),
+    "elevenlabs": (
+        "voice",
+        _curated(
+            [
+                ("onwK4e9ZLuTAKqWW03F9", "Daniel — British, authoritative (default)"),
+                ("JBFqnCBsd6RMkjVDRZzb", "George — British, deep narrator"),
+                ("IKne3meq5aSn9XLyUdCD", "Charlie — British, mature butler"),
+                ("nPczCjzI2devNBz1zQrb", "Brian — American, deep narrator"),
+                ("pNInz6obpgDQGcFmaJgB", "Adam — American, classic AI voice"),
+            ]
+        ),
+    ),
+    "gemini-flash-tts": (
+        "voice",
+        _ids(
+            [
+                "Charon",
+                "Kore",
+                "Orus",
+                "Iapetus",
+                "Rasalgethi",
+                "Algenib",
+                "Algieba",
+                "Fenrir",
+                "Aoede",
+                "Zephyr",
+                "Puck",
+                "Leda",
+                "Callirrhoe",
+                "Autonoe",
+                "Enceladus",
+                "Umbriel",
+                "Despina",
+                "Erinome",
+                "Laomedeia",
+                "Achernar",
+                "Alnilam",
+                "Schedar",
+                "Gacrux",
+                "Pulcherrima",
+                "Achird",
+                "Zubenelgenubi",
+                "Vindemiatrix",
+                "Sadachbia",
+                "Sadaltager",
+                "Sulafat",
+            ]
+        ),
+    ),
+    "grok-voice": (
+        "voice",
+        _ids(
+            [
+                "leo",
+                "rex",
+                "sal",
+                "ara",
+                "eve",
+                "carina",
+                "zagan",
+                "helix",
+                "orion",
+                "luna",
+                "iris",
+                "altair",
+                "zenith",
+                "perseus",
+                "helios",
+                "lux",
+                "kepler",
+                "rigel",
+                "cosmo",
+                "celeste",
+                "ursa",
+                "sirius",
+                "lumen",
+                "castor",
+                "naksh",
+                "atlas",
+            ]
+        ),
+    ),
+    "openai-tts": (
+        "voice",
+        _ids(
+            [
+                "alloy",
+                "ash",
+                "ballad",
+                "coral",
+                "echo",
+                "fable",
+                "onyx",
+                "nova",
+                "sage",
+                "shimmer",
+                "verse",
+                "marin",
+                "cedar",
+            ]
+        ),
+    ),
+    "google-neural2": (
+        "voice",
+        _ids(
+            [
+                "en-US-Neural2-A",
+                "en-US-Neural2-C",
+                "en-US-Neural2-D",
+                "en-US-Neural2-F",
+                "de-DE-Neural2-B",
+                "de-DE-Neural2-C",
+                "de-DE-Neural2-D",
+                "de-DE-Neural2-F",
+            ]
+        ),
+    ),
+    "cartesia": (
+        "model",
+        _curated(
+            [
+                ("sonic-3.5", "Sonic 3.5 (stable)"),
+                ("sonic-3", "Sonic 3"),
+                ("sonic-3-latest", "Sonic 3 latest (preview track)"),
+            ]
+        ),
+    ),
     # OpenRouter TTS (the last-resort gateway) — the model picker offers ONLY the
     # four allowlisted, production-grade speech models. The five open-source slop
     # models (Kokoro, Orpheus, CSM-1B, both Zonos) are UNLISTED per the hard
@@ -271,12 +434,17 @@ TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
     # multilingual bar on de/es coverage, beta stability, or GPU dependence. Every
     # id here must satisfy curated_catalog.is_allowed("openrouter", id) — guarded
     # by tests/unit/plugins/tts/test_openrouter_curation.py.
-    "openrouter-tts": ("model", _ids([
-        "google/gemini-3.1-flash-tts-preview",
-        "x-ai/grok-voice-tts-1.0",
-        "microsoft/mai-voice-2",
-        "mistralai/voxtral-mini-tts-2603",
-    ])),
+    "openrouter-tts": (
+        "model",
+        _ids(
+            [
+                "google/gemini-3.1-flash-tts-preview",
+                "x-ai/grok-voice-tts-1.0",
+                "microsoft/mai-voice-2",
+                "mistralai/voxtral-mini-tts-2603",
+            ]
+        ),
+    ),
 }
 
 # Realtime catalogs — REALTIME_MODELS + REALTIME_VOICES, keyed by realtime
@@ -301,31 +469,35 @@ TTS_CATALOG: dict[str, tuple[str, list[ModelInfo]]] = {
 # they target dedicated translation/transcription sessions, not the general
 # duplex voice-agent protocol implemented by this adapter.
 REALTIME_MODELS: dict[str, list[ModelInfo]] = {
-    "openai-realtime": _curated([
-        ("gpt-realtime", "GPT Realtime (default)"),
-        ("gpt-realtime-2.1", "GPT Realtime 2.1"),
-        ("gpt-realtime-2.1-mini", "GPT Realtime 2.1 Mini"),
-        ("gpt-realtime-2", "GPT Realtime 2"),
-        ("gpt-realtime-1.5", "GPT Realtime 1.5"),
-        ("gpt-realtime-mini", "GPT Realtime Mini"),
-    ]),
+    "openai-realtime": _curated(
+        [
+            ("gpt-realtime", "GPT Realtime (default)"),
+            ("gpt-realtime-2.1", "GPT Realtime 2.1"),
+            ("gpt-realtime-2.1-mini", "GPT Realtime 2.1 Mini"),
+            ("gpt-realtime-2", "GPT Realtime 2"),
+            ("gpt-realtime-1.5", "GPT Realtime 1.5"),
+            ("gpt-realtime-mini", "GPT Realtime Mini"),
+        ]
+    ),
     # gemini-live — verified 2026-07-10 against ai.google.dev/gemini-api/docs/models
     # (the Live API model list). ``gemini-3.1-flash-live-preview`` is the current
     # flagship (matches ``_MODEL`` in ``jarvis/plugins/realtime/gemini_live.py``);
     # ``gemini-2.5-flash-native-audio-preview-12-2025`` is the current 2.5-series
     # native-audio sibling still listed on that page. The older
     # ``gemini-2.0-flash-live-preview`` family is marked for shutdown — omitted.
-    "gemini-live": _curated([
-        ("gemini-3.1-flash-live-preview", "Gemini 3.1 Flash Live (default)"),
-        (
-            "gemini-2.5-flash-native-audio-latest",
-            "Gemini 2.5 Flash Native Audio (latest alias)",
-        ),
-        (
-            "gemini-2.5-flash-native-audio-preview-12-2025",
-            "Gemini 2.5 Flash Native Audio",
-        ),
-    ]),
+    "gemini-live": _curated(
+        [
+            ("gemini-3.1-flash-live-preview", "Gemini 3.1 Flash Live (default)"),
+            (
+                "gemini-2.5-flash-native-audio-latest",
+                "Gemini 2.5 Flash Native Audio (latest alias)",
+            ),
+            (
+                "gemini-2.5-flash-native-audio-preview-12-2025",
+                "Gemini 2.5 Flash Native Audio",
+            ),
+        ]
+    ),
     # grok-realtime (xAI Voice Agent API) was REMOVED 2026-07-16: the xAI
     # server drops the session contract after any response cancel, ignores
     # the configured VAD silence window, swallows response.done, and spams
@@ -339,17 +511,54 @@ REALTIME_MODELS: dict[str, list[ModelInfo]] = {
 # gemini-live: verified 2026-07-10 against the Live API capabilities guide,
 # which now permits the complete 30-voice Gemini prebuilt roster.
 REALTIME_VOICES: dict[str, list[ModelInfo]] = {
-    "openai-realtime": _ids([
-        "alloy", "ash", "ballad", "coral", "echo", "sage", "shimmer", "verse",
-        "marin", "cedar",
-    ]),
-    "gemini-live": _ids([
-        "Puck", "Charon", "Kore", "Fenrir", "Aoede", "Orus", "Leda", "Zephyr",
-        "Callirrhoe", "Autonoe", "Enceladus", "Iapetus", "Umbriel", "Algieba",
-        "Despina", "Erinome", "Algenib", "Rasalgethi", "Laomedeia", "Achernar",
-        "Alnilam", "Schedar", "Gacrux", "Pulcherrima", "Achird", "Zubenelgenubi",
-        "Vindemiatrix", "Sadachbia", "Sadaltager", "Sulafat",
-    ]),
+    "openai-realtime": _ids(
+        [
+            "alloy",
+            "ash",
+            "ballad",
+            "coral",
+            "echo",
+            "sage",
+            "shimmer",
+            "verse",
+            "marin",
+            "cedar",
+        ]
+    ),
+    "gemini-live": _ids(
+        [
+            "Puck",
+            "Charon",
+            "Kore",
+            "Fenrir",
+            "Aoede",
+            "Orus",
+            "Leda",
+            "Zephyr",
+            "Callirrhoe",
+            "Autonoe",
+            "Enceladus",
+            "Iapetus",
+            "Umbriel",
+            "Algieba",
+            "Despina",
+            "Erinome",
+            "Algenib",
+            "Rasalgethi",
+            "Laomedeia",
+            "Achernar",
+            "Alnilam",
+            "Schedar",
+            "Gacrux",
+            "Pulcherrima",
+            "Achird",
+            "Zubenelgenubi",
+            "Vindemiatrix",
+            "Sadachbia",
+            "Sadaltager",
+            "Sulafat",
+        ]
+    ),
     # Live roster verified through xAI's authenticated /v1/tts/voices endpoint.
     # Eve leads because it is xAI's current Voice Agent default.
 }
@@ -362,30 +571,34 @@ STT_CATALOG: dict[str, list[ModelInfo]] = {
     # v1.0.1 — see the note in provider_spec.py. The wake-word local Whisper and
     # the key-free STT fallback do NOT use this catalog (they read [stt].wake_*
     # / construct FasterWhisperProvider directly), so no wake/fallback breakage.
-    "openai-api": _ids([
-        "gpt-4o-transcribe",
-        "gpt-4o-mini-transcribe",
-        "gpt-4o-mini-transcribe-2025-12-15",
-        "gpt-4o-transcribe-diarize",
-        "whisper-1",
-    ]),
+    "openai-api": _ids(
+        [
+            "gpt-4o-transcribe",
+            "gpt-4o-mini-transcribe",
+            "gpt-4o-mini-transcribe-2025-12-15",
+            "gpt-4o-transcribe-diarize",
+            "whisper-1",
+        ]
+    ),
     "deepgram": _ids(["nova-3", "nova-2", "nova-2-general", "enhanced", "base"]),
     # OpenRouter STT — the model picker offers ONLY transcription models. This
     # curated snapshot mirrors the live `?output_modalities=transcription` list
     # (verified 2026-07-02); audio-in chat models are excluded. The default
     # model (openai/whisper-large-v3) is listed first.
-    "openrouter-stt": _ids([
-        "openai/whisper-large-v3",
-        "openai/gpt-4o-transcribe",
-        "openai/gpt-4o-mini-transcribe",
-        "openai/whisper-1",
-        "openai/whisper-large-v3-turbo",
-        "google/chirp-3",
-        "mistralai/voxtral-mini-transcribe",
-        "qwen/qwen3-asr-flash-2026-02-10",
-        "nvidia/parakeet-tdt-0.6b-v3",
-        "microsoft/mai-transcribe-1.5",
-    ]),
+    "openrouter-stt": _ids(
+        [
+            "openai/whisper-large-v3",
+            "openai/gpt-4o-transcribe",
+            "openai/gpt-4o-mini-transcribe",
+            "openai/whisper-1",
+            "openai/whisper-large-v3-turbo",
+            "google/chirp-3",
+            "mistralai/voxtral-mini-transcribe",
+            "qwen/qwen3-asr-flash-2026-02-10",
+            "nvidia/parakeet-tdt-0.6b-v3",
+            "microsoft/mai-transcribe-1.5",
+        ]
+    ),
 }
 
 
@@ -394,8 +607,8 @@ class CatalogSpec:
     """Per-provider picker spec: which tier, what it selects, the curated list,
     and whether a live ``/v1/models`` fetch is available (brain providers only)."""
 
-    tier: str       # "brain" | "tts" | "stt"
-    selects: str    # "model" | "voice"
+    tier: str  # "brain" | "tts" | "stt"
+    selects: str  # "model" | "voice"
     curated: tuple[ModelInfo, ...]
     live: bool
 
@@ -410,14 +623,23 @@ def _build_provider_catalog() -> dict[str, CatalogSpec]:
     # /v1/models over OAuth, so curated only. The concrete GPT-5.6 choices are
     # the current Codex lineup; the still-supported GPT-5.5/5.4 choices remain
     # available for users who intentionally prefer their established behavior.
-    cat["codex"] = CatalogSpec("brain", "model", tuple(_curated([
-        ("gpt-5.6-sol", "GPT-5.6 Sol"),
-        ("gpt-5.6-terra", "GPT-5.6 Terra"),
-        ("gpt-5.6-luna", "GPT-5.6 Luna"),
-        ("gpt-5.5", "GPT-5.5"),
-        ("gpt-5.4", "GPT-5.4"),
-        ("gpt-5.4-mini", "GPT-5.4 Mini"),
-    ])), live=False)
+    cat["codex"] = CatalogSpec(
+        "brain",
+        "model",
+        tuple(
+            _curated(
+                [
+                    ("gpt-5.6-sol", "GPT-5.6 Sol"),
+                    ("gpt-5.6-terra", "GPT-5.6 Terra"),
+                    ("gpt-5.6-luna", "GPT-5.6 Luna"),
+                    ("gpt-5.5", "GPT-5.5"),
+                    ("gpt-5.4", "GPT-5.4"),
+                    ("gpt-5.4-mini", "GPT-5.4 Mini"),
+                ]
+            )
+        ),
+        live=False,
+    )
     # Antigravity — subagent model catalog for the official agy/gemini CLI
     # (OAuth login); no /v1/models over OAuth, so curated only. Flash first =
     # the fast default; Pro is the deep option. Both are valid gemini-CLI ids.
@@ -426,10 +648,19 @@ def _build_provider_catalog() -> dict[str, CatalogSpec]:
     # (a bogus name still answers), so agy always runs its IDE-configured default.
     # The selection here therefore only takes effect on the gemini-CLI fallback
     # path (and any future agy that honors the flag); for agy it is informational.
-    cat["antigravity"] = CatalogSpec("brain", "model", tuple(_curated([
-        ("gemini-3.5-flash", "Gemini 3.5 Flash"),
-        ("gemini-3.1-pro-preview", "Gemini 3.1 Pro"),
-    ])), live=False)
+    cat["antigravity"] = CatalogSpec(
+        "brain",
+        "model",
+        tuple(
+            _curated(
+                [
+                    ("gemini-3.5-flash", "Gemini 3.5 Flash"),
+                    ("gemini-3.1-pro-preview", "Gemini 3.1 Pro"),
+                ]
+            )
+        ),
+        live=False,
+    )
     for p, (selects, opts) in TTS_CATALOG.items():
         cat[p] = CatalogSpec("tts", selects, tuple(opts), live=False)
     for p, opts in STT_CATALOG.items():
@@ -449,6 +680,7 @@ def catalog_spec(provider: str) -> CatalogSpec | None:
 # Pure parsing + sorting (module-level for easy testing)
 # ----------------------------------------------------------------------
 
+
 def parse_models_response(provider: str, payload: dict) -> list[ModelInfo]:
     """Map a provider's ``/v1/models`` JSON to a flat ``list[ModelInfo]``.
 
@@ -459,6 +691,19 @@ def parse_models_response(provider: str, payload: dict) -> list[ModelInfo]:
     Entries without a usable id are dropped.
     """
     out: list[ModelInfo] = []
+    if provider == "ollama":
+        # Native /api/tags: {"models": [{"name": "qwen3.5:9b", ...}, ...]} —
+        # the installed-model list of the user's own server. DOWNLOADED models
+        # only: ``:cloud`` entries are ollama.com-proxied references, not
+        # local weights — a "local" card must never offer a path that leaves
+        # the machine (maintainer report 2026-07-25).
+        for m in payload.get("models", []) or []:
+            raw = (m.get("name") or "").strip()
+            if not raw or raw.endswith(":cloud") or m.get("remote"):
+                continue
+            out.append(ModelInfo(id=raw, label=raw))
+        return out
+
     if provider == "gemini":
         for m in payload.get("models", []) or []:
             raw = (m.get("name") or "").removeprefix("models/").strip()
@@ -481,13 +726,15 @@ def parse_models_response(provider: str, payload: dict) -> list[ModelInfo]:
         if not raw:
             continue
         label = (m.get("name") or "").strip() or raw  # OpenRouter has a name
-        out.append(ModelInfo(
-            id=raw,
-            label=label,
-            output_modalities=_output_modalities(m),
-            input_modalities=_input_modalities(m),
-            supported_parameters=_supported_parameters(m),
-        ))
+        out.append(
+            ModelInfo(
+                id=raw,
+                label=label,
+                output_modalities=_output_modalities(m),
+                input_modalities=_input_modalities(m),
+                supported_parameters=_supported_parameters(m),
+            )
+        )
     return out
 
 
@@ -586,13 +833,15 @@ def pick_vision_model(provider: str) -> str | None:
             continue
         out_mods = m.get("output_modalities")
         params = m.get("supported_parameters")
-        candidates.append(ModelInfo(
-            id=mid,
-            label=str(m.get("label") or mid),
-            output_modalities=tuple(out_mods) if isinstance(out_mods, list) else None,
-            input_modalities=tuple(str(x) for x in inp),
-            supported_parameters=tuple(params) if isinstance(params, list) else None,
-        ))
+        candidates.append(
+            ModelInfo(
+                id=mid,
+                label=str(m.get("label") or mid),
+                output_modalities=tuple(out_mods) if isinstance(out_mods, list) else None,
+                input_modalities=tuple(str(x) for x in inp),
+                supported_parameters=tuple(params) if isinstance(params, list) else None,
+            )
+        )
     usable = sort_models(provider, filter_brain_models(candidates))
     return usable[0].id if usable else None
 
@@ -602,7 +851,13 @@ def pick_vision_model(provider: str) -> str | None:
 #: dominates mission wall-clock (live forensic 2026-07-02: think=60.8s of a
 #: 75.8s mission on a flagship model). Data, not logic; extend by adding a row.
 _FAST_CLASS_MARKERS: tuple[str, ...] = (
-    "flash", "haiku", "mini", "lite", "turbo", "air", "nano",
+    "flash",
+    "haiku",
+    "mini",
+    "lite",
+    "turbo",
+    "air",
+    "nano",
 )
 
 
@@ -662,13 +917,15 @@ def pick_fast_vision_model(provider: str) -> str | None:
             continue
         out_mods = m.get("output_modalities")
         params = m.get("supported_parameters")
-        candidates.append(ModelInfo(
-            id=mid,
-            label=str(m.get("label") or mid),
-            output_modalities=tuple(out_mods) if isinstance(out_mods, list) else None,
-            input_modalities=tuple(str(x) for x in inp),
-            supported_parameters=tuple(params) if isinstance(params, list) else None,
-        ))
+        candidates.append(
+            ModelInfo(
+                id=mid,
+                label=str(m.get("label") or mid),
+                output_modalities=tuple(out_mods) if isinstance(out_mods, list) else None,
+                input_modalities=tuple(str(x) for x in inp),
+                supported_parameters=tuple(params) if isinstance(params, list) else None,
+            )
+        )
     usable = sort_models(provider, filter_brain_models(candidates))
     if not usable:
         return None
@@ -703,9 +960,26 @@ def _output_modalities(entry: dict) -> tuple[str, ...] | None:
 # Gemini catalog in particular front-loads Veo/Imagen/Lyria/Nano-Banana. A truly
 # exotic model is still reachable via the free-text custom entry.
 _NON_BRAIN_MARKERS: tuple[str, ...] = (
-    "veo", "imagen", "lyria", "nano-banana", "dall-e", "dalle", "sora",
-    "whisper", "transcrib", "speech", "tts", "-audio", "audio-",
-    "embed", "image", "moderation", "rerank", "realtime", "-live", "guard",
+    "veo",
+    "imagen",
+    "lyria",
+    "nano-banana",
+    "dall-e",
+    "dalle",
+    "sora",
+    "whisper",
+    "transcrib",
+    "speech",
+    "tts",
+    "-audio",
+    "audio-",
+    "embed",
+    "image",
+    "moderation",
+    "rerank",
+    "realtime",
+    "-live",
+    "guard",
 )
 
 
@@ -714,9 +988,15 @@ _NON_BRAIN_MARKERS: tuple[str, ...] = (
 # it is pure noise in the picker). NOTE: this is about OUTPUT only; a model that
 # ACCEPTS image INPUT (vision) but outputs text is a valid — even required —
 # brain (Computer-Use needs vision-input), so input modalities are NOT filtered.
-_GENERATION_OUTPUT_MODALITIES: frozenset[str] = frozenset({
-    "image", "audio", "video", "music", "speech",
-})
+_GENERATION_OUTPUT_MODALITIES: frozenset[str] = frozenset(
+    {
+        "image",
+        "audio",
+        "video",
+        "music",
+        "speech",
+    }
+)
 
 
 def filter_brain_models(models: list[ModelInfo]) -> list[ModelInfo]:
@@ -787,15 +1067,34 @@ def _is_stale(provider: str, model_id: str) -> bool:
 # anything, so this is a sensible default order, not a hard curation.
 _FAMILY_RANK: tuple[tuple[str, int], ...] = (
     # Flagship frontier
-    ("claude-opus", 39), ("claude-fable", 39), ("claude-sonnet", 38),
-    ("gpt-5", 37), ("gemini-3", 36), ("grok-4", 35), ("claude-haiku", 33),
+    ("claude-opus", 39),
+    ("claude-fable", 39),
+    ("claude-sonnet", 38),
+    ("gpt-5", 37),
+    ("gemini-3", 36),
+    ("grok-4", 35),
+    ("claude-haiku", 33),
     # Popular / strong value
-    ("deepseek", 29), ("kimi", 28), ("glm-5", 27), ("qwen3", 26),
-    ("qwen-3", 26), ("glm-4", 25), ("llama-4", 24), ("mistral-large", 23),
-    ("mistral-medium", 22), ("gpt-oss", 21), ("command-r", 20),
+    ("deepseek", 29),
+    ("kimi", 28),
+    ("glm-5", 27),
+    ("qwen3", 26),
+    ("qwen-3", 26),
+    ("glm-4", 25),
+    ("llama-4", 24),
+    ("mistral-large", 23),
+    ("mistral-medium", 22),
+    ("gpt-oss", 21),
+    ("command-r", 20),
     # Older-but-mainstream
-    ("gpt-4", 15), ("gemini-2", 14), ("grok-3", 13), ("llama-3", 12),
-    ("mistral", 11), ("qwen", 10), ("glm", 10), ("command", 9),
+    ("gpt-4", 15),
+    ("gemini-2", 14),
+    ("grok-3", 13),
+    ("llama-3", 12),
+    ("mistral", 11),
+    ("qwen", 10),
+    ("glm", 10),
+    ("command", 9),
 )
 
 
@@ -847,16 +1146,18 @@ def _squash(text: str) -> str:
 # stripped) so the same pick is starred whether it comes from a direct provider
 # (``claude-opus-4-8``) or OpenRouter (``anthropic/claude-opus-4.8``). Extend
 # freely — this is a curated favourites list, presentation only.
-STARRED_MODELS: frozenset[str] = frozenset({
-    _squash("claude-opus-4.8"),       # Opus 4.8
-    _squash("claude-opus-4.8-fast"),  # Opus 4.8 (Fast)
-    _squash("gpt-5.6"),               # GPT-5.6 alias (direct OpenAI)
-    _squash("gpt-5.6-sol"),           # GPT-5.6 flagship (OpenAI/OpenRouter)
-    _squash("gpt-5.5"),               # GPT-5.5
-    _squash("gemini-3.5-flash"),      # Gemini 3.5 Flash
-    _squash("claude-fable-5"),        # Fable 5
-    _squash("glm-5.2"),               # GLM-5.2
-})
+STARRED_MODELS: frozenset[str] = frozenset(
+    {
+        _squash("claude-opus-4.8"),  # Opus 4.8
+        _squash("claude-opus-4.8-fast"),  # Opus 4.8 (Fast)
+        _squash("gpt-5.6"),  # GPT-5.6 alias (direct OpenAI)
+        _squash("gpt-5.6-sol"),  # GPT-5.6 flagship (OpenAI/OpenRouter)
+        _squash("gpt-5.5"),  # GPT-5.5
+        _squash("gemini-3.5-flash"),  # Gemini 3.5 Flash
+        _squash("claude-fable-5"),  # Fable 5
+        _squash("glm-5.2"),  # GLM-5.2
+    }
+)
 
 
 def is_free_model(model_id: str, label: str = "") -> bool:
@@ -903,12 +1204,21 @@ def classify_model(model_id: str, label: str = "") -> ModelTags:
 # special-purpose siblings rarely wanted as the default pick. The full flagship
 # (incl. ``-pro``) is NOT demoted.
 _SPECIALIZED_MARKERS: tuple[str, ...] = (
-    "-mini", "-nano", "-lite", ":free", "-codex", "-chat",
-    "-search", "-air", "-flash-lite",
+    "-mini",
+    "-nano",
+    "-lite",
+    ":free",
+    "-codex",
+    "-chat",
+    "-search",
+    "-air",
+    "-flash-lite",
     # Special-purpose siblings — not the default chat brain, so they rank below
     # the plain model of the same family. (Image/audio variants are already
     # dropped upstream by filter_brain_models, so they need no marker here.)
-    "-deep-research", "-multi-agent", "-customtools",
+    "-deep-research",
+    "-multi-agent",
+    "-customtools",
 )
 
 
@@ -1003,6 +1313,7 @@ def sort_models(provider: str, models: list[ModelInfo]) -> list[ModelInfo]:
 # Catalog with cache + live fetch + static fallback
 # ----------------------------------------------------------------------
 
+
 class ModelCatalog:
     """Live model lists per provider with a TTL cache and honest fallbacks."""
 
@@ -1090,7 +1401,8 @@ class ModelCatalog:
             for prov, (ts, models) in self._cache.items()
         }
         self._cache_path.write_text(
-            json.dumps(data, indent=2), encoding="utf-8",
+            json.dumps(data, indent=2),
+            encoding="utf-8",
         )
 
     def _is_fresh(self, provider: str, fetched_at: float) -> bool:
@@ -1107,9 +1419,7 @@ class ModelCatalog:
 
     # -- public API ----------------------------------------------------
 
-    async def list_models(
-        self, provider: str, *, force_refresh: bool = False
-    ) -> CatalogResult:
+    async def list_models(self, provider: str, *, force_refresh: bool = False) -> CatalogResult:
         """Return the catalog for ``provider`` with an honest ``source`` flag.
 
         Brain providers with a live endpoint: fresh cache → ``cache`` (no
@@ -1138,7 +1448,11 @@ class ModelCatalog:
             cached = self._cache.get(provider)
             if cached and not force_refresh and self._is_fresh(provider, cached[0]):
                 return CatalogResult(
-                    provider, self._present(provider, cached[1]), "cache", cached[0], "model",
+                    provider,
+                    self._present(provider, cached[1]),
+                    "cache",
+                    cached[0],
+                    "model",
                 )
 
             try:
@@ -1147,18 +1461,30 @@ class ModelCatalog:
                 log.info("Model catalog fetch for %s failed: %s", provider, exc)
                 if cached:
                     return CatalogResult(
-                        provider, self._present(provider, cached[1]), "cache", cached[0], "model",
+                        provider,
+                        self._present(provider, cached[1]),
+                        "cache",
+                        cached[0],
+                        "model",
                     )
                 static = self._static_fallback(provider)
                 return CatalogResult(
-                    provider, self._present(provider, static), "static", 0.0, "model",
+                    provider,
+                    self._present(provider, static),
+                    "static",
+                    0.0,
+                    "model",
                 )
 
             now = time.time()
             self._cache[provider] = (now, models)
             self._save_cache()
             return CatalogResult(
-                provider, self._present(provider, models), "live", now, "model",
+                provider,
+                self._present(provider, models),
+                "live",
+                now,
+                "model",
             )
 
     # -- network -------------------------------------------------------
@@ -1168,15 +1494,49 @@ class ModelCatalog:
             return self._client_factory()  # type: ignore[operator]
         return httpx.AsyncClient(timeout=12.0)
 
+    @staticmethod
+    def _resolve_catalog_url(provider: str, ep: _CatalogEndpoint) -> str:
+        """The effective catalog URL: team proxy → base_url override → vendor
+        default, composed with the provider's ``path``.
+
+        Local providers store a bare SERVER ROOT (a pasted ``…/v1`` is
+        normalized away, ollama honors OLLAMA_HOST); cloud providers compose
+        exactly like the former static table with no override configured.
+        """
+        if provider in ("ollama", "local-openai"):
+            # Lazy plugin import (pure helpers) — keeps module import light.
+            from jarvis.plugins.brain.ollama import (
+                default_server_root,
+                normalize_server_root,
+            )
+
+            vendor_default = default_server_root() if provider == "ollama" else None
+            resolved = cfg.resolve_provider_endpoint(
+                provider, vendor_default_base_url=vendor_default
+            )
+            if not resolved.base_url:
+                raise RuntimeError(
+                    "No server URL configured for the local OpenAI-compatible "
+                    "provider — set it on the provider card first."
+                )
+            return normalize_server_root(resolved.base_url) + ep.path
+
+        resolved = cfg.resolve_provider_endpoint(provider, vendor_default_base_url=ep.vendor_base)
+        base = (resolved.base_url or "").rstrip("/")
+        return base + ep.path
+
     async def _fetch_raw(self, provider: str) -> list[ModelInfo]:
         """Call ``provider``'s catalog endpoint and parse it. Raises on no key
-        (except OpenRouter, whose catalog is public) or a transport/HTTP error."""
+        (public catalogs and keyless local providers excepted) or a
+        transport/HTTP error."""
         if provider not in _ENDPOINTS:
             raise ValueError(f"Unsupported provider: {provider}")
-        url, auth = _ENDPOINTS[provider]
+        ep = _ENDPOINTS[provider]
+        url = self._resolve_catalog_url(provider, ep)
         key = cfg.get_provider_secret(provider)
-        if not key and auth != "bearer_opt":
+        if not key and ep.auth in ("x-api-key", "bearer", "query"):
             raise RuntimeError(f"No API key configured for {provider}.")
+        auth = ep.auth
 
         headers: dict[str, str] = {}
         params: dict[str, str] = {}
@@ -1189,6 +1549,12 @@ class ModelCatalog:
                 headers = {"Authorization": f"Bearer {key}"}
         elif auth == "query":
             params = {"key": key or ""}
+        elif auth == "none" and ep.secret_slot is not None:
+            # Keyless local server with an OPTIONAL stored key (e.g. vLLM
+            # --api-key): attach it when present, stay anonymous otherwise.
+            optional = cfg.get_secret(*ep.secret_slot)
+            if optional:
+                headers = {"Authorization": f"Bearer {optional}"}
 
         client = await self._client()
         async with client:

@@ -136,6 +136,9 @@ class _FakeAsyncClient:
     payload: dict[str, Any] = {}
     fail: bool = False
     last_url: str | None = None
+    # /api/show capability map: model name -> capabilities list. Models absent
+    # from the map answer with a chat-capable default.
+    show_caps: dict[str, list[str]] = {}
 
     def __init__(self, **kwargs: Any) -> None:
         pass
@@ -152,6 +155,12 @@ class _FakeAsyncClient:
             raise httpx.ConnectError("connection refused")
         return _FakeResponse(_FakeAsyncClient.payload)
 
+    async def post(self, url: str, json: dict[str, Any] | None = None) -> _FakeResponse:
+        assert url.endswith("/api/show")
+        name = str((json or {}).get("model") or "")
+        caps = _FakeAsyncClient.show_caps.get(name, ["completion", "tools"])
+        return _FakeResponse({"capabilities": caps})
+
 
 @pytest.fixture()
 def fake_tags(monkeypatch):
@@ -159,6 +168,7 @@ def fake_tags(monkeypatch):
     _FakeAsyncClient.fail = False
     _FakeAsyncClient.payload = {}
     _FakeAsyncClient.last_url = None
+    _FakeAsyncClient.show_caps = {}
     return _FakeAsyncClient
 
 
@@ -169,15 +179,93 @@ async def test_configured_model_skips_discovery(monkeypatch, fake_tags) -> None:
     assert fake_tags.last_url is None  # no HTTP call
 
 
-async def test_discovery_uses_first_installed_model(monkeypatch, fake_tags) -> None:
+async def test_discovery_uses_smallest_downloaded_model(monkeypatch, fake_tags) -> None:
+    """Live incident 2026-07-25: the first-installed pick loaded a 30B model
+    (45 GB at its 256k default context) on a 32 GB box and froze the desktop.
+    The silent default is the SMALLEST download; the user's pick wins."""
     _no_override(monkeypatch)
-    fake_tags.payload = {"models": [{"name": "qwen3.5:9b"}, {"name": "gemma4:12b"}]}
+    fake_tags.payload = {
+        "models": [
+            {"name": "qwen3-coder:30b", "size": 18_000_000_000},
+            {"name": "qwen2.5:7b", "size": 4_700_000_000},
+            {"name": "deepseek-r1:14b", "size": 9_000_000_000},
+        ]
+    }
     brain = OllamaBrain()
-    assert await brain._resolve_model() == "qwen3.5:9b"
+    assert await brain._resolve_model() == "qwen2.5:7b"
     assert fake_tags.last_url == "http://localhost:11434/api/tags"
     # Cached: a second resolve must not depend on the server again.
     fake_tags.fail = True
-    assert await brain._resolve_model() == "qwen3.5:9b"
+    assert await brain._resolve_model() == "qwen2.5:7b"
+
+
+async def test_discovery_never_picks_a_cloud_reference(monkeypatch, fake_tags) -> None:
+    """``:cloud`` tags are ollama.com-proxied references, not local weights —
+    the LOCAL brain must never default onto a path that leaves the machine."""
+    _no_override(monkeypatch)
+    fake_tags.payload = {
+        "models": [
+            {"name": "kimi-k2.5:cloud", "size": 1},
+            {"name": "remote-thing", "size": 2, "remote": True},
+            {"name": "qwen2.5:7b", "size": 4_700_000_000},
+        ]
+    }
+    assert await OllamaBrain()._resolve_model() == "qwen2.5:7b"
+
+
+async def test_discovery_skips_embedding_only_downloads(monkeypatch, fake_tags) -> None:
+    """Live incident 2026-07-25 #2: the smallest download was bge-m3, an
+    embedding-only model that 400s on chat. The default gates on the DECLARED
+    /api/show capability (never the name, AP-21) and takes the next-smallest
+    chat-capable download."""
+    _no_override(monkeypatch)
+    fake_tags.payload = {
+        "models": [
+            {"name": "bge-m3:latest", "size": 1_200_000_000},
+            {"name": "qwen2.5:7b", "size": 4_700_000_000},
+        ]
+    }
+    fake_tags.show_caps = {"bge-m3:latest": ["embedding"]}
+    assert await OllamaBrain()._resolve_model() == "qwen2.5:7b"
+
+
+async def test_tool_turns_require_a_tools_capable_download(monkeypatch, fake_tags) -> None:
+    """Live incident 2026-07-25 #3: the smallest chat-capable download had no
+    ``tools`` capability and 400ed on the first tool turn. A tool-bearing
+    request gates on the declared ``tools`` capability; plain chat may still
+    run the smaller model."""
+    _no_override(monkeypatch)
+    fake_tags.payload = {
+        "models": [
+            {"name": "deepseek-llm:latest", "size": 1_000},
+            {"name": "qwen2.5:7b", "size": 2_000},
+        ]
+    }
+    fake_tags.show_caps = {"deepseek-llm:latest": ["completion"]}
+    brain = OllamaBrain()
+    assert await brain._resolve_model() == "deepseek-llm:latest"
+    assert await brain._resolve_model(need_tools=True) == "qwen2.5:7b"
+
+
+async def test_embedding_only_server_gives_honest_error(monkeypatch, fake_tags) -> None:
+    _no_override(monkeypatch)
+    fake_tags.payload = {"models": [{"name": "bge-m3:latest", "size": 1}]}
+    fake_tags.show_caps = {"bge-m3:latest": ["embedding"]}
+    with pytest.raises(RuntimeError) as err:
+        await OllamaBrain()._resolve_model()
+    msg = str(err.value)
+    assert "supports chat" in msg
+    assert f"ollama pull {RECOMMENDED_PULL}" in msg
+
+
+async def test_cloud_only_server_gives_honest_pull_hint(monkeypatch, fake_tags) -> None:
+    _no_override(monkeypatch)
+    fake_tags.payload = {"models": [{"name": "kimi-k2.5:cloud", "size": 1}]}
+    with pytest.raises(RuntimeError) as err:
+        await OllamaBrain()._resolve_model()
+    msg = str(err.value)
+    assert f"ollama pull {RECOMMENDED_PULL}" in msg
+    assert "cloud references do not count" in msg
 
 
 async def test_empty_server_gives_honest_pull_hint(monkeypatch, fake_tags) -> None:
