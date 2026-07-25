@@ -15,16 +15,15 @@
  * nothing to import — today that is a plugin-bridge integration whose pull
  * adapter is not built yet.
  *
- * "Add source": connector picker over the five built-ins, a path field for the
- * folder-shaped connectors, area assignment, and — for the plugin-bridge — the
- * connected-integration candidates from `GET /api/ultrawiki/bridge/candidates`.
- * A bridge source is named after the integration the user picked ("GitHub"),
- * never after the generic bridge, so the list is readable.
+ * "Add source": the curated picker (`ConnectorPicker`) — a tile grid of the
+ * built-ins and the curated integrations, each with its real product name and
+ * brand mark — plus a path field for the folder-shaped connectors and area
+ * assignment. A bridge source is named after the integration the user picked
+ * ("GitHub"), never after the generic bridge, so the list stays readable.
  */
 import { useState } from "react";
 import {
   AlertCircle,
-  Check,
   FolderOpen,
   Info,
   Loader2,
@@ -41,26 +40,21 @@ import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { useEventStore } from "@/store/events";
 import { formatRelativeTime } from "@/components/ultrawiki/relativeTime";
+import { ConnectorBrandMark } from "@/components/ultrawiki/ConnectorBrand";
 import {
-  ULTRAWIKI_CONNECTOR_IDS,
+  ConnectorPicker,
+  connectorLabel,
+  type ConnectorOption,
+} from "@/components/ultrawiki/ConnectorPicker";
+import {
   approveUltraWikiSource,
   cancelUltraWikiJob,
   createUltraWikiSource,
   fetchUltraWikiAreas,
-  fetchUltraWikiBridgeCandidates,
   revokeUltraWikiSource,
   startUltraWikiSync,
-  type UltraWikiConnectorId,
   type UltraWikiSource,
 } from "@/lib/ultrawikiApi";
-
-const CONNECTOR_LABEL_KEY: Record<UltraWikiConnectorId, string> = {
-  "obsidian-vault": "ultrawiki.sources.connector_obsidian",
-  "local-folder": "ultrawiki.sources.connector_local_folder",
-  "jarvis-conversations": "ultrawiki.sources.connector_conversations",
-  "normal-wiki": "ultrawiki.sources.connector_normal_wiki",
-  "plugin-bridge": "ultrawiki.sources.connector_plugin_bridge",
-};
 
 /** Connectors that read a user-chosen folder (config key `root`). */
 const PATH_CONNECTORS: readonly string[] = ["obsidian-vault", "local-folder"];
@@ -232,13 +226,24 @@ function SourceCard({
       data-testid={`ultrawiki-source-${source.id}`}
     >
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="min-w-0">
-          <span className="text-sm font-medium text-foreground">
-            {source.label}
-          </span>
-          <span className="ml-2 font-mono text-[10px] text-muted-foreground">
-            {source.connector}
-          </span>
+        <div className="flex min-w-0 items-center gap-2">
+          {/* The same mark the picker offered this source under — the backend
+              derives it from the connector, so a card added before the roster
+              existed gets its logo too. */}
+          <ConnectorBrandMark
+            brand={source.brand ?? ""}
+            label={source.label}
+            size="sm"
+            testId={`uw-source-brand-${source.id}`}
+          />
+          <div className="min-w-0">
+            <span className="text-sm font-medium text-foreground">
+              {source.label}
+            </span>
+            <span className="ml-2 font-mono text-[10px] text-muted-foreground">
+              {source.connector}
+            </span>
+          </div>
         </div>
         <span
           className={cn(
@@ -465,11 +470,9 @@ function AddSourceForm({
   onCreated: () => void;
 }): JSX.Element {
   const t = useT();
-  const [connector, setConnector] =
-    useState<UltraWikiConnectorId>("obsidian-vault");
+  const [option, setOption] = useState<ConnectorOption | null>(null);
   const [label, setLabel] = useState("");
   const [rootPath, setRootPath] = useState("");
-  const [integrationId, setIntegrationId] = useState("");
   const [selectedAreas, setSelectedAreas] = useState<string[]>([]);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -479,24 +482,12 @@ function AddSourceForm({
     queryFn: fetchUltraWikiAreas,
     staleTime: 5_000,
   });
-  const bridgeQuery = useQuery({
-    queryKey: ["ultrawiki", "bridge-candidates"],
-    queryFn: fetchUltraWikiBridgeCandidates,
-    staleTime: 5_000,
-    enabled: connector === BRIDGE_CONNECTOR,
-  });
 
-  const needsPath = PATH_CONNECTORS.includes(connector);
-  const candidates = bridgeQuery.data?.candidates ?? [];
-  const selectedCandidate =
-    candidates.find((candidate) => candidate.id === integrationId) ?? null;
+  const needsPath = Boolean(option && PATH_CONNECTORS.includes(option.connector));
   // A bridge card is named after the INTEGRATION the user picked. Falling back
   // to the connector's own name produced a list of identical "Connected
   // integration" rows nobody could tell apart.
-  const defaultLabel =
-    connector === BRIDGE_CONNECTOR && selectedCandidate
-      ? selectedCandidate.label
-      : t(CONNECTOR_LABEL_KEY[connector]);
+  const defaultLabel = option ? connectorLabel(option, t) : "";
 
   function toggleArea(id: string) {
     setSelectedAreas((current) =>
@@ -508,16 +499,17 @@ function AddSourceForm({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (!option) return;
     setSubmitting(true);
     setError("");
     const config: Record<string, unknown> = {};
     if (needsPath && rootPath.trim()) config.root = rootPath.trim();
-    if (connector === BRIDGE_CONNECTOR && integrationId) {
-      config.integration_id = integrationId;
+    if (option.connector === BRIDGE_CONNECTOR && option.integrationId) {
+      config.integration_id = option.integrationId;
     }
     try {
       await createUltraWikiSource({
-        connector,
+        connector: option.connector,
         label: label.trim() || defaultLabel,
         config,
         areas: selectedAreas,
@@ -548,38 +540,36 @@ function AddSourceForm({
         {t("ultrawiki.sources.add_title")}
       </h4>
 
-      <label className="block">
+      <div>
         <span className="mb-1.5 block text-[10px] uppercase tracking-wider text-muted-foreground">
-          {t("ultrawiki.sources.connector_label")}
+          {t("ultrawiki.picker.choose")}
         </span>
-        <select
-          value={connector}
-          onChange={(e) =>
-            setConnector(e.target.value as UltraWikiConnectorId)
-          }
-          className={inputCls}
-          data-testid="ultrawiki-connector-select"
-        >
-          {ULTRAWIKI_CONNECTOR_IDS.map((id) => (
-            <option key={id} value={id}>
-              {t(CONNECTOR_LABEL_KEY[id])}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <label className="block">
-        <span className="mb-1.5 block text-[10px] uppercase tracking-wider text-muted-foreground">
-          {t("ultrawiki.sources.label_label")}
-        </span>
-        <input
-          type="text"
-          value={label}
-          onChange={(e) => setLabel(e.target.value)}
-          placeholder={defaultLabel}
-          className={inputCls}
+        <ConnectorPicker
+          selectedKey={option?.key ?? ""}
+          onSelect={(picked) => {
+            setOption(picked);
+            // The path belongs to the folder connector it was typed for;
+            // carrying it over to a different source type would silently point
+            // the new one at an unrelated folder.
+            if (!PATH_CONNECTORS.includes(picked.connector)) setRootPath("");
+          }}
         />
-      </label>
+      </div>
+
+      {option && (
+        <label className="block">
+          <span className="mb-1.5 block text-[10px] uppercase tracking-wider text-muted-foreground">
+            {t("ultrawiki.sources.label_label")}
+          </span>
+          <input
+            type="text"
+            value={label}
+            onChange={(e) => setLabel(e.target.value)}
+            placeholder={defaultLabel}
+            className={inputCls}
+          />
+        </label>
+      )}
 
       {needsPath && (
         <label className="block">
@@ -598,80 +588,6 @@ function AddSourceForm({
             {t("ultrawiki.sources.path_hint")}
           </span>
         </label>
-      )}
-
-      {connector === BRIDGE_CONNECTOR && (
-        <div>
-          <span className="mb-1.5 block text-[10px] uppercase tracking-wider text-muted-foreground">
-            {t("ultrawiki.sources.bridge_label")}
-          </span>
-          {bridgeQuery.isLoading ? (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
-              {t("ultrawiki.panel.loading")}
-            </div>
-          ) : bridgeQuery.isError ? (
-            <p className="text-xs text-destructive">
-              {t("ultrawiki.sources.bridge_load_failed")}
-            </p>
-          ) : candidates.length === 0 ? (
-            <p className="text-xs text-muted-foreground">
-              {t("ultrawiki.sources.bridge_empty")}
-            </p>
-          ) : (
-            <ul className="space-y-1.5">
-              {candidates.map((candidate) => {
-                const selected = integrationId === candidate.id;
-                // The backend states adapter readiness inside `detail`; mark
-                // "pull adapter pending" honestly instead of hiding it.
-                const adapterPending = candidate.detail.includes(
-                  "pull adapter pending",
-                );
-                return (
-                  <li key={candidate.id}>
-                    <button
-                      type="button"
-                      onClick={() => setIntegrationId(candidate.id)}
-                      aria-pressed={selected}
-                      data-testid={`ultrawiki-bridge-${candidate.id}`}
-                      className={cn(
-                        "w-full rounded-lg border p-2 text-left text-xs transition-colors",
-                        selected
-                          ? "border-primary/60 bg-primary/5 ring-1 ring-primary/40"
-                          : "border-border hover:bg-secondary/30",
-                      )}
-                    >
-                      <span className="flex items-center gap-2">
-                        {selected && (
-                          <Check className="h-3 w-3 text-primary" aria-hidden />
-                        )}
-                        <span className="font-medium text-foreground">
-                          {candidate.label}
-                        </span>
-                        <span className="font-mono text-[10px] text-muted-foreground">
-                          {candidate.kind}
-                        </span>
-                        {adapterPending && (
-                          <span className="rounded-full border border-[#ffb84d]/40 bg-[#ffb84d]/10 px-1.5 py-0.5 text-[10px] text-[#ffb84d]">
-                            {t("ultrawiki.sources.adapter_pending")}
-                          </span>
-                        )}
-                      </span>
-                      <span className="mt-0.5 block text-muted-foreground">
-                        {candidate.detail}
-                      </span>
-                      {adapterPending && selected && (
-                        <span className="mt-1 block text-[#ffb84d]">
-                          {t("ultrawiki.sources.adapter_pending_hint")}
-                        </span>
-                      )}
-                    </button>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
       )}
 
       <div>
@@ -719,11 +635,7 @@ function AddSourceForm({
           <Button
             size="sm"
             type="submit"
-            disabled={
-              submitting ||
-              (connector === BRIDGE_CONNECTOR && !integrationId) ||
-              (needsPath && !rootPath.trim())
-            }
+            disabled={submitting || !option || (needsPath && !rootPath.trim())}
             data-testid="ultrawiki-create-source"
           >
             {submitting && (

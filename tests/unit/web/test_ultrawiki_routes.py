@@ -1156,6 +1156,96 @@ def test_status_carries_the_per_source_outcome_after_the_auto_import(env) -> Non
 
 
 # ---------------------------------------------------------------------------
+# The curated connector roster — what the add-source picker may render
+# ---------------------------------------------------------------------------
+
+
+def test_connectors_answer_with_the_whole_curated_roster(env) -> None:
+    """Product data: identical on every install, no credential probe involved."""
+    response = env.client.get("/api/ultrawiki/connectors")
+
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["total"] == body["builtin"] + body["bridge"]
+    assert body["builtin"] >= 4 and body["bridge"] >= 1
+    for row in body["connectors"]:
+        assert row["kind"] in ("builtin", "bridge")
+        assert row["label"].strip()
+        assert row["brand"].strip()
+        assert row["status"] in ("available", "adapter_pending")
+        assert row["description_key"].startswith("ultrawiki.connectors.")
+
+
+def test_connectors_never_offer_the_bridge_itself_as_a_card(env) -> None:
+    """`plugin-bridge` is plumbing; its generic name is what the roster ends."""
+    rows = env.client.get("/api/ultrawiki/connectors").json()["connectors"]
+    assert all(row["id"] != "plugin-bridge" for row in rows)
+    # It is still the connector every bridge entry registers under.
+    bridges = [row for row in rows if row["kind"] == "bridge"]
+    assert all(row["connector"] == "plugin-bridge" for row in bridges)
+
+
+def test_bridge_candidates_show_curated_entries_that_are_not_connected(
+    env, monkeypatch
+) -> None:
+    """Seeing what is POSSIBLE is the point — flagged, so nobody adds a dead
+    source by mistake."""
+    monkeypatch.setattr(
+        "jarvis.marketplace.catalog_data.load_catalog",
+        lambda: SimpleNamespace(plugins=[]),
+    )
+    monkeypatch.setattr("jarvis.mcp.state.load_config", lambda: {"mcpServers": {}})
+
+    body = env.client.get("/api/ultrawiki/bridge/candidates").json()
+
+    assert body["connected"] == 0
+    assert body["total"] > 0
+    for row in body["candidates"]:
+        assert row["connected"] is False
+        assert row["connector_kind"] == "bridge"
+        assert row["brand"].strip()
+        assert row["label"].strip()
+
+
+def test_bridge_candidates_exclude_an_uncurated_connected_tool(
+    env, monkeypatch
+) -> None:
+    """A raw registry dump is exactly what the picker must never render."""
+    monkeypatch.setattr(
+        "jarvis.marketplace.catalog_data.load_catalog",
+        lambda: SimpleNamespace(plugins=[]),
+    )
+    monkeypatch.setattr(
+        "jarvis.mcp.state.load_config",
+        lambda: {
+            "mcpServers": {
+                "notion": {"enabled": True},
+                "some-private-server": {"enabled": True, "display": "grace plug in"},
+            }
+        },
+    )
+
+    body = env.client.get("/api/ultrawiki/bridge/candidates").json()
+
+    connected = [row for row in body["candidates"] if row["connected"]]
+    assert [row["catalog_id"] for row in connected] == ["notion"]
+    assert connected[0]["label"] == "Notion"
+    assert all("grace plug in" not in row["label"] for row in body["candidates"])
+
+
+def test_status_sources_carry_the_brand_a_card_renders(env) -> None:
+    _activate(env)
+    rows = env.client.get("/api/ultrawiki/status").json()["sources"]
+
+    assert rows, "activation registers the default local sources"
+    for row in rows:
+        assert row["connector_kind"] in ("builtin", "bridge", "")
+        assert "brand" in row
+    wiki = next(row for row in rows if row["connector"] == "normal-wiki")
+    assert (wiki["brand"], wiki["connector_kind"]) == ("wiki", "builtin")
+
+
+# ---------------------------------------------------------------------------
 # The contents view — WHICH items are in the database, not just how many
 # ---------------------------------------------------------------------------
 

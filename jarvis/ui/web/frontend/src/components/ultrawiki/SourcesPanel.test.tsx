@@ -347,10 +347,79 @@ describe("SourcesPanel — bridge sources carry a real identity", () => {
     expect(subtitle.textContent).toContain("plugin:github");
   });
 
-  it("registers a bridge source under the picked candidate's label", async () => {
+  it("shows the source's brand mark next to its name", () => {
+    installFetchMock({});
+    const bridge = source({
+      id: "src-gh",
+      connector: "plugin-bridge",
+      label: "GitHub",
+      consent: "approved",
+      integration_id: "plugin:github",
+      brand: "github",
+      connector_kind: "bridge",
+    });
+    const folder = source({
+      id: "src-folder",
+      connector: "local-folder",
+      label: "Notes",
+      brand: "folder",
+      connector_kind: "builtin",
+    });
+
+    renderWithClient(
+      <SourcesPanel sources={[bridge, folder]} onChanged={vi.fn()} />,
+    );
+
+    // The same resolution the picker uses: a bundled vendor mark for the
+    // integration, one of our own icons for a built-in.
+    expect(
+      screen.getByTestId("uw-source-brand-src-gh").getAttribute("data-brand-tier"),
+    ).toBe("asset");
+    expect(
+      screen
+        .getByTestId("uw-source-brand-src-folder")
+        .getAttribute("data-brand-tier"),
+    ).toBe("neutral");
+  });
+
+  it("falls back to a monogram for a source with no roster brand", () => {
+    installFetchMock({});
+    const orphan = source({
+      id: "src-orphan",
+      connector: "third-party-connector",
+      label: "Zeta archive",
+      brand: "",
+    });
+
+    renderWithClient(<SourcesPanel sources={[orphan]} onChanged={vi.fn()} />);
+
+    const mark = screen.getByTestId("uw-source-brand-src-orphan");
+    expect(mark.getAttribute("data-brand-tier")).toBe("monogram");
+    expect(mark.textContent).toBe("Z");
+  });
+
+  it("registers a bridge source under the picked integration's label", async () => {
     const created: unknown[] = [];
     const fetchMock = installFetchMock({
       "/api/ultrawiki/areas": () => ({ areas: [], total: 0 }),
+      "/api/ultrawiki/connectors": () => ({
+        connectors: [
+          {
+            id: "github",
+            kind: "bridge",
+            label: "GitHub",
+            label_key: "",
+            brand: "github",
+            status: "adapter_pending",
+            description_key: "ultrawiki.connectors.github",
+            connector: "plugin-bridge",
+            integration_id: "plugin:github",
+          },
+        ],
+        total: 1,
+        builtin: 0,
+        bridge: 1,
+      }),
       "/api/ultrawiki/bridge/candidates": () => ({
         candidates: [
           {
@@ -358,9 +427,17 @@ describe("SourcesPanel — bridge sources carry a real identity", () => {
             kind: "plugin",
             label: "GitHub",
             detail: "connected marketplace plugin; pull adapter pending",
+            catalog_id: "github",
+            brand: "github",
+            connector_kind: "bridge",
+            description_key: "ultrawiki.connectors.github",
+            status: "adapter_pending",
+            connected: true,
+            has_pull_adapter: false,
           },
         ],
         total: 1,
+        connected: 1,
       }),
       "/api/ultrawiki/sources": (init) => {
         created.push(JSON.parse(String(init?.body ?? "{}")));
@@ -370,13 +447,15 @@ describe("SourcesPanel — bridge sources carry a real identity", () => {
     renderWithClient(<SourcesPanel sources={[]} onChanged={vi.fn()} />);
 
     fireEvent.click(screen.getByTestId("ultrawiki-add-source-toggle"));
-    fireEvent.change(screen.getByTestId("ultrawiki-connector-select"), {
-      target: { value: "plugin-bridge" },
-    });
     await waitFor(() => {
-      expect(screen.getByTestId("ultrawiki-bridge-plugin:github")).toBeDefined();
+      expect(screen.getByTestId("uw-picker-github")).toBeDefined();
     });
-    fireEvent.click(screen.getByTestId("ultrawiki-bridge-plugin:github"));
+    // Nothing can be created before a source type is picked.
+    expect(
+      screen.getByTestId("ultrawiki-create-source").hasAttribute("disabled"),
+    ).toBe(true);
+
+    fireEvent.click(screen.getByTestId("uw-picker-github"));
     fireEvent.click(screen.getByTestId("ultrawiki-create-source"));
 
     await waitFor(() => {

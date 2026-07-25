@@ -2975,6 +2975,41 @@
       "action_open_sources": "Quellen öffnen",
       "action_open_settings": "Einstellungen öffnen",
       "action_enable_mode": "Einschalten"
+    },
+    "connectors": {
+      "obsidian_vault": "Jede Notiz in einem Obsidian-Tresor auf diesem Gerät.",
+      "local_folder": "Text- und Markdown-Dateien in einem Ordner deiner Wahl.",
+      "jarvis_conversations": "Worüber du und {name} schon gesprochen habt.",
+      "normal_wiki": "Die Notizen, die das eingebaute Wiki bereits gesammelt hat.",
+      "github": "Repositories, Issues und Pull Requests, an denen du arbeitest.",
+      "notion": "Seiten und Datenbanken aus deinem Notion-Workspace.",
+      "slack": "Nachrichten und Threads aus deinen Kanälen.",
+      "google_drive": "Dokumente und Dateien in deinem Drive.",
+      "gmail": "Gesendete und empfangene E-Mails.",
+      "google_calendar": "Termine, Einladungen und ihre Notizen.",
+      "asana": "Aufgaben, Projekte und ihre Beschreibungen.",
+      "linear": "Issues, Projekte und die Diskussionen dazu.",
+      "todoist": "Aufgaben und die Notizen daran.",
+      "clickup": "Aufgaben, Dokumente und Kommentare aus deinen Spaces.",
+      "dropbox": "Dokumente und Dateien in Dropbox.",
+      "airtable": "Datensätze aus deinen Bases und Tabellen.",
+      "discord": "Nachrichten aus den Servern und Kanälen, denen du folgst.",
+      "telegram": "Nachrichten aus deinen Chats und Kanälen."
+    },
+    "picker": {
+      "builtin_group": "Auf diesem Gerät",
+      "bridge_group": "Verbundene Apps",
+      "builtin_hint": "Wird direkt von diesem Gerät gelesen — nichts verlässt es.",
+      "bridge_hint": "Apps, die du unter Plugins verbunden hast.",
+      "badge_available": "Bereit zum Import",
+      "badge_adapter_pending": "Leser noch nicht gebaut",
+      "badge_not_connected": "Nicht verbunden",
+      "adapter_pending_hint": "Du kannst sie jetzt hinzufügen, aber eine Synchronisation findet nichts, bis ihr Leser fertig ist.",
+      "not_connected_hint": "Verbinde sie zuerst unter Plugins — danach lässt sie sich hier hinzufügen.",
+      "load_failed": "Die verbundenen Apps konnten nicht geladen werden.",
+      "empty": "In dieser Version werden keine Quellen angeboten.",
+      "selected": "Ausgewählt",
+      "choose": "Quelle auswählen"
     }
   }
 }

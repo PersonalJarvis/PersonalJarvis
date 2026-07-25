@@ -59,6 +59,51 @@ export const ULTRAWIKI_CONNECTOR_IDS = [
 ] as const;
 export type UltraWikiConnectorId = (typeof ULTRAWIKI_CONNECTOR_IDS)[number];
 
+// Mirrors jarvis/ultrawiki/connector_catalog.py::CONNECTOR_KINDS — five-layer
+// anti-drift discipline (AP-4): pinned against Python by
+// tests/unit/ultrawiki/test_connector_catalog.py.
+export const ULTRAWIKI_CONNECTOR_KINDS = ["builtin", "bridge"] as const;
+export type UltraWikiConnectorKind =
+  (typeof ULTRAWIKI_CONNECTOR_KINDS)[number];
+
+// Mirrors jarvis/ultrawiki/connector_catalog.py::CONNECTOR_STATUSES.
+export const ULTRAWIKI_CONNECTOR_STATUSES = [
+  "available",
+  "adapter_pending",
+] as const;
+export type UltraWikiConnectorStatus =
+  (typeof ULTRAWIKI_CONNECTOR_STATUSES)[number];
+
+// Mirrors jarvis/ultrawiki/connector_catalog.py::NEUTRAL_BRANDS — brand tokens
+// that name one of OUR icons instead of a vendor mark.
+export const ULTRAWIKI_NEUTRAL_BRANDS = [
+  "vault",
+  "folder",
+  "chat",
+  "wiki",
+] as const;
+export type UltraWikiNeutralBrand =
+  (typeof ULTRAWIKI_NEUTRAL_BRANDS)[number];
+
+/** One offer in the add-source picker (`GET /api/ultrawiki/connectors`). */
+export interface UltraWikiConnectorSpec {
+  id: string;
+  kind: UltraWikiConnectorKind | string;
+  /** The real product name — the vendor's own spelling, never translated. */
+  label: string;
+  /** Built-ins only: i18n key of the display name (ours, so it translates). */
+  label_key: string;
+  /** Asset key under `src/assets/brands`, or one of ULTRAWIKI_NEUTRAL_BRANDS. */
+  brand: string;
+  status: UltraWikiConnectorStatus | string;
+  /** i18n key of the one-line description under the name. */
+  description_key: string;
+  /** The connector a source is registered under. */
+  connector: string;
+  /** Bridge entries only: the candidate id the source config carries. */
+  integration_id: string;
+}
+
 export interface UltraWikiCounts {
   captured: number;
   keyword_indexed: number;
@@ -89,6 +134,10 @@ export interface UltraWikiSource {
   label: string;
   /** The integration behind a plugin-bridge source ("plugin:github"). */
   integration_id?: string;
+  /** Brand asset key, so an existing card carries the same logo the picker
+   *  offered it under. Empty when the connector is not on the roster. */
+  brand?: string;
+  connector_kind?: UltraWikiConnectorKind | string;
   consent: UltraWikiConsent | string;
   enabled: boolean;
   areas: string[];
@@ -494,11 +543,28 @@ export interface UltraWikiSlotTestResult {
   latency_ms: number;
 }
 
+/**
+ * One curated integration in the picker (`GET /api/ultrawiki/bridge/candidates`).
+ *
+ * `kind` says where it was DISCOVERED (marketplace plugin or mcp.json server);
+ * `connector_kind` is always "bridge". Every field except `id`/`kind`/`detail`
+ * comes from the curated roster, so a registry's own display string can never
+ * reach a card. Entries with `connected: false` are offered but not usable yet
+ * — the user connects them under Plugins first.
+ */
 export interface UltraWikiBridgeCandidate {
   id: string;
   kind: "plugin" | "mcp" | string;
   label: string;
   detail: string;
+  /** The roster entry id ("github"), which is also the brand asset key. */
+  catalog_id?: string;
+  brand?: string;
+  connector_kind?: UltraWikiConnectorKind | string;
+  description_key?: string;
+  status?: UltraWikiConnectorStatus | string;
+  connected?: boolean;
+  has_pull_adapter?: boolean;
 }
 
 export interface UltraWikiArea {
@@ -804,10 +870,28 @@ export function cancelUltraWikiJob(
 export function fetchUltraWikiBridgeCandidates(): Promise<{
   candidates: UltraWikiBridgeCandidate[];
   total: number;
+  connected?: number;
 }> {
-  return request<{ candidates: UltraWikiBridgeCandidate[]; total: number }>(
-    "/api/ultrawiki/bridge/candidates",
-  );
+  return request<{
+    candidates: UltraWikiBridgeCandidate[];
+    total: number;
+    connected?: number;
+  }>("/api/ultrawiki/bridge/candidates");
+}
+
+/** The curated roster the picker renders — product data, not install state. */
+export function fetchUltraWikiConnectors(): Promise<{
+  connectors: UltraWikiConnectorSpec[];
+  total: number;
+  builtin?: number;
+  bridge?: number;
+}> {
+  return request<{
+    connectors: UltraWikiConnectorSpec[];
+    total: number;
+    builtin?: number;
+    bridge?: number;
+  }>("/api/ultrawiki/connectors");
 }
 
 export function fetchUltraWikiAreas(): Promise<{

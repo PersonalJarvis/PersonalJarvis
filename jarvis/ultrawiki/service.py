@@ -99,6 +99,25 @@ BRIDGE_ADAPTER_PENDING_NOTICE = (
 #: state is the only one that produces the notice above).
 _BRIDGE_CONNECTOR_ID = "plugin-bridge"
 
+def _connector_identity(connector_id: str, integration_id: str) -> tuple[str, str]:
+    """``(brand asset key, connector kind)`` for one registered source.
+
+    Derived on every read instead of stored with the source: the roster is a
+    product decision that must reach sources registered before it, and a brand
+    frozen into the database at creation time is exactly how a card ends up
+    showing a logo the app no longer ships. An unknown connector answers with
+    empty strings — the UI then draws a monogram, which is the honest rendering
+    of "this is not one of ours".
+    """
+    from jarvis.ultrawiki import connector_catalog  # noqa: PLC0415 — lazy (AP-26)
+
+    if connector_id == _BRIDGE_CONNECTOR_ID:
+        spec = connector_catalog.bridge_entry_for(integration_id)
+        return (spec.brand if spec else "", "bridge")
+    spec = connector_catalog.get_connector(connector_id)
+    return (spec.brand, spec.kind) if spec else ("", "")
+
+
 #: The default local sources :meth:`UltraWikiService.activate` registers —
 #: source id == connector id for these singletons.
 _DEFAULT_SOURCES: tuple[tuple[str, str], ...] = (
@@ -367,6 +386,18 @@ class UltraWikiService:
 
     # -- lifecycle -----------------------------------------------------------
 
+    @staticmethod
+    def _register_pull_adapters() -> None:
+        """Wire the built-in integration readers into the plugin bridge."""
+        try:
+            from jarvis.ultrawiki.adapters import (  # noqa: PLC0415 — lazy (AP-26)
+                register_builtin_adapters,
+            )
+
+            register_builtin_adapters()
+        except Exception as exc:  # noqa: BLE001 — no reader is not a boot failure
+            log.warning("UltraWiki: pull adapters could not register: %s", exc)
+
     async def ensure_started(self) -> None:
         """Open the store and start the pipeline (idempotent, off boot path).
 
@@ -377,6 +408,12 @@ class UltraWikiService:
             if self._store is None:
                 self._store = await self._open_store()
                 await self._heal_bridge_labels(self._store)
+                # The readers behind the plugin bridge. Registered HERE rather
+                # than at import time: an adapter reaches for credentials and
+                # HTTP clients, and the bridge must stay importable on a
+                # machine that has neither (AP-26). Idempotent and never
+                # raises — a broken adapter shortens the list, nothing more.
+                self._register_pull_adapters()
             if self._uw_enabled() and self._pipeline_task is None:
                 from jarvis.ultrawiki.pipeline import (  # noqa: PLC0415 — lazy
                     PipelineWorker,
@@ -645,15 +682,23 @@ class UltraWikiService:
         source_id = str(row.get("id") or "")
         active = _active_job_for(source_id)
         config = row.get("config") or {}
+        connector_id = str(row.get("connector") or "")
+        integration_id = (
+            str(config.get("integration_id") or "") if isinstance(config, dict) else ""
+        )
+        brand, connector_kind = _connector_identity(connector_id, integration_id)
         return {
             "id": row.get("id"),
-            "connector": row.get("connector"),
+            "connector": connector_id,
             "label": row.get("label"),
             # The integration behind a plugin-bridge source, so the card can
             # name it instead of showing an opaque generated source id.
-            "integration_id": str(config.get("integration_id") or "")
-            if isinstance(config, dict)
-            else "",
+            "integration_id": integration_id,
+            # Brand identity of an EXISTING source, so its card carries the
+            # same logo the picker offered it under. Derived, never stored: a
+            # roster change must reach sources registered before it.
+            "brand": brand,
+            "connector_kind": connector_kind,
             "consent": row.get("consent"),
             "enabled": row.get("enabled"),
             "areas": row.get("areas", []),
@@ -940,9 +985,16 @@ class UltraWikiService:
 
         A plugin-bridge source registered under the bridge's own generic name
         produced a list of identical "Connected Integrations" cards nobody
-        could tell apart. When the caller supplied no real name, the label of
-        the chosen candidate ("GitHub", "Notion", ...) is used instead. The
-        lookup is best-effort: a broken registry keeps the caller's label.
+        could tell apart. When the caller supplied no real name, the product's
+        own name ("GitHub", "Notion", ...) is used instead.
+
+        The CATALOG answers first and the live registry only second. The
+        registry's display string is whatever a vendor or a hand-written
+        ``mcp.json`` put there and drifts into unreadable shapes; the roster
+        holds the real product name and, unlike the registry, still answers
+        when the integration has been disconnected in the meantime. Both
+        lookups are best-effort: neither may fail a source registration over
+        what is ultimately decoration.
         """
         chosen = str(label or "").strip()
         if connector_id != _BRIDGE_CONNECTOR_ID:
@@ -962,6 +1014,11 @@ class UltraWikiService:
         }
         if chosen.lower() not in generic:
             return chosen
+        from jarvis.ultrawiki import connector_catalog  # noqa: PLC0415 — lazy (AP-26)
+
+        spec = connector_catalog.bridge_entry_for(integration_id)
+        if spec is not None:
+            return spec.label
         try:
             from jarvis.ultrawiki.connectors import (  # noqa: PLC0415 — lazy (AP-26)
                 plugin_bridge,

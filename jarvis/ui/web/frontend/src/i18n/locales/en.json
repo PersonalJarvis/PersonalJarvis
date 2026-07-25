@@ -2976,6 +2976,41 @@
       "action_open_sources": "Open sources",
       "action_open_settings": "Open settings",
       "action_enable_mode": "Turn on"
+    },
+    "connectors": {
+      "obsidian_vault": "Every note in an Obsidian vault on this machine.",
+      "local_folder": "Text and Markdown files in any folder you choose.",
+      "jarvis_conversations": "What you and {name} have already talked about.",
+      "normal_wiki": "The notes the built-in wiki has already collected.",
+      "github": "Repositories, issues and pull requests you work on.",
+      "notion": "Pages and databases from your Notion workspace.",
+      "slack": "Messages and threads from the channels you are in.",
+      "google_drive": "Documents and files stored in your Drive.",
+      "gmail": "Mail you have sent and received.",
+      "google_calendar": "Events, invitations and the notes on them.",
+      "asana": "Tasks, projects and their descriptions.",
+      "linear": "Issues, projects and the discussions on them.",
+      "todoist": "Tasks and the notes attached to them.",
+      "clickup": "Tasks, docs and comments from your spaces.",
+      "dropbox": "Documents and files kept in Dropbox.",
+      "airtable": "Records from your bases and tables.",
+      "discord": "Messages from the servers and channels you follow.",
+      "telegram": "Messages from your chats and channels."
+    },
+    "picker": {
+      "builtin_group": "On this machine",
+      "bridge_group": "Connected apps",
+      "builtin_hint": "Read straight from this device — nothing leaves it.",
+      "bridge_hint": "Apps you have connected under Plugins.",
+      "badge_available": "Ready to import",
+      "badge_adapter_pending": "Reader not built yet",
+      "badge_not_connected": "Not connected",
+      "adapter_pending_hint": "You can add it now, but a sync finds nothing until its reader ships.",
+      "not_connected_hint": "Connect it under Plugins first — then it can be added here.",
+      "load_failed": "The connected apps could not be loaded.",
+      "empty": "This build offers no source types.",
+      "selected": "Selected",
+      "choose": "Pick a source type"
     }
   }
 }

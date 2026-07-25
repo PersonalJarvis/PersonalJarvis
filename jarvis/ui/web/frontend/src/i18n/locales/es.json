@@ -2975,6 +2975,41 @@
       "action_open_sources": "Abrir fuentes",
       "action_open_settings": "Abrir ajustes",
       "action_enable_mode": "Activar"
+    },
+    "connectors": {
+      "obsidian_vault": "Cada nota de un almacén de Obsidian en este equipo.",
+      "local_folder": "Archivos de texto y Markdown en la carpeta que elijas.",
+      "jarvis_conversations": "Lo que ya has hablado con {name}.",
+      "normal_wiki": "Las notas que el wiki integrado ya ha recopilado.",
+      "github": "Repositorios, incidencias y pull requests en los que trabajas.",
+      "notion": "Páginas y bases de datos de tu espacio de Notion.",
+      "slack": "Mensajes e hilos de los canales en los que estás.",
+      "google_drive": "Documentos y archivos guardados en tu Drive.",
+      "gmail": "Correos que has enviado y recibido.",
+      "google_calendar": "Eventos, invitaciones y sus notas.",
+      "asana": "Tareas, proyectos y sus descripciones.",
+      "linear": "Incidencias, proyectos y sus discusiones.",
+      "todoist": "Tareas y las notas adjuntas a ellas.",
+      "clickup": "Tareas, documentos y comentarios de tus espacios.",
+      "dropbox": "Documentos y archivos guardados en Dropbox.",
+      "airtable": "Registros de tus bases y tablas.",
+      "discord": "Mensajes de los servidores y canales que sigues.",
+      "telegram": "Mensajes de tus chats y canales."
+    },
+    "picker": {
+      "builtin_group": "En este equipo",
+      "bridge_group": "Aplicaciones conectadas",
+      "builtin_hint": "Se lee directamente desde este equipo: nada sale de él.",
+      "bridge_hint": "Aplicaciones que has conectado en Plugins.",
+      "badge_available": "Listo para importar",
+      "badge_adapter_pending": "Lector aún no disponible",
+      "badge_not_connected": "Sin conectar",
+      "adapter_pending_hint": "Puedes añadirla ya, pero una sincronización no encontrará nada hasta que llegue su lector.",
+      "not_connected_hint": "Conéctala primero en Plugins y después podrás añadirla aquí.",
+      "load_failed": "No se pudieron cargar las aplicaciones conectadas.",
+      "empty": "Esta versión no ofrece ningún tipo de origen.",
+      "selected": "Seleccionado",
+      "choose": "Elige un tipo de origen"
     }
   }
 }
