@@ -190,6 +190,27 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: python scripts/ci/assert_min_passed.py report.xml
 
+      # Its OWN blocking step, on purpose, and two traps avoided deliberately:
+      #
+      #   * NOT carrying the `eval` marker. The suite above filters
+      #     `-m "not ... and not eval"`, so an `eval`-marked routing test would
+      #     silently never run — which is exactly how scripts/skill_routing_eval.py
+      #     became invisible.
+      #   * NOT folded into the pytest step above, which ends in `|| echo` and
+      #     therefore swallows failures until the min-passed floor moves.
+      #
+      # Measures precision AND recall together. Watching only precision is how
+      # the wake-word subsystem destroyed its own recall twice without anyone
+      # noticing (AP-27); recall may not drop without editing the committed
+      # BASELINE.json in the same change, which puts it in the diff.
+      - name: Skill routing eval (BLOCKING — precision AND recall)
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: |
+          python -m pytest tests/unit/skills/test_skill_routing_offline.py \
+            -q -p no:cacheprovider
+          python scripts/skill_relevance_calibrate.py
+
   # jarvisctl control-CLI unit suite across the three supported desktops.
   # jarvisctl is a thin cross-platform HTTP client (paths via platformdirs,
   # UTF-8 I/O, no Windows APIs); this job proves it imports + its unit tests

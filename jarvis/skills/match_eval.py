@@ -162,6 +162,61 @@ def _trigger_decision(registry: Any, user_text: str, lang: str) -> MatchDecision
     )
 
 
+def _relevance_decision(registry: Any, user_text: str, *, limit: int) -> MatchDecision:
+    """Deterministic relevance pass — the paraphrase channel.
+
+    Bands are applied HERE rather than inside the scorer, so
+    :mod:`jarvis.skills.relevance` stays a pure ranking function that knows
+    nothing about capture policy, and the dependency stays one-directional.
+    """
+    try:
+        from jarvis.skills.relevance import get_index
+
+        index = get_index(registry)
+        ranking = index.rank(user_text, limit=limit)
+    except Exception:  # noqa: BLE001 — matching must never break a turn
+        return MatchDecision()
+    if ranking.top is None:
+        return MatchDecision()
+
+    candidates = tuple(
+        MatchCandidate(
+            skill_name=scored.name,
+            score=round(scored.score, 6),
+            band=_band_for(scored.score, ranking),
+            source=SOURCE_RELEVANCE,
+            evidence=scored.evidence,
+            reason=scored.reason,
+            signals=(
+                ("token", round(scored.token_score, 6)),
+                ("trigram", round(scored.trigram_score, 6)),
+            ),
+        )
+        for scored in ranking.ranked
+    )
+    top = candidates[0]
+    # FIRE additionally requires a CLEAR winner. Two near-tied skills are
+    # genuine ambiguity ("send a message" → slack or discord?) and must degrade
+    # so the model disambiguates from a short list instead of the matcher
+    # guessing and hijacking the turn.
+    band = top.band if (top.band != BAND_FIRE or ranking.clear_winner) else BAND_NARROW
+    return MatchDecision(
+        band=band,
+        source=SOURCE_RELEVANCE,
+        top=top if band != BAND_NONE else None,
+        candidates=candidates,
+        margin=round(ranking.margin, 6),
+    )
+
+
+def _band_for(score: float, ranking: Any) -> str:
+    if score >= ranking.fire_threshold:
+        return BAND_FIRE
+    if score >= ranking.hint_threshold:
+        return BAND_NARROW
+    return BAND_NONE
+
+
 def evaluate_match(
     registry: Any,
     user_text: str,
@@ -206,10 +261,7 @@ def evaluate_match(
     if trigger is not None:
         return _stamp(trigger)
 
-    # Deterministic relevance fallback — wired in a later phase. Until then the
-    # behaviour below is exactly today's: a trigger miss is a total miss.
-    _ = limit
-    return _stamp(MatchDecision())
+    return _stamp(_relevance_decision(registry, user_text, limit=limit))
 
 
 __all__ = [

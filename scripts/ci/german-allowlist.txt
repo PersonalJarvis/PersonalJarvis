@@ -375,3 +375,11 @@ docs/superpowers/specs/2026-07-06-interim-ack-redesign-design.md
 # --- TTS evaluation corpus: the German sentences ARE the evaluation data the
 #     speech synthesis is scored on (product-surface test fixtures, reason 4) ---
 jarvis/speech/tts_eval/corpus.py
+
+# --- Skill-routing golden set: every `text:` value is a simulated user
+#     utterance, i.e. the speech input the matcher is scored on. The file has
+#     no prose to translate — a future entry is, by construction, another
+#     fixture utterance, so this is not a "narrow it later" exemption (reason
+#     4, same shape as tts_eval/corpus.py above). The harness and tests that
+#     READ this file are NOT exempt and stay English-checked. ---
+tests/fixtures/skill_routing/golden.yaml

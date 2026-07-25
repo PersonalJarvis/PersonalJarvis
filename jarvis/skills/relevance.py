@@ -124,11 +124,18 @@ MARGIN_REL = 0.25
 #: bare floats so they stay meaningful from a 5-skill fresh install to a
 #: 60-skill power user (see :meth:`SkillMatchIndex.fire_threshold`).
 #:
-#: PLACEHOLDERS pending the offline calibration sweep, which picks the smallest
-#: threshold with zero false positives over the hard-negative set and then
-#: REPORTS the resulting recall. Do not hand-tune these to fix a single
-#: over-fire; add a hard negative and re-run the sweep.
-FIRE_COEFFICIENT = 0.62
+#: Set by ``scripts/skill_relevance_calibrate.py``, which picks the smallest
+#: FIRE threshold with ZERO false positives over the hard-negative set and then
+#: REPORTS the recall that costs. Do not hand-tune these to make a single
+#: over-fire go away — add a hard negative to the golden set and re-run the
+#: sweep, so the trade-off lands in a diff instead of in someone's head.
+#:
+#: Calibrated 2026-07-25 against the shipped builtin corpus: the strongest
+#: negative scored 1.139 while the configured FIRE threshold was 1.057, i.e.
+#: below it — only the clear-winner margin rule was preventing a capture. Too
+#: thin to rely on, so FIRE was raised to sit above the negative distribution
+#: on its own.
+FIRE_COEFFICIENT = 0.68
 HINT_COEFFICIENT = 0.22
 
 # ---------------------------------------------------------------------------
