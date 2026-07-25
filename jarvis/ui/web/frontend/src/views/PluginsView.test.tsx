@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   ConnectIconButton,
+  PatConnectDialog,
   PkceConnectDialog,
   PluginsView,
 } from "@/views/PluginsView";
@@ -376,6 +377,62 @@ describe("PluginsView keeps revoked plugins visible", () => {
     expect(
       screen.getByRole("button", { name: "Reconnect plugin" }),
     ).toBeDefined();
+  });
+});
+
+describe("PatConnectDialog asks for a self-hosted server address", () => {
+  const selfHosted = {
+    id: "home_assistant",
+    name: "Home Assistant",
+    description: "Smart home",
+    category: "Home & Devices",
+    logoSlug: "homeassistant",
+    authMode: "pat_paste" as const,
+    authConfig: {
+      mode: "pat_paste",
+      token_creation_url: "https://example.test/token",
+      token_prefix: "",
+      instruction_md: "Create a long-lived token.",
+      instance_url: {
+        label: "Your Home Assistant address",
+        placeholder: "http://192.168.1.20:8123",
+        help_md: "The address you use in your browser.",
+      },
+    },
+    status: "not_connected" as const,
+    longevity: "permanent" as const,
+  };
+
+  it("cannot submit without the address, then passes it through", () => {
+    const onSubmit = vi.fn();
+    render(
+      <PatConnectDialog
+        plugin={selfHosted as never}
+        onClose={() => {}}
+        onSubmit={onSubmit}
+        isPending={false}
+        errorMessage={null}
+      />,
+    );
+
+    const token = screen.getByPlaceholderText("Token");
+    fireEvent.change(token, { target: { value: "llat-secret" } });
+
+    // A self-hosted plugin cannot be reached at all without its address, so
+    // Connect stays disabled rather than failing a round-trip later.
+    const connect = screen.getByRole("button", { name: /connect/i });
+    expect((connect as HTMLButtonElement).disabled).toBe(true);
+
+    fireEvent.change(screen.getByPlaceholderText("http://192.168.1.20:8123"), {
+      target: { value: "http://192.168.1.20:8123/lovelace/0" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: /connect/i }));
+
+    expect(onSubmit).toHaveBeenCalledWith(
+      "llat-secret",
+      null,
+      "http://192.168.1.20:8123/lovelace/0",
+    );
   });
 });
 

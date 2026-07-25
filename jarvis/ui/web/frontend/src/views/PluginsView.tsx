@@ -83,6 +83,14 @@ interface PatPasteAuthDetail {
   token_creation_url: string;
   token_prefix: string;
   instruction_md: string;
+  /** Present for self-hosted services (Home Assistant, Jellyfin, Nextcloud…):
+   *  the server address is the user's own, so the catalog can only describe
+   *  the field, never fill it. */
+  instance_url?: {
+    label: string;
+    placeholder: string;
+    help_md?: string | null;
+  } | null;
 }
 
 interface Plugin {
@@ -303,13 +311,20 @@ export function PluginsView() {
       pluginId,
       token,
       allowedUserId,
+      instanceUrl,
     }: {
       pluginId: string;
       token: string;
       allowedUserId?: number | null;
+      instanceUrl?: string | null;
     }) => {
-      const body: { token: string; allowed_user_id?: number } = { token };
+      const body: {
+        token: string;
+        allowed_user_id?: number;
+        instance_url?: string;
+      } = { token };
       if (allowedUserId != null) body.allowed_user_id = allowedUserId;
+      if (instanceUrl) body.instance_url = instanceUrl;
       const res = await fetch(`/api/marketplace/plugins/${pluginId}/connect/pat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -628,11 +643,12 @@ export function PluginsView() {
             setConnectingPlugin(null);
             connectMutation.reset();
           }}
-          onSubmit={(token, allowedUserId) =>
+          onSubmit={(token, allowedUserId, instanceUrl) =>
             connectMutation.mutate({
               pluginId: connectingPlugin.id,
               token,
               allowedUserId,
+              instanceUrl,
             })
           }
           isPending={connectMutation.isPending}
@@ -2231,22 +2247,34 @@ export function PatConnectDialog({
 }: {
   plugin: Plugin;
   onClose: () => void;
-  onSubmit: (token: string, allowedUserId: number | null) => void;
+  onSubmit: (
+    token: string,
+    allowedUserId: number | null,
+    instanceUrl: string | null,
+  ) => void;
   isPending: boolean;
   errorMessage: string | null;
 }) {
   const [token, setToken] = useState("");
   const [userId, setUserId] = useState("");
+  const [instanceUrl, setInstanceUrl] = useState("");
   const ownerLock = OWNER_LOCK_PLUGIN_IDS.has(plugin.id);
   const auth = plugin.authConfig as unknown as PatPasteAuthDetail;
+  const instanceField = auth.instance_url ?? null;
   const expectedPrefix = auth.token_prefix ?? "";
   const prefixOk = !expectedPrefix || token.trim().startsWith(`${expectedPrefix}_`);
   const userIdTrimmed = userId.trim();
   const userIdOk = !ownerLock || userIdTrimmed === "" || /^\d+$/.test(userIdTrimmed);
   const parsedUserId =
     ownerLock && /^\d+$/.test(userIdTrimmed) ? Number(userIdTrimmed) : null;
-  const canSubmit = token.trim().length > 0 && prefixOk && userIdOk && !isPending;
-  const submit = () => onSubmit(token.trim(), parsedUserId);
+  // A self-hosted plugin cannot be reached at all without its address, so the
+  // field is required rather than optional — the backend would reject it a
+  // round-trip later otherwise.
+  const instanceOk = !instanceField || instanceUrl.trim().length > 0;
+  const canSubmit =
+    token.trim().length > 0 && prefixOk && userIdOk && instanceOk && !isPending;
+  const submit = () =>
+    onSubmit(token.trim(), parsedUserId, instanceField ? instanceUrl.trim() : null);
 
   // Close on Escape — small but expected affordance.
   useEffect(() => {
@@ -2327,7 +2355,26 @@ export function PatConnectDialog({
             </div>
           </Step>
 
-          <Step num={2} title="Paste the token below">
+          {instanceField && (
+            <Step num={2} title={instanceField.label} body={instanceField.help_md ?? undefined}>
+              <input
+                type="text"
+                inputMode="url"
+                autoComplete="off"
+                spellCheck={false}
+                value={instanceUrl}
+                onChange={(e) => setInstanceUrl(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && canSubmit) submit();
+                }}
+                placeholder={instanceField.placeholder}
+                className="mt-2 w-full rounded-md border border-border bg-input px-3 py-2 font-mono text-xs text-foreground placeholder:text-muted-foreground/40 focus:border-primary/50 focus:outline-none focus:ring-1 focus:ring-primary/30"
+                disabled={isPending}
+              />
+            </Step>
+          )}
+
+          <Step num={instanceField ? 3 : 2} title="Paste the token below">
             <input
               type="password"
               autoComplete="off"
