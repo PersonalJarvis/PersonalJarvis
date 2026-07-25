@@ -322,9 +322,9 @@ _PHRASES: dict[str, dict[str, str]] = {
         "es": "Enviado a {terminal}, junto con {file}.",
     },
     "ide_terminal_not_running": {
-        "de": "{terminal} läuft gerade nicht ({status}) — ich habe nichts geschickt.",  # i18n-allow
-        "en": "{terminal} is not running right now ({status}) — I sent nothing.",
-        "es": "{terminal} no está en marcha ahora ({status}) — no envié nada.",
+        "de": "{terminal} läuft gerade nicht ({status}). Ich habe nichts geschickt.",  # i18n-allow
+        "en": "{terminal} is not running right now ({status}). I sent nothing.",
+        "es": "{terminal} no está en marcha ahora ({status}). No envié nada.",
     },
 }
 
