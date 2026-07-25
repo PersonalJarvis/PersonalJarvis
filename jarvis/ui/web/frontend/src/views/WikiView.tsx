@@ -42,6 +42,8 @@ import { PageRenderer } from "@/components/wiki/PageRenderer";
 import { BacklinksPanel } from "@/components/wiki/BacklinksPanel";
 import { ObsidianStatus } from "@/components/wiki/ObsidianStatus";
 import { ObsidianSetupDialog } from "@/components/wiki/ObsidianSetupDialog";
+import { UltraModeSwitch } from "@/components/ultrawiki/UltraModeSwitch";
+import { fetchUltraWikiStatus } from "@/lib/ultrawikiApi";
 import type { ObsidianStatus as ObsidianStatusType } from "@/types/setup";
 
 // Agent C owns WikiGraph. Lazy import so the graph bundle (~120 KB minified)
@@ -50,6 +52,14 @@ import type { ObsidianStatus as ObsidianStatusType } from "@/types/setup";
 const WikiGraph = lazy(() =>
   import("@/components/wiki/WikiGraph").then((mod) => ({
     default: mod.WikiGraph,
+  })),
+);
+
+// Ultra-mode body (decision D-5: either-or). Lazy like WikiGraph so
+// normal-mode users never download the Ultra chunk.
+const UltraWikiPanel = lazy(() =>
+  import("@/views/ultrawiki/UltraWikiPanel").then((mod) => ({
+    default: mod.UltraWikiPanel,
   })),
 );
 
@@ -94,6 +104,16 @@ export function WikiView(): JSX.Element {
     refetchInterval: 30_000,
     staleTime: 5_000,
   });
+
+  // UltraWiki mode (D-5): `GET /api/ultrawiki/status` → `enabled` is the one
+  // source of truth for which body this section renders. `null` = backend
+  // unreachable → the normal wiki stands.
+  const ultraStatusQuery = useQuery({
+    queryKey: ["ultrawiki", "status"],
+    queryFn: fetchUltraWikiStatus,
+    staleTime: 5_000,
+  });
+  const ultraEnabled = ultraStatusQuery.data?.enabled === true;
 
   // When a slug is selected (via tree click, graph click, or wikilink),
   // automatically swap to the page tab.
@@ -202,7 +222,11 @@ export function WikiView(): JSX.Element {
             subtitle={subtitle}
           />
         </div>
-        <div className="flex shrink-0 items-center pt-4">
+        <div className="flex shrink-0 items-center gap-3 pt-4">
+          <UltraModeSwitch
+            status={ultraStatusQuery.data ?? null}
+            onModeChanged={() => void ultraStatusQuery.refetch()}
+          />
           <ObsidianStatus
             onOpenSetup={(s) => {
               setSetupHint(s);
@@ -212,6 +236,14 @@ export function WikiView(): JSX.Element {
         </div>
       </div>
 
+      {ultraEnabled ? (
+        // Ultra mode owns the entire body below the header (D-5 either-or);
+        // the normal wiki surfaces stay untouched, ready for the switch back.
+        <Suspense fallback={<GraphSkeleton />}>
+          <UltraWikiPanel />
+        </Suspense>
+      ) : (
+      <>
       <WikiHealthStrip
         health={healthQuery.data}
         isLoading={healthQuery.isLoading}
@@ -371,6 +403,8 @@ export function WikiView(): JSX.Element {
               </aside>
             ))}
         </div>
+      )}
+      </>
       )}
 
       {toast && (
