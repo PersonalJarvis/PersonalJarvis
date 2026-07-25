@@ -106,13 +106,46 @@ def _trust_claude(repo_root: Path, cfg: Path) -> TrustResult:
         return TrustResult("claude", False, "error", str(exc))
 
 
+def _already_trusted_by_codex(text: str, native: str) -> bool:
+    """Read-only "is this folder already trusted?" — the fast path.
+
+    Deliberately ``tomllib`` and not ``tomlkit``. Both parse the same file, but
+    tomlkit rebuilds it as an editable document that remembers every comment and
+    every space, which is exactly what the WRITE below needs and pure waste for
+    a lookup. The difference is not academic: on a real config that has
+    accumulated a few hundred projects (71 KB) tomlkit took 4.6 seconds and
+    tomllib 6 milliseconds — and this runs before every workspace opens, so that
+    was five seconds of apparently-frozen UI on a folder that needed no change
+    at all.
+
+    A file this cannot read is not an answer, just an absence: the caller falls
+    through to the slow path, which will report a real failure honestly.
+    """
+    import tomllib
+
+    try:
+        projects = tomllib.loads(text).get("projects")
+    except (ValueError, TypeError):
+        return False
+    if not isinstance(projects, dict):
+        return False
+    entry = projects.get(native)
+    return isinstance(entry, dict) and entry.get("trust_level") == "trusted"
+
+
 def _trust_codex(repo_root: Path, cfg: Path) -> TrustResult:
     native = str(repo_root)
     try:
+        existing_text = cfg.read_text(encoding="utf-8") if cfg.exists() else ""
+        if existing_text and _already_trusted_by_codex(existing_text, native):
+            return TrustResult("codex", True, "noop", "already trusted")
+
+        # Only now, when something actually has to change, is the
+        # formatting-preserving parser worth its cost.
         import tomlkit
 
-        if cfg.exists():
-            doc = tomlkit.parse(cfg.read_text(encoding="utf-8"))
+        if existing_text:
+            doc = tomlkit.parse(existing_text)
         else:
             cfg.parent.mkdir(parents=True, exist_ok=True)
             doc = tomlkit.document()
