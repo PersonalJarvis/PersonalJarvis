@@ -35,7 +35,7 @@ from jarvis.brain.provider_test import (
     UNREACHABLE,
     classify_provider_error,
 )
-from jarvis.brain.turn_planner import TurnPlan, plan_turn
+from jarvis.brain.turn_planner import TurnPath, TurnPlan, plan_turn
 from jarvis.core.protocols import AudioChunk, BrainMessage
 from jarvis.core.redact import safe_preview
 from jarvis.core.turn_language import normalize_language_tag, resolve_output_language
@@ -1132,16 +1132,32 @@ class RealtimeVoiceSession:
             getattr(self._config, "brain", None), "evidence_domains", None
         )
         evidence_domains = getattr(evidence_cfg, "domains", None)
-        return plan_turn(
-            text,
-            capability_registry=registry,
-            tool_names=tool_names,
-            evidence_domains=(
-                evidence_domains if isinstance(evidence_domains, dict) else None
-            ),
-            context=context,
-            skill_index=self._skill_match_index(),
-        )
+        try:
+            return plan_turn(
+                text,
+                capability_registry=registry,
+                tool_names=tool_names,
+                evidence_domains=(
+                    evidence_domains if isinstance(evidence_domains, dict) else None
+                ),
+                context=context,
+                skill_index=self._skill_match_index(),
+            )
+        except Exception:  # noqa: BLE001 — routing must never end a live call
+            # Planning only chooses a route, and both routes can answer. The
+            # pump treats any exception as a dead provider socket, so letting
+            # one escape here costs the whole call: live incident 2026-07-25
+            # 15:35, where a planner signature mismatch raised on every
+            # committed turn, burned the rebuild budget and left four spoken
+            # turns unanswered and inaudible. Degrade to the native route —
+            # the model answers immediately, which is what the caller hears.
+            log.warning(
+                "realtime[%s] turn planning failed — routing this turn "
+                "natively instead of ending the call",
+                self.session_id,
+                exc_info=True,
+            )
+            return TurnPlan(path=TurnPath.NATIVE_REALTIME)
 
     def _skill_directive(self, text: str) -> str:
         """A matched skill's instructions, injected straight into this turn.
