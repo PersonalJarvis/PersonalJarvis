@@ -83,7 +83,10 @@ class AddTerminalRequest(BaseModel):
     )
     direction: str = Field(
         default="right",
-        description="'right' places it beside the anchor, 'down' below it.",
+        description=(
+            "'right' opens a new column beside the anchor, 'down' splits the "
+            "anchor's own column and stacks the new pane under it."
+        ),
     )
 
 
@@ -413,9 +416,11 @@ async def set_mode(req: ModeRequest) -> dict:
 async def add_terminal(req: AddTerminalRequest) -> dict:
     """Add a terminal to the running workspace, beside or below another one.
 
-    ``direction="right"`` puts it in the same grid row as ``anchor`` (side by
-    side); ``"down"`` opens a new row underneath. The agent defaults to the
-    anchor's, since splitting a pane usually means "another one of these".
+    ``direction="right"`` opens a new column beside ``anchor``; ``"down"``
+    splits the anchor's own column and stacks the new pane underneath it,
+    leaving every other column untouched. The agent defaults to the anchor's,
+    since splitting a pane usually means "another one of these" — pass ``agent``
+    to run a different coding CLI in the new pane.
     """
     try:
         term = await get_registry().add_terminal(

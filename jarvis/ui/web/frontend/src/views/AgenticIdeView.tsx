@@ -35,6 +35,7 @@ import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { AgenticGrid } from "@/components/agentic/AgenticGrid";
+import { paneColumns } from "@/components/agentic/layout";
 import { FolderPicker } from "@/components/agentic/FolderPicker";
 import {
   endIdeSession,
@@ -54,7 +55,9 @@ interface PlannedTerminal {
   name: string;
 }
 
-const COUNT_CHOICES = [1, 2, 3, 4, 6, 8] as const;
+// Offered up to the backend's cap, so the busiest workspace the app supports is
+// one click away rather than eleven splits.
+const COUNT_CHOICES = [1, 2, 3, 4, 6, 8, 10, 12] as const;
 
 /**
  * Terminal plan for ``count`` panes, preserving whatever the user already chose
@@ -158,6 +161,18 @@ export function AgenticIdeView() {
   const installed = useMemo(() => agents.filter((a) => a.installed), [agents]);
   const defaultAgent = installed[0]?.name ?? "claude";
 
+  // What the grid's split menus offer. Uninstalled CLIs stay in the list but
+  // disabled, so their absence is visible rather than silently missing.
+  const splitChoices = useMemo(
+    () =>
+      agents.map((a) => ({
+        name: a.name,
+        displayName: a.display_name,
+        installed: a.installed,
+      })),
+    [agents],
+  );
+
   const chooseCount = (n: number) => {
     setCount(n);
     setPlanned((prev) => buildPlan(n, prev, defaultAgent, suggested));
@@ -253,6 +268,7 @@ export function AgenticIdeView() {
           onClose={() => void close()}
           busy={busy}
           maxTerminals={meta?.max_terminals ?? 12}
+          agents={splitChoices}
           onSessionChanged={setSession}
         />
         {modeIntroFor === session.id && (
@@ -334,9 +350,9 @@ export function AgenticIdeView() {
           {step === 1 && (
             <Section
               title="How many terminals?"
-              hint="Each terminal runs its own agent, side by side in a grid."
+              hint="Each terminal runs its own agent. The dots show how they will sit — side by side, wrapping onto a second line once there are too many to stay readable."
             >
-              <div className="grid grid-cols-3 gap-3 sm:grid-cols-6">
+              <div className="grid grid-cols-4 gap-3 sm:grid-cols-8">
                 {COUNT_CHOICES.filter((n) => n <= (meta?.max_terminals ?? 12)).map((n) => (
                   <button
                     key={n}
@@ -678,18 +694,28 @@ function AgentChoice({
   );
 }
 
+/**
+ * The arrangement ``n`` terminals will actually open in.
+ *
+ * The column count comes from the same function the running grid lays itself
+ * out with — it used to have its own (three per line), so choosing 4 previewed
+ * 3 above and 1 below and then opened 4 side by side. A preview is only worth
+ * showing while it cannot disagree with the real thing.
+ */
 function DotGrid({ n, active }: { n: number; active: boolean }) {
-  const cols = n <= 1 ? 1 : n <= 2 ? 2 : n <= 6 ? 3 : 4;
+  const cols = Math.max(1, paneColumns(n));
+  const tight = cols > 6;
   return (
     <div
-      className="grid gap-1"
+      className={cn("grid", tight ? "gap-0.5" : "gap-1")}
       style={{ gridTemplateColumns: `repeat(${cols}, minmax(0, 1fr))` }}
     >
       {Array.from({ length: n }).map((_, i) => (
         <span
           key={i}
           className={cn(
-            "h-2 w-2 rounded-[3px]",
+            "rounded-[3px]",
+            tight ? "h-1.5 w-1.5" : "h-2 w-2",
             active ? "bg-primary" : "bg-muted-foreground/40",
           )}
         />

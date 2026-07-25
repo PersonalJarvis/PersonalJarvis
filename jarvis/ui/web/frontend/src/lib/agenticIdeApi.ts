@@ -82,8 +82,10 @@ export interface TerminalState {
   agent: string;
   display_name: string;
   index: number;
-  /** Grid row: panes sharing a row render side by side. */
-  row: number;
+  /** Grid column, left to right. Each column is its own stack of panes. */
+  column: number;
+  /** Position within that column, top to bottom. */
+  slot: number;
   status: "pending" | "live" | "exited" | "error";
   exit_code: number | null;
   error: string;
@@ -204,8 +206,10 @@ export async function endIdeSession(): Promise<void> {
 /**
  * Open one more terminal in the running workspace.
  *
- * `direction` decides where it lands relative to `anchor`: "right" joins that
- * pane's row, "down" opens a new row beneath it. Returns the updated workspace.
+ * `direction` decides where it lands relative to `anchor`: "right" opens a new
+ * column beside that pane, "down" splits the pane's own column and stacks the
+ * new one under it. `agent` picks the coding CLI to run — omitted, the new pane
+ * inherits the anchor's. Returns the updated workspace.
  */
 export async function addTerminal(payload: {
   anchor?: string;

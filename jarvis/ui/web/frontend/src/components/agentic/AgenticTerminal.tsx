@@ -38,7 +38,7 @@
  *   redrawing on every keystroke that is both slow and subtly misaligned. The
  *   canvas renderer draws on a grid, which is what a terminal actually is.
  */
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
@@ -53,6 +53,7 @@ import {
   Maximize2,
   Minimize2,
   Rows2,
+  RotateCcw,
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -63,6 +64,17 @@ import {
 } from "./terminalThemes";
 
 export type PaneStatus = "connecting" | "live" | "exited" | "error";
+
+/** A coding CLI a split may start, as offered by the pane's split menu. */
+export interface SplitAgentChoice {
+  /** Backend id — "claude", "codex". */
+  name: string;
+  /** What the user reads — "Claude Code". */
+  displayName: string;
+  installed: boolean;
+}
+
+export type SplitDirection = "right" | "down";
 
 interface AgenticTerminalProps {
   /** Terminal call-sign — also the WS path segment. */
@@ -78,14 +90,34 @@ interface AgenticTerminalProps {
   /** True while this pane fills the whole grid. */
   maximized?: boolean;
   onToggleMaximize?: () => void;
-  /** Open another terminal beside this one. */
-  onSplitRight?: () => void;
-  /** Open another terminal below this one. */
-  onSplitDown?: () => void;
+  /**
+   * Open another terminal beside or below this one.
+   *
+   * `agent` is the coding CLI the user picked from the split menu; omitted, the
+   * new pane inherits this pane's agent.
+   */
+  onSplit?: (direction: SplitDirection, agent?: string) => void;
+  /**
+   * Coding CLIs the split menu offers. With one (or none) there is nothing to
+   * choose, so the split buttons act immediately instead of opening a menu.
+   */
+  agents?: SplitAgentChoice[];
   /** Close this pane (the caller asks for confirmation first). */
   onClose?: () => void;
   /** Disable the split buttons — the workspace is at its terminal limit. */
   splitDisabled?: boolean;
+  /** Called when the user asks a dead pane to start a fresh agent. */
+  onRestart?: () => void;
+  /**
+   * Bump to reconnect this pane.
+   *
+   * An exited agent leaves a dead pane with no way back: the connect effect runs
+   * on mount only (deliberately — see the file header), and remounting is not an
+   * option because it is what kills a LIVE agent. So the token is part of the
+   * effect's identity: changing it tears down this one socket and opens a fresh
+   * one, and the backend spawns a new agent for it.
+   */
+  restartToken?: number;
 }
 
 function socketUrl(name: string, cols: number, rows: number): string {
@@ -106,10 +138,12 @@ export function AgenticTerminal({
   onStatus,
   maximized = false,
   onToggleMaximize,
-  onSplitRight,
-  onSplitDown,
+  onSplit,
+  agents,
   onClose,
   splitDisabled = false,
+  onRestart,
+  restartToken = 0,
 }: AgenticTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
@@ -118,6 +152,9 @@ export function AgenticTerminal({
   // process together) without reaching into the connect effect's socket.
   const resizeRef = useRef<(() => void) | null>(null);
   const statusRef = useRef<PaneStatus>("connecting");
+  // Mirrored into state purely so the header can show/hide the restart button;
+  // it transitions a handful of times per pane, never per output chunk.
+  const [visibleStatus, setVisibleStatus] = useState<PaneStatus>("connecting");
   // Latest callbacks/appearance without re-running the connect effect.
   const onStatusRef = useRef(onStatus);
   const initialRef = useRef({ appearance, fontSize });
@@ -194,6 +231,7 @@ export function AgenticTerminal({
 
     const report = (status: PaneStatus, detail?: string) => {
       statusRef.current = status;
+      setVisibleStatus(status);
       onStatusRef.current?.(status, detail);
     };
 
@@ -324,7 +362,7 @@ export function AgenticTerminal({
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- see file header:
     // appearance/fontSize must NOT rebuild the pane (it would kill the agent).
-  }, [name]);
+  }, [name, restartToken]);
 
   // Live restyle — no reconnect, so the running agent is untouched. The canvas
   // renderer caches rendered glyphs per colour in a texture atlas, so a theme
@@ -367,14 +405,16 @@ export function AgenticTerminal({
       data-testid={`agentic-pane-${name}`}
     >
       <PaneHeader
+        dead={visibleStatus === "exited" || visibleStatus === "error"}
+        onRestart={onRestart}
         name={name}
         displayName={displayName}
         appearance={appearance}
         focused={focused}
         maximized={maximized}
         onToggleMaximize={onToggleMaximize}
-        onSplitRight={onSplitRight}
-        onSplitDown={onSplitDown}
+        onSplit={onSplit}
+        agents={agents}
         onClose={onClose}
         splitDisabled={splitDisabled}
       />
@@ -390,10 +430,12 @@ function PaneHeader({
   focused,
   maximized,
   onToggleMaximize,
-  onSplitRight,
-  onSplitDown,
+  onSplit,
+  agents,
   onClose,
   splitDisabled,
+  dead,
+  onRestart,
 }: {
   name: string;
   displayName: string;
@@ -401,15 +443,31 @@ function PaneHeader({
   focused: boolean;
   maximized: boolean;
   onToggleMaximize?: () => void;
-  onSplitRight?: () => void;
-  onSplitDown?: () => void;
+  onSplit?: (direction: SplitDirection, agent?: string) => void;
+  agents?: SplitAgentChoice[];
   onClose?: () => void;
   splitDisabled: boolean;
+  /** The agent in this pane has exited or failed — offer to start it again. */
+  dead: boolean;
+  onRestart?: () => void;
 }) {
   const light = appearance === "light";
+  // Which split button opened the CLI picker, if any.
+  const [picking, setPicking] = useState<SplitDirection | null>(null);
+
+  // With one installed CLI there is nothing to pick, so the button splits
+  // straight away — a menu with a single entry is a click tax, not a choice.
+  const choices = agents ?? [];
+  const offersChoice = choices.filter((a) => a.installed).length > 1;
+
+  const startSplit = (direction: SplitDirection) => {
+    if (offersChoice) setPicking((current) => (current === direction ? null : direction));
+    else onSplit?.(direction);
+  };
+
   return (
     <header
-      className="group/header flex items-center justify-between gap-2 border-b px-3 py-2"
+      className="group/header relative flex items-center justify-between gap-2 border-b px-3 py-2"
       style={{
         borderColor: PANE_CHROME[appearance].border,
         background: light ? "rgba(0,0,0,0.025)" : "rgba(255,255,255,0.03)",
@@ -448,6 +506,23 @@ function PaneHeader({
             : "opacity-0 focus-within:opacity-100 group-hover/header:opacity-100",
         )}
       >
+        {dead && (
+          <button
+            type="button"
+            aria-label={`Restart ${name}`}
+            title={`Start a fresh ${displayName} in ${name}`}
+            data-testid={`pane-restart-${name}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onRestart?.();
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+            className="mr-1 flex items-center gap-1 rounded bg-primary/20 px-2 py-0.5 text-[11px] font-medium text-primary transition-colors hover:bg-primary/30"
+          >
+            <RotateCcw className="h-3 w-3" />
+            Restart
+          </button>
+        )}
         <PaneAction
           label={maximized ? `Restore ${name}` : `Maximize ${name}`}
           testId={`pane-maximize-${name}`}
@@ -461,16 +536,18 @@ function PaneHeader({
           testId={`pane-split-right-${name}`}
           light={light}
           disabled={splitDisabled}
-          onClick={onSplitRight}
+          expanded={offersChoice ? picking === "right" : undefined}
+          onClick={onSplit ? () => startSplit("right") : undefined}
         >
           <Columns2 className="h-3.5 w-3.5" />
         </PaneAction>
         <PaneAction
-          label={`Open another terminal below ${name}`}
+          label={`Split ${name} and open a terminal below it`}
           testId={`pane-split-down-${name}`}
           light={light}
           disabled={splitDisabled}
-          onClick={onSplitDown}
+          expanded={offersChoice ? picking === "down" : undefined}
+          onClick={onSplit ? () => startSplit("down") : undefined}
         >
           <Rows2 className="h-3.5 w-3.5" />
         </PaneAction>
@@ -484,7 +561,89 @@ function PaneHeader({
           <X className="h-3.5 w-3.5" />
         </PaneAction>
       </div>
+
+      {picking && (
+        <SplitAgentMenu
+          paneName={name}
+          direction={picking}
+          agents={choices}
+          onDismiss={() => setPicking(null)}
+          onPick={(agent) => {
+            setPicking(null);
+            onSplit?.(picking, agent);
+          }}
+        />
+      )}
     </header>
+  );
+}
+
+/**
+ * The CLI picker a split button opens.
+ *
+ * Splitting used to inherit the anchor's agent silently, which made running a
+ * Codex pane next to a Claude Code one impossible from the grid — you had to
+ * close the workspace and start it again from the wizard. The backend always
+ * accepted an agent per terminal; this is the surface that finally asks.
+ *
+ * A CLI that is not installed stays listed but disabled, so the absence is
+ * visible and explains itself rather than the entry simply not being there.
+ */
+function SplitAgentMenu({
+  paneName,
+  direction,
+  agents,
+  onPick,
+  onDismiss,
+}: {
+  paneName: string;
+  direction: SplitDirection;
+  agents: SplitAgentChoice[];
+  onPick: (agent: string) => void;
+  onDismiss: () => void;
+}) {
+  return (
+    <>
+      {/* Click-anywhere-else to dismiss, without a global listener that would
+          outlive the pane. */}
+      <div className="fixed inset-0 z-40" onMouseDown={onDismiss} />
+      <div
+        role="menu"
+        aria-label={`Which CLI should run ${direction === "right" ? "beside" : "below"} ${paneName}?`}
+        data-testid={`pane-split-menu-${direction}-${paneName}`}
+        className="absolute right-2 top-full z-50 mt-1 w-56 rounded-lg border border-border bg-card p-1 shadow-xl"
+        onMouseDown={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") onDismiss();
+        }}
+      >
+        <p className="px-2 py-1.5 text-[11px] uppercase tracking-wider text-muted-foreground">
+          {direction === "right" ? "Open beside — which CLI?" : "Split below — which CLI?"}
+        </p>
+        {agents.map((agent) => (
+          <button
+            key={agent.name}
+            type="button"
+            role="menuitem"
+            autoFocus={agent.installed && agent === agents.find((a) => a.installed)}
+            disabled={!agent.installed}
+            data-testid={`pane-split-${direction}-${paneName}-${agent.name}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onPick(agent.name);
+            }}
+            className="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-primary/10 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent"
+          >
+            <span>{agent.displayName}</span>
+            {!agent.installed && (
+              <span className="text-[10px] uppercase tracking-wide text-muted-foreground">
+                not installed
+              </span>
+            )}
+          </button>
+        ))}
+      </div>
+    </>
   );
 }
 
@@ -494,6 +653,7 @@ function PaneAction({
   light,
   danger = false,
   disabled = false,
+  expanded,
   onClick,
   children,
 }: {
@@ -502,6 +662,8 @@ function PaneAction({
   light: boolean;
   danger?: boolean;
   disabled?: boolean;
+  /** Set when this button opens a menu — announces its state to a screen reader. */
+  expanded?: boolean;
   onClick?: () => void;
   children: React.ReactNode;
 }) {
@@ -511,6 +673,8 @@ function PaneAction({
       aria-label={label}
       title={label}
       data-testid={testId}
+      aria-haspopup={expanded === undefined ? undefined : "menu"}
+      aria-expanded={expanded}
       disabled={disabled || !onClick}
       onClick={(e) => {
         // The pane's own mousedown selects it as the prompt target; an action

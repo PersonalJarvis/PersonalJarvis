@@ -203,11 +203,19 @@ class Terminal:
     agent: str          # "claude" | "codex"
     display_name: str   # "Claude Code"
     index: int
-    # Grid row this pane sits in. Panes sharing a row render side by side, which
-    # is what "split right" produces; "split down" opens a new row. A full split
-    # TREE (arbitrary nesting, draggable separators) is deliberately NOT modelled
-    # — rows express both buttons the UI offers and stay readable.
-    row: int = 0
+    # Where the pane sits in the grid, on TWO axes: the workspace is a
+    # left-to-right list of columns, and each column is a top-to-bottom stack.
+    # "Split right" opens a new column beside the anchor; "split down" adds a
+    # pane to the anchor's OWN column and leaves every other column alone.
+    #
+    # The second axis is load-bearing. With only a row number, "split down"
+    # could only mean "open a new row", and a row is window-wide by definition —
+    # so splitting one pane squashed every other pane to half height. A full
+    # split TREE (arbitrary nesting, draggable separators) is still deliberately
+    # NOT modelled: two axes express both buttons the UI offers and stay
+    # readable.
+    column: int = 0
+    slot: int = 0
     status: Status = "pending"
     pty_id: str | None = None
     exit_code: int | None = None
@@ -227,7 +235,8 @@ class Terminal:
             "agent": self.agent,
             "display_name": self.display_name,
             "index": self.index,
-            "row": self.row,
+            "column": self.column,
+            "slot": self.slot,
             "status": self.status,
             "exit_code": self.exit_code,
             "error": self.error,
@@ -385,6 +394,9 @@ class Registry:
                         agent=agent,
                         display_name=AGENT_DISPLAY.get(agent, agent),
                         index=index,
+                        # A wizard-opened workspace is one row of columns; the
+                        # user's own "split down" is what creates a stack.
+                        column=index,
                     )
                 )
 
@@ -582,12 +594,14 @@ class Registry:
         """Open one more terminal in the running workspace.
 
         ``direction`` decides where it lands relative to ``anchor``:
-        ``"right"`` joins the anchor's row (side by side), ``"down"`` opens a new
-        row directly beneath it and pushes the rows below down. Without an anchor
-        the new pane goes after the last one.
+        ``"right"`` opens a new column beside the anchor, ``"down"`` splits the
+        anchor's own column and stacks the new pane under it — leaving every
+        other column at full height. Without an anchor the new pane goes after
+        the last one.
 
         The agent defaults to the anchor's, because splitting a Claude Code pane
-        almost always means "another one of these".
+        usually means "another one of these" — but a caller may name any
+        installed agent, which is how the UI offers a choice of coding CLI.
         """
         async with self._lock:
             session = self._session
@@ -630,17 +644,22 @@ class Registry:
                 suffix += 1
 
             if base is None:
-                row = 0
-                position = len(session.terminals)
+                column, slot = 0, 0
             elif direction == "right":
-                row = base.row
-                position = session.terminals.index(base) + 1
-            else:
-                row = base.row + 1
+                # A new column of its own, immediately right of the anchor's;
+                # everything further right shifts one column over.
+                column, slot = base.column + 1, 0
                 for other in session.terminals:
-                    if other.row >= row:
-                        other.row += 1
-                position = session.terminals.index(base) + 1
+                    if other.column >= column:
+                        other.column += 1
+            else:
+                # Inside the anchor's column, directly beneath it. No other
+                # column is touched — that is what makes this a real split
+                # rather than a new window-wide row.
+                column, slot = base.column, base.slot + 1
+                for other in session.terminals:
+                    if other.column == column and other.slot >= slot:
+                        other.slot += 1
 
             term = Terminal(
                 key=normalize(final) or f"t{len(session.terminals)}",
@@ -648,9 +667,10 @@ class Registry:
                 agent=chosen,
                 display_name=AGENT_DISPLAY.get(chosen, chosen),
                 index=len(session.terminals),
-                row=row,
+                column=column,
+                slot=slot,
             )
-            session.terminals.insert(position, term)
+            session.terminals.append(term)
             self._renumber(session)
             logger.info(
                 "Agentic IDE: added terminal {} ({}) {} of {}",
@@ -660,6 +680,44 @@ class Registry:
                 base.name if base else "the grid",
             )
             return term
+
+    async def add_terminals(
+        self, count: int, *, agent: str | None = None
+    ) -> tuple[list[Terminal], bool]:
+        """Open up to ``count`` more panes — the batch behind "open five more".
+
+        Returns the panes that were created and whether the workspace cap
+        truncated the request, because those are two different answers the caller
+        has to speak out loud: five requested with three opened is a success the
+        user must hear ("room for three"), not a silent partial.
+
+        Deliberately a loop over ``add_terminal`` rather than a second placement
+        implementation: the anchor, the call-sign pool, and the grid position are
+        already decided there, and a batch that placed panes its own way would
+        drift from what the split buttons do.
+
+        The cap is the expected stopping point, so hitting it is not an error.
+        A failure with NOTHING opened is — an unknown agent or a vanished binary
+        must not be reported as "nothing to do".
+        """
+        if self._session is None:
+            raise SessionError("No Agentic-IDE session is running.")
+        wanted = max(1, int(count))
+        created: list[Terminal] = []
+        for _ in range(wanted):
+            try:
+                created.append(await self.add_terminal(agent=agent))
+            except SessionError as exc:
+                if not created:
+                    raise
+                logger.info(
+                    "Agentic IDE: batch stopped after {} of {} panes: {}",
+                    len(created),
+                    wanted,
+                    exc,
+                )
+                break
+        return created, len(created) < wanted
 
     async def close_terminal(self, wanted: str) -> Terminal:
         """Stop one terminal's agent and remove its pane from the workspace."""
@@ -686,16 +744,24 @@ class Registry:
 
     @staticmethod
     def _renumber(session: Session) -> None:
-        """Re-pack indexes and rows after an insert or a removal.
+        """Re-pack the grid after an insert or a removal.
 
-        Removing the only pane of a row would otherwise leave a gap in the row
-        numbers and the grid would render an empty band.
+        Three things at once, all of them about not leaking holes into the UI:
+        the terminal list is sorted back into reading order (left to right, top
+        to bottom), column numbers are packed so emptying a column does not
+        render as a blank stripe, and each column's slots are packed so closing
+        the middle of a stack does not leave a gap in it.
         """
-        rows = sorted({t.row for t in session.terminals})
-        remap = {old: new for new, old in enumerate(rows)}
+        session.terminals.sort(key=lambda t: (t.column, t.slot))
+
+        columns = sorted({t.column for t in session.terminals})
+        remap = {old: new for new, old in enumerate(columns)}
+        next_slot: dict[int, int] = {}
         for position, term in enumerate(session.terminals):
             term.index = position
-            term.row = remap.get(term.row, 0)
+            term.column = remap.get(term.column, 0)
+            term.slot = next_slot.get(term.column, 0)
+            next_slot[term.column] = term.slot + 1
 
     # --------------------------------------------------------------- prompt
     async def send_prompt(self, wanted: str, text: str) -> Terminal:
@@ -802,6 +868,28 @@ class Registry:
         return data
 
 
+def terminals_added_event(
+    session: Session, created: list[Terminal], *, source_layer: str
+) -> Any:
+    """The bus event announcing new panes to every connected client.
+
+    A free function rather than a registry call, because the registry has no bus:
+    it is a plain in-process holder, and reaching for a process-wide bus from
+    inside it would be the lateral dependency the architecture forbids. The two
+    callers that DO hold one (the REST route and the voice fast-path) build the
+    event here so both send exactly the same payload.
+    """
+    from jarvis.core.events import AgenticIdeTerminalsAdded
+
+    return AgenticIdeTerminalsAdded(
+        session_id=session.id,
+        names=tuple(t.name for t in created),
+        agent=created[0].agent if created else "",
+        folder=session.folder,
+        source_layer=source_layer,
+    )
+
+
 _REGISTRY: Registry | None = None
 
 
@@ -833,4 +921,5 @@ __all__ = [
     "get_registry",
     "reset_registry",
     "sanitize_prompt",
+    "terminals_added_event",
 ]
