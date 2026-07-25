@@ -198,6 +198,141 @@ def test_parser_openrouter_uses_human_name_as_label() -> None:
     assert [(m.id, m.label) for m in models] == [("a/b", "A B")]
 
 
+def _local_env(
+    monkeypatch,
+    *,
+    base_urls: dict[str, str] | None = None,
+    stored_local_key: str | None = None,
+) -> None:
+    """Hermetic env for the LOCAL providers: optional base-url overrides, no
+    real keyring, no ambient OLLAMA_HOST."""
+    from jarvis.core.config import BrainConfig, BrainProviderConfig
+
+    providers = {pid: BrainProviderConfig(base_url=url) for pid, url in (base_urls or {}).items()}
+    conf = JarvisConfig(brain=BrainConfig(providers=providers))
+    monkeypatch.setattr(cfg, "load_config", lambda: conf)
+    monkeypatch.setattr(cfg, "get_provider_secret", lambda pid: None)
+    monkeypatch.setattr(
+        cfg,
+        "get_secret",
+        lambda key, env=None: stored_local_key if key == "local_openai_api_key" else None,
+    )
+    monkeypatch.delenv("OLLAMA_HOST", raising=False)
+
+
+_OLLAMA_TAGS = {"models": [{"name": "qwen3.5:9b"}, {"name": "glm-5.1:latest"}]}
+
+
+# ── Local half (S3b): ollama /api/tags ───────────────────────────────────
+async def test_ollama_fetches_tags_keyless(tmp_path, monkeypatch) -> None:
+    client = _FakeClient(_OLLAMA_TAGS)
+    _local_env(monkeypatch)
+
+    result = await _catalog(tmp_path, client).list_models("ollama")
+
+    assert result.source == "live"
+    # The picker applies its relevance sort — pin membership, not order.
+    assert {m.id for m in result.models} == {"qwen3.5:9b", "glm-5.1:latest"}
+    assert len(client.calls) == 1
+    call = client.calls[0]
+    assert call["url"] == "http://localhost:11434/api/tags"
+    assert call["headers"] == {}
+    assert call["params"] == {}
+
+
+async def test_ollama_honors_base_url_override(tmp_path, monkeypatch) -> None:
+    """A pasted ``…/v1`` override is normalized to the server root first."""
+    client = _FakeClient(_OLLAMA_TAGS)
+    _local_env(monkeypatch, base_urls={"ollama": "http://gpu.lan:11434/v1/"})
+
+    await _catalog(tmp_path, client).list_models("ollama")
+
+    assert client.calls[0]["url"] == "http://gpu.lan:11434/api/tags"
+
+
+async def test_ollama_honors_ollama_host_env(tmp_path, monkeypatch) -> None:
+    client = _FakeClient(_OLLAMA_TAGS)
+    _local_env(monkeypatch)
+    monkeypatch.setenv("OLLAMA_HOST", "0.0.0.0:12345")
+
+    await _catalog(tmp_path, client).list_models("ollama")
+
+    # 0.0.0.0 is a bind address, not a client target — mapped to localhost.
+    assert client.calls[0]["url"] == "http://localhost:12345/api/tags"
+
+
+async def test_ollama_unreachable_returns_honest_empty_static(tmp_path, monkeypatch) -> None:
+    """No fake curated list for a local provider: dead server → empty models,
+    honest ``static`` source (the card's test button explains the fix)."""
+
+    class _DeadClient(_FakeClient):
+        async def get(self, url, headers=None, params=None):  # type: ignore[override]
+            raise RuntimeError("connection refused")
+
+    _local_env(monkeypatch)
+
+    result = await _catalog(tmp_path, _DeadClient({})).list_models("ollama")
+
+    assert result.source == "static"
+    assert result.models == ()
+
+
+# ── Local half (S3b): local-openai /v1/models ────────────────────────────
+async def test_local_openai_without_base_url_is_honestly_empty(tmp_path, monkeypatch) -> None:
+    """No configured server → no network call, no fake list, no crash."""
+    client = _FakeClient(_OPENAI_SHAPE)
+    _local_env(monkeypatch)
+
+    result = await _catalog(tmp_path, client).list_models("local-openai")
+
+    assert result.source == "static"
+    assert result.models == ()
+    assert client.calls == []
+
+
+async def test_local_openai_fetches_v1_models_from_override(tmp_path, monkeypatch) -> None:
+    client = _FakeClient({"data": [{"id": "Qwen/Qwen3.5-9B"}]})
+    _local_env(monkeypatch, base_urls={"local-openai": "http://localhost:8000"})
+
+    result = await _catalog(tmp_path, client).list_models("local-openai")
+
+    assert result.source == "live"
+    assert [m.id for m in result.models] == ["Qwen/Qwen3.5-9B"]
+    call = client.calls[0]
+    assert call["url"] == "http://localhost:8000/v1/models"
+    assert call["headers"] == {}
+
+
+async def test_local_openai_attaches_optional_stored_key(tmp_path, monkeypatch) -> None:
+    client = _FakeClient({"data": [{"id": "m"}]})
+    _local_env(
+        monkeypatch,
+        base_urls={"local-openai": "http://localhost:8000"},
+        stored_local_key="sk-local-pin",
+    )
+
+    await _catalog(tmp_path, client).list_models("local-openai")
+
+    assert client.calls[0]["headers"] == {"Authorization": "Bearer sk-local-pin"}
+
+
+def test_local_ttl_capped_near_live(tmp_path) -> None:
+    """The installed-model set changes with every pull/restart — a local
+    catalog older than 60 s is stale even under the 6 h default TTL."""
+    catalog = _catalog(tmp_path, _FakeClient({}))
+    import time as _time
+
+    two_minutes_ago = _time.time() - 120
+    assert catalog._is_fresh("openai", two_minutes_ago) is True
+    assert catalog._is_fresh("ollama", two_minutes_ago) is False
+    assert catalog._is_fresh("local-openai", two_minutes_ago) is False
+
+
+def test_parser_ollama_tags_shape() -> None:
+    models = parse_models_response("ollama", {"models": [{"name": "qwen3.5:9b"}, {"name": ""}]})
+    assert [(m.id, m.label) for m in models] == [("qwen3.5:9b", "qwen3.5:9b")]
+
+
 def test_parser_gemini_strips_prefix_and_gates_on_generate_content() -> None:
     payload = {
         "models": [
