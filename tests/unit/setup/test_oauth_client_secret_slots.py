@@ -62,6 +62,9 @@ def test_step_api_keys_skips_non_prompt_slots() -> None:
         patch("jarvis.setup.wizard._ask", side_effect=_record),
         patch("jarvis.setup.wizard.cfg.get_secret", return_value=None),
         patch("jarvis.setup.wizard._println"),
+        # Hermetic: a REAL local Ollama on the test host would add the
+        # local-brain offer prompt — this test counts key prompts only.
+        patch("jarvis.setup.wizard._ollama_reachable", return_value=False),
     ):
         step_api_keys()
 
