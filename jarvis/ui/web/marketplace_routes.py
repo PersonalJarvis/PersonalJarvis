@@ -32,6 +32,7 @@ from jarvis.marketplace.auth import (
     get_registry,
 )
 from jarvis.marketplace.catalog import (
+    CATEGORY_ORDER,
     HostedMcpOAuthDcrAuth,
     OAuthDeviceFlowAuth,
     OAuthPkceLoopbackAuth,
@@ -254,6 +255,11 @@ async def list_plugins(response: Response) -> dict[str, Any]:
     return {
         "version": catalog.version,
         "schema_version": catalog.schema_version,
+        # Section order for the store. Served rather than hardcoded in the UI so
+        # a new category is a backend-only change; the frontend appends any
+        # category it receives that is not listed here instead of dropping (or
+        # crashing on) it.
+        "category_order": list(CATEGORY_ORDER),
         "plugins": enriched,
         "total": len(enriched),
         "connected": connected,

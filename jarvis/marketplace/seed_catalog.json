@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "schema_version": "2026-05-09",
   "plugins": [
     {
@@ -9,6 +9,8 @@
       "category": "Developer",
       "logo_slug": "github",
       "featured": true,
+      "longevity": "permanent",
+      "longevity_note": "Pick 'No expiration' when you create the token.",
       "auth": {
         "mode": "pat_paste",
         "token_creation_url": "https://github.com/settings/tokens/new?scopes=repo,workflow,read:user&description=Personal+Jarvis",
@@ -30,6 +32,8 @@
       "category": "Developer",
       "logo_slug": "vercel",
       "featured": true,
+      "longevity": "permanent",
+      "longevity_note": "Pick 'No expiration' when you create the token.",
       "auth": {
         "mode": "pat_paste",
         "token_creation_url": "https://vercel.com/account/tokens",
@@ -47,6 +51,7 @@
       "category": "Developer",
       "logo_slug": "supabase",
       "featured": false,
+      "longevity": "permanent",
       "auth": {
         "mode": "pat_paste",
         "token_creation_url": "https://supabase.com/dashboard/account/tokens",
@@ -65,9 +70,10 @@
       "id": "notion",
       "display_name": "Notion",
       "description": "Pages, databases and comments — multi-workspace",
-      "category": "Productivity",
+      "category": "Knowledge & Reading",
       "logo_slug": "notion",
       "featured": true,
+      "longevity": "self_renewing",
       "auth": {
         "mode": "hosted_mcp_oauth_dcr",
         "discovery_url": "https://mcp.notion.com/.well-known/oauth-protected-resource",
@@ -94,10 +100,12 @@
       "id": "slack",
       "display_name": "Slack",
       "description": "Channels, DMs, search and Canvas drafts",
-      "category": "Communication",
+      "category": "Messaging",
       "logo_slug": "slack",
       "logo_url": "/plugin-assets/slack-logo.svg",
       "featured": true,
+      "longevity": "self_renewing",
+      "oauth_client_family": "slack",
       "auth": {
         "mode": "oauth_pkce_loopback",
         "authorization_url": "https://slack.com/oauth/v2/authorize",
@@ -136,6 +144,7 @@
       "category": "Developer",
       "logo_slug": "linear",
       "featured": true,
+      "longevity": "self_renewing",
       "auth": {
         "mode": "hosted_mcp_oauth_dcr",
         "discovery_url": "https://mcp.linear.app/.well-known/oauth-protected-resource",
@@ -155,6 +164,7 @@
       "category": "Developer",
       "logo_slug": "stripe",
       "featured": false,
+      "longevity": "permanent",
       "auth": {
         "mode": "pat_paste",
         "token_creation_url": "https://dashboard.stripe.com/apikeys",
@@ -176,6 +186,7 @@
       "category": "Developer",
       "logo_slug": "cloudflare",
       "featured": false,
+      "longevity": "self_renewing",
       "auth": {
         "mode": "hosted_mcp_oauth_dcr",
         "discovery_url": "https://observability.mcp.cloudflare.com/.well-known/oauth-protected-resource",
@@ -198,9 +209,11 @@
       "id": "discord",
       "display_name": "Discord",
       "description": "Chat with Jarvis from Discord (your bot)",
-      "category": "Communication",
+      "category": "Messaging",
       "logo_slug": "discord",
       "featured": false,
+      "longevity": "permanent",
+      "longevity_note": "A bot token stays valid until you reset it in the Discord developer portal.",
       "auth": {
         "mode": "pat_paste",
         "auth_scheme": "bot",
@@ -215,9 +228,11 @@
       "id": "telegram",
       "display_name": "Telegram",
       "description": "Chat with Jarvis from Telegram (your bot)",
-      "category": "Communication",
+      "category": "Messaging",
       "logo_slug": "telegram",
       "featured": false,
+      "longevity": "permanent",
+      "longevity_note": "A bot token stays valid until you revoke it in BotFather.",
       "auth": {
         "mode": "pat_paste",
         "auth_scheme": "telegram_path",
@@ -232,9 +247,11 @@
       "id": "asana",
       "display_name": "Asana",
       "description": "Tasks, projects and workspaces",
-      "category": "Productivity",
+      "category": "Lists & Tasks",
       "logo_slug": "asana",
       "featured": false,
+      "longevity": "self_renewing",
+      "oauth_client_family": "asana",
       "auth": {
         "mode": "oauth_pkce_loopback",
         "authorization_url": "https://app.asana.com/-/oauth_authorize",
@@ -242,7 +259,9 @@
         "revocation_url": "https://app.asana.com/-/oauth_revoke",
         "client_id": "REPLACE_WITH_JARVIS_ASANA_CLIENT_ID",
         "callback_port": 3119,
-        "scopes": ["default"],
+        "scopes": [
+          "default"
+        ],
         "refresh_supported": true,
         "resource": "https://mcp.asana.com/v2"
       },
@@ -257,9 +276,12 @@
       "id": "google_drive",
       "display_name": "Google Drive",
       "description": "Search, read, create, share and delete your Drive files",
-      "category": "Productivity",
+      "category": "Files & Photos",
       "logo_slug": "googledrive",
       "featured": false,
+      "longevity": "provider_limited",
+      "longevity_note": "Google expires the authorization after 7 days while your own OAuth app is in Testing mode. Publish the app to keep the connection indefinitely.",
+      "oauth_client_family": "google",
       "auth": {
         "mode": "oauth_pkce_loopback",
         "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
@@ -268,7 +290,9 @@
         "client_id": "REPLACE_WITH_JARVIS_GOOGLE_CLIENT_ID",
         "callback_port": 3120,
         "callback_path": "",
-        "scopes": ["https://www.googleapis.com/auth/drive"],
+        "scopes": [
+          "https://www.googleapis.com/auth/drive"
+        ],
         "scope_separator": "space",
         "user_scopes_only": false,
         "refresh_supported": true,
@@ -281,9 +305,12 @@
       "id": "gmail",
       "display_name": "Gmail",
       "description": "Read, send, organize and delete mail in your inbox",
-      "category": "Communication",
+      "category": "Calendar & Mail",
       "logo_slug": "gmail",
       "featured": false,
+      "longevity": "provider_limited",
+      "longevity_note": "Google expires the authorization after 7 days while your own OAuth app is in Testing mode. Publish the app to keep the connection indefinitely.",
+      "oauth_client_family": "google",
       "auth": {
         "mode": "oauth_pkce_loopback",
         "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
@@ -307,9 +334,12 @@
       "id": "google_calendar",
       "display_name": "Google Calendar",
       "description": "See your schedule and create, move or delete events by voice",
-      "category": "Productivity",
+      "category": "Calendar & Mail",
       "logo_slug": "googlecalendar",
       "featured": true,
+      "longevity": "provider_limited",
+      "longevity_note": "Google expires the authorization after 7 days while your own OAuth app is in Testing mode. Publish the app to keep the connection indefinitely.",
+      "oauth_client_family": "google",
       "auth": {
         "mode": "oauth_pkce_loopback",
         "authorization_url": "https://accounts.google.com/o/oauth2/v2/auth",
