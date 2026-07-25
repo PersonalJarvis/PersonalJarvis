@@ -1872,6 +1872,93 @@ async def restart_app(request: Request, force: bool = False) -> dict[str, object
     return {"ok": True, "restarting": True}
 
 
+@router.get("/input-isolation", summary="Can other apps type into this window?")
+async def get_input_isolation() -> dict[str, object]:
+    """Report whether outside input software can reach this app's window.
+
+    Dictation apps (Wispr Flow, Voice Access, superwhisper, ...), text expanders,
+    clipboard managers, and password-manager auto-type all inject synthetic
+    keystrokes into the focused window and locate the field through the OS
+    accessibility tree. Windows blocks BOTH for any window owned by a
+    higher-integrity process — so while this app runs elevated they appear to do
+    nothing here while still working in every other app, with no error anywhere
+    (Windows does not report a UIPI drop to the sender).
+
+    Deliberately cheap, uncached, and unauthenticated-safe: it reads only this
+    process's own privilege state, so the desktop UI can poll it on mount.
+    """
+    from jarvis.platform.input_isolation import describe_input_isolation
+
+    return describe_input_isolation().to_dict()
+
+
+@router.post(
+    "/restart-unelevated",
+    summary="Restart the app without administrator rights",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def restart_unelevated(request: Request, force: bool = False) -> dict[str, object]:
+    """Restart the desktop app stripped of its administrator rights.
+
+    The repair for the condition ``GET /input-isolation`` reports: elevation
+    survives every ordinary in-app restart, so a plain restart cannot escape it.
+    This relaunches through the elevated token's filtered companion token, which
+    lands the fresh window at the same privilege level as any normally-started
+    app — and back within reach of the user's dictation software.
+
+    Refuses with 409 when the app is not elevated (nothing to repair) or when
+    privileges cannot be dropped on this account, and in that case the app stays
+    UP: a restart that never returns is worse than the problem being fixed.
+    Honours the same running-mission guard as ``/restart-app``.
+    """
+    from jarvis.platform.input_isolation import describe_input_isolation
+
+    report = describe_input_isolation()
+    if not report.can_restart_unelevated:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "error": "not_elevated"
+                if not report.blocked
+                else "cannot_drop_privileges",
+                "report": report.to_dict(),
+            },
+        )
+
+    if not force:
+        kontrollierer = getattr(request.app.state, "kontrollierer", None)
+        list_running = getattr(kontrollierer, "running_mission_ids", None)
+        running = list(list_running()) if callable(list_running) else []
+        if running:
+            manager = getattr(request.app.state, "mission_manager", None)
+            try:
+                missions = await asyncio.wait_for(
+                    _running_mission_summaries(manager, running), timeout=2.0
+                )
+            except TimeoutError:
+                missions = [{"id": mid, "title": ""} for mid in running]
+            raise HTTPException(
+                status_code=409,
+                detail={"error": "missions_running", "missions": missions},
+            )
+
+    desktop = getattr(request.app.state, "desktop_app", None)
+    fn = getattr(desktop, "request_unelevated_restart", None)
+    if not callable(fn):
+        raise HTTPException(
+            status_code=503, detail="self-restart unavailable on this host"
+        )
+    # Same off-pool dispatch as /restart-app: a restart must survive a default
+    # thread pool exhausted by hung threads.
+    scheduled, detail = await _run_off_pool(fn)
+    if not scheduled:
+        raise HTTPException(
+            status_code=409,
+            detail={"error": "deescalation_failed", "message": detail},
+        )
+    return {"ok": True, "restarting": True, "unelevated": True}
+
+
 class OpenExternalBody(BaseModel):
     url: str = Field(min_length=1, max_length=4096)
 

@@ -7483,3 +7483,77 @@ The user hung up via hotkey at 11:55:11.
 Related: BUG-102 (topology refresh), BUG-104 (rebuild seed), BUG-106
 (the answer itself also missed the Gulfstream G800, in service since
 2025 — fact-quality family, tracked there).
+
+## BUG-109: every dictation app, text expander, and auto-type tool goes dead inside the Jarvis window — the desktop app was running elevated (HIGH, FIXED 2026-07-25)
+
+**Symptom (desktop field report).** Dictation software — Wispr Flow in the
+report, but the class is open: Windows Voice Access, superwhisper, Talon,
+text expanders, clipboard managers, password-manager auto-type — works
+everywhere on the machine except inside the Personal Jarvis desktop window.
+The user speaks, the dictation app records and reports success, and no text
+ever appears in the Jarvis chat box. Nothing logs an error on either side, so
+from the outside it reads as "Jarvis breaks my dictation app".
+
+**Root cause.** The desktop process was running **elevated** (HIGH integrity,
+`elevated=True`), while every ordinary user application including the dictation
+tool runs at MEDIUM integrity. Windows **UIPI** (User Interface Privilege
+Isolation) forbids a lower-integrity process from injecting synthetic input
+into, or reading the UI-Automation tree of, a higher-integrity window. Both
+mechanisms every tool in this category depends on are therefore cut:
+
+* **Field detection.** Measured against the live elevated window, a normal
+  automation client saw **1** element and **0** text fields; an ordinary
+  window in the same session yielded 418 elements / 80 fields.
+* **Text insertion.** Microsoft documents that `SendInput` blocked by UIPI
+  reports the failure through *neither* its return value *nor* `GetLastError`
+  — which is exactly why the dictation app believes it succeeded.
+
+The WebView engine was ruled out by control experiment: an identical
+pywebview/WebView2 window launched **unelevated** accepted both synthetic
+unicode typing and a Ctrl+V clipboard paste. Privilege level was the only
+differing variable.
+
+Two properties made this durable and invisible:
+
+1. **Elevation is sticky.** `POST /api/settings/restart-app` spawns the
+   relauncher as a child, so every in-app restart inherited the elevated
+   token. Once elevated, always elevated.
+2. **Nothing checked.** The app is *designed* to run unelevated — the
+   autostart scheduled task pins `RunLevel=Limited` (see
+   `jarvis/autostart/windows.py`) and privileged operations go through the
+   separate helper in `jarvis/admin/` — but no code verified the assumption,
+   so a single elevated manual start silently persisted across reboots.
+
+**Fix.**
+* `jarvis/platform/input_isolation.py` — cross-platform probe reporting
+  whether outside input software can reach our window (Windows: token
+  elevation; POSIX: euid 0). Fail-open: an unreadable privilege state reports
+  `unknown` and warns about nothing, so no user is nagged on a guess.
+* `jarvis/platform/deescalate.py` — relaunch through the elevated token's
+  filtered companion token (`TokenLinkedToken` → `DuplicateTokenEx` →
+  `CreateProcessWithTokenW`), landing the fresh window at ordinary integrity.
+  Refuses honestly where no companion token exists (UAC disabled, built-in
+  Administrator, SYSTEM) instead of quietly relaunching elevated again.
+* `DesktopApp._schedule_restart(drop_elevation=...)` +
+  `request_unelevated_restart()` — a failed de-escalation leaves the app UP
+  and returns the reason; a restart that never comes back is worse than the
+  defect.
+* `GET /api/settings/input-isolation` + `POST /api/settings/restart-unelevated`
+  (mission-guarded, `x-jarvis-dangerous`), hence CLI-reachable.
+* `InputIsolationBanner` — app-wide alert naming the affected software in
+  plain language with a one-click "restart without admin rights", localized in
+  de/en/es. Renders nothing when the window is reachable.
+* Boot-time warning from `_log_input_isolation()` on the background heavy-init
+  task (AP-26), so a support log shows the condition.
+
+**Regression guards.** `tests/unit/platform/test_input_isolation.py`,
+`tests/unit/platform/test_deescalate.py`,
+`tests/unit/ui/test_input_isolation_route.py`,
+`src/components/layout/InputIsolationBanner.test.tsx`. All inject the privilege
+verdict — none read the host's real state, so they hold on an elevated Windows
+box, in a Linux container, and on a Mac.
+
+**Class lesson.** "Works everywhere except in *this one app's window*" is the
+signature of a privilege boundary, not of the app's UI framework. Check the
+integrity levels of both processes *before* investigating the window toolkit —
+the measurement takes seconds and the toolkit hypothesis costs hours.

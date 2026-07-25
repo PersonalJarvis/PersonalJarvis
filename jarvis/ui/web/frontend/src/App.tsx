@@ -5,6 +5,7 @@ import { useAssistantNameSeed } from "@/hooks/useAssistantNameSeed";
 import { Sidebar } from "@/components/layout/Sidebar";
 import { TopBar } from "@/components/layout/TopBar";
 import { PermissionsAlertBanner } from "@/components/layout/PermissionsAlertBanner";
+import { InputIsolationBanner } from "@/components/layout/InputIsolationBanner";
 import { VoiceWarmingBanner } from "@/components/layout/VoiceWarmingBanner";
 import { MainView } from "@/components/layout/MainView";
 import { ToastLayer } from "@/components/ToastLayer";
@@ -32,6 +33,11 @@ export default function App() {
         {/* App-wide macOS permission alert — topmost so a missing grant is
             impossible to miss on any view. No-op on other platforms. */}
         <PermissionsAlertBanner />
+        {/* Outside input software (dictation, text expanders, auto-type) cannot
+            reach an elevated window. Sits next to the permission alert because
+            it is the same class of problem: an OS-level gate the user must be
+            told about, since nothing else reports it. */}
+        <InputIsolationBanner />
         <TopBar />
         <VoiceWarmingBanner />
         <div className="min-h-0 flex-1">

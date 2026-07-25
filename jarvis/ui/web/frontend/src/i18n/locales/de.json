@@ -1,4 +1,13 @@
 {
+  "input_isolation": {
+    "title": "Diktier- und Tipphilfen erreichen dieses Fenster nicht",
+    "impact": "Diese App läuft mit Administratorrechten, deshalb lässt Windows andere Programme nicht in ihr Fenster schreiben. Diktier-Apps, Textbausteine, Zwischenablage-Tools und das automatische Ausfüllen von Passwort-Managern scheinen hier nichts zu tun, während sie in jeder anderen App weiterhin funktionieren.",
+    "manual_hint": "Die App kann die Administratorrechte auf diesem Windows-Konto nicht selbst ablegen. Schließe sie und starte sie normal neu — ohne „Als Administrator ausführen“.",
+    "restart_now": "Ohne Administratorrechte neu starten",
+    "restarting": "Wird neu gestartet…",
+    "restart_failed": "Die App konnte nicht ohne Administratorrechte neu gestartet werden.",
+    "dismiss": "Hinweis ausblenden"
+  },
   "auth_gate": {
     "checking": "Zugriff wird geprüft…",
     "starting": "Wird gestartet…",

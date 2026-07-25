@@ -1,4 +1,13 @@
 {
+  "input_isolation": {
+    "title": "Dictation and typing tools can't reach this window",
+    "impact": "This app is running with administrator rights, so Windows blocks other programs from typing into it. Dictation apps, text expanders, clipboard tools, and password-manager auto-type will seem to do nothing here, while still working in every other app.",
+    "manual_hint": "This app can't drop the administrator rights by itself on this Windows account. Close it and start it again normally — without “Run as administrator”.",
+    "restart_now": "Restart without admin rights",
+    "restarting": "Restarting…",
+    "restart_failed": "The app could not restart without administrator rights.",
+    "dismiss": "Hide this notice"
+  },
   "auth_gate": {
     "checking": "Checking access…",
     "starting": "Starting up…",

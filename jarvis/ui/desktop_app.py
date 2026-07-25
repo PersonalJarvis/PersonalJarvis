@@ -258,6 +258,39 @@ def _write_meta(port: int, pid: int) -> None:
             pass
 
 
+def _log_input_isolation() -> None:
+    """Record whether outside input software can reach our window.
+
+    Elevation is sticky (it survives every in-app restart) and invisible: while
+    it lasts, Windows silently discards synthetic keystrokes and automation
+    queries from ordinary user software, so dictation apps, text expanders, and
+    password-manager auto-type stop working INSIDE our window with no error on
+    either side. Without this line a support log gives no hint at all — the
+    2026-07-25 report reached us as "dictation just doesn't work in Jarvis".
+
+    Runs on the background heavy-init task, never the startup critical path
+    (AP-26), and is a token read costing microseconds. Fully guarded: a
+    diagnostic must never be the thing that breaks boot.
+    """
+    try:
+        from loguru import logger
+
+        from jarvis.platform.input_isolation import describe_input_isolation
+
+        report = describe_input_isolation()
+        if report.blocked:
+            logger.warning(
+                "Input isolation ACTIVE (reason={}): {} Repair: {}",
+                report.reason,
+                report.summary,
+                report.remedy,
+            )
+        else:
+            logger.debug("Input isolation clear (reason={}).", report.reason)
+    except Exception:  # noqa: BLE001, S110 — never let a diagnostic break boot
+        pass
+
+
 def _read_meta() -> dict[str, Any] | None:
     """Reads the PID sidecar. ``None`` if missing or corrupt."""
     try:
@@ -1857,6 +1890,7 @@ class DesktopApp:
                 # the meta file only needs the API to answer, which set_app
                 # just made true.
                 _write_meta(self.cfg.ui.admin_api_port, os.getpid())
+                _log_input_isolation()
                 try:
                     await server.start(start_serving=False)
                     _db_mark("server_start")
@@ -2304,42 +2338,89 @@ class DesktopApp:
         (no window to restart). Fully guarded — a spawn failure leaves the app
         running rather than half-quitting.
         """
+        return self._schedule_restart(drop_elevation=False)[0]
+
+    def request_unelevated_restart(self) -> tuple[bool, str]:
+        """Restart WITHOUT the administrator rights this process is carrying.
+
+        Recovery for the input-isolation defect: while the app runs elevated,
+        Windows UIPI silently discards synthetic keystrokes and automation
+        queries from ordinary user software, so dictation apps, text expanders,
+        clipboard tools, and password-manager auto-type all go dead inside our
+        window while working everywhere else (see
+        ``jarvis/platform/input_isolation.py``). Elevation survives every normal
+        in-app restart, so escaping it needs this dedicated path.
+
+        Returns ``(scheduled, detail)``. On failure the app deliberately stays
+        UP and elevated rather than quitting: a half-repaired restart that never
+        comes back is strictly worse than the problem being fixed, and the
+        detail string is what the UI shows instead of a silent dead button.
+        """
+        return self._schedule_restart(drop_elevation=True)
+
+    def _schedule_restart(self, *, drop_elevation: bool) -> tuple[bool, str]:
+        """Spawn the detached relauncher, then quit — optionally dropping
+        elevation on the way out.
+
+        ``drop_elevation`` launches the relauncher through the elevated token's
+        filtered companion token, so the whole restart chain (relauncher → fresh
+        launcher → window) lands at ordinary integrity. Any failure returns
+        ``(False, detail)`` WITHOUT scheduling the quit.
+        """
         import subprocess
 
         from loguru import logger
 
         from jarvis.ui.relauncher import (
             detached_creationflags,
+            fresh_user_env,
             run_restart_quit_sequence,
         )
 
         window = getattr(self, "_window", None)
         if window is None:
-            return False
+            return (False, "no desktop window to restart")
         try:
             import jarvis as _jarvis
 
             repo_root = str(Path(_jarvis.__file__).resolve().parent.parent)
-            kwargs: dict[str, Any] = {"cwd": repo_root, "close_fds": True}
-            if sys.platform == "win32":
-                kwargs["creationflags"] = detached_creationflags()
+            argv = [
+                sys.executable,
+                "-m",
+                "jarvis.ui.relauncher",
+                str(os.getpid()),
+                repo_root,
+            ]
+            if drop_elevation:
+                from jarvis.platform.deescalate import spawn_unelevated
+
+                outcome = spawn_unelevated(
+                    argv,
+                    cwd=repo_root,
+                    env=fresh_user_env(),
+                    creationflags=detached_creationflags(),
+                )
+                if not outcome.ok:
+                    logger.warning(
+                        "Unelevated relaunch refused — staying up elevated: {}",
+                        outcome.detail,
+                    )
+                    return (False, outcome.detail)
             else:
-                kwargs["start_new_session"] = True
-            subprocess.Popen(  # noqa: S603 — fixed argv, no shell, own interpreter
-                [
-                    sys.executable,
-                    "-m",
-                    "jarvis.ui.relauncher",
-                    str(os.getpid()),
-                    repo_root,
-                ],
-                **kwargs,
-            )
+                kwargs: dict[str, Any] = {"cwd": repo_root, "close_fds": True}
+                if sys.platform == "win32":
+                    kwargs["creationflags"] = detached_creationflags()
+                else:
+                    kwargs["start_new_session"] = True
+                subprocess.Popen(  # noqa: S603 — fixed argv, no shell, own interpreter
+                    argv,
+                    **kwargs,
+                )
         except Exception as exc:  # noqa: BLE001 — never half-quit on a spawn error
             logger.opt(exception=exc).warning(
                 "relauncher spawn failed — staying up (no self-restart)"
             )
-            return False
+            return (False, f"{type(exc).__name__}: {exc}")
 
         def _mark_quit() -> None:
             self._user_requested_quit = True
@@ -2359,10 +2440,11 @@ class DesktopApp:
             target=_quit_soon, name="jarvis-restart-quit", daemon=True
         ).start()
         logger.info(
-            "Self-restart scheduled (relauncher spawned; quitting in ~0.2 s, "
-            "independent hard-exit watchdog at ~0.9 s)."
+            "Self-restart scheduled (relauncher spawned{}; quitting in ~0.2 s, "
+            "independent hard-exit watchdog at ~0.9 s).",
+            " WITHOUT administrator rights" if drop_elevation else "",
         )
-        return True
+        return (True, "restart scheduled")
 
     def request_quit(self) -> bool:
         """Cleanly quit the app WITHOUT relaunching (Terms declined).
