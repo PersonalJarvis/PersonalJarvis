@@ -287,6 +287,72 @@ def set_worker_model(model: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     _sync_worker_model_drift_soll(model)  # i18n-allow
 
 
+def migrate_worker_tier_table(*, path: Path = DEFAULT_CONFIG_FILE) -> bool:
+    """One-time boot heal for the [brain.sub_jarvis] / [brain.worker] split-brain.
+
+    Both tables feed the SAME config field (``BrainConfig.worker`` via
+    ``AliasChoices``), so a file carrying both is a latent conflict: the
+    canonical ``[brain.worker]`` wins at load time while the legacy table
+    silently rots (live case 2026-07-25: ``provider = "antigravity"`` vs
+    ``"openai-codex"``, with the whole ``fallback_*`` chain stranded in the
+    dead table). This migration makes the file match what the loader
+    already resolves:
+
+      * both tables present  -> copy legacy-ONLY keys (e.g. the ``fallback_*``
+        chain) into ``[brain.worker]``, then drop ``[brain.sub_jarvis]``;
+        keys present in both keep the canonical worker value.
+      * only the legacy table -> its keys move to ``[brain.worker]`` verbatim.
+      * no legacy table       -> no-op (a cheap string probe skips the parse).
+
+    Returns True when the file was rewritten. Best-effort by design: a
+    missing file, unparsable TOML, or a write failure (read-only flag /
+    drift-guard EPERM) degrades to a logged no-op — boot must never break
+    on this heal. Reading old files keeps working either way through the
+    ``AliasChoices`` read-compat alias, which stays.
+    """
+    try:
+        if path == DEFAULT_CONFIG_FILE:
+            from jarvis.core.config import resolve_config_path  # noqa: PLC0415
+
+            path = resolve_config_path()
+        if not path.exists():
+            return False
+        with _WRITE_LOCK:
+            raw = path.read_text(encoding="utf-8")
+            had_bom = raw.startswith(_BOM)
+            if had_bom:
+                raw = raw[len(_BOM) :]
+            # Fast path: steady-state boots pay one file read, no TOML parse.
+            if "sub_jarvis" not in raw:
+                return False
+            doc: TOMLDocument = tomlkit.parse(raw)
+            brain = doc.get("brain")
+            if brain is None or "sub_jarvis" not in brain:
+                return False
+            legacy = brain["sub_jarvis"]
+            worker = brain.get("worker")
+            if worker is None:
+                worker = tomlkit.table()
+                brain["worker"] = worker
+            if isinstance(legacy, dict):
+                for key in legacy:
+                    if key not in worker:
+                        worker[key] = legacy[key]
+            del brain["sub_jarvis"]
+            out = tomlkit.dumps(doc)
+            if had_bom:
+                out = _BOM + out
+            _atomic_write(path, out)
+        log.info(
+            "Merged legacy [brain.sub_jarvis] into canonical [brain.worker] (%s).",
+            path,
+        )
+        return True
+    except Exception as exc:  # noqa: BLE001 — boot heal must never raise
+        log.warning("Worker-tier TOML migration skipped: %s", exc)
+        return False
+
+
 # Back-compat alias — callers that imported set_sub_jarvis_model still work.
 set_sub_jarvis_model = set_worker_model
 

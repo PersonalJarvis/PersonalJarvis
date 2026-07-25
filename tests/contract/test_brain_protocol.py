@@ -18,10 +18,11 @@ from jarvis.brain.provider_registry import BrainProviderRegistry
 
 BRAIN_PROVIDERS = [
     "claude-api",
-    "claude-api",
     "openrouter",
     "openai",
     "gemini",
+    # Keyless local provider, re-added 2026-07-25 (local-first mandate).
+    "ollama",
 ]
 
 
@@ -33,7 +34,7 @@ def registry():
 def test_all_providers_loaded(registry):
     available = set(registry.available())
     missing = set(BRAIN_PROVIDERS) - available
-    assert not missing, f"Fehlende Brain-Provider-Plugins: {missing}"
+    assert not missing, f"Missing brain provider plugins: {missing}"
 
 
 @pytest.mark.parametrize("name", BRAIN_PROVIDERS)

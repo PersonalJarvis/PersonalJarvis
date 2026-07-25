@@ -2630,6 +2630,36 @@ def _coerce_env_value(v: str) -> Any:
     return v
 
 
+def _dedupe_worker_tier_tables(data: dict[str, Any]) -> dict[str, Any]:
+    """Resolve the [brain.worker] vs legacy [brain.sub_jarvis] split-brain.
+
+    Both tables populate the SAME field (``BrainConfig.worker`` via
+    ``AliasChoices``); a file carrying both is a latent conflict whose winner
+    would otherwise be an artifact of alias ordering. Make it explicit code:
+    the canonical ``[brain.worker]`` wins, the legacy table is dropped from
+    the parsed dict, and ONE warning names both values so the operator can
+    see what was ignored. A file with only the legacy table stays untouched
+    (read-compat for pre-rename installs). The on-disk heal lives in
+    ``config_writer.migrate_worker_tier_table`` (called at boot).
+    """
+    brain = data.get("brain")
+    if not isinstance(brain, dict):
+        return data
+    worker = brain.get("worker")
+    legacy = brain.get("sub_jarvis")
+    if isinstance(worker, dict) and isinstance(legacy, dict):
+        logging.getLogger(__name__).warning(
+            "config: both [brain.worker] (provider=%r) and legacy "
+            "[brain.sub_jarvis] (provider=%r) are present — [brain.worker] "
+            "wins; the legacy table is ignored and will be merged away at "
+            "the next boot heal.",
+            worker.get("provider"),
+            legacy.get("provider"),
+        )
+        brain.pop("sub_jarvis", None)
+    return data
+
+
 def _migrate_worker_env_vars() -> None:
     """Process-local back-compat shim for the sub_jarvis → worker rename.
 
@@ -2679,6 +2709,9 @@ def load_config(
         if profile_file.exists():
             data = _deep_merge(data, _load_yaml(profile_file))
 
+    # Deterministic winner for the worker-tier split-brain BEFORE env
+    # overrides land (env writes into brain.worker and wins regardless).
+    data = _dedupe_worker_tier_tables(data)
     # Back-compat shim: copy old JARVIS__BRAIN__SUB_JARVIS__* to new
     # JARVIS__BRAIN__WORKER__* if only the old names are set (process-local).
     _migrate_worker_env_vars()

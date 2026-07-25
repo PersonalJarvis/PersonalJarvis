@@ -1105,6 +1105,17 @@ def main(argv: list[str] | None = None) -> int:
             "Healed stale inherited provider env from registry: %s", healed
         )
 
+    # One-time worker-tier heal BEFORE load_config: merge the legacy
+    # [brain.sub_jarvis] table into the canonical [brain.worker] so the two
+    # can never disagree again (config split-brain). Cheap no-op on healed
+    # files; internally best-effort and never blocks boot.
+    try:
+        from jarvis.core.config_writer import migrate_worker_tier_table
+
+        migrate_worker_tier_table()
+    except Exception:  # noqa: BLE001, S110 — boot heal must never block startup
+        pass
+
     cfg = load_config()
     _m_mark("parse_cwd_env_loadconfig")
 

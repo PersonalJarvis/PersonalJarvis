@@ -264,7 +264,26 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "background tasks, sluggish as your main or voice brain."
         ),
     ),
-    # Ollama provider removed 2026-04-21 — pure API-provider chain.
+    # Ollama re-added 2026-07-25 as a keyless LOCAL provider (auth_mode
+    # "none" → billing "local"); the 2026-04-21 removal predates the
+    # local-first mandate.
+    ProviderSpec(
+        id="ollama",
+        label="Ollama (local)",
+        tier="brain",
+        auth_mode="none",
+        secret_keys=(),
+        dashboard_url=None,
+        install_hint="ollama pull qwen3.5",
+        signup_url="https://ollama.com/download",
+        credential_help=(
+            "Runs models fully local through an Ollama server — no API key, "
+            "no cloud account, nothing leaves this machine. Install Ollama, "
+            "pull a tools-capable model (e.g. ollama pull qwen3.5), and "
+            "Jarvis finds it at http://localhost:11434 automatically. Point "
+            "the server URL at another machine to share one Ollama box."
+        ),
+    ),
     # ── TTS ───────────────────────────────────────────────────────────────
     # Voice-Output cards render in this tuple order. OpenRouter leads (one key
     # reaches many vetted speech models); Inworld sits last as a premium

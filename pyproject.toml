@@ -409,7 +409,9 @@ gemini = "jarvis.plugins.brain.gemini:GeminiBrain"
 codex = "jarvis.plugins.brain.codex:CodexBrain"
 antigravity = "jarvis.plugins.brain.antigravity:AntigravityBrain"
 grok = "jarvis.plugins.brain.grok:GrokBrain"
-# Ollama provider removed on 2026-04-21; the runtime uses the API provider chain.
+# Keyless LOCAL provider (2026-07-25, local-first mandate): talks to a local
+# Ollama server, deliberately absent from PROVIDER_SECRET_CANDIDATES.
+ollama = "jarvis.plugins.brain.ollama:OllamaBrain"
 
 [project.entry-points."jarvis.harness"]
 python-script = "jarvis.plugins.harness.python_script:PythonScriptHarness"
