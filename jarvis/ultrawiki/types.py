@@ -15,7 +15,7 @@ from __future__ import annotations
 import hashlib
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
 __all__ = [
@@ -36,7 +36,7 @@ __all__ = [
 ]
 
 
-class ItemState(str, Enum):
+class ItemState(StrEnum):
     """Staged-pipeline state of one raw item (design doc 02).
 
     The value is the LAST COMPLETED stage; workers advance items whose state
@@ -61,7 +61,7 @@ STATE_ORDER: tuple[ItemState, ...] = (
 )
 
 
-class DocType(str, Enum):
+class DocType(StrEnum):
     """Kind of derived document stored in ``uw_documents``."""
 
     RAW = "raw"  # lightly normalized full text (pre-distillation embedding basis)
@@ -69,7 +69,7 @@ class DocType(str, Enum):
     BURST = "burst"  # high-signal fragment embedded with parent context
 
 
-class ConsentState(str, Enum):
+class ConsentState(StrEnum):
     """Per-source user consent. No connector pulls a single byte before
     the source is explicitly approved in the UI/CLI (maintainer mandate)."""
 
@@ -78,7 +78,7 @@ class ConsentState(str, Enum):
     REVOKED = "revoked"
 
 
-class IncrementalMode(str, Enum):
+class IncrementalMode(StrEnum):
     """How a connector keeps a source fresh after backfill."""
 
     PUSH = "push"  # platform pushes events (webhook/socket)
@@ -87,7 +87,7 @@ class IncrementalMode(str, Enum):
     NONE = "none"  # backfill/re-import only (e.g. export files)
 
 
-class AuthKind(str, Enum):
+class AuthKind(StrEnum):
     """What a connector needs before it can run."""
 
     NONE = "none"

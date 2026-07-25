@@ -331,6 +331,7 @@ class WebServer:
         from .telephony_routes import router as telephony_router
         from .tool_model_routes import router as tool_model_router
         from .tools_routes import router as tools_router
+        from .ultrawiki_routes import router as ultrawiki_router
         from .update_routes import router as update_router
         from .wiki_routes import router as wiki_router
         from .wiki_ws import router as wiki_ws_router
@@ -452,6 +453,11 @@ class WebServer:
         # Forwards WikiPageChanged events from the shared EventBus to
         # subscribed UI clients. WikiWatcher is started in start().
         app.include_router(wiki_ws_router)
+        # UltraWiki (semantic memory mode) — status/activation/sources/sync/
+        # search. The service handle is wired in start() via _init_ultrawiki();
+        # while it is None the routes answer 503 (search answers 409 whenever
+        # the mode switch is off).
+        app.include_router(ultrawiki_router)
         # ConnectionManager singleton for the global event stream. Attached
         # to MissionBus.subscribe_all() in start().
         app.state.missions_ws_manager = _MissionsConnMgr()
@@ -460,6 +466,9 @@ class WebServer:
         # so the REST routes return 503 instead of crashing.
         app.state.mission_manager = None
         app.state.kontrollierer = None
+        # UltraWikiService is constructed in start() (_init_ultrawiki); None
+        # keeps /api/ultrawiki honest (503 / degraded status) until then.
+        app.state.ultrawiki = None
         app.state.mission_tool_approvals = self._mission_tool_approvals
 
         # Board aggregator (personal-mastery dashboard) — the aggregator is
@@ -2055,6 +2064,18 @@ class WebServer:
             )
         _boot_mark("wiki_watcher")
 
+        # UltraWiki (semantic memory mode): construct the service handle ALWAYS
+        # (cheap ctor — in-app activation from a disabled state must work);
+        # the store + staged pipeline only start while [ultrawiki].enabled is
+        # true, and both live off the boot critical path (AP-26).
+        try:
+            await self._init_ultrawiki()
+        except Exception as exc:  # noqa: BLE001
+            logger.opt(exception=exc).warning(
+                "UltraWiki init failed — /api/ultrawiki answers 503"
+            )
+        _boot_mark("ultrawiki")
+
         # Voice-session recorder + store for the transcription view.
         # Sub-setup: runs sync (SQLite-WAL, no async loop needed), but is
         # run in start() so the EventBus is guaranteed to be alive.
@@ -2612,6 +2633,26 @@ class WebServer:
                 logger.opt(exception=True).warning("wiki auto-backfill pass failed")
             await asyncio.sleep(interval_s)
 
+    async def _init_ultrawiki(self) -> None:
+        """UltraWiki (semantic memory mode): wire the service handle.
+
+        The constructor is deliberately cheap (no I/O, no heavy import), so it
+        ALWAYS runs — the REST surface must be able to activate the mode from
+        a disabled state in-app. The store and the staged pipeline start only
+        while ``cfg.ultrawiki.enabled`` is true; a later in-app enable reaches
+        ``ensure_started()`` again through the routes (AP-26: nothing here
+        touches the boot-critical or voice path).
+        """
+        from jarvis.ultrawiki.service import UltraWikiService
+
+        service = UltraWikiService(self.cfg, bus=self.bus)
+        self.app.state.ultrawiki = service
+        if bool(getattr(getattr(self.cfg, "ultrawiki", None), "enabled", False)):
+            await service.ensure_started()
+            logger.info("ultrawiki: service started (mode enabled)")
+        else:
+            logger.info("ultrawiki: service constructed (mode disabled — dormant)")
+
     def _init_wiki_boot_index(self, *, background: bool = False) -> None:
         """Rebuild the derived FTS view against the active vault.
 
@@ -3014,6 +3055,18 @@ class WebServer:
         if backfill_task is not None:
             backfill_task.cancel()
             self._wiki_backfill_task = None
+
+        # UltraWiki: the service owns the ordering internally — cancel the
+        # pipeline + every sync task (cancel, then wait_for(2 s) each), THEN
+        # close its store. Runs before the store-dependent closes below so no
+        # loop ever ticks against a closed connection.
+        ultrawiki_service = getattr(self.app.state, "ultrawiki", None)
+        if ultrawiki_service is not None:
+            try:
+                await ultrawiki_service.shutdown()
+            except Exception as exc:  # noqa: BLE001 — shutdown best-effort
+                logger.opt(exception=exc).debug("UltraWiki shutdown failed: {}", exc)
+            self.app.state.ultrawiki = None
 
         # Phase B5 wiki write-wiring: unsubscribe + drain in-flight rollup task.
         wiki_handle = getattr(self, "_wiki_integration_handle", None)

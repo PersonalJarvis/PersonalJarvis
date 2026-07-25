@@ -1,0 +1,836 @@
+"""UltraWikiService — the one object the web layer talks to.
+
+Lifecycle discipline (AP-26 + the WebServer.stop() teardown contract):
+
+- The constructor is CHEAP: no I/O, no store open, no heavy import. The web
+  layer constructs the service eagerly and calls :meth:`ensure_started` off
+  the boot critical path.
+- :meth:`ensure_started` opens the store (SQLite floor, or Postgres via the
+  ``ultrawiki_db_url`` secret when ``cfg.ultrawiki.db_backend`` says so —
+  falling back honestly to SQLite when the URL/driver/server is missing) and
+  starts the staged pipeline as a NAMED task held on an attribute.
+- :meth:`shutdown` follows the cancel-then-``wait_for(2 s)`` discipline for
+  the pipeline task and every running sync job, THEN closes the store —
+  never the other way around (a loop must not tick against a closed
+  connection).
+
+Consent is policy here, not in the store: :meth:`activate` registers the
+default local sources with consent PENDING and pulls NOTHING;
+:meth:`start_sync` refuses unless the source is explicitly approved AND
+UltraWiki is enabled.
+
+Sync jobs run as detached named tasks streaming connector items into
+``store.upsert_items`` in chunks with per-chunk sync-state checkpoints; the
+module-level job registry mirrors ``jarvis/harness/cu_run_registry.py``
+(bounded, in-memory, JSON-safe snapshots, never breaks a job).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import dataclasses
+import logging
+import re
+import time
+import uuid
+from collections import OrderedDict
+from collections.abc import AsyncIterator, Awaitable, Callable
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from typing import Any
+
+from jarvis.ultrawiki.types import (
+    ConnectorContext,
+    ConsentState,
+    IncrementalMode,
+    PipelineCounts,
+    RawItem,
+)
+
+log = logging.getLogger(__name__)
+
+__all__ = [
+    "SYNC_CHUNK_SIZE",
+    "JOB_ACTIVE_STATUSES",
+    "JOB_TERMINAL_STATUSES",
+    "SyncJob",
+    "UltraWikiService",
+    "clear_jobs",
+]
+
+#: Items per ``upsert_items`` transaction / sync-state checkpoint.
+SYNC_CHUNK_SIZE = 200
+
+#: The default local sources :meth:`UltraWikiService.activate` registers —
+#: source id == connector id for these singletons.
+_DEFAULT_SOURCES: tuple[tuple[str, str], ...] = (
+    ("normal-wiki", "Built-in Wiki"),
+    ("jarvis-conversations", "Jarvis Conversations"),
+)
+
+_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _slugify(name: str) -> str:
+    return _SLUG_RE.sub("-", name.lower()).strip("-") or "area"
+
+
+def _iso_now() -> str:
+    return datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _counts_dict(counts: PipelineCounts) -> dict[str, int]:
+    return {**dataclasses.asdict(counts), "total": counts.total}
+
+
+# ---------------------------------------------------------------------------
+# Bounded in-module sync-job registry (mirror of cu_run_registry.py)
+# ---------------------------------------------------------------------------
+
+#: Bounded history: the oldest TERMINAL jobs are evicted past this size.
+_MAX_JOBS = 100
+
+JOB_TERMINAL_STATUSES = frozenset({"done", "failed", "cancelled"})
+JOB_ACTIVE_STATUSES = frozenset({"queued", "running"})
+
+
+@dataclass
+class SyncJob:
+    """One sync run's control-plane view (in-memory, not history)."""
+
+    job_id: str
+    source_id: str
+    mode: str  # "backfill" | "incremental"
+    status: str = "queued"
+    started_at: float = field(default_factory=time.time)
+    ended_at: float | None = None
+    chunks: int = 0
+    new: int = 0
+    changed: int = 0
+    unchanged: int = 0
+    tombstoned: int = 0
+    error: str = ""
+    #: The asyncio.Task while the job is active; cleared when it ends.
+    task: Any = None
+
+    def snapshot(self) -> dict[str, Any]:
+        """JSON-safe public view (never exposes the task)."""
+        return {
+            "job_id": self.job_id,
+            "source_id": self.source_id,
+            "mode": self.mode,
+            "status": self.status,
+            "started_at": self.started_at,
+            "ended_at": self.ended_at,
+            "chunks": self.chunks,
+            "new": self.new,
+            "changed": self.changed,
+            "unchanged": self.unchanged,
+            "tombstoned": self.tombstoned,
+            "error": self.error,
+        }
+
+
+_JOBS: OrderedDict[str, SyncJob] = OrderedDict()
+
+
+def _evict_jobs_if_needed() -> None:
+    if len(_JOBS) <= _MAX_JOBS:
+        return
+    for job_id, job in list(_JOBS.items()):
+        if len(_JOBS) <= _MAX_JOBS:
+            break
+        if job.status in JOB_TERMINAL_STATUSES:
+            _JOBS.pop(job_id, None)
+
+
+def _register_job(job: SyncJob) -> None:
+    try:
+        _JOBS[job.job_id] = job
+        _evict_jobs_if_needed()
+    except Exception:  # noqa: BLE001 — the registry must never break a sync
+        log.debug("ultrawiki job register failed", exc_info=True)
+
+
+def _get_job(job_id: str) -> SyncJob | None:
+    return _JOBS.get(job_id)
+
+
+def _list_job_snapshots(limit: int = 20) -> list[dict[str, Any]]:
+    jobs = list(_JOBS.values())
+    jobs.sort(key=lambda j: j.started_at, reverse=True)
+    return [j.snapshot() for j in jobs[: max(1, int(limit))]]
+
+
+def _cancel_job(job_id: str) -> bool:
+    """Cancel ONE active job. False when unknown or already terminal."""
+    job = _JOBS.get(job_id)
+    if job is None or job.status in JOB_TERMINAL_STATUSES or job.task is None:
+        return False
+    try:
+        job.task.cancel()
+    except Exception:  # noqa: BLE001 — a broken task must not 500 the API
+        log.debug("ultrawiki job cancel failed", exc_info=True)
+        return False
+    return True
+
+
+def clear_jobs() -> None:
+    """Test/teardown helper — wipes the job registry."""
+    _JOBS.clear()
+
+
+# ---------------------------------------------------------------------------
+# The service
+# ---------------------------------------------------------------------------
+
+
+class UltraWikiService:
+    """Facade over store + pipeline + connectors for the REST/CLI surface.
+
+    ``embedding_backend_factory`` and ``distill_fn`` are injectable test
+    seams; production leaves them ``None`` (the configured backend registry
+    and ``distill_text`` are resolved lazily).
+    """
+
+    def __init__(
+        self,
+        cfg: Any,
+        bus: Any = None,
+        *,
+        embedding_backend_factory: Callable[[], Any] | None = None,
+        distill_fn: Callable[..., Awaitable[Any]] | None = None,
+    ) -> None:
+        self._cfg = cfg
+        self._bus = bus
+        self._store: Any = None
+        self._backend_in_use = ""
+        self._pipeline: Any = None
+        self._pipeline_task: asyncio.Task[None] | None = None
+        self._cancel_event: asyncio.Event | None = None
+        self._start_lock = asyncio.Lock()
+        self._sync_tasks: dict[str, asyncio.Task[None]] = {}
+        self._degradations: list[str] = []
+        self._embedding_backend_factory = (
+            embedding_backend_factory or self._default_backend_factory
+        )
+        self._injected_distill_fn = distill_fn
+
+    # -- config helpers ------------------------------------------------------
+
+    def _uw_cfg(self) -> Any:
+        return getattr(self._cfg, "ultrawiki", None)
+
+    def _uw_enabled(self) -> bool:
+        return bool(getattr(self._uw_cfg(), "enabled", False))
+
+    def _note_degradation(self, reason: str) -> None:
+        if reason not in self._degradations:
+            self._degradations.append(reason)
+            log.warning("UltraWiki degraded: %s", reason)
+
+    # -- default provider seams ---------------------------------------------
+
+    def _default_backend_factory(self) -> Any:
+        """The configured embedding backend, or ``None`` (unconfigured slot)."""
+        provider = str(getattr(self._uw_cfg(), "embedding_provider", "") or "").strip()
+        if not provider:
+            return None
+        from jarvis.ultrawiki.embeddings import (  # noqa: PLC0415 — lazy (AP-26)
+            EMBEDDING_BACKENDS,
+        )
+
+        factory = EMBEDDING_BACKENDS.get(provider)
+        if factory is None:
+            log.warning(
+                "UltraWiki: unknown embedding provider %r - the embed stage "
+                "stays paused",
+                provider,
+            )
+            return None
+        return factory(self._cfg)
+
+    async def _call_distill(
+        self, cfg: Any, *, title: str, body: str, source_kind: str
+    ) -> Any:
+        if self._injected_distill_fn is not None:
+            return await self._injected_distill_fn(
+                cfg, title=title, body=body, source_kind=source_kind
+            )
+        from jarvis.ultrawiki.distill import distill_text  # noqa: PLC0415 — lazy
+
+        return await distill_text(cfg, title=title, body=body, source_kind=source_kind)
+
+    # -- lifecycle -----------------------------------------------------------
+
+    async def ensure_started(self) -> None:
+        """Open the store and start the pipeline (idempotent, off boot path).
+
+        The pipeline only starts while ``cfg.ultrawiki.enabled`` is true; a
+        later enable is picked up by the next ``ensure_started`` call.
+        """
+        async with self._start_lock:
+            if self._store is None:
+                self._store = await self._open_store()
+            if self._uw_enabled() and self._pipeline_task is None:
+                from jarvis.ultrawiki.pipeline import (  # noqa: PLC0415 — lazy
+                    PipelineWorker,
+                )
+
+                self._cancel_event = asyncio.Event()
+                self._pipeline = PipelineWorker(
+                    self._store,
+                    self._cfg,
+                    embedding_backend_factory=self._embedding_backend_factory,
+                    distill_fn=self._call_distill,
+                )
+                self._pipeline_task = asyncio.create_task(
+                    self._pipeline.run(self._cancel_event),
+                    name="ultrawiki-pipeline",
+                )
+
+    async def _open_store(self) -> Any:
+        from jarvis.ultrawiki import store as store_mod  # noqa: PLC0415 — lazy
+
+        backend = str(getattr(self._uw_cfg(), "db_backend", "sqlite") or "sqlite")
+        if backend.strip().lower() == "postgres":
+            from jarvis.core.config import get_secret  # noqa: PLC0415 — lazy
+
+            conn_str = get_secret("ultrawiki_db_url")
+            if not conn_str:
+                self._note_degradation(
+                    "the Postgres backend is configured but no "
+                    "'ultrawiki_db_url' connection string is saved - falling "
+                    "back to the local SQLite store"
+                )
+            else:
+                pg_store = store_mod.PostgresStore(conn_str)
+                try:
+                    await pg_store.open()
+                except Exception as exc:  # noqa: BLE001 — degrade, never brick
+                    self._note_degradation(
+                        f"the Postgres store is unavailable ({exc}) - falling "
+                        "back to the local SQLite store"
+                    )
+                else:
+                    self._backend_in_use = "postgres"
+                    return pg_store
+        data_dir = getattr(getattr(self._cfg, "memory", None), "data_dir", None)
+        sqlite_store = store_mod.UltraStore(
+            store_mod.resolve_ultrawiki_db_path(data_dir)
+        )
+        await sqlite_store.open()
+        self._backend_in_use = "sqlite"
+        return sqlite_store
+
+    async def shutdown(self) -> None:
+        """Cancel pipeline + sync tasks (cancel, then ``wait_for(2 s)``),
+        THEN close the store."""
+        async with self._start_lock:
+            if self._cancel_event is not None:
+                self._cancel_event.set()
+            task = self._pipeline_task
+            if task is not None:
+                task.cancel()
+                try:
+                    await asyncio.wait_for(task, timeout=2.0)
+                except (TimeoutError, asyncio.CancelledError):
+                    pass
+                except Exception as exc:  # noqa: BLE001 — shutdown best-effort
+                    log.warning("UltraWiki pipeline shutdown error: %s", exc)
+                self._pipeline_task = None
+            for job_id, sync_task in list(self._sync_tasks.items()):
+                sync_task.cancel()
+                try:
+                    await asyncio.wait_for(sync_task, timeout=2.0)
+                except (TimeoutError, asyncio.CancelledError):
+                    pass
+                except Exception as exc:  # noqa: BLE001 — shutdown best-effort
+                    log.warning("UltraWiki sync %s shutdown error: %s", job_id, exc)
+            self._sync_tasks.clear()
+            if self._store is not None:
+                try:
+                    await self._store.close()
+                except Exception as exc:  # noqa: BLE001 — shutdown best-effort
+                    log.warning("UltraWiki store close failed: %s", exc)
+                self._store = None
+            self._pipeline = None
+            self._cancel_event = None
+            self._backend_in_use = ""
+
+    def _require_store(self) -> Any:
+        if self._store is None:
+            raise RuntimeError(
+                "UltraWiki is not started - call ensure_started() first"
+            )
+        return self._store
+
+    # -- status --------------------------------------------------------------
+
+    async def status(self) -> dict[str, Any]:
+        """Honest capability + backlog report for the settings surface."""
+        started = self._store is not None
+        counts = PipelineCounts()
+        sources: list[dict[str, Any]] = []
+        vector: dict[str, Any] = {"ready": False, "reason": "store not started"}
+        if started:
+            try:
+                counts = await self._store.counts()
+                sources = [
+                    self._source_summary(row)
+                    for row in await self._store.list_sources()
+                ]
+            except Exception as exc:  # noqa: BLE001 — status never raises
+                self._note_degradation(f"store status query failed ({exc})")
+            try:
+                vec_ok, vec_reason = await self._store.vector_status()
+                vector = {"ready": bool(vec_ok), "reason": vec_reason}
+            except Exception as exc:  # noqa: BLE001 — status never raises
+                vector = {"ready": False, "reason": f"vector probe failed ({exc})"}
+        pipeline_running = (
+            self._pipeline_task is not None and not self._pipeline_task.done()
+        )
+        processed = (
+            self._pipeline.processed_counts() if self._pipeline is not None else {}
+        )
+        return {
+            "enabled": self._uw_enabled(),
+            "started": started,
+            "backend": {
+                "configured": str(
+                    getattr(self._uw_cfg(), "db_backend", "sqlite") or "sqlite"
+                ),
+                "in_use": self._backend_in_use,
+            },
+            "slots": {
+                "embedding": self._embedding_slot_status(),
+                "distill": self._distill_slot_status(),
+                "rerank": self._rerank_slot_status(),
+            },
+            "vector": vector,
+            "counts": _counts_dict(counts),
+            "pipeline": {"running": pipeline_running, "processed": processed},
+            "sources": sources,
+            "jobs": _list_job_snapshots(10),
+            "degradations": list(self._degradations),
+        }
+
+    @staticmethod
+    def _source_summary(row: dict[str, Any]) -> dict[str, Any]:
+        counts = row.get("counts")
+        return {
+            "id": row.get("id"),
+            "connector": row.get("connector"),
+            "label": row.get("label"),
+            "consent": row.get("consent"),
+            "enabled": row.get("enabled"),
+            "areas": row.get("areas", []),
+            "counts": _counts_dict(counts)
+            if isinstance(counts, PipelineCounts)
+            else counts,
+            "sync_state": row.get("sync_state"),
+            "last_sync_at": row.get("last_sync_at"),
+            "last_error": row.get("last_error"),
+        }
+
+    def _embedding_slot_status(self) -> dict[str, Any]:
+        provider = str(getattr(self._uw_cfg(), "embedding_provider", "") or "").strip()
+        model = str(getattr(self._uw_cfg(), "embedding_model", "") or "").strip()
+        try:
+            from jarvis.ultrawiki import embeddings as embeddings_mod  # noqa: PLC0415
+
+            available = embeddings_mod.available_backends(self._cfg)
+        except Exception as exc:  # noqa: BLE001 — status never raises
+            return {
+                "provider": provider,
+                "model": model,
+                "ready": False,
+                "reason": f"embedding backend probe failed ({type(exc).__name__})",
+                "available": [],
+            }
+        row = next((r for r in available if r.get("name") == provider), None)
+        if not provider:
+            ready, reason = False, "no embedding provider is configured"
+        elif row is None:
+            ready, reason = False, f"unknown embedding provider {provider!r}"
+        else:
+            ready, reason = bool(row.get("ready")), str(row.get("reason") or "")
+        return {
+            "provider": provider,
+            "model": model or (str(row.get("default_model") or "") if row else ""),
+            "ready": ready,
+            "reason": reason,
+            "available": available,
+        }
+
+    def _distill_slot_status(self) -> dict[str, Any]:
+        provider = str(getattr(self._uw_cfg(), "distill_provider", "") or "").strip()
+        model = str(getattr(self._uw_cfg(), "distill_model", "") or "").strip()
+        try:
+            from jarvis.brain.provider_registry import (  # noqa: PLC0415 — lazy
+                BrainProviderRegistry,
+            )
+            from jarvis.memory.wiki.provider_chain import (  # noqa: PLC0415 — lazy
+                credential_ready_wiki_providers,
+            )
+
+            available = set(BrainProviderRegistry().available())
+            chain = sorted(
+                credential_ready_wiki_providers(available=available, config=self._cfg)
+            )
+        except Exception as exc:  # noqa: BLE001 — status never raises
+            return {
+                "provider": provider,
+                "model": model,
+                "ready": False,
+                "reason": f"distill chain probe failed ({type(exc).__name__})",
+                "chain": [],
+            }
+        ready = bool(chain)
+        reason = (
+            ""
+            if ready
+            else "no credential-ready chat provider is available for distillation"
+        )
+        return {
+            "provider": provider,
+            "model": model,
+            "ready": ready,
+            "reason": reason,
+            "chain": chain,
+        }
+
+    def _rerank_slot_status(self) -> dict[str, Any]:
+        provider = str(getattr(self._uw_cfg(), "rerank_provider", "") or "").strip()
+        try:
+            from jarvis.ultrawiki import rerank as rerank_mod  # noqa: PLC0415 — lazy
+
+            available = rerank_mod.available_rerankers(self._cfg)
+        except Exception as exc:  # noqa: BLE001 — status never raises
+            return {
+                "provider": provider,
+                "ready": False,
+                "reason": f"rerank backend probe failed ({type(exc).__name__})",
+                "available": [],
+            }
+        row = next((r for r in available if r.get("name") == provider), None)
+        if not provider:
+            ready = False
+            reason = "rerank is not configured - the fusion order stands (optional stage)"
+        elif row is None:
+            ready, reason = False, f"unknown rerank provider {provider!r}"
+        else:
+            ready, reason = bool(row.get("ready")), str(row.get("reason") or "")
+        return {
+            "provider": provider,
+            "ready": ready,
+            "reason": reason,
+            "available": available,
+        }
+
+    # -- activation & sources ------------------------------------------------
+
+    async def activate(self, payload: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Pure-domain activation: seed areas + register the default local
+        sources with consent PENDING. Writes NO config and pulls NOTHING —
+        approval (and any pull) is a separate, explicit user step."""
+        await self.ensure_started()
+        store = self._require_store()
+        payload = payload or {}
+        default_area = await store.ensure_default_area()
+        created_areas: list[str] = []
+        for name in payload.get("areas", []) or []:
+            label = str(name).strip()
+            if not label:
+                continue
+            slug = _slugify(label)
+            await store.upsert_area(slug, label)
+            created_areas.append(slug)
+        sources_created: list[str] = []
+        sources_existing: list[str] = []
+        for source_id, label in _DEFAULT_SOURCES:
+            if await store.get_source(source_id) is not None:
+                sources_existing.append(source_id)
+                continue
+            await store.upsert_source(
+                source_id,
+                connector=source_id,
+                label=label,
+                config={},
+                areas=[default_area],
+            )
+            sources_created.append(source_id)
+        return {
+            "default_area": default_area,
+            "areas_created": created_areas,
+            "sources_created": sources_created,
+            "sources_existing": sources_existing,
+        }
+
+    async def add_source(
+        self,
+        connector_id: str,
+        label: str,
+        config: dict[str, Any] | None = None,
+        area_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Register a new source (consent PENDING — nothing is pulled)."""
+        await self.ensure_started()
+        store = self._require_store()
+        from jarvis.ultrawiki import connectors as connectors_mod  # noqa: PLC0415
+
+        registry = connectors_mod.discover_connectors()
+        if connector_id not in registry:
+            raise ValueError(
+                f"unknown connector {connector_id!r} "
+                f"(available: {', '.join(sorted(registry))})"
+            )
+        source_id = f"{connector_id}-{uuid.uuid4().hex[:8]}"
+        await store.upsert_source(
+            source_id,
+            connector=connector_id,
+            label=label,
+            config=dict(config or {}),
+            areas=list(area_ids or []),
+        )
+        source = await store.get_source(source_id)
+        assert source is not None
+        return source
+
+    async def approve_source(self, source_id: str) -> dict[str, Any]:
+        return await self._set_consent(source_id, ConsentState.APPROVED)
+
+    async def revoke_source(self, source_id: str) -> dict[str, Any]:
+        return await self._set_consent(source_id, ConsentState.REVOKED)
+
+    async def _set_consent(
+        self, source_id: str, consent: ConsentState
+    ) -> dict[str, Any]:
+        await self.ensure_started()
+        store = self._require_store()
+        if await store.get_source(source_id) is None:
+            raise ValueError(f"unknown source {source_id!r}")
+        await store.set_consent(source_id, consent)
+        source = await store.get_source(source_id)
+        assert source is not None
+        return source
+
+    # -- sync jobs -----------------------------------------------------------
+
+    async def start_sync(self, source_id: str) -> str:
+        """Start a backfill/incremental sync as a detached named task.
+
+        Refuses (``ValueError``) unless UltraWiki is enabled AND the source
+        holds explicit approved consent — no connector pulls a single byte
+        before then.
+        """
+        if not self._uw_enabled():
+            raise ValueError(
+                "UltraWiki is disabled - enable it in the Wiki settings "
+                "before syncing sources"
+            )
+        await self.ensure_started()
+        store = self._require_store()
+        source = await store.get_source(source_id)
+        if source is None:
+            raise ValueError(f"unknown source {source_id!r}")
+        if source.get("consent") != ConsentState.APPROVED.value:
+            raise ValueError(
+                f"source {source_id!r} is not approved (consent is "
+                f"{source.get('consent')!r}) - nothing is pulled before the "
+                "source is explicitly approved"
+            )
+        if not source.get("enabled", False):
+            raise ValueError(f"source {source_id!r} is disabled")
+        connector = self._build_connector(str(source.get("connector") or ""))
+        sync_state = await store.get_sync_state(source_id) or {}
+        capabilities = getattr(connector, "capabilities", None)
+        incremental_mode = getattr(
+            capabilities, "incremental", IncrementalMode.NONE
+        )
+        use_incremental = bool(sync_state.get("backfill_complete_at")) and (
+            incremental_mode != IncrementalMode.NONE
+        )
+        mode = "incremental" if use_incremental else "backfill"
+        job = SyncJob(
+            job_id=uuid.uuid4().hex[:12], source_id=source_id, mode=mode
+        )
+        _register_job(job)
+        task = asyncio.create_task(
+            self._run_sync(job, source, connector, sync_state),
+            name=f"ultrawiki-sync-{source_id}-{job.job_id}",
+        )
+        job.task = task
+        self._sync_tasks[job.job_id] = task
+        task.add_done_callback(
+            lambda _t, jid=job.job_id: self._sync_tasks.pop(jid, None)
+        )
+        return job.job_id
+
+    def _build_connector(self, connector_id: str) -> Any:
+        from jarvis.ultrawiki import connectors as connectors_mod  # noqa: PLC0415
+
+        factory = connectors_mod.discover_connectors().get(connector_id)
+        if factory is None:
+            raise ValueError(
+                f"no connector {connector_id!r} is installed for this source"
+            )
+        return factory()
+
+    def _connector_context(self, source: dict[str, Any]) -> ConnectorContext:
+        def _secret_get(name: str) -> str | None:
+            from jarvis.core.config import get_secret  # noqa: PLC0415 — lazy
+
+            return get_secret(name)
+
+        return ConnectorContext(
+            source_id=str(source.get("id") or ""),
+            config=dict(source.get("config") or {}),
+            secret_get=_secret_get,
+        )
+
+    async def _run_sync(
+        self,
+        job: SyncJob,
+        source: dict[str, Any],
+        connector: Any,
+        sync_state: dict[str, Any],
+    ) -> None:
+        store = self._require_store()
+        source_id = job.source_id
+        ctx = self._connector_context(source)
+        job.status = "running"
+        checkpoint = sync_state.get("backfill_checkpoint")
+        # Delete-reconcile needs the COMPLETE yielded-id set, which only a
+        # backfill running from the very beginning can provide.
+        full_backfill = job.mode == "backfill" and not checkpoint
+        max_cursor = self._parse_cursor(sync_state.get("cursor"))
+        yielded_ids: set[str] = set()
+        buffer: list[RawItem] = []
+        try:
+            if job.mode == "incremental":
+                stream: AsyncIterator[RawItem] = connector.incremental(
+                    ctx, sync_state.get("cursor")
+                )
+            else:
+                stream = connector.backfill(ctx, checkpoint)
+            async for item in stream:
+                buffer.append(item)
+                if job.mode == "backfill" and not item.deleted:
+                    yielded_ids.add(item.external_id)
+                if len(buffer) >= SYNC_CHUNK_SIZE:
+                    max_cursor = await self._flush_chunk(
+                        job, source_id, buffer, max_cursor
+                    )
+                    buffer = []
+            if buffer:
+                max_cursor = await self._flush_chunk(
+                    job, source_id, buffer, max_cursor
+                )
+            now = _iso_now()
+            if job.mode == "backfill":
+                deletes_capable = bool(
+                    getattr(getattr(connector, "capabilities", None), "deletes", False)
+                )
+                if full_backfill and deletes_capable:
+                    job.tombstoned += await store.reconcile_deletes(
+                        source_id, yielded_ids
+                    )
+                await store.set_sync_state(
+                    source_id, backfill_complete_at=now, last_success_at=now
+                )
+            else:
+                await store.set_sync_state(source_id, last_success_at=now)
+            await store.set_source_status(
+                source_id, last_sync_at=now, last_error=None
+            )
+            job.status = "done"
+        except asyncio.CancelledError:
+            job.status = "cancelled"
+            raise
+        except Exception as exc:  # noqa: BLE001 — the job records, never crashes callers
+            log.exception(
+                "UltraWiki sync %s for source %s failed", job.job_id, source_id
+            )
+            job.status = "failed"
+            job.error = f"{type(exc).__name__}: {exc}"
+            try:
+                await store.set_source_status(source_id, last_error=job.error)
+            except Exception:  # noqa: BLE001 — best-effort bookkeeping
+                log.debug("sync error bookkeeping failed", exc_info=True)
+        finally:
+            job.ended_at = time.time()
+            job.task = None
+
+    async def _flush_chunk(
+        self,
+        job: SyncJob,
+        source_id: str,
+        items: list[RawItem],
+        max_cursor: int | None,
+    ) -> int | None:
+        store = self._require_store()
+        counts = await store.upsert_items(source_id, items)
+        job.chunks += 1
+        job.new += counts.new
+        job.changed += counts.changed
+        job.unchanged += counts.unchanged
+        job.tombstoned += counts.tombstoned
+        # Cursor advance from item metadata (connector convention: file
+        # walkers carry 'mtime_ns', jarvis-conversations carries 'max_rowid').
+        for item in items:
+            for key in ("mtime_ns", "max_rowid"):
+                value = item.metadata.get(key)
+                if value is None:
+                    continue
+                try:
+                    numeric = int(value)
+                except (TypeError, ValueError):
+                    continue
+                if max_cursor is None or numeric > max_cursor:
+                    max_cursor = numeric
+        updates: dict[str, Any] = {}
+        if job.mode == "backfill":
+            updates["backfill_checkpoint"] = items[-1].external_id
+        if max_cursor is not None:
+            updates["cursor"] = str(max_cursor)
+        if updates:
+            await store.set_sync_state(source_id, **updates)
+        return max_cursor
+
+    @staticmethod
+    def _parse_cursor(cursor: Any) -> int | None:
+        if cursor is None or cursor == "":
+            return None
+        try:
+            return int(cursor)
+        except (TypeError, ValueError):
+            return None
+
+    # -- job registry surface ------------------------------------------------
+
+    def job_snapshot(self, job_id: str) -> dict[str, Any] | None:
+        job = _get_job(job_id)
+        return job.snapshot() if job is not None else None
+
+    def list_jobs(self, limit: int = 20) -> list[dict[str, Any]]:
+        return _list_job_snapshots(limit)
+
+    def cancel_job(self, job_id: str) -> bool:
+        return _cancel_job(job_id)
+
+    # -- search --------------------------------------------------------------
+
+    async def search(self, query: str, **kwargs: Any) -> Any:
+        """Delegate to the retrieval module (built separately); lazy import
+        keeps this module cheap and decoupled from the read path."""
+        await self.ensure_started()
+        try:
+            from jarvis.ultrawiki import search as search_mod  # noqa: PLC0415
+        except ImportError as exc:
+            raise RuntimeError(
+                "UltraWiki search is not available in this build"
+            ) from exc
+        return await search_mod.search(
+            store=self._require_store(), cfg=self._cfg, query=query, **kwargs
+        )
