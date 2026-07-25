@@ -36,7 +36,8 @@ export type SectionId =
   | "contacts"
   | "feedback"
   | "agent-instructions"
-  | "dictionary";
+  | "dictionary"
+  | "agentic-ide";
 
 export const SECTION_IDS = [
   "chats",
@@ -65,6 +66,7 @@ export const SECTION_IDS = [
   "feedback",
   "agent-instructions",
   "dictionary",
+  "agentic-ide",
 ] as const satisfies readonly SectionId[];
 
 export function isSectionId(value: unknown): value is SectionId {
@@ -102,6 +104,7 @@ export const SECTION_LABELS: Record<SectionId, string> = {
   feedback: "Feedback",
   "agent-instructions": "Agent Instructions",
   dictionary: "Dictionary",
+  "agentic-ide": "Agentic IDE",
 };
 
 export interface EventItem {

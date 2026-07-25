@@ -3568,6 +3568,19 @@ class BrainManager:
         if self._wiki_context_suffix and not self._cache_optimized():
             parts.append(self._wiki_context_suffix)
 
+        # Agentic IDE: while the user has the focused coding mode ON, this turn
+        # is answered inside their open workspace — the folder, the codebase
+        # profile, and what each named terminal (Mika, Nova, …) last printed.
+        # Off / no session = empty string = no block, so this is inert for every
+        # user who never opens the IDE. In cache-optimized mode the block rides
+        # the per-turn user message instead (see _build_turn_context), because
+        # it changes as the agents print and would otherwise break the cached
+        # system prefix every turn.
+        if not self._cache_optimized():
+            agentic_block = self._agentic_focus_block()
+            if agentic_block:
+                parts.append(agentic_block)
+
         # Active-model self-awareness: tell THIS turn's actually-answering
         # provider/model who it is, so a "which model are you?" question gets an
         # honest answer instead of a guessed "Gemini" (forensic 2026-06-20: Grok
@@ -3692,7 +3705,25 @@ class BrainManager:
                 pass
         if self._wiki_context_suffix:
             parts.append(self._wiki_context_suffix)
+        agentic_block = self._agentic_focus_block()
+        if agentic_block:
+            parts.append(agentic_block)
         return "\n\n".join(p for p in parts if p)
+
+    def _agentic_focus_block(self) -> str:
+        """Workspace-awareness block while the Agentic IDE's focus mode is on.
+
+        Pure in-memory read (the session's cached project profile + each
+        terminal's ring buffer), so it stays off the latency budget the way
+        awareness does (AP-9). Any failure degrades to no block — a coding-mode
+        convenience must never be able to break a voice turn.
+        """
+        try:
+            from jarvis.agentic_ide.context import focus_context_block
+
+            return focus_context_block()
+        except Exception:  # noqa: BLE001 - feature absent or mid-reload
+            return ""
 
     # ------------------------------------------------------------------
     # Explicit switching

@@ -1,0 +1,330 @@
+"""Folder picking + cheap project profiling for the Agentic IDE.
+
+Two jobs:
+
+*Picking* — the wizard's first step lets the user choose ANY folder on the
+machine, so this module lists directories the way a file dialog would, but over
+REST (the desktop app is a web UI; a native folder dialog would exist on one OS
+and not the others). Start points are discovered per platform: drive letters on
+Windows, ``/`` plus the mounted volumes on macOS/Linux, always the home folder
+and a handful of conventional code directories.
+
+*Profiling* — once a folder is chosen, Jarvis needs to be able to answer "what
+is this codebase?" without reading it file by file. ``probe_project`` collects a
+compact profile from a SINGLE shallow directory scan plus a few file-existence
+checks: git branch, detected stacks, the agent instruction files that are
+actually present, and the skills the repo defines. Deliberately shallow — no
+recursive walk — because this runs when a session starts and its result is what
+gets folded into the voice turn's context (AP-9: awareness work stays off the
+hot path; here it is computed once and cached in the session).
+"""
+from __future__ import annotations
+
+import os
+from dataclasses import asdict, dataclass, field
+from pathlib import Path
+
+# Directory names that are never interesting as a project root and would bury
+# the real folders in the picker.
+_SKIP_DIRS = frozenset(
+    {
+        "node_modules",
+        "__pycache__",
+        ".git",
+        ".venv",
+        "venv",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        "dist",
+        "build",
+        ".next",
+        ".turbo",
+        "target",
+        ".idea",
+        ".vscode-test",
+        "$RECYCLE.BIN",
+        "System Volume Information",
+    }
+)
+
+# marker file/dir -> stack label. Order is irrelevant; all matches are reported.
+_STACK_MARKERS: tuple[tuple[str, str], ...] = (
+    ("pyproject.toml", "Python"),
+    ("requirements.txt", "Python"),
+    ("setup.py", "Python"),
+    ("package.json", "Node / JavaScript"),
+    ("tsconfig.json", "TypeScript"),
+    ("Cargo.toml", "Rust"),
+    ("go.mod", "Go"),
+    ("pom.xml", "Java / Maven"),
+    ("build.gradle", "Java / Gradle"),
+    ("Gemfile", "Ruby"),
+    ("composer.json", "PHP"),
+    ("Dockerfile", "Docker"),
+    ("docker-compose.yml", "Docker Compose"),
+    ("pubspec.yaml", "Dart / Flutter"),
+    ("*.csproj", ".NET"),
+)
+
+# Files a coding agent reads as its standing instructions. Which of these exist
+# tells the user (and Jarvis) how well-briefed an agent in this folder will be.
+_INSTRUCTION_FILES: tuple[str, ...] = (
+    "CLAUDE.md",
+    "AGENTS.md",
+    "GEMINI.md",
+    ".cursorrules",
+    "CONTRIBUTING.md",
+    "README.md",
+)
+
+_MAX_ENTRIES = 400
+_MAX_SKILLS = 60
+
+
+@dataclass(frozen=True, slots=True)
+class FolderEntry:
+    """One directory in the picker."""
+
+    name: str
+    path: str
+    is_project: bool
+    is_repo: bool
+
+
+@dataclass(slots=True)
+class ProjectProfile:
+    """Compact, cheap description of a chosen folder."""
+
+    path: str
+    name: str
+    exists: bool = True
+    is_repo: bool = False
+    branch: str | None = None
+    stacks: list[str] = field(default_factory=list)
+    instruction_files: list[str] = field(default_factory=list)
+    top_level_dirs: list[str] = field(default_factory=list)
+    skills: list[str] = field(default_factory=list)
+    note: str = ""
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    def summary_lines(self) -> list[str]:
+        """Plain-text lines for a model-facing context block."""
+        out = [f"Folder: {self.path}"]
+        if not self.exists:
+            out.append("This folder no longer exists on disk.")
+            return out
+        if self.is_repo:
+            out.append(f"Git repository{f' on branch {self.branch}' if self.branch else ''}.")
+        if self.stacks:
+            out.append("Stack: " + ", ".join(self.stacks))
+        if self.instruction_files:
+            out.append("Agent instructions present: " + ", ".join(self.instruction_files))
+        if self.top_level_dirs:
+            out.append("Top-level folders: " + ", ".join(self.top_level_dirs))
+        if self.skills:
+            shown = ", ".join(self.skills[:20])
+            more = "" if len(self.skills) <= 20 else f" (+{len(self.skills) - 20} more)"
+            out.append(f"Skills defined here ({len(self.skills)}): {shown}{more}")
+        return out
+
+
+def _is_hidden(name: str) -> bool:
+    return name.startswith(".")
+
+
+def _looks_like_project(entry_path: Path) -> tuple[bool, bool]:
+    """(is_project, is_repo) from marker files, without descending."""
+    is_repo = (entry_path / ".git").exists()
+    if is_repo:
+        return True, True
+    for marker, _label in _STACK_MARKERS:
+        if "*" in marker:
+            continue
+        if (entry_path / marker).exists():
+            return True, False
+    return False, False
+
+
+def start_points() -> list[FolderEntry]:
+    """Platform-appropriate places to begin browsing."""
+    seen: set[str] = set()
+    out: list[FolderEntry] = []
+
+    def add(path: Path, label: str | None = None) -> None:
+        try:
+            if not path.is_dir():
+                return
+            resolved = str(path)
+        except OSError:
+            return
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        is_project, is_repo = _looks_like_project(path)
+        out.append(
+            FolderEntry(
+                name=label or path.name or resolved,
+                path=resolved,
+                is_project=is_project,
+                is_repo=is_repo,
+            )
+        )
+
+    home = Path.home()
+    add(home, "Home")
+    for conventional in ("Desktop", "Documents", "Projects", "Code", "dev", "src", "repos"):
+        add(home / conventional)
+
+    if os.name == "nt":
+        for letter in "CDEFGHIJKLMNOPQRSTUVWXYZ":
+            add(Path(f"{letter}:\\"), f"{letter}:\\")
+    else:
+        add(Path("/"), "/")
+        for volumes in ("/Volumes", "/media", "/mnt", "/opt", "/srv"):
+            add(Path(volumes))
+
+    return out
+
+
+def list_dir(
+    path: str | Path, *, include_hidden: bool = False
+) -> tuple[list[FolderEntry], str | None]:
+    """Sub-directories of ``path``. Returns ``(entries, error_message)``."""
+    target = Path(path).expanduser()
+    try:
+        if not target.is_dir():
+            return [], f"Not a folder: {target}"
+    except OSError as exc:
+        return [], f"Cannot read {target}: {exc}"
+
+    entries: list[FolderEntry] = []
+    try:
+        with os.scandir(target) as it:
+            for item in it:
+                if len(entries) >= _MAX_ENTRIES:
+                    break
+                name = item.name
+                if name in _SKIP_DIRS:
+                    continue
+                if not include_hidden and _is_hidden(name):
+                    continue
+                try:
+                    if not item.is_dir(follow_symlinks=False):
+                        continue
+                except OSError:
+                    continue
+                child = Path(item.path)
+                is_project, is_repo = _looks_like_project(child)
+                entries.append(
+                    FolderEntry(
+                        name=name,
+                        path=str(child),
+                        is_project=is_project,
+                        is_repo=is_repo,
+                    )
+                )
+    except PermissionError:
+        return [], f"No permission to read {target}"
+    except OSError as exc:
+        return [], f"Cannot read {target}: {exc}"
+
+    # Projects first, then alphabetically — the folder the user came for is
+    # almost always a project.
+    entries.sort(key=lambda e: (not e.is_project, e.name.lower()))
+    return entries, None
+
+
+def _git_branch(root: Path) -> str | None:
+    """Current branch from ``.git/HEAD`` — no subprocess, no git required."""
+    head = root / ".git" / "HEAD"
+    try:
+        text = head.read_text(encoding="utf-8", errors="replace").strip()
+    except OSError:
+        return None
+    if text.startswith("ref: refs/heads/"):
+        return text[len("ref: refs/heads/") :] or None
+    return text[:12] or None  # detached HEAD
+
+
+def _collect_skills(root: Path) -> list[str]:
+    """Skill names defined in this repo (``.claude/skills`` / ``.agents/skills``)."""
+    found: list[str] = []
+    for base in (root / ".claude" / "skills", root / ".agents" / "skills"):
+        if not base.is_dir():
+            continue
+        try:
+            with os.scandir(base) as it:
+                for item in it:
+                    if len(found) >= _MAX_SKILLS:
+                        break
+                    if item.is_dir(follow_symlinks=False) and not _is_hidden(item.name):
+                        if item.name not in found:
+                            found.append(item.name)
+        except OSError:
+            continue
+    return found
+
+
+def probe_project(path: str | Path) -> ProjectProfile:
+    """Shallow profile of a folder — one scandir plus a few existence checks."""
+    root = Path(path).expanduser()
+    profile = ProjectProfile(path=str(root), name=root.name or str(root))
+
+    try:
+        if not root.is_dir():
+            profile.exists = False
+            profile.note = "Folder not found."
+            return profile
+    except OSError as exc:
+        profile.exists = False
+        profile.note = f"Folder unreadable: {exc}"
+        return profile
+
+    names: set[str] = set()
+    dirs: list[str] = []
+    try:
+        with os.scandir(root) as it:
+            for item in it:
+                names.add(item.name)
+                try:
+                    if item.is_dir(follow_symlinks=False):
+                        if item.name in _SKIP_DIRS or _is_hidden(item.name):
+                            continue
+                        if len(dirs) < 24:
+                            dirs.append(item.name)
+                except OSError:
+                    continue
+    except OSError as exc:
+        profile.note = f"Folder only partially readable: {exc}"
+
+    profile.is_repo = (root / ".git").exists()
+    if profile.is_repo:
+        profile.branch = _git_branch(root)
+
+    stacks: list[str] = []
+    for marker, label in _STACK_MARKERS:
+        hit = (
+            any(n.endswith(marker[1:]) for n in names)
+            if marker.startswith("*")
+            else marker in names
+        )
+        if hit and label not in stacks:
+            stacks.append(label)
+    profile.stacks = stacks
+
+    profile.instruction_files = [f for f in _INSTRUCTION_FILES if f in names]
+    profile.top_level_dirs = sorted(dirs, key=str.lower)
+    profile.skills = _collect_skills(root)
+    return profile
+
+
+__all__ = [
+    "FolderEntry",
+    "ProjectProfile",
+    "list_dir",
+    "probe_project",
+    "start_points",
+]

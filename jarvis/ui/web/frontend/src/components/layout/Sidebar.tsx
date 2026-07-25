@@ -18,6 +18,7 @@ import {
   Contact,
   MessageSquareWarning,
   ScrollText,
+  SquareTerminal,
   Loader2,
   type LucideIcon,
   ChevronRight,
@@ -126,10 +127,22 @@ const NAV_GROUPS: NavItem[][] = [
     },
     { id: "outputs", labelKey: "nav.outputs", icon: FolderOpen },
   ],
-  // 4) Social links + in-app feedback — pinned to the bottom group.
+  // 4) Social links + in-app feedback.
   [
     { id: "socials", labelKey: "nav.socials", icon: Share2 },
     { id: "feedback", labelKey: "nav.feedback", icon: MessageSquareWarning },
+  ],
+  // 5) Agentic IDE — its own bottom group on purpose. It is not one more page
+  // among the tools above: opening it puts real coding agents to work in a
+  // folder and can narrow the assistant to that workspace, so it sits apart
+  // with its own divider rather than blending into the list.
+  [
+    {
+      id: "agentic-ide",
+      labelKey: "nav.agentic_ide",
+      icon: SquareTerminal,
+      fallbackLabel: "Agentic IDE",
+    },
   ],
 ];
 

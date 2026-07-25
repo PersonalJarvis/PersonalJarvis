@@ -48,12 +48,24 @@ KNOWN: frozenset[str] = frozenset(
         "feedback",
         "agent-instructions",
         "dictionary",
+        "agentic-ide",
     }
 )
 
 # Natural-language aliases (DE + EN) → canonical id. The router usually passes an
 # id from the schema enum; this is the safety net for spoken labels/synonyms.
 _ALIASES: dict[str, str] = {
+    # Agentic IDE — the spoken forms people reach for. "agentic" is a mouthful
+    # in every supported language, so the plain-words variants matter more here
+    # than for sections whose label is already a common noun.
+    "agentic ide": "agentic-ide",
+    "agentic": "agentic-ide",
+    "ide": "agentic-ide",
+    "coding mode": "agentic-ide",
+    "coding workspace": "agentic-ide",
+    "codier-modus": "agentic-ide",  # i18n-allow: input vocab
+    "programmier-modus": "agentic-ide",  # i18n-allow: input vocab
+    "modo de programación": "agentic-ide",  # i18n-allow: input vocab
     "social": "socials",
     "social media": "socials",
     "soziale medien": "socials",

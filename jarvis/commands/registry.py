@@ -600,6 +600,122 @@ def _build_registry() -> tuple[AppCommand, ...]:
                 "es": ("cancela la tarea",),  # i18n-allow: input vocab
             },
         ),
+        # ------------------------------------------------------- agentic IDE
+        # The Agentic IDE runs coding agents in named terminals; these three
+        # commands are what make the workspace addressable by voice. Reading is
+        # free (status / report); writing is one narrow channel — type a prompt
+        # into a named terminal — and it can only ever type text plus Enter (the
+        # endpoint strips control characters, so voice cannot interrupt or kill
+        # an agent). No entry here is worker_allowed: a mission worker has no
+        # business steering the user's interactive coding panes (AP-5).
+        AppCommand(
+            id="agentic-ide-status",
+            title="Agentic IDE status",
+            description=(
+                "Report the open Agentic-IDE workspace: which folder, which "
+                "coding agents run in which named terminals, and whether the "
+                "focused coding mode is on."
+            ),
+            method="GET",
+            path="/api/agentic-ide/state",
+            ui_section="agentic-ide",
+            voice_aliases={
+                "de": ("was läuft in der agentic ide",),  # i18n-allow: input vocab
+                "en": ("what is running in the agentic ide",),
+                "es": ("qué se está ejecutando en el ide agéntico",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
+            id="agentic-ide-terminal-report",
+            title="Report on one Agentic-IDE terminal",
+            description=(
+                "Read what the coding agent in a named terminal is doing — its "
+                "status and its recent terminal output. Use this whenever the "
+                "user asks about a terminal by name (e.g. 'what is Mika doing?')."
+            ),
+            method="GET",
+            path="/api/agentic-ide/terminals/{name}/report",
+            params={
+                "type": "object",
+                "properties": {
+                    "name": _str_param(
+                        "Call-sign of the terminal, e.g. 'Mika'.", min_length=1
+                    ),
+                    "lines": {
+                        "type": "integer",
+                        "default": 40,
+                        "description": "How many recent output lines to read.",
+                    },
+                },
+                "required": ["name"],
+            },
+            path_params=("name",),
+            ui_section="agentic-ide",
+            voice_aliases={
+                "de": ("was macht mika",),  # i18n-allow: input vocab
+                "en": ("what is mika doing",),
+                "es": ("qué está haciendo mika",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
+            id="agentic-ide-prompt",
+            title="Prompt an Agentic-IDE terminal",
+            description=(
+                "Type a prompt into the named terminal's coding agent and press "
+                "Enter. Use the user's own instruction as the prompt text."
+            ),
+            method="POST",
+            path="/api/agentic-ide/terminals/{name}/prompt",
+            params={
+                "type": "object",
+                "properties": {
+                    "name": _str_param(
+                        "Call-sign of the terminal to prompt, e.g. 'Mika'.",
+                        min_length=1,
+                    ),
+                    "prompt": _str_param(
+                        "The instruction to type into that agent.",
+                        min_length=1,
+                        max_length=4000,
+                    ),
+                },
+                "required": ["name", "prompt"],
+            },
+            path_params=("name",),
+            ui_section="agentic-ide",
+            voice_aliases={
+                "de": ("sag mika sie soll die tests laufen lassen",),  # i18n-allow: input vocab
+                "en": ("tell mika to run the tests",),
+                "es": ("dile a mika que ejecute las pruebas",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
+            id="agentic-ide-focus",
+            title="Toggle Agentic-IDE focus mode",
+            description=(
+                "Turn the focused coding mode on or off. While on, answers are "
+                "given inside the open coding workspace; turning it off returns "
+                "to normal behaviour without stopping any agent."
+            ),
+            method="PUT",
+            path="/api/agentic-ide/mode",
+            params={
+                "type": "object",
+                "properties": {
+                    "enabled": {
+                        "type": "boolean",
+                        "description": "True enters focused coding mode, False leaves it.",
+                    },
+                },
+                "required": ["enabled"],
+            },
+            ui_section="agentic-ide",
+            voice_aliases={
+                "de": ("geh in den coding modus",),  # i18n-allow: input vocab
+                "en": ("switch into coding mode",),
+                "es": ("entra en el modo de programación",),  # i18n-allow: input vocab
+            },
+        ),
     )
 
 
