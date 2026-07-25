@@ -173,6 +173,17 @@ SECRETS: list[SecretSpec] = [
         required_for="Grok Brain and xAI TTS",
         section="brain",
     ),
+    # Optional key for the generic local OpenAI-compatible provider (vLLM
+    # --api-key, proxied LM Studio, ...). App-only: local servers usually need
+    # no key, so it must not lengthen first-run onboarding.
+    SecretSpec(
+        key="local_openai_api_key",
+        env_fallback="LOCAL_OPENAI_API_KEY",
+        label="Local OpenAI-compatible server key (optional)",
+        help_url="https://huggingface.co/docs/transformers/main/serving",
+        required_for="Local server brain (only if your server enforces a key)",
+        prompt=False,
+    ),
     # Scoped Realtime credentials. They are app-only fields in the Realtime tab,
     # not extra first-run questions. Generic credentials remain compatibility
     # fallbacks for existing installations.

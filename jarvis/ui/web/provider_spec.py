@@ -284,6 +284,23 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "the server URL at another machine to share one Ollama box."
         ),
     ),
+    ProviderSpec(
+        id="local-openai",
+        label="Local server (OpenAI-compatible)",
+        tier="brain",
+        auth_mode="none",
+        secret_keys=("local_openai_api_key",),
+        dashboard_url=None,
+        signup_url="https://huggingface.co/docs/transformers/main/serving",
+        credential_help=(
+            "Any self-hosted server that speaks the OpenAI chat format: "
+            "HuggingFace transformers serve (http://localhost:8000), llama.cpp "
+            "llama-server (http://localhost:8080), LM Studio "
+            "(http://localhost:1234), vLLM, or an existing TGI. Set the server "
+            "URL on this card — no cloud account, nothing leaves your network. "
+            "The API key is optional; most local servers ignore it."
+        ),
+    ),
     # ── TTS ───────────────────────────────────────────────────────────────
     # Voice-Output cards render in this tuple order. OpenRouter leads (one key
     # reaches many vetted speech models); Inworld sits last as a premium

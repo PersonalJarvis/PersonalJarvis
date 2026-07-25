@@ -409,9 +409,12 @@ gemini = "jarvis.plugins.brain.gemini:GeminiBrain"
 codex = "jarvis.plugins.brain.codex:CodexBrain"
 antigravity = "jarvis.plugins.brain.antigravity:AntigravityBrain"
 grok = "jarvis.plugins.brain.grok:GrokBrain"
-# Keyless LOCAL provider (2026-07-25, local-first mandate): talks to a local
-# Ollama server, deliberately absent from PROVIDER_SECRET_CANDIDATES.
+# Keyless LOCAL providers (2026-07-25, local-first mandate): both talk to
+# self-hosted servers and are deliberately absent from
+# PROVIDER_SECRET_CANDIDATES. local-openai covers HuggingFace transformers
+# serve, llama.cpp llama-server, vLLM, and LM Studio with one adapter.
 ollama = "jarvis.plugins.brain.ollama:OllamaBrain"
+local-openai = "jarvis.plugins.brain.local_openai:LocalOpenAIBrain"
 
 [project.entry-points."jarvis.harness"]
 python-script = "jarvis.plugins.harness.python_script:PythonScriptHarness"
