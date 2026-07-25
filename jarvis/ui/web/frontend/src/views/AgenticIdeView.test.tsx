@@ -1,8 +1,26 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+// jsdom ships no ResizeObserver, and the workspace grid measures itself with
+// one to decide how many panes fit side by side.
+class ResizeObserverPolyfill {
+  observe(): void {}
+  unobserve(): void {}
+  disconnect(): void {}
+}
+if (typeof globalThis.ResizeObserver === "undefined") {
+  globalThis.ResizeObserver = ResizeObserverPolyfill as unknown as typeof ResizeObserver;
+}
+
 // Identity translator so rendered text equals the i18n key.
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));
+
+// The workspace grid follows the app theme for its terminal colours; this test
+// renders the view outside the provider, so the hook is stubbed.
+vi.mock("@/hooks/useTheme", () => ({
+  useTheme: () => ({ theme: "dark", setTheme: vi.fn(), toggle: vi.fn() }),
+  useThemeValue: () => "dark",
+}));
 
 const pushToast = vi.fn();
 const setActiveSection = vi.fn();
@@ -91,7 +109,8 @@ function sessionWith(names: string[], focus = false): api.SessionState {
       agent: "claude",
       display_name: "Claude Code",
       index,
-      row: index,
+      column: index,
+      slot: 0,
       status: "live" as const,
       exit_code: null,
       error: "",

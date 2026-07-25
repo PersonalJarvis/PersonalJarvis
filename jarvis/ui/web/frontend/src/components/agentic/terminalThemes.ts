@@ -16,7 +16,7 @@ import type { ITheme } from "@xterm/xterm";
  * read for an hour and one you squint at.
  */
 
-/** Warm paper — the default. Reads like an editor, not like a console. */
+/** Warm paper for light mode. Reads like an editor, not like a console. */
 export const LIGHT_TERMINAL_THEME: ITheme = {
   background: "#fcfbf8",
   foreground: "#2b2b33",
@@ -42,7 +42,13 @@ export const LIGHT_TERMINAL_THEME: ITheme = {
   brightWhite: "#1f1f26",
 };
 
-/** Deep slate for late-night work — matches the app shell, not pure black. */
+/**
+ * Deep slate — matches the app shell rather than being pure black.
+ *
+ * This is what most people see: the panes follow the app's theme, and the app
+ * defaults to dark (`hooks/useTheme`). Not pure black on purpose — a #000 pane
+ * inside a #12141a shell reads as a hole punched in the window.
+ */
 export const DARK_TERMINAL_THEME: ITheme = {
   background: "#12141a",
   foreground: "#e8e8ec",

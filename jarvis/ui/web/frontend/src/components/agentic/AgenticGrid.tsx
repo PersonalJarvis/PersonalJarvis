@@ -9,7 +9,7 @@
  * take the identical path through the app, and the two can never behave
  * differently.
  */
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowUp,
   Brain,
@@ -22,14 +22,17 @@ import {
   Type,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useThemeValue } from "@/hooks/useTheme";
 import { useEventStore } from "@/store/events";
 import {
   AgenticTerminal,
   PaneStatusPill,
   type PaneStatus,
+  type SplitAgentChoice,
+  type SplitDirection,
 } from "./AgenticTerminal";
 import type { TerminalAppearance } from "./terminalThemes";
-import { paneColumns, paneLines, paneRows } from "./layout";
+import { bandCapacityFor, paneGrid } from "./layout";
 import {
   addTerminal,
   closeTerminal,
@@ -45,12 +48,63 @@ interface AgenticGridProps {
   busy?: boolean;
   /** Hard cap on panes, so the split buttons can disable themselves. */
   maxTerminals?: number;
+  /** Coding CLIs a split may start — the pane split menus offer these. */
+  agents?: SplitAgentChoice[];
   /** Adding or closing a pane changes the workspace — the owner re-reads it. */
   onSessionChanged?: (session: SessionState) => void;
 }
 
 const FONT_MIN = 10;
 const FONT_MAX = 20;
+
+/*
+ * Terminal appearance and text size are remembered, and the appearance follows
+ * the app's own theme until the user says otherwise.
+ *
+ * The first version hardcoded a light default. In a dark app that reads as a
+ * bug — you open the workspace, get a wall of white, and reach for the toggle
+ * every single time. Following the app theme is the honest default, and once
+ * someone deliberately picks the other one for their terminals (plenty of
+ * people want dark panes in a light app, and the reverse), that choice sticks
+ * instead of being re-decided on every visit.
+ *
+ * localStorage rather than config: this is a per-screen display preference of
+ * this browser profile, not something worth a round-trip and a config write.
+ */
+const APPEARANCE_KEY = "jarvis.agenticIde.terminalAppearance";
+const FONT_KEY = "jarvis.agenticIde.terminalFontSize";
+
+function readStored<T>(key: string, parse: (raw: string) => T | null): T | null {
+  try {
+    const raw = window.localStorage.getItem(key);
+    return raw === null ? null : parse(raw);
+  } catch {
+    // Private mode / storage disabled — fall back to the defaults rather than
+    // taking the whole workspace down over a preference.
+    return null;
+  }
+}
+
+function writeStored(key: string, value: string): void {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    /* nothing to do — the preference just will not survive this session */
+  }
+}
+
+function storedAppearance(): TerminalAppearance | null {
+  return readStored(APPEARANCE_KEY, (raw) =>
+    raw === "light" || raw === "dark" ? raw : null,
+  );
+}
+
+function storedFontSize(): number | null {
+  return readStored(FONT_KEY, (raw) => {
+    const n = Number.parseInt(raw, 10);
+    return Number.isFinite(n) && n >= FONT_MIN && n <= FONT_MAX ? n : null;
+  });
+}
 
 export function AgenticGrid({
   session,
@@ -59,30 +113,86 @@ export function AgenticGrid({
   onClose,
   busy = false,
   maxTerminals = 12,
+  agents,
   onSessionChanged,
 }: AgenticGridProps) {
   const pushToast = useEventStore((s) => s.pushToast);
-  const [appearance, setAppearance] = useState<TerminalAppearance>("light");
-  const [fontSize, setFontSize] = useState(13);
+  const theme = useThemeValue();
+  // No stored choice → follow the app. A stored one wins and keeps winning.
+  const [appearance, setAppearanceState] = useState<TerminalAppearance>(
+    () => storedAppearance() ?? theme,
+  );
+  const [fontSize, setFontSizeState] = useState(() => storedFontSize() ?? 13);
+
+  // Track the app theme while the user has expressed no preference of their own,
+  // so flipping the whole app to light does not leave black panes behind.
+  useEffect(() => {
+    if (storedAppearance() === null) setAppearanceState(theme);
+  }, [theme]);
+
+  const setAppearance = useCallback((next: TerminalAppearance) => {
+    setAppearanceState(next);
+    writeStored(APPEARANCE_KEY, next);
+  }, []);
+
+  const setFontSize = useCallback((next: number) => {
+    setFontSizeState(next);
+    writeStored(FONT_KEY, String(next));
+  }, []);
   const [target, setTarget] = useState(session.terminals[0]?.name ?? "");
   const [statuses, setStatuses] = useState<Record<string, { status: PaneStatus; detail?: string }>>({});
   const [prompt, setPrompt] = useState("");
   const [sending, setSending] = useState(false);
 
+  // Bumping a pane's token reconnects just that pane, which respawns its agent.
+  // Keyed by call-sign so closing or splitting never disturbs the others.
+  const [restartTokens, setRestartTokens] = useState<Record<string, number>>({});
+  const restartPane = useCallback((name: string) => {
+    setRestartTokens((prev) => ({ ...prev, [name]: (prev[name] ?? 0) + 1 }));
+  }, []);
+
   const [maximized, setMaximized] = useState<string | null>(null);
   const [pendingClose, setPendingClose] = useState<string | null>(null);
+  const [workspaceCloseRequested, setWorkspaceCloseRequested] = useState(false);
   const [working, setWorking] = useState(false);
 
-  // Group panes into their rows. The backend keeps `row` packed and the list in
-  // render order, so this is a straight fold rather than a sort.
-  const rows = useMemo(() => paneRows(session.terminals), [session.terminals]);
+  // Where each pane sits in the one grid below — coordinates, not nested
+  // lists, so a layout change never re-parents a pane (see ./layout).
+  // How many panes may share one band is a question about WIDTH, not a constant:
+  // eight side by side leave ~18 characters each and the agent's output becomes
+  // unreadable. So the grid measures itself and wraps once panes would starve.
+  const gridRef = useRef<HTMLDivElement | null>(null);
+  const [gridWidth, setGridWidth] = useState(0);
+  useEffect(() => {
+    const node = gridRef.current;
+    if (!node) return;
+    setGridWidth(node.clientWidth);
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width ?? node.clientWidth;
+      // Round to a step so a one-pixel drift cannot churn the layout (and with
+      // it every pane's resize) on window animations.
+      setGridWidth(Math.round(width / 16) * 16);
+    });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, []);
+
+  const perBand = useMemo(() => bandCapacityFor(gridWidth), [gridWidth]);
+  const grid = useMemo(
+    () => paneGrid(session.terminals, perBand),
+    [session.terminals, perBand],
+  );
 
   const atLimit = session.terminals.length >= maxTerminals;
 
-  const split = async (anchor: string | null, direction: "right" | "down") => {
+  const split = async (
+    anchor: string | null,
+    direction: SplitDirection,
+    agent?: string,
+  ) => {
     setWorking(true);
     try {
-      const next = await addTerminal({ anchor: anchor ?? undefined, direction });
+      const next = await addTerminal({ anchor: anchor ?? undefined, direction, agent });
       onSessionChanged?.(next);
       // A fresh pane should receive the next prompt — that is why it was opened.
       const known = new Set(session.terminals.map((t) => t.name));
@@ -213,7 +323,7 @@ export function AgenticGrid({
           <button
             type="button"
             aria-label="Smaller text"
-            onClick={() => setFontSize((n) => Math.max(FONT_MIN, n - 1))}
+            onClick={() => setFontSize(Math.max(FONT_MIN, fontSize - 1))}
             className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
           >
             <Minus className="h-3.5 w-3.5" />
@@ -222,7 +332,7 @@ export function AgenticGrid({
           <button
             type="button"
             aria-label="Larger text"
-            onClick={() => setFontSize((n) => Math.min(FONT_MAX, n + 1))}
+            onClick={() => setFontSize(Math.min(FONT_MAX, fontSize + 1))}
             className="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
           >
             <Plus className="h-3.5 w-3.5" />
@@ -232,7 +342,7 @@ export function AgenticGrid({
         <button
           type="button"
           className="btn-ghost shrink-0"
-          onClick={onClose}
+          onClick={() => setWorkspaceCloseRequested(true)}
           disabled={busy}
           title="Close the workspace and stop every agent in it"
         >
@@ -241,74 +351,88 @@ export function AgenticGrid({
         </button>
       </div>
 
+      {workspaceCloseRequested && (
+        <ConfirmWorkspaceClose
+          terminalCount={session.terminals.length}
+          busy={busy}
+          onCancel={() => setWorkspaceCloseRequested(false)}
+          onConfirm={onClose}
+        />
+      )}
+
       {/* ------------------------------------------------------------- grid */}
       {/*
-        Rows, not one uniform grid: "split right" adds a pane to an existing row
-        and "split down" opens a new one, so rows can differ in width. Every pane
-        stays MOUNTED at all times — including while another one is maximized —
-        because unmounting it would tear down its WebSocket and kill the agent
-        behind it. Maximizing therefore hides the others with CSS instead.
+        ONE grid, and every pane is a direct child of it — placed by the
+        coordinates `paneGrid` computed rather than by where it sits in a tree
+        of row and column elements.
 
-        Each row is a CSS grid whose width comes from `paneColumns`, so a row
-        wider than that wraps onto a second line (12 panes → 6 above, 6 below)
-        instead of squeezing every pane down to an unreadable sliver. Wrapping
-        inside ONE grid rather than into extra row elements is what keeps the
-        panes mounted through the wrap — moving a pane to a different parent
-        would remount it, and remounting kills its agent.
+        That is not a style choice. Every pane must stay MOUNTED for its whole
+        life, because unmounting one tears down its WebSocket and kills the
+        coding agent behind it. React re-parents children whenever the element
+        tree changes shape, so nesting a container per column would remount
+        panes on every split, close, and wrap. With one flat container the
+        layout only ever changes numbers, and nothing moves in the DOM.
+
+        The same reasoning covers maximizing: the other panes are HIDDEN with
+        CSS, never removed, and the maximized one is told to span the whole
+        grid instead of keeping its narrow cell.
       */}
-      <div className="flex flex-1 flex-col gap-3 overflow-hidden p-3">
-        {rows.map((rowTerminals, rowIndex) => {
-          const rowHidden =
-            maximized !== null && !rowTerminals.some((t) => t.name === maximized);
-          // While a pane is maximized the row collapses to a single column, so
-          // the one visible pane gets the full width instead of keeping the
-          // narrow slot it had in the grid.
-          const columns = maximized !== null ? 1 : paneColumns(rowTerminals.length);
+      <div
+        ref={gridRef}
+        data-testid="agentic-grid"
+        className="grid min-h-0 flex-1 gap-3 overflow-hidden p-3"
+        style={{
+          gridTemplateColumns: `repeat(${Math.max(1, grid.columns)}, minmax(0, 1fr))`,
+          gridTemplateRows: `repeat(${Math.max(1, grid.rows)}, minmax(0, 1fr))`,
+        }}
+      >
+        {session.terminals.map((term, index) => {
+          const place = grid.placements[index];
+          const isMaximized = maximized === term.name;
           return (
             <div
-              key={rowIndex}
-              className={cn("grid min-h-0 gap-3", rowHidden && "hidden")}
-              style={{
-                gridTemplateColumns: `repeat(${Math.max(1, columns)}, minmax(0, 1fr))`,
-                gridAutoRows: "minmax(0, 1fr)",
-                // A row that wraps onto two lines needs twice the height of a
-                // single-line row, or its panes end up half as tall.
-                flexGrow: maximized !== null ? 1 : paneLines(rowTerminals.length),
-                flexBasis: 0,
-              }}
-            >
-              {rowTerminals.map((term) => (
-                <div
-                  key={term.key}
-                  className={cn(
-                    "min-w-0",
-                    maximized !== null && maximized !== term.name && "hidden",
-                  )}
-                >
-                  <AgenticTerminal
-                    name={term.name}
-                    displayName={term.display_name}
-                    appearance={appearance}
-                    fontSize={fontSize}
-                    focused={target === term.name}
-                    maximized={maximized === term.name}
-                    splitDisabled={atLimit || busy || working}
-                    onFocus={() => setTarget(term.name)}
-                    onStatus={(status, detail) => setStatus(term.name, status, detail)}
-                    onToggleMaximize={() =>
-                      setMaximized((current) => (current === term.name ? null : term.name))
+              key={term.key}
+              data-testid={`pane-cell-${term.name}`}
+              className={cn(
+                "min-h-0 min-w-0",
+                maximized !== null && !isMaximized && "hidden",
+              )}
+              style={
+                isMaximized
+                  ? { gridColumn: "1 / -1", gridRow: "1 / -1" }
+                  : {
+                      gridColumn: place?.column ?? 1,
+                      gridRow: `${place?.row ?? 1} / span ${place?.rowSpan ?? 1}`,
                     }
-                    onSplitRight={() => void split(term.name, "right")}
-                    onSplitDown={() => void split(term.name, "down")}
-                    onClose={() => setPendingClose(term.name)}
-                  />
-                </div>
-              ))}
+              }
+            >
+              <AgenticTerminal
+                name={term.name}
+                displayName={term.display_name}
+                appearance={appearance}
+                fontSize={fontSize}
+                focused={target === term.name}
+                maximized={isMaximized}
+                splitDisabled={atLimit || busy || working}
+                agents={agents}
+                onFocus={() => setTarget(term.name)}
+                onStatus={(status, detail) => setStatus(term.name, status, detail)}
+                onToggleMaximize={() =>
+                  setMaximized((current) => (current === term.name ? null : term.name))
+                }
+                onSplit={(direction, agent) => void split(term.name, direction, agent)}
+                onClose={() => setPendingClose(term.name)}
+                restartToken={restartTokens[term.name] ?? 0}
+                onRestart={() => restartPane(term.name)}
+              />
             </div>
           );
         })}
         {session.terminals.length === 0 && (
-          <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
+          <div
+            className="flex flex-col items-center justify-center gap-3 text-sm text-muted-foreground"
+            style={{ gridColumn: "1 / -1", gridRow: "1 / -1" }}
+          >
             <span>Every terminal in this workspace is closed.</span>
             <button
               type="button"
@@ -393,6 +517,68 @@ export function AgenticGrid({
           “what is {session.terminals[0]?.name ?? "Mika"} doing?” or “tell{" "}
           {session.terminals[0]?.name ?? "Mika"} to run the tests”.
         </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Confirmation before the whole workspace is closed.
+ *
+ * This is intentionally separate from the per-terminal confirmation: the
+ * toolbar action stops every coding agent at once, so a stray click must never
+ * reach the session shutdown endpoint. The safe action receives initial focus.
+ */
+function ConfirmWorkspaceClose({
+  terminalCount,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  terminalCount: number;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  const agentLabel = terminalCount === 1 ? "coding agent" : "coding agents";
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Close workspace"
+      data-testid="confirm-close-workspace"
+      className="absolute inset-0 z-40 flex items-center justify-center bg-background/70 p-6 backdrop-blur-sm"
+      onKeyDown={(e) => {
+        if (e.key === "Escape" && !busy) onCancel();
+      }}
+    >
+      <div className="w-full max-w-sm rounded-xl border border-border bg-card p-5 shadow-xl">
+        <h3 className="font-display text-base font-semibold">Close this workspace?</h3>
+        <p className="mt-2 text-sm text-muted-foreground">
+          This stops all {terminalCount} {agentLabel} and closes every terminal
+          session. Anything already written to disk stays.
+        </p>
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            className="btn-ghost"
+            autoFocus
+            disabled={busy}
+            onClick={onCancel}
+          >
+            Keep workspace open
+          </button>
+          <button
+            type="button"
+            data-testid="confirm-close-workspace-confirm"
+            className="rounded-lg bg-destructive px-3 py-2 text-sm font-medium text-destructive-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+            disabled={busy}
+            onClick={onConfirm}
+          >
+            Close workspace
+          </button>
+        </div>
       </div>
     </div>
   );
