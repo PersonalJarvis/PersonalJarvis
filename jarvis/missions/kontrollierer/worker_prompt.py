@@ -80,7 +80,9 @@ SUPERVISOR_BOUNDARY_DIRECTIVE: Final[str] = (
     "app; never operate the live desktop or Computer Use; never read control "
     "credentials; and never change live configuration. For Wiki work, use only "
     "the supervisor-granted wiki-list, wiki-recall, wiki-page-read, and "
-    "wiki-ingest tools."
+    "wiki-ingest tools. A denied or failed supervisor tool call is a normal, "
+    "recoverable event: adapt your approach, use an alternative, or deliver "
+    "the remainder of the task and state the limitation in your summary."
 )
 
 
