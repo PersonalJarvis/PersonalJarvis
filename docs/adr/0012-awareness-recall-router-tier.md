@@ -96,3 +96,15 @@ not block it.
 - `jarvis/plugins/tool/awareness_recall.py` (tool implementation).
 - `jarvis/memory/recall.py:357` (`search_episodes` with `since_ns`).
 - `tests/unit/awareness/test_awareness_recall_tool.py` (tier placement assertions).
+
+## Amendment (2026-07-25, ADR-0030)
+
+The "router tier, not a worker tier" placement is superseded FOR BROKERED
+ACCESS: mission workers now receive `awareness-recall` through the ADR-0025
+mission-scoped broker grant, gated on `[awareness].enabled`
+(`jarvis/missions/workers/capabilities.py::restricted_worker_knowledge_tools`).
+The original rationale is preserved — the tool still executes in the
+supervisor process on the supervisor's recall store; no worker-side tool
+loading, MCP replication, or in-process worker tier was added. This is
+exactly the "Reopen if/when Jarvis-Agent workers need recall directly" path
+this ADR anticipated. See ADR-0030 for the full worker knowledge surface.

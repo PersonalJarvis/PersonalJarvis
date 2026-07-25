@@ -105,6 +105,20 @@ def test_supervisor_boundary_excludes_live_control_surfaces() -> None:
     assert "wiki-ingest" in text
 
 
+def test_supervisor_boundary_names_the_knowledge_surface() -> None:
+    """The directive is the one prompt chokepoint — a granted tool the model
+    was never told about is dead weight (ADR-0030)."""
+    text = SUPERVISOR_BOUNDARY_DIRECTIVE.lower()
+    for name in ("ultrawiki-search", "awareness-recall", "search_web", "contact-lookup"):
+        assert name in text
+    # Honesty clause: gated-off tools are simply absent from the tool list,
+    # and the model must not guess-call them (a blind call dirties the
+    # ADR-0025 completion certificate).
+    assert "absent from your tool list" in text
+    # Refusals stay recoverable (W3 soft-fail contract).
+    assert "recoverable" in text
+
+
 def test_compose_places_supervisor_boundary_before_the_step() -> None:
     step = "Research this topic and update the Wiki."
     out = compose_worker_prompt("", step)

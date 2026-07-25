@@ -21,9 +21,11 @@ merged (or when the store fails to build) — the tool then degrades to a clean
 
 Placement rule
 --------------
-Router-tier only. Never include in any worker tool-set — a ``contact-lookup`` is
-a direct safe-gated read, never a spawn (AP-5/AP-14). Risk tier ``safe``: a pure
-read with no side effect, so the brain calls it without a confirmation nag.
+Router-tier direct call; mission workers reach it ONLY through the ADR-0025
+broker grant (ADR-0030 widened the worker knowledge surface) — the tool object
+and the ContactStore stay in the supervisor, and the call still runs through
+``ToolExecutor``. Never a spawn (AP-5/AP-14). Risk tier ``safe``: a pure read
+with no side effect, so the brain calls it without a confirmation nag.
 
 Privacy
 -------

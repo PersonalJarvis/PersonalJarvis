@@ -112,3 +112,16 @@ calls.
 - Keep the credential-free mission test covering grant selection, approval
   resume, completion certification, and revocation.
 - Preserve the explicit recursive-tool and secret/config deny guards.
+
+## Amendment (2026-07-25, ADR-0030 + ADR-0031)
+
+Grant composition widened (mechanism unchanged): the native knowledge surface
+is now dynamic — the wiki triple plus gate-driven additions
+(`awareness-recall` behind `[awareness].enabled`, `search_web`,
+`contact-lookup`, and `ultrawiki-search` once its service gate goes live) —
+see ADR-0030. Ask-tier calls inside a grant can be pre-authorized per mission
+via `[phase6.safety].auto_approve_tool_families` — the gate is answered on
+the bus, never bypassed — see ADR-0031. The deny guards, the credential
+boundary, and the completion certificate are unchanged; observed refusals
+(denied/timed-out/errored calls) no longer abort the iteration, only
+integrity failures do (`WorkerToolExecutionSummary.integrity_compromised`).
