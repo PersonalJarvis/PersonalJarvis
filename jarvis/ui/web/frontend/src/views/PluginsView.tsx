@@ -1213,12 +1213,18 @@ export function BrandTile({ plugin }: { plugin: Plugin }) {
 
   return (
     <div
-      className="grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-lg border border-border/60"
-      style={
+      className={cn(
+        "grid h-10 w-10 shrink-0 place-items-center overflow-hidden rounded-lg border",
+        // A bundled mark sits on a dark plate, not a white one: a row of white
+        // squares reads as pasted-in on this UI. The plate is a touch lighter
+        // than the card so the mark still has something to sit on. Brands whose
+        // own logo is near-black ship a light variant for exactly this case —
+        // see LOGOS.md; without one, a dark mark would vanish here.
         fullColour && !showMonogram
-          ? { backgroundColor: "#ffffff" }
-          : { backgroundColor: tile }
-      }
+          ? "border-white/10 bg-white/[0.07]"
+          : "border-border/60",
+      )}
+      style={fullColour && !showMonogram ? undefined : { backgroundColor: tile }}
     >
       {showMonogram ? (
         <span

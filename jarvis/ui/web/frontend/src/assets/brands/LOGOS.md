@@ -15,6 +15,12 @@ listed here and want it removed, open an issue and it will be taken out.
 > not add the file: leave it to the fallback, which draws the vendor's glyph on
 > their brand colour instead.
 
+Marks sit on a **dark plate**, matching the rest of the interface. A brand
+whose own logo is near-black (GitHub, Vercel, Notion) therefore uses the
+**light variant its vendor publishes for exactly this purpose** — swapping to
+one of those is still the original mark, while recolouring one ourselves
+would not be.
+
 ## How the store picks a mark
 
 `PluginsView.tsx` resolves in three tiers, so a missing file is never a blank
@@ -60,22 +66,23 @@ than a bad imitation of a logo we could not obtain. Record it below with
 |---|---|---|---|
 | airtable | gilbarbara/logos `airtable.svg` | CC0 | 2026-07-25 |
 | asana | gilbarbara/logos `asana-icon.svg` | CC0 | 2026-07-25 |
+| cal_com | drawn for this project - a calendar glyph, not an imitation of the Cal.com wordmark | own work | 2026-07-25 |
 | canva | svgl `canva.svg` | MIT | 2026-07-25 |
 | clickup | svgl `clickup.svg` | MIT | 2026-07-25 |
 | discord | gilbarbara/logos `discord-icon.svg` | CC0 | 2026-07-25 |
 | dropbox | gilbarbara/logos `dropbox.svg` | CC0 | 2026-07-25 |
-| github | gilbarbara/logos `github-icon.svg` | CC0 | 2026-07-25 |
+| github | svgl `github_dark.svg` (the light variant, for dark backgrounds) | MIT | 2026-07-25 |
 | gmail | gilbarbara/logos `google-gmail.svg` | CC0 | 2026-07-25 |
 | google_calendar | gilbarbara/logos `google-calendar.svg` | CC0 | 2026-07-25 |
 | google_drive | gilbarbara/logos `google-drive.svg` | CC0 | 2026-07-25 |
 | home_assistant | svgl `home-assistant.svg` | MIT | 2026-07-25 |
-| linear | gilbarbara/logos `linear-icon.svg` | CC0 | 2026-07-25 |
-| notion | gilbarbara/logos `notion-icon.svg` | CC0 | 2026-07-25 |
+| linear | svgl `linear.svg` (brand purple, legible on dark) | MIT | 2026-07-25 |
+| notion | svgl `notion.svg` (the light variant, for dark backgrounds) | MIT | 2026-07-25 |
 | slack | gilbarbara/logos `slack-icon.svg` | CC0 | 2026-07-25 |
 | supabase | gilbarbara/logos `supabase-icon.svg` | CC0 | 2026-07-25 |
 | telegram | gilbarbara/logos `telegram.svg` | CC0 | 2026-07-25 |
 | todoist | gilbarbara/logos `todoist-icon.svg` | CC0 | 2026-07-25 |
-| vercel | gilbarbara/logos `vercel-icon.svg` | CC0 | 2026-07-25 |
+| vercel | svgl `vercel_dark.svg` (the light variant, for dark backgrounds) | MIT | 2026-07-25 |
 
 ### Deliberately not bundled
 
@@ -83,4 +90,3 @@ than a bad imitation of a logo we could not obtain. Record it below with
 |---|---|
 | stripe | Publishes no square full-colour icon. Its real app icon **is** a white "S" on the brand purple, so the fallback is the faithful rendering and a bundled wordmark would be less accurate. |
 | cloudflare | Same: the real app icon is the white cloud on brand orange. |
-| cal_com | No square full-colour mark published; the real icon is a light glyph on near-black. |
