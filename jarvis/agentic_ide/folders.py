@@ -21,6 +21,7 @@ hot path; here it is computed once and cached in the session).
 from __future__ import annotations
 
 import os
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
@@ -237,6 +238,95 @@ def list_dir(
     return entries, None
 
 
+def search_folders(
+    query: str,
+    *,
+    roots: list[Path] | None = None,
+    limit: int = 40,
+    max_depth: int = 5,
+) -> list[FolderEntry]:
+    """Folders whose name matches ``query``, searched breadth-first.
+
+    Breadth-first on purpose: the folder a person is looking for is almost always
+    a few levels down from home or from a code directory, so widening before
+    deepening finds it sooner and lets the walk stop early. The traversal is
+    bounded three ways — depth, a hard visit budget, and the shared skip list —
+    because an unbounded walk of a home directory on a spinning disk or a network
+    share would block for minutes.
+
+    Ranking puts exact name matches first, then prefix matches, then substring
+    matches; within each tier projects and repositories come before plain
+    folders, because that is what someone opening a coding workspace wants.
+    """
+    needle = query.strip().lower()
+    if not needle:
+        return []
+
+    if roots is None:
+        home = Path.home()
+        roots = [home]
+        for extra in ("Desktop", "Documents", "Projects", "Code", "dev", "src", "repos"):
+            candidate = home / extra
+            if candidate.is_dir():
+                roots.append(candidate)
+
+    # Visit budget: generous enough to cover a real code tree, small enough that
+    # the worst case stays well inside a request timeout.
+    budget = 20_000
+    seen: set[str] = set()
+    hits: list[tuple[int, int, str, FolderEntry]] = []
+
+    queue: deque[tuple[Path, int]] = deque((root, 0) for root in roots)
+    while queue and budget > 0 and len(hits) < limit * 4:
+        current, depth = queue.popleft()
+        key = str(current).lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        if depth > max_depth:
+            continue
+        try:
+            with os.scandir(current) as it:
+                for item in it:
+                    budget -= 1
+                    if budget <= 0:
+                        break
+                    name = item.name
+                    if name in _SKIP_DIRS or _is_hidden(name):
+                        continue
+                    try:
+                        if not item.is_dir(follow_symlinks=False):
+                            continue
+                    except OSError:
+                        continue
+                    child = Path(item.path)
+                    lowered = name.lower()
+                    if needle in lowered:
+                        tier = 0 if lowered == needle else 1 if lowered.startswith(needle) else 2
+                        is_project, is_repo = _looks_like_project(child)
+                        kind = 0 if is_repo else 1 if is_project else 2
+                        hits.append(
+                            (
+                                tier,
+                                kind,
+                                lowered,
+                                FolderEntry(
+                                    name=name,
+                                    path=str(child),
+                                    is_project=is_project,
+                                    is_repo=is_repo,
+                                ),
+                            )
+                        )
+                    if depth < max_depth:
+                        queue.append((child, depth + 1))
+        except (PermissionError, OSError):
+            continue
+
+    hits.sort(key=lambda h: (h[0], h[1], h[2]))
+    return [entry for _t, _k, _n, entry in hits[:limit]]
+
+
 def _git_branch(root: Path) -> str | None:
     """Current branch from ``.git/HEAD`` — no subprocess, no git required."""
     head = root / ".git" / "HEAD"
@@ -326,5 +416,6 @@ __all__ = [
     "ProjectProfile",
     "list_dir",
     "probe_project",
+    "search_folders",
     "start_points",
 ]

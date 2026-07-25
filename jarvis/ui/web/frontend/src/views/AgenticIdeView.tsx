@@ -124,6 +124,33 @@ export function AgenticIdeView() {
     setPlanned((prev) => buildPlan(n, prev, defaultAgent, suggested));
   };
 
+  const replayRecent = (recent: {
+    path: string;
+    terminals: number;
+    agents: Record<string, number>;
+  }) => {
+    const total = Math.max(1, Math.min(recent.terminals, meta?.max_terminals ?? 12));
+    setCount(total);
+    const entries = Object.entries(recent.agents ?? {}).filter(([, n]) => n > 0);
+    if (entries.length === 0) {
+      setPlanned(buildPlan(total, [], defaultAgent, suggested));
+      return;
+    }
+    // Expand the remembered split back into one pane per terminal, grouped the
+    // way it was, then re-apply the call-sign pool in grid order.
+    const expanded: string[] = [];
+    for (const [agent, n] of entries) {
+      for (let i = 0; i < n && expanded.length < total; i += 1) expanded.push(agent);
+    }
+    while (expanded.length < total) expanded.push(defaultAgent);
+    setPlanned(
+      expanded.map((agent, index) => ({
+        agent,
+        name: suggested[index] ?? `T${index + 1}`,
+      })),
+    );
+  };
+
   const goToStep = (next: Step) => {
     // Entering the agent step is the moment the plan has to exist and the
     // suggested call-signs have certainly arrived.
@@ -240,7 +267,11 @@ export function AgenticIdeView() {
               title="Which folder should the agents work in?"
               hint="Pick the project root. Everything the agents do happens inside it."
             >
-              <FolderPicker selected={folder} onSelect={setFolder} />
+              <FolderPicker
+                selected={folder}
+                onSelect={setFolder}
+                onSelectRecent={replayRecent}
+              />
             </Section>
           )}
 

@@ -28,6 +28,10 @@ vi.mock("@/lib/agenticIdeApi", () => ({
   fetchIdeState: vi.fn(),
   fetchIdeAgents: vi.fn(),
   fetchFolders: vi.fn(),
+  searchFolders: vi.fn(),
+  fetchRecents: vi.fn(),
+  forgetRecent: vi.fn(),
+  resolveDroppedFolder: vi.fn(),
   startIdeSession: vi.fn(),
   endIdeSession: vi.fn(),
   setFocusMode: vi.fn(),
@@ -107,6 +111,16 @@ beforeEach(() => {
     entries: [
       { name: "project", path: "/work/project", is_project: true, is_repo: true },
     ],
+    device_name: "Rubens MacBook",
+  });
+  vi.mocked(api.fetchRecents).mockResolvedValue({
+    device_name: "Rubens MacBook",
+    recents: [],
+  });
+  vi.mocked(api.searchFolders).mockResolvedValue({
+    query: "",
+    entries: [],
+    truncated: false,
   });
 });
 

@@ -29,6 +29,34 @@ export interface FoldersResponse {
   parent: string | null;
   entries: FolderItem[];
   error?: string | null;
+  /** Human-facing name of this machine ("Ruben's MacBook"). */
+  device_name?: string | null;
+}
+
+export interface SearchResponse {
+  query: string;
+  entries: FolderItem[];
+  truncated: boolean;
+}
+
+export interface RecentWorkspace {
+  path: string;
+  name: string;
+  terminals: number;
+  agents: Record<string, number>;
+  last_used: number;
+  exists: boolean;
+}
+
+export interface RecentsResponse {
+  device_name: string;
+  recents: RecentWorkspace[];
+}
+
+export interface ResolveResponse {
+  resolved: string | null;
+  candidates: FolderItem[];
+  detail: string;
 }
 
 export interface ProjectProfile {
@@ -108,6 +136,44 @@ export function fetchIdeAgents(): Promise<AgentsResponse> {
 export function fetchFolders(path?: string | null): Promise<FoldersResponse> {
   const query = path ? `?path=${encodeURIComponent(path)}` : "";
   return getJson<FoldersResponse>(`/api/agentic-ide/folders${query}`);
+}
+
+export function searchFolders(query: string, limit = 40): Promise<SearchResponse> {
+  const qs = new URLSearchParams({ q: query, limit: String(limit) });
+  return getJson<SearchResponse>(`/api/agentic-ide/folders/search?${qs.toString()}`);
+}
+
+export function fetchRecents(): Promise<RecentsResponse> {
+  return getJson<RecentsResponse>("/api/agentic-ide/recents");
+}
+
+export async function forgetRecent(path: string): Promise<void> {
+  const res = await fetch(
+    `/api/agentic-ide/recents?path=${encodeURIComponent(path)}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) throw new Error(await detail(res));
+}
+
+/**
+ * Turn a drag-and-drop payload into a folder path.
+ *
+ * The browser refuses to tell a web page where a dropped folder lives, so the
+ * caller sends whatever it could extract — a `file://` URI, a plain path, or
+ * just the folder name — and the backend resolves it (searching by name when
+ * that is all there is).
+ */
+export async function resolveDroppedFolder(payload: {
+  path?: string;
+  name?: string;
+}): Promise<ResolveResponse> {
+  const res = await fetch("/api/agentic-ide/folders/resolve", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+  return (await res.json()) as ResolveResponse;
 }
 
 export async function startIdeSession(
