@@ -495,6 +495,9 @@ async def terminal_prompt(name: str, req: PromptRequest) -> dict:
         term = await registry.send_prompt(name, text)
     except SessionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    # `submitted` is the honest part of this answer: the text was typed either
+    # way, but only a True here means the agent actually accepted it and started.
+    # A caller that reports "sent to Mika" on a False is lying to the user.
     return {
         "ok": True,
         "terminal": term.name,
@@ -503,6 +506,15 @@ async def terminal_prompt(name: str, req: PromptRequest) -> dict:
         "composed_by": composed_by,
         "files": files,
         "prompts_sent": term.prompts_sent,
+        "submitted": bool(term.submitted),
+        "detail": (
+            ""
+            if term.submitted
+            else (
+                f"{term.name} did not accept the prompt — the text is sitting in "
+                "its input box. Tell the user, and let them press Enter there."
+            )
+        ),
     }
 
 

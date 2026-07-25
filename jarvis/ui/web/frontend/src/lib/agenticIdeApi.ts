@@ -255,6 +255,14 @@ export interface PromptResult {
   composed_by: "llm" | "fallback" | "raw";
   /** Repo-relative files referenced with `@` in the sent prompt. */
   files: string[];
+  /**
+   * Did the agent actually ACCEPT the prompt? The text is typed either way; a
+   * false means it is still sitting in that terminal's input box (see the
+   * backend's submit verification). Never report a send as done without it.
+   */
+  submitted: boolean;
+  /** Plain-language explanation when `submitted` is false. */
+  detail?: string;
 }
 
 /**

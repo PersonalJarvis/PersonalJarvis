@@ -667,7 +667,11 @@ def _build_registry() -> tuple[AppCommand, ...]:
                 "— that work belongs to that agent, never to a background "
                 "worker. Pass the user's instruction as the prompt; with "
                 "compose=true it is rewritten into a briefed task with the "
-                "relevant files of this workspace attached."
+                "relevant files of this workspace attached. "
+                "CHECK THE REPLY: it carries a 'submitted' flag. True means the "
+                "agent accepted the prompt and started. False means the text is "
+                "only sitting in that terminal's input box — say so plainly and "
+                "name the terminal, never report it as done."
             ),
             method="POST",
             path="/api/agentic-ide/terminals/{name}/prompt",

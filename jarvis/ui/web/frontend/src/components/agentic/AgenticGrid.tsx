@@ -29,12 +29,12 @@ import {
   type PaneStatus,
 } from "./AgenticTerminal";
 import type { TerminalAppearance } from "./terminalThemes";
+import { paneColumns, paneLines, paneRows } from "./layout";
 import {
   addTerminal,
   closeTerminal,
   promptTerminal,
   type SessionState,
-  type TerminalState,
 } from "@/lib/agenticIdeApi";
 
 interface AgenticGridProps {
@@ -75,14 +75,7 @@ export function AgenticGrid({
 
   // Group panes into their rows. The backend keeps `row` packed and the list in
   // render order, so this is a straight fold rather than a sort.
-  const rows = useMemo(() => {
-    const grouped: TerminalState[][] = [];
-    for (const term of session.terminals) {
-      while (grouped.length <= term.row) grouped.push([]);
-      grouped[term.row].push(term);
-    }
-    return grouped.filter((row) => row.length > 0);
-  }, [session.terminals]);
+  const rows = useMemo(() => paneRows(session.terminals), [session.terminals]);
 
   const atLimit = session.terminals.length >= maxTerminals;
 
@@ -126,8 +119,17 @@ export function AgenticGrid({
     if (!text || !target) return;
     setSending(true);
     try {
-      await promptTerminal(target, text);
+      const result = await promptTerminal(target, text);
       setPrompt("");
+      // The text is typed either way — but if the agent did not accept it, say
+      // so instead of leaving the user to wonder why nothing happened.
+      if (result && result.submitted === false) {
+        pushToast(
+          "warning",
+          result.detail ||
+            `${target} did not accept the prompt — the text is waiting in its input box.`,
+        );
+      }
     } catch (e) {
       pushToast("error", (e as Error).message);
     } finally {
@@ -246,21 +248,40 @@ export function AgenticGrid({
         stays MOUNTED at all times — including while another one is maximized —
         because unmounting it would tear down its WebSocket and kill the agent
         behind it. Maximizing therefore hides the others with CSS instead.
+
+        Each row is a CSS grid whose width comes from `paneColumns`, so a row
+        wider than that wraps onto a second line (12 panes → 6 above, 6 below)
+        instead of squeezing every pane down to an unreadable sliver. Wrapping
+        inside ONE grid rather than into extra row elements is what keeps the
+        panes mounted through the wrap — moving a pane to a different parent
+        would remount it, and remounting kills its agent.
       */}
       <div className="flex flex-1 flex-col gap-3 overflow-hidden p-3">
         {rows.map((rowTerminals, rowIndex) => {
           const rowHidden =
             maximized !== null && !rowTerminals.some((t) => t.name === maximized);
+          // While a pane is maximized the row collapses to a single column, so
+          // the one visible pane gets the full width instead of keeping the
+          // narrow slot it had in the grid.
+          const columns = maximized !== null ? 1 : paneColumns(rowTerminals.length);
           return (
             <div
               key={rowIndex}
-              className={cn("flex min-h-0 flex-1 gap-3", rowHidden && "hidden")}
+              className={cn("grid min-h-0 gap-3", rowHidden && "hidden")}
+              style={{
+                gridTemplateColumns: `repeat(${Math.max(1, columns)}, minmax(0, 1fr))`,
+                gridAutoRows: "minmax(0, 1fr)",
+                // A row that wraps onto two lines needs twice the height of a
+                // single-line row, or its panes end up half as tall.
+                flexGrow: maximized !== null ? 1 : paneLines(rowTerminals.length),
+                flexBasis: 0,
+              }}
             >
               {rowTerminals.map((term) => (
                 <div
                   key={term.key}
                   className={cn(
-                    "min-w-0 flex-1",
+                    "min-w-0",
                     maximized !== null && maximized !== term.name && "hidden",
                   )}
                 >

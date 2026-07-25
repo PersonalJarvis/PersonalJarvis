@@ -240,6 +240,7 @@ describe("Agentic IDE running workspace", () => {
       sent: "run the tests",
       composed_by: "raw",
       files: [],
+      submitted: true,
     });
     render(<AgenticIdeView />);
 

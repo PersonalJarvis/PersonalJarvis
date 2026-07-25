@@ -69,6 +69,67 @@ ENTER_DELAY_S = 0.12
 
 Status = str  # "pending" | "live" | "exited" | "error"
 
+# Verification budget. Measured against a real Claude Code: a plain prompt clears
+# the input line within ~0.3 s, but one carrying an @file reference takes over a
+# second (the agent reads the file before redrawing). A 1.4 s window reported a
+# prompt as failed that had in fact gone through — a false alarm is as bad as a
+# silent drop — so the window is generous, polled finely, and returns the moment
+# the line is clear (the normal case still costs ~0.3 s).
+_SUBMIT_POLL_S = 0.25
+_SUBMIT_WINDOW_S = 2.5
+# One extra Enter, and only while the text is DEMONSTRABLY still in the box.
+# Pressing blindly into an agent that already started is how you accidentally
+# confirm one of ITS prompts.
+_SUBMIT_RETRY_AFTER_S = 1.0
+
+# Glyphs an agent TUI draws in front of its input line.
+_INPUT_MARKERS = ("❯", ">", "›")
+
+
+def _opens_completion(payload: str) -> bool:
+    """True when the prompt's last token would leave a completion popup open.
+
+    ``@path`` opens the file picker and ``/name`` the command picker; with either
+    still open, Enter selects from the list instead of submitting.
+    """
+    last = payload.rsplit(" ", 1)[-1]
+    return last.startswith(("@", "/")) and len(last) > 1
+
+
+def _submit_needle(payload: str) -> str:
+    """The fragment used to recognise the prompt inside the input line.
+
+    The beginning, not the end: the input box wraps long prompts, so only the
+    first line is reliably intact — and it is the part that never changes when a
+    completion popup rewrites the tail.
+    """
+    return " ".join(payload.split())[:28].strip().lower()
+
+
+def _input_line_holds(tail: list[str], needle: str) -> bool:
+    """True when the terminal's input line still shows ``needle`` being typed.
+
+    Only the LAST prompt-marked line counts. An agent echoes a submitted prompt
+    back into its history behind the same ``>`` glyph, so "any line starting with
+    > contains the text" reports every successful submit as a failure — measured,
+    it did exactly that. The live input line is always the bottom-most one, and
+    after a submit it is empty.
+    """
+    if not needle:
+        return False
+    current: str | None = None
+    for line in tail:
+        stripped = line.strip()
+        if not stripped:
+            continue
+        for marker in _INPUT_MARKERS:
+            if stripped.startswith(marker):
+                current = stripped[len(marker) :].strip()
+                break
+    if not current:
+        return False
+    return current.lower().startswith(needle[: max(8, len(needle) // 2)])
+
 
 def sanitize_prompt(text: str) -> str:
     """Injectable form of ``text``: printable characters only, length-capped.
@@ -139,6 +200,8 @@ class Terminal:
     last_output_at: float | None = None
     prompts_sent: int = 0
     last_prompt: str = ""
+    # Did the last prompt actually leave the input line? None = none sent yet.
+    submitted: bool | None = None
     transcript: Transcript = field(default_factory=Transcript)
 
     def to_dict(self) -> dict[str, Any]:
@@ -159,6 +222,7 @@ class Terminal:
             ),
             "prompts_sent": self.prompts_sent,
             "last_prompt": self.last_prompt,
+            "submitted": self.submitted,
             "lines_captured": len(self.transcript.lines()),
         }
 
@@ -635,10 +699,29 @@ class Registry:
 
     # --------------------------------------------------------------- prompt
     async def send_prompt(self, wanted: str, text: str) -> Terminal:
-        """Type ``text`` into a terminal and press Enter.
+        """Type ``text`` into a terminal, press Enter, and CONFIRM it was sent.
 
-        Raises ``SessionError`` when the terminal is unknown, not running, or
-        the prompt sanitizes down to nothing.
+        Typing and hoping is not enough, which a live failure proved on
+        2026-07-25: three prompts were typed into three agents and only one ran.
+        The two that stalled both ended with an ``@file`` reference, and that is
+        the whole mechanism — an ``@path`` (or a ``/command``) at the end of the
+        line leaves the agent's completion popup OPEN, so the Enter that follows
+        picks a suggestion instead of submitting. Measured on a real Claude Code:
+        ending with ``@README.md`` never submits; the same prompt with one
+        trailing space always does.
+
+        So two defences, because a silent no-op is the worst outcome here:
+
+        1. **Close any open completion** before Enter — a single space when the
+           prompt ends in an ``@``/``/`` token. Harmless to the prompt text.
+        2. **Verify and retry.** After Enter, the sent text must be GONE from the
+           input line. While it is still sitting there, press Enter again (twice
+           at most). Whether it finally went is reported back, so a caller can
+           say "sent to Mika" or "Mika did not accept it" — never guess.
+
+        Raises ``SessionError`` when the terminal is unknown, not running, or the
+        prompt sanitizes down to nothing. A prompt that was typed but refused to
+        submit is NOT an error — the text is in the box and the caller is told.
         """
         session = self._session
         if session is None:
@@ -657,15 +740,52 @@ class Registry:
             raise SessionError("The prompt was empty after cleanup.")
 
         manager = self._manager()
-        if not manager.write(term.pty_id, payload):
+        typed = payload + (" " if _opens_completion(payload) else "")
+        if not manager.write(term.pty_id, typed):
             raise SessionError(f"Could not write to {term.name}.")
         await asyncio.sleep(ENTER_DELAY_S)
         manager.write(term.pty_id, "\r")
 
         term.prompts_sent += 1
         term.last_prompt = payload
-        logger.info("Agentic IDE prompt -> {}: {}", term.name, payload[:120])
+        term.submitted = await self._confirm_submitted(term, payload, manager)
+        logger.info(
+            "Agentic IDE prompt -> {} ({}): {}",
+            term.name,
+            "submitted" if term.submitted else "STILL IN THE INPUT BOX",
+            payload[:120],
+        )
         return term
+
+    async def _confirm_submitted(
+        self, term: Terminal, payload: str, manager: PtyManager
+    ) -> bool:
+        """True once ``payload`` has left the terminal's input line.
+
+        The input line lives at the bottom of the screen, just above the status
+        bar; a submitted prompt scrolls up out of it. So the check is: does the
+        BOTTOM of the replayed screen still show the beginning of what we typed?
+        Content-based rather than timing-based, because "the agent produced some
+        output" is not the same as "the prompt was accepted" (a completion popup
+        redraws too).
+        """
+        needle = _submit_needle(payload)
+        checks = max(1, int(_SUBMIT_WINDOW_S / _SUBMIT_POLL_S)) if _SUBMIT_POLL_S else 1
+        retried = False
+        for step in range(checks):
+            await asyncio.sleep(_SUBMIT_POLL_S)
+            if not _input_line_holds(term.transcript.tail(10), needle):
+                return True
+            elapsed = (step + 1) * _SUBMIT_POLL_S
+            if not retried and elapsed >= _SUBMIT_RETRY_AFTER_S:
+                retried = True
+                logger.warning(
+                    "Agentic IDE: {} still holds the prompt in its input box — "
+                    "pressing Enter once more",
+                    term.name,
+                )
+                manager.write(term.pty_id or "", "\r")
+        return not _input_line_holds(term.transcript.tail(10), needle)
 
     def report(self, wanted: str, lines: int = 40) -> dict[str, Any]:
         """What one terminal has been up to — the answer to "what is X doing?"."""
