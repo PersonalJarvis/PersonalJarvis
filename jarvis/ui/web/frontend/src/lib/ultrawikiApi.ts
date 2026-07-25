@@ -405,6 +405,42 @@ export interface UltraWikiSlotModels {
   reason?: string;
 }
 
+// Mirrors jarvis/ultrawiki/health.py::CheckState — five-layer anti-drift
+// discipline (AP-4 / BUG-008): never retype these values elsewhere.
+// `working` and `blocked` exist on purpose: a running import is not a fault,
+// and an integration with no reader is not something a user can click away.
+export const ULTRAWIKI_CHECK_STATES = [
+  "ok",
+  "working",
+  "attention",
+  "blocked",
+] as const;
+export type UltraWikiCheckState = (typeof ULTRAWIKI_CHECK_STATES)[number];
+
+export interface UltraWikiHealthCheck {
+  id: string;
+  title: string;
+  state: UltraWikiCheckState;
+  detail: string;
+  /** What the UI should offer; `null` when there is nothing useful to click. */
+  action: { kind: string; [key: string]: unknown } | null;
+  facts: Record<string, unknown>;
+}
+
+export interface UltraWikiHealth {
+  /** The worst check's state — the headline colour. */
+  overall: UltraWikiCheckState;
+  /** Can the user get answers RIGHT NOW (a backlog does not make this false). */
+  usable: boolean;
+  checks: UltraWikiHealthCheck[];
+}
+
+export interface UltraWikiSyncAllResponse {
+  started: { source_id: string; job_id: string }[];
+  skipped: { source_id: string; reason: string }[];
+  detail: string;
+}
+
 export interface SupabaseProject {
   ref: string;
   name: string;
@@ -555,6 +591,25 @@ export function fetchUltraWikiProviders(): Promise<UltraWikiProviders> {
 
 export function fetchUltraWikiCatalog(): Promise<UltraWikiCatalog> {
   return request<UltraWikiCatalog>("/api/ultrawiki/catalog");
+}
+
+/**
+ * The "is my knowledge base working?" checklist. Poll-safe like the status
+ * fetch: a transient blip returns `null` rather than throwing, because this
+ * screen is the one a user opens BECAUSE something looks wrong.
+ */
+export async function fetchUltraWikiHealth(): Promise<UltraWikiHealth | null> {
+  try {
+    const res = await fetch("/api/ultrawiki/health");
+    if (!res.ok) return null;
+    return (await res.json()) as UltraWikiHealth;
+  } catch {
+    return null;
+  }
+}
+
+export function syncAllUltraWikiSources(): Promise<UltraWikiSyncAllResponse> {
+  return postJson<UltraWikiSyncAllResponse>("/api/ultrawiki/sources/sync-all");
 }
 
 /**

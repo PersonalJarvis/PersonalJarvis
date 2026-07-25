@@ -467,9 +467,23 @@ class TestPluginBridge:
         result = list_candidates()
         assert isinstance(result, list)
         for entry in result:
-            assert set(entry) == {"id", "kind", "label", "detail"}
-            assert all(isinstance(value, str) for value in entry.values())
+            assert set(entry) == {
+                "id",
+                "kind",
+                "label",
+                "detail",
+                # The machine-readable twin of the "pull adapter pending" note.
+                # Callers (the health checklist) must not have to string-match
+                # an English sentence to learn whether this integration can
+                # contribute anything at all.
+                "has_pull_adapter",
+            }
             assert entry["kind"] in {"plugin", "mcp"}
+            assert isinstance(entry["has_pull_adapter"], bool)
+            assert all(
+                isinstance(entry[key], str)
+                for key in ("id", "kind", "label", "detail")
+            )
 
     def test_list_candidates_survives_broken_registries(
         self, monkeypatch: pytest.MonkeyPatch

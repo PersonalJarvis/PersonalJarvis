@@ -298,6 +298,92 @@ async def get_status(request: Request) -> dict[str, Any]:
     }
 
 
+@router.get("/health", summary="Is the knowledge base actually working?")
+async def get_health(request: Request) -> dict[str, Any]:
+    """One checklist answering "is this working, and if not, what do I click?".
+
+    Assembled from the SAME status payload the settings screens read, so the
+    checklist can never claim something the rest of the UI contradicts. It
+    exists because every individual surface was already truthful while the
+    whole remained unreadable: sources "approved" (permission, not import),
+    a pipeline reporting "everything is processed" (of nothing), slots all
+    green, and seven connected apps that no reader can pull from. Diagnosing
+    that took a database query — see :mod:`jarvis.ultrawiki.health`.
+    """
+    from jarvis.ultrawiki import health as health_mod  # noqa: PLC0415 — lazy (AP-26)
+
+    status = await get_status(request)
+
+    def _candidates() -> list[dict[str, Any]]:
+        # Walks the keyring + mcp.json; keep it off the event loop.
+        from jarvis.ultrawiki.connectors import plugin_bridge  # noqa: PLC0415
+
+        try:
+            return plugin_bridge.list_candidates()
+        except Exception:  # noqa: BLE001 — a broken registry shortens the list
+            log.debug("health: candidate probe failed", exc_info=True)
+            return []
+
+    candidates = await asyncio.to_thread(_candidates)
+    return health_mod.build_health(status, candidates)
+
+
+@router.post(
+    "/sources/sync-all",
+    summary="Import every approved source that has never been read",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def sync_all_sources(
+    request: Request,
+    only_never_imported: bool = Query(
+        default=True,
+        description=(
+            "Only sources that have never finished an import (the default). "
+            "Pass false to re-read every approved source."
+        ),
+    ),
+) -> dict[str, Any]:
+    """The checklist's one-click fix for "approved but never imported".
+
+    Approving a source grants permission; before auto-import on approval
+    landed, it did not fetch, and installs made earlier still carry sources
+    that were allowed but never read. This starts exactly those, skipping any
+    already running so a double click cannot pile up duplicate work.
+    """
+    service = _service(request)
+    status = await service.status()
+    started: list[dict[str, str]] = []
+    skipped: list[dict[str, str]] = []
+    for source in status.get("sources", []):
+        source_id = str(source.get("id") or "")
+        if not source_id:
+            continue
+        if source.get("consent") != "approved" or not source.get("enabled", False):
+            skipped.append({"source_id": source_id, "reason": "not approved"})
+            continue
+        if source.get("active_job"):
+            skipped.append({"source_id": source_id, "reason": "already importing"})
+            continue
+        if only_never_imported and source.get("last_sync_at"):
+            skipped.append({"source_id": source_id, "reason": "already imported"})
+            continue
+        try:
+            job_id = await service.start_sync(source_id)
+        except Exception as exc:  # noqa: BLE001 — one refusal must not stop the rest
+            skipped.append({"source_id": source_id, "reason": str(exc)[:200]})
+            continue
+        started.append({"source_id": source_id, "job_id": job_id})
+    return {
+        "started": started,
+        "skipped": skipped,
+        "detail": (
+            f"Started {len(started)} import(s)."
+            if started
+            else "Nothing to import — every approved source has already been read."
+        ),
+    }
+
+
 @router.get("/providers", summary="UltraWiki provider options per slot")
 async def list_providers(request: Request) -> dict[str, Any]:
     """Option cards for the embedding, rerank, and storage slots (readiness-probed)."""
@@ -1317,13 +1403,48 @@ async def start_sync(
     }
 
 
+@router.get("/connectors", summary="List every UltraWiki source connector offered")
+async def list_connectors() -> dict[str, Any]:
+    """The curated roster the add-source picker renders: built-ins and integrations.
+
+    Static product data — the catalog, not the install. It says what UltraWiki
+    OFFERS (name, brand mark, whether a reader exists yet); which of them this
+    machine has actually connected is the separate ``/bridge/candidates`` call.
+    """
+    from jarvis.ultrawiki import connector_catalog  # noqa: PLC0415 — lazy (AP-26)
+
+    connectors = [
+        connector_catalog.as_dict(spec) for spec in connector_catalog.list_connectors()
+    ]
+    return {
+        "connectors": connectors,
+        "total": len(connectors),
+        "builtin": sum(1 for row in connectors if row["kind"] == "builtin"),
+        "bridge": sum(1 for row in connectors if row["kind"] == "bridge"),
+    }
+
+
 @router.get("/bridge/candidates", summary="List plugin-bridge candidates")
 async def list_bridge_candidates() -> dict[str, Any]:
-    """Connected Jarvis integrations (plugins, MCP servers) that could become sources."""
+    """Curated integrations for the picker, each flagged connected or not.
+
+    Only roster entries appear — a connected tool UltraWiki does not curate is
+    left out entirely, because offering it would promise a reader that will
+    never exist. A curated integration the user has NOT connected is included
+    with ``connected: false`` so the picker can show what is possible and point
+    at the Plugins store, rather than pretending the roster is empty.
+    """
     from jarvis.ultrawiki.connectors import plugin_bridge  # noqa: PLC0415 — lazy
 
-    candidates = plugin_bridge.list_candidates()
-    return {"candidates": candidates, "total": len(candidates)}
+    # Discovery walks the OS keyring and reads mcp.json — blocking work that
+    # belongs in a worker thread, the same way the health route runs it.
+    candidates = await asyncio.to_thread(plugin_bridge.list_offered_integrations)
+    connected = sum(1 for row in candidates if row.get("connected"))
+    return {
+        "candidates": candidates,
+        "total": len(candidates),
+        "connected": connected,
+    }
 
 
 # ---------------------------------------------------------------------------

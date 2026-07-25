@@ -2732,7 +2732,8 @@
       "status_unavailable": "UltraWiki status is unavailable — is the backend running?",
       "embedding_dead": "The embedding slot is not ready ({0}). Keyword and time-based answers still work; semantic search is paused until the slot is fixed.",
       "open_settings": "Open settings",
-      "tab_contents": "Contents"
+      "tab_contents": "Contents",
+      "tab_check": "Check"
     },
     "progress": {
       "title": "Import pipeline",
@@ -2962,6 +2963,19 @@
       "minutes": "{0} min ago",
       "hours": "{0} h ago",
       "days": "{0} d ago"
+    },
+    "health": {
+      "loading": "Checking…",
+      "unavailable": "The check could not run. The app may still be starting — try again in a moment.",
+      "recheck": "Check again",
+      "verdict_usable": "Your knowledge base is working.",
+      "verdict_usable_working": "Working — and still busy in the background.",
+      "verdict_not_ready": "Not ready to answer yet.",
+      "verdict_hint": "The steps below are checked in order. Anything you can fix has a button next to it.",
+      "action_sync_all": "Import now",
+      "action_open_sources": "Open sources",
+      "action_open_settings": "Open settings",
+      "action_enable_mode": "Turn on"
     }
   }
 }

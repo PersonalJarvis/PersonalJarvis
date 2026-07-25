@@ -2731,7 +2731,8 @@
       "status_unavailable": "El estado de UltraWiki no está disponible — ¿está funcionando el backend?",
       "embedding_dead": "La ranura de embeddings no está lista ({0}). Las respuestas por palabras clave y por fecha siguen funcionando; la búsqueda semántica queda en pausa hasta arreglar la ranura.",
       "open_settings": "Abrir ajustes",
-      "tab_contents": "Contenido"
+      "tab_contents": "Contenido",
+      "tab_check": "Comprobar"
     },
     "progress": {
       "title": "Canal de importación",
@@ -2961,6 +2962,19 @@
       "minutes": "hace {0} min",
       "hours": "hace {0} h",
       "days": "hace {0} d"
+    },
+    "health": {
+      "loading": "Comprobando…",
+      "unavailable": "La comprobación no pudo ejecutarse. Puede que la aplicación aún esté arrancando: inténtalo de nuevo en un momento.",
+      "recheck": "Comprobar de nuevo",
+      "verdict_usable": "Tu base de conocimiento funciona.",
+      "verdict_usable_working": "Funciona, y sigue trabajando en segundo plano.",
+      "verdict_not_ready": "Todavía no puede responder.",
+      "verdict_hint": "Los pasos de abajo se comprueban en orden. Todo lo que puedas arreglar tiene un botón al lado.",
+      "action_sync_all": "Importar ahora",
+      "action_open_sources": "Abrir fuentes",
+      "action_open_settings": "Abrir ajustes",
+      "action_enable_mode": "Activar"
     }
   }
 }

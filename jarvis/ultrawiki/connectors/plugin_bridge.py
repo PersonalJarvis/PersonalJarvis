@@ -12,6 +12,15 @@ could turn into UltraWiki sources —
   flagged ``needs_reauth``, the same rule the marketplace UI applies), and
 - MCP servers configured (and enabled) in the user's ``mcp.json``.
 
+Discovery finds what is INSTALLED; :mod:`jarvis.ultrawiki.connector_catalog`
+decides what is OFFERED. Every candidate is matched against that curated
+roster: an integration the roster does not name is dropped (noted once at
+debug), and one it does name is enriched with the catalog's real product
+name, brand key and status — so no raw id or drifting registry string can
+reach a card. :func:`list_offered_integrations` adds the roster entries the
+user has NOT connected yet, flagged as such, so the picker can show what is
+possible without letting anyone add a dead source.
+
 Every probe is wrapped so a half-configured install (no keyring service,
 corrupt catalog, missing mcp.json) shortens the list instead of crashing
 it. All imports of the marketplace/MCP machinery are lazy (AP-26).
@@ -48,6 +57,7 @@ import logging
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
+from jarvis.ultrawiki import connector_catalog
 from jarvis.ultrawiki.types import (
     AuthKind,
     ConnectorCapabilities,
@@ -83,8 +93,8 @@ def _adapter_note(integration_id: str) -> str:
     return "pull adapter available" if has_pull_adapter(integration_id) else "pull adapter pending"
 
 
-def _marketplace_candidates() -> list[dict[str, str]]:
-    candidates: list[dict[str, str]] = []
+def _marketplace_candidates() -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
     try:
         from jarvis.marketplace.catalog_data import load_catalog
         from jarvis.marketplace.token_store import TokenStore
@@ -112,13 +122,18 @@ def _marketplace_candidates() -> list[dict[str, str]]:
                     f"connected marketplace plugin ({spec.category}); "
                     f"{_adapter_note(integration_id)}"
                 ),
+                # The machine-readable twin of the note above. Callers used to
+                # have to string-match "pull adapter pending" to decide whether
+                # this integration can contribute anything — a flag they can
+                # branch on beats parsing an English sentence.
+                "has_pull_adapter": has_pull_adapter(integration_id),
             }
         )
     return candidates
 
 
-def _mcp_candidates() -> list[dict[str, str]]:
-    candidates: list[dict[str, str]] = []
+def _mcp_candidates() -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
     try:
         from jarvis.mcp.state import load_config
 
@@ -148,6 +163,7 @@ def _mcp_candidates() -> list[dict[str, str]]:
                     "kind": "mcp",
                     "label": label,
                     "detail": detail,
+                    "has_pull_adapter": has_pull_adapter(integration_id),
                 }
             )
         except Exception as exc:
@@ -156,14 +172,103 @@ def _mcp_candidates() -> list[dict[str, str]]:
     return candidates
 
 
-def list_candidates() -> list[dict[str, str]]:
-    """CONNECTED integrations a user could turn into UltraWiki sources.
+def _enriched(
+    candidate: dict[str, Any], spec: connector_catalog.UltraWikiConnectorSpec
+) -> dict[str, Any]:
+    """One discovered candidate, dressed in its catalog identity.
 
-    Each entry: ``{"id", "kind", "label", "detail"}`` where ``kind`` is
-    ``"plugin"`` (marketplace) or ``"mcp"`` (mcp.json server). Never
-    raises — a broken registry merely shortens the list.
+    The catalog label OVERWRITES whatever the registry carried: registry
+    display strings are user- and vendor-authored and drift into unreadable
+    shapes, while the roster holds the product's real name. ``status`` is the
+    one field the runtime knows better than the catalog — a registered pull
+    adapter means the integration really can be read today.
     """
-    return _marketplace_candidates() + _mcp_candidates()
+    integration_id = str(candidate.get("id") or "")
+    adapter_ready = has_pull_adapter(integration_id)
+    return {
+        **candidate,
+        "label": spec.label,
+        "catalog_id": spec.id,
+        "brand": spec.brand,
+        "connector_kind": spec.kind,
+        "description_key": spec.description_key,
+        "status": "available" if adapter_ready else spec.status,
+        "connected": True,
+        "has_pull_adapter": adapter_ready,
+    }
+
+
+def list_candidates() -> list[dict[str, Any]]:
+    """CONNECTED integrations the roster offers as UltraWiki sources.
+
+    Each entry: ``{"id", "kind", "label", "detail", "has_pull_adapter",
+    "catalog_id", "brand", "connector_kind", "description_key", "status",
+    "connected"}`` where ``kind`` is ``"plugin"`` (marketplace) or ``"mcp"``
+    (mcp.json server) — WHERE it was discovered — and ``connector_kind`` is
+    always ``"bridge"``.
+
+    Connected-only, so the count keeps meaning "apps this install can read
+    from" for the health surface. Anything connected but off the roster is
+    dropped. Never raises — a broken registry merely shortens the list.
+    """
+    # Roster order, not discovery order: the picker must not reshuffle itself
+    # because a token expired or an mcp.json entry moved.
+    rank = {spec.id: i for i, spec in enumerate(connector_catalog.BRIDGE_CONNECTORS)}
+    offered: list[tuple[int, dict[str, Any]]] = []
+    claimed: set[str] = set()
+    for candidate in _marketplace_candidates() + _mcp_candidates():
+        integration_id = str(candidate.get("id") or "")
+        spec = connector_catalog.bridge_entry_for(integration_id)
+        if spec is None:
+            connector_catalog.note_excluded_candidate(
+                integration_id, "no curated UltraWiki entry"
+            )
+            continue
+        # One product, one card: a user running their own MCP server for a
+        # product they also connected as a plugin gets ONE tile, and the
+        # marketplace connection wins because it is the supported path.
+        if spec.id in claimed:
+            connector_catalog.note_excluded_candidate(
+                integration_id, f"{spec.label} is already offered"
+            )
+            continue
+        claimed.add(spec.id)
+        offered.append((rank[spec.id], _enriched(candidate, spec)))
+    offered.sort(key=lambda pair: pair[0])
+    return [row for _, row in offered]
+
+
+def list_offered_integrations() -> list[dict[str, Any]]:
+    """The full picker roster: connected entries first, then the rest.
+
+    A curated integration the user has not connected still belongs in the
+    picker — that is the difference between a catalog and a list of what
+    happens to be plugged in. It carries ``connected: false`` so the UI sends
+    the user to the Plugins store instead of registering a source that could
+    never read anything.
+    """
+    connected = list_candidates()
+    seen = {str(row.get("catalog_id") or "") for row in connected}
+    missing = [
+        {
+            "id": f"plugin:{spec.id}",
+            "kind": "plugin",
+            "label": spec.label,
+            "detail": (
+                "not connected yet — connect it under Plugins, then add it here"
+            ),
+            "has_pull_adapter": False,
+            "catalog_id": spec.id,
+            "brand": spec.brand,
+            "connector_kind": spec.kind,
+            "description_key": spec.description_key,
+            "status": spec.status,
+            "connected": False,
+        }
+        for spec in connector_catalog.BRIDGE_CONNECTORS
+        if spec.id not in seen
+    ]
+    return connected + missing
 
 
 class PluginBridgeConnector:
@@ -215,6 +320,7 @@ __all__ = [
     "PullAdapter",
     "has_pull_adapter",
     "list_candidates",
+    "list_offered_integrations",
     "register_pull_adapter",
     "unregister_pull_adapter",
 ]

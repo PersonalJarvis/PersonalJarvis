@@ -2731,7 +2731,8 @@
       "status_unavailable": "UltraWiki-Status nicht verfügbar — läuft das Backend?",
       "embedding_dead": "Der Embedding-Slot ist nicht bereit ({0}). Stichwort- und Zeit-Antworten funktionieren weiter; die semantische Suche pausiert, bis der Slot repariert ist.",
       "open_settings": "Einstellungen öffnen",
-      "tab_contents": "Inhalte"
+      "tab_contents": "Inhalte",
+      "tab_check": "Prüfen"
     },
     "progress": {
       "title": "Import-Pipeline",
@@ -2961,6 +2962,19 @@
       "minutes": "vor {0} Min.",
       "hours": "vor {0} Std.",
       "days": "vor {0} Tg."
+    },
+    "health": {
+      "loading": "Wird geprüft…",
+      "unavailable": "Die Prüfung konnte nicht laufen. Die App startet möglicherweise noch — versuche es gleich noch einmal.",
+      "recheck": "Erneut prüfen",
+      "verdict_usable": "Deine Wissensbasis funktioniert.",
+      "verdict_usable_working": "Funktioniert — und arbeitet im Hintergrund weiter.",
+      "verdict_not_ready": "Kann noch nicht antworten.",
+      "verdict_hint": "Die Schritte unten werden der Reihe nach geprüft. Alles, was du beheben kannst, hat einen Knopf daneben.",
+      "action_sync_all": "Jetzt importieren",
+      "action_open_sources": "Quellen öffnen",
+      "action_open_settings": "Einstellungen öffnen",
+      "action_enable_mode": "Einschalten"
     }
   }
 }

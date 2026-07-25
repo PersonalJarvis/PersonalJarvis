@@ -7,14 +7,20 @@
  * every 4 s while a sync job is active (the wiki health polling idiom).
  *
  * Layout: honest degradation banner → staged import-progress strip → the
- * four tabs Ask | Sources | Contents | Settings. A dead required slot banners
- * the problem and links to the settings tab — the mode is never flipped
- * silently (design doc 04, mode-switch rules).
+ * five tabs Check | Ask | Sources | Contents | Settings. A dead required slot
+ * banners the problem and links to the settings tab — the mode is never
+ * flipped silently (design doc 04, mode-switch rules).
+ *
+ * "Check" leads on purpose. Every other tab answers a question you already
+ * know to ask; a user whose knowledge base looks empty does not know which
+ * one of them holds the reason, and hunting through four screens is how a
+ * single missing import step went undiagnosed for days.
  */
 import { useState } from "react";
 import {
   AlertTriangle,
   Database,
+  ListChecks,
   MessageCircleQuestion,
   Plug,
   Settings2,
@@ -28,12 +34,13 @@ import {
   hasActiveUltraWikiJobs,
 } from "@/lib/ultrawikiApi";
 import { AskPanel } from "@/components/ultrawiki/AskPanel";
+import { HealthPanel } from "@/components/ultrawiki/HealthPanel";
 import { SourcesPanel } from "@/components/ultrawiki/SourcesPanel";
 import { ContentsPanel } from "@/components/ultrawiki/ContentsPanel";
 import { SlotsPanel } from "@/components/ultrawiki/SlotsPanel";
 import { ImportProgress } from "@/components/ultrawiki/ImportProgress";
 
-type UltraTab = "ask" | "sources" | "contents" | "settings";
+type UltraTab = "check" | "ask" | "sources" | "contents" | "settings";
 
 export function UltraWikiPanel(): JSX.Element {
   const t = useT();
@@ -127,6 +134,13 @@ export function UltraWikiPanel(): JSX.Element {
 
       <div className="flex items-stretch border-b border-border bg-card/40">
         <UltraTabButton
+          active={tab === "check"}
+          onClick={() => setTab("check")}
+          icon={<ListChecks className="h-3.5 w-3.5" aria-hidden />}
+          label={t("ultrawiki.panel.tab_check")}
+          testId="ultrawiki-tab-check"
+        />
+        <UltraTabButton
           active={tab === "ask"}
           onClick={() => setTab("ask")}
           icon={<MessageCircleQuestion className="h-3.5 w-3.5" aria-hidden />}
@@ -157,6 +171,12 @@ export function UltraWikiPanel(): JSX.Element {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
+        {tab === "check" && (
+          <HealthPanel
+            onOpenSources={() => setTab("sources")}
+            onOpenSettings={() => setTab("settings")}
+          />
+        )}
         {tab === "ask" && (
           <AskPanel
             searchLegs={status.search_legs}
