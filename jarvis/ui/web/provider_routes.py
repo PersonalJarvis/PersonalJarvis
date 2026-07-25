@@ -287,6 +287,22 @@ def _codex_brain_usable() -> bool:
         return False
 
 
+def _stored_base_url(spec: ProviderSpec) -> str | None:
+    """The persisted ``[brain.providers.<id>].base_url`` override, or ``None``.
+
+    Only read for cards that expose the URL field; "" (the cleared state the
+    writer leaves behind) reports as ``None`` so the UI shows the placeholder.
+    """
+    if not spec.supports_base_url:
+        return None
+    try:
+        prov = cfg_mod.load_config().brain.providers.get(spec.id)
+    except Exception:  # noqa: BLE001 — a card list must never 500 on config trouble
+        return None
+    value = (getattr(prov, "base_url", None) or "").strip()
+    return value or None
+
+
 def _spec_to_payload(
     spec: ProviderSpec,
     *,
@@ -366,6 +382,11 @@ def _spec_to_payload(
         "credential_help": spec.credential_help,
         "signup_url": spec.signup_url,
         "billing": provider_billing(spec),
+        # Local/self-hosted cards: editable server URL
+        # (PUT /providers/{id}/base-url); None base_url = vendor default.
+        "supports_base_url": spec.supports_base_url,
+        "default_base_url": spec.default_base_url,
+        "base_url": _stored_base_url(spec),
         # Maintainer-recommended pick for this tier (UI badge) + the model it
         # points at. Presentation only — never gates behavior (AP-21).
         "recommended": spec.recommended,
@@ -1624,6 +1645,56 @@ async def set_brain_model(
     if cat.tier == "tts":
         return _apply_tts_selection(provider_id, value, cat.selects, body, request)
     return _apply_stt_model(provider_id, value, body, request)
+
+
+class BaseUrlBody(BaseModel):
+    # None or "" clears the override → back to the vendor default.
+    base_url: str | None = Field(default=None, max_length=500)
+
+
+class BaseUrlResponse(BaseModel):
+    ok: bool = True
+    provider: str
+    base_url: str | None
+    default_base_url: str | None
+
+
+@router.put("/providers/{provider_id}/base-url")
+async def set_provider_base_url(provider_id: str, body: BaseUrlBody) -> BaseUrlResponse:
+    """Set (or clear) the server URL of a local/self-hosted provider.
+
+    Only cards with ``supports_base_url`` accept one (400 otherwise). The URL
+    is normalized to a bare server root (a pasted ``…/v1`` suffix is stripped,
+    ``0.0.0.0`` maps to localhost) and persisted atomically to
+    ``[brain.providers.<id>].base_url``; clearing falls back to the vendor
+    default (ollama: OLLAMA_HOST → http://localhost:11434).
+    """
+    spec = get_spec(provider_id)
+    if spec is None:
+        raise HTTPException(status_code=404, detail=f"Unknown provider: {provider_id}")
+    if not spec.supports_base_url:
+        raise HTTPException(
+            status_code=400,
+            detail=f"'{provider_id}' does not accept a server URL.",
+        )
+    cleaned = (body.base_url or "").strip()
+    if cleaned:
+        if not cleaned.lower().startswith(("http://", "https://")):
+            raise HTTPException(
+                status_code=422,
+                detail="The server URL must start with http:// or https://.",
+            )
+        from jarvis.plugins.brain.ollama import normalize_server_root
+
+        cleaned = normalize_server_root(cleaned)
+    from jarvis.core import config_writer
+
+    config_writer.set_provider_base_url(provider_id, cleaned or None)
+    return BaseUrlResponse(
+        provider=provider_id,
+        base_url=cleaned or None,
+        default_base_url=spec.default_base_url,
+    )
 
 
 @router.get("/providers/{provider_id}/cu-model")

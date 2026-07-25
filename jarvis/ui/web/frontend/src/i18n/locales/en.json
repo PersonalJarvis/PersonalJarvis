@@ -75,7 +75,8 @@
     "taskbar": "Taskbar",
     "contacts": "Contacts",
     "feedback": "Feedback",
-    "agent_instructions": "{name}.md"
+    "agent_instructions": "{name}.md",
+    "agentic_ide": "Agentic IDE"
   },
   "agent_instructions": {
     "subtitle": "Your personal preferences for how the assistant works with you — tone, language, defaults, standing facts. Separate from the System Prompt, and it never overrides safety or confirmations.",
@@ -1004,6 +1005,16 @@
     "integration_ok_note": "The provider was reached — only the key/account/model is the blocker.",
     "integration_bad_note": "The provider could not be reached.",
     "failed": "Test failed"
+  },
+  "apikeys_base_url": {
+    "label": "Server URL",
+    "placeholder_required": "e.g. http://localhost:8000 — required",
+    "save": "Save",
+    "saving": "Saving…",
+    "saved": "Server URL saved",
+    "cleared": "Server URL reset to the default",
+    "hint_default": "Leave empty to use the default address shown above.",
+    "hint_required": "This provider needs a server URL — enter where your local server runs."
   },
   "apikeys_model": {
     "heading": "Model",

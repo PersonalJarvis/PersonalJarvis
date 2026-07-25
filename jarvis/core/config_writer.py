@@ -1477,6 +1477,62 @@ def set_brain_provider_model(
     )
 
 
+def set_provider_base_url(
+    provider: str, base_url: str | None, *, path: Path = DEFAULT_CONFIG_FILE
+) -> None:
+    """Persist (or clear) ``[brain.providers.<provider>].base_url``.
+
+    Backs the API-Keys card's server-URL field for local/self-hosted providers
+    (``PUT /api/providers/{id}/base-url``). ``None``/"" writes an EMPTY string
+    rather than deleting the key — "" is falsy everywhere the override is read
+    (``resolve_provider_endpoint``), and keeping the key present means the
+    drift-soll layer and the TOML always agree (BUG-010 class). Same atomic
+    discipline as every setter here (AP-7); tomlkit quotes hyphenated provider
+    ids (``[brain.providers."local-openai"]``) on its own.
+    """
+    path = _ensure_writable_config_path(path)
+    cleaned = (base_url or "").strip()
+
+    with _WRITE_LOCK:
+        raw = path.read_text(encoding="utf-8")
+        had_bom = raw.startswith(_BOM)
+        if had_bom:
+            raw = raw[len(_BOM) :]
+        doc: TOMLDocument = tomlkit.parse(raw)
+
+        brain = doc.get("brain")
+        if brain is None:
+            brain = tomlkit.table()
+            doc["brain"] = brain
+        providers = brain.get("providers")
+        if providers is None:
+            # Super-table flag via the factory (see set_brain_provider_model).
+            providers = tomlkit.table(True)
+            brain["providers"] = providers
+        block = providers.get(provider)
+        if block is None:
+            block = tomlkit.table()
+            providers[provider] = block
+        block["base_url"] = cleaned
+
+        out = tomlkit.dumps(doc)
+        if had_bom:
+            out = _BOM + out
+        _atomic_write(path, out)
+
+    # Best-effort drift-soll sync (never raises, never blocks the TOML write).
+    try:
+        _update_config_soll_section(  # i18n-allow
+            f"brain.providers.{provider}", {"base_url": cleaned}
+        )
+    except Exception as exc:  # noqa: BLE001 — best-effort, must not propagate
+        log.warning(
+            "Could not sync brain.providers.%s base_url to config-soll.json: %s",  # i18n-allow
+            provider,
+            exc,
+        )
+
+
 def set_telephony_config(values: dict[str, object], *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Patch ``[integrations.twilio]`` with the given non-secret fields.
 

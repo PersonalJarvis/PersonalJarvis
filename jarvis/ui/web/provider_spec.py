@@ -78,6 +78,14 @@ class ProviderSpec:
     # behavior (AP-21). Set on NVIDIA NIM: the free dev tier's 10-30s+ TTFB makes
     # it sluggish as a main/voice brain. ``None`` = no caution.
     caution: str | None = None
+    # Local/self-hosted providers: the card exposes an editable server URL
+    # (persisted as ``[brain.providers.<id>].base_url`` via
+    # ``PUT /api/providers/{id}/base-url``). ``default_base_url`` is the
+    # placeholder shown while no override is stored — ``None`` with
+    # ``supports_base_url=True`` means the user MUST set one (local-openai:
+    # no guessable default port).
+    supports_base_url: bool = False
+    default_base_url: str | None = None
 
 
 def provider_billing(spec: ProviderSpec) -> Billing:
@@ -276,6 +284,8 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
         dashboard_url=None,
         install_hint="ollama pull qwen3.5",
         signup_url="https://ollama.com/download",
+        supports_base_url=True,
+        default_base_url="http://localhost:11434",
         credential_help=(
             "Runs models fully local through an Ollama server — no API key, "
             "no cloud account, nothing leaves this machine. Install Ollama, "
@@ -283,6 +293,24 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "Jarvis finds it at http://localhost:11434 automatically. Point "
             "the server URL at another machine to share one Ollama box."
         ),
+    ),
+    ProviderSpec(
+        id="local-openai",
+        label="Local server (OpenAI-compatible)",
+        tier="brain",
+        auth_mode="none",
+        secret_keys=("local_openai_api_key",),
+        dashboard_url=None,
+        signup_url="https://huggingface.co/docs/transformers/main/serving",
+        credential_help=(
+            "Any self-hosted server that speaks the OpenAI chat format: "
+            "HuggingFace transformers serve (http://localhost:8000), llama.cpp "
+            "llama-server (http://localhost:8080), LM Studio "
+            "(http://localhost:1234), vLLM, or an existing TGI. Set the server "
+            "URL on this card — no cloud account, nothing leaves your network. "
+            "The API key is optional; most local servers ignore it."
+        ),
+        supports_base_url=True,
     ),
     # ── TTS ───────────────────────────────────────────────────────────────
     # Voice-Output cards render in this tuple order. OpenRouter leads (one key

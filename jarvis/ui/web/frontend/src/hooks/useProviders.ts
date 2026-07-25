@@ -65,6 +65,13 @@ export interface ProviderDescriptor {
   caution?: string | null;
   /** Gemini's Vertex alternative; null for single-path providers. */
   alt_credential: AltCredential | null;
+  /** Local/self-hosted cards: whether the card exposes an editable server URL
+   *  (persisted via PUT /api/providers/{id}/base-url). */
+  supports_base_url?: boolean;
+  /** Placeholder while no override is stored; null = the user must set one. */
+  default_base_url?: string | null;
+  /** The stored server-URL override; null = the vendor default is in effect. */
+  base_url?: string | null;
   /**
    * Codex only: legacy credential readiness kept in /api/providers for older
    * UI consumers. The current UI does not render Codex as a switchable Brain;
@@ -419,6 +426,26 @@ export async function deleteSecret(key: string): Promise<void> {
     const body = await res.json().catch(() => ({}));
     throw new Error(body.detail ?? `HTTP ${res.status}`);
   }
+}
+
+export async function saveProviderBaseUrl(
+  providerId: string,
+  baseUrl: string | null,
+): Promise<string | null> {
+  const res = await fetch(
+    `/api/providers/${encodeURIComponent(providerId)}/base-url`,
+    {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ base_url: baseUrl }),
+    },
+  );
+  if (!res.ok) {
+    const detail = await res.json().catch(() => ({}));
+    throw new Error(detail?.detail ?? `base-url ${res.status}`);
+  }
+  const data = (await res.json()) as { base_url: string | null };
+  return data.base_url ?? null;
 }
 
 export async function startCodexLogin(): Promise<void> {

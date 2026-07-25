@@ -1005,6 +1005,16 @@
     "integration_bad_note": "No se pudo contactar al proveedor.",
     "failed": "Prueba fallida"
   },
+  "apikeys_base_url": {
+    "label": "URL del servidor",
+    "placeholder_required": "p. ej. http://localhost:8000 — obligatorio",
+    "save": "Guardar",
+    "saving": "Guardando…",
+    "saved": "URL del servidor guardada",
+    "cleared": "URL del servidor restablecida al valor predeterminado",
+    "hint_default": "Déjalo vacío para usar la dirección predeterminada mostrada arriba.",
+    "hint_required": "Este proveedor necesita una URL de servidor: indica dónde se ejecuta tu servidor local."
+  },
   "apikeys_model": {
     "heading": "Modelo",
     "recommended_tag": "Recomendado",

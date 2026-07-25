@@ -24,6 +24,7 @@ import {
   type ProviderTestStatus,
   type ProviderTier,
   type SectionHealth,
+  saveProviderBaseUrl,
   sectionHealthForSubject,
   startCodexLogin,
   switchBrainProvider,
@@ -1727,6 +1728,77 @@ function ActiveControl({
   );
 }
 
+function BaseUrlField({
+  descriptor,
+  onChanged,
+}: {
+  descriptor: ProviderDescriptor;
+  onChanged: () => void;
+}) {
+  const t = useT();
+  const pushToast = useEventStore((s) => s.pushToast);
+  const [value, setValue] = useState(descriptor.base_url ?? "");
+  const [saving, setSaving] = useState(false);
+
+  // Follow refetches (e.g. after another card action) without clobbering an
+  // in-flight edit: only resync while the user is not mid-save.
+  useEffect(() => {
+    setValue(descriptor.base_url ?? "");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [descriptor.base_url]);
+
+  const dirty = value.trim() !== (descriptor.base_url ?? "");
+
+  async function save() {
+    setSaving(true);
+    try {
+      const stored = await saveProviderBaseUrl(descriptor.id, value.trim() || null);
+      setValue(stored ?? "");
+      pushToast(
+        "success",
+        stored ? t("apikeys_base_url.saved") : t("apikeys_base_url.cleared"),
+      );
+      onChanged();
+    } catch (e) {
+      pushToast("error", e instanceof Error ? e.message : String(e));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="space-y-1">
+      <label className="text-[10px] uppercase tracking-wider text-muted-foreground">
+        {t("apikeys_base_url.label")}
+      </label>
+      <div className="flex gap-2">
+        <input
+          type="url"
+          value={value}
+          onChange={(e) => setValue(e.target.value)}
+          placeholder={
+            descriptor.default_base_url ?? t("apikeys_base_url.placeholder_required")
+          }
+          className="h-8 w-full rounded-md border border-border bg-background px-2 text-xs"
+        />
+        <Button
+          size="sm"
+          variant="secondary"
+          onClick={save}
+          disabled={saving || !dirty}
+        >
+          {saving ? t("apikeys_base_url.saving") : t("apikeys_base_url.save")}
+        </Button>
+      </div>
+      <p className="text-[11px] leading-relaxed text-muted-foreground">
+        {descriptor.default_base_url
+          ? t("apikeys_base_url.hint_default")
+          : t("apikeys_base_url.hint_required")}
+      </p>
+    </div>
+  );
+}
+
 function AuthWidget({
   descriptor,
   onChanged,
@@ -1739,10 +1811,30 @@ function AuthWidget({
   return (
     <div className="space-y-2">
       <ProviderBillingBadge billing={descriptor.billing} />
+      {descriptor.supports_base_url && (
+        <BaseUrlField descriptor={descriptor} onChanged={onChanged} />
+      )}
       {descriptor.auth_mode === "none" && (
-        <p className="text-xs text-muted-foreground">
-          Local provider — no credentials needed.
-        </p>
+        <>
+          <p className="text-xs text-muted-foreground">
+            {descriptor.secret_keys.length > 0
+              ? "Local provider — runs without credentials. The key below is optional, only for servers that enforce one (e.g. vLLM --api-key)."
+              : "Local provider — no credentials needed."}
+          </p>
+          {descriptor.secret_keys.map((k) => (
+            <ApiKeyForm
+              key={k}
+              secretKey={k}
+              dashboardUrl={descriptor.dashboard_url}
+              configured={Boolean(descriptor.secrets_set[k])}
+              effectiveConfigured={Boolean(descriptor.secrets_effective?.[k])}
+              sharedWith={descriptor.secret_shared_with?.[k] ?? []}
+              credentialHelp={descriptor.credential_help}
+              onChanged={onChanged}
+              onSavedActivate={onSavedActivate}
+            />
+          ))}
+        </>
       )}
       {descriptor.auth_mode === "codex" && (
         <CodexAuthWidget descriptor={descriptor} onChanged={onChanged} />

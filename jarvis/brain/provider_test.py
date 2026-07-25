@@ -100,11 +100,15 @@ _BILLING_MARKERS = BILLING_LIMIT_MARKERS
 
 # "No key stored" shapes from the plugins' own _ensure_client guards.
 _MISSING_KEY_MARKERS = (
-    ("kein", "gefunden"),          # "Kein OpenAI-API-Key gefunden ..."
+    ("kein", "gefunden"),  # i18n-allow: legacy German key-error shape
     ("no api key",),               # "No API key found ..."
     ("no key found",),
     ("not configured",),
     ("missing api key",),
+    # Local OpenAI-compatible provider without a configured server URL —
+    # "enter the address on the card", the same actionable amber as a
+    # missing key (see jarvis/plugins/brain/local_openai.py).
+    ("needs a server url",),
 )
 
 # Reachability failures (no HTTP status code present).
@@ -118,6 +122,16 @@ _UNREACHABLE_MARKERS = (
     "network",
     "econnrefused",
     "name or service not known",
+    # Local providers phrase it honestly ("Ollama not reachable at … — is it
+    # running?"); the classifier must land on UNREACHABLE, not a red ERROR.
+    "not reachable",
+)
+
+# A reachable LOCAL server with nothing to run — the fix is a pull/load, not
+# a key or a network check (see the local brain plugins' error texts).
+_NO_LOCAL_MODEL_MARKERS = (
+    "no models installed",
+    "lists no models",
 )
 
 
@@ -160,6 +174,10 @@ def classify_provider_error(message: str | None) -> str:
         return UNREACHABLE
 
     # No HTTP status code in the message.
+    if any(m in msg for m in _NO_LOCAL_MODEL_MARKERS):
+        # Reachable local server, nothing loaded — "pull a model", not an
+        # integration bug and not a connectivity problem.
+        return MODEL_UNAVAILABLE
     if any(m in msg for m in _UNREACHABLE_MARKERS):
         return UNREACHABLE
     if _has_billing(msg):
