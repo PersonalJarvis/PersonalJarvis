@@ -1245,6 +1245,45 @@ class SafetyConfig(BaseModel):
     always_block_tiers: list[RiskTier] = Field(default_factory=lambda: ["block"])
     whitelist: SafetyWhitelistConfig = Field(default_factory=SafetyWhitelistConfig)
     blacklist: SafetyBlacklistConfig = Field(default_factory=SafetyBlacklistConfig)
+    # How long an armed approval gate waits for a decision before the default
+    # deny. Deliberately short: an unattended, non-pre-authorized ask-tier
+    # call should fail fast and honestly (the worker observes the denial and
+    # adapts, ADR-0031/W3) instead of burning its iteration budget blocked.
+    tool_approval_timeout_s: float = Field(default=60.0, ge=5.0, le=600.0)
+
+
+class SkillsConfig(BaseModel):
+    """Deterministic skill matching (2026-07-25).
+
+    Author-written voice triggers are unaffected by everything here; these knobs
+    govern only the relevance layer that catches paraphrases.
+    """
+
+    #: Master switch for the deterministic relevance layer. Off = exactly the
+    #: pre-2026-07-25 behaviour (author regex + the LLM listing).
+    relevance_enabled: bool = True
+
+    #: While true, a FIRE-band relevance match is RECORDED but does not capture
+    #: the turn — the narrowed candidate hint still ships. Default true for the
+    #: first release: the maintainer reviews a day of real decisions via
+    #: ``GET /api/skills/match-log`` and flips this off on measured numbers,
+    #: rather than on a hunch about a layer that can rewrite a turn's
+    #: instructions.
+    relevance_shadow: bool = True
+
+    #: Weakest band allowed to capture a turn. Anything below stays a
+    #: suggestion the model may ignore.
+    auto_fire_min_band: Literal["fire", "narrow"] = "fire"
+
+    #: Optional threshold overrides. ``None`` keeps the calibrated
+    #: corpus-derived defaults from jarvis/skills/relevance.py — set these only
+    #: with a number from scripts/skill_relevance_calibrate.py, never to make a
+    #: single over-fire go away (AP-27).
+    fire_threshold: float | None = None
+    hint_threshold: float | None = None
+
+    #: How many narrowed candidates ride the per-turn context on a NARROW turn.
+    narrow_candidates: int = 3
 
 
 class JarvisAgentNotificationConfig(BaseModel):
@@ -2082,6 +2121,16 @@ class WikiIntegrationConfig(BaseModel):
     subscribe_idle: bool = True              # listen for IdleEntered
     fallback_to_direct_ingest: bool = True   # when scheduler is missing
 
+    # Languages the search-alias bridge writes into each page
+    # (jarvis/memory/wiki/search_aliases.py). Pages are written in English by
+    # the fact extractor, so a user who ASKS in another language cannot reach
+    # them by keyword ("Flugzeuge" never matches "aircraft"). Listing that
+    # language here makes every page carry the words its owner would actually
+    # say. Empty = derive from the other language signals (reply_language, UI,
+    # STT); those are frequently all "en"/"auto" even for a non-English
+    # speaker, which is why this explicit list exists rather than a guess.
+    search_alias_languages: list[str] = Field(default_factory=list)
+
 
 class UltraWikiConfig(BaseModel):
     """UltraWiki — the semantic memory mode (design: UltraWiki/*.md).
@@ -2387,6 +2436,58 @@ class TeamProxyConfig(BaseModel):
     model_config = {"extra": "allow"}
 
 
+class Phase6SafetyConfig(BaseModel):
+    """``[phase6.safety]`` — mission-worker safety knobs (ADR-0031).
+
+    First Pydantic-modeled slice of the ``[phase6.*]`` tables (they were
+    documentation-plus-intent before; ``bootstrap_missions`` kwargs stay the
+    wiring for the older flags). ``extra="allow"`` so pre-existing raw keys
+    keep loading (AP-16).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    injection_scanner_enabled: bool = True
+    destructive_confirm_enabled: bool = True
+    extra_blocked_globs: list[str] = Field(default_factory=list)
+    # Mission-scoped tool pre-authorization (ADR-0031). When enabled, tools a
+    # mission's broker grant contains AND that appear below are auto-approved
+    # for THAT mission's calls only — the gate is answered on the bus (full
+    # Proposed→Approved→Executed audit), never bypassed. ``False`` restores
+    # the pre-ADR-0031 behavior (every ask-tier call waits for a human).
+    worker_tool_auto_approve: bool = True
+    # Exact tool names, or an MCP server family as ``server/`` (trailing
+    # slash). Prefer EXACT names: a server prefix silently authorizes every
+    # future tool that server adds, including destructive ones. Messaging /
+    # mail / social-send families deliberately stay OUT of the default —
+    # widen only by explicit operator choice. The shipped default lists
+    # read-only knowledge tools so a plausibility-escalated call can never
+    # stall an unattended mission.
+    auto_approve_tool_families: list[str] = Field(
+        default_factory=lambda: [
+            "search_web",
+            "wiki-list",
+            "wiki-recall",
+            "wiki-page-read",
+            "wiki-ingest",
+            "session-latest-turn",
+        ]
+    )
+
+
+class Phase6Config(BaseModel):
+    """``[phase6]`` root — mission subsystem configuration.
+
+    Only ``safety`` is typed so far; the other tables (orchestrator, budget,
+    voice, cleanup) remain raw TOML consumed via ``bootstrap_missions``
+    defaults and stay loadable through ``extra="allow"`` (AP-16).
+    """
+
+    model_config = ConfigDict(extra="allow")
+
+    safety: Phase6SafetyConfig = Field(default_factory=Phase6SafetyConfig)
+
+
 class JarvisConfig(BaseModel):
     """Root config model."""
     # populate_by_name=True lets callers use Python field names alongside
@@ -2401,6 +2502,7 @@ class JarvisConfig(BaseModel):
     brain: BrainConfig = Field(default_factory=BrainConfig)
     memory: MemoryConfig = Field(default_factory=MemoryConfig)
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
+    skills: SkillsConfig = Field(default_factory=SkillsConfig)
     harness: HarnessConfig = Field(default_factory=HarnessConfig)
     mcp_server: MCPServerConfig = Field(default_factory=MCPServerConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
@@ -2431,6 +2533,8 @@ class JarvisConfig(BaseModel):
     local_action: LocalActionConfig = Field(default_factory=LocalActionConfig)
     # Phase 8.4 — review pipeline configuration.
     review: ReviewConfig = Field(default_factory=ReviewConfig)
+    # Phase 6 — mission subsystem ([phase6.safety] typed; rest raw, AP-16).
+    phase6: Phase6Config = Field(default_factory=Phase6Config)
     # Latency sprint 1 (2026-04-30) — master switches for performance levers.
     performance: PerformanceConfig = Field(default_factory=PerformanceConfig)
     # Wave 0 (omni-latency) — hot-path latency span instrumentation toggle.

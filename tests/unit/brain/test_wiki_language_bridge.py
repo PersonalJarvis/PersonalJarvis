@@ -108,6 +108,48 @@ def test_alias_hit_carries_frontmatter_and_a_preview(tmp_path: Path) -> None:
     assert not hit.preview.startswith("#"), "preview must skip the H1"
 
 
+COMPOUND_PAGE = """---
+type: project
+slug: drugs-in-schools-project
+search_aliases: [Drogenprävention, Suchtprävention]  # i18n-allow: German compound under test
+---
+
+# Drugs in schools
+
+## Summary
+A prevention project.
+"""
+
+
+def test_prefix_matching_reaches_into_compounds(tmp_path: Path) -> None:
+    """FTS5 matches whole tokens, which strands every German compound.
+
+    Measured on the real vault: a question using the first half of a German
+    compound did not find the page whose alias was the whole compound. Prefix
+    variants close that, and they matter for plurals too.
+    """
+    root, conn = _vault(tmp_path, {"drugs.md": COMPOUND_PAGE})
+    hits = VaultSearch(root, conn=conn).search("Drogen", k=5)
+    assert [h.path.stem for h in hits] == ["drugs"]
+
+
+def test_prefix_matching_does_not_fire_on_tiny_tokens(tmp_path: Path) -> None:
+    """A two- or three-letter prefix would match half the vault for nothing."""
+    from jarvis.memory.wiki.search import _build_match_expr
+
+    assert "*" not in _build_match_expr(["ab"])
+    assert _build_match_expr(["drogen"]) == '"drogen" OR "drogen"*'
+
+
+def test_exact_token_is_still_searched_alongside_the_prefix(tmp_path: Path) -> None:
+    """The prefix is OR-ed IN ADDITION, so exact matches keep their rank."""
+    from jarvis.memory.wiki.search import _build_match_expr
+
+    expr = _build_match_expr(["dinner", "viktoria"])
+    assert '"dinner"' in expr and '"dinner"*' in expr
+    assert '"viktoria"' in expr and '"viktoria"*' in expr
+
+
 @pytest.mark.asyncio
 async def test_relevance_gate_does_not_discard_alias_hits(tmp_path: Path) -> None:
     """The regression this file exists for.

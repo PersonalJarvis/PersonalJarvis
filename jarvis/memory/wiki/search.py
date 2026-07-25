@@ -225,8 +225,11 @@ class VaultSearch:
         """
         cursor = conn.execute(sql, (match_expr, k))
         # Lowercased bare tokens for the "did body actually contain a hit?" check.
+        # Strip the quotes AND the prefix marker: '"drogen"*' and '"drogen"'
+        # both reduce to 'drogen', so the body check below stays a plain
+        # substring test and a prefix-only hit is judged on its stem.
         bare_tokens = [
-            _FTS5_SPECIAL_STRIP_RE.sub("", tok).lower()
+            _FTS5_SPECIAL_STRIP_RE.sub("", tok).rstrip("*").lower()
             for tok in match_expr.split(" OR ")
         ]
         hits: list[SearchHit] = []
@@ -264,6 +267,12 @@ class VaultSearch:
 # ---------------------------------------------------------------------------
 
 
+#: Shortest token that may be searched as a prefix. Below this a prefix match
+#: is indiscriminate ("ab*" hits half the vault) and costs precision for no
+#: recall worth having.
+_PREFIX_MIN_LEN = 4
+
+
 def _build_match_expr(tokens: list[str]) -> str:
     """Build an FTS5 MATCH expression from a list of tokens.
 
@@ -271,17 +280,34 @@ def _build_match_expr(tokens: list[str]) -> str:
     double-quotes) so that FTS5 special characters are treated as literals.
     Tokens are combined with OR.
 
+    Tokens of at least :data:`_PREFIX_MIN_LEN` characters additionally get a
+    PREFIX variant (``"drogen"*``). FTS5 matches whole tokens, which is a poor
+    fit for a compounding language: measured on the real vault, "Drogen" did
+    not find a page whose term was the corresponding German compound, and a
+    singular did not find its own plural. Every compound and every inflection
+    was a
+    separate, unreachable word. The prefix variant is OR-ed IN ADDITION to the
+    exact token, so exact matches keep their higher BM25 rank and the change
+    can only add recall, never reorder a hit that already worked.
+
     Examples
     --------
     >>> _build_match_expr(["foo", "bar"])
     '"foo" OR "bar"'
+    >>> _build_match_expr(["drogen"])
+    '"drogen" OR "drogen"*'
     >>> _build_match_expr(['a:b'])
     '"a:b"'
-    >>> _build_match_expr(['"foo*bar"'])
-    '"foo*bar"'
     """
-    quoted = [f'"{_FTS5_SPECIAL_STRIP_RE.sub("", tok)}"' for tok in tokens]
-    return " OR ".join(quoted)
+    parts: list[str] = []
+    for tok in tokens:
+        cleaned = _FTS5_SPECIAL_STRIP_RE.sub("", tok)
+        if not cleaned:
+            continue
+        parts.append(f'"{cleaned}"')
+        if len(cleaned) >= _PREFIX_MIN_LEN:
+            parts.append(f'"{cleaned}"*')
+    return " OR ".join(parts)
 
 
 #: How much leading body text ``SearchHit.preview`` carries.
