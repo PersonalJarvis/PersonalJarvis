@@ -157,3 +157,23 @@ enabled = true
 # Phase-5/6 features (vision, computer_use, admin, missions, board, telephony)
 # default to enabled = false in code. Enable them individually once configured;
 # see jarvis/core/config.py for every available section and its defaults.
+
+# -- Mission workers: tool pre-authorization (ADR-0031) --
+# Tools listed here are auto-approved for a mission's OWN supervisor-granted
+# calls (the gate is answered on the event bus with a full audit trail, never
+# bypassed). Entries are exact tool names, or an MCP server family written
+# with a trailing slash (e.g. "github/"). Prefer exact names: a family prefix
+# silently authorizes every future tool that server adds. Keep messaging /
+# mail / social-send tools OUT unless you explicitly accept unattended sends.
+# Set worker_tool_auto_approve = false to restore "every ask-tier call waits
+# for a human" behavior.
+[phase6.safety]
+worker_tool_auto_approve = true
+auto_approve_tool_families = [
+  "search_web",
+  "wiki-list",
+  "wiki-recall",
+  "wiki-page-read",
+  "wiki-ingest",
+  "session-latest-turn",
+]

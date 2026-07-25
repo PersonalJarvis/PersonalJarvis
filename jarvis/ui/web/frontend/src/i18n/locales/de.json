@@ -1005,16 +1005,6 @@
     "integration_bad_note": "Provider konnte nicht erreicht werden.",
     "failed": "Test fehlgeschlagen"
   },
-  "apikeys_base_url": {
-    "label": "Server-URL",
-    "placeholder_required": "z. B. http://localhost:8000 — erforderlich",
-    "save": "Speichern",
-    "saving": "Speichere…",
-    "saved": "Server-URL gespeichert",
-    "cleared": "Server-URL auf den Standard zurückgesetzt",
-    "hint_default": "Leer lassen, um die oben gezeigte Standard-Adresse zu verwenden.",
-    "hint_required": "Dieser Anbieter braucht eine Server-URL — trage ein, wo dein lokaler Server läuft."
-  },
   "apikeys_model": {
     "heading": "Modell",
     "recommended_tag": "Empfohlen",

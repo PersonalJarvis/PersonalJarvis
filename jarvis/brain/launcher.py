@@ -92,7 +92,10 @@ async def _run(args: argparse.Namespace) -> int:
             config.safety, extra_patterns_fn=make_cli_patterns_fn(),
         )
         approval = ApprovalWorkflow(bus)
-        tool_executor = ToolExecutor(bus, evaluator, approval)
+        tool_executor = ToolExecutor(
+            bus, evaluator, approval,
+            default_timeout_s=config.safety.tool_approval_timeout_s,
+        )
         tools = _load_tools()
 
     manager = BrainManager(

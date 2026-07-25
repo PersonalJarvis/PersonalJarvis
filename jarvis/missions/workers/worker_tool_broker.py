@@ -10,6 +10,7 @@ receives connector credentials or a direct ``Tool.execute`` handle.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 import secrets
@@ -117,6 +118,28 @@ class WorkerToolCallOutcome:
     error: str = ""
 
 
+# Statuses the worker OBSERVED as an in-stream error response (broker_stdio
+# returns isError=True; API workers get the error dict directly) — the worker
+# had the chance to adapt, so these are honest refusals, not integrity holes.
+_OBSERVED_REFUSAL_STATUSES: tuple[str, ...] = ("denied", "cancelled", "timed_out", "error")
+# Statuses where the supervisor cannot certify what actually happened: the
+# call was still running when the grant closed, or its outcome was rewritten
+# to unknown at revocation.
+_INTEGRITY_STATUSES: tuple[str, ...] = ("outcome_unknown", "active")
+
+
+def _outcome_preview(calls: list["WorkerToolCallOutcome"]) -> str | None:
+    if not calls:
+        return None
+    preview = "; ".join(
+        f"{call.tool_name}: {call.status}" + (f" ({call.error})" if call.error else "")
+        for call in calls[:3]
+    )
+    if len(calls) > 3:
+        preview += f"; +{len(calls) - 3} more"
+    return safe_preview(preview, max_chars=300)
+
+
 @dataclass(frozen=True, slots=True)
 class WorkerToolExecutionSummary:
     """Completion certificate consumed by the mission controller."""
@@ -128,22 +151,33 @@ class WorkerToolExecutionSummary:
         return all(call.status == "success" for call in self.calls)
 
     @property
+    def integrity_compromised(self) -> bool:
+        """True when the supervisor cannot certify what actually happened.
+
+        Only these outcomes abort an iteration before critic review. Honest
+        refusals (:data:`_OBSERVED_REFUSAL_STATUSES`) keep the iteration
+        reviewable — per the BUG-096 class rule, worker execution and critic
+        approval are separate facts, and the critic judges the deliverable
+        WITH knowledge of the refusals (see ``refusal_summary``).
+        """
+        return any(call.status in _INTEGRITY_STATUSES for call in self.calls)
+
+    @property
     def active_count(self) -> int:
         return sum(call.status == "active" for call in self.calls)
 
     @property
     def failure_summary(self) -> str | None:
-        failed = [call for call in self.calls if call.status != "success"]
-        if not failed:
-            return None
-        preview = "; ".join(
-            f"{call.tool_name}: {call.status}"
-            + (f" ({call.error})" if call.error else "")
-            for call in failed[:3]
+        return _outcome_preview(
+            [call for call in self.calls if call.status != "success"]
         )
-        if len(failed) > 3:
-            preview += f"; +{len(failed) - 3} more"
-        return safe_preview(preview, max_chars=300)
+
+    @property
+    def refusal_summary(self) -> str | None:
+        """Bounded preview of the observed refusals, for the critic's context."""
+        return _outcome_preview(
+            [call for call in self.calls if call.status in _OBSERVED_REFUSAL_STATUSES]
+        )
 
 
 def worker_tool_name_allowed(name: str) -> bool:
@@ -625,6 +659,75 @@ class WorkerToolBroker:
                 self._thread = thread
             return self._server
 
+    @staticmethod
+    def _grant_key(token: str) -> str:
+        """Non-secret derivative of the bearer used to key auto-approval arms.
+
+        The raw token must never leave the broker; a truncated digest is
+        collision-safe enough for a handful of concurrent grants.
+        """
+        return hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+
+    @staticmethod
+    def _auto_approve_names(scope: _BrokerScope) -> frozenset[str]:
+        """``granted ∩ [phase6.safety].auto_approve_tool_families`` (ADR-0031).
+
+        Fail-closed on every edge: feature off, empty allowlist, config
+        unreadable, or a name failing the broker denylist all yield the empty
+        set (arm becomes a symmetric no-op). Allowlist entries are exact tool
+        names or an MCP server family written as ``server/`` (trailing slash).
+        """
+        try:
+            from jarvis.core.config import load_config  # noqa: PLC0415 — lazy, boot-safe
+
+            safety = load_config().phase6.safety
+            if not safety.worker_tool_auto_approve:
+                return frozenset()
+            allow = [
+                str(entry).strip()
+                for entry in safety.auto_approve_tool_families
+                if str(entry).strip()
+            ]
+            if not allow:
+                return frozenset()
+            granted = {
+                str(spec.get("name") or "").strip()
+                for spec in scope.specs
+                if str(spec.get("name") or "").strip()
+            }
+            approved: set[str] = set()
+            for name in granted:
+                if not worker_tool_name_allowed(name):
+                    continue
+                for entry in allow:
+                    if name == entry or (
+                        entry.endswith("/") and name.startswith(entry)
+                    ):
+                        approved.add(name)
+                        break
+            return frozenset(approved)
+        except Exception:  # noqa: BLE001 — pre-authorization must fail closed
+            logger.debug("auto-approve set resolution failed (fail-closed)", exc_info=True)
+            return frozenset()
+
+    def _arm_auto_approval(self, token: str, scope: _BrokerScope) -> None:
+        if not scope.mission_id:
+            return
+        approver = runtime_refs.get_mission_tool_auto_approver()
+        if approver is None:
+            return
+        with suppress(Exception):
+            approver.arm(scope.mission_id, self._grant_key(token), self._auto_approve_names(scope))
+
+    def _disarm_auto_approval(self, token: str, scope: _BrokerScope) -> None:
+        if not scope.mission_id:
+            return
+        approver = runtime_refs.get_mission_tool_auto_approver()
+        if approver is None:
+            return
+        with suppress(Exception):
+            approver.disarm(scope.mission_id, self._grant_key(token))
+
     def issue(
         self,
         *,
@@ -672,6 +775,9 @@ class WorkerToolBroker:
         with self._lock:
             self._reap_locked()
             self._scopes[token] = scope
+        # Auto-approval lives exactly as long as the grant: armed here,
+        # disarmed on every revocation path (revoke / reaper / test reset).
+        self._arm_auto_approval(token, scope)
         host, port = server.server_address[:2]
         return WorkerToolBrokerBinding(
             url=f"http://{host}:{port}",
@@ -687,6 +793,7 @@ class WorkerToolBroker:
             scope = self._scopes.pop(token, None)
             if scope is not None:
                 scope.revoke("grant_expired")
+                self._disarm_auto_approval(token, scope)
 
     def lookup(self, token: str) -> _BrokerScope | None:
         with self._lock:
@@ -703,16 +810,18 @@ class WorkerToolBroker:
             scope = self._scopes.pop(token, None)
         if scope is not None:
             scope.revoke("grant_revoked")
+            self._disarm_auto_approval(token, scope)
 
     def reset_for_tests(self) -> None:
         with self._lock:
-            scopes = tuple(self._scopes.values())
+            scoped = tuple(self._scopes.items())
             self._scopes.clear()
             server = self._server
             self._server = None
             self._thread = None
-        for scope in scopes:
+        for token, scope in scoped:
             scope.revoke("broker_reset")
+            self._disarm_auto_approval(token, scope)
         if server is not None:
             server.shutdown()
             server.server_close()

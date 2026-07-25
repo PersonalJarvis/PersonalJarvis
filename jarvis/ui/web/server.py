@@ -135,9 +135,20 @@ class WebServer:
         # unchanged. See docs/superpowers/specs/2026-05-11-pre-thinking-ack-
         # flash-brain-design.md §4.
         self.bus.subscribe(AnnouncementRequested, self._forward_preamble_to_chat)
-        from jarvis.missions.tool_approvals import MissionToolApprovalCoordinator
+        from jarvis.core import runtime_refs
+        from jarvis.missions.tool_approvals import (
+            MissionToolApprovalCoordinator,
+            MissionToolAutoApprover,
+        )
 
         self._mission_tool_approvals = MissionToolApprovalCoordinator(self.bus)
+        # Mission-scoped tool pre-authorization (ADR-0031): answers the
+        # approval gate for tools a mission's broker grant pre-authorizes
+        # ([phase6.safety].auto_approve_tool_families), full audit chain
+        # preserved. Registered in runtime_refs because the WorkerToolBroker
+        # lives below the web layer (same pattern as the supervisor gateway).
+        self._mission_tool_auto_approver = MissionToolAutoApprover(self.bus)
+        runtime_refs.set_mission_tool_auto_approver(self._mission_tool_auto_approver)
         self.app: FastAPI = self._build_app()
         self.app.state.refresh_scheduler = None
 
