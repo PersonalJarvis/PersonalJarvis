@@ -1,9 +1,12 @@
 /**
- * One Run-turn, fully visible (modeled on the Transcription TurnCard) and
- * enriched with the forensic lens: what the user said, what Jarvis answered,
- * and — the headline — exactly WHICH capabilities/agents/tools this turn
- * triggered. Deep forensics (latency, decision path, timeline, errors) stay one
- * click away so the card reads cleanly at a glance.
+ * One Run-turn, from the developer's angle.
+ *
+ * The top of the card stays readable (what was said, what came back, which
+ * capabilities fired); everything a developer needs to reconstruct HOW the turn
+ * was handled lives in the forensic tab strip below it — decisions with their
+ * recorded rationale, the latency waterfall, tool I/O, the raw event stream and
+ * errors. Tabs rather than five stacked sections, because the useful move is
+ * "show me the events for THIS turn", not "scroll past four panels".
  */
 import { useState } from "react";
 import type { ReactNode } from "react";
@@ -14,13 +17,15 @@ import { Card, CardContent } from "@/components/ui/card";
 import { useEventStore } from "@/store/events";
 import { useT } from "@/i18n";
 
+import { fmtInt, fmtMs, useRunLocale } from "./format";
+
 import { OutcomeBadge } from "./OutcomeBadge";
 import { FeatureBadges } from "./FeatureBadges";
-import { TimelinePanel } from "./TimelinePanel";
 import { LatencyWaterfall } from "./LatencyWaterfall";
 import { DecisionPath } from "./DecisionPath";
 import { ToolTable } from "./ToolTable";
 import { ErrorPanel } from "./ErrorPanel";
+import { EventStream } from "./EventStream";
 import type { RunTurn, TranscriptLine } from "./types";
 
 const ROLE_TONE: Record<string, string> = {
@@ -37,15 +42,19 @@ const ROLE_LABEL: Record<string, string> = {
   error: "error",
 };
 
+type TabId = "decisions" | "latency" | "tools" | "events" | "errors";
+
 export function RunTurnCard({ turn }: { turn: RunTurn }) {
   const t = useT();
   const assistantName = useEventStore((s) => s.assistantName);
+  const locale = useRunLocale();
   const [showForensics, setShowForensics] = useState(false);
+  const [tab, setTab] = useState<TabId>("events");
 
   // "What happened" = every transcript line that is NOT the headline user
   // utterance or the headline Jarvis reply (those get their own blocks), and
   // not raw state-machine churn. Carries intermediate phrases, tool/CU outcomes
-  // and system outputs (exit codes, "das hat nicht geklappt", denials). i18n-allow
+  // and system outputs (exit codes, denials).
   const trace = (turn.transcript ?? []).filter(
     (l) =>
       l.kind !== "SystemStateChanged" &&
@@ -54,11 +63,17 @@ export function RunTurnCard({ turn }: { turn: RunTurn }) {
   );
 
   const triggered = [...turn.activity.agents, ...turn.activity.tools];
-  const hasForensics =
-    turn.latency.length > 0 ||
-    turn.decision_path.length > 0 ||
-    turn.timeline.length > 0 ||
-    turn.errors.length > 0;
+  // Defaulted, not assumed — a run served by an older backend must render a
+  // quiet empty tab, never crash the inspector (BUG-008 degrade contract).
+  const events = turn.events ?? [];
+  const tabs: Array<{ id: TabId; label: string; count: number }> = [
+    { id: "decisions", label: t("run_inspector.panel.decision"), count: turn.decision_path.length },
+    { id: "latency", label: t("run_inspector.panel.latency"), count: turn.latency.length },
+    { id: "tools", label: t("run_inspector.panel.tools"), count: turn.tools.length },
+    { id: "events", label: t("run_inspector.panel.events"), count: events.length },
+    { id: "errors", label: t("run_inspector.panel.errors"), count: turn.errors.length },
+  ];
+  const hasForensics = tabs.some((x) => x.count > 0);
 
   return (
     <Card className="bg-background/40" data-testid="run-turn-card">
@@ -78,10 +93,19 @@ export function RunTurnCard({ turn }: { turn: RunTurn }) {
                 {turn.model || turn.provider}
               </Badge>
             )}
-            {(turn.tokens_in > 0 || turn.tokens_out > 0) && (
-              <span>{turn.tokens_in}+{turn.tokens_out} tok</span>
+            {/* "Not measured" and "measured as zero" are different facts —
+                printing a bare 0 for a realtime turn billed at session level
+                would misreport it as free. */}
+            {turn.usage_recorded ? (
+              <>
+                <span>{fmtInt(turn.tokens_in, locale)}+{fmtInt(turn.tokens_out, locale)} tok</span>
+                {turn.cost_usd > 0 && <span>· ${turn.cost_usd.toFixed(4)}</span>}
+              </>
+            ) : (
+              <span className="italic text-muted-foreground/70">
+                {t("run_inspector.no_usage")}
+              </span>
             )}
-            {turn.cost_usd > 0 && <span>· ${turn.cost_usd.toFixed(3)}</span>}
           </div>
         </div>
 
@@ -124,6 +148,11 @@ export function RunTurnCard({ turn }: { turn: RunTurn }) {
           </div>
         )}
 
+        {/* Turn facts — the small machine-readable truths that used to be
+            recorded but never shown (endpoint reason, prompt-cache hit,
+            barge-in, prompt size, the trace id you need to grep a log for). */}
+        <TurnFacts turn={turn} />
+
         {/* Think / speak */}
         {(turn.think_ms > 0 || turn.speak_ms > 0) && (
           <div className="flex flex-wrap items-center gap-3 text-[11px] text-muted-foreground">
@@ -147,32 +176,82 @@ export function RunTurnCard({ turn }: { turn: RunTurn }) {
             >
               <span>{showForensics ? "▾" : "▸"}</span>
               {t("run_inspector.forensics")}
+              <span className="text-[10px] text-muted-foreground/70">
+                · {events.length} {t("run_inspector.stream.events")}
+              </span>
             </button>
             {showForensics && (
-              <div className="mt-2 space-y-3 text-xs">
-                <Section label={t("run_inspector.panel.latency")}>
-                  <LatencyWaterfall entries={turn.latency} />
-                </Section>
-                <Section label={t("run_inspector.panel.decision")}>
-                  <DecisionPath steps={turn.decision_path} />
-                </Section>
-                <Section label={t("run_inspector.panel.tools")}>
-                  <ToolTable tools={turn.tools} />
-                </Section>
-                <Section label={t("run_inspector.panel.timeline")}>
-                  <TimelinePanel turn={turn} />
-                </Section>
-                {turn.errors.length > 0 && (
-                  <Section label={t("run_inspector.panel.errors")}>
-                    <ErrorPanel errors={turn.errors} />
-                  </Section>
-                )}
+              <div className="mt-2 space-y-2">
+                <div className="flex flex-wrap gap-1" role="tablist">
+                  {tabs.map((x) => (
+                    <button
+                      key={x.id}
+                      type="button"
+                      role="tab"
+                      aria-selected={tab === x.id}
+                      data-testid={`forensic-tab-${x.id}`}
+                      onClick={() => setTab(x.id)}
+                      disabled={x.count === 0}
+                      className={`rounded-md px-2 py-1 text-[11px] font-medium transition-colors ${
+                        tab === x.id
+                          ? "bg-primary/15 text-foreground ring-1 ring-inset ring-primary/30"
+                          : x.count === 0
+                            ? "text-muted-foreground/40"
+                            : "text-muted-foreground hover:bg-muted/40 hover:text-foreground"
+                      }`}
+                    >
+                      {x.label}
+                      <span className="ml-1 tabular-nums opacity-70">{x.count}</span>
+                    </button>
+                  ))}
+                </div>
+                <div className="rounded-md border border-border/50 bg-background/30 p-2 text-xs">
+                  {tab === "decisions" && <DecisionPath steps={turn.decision_path} />}
+                  {tab === "latency" && <LatencyWaterfall entries={turn.latency} />}
+                  {tab === "tools" && <ToolTable tools={turn.tools} />}
+                  {tab === "events" && (
+                    <EventStream events={events} truncated={turn.events_truncated} />
+                  )}
+                  {tab === "errors" && <ErrorPanel errors={turn.errors} />}
+                </div>
               </div>
             )}
           </div>
         )}
       </CardContent>
     </Card>
+  );
+}
+
+function TurnFacts({ turn }: { turn: RunTurn }) {
+  const t = useT();
+  const locale = useRunLocale();
+  const facts: Array<[string, string]> = [];
+  if (turn.extras.endpoint_reason) {
+    facts.push([t("run_inspector.facts.endpoint"), turn.extras.endpoint_reason]);
+  }
+  if (turn.extras.cache_hit !== null) {
+    facts.push([
+      t("run_inspector.facts.cache"),
+      turn.extras.cache_hit ? t("run_inspector.facts.cache_hit") : t("run_inspector.facts.cache_miss"),
+    ]);
+  }
+  if (turn.extras.interrupted) {
+    facts.push([t("run_inspector.facts.interrupted"), "yes"]);
+  }
+  if (turn.extras.context_tokens) {
+    facts.push([t("run_inspector.facts.context"), `${fmtInt(turn.extras.context_tokens, locale)} tok`]);
+  }
+  facts.push(["trace_id", turn.trace_id]);
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-muted-foreground">
+      {facts.map(([k, v]) => (
+        <span key={k} className="inline-flex items-center gap-1">
+          <span className="uppercase tracking-[0.1em] opacity-70">{k}</span>
+          <span className="font-mono text-foreground/70">{v}</span>
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -205,17 +284,3 @@ function TraceLine({ line }: { line: TranscriptLine }) {
   );
 }
 
-function Section({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div>
-      <div className="mb-1 text-[10px] uppercase tracking-wider text-muted-foreground">{label}</div>
-      {children}
-    </div>
-  );
-}
-
-function fmtMs(ms: number): string {
-  if (ms <= 0) return "0ms";
-  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
-  return `${ms}ms`;
-}

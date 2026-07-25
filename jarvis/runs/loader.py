@@ -20,6 +20,21 @@ log = logging.getLogger(__name__)
 # Optional callable: session_id -> list[MissionRef]. None disables the slice.
 MissionsLookup = Callable[[str], list[MissionRef]]
 
+# The ONLY event kinds the run LIST derives from — error count, worst SLO,
+# outcome, feature tags. Keeping this narrow is what makes the list query cheap;
+# the full stream is loaded only when a single run is opened. Adding a kind here
+# is fine, adding "all kinds" is the regression this replaced.
+_LIST_EVENT_KINDS: list[str] = [
+    "ErrorOccurred",
+    "ActionDenied",
+    "LatencySpan",
+    "ResponseGenerated",
+    "SpeechSpoken",
+    "ActionProposed",
+    "ActionExecuted",
+    "JarvisAgentTaskStarted",
+]
+
 
 class RunLoader:
     def __init__(
@@ -34,9 +49,17 @@ class RunLoader:
         self._missions = missions_lookup
 
     def list_runs(self, *, limit: int = 100) -> list[RunListItem]:
+        sessions = self._sessions.list_sessions(limit=limit)
+        # ONE narrow query for all sessions instead of a full event fetch per
+        # session. The list only needs the kinds below; pulling everything cost
+        # 100 store-lock acquisitions, which stalled for tens of seconds
+        # whenever a live voice session held that lock through the recorder.
+        events_by_session = self._sessions.get_events_for_sessions(
+            [s.id for s in sessions], kinds=_LIST_EVENT_KINDS
+        )
         items: list[RunListItem] = []
-        for s in self._sessions.list_sessions(limit=limit):
-            events = self._sessions.get_events(s.id)
+        for s in sessions:
+            events = events_by_session.get(s.id, [])
             error_count = sum(
                 1 for e in events if e.kind in ("ErrorOccurred", "ActionDenied")
             )
@@ -84,6 +107,12 @@ class RunLoader:
         analytics = analyzer.build_analytics(
             run_turns, started_ms=session.started_ms, ended_ms=session.ended_ms
         )
+        # Events the recorder stored WITHOUT a turn id are the session frame
+        # (wake, session start/end, provider switches between turns). They used
+        # to be dropped entirely because the turn join never matched them.
+        session_events, _ = analyzer.build_raw_events(
+            events_by_turn.get(None, []), turn_started_ms=session.started_ms
+        )
         return Run(
             session=session,
             outcome=analyzer.build_outcome(run_turns),
@@ -91,6 +120,9 @@ class RunLoader:
             missions=missions,
             activity=analyzer.build_activity(run_turns),
             analytics=analytics,
+            environment=analyzer.build_environment(session, events, run_turns),
+            session_events=session_events,
+            event_counts=analyzer.build_event_counts(events),
         )
 
     def _build_turn(self, tr: VoiceTurnRow, events: list[VoiceEventRow]) -> RunTurn:
@@ -108,6 +140,9 @@ class RunLoader:
         tools = analyzer.merge_action_tools(events, cli_tools)
         # Surface the already-captured command + result onto each tool row.
         analyzer.attach_tool_io(events, tools)
+        raw_events, truncated = analyzer.build_raw_events(
+            events, turn_started_ms=tr.started_ms
+        )
         turn = RunTurn(
             idx=tr.idx,
             trace_id=tr.id,
@@ -122,15 +157,25 @@ class RunLoader:
             think_ms=tr.think_ms,
             speak_ms=tr.speak_ms,
             transcript=analyzer.build_transcript(events, turn_started_ms=tr.started_ms),
-            timeline=analyzer.build_timeline(events, turn_started_ms=tr.started_ms),
             latency=analyzer.build_latency(events),
             decision_path=analyzer.build_decision_path(events),
             tools=tools,
             errors=analyzer.build_errors(events),
             extras=analyzer.build_extras(events, tokens_in=tr.tokens_in),
+            events=raw_events,
+            event_counts=analyzer.build_event_counts(events),
+            events_truncated=truncated,
+            # "Not measured" is a different fact from "measured as zero" — a
+            # realtime turn billed at session level records neither tokens nor
+            # cost, and printing a bare 0 would misreport that as free.
+            usage_recorded=bool(
+                tr.tokens_in or tr.tokens_out or tr.cost_usd
+                or any(e.kind == "BrainTurnCompleted" for e in events)
+            ),
         )
         turn.outcome = analyzer.turn_outcome(turn)
         turn.activity = analyzer.build_activity([turn])
+        analyzer.ensure_brain_step(turn.decision_path, turn)
         return turn
 
     def _safe_missions(self, session_id: str) -> list[MissionRef]:
@@ -143,13 +188,9 @@ class RunLoader:
             return []
 
 
-def _wake_source(wake_keyword: str) -> str:
-    kw = (wake_keyword or "").lower()
-    if "hotkey" in kw:
-        return "hotkey"
-    if kw.startswith("channel:") or kw in ("telegram", "discord", "web"):
-        return f"channel:{kw}" if not kw.startswith("channel:") else kw
-    return "voice"
+# One implementation, shared with build_environment — the list card and the
+# run header must never disagree about how a run was started.
+_wake_source = analyzer.wake_source
 
 
 __all__ = ["RunLoader", "MissionsLookup"]

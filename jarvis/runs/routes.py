@@ -7,6 +7,7 @@ Read-only; reuses app.state.session_store (set by bootstrap_sessions) and a
 process-local UsageLog. Loopback-only, no auth token (mirrors sessions_routes)."""
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from fastapi import APIRouter, HTTPException, Query, Request
@@ -47,12 +48,19 @@ async def list_runs(
     request: Request,
     limit: int = Query(default=100, ge=1, le=500),
 ) -> list[RunListItem]:
-    return _loader(request).list_runs(limit=limit)
+    # OFF the event loop. SessionStore is synchronous SQLite behind a lock the
+    # live recorder also writes through; awaiting that lock on the loop thread
+    # freezes the WHOLE server, not just this request — the observed symptom
+    # was every API call (and therefore the desktop UI) stalling for tens of
+    # seconds whenever a voice session was active while the inspector polled.
+    loader = _loader(request)
+    return await asyncio.to_thread(loader.list_runs, limit=limit)
 
 
 @router.get("/{session_id}", response_model=Run)
 async def get_run(session_id: str, request: Request) -> Run:
-    run = _loader(request).load_run(session_id)
+    loader = _loader(request)
+    run = await asyncio.to_thread(loader.load_run, session_id)
     if run is None:
         raise HTTPException(status_code=404, detail="run-not-found")
     return run

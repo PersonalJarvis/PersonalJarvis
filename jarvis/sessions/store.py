@@ -544,6 +544,47 @@ class SessionStore:
             for r in rows
         ]
 
+    def get_events_for_sessions(
+        self, session_ids: list[str], *, kinds: list[str] | None = None
+    ) -> dict[str, list[VoiceEventRow]]:
+        """Events for MANY sessions in ONE query, optionally narrowed by kind.
+
+        The run list needs a handful of event kinds from each of up to 100
+        sessions. Doing that as 100 separate ``get_events`` calls costs 100
+        acquisitions of the store lock — which is fine on an idle box and
+        catastrophic while a live voice session has the recorder writing
+        through that same lock: the list endpoint stalled for tens of seconds.
+        One narrow query takes one lock, once.
+
+        Returns a mapping keyed by session id; a session with no matching
+        events is absent from the mapping (callers use ``.get(id, [])``).
+        """
+        if not session_ids:
+            return {}
+        id_marks = ",".join("?" for _ in session_ids)
+        sql = f"SELECT * FROM voice_events WHERE session_id IN ({id_marks})"  # noqa: S608
+        params: list[str] = list(session_ids)
+        if kinds:
+            kind_marks = ",".join("?" for _ in kinds)
+            sql += f" AND kind IN ({kind_marks})"  # noqa: S608
+            params.extend(kinds)
+        sql += " ORDER BY session_id, seq ASC"
+        with self._lock:
+            rows = self._c.execute(sql, params).fetchall()
+        out: dict[str, list[VoiceEventRow]] = {}
+        for r in rows:
+            out.setdefault(r["session_id"], []).append(
+                VoiceEventRow(
+                    seq=r["seq"],
+                    session_id=r["session_id"],
+                    turn_id=r["turn_id"],
+                    ts_ms=r["ts_ms"],
+                    kind=r["kind"],
+                    payload=json.loads(r["payload_json"] or "{}"),
+                )
+            )
+        return out
+
     def list_open_sessions(self) -> list[str]:
         """IDs of all sessions without ``ended_ms`` — for crash recovery."""
         with self._lock:

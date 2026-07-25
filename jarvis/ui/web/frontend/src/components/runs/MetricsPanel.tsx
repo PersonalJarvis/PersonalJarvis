@@ -1,4 +1,6 @@
 import type { ReactNode } from "react";
+
+import { fmtInt, fmtMs, useRunLocale } from "./format";
 import type { Run } from "./types";
 
 /** A compact labelled metric: small uppercase label over a mono value. */
@@ -23,23 +25,20 @@ export function StatChip({
   );
 }
 
-function fmtMs(ms: number): string {
-  if (ms >= 1000) return `${(ms / 1000).toFixed(1)}s`;
-  return `${Math.round(ms)}ms`;
-}
-
 /** Deep-dive analytics grid for a single run. */
 export function MetricsPanel({ run }: { run: Run }) {
+  const locale = useRunLocale();
   const a = run.analytics;
   const providers = Object.entries(a.cost_by_provider);
   const tools = Object.entries(a.tool_counts).sort((x, y) => y[1] - x[1]);
+  const eventKinds = Object.entries(run.event_counts ?? {}).sort((x, y) => y[1] - x[1]);
   return (
     <div className="space-y-3" data-testid="metrics-panel">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
         <StatChip label="Think" value={fmtMs(a.total_think_ms)} />
         <StatChip label="Speak" value={fmtMs(a.total_speak_ms)} />
-        <StatChip label="Tokens in" value={a.total_tokens_in.toLocaleString()} />
-        <StatChip label="Tokens out" value={a.total_tokens_out.toLocaleString()} />
+        <StatChip label="Tokens in" value={fmtInt(a.total_tokens_in, locale)} />
+        <StatChip label="Tokens out" value={fmtInt(a.total_tokens_out, locale)} />
         <StatChip
           label="Interruptions"
           value={a.interruptions}
@@ -63,6 +62,28 @@ export function MetricsPanel({ run }: { run: Run }) {
                 <span className="text-muted-foreground">{p}</span>
                 <span className="font-mono tabular-nums">${c.toFixed(4)}</span>
               </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Event-kind histogram — the fastest read on what dominated this run.
+          A run that is 90% LatencySpan looks very different from one that is
+          40% CUStepProfiled, and the shape alone often locates a problem. */}
+      {eventKinds.length > 0 && (
+        <div>
+          <div className="mb-1 text-[9px] font-medium uppercase tracking-[0.12em] text-muted-foreground">
+            Recorded events
+          </div>
+          <div className="flex flex-wrap gap-1" data-testid="event-histogram">
+            {eventKinds.map(([kind, n]) => (
+              <span
+                key={kind}
+                className="inline-flex items-center gap-1 rounded-md bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground ring-1 ring-inset ring-border/60"
+              >
+                {kind}
+                <span className="text-foreground/80">×{n}</span>
+              </span>
             ))}
           </div>
         </div>

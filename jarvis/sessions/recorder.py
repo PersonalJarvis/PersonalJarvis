@@ -115,6 +115,42 @@ _RAW_EVENT_KINDS: frozenset[str] = frozenset(
         "ActionDenied",
         "ErrorOccurred",
         "LatencySpan",
+        # Developer forensics, wave 2 (2026-07-25). The Run Inspector is the
+        # developer's window into HOW a turn was handled, and the three most
+        # asked questions there — "which provider actually answered and why did
+        # it change?", "what did the Computer-Use loop see and do?", "what did
+        # the sub-agent run?" — were unanswerable because their events were
+        # never persisted. All of these are low-frequency (per turn, per CU
+        # step, per mission), never per audio frame; the genuinely chatty
+        # streams (TerminalOutput, CliInstallProgress, HarnessProgress) stay
+        # excluded on purpose, and the read side caps a turn at
+        # MAX_RAW_EVENTS_PER_TURN.
+        "HotkeyPressed",
+        "UtteranceCaptured",
+        # The key-aware fallback chain (AP-22) is invisible without this pair.
+        "BrainProviderSwitched",
+        "FrontierModelSwitched",
+        "BrainToolsChanged",
+        "ActionApprovalRequired",
+        "CliInvoked",
+        "CliInvocationFinished",
+        "JarvisAgentReviewTriggered",
+        "JarvisAgentAnnouncement",
+        "HarnessDispatched",
+        "HarnessCompleted",
+        "MissionCompleted",
+        # Computer-Use observe -> plan -> act -> verify loop.
+        "ObservationCaptured",
+        "VisionInjected",
+        "ActionPlanned",
+        "ActionVerified",
+        "CUStepProfiled",
+        "CUControlStarted",
+        "CUControlEnded",
+        # Cost / kill-switch stops that silently end a turn.
+        "BudgetWarning",
+        "BudgetExceeded",
+        "TaskCancelled",
     }
 )
 
@@ -1035,6 +1071,51 @@ def _payload_for(event: Event) -> dict[str, Any]:
         "error_type",    # ErrorOccurred
         "message",       # ErrorOccurred
         "recoverable",   # ErrorOccurred (bool — _payload_for skips None, keeps False)
+        # --- Developer forensics, wave 2 (2026-07-25) -------------------
+        # Field names only; _payload_for pulls them by hasattr, so an event
+        # class that lacks one is simply skipped. Nothing here is a credential:
+        # secrets ride on SecretConfigured, which is NOT a recorded kind, and
+        # every *_preview field is redacted + length-capped by its publisher.
+        "combo",              # HotkeyPressed
+        "audio_ref",          # UtteranceCaptured (content hash, not audio)
+        "from_provider",      # BrainProviderSwitched — the fallback chain
+        "to_provider",
+        "old_model",          # FrontierModelSwitched
+        "new_model",
+        "system_prompt_preview",  # BrainTurnStarted — which persona/prompt ran
+        "harness",            # HarnessDispatched / HarnessCompleted
+        "mission_id",         # MissionCompleted / CUControl*
+        "status",             # MissionCompleted
+        "summary",            # JarvisAgentTaskCompleted
+        "summary_en",         # MissionCompleted
+        "result_uri",
+        "iteration",          # JarvisAgentReviewTriggered (critic loop)
+        "utterance",          # JarvisAgentTaskStarted — the delegated task
+        "depth",
+        "max_duration_s",
+        "cost_estimate_usd",  # JarvisAgentTaskCompleted
+        "full_log_len",
+        "action",             # JarvisAgentAnnouncement (also set from args below)
+        "target",
+        "cli_name",           # CliInvoked / CliInvocationFinished
+        "caller",
+        "command_preview",
+        "exit_code",
+        "source",             # ObservationCaptured
+        "window_title",
+        "node_count",
+        "screenshot_hash",
+        "bytes_size",         # VisionInjected
+        "capture_age_ms",
+        "action_kind",        # ActionPlanned / ActionVerified
+        "target_hint",
+        "step_idx",           # CUStepProfiled
+        "engine",
+        "cache_read_tokens",
+        "scope",              # BudgetWarning / BudgetExceeded
+        "spent_eur",
+        "limit_eur",
+        "task_id",            # TaskCancelled
     }
     payload: dict[str, Any] = {}
     for k in fields_whitelist:

@@ -1,7 +1,10 @@
 import { describe, it, expect, vi } from "vitest";
 import { render } from "@testing-library/react";
 
-vi.mock("@/i18n", () => ({ useT: () => (k: string) => k }));
+vi.mock("@/i18n", () => ({
+  useT: () => (k: string) => k,
+  useUiLanguage: () => "en",
+}));
 
 import { RunTurnCard } from "../RunTurnCard";
 import type { RunTurn } from "../types";
@@ -17,7 +20,8 @@ const turn: RunTurn = {
     { role: "system", kind: "SystemStateChanged", text: "LISTENING -> THINKING", offset_ms: 5, ts_ms: 5, spoken_kind: null },
     { role: "system", kind: "SpeechSpoken", text: "exit 5 - harness reported failure", offset_ms: 50, ts_ms: 50, spoken_kind: null },
   ],
-  timeline: [], latency: [], decision_path: [], tools: [], errors: [],
+  latency: [], decision_path: [], tools: [], errors: [],
+  events: [], event_counts: {}, events_truncated: false, usage_recorded: true,
   extras: { interrupted: false, cache_hit: null, endpoint_reason: null, context_tokens: null },
   activity: { tools: ["search_web"], agents: ["computer_use"] },
 };

@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { SLO_STATUSES, RUN_DECISION_KINDS, TRANSCRIPT_ROLES, RUN_OUTCOMES } from "../types";
+import {
+  SLO_STATUSES, RUN_DECISION_KINDS, TRANSCRIPT_ROLES, RUN_OUTCOMES,
+  RATIONALE_SOURCES, RUN_EVENT_CATEGORIES,
+} from "../types";
 
 describe("run enum parity", () => {
   it("SLO statuses match the Python SSOT order", () => {
@@ -15,5 +18,14 @@ describe("run enum parity", () => {
   });
   it("run outcomes match the Python SSOT order", () => {
     expect(RUN_OUTCOMES).toEqual(["success", "partial", "failed"]);
+  });
+  it("rationale sources match the Python SSOT order", () => {
+    expect(RATIONALE_SOURCES).toEqual(["model", "rule"]);
+  });
+  it("event-stream lanes match the Python SSOT order", () => {
+    expect(RUN_EVENT_CATEGORIES).toEqual([
+      "lifecycle", "speech", "brain", "tool", "agent", "vision",
+      "latency", "error", "system",
+    ]);
   });
 });
