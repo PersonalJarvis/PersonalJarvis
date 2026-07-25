@@ -1009,3 +1009,80 @@ def test_supabase_link_is_flagged_dangerous(env) -> None:
     spec = env.server.app.openapi()
     operation = spec["paths"]["/api/ultrawiki/storage/supabase/link"]["post"]
     assert operation.get("x-jarvis-dangerous") is True
+
+
+# ---------------------------------------------------------------------------
+# Model lists per slot
+# ---------------------------------------------------------------------------
+
+
+def test_slot_models_answer_in_the_shape_the_model_picker_consumes(
+    env, monkeypatch
+) -> None:
+    """The slots reuse the API-Keys model picker, so the payload must match it.
+
+    A separate look-alike picker was the alternative, and it would have drifted
+    from the original within a release. Same shape in, same component out.
+    """
+    from jarvis.ultrawiki import embedding_models
+
+    async def fake_list(provider, cfg, *, transport=None):
+        return embedding_models.EmbeddingModelList(
+            models=(embedding_models.EmbeddingModel(id="bge-m3", label="bge-m3"),),
+            source="live",
+        )
+
+    monkeypatch.setattr(embedding_models, "list_embedding_models", fake_list)
+    _activate(env)
+    response = env.client.get("/api/ultrawiki/models/embedding")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert set(body) >= {
+        "provider",
+        "current_model",
+        "models",
+        "source",
+        "fetched_at",
+        "selects",
+    }
+    assert body["provider"] == "gemini"
+    assert body["current_model"] == "fake-embed"
+    assert body["models"] == [{"id": "bge-m3", "label": "bge-m3"}]
+    assert body["selects"] == "model"
+
+
+def test_slot_models_are_empty_but_honest_before_a_provider_is_picked(env) -> None:
+    response = env.client.get("/api/ultrawiki/models/embedding")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["models"] == []
+    assert "no provider" in body["reason"]
+
+
+def test_a_vendor_reranker_offers_no_model_choice(env) -> None:
+    """Voyage and Cohere pin their own cross-encoder; an empty picker is right."""
+    response = env.client.get("/api/ultrawiki/models/rerank?provider=cohere")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["models"] == []
+    assert "fixed model" in body["reason"]
+
+
+def test_an_unknown_slot_is_a_404(env) -> None:
+    assert env.client.get("/api/ultrawiki/models/storage").status_code == 404
+    assert env.client.get("/api/ultrawiki/models/nonsense").status_code == 404
+
+
+def test_a_dead_model_catalog_degrades_instead_of_500ing(env, monkeypatch) -> None:
+    """A settings screen must render even when a provider catalog is down."""
+    import jarvis.ui.web.provider_routes as provider_routes
+
+    def boom(_request):
+        raise RuntimeError("catalog exploded")
+
+    monkeypatch.setattr(provider_routes, "_get_model_catalog", boom)
+    response = env.client.get("/api/ultrawiki/models/distill?provider=gemini")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["models"] == []
+    assert "RuntimeError" in body["reason"]

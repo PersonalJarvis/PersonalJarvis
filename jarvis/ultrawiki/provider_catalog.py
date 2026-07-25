@@ -117,10 +117,9 @@ STORAGE_PROVIDERS: tuple[UltraWikiProviderSpec, ...] = (
         db_backend="sqlite",
         recommended=True,
         credential_help=(
-            "A single file under the Jarvis data directory. Zero setup, works "
-            "offline on every operating system, and nothing leaves this "
-            "machine. Pick a cloud store below only when you want the same "
-            "memory on several devices."
+            "A single file on this machine. Zero setup, works offline, "
+            "nothing leaves the device. Pick a cloud store only if you want "
+            "the same memory on several machines."
         ),
     ),
     UltraWikiProviderSpec(
@@ -138,10 +137,9 @@ STORAGE_PROVIDERS: tuple[UltraWikiProviderSpec, ...] = (
             "@<region>.pooler.supabase.com:6543/postgres"
         ),
         credential_help=(
-            "Hosted Postgres with a generous free tier. Connect signs you in "
-            "through your browser, lists your projects, and builds the "
-            "connection string for you — you only supply the database "
-            "password, which Supabase never hands back over its API."
+            "Hosted Postgres with a generous free tier. Signing in lists "
+            "your projects and builds the connection string for you — you "
+            "only add the database password."
         ),
     ),
     UltraWikiProviderSpec(
@@ -156,9 +154,8 @@ STORAGE_PROVIDERS: tuple[UltraWikiProviderSpec, ...] = (
             "postgresql://<user>:<password>@<endpoint>.neon.tech/<db>?sslmode=require"
         ),
         credential_help=(
-            "Serverless Postgres that scales to zero when idle. Copy the "
-            "pooled connection string from the Neon console — it already "
-            "contains the password — and paste it below."
+            "Serverless Postgres that scales to zero when idle. Paste the "
+            "pooled connection string from the Neon console."
         ),
     ),
     UltraWikiProviderSpec(
@@ -171,10 +168,9 @@ STORAGE_PROVIDERS: tuple[UltraWikiProviderSpec, ...] = (
         db_backend="postgres",
         connection_hint="postgresql://<user>:<password>@<host>:5432/<database>",
         credential_help=(
-            "Your own Postgres, AWS RDS, Google Cloud SQL, Azure Database, "
-            "Railway, Render — anything that speaks Postgres. Paste the full "
-            "connection string. Install the pgvector extension for semantic "
-            "search; without it keyword search still works."
+            "Your own server, RDS, Cloud SQL, Azure, Railway — anything "
+            "that speaks Postgres. Add pgvector for semantic search; without "
+            "it keyword search still works."
         ),
     ),
 )
@@ -203,10 +199,9 @@ EMBEDDING_PROVIDERS: tuple[UltraWikiProviderSpec, ...] = (
         default_base_url="http://localhost:11434",
         recommended=True,
         credential_help=(
-            "Embeds fully on your own machine — no API key, no cloud account, "
-            "no per-item cost, and no text ever leaves your network. Install "
-            "Ollama and pull an embedding model (ollama pull bge-m3). Point "
-            "the server URL at another machine to share one Ollama box."
+            "Runs on your own machine: no key, no per-item cost, and no "
+            "text leaves your network. Needs Ollama installed with an "
+            "embedding model pulled."
         ),
     ),
     UltraWikiProviderSpec(
@@ -218,9 +213,8 @@ EMBEDDING_PROVIDERS: tuple[UltraWikiProviderSpec, ...] = (
         dashboard_url="https://aistudio.google.com/app/apikey",
         default_model="gemini-embedding-001",
         credential_help=(
-            "The same Google AI Studio key as the Gemini brain (starts with "
-            "AIza or AQ.) — no second key needed. Billed per token on your AI "
-            "Studio project."
+            "The same Google AI Studio key as the Gemini brain — no second "
+            "key needed. Billed per token."
         ),
     ),
     UltraWikiProviderSpec(
@@ -232,8 +226,8 @@ EMBEDDING_PROVIDERS: tuple[UltraWikiProviderSpec, ...] = (
         dashboard_url="https://platform.openai.com/api-keys",
         default_model="text-embedding-3-small",
         credential_help=(
-            "The same OpenAI key as the GPT brain (starts with sk-). "
-            "text-embedding-3-small is inexpensive and strong for this job."
+            "The same OpenAI key as the GPT brain. The small embedding "
+            "model is inexpensive and strong for this job."
         ),
     ),
     UltraWikiProviderSpec(
@@ -245,9 +239,8 @@ EMBEDDING_PROVIDERS: tuple[UltraWikiProviderSpec, ...] = (
         dashboard_url="https://dash.voyageai.com/api-keys",
         default_model="voyage-3.5",
         credential_help=(
-            "A retrieval-specialised embedding provider — usually the best "
-            "search quality per euro here. The same key also powers the "
-            "Voyage reranker below."
+            "Specialised in retrieval — usually the best search quality per "
+            "euro. One key also covers the Voyage reranker."
         ),
     ),
     UltraWikiProviderSpec(
@@ -259,8 +252,7 @@ EMBEDDING_PROVIDERS: tuple[UltraWikiProviderSpec, ...] = (
         dashboard_url="https://console.mistral.ai/api-keys",
         default_model="mistral-embed",
         credential_help=(
-            "European provider (data processed in the EU). One model, "
-            "mistral-embed, billed per token on your Mistral account."
+            "European provider, data processed in the EU. Billed per token."
         ),
     ),
     UltraWikiProviderSpec(
@@ -272,8 +264,8 @@ EMBEDDING_PROVIDERS: tuple[UltraWikiProviderSpec, ...] = (
         dashboard_url="https://dashboard.cohere.com/api-keys",
         default_model="embed-v4.0",
         credential_help=(
-            "Strong multilingual embeddings — a good pick when your notes mix "
-            "languages. The same key also powers the Cohere reranker below."
+            "Strong multilingual embeddings — a good pick when your notes "
+            "mix languages. One key also covers the Cohere reranker."
         ),
     ),
 )
@@ -302,11 +294,9 @@ RERANK_PROVIDERS: tuple[UltraWikiProviderSpec, ...] = (
         dashboard_url=None,
         recommended=True,
         credential_help=(
-            "Grades the best candidates with the chat providers you already "
-            "have — a cloud key, a subscription CLI, or a local Ollama model "
-            "offline. Needs no extra account and no second key. Slightly "
-            "slower than a dedicated reranker, which barely matters because "
-            "the stage only re-scores a handful of results."
+            "Grades results with the chat providers you already have — a "
+            "cloud key, a subscription CLI, or a local Ollama model. No "
+            "extra account, no second key."
         ),
     ),
     UltraWikiProviderSpec(
@@ -318,9 +308,8 @@ RERANK_PROVIDERS: tuple[UltraWikiProviderSpec, ...] = (
         dashboard_url="https://dash.voyageai.com/api-keys",
         default_model="rerank-2.5",
         credential_help=(
-            "A dedicated cross-encoder: lower latency than grading with a chat "
-            "model, at the cost of a paid single-vendor account. The same "
-            "Voyage key as the embedding slot — one key covers both."
+            "A dedicated scoring model: faster than grading with a chat "
+            "model, but needs a paid Voyage account. Same key as above."
         ),
     ),
     UltraWikiProviderSpec(
@@ -332,8 +321,8 @@ RERANK_PROVIDERS: tuple[UltraWikiProviderSpec, ...] = (
         dashboard_url="https://dashboard.cohere.com/api-keys",
         default_model="rerank-v3.5",
         credential_help=(
-            "Cohere's rerank model, strong across languages. The same Cohere "
-            "key as the embedding slot — one key covers both."
+            "Cohere's scoring model, strong across languages. Same key as "
+            "the embedding slot."
         ),
     ),
 )
@@ -366,9 +355,8 @@ DISTILL_PROVIDERS: tuple[UltraWikiProviderSpec, ...] = (
         default_model="gemini-3.5-flash",
         recommended=True,
         credential_help=(
-            "Google AI Studio key (AIza / AQ.). A fast flash model is exactly "
-            "right here — distillation is a high-volume background job, not a "
-            "reasoning task."
+            "Google AI Studio key. A fast flash model fits well here: this "
+            "is a high-volume background job, not a reasoning task."
         ),
     ),
     UltraWikiProviderSpec(
@@ -378,7 +366,7 @@ DISTILL_PROVIDERS: tuple[UltraWikiProviderSpec, ...] = (
         auth_mode="api_key",
         secret_keys=("openai_api_key",),
         dashboard_url="https://platform.openai.com/api-keys",
-        credential_help="OpenAI API key (sk-), shared with the GPT brain.",
+        credential_help="Shared with the GPT brain — no second key needed.",
     ),
     UltraWikiProviderSpec(
         id="claude-api",
@@ -387,7 +375,7 @@ DISTILL_PROVIDERS: tuple[UltraWikiProviderSpec, ...] = (
         auth_mode="api_key",
         secret_keys=("anthropic_api_key",),
         dashboard_url="https://console.anthropic.com/settings/keys",
-        credential_help="Anthropic API key (sk-ant-), shared with the Claude brain.",
+        credential_help="Shared with the Claude brain — no second key needed.",
     ),
     UltraWikiProviderSpec(
         id="openrouter",
@@ -397,8 +385,8 @@ DISTILL_PROVIDERS: tuple[UltraWikiProviderSpec, ...] = (
         secret_keys=("openrouter_api_key",),
         dashboard_url="https://openrouter.ai/keys",
         credential_help=(
-            "OpenRouter API key (sk-or-). One key reaches many models — handy "
-            "when you want a cheap model for this background job."
+            "One key reaches many models — handy for picking a cheap one "
+            "for this background job."
         ),
     ),
     UltraWikiProviderSpec(
@@ -408,7 +396,7 @@ DISTILL_PROVIDERS: tuple[UltraWikiProviderSpec, ...] = (
         auth_mode="api_key",
         secret_keys=("grok_api_key",),
         dashboard_url="https://console.x.ai/",
-        credential_help="xAI API key (xai-), shared with the Grok brain.",
+        credential_help="Shared with the Grok brain — no second key needed.",
     ),
     UltraWikiProviderSpec(
         id="nvidia",
@@ -418,8 +406,8 @@ DISTILL_PROVIDERS: tuple[UltraWikiProviderSpec, ...] = (
         secret_keys=("nvidia_api_key",),
         dashboard_url="https://build.nvidia.com/settings/api-keys",
         credential_help=(
-            "NVIDIA API key (nvapi-) from build.nvidia.com. The free tier is "
-            "slow to first token, which matters little for a background job."
+            "Key from build.nvidia.com. The free tier is slow to start, "
+            "which matters little for a background job."
         ),
     ),
     UltraWikiProviderSpec(
@@ -432,9 +420,8 @@ DISTILL_PROVIDERS: tuple[UltraWikiProviderSpec, ...] = (
         supports_base_url=True,
         default_base_url="http://localhost:11434",
         credential_help=(
-            "Distills on your own machine — no key, no cost, nothing leaves "
-            "your network. Slower than a hosted flash model, but this runs in "
-            "the background so latency barely matters."
+            "Runs on your own machine: no key, no cost, nothing leaves "
+            "your network. Slower, but this runs in the background."
         ),
     ),
 )

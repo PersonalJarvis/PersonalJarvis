@@ -2816,7 +2816,6 @@
       "in_use": "En uso: {0}",
       "embedding_title": "Modelo de embeddings",
       "embedding_desc": "Convierte el texto en vectores para la búsqueda semántica. Cambiarlo vuelve a incrustar todo.",
-      "model_label": "Modelo",
       "distill_title": "Modelo de destilación",
       "distill_desc": "Resume los elementos ingeridos en segundo plano. Solo aplica al trabajo nuevo.",
       "distill_auto": "Automático — primer proveedor de chat listo",
@@ -2842,13 +2841,12 @@
       "via": "Mediante: {0}",
       "loading": "Cargando la lista de proveedores…",
       "catalog_unavailable": "No se pudo cargar la lista de proveedores. Puede que la aplicación aún esté arrancando: inténtalo de nuevo en un momento.",
-      "save_model": "Guardar modelo",
       "server_url_label": "URL del servidor",
       "storage_restart_hint": "Un cambio de almacenamiento surte efecto la próxima vez que arranque Jarvis. No se borra nada y, hasta entonces, el almacén actual sigue respondiendo.",
       "embedding_lock_hint": "Esta ranura no tiene alternativa automática a propósito: el proveedor y el modelo juntos definen el espacio vectorial de toda tu memoria, así que Jarvis nunca lo cambia en silencio.",
       "distill_auto_desc": "Usa el proveedor de chat para el que ya tengas una credencial válida y pasa al siguiente si está limitado o sin saldo. La opción segura por defecto.",
       "rerank_off_desc": "La búsqueda sigue funcionando: los resultados mantienen el orden en el que coincidieron la búsqueda por palabras clave y la semántica. Activa un reranker para respuestas más precisas.",
-      "model_cheap_default": "Valor por defecto de la cadena (modelo rápido y barato)"
+      "save_server_url": "Guardar URL del servidor"
     },
     "wizard": {
       "title": "Activar el modo Ultra",

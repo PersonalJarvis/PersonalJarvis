@@ -302,17 +302,17 @@ def test_keyed_backend_ready_without_key_is_false_and_honest(no_secrets, backend
     usable, reason = backend_class().ready()
     assert usable is False
     assert reason  # never an empty reason on a not-ready verdict
-    # The reason must name BOTH recovery paths, because the two kinds of
-    # install fix this differently: a desktop user types the credential into
-    # the slot named here, a headless VPS exports the environment variable.
-    # (Asserted by slot + env var rather than by the name of a UI screen —
-    # that literal went stale the moment the key field moved onto the
-    # provider's own card.)
+    # The reason must name the HEADLESS recovery path — the environment
+    # variable — because a server install has no card to type into. The
+    # desktop path is not spelled out here on purpose: the key field sits
+    # directly below this line, so repeating its raw snake_case slot name is
+    # noise. (Asserted by env var rather than by the name of a UI screen: that
+    # literal went stale the moment the field moved onto the provider's card.)
     backend = backend_class()
-    slot = backend._SECRET_SLOT if hasattr(backend, "_SECRET_SLOT") else ""
+    slot = getattr(backend, "_SECRET_SLOT", "")
     if slot:
-        assert slot in reason
         assert slot.upper() in reason
+        assert "add one below" in reason
 
 
 @pytest.mark.parametrize(

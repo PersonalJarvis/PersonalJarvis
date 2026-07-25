@@ -2817,7 +2817,6 @@
       "in_use": "In use: {0}",
       "embedding_title": "Embedding model",
       "embedding_desc": "Turns text into vectors for semantic search. Changing it re-embeds everything.",
-      "model_label": "Model",
       "distill_title": "Distillation model",
       "distill_desc": "Summarizes ingested items in the background. Applies to new work only.",
       "distill_auto": "Automatic — first ready chat provider",
@@ -2843,13 +2842,12 @@
       "via": "Via: {0}",
       "loading": "Loading the provider list…",
       "catalog_unavailable": "The provider list could not be loaded. The app may still be starting — try again in a moment.",
-      "save_model": "Save model",
       "server_url_label": "Server URL",
       "storage_restart_hint": "A storage change takes effect the next time Jarvis starts. Nothing is deleted, and the current store keeps answering until then.",
       "embedding_lock_hint": "This slot has no automatic fallback on purpose: the provider and model together define the vector space of your whole memory, so Jarvis never switches it silently.",
       "distill_auto_desc": "Uses whichever chat provider you already have a working credential for, and moves on to the next one if it is rate limited or out of credit. The safe default.",
       "rerank_off_desc": "Search still works: results keep the order the keyword and semantic legs agreed on. Turn a reranker on for sharper answers to precise questions.",
-      "model_cheap_default": "Chain default (a cheap fast model)"
+      "save_server_url": "Save server URL"
     },
     "wizard": {
       "title": "Turn on Ultra mode",

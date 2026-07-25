@@ -329,6 +329,21 @@ export interface UltraWikiCatalog {
   ollama_endpoint: string;
 }
 
+/**
+ * Mirrors `GET /api/ultrawiki/models/{slot}` — deliberately the same shape as
+ * `BrainModelsResult` so the shared picker consumes it unchanged.
+ */
+export interface UltraWikiSlotModels {
+  provider: string;
+  current_model: string;
+  models: { id: string; label: string }[];
+  source: "live" | "cache" | "static" | "curated";
+  fetched_at: number;
+  selects?: "model" | "voice";
+  /** Why a curated list is shown ("no Gemini API key saved yet"). */
+  reason?: string;
+}
+
 export interface SupabaseProject {
   ref: string;
   name: string;
@@ -479,6 +494,25 @@ export function fetchUltraWikiProviders(): Promise<UltraWikiProviders> {
 
 export function fetchUltraWikiCatalog(): Promise<UltraWikiCatalog> {
   return request<UltraWikiCatalog>("/api/ultrawiki/catalog");
+}
+
+/**
+ * The selectable models for one slot's provider, in the exact shape the
+ * API-Keys model picker consumes — so the slots get THAT picker (searchable,
+ * refreshable, custom ids allowed) instead of a free-text box.
+ */
+export function fetchUltraWikiSlotModels(
+  slot: UltraWikiSlotName,
+  provider: string,
+  refresh = false,
+): Promise<UltraWikiSlotModels> {
+  const params = new URLSearchParams();
+  if (provider) params.set("provider", provider);
+  if (refresh) params.set("refresh", "true");
+  const query = params.toString();
+  return request<UltraWikiSlotModels>(
+    `/api/ultrawiki/models/${encodeURIComponent(slot)}${query ? `?${query}` : ""}`,
+  );
 }
 
 export function fetchSupabaseProjects(): Promise<SupabaseProjectsResponse> {

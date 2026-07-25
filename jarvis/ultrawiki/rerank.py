@@ -109,12 +109,12 @@ class _HttpReranker:
     def ready(self) -> tuple[bool, str]:
         if self._key():
             return True, ""
-        # Place-neutral: the key field lives on this provider's own settings
-        # card now, not in the API-Keys view (which has no slot for it).
+        # Short and place-neutral: the key field sits right below this line on
+        # the provider's own card, so naming the raw snake_case slot is noise.
+        # The env var stays -- it is the headless recovery path.
         return False, (
-            f"No {self._KEY_LABEL} API key is configured - enter "
-            f"{self._SECRET_SLOT} on this provider's card, or set the "
-            f"{self._SECRET_SLOT.upper()} environment variable."
+            f"No {self._KEY_LABEL} API key yet - add one below, "
+            f"or set {self._SECRET_SLOT.upper()}."
         )
 
     def _payload(self, query: str, documents: list[str], top_k: int) -> dict[str, Any]:

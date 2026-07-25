@@ -2816,7 +2816,6 @@
       "in_use": "In Benutzung: {0}",
       "embedding_title": "Embedding-Modell",
       "embedding_desc": "Wandelt Text in Vektoren für die semantische Suche um. Ein Wechsel bettet alles neu ein.",
-      "model_label": "Modell",
       "distill_title": "Destillations-Modell",
       "distill_desc": "Fasst aufgenommene Elemente im Hintergrund zusammen. Gilt nur für neue Arbeit.",
       "distill_auto": "Automatisch — erster bereiter Chat-Anbieter",
@@ -2842,13 +2841,12 @@
       "via": "Über: {0}",
       "loading": "Anbieterliste wird geladen…",
       "catalog_unavailable": "Die Anbieterliste konnte nicht geladen werden. Die App startet möglicherweise noch — versuche es gleich noch einmal.",
-      "save_model": "Modell speichern",
       "server_url_label": "Server-URL",
       "storage_restart_hint": "Eine Änderung am Speicher greift beim nächsten Start von Jarvis. Es wird nichts gelöscht, und bis dahin antwortet der bisherige Speicher weiter.",
       "embedding_lock_hint": "Dieser Slot hat absichtlich keinen automatischen Ersatz: Anbieter und Modell zusammen legen den Vektorraum deines gesamten Gedächtnisses fest, deshalb wechselt Jarvis ihn nie unbemerkt.",
       "distill_auto_desc": "Nutzt den Chat-Anbieter, für den du bereits gültige Zugangsdaten hast, und geht zum nächsten weiter, wenn dieser gedrosselt ist oder kein Guthaben mehr hat. Die sichere Voreinstellung.",
       "rerank_off_desc": "Die Suche funktioniert trotzdem: Die Treffer behalten die Reihenfolge, auf die sich Stichwort- und Bedeutungssuche geeinigt haben. Schalte einen Reranker ein, wenn präzise Fragen schärfere Antworten brauchen.",
-      "model_cheap_default": "Standard der Kette (schnelles, günstiges Modell)"
+      "save_server_url": "Server-URL speichern"
     },
     "wizard": {
       "title": "Ultra-Modus einschalten",

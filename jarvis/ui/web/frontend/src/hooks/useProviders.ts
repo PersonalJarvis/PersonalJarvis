@@ -821,6 +821,12 @@ export interface BrainModelsResult {
   fetched_at: number;
   // What the picker writes: "model" (brain/stt/cartesia) or "voice" (most TTS).
   selects?: "model" | "voice";
+  /**
+   * Why a `curated` list is being shown instead of the provider's own ("no
+   * Gemini API key saved yet"). Optional: only the UltraWiki slot catalog
+   * fills it in today. Shown verbatim under the picker.
+   */
+  reason?: string;
 }
 
 /** Lists the available models for a brain provider for the picker dropdown. */

@@ -3,14 +3,20 @@
  * distillation, rerank) rendered as provider CARDS, in the same visual and
  * behavioural language as the API-Keys view.
  *
- * What changed and why (2026-07-25): the previous version showed a dropdown
- * per slot and, for anything needing a credential, the sentence "add it in the
- * API-Keys view". That view has no field for these slots, so Voyage, Mistral,
- * Cohere and every Postgres store were listed but impossible to connect from
- * inside the app — the exact out-of-app setup step the in-app-recoverable
- * mandate forbids (§3, AP-23). Every provider now carries its credential
- * widget on its own card, using the SAME `ApiKeyForm` component the API-Keys
- * view uses, so the two screens cannot drift apart.
+ * Two rounds of "this is not the API-Keys section, it just looks vaguely like
+ * it" got it here:
+ *
+ * 1. The slots used to be dropdowns whose credential hint pointed at the
+ *    API-Keys view — which has no field for `voyage_api_key`,
+ *    `mistral_api_key`, `cohere_api_key` or `ultrawiki_db_url`. Every provider
+ *    now carries its credential widget on its own card, and that widget IS the
+ *    shared `ApiKeyForm`, so the two screens cannot drift apart.
+ * 2. The model was then a free-text box while every other provider surface in
+ *    the app has a searchable picker. It is now the SAME picker
+ *    (`BrainModelSelector`), fed by `GET /api/ultrawiki/models/{slot}` — live
+ *    from the provider where one is listed, curated where none is, and its
+ *    custom-id row still reaches a model no catalog knows yet. Picking saves;
+ *    there is no separate Save button to forget.
  *
  * Slot rules that are deliberate, not incidental:
  *
@@ -38,6 +44,7 @@ import {
   Loader2,
 } from "lucide-react";
 
+import { BrainModelSelector } from "@/components/BrainModelSelector";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
@@ -49,11 +56,12 @@ import {
 } from "@/views/settings/SettingsBlock";
 import { SupabaseConnect } from "@/components/ultrawiki/SupabaseConnect";
 import {
-  StateChip,
+  SlotActiveControl,
   UltraProviderCard,
 } from "@/components/ultrawiki/UltraProviderCard";
 import {
   fetchUltraWikiCatalog,
+  fetchUltraWikiSlotModels,
   reembedGateOf,
   testUltraWikiSlot,
   updateUltraWikiSettings,
@@ -181,6 +189,51 @@ interface SectionProps {
   refresh: () => void;
 }
 
+/**
+ * The shared model picker — literally the API-Keys one, pointed at this slot.
+ *
+ * `onSave` returns the picker's expected result shape; UltraWiki runs no
+ * 1-token probe on a model pin (the slot's own Test button does a real call),
+ * so `probe` is null and the picker simply shows the saved state.
+ */
+function SlotModelPicker({
+  slot,
+  providerId,
+  currentModel,
+  recommendedModel,
+  onSave,
+}: {
+  slot: UltraWikiSlotName;
+  providerId: string;
+  currentModel: string;
+  recommendedModel?: string | null;
+  onSave: (model: string) => Promise<void>;
+}): JSX.Element {
+  return (
+    <BrainModelSelector
+      providerId={providerId}
+      currentModel={currentModel}
+      recommendedModel={recommendedModel ?? null}
+      controlled
+      loadModels={(refresh) =>
+        fetchUltraWikiSlotModels(slot, providerId, refresh)
+      }
+      onSave={async (model) => {
+        await onSave(model);
+        return {
+          ok: true,
+          provider: providerId,
+          model,
+          persisted: true,
+          applied_live: true,
+          restart_required: false,
+          probe: null,
+        };
+      }}
+    />
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Storage
 // ---------------------------------------------------------------------------
@@ -252,9 +305,7 @@ function EmbeddingSection({
 }: SectionProps): JSX.Element {
   const t = useT();
   const rows = catalog.slots.embedding ?? [];
-  const [model, setModel] = useState<string | null>(null);
   const [endpoint, setEndpoint] = useState<string | null>(null);
-  const modelValue = model ?? catalog.models.embedding;
   const endpointValue = endpoint ?? catalog.ollama_endpoint;
 
   return (
@@ -284,50 +335,45 @@ function EmbeddingSection({
             >
               {row.selected && (
                 <div className="space-y-3">
-                  <SettingsField label={t("ultrawiki.slots.model_label")}>
-                    <input
-                      type="text"
-                      value={modelValue}
-                      onChange={(e) => setModel(e.target.value)}
-                      placeholder={row.default_model}
-                      className={settingsInputCls}
-                      data-testid="ultrawiki-embedding-model-input"
-                    />
-                  </SettingsField>
-                  {row.supports_base_url && (
-                    <SettingsField label={t("ultrawiki.slots.server_url_label")}>
-                      <input
-                        type="url"
-                        value={endpointValue}
-                        onChange={(e) => setEndpoint(e.target.value)}
-                        placeholder={row.default_base_url ?? ""}
-                        className={settingsInputCls}
-                        data-testid="ultrawiki-ollama-endpoint-input"
-                      />
-                    </SettingsField>
-                  )}
-                  <Button
-                    size="sm"
-                    disabled={pending}
-                    onClick={() =>
-                      void apply({
+                  <SlotModelPicker
+                    slot="embedding"
+                    providerId={row.id}
+                    currentModel={catalog.models.embedding}
+                    recommendedModel={row.default_model}
+                    onSave={(model) =>
+                      apply({
                         embedding_provider: row.id,
-                        embedding_model: modelValue,
-                        ...(row.supports_base_url
-                          ? { ollama_endpoint: endpointValue }
-                          : {}),
+                        embedding_model: model,
                       })
                     }
-                    data-testid="ultrawiki-embedding-apply"
-                  >
-                    {pending && (
-                      <Loader2
-                        className="mr-1 h-3.5 w-3.5 animate-spin"
-                        aria-hidden
-                      />
-                    )}
-                    {t("ultrawiki.slots.save_model")}
-                  </Button>
+                  />
+                  {row.supports_base_url && (
+                    <div className="space-y-2">
+                      <SettingsField
+                        label={t("ultrawiki.slots.server_url_label")}
+                      >
+                        <input
+                          type="url"
+                          value={endpointValue}
+                          onChange={(e) => setEndpoint(e.target.value)}
+                          placeholder={row.default_base_url ?? ""}
+                          className={settingsInputCls}
+                          data-testid="ultrawiki-ollama-endpoint-input"
+                        />
+                      </SettingsField>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        disabled={pending || endpointValue === catalog.ollama_endpoint}
+                        onClick={() =>
+                          void apply({ ollama_endpoint: endpointValue })
+                        }
+                        data-testid="ultrawiki-ollama-endpoint-apply"
+                      >
+                        {t("ultrawiki.slots.save_server_url")}
+                      </Button>
+                    </div>
+                  )}
                 </div>
               )}
             </UltraProviderCard>
@@ -354,8 +400,6 @@ function DistillSection({
 }: SectionProps): JSX.Element {
   const t = useT();
   const rows = catalog.slots.distill ?? [];
-  const [model, setModel] = useState<string | null>(null);
-  const modelValue = model ?? catalog.models.distill;
   const automatic = !catalog.selected.distill;
 
   return (
@@ -369,6 +413,7 @@ function DistillSection({
         <SlotProvenance slot="distill" via={status.slots.distill?.via} />
         <CardGrid>
           <SlotDefaultCard
+            slot="distill"
             selected={automatic}
             busy={pending}
             title={t("ultrawiki.slots.distill_auto")}
@@ -385,34 +430,15 @@ function DistillSection({
               onCredentialChanged={refresh}
             >
               {row.selected && (
-                <div className="space-y-2">
-                  <SettingsField label={t("ultrawiki.slots.model_label")}>
-                    <input
-                      type="text"
-                      value={modelValue}
-                      onChange={(e) => setModel(e.target.value)}
-                      placeholder={
-                        row.default_model ||
-                        t("ultrawiki.slots.model_cheap_default")
-                      }
-                      className={settingsInputCls}
-                      data-testid="ultrawiki-distill-model-input"
-                    />
-                  </SettingsField>
-                  <Button
-                    size="sm"
-                    disabled={pending}
-                    onClick={() =>
-                      void apply({
-                        distill_provider: row.id,
-                        distill_model: modelValue,
-                      })
-                    }
-                    data-testid="ultrawiki-distill-apply"
-                  >
-                    {t("ultrawiki.slots.save_model")}
-                  </Button>
-                </div>
+                <SlotModelPicker
+                  slot="distill"
+                  providerId={row.id}
+                  currentModel={catalog.models.distill}
+                  recommendedModel={row.default_model}
+                  onSave={(model) =>
+                    apply({ distill_provider: row.id, distill_model: model })
+                  }
+                />
               )}
             </UltraProviderCard>
           ))}
@@ -436,11 +462,10 @@ function RerankSection({
   const t = useT();
   const rows = catalog.slots.rerank ?? [];
   const off = !catalog.selected.rerank;
-  const [rerankModel, setRerankModel] = useState<string | null>(null);
   const [floor, setFloor] = useState<string | null>(null);
-  const rerankModelValue = rerankModel ?? status.slots.rerank?.model ?? "";
-  const floorValue =
-    floor ?? String(status.slots.rerank?.ranking?.rerank_min_score ?? 4);
+  const rerankModel = status.slots.rerank?.model ?? "";
+  const savedFloor = String(status.slots.rerank?.ranking?.rerank_min_score ?? 4);
+  const floorValue = floor ?? savedFloor;
 
   return (
     <SettingsBlock
@@ -453,6 +478,7 @@ function RerankSection({
         <SlotProvenance slot="rerank" via={status.slots.rerank?.via} />
         <CardGrid>
           <SlotDefaultCard
+            slot="rerank"
             selected={off}
             busy={pending}
             title={t("ultrawiki.slots.rerank_off")}
@@ -472,37 +498,20 @@ function RerankSection({
                   rerank_provider: row.id,
                   // The vendor cross-encoders pin their own model; only the
                   // chat-graded backend takes one from the user.
-                  rerank_model: row.id === "llm" ? rerankModelValue : "",
+                  rerank_model: row.id === "llm" ? rerankModel : "",
                 })
               }
               onCredentialChanged={refresh}
             >
               {row.selected && row.id === "llm" && (
-                <div className="space-y-2">
-                  <SettingsField label={t("ultrawiki.slots.model_label")}>
-                    <input
-                      type="text"
-                      value={rerankModelValue}
-                      onChange={(e) => setRerankModel(e.target.value)}
-                      placeholder={t("ultrawiki.slots.rerank_model_placeholder")}
-                      className={settingsInputCls}
-                      data-testid="ultrawiki-rerank-model-input"
-                    />
-                  </SettingsField>
-                  <Button
-                    size="sm"
-                    disabled={pending}
-                    onClick={() =>
-                      void apply({
-                        rerank_provider: row.id,
-                        rerank_model: rerankModelValue,
-                      })
-                    }
-                    data-testid="ultrawiki-rerank-apply"
-                  >
-                    {t("ultrawiki.slots.save_model")}
-                  </Button>
-                </div>
+                <SlotModelPicker
+                  slot="rerank"
+                  providerId={row.id}
+                  currentModel={rerankModel}
+                  onSave={(model) =>
+                    apply({ rerank_provider: row.id, rerank_model: model })
+                  }
+                />
               )}
             </UltraProviderCard>
           ))}
@@ -529,7 +538,8 @@ function RerankSection({
           </p>
           <Button
             size="sm"
-            disabled={pending}
+            variant="secondary"
+            disabled={pending || floorValue === savedFloor}
             onClick={() => void apply({ rerank_min_score: Number(floorValue) })}
             data-testid="ultrawiki-rerank-floor-apply"
           >
@@ -546,6 +556,8 @@ function RerankSection({
 // ---------------------------------------------------------------------------
 
 function CardGrid({ children }: { children: React.ReactNode }): JSX.Element {
+  // items-stretch (the grid default) plus h-full on the cards: a provider with
+  // six lines of help text and one with three still produce a level row.
   return <div className="grid gap-3 lg:grid-cols-2">{children}</div>;
 }
 
@@ -583,6 +595,7 @@ function SlotProvenance({
  * with the plain fusion order.
  */
 function SlotDefaultCard({
+  slot,
   selected,
   busy,
   title,
@@ -590,6 +603,7 @@ function SlotDefaultCard({
   onSelect,
   testId,
 }: {
+  slot: UltraWikiSlotName;
   selected: boolean;
   busy: boolean;
   title: string;
@@ -597,7 +611,6 @@ function SlotDefaultCard({
   onSelect: () => void;
   testId: string;
 }): JSX.Element {
-  const t = useT();
   return (
     <div
       onClick={() => {
@@ -606,33 +619,22 @@ function SlotDefaultCard({
       data-testid={testId}
       data-selected={selected ? "true" : "false"}
       className={cn(
-        "card-outline space-y-3 p-4 transition-colors",
+        "card-outline flex h-full flex-col gap-3 p-4 transition-colors",
         selected
           ? "border-primary bg-primary/[0.06] ring-1 ring-primary/30"
           : "cursor-pointer hover:border-primary/40 hover:bg-primary/[0.02]",
       )}
     >
       <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0 flex-1">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-display text-sm font-semibold tracking-tight">
-              {title}
-            </span>
-            {selected && (
-              <StateChip tone="active">
-                {t("ultrawiki.card.chip_in_use")}
-              </StateChip>
-            )}
-          </div>
-        </div>
-        <Button
-          size="sm"
-          variant={selected ? "secondary" : "outline"}
-          disabled={selected || busy}
-          onClick={onSelect}
-        >
-          {t(selected ? "ultrawiki.card.in_use" : "ultrawiki.card.use")}
-        </Button>
+        <span className="font-display text-sm font-semibold tracking-tight">
+          {title}
+        </span>
+        <SlotActiveControl
+          slot={slot}
+          selected={selected}
+          busy={busy}
+          onSelect={onSelect}
+        />
       </div>
       <p className="text-[11px] leading-relaxed text-muted-foreground">{body}</p>
     </div>

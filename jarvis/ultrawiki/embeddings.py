@@ -273,14 +273,15 @@ class _OpenAIShapedEmbedding(_HttpEmbedding):
     def ready(self) -> tuple[bool, str]:
         if self._key():
             return True, ""
-        # Place-neutral on purpose: this line is read on the UltraWiki
-        # settings card (where the key field now sits), in CLI output, and in
-        # logs. It used to send the user to the API-Keys view, which has no
-        # field for this slot -- a dead end dressed up as an instruction.
+        # Short and place-neutral: the line is read on the settings card (where
+        # the key field now sits, right below it), in CLI output and in logs.
+        # It used to send the user to the API-Keys view, which has no field for
+        # this slot -- a dead end dressed up as an instruction -- and to spell
+        # out the raw snake_case slot name, which is noise next to the input
+        # box it names. The env var stays: that is the headless recovery path.
         return False, (
-            f"No {self._KEY_LABEL} API key is configured - enter "
-            f"{self._SECRET_SLOT} on this provider's card, or set the "
-            f"{self._SECRET_SLOT.upper()} environment variable."
+            f"No {self._KEY_LABEL} API key yet - add one below, "
+            f"or set {self._SECRET_SLOT.upper()}."
         )
 
     async def embed(self, texts: list[str], *, model: str) -> list[list[float]]:

@@ -161,11 +161,11 @@ def test_ready_without_key_is_false_with_honest_reason(no_secrets, backend_class
     usable, reason = backend.ready()
     assert usable is False
     assert reason
-    # Names both recovery paths: the credential slot a desktop user fills in
-    # on the provider's card, and the environment variable a headless install
-    # exports instead.
-    assert backend._SECRET_SLOT in reason
+    # Names the headless recovery path (the env var) and points at the field
+    # on the card for everyone else. The raw snake_case slot name is
+    # deliberately absent — the input box it would name is right below.
     assert backend._SECRET_SLOT.upper() in reason
+    assert "add one below" in reason
 
 
 @pytest.mark.parametrize("backend_class", [VoyageReranker, CohereReranker])

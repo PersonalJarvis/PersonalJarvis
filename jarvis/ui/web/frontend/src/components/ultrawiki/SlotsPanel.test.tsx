@@ -190,6 +190,25 @@ function installFetchMock(overrides: Record<string, () => Response> = {}) {
           json: async () => CATALOG,
         } as Response;
       }
+      if (url.startsWith("/api/ultrawiki/models/")) {
+        return {
+          ok: true,
+          status: 200,
+          statusText: "OK",
+          json: async () => ({
+            provider: "ollama",
+            current_model: "bge-m3",
+            models: [
+              { id: "bge-m3", label: "bge-m3 — multilingual" },
+              { id: "nomic-embed-text", label: "nomic-embed-text" },
+            ],
+            source: "live",
+            fetched_at: 0,
+            selects: "model",
+            reason: "",
+          }),
+        } as Response;
+      }
       if (url.startsWith("/api/ultrawiki/settings")) {
         putBodies.push(JSON.parse(String(init?.body ?? "{}")));
         return {
@@ -288,6 +307,30 @@ describe("SlotsPanel", () => {
     // pooler hostname is not derivable, so hand-typing it is a trap.
     const links = screen.getAllByRole("link", { name: /supabase/i });
     expect(links.length).toBeGreaterThan(0);
+  });
+
+  it("picks the model from a list instead of asking the user to type it", async () => {
+    // A free-text model box is how "gemini-embedding-01" becomes a 404 on the
+    // first real embed and a silently paused pipeline. The slot uses the same
+    // searchable picker as every other provider surface in the app.
+    renderWithClient(<SlotsPanel status={STATUS} onChanged={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Model" }));
+    // The provider's own catalog, not a hardcoded guess. The id shows twice
+    // per row (label + monospace id column), so match all of them.
+    expect((await screen.findAllByText("nomic-embed-text")).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/bge-m3/).length).toBeGreaterThan(0);
+  });
+
+  it("saves the model straight from the list, with no separate Save step", async () => {
+    renderWithClient(<SlotsPanel status={STATUS} onChanged={() => {}} />);
+    fireEvent.click(await screen.findByRole("button", { name: /model/i }));
+    const row = (await screen.findAllByText("nomic-embed-text"))[0];
+    fireEvent.click(row.closest("button") as HTMLElement);
+    await waitFor(() => expect(putBodies).toHaveLength(1));
+    expect(putBodies[0]).toEqual({
+      embedding_provider: "ollama",
+      embedding_model: "nomic-embed-text",
+    });
   });
 
   it("treats automatic distillation and rerank-off as real choices", async () => {

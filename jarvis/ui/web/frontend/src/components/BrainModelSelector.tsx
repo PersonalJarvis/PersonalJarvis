@@ -16,6 +16,7 @@ import {
   type BrainModel,
   type BrainModelProbe,
   type BrainModelSaveResult,
+  type BrainModelsResult,
   type ProviderTestStatus,
 } from "@/hooks/useProviders";
 import { useEventStore } from "@/store/events";
@@ -111,6 +112,7 @@ export function BrainModelSelector({
   placeholder,
   controlled,
   visionOnly,
+  loadModels,
 }: {
   providerId: string;
   currentModel?: string;
@@ -161,6 +163,14 @@ export function BrainModelSelector({
    * default — the main brain picker shows everything.
    */
   visionOnly?: boolean;
+  /**
+   * Override where the list comes from. The UltraWiki capability slots pass
+   * their own fetcher (`GET /api/ultrawiki/models/{slot}`) so they get THIS
+   * picker — searchable, refreshable, with the custom-id escape hatch — rather
+   * than a look-alike that would drift from it. Defaults to the per-provider
+   * brain catalog, so every existing call site is unchanged.
+   */
+  loadModels?: (refresh: boolean) => Promise<BrainModelsResult>;
 }) {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -170,6 +180,10 @@ export function BrainModelSelector({
   const [filter, setFilter] = useState<ModelFilter>("all");
   const [models, setModels] = useState<BrainModel[]>([]);
   const [source, setSource] = useState<"live" | "cache" | "static" | "curated" | null>(null);
+  // Why the list is the fallback one ("no Gemini API key saved yet") — shown
+  // verbatim, because "these five are all there is" and "we couldn't ask" look
+  // identical in a dropdown and mean very different things.
+  const [sourceNote, setSourceNote] = useState("");
   const [selects, setSelects] = useState<"model" | "voice">("model");
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -179,9 +193,12 @@ export function BrainModelSelector({
   async function load(refresh = false) {
     setLoading(true);
     try {
-      const res = await getBrainProviderModels(providerId, refresh);
+      const res = loadModels
+        ? await loadModels(refresh)
+        : await getBrainProviderModels(providerId, refresh);
       setModels(Array.isArray(res.models) ? res.models : []);
       setSource(res.source);
+      setSourceNote(typeof res.reason === "string" ? res.reason : "");
       setSelects(res.selects === "voice" ? "voice" : "model");
       // Uncontrolled: adopt the catalog's current selection as the pinned value.
       // Controlled (CU picker): the parent owns the pinned value (cu_model) —
@@ -564,6 +581,9 @@ export function BrainModelSelector({
           <span className="text-[11px] text-amber-600" title={t("apikeys_model.source_static_note")}>
             {t("apikeys_model.source_static")}
           </span>
+        )}
+        {sourceNote && (
+          <span className="text-[11px] text-muted-foreground">{sourceNote}</span>
         )}
         {probe && <ProbeChip probe={probe} />}
       </div>

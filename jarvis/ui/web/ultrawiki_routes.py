@@ -495,6 +495,122 @@ async def get_catalog(request: Request) -> dict[str, Any]:
     }
 
 
+@router.get("/models/{slot}", summary="Selectable models for one UltraWiki slot")
+async def list_slot_models(
+    slot: str,
+    request: Request,
+    provider: str = Query(default="", description="Defaults to the slot's provider"),
+    refresh: bool = Query(default=False),
+) -> dict[str, Any]:
+    """The model catalog for a slot's provider, shaped like the brain picker's.
+
+    Same payload as ``GET /api/providers/{id}/models`` so the settings cards
+    reuse the API-Keys model picker verbatim instead of a look-alike — a
+    free-text box was how a one-character typo ("gemini-embedding-01") became a
+    silently paused embed stage.
+
+    Embedding models come from :mod:`jarvis.ultrawiki.embedding_models`
+    (live where the provider lists them, curated otherwise); distillation and
+    the chat-graded reranker are ordinary chat providers and go through the
+    shared brain catalog. ``source`` stays honest either way, and the picker's
+    custom-id row still reaches a model no catalog knows yet.
+    """
+    cfg = _config(request)
+    uw = _uw_cfg(request)
+    if slot not in ("embedding", "distill", "rerank"):
+        raise HTTPException(
+            status_code=404,
+            detail="unknown slot — one of: embedding, distill, rerank",
+        )
+
+    chosen = provider.strip() or str(
+        getattr(uw, f"{slot}_provider", "") or ""
+    ).strip()
+    current = str(getattr(uw, f"{slot}_model", "") or "").strip()
+    if not chosen:
+        return {
+            "provider": "",
+            "current_model": current,
+            "models": [],
+            "source": "curated",
+            "fetched_at": 0.0,
+            "selects": "model",
+            "reason": "no provider is selected for this slot yet",
+        }
+
+    if slot == "embedding":
+        from jarvis.ultrawiki import embedding_models  # noqa: PLC0415 — lazy (AP-26)
+
+        result = await embedding_models.list_embedding_models(chosen, cfg)
+        payload = result.as_dict()
+        return {
+            "provider": chosen,
+            "current_model": current,
+            "models": payload["models"],
+            "source": payload["source"],
+            "fetched_at": time.time(),
+            "selects": "model",
+            "reason": payload["reason"],
+        }
+
+    # distill + the "llm" reranker both grade with an ordinary chat provider,
+    # so they share the brain catalog rather than a second copy of it.
+    if slot == "rerank" and chosen != "llm":
+        # A vendor cross-encoder pins its own model; there is nothing to pick.
+        return {
+            "provider": chosen,
+            "current_model": "",
+            "models": [],
+            "source": "curated",
+            "fetched_at": 0.0,
+            "selects": "model",
+            "reason": "this reranker uses its own fixed model",
+        }
+    if slot == "rerank":
+        chosen = str(getattr(uw, "distill_provider", "") or "").strip()
+        if not chosen:
+            return {
+                "provider": "",
+                "current_model": current,
+                "models": [],
+                "source": "curated",
+                "fetched_at": 0.0,
+                "selects": "model",
+                "reason": (
+                    "the chat-graded reranker follows your provider chain — "
+                    "pin a distillation provider to choose its model"
+                ),
+            }
+
+    try:
+        from jarvis.ui.web.provider_routes import (  # noqa: PLC0415 — lazy
+            _get_model_catalog,
+        )
+
+        catalog = _get_model_catalog(request)
+        result = await catalog.list_models(chosen, force_refresh=refresh)
+    except Exception as exc:  # noqa: BLE001 — a dead catalog must not 500 the screen
+        log.debug("slot model catalog failed for %s", chosen, exc_info=True)
+        return {
+            "provider": chosen,
+            "current_model": current,
+            "models": [],
+            "source": "curated",
+            "fetched_at": 0.0,
+            "selects": "model",
+            "reason": f"model list unavailable ({type(exc).__name__})",
+        }
+    return {
+        "provider": chosen,
+        "current_model": current,
+        "models": [{"id": m.id, "label": m.label} for m in result.models],
+        "source": result.source,
+        "fetched_at": result.fetched_at,
+        "selects": "model",
+        "reason": "",
+    }
+
+
 # ---------------------------------------------------------------------------
 # Storage — the guided Supabase link
 # ---------------------------------------------------------------------------
