@@ -12,6 +12,7 @@ from jarvis.platform.deescalate import (
     DeescalationResult,
     environment_block,
     spawn_unelevated,
+    token_creationflags,
 )
 
 
@@ -33,6 +34,25 @@ class TestEnvironmentBlock:
         block = environment_block({"PATH": "C:\\a;C:\\b", "Q": "x=y"})
         assert "PATH=C:\\a;C:\\b\0" in block
         assert "Q=x=y\0" in block
+
+
+class TestTokenCreationFlags:
+    def test_strips_detached_process_and_keeps_the_window_hidden(self):
+        detached_process = 0x00000008
+        create_unicode_environment = 0x00000400
+        create_no_window = 0x08000000
+
+        flags = token_creationflags(detached_process | create_no_window)
+
+        assert flags == create_no_window | create_unicode_environment
+
+    def test_preserves_unrelated_creation_flags(self):
+        create_new_process_group = 0x00000200
+        create_unicode_environment = 0x00000400
+
+        flags = token_creationflags(create_new_process_group)
+
+        assert flags == create_new_process_group | create_unicode_environment
 
 
 class TestPlatformGating:

@@ -120,6 +120,31 @@ def windows_process_is_elevated() -> bool | None:
         advapi32 = ctypes.WinDLL("advapi32", use_last_error=True)
         kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
 
+        # Declaring these is load-bearing, not decoration: ctypes assumes a
+        # 32-bit int return/argument for anything undeclared, which truncates
+        # 64-bit HANDLEs. Without it OpenProcessToken receives a mangled
+        # pseudo-handle, fails, and this probe reports "unknown" on every
+        # Windows host — a broken measurement perfectly disguised as our own
+        # fail-open behaviour (caught only by a live check, 2026-07-25).
+        kernel32.GetCurrentProcess.argtypes = []
+        kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+        kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel32.CloseHandle.restype = wintypes.BOOL
+        advapi32.OpenProcessToken.argtypes = [
+            wintypes.HANDLE,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.HANDLE),
+        ]
+        advapi32.OpenProcessToken.restype = wintypes.BOOL
+        advapi32.GetTokenInformation.argtypes = [
+            wintypes.HANDLE,
+            ctypes.c_int,
+            wintypes.LPVOID,
+            wintypes.DWORD,
+            ctypes.POINTER(wintypes.DWORD),
+        ]
+        advapi32.GetTokenInformation.restype = wintypes.BOOL
+
         token = wintypes.HANDLE()
         if not advapi32.OpenProcessToken(
             kernel32.GetCurrentProcess(), TOKEN_QUERY, ctypes.byref(token)
@@ -131,7 +156,7 @@ def windows_process_is_elevated() -> bool | None:
             ok = advapi32.GetTokenInformation(
                 token,
                 TokenElevation,
-                ctypes.byref(elevated),
+                ctypes.cast(ctypes.byref(elevated), wintypes.LPVOID),
                 ctypes.sizeof(elevated),
                 ctypes.byref(returned),
             )

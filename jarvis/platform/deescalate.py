@@ -7,19 +7,25 @@ text expanders, and password-manager auto-type (see
 happen from inside the app — telling a user to hunt down how their app came to
 be elevated is not a fix.
 
-**How.** When UAC filters an administrator account, Windows issues *two* tokens
-at logon: the full one the elevated process runs on, and a filtered
-medium-integrity one hanging off it as ``TokenLinkedToken``. Duplicating that
-linked token and launching through ``CreateProcessWithTokenW`` produces a child
-at exactly the integrity level of any normally-started app — no Explorer COM
-detour and no third-party dependency. ``CreateProcessWithTokenW`` needs
-``SeImpersonatePrivilege``, which an elevated process holds.
+**How.** We need a *primary* token that represents "an ordinary app of this
+user", then launch through ``CreateProcessWithTokenW`` (which needs
+``SeImpersonatePrivilege`` — an elevated process holds it). Two sources are
+tried in order:
 
-**When it cannot work** (reported honestly, never faked): UAC disabled, the true
-built-in Administrator account, or a Windows-service/SYSTEM context — there is
-no filtered companion token to fall back to. POSIX hosts are a documented no-op:
-dropping from root to "whoever ran sudo" is guesswork that would strand file
-ownership, so we tell the user instead of guessing.
+1. **The desktop shell's token.** Explorer always runs as the plain interactive
+   user, and an elevated process may open it because access flows downward. This
+   is the primary path and the only one that also works with UAC switched off.
+2. **Our own token's filtered companion** (``TokenLinkedToken``). Kept as a
+   fallback, but it is *not* reliable: unless the caller holds
+   ``SeTcbPrivilege``, Windows hands that token out at *identification* level,
+   and a primary token cannot be duplicated from one — measured live as error
+   1346, ``ERROR_BAD_IMPERSONATION_LEVEL``.
+
+**When it cannot work** (reported honestly, never faked): a session with no
+shell and no usable companion token — a Windows service, a SYSTEM context, or a
+headless host. POSIX is a documented no-op: dropping from root to "whoever ran
+sudo" is guesswork that would strand file ownership, so we tell the user instead
+of guessing.
 """
 
 from __future__ import annotations
@@ -34,10 +40,12 @@ log = logging.getLogger(__name__)
 #: ``CreateProcessWithTokenW`` logon flag: load the target user's profile.
 _LOGON_WITH_PROFILE = 0x00000001
 _CREATE_UNICODE_ENVIRONMENT = 0x00000400
+_DETACHED_PROCESS = 0x00000008
 _TOKEN_QUERY = 0x0008
 _TOKEN_DUPLICATE = 0x0002
 _TOKEN_ASSIGN_PRIMARY = 0x0001
 _TOKEN_ALL_ACCESS = 0xF01FF
+_PROCESS_QUERY_INFORMATION = 0x0400
 _TokenLinkedToken = 19
 _SecurityImpersonation = 2
 _TokenPrimary = 1
@@ -64,6 +72,19 @@ def environment_block(env: dict[str, str]) -> str:
     """
     items = sorted(env.items(), key=lambda kv: kv[0].upper())
     return "".join(f"{name}={value}\0" for name, value in items) + "\0"
+
+
+def token_creationflags(creationflags: int) -> int:
+    """Return flags accepted by ``CreateProcessWithTokenW``.
+
+    That API enables ``CREATE_NEW_CONSOLE`` by default, while Windows forbids
+    combining it with ``DETACHED_PROCESS``. The desktop relauncher normally
+    requests ``DETACHED_PROCESS | CREATE_NO_WINDOW``; passing that combination
+    through produced ``ERROR_INVALID_PARAMETER`` (87). ``CREATE_NO_WINDOW`` is
+    sufficient for this helper, and Windows does not tie a child process's
+    lifetime to its parent merely because this flag is absent.
+    """
+    return (creationflags & ~_DETACHED_PROCESS) | _CREATE_UNICODE_ENVIRONMENT
 
 
 def _spawn_unelevated_windows(
@@ -119,49 +140,154 @@ def _spawn_unelevated_windows(
     ]
     advapi32.CreateProcessWithTokenW.restype = wintypes.BOOL
 
-    token = wintypes.HANDLE()
-    if not advapi32.OpenProcessToken(
-        kernel32.GetCurrentProcess(),
-        _TOKEN_QUERY | _TOKEN_DUPLICATE,
-        ctypes.byref(token),
-    ):
+    # Undeclared ctypes prototypes default to a 32-bit int, which truncates
+    # every 64-bit HANDLE passed or returned here. Skipping these turns the
+    # whole de-escalation into a silent "could not open token" (the same trap
+    # that made the elevation probe report "unknown" on every host).
+    kernel32.GetCurrentProcess.argtypes = []
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    kernel32.CloseHandle.restype = wintypes.BOOL
+    advapi32.OpenProcessToken.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.HANDLE),
+    ]
+    advapi32.OpenProcessToken.restype = wintypes.BOOL
+    advapi32.GetTokenInformation.argtypes = [
+        wintypes.HANDLE,
+        ctypes.c_int,
+        wintypes.LPVOID,
+        wintypes.DWORD,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    advapi32.GetTokenInformation.restype = wintypes.BOOL
+    advapi32.DuplicateTokenEx.argtypes = [
+        wintypes.HANDLE,
+        wintypes.DWORD,
+        wintypes.LPVOID,
+        ctypes.c_int,
+        ctypes.c_int,
+        ctypes.POINTER(wintypes.HANDLE),
+    ]
+    advapi32.DuplicateTokenEx.restype = wintypes.BOOL
+
+    user32 = ctypes.WinDLL("user32", use_last_error=True)
+    user32.GetShellWindow.argtypes = []
+    user32.GetShellWindow.restype = wintypes.HWND
+    user32.GetWindowThreadProcessId.argtypes = [
+        wintypes.HWND,
+        ctypes.POINTER(wintypes.DWORD),
+    ]
+    user32.GetWindowThreadProcessId.restype = wintypes.DWORD
+    kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+
+    def _shell_token() -> tuple[wintypes.HANDLE | None, str]:
+        """A primary token borrowed from the desktop shell (Explorer).
+
+        Explorer always runs as the ordinary interactive user, and an elevated
+        process may open it (access flows downward), so its token is the most
+        reliable source of "what a normally-started app looks like". Also the
+        only one that works with UAC turned off, where no linked token exists.
+        """
+        hwnd = user32.GetShellWindow()
+        if not hwnd:
+            return None, "no desktop shell window (headless or Explorer not running)"
+        pid = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(pid))
+        if not pid.value:
+            return None, "could not identify the shell process"
+        proc = kernel32.OpenProcess(_PROCESS_QUERY_INFORMATION, False, pid.value)
+        if not proc:
+            return None, f"OpenProcess(shell) failed ({ctypes.get_last_error()})"
+        try:
+            shell_tok = wintypes.HANDLE()
+            if not advapi32.OpenProcessToken(
+                proc, _TOKEN_DUPLICATE | _TOKEN_QUERY, ctypes.byref(shell_tok)
+            ):
+                return None, f"OpenProcessToken(shell) failed ({ctypes.get_last_error()})"
+            try:
+                dup = wintypes.HANDLE()
+                if not advapi32.DuplicateTokenEx(
+                    shell_tok,
+                    _TOKEN_ALL_ACCESS,
+                    None,
+                    _SecurityImpersonation,
+                    _TokenPrimary,
+                    ctypes.byref(dup),
+                ):
+                    return None, f"DuplicateTokenEx(shell) failed ({ctypes.get_last_error()})"
+                return dup, "shell token"
+            finally:
+                kernel32.CloseHandle(shell_tok)
+        finally:
+            kernel32.CloseHandle(proc)
+
+    def _linked_token() -> tuple[wintypes.HANDLE | None, str]:
+        """The filtered companion of our own elevated token.
+
+        Fallback only: Windows hands `TokenLinkedToken` out at *identification*
+        level unless the caller holds SeTcbPrivilege, and a primary token cannot
+        be duplicated from that — the live failure was error 1346,
+        ERROR_BAD_IMPERSONATION_LEVEL. It still succeeds in some configurations,
+        so it stays as a second chance rather than being deleted.
+        """
+        own = wintypes.HANDLE()
+        if not advapi32.OpenProcessToken(
+            kernel32.GetCurrentProcess(),
+            _TOKEN_QUERY | _TOKEN_DUPLICATE,
+            ctypes.byref(own),
+        ):
+            return None, f"OpenProcessToken(self) failed ({ctypes.get_last_error()})"
+        try:
+            linked = wintypes.HANDLE()
+            returned = wintypes.DWORD()
+            if not advapi32.GetTokenInformation(
+                own,
+                _TokenLinkedToken,
+                ctypes.cast(ctypes.byref(linked), wintypes.LPVOID),
+                ctypes.sizeof(linked),
+                ctypes.byref(returned),
+            ):
+                return None, f"no linked token ({ctypes.get_last_error()})"
+            try:
+                dup = wintypes.HANDLE()
+                if not advapi32.DuplicateTokenEx(
+                    linked,
+                    _TOKEN_ALL_ACCESS | _TOKEN_ASSIGN_PRIMARY,
+                    None,
+                    _SecurityImpersonation,
+                    _TokenPrimary,
+                    ctypes.byref(dup),
+                ):
+                    return None, f"DuplicateTokenEx(linked) failed ({ctypes.get_last_error()})"
+                return dup, "linked token"
+            finally:
+                kernel32.CloseHandle(linked)
+        finally:
+            kernel32.CloseHandle(own)
+
+    primary = None
+    source = ""
+    failures: list[str] = []
+    for candidate in (_shell_token, _linked_token):
+        handle, detail = candidate()
+        if handle:
+            primary, source = handle, detail
+            break
+        failures.append(detail)
+
+    if primary is None:
         return DeescalationResult(
-            False, None, f"OpenProcessToken failed ({ctypes.get_last_error()})"
+            False,
+            None,
+            "Could not obtain an unelevated token on this Windows account "
+            f"({'; '.join(failures)}), so the app cannot drop its administrator "
+            "rights by itself.",
         )
 
-    linked = wintypes.HANDLE()
-    primary = wintypes.HANDLE()
     try:
-        returned = wintypes.DWORD()
-        if not advapi32.GetTokenInformation(
-            token,
-            _TokenLinkedToken,
-            ctypes.byref(linked),
-            ctypes.sizeof(linked),
-            ctypes.byref(returned),
-        ):
-            # No filtered companion token: UAC off, the built-in Administrator,
-            # or a SYSTEM context. Nothing to de-escalate to.
-            return DeescalationResult(
-                False,
-                None,
-                "This Windows account has no unelevated companion token "
-                f"(error {ctypes.get_last_error()}), so the app cannot drop its "
-                "administrator rights by itself.",
-            )
-
-        if not advapi32.DuplicateTokenEx(
-            linked,
-            _TOKEN_ALL_ACCESS | _TOKEN_ASSIGN_PRIMARY,
-            None,
-            _SecurityImpersonation,
-            _TokenPrimary,
-            ctypes.byref(primary),
-        ):
-            return DeescalationResult(
-                False, None, f"DuplicateTokenEx failed ({ctypes.get_last_error()})"
-            )
-
         startup = STARTUPINFOW()
         startup.cb = ctypes.sizeof(STARTUPINFOW)
         info = PROCESS_INFORMATION()
@@ -176,7 +302,7 @@ def _spawn_unelevated_windows(
             _LOGON_WITH_PROFILE,
             None,
             cmdline,
-            creationflags | _CREATE_UNICODE_ENVIRONMENT,
+            token_creationflags(creationflags),
             ctypes.cast(block, wintypes.LPVOID),
             cwd,
             ctypes.byref(startup),
@@ -191,12 +317,12 @@ def _spawn_unelevated_windows(
         kernel32.CloseHandle(info.hProcess)
         kernel32.CloseHandle(info.hThread)
         return DeescalationResult(
-            True, int(info.dwProcessId), "Started without administrator rights."
+            True,
+            int(info.dwProcessId),
+            f"Started without administrator rights (via the {source}).",
         )
     finally:
-        for handle in (linked, primary, token):
-            if handle:
-                kernel32.CloseHandle(handle)
+        kernel32.CloseHandle(primary)
 
 
 def spawn_unelevated(
@@ -243,4 +369,5 @@ __all__ = [
     "current_process_is_elevated",
     "environment_block",
     "spawn_unelevated",
+    "token_creationflags",
 ]

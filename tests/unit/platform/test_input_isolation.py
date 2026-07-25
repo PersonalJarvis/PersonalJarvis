@@ -14,6 +14,8 @@ a Mac.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from jarvis.platform.input_isolation import (
@@ -116,3 +118,23 @@ class TestRealHostProbe:
         assert windows_process_is_elevated() in (True, False, None)
         report = describe_input_isolation()
         assert isinstance(report.blocked, bool)
+
+    @pytest.mark.skipif(os.name != "nt", reason="Windows token probe")
+    def test_probe_agrees_with_an_independent_windows_reference(self):
+        """Cross-check the token read against shell32's own answer.
+
+        This exists because of a real 2026-07-25 miss: undeclared ctypes
+        prototypes truncated the 64-bit process handle, `OpenProcessToken`
+        failed, and the probe returned `None` on EVERY Windows host. That is
+        indistinguishable from our deliberate "privilege state unreadable"
+        fail-open, so the banner would simply never appear and the whole fix
+        would be silently inert. Only a live check caught it.
+
+        `IsUserAnAdmin` answers the same question through an unrelated code
+        path, so a disagreement — including `None` where it says False — means
+        our probe is broken, not merely unsure.
+        """
+        import ctypes  # noqa: PLC0415
+
+        reference = bool(ctypes.windll.shell32.IsUserAnAdmin())
+        assert windows_process_is_elevated() == reference

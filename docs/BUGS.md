@@ -7557,3 +7557,36 @@ box, in a Linux container, and on a Mac.
 signature of a privilege boundary, not of the app's UI framework. Check the
 integrity levels of both processes *before* investigating the window toolkit —
 the measurement takes seconds and the toolkit hypothesis costs hours.
+
+**Three follow-ups the live check caught — none of which any unit test saw.**
+
+1. **The probe answered "unknown" on every Windows host.** Undeclared `ctypes`
+   prototypes default to a 32-bit int, truncating the 64-bit handle from
+   `GetCurrentProcess`; `OpenProcessToken` then failed and the probe returned
+   `None`. That is *indistinguishable from the deliberate fail-open*, so the
+   banner would simply never appear and the entire fix would sit inert. Fixed by
+   declaring `argtypes`/`restype` on every call, and guarded by a cross-check
+   against `shell32.IsUserAnAdmin()` — a disagreement (including `None` where it
+   says False) now fails the suite.
+2. **`TokenLinkedToken` is not a usable source** (`DuplicateTokenEx` → 1346,
+   `ERROR_BAD_IMPERSONATION_LEVEL`): without `SeTcbPrivilege` Windows hands the
+   companion token out at *identification* level, from which no primary token can
+   be duplicated. The desktop shell's token is now the primary source (Explorer
+   always runs as the plain interactive user, access flows downward, and it also
+   works with UAC disabled); the linked token stays as a fallback.
+3. **`CreateProcessWithTokenW` rejected the relauncher's flags**
+   (`ERROR_INVALID_PARAMETER`, 87): that API implies `CREATE_NEW_CONSOLE`, which
+   Windows forbids combining with the `DETACHED_PROCESS` the desktop relauncher
+   normally passes. `token_creationflags()` strips it and keeps
+   `CREATE_NO_WINDOW`.
+
+**Live verification (2026-07-25).** Boot log wrote `Input isolation ACTIVE
+(reason=elevated)`; the repair was refused honestly three times while the app
+stayed up (errors 1346 then 87); after the fixes the log wrote `relauncher
+spawned WITHOUT administrator rights`. The fresh process measures MEDIUM
+integrity, the endpoint reports `blocked: false`, and the automation elements a
+normal-privilege client can see in the Jarvis window went from **1 to 22**.
+
+**Meta-lesson.** A fail-open diagnostic can perfectly disguise its own breakage.
+Any probe whose "I don't know" path is silent needs a cross-check against an
+independent implementation, or it will report "nothing to see here" forever.
