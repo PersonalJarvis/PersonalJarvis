@@ -11,13 +11,50 @@
  *    tear down the WebSocket, which kills the agent running behind it and
  *    loses the whole session. So the connect effect depends on the pane key
  *    alone.
+ *
+ * ## Why this pane is configured the way it is
+ *
+ * A coding agent's TUI is the hardest thing you can ask a web terminal to
+ * draw: box-drawing frames, emoji status markers, live-rewritten spinner lines,
+ * and a prompt box that redraws on every keystroke. Rendered with xterm's
+ * defaults it came out visibly broken (reported 2026-07-25): text wrapped in
+ * the wrong places, the frame characters drifted out of their columns, and
+ * typing left artefacts behind. Four causes, all fixed here:
+ *
+ * * **Character width.** Without the Unicode 11 provider, xterm measures emoji
+ *   and many box/symbol characters as one cell when the terminal on the other
+ *   side counts them as two. Every such glyph then shifts the rest of the line
+ *   by a column — which is exactly what "the frames look wrong" means.
+ * * **ConPTY line semantics.** On Windows the agent runs behind ConPTY, which
+ *   re-wraps and re-emits lines differently from a POSIX pty. xterm has a
+ *   dedicated compatibility mode for it; without `windowsPty` the re-emitted
+ *   lines stack up as duplicated, half-overwritten rows.
+ * * **Measuring before the font is ready.** FitAddon derives the column count
+ *   from one measured character. Run before the web font loads, it measures
+ *   the fallback font, computes the wrong column count, and the agent then
+ *   formats for a width the pane does not have. Hence the re-fit once
+ *   `document.fonts.ready` resolves.
+ * * **Renderer.** The DOM renderer draws each cell as an element; with a TUI
+ *   redrawing on every keystroke that is both slow and subtly misaligned. The
+ *   canvas renderer draws on a grid, which is what a terminal actually is.
  */
 import { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { CanvasAddon } from "@xterm/addon-canvas";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import "@xterm/xterm/css/xterm.css";
-import { AlertCircle, Circle, Loader2 } from "lucide-react";
+import {
+  AlertCircle,
+  Circle,
+  Columns2,
+  Loader2,
+  Maximize2,
+  Minimize2,
+  Rows2,
+  X,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
   PANE_CHROME,
@@ -38,6 +75,17 @@ interface AgenticTerminalProps {
   focused?: boolean;
   onFocus?: () => void;
   onStatus?: (status: PaneStatus, detail?: string) => void;
+  /** True while this pane fills the whole grid. */
+  maximized?: boolean;
+  onToggleMaximize?: () => void;
+  /** Open another terminal beside this one. */
+  onSplitRight?: () => void;
+  /** Open another terminal below this one. */
+  onSplitDown?: () => void;
+  /** Close this pane (the caller asks for confirmation first). */
+  onClose?: () => void;
+  /** Disable the split buttons — the workspace is at its terminal limit. */
+  splitDisabled?: boolean;
 }
 
 function socketUrl(name: string, cols: number, rows: number): string {
@@ -56,10 +104,19 @@ export function AgenticTerminal({
   focused = false,
   onFocus,
   onStatus,
+  maximized = false,
+  onToggleMaximize,
+  onSplitRight,
+  onSplitDown,
+  onClose,
+  splitDisabled = false,
 }: AgenticTerminalProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const termRef = useRef<Terminal | null>(null);
   const fitRef = useRef<FitAddon | null>(null);
+  // Lets the font-size effect trigger a REAL resize (xterm + the terminal
+  // process together) without reaching into the connect effect's socket.
+  const resizeRef = useRef<(() => void) | null>(null);
   const statusRef = useRef<PaneStatus>("connecting");
   // Latest callbacks/appearance without re-running the connect effect.
   const onStatusRef = useRef(onStatus);
@@ -77,17 +134,56 @@ export function AgenticTerminal({
       fontSize: initialRef.current.fontSize,
       // Roomier than a console default — the single biggest readability win for
       // an agent that prints prose, diffs and file trees rather than log lines.
-      lineHeight: 1.35,
-      letterSpacing: 0.2,
+      // Kept integral-friendly: fractional cell heights round differently per
+      // row and make a redrawn TUI box look ragged.
+      lineHeight: 1.3,
+      // Zero, not 0.2: extra tracking is added per cell, so a box-drawing frame
+      // and the text under it accumulate different sub-pixel offsets and the
+      // frame visibly bends. Monospace legibility comes from the line height.
+      letterSpacing: 0,
       cursorBlink: true,
       cursorStyle: "bar",
       scrollback: 10000,
+      // Required by the Unicode 11 width provider below.
+      allowProposedApi: true,
+      // Instant scrolling: an agent that redraws a live status line while
+      // animating a scroll leaves visible tearing.
+      smoothScrollDuration: 0,
+      // Windows only. ConPTY re-emits and re-wraps lines in a way a POSIX pty
+      // never does; without telling xterm which backend it is talking to, those
+      // re-emitted lines pile up as duplicated, half-overwritten rows. Harmless
+      // to declare on other platforms — the pty there simply never triggers it,
+      // and the value is derived from the browser rather than assumed.
+      windowsPty: /windows/i.test(navigator.userAgent)
+        ? { backend: "conpty" as const }
+        : undefined,
       theme: themeFor(initialRef.current.appearance),
     });
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
+    // Character WIDTH, not appearance: without this xterm measures emoji and
+    // many box/symbol glyphs as one cell while the agent on the other side
+    // counted two, and every such glyph shifts the rest of the line one column
+    // left. That is the "the frames are broken" symptom.
+    try {
+      const unicode = new Unicode11Addon();
+      term.loadAddon(unicode);
+      term.unicode.activeVersion = "11";
+    } catch {
+      /* proposed API unavailable in this build — widths stay at Unicode 6 */
+    }
     term.open(container);
+    // Canvas rather than the DOM renderer: a coding agent's TUI redraws its
+    // prompt box on every keystroke, and per-cell DOM elements both lag and
+    // land on fractional pixel offsets. Loaded AFTER open() because it needs
+    // the mounted element. A failure here is not fatal — xterm falls back to
+    // the DOM renderer, which draws correctly, just less crisply.
+    try {
+      term.loadAddon(new CanvasAddon());
+    } catch {
+      /* no canvas in this environment — the DOM renderer still works */
+    }
     termRef.current = term;
     fitRef.current = fit;
     try {
@@ -106,15 +202,22 @@ export function AgenticTerminal({
     let everLive = false;
 
     const sendResize = () => {
+      // A hidden pane measures 0x0 (maximizing another one hides this one), and
+      // fitting to that would resize the PTY to zero columns — which permanently
+      // wrecks the agent's full-screen drawing. Skip while not measurable; the
+      // ResizeObserver fires again when the pane comes back.
+      if (container.clientWidth < 8 || container.clientHeight < 8) return;
       try {
         fit.fit();
       } catch {
         return;
       }
+      if (term.cols < 2 || term.rows < 2) return;
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ t: "r", cols: term.cols, rows: term.rows }));
       }
     };
+    resizeRef.current = sendResize;
 
     ws = new WebSocket(socketUrl(name, term.cols || 80, term.rows || 24));
     ws.onopen = () => {
@@ -169,13 +272,45 @@ export function AgenticTerminal({
       }
     });
 
-    window.addEventListener("resize", sendResize);
-    const ro = new ResizeObserver(() => sendResize());
+    // The mount-time fit measured whatever font was loaded at that moment. If
+    // the display font arrives afterwards the cell width changes underneath the
+    // already-computed column count, and the agent then formats its output for a
+    // width the pane does not have — text wrapping in the wrong places, which is
+    // exactly the reported symptom. Re-fit once fonts settle.
+    let fontsSettled = false;
+    const refitOnFonts = () => {
+      if (disposed || fontsSettled) return;
+      fontsSettled = true;
+      term.clearTextureAtlas?.();
+      sendResize();
+    };
+    if (typeof document !== "undefined" && document.fonts?.ready) {
+      void document.fonts.ready.then(refitOnFonts).catch(() => undefined);
+    } else {
+      refitOnFonts();
+    }
+
+    // Resizes are coalesced: dragging a split or the window fires the observer
+    // dozens of times a second, and every fit both reflows xterm's buffer and
+    // sends a PTY resize the agent redraws for. Unthrottled that is the visible
+    // flicker while resizing.
+    let resizeTimer: number | undefined;
+    const scheduleResize = () => {
+      if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
+      resizeTimer = window.setTimeout(() => {
+        resizeTimer = undefined;
+        sendResize();
+      }, 80);
+    };
+
+    window.addEventListener("resize", scheduleResize);
+    const ro = new ResizeObserver(scheduleResize);
     ro.observe(container);
 
     return () => {
       disposed = true;
-      window.removeEventListener("resize", sendResize);
+      if (resizeTimer !== undefined) window.clearTimeout(resizeTimer);
+      window.removeEventListener("resize", scheduleResize);
       ro.disconnect();
       try {
         ws?.close();
@@ -185,27 +320,33 @@ export function AgenticTerminal({
       term.dispose();
       termRef.current = null;
       fitRef.current = null;
+      resizeRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- see file header:
     // appearance/fontSize must NOT rebuild the pane (it would kill the agent).
   }, [name]);
 
-  // Live restyle — no reconnect, so the running agent is untouched.
+  // Live restyle — no reconnect, so the running agent is untouched. The canvas
+  // renderer caches rendered glyphs per colour in a texture atlas, so a theme
+  // change has to invalidate it or the old palette keeps being painted.
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
     term.options.theme = themeFor(appearance);
+    term.clearTextureAtlas?.();
   }, [appearance]);
 
   useEffect(() => {
     const term = termRef.current;
     if (!term) return;
     term.options.fontSize = fontSize;
-    try {
-      fitRef.current?.fit();
-    } catch {
-      /* ignore */
-    }
+    term.clearTextureAtlas?.();
+    // Changing the font size changes the COLUMN COUNT. Fitting locally without
+    // telling the terminal process leaves the agent formatting for the old
+    // width — it keeps wrapping at 100 columns in a pane that now holds 80, and
+    // every line breaks in the wrong place. The two must move together, so this
+    // goes through the same resize path the observer uses.
+    resizeRef.current?.();
   }, [fontSize]);
 
   const chrome = PANE_CHROME[appearance];
@@ -230,6 +371,12 @@ export function AgenticTerminal({
         displayName={displayName}
         appearance={appearance}
         focused={focused}
+        maximized={maximized}
+        onToggleMaximize={onToggleMaximize}
+        onSplitRight={onSplitRight}
+        onSplitDown={onSplitDown}
+        onClose={onClose}
+        splitDisabled={splitDisabled}
       />
       <div ref={containerRef} className="flex-1 overflow-hidden px-2 pb-1 pt-1" />
     </div>
@@ -241,16 +388,28 @@ function PaneHeader({
   displayName,
   appearance,
   focused,
+  maximized,
+  onToggleMaximize,
+  onSplitRight,
+  onSplitDown,
+  onClose,
+  splitDisabled,
 }: {
   name: string;
   displayName: string;
   appearance: TerminalAppearance;
   focused: boolean;
+  maximized: boolean;
+  onToggleMaximize?: () => void;
+  onSplitRight?: () => void;
+  onSplitDown?: () => void;
+  onClose?: () => void;
+  splitDisabled: boolean;
 }) {
   const light = appearance === "light";
   return (
     <header
-      className="flex items-center justify-between gap-2 border-b px-3 py-2"
+      className="group/header flex items-center justify-between gap-2 border-b px-3 py-2"
       style={{
         borderColor: PANE_CHROME[appearance].border,
         background: light ? "rgba(0,0,0,0.025)" : "rgba(255,255,255,0.03)",
@@ -277,7 +436,101 @@ function PaneHeader({
           {displayName}
         </span>
       </div>
+
+      {/* Pane actions. Kept quiet until the pane is hovered or focused, so a
+          grid of eight terminals is not a wall of icons — but always reachable
+          by keyboard, and always visible on the pane you are working in. */}
+      <div
+        className={cn(
+          "flex shrink-0 items-center gap-0.5 transition-opacity",
+          focused || maximized
+            ? "opacity-100"
+            : "opacity-0 focus-within:opacity-100 group-hover/header:opacity-100",
+        )}
+      >
+        <PaneAction
+          label={maximized ? `Restore ${name}` : `Maximize ${name}`}
+          testId={`pane-maximize-${name}`}
+          light={light}
+          onClick={onToggleMaximize}
+        >
+          {maximized ? <Minimize2 className="h-3.5 w-3.5" /> : <Maximize2 className="h-3.5 w-3.5" />}
+        </PaneAction>
+        <PaneAction
+          label={`Open another terminal beside ${name}`}
+          testId={`pane-split-right-${name}`}
+          light={light}
+          disabled={splitDisabled}
+          onClick={onSplitRight}
+        >
+          <Columns2 className="h-3.5 w-3.5" />
+        </PaneAction>
+        <PaneAction
+          label={`Open another terminal below ${name}`}
+          testId={`pane-split-down-${name}`}
+          light={light}
+          disabled={splitDisabled}
+          onClick={onSplitDown}
+        >
+          <Rows2 className="h-3.5 w-3.5" />
+        </PaneAction>
+        <PaneAction
+          label={`Close ${name}`}
+          testId={`pane-close-${name}`}
+          light={light}
+          danger
+          onClick={onClose}
+        >
+          <X className="h-3.5 w-3.5" />
+        </PaneAction>
+      </div>
     </header>
+  );
+}
+
+function PaneAction({
+  label,
+  testId,
+  light,
+  danger = false,
+  disabled = false,
+  onClick,
+  children,
+}: {
+  label: string;
+  testId: string;
+  light: boolean;
+  danger?: boolean;
+  disabled?: boolean;
+  onClick?: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      data-testid={testId}
+      disabled={disabled || !onClick}
+      onClick={(e) => {
+        // The pane's own mousedown selects it as the prompt target; an action
+        // click must not also count as "typing here".
+        e.stopPropagation();
+        onClick?.();
+      }}
+      onMouseDown={(e) => e.stopPropagation()}
+      className={cn(
+        "flex h-6 w-6 items-center justify-center rounded transition-colors disabled:cursor-not-allowed disabled:opacity-30",
+        danger
+          ? "hover:bg-destructive/20 hover:text-destructive"
+          : light
+            ? "hover:bg-black/10"
+            : "hover:bg-white/10",
+      )}
+      style={{ color: light ? "#55555e" : "#a8a8b2" }}
+    >
+      {children}
+    </button>
   );
 }
 

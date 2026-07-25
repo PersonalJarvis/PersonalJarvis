@@ -15,15 +15,17 @@
  * i18n note: the section label and view header go through the locale files; the
  * panel copy inside is still English-only source awaiting its i18n keys.
  */
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertCircle,
   ArrowLeft,
   ArrowRight,
+  Brain,
   Check,
   Download,
   FolderOpen,
   Loader2,
+  Mic,
   Rocket,
   Sparkles,
   Terminal,
@@ -112,6 +114,43 @@ export function AgenticIdeView() {
     void refresh();
   }, [refresh]);
 
+  /*
+   * Being in this section IS the coding mode.
+   *
+   * Focus mode started as a switch you had to remember to flip, and the result
+   * was predictable: the workspace was open, agents were running, and Jarvis
+   * still answered as the general-purpose assistant because nobody had pressed
+   * the button. Standing in a room full of running coding agents and having to
+   * announce that you are now coding is not a mode, it is paperwork. So opening
+   * a workspace turns it on.
+   *
+   * The switch stays, and it stays honest: turning it OFF here is respected for
+   * as long as this workspace is open (`optedOutRef`), so "I want the normal
+   * assistant for a minute" works and does not get overridden a second later.
+   */
+  const optedOutRef = useRef(false);
+  const [modeIntroFor, setModeIntroFor] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!session || session.focus_mode || optedOutRef.current) return;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const on = await setFocusMode(true);
+        if (cancelled) return;
+        setFocus(on);
+        // First workspace on this machine: say once what just changed. A mode
+        // that switches silently is indistinguishable from a bug.
+        if (on && !hasSeenModeIntro()) setModeIntroFor(session.id);
+      } catch {
+        /* the workspace still works; the mode toggle stays available */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [session]);
+
   // Memoised so these arrays keep a stable identity across renders — see the
   // note on buildPlan for what an unstable one costs.
   const agents = useMemo(() => meta?.agents ?? [], [meta]);
@@ -193,6 +232,9 @@ export function AgenticIdeView() {
   };
 
   const toggleFocus = async (enabled: boolean) => {
+    // Remember a deliberate opt-out, or the auto-enable effect above would turn
+    // the mode straight back on and the switch would look broken.
+    optedOutRef.current = !enabled;
     try {
       setFocus(await setFocusMode(enabled));
     } catch (e) {
@@ -203,13 +245,27 @@ export function AgenticIdeView() {
   // ------------------------------------------------------------ running mode
   if (session) {
     return (
-      <AgenticGrid
-        session={session}
-        focusMode={focusMode}
-        onToggleFocus={(v) => void toggleFocus(v)}
-        onClose={() => void close()}
-        busy={busy}
-      />
+      <>
+        <AgenticGrid
+          session={session}
+          focusMode={focusMode}
+          onToggleFocus={(v) => void toggleFocus(v)}
+          onClose={() => void close()}
+          busy={busy}
+          maxTerminals={meta?.max_terminals ?? 12}
+          onSessionChanged={setSession}
+        />
+        {modeIntroFor === session.id && (
+          <CodingModeIntro
+            terminals={session.terminals.map((x) => x.name)}
+            project={session.project.name}
+            onDismiss={() => {
+              rememberModeIntro();
+              setModeIntroFor(null);
+            }}
+          />
+        )}
+      </>
     );
   }
 
@@ -423,6 +479,114 @@ export function AgenticIdeView() {
               </button>
             )}
           </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/*
+ * One-time explanation of what entering a workspace changes.
+ *
+ * Shown once per machine, not once per session: after the first time the user
+ * knows, and a modal that reappears every time is the thing people learn to
+ * dismiss without reading. Stored in localStorage rather than in config —
+ * "has this person seen a UI hint" is a property of this browser profile, not
+ * something worth a round-trip and a config write.
+ */
+const MODE_INTRO_KEY = "jarvis.agenticIde.codingModeIntroSeen";
+
+function hasSeenModeIntro(): boolean {
+  try {
+    return window.localStorage.getItem(MODE_INTRO_KEY) === "1";
+  } catch {
+    // Private mode / storage disabled: showing the hint again is a far smaller
+    // problem than crashing the view.
+    return false;
+  }
+}
+
+function rememberModeIntro(): void {
+  try {
+    window.localStorage.setItem(MODE_INTRO_KEY, "1");
+  } catch {
+    /* nothing to do — the hint will simply appear again */
+  }
+}
+
+function CodingModeIntro({
+  terminals,
+  project,
+  onDismiss,
+}: {
+  terminals: string[];
+  project: string;
+  onDismiss: () => void;
+}) {
+  const first = terminals[0] ?? "Mika";
+  const second = terminals[1] ?? "Nova";
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/70 p-6 backdrop-blur-sm">
+      <div className="w-full max-w-lg rounded-2xl border border-primary/30 bg-card p-6 shadow-2xl">
+        <div className="mb-4 flex items-center gap-3">
+          <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-primary/15">
+            <Brain className="h-5 w-5 text-primary" />
+          </span>
+          <div>
+            <h3 className="font-display text-lg font-semibold">Coding mode is on</h3>
+            <p className="text-xs text-muted-foreground">
+              While this workspace is open, Jarvis works inside {project}.
+            </p>
+          </div>
+        </div>
+
+        <ul className="space-y-3 text-sm">
+          <li className="flex gap-3">
+            <Mic className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+            <span>
+              <strong className="font-medium">Talk to the agents by name.</strong>{" "}
+              Say “tell {first} to look at the wake word code” and it goes
+              straight into {first}’s terminal — you never type the prompt
+              yourself.
+            </span>
+          </li>
+          <li className="flex gap-3">
+            <Sparkles className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+            <span>
+              <strong className="font-medium">Jarvis writes the prompt.</strong>{" "}
+              What you say gets turned into a proper instruction, with the
+              relevant files of this repository attached as <code>@</code>{" "}
+              references.
+            </span>
+          </li>
+          <li className="flex gap-3">
+            <Terminal className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+            <span>
+              <strong className="font-medium">Ask what they are doing.</strong>{" "}
+              “What is {second} up to?” is answered from what that terminal
+              actually printed.
+            </span>
+          </li>
+          <li className="flex gap-3">
+            <Brain className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+            <span>
+              <strong className="font-medium">Think out loud with Jarvis.</strong>{" "}
+              It knows this codebase — the stack, the branch, the instruction
+              files — so planning happens here instead of in a chat window.
+            </span>
+          </li>
+        </ul>
+
+        <p className="mt-4 text-xs text-muted-foreground">
+          No background agents are started while you are in here: work you give
+          a terminal stays with that terminal. Turn the mode off any time with
+          the button in the toolbar.
+        </p>
+
+        <div className="mt-5 flex justify-end">
+          <button type="button" className="btn-primary" onClick={onDismiss}>
+            Got it
+          </button>
         </div>
       </div>
     </div>

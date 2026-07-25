@@ -29,7 +29,13 @@ import {
   type PaneStatus,
 } from "./AgenticTerminal";
 import type { TerminalAppearance } from "./terminalThemes";
-import { promptTerminal, type SessionState } from "@/lib/agenticIdeApi";
+import {
+  addTerminal,
+  closeTerminal,
+  promptTerminal,
+  type SessionState,
+  type TerminalState,
+} from "@/lib/agenticIdeApi";
 
 interface AgenticGridProps {
   session: SessionState;
@@ -37,13 +43,10 @@ interface AgenticGridProps {
   onToggleFocus: (enabled: boolean) => void;
   onClose: () => void;
   busy?: boolean;
-}
-
-function gridColumns(count: number): number {
-  if (count <= 1) return 1;
-  if (count <= 2) return 2;
-  if (count <= 6) return Math.min(3, Math.ceil(count / 2));
-  return 4;
+  /** Hard cap on panes, so the split buttons can disable themselves. */
+  maxTerminals?: number;
+  /** Adding or closing a pane changes the workspace — the owner re-reads it. */
+  onSessionChanged?: (session: SessionState) => void;
 }
 
 const FONT_MIN = 10;
@@ -55,6 +58,8 @@ export function AgenticGrid({
   onToggleFocus,
   onClose,
   busy = false,
+  maxTerminals = 12,
+  onSessionChanged,
 }: AgenticGridProps) {
   const pushToast = useEventStore((s) => s.pushToast);
   const [appearance, setAppearance] = useState<TerminalAppearance>("light");
@@ -64,7 +69,53 @@ export function AgenticGrid({
   const [prompt, setPrompt] = useState("");
   const [sending, setSending] = useState(false);
 
-  const columns = gridColumns(session.terminals.length);
+  const [maximized, setMaximized] = useState<string | null>(null);
+  const [pendingClose, setPendingClose] = useState<string | null>(null);
+  const [working, setWorking] = useState(false);
+
+  // Group panes into their rows. The backend keeps `row` packed and the list in
+  // render order, so this is a straight fold rather than a sort.
+  const rows = useMemo(() => {
+    const grouped: TerminalState[][] = [];
+    for (const term of session.terminals) {
+      while (grouped.length <= term.row) grouped.push([]);
+      grouped[term.row].push(term);
+    }
+    return grouped.filter((row) => row.length > 0);
+  }, [session.terminals]);
+
+  const atLimit = session.terminals.length >= maxTerminals;
+
+  const split = async (anchor: string | null, direction: "right" | "down") => {
+    setWorking(true);
+    try {
+      const next = await addTerminal({ anchor: anchor ?? undefined, direction });
+      onSessionChanged?.(next);
+      // A fresh pane should receive the next prompt — that is why it was opened.
+      const known = new Set(session.terminals.map((t) => t.name));
+      const added = next.terminals.find((t) => !known.has(t.name));
+      if (added) setTarget(added.name);
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const closeOne = async (name: string) => {
+    setWorking(true);
+    try {
+      const next = await closeTerminal(name);
+      setPendingClose(null);
+      if (maximized === name) setMaximized(null);
+      onSessionChanged?.(next);
+      if (target === name) setTarget(next.terminals[0]?.name ?? "");
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setWorking(false);
+    }
+  };
 
   const setStatus = useCallback((name: string, status: PaneStatus, detail?: string) => {
     setStatuses((prev) => ({ ...prev, [name]: { status, detail } }));
@@ -91,7 +142,7 @@ export function AgenticGrid({
   );
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="relative flex h-full flex-col">
       {/* ---------------------------------------------------------- toolbar */}
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-border px-4 py-2.5">
         <div className="flex min-w-0 flex-1 items-center gap-2">
@@ -189,26 +240,77 @@ export function AgenticGrid({
       </div>
 
       {/* ------------------------------------------------------------- grid */}
-      <div
-        className="grid flex-1 gap-3 overflow-hidden p-3"
-        style={{
-          gridTemplateColumns: `repeat(${columns}, minmax(0, 1fr))`,
-          gridAutoRows: "1fr",
-        }}
-      >
-        {session.terminals.map((term) => (
-          <AgenticTerminal
-            key={term.key}
-            name={term.name}
-            displayName={term.display_name}
-            appearance={appearance}
-            fontSize={fontSize}
-            focused={target === term.name}
-            onFocus={() => setTarget(term.name)}
-            onStatus={(status, detail) => setStatus(term.name, status, detail)}
-          />
-        ))}
+      {/*
+        Rows, not one uniform grid: "split right" adds a pane to an existing row
+        and "split down" opens a new one, so rows can differ in width. Every pane
+        stays MOUNTED at all times — including while another one is maximized —
+        because unmounting it would tear down its WebSocket and kill the agent
+        behind it. Maximizing therefore hides the others with CSS instead.
+      */}
+      <div className="flex flex-1 flex-col gap-3 overflow-hidden p-3">
+        {rows.map((rowTerminals, rowIndex) => {
+          const rowHidden =
+            maximized !== null && !rowTerminals.some((t) => t.name === maximized);
+          return (
+            <div
+              key={rowIndex}
+              className={cn("flex min-h-0 flex-1 gap-3", rowHidden && "hidden")}
+            >
+              {rowTerminals.map((term) => (
+                <div
+                  key={term.key}
+                  className={cn(
+                    "min-w-0 flex-1",
+                    maximized !== null && maximized !== term.name && "hidden",
+                  )}
+                >
+                  <AgenticTerminal
+                    name={term.name}
+                    displayName={term.display_name}
+                    appearance={appearance}
+                    fontSize={fontSize}
+                    focused={target === term.name}
+                    maximized={maximized === term.name}
+                    splitDisabled={atLimit || busy || working}
+                    onFocus={() => setTarget(term.name)}
+                    onStatus={(status, detail) => setStatus(term.name, status, detail)}
+                    onToggleMaximize={() =>
+                      setMaximized((current) => (current === term.name ? null : term.name))
+                    }
+                    onSplitRight={() => void split(term.name, "right")}
+                    onSplitDown={() => void split(term.name, "down")}
+                    onClose={() => setPendingClose(term.name)}
+                  />
+                </div>
+              ))}
+            </div>
+          );
+        })}
+        {session.terminals.length === 0 && (
+          <div className="flex flex-1 flex-col items-center justify-center gap-3 text-sm text-muted-foreground">
+            <span>Every terminal in this workspace is closed.</span>
+            <button
+              type="button"
+              className="btn-primary"
+              disabled={busy || working}
+              onClick={() => void split(null, "right")}
+            >
+              <Plus className="h-4 w-4" />
+              Open a terminal
+            </button>
+          </div>
+        )}
       </div>
+
+      {/* Closing a terminal kills a working agent, so it always asks first. */}
+      {pendingClose && (
+        <ConfirmClose
+          name={pendingClose}
+          busy={busy || working}
+          onCancel={() => setPendingClose(null)}
+          onConfirm={() => void closeOne(pendingClose)}
+        />
+      )}
 
       {/* -------------------------------------------------------- prompt bar */}
       <div className="border-t border-border px-4 py-3">
@@ -270,6 +372,66 @@ export function AgenticGrid({
           “what is {session.terminals[0]?.name ?? "Mika"} doing?” or “tell{" "}
           {session.terminals[0]?.name ?? "Mika"} to run the tests”.
         </p>
+      </div>
+    </div>
+  );
+}
+
+/**
+ * Confirmation before a pane is closed.
+ *
+ * Closing a terminal terminates a coding agent that may be mid-task, and there
+ * is no undo — so it always asks, and the dialog says what is actually lost.
+ * Escape cancels and the destructive button is not the default focus.
+ */
+function ConfirmClose({
+  name,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  name: string;
+  busy: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}) {
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label={`Close ${name}`}
+      data-testid="confirm-close-terminal"
+      className="absolute inset-0 z-30 flex items-center justify-center bg-background/70 p-6 backdrop-blur-sm"
+      onKeyDown={(e) => {
+        if (e.key === "Escape") onCancel();
+      }}
+    >
+      <div className="w-full max-w-sm rounded-xl border border-border bg-card p-5 shadow-xl">
+        <h3 className="font-display text-base font-semibold">Close {name}?</h3>
+        <p className="mt-2 text-sm text-muted-foreground">
+          The coding agent running in this terminal is stopped and its session is
+          gone. Anything it already wrote to disk stays.
+        </p>
+        <div className="mt-5 flex items-center justify-end gap-2">
+          <button
+            type="button"
+            className="btn-ghost"
+            autoFocus
+            disabled={busy}
+            onClick={onCancel}
+          >
+            Keep it open
+          </button>
+          <button
+            type="button"
+            data-testid="confirm-close-terminal-confirm"
+            className="rounded-lg bg-destructive px-3 py-2 text-sm font-medium text-destructive-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
+            disabled={busy}
+            onClick={onConfirm}
+          >
+            Close {name}
+          </button>
+        </div>
       </div>
     </div>
   );

@@ -89,6 +89,7 @@ function sessionWith(names: string[], focus = false): api.SessionState {
       agent: "claude",
       display_name: "Claude Code",
       index,
+      row: index,
       status: "live" as const,
       exit_code: null,
       error: "",
@@ -212,11 +213,18 @@ describe("Agentic IDE running workspace", () => {
     render(<AgenticIdeView />);
 
     const toggle = await screen.findByTestId("agentic-focus-toggle");
-    expect(toggle.getAttribute("aria-pressed")).toBe("false");
-    fireEvent.click(toggle);
+    // The view turns coding mode on by itself when a workspace opens, so the
+    // starting state is not asserted here — what matters is that the switch goes
+    // through the API rather than only flipping local state.
+    await waitFor(() => expect(api.setFocusMode).toHaveBeenCalled());
+    const before = toggle.getAttribute("aria-pressed") === "true";
+    vi.mocked(api.setFocusMode).mockResolvedValue(!before);
 
-    await waitFor(() => expect(api.setFocusMode).toHaveBeenCalledWith(true));
-    await waitFor(() => expect(toggle.getAttribute("aria-pressed")).toBe("true"));
+    fireEvent.click(toggle);
+    await waitFor(() => expect(api.setFocusMode).toHaveBeenLastCalledWith(!before));
+    await waitFor(() =>
+      expect(toggle.getAttribute("aria-pressed")).toBe(String(!before)),
+    );
   });
 
   it("sends a prompt to the selected terminal through the same endpoint voice uses", async () => {
@@ -225,7 +233,12 @@ describe("Agentic IDE running workspace", () => {
       session: sessionWith(["Mika", "Nova"]),
       max_terminals: 12,
     });
-    vi.mocked(api.promptTerminal).mockResolvedValue(undefined);
+    vi.mocked(api.promptTerminal).mockResolvedValue({
+      terminal: "Mika",
+      sent: "run the tests",
+      composed_by: "raw",
+      files: [],
+    });
     render(<AgenticIdeView />);
 
     await screen.findByTestId("pane-Mika");

@@ -7,14 +7,24 @@ running in which pane, and what each of them last printed. Without that, "is
 Mika stuck?" is unanswerable and the assistant guesses — the failure mode this
 block exists to prevent.
 
+Two things live here, and the distinction matters:
+
+* **A role directive.** Focus mode is not a hint, it is a different assistant:
+  an agentic-coding partner for this one repository. It plans work with the
+  user, decides which pane should do what, and hands the work over — it does not
+  do the coding itself and does not start invisible background agents. Stating
+  that explicitly is what stopped the live 2026-07-25 failure, where "let Kai do
+  a deep dive" dispatched a background mission while Kai sat idle. The
+  deterministic guards (``intent.owns_turn``, consulted by the router's
+  force-spawn check and the spawn gate) are the enforcement; this text is what
+  makes the model *want* the right thing in the first place, so a phrasing the
+  regex misses still lands correctly.
+* **The facts.** Folder, stack, branch, panes, and what each pane last printed.
+
 Cost discipline (AP-9 / AP-26): building the block touches nothing but
 in-memory state — the session's cached project profile and each terminal's ring
 buffer. No disk read, no subprocess, no network. The project profile was
 computed ONCE when the session started, precisely so this path stays free.
-
-The block is written the way the wiki-context block is: it states what it is and
-what it is for, so the model treats it as situational awareness rather than as
-an instruction to narrate the terminals unprompted.
 """
 from __future__ import annotations
 
@@ -23,16 +33,38 @@ import time
 # Per-terminal output shown in the block. Enough to say what an agent is doing,
 # small enough that ten panes do not crowd out the conversation.
 _LINES_PER_TERMINAL = 6
-_MAX_CHARS = 4000
+_MAX_CHARS = 4500
 
 _HEADER = (
     "[AGENTIC IDE — focused coding mode is ON]\n"
-    "You are assisting inside a live coding workspace that the user has open in "
-    "the app. The facts below are the current state of that workspace: the "
-    "folder, what kind of project it is, and the coding agents running in named "
-    "terminals. Use it to answer questions about the workspace and its agents "
-    "concretely (by name), and to decide what to send to which terminal. It is "
-    "context, not a script — do not recite it back unprompted."
+    "You are the user's agentic-coding partner for the one repository below. "
+    "Coding agents are already running in named terminals in front of the user; "
+    "your job is to think WITH them about this codebase and to drive those "
+    "agents — not to write the code yourself, and not to start background "
+    "workers.\n"
+    "\n"
+    "How to behave while this mode is on:\n"
+    "- When the user tells a named terminal to do something (\"tell Kai to …\", "
+    "\"Mika soll …\", \"let Nova refactor …\"), send it to THAT terminal with "
+    "the agentic-ide-prompt function. That is the whole point of this mode. "
+    "NEVER spawn a background agent for work aimed at a terminal, and never "
+    "answer with what you WOULD have sent — send it.\n"
+    "- Turn what the user said into a prompt worth running: state the task "
+    "precisely, keep every constraint they gave, invent none, and point at the "
+    "relevant files with @path references from this repository. A vague spoken "
+    "sentence becomes a briefed task; that is the value you add here.\n"
+    "- When the user asks what an agent is doing, read it with "
+    "agentic-ide-terminal-report and answer from what that terminal actually "
+    "printed. Never guess, never take a screenshot — the terminals are readable "
+    "directly.\n"
+    "- Brainstorming, architecture, and 'what should we do next' are answered "
+    "inline, against this codebase, and you may propose which terminal should "
+    "take which part.\n"
+    "- Say the terminal's name out loud in your answers, so the user always "
+    "knows who is doing what.\n"
+    "\n"
+    "The facts below are the live state of that workspace. It is context, not a "
+    "script — do not recite it back unprompted."
 )
 
 

@@ -68,6 +68,25 @@ class StartSessionRequest(BaseModel):
     )
 
 
+class AddTerminalRequest(BaseModel):
+    agent: str | None = Field(
+        default=None,
+        description="Coding agent to run; defaults to the anchor terminal's.",
+    )
+    name: str | None = Field(
+        default=None,
+        description="Call-sign for the new terminal; auto-assigned when omitted.",
+    )
+    anchor: str | None = Field(
+        default=None,
+        description="Call-sign of the terminal to split; defaults to the last one.",
+    )
+    direction: str = Field(
+        default="right",
+        description="'right' places it beside the anchor, 'down' below it.",
+    )
+
+
 class ModeRequest(BaseModel):
     enabled: bool = Field(
         description="True narrows Jarvis to this workspace; False returns to normal."
@@ -78,6 +97,18 @@ class PromptRequest(BaseModel):
     prompt: str = Field(
         max_length=MAX_PROMPT_CHARS,
         description="Text to type into the terminal, followed by Enter.",
+    )
+    compose: bool = Field(
+        default=False,
+        description=(
+            "Rewrite the text into a briefed prompt for the coding agent and "
+            "attach @file references from this workspace before sending. Meant "
+            "for spoken/rough instructions; the typed prompt bar sends as-is."
+        ),
+    )
+    dry_run: bool = Field(
+        default=False,
+        description="Compose and return the prompt WITHOUT sending it.",
     )
 
 
@@ -359,6 +390,40 @@ async def set_mode(req: ModeRequest) -> dict:
     return {"ok": True, "focus_mode": enabled}
 
 
+@router.post("/terminals", summary="Open one more terminal")
+async def add_terminal(req: AddTerminalRequest) -> dict:
+    """Add a terminal to the running workspace, beside or below another one.
+
+    ``direction="right"`` puts it in the same grid row as ``anchor`` (side by
+    side); ``"down"`` opens a new row underneath. The agent defaults to the
+    anchor's, since splitting a pane usually means "another one of these".
+    """
+    try:
+        term = await get_registry().add_terminal(
+            agent=req.agent,
+            name=req.name,
+            anchor=req.anchor,
+            direction=req.direction,
+        )
+    except SessionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"ok": True, "terminal": term.to_dict(), "state": get_registry().state()}
+
+
+@router.delete(
+    "/terminals/{name}",
+    summary="Close one terminal",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def close_terminal(name: str) -> dict:
+    """Stop the agent in the terminal called ``name`` and remove its pane."""
+    try:
+        term = await get_registry().close_terminal(name)
+    except SessionError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {"ok": True, "closed": term.name, "state": get_registry().state()}
+
+
 @router.get("/terminals/{name}/report", summary="What one terminal is doing")
 async def terminal_report(name: str, lines: int = 40) -> dict:
     """Status plus the recent readable output of the terminal called ``name``."""
@@ -370,9 +435,64 @@ async def terminal_report(name: str, lines: int = 40) -> dict:
 
 @router.post("/terminals/{name}/prompt", summary="Send a prompt to one terminal")
 async def terminal_prompt(name: str, req: PromptRequest) -> dict:
-    """Type ``prompt`` into the terminal called ``name`` and press Enter."""
+    """Type ``prompt`` into the terminal called ``name`` and press Enter.
+
+    With ``compose=true`` the text is first rewritten into a prompt worth
+    running — speech artefacts removed, the task stated as an imperative, and
+    the relevant files of this workspace attached as ``@path`` references. That
+    is the path a spoken instruction takes; the UI's prompt bar sends verbatim,
+    because someone who typed it already wrote what they meant.
+
+    ``dry_run=true`` returns the composed prompt without sending it, so a caller
+    can show it for approval first.
+    """
+    registry = get_registry()
+    session = registry.session
+    if session is None:
+        raise HTTPException(
+            status_code=409, detail="No Agentic-IDE session is running."
+        )
+
+    text = req.prompt
+    composed_by = "raw"
+    files: list[str] = []
+    if req.compose:
+        from jarvis.agentic_ide.prompt_composer import compose as compose_prompt
+
+        term_for_compose = session.find(name)
+        if term_for_compose is None:
+            known = ", ".join(t.name for t in session.terminals) or "none"
+            raise HTTPException(
+                status_code=404,
+                detail=f"No terminal called {name!r}. Running: {known}.",
+            )
+        result = await compose_prompt(
+            req.prompt,
+            session=session,
+            terminal_name=term_for_compose.name,
+            agent_display=AGENT_DISPLAY.get(
+                term_for_compose.agent, term_for_compose.agent
+            ),
+        )
+        text, composed_by, files = result.text, result.composed_by, result.files
+        if not text:
+            raise HTTPException(
+                status_code=422, detail="The prompt was empty after composition."
+            )
+
+    if req.dry_run:
+        return {
+            "ok": True,
+            "terminal": name,
+            "sent": "",
+            "composed": text,
+            "composed_by": composed_by,
+            "files": files,
+            "dry_run": True,
+        }
+
     try:
-        term = await get_registry().send_prompt(name, req.prompt)
+        term = await registry.send_prompt(name, text)
     except SessionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return {
@@ -380,6 +500,8 @@ async def terminal_prompt(name: str, req: PromptRequest) -> dict:
         "terminal": term.name,
         "agent": AGENT_DISPLAY.get(term.agent, term.agent),
         "sent": term.last_prompt,
+        "composed_by": composed_by,
+        "files": files,
         "prompts_sent": term.prompts_sent,
     }
 

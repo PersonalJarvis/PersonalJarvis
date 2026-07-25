@@ -661,8 +661,13 @@ def _build_registry() -> tuple[AppCommand, ...]:
             id="agentic-ide-prompt",
             title="Prompt an Agentic-IDE terminal",
             description=(
-                "Type a prompt into the named terminal's coding agent and press "
-                "Enter. Use the user's own instruction as the prompt text."
+                "Send an instruction to the coding agent in a named terminal. "
+                "Use this whenever the user tells a terminal to do something "
+                "('tell Kai to ...', 'Mika soll ...', 'let Nova refactor ...') "
+                "— that work belongs to that agent, never to a background "
+                "worker. Pass the user's instruction as the prompt; with "
+                "compose=true it is rewritten into a briefed task with the "
+                "relevant files of this workspace attached."
             ),
             method="POST",
             path="/api/agentic-ide/terminals/{name}/prompt",
@@ -678,6 +683,15 @@ def _build_registry() -> tuple[AppCommand, ...]:
                         min_length=1,
                         max_length=4000,
                     ),
+                    "compose": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": (
+                            "Rewrite a spoken/rough instruction into a precise "
+                            "prompt and attach @file references before sending. "
+                            "Set false only to send text through verbatim."
+                        ),
+                    },
                 },
                 "required": ["name", "prompt"],
             },

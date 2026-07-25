@@ -69,6 +69,10 @@ export interface ProjectProfile {
   instruction_files: string[];
   top_level_dirs: string[];
   skills: string[];
+  /** Subagents this repo defines (`.claude/agents` / `.agents/agents`). */
+  subagents: string[];
+  /** Slash commands this repo defines (`.claude/commands`). */
+  commands: string[];
   note: string;
 }
 
@@ -78,6 +82,8 @@ export interface TerminalState {
   agent: string;
   display_name: string;
   index: number;
+  /** Grid row: panes sharing a row render side by side. */
+  row: number;
   status: "pending" | "live" | "exited" | "error";
   exit_code: number | null;
   error: string;
@@ -195,6 +201,41 @@ export async function endIdeSession(): Promise<void> {
   if (!res.ok) throw new Error(await detail(res));
 }
 
+/**
+ * Open one more terminal in the running workspace.
+ *
+ * `direction` decides where it lands relative to `anchor`: "right" joins that
+ * pane's row, "down" opens a new row beneath it. Returns the updated workspace.
+ */
+export async function addTerminal(payload: {
+  anchor?: string;
+  direction?: "right" | "down";
+  agent?: string;
+  name?: string;
+}): Promise<SessionState> {
+  const res = await fetch("/api/agentic-ide/terminals", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+  const body = (await res.json()) as { state: IdeState };
+  if (!body.state.session) throw new Error("The workspace closed while adding a terminal.");
+  return body.state.session;
+}
+
+/** Stop one terminal's agent and remove its pane. Returns the updated workspace. */
+export async function closeTerminal(name: string): Promise<SessionState> {
+  const res = await fetch(
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) throw new Error(await detail(res));
+  const body = (await res.json()) as { state: IdeState };
+  if (!body.state.session) throw new Error("The workspace is no longer open.");
+  return body.state.session;
+}
+
 export async function setFocusMode(enabled: boolean): Promise<boolean> {
   const res = await fetch("/api/agentic-ide/mode", {
     method: "PUT",
@@ -206,14 +247,38 @@ export async function setFocusMode(enabled: boolean): Promise<boolean> {
   return body.focus_mode;
 }
 
-export async function promptTerminal(name: string, prompt: string): Promise<void> {
+export interface PromptResult {
+  terminal: string;
+  /** What was actually typed into the agent. */
+  sent: string;
+  /** `llm` when a model wrote the prompt, `fallback` after cleanup, `raw` as typed. */
+  composed_by: "llm" | "fallback" | "raw";
+  /** Repo-relative files referenced with `@` in the sent prompt. */
+  files: string[];
+}
+
+/**
+ * Send an instruction to one terminal.
+ *
+ * `compose` asks the backend to rewrite a rough instruction into a briefed
+ * prompt with `@file` references attached. The typed prompt bar leaves it off —
+ * someone who typed a prompt already wrote what they meant, and silently
+ * rewriting it would be the wrong kind of helpful. Spoken instructions take the
+ * composed path.
+ */
+export async function promptTerminal(
+  name: string,
+  prompt: string,
+  options: { compose?: boolean } = {},
+): Promise<PromptResult> {
   const res = await fetch(
     `/api/agentic-ide/terminals/${encodeURIComponent(name)}/prompt`,
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt }),
+      body: JSON.stringify({ prompt, compose: Boolean(options.compose) }),
     },
   );
   if (!res.ok) throw new Error(await detail(res));
+  return (await res.json()) as PromptResult;
 }

@@ -126,6 +126,11 @@ class Terminal:
     agent: str          # "claude" | "codex"
     display_name: str   # "Claude Code"
     index: int
+    # Grid row this pane sits in. Panes sharing a row render side by side, which
+    # is what "split right" produces; "split down" opens a new row. A full split
+    # TREE (arbitrary nesting, draggable separators) is deliberately NOT modelled
+    # — rows express both buttons the UI offers and stay readable.
+    row: int = 0
     status: Status = "pending"
     pty_id: str | None = None
     exit_code: int | None = None
@@ -143,6 +148,7 @@ class Terminal:
             "agent": self.agent,
             "display_name": self.display_name,
             "index": self.index,
+            "row": self.row,
             "status": self.status,
             "exit_code": self.exit_code,
             "error": self.error,
@@ -323,6 +329,17 @@ class Registry:
                 created_at=time.time(),
             )
             self._session = session
+            # Start indexing the codebase NOW, in a background thread, so the
+            # first spoken instruction can already point the agent at real files
+            # (@path). Deliberately fire-and-forget: nothing waits for it, and a
+            # workspace whose walk is still running just gets a prompt without
+            # file references (AP-26 — no heavy work on an interactive path).
+            try:
+                from . import file_index
+
+                file_index.prime_index(str(root))
+            except Exception as exc:  # noqa: BLE001 - the index is a convenience
+                logger.warning("Agentic IDE: file index not primed: {}", exc)
             # Remember the workspace so the next visit is one click, replaying
             # the same terminal count and agent split (see recents.py).
             split: dict[str, int] = {}
@@ -365,6 +382,14 @@ class Registry:
                         manager.close(term.pty_id)
                     except Exception:  # noqa: BLE001, S110 - best-effort teardown
                         pass
+        # Drop the codebase index with the workspace: keeping it would hand the
+        # next session a snapshot of a folder that may have changed since.
+        try:
+            from . import file_index
+
+            file_index.reset_cache()
+        except Exception:  # noqa: BLE001, S110 - best-effort teardown
+            pass
         logger.info("Agentic IDE session ended: {}", session.id)
 
     def set_focus_mode(self, enabled: bool) -> bool:
@@ -480,6 +505,133 @@ class Registry:
         term.pty_id = None
         if term.status == "live":
             term.status = "exited"
+
+    # ------------------------------------------------------------- panes
+    async def add_terminal(
+        self,
+        *,
+        agent: str | None = None,
+        name: str | None = None,
+        anchor: str | None = None,
+        direction: str = "right",
+    ) -> Terminal:
+        """Open one more terminal in the running workspace.
+
+        ``direction`` decides where it lands relative to ``anchor``:
+        ``"right"`` joins the anchor's row (side by side), ``"down"`` opens a new
+        row directly beneath it and pushes the rows below down. Without an anchor
+        the new pane goes after the last one.
+
+        The agent defaults to the anchor's, because splitting a Claude Code pane
+        almost always means "another one of these".
+        """
+        async with self._lock:
+            session = self._session
+            if session is None:
+                raise SessionError("No Agentic-IDE session is running.")
+            if len(session.terminals) >= MAX_TERMINALS:
+                raise SessionError(
+                    f"This workspace already has the maximum of {MAX_TERMINALS} terminals."
+                )
+            if direction not in ("right", "down"):
+                raise SessionError("Direction must be 'right' or 'down'.")
+
+            base = session.find(anchor) if anchor else None
+            if anchor and base is None:
+                raise SessionError(f"No terminal called {anchor!r}.")
+            if base is None:
+                base = session.terminals[-1] if session.terminals else None
+
+            chosen = agent or (base.agent if base else "claude")
+            if chosen not in AGENT_BINARIES:
+                raise SessionError(f"Unknown agent: {chosen}")
+            if agent_argv(chosen) is None:
+                pretty = AGENT_DISPLAY.get(chosen, chosen)
+                raise SessionError(f"{pretty} is not installed or not on this machine's PATH.")
+
+            used = {normalize(t.name) for t in session.terminals}
+            wanted = (name or "").strip()
+            if not wanted:
+                # Next unused call-sign from the pool, so names stay speakable
+                # however many times the user splits.
+                pool = default_names(MAX_TERMINALS * 2)
+                wanted = next(
+                    (n for n in pool if normalize(n) not in used),
+                    f"T{len(session.terminals) + 1}",
+                )
+            final = wanted
+            suffix = 2
+            while normalize(final) in used:
+                final = f"{wanted} {suffix}"
+                suffix += 1
+
+            if base is None:
+                row = 0
+                position = len(session.terminals)
+            elif direction == "right":
+                row = base.row
+                position = session.terminals.index(base) + 1
+            else:
+                row = base.row + 1
+                for other in session.terminals:
+                    if other.row >= row:
+                        other.row += 1
+                position = session.terminals.index(base) + 1
+
+            term = Terminal(
+                key=normalize(final) or f"t{len(session.terminals)}",
+                name=final,
+                agent=chosen,
+                display_name=AGENT_DISPLAY.get(chosen, chosen),
+                index=len(session.terminals),
+                row=row,
+            )
+            session.terminals.insert(position, term)
+            self._renumber(session)
+            logger.info(
+                "Agentic IDE: added terminal {} ({}) {} of {}",
+                term.name,
+                term.agent,
+                direction,
+                base.name if base else "the grid",
+            )
+            return term
+
+    async def close_terminal(self, wanted: str) -> Terminal:
+        """Stop one terminal's agent and remove its pane from the workspace."""
+        async with self._lock:
+            session = self._session
+            if session is None:
+                raise SessionError("No Agentic-IDE session is running.")
+            term = session.find(wanted)
+            if term is None:
+                known = ", ".join(t.name for t in session.terminals) or "none"
+                raise SessionError(f"No terminal called {wanted!r}. Running: {known}.")
+
+            if term.pty_id and self._pty is not None:
+                try:
+                    self._pty.close(term.pty_id)
+                except Exception:  # noqa: BLE001, S110 - best-effort teardown
+                    pass
+            term.pty_id = None
+            term.status = "exited"
+            session.terminals.remove(term)
+            self._renumber(session)
+            logger.info("Agentic IDE: closed terminal {}", term.name)
+            return term
+
+    @staticmethod
+    def _renumber(session: Session) -> None:
+        """Re-pack indexes and rows after an insert or a removal.
+
+        Removing the only pane of a row would otherwise leave a gap in the row
+        numbers and the grid would render an empty band.
+        """
+        rows = sorted({t.row for t in session.terminals})
+        remap = {old: new for new, old in enumerate(rows)}
+        for position, term in enumerate(session.terminals):
+            term.index = position
+            term.row = remap.get(term.row, 0)
 
     # --------------------------------------------------------------- prompt
     async def send_prompt(self, wanted: str, text: str) -> Terminal:
