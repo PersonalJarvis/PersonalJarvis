@@ -18,11 +18,14 @@ import pytest
 
 from jarvis.agentic_ide import session as session_mod
 from jarvis.agentic_ide.session import (
+    PASTE_END,
+    PASTE_START,
     Registry,
     SessionError,
     _input_line_holds,
     _opens_completion,
     _submit_needle,
+    sanitize_prompt,
 )
 from tests.fakes.fake_pty_manager import FakePtyManager
 
@@ -182,3 +185,90 @@ async def test_a_dead_terminal_still_refuses_outright(
     await _open(registry, tmp_path)
     with pytest.raises(SessionError, match="not running"):
         await registry.send_prompt("Mika", "review the pipeline")
+
+
+# --------------------------------------------------- multi-line transport
+# A structured prompt only reaches the pane if its line breaks survive, and a
+# bare "\n" written to a PTY IS the Enter key — an unwrapped markdown prompt
+# would submit after its first line. Bracketed paste is the terminal-level
+# convention that delivers the whole block as one paste instead.
+_MARKDOWN = "## Task\nReview the ranking.\n\n## Scope\nRanking only."
+_ONE_LINE = "## Task Review the ranking. ## Scope Ranking only."
+
+
+def test_sanitize_keeps_newlines_when_asked() -> None:
+    out = sanitize_prompt(_MARKDOWN, keep_newlines=True)
+    assert out == _MARKDOWN
+
+
+def test_sanitize_default_still_collapses_newlines() -> None:
+    assert "\n" not in sanitize_prompt("a\nb\nc")
+    assert sanitize_prompt(_MARKDOWN) == _ONE_LINE
+
+
+def test_sanitize_strips_control_characters_even_in_multiline_mode() -> None:
+    out = sanitize_prompt("## Task\n\x1b[31mred\x1b[0m\rsubmit\x03now", keep_newlines=True)
+    assert "\x1b" not in out
+    assert "\r" not in out
+    assert "\x03" not in out
+    assert "red" in out and "submit" in out and "now" in out
+
+
+def test_sanitize_collapses_runs_of_blank_lines() -> None:
+    assert sanitize_prompt("a\n\n\n\n\nb", keep_newlines=True) == "a\n\nb"
+
+
+def test_the_needle_uses_only_the_first_line() -> None:
+    """The needle must not span the line break, or it can never be found."""
+    needle = _submit_needle(_MARKDOWN)
+    assert needle == "## task"
+
+
+async def test_a_multiline_prompt_is_sent_as_one_bracketed_paste(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    term = await _live(registry, tmp_path)
+
+    await registry.send_prompt("Mika", _MARKDOWN)
+
+    body = fake_pty.typed[0]
+    assert body.startswith(PASTE_START)
+    assert body.endswith(PASTE_END)
+    assert "## Task\nReview the ranking." in body
+    assert fake_pty.typed[1] == "\r"
+    assert term.submitted is True
+    assert term.sent_multiline is True
+
+
+async def test_a_single_line_prompt_is_not_wrapped(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    term = await _live(registry, tmp_path)
+
+    await registry.send_prompt("Mika", "review the pipeline")
+
+    assert PASTE_START not in fake_pty.typed[0]
+    assert term.sent_multiline is False
+
+
+def test_a_collapsed_paste_on_the_input_line_counts_as_pending() -> None:
+    """A TUI may render a paste as a placeholder. Reading that as 'submitted'
+    would hide a genuine failure behind an optimistic check."""
+    needle = _submit_needle(_MARKDOWN)
+    assert _input_line_holds(["❯ [Pasted text #1 +12 lines]"], needle)
+    assert _input_line_holds(["> [Pasted text +4 lines]", ""], needle)
+
+
+async def test_a_rejected_multiline_prompt_falls_back_to_one_line(
+    registry: Registry, fake_pty: FakePtyManager, tmp_path: Path
+) -> None:
+    """Worst case is the old behaviour, never a lost instruction."""
+    term = await _live(registry, tmp_path)
+    on_output = fake_pty.spawns[-1]["on_output"]
+    await on_output("pty", "\x1b[2J\x1b[H❯ [Pasted text #1 +4 lines]\r\n")
+
+    await registry.send_prompt("Mika", _MARKDOWN)
+
+    assert any(d == _ONE_LINE for d in fake_pty.typed), fake_pty.typed
+    assert term.sent_multiline is False
+    assert term.last_prompt == _ONE_LINE

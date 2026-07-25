@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import asyncio
 import os
+import re
 import shutil
 import sys
 import time
@@ -87,6 +88,19 @@ _SUBMIT_RETRY_AFTER_S = 1.0
 # Glyphs an agent TUI draws in front of its input line.
 _INPUT_MARKERS = ("❯", ">", "›")
 
+# Bracketed paste. A TUI that has enabled it receives everything between these
+# markers as ONE pasted block rather than as keystrokes, which is the only way
+# a structured prompt survives the trip: a bare "\n" written to a PTY IS the
+# Enter key, so an unwrapped markdown prompt would submit after its first line.
+# This is a terminal-level convention, not an OS API — the same bytes go down
+# the same PTY on Windows, macOS and Linux.
+PASTE_START = "\x1b[200~"
+PASTE_END = "\x1b[201~"
+
+# What an agent TUI draws instead of the text when it collapses a paste into a
+# placeholder ("[Pasted text #1 +12 lines]").
+_PASTE_PLACEHOLDER_RE = re.compile(r"\[\s*pasted?\s+text[^\]]*\]", re.IGNORECASE)
+
 
 def _opens_completion(payload: str) -> bool:
     """True when the prompt's last token would leave a completion popup open.
@@ -104,8 +118,12 @@ def _submit_needle(payload: str) -> str:
     The beginning, not the end: the input box wraps long prompts, so only the
     first line is reliably intact — and it is the part that never changes when a
     completion popup rewrites the tail.
+
+    A composed prompt is markdown, so the needle stops at the first line break
+    too: a needle spanning a line break could never be found on one screen row.
     """
-    return " ".join(payload.split())[:28].strip().lower()
+    first_line = payload.split("\n", 1)[0]
+    return " ".join(first_line.split())[:28].strip().lower()
 
 
 def _input_line_holds(tail: list[str], needle: str) -> bool:
@@ -130,25 +148,51 @@ def _input_line_holds(tail: list[str], needle: str) -> bool:
                 break
     if not current:
         return False
+    if _PASTE_PLACEHOLDER_RE.search(current):
+        # The TUI collapsed our paste into a placeholder, so the text itself is
+        # not on screen to compare against. It is still sitting in the box —
+        # calling that "submitted" would hide a real failure behind an
+        # optimistic check, and the caller would tell the user it went out.
+        return True
     return current.lower().startswith(needle[: max(8, len(needle) // 2)])
 
 
-def sanitize_prompt(text: str) -> str:
+def sanitize_prompt(text: str, *, keep_newlines: bool = False) -> str:
     """Injectable form of ``text``: printable characters only, length-capped.
 
     Escape sequences are removed whole (so ``ESC [ A`` does not leave a stray
-    ``[A`` in the prompt), then newlines and tabs collapse to spaces and every
-    remaining C0 control is dropped — the caller cannot smuggle Ctrl-C, ESC, or
-    EOF into a running agent.
+    ``[A`` in the prompt) and every remaining C0 control is dropped — the caller
+    cannot smuggle Ctrl-C, ESC, or EOF into a running agent.
+
+    With ``keep_newlines`` the line structure of a composed markdown prompt
+    survives, which is what makes a structured brief possible at all. ``\\r``
+    and ``\\t`` still do not survive: a lone carriage return IS the submit
+    keystroke, and a tab is a completion key. Runs of blank lines collapse to
+    one, so a stray gap cannot push the prompt out of the visible pane.
     """
     from .transcript import strip_ansi
 
-    cleaned = "".join(
-        " " if ch in "\r\n\t" else ch
-        for ch in strip_ansi(text)
-        if ch >= " " or ch in "\r\n\t"
-    )
-    return " ".join(cleaned.split())[:MAX_PROMPT_CHARS]
+    kept: list[str] = []
+    for ch in strip_ansi(text):
+        if keep_newlines and ch == "\n":
+            kept.append(ch)
+        elif ch in "\r\n\t":
+            kept.append(" ")
+        elif ch >= " ":
+            kept.append(ch)
+        # everything else is a C0 control and is dropped outright
+    cleaned = "".join(kept)
+
+    if not keep_newlines:
+        return " ".join(cleaned.split())[:MAX_PROMPT_CHARS]
+
+    lines: list[str] = []
+    for raw in cleaned.split("\n"):
+        line = " ".join(raw.split())
+        if not line and lines and not lines[-1]:
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()[:MAX_PROMPT_CHARS]
 
 
 def agent_argv(agent: str) -> tuple[str, ...] | None:
@@ -226,6 +270,10 @@ class Terminal:
     last_prompt: str = ""
     # Did the last prompt actually leave the input line? None = none sent yet.
     submitted: bool | None = None
+    # Did it arrive with its line structure intact? False means the pane
+    # rejected the pasted block and the single-line fallback carried it — worth
+    # seeing in the log, because it silently costs prompt readability.
+    sent_multiline: bool = False
     transcript: Transcript = field(default_factory=Transcript)
 
     def to_dict(self) -> dict[str, Any]:
@@ -776,7 +824,7 @@ class Registry:
         ending with ``@README.md`` never submits; the same prompt with one
         trailing space always does.
 
-        So two defences, because a silent no-op is the worst outcome here:
+        So three defences, because a silent no-op is the worst outcome here:
 
         1. **Close any open completion** before Enter — a single space when the
            prompt ends in an ``@``/``/`` token. Harmless to the prompt text.
@@ -784,6 +832,11 @@ class Registry:
            input line. While it is still sitting there, press Enter again (twice
            at most). Whether it finally went is reported back, so a caller can
            say "sent to Mika" or "Mika did not accept it" — never guess.
+        3. **Fall back to one line.** A composed prompt is markdown and travels
+           as a bracketed paste. Whether a given agent TUI honours that is not
+           knowable from here, so a paste the pane did not accept is re-sent in
+           the single-line form that has always worked. The worst case is
+           therefore the old behaviour, never a lost instruction.
 
         Raises ``SessionError`` when the terminal is unknown, not running, or the
         prompt sanitizes down to nothing. A prompt that was typed but refused to
@@ -801,27 +854,56 @@ class Registry:
                 f"{term.name} is not running right now "
                 f"(status: {term.status}) — nothing was sent."
             )
-        payload = sanitize_prompt(text)
+        payload = sanitize_prompt(text, keep_newlines=True)
         if not payload:
             raise SessionError("The prompt was empty after cleanup.")
 
         manager = self._manager()
-        typed = payload + (" " if _opens_completion(payload) else "")
-        if not manager.write(term.pty_id, typed):
-            raise SessionError(f"Could not write to {term.name}.")
-        await asyncio.sleep(ENTER_DELAY_S)
-        manager.write(term.pty_id, "\r")
+        multiline = "\n" in payload
+
+        submitted = await self._write_and_confirm(term, payload, manager, multiline)
+        if not submitted and multiline:
+            logger.warning(
+                "Agentic IDE: {} did not accept a multi-line prompt — "
+                "re-sending it on one line",
+                term.name,
+            )
+            payload = sanitize_prompt(payload)
+            multiline = False
+            submitted = await self._write_and_confirm(term, payload, manager, False)
 
         term.prompts_sent += 1
         term.last_prompt = payload
-        term.submitted = await self._confirm_submitted(term, payload, manager)
+        term.submitted = submitted
+        term.sent_multiline = multiline and submitted
         logger.info(
-            "Agentic IDE prompt -> {} ({}): {}",
+            "Agentic IDE prompt -> {} ({}, {}): {}",
             term.name,
             "submitted" if term.submitted else "STILL IN THE INPUT BOX",
+            "multi-line" if term.sent_multiline else "one line",
             payload[:120],
         )
         return term
+
+    async def _write_and_confirm(
+        self,
+        term: Terminal,
+        payload: str,
+        manager: PtyManager,
+        multiline: bool,
+    ) -> bool:
+        """Type ``payload``, press Enter, and report whether it was accepted."""
+        # The completion guard applies to the LAST line: that is the one the
+        # cursor sits on when Enter arrives.
+        last_line = payload.rsplit("\n", 1)[-1]
+        typed = payload + (" " if _opens_completion(last_line) else "")
+        if multiline:
+            typed = f"{PASTE_START}{typed}{PASTE_END}"
+        if not manager.write(term.pty_id or "", typed):
+            raise SessionError(f"Could not write to {term.name}.")
+        await asyncio.sleep(ENTER_DELAY_S)
+        manager.write(term.pty_id or "", "\r")
+        return await self._confirm_submitted(term, payload, manager)
 
     async def _confirm_submitted(
         self, term: Terminal, payload: str, manager: PtyManager
