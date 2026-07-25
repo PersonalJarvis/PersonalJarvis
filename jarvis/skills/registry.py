@@ -85,6 +85,12 @@ class SkillRegistry:
         # toggle survives restarts. ``None`` → legacy behaviour (no overrides).
         self._state_prefs_loader = state_prefs_loader
         self._skills: dict[str, Skill] = {}
+        # Monotonic reload counter. Derived caches (e.g. the relevance match
+        # index) key on it so they rebuild lazily after a hot reload instead of
+        # the registry having to know they exist — and so a rebuild never runs
+        # inside the reload itself, where it would sit on the boot path (AP-26)
+        # and thrash while the watchdog fires on every keystroke in a SKILL.md.
+        self._generation: int = 0
         self._async_lock = asyncio.Lock()
         self._thread_lock = threading.Lock()
         self._observer: Any | None = None
@@ -95,6 +101,16 @@ class SkillRegistry:
     # ------------------------------------------------------------------
     # Lookup
     # ------------------------------------------------------------------
+
+    @property
+    def generation(self) -> int:
+        """Reload counter — bumped on every successful (re)load.
+
+        Derived read-only caches use ``(id(registry), generation)`` as their key
+        so a hot reload invalidates them without the registry holding a
+        reference to anything.
+        """
+        return self._generation
 
     def get(self, name: str) -> Skill:
         if name not in self._skills:
@@ -292,6 +308,7 @@ class SkillRegistry:
         skills = self._apply_state_overrides(discover_skills(self.root))
         with self._thread_lock:
             self._skills = {s.name: s for s in skills}
+            self._generation += 1
         self._sync_paired_capabilities()
         self._emit_reloaded()
 
@@ -304,6 +321,7 @@ class SkillRegistry:
             skills = self._apply_state_overrides(skills)
             with self._thread_lock:
                 self._skills = {s.name: s for s in skills}
+                self._generation += 1
         self._sync_paired_capabilities()
         self._emit_reloaded()
 
