@@ -67,6 +67,10 @@ _QUOTA_BLOCKED_MARKERS: tuple[str, ...] = (
 )
 _FALLBACK_MODEL: str = "gemini-3-flash-preview"
 
+# 20 min default hard cap — used only when the orchestrator does not pass its
+# own degressive budget (720 s iteration-0 / 360 s correction) via ``timeout_s``.
+_WORKER_TIMEOUT_S: float = 1200.0
+
 
 def _build_isolated_gemini_env(
     env: dict[str, str],
@@ -297,6 +301,7 @@ class GeminiWorker:
         max_turns: int = 20,
         resume_session_id: str | None = None,
         extra_args: tuple[str, ...] = (),
+        timeout_s: float = _WORKER_TIMEOUT_S,
         _broker_binding: Any | None = None,
         **_unused: Any,
     ) -> AsyncIterator[Any]:
@@ -305,7 +310,7 @@ class GeminiWorker:
         issued_here = broker_binding is None
         if issued_here:
             broker_binding = self.capability_inventory.bind_broker(
-                ttl_s=1260.0,
+                ttl_s=timeout_s + 60.0,
                 mission_id=_unused.get("mission_id"),
                 worker_id=worker_id,
             )
@@ -323,6 +328,7 @@ class GeminiWorker:
                 max_turns=max_turns,
                 resume_session_id=resume_session_id,
                 extra_args=extra_args,
+                timeout_s=timeout_s,
                 broker_binding=broker_binding,
                 **_unused,
             ):
@@ -349,6 +355,7 @@ class GeminiWorker:
         max_turns: int = 20,
         resume_session_id: str | None = None,
         extra_args: tuple[str, ...] = (),
+        timeout_s: float = _WORKER_TIMEOUT_S,
         broker_binding: Any | None,
         **_unused: Any,
     ) -> AsyncIterator[Any]:
@@ -424,6 +431,12 @@ class GeminiWorker:
             permission_mode == "yolo",
         )
 
+        t0 = time.perf_counter()
+        # One deadline for the WHOLE spawn, shared with the quota-fallback
+        # re-spawn below — otherwise one iteration could burn 2 × timeout_s
+        # and blow the orchestrator's degressive task budget.
+        deadline = t0 + timeout_s
+
         async def _spawn_once(spawn_cmd: list[str]) -> tuple[bytes, bytes, int]:
             """Spawn the Gemini CLI once and return (stdout, stderr, exit).
 
@@ -453,12 +466,14 @@ class GeminiWorker:
                     proc_local.pid,
                     exc_info=True,
                 )
-            # 1200 s (20 min) hard cap — raised from 600 s so complex tasks can
-            # finish (user mandate 2026-06-09). The "timeout" substring in the
-            # stderr below still flags is_timeout to the orchestrator, which then
-            # grades the on-disk diff instead of discarding it.
+            # The orchestrator's degressive budget (``timeout_s``) is the hard
+            # cap; a fallback re-spawn only gets whatever remains of it. The
+            # "timeout" substring in the stderr below flags is_timeout to the
+            # orchestrator, which then grades the on-disk diff instead of
+            # discarding it.
+            remaining = max(1.0, deadline - time.perf_counter())
             try:
-                out, err = await asyncio.wait_for(proc_local.communicate(), timeout=1200.0)
+                out, err = await asyncio.wait_for(proc_local.communicate(), timeout=remaining)
             except TimeoutError:
                 with suppress(ProcessLookupError):
                     proc_local.kill()
@@ -466,11 +481,13 @@ class GeminiWorker:
                 # asyncio transport tears down and the Win32 handle drops.
                 with suppress(Exception):
                     await asyncio.wait_for(proc_local.wait(), timeout=5.0)
-                out, err = b"", b"GeminiWorker: subprocess wait_for timeout (1200s)"
+                out, err = b"", (
+                    f"GeminiWorker: subprocess wait_for timeout "
+                    f"({remaining:.0f}s of {timeout_s:.0f}s budget)"
+                ).encode()
             exit_local = proc_local.returncode if proc_local.returncode is not None else -1
             return out, err, exit_local
 
-        t0 = time.perf_counter()
         stdout_bytes, stderr_bytes, exit_code = await _spawn_once(cmd)
 
         # Pro→Flash fallback. Google AI Studio enforces a rolling 6h

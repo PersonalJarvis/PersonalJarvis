@@ -242,6 +242,7 @@ class ApiAgentWorker:
         log_dir: Path,
         model: str = "",
         max_turns: int = _MAX_TURNS,
+        timeout_s: float = _WORKER_TIMEOUT_S,
         _broker_binding: Any | None = None,
         **_unused: Any,
     ) -> AsyncIterator[Any]:
@@ -249,7 +250,7 @@ class ApiAgentWorker:
         issued_here = broker_binding is None
         if issued_here:
             broker_binding = self.capability_inventory.bind_broker(
-                ttl_s=_WORKER_TIMEOUT_S + 60.0,
+                ttl_s=timeout_s + 60.0,
                 mission_id=_unused.get("mission_id"),
                 worker_id=worker_id,
             )
@@ -263,6 +264,7 @@ class ApiAgentWorker:
                 log_dir=log_dir,
                 model=model,
                 max_turns=max_turns,
+                timeout_s=timeout_s,
                 broker_binding=broker_binding,
                 **_unused,
             ):
@@ -285,6 +287,7 @@ class ApiAgentWorker:
         log_dir: Path,
         model: str = "",
         max_turns: int = _MAX_TURNS,
+        timeout_s: float = _WORKER_TIMEOUT_S,
         broker_binding: Any | None,
         **_unused: Any,
     ) -> AsyncIterator[Any]:
@@ -384,14 +387,14 @@ class ApiAgentWorker:
 
         try:
             for turn in range(max_turns):
-                if time.perf_counter() - t0 > _WORKER_TIMEOUT_S:
+                if time.perf_counter() - t0 > timeout_s:
                     res = ClaudeResult(
                         subtype="error_during_execution",
                         is_error=True,
                         session_id=session_id,
                         timed_out=True,
                         duration_ms=int((time.perf_counter() - t0) * 1000),
-                        result=f"{final_text}\n[timeout after {_WORKER_TIMEOUT_S:.0f}s]".strip(),
+                        result=f"{final_text}\n[timeout after {timeout_s:.0f}s]".strip(),
                     )
                     _emit_line(res)
                     yield res

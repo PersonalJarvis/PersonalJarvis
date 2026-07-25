@@ -70,7 +70,9 @@ class BrokerMcpConfigurationError(RuntimeError):
     """Raised when the isolated Google CLI cannot receive the broker config."""
 
 
-def _build_agy_worker_argv(exe: str, prompt: str, worktree: Path) -> list[str]:
+def _build_agy_worker_argv(
+    exe: str, prompt: str, worktree: Path, *, timeout_s: float = _WORKER_TIMEOUT_S
+) -> list[str]:
     """agy worker argv: one non-interactive prompt with auto-approved tools so it
     can write files in the worktree.
 
@@ -86,9 +88,10 @@ def _build_agy_worker_argv(exe: str, prompt: str, worktree: Path) -> list[str]:
     diff; agy itself reported "kein aktives Workspace-Verzeichnis geöffnet"  # i18n-allow (quotes agy's own literal CLI message)
     — English: "no active workspace directory open").
 
-    ``--print-timeout`` is widened from agy's 5-minute default to the worker's own
-    time budget so a long "production-quality" task is not cut short by agy before
-    our :data:`_WORKER_TIMEOUT_S` cap.
+    ``--print-timeout`` is derived from the caller's ``timeout_s`` budget, set
+    30 s BELOW it (floored at 30 s) so agy terminates itself and flushes its
+    final output before the external PTY kill fires; the PTY ``timeout_s``
+    stays the hard enforcement.
 
     Newlines are collapsed to spaces — agy takes the whole prompt as a single
     ``--print`` argument.
@@ -101,7 +104,7 @@ def _build_agy_worker_argv(exe: str, prompt: str, worktree: Path) -> list[str]:
         "--add-dir",
         str(worktree),
         "--print-timeout",
-        f"{int(_WORKER_TIMEOUT_S)}s",
+        f"{max(30, int(timeout_s) - 30)}s",
         "--dangerously-skip-permissions",
     ]
 
@@ -175,6 +178,7 @@ class GoogleCliWorker:
         max_turns: int = 20,
         resume_session_id: str | None = None,
         extra_args: tuple[str, ...] = (),
+        timeout_s: float = _WORKER_TIMEOUT_S,
         _broker_binding: Any | None = None,
         **_unused: Any,
     ) -> AsyncIterator[Any]:
@@ -183,7 +187,7 @@ class GoogleCliWorker:
         issued_here = broker_binding is None
         if issued_here:
             broker_binding = self.capability_inventory.bind_broker(
-                ttl_s=_WORKER_TIMEOUT_S + 60.0,
+                ttl_s=timeout_s + 60.0,
                 mission_id=_unused.get("mission_id"),
                 worker_id=worker_id,
             )
@@ -201,6 +205,7 @@ class GoogleCliWorker:
                 max_turns=max_turns,
                 resume_session_id=resume_session_id,
                 extra_args=extra_args,
+                timeout_s=timeout_s,
                 broker_binding=broker_binding,
                 **_unused,
             ):
@@ -227,6 +232,7 @@ class GoogleCliWorker:
         max_turns: int = 20,
         resume_session_id: str | None = None,
         extra_args: tuple[str, ...] = (),
+        timeout_s: float = _WORKER_TIMEOUT_S,
         broker_binding: Any | None,
         **_unused: Any,
     ) -> AsyncIterator[Any]:
@@ -285,6 +291,7 @@ class GoogleCliWorker:
                 model=model,
                 max_turns=max_turns,
                 resume_session_id=resume_session_id,
+                timeout_s=timeout_s,
                 _broker_binding=broker_binding,
                 **_unused,
             ):
@@ -312,6 +319,7 @@ class GoogleCliWorker:
                 max_turns=max_turns,
                 resume_session_id=resume_session_id,
                 extra_args=extra_args,
+                timeout_s=timeout_s,
                 _broker_binding=broker_binding,
                 **_unused,
             ):
@@ -323,7 +331,7 @@ class GoogleCliWorker:
         # agy path: PTY + write-mode + isolated hook/mcp-free home.
         exe = cli.argv_prefix[0]
         log_dir.mkdir(parents=True, exist_ok=True)  # noqa: ASYNC240 — trivial sync mkdir (mirrors GeminiWorker)
-        argv = _build_agy_worker_argv(exe, prompt, worktree)
+        argv = _build_agy_worker_argv(exe, prompt, worktree, timeout_s=timeout_s)
         broker_servers = (
             broker_binding.mcp_server_config() if broker_binding is not None else {}
         )
@@ -390,7 +398,7 @@ class GoogleCliWorker:
             None,
             lambda: run_cli_over_pty(
                 tuple(argv),
-                timeout_s=_WORKER_TIMEOUT_S,
+                timeout_s=timeout_s,
                 cwd=str(worktree),
                 env=agy_env,
                 on_spawn=_assign,
@@ -406,7 +414,7 @@ class GoogleCliWorker:
         is_error = bool(result.error) or result.timed_out or result.exit_status not in (0, None)
         text = result.text or (result.error or "")
         if result.timed_out:
-            text = f"{text}\n[timeout after {_WORKER_TIMEOUT_S:.0f}s]".strip()
+            text = f"{text}\n[timeout after {timeout_s:.0f}s]".strip()
         logger.info(
             "GoogleCliWorker[%s] agy done: error=%s %dms text=%d chars",
             worker_id,
