@@ -134,7 +134,14 @@ async def test_verify_returns_true_when_transcript_has_hey_prefix() -> None:
 
     assert matched is True
     assert transcript == "Hey Jarvis, was läuft"  # i18n-allow
-    assert stt.calls == [(len(PCM_2S_16K), 16_000, "de")]
+    # The omitted-language default is None (provider auto-detect), NOT "de".
+    # It used to be German, which every caller that passed no language silently
+    # inherited — so a wake was verified by ASSERTING the audio is German no
+    # matter who was speaking, garbling the transcript the matcher then has to
+    # satisfy. A layer that cannot tell must fall back honestly, never guess one
+    # locale (CLAUDE.md runtime-output-language rule, and the same §3
+    # universality contract that forbids tuning to one user).
+    assert stt.calls == [(len(PCM_2S_16K), 16_000, None)]
 
 
 async def test_verify_returns_false_when_transcript_is_bare_jarvis() -> None:

@@ -970,6 +970,37 @@ async def put_wake_word(body: WakeWordBody, request: Request) -> dict[str, objec
         except Exception as exc:  # noqa: BLE001 — never fail the save on a live-apply hiccup
             log.warning("wake-word live-apply failed (persisted; applies on restart): %s", exc)
 
+    # Out-of-vocabulary check AT SAVE TIME. The probe already existed but its
+    # only caller was the self-test button, so a user whose phrase is missing
+    # from the model's lexicon had a wake that can NEVER fire and found out by
+    # chance. Reported, never enforced: the probe fails open, the union of
+    # installed models may still hear the phrase, and blocking a save on a
+    # lexicon guess is exactly the AP-27 trap (a spelling rule deciding whether
+    # a wake word is allowed to exist).
+    phrase_in_vocab: bool | None = None
+    if plan.engine == "vosk_kws":
+        try:
+            from jarvis.speech.wake_constants import resolve_vosk_model_path
+
+            model_path = resolve_vosk_model_path(_wake_lang)
+            if model_path:
+                from jarvis.plugins.wake.vosk_kws_provider import (
+                    vosk_model_supports_phrase,
+                )
+
+                phrase_in_vocab = await asyncio.to_thread(
+                    vosk_model_supports_phrase, model_path, body.phrase
+                )
+                if phrase_in_vocab is False:
+                    log.info(
+                        "wake-word saved but %r is not in the %s model's "
+                        "vocabulary — that phrase cannot fire on this engine.",
+                        body.phrase,
+                        _wake_lang,
+                    )
+        except Exception:  # noqa: BLE001 — a probe hiccup must never fail a save
+            phrase_in_vocab = None
+
     return {
         "ok": True,
         "phrase": body.phrase,
@@ -979,6 +1010,10 @@ async def put_wake_word(body: WakeWordBody, request: Request) -> dict[str, objec
         # False when no local model matches the user's word: the wake word is off
         # and the Call shortcut is the activation.
         "wake_available": plan.wake_available,
+        # None = not applicable / not probed. False is a WARNING, not a
+        # rejection: the phrase saved, but this engine's lexicon has no entry
+        # for it, so the UI should say so instead of leaving the user guessing.
+        "phrase_in_vocab": phrase_in_vocab,
         "message": plan.message,
         "persisted": persisted,
         # When live-applied, the running pipeline already swapped the detector;

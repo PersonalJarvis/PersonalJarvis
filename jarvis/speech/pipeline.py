@@ -5254,9 +5254,22 @@ class SpeechPipeline:
         # open is engine-dependent — see below.)
         if not pcm_snapshot:
             return False
+        # Pass the RESOLVED wake language. Omitting it fell back to the
+        # parameter default ("de"), so every custom-model wake on earth was
+        # verified by telling the cloud STT the audio is German — a systematic
+        # garble for an English, Spanish or any other user, on the one engine
+        # AP-25 names as the endgame. Uses the same resolver the wake plan and
+        # the model download use, so selection and verification always agree.
+        try:
+            from jarvis.speech.wake_model_fetch import resolve_wake_language
+
+            verify_language = resolve_wake_language(self._config)
+        except Exception:  # noqa: BLE001 — never let a language lookup kill a wake
+            verify_language = None
         matched, text = await verify_wake_with_stt(
             self._utterance_stt,
             pcm_snapshot,
+            language=verify_language,
             matcher=getattr(self, "_wake_matcher", None),
         )
         if matched:

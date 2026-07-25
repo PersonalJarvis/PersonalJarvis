@@ -1118,25 +1118,26 @@ class VoskKwsProvider:
                 if w.get("end", 0.0) >= span_a and w.get("start", 0.0) <= span_b
             ]
             free_local = " ".join(w.get("word", "") for w in local_words)
-            # The SHAPE path must not see what comes AFTER the phrase. A command
-            # word starting inside the trailing slack is the user's request, not
-            # evidence about the wake call — and counting it pushes the token
-            # count over the phrase's own, which disables the shape path
-            # outright (_SHAPE_TOKEN_SLACK is 0). For an out-of-vocabulary name
-            # the spelling path cannot cover that gap, so both confirm routes
-            # failed at once and the natural way people talk — wake word and
-            # command in ONE breath — was materially less likely to fire than an
-            # isolated call plus a pause.
+            # OPEN (2026-07-25, measured): a wake spoken in ONE breath with the
+            # command is materially less likely to fire than an isolated call.
+            # A command word starting inside the trailing 0.3 s slack is counted
+            # into the candidate and pushes the token count over the phrase's
+            # own, which disables the shape path outright (_SHAPE_TOKEN_SLACK is
+            # 0) — and for an out-of-vocabulary name the spelling path cannot
+            # cover that gap, so BOTH confirm routes fail at once.
             #
-            # Keep the LEADING slack (alignment jitter before the phrase) and
-            # admit any word that OVERLAPS the phrase span, so a name the free
-            # ear stretched past the grammar's end boundary still counts. The
-            # false-wake class this gate exists for ("hey ho", live 2026-07-13)
-            # sits INSIDE the span and is unaffected.
-            shape_words = [
-                w for w in fres.get("result", [])
-                if w.get("end", 0.0) >= span_a and w.get("start", 0.0) <= end_s
-            ]
+            # Narrowing the shape window to [span_a, end_s] fixes that case and
+            # was TRIED — but it also costs precision, because the token-count
+            # bound relies on surrounding words being counted: on the room-speech
+            # fixture the narrower window admits 2 words instead of 3, lands ON
+            # the phrase's token count, and ACCEPTS (verified: it breaks
+            # test_free_words_outside_the_span_cannot_confirm plus two
+            # storm/suppression guards).
+            #
+            # So this is a real latency/recall-vs-precision trade, not a free
+            # win, and it must be calibrated against the recorded corpora
+            # (250/1650 windows) rather than a fixture — same gate as the
+            # _SHAPE_MAX_VOICED_S_PER_TOKEN bump. Do not narrow it on a hunch.
         except Exception as exc:  # noqa: BLE001 — polarity via fail_open
             log.warning(
                 "vosk-kws: verify failed (%s) — %s.",
@@ -1162,7 +1163,7 @@ class VoskKwsProvider:
         # untouched: a free ear that spelled the phrase still fires instantly.
         ok = sound_confirm(free_local, self._phrase, ratio=self._confirm_ratio)
         by_shape = False
-        if not ok and candidate_shape_ok(shape_words, self._phrase):
+        if not ok and candidate_shape_ok(local_words, self._phrase):
             ok = by_shape = self._shape_competition_ok(pcm, model_path)
             if not ok:
                 self._stat_suppressed_shape_competition += 1

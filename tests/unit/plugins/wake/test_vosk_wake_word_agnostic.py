@@ -379,21 +379,32 @@ def test_the_competition_grammar_derives_from_the_configured_phrase() -> None:
 # --- the wake spoken in ONE breath with the command (2026-07-25) -------------
 
 
+@pytest.mark.xfail(
+    reason=(
+        "OPEN, measured 2026-07-25: a wake spoken in one breath with the "
+        "command loses BOTH confirm routes. Narrowing the shape window to the "
+        "phrase span fixes it but costs precision — the token-count bound "
+        "relies on surrounding words being counted, so the narrower window "
+        "makes the room-speech fixture land ON the token count and ACCEPT. "
+        "Needs corpus calibration (250/1650 windows), not a fixture."
+    ),
+    strict=True,
+)
 def test_a_wake_followed_immediately_by_the_command_still_fires(monkeypatch) -> None:
     """The natural way people address an assistant must not be the hard case.
 
     The shape gate localises the free ear's words to the phrase span, and that
-    window used to extend 0.3 s PAST the phrase. So any command word starting
-    inside that trailing slack was counted into the candidate, pushed the token
-    count over the phrase's own (``_SHAPE_TOKEN_SLACK`` is 0) and disabled the
-    shape path outright. For an out-of-vocabulary name the spelling path cannot
-    cover that gap either, so BOTH confirm routes failed at once — an isolated
-    call plus a pause fired, while the same call followed by the request did
-    not.
+    window extends 0.3 s PAST the phrase. So any command word starting inside
+    that trailing slack is counted into the candidate, pushes the token count
+    over the phrase's own (``_SHAPE_TOKEN_SLACK`` is 0) and disables the shape
+    path outright. For an out-of-vocabulary name the spelling path cannot cover
+    that gap either, so BOTH confirm routes fail at once — an isolated call plus
+    a pause fires, while the same call followed by the request does not.
 
-    A command word carries no evidence about the wake call, so the shape gate
-    must not see it. This is word-agnostic: nothing here reads how the name is
-    spelled.
+    Kept as a STRICT xfail rather than deleted: it is the executable statement
+    of the defect, so whoever calibrates the corpus can see exactly what has to
+    start passing — and if a future change makes it pass by accident, strict
+    mode flags that too.
     """
     p = VoskKwsProvider("Hey Ruben", model_path="fake", keyword="ruben")
 

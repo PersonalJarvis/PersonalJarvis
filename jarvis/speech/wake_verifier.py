@@ -110,7 +110,13 @@ async def verify_wake_with_stt(
     stt: _SupportsTranscribePCM,
     pcm_bytes: bytes,
     sample_rate: int = 16_000,
-    language: str | None = "de",
+    # None = let the provider auto-detect. This default used to be "de", which
+    # every caller that omitted the argument silently inherited — so a wake was
+    # verified by asserting the audio is German regardless of who was speaking.
+    # A wrong pin garbles the transcript the matcher then has to satisfy;
+    # auto-detect is the honest fallback. Callers that KNOW the language (the
+    # pipeline resolves it through ``resolve_wake_language``) still pass it.
+    language: str | None = None,
     matcher: Any | None = None,
 ) -> tuple[bool, str | None]:
     """Transcribe ``pcm_bytes`` and confirm the configured wake phrase.
