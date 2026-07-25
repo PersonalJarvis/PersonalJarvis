@@ -1893,6 +1893,13 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # rationale as gmail — its rest_wrapper transport produced zero MCP
             # tools, so it must be router-visible directly. Read-only.
             "vercel",
+            # Home Assistant Marketplace plugin (2026-07-25): native REST tool,
+            # same rationale as gmail — Home Assistant declined dynamic client
+            # registration and its MCP server only exposes its own Assist
+            # pipeline, so the entity/service surface must be router-visible
+            # directly. risk_tier "ask": a service call physically changes
+            # something in the user's home. Never a spawn (AP-5/AP-14).
+            "home_assistant",
             # Google Calendar Marketplace plugin (2026-06-27): native bridge tool
             # whose bot logic is a Node script (calendar_bot.mjs). Same rationale
             # as gmail — no MCP server block, so it must be router-visible

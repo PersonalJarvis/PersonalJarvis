@@ -21,12 +21,35 @@ class _BaseAuth(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class InstanceUrlSpec(_BaseAuth):
+    """A per-user base address, for services the user hosts themselves.
+
+    Home Assistant, Jellyfin, Nextcloud, Paperless and Immich have no fixed
+    public endpoint: the address IS user data, so the catalog can only describe
+    the field, never fill it. When present, the connect dialog asks for the
+    address alongside the token and `validation_endpoint` is treated as a path
+    RELATIVE to it.
+    """
+
+    label: str
+    placeholder: str
+    # Appended to the entered address to check the credential works. Kept
+    # separate from the address so a user pasting a trailing slash, a path, or
+    # the full URL of some page still validates.
+    validation_path: str = "/"
+    help_md: str | None = None
+
+
 class PatPasteAuth(_BaseAuth):
     mode: Literal["pat_paste"]
     token_creation_url: str
     token_prefix: str
     validation_endpoint: str
     instruction_md: str
+    # Set for self-hosted services: the user supplies the address, so
+    # `validation_endpoint` above is ignored in favour of
+    # `instance_url.validation_path` appended to what they entered.
+    instance_url: InstanceUrlSpec | None = None
     # How to present the pasted token when validating + wiring downstream:
     #   bearer        -> Authorization: Bearer <token>  (GitHub/Vercel/Supabase)
     #   bot           -> Authorization: Bot <token>      (Discord)

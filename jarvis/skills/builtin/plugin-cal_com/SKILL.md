@@ -9,7 +9,7 @@ intent_verbs: [zeig, lies, buch, verschieb, sag ab, show, list, book, reschedule
 intent_objects: [cal.com, calcom, cal com, calcom-buchung, calcom booking, calcom-termin, calcom-verfügbarkeit, calcom availability, buchungslink, booking link]  # i18n-allow: spoken-input vocabulary, de/en/es
 triggers:
   - type: voice
-    pattern: '(cal\.com|calcom|buchungslink|booking link)'  # i18n-allow: spoken-input vocabulary
+    pattern: '(cal[\s.]?com|buchungslink|booking link)'  # i18n-allow: spoken-input vocabulary; speech writes "cal com" with a space
 requires_tools: [cal_com]
 risk_policy:
   default_tier: monitor

@@ -151,6 +151,11 @@ ROUTER_TOOLS = frozenset({
     # as gmail — Vercel's catalog rest_wrapper transport produced zero MCP tools,
     # so it must be router-visible directly. Read-only; never a spawn (AP-5/AP-14).
     "vercel",
+    # Home Assistant Marketplace plugin (2026-07-25): native REST tool, same
+    # rationale as gmail — no usable MCP surface, so it must be router-visible
+    # directly or a connected smart home is not callable by voice. A direct
+    # gated action (risk_tier "ask"), never a spawn (AP-5/AP-14).
+    "home_assistant",
     # Google Calendar Marketplace plugin (2026-06-27): native bridge tool whose
     # bot logic is a Node script (calendar_bot.mjs). Same rationale as gmail — no
     # MCP server block, so it must be router-visible directly; otherwise a
@@ -773,7 +778,10 @@ def _phase2_full_brain(
         config.safety, extra_patterns_fn=make_cli_patterns_fn(),
     )
     approval = ApprovalWorkflow(bus)
-    executor = ToolExecutor(bus, evaluator, approval)
+    executor = ToolExecutor(
+        bus, evaluator, approval,
+        default_timeout_s=config.safety.tool_approval_timeout_s,
+    )
 
     # HarnessManager for the internal harness fast path (computer-use /
     # local-action). NB: dispatch-to-harness is no longer an
@@ -1414,7 +1422,10 @@ def _legacy_full_brain(bus: Any | None = None) -> Any:
         config.safety, extra_patterns_fn=make_cli_patterns_fn(),
     )
     approval = ApprovalWorkflow(bus)
-    executor = ToolExecutor(bus, evaluator, approval)
+    executor = ToolExecutor(
+        bus, evaluator, approval,
+        default_timeout_s=config.safety.tool_approval_timeout_s,
+    )
 
     tools: dict[str, Any] = {}
     active_tools = {"open-app", "type-text", "run-shell", "search-web", "remember",

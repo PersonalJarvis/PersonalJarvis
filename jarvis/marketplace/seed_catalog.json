@@ -1,5 +1,5 @@
 {
-  "version": 3,
+  "version": 4,
   "schema_version": "2026-05-09",
   "plugins": [
     {
@@ -503,6 +503,32 @@
         "url": "https://mcp.cal.com/mcp",
         "auth_header_template": "Authorization: Bearer ${plugin_cal_com_access_token}"
       }
+    },
+    {
+      "id": "home_assistant",
+      "display_name": "Home Assistant",
+      "description": "Lights, heating, doors and scenes in your own smart home",
+      "category": "Home & Devices",
+      "logo_slug": "homeassistant",
+      "logo_color": "18BCF2",
+      "featured": true,
+      "longevity": "permanent",
+      "longevity_note": "A Home Assistant long-lived access token is valid for ten years and is never renewed or rotated, so this connection needs no maintenance.",
+      "auth": {
+        "mode": "pat_paste",
+        "token_creation_url": "https://www.home-assistant.io/docs/authentication/#your-account-profile",
+        "token_prefix": "",
+        "validation_endpoint": "https://homeassistant.local:8123/api/",
+        "instruction_md": "In Home Assistant open your **profile** (your name, bottom left) → **Security** → **Long-lived access tokens** → **Create token**. It is shown once, so copy it straight away.\n\nThe token inherits every permission of the account that creates it, so prefer a dedicated non-admin Home Assistant user over your own admin account.",
+        "instance_url": {
+          "label": "Your Home Assistant address",
+          "placeholder": "http://192.168.1.20:8123",
+          "validation_path": "/api/",
+          "help_md": "The address you use in your browser. Home Assistant runs on your home network, so a Jarvis on a different machine, behind a VPN or in a container may not reach it."
+        }
+      },
+      "native_tool": "home_assistant",
+      "post_install_hint_md": "Try “turn off the living room lights” or “is the garage door still open”. Acting on a device asks for confirmation first."
     }
   ]
 }
