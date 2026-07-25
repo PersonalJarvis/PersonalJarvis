@@ -1330,11 +1330,17 @@ def _phase2_full_brain(
                     max_chars=getattr(wiki_cfg, "max_chars", 1500),
                     latency_budget_ms=getattr(wiki_cfg, "latency_budget_ms", 80),
                     min_keyword_length=getattr(wiki_cfg, "min_keyword_length", 4),
+                    relevance_gate=bool(getattr(wiki_cfg, "relevance_gate", True)),
+                    min_coverage=float(getattr(wiki_cfg, "min_coverage", 0.5)),
+                    min_relative_score=float(
+                        getattr(wiki_cfg, "min_relative_score", 0.35)
+                    ),
                 )
                 log.info(
-                    "WikiContextInjector active (vault=%s, budget=%dms)",
+                    "WikiContextInjector active (vault=%s, budget=%dms, gate=%s)",
                     vault_path,
                     getattr(wiki_cfg, "latency_budget_ms", 80),
+                    "on" if getattr(wiki_cfg, "relevance_gate", True) else "off",
                 )
             except ImportError:
                 # Agent B's search module not yet merged — fallback to no-op.

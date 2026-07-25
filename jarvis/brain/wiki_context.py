@@ -1,15 +1,34 @@
 """Wiki context injector for the brain system prompt.
 
 Performs a fast, latency-bounded vault search before each brain turn and
-prepends the top matching snippets to the system prompt as a ``## Wiki context``
-section.  If the search exceeds the latency budget, or if no useful keywords can
-be extracted from the user text, or if the vault returns no hits, the original
-system prompt is returned unchanged.
+prepends the surviving snippets to the system prompt as a framed personal-memory
+section.  If the relevance gate declines the turn, if the search exceeds the
+latency budget, if no useful keywords can be extracted from the user text, or if
+nothing retrieved is relevant enough, the original system prompt is returned
+unchanged.
+
+Relevance contract (``jarvis.brain.wiki_relevance``):
+    Retrieval has no null element — a keyword search always returns a ranked
+    list, and "best match" never means "good match".  Injecting whatever came
+    back is what welds unrelated personal facts onto general-knowledge answers.
+    Three gates, in order:
+
+    1. BEFORE searching, ``should_consult_memory`` skips turns that are not
+       questions about the user's own life.  A general-knowledge question never
+       touches the vault at all — no latency, no context, no non-sequitur.
+    2. AFTER searching, ``relevant_hits`` drops hits that merely share a common
+       word with the question.
+    3. AT injection, ``frame_context_block`` states that the notes may be
+       irrelevant and that the model must ignore them if so.
+
+    When the gate declines a turn the knowledge is not lost: the router brain
+    holds the ``wiki-recall`` tool and can look something up deliberately.
 
 Latency contract:
     The whole ``maybe_inject`` coroutine must complete in <= ``latency_budget_ms``
     milliseconds.  It uses ``asyncio.wait_for`` to enforce this.  A slow vault
     (cold filesystem, network FS, etc.) therefore cannot block the voice path.
+    The relevance gate itself is regex-only and IO-free (AP-9/AP-11).
 
 Fallback contract:
     When ``search`` is ``None`` (Agent B not yet merged), the injector silently
@@ -27,6 +46,13 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from jarvis.memory.wiki.search import VaultSearch
 
+from jarvis.brain.wiki_relevance import (
+    DEFAULT_MIN_COVERAGE,
+    DEFAULT_MIN_RELATIVE_SCORE,
+    frame_context_block,
+    relevant_hits,
+    should_consult_memory,
+)
 from jarvis.memory.wiki.telemetry import telemetry
 
 log = logging.getLogger(__name__)
@@ -166,11 +192,30 @@ class WikiContextInjector:
         max_chars: int = 1500,
         latency_budget_ms: int = 80,
         min_keyword_length: int = 4,
+        relevance_gate: bool = True,
+        min_coverage: float = DEFAULT_MIN_COVERAGE,
+        min_relative_score: float = DEFAULT_MIN_RELATIVE_SCORE,
     ) -> None:
         self._search = search
         self._max_chars = max_chars
         self._latency_budget_ms = latency_budget_ms
         self._min_keyword_length = min_keyword_length
+        # Escape hatch: ``relevance_gate=False`` restores the pre-gate
+        # behaviour (search every turn, inject every hit). Kept so a user who
+        # believes the gate is too strict can prove it from config rather than
+        # by patching code — the defaults stay on.
+        self._relevance_gate = relevance_gate
+        self._min_coverage = min_coverage
+        self._min_relative_score = min_relative_score
+
+    def _miss(self, t0: float, reason: str) -> None:
+        """Record one skipped injection: telemetry + the single INFO line."""
+        telemetry.inc("wiki_context_misses")
+        log.info(
+            "WikiContextInjector injected=False hits=0 latency_ms=%d reason=%s",
+            int((time.monotonic() - t0) * 1000),
+            reason,
+        )
 
     async def maybe_inject(
         self,
@@ -200,13 +245,18 @@ class WikiContextInjector:
 
         # Fast-path: no search engine available (Agent B not merged yet)
         if self._search is None:
-            latency_ms = int((time.monotonic() - t0) * 1000)
-            telemetry.inc("wiki_context_misses")
-            log.info(
-                "WikiContextInjector injected=False hits=0 latency_ms=%d",
-                latency_ms,
-            )
+            self._miss(t0, "no_search")
             return system_prompt
+
+        # Gate 1 (pre-retrieval): is this a question about the user's own life
+        # at all? A general-knowledge question must never reach the vault —
+        # that is what produces personalized non-sequiturs. Regex-only, so the
+        # skip path costs microseconds and SAVES the search latency.
+        if self._relevance_gate:
+            verdict = should_consult_memory(user_text)
+            if not verdict.consult:
+                self._miss(t0, verdict.reason)
+                return system_prompt
 
         # Extract keywords
         keywords = _extract_keywords(
@@ -214,12 +264,7 @@ class WikiContextInjector:
             min_length=self._min_keyword_length,
         )
         if not keywords:
-            latency_ms = int((time.monotonic() - t0) * 1000)
-            telemetry.inc("wiki_context_misses")
-            log.info(
-                "WikiContextInjector injected=False hits=0 latency_ms=%d",
-                latency_ms,
-            )
+            self._miss(t0, "no_keywords")
             return system_prompt
 
         query = " ".join(keywords)
@@ -231,42 +276,42 @@ class WikiContextInjector:
                 timeout=self._latency_budget_ms / 1000.0,
             )
         except TimeoutError:
-            latency_ms = int((time.monotonic() - t0) * 1000)
             log.warning(
                 "WikiContextInjector timed out after %dms (budget=%dms) — "
                 "skipping wiki context for this turn",
-                latency_ms,
+                int((time.monotonic() - t0) * 1000),
                 self._latency_budget_ms,
             )
-            telemetry.inc("wiki_context_misses")
-            log.info(
-                "WikiContextInjector injected=False hits=0 latency_ms=%d",
-                latency_ms,
-            )
+            self._miss(t0, "timeout")
             return system_prompt
         except Exception:  # noqa: BLE001
-            latency_ms = int((time.monotonic() - t0) * 1000)
             log.warning(
                 "WikiContextInjector search raised unexpectedly — "
                 "skipping wiki context",
                 exc_info=True,
             )
-            telemetry.inc("wiki_context_misses")
-            log.info(
-                "WikiContextInjector injected=False hits=0 latency_ms=%d",
-                latency_ms,
-            )
+            self._miss(t0, "search_error")
             return system_prompt
-
-        latency_ms = int((time.monotonic() - t0) * 1000)
 
         if not hits:
-            telemetry.inc("wiki_context_misses")
-            log.info(
-                "WikiContextInjector injected=False hits=0 latency_ms=%d",
-                latency_ms,
-            )
+            self._miss(t0, "no_hits")
             return system_prompt
+
+        # Gate 2 (post-retrieval): the index matches on ANY query term, so a
+        # page sharing one common word arrives looking just like one that is
+        # on topic. Coverage + a within-call relative floor separate them.
+        if self._relevance_gate:
+            hits = relevant_hits(
+                hits,
+                query,
+                min_coverage=self._min_coverage,
+                min_relative_score=self._min_relative_score,
+            )
+            if not hits:
+                self._miss(t0, "no_relevant_hits")
+                return system_prompt
+
+        latency_ms = int((time.monotonic() - t0) * 1000)
 
         # Build the context block, capped at max_chars
         context_parts: list[str] = []
@@ -286,15 +331,13 @@ class WikiContextInjector:
             hits_included += 1
 
         if not context_parts:
-            telemetry.inc("wiki_context_misses")
-            log.info(
-                "WikiContextInjector injected=False hits=0 latency_ms=%d",
-                latency_ms,
-            )
+            self._miss(t0, "empty_block")
             return system_prompt
 
-        wiki_block = "## Wiki context\n" + "\n".join(context_parts)
-        augmented = system_prompt + "\n\n" + wiki_block
+        # Gate 3 (at injection): the block carries its own usage contract, so
+        # the model knows the notes are a guess and is explicitly allowed to
+        # ignore them. A bare context block reads as an instruction to use it.
+        augmented = system_prompt + "\n\n" + frame_context_block(context_parts)
 
         telemetry.inc("wiki_context_hits")
         log.info(

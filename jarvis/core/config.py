@@ -2136,6 +2136,18 @@ class WikiContextConfig(BaseModel):
     latency_budget_ms: int = 80
     min_keyword_length: int = 4
 
+    # Relevance gate (jarvis/brain/wiki_relevance.py). Retrieval always
+    # returns a ranked list, so without a gate every unrelated question gets
+    # a personal note welded onto its answer. ``relevance_gate = false``
+    # restores the pre-gate behaviour: search every turn, inject every hit.
+    relevance_gate: bool = True
+    # Share of the question's content terms a hit must cover to be injected.
+    min_coverage: float = 0.5
+    # Share of the best hit's score (within the SAME search call) a hit must
+    # reach. Relative by design — the vault's scores are only comparable
+    # within one call, so an absolute cutoff would be noise.
+    min_relative_score: float = 0.35
+
 
 class VoiceConfig(BaseModel):
     """Voice-flow knobs that are not STT/TTS/Trigger-specific.

@@ -137,6 +137,19 @@ tests/unit/voice/test_action_phrases.py
 jarvis/brain/local_action_gate.py
 jarvis/missions/stream_evidence.py
 
+# --- Personal-memory relevance gate, VOCABULARY ONLY (reason 3: the German
+#     tokens a classifier must literally contain to match German utterances).
+#     Deliberately split from jarvis/brain/wiki_relevance.py so the LOGIC file
+#     stays fully checked — only the token tuples are exempt, and any future
+#     German prose in the gate itself is still caught ---
+jarvis/brain/wiki_relevance_vocab.py
+
+# --- Relevance-gate tests: the German/Spanish utterances and vault fixtures
+#     ARE the content under test (reason 4) — the tallest-tower regression
+#     only means anything in the language it was reported in ---
+tests/unit/brain/test_wiki_relevance.py
+tests/unit/brain/test_wiki_context_relevance.py
+
 # --- Screen-narration guard test: the German voice fixtures and the assertions
 #     on the German persona/system-prompt content are the behaviour under test ---
 tests/unit/brain/test_screen_narration_guard.py
