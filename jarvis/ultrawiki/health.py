@@ -442,6 +442,25 @@ def _integrations_check(
             ),
             facts=facts,
         )
+    if pending:
+        # The mixed case, and the easy one to get wrong: reporting only the
+        # readable ones would quietly drop the apps that still contribute
+        # nothing, leaving the user to wonder why their Gmail never shows up.
+        ready_names, _ = _names(ready, limit=3)
+        pending_names, _ = _names(pending, limit=3)
+        return HealthCheck(
+            id="integrations",
+            title=(
+                f"{len(ready)} connected app(s) can be imported, "
+                f"{len(pending)} cannot yet"
+            ),
+            state="ok",
+            detail=(
+                f"{ready_names} can be added as a source. {pending_names} "
+                "are connected, but UltraWiki has no reader for them yet."
+            ),
+            facts=facts,
+        )
     return HealthCheck(
         id="integrations",
         title=f"{len(ready)} connected app(s) can be imported",

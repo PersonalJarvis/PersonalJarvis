@@ -236,6 +236,28 @@ def test_an_integration_with_a_reader_is_reported_as_importable():
     assert _check(health, "integrations")["state"] == "ok"
 
 
+def test_the_mixed_case_still_names_the_apps_that_cannot_be_read():
+    """One reader must not hide the apps that still contribute nothing.
+
+    Reporting only "1 app can be imported" is technically true and leaves the
+    user wondering for weeks why their Gmail never shows up.
+    """
+    health = build_health(
+        _status(),
+        [
+            {"id": "plugin:github", "label": "GitHub", "has_pull_adapter": True},
+            {"id": "plugin:gmail", "label": "Gmail", "has_pull_adapter": False},
+            {"id": "plugin:linear", "label": "Linear", "has_pull_adapter": False},
+        ],
+    )
+    check = _check(health, "integrations")
+    assert check["state"] == "ok"
+    assert check["facts"] == {"connected": 3, "readable": 1, "pending": 2}
+    assert "GitHub" in check["detail"]
+    assert "Gmail and Linear" in check["detail"]
+    assert "no reader" in check["detail"]
+
+
 def test_a_silent_storage_fallback_is_surfaced():
     """Postgres configured, SQLite answering: the wiki works, elsewhere."""
     health = build_health(
