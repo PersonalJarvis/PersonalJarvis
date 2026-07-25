@@ -708,6 +708,49 @@ def _build_registry() -> tuple[AppCommand, ...]:
             },
         ),
         AppCommand(
+            id="agentic-ide-spawn-terminals",
+            title="Open more Agentic-IDE terminals",
+            description=(
+                "Open one or more additional coding terminals in the open "
+                "workspace. Use this when the user asks for MORE TERMINALS / "
+                "panes ('spawn five new Claude Code terminals', 'open two more "
+                "Codex terminals') — that is a request for workspace panes, "
+                "never for a background worker. Pass count, and agent only when "
+                "the user named one ('claude' or 'codex'); omitted, the new "
+                "panes run whatever the last pane runs. "
+                "CHECK THE REPLY: 'capped' true means the workspace maximum cut "
+                "the request short — say how many actually opened and name them, "
+                "never report the full number as done."
+            ),
+            method="POST",
+            path="/api/agentic-ide/terminals/batch",
+            params={
+                "type": "object",
+                "properties": {
+                    "count": {
+                        "type": "integer",
+                        "default": 1,
+                        "description": "How many terminals to open.",
+                    },
+                    "agent": {
+                        "type": "string",
+                        "enum": ["claude", "codex"],
+                        "description": (
+                            "Coding agent for the new panes; omit to inherit "
+                            "the last pane's."
+                        ),
+                    },
+                },
+                "required": ["count"],
+            },
+            ui_section="agentic-ide",
+            voice_aliases={
+                "de": ("spawne fünf neue terminals",),  # i18n-allow: input vocab
+                "en": ("spawn five new claude code terminals",),
+                "es": ("abre dos terminales de codex",),  # i18n-allow: input vocab
+            },
+        ),
+        AppCommand(
             id="agentic-ide-focus",
             title="Toggle Agentic-IDE focus mode",
             description=(

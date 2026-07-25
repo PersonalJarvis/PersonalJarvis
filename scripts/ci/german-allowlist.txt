@@ -383,3 +383,14 @@ jarvis/speech/tts_eval/corpus.py
 #     4, same shape as tts_eval/corpus.py above). The harness and tests that
 #     READ this file are NOT exempt and stay English-checked. ---
 tests/fixtures/skill_routing/golden.yaml
+
+# --- Generated command reference: every German fragment in it is a quoted
+#     SPOKEN EXAMPLE copied out of a Command-Registry description ("'Mika soll
+#     ...'", "'sag Mika ...'"), i.e. the input vocabulary a voice command has to
+#     match (reason 3). The file is written by
+#     scripts/ci/gen_commands_reference.py, so an inline i18n-allow is
+#     impossible: the next regeneration would drop it. Nobody hand-writes prose
+#     here, so this is not a "narrow it later" exemption — the SOURCE
+#     (jarvis/commands/registry.py) stays English-checked, which is where a real
+#     German leak would have to be fixed. ---
+docs/commands-reference.md

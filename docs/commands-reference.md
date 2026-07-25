@@ -16,7 +16,7 @@ Commands marked **requires confirmation** never run on a bare voice request — 
 Switch the ACTIVE main brain (LLM) provider, e.g. from openai to claude-api. Reversible; validated against the provider catalog and stored credentials.
 
 - **Endpoint:** `POST /api/brain/switch`
-- **Arguments:** `provider` (one of: claude-api, gemini, grok, nvidia, openai, openrouter; required); `persist` (boolean; optional)
+- **Arguments:** `provider` (one of: claude-api, gemini, grok, local-openai, nvidia, ollama, openai, openrouter; required); `persist` (boolean; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "switch the brain provider to claude"
@@ -56,7 +56,7 @@ Switch which realtime voice engine (speech-to-speech) is active, e.g. openai-rea
 Switch the dedicated Computer-Use planner provider (screen control), decoupled from the main brain.
 
 - **Endpoint:** `POST /api/computer-use/switch`
-- **Arguments:** `provider` (one of: antigravity, claude-api, codex, gemini, grok, nvidia, openai, openrouter; required); `persist` (boolean; optional)
+- **Arguments:** `provider` (one of: antigravity, claude-api, codex, gemini, grok, local-openai, nvidia, ollama, openai, openrouter; required); `persist` (boolean; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "switch the computer use provider to gemini"
@@ -66,7 +66,7 @@ Switch the dedicated Computer-Use planner provider (screen control), decoupled f
 Switch the provider used for new missions (e.g. codex to openai). The next mission uses the new provider.
 
 - **Endpoint:** `POST /api/jarvis-agent/switch`
-- **Arguments:** `provider` (one of: antigravity, claude-api, codex, gemini, grok, nvidia, openai, openrouter; required); `persist` (boolean; optional)
+- **Arguments:** `provider` (one of: antigravity, claude-api, codex, gemini, grok, local-openai, nvidia, ollama, openai, openrouter; required); `persist` (boolean; optional)
 - **Requires confirmation:** no
 - **Desktop UI section:** `agents`
 - **Voice example (EN):** "switch the agent provider to openai"
@@ -86,7 +86,7 @@ List all configured providers and which ones are active.
 Test connectivity and authentication for one provider.
 
 - **Endpoint:** `POST /api/providers/{provider_id}/test`
-- **Arguments:** `provider_id` (one of: antigravity, cartesia, claude-api, codex, elevenlabs, gemini, gemini-flash-tts, gemini-live, grok, grok-voice, groq-api, inworld, nvidia, openai, openai-api, openai-realtime, openrouter, openrouter-stt, openrouter-tts; required)
+- **Arguments:** `provider_id` (one of: antigravity, cartesia, claude-api, codex, elevenlabs, gemini, gemini-flash-tts, gemini-live, grok, grok-voice, groq-api, inworld, local-openai, nvidia, ollama, openai, openai-api, openai-realtime, openrouter, openrouter-stt, openrouter-tts; required)
 - **Requires confirmation:** no
 - **Desktop UI section:** `apikeys`
 - **Voice example (EN):** "test the openai provider"
@@ -240,4 +240,54 @@ Cancel a running or scheduled task by id.
 - **Requires confirmation:** yes
 - **Desktop UI section:** `tasks`
 - **Voice example (EN):** "cancel the task"
+
+## `agentic-ide-status` — Agentic IDE status
+
+Report the open Agentic-IDE workspace: which folder, which coding agents run in which named terminals, and whether the focused coding mode is on.
+
+- **Endpoint:** `GET /api/agentic-ide/state`
+- **Arguments:** none
+- **Requires confirmation:** no
+- **Desktop UI section:** `agentic-ide`
+- **Voice example (EN):** "what is running in the agentic ide"
+
+## `agentic-ide-terminal-report` — Report on one Agentic-IDE terminal
+
+Read what the coding agent in a named terminal is doing — its status and its recent terminal output. Use this whenever the user asks about a terminal by name (e.g. 'what is Mika doing?').
+
+- **Endpoint:** `GET /api/agentic-ide/terminals/{name}/report`
+- **Arguments:** `name` (string; required); `lines` (integer; optional)
+- **Requires confirmation:** no
+- **Desktop UI section:** `agentic-ide`
+- **Voice example (EN):** "what is mika doing"
+
+## `agentic-ide-prompt` — Prompt an Agentic-IDE terminal
+
+Send an instruction to the coding agent in a named terminal. Use this whenever the user tells a terminal to do something ('tell Kai to ...', 'Mika soll ...', 'let Nova refactor ...') — that work belongs to that agent, never to a background worker. Pass the user's instruction as the prompt; with compose=true it is rewritten into a briefed task with the relevant files of this workspace attached. CHECK THE REPLY: it carries a 'submitted' flag. True means the agent accepted the prompt and started. False means the text is only sitting in that terminal's input box — say so plainly and name the terminal, never report it as done.
+
+- **Endpoint:** `POST /api/agentic-ide/terminals/{name}/prompt`
+- **Arguments:** `name` (string; required); `prompt` (string; required); `compose` (boolean; optional)
+- **Requires confirmation:** no
+- **Desktop UI section:** `agentic-ide`
+- **Voice example (EN):** "tell mika to run the tests"
+
+## `agentic-ide-spawn-terminals` — Open more Agentic-IDE terminals
+
+Open one or more additional coding terminals in the open workspace. Use this when the user asks for MORE TERMINALS / panes ('spawn five new Claude Code terminals', 'open two more Codex terminals') — that is a request for workspace panes, never for a background worker. Pass count, and agent only when the user named one ('claude' or 'codex'); omitted, the new panes run whatever the last pane runs. CHECK THE REPLY: 'capped' true means the workspace maximum cut the request short — say how many actually opened and name them, never report the full number as done.
+
+- **Endpoint:** `POST /api/agentic-ide/terminals/batch`
+- **Arguments:** `count` (integer; required); `agent` (one of: claude, codex; optional)
+- **Requires confirmation:** no
+- **Desktop UI section:** `agentic-ide`
+- **Voice example (EN):** "spawn five new claude code terminals"
+
+## `agentic-ide-focus` — Toggle Agentic-IDE focus mode
+
+Turn the focused coding mode on or off. While on, answers are given inside the open coding workspace; turning it off returns to normal behaviour without stopping any agent.
+
+- **Endpoint:** `PUT /api/agentic-ide/mode`
+- **Arguments:** `enabled` (boolean; required)
+- **Requires confirmation:** no
+- **Desktop UI section:** `agentic-ide`
+- **Voice example (EN):** "switch into coding mode"
 

@@ -386,6 +386,28 @@ class NavigateSidebar(Event):
     section: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class AgenticIdeTerminalsAdded(Event):
+    """Panes were added to the Agentic-IDE workspace from outside its view.
+
+    The workspace view loads its state once when it mounts, which is enough as
+    long as it is the only thing that can add a pane. Voice and the CLI can too
+    ("open five more Claude Code terminals"), and without this event those panes
+    exist in the registry while the open view keeps showing the old grid.
+
+    The frontend (``useWebSocket.ts``) turns it into a window event the workspace
+    view listens for and re-runs its own fetch — the same shape as
+    ``SecretConfigured``. ``names`` is carried so a client can tell the user what
+    appeared without a second request; ``folder`` identifies the workspace, since
+    a stale event from a session that has since been replaced must not be acted
+    on.
+    """
+    session_id: str = ""
+    names: tuple[str, ...] = ()
+    agent: str = ""
+    folder: str = ""
+
+
 # ----------------------------------------------------------------------
 # UI / Chat
 # ----------------------------------------------------------------------

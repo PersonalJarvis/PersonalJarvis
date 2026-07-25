@@ -260,18 +260,177 @@ def _looks_like_instruction(text: str) -> bool:
     return bool(_INSTRUCTION_VERB_RE.search(text))
 
 
+# --------------------------------------------------------------------------- #
+# "Open N more terminals"                                                     #
+# --------------------------------------------------------------------------- #
+# A second, narrower request shape: the user asking for MORE PANES rather than
+# addressing an existing one ("spawne fünf neue Claude Code Terminals").  # i18n-allow: quoted spoken input
+#
+# Why it needs its own detector instead of a router tool: the sentence opens
+# with the very word the force-spawn heuristic reads as "dispatch a background
+# agent". Left to the router, the turn becomes an invisible mission worker — the
+# same class of failure ``detect`` above exists to fix, one layer up. So this is
+# deterministic too, and it deliberately claims the turn BEFORE the
+# vehicle-naming stand-down (see ``owns_turn``).
+#
+# The safety margin is one mandatory word: a TERMINAL NOUN. "Spawne fünf  # i18n-allow: quoted spoken input
+# Terminals" is a workspace request; "spawne fünf Agenten" stays a background  # i18n-allow: quoted spoken input
+# mission. A false positive here silently withholds a mission the user wanted,
+# which is invisible; a false negative just costs one clearer sentence.
+
+# Nouns that mean "a pane of the coding workspace". "Fenster"/"ventana"
+# (window) is deliberately NOT here: a spoken "open two windows" is at least as
+# likely to mean an application window, which is a Computer-Use request.
+_PANE_NOUN_RE = re.compile(
+    r"\b(?:terminals?|terminales|panes?|tabs?)\b",
+    re.IGNORECASE,
+)
+
+# Verbs that ask for something to be opened, plus the additive markers that
+# carry the same request without a verb ("noch drei Terminals").
+_OPEN_VERB_RE = re.compile(
+    r"\b(?:spawn\w*|[oö]ffn\w*|start\w*|mach\w*|erstell\w*|f[uü]g\w*|"  # i18n-allow: German input vocabulary
+    r"gib|geb\w*|brauch\w*|will|h[aä]tte|"  # i18n-allow: German input vocabulary
+    r"open\w*|create\w*|launch\w*|add|give|need|want|"
+    r"abr\w*|cre\w*|lanz\w*|a[nñ]ad\w*|agrega\w*|dame|necesito|quiero)\b",
+    re.IGNORECASE,
+)
+_ADDITIVE_RE = re.compile(
+    r"\b(?:noch|weitere\w*|zus[aä]tzlich\w*|mehr|another|more|extra|"  # i18n-allow: German input vocabulary
+    r"otr[oa]s?|m[aá]s)\b",
+    re.IGNORECASE,
+)
+
+# An utterance that OPENS with a question word is asking about terminals, not
+# asking for them ("wie viele Terminals kann ich öffnen?"). A polite request  # i18n-allow: quoted spoken input
+# that merely ends in a question mark ("kannst du 5 Terminals öffnen?") is NOT  # i18n-allow: quoted spoken input
+# excluded — that is a real request, and the filler prefix above strips its
+# politeness for the composer anyway.
+_QUESTION_OPENER_RE = re.compile(
+    r"^(?:"
+    r"wie|was|wieso|warum|wo|wann|welche\w*|wieviel\w*|"
+    r"how|what|why|where|when|which|"
+    r"c[oó]mo|qu[eé]|cu[aá]nt\w*|por\s+qu[eé]|d[oó]nde|cu[aá]ndo"
+    r")\b",
+    re.IGNORECASE,
+)
+
+# Number words per locale. Capped at the workspace maximum: past it the count is
+# clamped anyway, so spelling out "twenty" buys nothing.
+_NUMBER_WORDS: dict[str, int] = {
+    # German — "ein/eine/einen" doubles as the article, which is exactly right  # i18n-allow: names the German number words below
+    # here ("mach noch ein Terminal auf" = one).  # i18n-allow: quoted spoken input
+    "ein": 1, "eine": 1, "einen": 1, "eins": 1,  # i18n-allow: German number words (input vocabulary)
+    "zwei": 2, "drei": 3, "vier": 4, "fünf": 5, "funf": 5, "sechs": 6,  # i18n-allow: German number words (input vocabulary)
+    "sieben": 7, "acht": 8, "neun": 9, "zehn": 10, "elf": 11, "zwölf": 12,  # i18n-allow: German number words (input vocabulary)
+    "zwolf": 12,
+    # English
+    "a": 1, "an": 1, "one": 1, "two": 2, "three": 3, "four": 4, "five": 5,
+    "six": 6, "seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11,
+    "twelve": 12,
+    # Spanish
+    "un": 1, "uno": 1, "una": 1, "dos": 2, "tres": 3, "cuatro": 4, "cinco": 5,
+    "seis": 6, "siete": 7, "ocho": 8, "nueve": 9, "diez": 10, "once": 11,
+    "doce": 12,
+}
+
+# Which coding agent, when the user names one. Bare "claude" counts — nobody
+# says a product name in full while talking. Everything else (including no
+# mention at all) leaves the choice to the registry, which inherits the last
+# pane's agent: "noch drei davon" is the common intent.
+_AGENT_RE = re.compile(r"\b(claude(?:\s+code)?|codex)\b", re.IGNORECASE)
+
+
+@dataclass(frozen=True, slots=True)
+class SpawnTerminalsRequest:
+    """A spoken request to open more panes in the coding workspace."""
+
+    count: int
+    """How many panes to open, already clamped to a sane range."""
+
+    agent: str | None
+    """``"claude"`` / ``"codex"``, or ``None`` to inherit the last pane's."""
+
+    utterance: str
+    """The original utterance, unmodified."""
+
+
+def _spoken_count(text: str) -> int:
+    """The requested number of panes: digits, a number word, or 1.
+
+    First hit wins. A count is optional — "open another terminal" is a perfectly
+    clear request for one — so this never fails, it defaults.
+    """
+    from .session import MAX_TERMINALS
+
+    digits = re.search(r"\b(\d{1,3})\b", text)
+    if digits is not None:
+        return max(1, min(int(digits.group(1)), MAX_TERMINALS))
+    for word in text.lower().split():
+        cleaned = "".join(ch for ch in word if ch.isalpha())
+        if cleaned in _NUMBER_WORDS:
+            return max(1, min(_NUMBER_WORDS[cleaned], MAX_TERMINALS))
+    return 1
+
+
+def detect_spawn(
+    user_text: str, *, names: list[str] | None = None
+) -> SpawnTerminalsRequest | None:
+    """A request to open more terminals, or ``None``.
+
+    ``names`` is the live call-signs (injectable for tests). They are needed for
+    one decision only: an utterance that ADDRESSES a pane is that pane's prompt,
+    even when it mentions terminals: telling a named pane to open a terminal is
+    work for THAT pane, not a request for another one. Addressing therefore wins,
+    and it is checked here so both callers inherit the same order.
+    """
+    text = (user_text or "").strip()
+    if len(text) < 6:
+        return None
+    if _PANE_NOUN_RE.search(text) is None:
+        return None
+    if _QUESTION_OPENER_RE.search(text) is not None:
+        return None
+    if _OPEN_VERB_RE.search(text) is None and _ADDITIVE_RE.search(text) is None:
+        return None
+    if detect(text, names=names) is not None:
+        return None
+
+    agent_match = _AGENT_RE.search(text)
+    agent: str | None = None
+    if agent_match is not None:
+        agent = "codex" if agent_match.group(1).lower().startswith("codex") else "claude"
+    return SpawnTerminalsRequest(
+        count=_spoken_count(text), agent=agent, utterance=text
+    )
+
+
 def owns_turn(user_text: str, *, names: list[str] | None = None) -> bool:
     """True when the open workspace should handle this turn instead of a spawn.
 
-    Used by the router's force-spawn guard. An utterance that explicitly names
-    the spawn vehicle is NOT owned here — asking for a background agent while a
-    workspace happens to be open is a real request, and stealing it would be the
-    mirror image of the bug this module fixes.
+    Used by the router's force-spawn guard AND by ``spawn_gate`` — both already
+    call this before they look for the delegation marker, which is why the
+    precedence lives here and not in either of them: one answer, no drift.
+
+    Order:
+
+    1. A request for MORE TERMINALS is the workspace's, even though it names the
+       spawn vehicle ("spawne … Terminals"). The mandatory pane noun is what
+       makes claiming it safe, and it holds with no workspace open too — the
+       feature then opens one, so a background mission would be just as wrong.
+    2. Otherwise an utterance that explicitly names the spawn vehicle is NOT
+       owned here — asking for a background agent while a workspace happens to
+       be open is a real request, and stealing it would be the mirror image of
+       the bug this module fixes.
     """
     from jarvis.brain.spawn_gate import names_spawn_vehicle
 
     text = (user_text or "").strip()
-    if not text or names_spawn_vehicle(text):
+    if not text:
+        return False
+    if detect_spawn(text, names=names) is not None:
+        return True
+    if names_spawn_vehicle(text):
         return False
     return detect(text, names=names) is not None
 
@@ -279,7 +438,9 @@ def owns_turn(user_text: str, *, names: list[str] | None = None) -> bool:
 __all__ = [
     "KIND_PROMPT",
     "KIND_REPORT",
+    "SpawnTerminalsRequest",
     "TerminalIntent",
     "detect",
+    "detect_spawn",
     "owns_turn",
 ]

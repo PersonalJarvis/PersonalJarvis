@@ -256,6 +256,17 @@ export function useWebSocket(): void {
           window.dispatchEvent(new CustomEvent("jarvis:secret-configured", { detail: env.payload }));
         }
 
+        if (env.event_name === "AgenticIdeTerminalsAdded") {
+          // Panes were opened by voice or the CLI. The workspace view loads its
+          // state once on mount, so without this it would keep showing the old
+          // grid while the agents are already running. Trigger only — the view
+          // re-runs its own fetch, which is the single source of truth for the
+          // layout.
+          window.dispatchEvent(
+            new CustomEvent("jarvis:agentic-ide-changed", { detail: env.payload }),
+          );
+        }
+
         // Live interface-language switch (voice / Control API / another client):
         // the whole app re-renders in the new language with no reload. push:false
         // so receiving the broadcast does not echo a PUT back.

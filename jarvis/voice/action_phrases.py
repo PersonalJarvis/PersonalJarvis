@@ -326,6 +326,54 @@ _PHRASES: dict[str, dict[str, str]] = {
         "en": "{terminal} is not running right now ({status}). I sent nothing.",
         "es": "{terminal} no está en marcha ahora ({status}). No envié nada.",
     },
+    # Opening more panes by voice ("spawn five more Claude Code terminals").
+    # The names are always read back: they are how the user addresses the new
+    # panes in the very next sentence, and hearing them is also the fastest way
+    # to notice that fewer opened than asked for.
+    "ide_terminals_spawned_one": {
+        "de": "{names} ist offen.",  # i18n-allow
+        "en": "{names} is open.",
+        "es": "{names} está abierta.",
+    },
+    "ide_terminals_spawned": {
+        "de": "{count} neue Terminals: {names}.",  # i18n-allow
+        "en": "{count} new terminals: {names}.",
+        "es": "{count} terminales nuevas: {names}.",
+    },
+    # Fewer than asked for, because the workspace cap cut the batch short. Named
+    # separately from the plain success so the shortfall is impossible to miss.
+    "ide_terminals_spawned_capped": {
+        "de": "Platz war nur für {count}: {names}.",  # i18n-allow
+        "en": "There was only room for {count}: {names}.",
+        "es": "Solo había espacio para {count}: {names}.",
+    },
+    "ide_terminals_full": {
+        "de": "Der Workspace ist voll, {max} Terminals laufen schon.",  # i18n-allow
+        "en": "The workspace is full, {max} terminals are already running.",
+        "es": "El espacio de trabajo está lleno, ya hay {max} terminales.",
+    },
+    # No workspace was open, so one was opened in the most recent folder. The
+    # folder is named on purpose: it is an assumption, and hearing it is how the
+    # user catches a wrong one before an agent starts working in it.
+    "ide_terminals_opened_workspace": {
+        "de": "Ich habe {folder} geöffnet: {names}.",  # i18n-allow
+        "en": "I opened {folder}: {names}.",
+        "es": "Abrí {folder}: {names}.",
+    },
+    "ide_terminals_nowhere": {
+        "de": (  # i18n-allow
+            "Es ist kein Workspace offen und ich habe keinen letzten. "  # i18n-allow
+            "Wähle einen Ordner in der Agentic IDE."  # i18n-allow
+        ),
+        "en": (
+            "No workspace is open and there is no recent one. "
+            "Pick a folder in the Agentic IDE."
+        ),
+        "es": (
+            "No hay ningún espacio de trabajo abierto ni uno reciente. "
+            "Elige una carpeta en el IDE agéntico."
+        ),
+    },
 }
 
 

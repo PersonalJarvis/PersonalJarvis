@@ -1110,6 +1110,52 @@ def _terminal_not_running_line(terminal: str, status: str, lang: str) -> str:
     )
 
 
+def _recent_agent(recent: Any) -> str:
+    """The coding agent a remembered workspace mostly ran, defaulting to Claude.
+
+    Reopening a project the user last worked in with Codex should not silently
+    switch them to a different agent. ``agents`` is a name -> pane-count map, so
+    the majority answer is the one that matches what they saw last time.
+    """
+    counts = getattr(recent, "agents", None) or {}
+    if not counts:
+        return "claude"
+    return max(counts.items(), key=lambda kv: kv[1])[0]
+
+
+def _terminals_spawned_line(
+    names: list[str], *, requested: int, folder: str | None, lang: str
+) -> str:
+    """Spoken confirmation for "open N more terminals".
+
+    Always names the new panes: they are how the user addresses them in the very
+    next sentence ("Zara, mach mal ..."), and hearing three names after asking
+    for five is the fastest possible way to notice the workspace was full.
+
+    The names are joined with commas rather than a localized "and" — a list
+    separator needs no translation, and a per-language conjunction would be one
+    more thing to get wrong in a fourth locale.
+    """
+    from jarvis.voice.action_phrases import action_phrase
+
+    listed = ", ".join(names)
+    if folder is not None:
+        # A workspace had to be opened first; naming the folder is what makes the
+        # assumption auditable.
+        return action_phrase(
+            "ide_terminals_opened_workspace", lang, folder=folder, names=listed
+        )
+    if len(names) < requested:
+        return action_phrase(
+            "ide_terminals_spawned_capped", lang, count=len(names), names=listed
+        )
+    if len(names) == 1:
+        return action_phrase("ide_terminals_spawned_one", lang, names=listed)
+    return action_phrase(
+        "ide_terminals_spawned", lang, count=len(names), names=listed
+    )
+
+
 # Conversational coaching: "help me [get better at a soft / cognitive /
 # conversational skill]" — asking, thinking, phrasing, deciding, understanding,
 # expressing, communicating. This is CONVERSATION (Jarvis answers inline and
@@ -5713,6 +5759,139 @@ class BrainManager:
         )
         return _prompt_sent_line(term.name, composed.files, out_lang)
 
+    async def _run_agentic_ide_spawn_fast_path(
+        self,
+        user_text: str,
+        *,
+        trace_id: UUID | None = None,
+    ) -> str | None:
+        """Open N more coding terminals when the user asks for them out loud.
+
+        "Spawn five more Claude Code terminals" is a workspace request, but it
+        opens with the word the force-spawn heuristic reads as "dispatch a
+        background agent" — so left to the router it becomes an invisible mission
+        worker instead of five panes. ``intent.detect_spawn`` claims the turn
+        (that precedence lives in ``intent.owns_turn``, which both routing gates
+        already consult) and this path carries it out.
+
+        Three things happen here that the REST route cannot do on its own:
+
+        1. **A workspace is opened when none is running.** The folder is the most
+           recently used one, and it is NAMED in the reply — it is an assumption,
+           and the user has to be able to hear a wrong one.
+        2. **The open UI is told.** Panes added from outside the workspace view
+           are invisible to it (it fetches its state once, on mount), so the new
+           pane list is published on the bus.
+        3. **The view is brought forward.** This is also what STARTS the agents:
+           ``add_terminals`` creates the registry entries, and each agent's
+           pseudo-terminal spawns when its pane mounts.
+
+        Returns ``None`` on every turn that is not a terminal-spawn request, so
+        the normal path runs untouched.
+        """
+        try:
+            from jarvis.agentic_ide import intent as ide_intent
+            from jarvis.agentic_ide.session import (
+                MAX_TERMINALS,
+                SessionError,
+                get_registry,
+                terminals_added_event,
+            )
+        except Exception:  # noqa: BLE001 - optional surface
+            return None
+
+        try:
+            request = ide_intent.detect_spawn(user_text)
+        except Exception:  # noqa: BLE001 - detection must never break a turn
+            return None
+        if request is None:
+            return None
+
+        out_lang = resolve_output_language(
+            self._reply_language,
+            "unknown",
+            user_text,
+            default=DEFAULT_LOCALE,
+            conversation_language=self._conversation_language,
+        )
+        from jarvis.voice.action_phrases import action_phrase
+
+        registry = get_registry()
+        folder_label: str | None = None
+
+        try:
+            if registry.session is None:
+                # No workspace open: take the most recent one. Reading the
+                # recents file is IO, so it goes to a thread — this path runs
+                # inside a voice turn.
+                from jarvis.agentic_ide import recents
+
+                entries = await asyncio.to_thread(recents.load)
+                if not entries:
+                    return action_phrase("ide_terminals_nowhere", out_lang)
+                recent = entries[0]
+                agent = request.agent or _recent_agent(recent)
+                session = await registry.start(
+                    recent.path,
+                    [{"agent": agent} for _ in range(request.count)],
+                )
+                created = list(session.terminals)
+                folder_label = recent.name
+            else:
+                created, _capped = await registry.add_terminals(
+                    request.count, agent=request.agent
+                )
+        except SessionError as exc:
+            # A full workspace, a missing CLI, an unreadable folder: every one of
+            # these already carries a user-facing English sentence, and speaking
+            # it is more useful than a generic failure.
+            log.info("Agentic IDE spawn fast-path refused: %s", exc)
+            if "maximum" in str(exc).lower():
+                return action_phrase(
+                    "ide_terminals_full", out_lang, max=MAX_TERMINALS
+                )
+            return str(exc)
+        except Exception:  # noqa: BLE001 - never crash the turn over a pane
+            log.warning("Agentic IDE spawn fast-path failed", exc_info=True)
+            return None
+
+        if not created:
+            return action_phrase("ide_terminals_full", out_lang, max=MAX_TERMINALS)
+
+        session = registry.session
+        if session is not None and self._bus is not None:
+            try:
+                await self._bus.publish(
+                    terminals_added_event(
+                        session, created, source_layer="brain.agentic_ide_spawn"
+                    )
+                )
+                # Bring the workspace forward so the panes are SEEN appearing —
+                # and so their agents boot, which only happens once a pane
+                # mounts. A no-op when the view is already active.
+                from jarvis.core.events import NavigateSidebar
+
+                await self._bus.publish(
+                    NavigateSidebar(
+                        section="agentic-ide",
+                        source_layer="brain.agentic_ide_spawn",
+                        trace_id=trace_id or uuid4(),
+                    )
+                )
+            except Exception:  # noqa: BLE001 - the panes exist either way
+                log.warning("Agentic IDE spawn: UI notification failed", exc_info=True)
+
+        names = [t.name for t in created]
+        log.info(
+            "Agentic IDE spawn fast-path: opened %d pane(s) %s%s",
+            len(names),
+            names,
+            f" in {folder_label}" if folder_label else "",
+        )
+        return _terminals_spawned_line(
+            names, requested=request.count, folder=folder_label, lang=out_lang
+        )
+
     def _is_explicit_heavy_request(self, user_text: str) -> bool:
         """Return whether the user semantically requested a heavy worker."""
         text = (user_text or "").strip()
@@ -8172,6 +8351,26 @@ class BrainManager:
                 trace_id=turn_trace_id,
             )
             return ide_reply
+
+        # Agentic-IDE pane spawn: "spawn five more Claude Code terminals" opens
+        # five panes instead of dispatching a background mission. Same reason to
+        # be deterministic and to sit ahead of force-spawn as the path above —
+        # the utterance NAMES the spawn vehicle, so nothing but a narrower
+        # deterministic rule can keep it in the workspace. Runs after the
+        # addressed-terminal path because ``detect_spawn`` stands down for an
+        # addressed pane ("sag Mika, sie soll ein Terminal öffnen" is Mika's
+        # work), which makes the two mutually exclusive by construction.
+        ide_spawn_reply = await self._run_agentic_ide_spawn_fast_path(
+            user_text, trace_id=turn_trace_id,
+        )
+        if ide_spawn_reply is not None:
+            await self._record_response_side_effects(
+                user_text=user_text,
+                response_text=ide_spawn_reply,
+                use_history=use_history,
+                trace_id=turn_trace_id,
+            )
+            return ide_spawn_reply
 
         # Agent-C (capability-coupling): pre-generation capability gate.
         # If the utterance looks like an action request but no registered
