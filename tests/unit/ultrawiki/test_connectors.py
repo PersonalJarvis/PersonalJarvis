@@ -467,7 +467,11 @@ class TestPluginBridge:
         result = list_candidates()
         assert isinstance(result, list)
         for entry in result:
-            assert set(entry) == {
+            # A REQUIRED-key check, not an exact-set one: candidates are
+            # progressively enriched (catalog identity, brand, status), and
+            # pinning the exact shape turns every additive improvement into a
+            # test failure that says nothing about correctness.
+            assert {
                 "id",
                 "kind",
                 "label",
@@ -477,7 +481,7 @@ class TestPluginBridge:
                 # an English sentence to learn whether this integration can
                 # contribute anything at all.
                 "has_pull_adapter",
-            }
+            } <= set(entry)
             assert entry["kind"] in {"plugin", "mcp"}
             assert isinstance(entry["has_pull_adapter"], bool)
             assert all(
