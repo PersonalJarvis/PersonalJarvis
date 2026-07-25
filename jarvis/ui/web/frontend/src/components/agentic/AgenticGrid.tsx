@@ -33,11 +33,14 @@ import {
   type SplitDirection,
 } from "./AgenticTerminal";
 import type { TerminalAppearance } from "./terminalThemes";
-import { bandCapacityFor, paneGrid } from "./layout";
+import { paneGrid, workspaceBandCapacityFor } from "./layout";
+import { PromptPreview } from "./PromptPreview";
 import {
   addTerminal,
   closeTerminal,
+  composePrompt,
   promptTerminal,
+  type ComposedPreview,
   type SessionState,
 } from "@/lib/agenticIdeApi";
 
@@ -144,6 +147,11 @@ export function AgenticGrid({
   const [statuses, setStatuses] = useState<Record<string, { status: PaneStatus; detail?: string }>>({});
   const [prompt, setPrompt] = useState("");
   const [sending, setSending] = useState(false);
+  // The composed prompt waiting for the user's approval, and the wording they
+  // originally typed. Both are kept so "Send verbatim" and Escape can hand the
+  // original back — nothing typed here is ever lost behind the preview.
+  const [preview, setPreview] = useState<ComposedPreview | null>(null);
+  const [previewSource, setPreviewSource] = useState("");
 
   // Bumping a pane's token reconnects just that pane, which respawns its agent.
   // Keyed by call-sign so closing or splitting never disturbs the others.
@@ -178,7 +186,7 @@ export function AgenticGrid({
     return () => observer.disconnect();
   }, []);
 
-  const perBand = useMemo(() => bandCapacityFor(gridWidth), [gridWidth]);
+  const perBand = useMemo(() => workspaceBandCapacityFor(gridWidth), [gridWidth]);
   const grid = useMemo(
     () => paneGrid(session.terminals, perBand),
     [session.terminals, perBand],
@@ -225,12 +233,13 @@ export function AgenticGrid({
     setStatuses((prev) => ({ ...prev, [name]: { status, detail } }));
   }, []);
 
-  const send = async () => {
-    const text = prompt.trim();
-    if (!text || !target) return;
+  /** Type `text` into `target` and report honestly if it was not accepted. */
+  const deliver = async (text: string) => {
     setSending(true);
     try {
       const result = await promptTerminal(target, text);
+      setPreview(null);
+      setPreviewSource("");
       setPrompt("");
       // The text is typed either way — but if the agent did not accept it, say
       // so instead of leaving the user to wonder why nothing happened.
@@ -243,6 +252,36 @@ export function AgenticGrid({
       }
     } catch (e) {
       pushToast("error", (e as Error).message);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  /**
+   * Compose first, then ask.
+   *
+   * Jarvis turns a rough instruction into a briefed task with the relevant
+   * files attached, which is a real improvement — but replacing someone's own
+   * wording without showing them would be the wrong kind of helpful. So the
+   * rewrite is offered, not imposed: send the brief, send what you typed, or
+   * back out. If composition fails outright the original goes straight through
+   * rather than blocking on a nicety.
+   */
+  const send = async () => {
+    const text = prompt.trim();
+    if (!text || !target) return;
+    setSending(true);
+    try {
+      const composed = await composePrompt(target, text);
+      if (composed.composed && composed.composed !== text) {
+        setPreviewSource(text);
+        setPreview(composed);
+        return;
+      }
+      await deliver(text);
+    } catch (e) {
+      pushToast("warning", `Could not prepare the prompt: ${(e as Error).message}`);
+      await deliver(text);
     } finally {
       setSending(false);
     }
@@ -490,6 +529,24 @@ export function AgenticGrid({
             );
           })}
         </div>
+        {preview && (
+          <div className="mb-2">
+            <PromptPreview
+              terminal={target}
+              composed={preview.composed}
+              files={preview.files}
+              composedBy={preview.composed_by}
+              onSend={() => void deliver(preview.composed)}
+              onSendVerbatim={() => void deliver(previewSource)}
+              onCancel={() => {
+                // Give the user their own words back rather than dropping them.
+                setPrompt(previewSource);
+                setPreview(null);
+                setPreviewSource("");
+              }}
+            />
+          </div>
+        )}
         <div className="flex items-end gap-2">
           <textarea
             value={prompt}
@@ -515,7 +572,7 @@ export function AgenticGrid({
             onClick={() => void send()}
           >
             <ArrowUp className="h-4 w-4" />
-            Send
+            {sending ? "Preparing…" : "Send"}
           </button>
         </div>
         <p className="mt-2 text-[11px] text-muted-foreground">

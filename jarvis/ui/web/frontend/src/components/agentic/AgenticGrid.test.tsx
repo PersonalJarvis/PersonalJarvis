@@ -22,6 +22,7 @@ vi.mock("@/store/events", () => ({
 vi.mock("@/lib/agenticIdeApi", () => ({
   addTerminal: vi.fn(),
   closeTerminal: vi.fn(),
+  composePrompt: vi.fn(),
   promptTerminal: vi.fn(),
 }));
 
@@ -167,6 +168,18 @@ beforeEach(() => {
     ]),
   );
   vi.mocked(api.closeTerminal).mockResolvedValue(sessionWith([["Nova", 0]]));
+  vi.mocked(api.composePrompt).mockResolvedValue({
+    composed: "## Task\nRun the tests.",
+    composed_by: "llm",
+    files: [],
+  });
+  vi.mocked(api.promptTerminal).mockResolvedValue({
+    terminal: "Mika",
+    sent: "## Task\nRun the tests.",
+    composed_by: "raw",
+    files: [],
+    submitted: true,
+  });
 });
 
 afterEach(() => {
@@ -528,5 +541,70 @@ describe("restarting a dead pane", () => {
     fireEvent.click(screen.getByTestId("pane-restart-Mika"));
     expect(api.addTerminal).not.toHaveBeenCalled();
     expect(api.closeTerminal).not.toHaveBeenCalled();
+  });
+});
+
+describe("the prompt bar composes before it sends", () => {
+  const type = (text: string) => {
+    const box = screen.getByPlaceholderText(/instruction for Mika/i);
+    fireEvent.change(box, { target: { value: text } });
+    fireEvent.keyDown(box, { key: "Enter" });
+  };
+
+  it("shows the briefed prompt for approval instead of sending straight away", async () => {
+    renderGrid();
+    type("run the tests");
+
+    await waitFor(() => expect(screen.getByTestId("prompt-preview")).toBeTruthy());
+    expect(api.composePrompt).toHaveBeenCalledWith("Mika", "run the tests");
+    expect(api.promptTerminal).not.toHaveBeenCalled();
+  });
+
+  it("sends the composed prompt when the user approves it", async () => {
+    renderGrid();
+    type("run the tests");
+    await waitFor(() => expect(screen.getByTestId("prompt-preview")).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId("prompt-preview-send"));
+
+    await waitFor(() =>
+      expect(api.promptTerminal).toHaveBeenCalledWith("Mika", "## Task\nRun the tests."),
+    );
+  });
+
+  it("sends the user's own wording when they prefer it", async () => {
+    renderGrid();
+    type("run the tests");
+    await waitFor(() => expect(screen.getByTestId("prompt-preview")).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId("prompt-preview-verbatim"));
+
+    await waitFor(() =>
+      expect(api.promptTerminal).toHaveBeenCalledWith("Mika", "run the tests"),
+    );
+  });
+
+  it("gives the typed text back when the preview is discarded", async () => {
+    renderGrid();
+    type("run the tests");
+    await waitFor(() => expect(screen.getByTestId("prompt-preview")).toBeTruthy());
+
+    fireEvent.click(screen.getByTestId("prompt-preview-cancel"));
+
+    await waitFor(() => expect(screen.queryByTestId("prompt-preview")).toBeNull());
+    expect(
+      (screen.getByPlaceholderText(/instruction for Mika/i) as HTMLTextAreaElement).value,
+    ).toBe("run the tests");
+    expect(api.promptTerminal).not.toHaveBeenCalled();
+  });
+
+  it("still delivers the instruction when composing fails outright", async () => {
+    vi.mocked(api.composePrompt).mockRejectedValue(new Error("no session"));
+    renderGrid();
+    type("run the tests");
+
+    await waitFor(() =>
+      expect(api.promptTerminal).toHaveBeenCalledWith("Mika", "run the tests"),
+    );
   });
 });

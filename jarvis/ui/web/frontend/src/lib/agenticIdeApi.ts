@@ -310,10 +310,11 @@ export interface PromptResult {
  * Send an instruction to one terminal.
  *
  * `compose` asks the backend to rewrite a rough instruction into a briefed
- * prompt with `@file` references attached. The typed prompt bar leaves it off —
- * someone who typed a prompt already wrote what they meant, and silently
- * rewriting it would be the wrong kind of helpful. Spoken instructions take the
- * composed path.
+ * prompt with `@file` references attached. The typed prompt bar sends with
+ * `compose` OFF here — it composes in a separate step first (see
+ * `composePrompt`) so the user approves the rewrite before it is typed into
+ * their agent. Silently rewriting what someone typed would be the wrong kind
+ * of helpful; showing it and asking is not.
  */
 export async function promptTerminal(
   name: string,
@@ -330,4 +331,45 @@ export async function promptTerminal(
   );
   if (!res.ok) throw new Error(await detail(res));
   return (await res.json()) as PromptResult;
+}
+
+export interface ComposedPreview {
+  /** The briefed markdown prompt, ready to send. */
+  composed: string;
+  /** `llm` when a model wrote it, `fallback` when no capable model was up. */
+  composed_by: "llm" | "fallback" | "raw";
+  /** Repo-relative files the prompt references with `@`. */
+  files: string[];
+}
+
+/**
+ * Build the briefed prompt for `name` WITHOUT sending it.
+ *
+ * Same composition the spoken path uses, stopped one step short so the user can
+ * read it. Takes as long as one model call plus reading a few files — the
+ * caller should show that it is working.
+ */
+export async function composePrompt(
+  name: string,
+  prompt: string,
+): Promise<ComposedPreview> {
+  const res = await fetch(
+    `/api/agentic-ide/terminals/${encodeURIComponent(name)}/prompt`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ prompt, compose: true, dry_run: true }),
+    },
+  );
+  if (!res.ok) throw new Error(await detail(res));
+  const data = (await res.json()) as {
+    composed: string;
+    composed_by: ComposedPreview["composed_by"];
+    files: string[];
+  };
+  return {
+    composed: data.composed,
+    composed_by: data.composed_by,
+    files: data.files ?? [],
+  };
 }
