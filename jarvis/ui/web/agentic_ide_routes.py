@@ -353,13 +353,32 @@ def _unwrap_file_uri(value: str) -> str:
 
 @router.post("/session", summary="Open an Agentic-IDE workspace")
 async def start_session(req: StartSessionRequest) -> dict:
-    """Open ``folder`` with one named terminal per requested agent."""
+    """Open ``folder`` with one named terminal per requested agent.
+
+    The recent-folder history is updated here, at the user-facing open action,
+    rather than inside ``Registry.start``. Internal callers (especially unit
+    tests using temporary directories) therefore cannot pollute the user's real
+    history with folders the user never selected.
+    """
     try:
         session = await get_registry().start(
             req.folder, [t.model_dump() for t in req.terminals]
         )
     except SessionError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    split: dict[str, int] = {}
+    for terminal in session.terminals:
+        split[terminal.agent] = split.get(terminal.agent, 0) + 1
+    try:
+        await asyncio.to_thread(
+            recents.remember,
+            session.folder,
+            terminals=len(session.terminals),
+            agents=split,
+        )
+    except Exception:  # noqa: BLE001 - history must never block opening a folder
+        log.warning("Agentic IDE recent-folder history was not updated", exc_info=True)
     return {"ok": True, "session": session.to_dict()}
 
 

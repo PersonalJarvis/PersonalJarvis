@@ -13,6 +13,7 @@ from pathlib import Path
 
 import pytest
 
+from jarvis.agentic_ide import recents
 from jarvis.agentic_ide import session as session_mod
 from jarvis.agentic_ide.session import Registry, SessionError, sanitize_prompt
 from tests.fakes.fake_pty_manager import FakePtyManager
@@ -97,6 +98,22 @@ async def test_start_creates_named_terminals(registry: Registry, tmp_path: Path)
     assert [t.name for t in session.terminals] == ["Mika", "Nova"]
     assert [t.agent for t in session.terminals] == ["claude", "codex"]
     assert session.folder == str(tmp_path)
+
+
+async def test_internal_start_does_not_write_user_recents(
+    registry: Registry, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Only the user-facing open route owns recent-folder history."""
+    remembered: list[str] = []
+    monkeypatch.setattr(
+        recents,
+        "remember",
+        lambda path, **_kwargs: remembered.append(path),
+    )
+
+    await _open(registry, tmp_path, [{"agent": "claude"}])
+
+    assert remembered == []
 
 
 async def test_custom_names_are_kept_and_deduplicated(

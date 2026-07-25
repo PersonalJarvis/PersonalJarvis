@@ -420,22 +420,6 @@ class Registry:
                 file_index.prime_index(str(root))
             except Exception as exc:  # noqa: BLE001 - the index is a convenience
                 logger.warning("Agentic IDE: file index not primed: {}", exc)
-            # Remember the workspace so the next visit is one click, replaying
-            # the same terminal count and agent split (see recents.py).
-            split: dict[str, int] = {}
-            for term in terminals:
-                split[term.agent] = split.get(term.agent, 0) + 1
-            try:
-                from . import recents
-
-                await asyncio.to_thread(
-                    recents.remember,
-                    str(root),
-                    terminals=len(terminals),
-                    agents=split,
-                )
-            except Exception as exc:  # noqa: BLE001 - convenience, never fatal
-                logger.warning("Agentic IDE: recents not updated: {}", exc)
             logger.info(
                 "Agentic IDE session started: {} terminals in {}",
                 len(terminals),

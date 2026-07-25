@@ -22,7 +22,6 @@
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
-  Clock,
   CornerLeftUp,
   Folder,
   FolderGit2,
@@ -31,6 +30,7 @@ import {
   Loader2,
   RefreshCw,
   Search,
+  Star,
   Terminal,
   X,
 } from "lucide-react";
@@ -259,8 +259,8 @@ export function FolderPicker({ selected, onSelect, onSelectRecent }: FolderPicke
       {recents.length > 0 && searchHits === null && (
         <section className="space-y-2">
           <h4 className="flex items-center gap-2 text-[11px] uppercase tracking-wider text-muted-foreground">
-            <Clock className="h-3.5 w-3.5" />
-            Recent workspaces
+            <Star className="h-3.5 w-3.5 fill-current text-primary" />
+            Recent folders
           </h4>
           <ul className="grid gap-2 sm:grid-cols-2">
             {recents.map((recent) => (
@@ -275,7 +275,10 @@ export function FolderPicker({ selected, onSelect, onSelectRecent }: FolderPicke
                       : "border-border bg-card/60 hover:border-primary/40",
                   )}
                 >
-                  <FolderOpen className="h-4 w-4 shrink-0 text-primary/80" />
+                  <Star
+                    data-testid="recent-folder-star"
+                    className="h-4 w-4 shrink-0 fill-current text-primary"
+                  />
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sm font-medium">{recent.name}</span>
                     <span className="block truncate font-mono text-[10px] text-muted-foreground">

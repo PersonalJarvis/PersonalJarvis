@@ -159,6 +159,8 @@ describe("FolderPicker", () => {
     );
 
     const card = await screen.findByText("/home/ruben/webshop");
+    expect(screen.getByText("Recent folders")).toBeTruthy();
+    expect(screen.getByTestId("recent-folder-star")).toBeTruthy();
     fireEvent.click(card);
     expect(onSelect).toHaveBeenCalledWith("/home/ruben/webshop");
     expect(onSelectRecent).toHaveBeenCalledWith(
