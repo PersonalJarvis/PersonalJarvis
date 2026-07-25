@@ -35,6 +35,11 @@ Stage notes:
   date; "dinner" → event-type filter `meal`; active area → SQL prefilter).
   Runs on the fastest configured model tier. If planning fails or times out,
   the fallback is a plain hybrid search over all lists — degraded, never dead.
+  **Binding order of implementation:** a deterministic slot extractor (regex +
+  contact/area lookup + time-expression parsing) is the DEFAULT planner; the
+  LLM pass is the optional upgrade on top. On a keyless or headless install an
+  LLM-only planner is a dead path, and inside the voice budget it is the most
+  expensive stage — the deterministic floor keeps both alive.
 - **Fan-out.** Every list is a single indexed SQL query against the unified
   store; they run concurrently. Recency decay and term-rarity weighting are
   baked into the keyword/vector list scoring, so stale answers lose ties and
@@ -53,6 +58,21 @@ Stage notes:
   the user's life must carry at least one evidence permalink. **No evidence →
   say so.** The system answers "I don't have that" rather than inventing a
   plausible dinner date.
+
+## The relevance floor (binding — the "Bugatti case" lesson)
+
+RRF scores are **ordinal**: they rank candidates against each other but can
+never say "nothing here is actually relevant" — a fusion over garbage still
+produces a confident-looking top result. For the Ask view that is acceptable
+(the user explicitly searched and sees the evidence). For every **unsolicited
+surface** — context injection into the brain prompt, voice answers that
+volunteer personal facts, proactive summaries — it is the defect class the
+normal wiki already shipped and fixed once (2026-07-25, the relevance-gate
+commit): private facts surfacing in answers nobody asked for. Binding rule:
+before UltraWiki results reach any surface the user did not explicitly query,
+they must pass an **absolute relevance gate** (the wiki's three-gate pattern:
+score floor on the underlying leg scores, query-term overlap, and an
+honest empty-result path), never the bare fusion ranking.
 
 ## Cross-source reconstruction
 
