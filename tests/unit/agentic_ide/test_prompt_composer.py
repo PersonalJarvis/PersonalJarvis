@@ -191,7 +191,9 @@ async def test_an_index_that_is_not_ready_yet_does_not_block(
     file_index.reset_cache()
 
     async def _echo(**kwargs: object) -> str:
-        assert kwargs["candidates"] == []
+        # With no index there are no candidates, and the writer is told so
+        # rather than left to guess a path.
+        assert "no candidate files matched" in str(kwargs["user_block"])
         return "Review the wake word detection."
 
     monkeypatch.setattr(prompt_composer, "_llm_compose", _echo)
@@ -201,3 +203,138 @@ async def test_an_index_that_is_not_ready_yet_does_not_block(
     # The instruction goes out; with no index there is nothing to attach.
     assert "wake" in result.text.lower()
     assert result.files == []
+
+
+# ------------------------------------------------------- structured output
+async def test_the_composed_prompt_is_markdown(
+    workspace: _Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _prime(workspace)
+
+    async def _brief(**_kwargs: object) -> str:
+        return (
+            "## Task\nReview the wake provider.\n\n"
+            "## Key files\n- `@jarvis/plugins/wake/vosk_kws_provider.py` - the provider"
+        )
+
+    monkeypatch.setattr(prompt_composer, "_llm_compose", _brief)
+
+    result = await prompt_composer.compose(
+        "review the vosk wake provider", session=workspace, terminal_name="Kai"
+    )
+
+    assert result.composed_by == "llm"
+    assert result.text.startswith("## Task")
+    assert "\n" in result.text, "the line structure must survive sanitisation"
+
+
+async def test_the_writer_gets_the_rules_for_the_detected_kind(
+    workspace: _Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _prime(workspace)
+    seen: dict[str, str] = {}
+
+    async def _capture(**kwargs: object) -> str:
+        seen["system"] = str(kwargs["system_prompt"])
+        return "## Task\nDo it."
+
+    monkeypatch.setattr(prompt_composer, "_llm_compose", _capture)
+
+    await prompt_composer.compose(
+        "review the wake provider", session=workspace, terminal_name="Kai"
+    )
+
+    assert "REVIEW task" in seen["system"]
+    assert "IMPLEMENTATION task" not in seen["system"]
+
+
+async def test_the_writer_is_shown_an_outline_of_the_candidate_files(
+    workspace: _Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Without the outline the prompt can only describe code, not name it."""
+    provider = (
+        Path(workspace.folder) / "jarvis" / "plugins" / "wake" / "vosk_kws_provider.py"
+    )
+    provider.write_text(
+        '"""Vosk keyword spotting."""\n\n\n'
+        "def candidate_shape_ok(span: float) -> bool:\n    return True\n",
+        encoding="utf-8",
+    )
+    _prime(workspace)
+    seen: dict[str, str] = {}
+
+    async def _capture(**kwargs: object) -> str:
+        seen["user"] = str(kwargs["user_block"])
+        return "## Task\nDo it."
+
+    monkeypatch.setattr(prompt_composer, "_llm_compose", _capture)
+
+    await prompt_composer.compose(
+        "review the vosk wake provider", session=workspace, terminal_name="Kai"
+    )
+
+    assert "candidate_shape_ok" in seen["user"]
+    assert "Vosk keyword spotting." in seen["user"]
+
+
+async def test_no_quality_writer_degrades_openly(
+    workspace: _Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Rather than silently demoting to whatever small model is left."""
+    _prime(workspace)
+    monkeypatch.setattr(prompt_composer, "_resolve_writer", lambda: None)
+
+    result = await prompt_composer.compose(
+        "review the vosk wake provider", session=workspace, terminal_name="Kai"
+    )
+
+    assert result.composed_by == "fallback"
+    assert "quality-tier" in result.note
+    assert result.text.startswith("## Task")
+
+
+async def test_a_prompt_ending_on_a_reference_is_repaired(
+    workspace: _Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A trailing @path holds the completion popup open and never submits."""
+    _prime(workspace)
+
+    async def _trailing(**_kwargs: object) -> str:
+        return (
+            "## Task\nReview it.\n\n"
+            "## Key files\n- `@jarvis/plugins/wake/vosk_kws_provider.py`"
+        )
+
+    monkeypatch.setattr(prompt_composer, "_llm_compose", _trailing)
+
+    result = await prompt_composer.compose(
+        "review the vosk wake provider", session=workspace, terminal_name="Kai"
+    )
+
+    from jarvis.agentic_ide.prompt_blueprint import ends_on_reference
+
+    assert not ends_on_reference(result.text)
+
+
+async def test_an_explicitly_pinned_brain_is_used(
+    workspace: _Session, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The parameter still works for a caller that means it."""
+    _prime(workspace)
+    pinned = object()
+    seen: dict[str, object] = {}
+
+    async def _capture(**kwargs: object) -> str:
+        seen["brain"] = kwargs["brain"]
+        return "## Task\nDo it."
+
+    monkeypatch.setattr(prompt_composer, "_llm_compose", _capture)
+    monkeypatch.setattr(
+        prompt_composer, "_resolve_writer", lambda: pytest.fail("should not resolve")
+    )
+
+    await prompt_composer.compose(
+        "review it", session=workspace, terminal_name="Kai", brain=pinned
+    )
+
+    assert seen["brain"] is pinned

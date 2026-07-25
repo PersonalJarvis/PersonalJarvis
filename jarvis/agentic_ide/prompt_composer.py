@@ -9,31 +9,53 @@ by asking what you meant. What the user asked for is that *Jarvis* does the
 prompt engineering: it knows the repo, so it turns that sentence into a briefed
 task with the relevant files already attached.
 
+The prompt's SHAPE lives in ``prompt_blueprint`` and the guardrails it carries
+are chosen by ``task_kind``; this module is the orchestration around them:
+which files to offer, what to read of them, which model writes it, and what
+happens when any of that is unavailable.
+
 What the composed prompt contains, and why each part earns its place:
 
-* **The task, as an imperative.** Fillers, the addressing clause ("tell Kai
-  to …") and speech artefacts are gone; what remains is what to do.
-* **File references in the agent's own syntax** (``@path``). Both supported
-  CLIs read ``@`` as "pull this file into context", which removes the agent's
-  entire opening round of blind searching. Paths come from the workspace file
-  index — never invented, and every one is verified to exist before it ships.
-* **A short workspace line** (stack, branch) when it is not obvious, so the
-  agent does not re-derive it.
+* **A briefed task in markdown**, not a rephrased sentence. Opus 5 and Fable 5
+  both work best from a complete specification given up front, so the prompt
+  states the task, why it matters, the files, the scope bound, and what done
+  looks like — dropping any section it cannot ground rather than padding it.
+* **File references in the agent's own syntax** (``@path``), inside the Key
+  files list with a reason each. Both supported CLIs read ``@`` as "pull this
+  file into context", which removes the agent's entire opening round of blind
+  searching. Paths come from the workspace file index — never invented, and
+  every one is verified to exist before it ships.
+* **Real symbol names**, because the writer reads a bounded outline of those
+  files first (``code_skeleton``). Without it the prompt can only say "the
+  ranking logic" where it could say ``_fuse_ranked()``.
+* **The repository's own house rules**, so ``## Done when`` cites the project's
+  actual test command instead of inventing a plausible one.
 
 Two-layer construction, because the product must work for a downloader with no
 API key at all (§3):
 
-1. **Composed** — one bounded call to the frontier chain
-   (``resolve_frontier_brain``: key-aware, crosses provider families, AP-22).
-   It gets the utterance, the project profile and the candidate files, and
-   returns the prompt.
-2. **Deterministic fallback** — regex cleanup plus the same file references,
-   used when no provider is reachable, the call fails, times out, or comes back
+1. **Composed** — one bounded call to ``resolve_quality_brain``. Deliberately
+   NOT the full frontier chain: that chain ends in small, fast models so a core
+   path never dies, and a prompt written by one of those looks fine while being
+   materially worse. Here the output IS the product, so a chain that cannot
+   reach a capable model returns nothing and we fall to layer 2 openly.
+2. **Deterministic fallback** — the same markdown skeleton filled by regex,
+   used when no provider qualifies, the call fails, times out, or comes back
    empty. It is *always* better than the raw transcript, so the feature never
    depends on a model being available.
 
 The composer is honest about which layer produced the result (``composed_by``),
 because the readback the user hears should not claim more than happened.
+
+**On latency (deliberate trade, maintainer decision 2026-07-25).** An earlier
+change routed this through the router-tier model the voice turn already held,
+because a rewrite took 1-3 s there against 7-8 s on the deep tier. That
+optimised the wrong axis: the maintainer's instruction was that these prompts
+must be accurate about the codebase and "must not be dumb", and chose the
+slower, better prompt explicitly. Reading file outlines costs more still. So
+the composer takes its time and the bound below is generous — what must never
+happen is a silent demotion to a weaker model, because nobody inspects a prompt
+that looks fine.
 """
 from __future__ import annotations
 
@@ -48,40 +70,19 @@ from .file_index import cached_index
 from .session import MAX_PROMPT_CHARS, sanitize_prompt
 
 # The composer is not on the voice hot path the way an ack is, but the user is
-# waiting to hear "sent to Kai" — past a few seconds it feels broken. On timeout
-# the deterministic prompt ships, so this bound costs quality, never delivery.
+# waiting to hear "sent to Kai". On timeout the deterministic prompt ships, so
+# this bound costs quality, never delivery.
 #
 # Measured 2026-07-25 on the live chain: a fast router-tier model answers in
-# 1-3 s, while the deep frontier tier (a thinking model) took 7-8 s for the same
-# rewrite. Callers that hold a fast brain pass it in; 12 s leaves room for the
-# slow path to still succeed rather than silently demoting every composition to
-# the regex fallback, which an 8 s bound did.
-COMPOSE_TIMEOUT_S = 12.0
+# 1-3 s and the deep tier took 7-8 s for the same rewrite. Reading file outlines
+# adds to that. The bound is therefore generous rather than tight: a bound that
+# expires mid-composition does not produce a faster good prompt, it produces the
+# regex one — which an earlier 8 s bound did routinely.
+COMPOSE_TIMEOUT_S = 20.0
 
 # How many files may be attached. Enough to point the agent at a feature's
 # surface; few enough that the agent's context is not flooded with guesses.
 MAX_FILE_REFERENCES = 5
-
-_SYSTEM_PROMPT = """\
-You turn a spoken instruction into a precise prompt for a coding agent (Claude \
-Code / Codex) that is already running inside the user's repository.
-
-Rules:
-- Output ONLY the prompt text. No preamble, no explanation, no quotes, no \
-markdown fences.
-- Write it as a direct instruction to the coding agent, in the imperative.
-- Preserve every constraint, file, symbol and intent the user expressed. Do not \
-invent requirements, scope, or acceptance criteria they did not state.
-- Remove speech artefacts: filler words, false starts, self-corrections, and \
-the clause that addressed the agent by name ("tell Kai to ...").
-- If the user was vague, keep it vague — state the goal and let the agent \
-investigate. Never fabricate specifics to make the prompt look complete.
-- Reference relevant files with @path syntax on their own line at the end, \
-using ONLY paths from the candidate list you are given. Omit the line entirely \
-if no candidate is clearly relevant.
-- Write the prompt in the same language the user spoke.
-- Keep it under 1200 characters.
-"""
 
 # Speech artefacts the deterministic layer removes. Matching *input vocabulary*
 # in the supported locales — these are the words people actually say while
@@ -173,15 +174,6 @@ def _file_candidates(session, instruction: str, limit: int) -> list[str]:  # noq
     return _existing(session.folder, index.suggest(instruction, limit=limit))
 
 
-def _render_fallback(instruction: str, files: list[str]) -> str:
-    body = _clean_speech(instruction)
-    if not body:
-        body = " ".join((instruction or "").split())
-    if files:
-        body = f"{body}\n\n{' '.join('@' + f for f in files)}"
-    return body
-
-
 def _extract_referenced(text: str) -> list[str]:
     """``@path`` tokens in a composed prompt, in order of appearance."""
     seen: list[str] = []
@@ -192,72 +184,113 @@ def _extract_referenced(text: str) -> list[str]:
     return seen
 
 
+def _resolve_writer():  # noqa: ANN202 - Brain | None, avoid an import cycle
+    """The model that writes prompts, or None when only fast tiers are up.
+
+    Uses ``resolve_quality_brain`` rather than the full frontier chain: the
+    latter is built so a core path never dies and therefore ends in small, fast
+    models. Here the OUTPUT is the product, and a brief written by a mini model
+    is worse in a way nobody notices — it reads perfectly well. Returning None
+    lets the caller degrade to the deterministic prompt and say so.
+    """
+    from jarvis.brain.resolver import resolve_quality_brain
+    from jarvis.core.config import load_config
+
+    try:
+        return resolve_quality_brain(load_config())
+    except Exception:  # noqa: BLE001 - resolution must never break a turn
+        logger.info("Agentic IDE prompt writer could not be resolved", exc_info=True)
+        return None
+
+
+# How much of the repository's agent instructions to carry. Enough for the
+# headline conventions; far short of pasting a whole CLAUDE.md into every call.
+_HOUSE_RULES_CHARS = 1200
+
+
+def _house_rules(session) -> str:  # noqa: ANN001 - Session, avoid an import cycle
+    """The repository's own conventions, so ``## Done when`` stays grounded.
+
+    Without this the writer has to guess a test command, and a guessed one is
+    exactly the kind of invented acceptance criterion the blueprint forbids.
+    """
+    from .code_skeleton import skeleton_for
+
+    names = list(getattr(session.profile, "instruction_files", None) or [])
+    for name in names:
+        text = skeleton_for(session.folder, name, max_chars=_HOUSE_RULES_CHARS)
+        if text:
+            return f"From {name}:\n{text}"
+    return ""
+
+
 async def _llm_compose(
     *,
-    utterance: str,
-    instruction: str,
-    session,  # noqa: ANN001 - Session, avoid an import cycle
-    terminal_name: str,
-    agent_display: str,
-    candidates: list[str],
-    brain=None,  # noqa: ANN001 - Brain, avoid an import cycle
+    brain,  # noqa: ANN001 - Brain, avoid an import cycle
+    system_prompt: str,
+    user_block: str,
 ) -> str:
-    """One bounded call that writes the prompt.
-
-    ``brain`` lets a caller that already holds a warm, FAST model pass it in —
-    the router-tier brain the voice turn is using anyway. That matters: measured
-    on the live chain, a rewrite took 1-3 s there against 7-8 s on the deep
-    frontier tier, which is a thinking model doing far more work than rephrasing
-    one sentence needs.
-
-    Without one (the REST/CLI path, which holds no brain), it falls back to
-    ``resolve_frontier_brain`` — the shared key-aware chain that follows the
-    user's own configuration and crosses provider families when the primary is
-    dead (AP-21 / AP-22), rather than a pinned provider that would brick this
-    for every downloader with a different key.
-    """
+    """One bounded call that writes the prompt."""
     from jarvis.core.protocols import BrainMessage, BrainRequest
-
-    if brain is None:
-        from jarvis.brain.resolver import resolve_frontier_brain
-        from jarvis.core.config import load_config
-
-        brain = resolve_frontier_brain(load_config())
-
-    profile_lines = "\n".join(session.profile.summary_lines())
-    candidate_block = (
-        "\n".join(f"- {c}" for c in candidates)
-        if candidates
-        else "(no candidate files matched — omit the @ line)"
-    )
-    user_block = (
-        f"The user is talking to the coding agent {agent_display} running in a "
-        f"terminal they call {terminal_name}.\n\n"
-        f"WORKSPACE\n{profile_lines}\n\n"
-        f"CANDIDATE FILES (repo-relative; use only these in @ references)\n"
-        f"{candidate_block}\n\n"
-        f"WHAT THE USER SAID (verbatim speech transcript)\n{utterance}\n\n"
-        f"THE INSTRUCTION PART, WITH THE ADDRESSING REMOVED\n{instruction}\n\n"
-        f"Write the prompt now."
-    )
 
     request = BrainRequest(
         messages=(BrainMessage(role="user", content=user_block),),
-        system=_SYSTEM_PROMPT,
+        system=system_prompt,
         # Deterministic rewriting, not creative writing: the prompt must carry
         # the user's intent, so temperature stays low.
         temperature=0.2,
-        max_tokens=800,
+        # A structured brief with five sections needs room; 800 truncated it.
+        max_tokens=2000,
         stream=True,
-        # A prompt rewrite needs no internal reasoning budget, and on
-        # thinking-heavy models it would eat max_tokens and truncate the answer.
-        reasoning_effort="none",
+        # Turning a spoken sentence plus a set of file outlines into a briefed
+        # task is judgement work, not transcription. The documentation is
+        # explicit that thinking disabled performs worse than a modest effort at
+        # comparable cost, and "none" is what made this a rephraser.
+        reasoning_effort="medium",
     )
     chunks: list[str] = []
     async for delta in brain.complete(request):
         if delta.content:
             chunks.append(delta.content)
     return "".join(chunks).strip()
+
+
+async def _compose_once(
+    *,
+    brain,  # noqa: ANN001 - Brain, avoid an import cycle
+    session,  # noqa: ANN001 - Session, avoid an import cycle
+    said: str,
+    base_instruction: str,
+    terminal_name: str,
+    agent_display: str,
+    candidates: list[str],
+    kind: str,
+) -> str:
+    """Read the candidate files, then make the one writing call.
+
+    File reading runs in a worker thread: it is disk IO on a path a voice turn
+    is waiting on, and the whole call already sits under ``COMPOSE_TIMEOUT_S``.
+    """
+    from . import prompt_blueprint as blueprint
+    from .code_skeleton import skeletons as read_skeletons
+
+    outlines = await asyncio.to_thread(read_skeletons, session.folder, candidates)
+    house_rules = await asyncio.to_thread(_house_rules, session)
+
+    return await _llm_compose(
+        brain=brain,
+        system_prompt=blueprint.system_prompt(kind),
+        user_block=blueprint.user_block(
+            utterance=said,
+            instruction=base_instruction,
+            terminal_name=terminal_name,
+            agent_display=agent_display,
+            profile_lines=session.profile.summary_lines(),
+            candidates=candidates,
+            skeletons=outlines,
+            house_rules=house_rules,
+        ),
+    )
 
 
 def _strip_wrapper(text: str) -> str:
@@ -284,70 +317,87 @@ async def compose(
 ) -> ComposedPrompt:
     """Build the prompt for ``terminal_name`` out of what the user said.
 
-    Pass ``brain`` when you already hold a fast one (see ``_llm_compose``);
-    omitting it resolves the shared key-aware chain.
+    ``brain`` pins the writing model explicitly. Leave it None — the default
+    resolves a quality-tier model and degrades openly when none is reachable.
+    Passing a fast model here trades prompt accuracy for a few seconds, which
+    is the trade the maintainer decided against on 2026-07-25.
 
     Never raises: every failure path lands on the deterministic prompt, because
-    "the agent got a slightly rougher prompt" is a far better outcome than "your
+    "the agent got a rougher prompt" is a far better outcome than "your
     instruction vanished".
     """
+    from . import prompt_blueprint as blueprint
+    from .task_kind import classify
+
     said = (utterance or "").strip()
-    base_instruction = (instruction or said).strip()
+    base_instruction = _clean_speech(instruction or said) or (instruction or said).strip()
     if not said:
         return ComposedPrompt(text="", composed_by="raw", note="empty instruction")
 
     candidates = _file_candidates(session, base_instruction or said, max_files * 2)
 
-    if not use_llm:
-        text = _render_fallback(base_instruction, candidates[:max_files])
+    def _deterministic(composed_by: str, note: str = "") -> ComposedPrompt:
+        chosen = candidates[:max_files]
         return ComposedPrompt(
-            text=sanitize_prompt(text)[:MAX_PROMPT_CHARS],
-            files=candidates[:max_files],
-            composed_by="raw",
+            text=sanitize_prompt(
+                blueprint.render_fallback(base_instruction, chosen), keep_newlines=True
+            )[:MAX_PROMPT_CHARS],
+            files=chosen,
+            composed_by=composed_by,
+            note=note,
         )
 
-    note = ""
+    if not use_llm:
+        return _deterministic("raw")
+
+    writer = brain if brain is not None else _resolve_writer()
+    if writer is None:
+        # Deliberately NOT falling through to whatever model is left: see the
+        # module docstring. Plain and honest beats polished and quietly worse.
+        return _deterministic("fallback", "no quality-tier provider reachable")
+
     try:
         composed = await asyncio.wait_for(
-            _llm_compose(
-                utterance=said,
-                instruction=base_instruction,
+            _compose_once(
+                brain=writer,
                 session=session,
+                said=said,
+                base_instruction=base_instruction,
                 terminal_name=terminal_name,
                 agent_display=agent_display,
                 candidates=candidates,
-                brain=brain,
+                kind=classify(base_instruction),
             ),
             timeout=COMPOSE_TIMEOUT_S,
         )
         composed = _strip_wrapper(composed)
     except TimeoutError:
-        composed, note = "", f"composer timed out after {COMPOSE_TIMEOUT_S:g}s"
+        return _deterministic(
+            "fallback", f"composer timed out after {COMPOSE_TIMEOUT_S:g}s"
+        )
     except Exception as exc:  # noqa: BLE001 - any provider failure degrades
-        composed, note = "", f"composer unavailable ({type(exc).__name__})"
         logger.info("Agentic IDE prompt composer fell back: {}", exc)
+        return _deterministic("fallback", f"composer unavailable ({type(exc).__name__})")
 
-    if composed:
-        # Keep only the references that survive an existence check — the model
-        # may echo a candidate that was renamed, or invent one outright.
-        referenced = _existing(session.folder, _extract_referenced(composed))
-        dropped = [r for r in _extract_referenced(composed) if r not in referenced]
-        for bad in dropped:
-            composed = composed.replace(f"@{bad}", bad)
-        final = sanitize_prompt(composed)[:MAX_PROMPT_CHARS]
-        if final:
-            return ComposedPrompt(
-                text=final, files=referenced, composed_by="llm", note=note
-            )
-        note = note or "composer returned nothing usable"
+    if not composed:
+        return _deterministic("fallback", "composer returned nothing usable")
 
-    chosen = candidates[:max_files]
-    return ComposedPrompt(
-        text=sanitize_prompt(_render_fallback(base_instruction, chosen))[:MAX_PROMPT_CHARS],
-        files=chosen,
-        composed_by="fallback",
-        note=note or "no provider reachable",
-    )
+    # Keep only the references that survive an existence check — the model may
+    # echo a candidate that was renamed, or invent one outright. A dead @path
+    # costs the agent a turn; the bare path costs it nothing.
+    referenced = _existing(session.folder, _extract_referenced(composed))
+    for bad in (r for r in _extract_referenced(composed) if r not in referenced):
+        composed = composed.replace(f"@{bad}", bad)
+
+    if blueprint.ends_on_reference(composed):
+        # A trailing @path or /command holds the completion popup open, and the
+        # Enter that follows picks a suggestion instead of submitting.
+        composed = f"{composed}\n\nStart there; search further if needed."
+
+    final = sanitize_prompt(composed, keep_newlines=True)[:MAX_PROMPT_CHARS]
+    if not final:
+        return _deterministic("fallback", "composer returned nothing usable")
+    return ComposedPrompt(text=final, files=referenced, composed_by="llm")
 
 
 __all__ = [
