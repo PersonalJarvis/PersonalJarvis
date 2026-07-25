@@ -1735,9 +1735,15 @@ class CriticRunner:
             # had written the file correctly (live repro mission_019e5960).
             # bypassPermissions (same as the worker) makes claude answer the
             # prompt directly. The critic is read-only by intent: the diff is
-            # in the prompt and the prompt never asks for a write, so no file
-            # is touched regardless of permission mode.
+            # in the prompt and the prompt never asks for a write — and since
+            # 2026-07-25 that intent is ENFORCED: the write/shell tools are
+            # disallowed outright, while Read/Glob/Grep stay available for the
+            # ground-truth verification the recovery parser narrates. A
+            # denylist is drift-safe here (an unknown name in the list is
+            # inert, unlike an allowlist that could silence a renamed read
+            # tool).
             "--permission-mode", "bypassPermissions",
+            "--disallowedTools", "Write,Edit,MultiEdit,NotebookEdit,Bash",
             "--add-dir", str(worktree),
         ]
         if model:
@@ -1971,6 +1977,7 @@ class CriticRunner:
         the verdict text, then strip any stray ```json fences.
         """
         from jarvis.missions.workers.codex_direct_worker import (
+            _MISSION_REASONING_EFFORT,
             _resolve_codex_binary,
         )
 
@@ -1997,6 +2004,12 @@ class CriticRunner:
             "--ignore-user-config",
             "--sandbox", "read-only",
             "-c", "approval_policy=never",
+            # Deterministic verdict latency: cap the reasoning effort to the
+            # same tier as the worker (shared constant). --ignore-user-config
+            # skips the user's config, so WITHOUT this the critic ran on the
+            # upstream default and, with a user config, inherited xhigh -- a
+            # slow critic eats the correction-iteration time reserve.
+            "-c", f"model_reasoning_effort={_MISSION_REASONING_EFFORT}",
             "--add-dir", str(worktree),
             "--output-schema", schema_path,
         ]
