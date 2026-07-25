@@ -149,6 +149,89 @@ def resolve_frontier_brain(
     )
 
 
+def _is_fast_tier(config: JarvisConfig, provider: str, model: str | None) -> bool:
+    """Whether ``(provider, model)`` is this install's latency-first tier.
+
+    Classification comes from the tier tables and from the user's OWN router
+    configuration — never from a model name or a provider name (AP-21). A model
+    the tables do not know is treated as qualified: we filter what we know, we
+    do not guess from a name like "flash" or "mini", because that is exactly the
+    name-based gating that breaks silently for every provider we did not think
+    of.
+    """
+    name = (model or "").strip()
+    if not name:
+        return False
+
+    router_cfg = getattr(getattr(config, "brain", None), "router", None)
+    if (
+        getattr(router_cfg, "provider", None) == provider
+        and (getattr(router_cfg, "model", None) or "").strip() == name
+    ):
+        return True
+
+    fast_default = TIER_DEFAULTS_BY_PROVIDER.get("router", {}).get(provider, "")
+    deep_default = TIER_DEFAULTS_BY_PROVIDER.get("deep", {}).get(provider, "")
+    # A provider whose fast and deep defaults coincide has only one model worth
+    # having; filtering it away would leave that provider with nothing.
+    return bool(fast_default) and name == fast_default and name != deep_default
+
+
+def resolve_quality_brain(
+    config: JarvisConfig,
+    *,
+    bus: EventBus | None = None,
+) -> Brain | None:
+    """A Brain for work that must not be done by a small model, or None.
+
+    ``resolve_frontier_brain`` walks the whole fallback chain, and that chain
+    deliberately ends in small, fast, cheap models so a core path never dies.
+    For callers whose OUTPUT is the product rather than a step towards it, that
+    trade is wrong: the Agentic IDE's prompt composer writes the brief a coding
+    agent then works from, and a brief written by a mini model on a depleted
+    primary is worse than an honestly plain deterministic one — and worse
+    *invisibly*, which is the part that matters. Nobody inspects a prompt that
+    looks fine.
+
+    So this resolver skips the latency-first stages and returns None when none
+    of the remaining ones can be instantiated, leaving the caller to degrade
+    openly. Never raises: None is the answer, not an error.
+    """
+    _ensure_bus_subscription(bus)
+    try:
+        chain = list(_resolve_chain(config))
+    except Exception:  # noqa: BLE001 - a config problem must not kill the caller
+        log.info("resolve_quality_brain: chain could not be built", exc_info=True)
+        return None
+
+    for provider, model in chain:
+        if _is_fast_tier(config, provider, model):
+            log.debug(
+                "resolve_quality_brain: skipping %s/%s (latency-first tier)",
+                provider, model,
+            )
+            continue
+        cache_key = (provider, model or "")
+        cached = _cache.get(cache_key)
+        if cached is not None:
+            return cached
+        try:
+            brain = _get_registry().instantiate(
+                provider, **({"model": model} if model else {}),
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.info(
+                "resolve_quality_brain: %s/%s not instantiable (%s)",
+                provider, model or "<default>", type(exc).__name__,
+            )
+            continue
+        _cache[cache_key] = brain
+        return brain
+
+    log.info("resolve_quality_brain: no quality-tier provider reachable")
+    return None
+
+
 # ----------------------------------------------------------------------
 # Internal — Chain-Building
 # ----------------------------------------------------------------------
