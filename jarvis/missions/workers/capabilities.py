@@ -222,14 +222,24 @@ def _awareness_recall_available() -> bool:
 
 
 def _ultrawiki_worker_tool_available() -> bool:
-    """Gate for the ``ultrawiki-search`` grant — deliberately OFF for now.
+    """``ultrawiki-search`` joins the grant only when it can actually answer.
 
-    Flips live once the ``ultrawiki-search`` router tool ships: the honest
-    condition is ``cfg.ultrawiki.enabled`` AND a running ``UltraWikiService``
-    on the web app state. Until then this returns False so the name never
-    enters a grant (phantom-tool rule, ADR-0030).
+    Honest grant condition (ADR-0030): UltraWiki mode is enabled AND the
+    ``UltraWikiService`` is live on the web-app state. The startup race is
+    covered by ``ensure_started()`` inside ``service.search()``; the
+    gateway-catalog intersection remains the structural backstop for a tool
+    that never loaded. Fails closed on any error (phantom-tool rule).
     """
-    return False
+    try:
+        from jarvis.core import runtime_refs  # noqa: PLC0415 — lazy, boot-safe
+        from jarvis.core.config import load_config  # noqa: PLC0415
+
+        if not load_config().ultrawiki.enabled:
+            return False
+        app = runtime_refs.get_web_app()
+        return getattr(getattr(app, "state", None), "ultrawiki", None) is not None
+    except Exception:  # noqa: BLE001 - config/runtime drift must not break missions
+        return False
 
 
 def restricted_worker_knowledge_tools() -> tuple[str, ...]:

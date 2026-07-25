@@ -136,16 +136,35 @@ def test_awareness_gate_adds_session_memory(monkeypatch: pytest.MonkeyPatch) -> 
     assert "awareness-recall" in restricted_worker_knowledge_tools()
 
 
-def test_ultrawiki_gate_ships_fail_closed(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The ultrawiki-search grant stays OFF until the router tool + service
-    exist — a phantom tool must never enter a grant (ADR-0030)."""
+def test_ultrawiki_gate_requires_mode_and_live_service(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The ultrawiki-search grant is honest: only when UltraWiki mode is ON
+    and the service is live does the name enter a grant — a phantom tool
+    must never reach a worker (ADR-0030)."""
+    from types import SimpleNamespace
+
+    from jarvis.core import runtime_refs
     from jarvis.missions.workers import capabilities
 
+    # Test environment: no live service (and default mode off) → closed.
     assert capabilities._ultrawiki_worker_tool_available() is False
     assert "ultrawiki-search" not in restricted_worker_knowledge_tools()
 
-    monkeypatch.setattr(capabilities, "_ultrawiki_worker_tool_available", lambda: True)
+    # Mode enabled + live service on the web-app state → granted.
+    cfg = SimpleNamespace(ultrawiki=SimpleNamespace(enabled=True))
+    monkeypatch.setattr("jarvis.core.config.load_config", lambda *a, **k: cfg)
+    monkeypatch.setattr(
+        runtime_refs,
+        "get_web_app",
+        lambda: SimpleNamespace(state=SimpleNamespace(ultrawiki=object())),
+    )
+    assert capabilities._ultrawiki_worker_tool_available() is True
     assert "ultrawiki-search" in restricted_worker_knowledge_tools()
+
+    # Mode enabled but the service is absent → still closed.
+    monkeypatch.setattr(runtime_refs, "get_web_app", lambda: None)
+    assert capabilities._ultrawiki_worker_tool_available() is False
 
 
 def test_every_granted_knowledge_tool_passes_the_broker_denylist(

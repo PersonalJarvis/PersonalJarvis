@@ -1874,6 +1874,12 @@ def test_router_tools_is_pure_dispatcher_set() -> None:
             # "what is in my wiki" in one round. Read-only, never a spawn.
             # ADR-0011 amendment "wiki-list tool".
             "wiki-list",
+            # UltraWiki semantic search (2026-07-25): fused keyword+vector
+            # retrieval with citations — the pull primitive of the semantic
+            # memory mode. Read-only, never a spawn (AP-5/AP-14); workers
+            # reach it only via the ADR-0025 broker (ADR-0030 gate).
+            # ADR-0011 amendment "UltraWiki Search".
+            "ultrawiki-search",
             # CLI-Integration (2026-05-24): virtual loader that expands to one
             # cli_<name> tool per connected & usable CLI. Router-tier only — a
             # cli_<name> tool is a direct safe-gated action, never a recursive

@@ -48,7 +48,7 @@ the static wiki triple stays exported for read-compat. Per tool:
 | `awareness-recall` | **granted** | `[awareness].enabled`, fail closed |
 | `search_web` | **granted** | none (keyless, safe-tier) |
 | `contact-lookup` | **granted** | none (degrades to a clean "contacts unavailable" error) |
-| `ultrawiki-search` | **planned** | gate ships fail-closed OFF; flips when the router tool + `UltraWikiService` exist (`cfg.ultrawiki.enabled` ∧ live service) |
+| `ultrawiki-search` | **granted** | `cfg.ultrawiki.enabled` ∧ live `UltraWikiService` on the web-app state, fail closed (gate went live 2026-07-25 together with the router tool, ADR-0011 amendment "UltraWiki Search") |
 | `awareness-snapshot` | **excluded** | live-desktop read: near-zero value in an isolated worktree, pure privacy leakage of current screen activity into external CLI transcripts |
 | `contact-upsert` | **excluded (deferred)** | unattended write to the contact store; least privilege — not part of a knowledge surface |
 

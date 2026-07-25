@@ -1034,3 +1034,23 @@ reports that as a network problem instead of implying a bad credential.
 - `tests/unit/plugins/tool/test_home_assistant_rest.py`
 - `tests/unit/marketplace/test_instance_url.py`
 - `tests/unit/brain/test_routing.py` (ROUTER_TOOLS parity)
+
+## Amendment: UltraWiki Search (2026-07-25)
+
+`ultrawiki-search` joins `ROUTER_TOOLS`: the read-only pull primitive over
+the UltraWiki semantic store (fused keyword + vector retrieval with citation
+permalinks, `jarvis/plugins/tool/ultrawiki_search.py`). Direct safe-gated
+read, never a spawn (AP-5/AP-14). Resolver-not-instance wiring (the
+UltraWikiService is built by the WebServer after the brain — the wiki-ingest
+lazy-curator precedent); the tool loads even while UltraWiki mode is
+disabled and answers with an honest steer to the classic `wiki-*` tools, so
+the router's tool surface stays stable across mode toggles. Mission workers
+reach it only through the ADR-0025 broker grant once the ADR-0030 gate is
+live. A dedicated `who_is` primitive stays DEFERRED until the UltraWiki P5
+identity layer exists; until then `ultrawiki-search` answers "who is X"
+queries via hybrid search.
+
+### Regression guards
+
+- `tests/unit/plugins/tool/test_ultrawiki_search_tool.py`
+- `tests/unit/brain/test_routing.py` (ROUTER_TOOLS exact set)
