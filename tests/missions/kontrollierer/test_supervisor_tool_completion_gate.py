@@ -1,14 +1,4 @@
-"""Supervisor-tool completion certificate: integrity gates, refusals inform.
-
-Two failure classes, two different consequences (BUG-096 four-facts rule):
-
-* INTEGRITY failures (a call still running when the grant closed /
-  ``outcome_unknown``) — the supervisor cannot certify what happened, so the
-  iteration is aborted and the critic never runs.
-* OBSERVED refusals (denied / timed-out / errored calls) — the worker saw the
-  error in-stream and could adapt, so the iteration stays reviewable and the
-  critic receives the refusal list as context.
-"""
+"""The critic cannot approve past an unclean supervisor-tool grant."""
 
 from __future__ import annotations
 
@@ -136,12 +126,10 @@ def _clean_runtime_refs() -> Any:
 
 
 @pytest.mark.asyncio
-async def test_observed_tool_error_reaches_critic_with_refusal_note(
+async def test_worker_cannot_hide_failed_tool_call_from_approving_critic(
     manager: MissionManager,
     tmp_path: Path,
 ) -> None:
-    """A tool ERROR the worker observed in-stream no longer kills the
-    iteration — the critic reviews the work WITH the refusal as context."""
     gateway = _Gateway(
         ToolResult(success=False, output=None, error="connector unavailable")
     )
@@ -158,74 +146,14 @@ async def test_observed_tool_error_reaches_critic_with_refusal_note(
 
     state = await kontrollierer.run_mission(mission_id)
 
-    assert state == MissionState.APPROVED
+    assert state == MissionState.FAILED
+    assert critic.calls == []
     assert gateway.calls == 1
-    assert len(critic.calls) == 1
-    critic_log = critic.calls[0]["worker_log"]
-    assert "supervisor-tool refusals" in critic_log
-    assert "external-action" in critic_log
-    assert "connector unavailable" in critic_log
-
-
-@pytest.mark.asyncio
-async def test_denied_tool_call_reaches_critic_and_is_named(
-    manager: MissionManager,
-    tmp_path: Path,
-) -> None:
-    """An approval denial (e.g. the unattended 60 s timeout) is an observed
-    refusal: the mission is graded, not auto-failed as supervisor_tool_failed."""
-    gateway = _Gateway(
-        ToolResult(success=False, output=None, error="approval-denied (timeout)")
-    )
-    runtime_refs.set_supervisor_tool_gateway(gateway)
-    worker = _BrokerCallingWorker()
-    critic = FakeCriticRunner(_make_approve_verdict())
-    kontrollierer = _make_kontrollierer(
-        manager=manager,
-        tmp_path=tmp_path,
-        critic=critic,
-        worker_factory_fn=lambda _step: worker,
-    )
-    mission_id = await manager.dispatch(prompt="Perform an external action")
-
-    state = await kontrollierer.run_mission(mission_id)
-
-    assert state == MissionState.APPROVED
-    assert len(critic.calls) == 1
-    critic_log = critic.calls[0]["worker_log"]
-    assert "denied" in critic_log
     events = await manager.store.events_for_mission(mission_id)
+    approved = [e for e in events if e.payload.event_type == "MissionApproved"]
     failed = [e for e in events if e.payload.event_type == "MissionFailed"]
-    assert failed == []
-
-
-def test_summary_partitions_refusals_from_integrity_failures() -> None:
-    """Every non-success status belongs to exactly one bucket: observed
-    refusal (keeps the iteration reviewable) or integrity failure (gates)."""
-    from jarvis.missions.workers.worker_tool_broker import (
-        WorkerToolCallOutcome,
-        WorkerToolExecutionSummary,
-    )
-
-    def call(status: str) -> WorkerToolCallOutcome:
-        return WorkerToolCallOutcome(trace_id="t", tool_name="x", status=status)  # type: ignore[arg-type]
-
-    refusals = WorkerToolExecutionSummary(
-        calls=(call("denied"), call("error"), call("timed_out"), call("cancelled"))
-    )
-    assert refusals.clean is False
-    assert refusals.integrity_compromised is False
-    assert "denied" in (refusals.refusal_summary or "")
-
-    for status in ("outcome_unknown", "active"):
-        summary = WorkerToolExecutionSummary(calls=(call(status),))
-        assert summary.integrity_compromised is True
-        assert summary.refusal_summary is None
-
-    clean = WorkerToolExecutionSummary(calls=(call("success"),))
-    assert clean.clean is True
-    assert clean.integrity_compromised is False
-    assert clean.refusal_summary is None
+    assert approved == []
+    assert failed[-1].payload.error_class == "supervisor_tool_failed"  # type: ignore[union-attr]
 
 
 @pytest.mark.asyncio

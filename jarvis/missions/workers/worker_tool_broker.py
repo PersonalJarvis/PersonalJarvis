@@ -117,28 +117,6 @@ class WorkerToolCallOutcome:
     error: str = ""
 
 
-# Statuses the worker OBSERVED as an in-stream error response (broker_stdio
-# returns isError=True; API workers get the error dict directly) — the worker
-# had the chance to adapt, so these are honest refusals, not integrity holes.
-_OBSERVED_REFUSAL_STATUSES: tuple[str, ...] = ("denied", "cancelled", "timed_out", "error")
-# Statuses where the supervisor cannot certify what actually happened: the
-# call was still running when the grant closed, or its outcome was rewritten
-# to unknown at revocation.
-_INTEGRITY_STATUSES: tuple[str, ...] = ("outcome_unknown", "active")
-
-
-def _outcome_preview(calls: list["WorkerToolCallOutcome"]) -> str | None:
-    if not calls:
-        return None
-    preview = "; ".join(
-        f"{call.tool_name}: {call.status}" + (f" ({call.error})" if call.error else "")
-        for call in calls[:3]
-    )
-    if len(calls) > 3:
-        preview += f"; +{len(calls) - 3} more"
-    return safe_preview(preview, max_chars=300)
-
-
 @dataclass(frozen=True, slots=True)
 class WorkerToolExecutionSummary:
     """Completion certificate consumed by the mission controller."""
@@ -150,33 +128,22 @@ class WorkerToolExecutionSummary:
         return all(call.status == "success" for call in self.calls)
 
     @property
-    def integrity_compromised(self) -> bool:
-        """True when the supervisor cannot certify what actually happened.
-
-        Only these outcomes abort an iteration before critic review. Honest
-        refusals (:data:`_OBSERVED_REFUSAL_STATUSES`) keep the iteration
-        reviewable — per the BUG-096 class rule, worker execution and critic
-        approval are separate facts, and the critic judges the deliverable
-        WITH knowledge of the refusals (see ``refusal_summary``).
-        """
-        return any(call.status in _INTEGRITY_STATUSES for call in self.calls)
-
-    @property
     def active_count(self) -> int:
         return sum(call.status == "active" for call in self.calls)
 
     @property
     def failure_summary(self) -> str | None:
-        return _outcome_preview(
-            [call for call in self.calls if call.status != "success"]
+        failed = [call for call in self.calls if call.status != "success"]
+        if not failed:
+            return None
+        preview = "; ".join(
+            f"{call.tool_name}: {call.status}"
+            + (f" ({call.error})" if call.error else "")
+            for call in failed[:3]
         )
-
-    @property
-    def refusal_summary(self) -> str | None:
-        """Bounded preview of the observed refusals, for the critic's context."""
-        return _outcome_preview(
-            [call for call in self.calls if call.status in _OBSERVED_REFUSAL_STATUSES]
-        )
+        if len(failed) > 3:
+            preview += f"; +{len(failed) - 3} more"
+        return safe_preview(preview, max_chars=300)
 
 
 def worker_tool_name_allowed(name: str) -> bool:

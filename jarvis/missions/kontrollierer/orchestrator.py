@@ -1438,9 +1438,8 @@ class Kontrollierer:
                     ),
                 }
                 logger.error(
-                    "Task %s iter %d: refusing critic review after an "
-                    "integrity-compromised supervisor tool grant (a call was "
-                    "still running or its outcome is unknown): %s",
+                    "Task %s iter %d: refusing critic review after an unclean "
+                    "supervisor tool grant: %s",
                     step.task_id,
                     iteration,
                     error_detail,
@@ -1657,28 +1656,13 @@ class Kontrollierer:
                 if safety_kill_reason is not None:
                     return TaskOutcome.ERROR
 
-            # Critic-Call. Honest supervisor-tool refusals (denied/timed-out/
-            # errored calls the worker OBSERVED in-stream) did not abort the
-            # iteration — only integrity failures do — but the critic must
-            # judge the deliverable WITH the refusal list: "the task depended
-            # on the denied call" is a reject, "the worker adapted" is not
-            # (BUG-096: execution, artifact, approval, and outcome are four
-            # separate facts). Appended to the critic's log view only, never
-            # to the diff, and after the safety scan so the scanner never
-            # reads our own note.
-            critic_log = log_text
-            if spawn_result.supervisor_tool_refusals:
-                critic_log = (
-                    f"{log_text}\n\n"
-                    "# supervisor-tool refusals (observed by the worker)\n"
-                    f"{spawn_result.supervisor_tool_refusals}\n"
-                )
+            # Critic-Call
             env = self._env_builder(mission_dir)
             try:
                 verdict = await self._runner.run(
                     mission_prompt=mission_prompt,
                     worker_diff=diff_text,
-                    worker_log=critic_log,
+                    worker_log=log_text,
                     prior_reflections=prior_block,
                     iteration=iteration,
                     worktree=worktree,
@@ -1826,7 +1810,6 @@ class Kontrollierer:
             worker_timed_out: bool = False,
             supervisor_tool_failed: bool = False,
             supervisor_tool_error: str | None = None,
-            supervisor_tool_refusals: str | None = None,
         ) -> None:
             self.worker_id = worker_id
             self.cost_usd = cost_usd
@@ -1847,10 +1830,6 @@ class Kontrollierer:
             self.worker_error = worker_error
             self.supervisor_tool_failed = supervisor_tool_failed
             self.supervisor_tool_error = supervisor_tool_error
-            # Observed refusals (denied/timed_out/error/cancelled) — the
-            # worker saw these in-stream and could adapt; they do NOT fail
-            # the iteration, they inform the critic (BUG-096 four facts).
-            self.supervisor_tool_refusals = supervisor_tool_refusals
 
     async def _spawn_worker_collect(
         self,
@@ -2058,12 +2037,8 @@ class Kontrollierer:
             session_id=session_id,
             worker_error=worker_error,
             worker_timed_out=worker_timed_out,
-            # Only INTEGRITY failures (outcome_unknown / still-active calls)
-            # abort the iteration — an observed refusal keeps the work
-            # reviewable and reaches the critic as context instead.
-            supervisor_tool_failed=broker_summary.integrity_compromised,
+            supervisor_tool_failed=not broker_summary.clean,
             supervisor_tool_error=broker_summary.failure_summary,
-            supervisor_tool_refusals=broker_summary.refusal_summary,
         )
 
     # --- Phase-5 Safety -----------------------------------------------------

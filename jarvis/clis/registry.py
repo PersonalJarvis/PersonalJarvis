@@ -9,20 +9,28 @@ from typing import Any
 from jarvis.clis.auth import CliAuthManager
 from jarvis.clis.catalog import CliCatalog
 from jarvis.clis.installer import CliInstaller
-from jarvis.clis.prober import CliStatusProber
+from jarvis.clis.prober import PROBE_ALL_TIMEOUT_S, CliStatusProber
 from jarvis.clis.spec import CliSpec, CliStatus
 from jarvis.clis.tool import CliTool
 from jarvis.clis.usage_log import UsageLog
 
 log = logging.getLogger(__name__)
 
-# Defence-in-depth ceiling around ``probe_all`` (Prober already bounds each
-# individual probe, see jarvis/clis/prober.py CHECK_TIMEOUT_S/AUTH_TIMEOUT_S/
-# KILL_WAIT_TIMEOUT_S). This is a second, coarser backstop: bootstrap() is
-# awaited synchronously by the headless CLI path
+# Defence-in-depth ceiling around ``probe_all``. The prober bounds each
+# individual probe (CHECK_TIMEOUT_S/AUTH_TIMEOUT_S/KILL_WAIT_TIMEOUT_S) AND
+# the whole sweep (PROBE_ALL_TIMEOUT_S), returning partial results rather
+# than cancelling everything. This is the last resort for a prober that
+# wedges BEFORE its own budget applies (a code bug, not slow CLIs):
+# bootstrap() is awaited synchronously by the headless CLI path
 # (``asyncio.run(registry.bootstrap())`` in jarvis/clis/loader.py) and must
-# never hang the whole process even if a probe somehow still wedges.
-_BOOTSTRAP_CEILING_S = 30.0
+# never hang the whole process.
+#
+# It is derived from the sweep budget so the two can never invert. When this
+# ceiling sat BELOW the prober's own worst case (30s vs. 29s per probe), it
+# fired during routine operation and replaced every probed result with an
+# error row — 22 red "error" CLIs and zero exposed tools, for the rest of
+# the session (observed 2026-07-25 09:06:10).
+_BOOTSTRAP_CEILING_S = PROBE_ALL_TIMEOUT_S + 15.0
 
 
 class CliToolRegistry:
@@ -71,7 +79,7 @@ class CliToolRegistry:
         self._bootstrapped = True
         self._sync_capabilities()
         log.info(
-            "cli-registry: %d von %d CLIs als Tools exponiert",
+            "cli-registry: %d of %d CLIs exposed as tools",
             len(self._tools),
             len(specs),
         )

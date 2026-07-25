@@ -459,6 +459,13 @@ gmail = "jarvis.plugins.tool.gmail_rest:GmailRestTool"
 # router-tier, risk_tier "monitor" (read-only). A direct gated action, never a
 # spawn (AP-5/AP-14). See docs/superpowers/plans/2026-06-07-plugin-skill-pairing-reachability.md.
 vercel = "jarvis.plugins.tool.vercel_rest:VercelRestTool"
+# Home Assistant (marketplace plugin, 2026-07-25) — list/read entities and call
+# services over the documented REST API. Native rather than MCP on purpose:
+# Home Assistant declined dynamic client registration and its MCP server is
+# scoped to its own Assist pipeline, so it exposes conversation instead of the
+# entity/service surface a voice assistant needs. risk_tier "ask" because a
+# service call physically changes something in the user's home.
+home_assistant = "jarvis.plugins.tool.home_assistant_rest:HomeAssistantRestTool"
 # Google Calendar (marketplace plugin, 2026-06-27) — read/create/update/delete
 # calendar events. The bot logic is a dependency-free Node script
 # (calendar_bot.mjs); this Python entry point is the OAuth bridge that reuses

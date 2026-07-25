@@ -1740,26 +1740,9 @@ function AuthWidget({
     <div className="space-y-2">
       <ProviderBillingBadge billing={descriptor.billing} />
       {descriptor.auth_mode === "none" && (
-        <>
-          <p className="text-xs text-muted-foreground">
-            {descriptor.secret_keys.length > 0
-              ? "Local provider — runs without credentials. The key below is optional, only for servers that enforce one (e.g. vLLM --api-key)."
-              : "Local provider — no credentials needed."}
-          </p>
-          {descriptor.secret_keys.map((k) => (
-            <ApiKeyForm
-              key={k}
-              secretKey={k}
-              dashboardUrl={descriptor.dashboard_url}
-              configured={Boolean(descriptor.secrets_set[k])}
-              effectiveConfigured={Boolean(descriptor.secrets_effective?.[k])}
-              sharedWith={descriptor.secret_shared_with?.[k] ?? []}
-              credentialHelp={descriptor.credential_help}
-              onChanged={onChanged}
-              onSavedActivate={onSavedActivate}
-            />
-          ))}
-        </>
+        <p className="text-xs text-muted-foreground">
+          Local provider — no credentials needed.
+        </p>
       )}
       {descriptor.auth_mode === "codex" && (
         <CodexAuthWidget descriptor={descriptor} onChanged={onChanged} />
