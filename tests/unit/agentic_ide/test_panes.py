@@ -1,10 +1,10 @@
 """Adding and closing panes in a running workspace.
 
-The row model is what makes the two split buttons mean something: "right" joins
-the anchor's row so the panes render side by side, "down" opens a new row
-beneath it. These tests pin that arithmetic, because an off-by-one in the row
-numbers renders as an empty band in the grid or as two panes stacked where one
-was expected.
+The workspace is COLUMNS of stacked panes, which is what makes the two split
+buttons mean something: "right" opens a new column beside the anchor, "down" adds
+a pane to the anchor's OWN column and leaves every other column at full height.
+These tests pin that arithmetic, because an off-by-one renders as a blank stripe
+in the grid, or squashes panes that should not have moved.
 """
 from __future__ import annotations
 
@@ -34,9 +34,13 @@ async def _open(registry: Registry, folder: Path, count: int = 2):
     )
 
 
-def _layout(registry: Registry) -> list[tuple[str, int]]:
-    """(name, row) in render order — the shape the grid draws."""
-    return [(t.name, t.row) for t in registry.session.terminals]
+def _layout(registry: Registry) -> list[tuple[str, int, int]]:
+    """(name, column, slot) in render order — the shape the grid draws.
+
+    The workspace is columns of stacked panes: `column` runs left to right,
+    `slot` top to bottom inside one column.
+    """
+    return [(t.name, t.column, t.slot) for t in registry.session.terminals]
 
 
 async def _noop(_text: str) -> None:
@@ -48,21 +52,23 @@ async def _noop_exit(_code: int) -> None:
 
 
 # --------------------------------------------------------------- initial rows
-async def test_a_fresh_workspace_puts_every_pane_in_row_zero(
+async def test_a_fresh_workspace_puts_every_pane_in_its_own_column(
     registry: Registry, tmp_path: Path
 ) -> None:
-    """The wizard's grid is one row; splitting is what creates more."""
+    """The wizard's panes stand side by side: one column each, top slot."""
     await _open(registry, tmp_path, 3)
-    assert _layout(registry) == [("Mika", 0), ("Nova", 0), ("Aria", 0)]
+    assert _layout(registry) == [("Mika", 0, 0), ("Nova", 1, 0), ("Aria", 2, 0)]
 
 
 # ---------------------------------------------------------------- split right
-async def test_split_right_joins_the_anchor_row(registry: Registry, tmp_path: Path) -> None:
+async def test_split_right_opens_a_column_next_to_the_anchor(
+    registry: Registry, tmp_path: Path
+) -> None:
     await _open(registry, tmp_path, 2)
     term = await registry.add_terminal(anchor="Mika", direction="right")
-    assert term.row == 0
-    # Inserted directly after its anchor, not appended at the end.
-    assert _layout(registry) == [("Mika", 0), (term.name, 0), ("Nova", 0)]
+    # Immediately right of its anchor — not appended at the end — and everything
+    # further right shifts over rather than being overwritten.
+    assert _layout(registry) == [("Mika", 0, 0), (term.name, 1, 0), ("Nova", 2, 0)]
 
 
 async def test_split_right_inherits_the_anchor_agent(
@@ -83,26 +89,28 @@ async def test_an_explicit_agent_wins_over_the_anchor(
 
 
 # ----------------------------------------------------------------- split down
-async def test_split_down_opens_a_new_row_below_the_anchor(
+async def test_split_down_stacks_inside_the_anchor_column(
     registry: Registry, tmp_path: Path
 ) -> None:
+    """The point of the column model: splitting one pane must not squash the
+    others. Nova keeps its own full-height column."""
     await _open(registry, tmp_path, 2)
     term = await registry.add_terminal(anchor="Mika", direction="down")
-    assert term.row == 1
-    assert _layout(registry) == [("Mika", 0), (term.name, 1), ("Nova", 0)]
+    assert (term.column, term.slot) == (0, 1)
+    assert _layout(registry) == [("Mika", 0, 0), (term.name, 0, 1), ("Nova", 1, 0)]
 
 
-async def test_split_down_pushes_existing_lower_rows_down(
+async def test_split_down_pushes_the_existing_stack_down(
     registry: Registry, tmp_path: Path
 ) -> None:
-    """Inserting between rows must not collide with the row already there."""
+    """Inserting into the middle of a stack must not collide with what is there."""
     await _open(registry, tmp_path, 1)
     bottom = await registry.add_terminal(anchor="Mika", direction="down")
     middle = await registry.add_terminal(anchor="Mika", direction="down")
-    rows = {name: row for name, row in _layout(registry)}
-    assert rows["Mika"] == 0
-    assert rows[middle.name] == 1, "the newest pane sits directly under its anchor"
-    assert rows[bottom.name] == 2, "the older row moved down"
+    slots = {name: (column, slot) for name, column, slot in _layout(registry)}
+    assert slots["Mika"] == (0, 0)
+    assert slots[middle.name] == (0, 1), "the newest pane sits under its anchor"
+    assert slots[bottom.name] == (0, 2), "the older pane moved down"
 
 
 # --------------------------------------------------------------------- naming
@@ -178,15 +186,24 @@ async def test_closing_a_pane_stops_its_agent(
     assert [t.name for t in registry.session.terminals] == ["Nova"]
 
 
-async def test_closing_repacks_the_rows(registry: Registry, tmp_path: Path) -> None:
-    """A row left empty would render as a blank band, so rows are re-packed."""
+async def test_closing_repacks_the_stack(registry: Registry, tmp_path: Path) -> None:
+    """A gap in a stack would render as a blank cell, so slots are re-packed."""
     await _open(registry, tmp_path, 1)
     middle = await registry.add_terminal(anchor="Mika", direction="down")
     bottom = await registry.add_terminal(anchor=middle.name, direction="down")
-    assert [row for _n, row in _layout(registry)] == [0, 1, 2]
+    assert [slot for _n, _c, slot in _layout(registry)] == [0, 1, 2]
 
     await registry.close_terminal(middle.name)
-    assert _layout(registry) == [("Mika", 0), (bottom.name, 1)]
+    assert _layout(registry) == [("Mika", 0, 0), (bottom.name, 0, 1)]
+
+
+async def test_closing_a_whole_column_repacks_the_columns(
+    registry: Registry, tmp_path: Path
+) -> None:
+    """An emptied column would render as a blank stripe."""
+    await _open(registry, tmp_path, 3)
+    await registry.close_terminal("Nova")
+    assert _layout(registry) == [("Mika", 0, 0), ("Aria", 1, 0)]
 
 
 async def test_closing_the_last_pane_leaves_an_empty_workspace(

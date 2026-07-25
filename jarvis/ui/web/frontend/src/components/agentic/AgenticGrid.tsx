@@ -10,6 +10,7 @@
  * differently.
  */
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import * as Dialog from "@radix-ui/react-dialog";
 import {
   ArrowUp,
   Brain,
@@ -339,26 +340,30 @@ export function AgenticGrid({
           </button>
         </div>
 
-        <button
-          type="button"
-          className="btn-ghost shrink-0"
-          onClick={() => setWorkspaceCloseRequested(true)}
-          disabled={busy}
-          title="Close the workspace and stop every agent in it"
+        <Dialog.Root
+          open={workspaceCloseRequested}
+          onOpenChange={(open) => {
+            if (!busy) setWorkspaceCloseRequested(open);
+          }}
         >
-          <Power className="h-4 w-4" />
-          Close
-        </button>
+          <Dialog.Trigger asChild>
+            <button
+              type="button"
+              className="btn-ghost shrink-0"
+              disabled={busy}
+              title="Close the workspace and stop every agent in it"
+            >
+              <Power className="h-4 w-4" />
+              Close
+            </button>
+          </Dialog.Trigger>
+          <ConfirmWorkspaceClose
+            terminalCount={session.terminals.length}
+            busy={busy}
+            onConfirm={onClose}
+          />
+        </Dialog.Root>
       </div>
-
-      {workspaceCloseRequested && (
-        <ConfirmWorkspaceClose
-          terminalCount={session.terminals.length}
-          busy={busy}
-          onCancel={() => setWorkspaceCloseRequested(false)}
-          onConfirm={onClose}
-        />
-      )}
 
       {/* ------------------------------------------------------------- grid */}
       {/*
@@ -532,43 +537,45 @@ export function AgenticGrid({
 function ConfirmWorkspaceClose({
   terminalCount,
   busy,
-  onCancel,
   onConfirm,
 }: {
   terminalCount: number;
   busy: boolean;
-  onCancel: () => void;
   onConfirm: () => void;
 }) {
   const agentLabel = terminalCount === 1 ? "coding agent" : "coding agents";
 
   return (
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-label="Close workspace"
-      data-testid="confirm-close-workspace"
-      className="absolute inset-0 z-40 flex items-center justify-center bg-background/70 p-6 backdrop-blur-sm"
-      onKeyDown={(e) => {
-        if (e.key === "Escape" && !busy) onCancel();
-      }}
-    >
-      <div className="w-full max-w-sm rounded-xl border border-border bg-card p-5 shadow-xl">
-        <h3 className="font-display text-base font-semibold">Close this workspace?</h3>
-        <p className="mt-2 text-sm text-muted-foreground">
+    <Dialog.Portal>
+      <Dialog.Overlay className="fixed inset-0 z-50 bg-background/70 backdrop-blur-sm" />
+      <Dialog.Content
+        data-testid="confirm-close-workspace"
+        className="fixed left-1/2 top-1/2 z-50 w-[min(24rem,calc(100vw-3rem))] -translate-x-1/2 -translate-y-1/2 rounded-xl border border-border bg-card p-5 shadow-xl"
+        onEscapeKeyDown={(event) => {
+          if (busy) event.preventDefault();
+        }}
+        onPointerDownOutside={(event) => {
+          if (busy) event.preventDefault();
+        }}
+      >
+        <Dialog.Title className="font-display text-base font-semibold">
+          Close this workspace?
+        </Dialog.Title>
+        <Dialog.Description className="mt-2 text-sm text-muted-foreground">
           This stops all {terminalCount} {agentLabel} and closes every terminal
           session. Anything already written to disk stays.
-        </p>
+        </Dialog.Description>
         <div className="mt-5 flex items-center justify-end gap-2">
-          <button
-            type="button"
-            className="btn-ghost"
-            autoFocus
-            disabled={busy}
-            onClick={onCancel}
-          >
-            Keep workspace open
-          </button>
+          <Dialog.Close asChild>
+            <button
+              type="button"
+              className="btn-ghost"
+              autoFocus
+              disabled={busy}
+            >
+              Keep workspace open
+            </button>
+          </Dialog.Close>
           <button
             type="button"
             data-testid="confirm-close-workspace-confirm"
@@ -579,8 +586,8 @@ function ConfirmWorkspaceClose({
             Close workspace
           </button>
         </div>
-      </div>
-    </div>
+      </Dialog.Content>
+    </Dialog.Portal>
   );
 }
 

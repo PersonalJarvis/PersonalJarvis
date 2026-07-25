@@ -437,13 +437,18 @@ describe("closing a pane", () => {
 });
 
 describe("closing the workspace", () => {
-  it("asks before stopping every coding agent", () => {
+  it("asks before stopping every coding agent and focuses the safe action", async () => {
     const { onClose } = renderGrid();
     fireEvent.click(screen.getByTitle("Close the workspace and stop every agent in it"));
 
     expect(screen.getByTestId("confirm-close-workspace")).toBeTruthy();
     expect(screen.getByText(/Close this workspace\?/i)).toBeTruthy();
     expect(screen.getByText(/stops all 2 coding agents/i)).toBeTruthy();
+    await waitFor(() =>
+      expect(document.activeElement).toBe(
+        screen.getByRole("button", { name: /keep workspace open/i }),
+      ),
+    );
     expect(onClose).not.toHaveBeenCalled();
   });
 
@@ -464,12 +469,24 @@ describe("closing the workspace", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it("escape safely cancels the workspace dialog", () => {
-    const { onClose } = renderGrid();
+  it("hides workspace controls from assistive technology while confirmation is open", () => {
+    renderGrid();
     fireEvent.click(screen.getByTitle("Close the workspace and stop every agent in it"));
-    fireEvent.keyDown(screen.getByTestId("confirm-close-workspace"), { key: "Escape" });
+    const prompt = screen.getByPlaceholderText(/instruction for Mika/i);
 
-    expect(screen.queryByTestId("confirm-close-workspace")).toBeNull();
+    expect(prompt.closest('[aria-hidden="true"]')).toBeTruthy();
+  });
+
+  it("escape safely cancels and restores focus to the close trigger", async () => {
+    const { onClose } = renderGrid();
+    const trigger = screen.getByTitle("Close the workspace and stop every agent in it");
+    fireEvent.click(trigger);
+    const cancel = screen.getByRole("button", { name: /keep workspace open/i });
+    await waitFor(() => expect(document.activeElement).toBe(cancel));
+    fireEvent.keyDown(cancel, { key: "Escape" });
+
+    await waitFor(() => expect(screen.queryByTestId("confirm-close-workspace")).toBeNull());
+    await waitFor(() => expect(document.activeElement).toBe(trigger));
     expect(onClose).not.toHaveBeenCalled();
   });
 });
