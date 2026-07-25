@@ -75,13 +75,22 @@ GENERAL_KNOWLEDGE_PHRASES: tuple[str, ...] = (
 #: question; on its own it is not enough.
 LOOKUP_MARKERS: tuple[str, ...] = (
     # de
-    "wann", "was", "wer", "welche", "welcher", "welches", "wo", "wie",
-    "warum", "wieso", "kennst du", "zeig", "zeige", "nenn", "nenne",
+    "wann", "was", "wer", "wen", "wem", "wessen",
+    "welche", "welcher", "welches", "welchen", "welchem",
+    "wo", "wie", "warum", "wieso",
+    # German pronominal adverbs ("woran arbeite ich"): a whole question shape
+    # with no single-word English equivalent. Missing these made "woran
+    # arbeite ich gerade an X?" read as having no lookup shape at all —
+    # caught by the live vault check on 2026-07-25, not by the unit tests.
+    "woran", "worauf", "worueber", "womit", "wofuer", "wovon", "wobei",
+    "wonach", "worin", "woher", "wohin",
+    "kennst du", "zeig", "zeige", "nenn", "nenne",
     "erzaehl", "erzaehle", "sag mir", "liste",
     # en
-    "when", "what", "who", "which", "where", "how", "why",
+    "when", "what", "who", "whom", "whose", "which", "where", "how", "why",
     "do you know", "tell me", "show me", "list", "remind me",
     # es
-    "cuando", "que", "quien", "cual", "donde", "como", "por que",
+    "cuando", "que", "quien", "cual", "cuales", "donde", "adonde",
+    "como", "por que", "cuanto", "cuanta", "cuantas",
     "dime", "muestrame",
 )

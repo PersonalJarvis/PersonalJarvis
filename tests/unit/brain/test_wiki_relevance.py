@@ -78,6 +78,22 @@ def test_personal_questions_do_consult_memory(utterance: str) -> None:
 
 @pytest.mark.parametrize(
     "utterance",
+    [
+        # German pronominal adverbs — a question shape with no one-word English
+        # equivalent. Regression: the live vault check on 2026-07-25 found these
+        # rejected as "no lookup shape", silently muting real memory questions.
+        "Woran arbeite ich gerade bei Personal Jarvis?",
+        "Worauf habe ich mich letzte Woche vorbereitet?",
+        "Womit hat mein Projekt angefangen?",
+        "Wofuer brauche ich meinen Zweitrechner?",
+    ],
+)
+def test_german_pronominal_adverbs_are_lookup_shapes(utterance: str) -> None:
+    assert should_consult_memory(utterance).consult is True
+
+
+@pytest.mark.parametrize(
+    "utterance",
     ["Hallo", "ok", "danke dir", "", "   "],  # i18n-allow: German user input under test
 )
 def test_smalltalk_and_fragments_skip(utterance: str) -> None:
