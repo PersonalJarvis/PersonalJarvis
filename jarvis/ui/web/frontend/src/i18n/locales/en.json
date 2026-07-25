@@ -75,8 +75,7 @@
     "taskbar": "Taskbar",
     "contacts": "Contacts",
     "feedback": "Feedback",
-    "agent_instructions": "{name}.md",
-    "agentic_ide": "Agentic IDE"
+    "agent_instructions": "{name}.md"
   },
   "agent_instructions": {
     "subtitle": "Your personal preferences for how the assistant works with you — tone, language, defaults, standing facts. Separate from the System Prompt, and it never overrides safety or confirmations.",
@@ -488,7 +487,7 @@
   },
   "run_inspector": {
     "title": "Run Inspector",
-    "subtitle": "Per-run forensics: full transcript, timeline, latency, decisions, tools, errors.",
+    "subtitle": "Developer forensics per run: environment, decisions, latency, tool I/O and the raw event stream.",
     "empty": "Select a run to inspect.",
     "unavailable": "Run recorder is disabled.",
     "export_raw": "Export raw (JSON)",
@@ -503,7 +502,52 @@
       "latency": "Latency",
       "decision": "Decision path",
       "tools": "Tools",
-      "errors": "Errors"
+      "errors": "Errors",
+      "events": "Events"
+    },
+    "environment": "Run environment",
+    "session_events": "Session-level events",
+    "no_usage": "usage not measured",
+    "stream": {
+      "empty": "No events recorded.",
+      "events": "events",
+      "filter": "filter…",
+      "copy": "Copy the filtered stream as JSONL",
+      "copied": "events copied as JSONL",
+      "copy_failed": "Copy failed",
+      "truncated": "This turn recorded more events than are shown — the stream is capped at 500 rows per turn."
+    },
+    "decision": {
+      "empty": "No decisions recorded for this turn.",
+      "no_rationale": "No rationale recorded.",
+      "no_source": "none"
+    },
+    "tools": {
+      "empty": "No tools ran in this turn.",
+      "command": "Command",
+      "output": "Result",
+      "error": "Error"
+    },
+    "facts": {
+      "endpoint": "endpoint",
+      "cache": "prompt cache",
+      "cache_hit": "hit",
+      "cache_miss": "miss",
+      "interrupted": "interrupted",
+      "context": "context"
+    },
+    "env": {
+      "mode": "Mode",
+      "surface": "Surface",
+      "started_by": "Started by",
+      "ended_by": "Ended by",
+      "language": "Language",
+      "providers": "Providers",
+      "models": "Models",
+      "tiers": "Tiers",
+      "voices": "Voices",
+      "audio": "Audio",
+      "empty": "No environment recorded."
     }
   },
   "voice_mode": {
@@ -1005,6 +1049,16 @@
     "integration_ok_note": "The provider was reached — only the key/account/model is the blocker.",
     "integration_bad_note": "The provider could not be reached.",
     "failed": "Test failed"
+  },
+  "apikeys_base_url": {
+    "label": "Server URL",
+    "placeholder_required": "e.g. http://localhost:8000 — required",
+    "save": "Save",
+    "saving": "Saving…",
+    "saved": "Server URL saved",
+    "cleared": "Server URL reset to the default",
+    "hint_default": "Leave empty to use the default address shown above.",
+    "hint_required": "This provider needs a server URL — enter where your local server runs."
   },
   "apikeys_model": {
     "heading": "Model",

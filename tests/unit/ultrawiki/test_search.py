@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import importlib.util
 import logging
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 
 import pytest
@@ -21,7 +22,12 @@ import jarvis.ultrawiki.embeddings as embeddings_mod
 import jarvis.ultrawiki.rerank as rerank_mod
 from jarvis.ultrawiki.embeddings import EmbeddingError
 from jarvis.ultrawiki.rerank import RerankError
-from jarvis.ultrawiki.search import hybrid_search, search_status
+from jarvis.ultrawiki.search import (
+    RRF_K,
+    hybrid_search,
+    ranking_settings,
+    search_status,
+)
 from jarvis.ultrawiki.store import UltraStore
 from jarvis.ultrawiki.types import (
     ConsentState,
@@ -121,11 +127,19 @@ class FakeStore:
 
 
 def make_cfg(**overrides) -> SimpleNamespace:
+    # The ranking knobs are spelled out (not left to getattr defaults) so a
+    # test states the ranking it exercises and stays honest if a product
+    # default moves.
     values = {
         "enabled": True,
         "embedding_provider": "",
         "embedding_model": "",
         "rerank_provider": "",
+        "rerank_model": "",
+        "rerank_min_score": 4.0,
+        "rrf_keyword_weight": 1.0,
+        "rrf_vector_weight": 1.0,
+        "recency_half_life_days": 180.0,
         "ollama_endpoint": "http://localhost:11434",
     }
     values.update(overrides)
@@ -139,12 +153,14 @@ def make_result(
     timestamp_utc: str = "2026-01-02T10:00:00Z",
     matched_by: tuple[str, ...] = ("keyword",),
     score: float = 0.5,
+    title: str | None = None,
+    snippet: str | None = None,
 ) -> SearchResult:
     return SearchResult(
         item_id=item_id,
         source_id=source_id,
-        title=f"Item {item_id}",
-        snippet=f"snippet {item_id}",
+        title=f"Item {item_id}" if title is None else title,
+        snippet=f"snippet {item_id}" if snippet is None else snippet,
         permalink=f"app://item/{item_id}",
         timestamp_utc=timestamp_utc,
         score=score,
@@ -315,7 +331,14 @@ async def test_rrf_consensus_beats_single_list_rank(store, monkeypatch):
     await embed_item(store, id_c, [1.0, 0.0, 0.0])
     await embed_item(store, id_a, [0.9, 0.1, 0.0])
     register_fake_embedding(monkeypatch, FakeEmbedding({"alpha": [1.0, 0.0, 0.0]}))
-    cfg = make_cfg(embedding_provider="fake", embedding_model=EMBED_MODEL)
+    # Pure RRF arithmetic under test: the age decay is a separate stage with
+    # its own tests, and leaving it on would make the asserted sums depend on
+    # the day the suite runs.
+    cfg = make_cfg(
+        embedding_provider="fake",
+        embedding_model=EMBED_MODEL,
+        recency_half_life_days=0,
+    )
 
     results = await hybrid_search(store, cfg, "alpha")
 
@@ -415,21 +438,25 @@ async def seed_three_ranked_items(store: UltraStore) -> list[int]:
 
 async def test_rerank_reorders_when_configured_and_ready(store, monkeypatch):
     id_0, id_1, id_2 = await seed_three_ranked_items(store)
-
-    baseline = await hybrid_search(store, make_cfg(), "alpha")
+    # Decay off: the assertion below compares fused scores across two separate
+    # searches, and a live half-life would move them between the two calls.
+    baseline = await hybrid_search(store, make_cfg(recency_half_life_days=0), "alpha")
     assert [hit.item_id for hit in baseline] == [id_0, id_1, id_2]
 
-    fake = FakeReranker(pairs=[(2, 0.9), (1, 0.5), (0, 0.1)])
+    fake = FakeReranker(pairs=[(2, 9.0), (1, 5.0), (0, 1.0)])
     monkeypatch.setattr(rerank_mod, "resolve_reranker", lambda cfg: fake)
-    cfg = make_cfg(rerank_provider="voyage")
+    cfg = make_cfg(rerank_provider="voyage", recency_half_life_days=0)
 
     results = await hybrid_search(store, cfg, "alpha")
 
     assert [hit.item_id for hit in results] == [id_2, id_1, id_0]
-    # Only the ORDER changes — every hit keeps its fused score.
+    # Only the ORDER changes — every hit keeps its fused score...
     assert {hit.item_id: hit.score for hit in results} == {
         hit.item_id: hit.score for hit in baseline
     }
+    # ...and gains the ABSOLUTE grade the fused score could never express.
+    assert [hit.rerank_score for hit in results] == [9.0, 5.0, 1.0]
+    assert all(hit.rerank_score is None for hit in baseline)
     # The reranker saw one call with all three snippets.
     assert len(fake.calls) == 1
     assert len(fake.calls[0][1]) == 3
@@ -509,3 +536,352 @@ def test_search_status_unknown_embedding_provider():
 
     assert status["vector"]["available"] is False
     assert "does-not-exist" in status["vector"]["reason"]
+
+
+def test_search_status_reports_the_live_ranking_knobs():
+    status = search_status(
+        make_cfg(
+            rrf_keyword_weight=2.0,
+            rrf_vector_weight=0.5,
+            recency_half_life_days=30,
+            rerank_min_score=6,
+        )
+    )
+
+    assert status["ranking"] == {
+        "keyword_weight": 2.0,
+        "vector_weight": 0.5,
+        "recency_half_life_days": 30.0,
+        "rerank_min_score": 6.0,
+    }
+
+
+def test_ranking_settings_fall_back_on_junk_values():
+    """A hand-edited jarvis.toml must never take the ranking down."""
+    knobs = ranking_settings(
+        make_cfg(rrf_keyword_weight="nonsense", recency_half_life_days=-5)
+    )
+
+    assert knobs["keyword_weight"] == 1.0
+    assert knobs["recency_half_life_days"] == 0.0  # negative clamps to "off"
+
+
+# ---------------------------------------------------------------------------
+# Per-leg weights + age decay
+# ---------------------------------------------------------------------------
+
+
+async def test_zero_weight_silences_a_leg_without_removing_its_hits(monkeypatch):
+    keyword_hit = make_result(1)
+    vector_hit = make_result(2, matched_by=("vector",))
+    fake_store = FakeStore(keyword_hits=[keyword_hit], vector_hits=[vector_hit])
+    register_fake_embedding(monkeypatch, FakeEmbedding())
+    cfg = make_cfg(
+        embedding_provider="fake",
+        embedding_model=EMBED_MODEL,
+        rrf_keyword_weight=0.0,
+        recency_half_life_days=0,
+    )
+
+    results = await hybrid_search(fake_store, cfg, "alpha")
+
+    # The vector hit outranks the silenced keyword hit, which still appears.
+    assert [hit.item_id for hit in results] == [2, 1]
+    by_id = {hit.item_id: hit for hit in results}
+    assert by_id[1].score == pytest.approx(0.0, abs=1e-5)
+    assert by_id[2].score > 0.0
+
+
+async def test_age_decay_lets_a_fresh_item_beat_a_stale_one(monkeypatch):
+    """Equal leg rank, very different age — the article's age decay."""
+    now = datetime.now(UTC)
+    stale = make_result(
+        1, timestamp_utc=(now - timedelta(days=720)).isoformat().replace("+00:00", "Z")
+    )
+    fresh = make_result(
+        2,
+        timestamp_utc=(now - timedelta(days=1)).isoformat().replace("+00:00", "Z"),
+        matched_by=("vector",),
+    )
+    fake_store = FakeStore(keyword_hits=[stale], vector_hits=[fresh])
+    register_fake_embedding(monkeypatch, FakeEmbedding())
+
+    decayed = await hybrid_search(
+        fake_store,
+        make_cfg(
+            embedding_provider="fake",
+            embedding_model=EMBED_MODEL,
+            recency_half_life_days=180,
+        ),
+        "alpha",
+    )
+    assert [hit.item_id for hit in decayed] == [2, 1]
+    # Two years at a 180-day half-life is roughly a sixteenth of the score.
+    by_id = {hit.item_id: hit for hit in decayed}
+    assert by_id[1].score < by_id[2].score / 10
+
+
+async def test_half_life_zero_keeps_the_pure_fusion_order(monkeypatch):
+    """The opt-out reproduces the old behaviour exactly: with the decay off,
+    an ancient rank-1 hit still ties a fresh rank-1 hit (epsilon aside)."""
+    now = datetime.now(UTC)
+    stale = make_result(
+        1, timestamp_utc=(now - timedelta(days=720)).isoformat().replace("+00:00", "Z")
+    )
+    fresh = make_result(
+        2,
+        timestamp_utc=(now - timedelta(days=1)).isoformat().replace("+00:00", "Z"),
+        matched_by=("vector",),
+    )
+    fake_store = FakeStore(keyword_hits=[stale], vector_hits=[fresh])
+    register_fake_embedding(monkeypatch, FakeEmbedding())
+
+    results = await hybrid_search(
+        fake_store,
+        make_cfg(
+            embedding_provider="fake",
+            embedding_model=EMBED_MODEL,
+            recency_half_life_days=0,
+        ),
+        "alpha",
+    )
+
+    by_id = {hit.item_id: hit for hit in results}
+    assert by_id[1].score == pytest.approx(by_id[2].score, abs=1e-5)
+    assert [hit.item_id for hit in results] == [2, 1]  # epsilon tiebreak only
+
+
+async def test_unparsable_timestamp_is_never_punished_by_the_decay(monkeypatch):
+    broken = make_result(1, timestamp_utc="not-a-date")
+    fake_store = FakeStore(keyword_hits=[broken])
+    cfg = make_cfg(recency_half_life_days=30)
+
+    results = await hybrid_search(fake_store, cfg, "alpha")
+
+    assert results[0].score == pytest.approx(1 / (RRF_K + 1), abs=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# Term rarity (IDF)
+# ---------------------------------------------------------------------------
+
+
+class SignalStore(FakeStore):
+    """A store that answers the ranking-signal probes."""
+
+    def __init__(self, *args, corpus: int = 100, frequencies=None, neighbors=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._corpus = corpus
+        self._frequencies = frequencies or {}
+        self._neighbors = neighbors or {}
+        self.neighbor_calls: list[int] = []
+
+    async def live_item_count(self) -> int:
+        return self._corpus
+
+    async def term_document_frequency(self, terms):
+        return {term: self._frequencies.get(term, 0) for term in terms}
+
+    async def neighbors_for(self, item_id: int, *, limit: int = 2) -> list[str]:
+        self.neighbor_calls.append(item_id)
+        return list(self._neighbors.get(item_id, []))
+
+
+async def test_rare_term_hit_outranks_higher_ranked_filler():
+    """The article's "separate signal from filler": a short pleasantry that
+    ranked first loses to the candidate actually carrying the rare words."""
+    filler = make_result(1, snippet="sounds good, thanks!")
+    substantive = make_result(
+        2, snippet="the bugatti chiron service interval is every two years"
+    )
+    store = SignalStore(
+        keyword_hits=[filler, substantive],  # filler ranks FIRST before signals
+        frequencies={"bugatti": 1, "chiron": 1, "the": 90},
+    )
+
+    results = await hybrid_search(store, make_cfg(recency_half_life_days=0), "bugatti chiron")
+
+    assert [hit.item_id for hit in results] == [2, 1]
+
+
+async def test_filler_is_pushed_down_never_dropped():
+    """AP-27 discipline: content-based signals may reorder, never delete —
+    the rerank stage is where real filtering belongs."""
+    filler = make_result(1, snippet="ok")
+    store = SignalStore(keyword_hits=[filler], frequencies={"bugatti": 1})
+
+    results = await hybrid_search(store, make_cfg(recency_half_life_days=0), "bugatti")
+
+    assert [hit.item_id for hit in results] == [1]
+    assert results[0].score > 0.0
+
+
+async def test_common_query_terms_leave_the_ranking_untouched():
+    """Every query term is common => no rare vocabulary => neutral factor."""
+    first = make_result(1, snippet="alpha one")
+    second = make_result(2, snippet="alpha two")
+    store = SignalStore(
+        keyword_hits=[first, second], corpus=100, frequencies={"alpha": 80}
+    )
+
+    results = await hybrid_search(store, make_cfg(recency_half_life_days=0), "alpha")
+
+    assert [hit.item_id for hit in results] == [1, 2]
+    assert results[0].score == pytest.approx(1 / (RRF_K + 1), abs=1e-5)
+
+
+async def test_store_without_ranking_signals_degrades_neutrally():
+    """Third-party stores and fakes predate these methods — neutral, no crash."""
+    plain = FakeStore(keyword_hits=[make_result(1, snippet="ok")])
+
+    results = await hybrid_search(plain, make_cfg(recency_half_life_days=0), "bugatti")
+
+    assert results[0].score == pytest.approx(1 / (RRF_K + 1), abs=1e-5)
+
+
+async def test_failing_signal_probe_never_fails_the_search():
+    class ExplodingStore(SignalStore):
+        async def term_document_frequency(self, terms):
+            raise RuntimeError("index corrupted")
+
+    store = ExplodingStore(keyword_hits=[make_result(1)])
+
+    results = await hybrid_search(store, make_cfg(recency_half_life_days=0), "bugatti")
+
+    assert [hit.item_id for hit in results] == [1]
+
+
+# ---------------------------------------------------------------------------
+# Relevance floor (the "Bugatti case" guard)
+# ---------------------------------------------------------------------------
+
+
+async def test_explicit_search_keeps_weakly_graded_hits(store, monkeypatch):
+    """The Ask view / REST route / CLI: the user asked and sees the evidence."""
+    id_0, id_1, id_2 = await seed_three_ranked_items(store)
+    fake = FakeReranker(pairs=[(0, 9.0), (1, 2.0), (2, 0.0)])
+    monkeypatch.setattr(rerank_mod, "resolve_reranker", lambda cfg: fake)
+    cfg = make_cfg(rerank_provider="voyage", rerank_min_score=4.0)
+
+    results = await hybrid_search(store, cfg, "alpha")
+
+    assert [hit.item_id for hit in results] == [id_0, id_1, id_2]
+
+
+async def test_unsolicited_surface_drops_hits_below_the_floor(store, monkeypatch):
+    """Context injection / volunteered voice answers: below the floor, gone."""
+    id_0, _id_1, _id_2 = await seed_three_ranked_items(store)
+    fake = FakeReranker(pairs=[(0, 9.0), (1, 2.0), (2, 0.0)])
+    monkeypatch.setattr(rerank_mod, "resolve_reranker", lambda cfg: fake)
+    cfg = make_cfg(rerank_provider="voyage", rerank_min_score=4.0)
+
+    results = await hybrid_search(store, cfg, "alpha", enforce_floor=True)
+
+    assert [hit.item_id for hit in results] == [id_0]
+
+
+async def test_floor_can_return_nothing_at_all(store, monkeypatch):
+    """RRF alone can never say "nothing here is relevant" — the grade can."""
+    await seed_three_ranked_items(store)
+    fake = FakeReranker(pairs=[(0, 1.0), (1, 0.0), (2, 0.0)])
+    monkeypatch.setattr(rerank_mod, "resolve_reranker", lambda cfg: fake)
+    cfg = make_cfg(rerank_provider="voyage", rerank_min_score=4.0)
+
+    assert await hybrid_search(store, cfg, "alpha", enforce_floor=True) == []
+
+
+async def test_floor_zero_disables_the_gate(store, monkeypatch):
+    await seed_three_ranked_items(store)
+    fake = FakeReranker(pairs=[(0, 1.0), (1, 0.0), (2, 0.0)])
+    monkeypatch.setattr(rerank_mod, "resolve_reranker", lambda cfg: fake)
+    cfg = make_cfg(rerank_provider="voyage", rerank_min_score=0)
+
+    assert len(await hybrid_search(store, cfg, "alpha", enforce_floor=True)) == 3
+
+
+async def test_ungraded_hits_pass_the_floor_visibly_rather_than_silently(
+    store, monkeypatch, caplog
+):
+    """A rerank outage must not turn the floor into a silent pass-all: the
+    hits come through UNGRADED (rerank_score None) so the caller's own
+    deterministic gate can still refuse them."""
+    await seed_three_ranked_items(store)
+    fake = FakeReranker(error=RerankError("fake: HTTP 500"))
+    monkeypatch.setattr(rerank_mod, "resolve_reranker", lambda cfg: fake)
+    cfg = make_cfg(rerank_provider="voyage", rerank_min_score=4.0)
+
+    with caplog.at_level(logging.WARNING, logger="jarvis.ultrawiki.search"):
+        results = await hybrid_search(store, cfg, "alpha", enforce_floor=True)
+
+    assert len(results) == 3
+    assert all(hit.rerank_score is None for hit in results)
+    assert any("rerank failed" in rec.message for rec in caplog.records)
+
+
+async def test_voice_path_can_skip_the_rerank_stage(store, monkeypatch):
+    """doc 03 latency budget: realtime voice degrades stages, never blocks."""
+    id_0, id_1, id_2 = await seed_three_ranked_items(store)
+    fake = FakeReranker(pairs=[(2, 9.0), (1, 5.0), (0, 1.0)])
+    monkeypatch.setattr(rerank_mod, "resolve_reranker", lambda cfg: fake)
+    cfg = make_cfg(rerank_provider="voyage")
+
+    results = await hybrid_search(store, cfg, "alpha", rerank=False)
+
+    assert [hit.item_id for hit in results] == [id_0, id_1, id_2]
+    assert fake.calls == []  # no model call on the voice path
+
+
+# ---------------------------------------------------------------------------
+# Context expansion
+# ---------------------------------------------------------------------------
+
+
+async def test_context_expansion_rehydrates_the_winners():
+    store = SignalStore(
+        keyword_hits=[make_result(1), make_result(2)],
+        neighbors={1: ["the message before", "the message after"]},
+    )
+
+    results = await hybrid_search(store, make_cfg(recency_half_life_days=0), "alpha")
+
+    by_id = {hit.item_id: hit for hit in results}
+    assert by_id[1].context == ("the message before", "the message after")
+    assert by_id[2].context == ()
+    assert sorted(store.neighbor_calls) == [1, 2]
+
+
+async def test_context_expansion_only_runs_for_the_returned_top_k():
+    store = SignalStore(
+        keyword_hits=[make_result(i) for i in range(1, 6)],
+        neighbors={i: [f"ctx {i}"] for i in range(1, 6)},
+    )
+
+    results = await hybrid_search(
+        store, make_cfg(recency_half_life_days=0), "alpha", k=2
+    )
+
+    assert len(results) == 2
+    assert store.neighbor_calls == [1, 2]  # no wasted lookups below the cut
+
+
+async def test_context_expansion_failure_leaves_bare_snippets():
+    class ExplodingStore(SignalStore):
+        async def neighbors_for(self, item_id: int, *, limit: int = 2) -> list[str]:
+            raise RuntimeError("neighbour lookup exploded")
+
+    store = ExplodingStore(keyword_hits=[make_result(1)])
+
+    results = await hybrid_search(store, make_cfg(recency_half_life_days=0), "alpha")
+
+    assert results[0].context == ()
+
+
+async def test_context_expansion_can_be_switched_off():
+    store = SignalStore(keyword_hits=[make_result(1)], neighbors={1: ["ctx"]})
+
+    results = await hybrid_search(
+        store, make_cfg(recency_half_life_days=0), "alpha", expand_context=False
+    )
+
+    assert results[0].context == ()
+    assert store.neighbor_calls == []

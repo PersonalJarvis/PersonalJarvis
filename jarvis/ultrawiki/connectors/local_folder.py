@@ -7,10 +7,14 @@ store, no LLM, no embedding (design doc 02, hard rule 1).
 
 Cursor / checkpoint contract (documented honestly):
 
-- ``backfill(ctx, checkpoint)`` walks the tree in deterministic order
-  (sorted by POSIX relative path). ``checkpoint`` is the ``external_id``
-  of the last item the runtime persisted; files sorting at or before it
-  are skipped so an interrupted backfill resumes instead of restarting.
+- ``backfill(ctx, checkpoint)`` walks the tree in deterministic order,
+  sorted by ``external_id`` — the SAME string the checkpoint holds, which
+  is what makes "skip everything at or before the checkpoint" correct for
+  every subclass (a subclass that derives its ids differently, like the
+  normal-wiki connector stripping ``.md``, orders by ITS ids too).
+  ``checkpoint`` is the ``external_id`` of the last item the runtime
+  persisted; files sorting at or before it are skipped so an interrupted
+  backfill resumes instead of restarting.
 - ``incremental(ctx, cursor)`` uses a cursor that is the highest
   ``st_mtime_ns`` seen so far, as a string. Every yielded item carries
   ``metadata["mtime_ns"]`` so the runtime can advance the cursor to the
@@ -29,10 +33,11 @@ Cursor / checkpoint contract (documented honestly):
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import re
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -48,6 +53,16 @@ log = logging.getLogger(__name__)
 
 #: Matches an H1 markdown heading ("# Title") at the start of a line.
 _H1_RE = re.compile(r"^# +(.+?)\s*$", re.MULTILINE)
+
+#: Files stat'ed + read per worker-thread hop. Filesystem I/O must never run
+#: on the event loop (it also serves voice and chat), but one hop per file
+#: would pay the handoff thousands of times over a real vault — a small batch
+#: amortizes it while keeping each hop short.
+READ_BATCH = 32
+
+
+def _batched(values: Sequence[Path], size: int) -> list[Sequence[Path]]:
+    return [values[start : start + size] for start in range(0, len(values), size)]
 
 
 def first_h1_heading(body: str) -> str:
@@ -112,32 +127,34 @@ class LocalFolderConnector:
     async def backfill(
         self, ctx: ConnectorContext, checkpoint: str | None = None
     ) -> AsyncIterator[RawItem]:
-        root = self._resolve_root(ctx)
+        root = await asyncio.to_thread(self._resolve_root, ctx)
         if root is None:
             return
         extensions = self._extensions(ctx)
-        for path in self._sorted_files(root, extensions):
-            external_id = self._external_id_for(root, path)
-            if checkpoint and external_id <= checkpoint:
-                continue
-            item = self._item_for(root, path)
-            if item is not None:
+        paths = await asyncio.to_thread(self._sorted_files, root, extensions)
+        pending = [
+            path
+            for path in paths
+            if not (checkpoint and self._external_id_for(root, path) <= checkpoint)
+        ]
+        for batch in _batched(pending, READ_BATCH):
+            for item in await asyncio.to_thread(self._items_for_paths, root, batch):
                 yield item
 
     async def incremental(
         self, ctx: ConnectorContext, cursor: str | None = None
     ) -> AsyncIterator[RawItem]:
-        root = self._resolve_root(ctx)
+        root = await asyncio.to_thread(self._resolve_root, ctx)
         if root is None:
             return
         threshold = parse_mtime_cursor(cursor, connector_id=self.id)
         extensions = self._extensions(ctx)
-        for path in self._sorted_files(root, extensions):
-            mtime_ns = self._mtime_ns(path)
-            if mtime_ns is None or mtime_ns <= threshold:
-                continue
-            item = self._item_for(root, path)
-            if item is not None:
+        paths = await asyncio.to_thread(self._sorted_files, root, extensions)
+        for batch in _batched(paths, READ_BATCH):
+            items = await asyncio.to_thread(
+                self._items_for_paths, root, batch, min_mtime_ns=threshold
+            )
+            for item in items:
                 yield item
 
     # ------------------------------------------------------------------
@@ -176,10 +193,16 @@ class LocalFolderConnector:
         return tuple(normalized) or self.DEFAULT_EXTENSIONS
 
     def _sorted_files(self, root: Path, extensions: tuple[str, ...]) -> list[Path]:
-        """All matching files under ``root``, sorted by POSIX relative path.
+        """All matching files under ``root``, sorted by ``external_id``.
+
+        The sort key is deliberately :meth:`_external_id_for`, not the raw
+        relative path: the backfill checkpoint stores an ``external_id``, so
+        resuming can only be correct while walk order and checkpoint order are
+        the same string ordering.
 
         Hidden directories and files (dot-prefixed) plus :attr:`SKIP_DIR_NAMES`
-        are excluded. Symlinked directories are not followed.
+        are excluded. Symlinked directories are not followed. Blocking — call
+        it through ``asyncio.to_thread``.
         """
         matches: list[tuple[str, Path]] = []
         for dirpath, dirnames, filenames in os.walk(root):
@@ -193,9 +216,9 @@ class LocalFolderConnector:
                 path = base / name
                 if path.suffix.lower() not in extensions:
                     continue
-                matches.append((path.relative_to(root).as_posix(), path))
+                matches.append((self._external_id_for(root, path), path))
         matches.sort(key=lambda pair: pair[0])
-        return [path for _rel, path in matches]
+        return [path for _external_id, path in matches]
 
     def _external_id_for(self, root: Path, path: Path) -> str:
         return path.relative_to(root).as_posix()
@@ -204,8 +227,32 @@ class LocalFolderConnector:
         return path.stem
 
     # ------------------------------------------------------------------
-    # Item construction (sync helpers keep blocking I/O out of async frames)
+    # Item construction — every helper below BLOCKS on the filesystem and is
+    # only ever called through asyncio.to_thread from the generators above.
     # ------------------------------------------------------------------
+
+    def _items_for_paths(
+        self,
+        root: Path,
+        paths: Sequence[Path],
+        *,
+        min_mtime_ns: int | None = None,
+    ) -> list[RawItem]:
+        """Stat + read one batch of files in a worker thread.
+
+        With ``min_mtime_ns`` set (the incremental cursor) files that were not
+        modified after it are skipped before their body is read at all.
+        """
+        items: list[RawItem] = []
+        for path in paths:
+            if min_mtime_ns is not None:
+                mtime_ns = self._mtime_ns(path)
+                if mtime_ns is None or mtime_ns <= min_mtime_ns:
+                    continue
+            item = self._item_for(root, path)
+            if item is not None:
+                items.append(item)
+        return items
 
     def _mtime_ns(self, path: Path) -> int | None:
         try:

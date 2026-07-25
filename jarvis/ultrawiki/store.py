@@ -80,9 +80,35 @@ _IN_CHUNK = 400
 
 _FTS_QUOTE_STRIP_RE = re.compile(r'"')
 
+#: Seconds a Postgres connect attempt may take before it gives up. The store
+#: opens on the app's startup path, so an unreachable host must fail fast and
+#: degrade to SQLite instead of stalling the boot.
+PG_CONNECT_TIMEOUT_S = 5
+
+#: ``scheme://user:password@host`` userinfo inside any connection string a
+#: driver may echo back in an error message.
+_DSN_USERINFO_RE = re.compile(
+    r"(?P<scheme>[A-Za-z][A-Za-z0-9+.\-]*://)(?P<userinfo>[^/@\s]+)@"
+)
+
 
 class UltraStoreError(RuntimeError):
     """Raised for store-contract violations (e.g. embedding-dim mismatch)."""
+
+
+def sanitize_conn_error(exc: BaseException, conn_str: str = "") -> str:
+    """``"TypeName: message"`` with every credential scrubbed out.
+
+    A psycopg failure routinely echoes the whole connection string — including
+    the password — and that text lands in ``/api/ultrawiki/status``
+    degradations and the ``/test/storage`` result. Both the stored connection
+    string itself and any ``scheme://user:password@`` userinfo are replaced by
+    ``***`` before the message is allowed to leave the store.
+    """
+    text = f"{type(exc).__name__}: {exc}"
+    if conn_str:
+        text = text.replace(conn_str, "***")
+    return _DSN_USERINFO_RE.sub(lambda m: f"{m.group('scheme')}***@", text)
 
 
 @dataclass(frozen=True, slots=True)
@@ -215,6 +241,22 @@ def _distance_score(distance: float) -> float:
 def _snippet_of(text: str) -> str:
     collapsed = " ".join(text.split())
     return collapsed[:_SNIPPET_CHARS]
+
+
+def _neighbors_per_side(limit: int) -> int:
+    """How many neighbours to pull on EACH side for a total budget of
+    ``limit`` (the article's "two neighboring sections" = one per side)."""
+    return max(1, (int(limit) + 1) // 2)
+
+
+def _neighbor_snippets(before: Iterable[Any], after: Iterable[Any]) -> list[str]:
+    """Interleave the preceding and following rows, nearest neighbour first."""
+    out: list[str] = []
+    for row in before:
+        out.append(_snippet_of(f"{row['title']} {row['body_raw']}"))
+    for row in after:
+        out.append(_snippet_of(f"{row['title']} {row['body_raw']}"))
+    return out
 
 
 def _chunks(values: Sequence[Any], size: int = _IN_CHUNK) -> Iterable[Sequence[Any]]:
@@ -702,12 +744,29 @@ class UltraStore:
         *,
         fts_title: str | None = None,
         fts_body: str | None = None,
-    ) -> None:
+        expected_state: ItemState | str | None = None,
+        expected_content_hash: str | None = None,
+    ) -> bool:
         """Commit one state transition; retry bookkeeping resets.
 
         For the keyword stage the FTS delete+insert happens in the SAME
         transaction as the state transition (pass ``fts_title``/``fts_body``)
         so the index can never drift from the state column.
+
+        **Compare-and-set (the lost-claim guard).** A sync running concurrently
+        with the pipeline can reset an item to ``captured`` and purge its
+        derived rows the moment its content changes (:meth:`upsert_items`) —
+        between a worker's claim and its commit. An unconditional UPDATE would
+        then stamp e.g. ``embedded`` onto content that is no longer keyword
+        indexed and whose vector belongs to the OLD text. Passing
+        ``expected_state`` (the predecessor state seen at claim time) and
+        ``expected_content_hash`` narrows the UPDATE to exactly that row
+        version: when it no longer matches, nothing is written (no FTS row
+        either) and ``False`` says "claim lost, skip this item this pass".
+        The pipeline always passes both; callers that omit them get the
+        unconditional legacy behaviour.
+
+        Returns ``True`` when the transition was committed.
         """
         state = _coerce_state(new_state)
         if state not in STATE_ORDER or state is ItemState.CAPTURED:
@@ -716,13 +775,24 @@ class UltraStore:
                 "stages after 'captured' are worker transitions"
             )
         now = _iso_utc()
+        sql = (
+            "UPDATE uw_items SET state = ?, attempt_count = 0,"
+            " next_retry_at = NULL, last_error = NULL, updated_at = ?"
+            " WHERE id = ?"
+        )
+        params: list[Any] = [state.value, now, item_id]
+        if expected_state is not None:
+            sql += " AND state = ?"
+            params.append(_coerce_state(expected_state).value)
+        if expected_content_hash is not None:
+            sql += " AND content_hash = ?"
+            params.append(expected_content_hash)
         async with self._txn() as conn:
-            await conn.execute(
-                "UPDATE uw_items SET state = ?, attempt_count = 0,"
-                " next_retry_at = NULL, last_error = NULL, updated_at = ?"
-                " WHERE id = ?",
-                (state.value, now, item_id),
-            )
+            cur = await conn.execute(sql, params)
+            claimed = cur.rowcount != 0
+            await cur.close()
+            if not claimed:
+                return False
             if fts_body is not None or fts_title is not None:
                 await conn.execute(
                     "DELETE FROM uw_fts WHERE item_id = ?", (item_id,)
@@ -731,6 +801,7 @@ class UltraStore:
                     "INSERT INTO uw_fts (item_id, title, body) VALUES (?, ?, ?)",
                     (item_id, fts_title or "", fts_body or ""),
                 )
+        return True
 
     async def mark_retry(
         self,
@@ -786,6 +857,54 @@ class UltraStore:
             " last_error = ?, updated_at = ? WHERE id = ?",
             (ItemState.FAILED.value, error, now, item_id),
         )
+
+    async def requeue_failed(self, source_id: str | None = None) -> int:
+        """Give every dead-lettered item another run; returns the count moved.
+
+        Dead-lettering is permanent by design (5 attempts, then ``failed``), so
+        a transient outage — a chat provider without credit while the distill
+        stage ran, a dead embedding endpoint — silently strands items forever
+        once the user fixes the cause. This is the recovery path.
+
+        The state each item returns to is DERIVED from the rows it actually
+        owns, never guessed: a stored embedding means the embed stage really
+        finished (``embedded``), an FTS row means the keyword stage finished
+        (``keyword_indexed``), and anything else restarts at ``captured``.
+        Retry bookkeeping (attempt count, backoff, last error) is cleared so
+        the pipeline picks the items up on its next pass.
+        """
+        now = _iso_utc()
+        moved = 0
+        async with self._txn() as conn:
+            sql = (
+                "SELECT i.id AS id,"
+                " EXISTS (SELECT 1 FROM uw_documents d"
+                "  JOIN uw_embeddings e ON e.document_id = d.id"
+                "  WHERE d.item_id = i.id) AS has_vector,"
+                " EXISTS (SELECT 1 FROM uw_fts f WHERE f.item_id = i.id) AS has_fts"
+                " FROM uw_items i"
+                " WHERE i.state = ? AND i.deleted_at IS NULL"
+            )
+            params: list[Any] = [ItemState.FAILED.value]
+            if source_id is not None:
+                sql += " AND i.source_id = ?"
+                params.append(source_id)
+            rows = await self._fetchall(conn, sql, params)
+            for row in rows:
+                if int(row["has_vector"]):
+                    target = ItemState.EMBEDDED
+                elif int(row["has_fts"]):
+                    target = ItemState.KEYWORD_INDEXED
+                else:
+                    target = ItemState.CAPTURED
+                await conn.execute(
+                    "UPDATE uw_items SET state = ?, attempt_count = 0,"
+                    " next_retry_at = NULL, last_error = NULL, updated_at = ?"
+                    " WHERE id = ?",
+                    (target.value, now, row["id"]),
+                )
+                moved += 1
+        return moved
 
     async def counts(self) -> PipelineCounts:
         """Per-stage backlog counts over live (non-tombstoned) items."""
@@ -1177,6 +1296,93 @@ class UltraStore:
                 break
         return results, ""
 
+    # -- ranking signals -----------------------------------------------------
+
+    async def live_item_count(self) -> int:
+        """Live (non-deleted) item count — the ``N`` of the IDF formula."""
+        conn = await self._ensure_open()
+        row = await self._fetchone(
+            conn, "SELECT count(*) AS n FROM uw_items WHERE deleted_at IS NULL", ()
+        )
+        return int(row["n"]) if row else 0
+
+    async def term_document_frequency(self, terms: Sequence[str]) -> dict[str, int]:
+        """In how many live items does each term occur? (the ``df`` of IDF)
+
+        One indexed FTS count per distinct term — queries carry a handful of
+        terms, so this stays cheap. Unindexable tokens report 0, which the
+        caller reads as "maximally rare" only after the count is compared
+        against the corpus size.
+        """
+        conn = await self._ensure_open()
+        frequencies: dict[str, int] = {}
+        for term in dict.fromkeys(terms):
+            match_expr = _fts_match_expr(term)
+            if not match_expr:
+                frequencies[term] = 0
+                continue
+            row = await self._fetchone(
+                conn,
+                "SELECT count(*) AS n FROM uw_fts"
+                " JOIN uw_items i ON i.id = uw_fts.item_id"
+                " WHERE uw_fts MATCH ? AND i.deleted_at IS NULL",
+                (match_expr,),
+            )
+            frequencies[term] = int(row["n"]) if row else 0
+        return frequencies
+
+    async def neighbors_for(self, item_id: int, *, limit: int = 2) -> list[str]:
+        """Surrounding evidence for one winning item (context expansion).
+
+        Conversation-shaped sources (a ``thread_key``) return the items
+        immediately before and after inside that thread; file-shaped sources
+        (no thread) fall back to the item's other stored document rendition,
+        so a hit that matched a short fragment still shows its fuller text.
+        Returns snippets, best-effort and possibly empty.
+        """
+        if limit <= 0:
+            return []
+        conn = await self._ensure_open()
+        anchor = await self._fetchone(
+            conn,
+            "SELECT thread_key, timestamp_utc FROM uw_items WHERE id = ?",
+            (int(item_id),),
+        )
+        if anchor is None:
+            return []
+        thread_key = str(anchor["thread_key"] or "")
+        stamp = str(anchor["timestamp_utc"] or "")
+        out: list[str] = []
+        if thread_key:
+            # ISO-8601 UTC stamps sort lexicographically — no date function,
+            # identical behaviour on SQLite and Postgres.
+            before = await self._fetchall(
+                conn,
+                "SELECT title, body_raw FROM uw_items"
+                " WHERE thread_key = ? AND id <> ? AND deleted_at IS NULL"
+                "   AND timestamp_utc <= ?"
+                " ORDER BY timestamp_utc DESC LIMIT ?",
+                (thread_key, int(item_id), stamp, _neighbors_per_side(limit)),
+            )
+            after = await self._fetchall(
+                conn,
+                "SELECT title, body_raw FROM uw_items"
+                " WHERE thread_key = ? AND id <> ? AND deleted_at IS NULL"
+                "   AND timestamp_utc > ?"
+                " ORDER BY timestamp_utc ASC LIMIT ?",
+                (thread_key, int(item_id), stamp, _neighbors_per_side(limit)),
+            )
+            out = _neighbor_snippets(reversed(list(before)), after)
+        if not out:
+            docs = await self._fetchall(
+                conn,
+                "SELECT text_norm FROM uw_documents WHERE item_id = ?"
+                " ORDER BY length(text_norm) DESC LIMIT ?",
+                (int(item_id), int(limit)),
+            )
+            out = [_snippet_of(row["text_norm"] or "") for row in docs]
+        return [snippet for snippet in out if snippet][:limit]
+
     # -- sync state ----------------------------------------------------------
 
     async def get_sync_state(self, source_id: str) -> dict[str, Any] | None:
@@ -1430,9 +1636,13 @@ class PostgresStore:
         except ImportError as exc:
             return False, str(exc)
         try:
-            conn = await psycopg.AsyncConnection.connect(conn_str, connect_timeout=5)
+            conn = await psycopg.AsyncConnection.connect(
+                conn_str, connect_timeout=PG_CONNECT_TIMEOUT_S
+            )
         except Exception as exc:
-            return False, f"Connection failed: {exc}"
+            # psycopg echoes the DSN — password included — in several failure
+            # modes, and this message is shown in the UI.
+            return False, f"Connection failed: {sanitize_conn_error(exc, conn_str)}"
         try:
             cur = await conn.execute("SELECT version()")
             version_row = await cur.fetchone()
@@ -1449,7 +1659,10 @@ class PostgresStore:
             server = version_row[0] if version_row else "PostgreSQL"
             return True, f"Connected: {server}; {vec_note}"
         except Exception as exc:
-            return False, f"Connected, but the server probe failed: {exc}"
+            return False, (
+                "Connected, but the server probe failed: "
+                f"{sanitize_conn_error(exc, conn_str)}"
+            )
         finally:
             await conn.close()
 
@@ -1458,8 +1671,14 @@ class PostgresStore:
             if self._conn is not None:
                 return
             psycopg = _import_psycopg()
+            # A bounded connect: this runs on the app's startup path, so an
+            # unreachable host must fail fast into the SQLite fallback rather
+            # than hang the boot (psycopg would otherwise wait on the OS).
             conn = await psycopg.AsyncConnection.connect(
-                self._conn_str, autocommit=True, row_factory=psycopg.rows.dict_row
+                self._conn_str,
+                autocommit=True,
+                row_factory=psycopg.rows.dict_row,
+                connect_timeout=PG_CONNECT_TIMEOUT_S,
             )
             async with conn.transaction():
                 for statement in self.ddl_statements():
@@ -1815,22 +2034,35 @@ class PostgresStore:
         *,
         fts_title: str | None = None,  # noqa: ARG002 — tsvector is generated
         fts_body: str | None = None,  # noqa: ARG002 — tsvector is generated
-    ) -> None:
-        """Same contract as the SQLite twin; the ``fts_*`` arguments are
-        accepted and ignored because the keyword leg is a generated column."""
+        expected_state: ItemState | str | None = None,
+        expected_content_hash: str | None = None,
+    ) -> bool:
+        """Same contract as the SQLite twin — including the compare-and-set
+        lost-claim guard; the ``fts_*`` arguments are accepted and ignored
+        because the keyword leg is a generated column."""
         state = _coerce_state(new_state)
         if state not in STATE_ORDER or state is ItemState.CAPTURED:
             raise ValueError(
                 f"mark_stage_done cannot set {state.value!r} — only forward "
                 "stages after 'captured' are worker transitions"
             )
-        conn = await self._ensure_open()
-        await conn.execute(
+        sql = (
             "UPDATE uw_items SET state = %s, attempt_count = 0,"
             " next_retry_at = NULL, last_error = NULL, updated_at = %s"
-            " WHERE id = %s",
-            (state.value, _iso_utc(), item_id),
+            " WHERE id = %s"
         )
+        params: list[Any] = [state.value, _iso_utc(), item_id]
+        if expected_state is not None:
+            sql += " AND state = %s"
+            params.append(_coerce_state(expected_state).value)
+        if expected_content_hash is not None:
+            sql += " AND content_hash = %s"
+            params.append(expected_content_hash)
+        conn = await self._ensure_open()
+        cur = await conn.execute(sql, params)
+        # A driver that cannot report a row count (-1) is treated as a hit —
+        # the guard may never invent a lost claim out of missing information.
+        return int(getattr(cur, "rowcount", -1)) != 0
 
     async def mark_retry(
         self,
@@ -1884,6 +2116,47 @@ class PostgresStore:
             " last_error = %s, updated_at = %s WHERE id = %s",
             (ItemState.FAILED.value, error, _iso_utc(), item_id),
         )
+
+    async def requeue_failed(self, source_id: str | None = None) -> int:
+        """Postgres twin of the SQLite requeue.
+
+        One deliberate difference: the keyword leg here is a GENERATED
+        ``tsvector`` column, so there is no separate index row to look for and
+        no ``keyword_indexed`` evidence to find. An item without a stored
+        embedding therefore restarts at ``captured`` — re-running the keyword
+        transition costs a single cheap UPDATE and can never claim an item is
+        searchable when it is not.
+        """
+        now = _iso_utc()
+        moved = 0
+        async with self._txn() as conn:
+            sql = (
+                "SELECT i.id AS id,"
+                " EXISTS (SELECT 1 FROM uw_documents d"
+                "  JOIN uw_embeddings e ON e.document_id = d.id"
+                "  WHERE d.item_id = i.id) AS has_vector"
+                " FROM uw_items i"
+                " WHERE i.state = %s AND i.deleted_at IS NULL"
+            )
+            params: list[Any] = [ItemState.FAILED.value]
+            if source_id is not None:
+                sql += " AND i.source_id = %s"
+                params.append(source_id)
+            rows = await self._fetchall(conn, sql, params)
+            for row in rows:
+                target = (
+                    ItemState.EMBEDDED
+                    if bool(row["has_vector"])
+                    else ItemState.CAPTURED
+                )
+                await conn.execute(
+                    "UPDATE uw_items SET state = %s, attempt_count = 0,"
+                    " next_retry_at = NULL, last_error = NULL, updated_at = %s"
+                    " WHERE id = %s",
+                    (target.value, now, row["id"]),
+                )
+                moved += 1
+        return moved
 
     async def counts(self) -> PipelineCounts:
         conn = await self._ensure_open()
@@ -2205,6 +2478,78 @@ class PostgresStore:
                 break
         return results, ""
 
+    # -- ranking signals -----------------------------------------------------
+
+    async def live_item_count(self) -> int:
+        """Live (non-deleted) item count — the ``N`` of the IDF formula."""
+        conn = await self._ensure_open()
+        row = await self._fetchone(
+            conn, "SELECT count(*) AS n FROM uw_items WHERE deleted_at IS NULL", ()
+        )
+        return int(row["n"]) if row else 0
+
+    async def term_document_frequency(self, terms: Sequence[str]) -> dict[str, int]:
+        """In how many live items does each term occur? (the ``df`` of IDF)"""
+        conn = await self._ensure_open()
+        frequencies: dict[str, int] = {}
+        for term in dict.fromkeys(terms):
+            cleaned = " ".join(str(term).split())
+            if not cleaned:
+                frequencies[term] = 0
+                continue
+            row = await self._fetchone(
+                conn,
+                "SELECT count(*) AS n FROM uw_items"
+                " WHERE search_tsv @@ websearch_to_tsquery('simple', %s)"
+                "   AND deleted_at IS NULL",
+                (cleaned,),
+            )
+            frequencies[term] = int(row["n"]) if row else 0
+        return frequencies
+
+    async def neighbors_for(self, item_id: int, *, limit: int = 2) -> list[str]:
+        """Surrounding evidence for one winning item (context expansion)."""
+        if limit <= 0:
+            return []
+        conn = await self._ensure_open()
+        anchor = await self._fetchone(
+            conn,
+            "SELECT thread_key, timestamp_utc FROM uw_items WHERE id = %s",
+            (int(item_id),),
+        )
+        if anchor is None:
+            return []
+        thread_key = str(anchor["thread_key"] or "")
+        stamp = str(anchor["timestamp_utc"] or "")
+        out: list[str] = []
+        if thread_key:
+            before = await self._fetchall(
+                conn,
+                "SELECT title, body_raw FROM uw_items"
+                " WHERE thread_key = %s AND id <> %s AND deleted_at IS NULL"
+                "   AND timestamp_utc <= %s"
+                " ORDER BY timestamp_utc DESC LIMIT %s",
+                (thread_key, int(item_id), stamp, _neighbors_per_side(limit)),
+            )
+            after = await self._fetchall(
+                conn,
+                "SELECT title, body_raw FROM uw_items"
+                " WHERE thread_key = %s AND id <> %s AND deleted_at IS NULL"
+                "   AND timestamp_utc > %s"
+                " ORDER BY timestamp_utc ASC LIMIT %s",
+                (thread_key, int(item_id), stamp, _neighbors_per_side(limit)),
+            )
+            out = _neighbor_snippets(reversed(list(before)), after)
+        if not out:
+            docs = await self._fetchall(
+                conn,
+                "SELECT text_norm FROM uw_documents WHERE item_id = %s"
+                " ORDER BY length(text_norm) DESC LIMIT %s",
+                (int(item_id), int(limit)),
+            )
+            out = [_snippet_of(row["text_norm"] or "") for row in docs]
+        return [snippet for snippet in out if snippet][:limit]
+
     # -- sync state / areas / cache / meta ----------------------------------
 
     async def get_sync_state(self, source_id: str) -> dict[str, Any] | None:
@@ -2340,11 +2685,13 @@ __all__ = [
     "MAX_ATTEMPTS",
     "META_EMBED_DIM",
     "META_EMBED_MODEL",
+    "PG_CONNECT_TIMEOUT_S",
     "PostgresStore",
     "UltraStore",
     "UltraStoreError",
     "UpsertCounts",
     "pack_vector",
     "resolve_ultrawiki_db_path",
+    "sanitize_conn_error",
     "unpack_vector",
 ]

@@ -42,15 +42,29 @@ Stage notes:
   expensive stage — the deterministic floor keeps both alive.
 - **Fan-out.** Every list is a single indexed SQL query against the unified
   store; they run concurrently. Recency decay and term-rarity weighting are
-  baked into the keyword/vector list scoring, so stale answers lose ties and
-  filler ("sounds good, thanks!") never surfaces on similarity alone.
+  applied to the fused candidates, so stale answers lose ties and filler
+  ("sounds good, thanks!") never surfaces on similarity alone.
+  **Shipped (2026-07-25):** term rarity is computed from the store's own
+  corpus (`term_document_frequency` + `live_item_count`, both backends), and a
+  candidate covering none of the query's rare vocabulary is scaled DOWN, never
+  dropped — a hard content filter is the AP-27 trap. Age decay is
+  `0.5 ** (age_days / [ultrawiki].recency_half_life_days)`, default 180 days,
+  `0` disables it.
 - **Fusion (RRF, smoothing constant 60).** Consensus beats a single strong
   vote: a document appearing near the top of several lists outranks one that
-  is first in only one. Weights are per-list and tunable; defaults to 1.0.
+  is first in only one. Weights are per-list and tunable
+  (`[ultrawiki].rrf_keyword_weight` / `rrf_vector_weight`); default 1.0.
 - **Rerank.** A small model scores each candidate against the actual question
-  (0–10), killing look-alikes that share vocabulary but answer a different
-  question. Uses the configured rerank-capable provider if present; skipped
-  honestly when none is configured (fusion order then stands).
+  (**0–10, the same scale for every backend**), killing look-alikes that share
+  vocabulary but answer a different question. Skipped honestly when no
+  provider is configured or ready (fusion order then stands).
+  **Universality (§3/AP-22, shipped 2026-07-25):** the default backend is
+  `llm`, which grades through the key-aware cross-family provider chain — the
+  same one distillation uses — so the stage works with whatever credential the
+  install actually holds, including a purely local Ollama on a headless box.
+  `voyage` / `cohere` remain available for installs holding those keys; their
+  native 0–1 relevance is normalized ×10 onto the shared scale, because the
+  relevance floor below must not depend on which backend answered.
 - **Context expansion.** Winners are re-hydrated with their surroundings — the
   neighboring wiki sections, the messages around a burst — so the synthesis
   model sees complete evidence, not orphaned fragments.
@@ -73,6 +87,27 @@ before UltraWiki results reach any surface the user did not explicitly query,
 they must pass an **absolute relevance gate** (the wiki's three-gate pattern:
 score floor on the underlying leg scores, query-term overlap, and an
 honest empty-result path), never the bare fusion ranking.
+
+**Mechanism (shipped 2026-07-25).** The rerank grade IS the absolute measure
+the fused score cannot provide. `hybrid_search(..., enforce_floor=True)` drops
+every candidate graded below `[ultrawiki].rerank_min_score` (default 4.0, `0`
+disables) and returns an empty list rather than a weak match; explicit
+surfaces (Ask view, `GET /api/ultrawiki/search`, the CLI) never pass the flag.
+Two honesty rules that must not be softened:
+
+1. A candidate the rerank stage never graded (stage off, provider down, or
+   below the rerank pool) arrives with `rerank_score=None` and is passed
+   through UNGRADED rather than silently admitted as "good enough" — a floor
+   that disappears on provider failure is worse than a visible one. The
+   caller's deterministic gate (`jarvis/brain/wiki_relevance.py`) stays
+   responsible for those.
+2. The floor never runs on an explicit search. The user asked; hiding evidence
+   from them is a different defect than volunteering it unasked.
+
+**Wiring status:** the flag exists and is tested, but no unsolicited surface
+consumes UltraWiki yet — `wiki_relevance` still guards the normal wiki vault.
+Whoever wires UltraWiki into context injection or voice MUST pass
+`enforce_floor=True`; that is the moment this section becomes load-bearing.
 
 ## Cross-source reconstruction
 

@@ -53,10 +53,22 @@ __all__ = [
     "SYNC_CHUNK_SIZE",
     "JOB_ACTIVE_STATUSES",
     "JOB_TERMINAL_STATUSES",
+    "PIPELINE_STATES",
+    "SyncAlreadyRunningError",
     "SyncJob",
     "UltraWikiService",
     "clear_jobs",
 ]
+
+#: The honest pipeline states reported by :meth:`UltraWikiService.status`.
+#: Five-layer drift discipline (AP-4): the TypeScript union in
+#: ``src/lib/ultrawikiApi.ts`` and the UI labels derive from THIS list.
+PIPELINE_STATES: tuple[str, ...] = (
+    "waiting_for_sources",
+    "idle",
+    "processing",
+    "paused",
+)
 
 #: Items per ``upsert_items`` transaction / sync-state checkpoint.
 SYNC_CHUNK_SIZE = 200
@@ -92,6 +104,24 @@ _MAX_JOBS = 100
 
 JOB_TERMINAL_STATUSES = frozenset({"done", "failed", "cancelled"})
 JOB_ACTIVE_STATUSES = frozenset({"queued", "running"})
+
+
+class SyncAlreadyRunningError(RuntimeError):
+    """One source already has an active sync job.
+
+    Its own error type (not ``ValueError``) so the REST layer can answer 409
+    with the ACTIVE job id instead of guessing from message text. Two
+    concurrent syncs of one source would interleave their checkpoint and
+    cursor writes and double every upsert.
+    """
+
+    def __init__(self, source_id: str, job_id: str) -> None:
+        super().__init__(
+            f"a sync is already running for source {source_id!r} "
+            f"(job {job_id}) - wait for it or cancel it first"
+        )
+        self.source_id = source_id
+        self.job_id = job_id
 
 
 @dataclass
@@ -154,6 +184,14 @@ def _register_job(job: SyncJob) -> None:
 
 def _get_job(job_id: str) -> SyncJob | None:
     return _JOBS.get(job_id)
+
+
+def _active_job_for(source_id: str) -> SyncJob | None:
+    """The active (queued/running) job of *source_id*, if any."""
+    for job in _JOBS.values():
+        if job.source_id == source_id and job.status in JOB_ACTIVE_STATUSES:
+            return job
+    return None
 
 
 def _list_job_snapshots(limit: int = 20) -> list[dict[str, Any]]:
@@ -283,6 +321,14 @@ class UltraWikiService:
                     self._cfg,
                     embedding_backend_factory=self._embedding_backend_factory,
                     distill_fn=self._call_distill,
+                    # An injected distiller brings its own provider, so the
+                    # credential-chain gate would be both wrong and dependent
+                    # on whatever keys the host happens to hold.
+                    distill_ready_fn=(
+                        (lambda: (True, ""))
+                        if self._injected_distill_fn is not None
+                        else None
+                    ),
                 )
                 self._pipeline_task = asyncio.create_task(
                     self._pipeline.run(self._cancel_event),
@@ -296,7 +342,8 @@ class UltraWikiService:
         if backend.strip().lower() == "postgres":
             from jarvis.core.config import get_secret  # noqa: PLC0415 — lazy
 
-            conn_str = get_secret("ultrawiki_db_url")
+            # The secret chain walks the OS keyring / .env — never on the loop.
+            conn_str = await asyncio.to_thread(get_secret, "ultrawiki_db_url")
             if not conn_str:
                 self._note_degradation(
                     "the Postgres backend is configured but no "
@@ -308,9 +355,12 @@ class UltraWikiService:
                 try:
                     await pg_store.open()
                 except Exception as exc:  # noqa: BLE001 — degrade, never brick
+                    # psycopg echoes the DSN (password included) in several
+                    # failure modes and this line is shown in /status.
                     self._note_degradation(
-                        f"the Postgres store is unavailable ({exc}) - falling "
-                        "back to the local SQLite store"
+                        "the Postgres store is unavailable "
+                        f"({store_mod.sanitize_conn_error(exc, conn_str)}) - "
+                        "falling back to the local SQLite store"
                     )
                 else:
                     self._backend_in_use = "postgres"
@@ -393,6 +443,12 @@ class UltraWikiService:
         processed = (
             self._pipeline.processed_counts() if self._pipeline is not None else {}
         )
+        # Every slot probe walks credentials (keyring / .env) or an endpoint —
+        # all three go to a worker thread together, never on the event loop.
+        slots = await asyncio.to_thread(self._slot_statuses)
+        state, reason = self._pipeline_state(
+            counts, sources, slots, running=pipeline_running
+        )
         return {
             "enabled": self._uw_enabled(),
             "started": started,
@@ -402,18 +458,111 @@ class UltraWikiService:
                 ),
                 "in_use": self._backend_in_use,
             },
-            "slots": {
-                "embedding": self._embedding_slot_status(),
-                "distill": self._distill_slot_status(),
-                "rerank": self._rerank_slot_status(),
-            },
+            "slots": slots,
             "vector": vector,
             "counts": _counts_dict(counts),
-            "pipeline": {"running": pipeline_running, "processed": processed},
+            "pipeline": {
+                "running": pipeline_running,
+                "state": state,
+                "reason": reason,
+                "processed": processed,
+            },
             "sources": sources,
             "jobs": _list_job_snapshots(10),
             "degradations": list(self._degradations),
         }
+
+    def _slot_statuses(self) -> dict[str, Any]:
+        """The three capability-slot reports. BLOCKING (credential probes) —
+        only ever called through ``asyncio.to_thread``."""
+        return {
+            "embedding": self._embedding_slot_status(),
+            "distill": self._distill_slot_status(),
+            "rerank": self._rerank_slot_status(),
+        }
+
+    def _pipeline_state(
+        self,
+        counts: PipelineCounts,
+        sources: list[dict[str, Any]],
+        slots: dict[str, Any],
+        *,
+        running: bool,
+    ) -> tuple[str, str]:
+        """``(state, honest English reason)`` for the import-progress strip.
+
+        "Pipeline running" on a fresh activation with zero approved sources
+        read as "something is already pulling my data" — the exact opposite of
+        the consent contract. A live worker LOOP is not the same thing as work
+        being done, so the strip states which of the four situations holds:
+        nothing approved yet, nothing left to do, actually processing, or
+        blocked on a slot. ``running`` is still reported separately.
+        """
+        approved = [
+            source
+            for source in sources
+            if str(source.get("consent") or "") == ConsentState.APPROVED.value
+            and bool(source.get("enabled"))
+        ]
+        pending_keyword = int(counts.captured)
+        pending_embed = int(counts.keyword_indexed)
+        pending_distill = int(counts.embedded)
+        backlog = pending_keyword + pending_embed + pending_distill
+        failed = int(counts.failed)
+        failed_note = (
+            f" {failed} item(s) gave up after repeated errors — use "
+            "'retry failed items' once the cause is fixed."
+            if failed
+            else ""
+        )
+
+        if not approved:
+            return "waiting_for_sources", (
+                "No source is approved yet, so nothing is being read. Approve a "
+                "source under Sources and start a sync — until then this store "
+                "stays empty by design." + failed_note
+            )
+        if backlog == 0:
+            return "idle", (
+                "Everything ingested so far is fully processed; the pipeline is "
+                "waiting for new or changed items." + failed_note
+            )
+
+        embed_ready = bool((slots.get("embedding") or {}).get("ready"))
+        embed_reason = str((slots.get("embedding") or {}).get("reason") or "")
+        distill_ready = bool((slots.get("distill") or {}).get("ready"))
+        distill_reason = str((slots.get("distill") or {}).get("reason") or "")
+
+        if pending_keyword > 0:
+            blocked = ""
+            if pending_embed and not embed_ready:
+                blocked = f" The embedding stage is paused: {embed_reason}"
+            elif pending_distill and not distill_ready:
+                blocked = f" The distillation stage is paused: {distill_reason}"
+            state, reason = "processing", (
+                f"{backlog} item(s) are queued for processing." + blocked + failed_note
+            )
+        elif pending_embed > 0 and not embed_ready:
+            state, reason = "paused", (
+                f"{pending_embed} item(s) are keyword-searchable and waiting for "
+                f"the embedding stage: {embed_reason}" + failed_note
+            )
+        elif pending_distill > 0 and pending_embed == 0 and not distill_ready:
+            state, reason = "paused", (
+                f"{pending_distill} item(s) are embedded and waiting for the "
+                f"distillation stage: {distill_reason}" + failed_note
+            )
+        else:
+            state, reason = "processing", (
+                f"{backlog} item(s) are queued for processing." + failed_note
+            )
+
+        if state == "processing" and not running:
+            return "paused", (
+                f"{backlog} item(s) are queued, but the ingest pipeline is not "
+                "running — UltraWiki is off or still starting." + failed_note
+            )
+        return state, reason
 
     @staticmethod
     def _source_summary(row: dict[str, Any]) -> dict[str, Any]:
@@ -455,11 +604,18 @@ class UltraWikiService:
             ready, reason = False, f"unknown embedding provider {provider!r}"
         else:
             ready, reason = bool(row.get("ready")), str(row.get("reason") or "")
+        via = ""
+        if ready:
+            try:
+                via = embeddings_mod.credential_source(provider, self._cfg)
+            except Exception:  # noqa: BLE001 — provenance is decoration
+                via = ""
         return {
             "provider": provider,
             "model": model or (str(row.get("default_model") or "") if row else ""),
             "ready": ready,
             "reason": reason,
+            "via": via,
             "available": available,
         }
 
@@ -484,6 +640,7 @@ class UltraWikiService:
                 "model": model,
                 "ready": False,
                 "reason": f"distill chain probe failed ({type(exc).__name__})",
+                "via": "",
                 "chain": [],
             }
         ready = bool(chain)
@@ -492,16 +649,31 @@ class UltraWikiService:
             if ready
             else "no credential-ready chat provider is available for distillation"
         )
+        # Provenance names the credential path, never a key: whatever chat
+        # provider(s) the install actually holds is what carries this stage.
+        if not ready:
+            via = ""
+        elif provider and provider in chain:
+            via = f"your pinned chat provider {provider}"
+        elif provider:
+            via = (
+                f"your pinned chat provider {provider} (not in the "
+                f"credential-ready chain: {', '.join(chain)})"
+            )
+        else:
+            via = f"chat-provider chain ({', '.join(chain)})"
         return {
             "provider": provider,
             "model": model,
             "ready": ready,
             "reason": reason,
+            "via": via,
             "chain": chain,
         }
 
     def _rerank_slot_status(self) -> dict[str, Any]:
         provider = str(getattr(self._uw_cfg(), "rerank_provider", "") or "").strip()
+        model = str(getattr(self._uw_cfg(), "rerank_model", "") or "").strip()
         try:
             from jarvis.ultrawiki import rerank as rerank_mod  # noqa: PLC0415 — lazy
 
@@ -509,9 +681,12 @@ class UltraWikiService:
         except Exception as exc:  # noqa: BLE001 — status never raises
             return {
                 "provider": provider,
+                "model": model,
                 "ready": False,
                 "reason": f"rerank backend probe failed ({type(exc).__name__})",
+                "via": "",
                 "available": [],
+                "ranking": self._ranking_knobs(),
             }
         row = next((r for r in available if r.get("name") == provider), None)
         if not provider:
@@ -523,10 +698,46 @@ class UltraWikiService:
             ready, reason = bool(row.get("ready")), str(row.get("reason") or "")
         return {
             "provider": provider,
+            "model": model,
             "ready": ready,
             "reason": reason,
+            "via": self._rerank_via(provider, row) if ready else "",
             "available": available,
+            # The knobs ride along with the slot they govern, so the settings
+            # card can show what the ranking actually does today.
+            "ranking": self._ranking_knobs(),
         }
+
+    def _ranking_knobs(self) -> dict[str, float]:
+        """Live fusion weights / age decay / relevance floor; ``{}`` on error."""
+        try:
+            from jarvis.ultrawiki.search import ranking_settings  # noqa: PLC0415 — lazy
+
+            return ranking_settings(self._cfg)
+        except Exception:  # noqa: BLE001 — status never raises
+            return {}
+
+    def _rerank_via(self, provider: str, row: dict[str, Any] | None) -> str:
+        """Key-free provenance of the rerank slot, or ``""`` when unknown.
+
+        Asks the readiness row first and the backend adapter second (by
+        capability, never by provider name), and stays EMPTY rather than
+        inventing a credential path the backend never used.
+        """
+        if row is not None:
+            declared = str(row.get("via") or "").strip()
+            if declared:
+                return declared
+        try:
+            from jarvis.ultrawiki import rerank as rerank_mod  # noqa: PLC0415 — lazy
+
+            factory = rerank_mod.RERANK_BACKENDS.get(provider)
+            if factory is None:
+                return ""
+            describe = getattr(factory(self._cfg), "credential_source", None)
+            return str(describe() or "") if callable(describe) else ""
+        except Exception:  # noqa: BLE001 — provenance is decoration, never a failure
+            return ""
 
     # -- activation & sources ------------------------------------------------
 
@@ -617,12 +828,21 @@ class UltraWikiService:
 
     # -- sync jobs -----------------------------------------------------------
 
-    async def start_sync(self, source_id: str) -> str:
+    async def start_sync(self, source_id: str, *, full: bool = False) -> str:
         """Start a backfill/incremental sync as a detached named task.
 
         Refuses (``ValueError``) unless UltraWiki is enabled AND the source
         holds explicit approved consent — no connector pulls a single byte
-        before then.
+        before then. A source that already has an active job raises
+        :class:`SyncAlreadyRunningError` (the REST layer answers 409).
+
+        ``full=True`` is the FULL REFRESH: it clears the resume checkpoint AND
+        the incremental cursor, so the connector re-yields everything from the
+        beginning. That is the only shape in which deletions can be detected —
+        tombstoning needs the COMPLETE set of ids that still exist, which only
+        a from-scratch backfill provides. Without it a source that has finished
+        its first backfill only ever runs incrementally, and a file deleted
+        afterwards stays in the store forever.
         """
         if not self._uw_enabled():
             raise ValueError(
@@ -642,14 +862,30 @@ class UltraWikiService:
             )
         if not source.get("enabled", False):
             raise ValueError(f"source {source_id!r} is disabled")
+        active = _active_job_for(source_id)
+        if active is not None:
+            raise SyncAlreadyRunningError(source_id, active.job_id)
         connector = self._build_connector(str(source.get("connector") or ""))
         sync_state = await store.get_sync_state(source_id) or {}
+        if full:
+            # Persist the reset before the job starts, so a crash mid-run
+            # still resumes as a full backfill rather than a partial one.
+            await store.set_sync_state(
+                source_id, backfill_checkpoint=None, cursor=None
+            )
+            sync_state = {
+                **sync_state,
+                "backfill_checkpoint": None,
+                "cursor": None,
+            }
         capabilities = getattr(connector, "capabilities", None)
         incremental_mode = getattr(
             capabilities, "incremental", IncrementalMode.NONE
         )
-        use_incremental = bool(sync_state.get("backfill_complete_at")) and (
-            incremental_mode != IncrementalMode.NONE
+        use_incremental = (
+            not full
+            and bool(sync_state.get("backfill_complete_at"))
+            and incremental_mode != IncrementalMode.NONE
         )
         mode = "incremental" if use_incremental else "backfill"
         job = SyncJob(
@@ -736,8 +972,16 @@ class UltraWikiService:
                     job.tombstoned += await store.reconcile_deletes(
                         source_id, yielded_ids
                     )
+                # Clearing the checkpoint is what makes the NEXT backfill a full
+                # one. Left behind, it points at the LAST item of a completed
+                # walk, so a connector that cannot run incrementally
+                # (IncrementalMode.NONE) resumed at the very end and yielded
+                # nothing, forever — its source looked permanently frozen.
                 await store.set_sync_state(
-                    source_id, backfill_complete_at=now, last_success_at=now
+                    source_id,
+                    backfill_checkpoint=None,
+                    backfill_complete_at=now,
+                    last_success_at=now,
                 )
             else:
                 await store.set_sync_state(source_id, last_success_at=now)
@@ -818,6 +1062,23 @@ class UltraWikiService:
 
     def cancel_job(self, job_id: str) -> bool:
         return _cancel_job(job_id)
+
+    # -- recovery ------------------------------------------------------------
+
+    async def requeue_failed(self, source_id: str | None = None) -> int:
+        """Return dead-lettered items to the pipeline; count moved.
+
+        The counterpart to the stage gates: whatever already gave up while a
+        slot was dead (no chat credential, unreachable embedding endpoint) is
+        stranded in ``failed`` for good, because retries are exhausted. This is
+        how a user recovers that backlog after fixing the cause — no
+        re-import, no data loss, no hand-edited database.
+        """
+        await self.ensure_started()
+        store = self._require_store()
+        if source_id is not None and await store.get_source(source_id) is None:
+            raise ValueError(f"unknown source {source_id!r}")
+        return int(await store.requeue_failed(source_id))
 
     # -- search --------------------------------------------------------------
 

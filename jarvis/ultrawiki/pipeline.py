@@ -16,12 +16,23 @@ identical end state. Stages, in ladder order:
   cache is consulted first on ``(content_hash, PROMPT_VERSION, model)``; on a
   miss the injected ``distill_fn`` runs, the SUMMARY document is stored with
   its ``distill_json``, the summary text is embedded too, and the result is
-  cached so identical input is never paid for twice.
+  cached so identical input is never paid for twice. This stage is gated on
+  BOTH slots it consumes — the embedding backend and a credential-ready chat
+  provider — so an install without either pauses instead of dead-lettering
+  every item (``store.requeue_failed`` recovers an already-stranded backlog).
 
 Error discipline: a per-item failure goes through ``store.mark_retry`` (60s *
 4^n backoff, dead-letter after 5 attempts) and the loop NEVER dies on one item
-— it logs and continues. ``asyncio.CancelledError`` is always re-raised so the
-service's cancel-then-wait shutdown stays honest.
+— it logs and continues. A failed BATCH embed call is not a per-item failure:
+its members are retried individually in the same pass so one poisoned text
+cannot charge an attempt to 31 healthy ones. ``asyncio.CancelledError`` is
+always re-raised so the service's cancel-then-wait shutdown stays honest.
+
+Concurrency: a sync can reset an item to ``captured`` (content changed, derived
+rows purged) between a worker's claim and its commit. Every transition is
+therefore a compare-and-set against the state AND content hash seen at claim
+time; a lost claim writes nothing, charges no attempt, and is simply re-run on
+the next pass.
 
 This module imports only the stdlib and the dependency-free types module at
 import time (AP-26); heavier modules (embedding defaults, the distill prompt
@@ -46,6 +57,7 @@ __all__ = [
     "KEYWORD_BATCH",
     "EMBED_BATCH",
     "DISTILL_BATCH",
+    "MAX_EMBED_CHARS",
     "IDLE_SLEEP_S",
     "BUSY_SLEEP_S",
     "PipelineWorker",
@@ -56,12 +68,19 @@ KEYWORD_BATCH = 200
 EMBED_BATCH = 32
 DISTILL_BATCH = 4
 
+#: Character budget per embedded text, mirroring the distillation truncation
+#: in ``jarvis/ultrawiki/distill.py``. An oversized document is a provider
+#: 400/413 that would otherwise retry five times and dead-letter; an embedding
+#: of the first 8000 characters is a far better answer than none.
+MAX_EMBED_CHARS = 8000
+
 #: Loop pacing: quick follow-up while there is work, gentle poll when idle.
 IDLE_SLEEP_S = 2.0
 BUSY_SLEEP_S = 0.1
 
-#: The embedding ``ready()`` probe may hit the network (Ollama); cache its
-#: verdict briefly so an idle loop does not hammer a dead endpoint.
+#: The embedding ``ready()`` probe may hit the network (Ollama) and the distill
+#: probe walks the keyring; cache both verdicts briefly so an idle loop does
+#: not hammer a dead endpoint or re-walk the credential chain every 2 seconds.
 _READY_PROBE_TTL_S = 30.0
 
 #: Zero-arg factory returning the CONFIGURED embedding backend (an object
@@ -71,6 +90,12 @@ EmbeddingBackendFactory = Callable[[], Any]
 
 #: ``distill_fn(cfg, *, title, body, source_kind) -> DistillResult-like``.
 DistillFn = Callable[..., Awaitable[Any]]
+
+#: ``() -> (usable, honest_reason_if_not)`` for the distillation slot. Injected
+#: whenever ``distill_fn`` is NOT the production chain (an injected distiller
+#: brings its own provider, so probing the credential chain would be wrong —
+#: and would make the result depend on whatever keys the host happens to have).
+DistillReadyFn = Callable[[], tuple[bool, str]]
 
 
 def _summary_text(
@@ -120,16 +145,20 @@ class PipelineWorker:
         embedding_backend_factory: EmbeddingBackendFactory,
         distill_fn: DistillFn,
         now_fn: Callable[[], datetime] | None = None,
+        distill_ready_fn: DistillReadyFn | None = None,
     ) -> None:
         self._store = store
         self._cfg = cfg
         self._backend_factory = embedding_backend_factory
         self._distill_fn = distill_fn
         self._now_fn = now_fn
+        self._distill_ready_fn = distill_ready_fn
         #: Per-stage processed counters (successful transitions only).
         self.processed: dict[str, int] = {"keyword": 0, "embed": 0, "distill": 0}
         self._ready_cache: tuple[float, str, bool, str] | None = None
-        self._last_slot_reason: str | None = None
+        self._distill_ready_cache: tuple[float, bool, str] | None = None
+        #: stage -> the pause reason last logged, so a persistent gap logs once.
+        self._pause_reasons: dict[str, str] = {}
         self._source_kind_cache: dict[str, str] = {}
 
     # -- public surface ------------------------------------------------------
@@ -198,13 +227,30 @@ class PipelineWorker:
                 "UltraWiki: mark_retry failed for item %s", item.get("id")
             )
 
-    def _note_slot_gap(self, reason: str) -> None:
+    def _note_stage_pause(self, stage: str, reason: str) -> None:
         """Log an honest 'stage paused' line once per reason change."""
-        if reason != self._last_slot_reason:
-            self._last_slot_reason = reason
-            log.info("UltraWiki embed/distill stages paused: %s", reason)
+        if self._pause_reasons.get(stage) != reason:
+            self._pause_reasons[stage] = reason
+            log.info("UltraWiki %s stage paused: %s", stage, reason)
 
-    def _embedding_slot(self) -> tuple[Any | None, str, str]:
+    def _clear_stage_pause(self, stage: str) -> None:
+        self._pause_reasons.pop(stage, None)
+
+    def _note_lost_claim(self, item: dict[str, Any], stage: str) -> None:
+        """A concurrent content change invalidated this claim — not an error.
+
+        The item is back at ``captured`` with its derived rows purged, so the
+        next pass re-runs the whole ladder against the NEW content. Nothing is
+        retried and no attempt is charged.
+        """
+        log.debug(
+            "UltraWiki %s stage: claim on item %s lost to a concurrent content "
+            "change; the next pass re-runs it",
+            stage,
+            item.get("id"),
+        )
+
+    async def _embedding_slot(self) -> tuple[Any | None, str, str]:
         """``(backend, model, reason)`` — backend is ``None`` when the slot is
         unconfigured, unknown, model-less, or its ``ready()`` probe fails."""
         try:
@@ -230,23 +276,83 @@ class PipelineWorker:
                 f"embedding backend {getattr(backend, 'name', '?')!r} has no "
                 "configured or default model"
             )
-        ok, reason = self._backend_ready(backend)
+        ok, reason = await self._backend_ready(backend)
         if not ok:
             return None, "", reason
         return backend, model, ""
 
-    def _backend_ready(self, backend: Any) -> tuple[bool, str]:
+    async def _backend_ready(self, backend: Any) -> tuple[bool, str]:
         name = str(getattr(backend, "name", ""))
         now = time.monotonic()
         cached = self._ready_cache
         if cached is not None and cached[1] == name and now < cached[0]:
             return cached[2], cached[3]
+
+        def _probe() -> tuple[bool, str]:
+            try:
+                ok, reason = backend.ready()
+            except Exception as exc:  # noqa: BLE001 — ready() must never kill the loop
+                return False, (
+                    f"embedding readiness probe failed ({type(exc).__name__})"
+                )
+            return bool(ok), str(reason or "")
+
+        # ready() is SYNCHRONOUS and may block on a socket (Ollama) or the OS
+        # keyring — never on the event loop, which also serves voice and chat.
+        ok, reason = await asyncio.to_thread(_probe)
+        self._ready_cache = (now + _READY_PROBE_TTL_S, name, ok, reason)
+        return ok, reason
+
+    async def _distill_ready(self) -> tuple[bool, str]:
+        """Is there a credential-ready chat provider for the distill stage?
+
+        Mirrors ``UltraWikiService._distill_slot_status``. Without this gate the
+        stage claimed work on an install with no chat credential at all, failed
+        every item five times, and dead-lettered the entire corpus into
+        ``failed`` — from which nothing ever returned. Now the stage simply
+        pauses, honestly and once, and the backlog waits at ``embedded``.
+        """
+        now = time.monotonic()
+        cached = self._distill_ready_cache
+        if cached is not None and now < cached[0]:
+            return cached[1], cached[2]
+        if self._distill_ready_fn is not None:
+            try:
+                ok, reason = self._distill_ready_fn()
+            except Exception as exc:  # noqa: BLE001 — a broken probe pauses, never kills
+                ok, reason = False, (
+                    f"distill readiness probe failed ({type(exc).__name__})"
+                )
+            ok, reason = bool(ok), str(reason or "")
+        else:
+            # Credential probes walk keyring / env / .env — off the loop.
+            ok, reason = await asyncio.to_thread(self._probe_distill_chain)
+        self._distill_ready_cache = (now + _READY_PROBE_TTL_S, ok, reason)
+        return ok, reason
+
+    def _probe_distill_chain(self) -> tuple[bool, str]:
+        """Is any chat provider credential-ready? BLOCKING (keyring walk)."""
         try:
-            ok, reason = backend.ready()
-        except Exception as exc:  # noqa: BLE001 — ready() must never kill the loop
-            ok, reason = False, f"embedding readiness probe failed ({type(exc).__name__})"
-        self._ready_cache = (now + _READY_PROBE_TTL_S, name, bool(ok), reason)
-        return bool(ok), reason
+            from jarvis.brain.provider_registry import (  # noqa: PLC0415 — lazy
+                BrainProviderRegistry,
+            )
+            from jarvis.memory.wiki.provider_chain import (  # noqa: PLC0415 — lazy
+                credential_ready_wiki_providers,
+            )
+
+            chain = credential_ready_wiki_providers(
+                available=set(BrainProviderRegistry().available()), config=self._cfg
+            )
+        except Exception as exc:  # noqa: BLE001 — a broken probe pauses, never kills
+            return False, f"distill chain probe failed ({type(exc).__name__})"
+        if not chain:
+            return False, (
+                "no credential-ready chat provider is available for "
+                "distillation - add any chat provider key (or start a local "
+                "one) and the backlog resumes; keyword and semantic search "
+                "keep working"
+            )
+        return True, ""
 
     async def _source_kind(self, source_id: str) -> str:
         kind = self._source_kind_cache.get(source_id)
@@ -261,11 +367,25 @@ class PipelineWorker:
         return kind
 
     @staticmethod
-    def _raw_text(item: dict[str, Any]) -> str:
+    def _cap_embed_input(text: str) -> str:
+        """Trim an embed input to :data:`MAX_EMBED_CHARS` (provider limits)."""
+        return text if len(text) <= MAX_EMBED_CHARS else text[:MAX_EMBED_CHARS]
+
+    @classmethod
+    def _raw_text(cls, item: dict[str, Any]) -> str:
         title = str(item.get("title") or "")
         body = str(item.get("body_raw") or "")
         text = f"{title}\n\n{body}".strip()
-        return text or str(item.get("external_id") or "")
+        return cls._cap_embed_input(text or str(item.get("external_id") or ""))
+
+    @staticmethod
+    def _claim_guard(item: dict[str, Any]) -> dict[str, Any]:
+        """The compare-and-set keys captured at claim time (see
+        ``UltraStore.mark_stage_done``)."""
+        return {
+            "expected_state": item.get("state") or None,
+            "expected_content_hash": item.get("content_hash") or None,
+        }
 
     # -- stage passes --------------------------------------------------------
 
@@ -277,13 +397,17 @@ class PipelineWorker:
         )
         for item in items:
             try:
-                await self._store.mark_stage_done(
+                committed = await self._store.mark_stage_done(
                     int(item["id"]),
                     ItemState.KEYWORD_INDEXED,
                     fts_title=str(item.get("title") or ""),
                     fts_body=str(item.get("body_raw") or ""),
+                    **self._claim_guard(item),
                 )
-                self.processed["keyword"] += 1
+                if committed:
+                    self.processed["keyword"] += 1
+                else:
+                    self._note_lost_claim(item, "keyword")
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 — one poisoned item blocks nothing
@@ -293,11 +417,11 @@ class PipelineWorker:
     async def _embed_pass(self) -> int:
         """``keyword_indexed -> embedded``: store the RAW document and its
         vector via the configured backend. An unusable slot claims NO work."""
-        backend, model, reason = self._embedding_slot()
+        backend, model, reason = await self._embedding_slot()
         if backend is None:
-            self._note_slot_gap(reason)
+            self._note_stage_pause("embed", reason)
             return 0
-        self._last_slot_reason = None
+        self._clear_stage_pause("embed")
         items = await self._store.claim_batch(
             ItemState.EMBEDDED, limit=EMBED_BATCH, now=self._claim_now()
         )
@@ -312,41 +436,95 @@ class PipelineWorker:
                 )
         except asyncio.CancelledError:
             raise
-        except Exception as exc:  # noqa: BLE001 — batch failure retries every member
-            for item in items:
-                await self._retry(item, "embed", exc)
-            return len(items)
+        except Exception as exc:  # noqa: BLE001 — fall back to per-item embedding
+            # ONE unembeddable text (provider 400 on some content) used to
+            # charge an attempt to all 32 batch members, so a single poison
+            # item dead-lettered a whole healthy batch every five passes.
+            # Re-embed each member ALONE in this SAME pass instead: only the
+            # genuinely failing item accrues an attempt.
+            log.info(
+                "UltraWiki embed batch of %d failed (%s) — retrying its members "
+                "individually in this pass",
+                len(items),
+                exc,
+            )
+            return await self._embed_individually(items, texts, backend, model)
         for item, text, vector in zip(items, texts, vectors, strict=True):
             try:
-                doc_id = await self._store.add_document(
-                    int(item["id"]),
-                    DocType.RAW,
-                    text,
-                    content_hash=str(item.get("content_hash") or ""),
-                )
-                await self._store.store_embedding(
-                    doc_id, model=model, dim=len(vector), vector=vector
-                )
-                await self._store.mark_stage_done(int(item["id"]), ItemState.EMBEDDED)
-                self.processed["embed"] += 1
+                await self._store_embedded(item, text, vector, model)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 — one poisoned item blocks nothing
                 await self._retry(item, "embed", exc)
         return len(items)
 
+    async def _embed_individually(
+        self,
+        items: list[dict[str, Any]],
+        texts: list[str],
+        backend: Any,
+        model: str,
+    ) -> int:
+        """Per-item fallback after a failed batch call (see ``_embed_pass``)."""
+        for item, text in zip(items, texts, strict=True):
+            try:
+                vectors = await backend.embed([text], model=model)
+                if not vectors:
+                    raise RuntimeError("backend returned no vector for the text")
+                await self._store_embedded(item, text, vectors[0], model)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # noqa: BLE001 — only this item is charged
+                await self._retry(item, "embed", exc)
+        return len(items)
+
+    async def _store_embedded(
+        self, item: dict[str, Any], text: str, vector: Any, model: str
+    ) -> None:
+        """RAW document + vector + the guarded ``embedded`` transition.
+
+        When the compare-and-set finds the item already reset by a concurrent
+        content change, the document just written is stale — harmless, because
+        ``add_document`` REPLACES the ``(item_id, doc_type)`` row when the next
+        pass re-embeds the new content.
+        """
+        doc_id = await self._store.add_document(
+            int(item["id"]),
+            DocType.RAW,
+            text,
+            content_hash=str(item.get("content_hash") or ""),
+        )
+        await self._store.store_embedding(
+            doc_id, model=model, dim=len(vector), vector=vector
+        )
+        committed = await self._store.mark_stage_done(
+            int(item["id"]), ItemState.EMBEDDED, **self._claim_guard(item)
+        )
+        if committed:
+            self.processed["embed"] += 1
+        else:
+            self._note_lost_claim(item, "embed")
+
     async def _distill_pass(self) -> int:
         """``embedded -> distilled``: cache-first distillation, SUMMARY
         document + summary embedding, result cached for determinism.
 
-        The stage needs the embedding slot too (the summary is embedded), so
-        an unusable slot claims no distill work either. Items can only reach
-        ``embedded`` while the slot works, so this gate is rarely the limiter.
+        TWO gates, because the stage needs TWO slots: the embedding slot (the
+        summary is embedded too) AND a credential-ready chat provider for the
+        distillation call itself. Either one unusable means the stage claims NO
+        work — the backlog waits honestly instead of burning five attempts per
+        item and dead-lettering the corpus (a keyless install used to lose
+        everything that way).
         """
-        backend, model, reason = self._embedding_slot()
+        backend, model, reason = await self._embedding_slot()
         if backend is None:
-            self._note_slot_gap(reason)
+            self._note_stage_pause("distill", reason)
             return 0
+        distill_ok, distill_reason = await self._distill_ready()
+        if not distill_ok:
+            self._note_stage_pause("distill", distill_reason)
+            return 0
+        self._clear_stage_pause("distill")
         items = await self._store.claim_batch(
             ItemState.DISTILLED, limit=DISTILL_BATCH, now=self._claim_now()
         )
@@ -354,8 +532,10 @@ class PipelineWorker:
             return 0
         for item in items:
             try:
-                await self._distill_one(item, backend, model)
-                self.processed["distill"] += 1
+                if await self._distill_one(item, backend, model):
+                    self.processed["distill"] += 1
+                else:
+                    self._note_lost_claim(item, "distill")
             except asyncio.CancelledError:
                 raise
             except Exception as exc:  # noqa: BLE001 — one poisoned item blocks nothing
@@ -371,7 +551,11 @@ class PipelineWorker:
         provider = str(getattr(ultrawiki, "distill_provider", "") or "").strip()
         return model or provider or "auto"
 
-    async def _distill_one(self, item: dict[str, Any], backend: Any, model: str) -> None:
+    async def _distill_one(
+        self, item: dict[str, Any], backend: Any, model: str
+    ) -> bool:
+        """One distillation; ``False`` means the claim was lost (see
+        ``_note_lost_claim``)."""
         from jarvis.ultrawiki.distill import (  # noqa: PLC0415 — lazy (AP-26)
             distill_cache_key,
         )
@@ -415,11 +599,13 @@ class PipelineWorker:
                     fields, ensure_ascii=False, separators=(",", ":")
                 )
 
-        text = _summary_text(
-            _string_field(fields, "question"),
-            _string_field(fields, "summary"),
-            _string_field(fields, "resolution"),
-            _list_field(fields, "entities"),
+        text = self._cap_embed_input(
+            _summary_text(
+                _string_field(fields, "question"),
+                _string_field(fields, "summary"),
+                _string_field(fields, "resolution"),
+                _list_field(fields, "entities"),
+            )
         ) or self._raw_text(item)
 
         doc_id = await self._store.add_document(
@@ -440,4 +626,8 @@ class PipelineWorker:
             await self._store.distill_cache_put(
                 content_hash, prompt_version, cache_model, raw_json
             )
-        await self._store.mark_stage_done(int(item["id"]), ItemState.DISTILLED)
+        return bool(
+            await self._store.mark_stage_done(
+                int(item["id"]), ItemState.DISTILLED, **self._claim_guard(item)
+            )
+        )

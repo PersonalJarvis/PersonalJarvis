@@ -75,8 +75,7 @@
     "taskbar": "Barra",
     "contacts": "Contactos",
     "feedback": "Comentarios",
-    "agent_instructions": "{name}.md",
-    "agentic_ide": "IDE agéntico"
+    "agent_instructions": "{name}.md"
   },
   "agent_instructions": {
     "subtitle": "Tus preferencias personales sobre cómo el asistente trabaja contigo — tono, idioma, valores por defecto, hechos permanentes. Separado del System Prompt y nunca anula la seguridad ni las confirmaciones.",
@@ -488,7 +487,7 @@
   },
   "run_inspector": {
     "title": "Run Inspector",
-    "subtitle": "Análisis por run: transcripción completa, cronología, latencia, decisiones, herramientas, errores.",
+    "subtitle": "Análisis para desarrolladores por run: entorno, decisiones, latencia, E/S de herramientas y el flujo bruto de eventos.",
     "empty": "Selecciona un run para analizar.",
     "unavailable": "El grabador de runs está desactivado.",
     "export_raw": "Exportar bruto (JSON)",
@@ -503,7 +502,52 @@
       "latency": "Latencia",
       "decision": "Ruta de decisión",
       "tools": "Herramientas",
-      "errors": "Errores"
+      "errors": "Errores",
+      "events": "Eventos"
+    },
+    "environment": "Entorno del run",
+    "session_events": "Eventos a nivel de sesión",
+    "no_usage": "consumo no medido",
+    "stream": {
+      "empty": "No se registraron eventos.",
+      "events": "eventos",
+      "filter": "filtrar…",
+      "copy": "Copiar el flujo filtrado como JSONL",
+      "copied": "eventos copiados como JSONL",
+      "copy_failed": "Error al copiar",
+      "truncated": "Este turno registró más eventos de los que se muestran — el flujo se limita a 500 filas por turno."
+    },
+    "decision": {
+      "empty": "No se registraron decisiones para este turno.",
+      "no_rationale": "Sin justificación registrada.",
+      "no_source": "ninguna"
+    },
+    "tools": {
+      "empty": "No se ejecutó ninguna herramienta en este turno.",
+      "command": "Comando",
+      "output": "Resultado",
+      "error": "Error"
+    },
+    "facts": {
+      "endpoint": "fin de habla",
+      "cache": "caché de prompt",
+      "cache_hit": "acierto",
+      "cache_miss": "fallo",
+      "interrupted": "interrumpido",
+      "context": "contexto"
+    },
+    "env": {
+      "mode": "Modo",
+      "surface": "Superficie",
+      "started_by": "Iniciado por",
+      "ended_by": "Finalizado por",
+      "language": "Idioma",
+      "providers": "Proveedores",
+      "models": "Modelos",
+      "tiers": "Niveles",
+      "voices": "Voces",
+      "audio": "Audio",
+      "empty": "No se registró el entorno."
     }
   },
   "voice_mode": {

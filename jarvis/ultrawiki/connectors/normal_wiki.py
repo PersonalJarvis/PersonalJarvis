@@ -90,7 +90,13 @@ class NormalWikiConnector(LocalFolderConnector):
                 if any(part.startswith(".") for part in rel_parts):
                     continue
                 matches.append(path)
-        matches.sort(key=lambda p: p.relative_to(root).as_posix())
+        # Sorted by external_id (suffix STRIPPED), because that is what the
+        # backfill checkpoint compares against. Sorting by the path WITH '.md'
+        # orders 'entities/foo-bar.md' before 'entities/foo.md' ('-' < '.')
+        # while the ids order 'entities/foo' before 'entities/foo-bar' — a
+        # resume from 'entities/foo-bar' would then skip 'entities/foo'
+        # entirely.
+        matches.sort(key=lambda p: self._external_id_for(root, p))
         return matches
 
     def _external_id_for(self, root: Path, path: Path) -> str:

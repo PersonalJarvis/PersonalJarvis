@@ -19,11 +19,16 @@ from typing import Any
 
 import pytest
 
-from jarvis.ultrawiki.pipeline import PipelineWorker
+from jarvis.ultrawiki.pipeline import EMBED_BATCH, MAX_EMBED_CHARS, PipelineWorker
 from jarvis.ultrawiki.store import UltraStore
 from jarvis.ultrawiki.types import ConsentState, ItemState, RawItem
 
 VECTOR = [0.1, 0.2, 0.3]
+
+#: The distillation gate, stated explicitly in every test: these workers use an
+#: INJECTED distiller, so the production credential-chain probe must never run
+#: — a test whose outcome depends on the host's keys is the AP-23 trap.
+DISTILL_READY = lambda: (True, "")  # noqa: E731 — a one-line test seam
 
 
 def make_cfg() -> SimpleNamespace:
@@ -44,12 +49,17 @@ def make_cfg() -> SimpleNamespace:
 
 
 class FakeEmbeddingBackend:
-    """Fixed-vector backend implementing the EmbeddingBackend protocol."""
+    """Fixed-vector backend implementing the EmbeddingBackend protocol.
+
+    ``poison`` marks a substring that makes ``embed`` raise whenever a batch
+    contains it — the "one bad text in a batch of 32" case.
+    """
 
     name = "fake"
 
-    def __init__(self, *, usable: bool = True) -> None:
+    def __init__(self, *, usable: bool = True, poison: str = "") -> None:
         self.usable = usable
+        self.poison = poison
         self.embed_calls: list[list[str]] = []
 
     def ready(self) -> tuple[bool, str]:
@@ -57,6 +67,8 @@ class FakeEmbeddingBackend:
 
     async def embed(self, texts: list[str], *, model: str) -> list[list[float]]:
         self.embed_calls.append(list(texts))
+        if self.poison and any(self.poison in text for text in texts):
+            raise RuntimeError("provider rejected the request (400)")
         return [list(VECTOR) for _ in texts]
 
 
@@ -130,6 +142,7 @@ async def test_full_ladder_captured_to_distilled(store, tmp_path):
         make_cfg(),
         embedding_backend_factory=lambda: backend,
         distill_fn=distill_ok,
+        distill_ready_fn=DISTILL_READY,
     )
 
     attempted = await worker.run_once()
@@ -173,6 +186,7 @@ async def test_unconfigured_slot_stops_at_keyword_indexed(store):
         make_cfg(),
         embedding_backend_factory=lambda: None,  # slot unconfigured
         distill_fn=distill_never,
+        distill_ready_fn=DISTILL_READY,
     )
 
     await worker.run_once()
@@ -193,6 +207,7 @@ async def test_not_ready_backend_claims_no_embed_work(store):
         make_cfg(),
         embedding_backend_factory=lambda: backend,
         distill_fn=distill_never,
+        distill_ready_fn=DISTILL_READY,
     )
 
     await worker.run_once()
@@ -226,6 +241,7 @@ async def test_poison_distill_dead_letters_while_others_pass(store):
         embedding_backend_factory=FakeEmbeddingBackend,
         distill_fn=flaky_distill,
         now_fn=lambda: clock["now"],
+        distill_ready_fn=DISTILL_READY,
     )
 
     # Backoff ladder tops out at 3840 s before the 5th attempt dead-letters;
@@ -268,6 +284,7 @@ async def test_distill_cache_hit_skips_the_provider_call(store):
         make_cfg(),
         embedding_backend_factory=FakeEmbeddingBackend,
         distill_fn=counting_distill,
+        distill_ready_fn=DISTILL_READY,
     )
 
     await worker.run_once()
@@ -289,6 +306,7 @@ async def test_cancel_event_stops_the_loop_cleanly(store):
         make_cfg(),
         embedding_backend_factory=lambda: None,
         distill_fn=distill_never,
+        distill_ready_fn=DISTILL_READY,
     )
     cancel = asyncio.Event()
     task = asyncio.create_task(worker.run(cancel), name="test-uw-pipeline")
@@ -300,12 +318,176 @@ async def test_cancel_event_stops_the_loop_cleanly(store):
     assert task.done() and not task.cancelled()
 
 
+# ---------------------------------------------------------------------------
+# One bad text must not dead-letter its whole batch
+# ---------------------------------------------------------------------------
+
+
+async def test_batch_embed_failure_retries_members_individually(store):
+    """31 healthy items advance; only the poisoned one accrues an attempt."""
+    count = EMBED_BATCH
+    items = [make_item(i) for i in range(count)]
+    items[7] = make_item(7, body="this body makes the provider choke")
+    await store.upsert_items("src1", items)
+    backend = FakeEmbeddingBackend(poison="choke")
+    worker = PipelineWorker(
+        store,
+        make_cfg(),
+        embedding_backend_factory=lambda: backend,
+        distill_fn=distill_never,
+        distill_ready_fn=DISTILL_READY,
+    )
+
+    await worker._keyword_pass()  # noqa: SLF001 — drive one stage deliberately
+    await worker._embed_pass()  # noqa: SLF001
+
+    assert worker.processed_counts()["embed"] == count - 1
+    counts = await store.counts()
+    assert counts.embedded == count - 1
+    assert counts.keyword_indexed == 1  # the poisoned one kept its good state
+
+    poisoned = await store.get_item_by_external_id("src1", "ext-0007")
+    assert poisoned["attempt_count"] == 1
+    assert "embed" in (poisoned["last_error"] or "")
+    # Every healthy neighbour is untouched by the poisoned member's failure.
+    healthy = await store.get_item_by_external_id("src1", "ext-0006")
+    assert healthy["state"] == ItemState.EMBEDDED.value
+    assert healthy["attempt_count"] == 0
+    assert healthy["last_error"] is None
+    # One batch call, then one call per member (the individual retry pass).
+    assert len(backend.embed_calls) == 1 + count
+
+
+async def test_embed_input_is_capped_to_the_provider_budget(store):
+    await store.upsert_items(
+        "src1", [make_item(1, body="x" * (MAX_EMBED_CHARS * 3))]
+    )
+    backend = FakeEmbeddingBackend()
+    worker = PipelineWorker(
+        store,
+        make_cfg(),
+        embedding_backend_factory=lambda: backend,
+        distill_fn=distill_never,
+        distill_ready_fn=DISTILL_READY,
+    )
+
+    await worker._keyword_pass()  # noqa: SLF001
+    await worker._embed_pass()  # noqa: SLF001
+
+    assert backend.embed_calls
+    assert len(backend.embed_calls[0][0]) == MAX_EMBED_CHARS
+    assert (await store.counts()).embedded == 1
+
+
+# ---------------------------------------------------------------------------
+# The distillation gate — a keyless install pauses instead of dead-lettering
+# ---------------------------------------------------------------------------
+
+
+async def test_unready_distill_slot_claims_no_work_and_never_fails_items(store):
+    await store.upsert_items("src1", [make_item(1), make_item(2)])
+    worker = PipelineWorker(
+        store,
+        make_cfg(),
+        embedding_backend_factory=FakeEmbeddingBackend,
+        distill_fn=distill_never,  # asserts it is never called
+        distill_ready_fn=lambda: (False, "no credential-ready chat provider"),
+    )
+
+    for _ in range(6):  # more passes than MAX_ATTEMPTS would need to give up
+        await worker.run_once()
+
+    counts = await store.counts()
+    assert counts.embedded == 2
+    assert counts.distilled == 0
+    assert counts.failed == 0  # nothing was dead-lettered
+    everything = await store.get_item_by_external_id("src1", "ext-0001")
+    assert everything["attempt_count"] == 0
+    assert everything["last_error"] is None
+
+
+async def test_distill_resumes_once_the_slot_becomes_ready(store):
+    await store.upsert_items("src1", [make_item(1)])
+    slot = {"ready": False}
+    worker = PipelineWorker(
+        store,
+        make_cfg(),
+        embedding_backend_factory=FakeEmbeddingBackend,
+        distill_fn=distill_ok,
+        distill_ready_fn=lambda: (
+            (True, "") if slot["ready"] else (False, "no chat provider yet")
+        ),
+    )
+
+    await worker.run_once()
+    assert (await store.counts()).embedded == 1
+
+    slot["ready"] = True
+    worker._distill_ready_cache = None  # noqa: SLF001 — skip the 30 s probe TTL
+    await worker.run_once()
+    assert (await store.counts()).distilled == 1
+
+
+# ---------------------------------------------------------------------------
+# Lost claims (a sync racing the pipeline) are skipped, never retried
+# ---------------------------------------------------------------------------
+
+
+async def test_lost_claim_is_skipped_without_charging_an_attempt(store):
+    """A content change mid-flight must not look like a stage failure."""
+    await store.upsert_items("src1", [make_item(1)])
+
+    class RacingStore:
+        """Delegates to the real store but rewrites the item's content the
+        moment the keyword stage tries to commit."""
+
+        def __init__(self, inner: UltraStore) -> None:
+            self._inner = inner
+            self.raced = False
+
+        def __getattr__(self, name: str) -> Any:
+            return getattr(self._inner, name)
+
+        async def mark_stage_done(self, item_id: int, new_state: Any, **kwargs: Any):
+            if not self.raced and new_state == ItemState.KEYWORD_INDEXED:
+                self.raced = True
+                await self._inner.upsert_items(
+                    "src1", [make_item(1, body="rewritten by a racing sync")]
+                )
+            return await self._inner.mark_stage_done(item_id, new_state, **kwargs)
+
+    racing = RacingStore(store)
+    worker = PipelineWorker(
+        racing,
+        make_cfg(),
+        embedding_backend_factory=FakeEmbeddingBackend,
+        distill_fn=distill_ok,
+        distill_ready_fn=DISTILL_READY,
+    )
+
+    await worker._keyword_pass()  # noqa: SLF001 — the raced stage
+
+    assert racing.raced is True
+    assert worker.processed_counts()["keyword"] == 0  # the claim was dropped
+    item = await store.get_item_by_external_id("src1", "ext-0001")
+    assert item["state"] == ItemState.CAPTURED.value
+    assert item["attempt_count"] == 0  # a lost claim is not a failure
+    assert item["last_error"] is None
+
+    # The next pass works on the NEW content and completes the whole ladder.
+    await worker.run_once()
+    item = await store.get_item_by_external_id("src1", "ext-0001")
+    assert item["state"] == ItemState.DISTILLED.value
+    assert len(await store.keyword_search("rewritten")) == 1
+
+
 async def test_hard_cancel_reraises_cancelled_error(store):
     worker = PipelineWorker(
         store,
         make_cfg(),
         embedding_backend_factory=lambda: None,
         distill_fn=distill_never,
+        distill_ready_fn=DISTILL_READY,
     )
     task = asyncio.create_task(worker.run(asyncio.Event()), name="test-uw-pipeline-2")
     await asyncio.sleep(0.02)

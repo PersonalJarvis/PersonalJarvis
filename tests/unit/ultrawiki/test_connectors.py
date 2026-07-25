@@ -21,6 +21,7 @@ from jarvis.ultrawiki.connectors import (
     builtin_connectors,
     discover_connectors,
     discovery_failures,
+    jarvis_conversations,
 )
 from jarvis.ultrawiki.connectors import plugin_bridge as plugin_bridge_module
 from jarvis.ultrawiki.connectors.jarvis_conversations import (
@@ -321,6 +322,69 @@ class TestJarvisConversations:
         assert await _collect(connector.incremental(ctx, None)) == []
         assert not (tmp_path / "absent.db").exists(), "read-only probe must not create the db"
 
+    async def test_cursor_never_advances_past_the_scanned_high_water_mark(
+        self, conversations_db: Path
+    ):
+        """A row written DURING the incremental run must not be skipped.
+
+        The touched-day scan runs first; re-reading a day afterwards can pick
+        up rows inserted since — including rows of OTHER conversations that the
+        scan never saw. Reporting one of those rowids would advance the cursor
+        past them and lose them forever.
+        """
+        connector = JarvisConversationsConnector()
+        ctx = _ctx({"db_path": str(conversations_db)})
+        items = await _collect(connector.backfill(ctx))
+        cursor = max(item.metadata["max_rowid"] for item in items)
+
+        conn = sqlite3.connect(conversations_db)
+        try:
+            # Row A touches t1's day and IS covered by the scan below.
+            conn.execute(
+                "INSERT INTO messages (trace_id, thread_id, timestamp_ns, role, text)"
+                " VALUES (?, ?, ?, ?, ?)",
+                ("tr-1", "t1", _ns_at("2026-01-05", 10), "user", "seen by the scan"),
+            )
+            conn.commit()
+            scanned_rowid = conn.execute(
+                "SELECT MAX(id) FROM messages"
+            ).fetchone()[0]
+        finally:
+            conn.close()
+
+        # The interleave: a LATER row of a DIFFERENT conversation lands on the
+        # same day, after the touched-day scan but before the day is re-read.
+        original_rows_for_days = jarvis_conversations._rows_for_days
+
+        def racing_rows_for_days(conn_, pairs):
+            racing = sqlite3.connect(conversations_db)
+            try:
+                racing.execute(
+                    "INSERT INTO messages (trace_id, thread_id, timestamp_ns, role,"
+                    " text) VALUES (?, ?, ?, ?, ?)",
+                    ("tr-9", "t9", _ns_at("2026-01-05", 11), "user", "never scanned"),
+                )
+                racing.commit()
+            finally:
+                racing.close()
+            jarvis_conversations._rows_for_days = original_rows_for_days
+            return original_rows_for_days(conn_, pairs)
+
+        jarvis_conversations._rows_for_days = racing_rows_for_days
+        try:
+            changed = await _collect(connector.incremental(ctx, str(cursor)))
+        finally:
+            jarvis_conversations._rows_for_days = original_rows_for_days
+
+        assert [item.external_id for item in changed] == ["t1:2026-01-05"]
+        reported = changed[0].metadata["max_rowid"]
+        assert reported == scanned_rowid, "cursor must stop at the scanned mark"
+
+        # Because the cursor stopped there, the unscanned conversation is
+        # picked up by the NEXT run instead of being lost.
+        following = await _collect(connector.incremental(ctx, str(reported)))
+        assert "t9:2026-01-05" in {item.external_id for item in following}
+
 
 # ---------------------------------------------------------------------------
 # Normal wiki
@@ -367,6 +431,30 @@ class TestNormalWiki:
         os.utime(page, ns=(base_ns + _NS, base_ns + _NS))
         changed = await _collect(connector.incremental(ctx, cursor))
         assert [item.external_id for item in changed] == ["concepts/alpha"]
+
+    async def test_walk_order_matches_the_checkpoint_order(self, tmp_path: Path):
+        """Resume must not skip a page whose id sorts differently than its path.
+
+        The checkpoint stores an ``external_id`` (no ``.md``). Ordering the walk
+        by the file PATH puts 'entities/foo-bar.md' before 'entities/foo.md'
+        ('-' < '.'), while the ids order 'entities/foo' first — so resuming
+        after 'entities/foo-bar' skipped 'entities/foo' entirely.
+        """
+        (tmp_path / "entities").mkdir()
+        for name in ("foo.md", "foo-bar.md", "foo-zeta.md"):
+            (tmp_path / "entities" / name).write_text(f"# {name}\n", encoding="utf-8")
+        connector = NormalWikiConnector()
+        ctx = _ctx({"vault_root": str(tmp_path)})
+
+        walked = [item.external_id for item in await _collect(connector.backfill(ctx))]
+        assert walked == sorted(walked), "the walk must follow external_id order"
+        assert walked == ["entities/foo", "entities/foo-bar", "entities/foo-zeta"]
+
+        resumed = await _collect(connector.backfill(ctx, checkpoint="entities/foo"))
+        assert [item.external_id for item in resumed] == [
+            "entities/foo-bar",
+            "entities/foo-zeta",
+        ]
 
 
 # ---------------------------------------------------------------------------

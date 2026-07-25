@@ -110,9 +110,10 @@ export function UltraWikiPanel(): JSX.Element {
 
       <ImportProgress
         counts={status.counts}
-        pipelineRunning={status.pipeline.running}
+        pipeline={status.pipeline}
         jobs={status.jobs}
         onChanged={refetch}
+        onOpenSources={() => setTab("sources")}
       />
 
       <div className="flex items-stretch border-b border-border bg-card/40">
@@ -140,7 +141,14 @@ export function UltraWikiPanel(): JSX.Element {
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto">
-        {tab === "ask" && <AskPanel searchLegs={status.search_legs} />}
+        {tab === "ask" && (
+          <AskPanel
+            searchLegs={status.search_legs}
+            slots={status.slots}
+            ingestedItems={status.counts.total ?? 0}
+            onOpenSources={() => setTab("sources")}
+          />
+        )}
         {tab === "sources" && (
           <SourcesPanel sources={status.sources} onChanged={refetch} />
         )}

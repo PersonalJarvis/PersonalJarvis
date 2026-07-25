@@ -22,8 +22,16 @@ import {
 
 export function AskPanel({
   searchLegs,
+  slots,
+  ingestedItems = 0,
+  onOpenSources,
 }: {
   searchLegs: UltraWikiStatus["search_legs"] | undefined;
+  /** Capability slots — used only for the honest `via` provenance line. */
+  slots?: UltraWikiStatus["slots"];
+  /** Items in the store; 0 means "nothing ingested yet", not "no hits". */
+  ingestedItems?: number;
+  onOpenSources?: () => void;
 }): JSX.Element {
   const t = useT();
   const [input, setInput] = useState("");
@@ -73,10 +81,36 @@ export function AskPanel({
         </button>
       </form>
 
-      <SearchLegsLine legs={searchLegs} />
+      <SearchLegsLine legs={searchLegs} slots={slots} />
 
       <div className="mt-3 min-h-0 flex-1 overflow-y-auto">
-        {searchQuery.isFetching ? (
+        {!submitted && ingestedItems === 0 ? (
+          // Nothing is in the store yet. A blank panel here reads as "the
+          // search is broken"; the two steps that actually fill it do not.
+          <div
+            className="space-y-2 py-6 text-sm text-muted-foreground"
+            data-testid="ultrawiki-ask-nothing-ingested"
+          >
+            <p className="text-foreground">
+              {t("ultrawiki.ask.nothing_ingested_title")}
+            </p>
+            <ol className="ml-4 list-decimal space-y-1 text-xs">
+              <li>{t("ultrawiki.ask.nothing_ingested_step_approve")}</li>
+              <li>{t("ultrawiki.ask.nothing_ingested_step_sync")}</li>
+            </ol>
+            <p className="text-xs">{t("ultrawiki.ask.nothing_ingested_note")}</p>
+            {onOpenSources && (
+              <button
+                type="button"
+                onClick={onOpenSources}
+                className="text-xs underline underline-offset-2 hover:text-primary"
+                data-testid="ultrawiki-ask-open-sources"
+              >
+                {t("ultrawiki.progress.open_sources")}
+              </button>
+            )}
+          </div>
+        ) : searchQuery.isFetching ? (
           <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
             <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
             {t("ultrawiki.ask.searching")}
@@ -121,11 +155,17 @@ export function AskPanel({
 
 function SearchLegsLine({
   legs,
+  slots,
 }: {
   legs: UltraWikiStatus["search_legs"] | undefined;
+  slots?: UltraWikiStatus["slots"];
 }): JSX.Element | null {
   const t = useT();
   if (!legs) return null;
+  // "via <credential path>" — which of the user's own keys/endpoints is
+  // actually carrying this leg. Never a key value, only where it came from.
+  const withVia = (text: string, via: string | undefined): string =>
+    via ? `${text} — ${t("ultrawiki.ask.via").replace("{0}", via)}` : text;
   const parts: Array<{ key: string; text: string; degraded: boolean }> = [];
   if (legs.keyword?.available) {
     parts.push({
@@ -137,7 +177,14 @@ function SearchLegsLine({
   if (legs.vector) {
     parts.push(
       legs.vector.available
-        ? { key: "vector", text: t("ultrawiki.ask.leg_vector_on"), degraded: false }
+        ? {
+            key: "vector",
+            text: withVia(
+              t("ultrawiki.ask.leg_vector_on"),
+              slots?.embedding?.via,
+            ),
+            degraded: false,
+          }
         : {
             key: "vector",
             text: t("ultrawiki.ask.leg_vector_off").replace(
@@ -151,11 +198,9 @@ function SearchLegsLine({
   if (legs.rerank) {
     parts.push({
       key: "rerank",
-      text: t(
-        legs.rerank.available
-          ? "ultrawiki.ask.leg_rerank_on"
-          : "ultrawiki.ask.leg_rerank_off",
-      ),
+      text: legs.rerank.available
+        ? withVia(t("ultrawiki.ask.leg_rerank_on"), slots?.rerank?.via)
+        : t("ultrawiki.ask.leg_rerank_off"),
       degraded: false,
     });
   }
@@ -195,6 +240,25 @@ function ResultRow({ hit }: { hit: UltraWikiSearchHit }): JSX.Element {
           {hit.title || hit.snippet.slice(0, 60)}
         </span>
         <span className="flex items-center gap-1.5">
+          {/* The absolute 0-10 grade, when the rerank stage actually ran.
+              Unlike the fused score it means something on its own, so it is
+              the one number worth showing. */}
+          {typeof hit.rerank_score === "number" && (
+            <span
+              className={cn(
+                "rounded-full border px-1.5 py-0.5 text-[10px] tabular-nums",
+                hit.rerank_score >= 7
+                  ? "border-[#5bd4a4]/40 bg-[#5bd4a4]/10 text-[#5bd4a4]"
+                  : hit.rerank_score >= 4
+                    ? "border-border text-muted-foreground"
+                    : "border-[#ffb84d]/40 bg-[#ffb84d]/10 text-[#ffb84d]",
+              )}
+              title={t("ultrawiki.ask.grade_hint")}
+              data-testid={`ultrawiki-grade-${hit.item_id}`}
+            >
+              {hit.rerank_score.toFixed(1)}/10
+            </span>
+          )}
           {hit.matched_by.map((leg) => (
             <span
               key={leg}
@@ -215,6 +279,28 @@ function ResultRow({ hit }: { hit: UltraWikiSearchHit }): JSX.Element {
         <p className="mt-1 text-xs leading-relaxed text-muted-foreground">
           {hit.snippet}
         </p>
+      )}
+      {/* Context expansion: the neighbouring messages/sections, so the hit
+          reads as evidence instead of an orphaned fragment. */}
+      {hit.context?.length > 0 && (
+        <details className="mt-1.5" data-testid={`ultrawiki-context-${hit.item_id}`}>
+          <summary className="cursor-pointer text-[11px] text-muted-foreground hover:text-foreground">
+            {t("ultrawiki.ask.context_toggle").replace(
+              "{0}",
+              String(hit.context.length),
+            )}
+          </summary>
+          <ul className="mt-1 space-y-1 border-l border-border/60 pl-2">
+            {hit.context.map((line, index) => (
+              <li
+                key={index}
+                className="text-[11px] leading-relaxed text-muted-foreground/80"
+              >
+                {line}
+              </li>
+            ))}
+          </ul>
+        </details>
       )}
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[11px] text-muted-foreground">
         <span className="font-mono">{hit.source_id}</span>

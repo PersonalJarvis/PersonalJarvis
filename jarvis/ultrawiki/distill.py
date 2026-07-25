@@ -45,6 +45,7 @@ __all__ = [
     "build_distill_prompt",
     "distill_cache_key",
     "distill_text",
+    "extract_json_object",
 ]
 
 #: Part of the distillation cache key — bump on EVERY prompt change.
@@ -129,11 +130,13 @@ def distill_cache_key(*, title: str, body: str, model: str) -> tuple[str, int, s
 _JSON_FENCE_RE = re.compile(r"```(?:json)?\s*(.*?)```", re.DOTALL)
 
 
-def _extract_json_object(text: str) -> tuple[str, dict[str, Any]] | None:
+def extract_json_object(text: str) -> tuple[str, dict[str, Any]] | None:
     """Best-effort extraction of the first JSON object from model output.
 
     Returns ``(raw_json_text, parsed_dict)`` or ``None``. Tolerates markdown
     fences and surrounding prose — providers wrap JSON despite instructions.
+    Shared with the LLM reranker, which faces the identical strict-JSON
+    contract against the identical provider chain.
     """
     candidates = [text.strip()]
     for match in _JSON_FENCE_RE.finditer(text):
@@ -187,7 +190,7 @@ def _validate_distill_response(agg: Any) -> str | None:
     """Chain validator: a transport success without parseable JSON is unusable
     output — the chain then tries the next provider family."""
     text = getattr(agg, "text", "") or ""
-    if _extract_json_object(text) is None:
+    if extract_json_object(text) is None:
         return "distillation output holds no parseable JSON object"
     return None
 
@@ -263,7 +266,7 @@ async def distill_text(
         )
 
     agg, provider = result
-    extracted = _extract_json_object(getattr(agg, "text", "") or "")
+    extracted = extract_json_object(getattr(agg, "text", "") or "")
     if extracted is None:  # defensive: validate() already guaranteed this
         raise DistillError(
             f"distillation failed: provider {provider} passed validation but "

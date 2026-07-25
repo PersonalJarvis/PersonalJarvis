@@ -9,7 +9,7 @@
  * poll up to a few seconds while a job is active).
  */
 import { useState } from "react";
-import { Loader2, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Loader2, PauseCircle, XCircle } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
@@ -19,6 +19,7 @@ import {
   cancelUltraWikiJob,
   type UltraWikiCounts,
   type UltraWikiJob,
+  type UltraWikiPipeline,
 } from "@/lib/ultrawikiApi";
 
 const STAGES = [
@@ -31,14 +32,16 @@ const STAGES = [
 
 export function ImportProgress({
   counts,
-  pipelineRunning,
+  pipeline,
   jobs,
   onChanged,
+  onOpenSources,
 }: {
   counts: Partial<UltraWikiCounts>;
-  pipelineRunning: boolean;
+  pipeline: UltraWikiPipeline;
   jobs: UltraWikiJob[];
   onChanged: () => void;
+  onOpenSources?: () => void;
 }): JSX.Element {
   const t = useT();
   const pushToast = useEventStore((s) => s.pushToast);
@@ -66,6 +69,13 @@ export function ImportProgress({
     ULTRAWIKI_ACTIVE_JOB_STATUSES.includes(job.status),
   );
 
+  // What is still WAITING to be processed. 'distilled' is finished work and
+  // 'failed' gave up, so neither belongs in a "still to do" number.
+  const pendingItems =
+    (counts.captured ?? 0) +
+    (counts.keyword_indexed ?? 0) +
+    (counts.embedded ?? 0);
+
   return (
     <section
       aria-label={t("ultrawiki.progress.title")}
@@ -73,20 +83,11 @@ export function ImportProgress({
       data-testid="ultrawiki-import-progress"
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
-        <span className="flex items-center gap-1.5 font-medium text-foreground">
-          {pipelineRunning && (
-            <Loader2
-              className="h-3 w-3 animate-spin text-primary"
-              aria-hidden
-              data-testid="ultrawiki-pipeline-running"
-            />
-          )}
-          {t(
-            pipelineRunning
-              ? "ultrawiki.progress.pipeline_running"
-              : "ultrawiki.progress.pipeline_idle",
-          )}
-        </span>
+        <PipelineState
+          pipeline={pipeline}
+          pending={pendingItems}
+          onOpenSources={onOpenSources}
+        />
         <dl className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
           {STAGES.map(([key, labelKey]) => {
             const value = counts[key] ?? 0;
@@ -116,6 +117,15 @@ export function ImportProgress({
           })}
         </dl>
       </div>
+
+      {pipeline.reason && (
+        <p
+          className="mt-1 text-[11px] leading-relaxed text-muted-foreground"
+          data-testid="ultrawiki-pipeline-reason"
+        >
+          {pipeline.reason}
+        </p>
+      )}
 
       {activeJobs.length > 0 && (
         <ul className="mt-1.5 space-y-1" data-testid="ultrawiki-active-jobs">
@@ -151,5 +161,91 @@ export function ImportProgress({
         </ul>
       )}
     </section>
+  );
+}
+
+/**
+ * The honest headline of the strip.
+ *
+ * It used to read "Pipeline running" whenever the worker LOOP was alive —
+ * including on a fresh activation with zero approved sources, where it read as
+ * "something is already pulling my data" although nothing had been connected.
+ * The four states come from the backend (one source of truth,
+ * `PIPELINE_STATES`), each with its own honest wording; "waiting for sources"
+ * additionally offers the way out, a link straight to the Sources tab.
+ */
+function PipelineState({
+  pipeline,
+  pending,
+  onOpenSources,
+}: {
+  pipeline: UltraWikiPipeline;
+  pending: number;
+  onOpenSources?: () => void;
+}): JSX.Element {
+  const t = useT();
+  const state = pipeline.state ?? (pipeline.running ? "processing" : "idle");
+
+  if (state === "waiting_for_sources") {
+    return (
+      <span
+        className="flex flex-wrap items-center gap-1.5 font-medium text-foreground"
+        data-testid="ultrawiki-pipeline-state"
+        data-state={state}
+      >
+        <AlertTriangle className="h-3 w-3 shrink-0 text-[#ffb84d]" aria-hidden />
+        {t("ultrawiki.progress.state_waiting_for_sources")}
+        {onOpenSources && (
+          <button
+            type="button"
+            onClick={onOpenSources}
+            className="underline underline-offset-2 hover:text-primary"
+            data-testid="ultrawiki-open-sources-link"
+          >
+            {t("ultrawiki.progress.open_sources")}
+          </button>
+        )}
+      </span>
+    );
+  }
+
+  const { icon, label } =
+    state === "processing"
+      ? {
+          icon: (
+            <Loader2
+              className="h-3 w-3 animate-spin text-primary"
+              aria-hidden
+              data-testid="ultrawiki-pipeline-running"
+            />
+          ),
+          label: t("ultrawiki.progress.state_processing").replace(
+            "{0}",
+            String(pending),
+          ),
+        }
+      : state === "paused"
+        ? {
+            icon: (
+              <PauseCircle className="h-3 w-3 shrink-0 text-[#ffb84d]" aria-hidden />
+            ),
+            label: t("ultrawiki.progress.state_paused"),
+          }
+        : {
+            icon: (
+              <CheckCircle2 className="h-3 w-3 shrink-0 text-[#5bd4a4]" aria-hidden />
+            ),
+            label: t("ultrawiki.progress.state_idle"),
+          };
+
+  return (
+    <span
+      className="flex items-center gap-1.5 font-medium text-foreground"
+      data-testid="ultrawiki-pipeline-state"
+      data-state={state}
+    >
+      {icon}
+      {label}
+    </span>
   );
 }

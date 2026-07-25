@@ -11,11 +11,13 @@ from __future__ import annotations
 
 import importlib.util
 import sys
+from types import SimpleNamespace
 
 import pytest
 
 import jarvis.ultrawiki.store as store_mod
 from jarvis.ultrawiki.store import (
+    MAX_ATTEMPTS,
     META_EMBED_DIM,
     META_EMBED_MODEL,
     PostgresStore,
@@ -517,6 +519,135 @@ async def test_sync_state_partial_updates(store):
 
 
 # ---------------------------------------------------------------------------
+# Ranking signals — term rarity + context expansion
+# ---------------------------------------------------------------------------
+
+
+async def seed_indexed(store: UltraStore, items: list[RawItem], source_id: str = "src1") -> None:
+    await store.upsert_items(source_id, items)
+    for claimed in await store.claim_batch(ItemState.KEYWORD_INDEXED, limit=500):
+        await index_keyword(store, claimed)
+
+
+async def test_live_item_count_ignores_tombstoned_items(store):
+    await add_source(store)
+    await seed_indexed(store, [make_item(1), make_item(2), make_item(3)])
+    assert await store.live_item_count() == 3
+
+    await store.upsert_items("src1", [make_item(2, deleted=True)])
+    assert await store.live_item_count() == 2
+
+
+async def test_term_document_frequency_counts_items_not_occurrences(store):
+    await add_source(store)
+    await seed_indexed(
+        store,
+        [
+            make_item(1, body="bugatti chiron chiron chiron", title=""),
+            make_item(2, body="a note about the chiron", title=""),
+            make_item(3, body="something else entirely", title=""),
+        ],
+    )
+
+    frequencies = await store.term_document_frequency(
+        ["chiron", "bugatti", "neverappears"]
+    )
+
+    # 'chiron' appears three times inside item 1 but that is ONE document.
+    assert frequencies == {"chiron": 2, "bugatti": 1, "neverappears": 0}
+
+
+async def test_term_document_frequency_tolerates_punctuation_only_tokens(store):
+    await add_source(store)
+    await seed_indexed(store, [make_item(1)])
+
+    assert await store.term_document_frequency(["!!!", ""]) == {"!!!": 0, "": 0}
+
+
+async def test_neighbors_for_returns_the_surrounding_thread_messages(store):
+    await add_source(store)
+    thread = [
+        RawItem(
+            external_id=f"msg-{index}",
+            body=f"message {index} body",
+            permalink=f"app://msg/{index}",
+            timestamp_utc=f"2026-03-01T10:0{index}:00Z",
+            title="",
+            thread_key="thread-a",
+        )
+        for index in range(4)
+    ]
+    await seed_indexed(store, thread)
+    row = await store.get_item_by_external_id("src1", "msg-2")
+
+    neighbors = await store.neighbors_for(int(row["id"]), limit=2)
+
+    # One before, one after — the article's "two neighboring sections".
+    assert len(neighbors) == 2
+    assert "message 1 body" in neighbors[0]
+    assert "message 3 body" in neighbors[1]
+
+
+async def test_neighbors_for_stays_inside_its_own_thread(store):
+    await add_source(store)
+    await seed_indexed(
+        store,
+        [
+            RawItem(
+                external_id="a1",
+                body="mine before",
+                permalink="app://a1",
+                timestamp_utc="2026-03-01T10:00:00Z",
+                thread_key="thread-a",
+            ),
+            RawItem(
+                external_id="a2",
+                body="mine anchor",
+                permalink="app://a2",
+                timestamp_utc="2026-03-01T10:01:00Z",
+                thread_key="thread-a",
+            ),
+            RawItem(
+                external_id="b1",
+                body="someone elses thread",
+                permalink="app://b1",
+                timestamp_utc="2026-03-01T10:02:00Z",
+                thread_key="thread-b",
+            ),
+        ],
+    )
+    row = await store.get_item_by_external_id("src1", "a2")
+
+    neighbors = await store.neighbors_for(int(row["id"]), limit=2)
+
+    assert any("mine before" in text for text in neighbors)
+    assert not any("someone elses thread" in text for text in neighbors)
+
+
+async def test_neighbors_for_falls_back_to_the_items_own_fuller_document(store):
+    """File-shaped sources have no thread — the fuller stored rendition is
+    the surrounding context instead."""
+    await add_source(store)
+    await seed_indexed(store, [make_item(7, body="short body", title="Note")])
+    row = await store.get_item_by_external_id("src1", "ext-0007")
+    item_id = int(row["id"])
+    await store.add_document(item_id, DocType.SUMMARY, "the much fuller distilled text")
+
+    neighbors = await store.neighbors_for(item_id, limit=2)
+
+    assert neighbors == ["the much fuller distilled text"]
+
+
+async def test_neighbors_for_unknown_item_and_zero_limit_are_empty(store):
+    await add_source(store)
+    await seed_indexed(store, [make_item(1)])
+    row = await store.get_item_by_external_id("src1", "ext-0001")
+
+    assert await store.neighbors_for(999_999, limit=2) == []
+    assert await store.neighbors_for(int(row["id"]), limit=0) == []
+
+
+# ---------------------------------------------------------------------------
 # Postgres variant — missing driver is an honest, actionable error
 # ---------------------------------------------------------------------------
 
@@ -530,3 +661,207 @@ async def test_postgres_missing_driver_names_the_extra(monkeypatch):
     assert ok is False
     assert "ultrawiki-postgres" in message
     assert "SQLite backend keeps working" in message
+
+
+# ---------------------------------------------------------------------------
+# Compare-and-set: a sync racing the pipeline must not corrupt the ladder
+# ---------------------------------------------------------------------------
+
+
+async def test_lost_claim_writes_nothing_and_the_next_pass_recovers(store):
+    """A content change between claim and commit invalidates the claim.
+
+    Without the guard the worker stamped its stage onto content that had just
+    been reset to 'captured' with its derived rows purged — an item marked
+    keyword-indexed that no FTS row covers, or embedded with the OLD vector.
+    """
+    await add_source(store)
+    await store.upsert_items("src1", [make_item(0)])
+    claimed = (await store.claim_batch(ItemState.KEYWORD_INDEXED, limit=1))[0]
+
+    # The interleave: a sync lands NEW content for the same external id.
+    await store.upsert_items("src1", [make_item(0, body="fresh body omega")])
+
+    committed = await store.mark_stage_done(
+        claimed["id"],
+        ItemState.KEYWORD_INDEXED,
+        fts_title=claimed["title"],
+        fts_body=claimed["body_raw"],
+        expected_state=claimed["state"],
+        expected_content_hash=claimed["content_hash"],
+    )
+    assert committed is False
+    after = await store.get_item(claimed["id"])
+    assert after["state"] == ItemState.CAPTURED.value
+    # Neither the stale body nor the fresh one is indexed: no FTS write happened.
+    assert await store.keyword_search("number0") == []
+    assert await store.keyword_search("omega") == []
+
+    # The next pass claims the CURRENT version and commits normally.
+    reclaimed = (await store.claim_batch(ItemState.KEYWORD_INDEXED, limit=1))[0]
+    assert reclaimed["content_hash"] != claimed["content_hash"]
+    assert (
+        await store.mark_stage_done(
+            reclaimed["id"],
+            ItemState.KEYWORD_INDEXED,
+            fts_title=reclaimed["title"],
+            fts_body=reclaimed["body_raw"],
+            expected_state=reclaimed["state"],
+            expected_content_hash=reclaimed["content_hash"],
+        )
+        is True
+    )
+    assert len(await store.keyword_search("omega")) == 1
+    reindexed = await store.get_item(reclaimed["id"])
+    assert reindexed["state"] == ItemState.KEYWORD_INDEXED.value
+
+
+async def test_wrong_expected_state_is_a_lost_claim(store):
+    await add_source(store)
+    await store.upsert_items("src1", [make_item(0)])
+    claimed = (await store.claim_batch(ItemState.KEYWORD_INDEXED, limit=1))[0]
+    # Another worker already advanced it (state is no longer 'captured').
+    await index_keyword(store, claimed)
+
+    committed = await store.mark_stage_done(
+        claimed["id"],
+        ItemState.EMBEDDED,
+        expected_state=ItemState.CAPTURED,
+        expected_content_hash=claimed["content_hash"],
+    )
+    assert committed is False
+    assert (await store.get_item(claimed["id"]))["state"] == (
+        ItemState.KEYWORD_INDEXED.value
+    )
+
+
+async def test_mark_stage_done_without_a_guard_stays_unconditional(store):
+    await add_source(store)
+    await store.upsert_items("src1", [make_item(0)])
+    claimed = (await store.claim_batch(ItemState.KEYWORD_INDEXED, limit=1))[0]
+    assert await store.mark_stage_done(claimed["id"], ItemState.KEYWORD_INDEXED) is True
+
+
+# ---------------------------------------------------------------------------
+# requeue_failed — the dead-letter recovery path
+# ---------------------------------------------------------------------------
+
+
+async def test_requeue_failed_restores_each_item_to_its_last_good_stage(store):
+    await add_source(store)
+    await add_source(store, "src2")
+    await store.upsert_items("src1", [make_item(i) for i in range(3)])
+    await store.upsert_items("src2", [make_item(9)])
+    claimed = await store.claim_batch(ItemState.KEYWORD_INDEXED, limit=10)
+    by_ext = {item["external_id"]: item for item in claimed}
+
+    # ext-0000 stays raw; ext-0001 is keyword indexed; ext-0002 is embedded too.
+    await index_keyword(store, by_ext["ext-0001"])
+    await index_keyword(store, by_ext["ext-0002"])
+    doc_id = await store.add_document(
+        by_ext["ext-0002"]["id"], DocType.RAW, "embedded text", content_hash="h"
+    )
+    await store.store_embedding(doc_id, model="m", dim=3, vector=[0.1, 0.2, 0.3])
+    await store.mark_stage_done(by_ext["ext-0002"]["id"], ItemState.EMBEDDED)
+
+    # Every one of them gives up (the classic case: no chat credential, so the
+    # distill stage burned all five attempts on the whole corpus).
+    for item in [*claimed]:
+        for _ in range(MAX_ATTEMPTS):
+            await store.mark_retry(item["id"], "provider had no credit")
+    assert (await store.counts()).failed == 4
+
+    moved = await store.requeue_failed("src1")
+    assert moved == 3
+
+    states = {
+        external_id: (await store.get_item_by_external_id("src1", external_id))["state"]
+        for external_id in ("ext-0000", "ext-0001", "ext-0002")
+    }
+    assert states == {
+        "ext-0000": ItemState.CAPTURED.value,
+        "ext-0001": ItemState.KEYWORD_INDEXED.value,
+        "ext-0002": ItemState.EMBEDDED.value,
+    }
+    # Retry bookkeeping is cleared, so the pipeline claims them immediately.
+    restored = await store.get_item_by_external_id("src1", "ext-0001")
+    assert restored["attempt_count"] == 0
+    assert restored["next_retry_at"] is None
+    assert restored["last_error"] is None
+    assert len(await store.claim_batch(ItemState.EMBEDDED, limit=10)) == 1
+
+    # The other source was out of scope and is still dead-lettered.
+    assert (await store.counts_for_source("src2")).failed == 1
+    assert await store.requeue_failed() == 1  # None = every source
+    assert (await store.counts()).failed == 0
+
+
+async def test_requeue_failed_on_a_healthy_store_is_zero(store):
+    await add_source(store)
+    await store.upsert_items("src1", [make_item(0)])
+    assert await store.requeue_failed() == 0
+
+
+# ---------------------------------------------------------------------------
+# Connection-string errors must never carry the password
+# ---------------------------------------------------------------------------
+
+
+def test_sanitize_conn_error_scrubs_the_stored_dsn():
+    dsn = "postgresql://jarvis:sup3r-s3cret@db.internal:5432/uw"
+    exc = RuntimeError(f'connection failed: dsn="{dsn}" sslmode=require')
+    text = store_mod.sanitize_conn_error(exc, dsn)
+    assert "sup3r-s3cret" not in text
+    assert dsn not in text
+    assert text.startswith("RuntimeError: ")
+    assert "***" in text
+
+
+def test_sanitize_conn_error_scrubs_userinfo_without_a_stored_dsn():
+    exc = ValueError("could not translate host in postgres://admin:pw123@h/db")
+    text = store_mod.sanitize_conn_error(exc)
+    assert "pw123" not in text
+    assert "admin" not in text
+    assert "postgres://***@h/db" in text
+
+
+async def test_postgres_connect_test_never_echoes_the_password(monkeypatch):
+    dsn = "postgresql://jarvis:hunter2@db.internal:5432/uw"
+
+    class _FakeConnection:
+        @staticmethod
+        async def connect(conn_str, **_kwargs):
+            raise OSError(f'connection to "{conn_str}" refused')
+
+    monkeypatch.setattr(
+        store_mod,
+        "_import_psycopg",
+        lambda: SimpleNamespace(AsyncConnection=_FakeConnection),
+    )
+    ok, message = await PostgresStore.connect_test(dsn)
+    assert ok is False
+    assert "hunter2" not in message
+    assert "***" in message
+
+
+async def test_postgres_open_bounds_the_connect_attempt(monkeypatch):
+    seen: dict[str, object] = {}
+
+    class _FakeConnection:
+        @staticmethod
+        async def connect(conn_str, **kwargs):
+            seen.update(kwargs)
+            raise OSError("refused")
+
+    monkeypatch.setattr(
+        store_mod,
+        "_import_psycopg",
+        lambda: SimpleNamespace(
+            AsyncConnection=_FakeConnection, rows=SimpleNamespace(dict_row=object())
+        ),
+    )
+    with pytest.raises(OSError, match="refused"):
+        await PostgresStore("postgresql://localhost/x").open()
+    # An unreachable host must fail fast into the SQLite fallback, never hang
+    # the startup path waiting on the OS default timeout.
+    assert seen["connect_timeout"] == store_mod.PG_CONNECT_TIMEOUT_S

@@ -348,7 +348,6 @@ class WebServer:
         from .wiki_ws import router as wiki_ws_router
         from .workflows_routes import router as workflows_router
         from .workspace_routes import router as workspace_router
-        from .agentic_ide_routes import router as agentic_ide_router
         # Conductor is an external package in the same monorepo. Import
         # defensively — anyone who checks out the repo without conductor would
         # otherwise get an ImportError here at server boot.
@@ -418,12 +417,6 @@ class WebServer:
         # Provides agent detection, workspace launch planning, and PTY WebSocket
         # for in-app Claude Code / Codex terminals (xterm panes, not OS windows).
         app.include_router(workspace_router)
-        # Agentic IDE (/api/agentic-ide/*) — a chosen folder plus named terminals
-        # running Claude Code / Codex, addressable by voice ("what is Mika
-        # doing?") and promptable from Jarvis. Reuses the same PTY stack as the
-        # workspace above; adds the folder picker, call-signs, transcripts, and
-        # the focused coding mode.
-        app.include_router(agentic_ide_router)
         # Contacts section — user-curated address book (pure file store, no Brain dep).
         app.include_router(contacts_router)
         app.include_router(dictionary_router)
@@ -487,6 +480,9 @@ class WebServer:
         # UltraWikiService is constructed in start() (_init_ultrawiki); None
         # keeps /api/ultrawiki honest (503 / degraded status) until then.
         app.state.ultrawiki = None
+        # The named background task that opens the UltraWiki store when the
+        # mode is already on at boot (see _init_ultrawiki); cancelled in stop().
+        self._ultrawiki_start_task: asyncio.Task[None] | None = None
         app.state.mission_tool_approvals = self._mission_tool_approvals
 
         # Board aggregator (personal-mastery dashboard) — the aggregator is
@@ -2660,16 +2656,46 @@ class WebServer:
         while ``cfg.ultrawiki.enabled`` is true; a later in-app enable reaches
         ``ensure_started()`` again through the routes (AP-26: nothing here
         touches the boot-critical or voice path).
+
+        The already-enabled case is dispatched as a NAMED BACKGROUND TASK and
+        never awaited here: opening the store can mean a Postgres connect, and
+        awaiting that inline put a remote host's latency (bounded, but still
+        seconds) directly into the startup sequence. The task is held on an
+        attribute so ``stop()`` can cancel it BEFORE the service shuts down —
+        otherwise a store could finish opening after the shutdown that was
+        supposed to close it, and leak the connection.
         """
         from jarvis.ultrawiki.service import UltraWikiService
 
         service = UltraWikiService(self.cfg, bus=self.bus)
         self.app.state.ultrawiki = service
         if bool(getattr(getattr(self.cfg, "ultrawiki", None), "enabled", False)):
-            await service.ensure_started()
-            logger.info("ultrawiki: service started (mode enabled)")
+            task = asyncio.create_task(
+                service.ensure_started(), name="ultrawiki-start"
+            )
+            self._ultrawiki_start_task = task
+            task.add_done_callback(self._on_ultrawiki_start_done)
+            logger.info("ultrawiki: store + pipeline start dispatched (mode enabled)")
         else:
             logger.info("ultrawiki: service constructed (mode disabled — dormant)")
+
+    def _on_ultrawiki_start_done(self, task: asyncio.Task[None]) -> None:
+        """Report the background start honestly — a silent failure would look
+        like a working mode with an empty store."""
+        if self._ultrawiki_start_task is task:
+            self._ultrawiki_start_task = None
+        if task.cancelled():
+            logger.info("ultrawiki: background start cancelled (shutdown)")
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.opt(exception=exc).warning(
+                "ultrawiki: background start failed — /api/ultrawiki reports it "
+                "as degraded until the next activation: {}",
+                exc,
+            )
+        else:
+            logger.info("ultrawiki: service started (mode enabled)")
 
     def _init_wiki_boot_index(self, *, background: bool = False) -> None:
         """Rebuild the derived FTS view against the active vault.
@@ -3078,6 +3104,21 @@ class WebServer:
         # pipeline + every sync task (cancel, then wait_for(2 s) each), THEN
         # close its store. Runs before the store-dependent closes below so no
         # loop ever ticks against a closed connection.
+        # First the boot-path start task: cancel-then-wait BEFORE shutdown, so
+        # a store cannot finish opening after the shutdown meant to close it.
+        ultrawiki_start_task = getattr(self, "_ultrawiki_start_task", None)
+        if ultrawiki_start_task is not None and not ultrawiki_start_task.done():
+            ultrawiki_start_task.cancel()
+            try:
+                await asyncio.wait_for(ultrawiki_start_task, timeout=2.0)
+            except (TimeoutError, asyncio.CancelledError):
+                pass
+            except Exception as exc:  # noqa: BLE001 — shutdown best-effort
+                logger.opt(exception=exc).debug(
+                    "UltraWiki start-task cancel failed: {}", exc
+                )
+        self._ultrawiki_start_task = None
+
         ultrawiki_service = getattr(self.app.state, "ultrawiki", None)
         if ultrawiki_service is not None:
             try:

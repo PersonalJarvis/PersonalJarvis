@@ -191,7 +191,16 @@ class EmbeddingBackend(Protocol):
 
 @dataclass(frozen=True, slots=True)
 class SearchResult:
-    """One fused hybrid-search hit with its citation."""
+    """One fused hybrid-search hit with its citation.
+
+    ``score`` is the ORDINAL fused rank score (RRF): it orders candidates
+    against each other and can never say "nothing here is relevant".
+    ``rerank_score`` is the ABSOLUTE 0-10 relevance grade from the rerank
+    stage — the number an unsolicited surface gates on — and stays ``None``
+    whenever that optional stage was skipped or failed. ``context`` carries
+    the neighbouring evidence pulled back in after ranking (design doc 03,
+    "context expansion"); empty when expansion was skipped or unavailable.
+    """
 
     item_id: int
     source_id: str
@@ -201,6 +210,8 @@ class SearchResult:
     timestamp_utc: str
     score: float
     matched_by: tuple[str, ...] = ()  # e.g. ("keyword", "vector")
+    rerank_score: float | None = None  # absolute 0-10 grade, None = not reranked
+    context: tuple[str, ...] = ()  # neighbouring sections/messages
 
 
 @dataclass(frozen=True, slots=True)

@@ -30,6 +30,10 @@ const HIT: UltraWikiSearchHit = {
   timestamp_utc: "2026-07-01T08:00:00Z",
   score: 0.87,
   matched_by: ["keyword", "vector"],
+  // The rerank stage is optional: an ungraded hit is the DEFAULT shape, so
+  // the row must render without a grade chip or a context disclosure.
+  rerank_score: null,
+  context: [],
 };
 
 function installFetchMock(routes: Record<string, () => unknown>) {
@@ -109,6 +113,71 @@ describe("AskPanel — results with citations", () => {
     expect(link.getAttribute("href")).toBe(
       "obsidian://open?path=notes%2Ftrip.md",
     );
+  });
+
+  it("names the credential carrying a live leg, never the key itself", async () => {
+    installFetchMock({ "/api/ultrawiki/search": () => ({ query: "", results: [], total: 0 }) });
+    renderWithClient(
+      <AskPanel
+        searchLegs={{
+          keyword: { available: true },
+          vector: { available: true, backend: "gemini", model: "gemini-embedding-001" },
+          rerank: { available: false, provider: "off" },
+        }}
+        slots={{
+          embedding: {
+            provider: "gemini",
+            ready: true,
+            reason: "",
+            via: "your saved Gemini API key (gemini_api_key)",
+          },
+        }}
+        ingestedItems={12}
+      />,
+    );
+
+    const vector = screen.getByTestId("ultrawiki-leg-vector");
+    expect(vector.textContent).toContain("Semantic search: on");
+    expect(vector.textContent).toContain(
+      "via your saved Gemini API key (gemini_api_key)",
+    );
+  });
+
+  it("guides the user instead of showing a blank panel when nothing is ingested", async () => {
+    installFetchMock({ "/api/ultrawiki/search": () => ({ query: "", results: [], total: 0 }) });
+    const onOpenSources = vi.fn();
+    renderWithClient(
+      <AskPanel
+        searchLegs={{ keyword: { available: true } }}
+        ingestedItems={0}
+        onOpenSources={onOpenSources}
+      />,
+    );
+
+    const guide = screen.getByTestId("ultrawiki-ask-nothing-ingested");
+    expect(guide.textContent).toContain("Nothing has been ingested yet");
+    expect(guide.textContent).toContain("approve a source");
+    expect(guide.textContent).toContain("Sync");
+    fireEvent.click(screen.getByTestId("ultrawiki-ask-open-sources"));
+    expect(onOpenSources).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the normal empty state once items exist but a query finds nothing", async () => {
+    installFetchMock({
+      "/api/ultrawiki/search": () => ({ query: "zzz", results: [], total: 0 }),
+    });
+    renderWithClient(
+      <AskPanel searchLegs={{ keyword: { available: true } }} ingestedItems={7} />,
+    );
+    expect(screen.queryByTestId("ultrawiki-ask-nothing-ingested")).toBeNull();
+
+    fireEvent.change(screen.getByTestId("ultrawiki-ask-input"), {
+      target: { value: "zzz" },
+    });
+    fireEvent.click(screen.getByTestId("ultrawiki-ask-submit"));
+    await waitFor(() => {
+      expect(screen.getByTestId("ultrawiki-ask-empty")).toBeDefined();
+    });
   });
 
   it("shows the honest degraded-leg reason when a query finds nothing", async () => {
