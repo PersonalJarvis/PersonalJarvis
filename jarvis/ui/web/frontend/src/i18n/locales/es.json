@@ -1771,6 +1771,14 @@
       "pipeline_label": "Pipeline (no recomendado):",
       "pipeline_body": "Añade claves únicamente para los proveedores de razonamiento, salida de voz y entrada de voz que elijas.",
       "security_note": "Pega las claves únicamente en la vista segura de Claves API, nunca en el chat ni por voz.",
+      "local_title": "¿Sin clave API? Funciona totalmente en local",
+      "local_checking": "Buscando un Ollama local…",
+      "local_detected": "Ollama detectado en este equipo: Jarvis puede pensar totalmente en local, sin clave.",
+      "local_detected_empty": "Ollama está en marcha pero aún no tiene ningún modelo: descarga uno primero (p. ej. ollama pull qwen3.5).",
+      "local_use_button": "Usar modelo local",
+      "local_active": "Cerebro local activo: Ollama responde desde este equipo.",
+      "local_missing": "¿Sin clave API a mano? Instala Ollama y Jarvis funciona totalmente en local, sin cuenta en la nube.",
+      "local_missing_link": "Obtener Ollama",
       "continue": "Continuar la introducción"
     },
     "mic_test": {

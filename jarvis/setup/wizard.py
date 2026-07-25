@@ -173,6 +173,17 @@ SECRETS: list[SecretSpec] = [
         required_for="Grok Brain and xAI TTS",
         section="brain",
     ),
+    # Optional key for the generic local OpenAI-compatible provider (vLLM
+    # --api-key, proxied LM Studio, ...). App-only: local servers usually need
+    # no key, so it must not lengthen first-run onboarding.
+    SecretSpec(
+        key="local_openai_api_key",
+        env_fallback="LOCAL_OPENAI_API_KEY",
+        label="Local OpenAI-compatible server key (optional)",
+        help_url="https://huggingface.co/docs/transformers/main/serving",
+        required_for="Local server brain (only if your server enforces a key)",
+        prompt=False,
+    ),
     # Scoped Realtime credentials. They are app-only fields in the Realtime tab,
     # not extra first-run questions. Generic credentials remain compatibility
     # fallbacks for existing installations.
@@ -466,6 +477,21 @@ SECRETS: list[SecretSpec] = [
         optional=True,
         prompt=False,
     ),
+    # Drives the guided Supabase link flow in the UltraWiki storage card: the
+    # token is read-only plumbing (list projects, read the pooler host) and is
+    # never what the store connects with — that stays 'ultrawiki_db_url'. It
+    # belongs in this allowlist because the same slot is already used by the
+    # Supabase CLI integration, and without the entry the app's own secrets
+    # route would refuse to save a token the user just pasted.
+    SecretSpec(
+        key="supabase_access_token",
+        env_fallback="SUPABASE_ACCESS_TOKEN",
+        label="Supabase Personal Access Token",
+        help_url="https://supabase.com/dashboard/account/tokens",
+        required_for="UltraWiki Supabase store (guided link) and the Supabase CLI",
+        optional=True,
+        prompt=False,
+    ),
 ]
 
 
@@ -620,8 +646,62 @@ def _api_keys_intro() -> None:
     _console.print(Panel(body, border_style="brand", padding=(1, 2)))
 
 
+def _ollama_reachable(timeout_s: float = 1.0) -> bool:
+    """One quick ``/api/version`` probe against the local Ollama default.
+
+    Interactive-wizard-only (never on the boot path, AP-26). Honors
+    OLLAMA_HOST via the plugin's own root resolution so wizard and runtime
+    can never disagree about where the server lives.
+    """
+    try:
+        import httpx
+
+        from jarvis.plugins.brain.ollama import default_server_root
+
+        resp = httpx.get(f"{default_server_root()}/api/version", timeout=timeout_s)
+        return resp.status_code == 200
+    except Exception:  # noqa: BLE001 — no local server is a normal state
+        return False
+
+
+def _offer_local_brain() -> bool:
+    """First-sixty-seconds local path: when a local Ollama already answers,
+    offer to run WITHOUT any API key before a single key question is asked.
+
+    Returns True when the user accepted (brain.primary pinned to ollama) —
+    the key sections still render afterwards (cloud keys stay optional
+    upgrades), so accepting never hides anything.
+    """
+    if not _ollama_reachable():
+        return False
+    _console.print()
+    _console.print(
+        Panel(
+            "[ok]Ollama detected on this machine.[/] Jarvis can run its brain "
+            "[brand.bold]fully local — no API key, nothing leaves this "
+            "computer[/]. Cloud keys below stay optional upgrades.",
+            border_style="ok",
+            padding=(1, 2),
+        )
+    )
+    answer = _ask("  Use the local Ollama as the brain? [Y/n]", default="y")
+    if answer.strip().lower() not in ("y", "yes", "j", "ja", "s", "si", "sí"):
+        return False
+    try:
+        from jarvis.core import config_writer
+
+        config_writer.set_brain_primary("ollama")
+        _console.print("  [ok]→ Brain set to Ollama (local). No key needed.[/]")
+        return True
+    except Exception as exc:  # noqa: BLE001 — a config hiccup must not kill setup
+        _console.print(f"  [bad]⚠ Could not persist the choice ({exc}) — "
+                       "you can switch to Ollama any time under Settings → API Keys.[/]")
+        return False
+
+
 def step_api_keys() -> dict[str, str]:
     _api_keys_intro()
+    _offer_local_brain()
 
     stored: dict[str, str] = {}
     for section in _SECTIONS:

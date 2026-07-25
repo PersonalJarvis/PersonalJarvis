@@ -1,11 +1,36 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));
 
 import { ApiKeysStep } from "./ApiKeysStep";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
+
+type ProbeShape = { source: string; models: { id: string }[] } | null;
+
+/** Stub fetch for the local-path probe (+ the brain switch). `null` = network error. */
+function stubFetch(probe: ProbeShape) {
+  const calls: { url: string; init?: RequestInit }[] = [];
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string, init?: RequestInit) => {
+      calls.push({ url, init });
+      if (url === "/api/providers/ollama/models") {
+        if (probe === null) throw new Error("network down");
+        return { ok: true, json: async () => probe } as Response;
+      }
+      if (url === "/api/brain/switch") {
+        return { ok: true, json: async () => ({ ok: true }) } as Response;
+      }
+      throw new Error(`unexpected fetch: ${url}`);
+    }),
+  );
+  return calls;
+}
 
 function renderStep(overrides: Record<string, unknown> = {}) {
   const props = {
@@ -22,6 +47,7 @@ function renderStep(overrides: Record<string, unknown> = {}) {
 }
 
 it("shows the real API Keys view with the navigation and voice-mode switch marked", () => {
+  stubFetch(null);
   renderStep();
 
   const screenshot = screen.getByRole("img", {
@@ -37,18 +63,69 @@ it("shows the real API Keys view with the navigation and voice-mode switch marke
   expect(screen.getByText("onboarding.api_keys.pipeline_label")).toBeDefined();
 });
 
-it("keeps credential entry out of the onboarding modal", () => {
+it("keeps credential entry out of the onboarding modal", async () => {
+  stubFetch(null);
   renderStep();
+  await screen.findByText("onboarding.api_keys.local_missing");
 
+  // No key can ever be typed here — that is the step's security contract.
   expect(screen.queryByRole("textbox")).toBeNull();
-  expect(screen.queryByRole("link")).toBeNull();
+  // The only link the step may carry is the Ollama install pointer (no
+  // provider dashboards, no key pages).
+  for (const link of screen.queryAllByRole("link")) {
+    expect(link.getAttribute("href")).toBe("https://ollama.com/download");
+  }
 });
 
-it("offers one clear action to continue onboarding", () => {
+it("offers one clear action to continue onboarding", async () => {
+  stubFetch(null);
   const props = renderStep();
-  const buttons = screen.getAllByRole("button");
-  expect(buttons).toHaveLength(1);
-  fireEvent.click(buttons[0]);
+  await screen.findByText("onboarding.api_keys.local_missing");
+
+  const cont = screen.getByRole("button", { name: "onboarding.api_keys.continue" });
+  fireEvent.click(cont);
   expect(props.goNext).toHaveBeenCalledTimes(1);
   expect(props.skip).not.toHaveBeenCalled();
+});
+
+it("probes through the backend and offers one-click local activation", async () => {
+  const calls = stubFetch({ source: "live", models: [{ id: "qwen3.5:9b" }] });
+  renderStep();
+
+  await screen.findByText("onboarding.api_keys.local_detected");
+  const useLocal = screen.getByRole("button", {
+    name: "onboarding.api_keys.local_use_button",
+  });
+  fireEvent.click(useLocal);
+
+  await screen.findByText("onboarding.api_keys.local_active");
+  const switchCall = calls.find((c) => c.url === "/api/brain/switch");
+  expect(switchCall).toBeDefined();
+  expect(JSON.parse(String(switchCall?.init?.body))).toMatchObject({
+    provider: "ollama",
+  });
+  // The probe went through the backend catalog route — never a
+  // browser-direct localhost:11434 call.
+  expect(calls[0].url).toBe("/api/providers/ollama/models");
+});
+
+it("tells a running-but-empty Ollama to pull a model first", async () => {
+  stubFetch({ source: "live", models: [] });
+  renderStep();
+
+  await screen.findByText("onboarding.api_keys.local_detected_empty");
+  expect(
+    screen.queryByRole("button", { name: "onboarding.api_keys.local_use_button" }),
+  ).toBeNull();
+});
+
+it("shows the honest install pointer when no local server answers", async () => {
+  stubFetch({ source: "static", models: [] });
+  renderStep();
+
+  await screen.findByText("onboarding.api_keys.local_missing");
+  const link = screen.getByRole("link", {
+    name: "onboarding.api_keys.local_missing_link",
+  });
+  expect(link.getAttribute("href")).toBe("https://ollama.com/download");
 });
