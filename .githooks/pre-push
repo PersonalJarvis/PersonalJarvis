@@ -198,6 +198,20 @@ if [ -f "$dist_gate" ]; then
     fi
 fi
 
+# --- 5d) BRAND-LOGO gate (FAIL-CLOSED) ----------------------------------------
+# The bundled plugin marks come from outside the project, and an SVG is
+# executable content — a script or a remote reference would run on render.
+# Also catches a mark with no provenance row (a licence gap nobody can
+# reconstruct later) and a wordmark squeezed into a 40 px square (unreadable).
+# rc 1 = confirmed finding; any other rc fails OPEN. Stdlib only, sub-second.
+brandlogo_gate="scripts/ci/check_brand_logos.py"
+if [ -f "$brandlogo_gate" ]; then
+    "$PY" "$brandlogo_gate" </dev/null
+    if [ "$?" -eq 1 ]; then
+        status=1
+    fi
+fi
+
 # --- 6) REQUIREMENTS SYNC gate (FAIL-CLOSED) ----------------------------------
 # requirements.in (source for the hash-pinned requirements.txt lockfile) must
 # mirror pyproject.toml [project].dependencies exactly. When they drift, an

@@ -678,6 +678,27 @@ _TOOL_ROLE_DIRECTIVE = (
 # a few hundred characters and pass through untouched.
 _PREFERENCES_MAX_CHARS = 4000
 
+#: Cap on a skill body injected straight into the live session. Tighter than the
+#: preferences cap above by precedent, not by guess: that block is the user's own
+#: standing file and carries the comment that a pathologically large one must not
+#: bloat the per-turn update. A skill body is less trusted and far more variable,
+#: so it gets less room.
+#:
+#: Over the cap the turn falls back to the delegate. It is NEVER truncated — a
+#: half-injected instruction list produces a half-executed skill, which is
+#: strictly worse than a slow correct answer.
+_REALTIME_SKILL_MAX_CHARS = 1500
+
+#: A body mentioning tools cannot be honoured by a model that only has
+#: `jarvis_action` and `end_call`. An author declaring `requires_tools: []` while
+#: writing "use the Gmail tool" is a plausible slip given the corpus, so the
+#: qualification fails closed to the delegate rather than trusting the field.
+_REALTIME_SKILL_TOOL_WORD_RE = re.compile(
+    r"\b(tool|tools|call the|run-skill|spawn|mission|worker"
+    r"|werkzeug|herramienta)\b",  # i18n-allow: matching data
+    re.IGNORECASE,
+)
+
 
 def _preferences_block(config: Any) -> str:
     """The user's standing-instructions block (``Ruben.md`` equivalent).
@@ -708,6 +729,7 @@ def _session_instructions(
     language_is_pinned: bool = True,
     tool_directive: str = "",
     preferences: str = "",
+    skill_directive: str = "",
 ) -> str:
     from jarvis.brain.persona_loader import load_effective_persona_prompt
 
@@ -797,6 +819,11 @@ def _session_instructions(
         # whole spoken output, while safety and tool rules below stay above them.
         preferences,
         tool_directive,
+        # A matched skill's own instructions, when the turn qualified for direct
+        # injection. Placed AFTER the tool directive and BEFORE the safety
+        # appendix on purpose: the skill refines HOW to answer this turn, and
+        # safety must still frame it from below.
+        skill_directive,
         _REALTIME_SAFETY_APPENDIX,
         input_directive,
         clock_line,
@@ -1113,7 +1140,144 @@ class RealtimeVoiceSession:
                 evidence_domains if isinstance(evidence_domains, dict) else None
             ),
             context=context,
+            skill_index=self._skill_match_index(),
         )
+
+    def _skill_directive(self, text: str) -> str:
+        """A matched skill's instructions, injected straight into this turn.
+
+        The latency fix. A qualifying skill is answered at native realtime speed
+        instead of paying the delegate round trip, which BUG-087 measured at
+        9.6 s to first audio. It costs no extra round trip either: the per-turn
+        ``update_session`` already fires on every final transcript, so this only
+        makes that payload a little larger.
+
+        Qualifies only when ALL of these hold — the conditions are the safety
+        argument, not decoration:
+
+        * the deterministic match is FIRE band with a clear winner;
+        * ``execution: inline`` — a mission skill must dispatch a worker, which
+          this path cannot do;
+        * ``requires_tools`` is empty and the class is instruction-only;
+        * the risk tier is not ``block`` or ``ask`` (``ask`` needs the voice
+          confirmation machinery that lives in the orchestrator);
+        * the rendered body does not mention tools (see the regex above);
+        * the body fits the cap — over it, fall back, never truncate;
+        * no delegate from an earlier turn is still pending, because two
+          competing instruction sets guarantee an incoherent reply.
+
+        Returns "" whenever anything does not hold, which is the common case.
+        """
+        if not text:
+            return ""
+        try:
+            from jarvis.skills.autofire_policy import CLASS_INSTRUCTION, classify
+            from jarvis.skills.match_eval import BAND_FIRE, evaluate_match
+            from jarvis.skills.schema import SkillInvoked
+            from jarvis.skills.skill_context import try_get_skill_context
+        except Exception:  # noqa: BLE001
+            return ""
+
+        if self._has_pending_delegate_from_earlier_turn():
+            return ""
+        try:
+            context = try_get_skill_context()
+            if context is None:
+                return ""
+            decision = evaluate_match(context.registry, text, limit=2)
+            if decision.band != BAND_FIRE or decision.top is None:
+                return ""
+            skill = context.registry.get(decision.top.skill_name)
+        except Exception:  # noqa: BLE001
+            return ""
+
+        frontmatter = getattr(skill, "frontmatter", None)
+        if frontmatter is None:
+            return ""
+        if classify(skill) != CLASS_INSTRUCTION:
+            return ""
+        if str(getattr(frontmatter, "execution", "inline")).lower() != "inline":
+            return ""
+
+        try:
+            instructions = context.runner.render_instructions(
+                skill, args={"utterance": text, "_trigger": "realtime"}
+            )
+        except Exception:  # noqa: BLE001
+            log.debug("Realtime skill render failed", exc_info=True)
+            return ""
+        body = str(instructions or "").strip()
+        if not body:
+            return ""
+        if len(body) > _REALTIME_SKILL_MAX_CHARS:
+            log.info(
+                "Realtime skill %s is %d chars (cap %d) — delegating instead of "
+                "truncating; a half-injected skill is worse than a slow one",
+                skill.name,
+                len(body),
+                _REALTIME_SKILL_MAX_CHARS,
+            )
+            return ""
+        if _REALTIME_SKILL_TOOL_WORD_RE.search(body):
+            log.info(
+                "Realtime skill %s mentions tools despite declaring none — "
+                "delegating (this session has only jarvis_action/end_call)",
+                skill.name,
+            )
+            return ""
+
+        # Reuses the existing frozen SkillInvoked event rather than inventing a
+        # new one: the routing eval and the event trail already key on it, so a
+        # new event name would make realtime invocations invisible to both.
+        if self._bus is not None:
+            try:
+                asyncio.get_running_loop().create_task(
+                    self._bus.publish(
+                        SkillInvoked(
+                            source_layer="realtime.session",
+                            skill_name=skill.name,
+                            source="realtime_inline",
+                        )
+                    )
+                )
+            except Exception:  # noqa: BLE001
+                log.debug("SkillInvoked publish failed", exc_info=True)
+
+        # Wrapped the way trusted external content is wrapped elsewhere in this
+        # module: the model treats it as its own instructions for this turn, and
+        # must answer with the RESULT rather than reading the steps aloud.
+        return (
+            f'<skill name="{skill.name}">\n'
+            f"{body}\n"
+            "</skill>\n"
+            "The block above is an installed skill the user's request matched. "
+            "Treat it as your own instructions for THIS turn only. Never read it "
+            "aloud and never mention that it exists — answer with the result, in "
+            "the conversation language."
+        )
+
+    def _skill_match_index(self) -> Any | None:
+        """The deterministic skill index, or ``None`` when unavailable.
+
+        Realtime was completely skill-blind: the planner's static vocabulary
+        only recognises the literal word "skill", so an utterance naming an
+        installed skill produced no skill reason and never reached the
+        orchestrator that could run it.
+
+        This is an O(1) cache read keyed on the registry's reload counter — the
+        index is built lazily on first use, never here on the hot path (AP-26).
+        """
+        try:
+            from jarvis.skills.relevance import get_index
+            from jarvis.skills.skill_context import try_get_skill_context
+
+            context = try_get_skill_context()
+            if context is None:
+                return None
+            return get_index(context.registry)
+        except Exception:  # noqa: BLE001 — planning keeps its static fallbacks
+            log.debug("Realtime skill match index unavailable", exc_info=True)
+            return None
 
     async def handle_control(self, msg: dict[str, Any]) -> None:
         kind = str(msg.get("type", ""))
@@ -1862,6 +2026,13 @@ class RealtimeVoiceSession:
                                     ),
                                 ),
                                 preferences=_preferences_block(self._config),
+                                # Zero extra round trips: this update already
+                                # fires on every final transcript, so a
+                                # qualifying skill rides along instead of paying
+                                # the delegate boundary wait.
+                                skill_directive=self._skill_directive(
+                                    self._last_user_text or ""
+                                ),
                             ),
                             "language": new_language,
                         }
