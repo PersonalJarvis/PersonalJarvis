@@ -15,6 +15,7 @@ monkeypatched at the module seams the routes import through.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -188,6 +189,10 @@ def _drive_pipeline(env) -> None:
             env.cfg,
             embedding_backend_factory=lambda: FakeEmbeddingBackend(),
             distill_fn=fake_distill,
+            # The injected distiller brings its own provider: the production
+            # credential-chain gate must not run, or this test would pass or
+            # fail depending on which keys the host happens to hold (AP-23).
+            distill_ready_fn=lambda: (True, ""),
         )
         for _ in range(8):
             if await worker.run_once() == 0:
@@ -312,6 +317,11 @@ def test_search_returns_fused_hits_after_inline_pipeline(env) -> None:
     assert hit["permalink"]
     assert "keyword" in hit["matched_by"]
     assert hit["score"] > 0
+    # Five-layer parity (AP-4): the SearchResult dataclass fields reach the
+    # payload verbatim. The rerank stage is off here, so the absolute grade is
+    # honestly null rather than a fabricated number.
+    assert hit["rerank_score"] is None
+    assert isinstance(hit["context"], list)
 
 
 # ---------------------------------------------------------------------------
@@ -362,6 +372,109 @@ def test_update_settings_without_changes_is_noop(env) -> None:
         "persisted": True,
         "reembed_started": False,
     }
+
+
+# ---------------------------------------------------------------------------
+# Ranking settings (rerank slot + the knobs it governs)
+# ---------------------------------------------------------------------------
+
+
+def test_llm_rerank_provider_is_accepted_and_persisted(env) -> None:
+    """The universal backend must be selectable without any vendor key."""
+    _activate(env)
+
+    response = env.client.put(
+        "/api/ultrawiki/settings",
+        json={"rerank_provider": "llm", "rerank_model": "some-cheap-model"},
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["changed"] == ["rerank_model", "rerank_provider"]
+    assert env.cfg.ultrawiki.rerank_provider == "llm"
+    assert env.cfg.ultrawiki.rerank_model == "some-cheap-model"
+    toml = env.toml.read_text(encoding="utf-8")
+    assert 'rerank_provider = "llm"' in toml
+    assert 'rerank_model = "some-cheap-model"' in toml
+
+
+def test_unknown_rerank_provider_is_refused(env) -> None:
+    _activate(env)
+    response = env.client.put(
+        "/api/ultrawiki/settings", json={"rerank_provider": "not-a-backend"}
+    )
+    assert response.status_code == 400
+    assert "not-a-backend" in response.json()["detail"]
+
+
+def test_ranking_knobs_persist_as_numbers(env) -> None:
+    _activate(env)
+
+    response = env.client.put(
+        "/api/ultrawiki/settings",
+        json={
+            "rerank_min_score": 6.5,
+            "rrf_keyword_weight": 2,
+            "recency_half_life_days": 0,
+        },
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["changed"] == [
+        "recency_half_life_days",
+        "rerank_min_score",
+        "rrf_keyword_weight",
+    ]
+    assert env.cfg.ultrawiki.rerank_min_score == 6.5
+    assert env.cfg.ultrawiki.recency_half_life_days == 0
+    toml = env.toml.read_text(encoding="utf-8")
+    # Numbers, not quoted strings that merely happen to parse.
+    assert "rerank_min_score = 6.5" in toml
+    assert "rrf_keyword_weight = 2.0" in toml
+
+
+@pytest.mark.parametrize(
+    ("payload", "needle"),
+    [
+        ({"rerank_min_score": 11}, "between 0.0 and 10.0"),
+        ({"rerank_min_score": -1}, "between 0.0 and 10.0"),
+        ({"rrf_vector_weight": 999}, "between 0.0 and 10.0"),
+    ],
+)
+def test_out_of_range_ranking_knobs_are_refused(env, payload, needle) -> None:
+    """Refused, never clamped: a silently corrected value would leave the UI
+    showing a number the ranking does not actually use."""
+    _activate(env)
+    response = env.client.put("/api/ultrawiki/settings", json=payload)
+
+    assert response.status_code == 400
+    assert needle in response.json()["detail"]
+    # Nothing was written on the way to the rejection.
+    assert "rerank_min_score" not in env.toml.read_text(encoding="utf-8")
+
+
+def test_status_reports_the_rerank_slot_with_its_ranking_knobs(env) -> None:
+    """The knobs ride along with the slot they govern, so the settings card
+    can show what the ranking actually does. (That the `llm` backend is
+    OFFERED is a rerank-registry property, covered in
+    tests/unit/ultrawiki/test_rerank.py — this fixture stubs the backend
+    probe out to stay offline.)"""
+    _activate(env)
+    slot = env.client.get("/api/ultrawiki/status").json()["slots"]["rerank"]
+
+    assert slot["ranking"]["rerank_min_score"] == 4.0
+    assert slot["ranking"]["keyword_weight"] == 1.0
+    assert slot["ranking"]["vector_weight"] == 1.0
+    assert slot["ranking"]["recency_half_life_days"] == 180.0
+    assert slot["model"] == ""  # honest empty, not a fabricated default
+
+
+def test_status_reflects_a_changed_relevance_floor(env) -> None:
+    _activate(env)
+    env.client.put("/api/ultrawiki/settings", json={"rerank_min_score": 7})
+
+    slot = env.client.get("/api/ultrawiki/status").json()["slots"]["rerank"]
+
+    assert slot["ranking"]["rerank_min_score"] == 7.0
 
 
 # ---------------------------------------------------------------------------
@@ -417,9 +530,482 @@ def test_dangerous_routes_carry_the_flag(env) -> None:
         assert operation.get("x-jarvis-dangerous") is True, (path, method)
 
 
+def test_slot_test_route_declares_a_long_cli_timeout(env) -> None:
+    """A real provider call outlives the CLI's default client timeout."""
+    spec = env.server.app.openapi()
+    operation = spec["paths"]["/api/ultrawiki/test/{slot}"]["post"]
+    assert operation.get("x-jarvis-timeout-seconds") == 120
+
+
+# ---------------------------------------------------------------------------
+# Unwired service — every route stays honest instead of crashing
+# ---------------------------------------------------------------------------
+
+
+def test_routes_are_honest_while_the_service_is_unwired(env) -> None:
+    env.server.app.state.ultrawiki = None
+    try:
+        sources = env.client.get("/api/ultrawiki/sources")
+        assert sources.status_code == 503
+        assert "not wired" in sources.json()["detail"]
+
+        # /status is the honesty surface: it ALWAYS answers, degraded.
+        status = env.client.get("/api/ultrawiki/status")
+        assert status.status_code == 200
+        body = status.json()
+        assert body["started"] is False
+        assert body["slots"] == {}
+        assert body["sources"] == []
+        assert body["pipeline"]["running"] is False
+        assert body["pipeline"]["state"] == "paused"
+        assert body["pipeline"]["reason"]
+        assert any("not wired" in line for line in body["degradations"])
+        assert "search_legs" in body
+    finally:
+        env.server.app.state.ultrawiki = env.service
+
+
+# ---------------------------------------------------------------------------
+# Sync: one at a time, and the full refresh
+# ---------------------------------------------------------------------------
+
+
+def test_second_sync_of_one_source_is_409_with_the_active_job(env) -> None:
+    _activate(env)
+    source_id, job_id = _approve_and_sync_folder(env)
+    # The first job may already be done on a fast machine — assert on whichever
+    # of the two honest answers applies, never on a race.
+    second = env.client.post(f"/api/ultrawiki/sources/{source_id}/sync")
+    if second.status_code == 409:
+        detail = second.json()["detail"]
+        assert detail["job_id"] == job_id
+        assert detail["source_id"] == source_id
+        assert "already running" in detail["message"]
+    else:
+        assert second.status_code == 201, second.text
+    _wait_for_job(env, job_id)
+
+
+def test_full_refresh_is_requested_through_the_body(env) -> None:
+    _activate(env)
+    source_id, job_id = _approve_and_sync_folder(env)
+    _wait_for_job(env, job_id)
+
+    plain = env.client.post(f"/api/ultrawiki/sources/{source_id}/sync")
+    assert plain.status_code == 201, plain.text
+    assert plain.json()["full"] is False
+    _wait_for_job(env, plain.json()["job_id"])
+
+    full = env.client.post(
+        f"/api/ultrawiki/sources/{source_id}/sync", json={"full": True}
+    )
+    assert full.status_code == 201, full.text
+    assert full.json()["full"] is True
+    snapshot = _wait_for_job(env, full.json()["job_id"])
+    assert snapshot["status"] == "done"
+    assert snapshot["mode"] == "backfill"
+
+
+# ---------------------------------------------------------------------------
+# Cancelling a live job
+# ---------------------------------------------------------------------------
+
+
+def test_cancel_of_a_running_job_succeeds(env, monkeypatch) -> None:
+    """A live job cancels; a job without a live task answers 409."""
+    _activate(env)
+
+    import jarvis.ultrawiki.connectors as connectors_mod
+    from jarvis.ultrawiki.types import (
+        AuthKind,
+        ConnectorCapabilities,
+        IncrementalMode,
+        RawItem,
+    )
+
+    class SlowConnector:
+        id = "slow-conn"
+        label = "Slow Connector"
+        auth = AuthKind.NONE
+        capabilities = ConnectorCapabilities(
+            backfill=True, incremental=IncrementalMode.NONE, deletes=False
+        )
+
+        async def backfill(self, ctx, checkpoint=None):
+            yield RawItem(
+                external_id="slow-1",
+                body="first item",
+                permalink="fake://slow/1",
+                timestamp_utc="2026-01-01T00:00:00Z",
+                title="Slow 1",
+            )
+            await asyncio.sleep(30)  # cancelled long before this returns
+
+        async def incremental(self, ctx, cursor=None):
+            return
+            yield  # pragma: no cover — makes this an async generator
+
+    registry = dict(connectors_mod.discover_connectors())
+    registry["slow-conn"] = SlowConnector
+    monkeypatch.setattr(connectors_mod, "discover_connectors", lambda: registry)
+
+    created = env.client.post(
+        "/api/ultrawiki/sources", json={"connector": "slow-conn", "label": "Slow"}
+    )
+    assert created.status_code == 201, created.text
+    source_id = created.json()["id"]
+    env.client.post(f"/api/ultrawiki/sources/{source_id}/approve")
+    job_id = env.client.post(
+        f"/api/ultrawiki/sources/{source_id}/sync"
+    ).json()["job_id"]
+
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        if env.client.get(f"/api/ultrawiki/jobs/{job_id}").json()["status"] == "running":
+            break
+        time.sleep(0.02)
+
+    cancelled = env.client.post(f"/api/ultrawiki/jobs/{job_id}/cancel")
+    assert cancelled.status_code == 200, cancelled.text
+    assert cancelled.json() == {"job_id": job_id, "cancel_requested": True}
+
+    snapshot = _wait_for_job(env, job_id)
+    assert snapshot["status"] == "cancelled"
+    # Terminal now: a second cancel is refused honestly.
+    assert env.client.post(f"/api/ultrawiki/jobs/{job_id}/cancel").status_code == 409
+
+
+def test_cancel_of_a_job_without_a_live_task_is_409(env) -> None:
+    """The narrow window where a job is registered but has no task yet."""
+    job = uw_service_mod.SyncJob(
+        job_id="pending-job", source_id="whatever", mode="backfill"
+    )
+    job.status = "queued"
+    job.task = None
+    uw_service_mod._register_job(job)  # noqa: SLF001 — the registry is module state
+    try:
+        response = env.client.post("/api/ultrawiki/jobs/pending-job/cancel")
+        assert response.status_code == 409
+        assert "no live task" in response.json()["detail"]
+    finally:
+        uw_service_mod.clear_jobs()
+
+
+# ---------------------------------------------------------------------------
+# Dead-letter recovery
+# ---------------------------------------------------------------------------
+
+
+def test_requeue_failed_returns_dead_lettered_items(env) -> None:
+    _activate(env)
+    _source_id, job_id = _approve_and_sync_folder(env)
+    _wait_for_job(env, job_id)
+
+    async def _fail_everything() -> None:
+        store = env.service._store  # noqa: SLF001 — deliberate test seam
+        for item in await store.claim_batch("keyword_indexed", limit=10):
+            await store.mark_failed(item["id"], "the distill provider was dead")
+
+    env.client.portal.call(_fail_everything)
+    assert env.client.get("/api/ultrawiki/status").json()["counts"]["failed"] == 2
+
+    response = env.client.post("/api/ultrawiki/pipeline/requeue-failed")
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["requeued"] == 2
+    assert body["detail"]
+    counts = env.client.get("/api/ultrawiki/status").json()["counts"]
+    assert counts["failed"] == 0
+    assert counts["captured"] == 2  # nothing was indexed yet, so they restart
+
+    # Nothing left to requeue is an honest zero, not an error.
+    again = env.client.post("/api/ultrawiki/pipeline/requeue-failed")
+    assert again.status_code == 200
+    assert again.json()["requeued"] == 0
+
+
+def test_requeue_failed_is_dangerous_and_scoped(env) -> None:
+    spec = env.server.app.openapi()
+    operation = spec["paths"]["/api/ultrawiki/pipeline/requeue-failed"]["post"]
+    assert operation.get("x-jarvis-dangerous") is True
+
+    _activate(env)
+    response = env.client.post(
+        "/api/ultrawiki/pipeline/requeue-failed", json={"source_id": "no-such-source"}
+    )
+    assert response.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# Honest pipeline state on the status surface
+# ---------------------------------------------------------------------------
+
+
+def test_status_reports_waiting_for_sources_after_a_fresh_activation(env) -> None:
+    """The maintainer report: a fresh activation must not claim to be working."""
+    _activate(env)
+    pipeline = env.client.get("/api/ultrawiki/status").json()["pipeline"]
+    assert pipeline["state"] == "waiting_for_sources"
+    assert "approve" in pipeline["reason"].lower()
+
+
+def test_status_reports_processing_once_items_are_queued(env) -> None:
+    _activate(env)
+    _source_id, job_id = _approve_and_sync_folder(env)
+    _wait_for_job(env, job_id)
+    pipeline = env.client.get("/api/ultrawiki/status").json()["pipeline"]
+    assert pipeline["state"] in ("processing", "paused")
+    assert "2" in pipeline["reason"]
+
+
+def test_status_reports_idle_once_everything_is_processed(env) -> None:
+    _activate(env)
+    _source_id, job_id = _approve_and_sync_folder(env)
+    _wait_for_job(env, job_id)
+    _drive_pipeline(env)
+    pipeline = env.client.get("/api/ultrawiki/status").json()["pipeline"]
+    assert pipeline["state"] == "idle"
+
+
+# ---------------------------------------------------------------------------
+# Activation ordering (a failed activation must not leave the mode on)
+# ---------------------------------------------------------------------------
+
+
+def test_failed_activation_leaves_the_mode_off(env, monkeypatch) -> None:
+    async def _explode(_payload=None):
+        raise RuntimeError("the store could not be opened")
+
+    monkeypatch.setattr(env.service, "activate", _explode)
+    response = env.client.post(
+        "/api/ultrawiki/activate",
+        json={"embedding_provider": "gemini", "embedding_model": "fake-embed"},
+    )
+    assert response.status_code == 500
+    assert "could not be activated" in response.json()["detail"]
+    # The mode switch never flipped — neither live nor on disk.
+    assert env.cfg.ultrawiki.enabled is False
+    assert "enabled = true" not in env.toml.read_text(encoding="utf-8")
+    # Search still answers with the mode-off message, not a broken Ultra view.
+    assert env.client.get("/api/ultrawiki/search", params={"q": "x"}).status_code == 409
+
+
 def test_router_import_line_exists_in_server_source() -> None:
     import jarvis.ui.web.server as server_mod
 
     source = Path(server_mod.__file__).read_text(encoding="utf-8")
     assert "from .ultrawiki_routes import router as ultrawiki_router" in source
     assert "app.include_router(ultrawiki_router)" in source
+
+
+# ---------------------------------------------------------------------------
+# Provider catalog + the guided Supabase link
+# ---------------------------------------------------------------------------
+
+
+def test_catalog_lists_every_slot_with_a_connectable_credential_field(env) -> None:
+    """The regression guard for the defect this surface was built to fix.
+
+    Before the catalog existed the settings cards offered providers with no way
+    to enter their credential, and pointed at an API-Keys view that had no field
+    for them either. Every row must now name the secret slot the UI can write,
+    and that slot must be one the secrets API actually accepts.
+    """
+    from jarvis.ui.web.provider_routes import ALLOWED_SECRET_KEYS
+
+    response = env.client.get("/api/ultrawiki/catalog")
+    assert response.status_code == 200, response.text
+    slots = response.json()["slots"]
+    assert set(slots) == {"storage", "embedding", "distill", "rerank"}
+    for slot, rows in slots.items():
+        assert rows, f"slot {slot} rendered no providers"
+        for row in rows:
+            for key in row["secret_keys"]:
+                assert key in ALLOWED_SECRET_KEYS, (slot, row["id"], key)
+                assert key in row["secrets_set"]
+                assert key in row["secret_shared_with"]
+
+
+def test_catalog_marks_the_configured_provider_as_selected(env) -> None:
+    _activate(env)
+    body = env.client.get("/api/ultrawiki/catalog").json()
+    assert body["selected"]["embedding"] == "gemini"
+    embedding = {row["id"]: row for row in body["slots"]["embedding"]}
+    assert embedding["gemini"]["selected"] is True
+    assert embedding["openai"]["selected"] is False
+    # Readiness comes from the provider's own probe, not from being selected.
+    assert embedding["gemini"]["ready"] is True
+    assert embedding["openai"]["ready"] is False
+    assert embedding["openai"]["reason"]
+    assert body["models"]["embedding"] == "fake-embed"
+
+
+def test_catalog_storage_defaults_to_the_local_floor(env) -> None:
+    body = env.client.get("/api/ultrawiki/catalog").json()
+    storage = {row["id"]: row for row in body["slots"]["storage"]}
+    assert body["selected"]["storage"] == "sqlite"
+    assert storage["sqlite"]["ready"] is True
+    # A cloud preset with no saved connection string is honest about it and
+    # says the local store keeps answering — never a bare failure.
+    assert storage["supabase"]["ready"] is False
+    assert "connection string" in storage["supabase"]["reason"]
+
+
+def test_selecting_a_storage_preset_derives_the_functional_backend(env) -> None:
+    """The UI picks a NAME; the two-value backend enum is derived server-side."""
+    _activate(env)
+    response = env.client.put(
+        "/api/ultrawiki/settings", json={"storage_provider": "neon"}
+    )
+    assert response.status_code == 200, response.text
+    assert set(response.json()["changed"]) == {"storage_provider", "db_backend"}
+    assert env.cfg.ultrawiki.db_backend == "postgres"
+    assert env.cfg.ultrawiki.storage_provider == "neon"
+    persisted = env.toml.read_text(encoding="utf-8")
+    assert 'storage_provider = "neon"' in persisted
+    assert 'db_backend = "postgres"' in persisted
+
+
+def test_switching_back_to_sqlite_restores_the_local_backend(env) -> None:
+    _activate(env)
+    env.client.put("/api/ultrawiki/settings", json={"storage_provider": "neon"})
+    response = env.client.put(
+        "/api/ultrawiki/settings", json={"storage_provider": "sqlite"}
+    )
+    assert response.status_code == 200, response.text
+    assert env.cfg.ultrawiki.db_backend == "sqlite"
+
+
+def test_an_unknown_storage_preset_is_refused(env) -> None:
+    response = env.client.put(
+        "/api/ultrawiki/settings", json={"storage_provider": "dropbox"}
+    )
+    assert response.status_code == 400
+    assert "dropbox" in response.json()["detail"]
+
+
+def test_supabase_projects_need_a_token_first(env, monkeypatch) -> None:
+    """Unlinked is a 409 with an instruction, never a 500 or an empty list.
+
+    The empty keyring is stubbed rather than assumed: a developer machine that
+    happens to hold a real Supabase token would otherwise turn this unit test
+    into a live API call against that person's own account.
+    """
+    monkeypatch.setattr("jarvis.core.config.get_secret", lambda *_a, **_kw: None)
+    response = env.client.get("/api/ultrawiki/storage/supabase/projects")
+    assert response.status_code == 409
+    assert "token" in response.json()["detail"].lower()
+
+
+def _stub_supabase(monkeypatch, *, probe_ok: bool, probe_detail: str) -> dict[str, str]:
+    """Wire an offline Supabase link: saved token, fixed endpoint, fixed probe.
+
+    Returns the dict that captures every secret write, so a test can assert
+    that a refused link wrote nothing at all.
+    """
+    from jarvis.ultrawiki import supabase_link
+
+    monkeypatch.setattr(
+        "jarvis.core.config.get_secret",
+        lambda key, **_kw: "sbp_token" if key == "supabase_access_token" else None,
+    )
+
+    async def fake_resolve(token, ref, *, mode="transaction", transport=None):
+        return (
+            supabase_link.PoolerEndpoint(
+                host="aws-1-eu-central-2.pooler.supabase.com",
+                port=6543,
+                user=f"postgres.{ref}",
+                database="postgres",
+                mode="transaction",
+            ),
+            "Using the Supabase transaction pooler.",
+        )
+
+    async def fake_connect_test(conn_str):
+        return probe_ok, probe_detail
+
+    monkeypatch.setattr(supabase_link, "resolve_endpoint", fake_resolve)
+    monkeypatch.setattr(
+        "jarvis.ultrawiki.store.PostgresStore.connect_test",
+        staticmethod(fake_connect_test),
+    )
+    written: dict[str, str] = {}
+
+    def fake_set_secret(key, value):
+        written[key] = value
+        return True
+
+    monkeypatch.setattr("jarvis.core.config.set_secret", fake_set_secret)
+    return written
+
+
+def test_supabase_link_saves_nothing_when_the_connection_fails(env, monkeypatch) -> None:
+    """A string that cannot connect must not become the configured store.
+
+    Saving it anyway would flip db_backend to postgres and then degrade back to
+    SQLite on every boot — a silent downgrade the user never asked for and
+    cannot see.
+    """
+    written = _stub_supabase(
+        monkeypatch, probe_ok=False, probe_detail="Connection failed: timeout"
+    )
+    response = env.client.post(
+        "/api/ultrawiki/storage/supabase/link",
+        json={"project_ref": "abcdefghijklmnopqrst", "db_password": "hunter2"},
+    )
+    assert response.status_code == 409, response.text
+    detail = response.json()["detail"]
+    assert detail["can_save_anyway"] is True
+    assert "timeout" in detail["probe_detail"]
+    assert written == {}
+    assert env.cfg.ultrawiki.db_backend == "sqlite"
+
+
+def test_supabase_link_can_be_forced_past_an_unreachable_probe(env, monkeypatch) -> None:
+    """A database only reachable over the user's VPN must still be linkable."""
+    written = _stub_supabase(
+        monkeypatch, probe_ok=False, probe_detail="Connection failed: timeout"
+    )
+    response = env.client.post(
+        "/api/ultrawiki/storage/supabase/link",
+        json={
+            "project_ref": "abcdefghijklmnopqrst",
+            "db_password": "hunter2",
+            "save_anyway": True,
+        },
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["probe_ok"] is False
+    assert "ultrawiki_db_url" in written
+    assert env.cfg.ultrawiki.db_backend == "postgres"
+
+
+def test_supabase_link_stores_the_uri_and_flips_the_slot(env, monkeypatch) -> None:
+    written = _stub_supabase(
+        monkeypatch,
+        probe_ok=True,
+        probe_detail="Connected: PostgreSQL 16; pgvector is available",
+    )
+    response = env.client.post(
+        "/api/ultrawiki/storage/supabase/link",
+        json={"project_ref": "abcdefghijklmnopqrst", "db_password": "p@ss/word"},
+    )
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["probe_ok"] is True
+    assert body["endpoint"]["host"] == "aws-1-eu-central-2.pooler.supabase.com"
+    # The credential is the connection string, stored under the store's own
+    # secret slot — never in the TOML (AP-12) — with the password encoded.
+    assert "ultrawiki_db_url" in written
+    assert written["ultrawiki_db_url"].startswith("postgresql://")
+    assert "p%40ss%2Fword" in written["ultrawiki_db_url"]
+    assert "p@ss/word" not in env.toml.read_text(encoding="utf-8")
+    assert env.cfg.ultrawiki.db_backend == "postgres"
+    assert env.cfg.ultrawiki.storage_provider == "supabase"
+
+
+def test_supabase_link_is_flagged_dangerous(env) -> None:
+    spec = env.server.app.openapi()
+    operation = spec["paths"]["/api/ultrawiki/storage/supabase/link"]["post"]
+    assert operation.get("x-jarvis-dangerous") is True

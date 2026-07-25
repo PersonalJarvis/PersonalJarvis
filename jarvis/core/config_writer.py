@@ -721,12 +721,34 @@ def set_wiki_vault_root(vault_root: str, *, path: Path = DEFAULT_CONFIG_FILE) ->
 #: lives in the secret chain under ``ultrawiki_db_url`` (AP-12).
 ULTRAWIKI_SLOT_KEYS = (
     "db_backend",
+    # Which named storage preset the user picked (sqlite / supabase / neon /
+    # postgres). Presentation over ``db_backend``: it decides the card's help
+    # text, dashboard link and connect flow, never how the store opens.
+    "storage_provider",
     "embedding_provider",
     "embedding_model",
     "distill_provider",
     "distill_model",
     "rerank_provider",
+    "rerank_model",
+    # Ranking knobs of the read path (design: UltraWiki ranking pipeline).
+    "rerank_min_score",
+    "rrf_keyword_weight",
+    "rrf_vector_weight",
+    "recency_half_life_days",
     "ollama_endpoint",
+)
+
+#: Slot keys whose value is a NUMBER, not a string. They are written as TOML
+#: floats so a hand-read jarvis.toml shows ``rerank_min_score = 4.0`` rather
+#: than a quoted string that only happens to parse.
+ULTRAWIKI_NUMERIC_SLOT_KEYS = frozenset(
+    {
+        "rerank_min_score",
+        "rrf_keyword_weight",
+        "rrf_vector_weight",
+        "recency_half_life_days",
+    }
 )
 
 
@@ -759,6 +781,15 @@ def set_ultrawiki_slot(key: str, value: str, *, path: Path = DEFAULT_CONFIG_FILE
             f"unknown [ultrawiki] slot key {key!r} "
             f"(allowed: {', '.join(ULTRAWIKI_SLOT_KEYS)})"
         )
+    if key in ULTRAWIKI_NUMERIC_SLOT_KEYS:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"[ultrawiki] {key} must be a number, got {value!r}"
+            ) from exc
+        _patch_table(path, "ultrawiki", key, numeric)
+        return
     _patch_table(path, "ultrawiki", key, str(value))
 
 

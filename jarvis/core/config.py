@@ -2154,12 +2154,34 @@ class UltraWikiConfig(BaseModel):
 
     enabled: bool = False
     db_backend: str = "sqlite"  # "sqlite" (universal floor) | "postgres"
+    # The named storage preset behind ``db_backend`` — "sqlite" | "supabase" |
+    # "neon" | "postgres". Presentation only (jarvis.ultrawiki.provider_catalog
+    # maps it back to db_backend): it selects the card's help text, dashboard
+    # link and connect flow. Deliberately NOT a second functional enum, so the
+    # store keeps exactly two code paths (AP-4 / BUG-008).
+    storage_provider: str = "sqlite"
     embedding_provider: str = ""  # "ollama" | "gemini" | "openai" | "voyage" | "mistral" | "cohere"
     embedding_model: str = ""
     distill_provider: str = ""  # empty = key-aware brain chain decides
     distill_model: str = ""
-    rerank_provider: str = ""  # empty = rerank stage honestly skipped
+    rerank_provider: str = ""  # "llm" | "voyage" | "cohere"; empty = stage skipped
+    rerank_model: str = ""  # only for rerank_provider="llm"; empty = cheap tier
     ollama_endpoint: str = "http://localhost:11434"
+
+    # -- ranking knobs (design: UltraWiki ranking pipeline, 2026-07-25) ------
+    # The absolute 0-10 relevance floor an UNSOLICITED surface (context
+    # injection, volunteered voice answers) must clear. Explicit searches --
+    # the Ask view, the REST route, the CLI -- never apply it: the user asked
+    # and sees the evidence. 0 disables the floor everywhere.
+    rerank_min_score: float = 4.0
+    # Per-leg RRF weights: score(d) = sum(weight / (60 + rank)). 1.0 each is
+    # the article's default; 0 silences a leg without removing it.
+    rrf_keyword_weight: float = 1.0
+    rrf_vector_weight: float = 1.0
+    # Age decay on the fused score: 0.5 ** (age_days / half_life). Stale
+    # answers lose when relevance is otherwise equal. 0 disables the decay
+    # (the epsilon-sized recency tiebreak still settles exact ties).
+    recency_half_life_days: float = 180.0
 
 
 class WikiContextConfig(BaseModel):

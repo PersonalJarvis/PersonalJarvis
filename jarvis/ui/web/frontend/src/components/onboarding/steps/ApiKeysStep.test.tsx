@@ -1,4 +1,4 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 
 vi.mock("@/i18n", () => ({ useT: () => (key: string) => key }));

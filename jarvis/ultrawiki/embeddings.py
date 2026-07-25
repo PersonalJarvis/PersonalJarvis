@@ -44,6 +44,7 @@ __all__ = [
     "EMBEDDING_BACKENDS",
     "DEFAULT_MODELS",
     "available_backends",
+    "credential_source",
 ]
 
 
@@ -93,6 +94,16 @@ class _HttpEmbedding:
 
     def __init__(self, *, transport: httpx.BaseTransport | None = None) -> None:
         self._transport = transport
+
+    def credential_source(self) -> str:
+        """Honest, KEY-FREE provenance of what satisfies this backend.
+
+        The settings and Ask surfaces show users which credential or endpoint
+        is actually carrying semantic search ("via your saved Gemini API key"),
+        so a downloader can tell WHY a slot is live. It names the secret slot or
+        endpoint — never the value, and never a truncated value.
+        """
+        return ""
 
     def _async_client(self) -> httpx.AsyncClient:
         return httpx.AsyncClient(timeout=_EMBED_TIMEOUT, transport=self._transport)
@@ -152,6 +163,9 @@ class OllamaEmbedding(_HttpEmbedding):
         super().__init__(transport=transport)
         self._endpoint = (endpoint or _DEFAULT_OLLAMA_ENDPOINT).rstrip("/")
 
+    def credential_source(self) -> str:
+        return f"local Ollama endpoint {self._endpoint} (no key, nothing leaves this machine)"
+
     def ready(self) -> tuple[bool, str]:
         url = f"{self._endpoint}/api/version"
         try:
@@ -188,9 +202,18 @@ class GeminiEmbedding(_HttpEmbedding):
     name = "gemini"
 
     _BASE = "https://generativelanguage.googleapis.com/v1beta"
+    _KEY_LABEL = "Gemini"
 
     def _key(self) -> str | None:
         return get_secret_any(_GEMINI_KEY_CANDIDATES)
+
+    def credential_source(self) -> str:
+        # Report WHICH of the accepted slots answered — a user with only
+        # GOOGLE_API_KEY set should see that, not a generic "Gemini key".
+        for slot, env in _GEMINI_KEY_CANDIDATES:
+            if get_secret(slot, env_fallback=env):
+                return f"your saved {self._KEY_LABEL} API key ({slot})"
+        return ""
 
     def ready(self) -> tuple[bool, str]:
         if self._key():
@@ -242,12 +265,21 @@ class _OpenAIShapedEmbedding(_HttpEmbedding):
     def _key(self) -> str | None:
         return get_secret(self._SECRET_SLOT)
 
+    def credential_source(self) -> str:
+        if self._key():
+            return f"your saved {self._KEY_LABEL} API key ({self._SECRET_SLOT})"
+        return ""
+
     def ready(self) -> tuple[bool, str]:
         if self._key():
             return True, ""
+        # Place-neutral on purpose: this line is read on the UltraWiki
+        # settings card (where the key field now sits), in CLI output, and in
+        # logs. It used to send the user to the API-Keys view, which has no
+        # field for this slot -- a dead end dressed up as an instruction.
         return False, (
-            f"No {self._KEY_LABEL} API key is configured - save "
-            f"{self._SECRET_SLOT} in the API-Keys view or set the "
+            f"No {self._KEY_LABEL} API key is configured - enter "
+            f"{self._SECRET_SLOT} on this provider's card, or set the "
             f"{self._SECRET_SLOT.upper()} environment variable."
         )
 
@@ -315,6 +347,9 @@ class CohereEmbedding(_HttpEmbedding):
     def _key(self) -> str | None:
         return get_secret("cohere_api_key")
 
+    def credential_source(self) -> str:
+        return "your saved Cohere API key (cohere_api_key)" if self._key() else ""
+
     def ready(self) -> tuple[bool, str]:
         if self._key():
             return True, ""
@@ -377,6 +412,23 @@ DEFAULT_MODELS: dict[str, str] = {
     "mistral": "mistral-embed",
     "cohere": "embed-v4.0",
 }
+
+
+def credential_source(name: str, cfg: Any) -> str:
+    """Key-free provenance of one backend's credential/endpoint, or ``""``.
+
+    Asks the ADAPTER (AP-21: no provider-name special-casing out here), so a
+    new backend supplies its own honest phrase and this function never grows a
+    branch. Never raises and never returns any part of a secret value.
+    """
+    factory = EMBEDDING_BACKENDS.get(name)
+    if factory is None:
+        return ""
+    try:
+        return str(factory(cfg).credential_source() or "")
+    except Exception:  # noqa: BLE001 — provenance is decoration, never a failure
+        log.debug("embedding backend %s provenance probe failed", name, exc_info=True)
+        return ""
 
 
 def available_backends(cfg: Any) -> list[dict[str, Any]]:

@@ -91,6 +91,8 @@ export interface UltraWikiProviderOption {
   ready: boolean;
   reason: string;
   default_model?: string;
+  /** One-line English explanation of what this option is. */
+  detail?: string;
 }
 
 export interface UltraWikiDbBackendOption {
@@ -107,13 +109,28 @@ export interface UltraWikiProviders {
   db_backends: UltraWikiDbBackendOption[];
 }
 
+/**
+ * Live ranking knobs of the read path — mirrors
+ * jarvis/ultrawiki/search.py::ranking_settings.
+ */
+export interface UltraWikiRanking {
+  keyword_weight: number;
+  vector_weight: number;
+  recency_half_life_days: number;
+  /** Absolute 0-10 relevance floor for UNSOLICITED surfaces; 0 = off. */
+  rerank_min_score: number;
+}
+
 export interface UltraWikiSlotStatus {
   provider: string;
   model?: string;
   ready: boolean;
   reason: string;
+  via?: string;
   available?: UltraWikiProviderOption[];
   chain?: string[];
+  /** Only on the rerank slot: the knobs that slot governs. */
+  ranking?: Partial<UltraWikiRanking>;
 }
 
 export interface UltraWikiStorageSlot {
@@ -122,6 +139,34 @@ export interface UltraWikiStorageSlot {
   ready: boolean;
   reason: string;
   vector?: { ready?: boolean; reason?: string };
+}
+
+// Mirrors jarvis/ultrawiki/service.py::PIPELINE_STATES — five-layer anti-drift
+// discipline (AP-4 / BUG-008): never retype these values elsewhere.
+export type UltraWikiPipelineState =
+  | "waiting_for_sources"
+  | "idle"
+  | "processing"
+  | "paused";
+
+export const ULTRAWIKI_PIPELINE_STATES: readonly UltraWikiPipelineState[] = [
+  "waiting_for_sources",
+  "idle",
+  "processing",
+  "paused",
+];
+
+export interface UltraWikiPipeline {
+  /**
+   * The worker LOOP is alive — NOT the same as work being done. Reporting this
+   * alone read as "something is already pulling my data" on a fresh activation
+   * with zero approved sources; `state` is what the UI shows.
+   */
+  running: boolean;
+  state?: UltraWikiPipelineState | string;
+  /** One honest English sentence: what is happening, or what blocks it. */
+  reason?: string;
+  processed: Record<string, number>;
 }
 
 export interface UltraWikiSearchLeg {
@@ -144,7 +189,7 @@ export interface UltraWikiStatus {
     storage?: UltraWikiStorageSlot;
   };
   counts: Partial<UltraWikiCounts>;
-  pipeline: { running: boolean; processed: Record<string, number> };
+  pipeline: UltraWikiPipeline;
   sources: UltraWikiSource[];
   jobs: UltraWikiJob[];
   search_legs: {
@@ -164,8 +209,13 @@ export interface UltraWikiSearchHit {
   snippet: string;
   permalink: string;
   timestamp_utc: string;
+  /** ORDINAL fused rank score (RRF) — comparable between hits, never absolute. */
   score: number;
   matched_by: string[];
+  /** ABSOLUTE 0-10 relevance grade; null when the rerank stage did not run. */
+  rerank_score: number | null;
+  /** Neighbouring evidence pulled back in after ranking; may be empty. */
+  context: string[];
 }
 
 export interface UltraWikiSearchResponse {
@@ -181,6 +231,7 @@ export interface UltraWikiActivateBody {
   distill_provider?: string;
   distill_model?: string;
   rerank_provider?: string;
+  rerank_model?: string;
   areas?: string[];
 }
 
@@ -206,12 +257,115 @@ export interface UltraWikiDeactivateResponse {
 
 export interface UltraWikiSettingsBody {
   db_backend?: string;
+  /**
+   * The named storage preset (sqlite / supabase / neon / postgres). Send this
+   * rather than `db_backend`: the backend derives the two-value functional
+   * enum from the preset, so the UI never has to mirror it (AP-4).
+   */
+  storage_provider?: string;
   embedding_provider?: string;
   embedding_model?: string;
   distill_provider?: string;
   distill_model?: string;
   rerank_provider?: string;
+  /** Only meaningful for rerank_provider="llm"; empty = cheap chain default. */
+  rerank_model?: string;
+  ollama_endpoint?: string;
+  /** Ranking knobs — see UltraWikiRanking. Sent only when the user edits one. */
+  rerank_min_score?: number;
+  rrf_keyword_weight?: number;
+  rrf_vector_weight?: number;
+  recency_half_life_days?: number;
   confirm_reembed?: boolean;
+}
+
+// Mirrors jarvis/ultrawiki/provider_catalog.py::SlotName / UltraWikiAuthMode —
+// five-layer anti-drift discipline (AP-4 / BUG-008): never retype these.
+export const ULTRAWIKI_SLOT_NAMES = [
+  "storage",
+  "embedding",
+  "distill",
+  "rerank",
+] as const;
+export type UltraWikiSlotName = (typeof ULTRAWIKI_SLOT_NAMES)[number];
+
+export type UltraWikiAuthMode =
+  | "none"
+  | "api_key"
+  | "connection_string"
+  | "managed_link";
+
+/**
+ * One provider row of `GET /api/ultrawiki/catalog`: the declared spec plus the
+ * live truth about THIS machine (which credential slots hold a value, which
+ * other Jarvis surfaces share them, whether the provider's own probe passes).
+ */
+export interface UltraWikiCatalogRow {
+  id: string;
+  slot: UltraWikiSlotName;
+  label: string;
+  auth_mode: UltraWikiAuthMode;
+  secret_keys: string[];
+  dashboard_url: string | null;
+  credential_help: string;
+  default_model: string;
+  supports_base_url: boolean;
+  default_base_url: string | null;
+  recommended: boolean;
+  caution: string | null;
+  db_backend: string | null;
+  connection_hint: string | null;
+  ready: boolean;
+  reason: string;
+  selected: boolean;
+  secrets_set: Record<string, boolean>;
+  secret_shared_with: Record<string, string[]>;
+}
+
+export interface UltraWikiCatalog {
+  slots: Record<UltraWikiSlotName, UltraWikiCatalogRow[]>;
+  selected: Record<UltraWikiSlotName, string>;
+  models: { embedding: string; distill: string };
+  ollama_endpoint: string;
+}
+
+export interface SupabaseProject {
+  ref: string;
+  name: string;
+  region: string;
+  status: string;
+}
+
+export interface SupabaseProjectsResponse {
+  projects: SupabaseProject[];
+  total: number;
+  tokens_url: string;
+}
+
+export interface SupabaseLinkBody {
+  project_ref: string;
+  db_password: string;
+  pool_mode?: "transaction" | "session";
+  save_anyway?: boolean;
+}
+
+export interface SupabaseLinkResponse {
+  ok: boolean;
+  project_ref: string;
+  endpoint: {
+    host: string;
+    port: number;
+    user: string;
+    database: string;
+    mode: string;
+  };
+  note: string;
+  probe_ok: boolean;
+  probe_detail: string;
+  persisted: boolean;
+  restart_required: boolean;
+  detail: string;
+  persist_error?: string;
 }
 
 export interface UltraWikiSettingsResponse {
@@ -323,6 +477,52 @@ export function fetchUltraWikiProviders(): Promise<UltraWikiProviders> {
   return request<UltraWikiProviders>("/api/ultrawiki/providers");
 }
 
+export function fetchUltraWikiCatalog(): Promise<UltraWikiCatalog> {
+  return request<UltraWikiCatalog>("/api/ultrawiki/catalog");
+}
+
+export function fetchSupabaseProjects(): Promise<SupabaseProjectsResponse> {
+  return request<SupabaseProjectsResponse>(
+    "/api/ultrawiki/storage/supabase/projects",
+  );
+}
+
+export function linkSupabaseProject(
+  body: SupabaseLinkBody,
+): Promise<SupabaseLinkResponse> {
+  return postJson<SupabaseLinkResponse>(
+    "/api/ultrawiki/storage/supabase/link",
+    body,
+  );
+}
+
+/**
+ * The 409 payload of a refused Supabase link — the connection probe failed and
+ * nothing was saved. Carries the sanitized reason plus the offer to save
+ * anyway, for the user whose database is only reachable over a VPN.
+ */
+export function supabaseLinkProbeFailureOf(error: unknown): {
+  message: string;
+  probe_detail: string;
+  can_save_anyway: boolean;
+} | null {
+  if (!(error instanceof UltraWikiApiError) || error.status !== 409) return null;
+  const detail = error.detail;
+  if (
+    detail &&
+    typeof detail === "object" &&
+    (detail as { can_save_anyway?: unknown }).can_save_anyway === true
+  ) {
+    const d = detail as { message?: unknown; probe_detail?: unknown };
+    return {
+      message: String(d.message ?? ""),
+      probe_detail: String(d.probe_detail ?? ""),
+      can_save_anyway: true,
+    };
+  }
+  return null;
+}
+
 export function activateUltraWiki(
   body: UltraWikiActivateBody,
 ): Promise<UltraWikiActivateResponse> {
@@ -376,12 +576,33 @@ export function revokeUltraWikiSource(
   );
 }
 
+/**
+ * Start a sync. `full` clears the resume checkpoint and the incremental
+ * cursor so everything is re-read — the only mode in which deletions are
+ * detected (an incremental run cannot see a file that no longer exists).
+ */
 export function startUltraWikiSync(
   sourceId: string,
-): Promise<{ job_id: string; status: string; source_id: string }> {
-  return postJson<{ job_id: string; status: string; source_id: string }>(
+  options: { full?: boolean } = {},
+): Promise<{
+  job_id: string;
+  status: string;
+  source_id: string;
+  full?: boolean;
+}> {
+  return postJson(
     `/api/ultrawiki/sources/${encodeURIComponent(sourceId)}/sync`,
+    { full: Boolean(options.full) },
   );
+}
+
+/** Return dead-lettered items to the pipeline (after fixing what broke). */
+export function requeueUltraWikiFailed(
+  sourceId?: string,
+): Promise<{ ok: boolean; requeued: number; source_id: string; detail: string }> {
+  return postJson("/api/ultrawiki/pipeline/requeue-failed", {
+    source_id: sourceId ?? "",
+  });
 }
 
 export function cancelUltraWikiJob(

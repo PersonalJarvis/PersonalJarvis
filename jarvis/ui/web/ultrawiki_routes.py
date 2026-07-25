@@ -19,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import dataclasses
 import logging
+import math
 import re
 import time
 from typing import Any
@@ -35,12 +36,34 @@ _MODE_OFF_DETAIL = "UltraWiki mode is off — the normal wiki answers today."
 #: The flat ``[ultrawiki]`` slot keys the settings surface may change.
 _SLOT_KEYS = (
     "db_backend",
+    "storage_provider",
     "embedding_provider",
     "embedding_model",
     "distill_provider",
     "distill_model",
     "rerank_provider",
+    "rerank_model",
+    "ollama_endpoint",
 )
+
+#: Numeric ranking knobs of the read path (design: UltraWiki ranking
+#: pipeline). Kept apart from the provider slots above because they are
+#: floats, not names — and because an out-of-range value must be refused here
+#: rather than silently ranking nonsense.
+_RANKING_KEYS = (
+    "rerank_min_score",
+    "rrf_keyword_weight",
+    "rrf_vector_weight",
+    "recency_half_life_days",
+)
+
+#: Inclusive bounds per ranking knob.
+_RANKING_BOUNDS: dict[str, tuple[float, float]] = {
+    "rerank_min_score": (0.0, 10.0),  # the shared 0-10 relevance scale
+    "rrf_keyword_weight": (0.0, 10.0),
+    "rrf_vector_weight": (0.0, 10.0),
+    "recency_half_life_days": (0.0, 36500.0),  # a century is "effectively off"
+}
 
 _SLUG_RE = re.compile(r"[^a-z0-9]+")
 
@@ -108,7 +131,40 @@ def _slugify(name: str) -> str:
     return _SLUG_RE.sub("-", name.lower()).strip("-") or "area"
 
 
-def _persist_slots(values: dict[str, str]) -> tuple[bool, str]:
+def _ranking_changes(body: Any, uw: Any) -> dict[str, float]:
+    """Validated, actually-changing numeric ranking knobs.
+
+    Bounds are enforced HERE rather than clamped later: a rejected 400 tells
+    the user their value was refused, while a silent clamp would leave the UI
+    showing a number the ranking does not use.
+    """
+    changes: dict[str, float] = {}
+    for key in _RANKING_KEYS:
+        raw = getattr(body, key, None)
+        if raw is None:
+            continue
+        try:
+            value = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise HTTPException(
+                status_code=400, detail=f"{key} must be a number, got {raw!r}"
+            ) from exc
+        low, high = _RANKING_BOUNDS[key]
+        if not math.isfinite(value) or not (low <= value <= high):
+            raise HTTPException(
+                status_code=400,
+                detail=f"{key} must be between {low} and {high}, got {value}",
+            )
+        try:
+            current = float(getattr(uw, key))
+        except (TypeError, ValueError, AttributeError):
+            current = None  # unset or unreadable — treat as a change
+        if current is None or current != value:
+            changes[key] = value
+    return changes
+
+
+def _persist_slots(values: dict[str, Any]) -> tuple[bool, str]:
     """Persist ``[ultrawiki]`` slot keys FIRST (AP-7 atomic writer).
 
     Best-effort like the wiki-provider route: a read-only/locked TOML must not
@@ -160,13 +216,22 @@ def _apply_live(request: Request, values: dict[str, str], *, enabled: bool | Non
 
 
 def _search_legs(cfg: Any) -> dict[str, Any]:
-    """Honest per-leg availability report (keyword / vector / rerank)."""
+    """Honest per-leg availability report (keyword / vector / rerank).
+
+    BLOCKING: the leg probes walk credentials and may touch a local endpoint.
+    Callers go through :func:`_search_legs_async`.
+    """
     try:
         from jarvis.ultrawiki import search as search_mod  # noqa: PLC0415 — lazy
 
         return search_mod.search_status(cfg)
     except Exception as exc:  # noqa: BLE001 — status must never 500
         return {"error": f"search-leg probe failed ({type(exc).__name__})"}
+
+
+async def _search_legs_async(cfg: Any) -> dict[str, Any]:
+    """The leg report off the event loop (which also serves voice and chat)."""
+    return await asyncio.to_thread(_search_legs, cfg)
 
 
 # ---------------------------------------------------------------------------
@@ -190,10 +255,18 @@ async def get_status(request: Request) -> dict[str, Any]:
             "backend_in_use": "",
             "slots": {},
             "counts": {},
-            "pipeline": {"running": False, "processed": {}},
+            "pipeline": {
+                "running": False,
+                "state": "paused",
+                "reason": (
+                    "UltraWiki is not wired yet — the app is still starting, or "
+                    "its init failed. Nothing is being read."
+                ),
+                "processed": {},
+            },
             "sources": [],
             "jobs": [],
-            "search_legs": _search_legs(cfg),
+            "search_legs": await _search_legs_async(cfg),
             "degradations": [
                 "the UltraWiki service is not wired — the app is still "
                 "starting or its init failed"
@@ -220,7 +293,7 @@ async def get_status(request: Request) -> dict[str, Any]:
         "pipeline": data.get("pipeline", {}),
         "sources": data.get("sources", []),
         "jobs": data.get("jobs", []),
-        "search_legs": _search_legs(cfg),
+        "search_legs": await _search_legs_async(cfg),
         "degradations": data.get("degradations", []),
     }
 
@@ -279,6 +352,276 @@ async def list_providers(request: Request) -> dict[str, Any]:
     return await asyncio.to_thread(_probe)
 
 
+@router.get("/catalog", summary="UltraWiki provider catalog with credential state")
+async def get_catalog(request: Request) -> dict[str, Any]:
+    """Every selectable provider per slot, with its live credential + readiness state.
+
+    This is what the settings cards render: for each of storage, embedding,
+    distill and rerank it returns the declared providers
+    (:mod:`jarvis.ultrawiki.provider_catalog`) enriched with the truth about
+    THIS machine — which credential slots hold a value, which other Jarvis
+    surfaces read the same slot (so a delete can warn before it disables
+    them), and whether the provider's own probe says it is usable.
+
+    Credential probes walk the OS keyring, so the whole enrichment runs in a
+    worker thread; the route body itself never blocks the event loop.
+    """
+    cfg = _config(request)
+    uw = getattr(cfg, "ultrawiki", None)
+    selected = {
+        "storage": str(getattr(uw, "storage_provider", "") or "").strip()
+        or ("postgres" if str(getattr(uw, "db_backend", "") or "") == "postgres" else "sqlite"),
+        "embedding": str(getattr(uw, "embedding_provider", "") or "").strip(),
+        "distill": str(getattr(uw, "distill_provider", "") or "").strip(),
+        "rerank": str(getattr(uw, "rerank_provider", "") or "").strip(),
+    }
+
+    def _probe() -> dict[str, Any]:
+        from jarvis.core.config import get_secret  # noqa: PLC0415 — lazy (AP-26)
+        from jarvis.ui.web.provider_spec import (  # noqa: PLC0415 — lazy
+            secret_slot_consumers,
+        )
+        from jarvis.ultrawiki import embeddings as embeddings_mod  # noqa: PLC0415
+        from jarvis.ultrawiki import provider_catalog  # noqa: PLC0415
+        from jarvis.ultrawiki import rerank as rerank_mod  # noqa: PLC0415
+
+        def _secret_present(slot: str) -> bool:
+            try:
+                return bool(get_secret(slot))
+            except Exception:  # noqa: BLE001 — a locked keyring reads as absent
+                return False
+
+        # Live readiness per slot, keyed by provider id. Each source is the
+        # provider's OWN probe (AP-21: capability, never a name check).
+        embedding_ready = {
+            str(row.get("name")): row
+            for row in embeddings_mod.available_backends(cfg)
+        }
+        rerank_ready = {
+            str(row.get("name")): row for row in rerank_mod.available_rerankers(cfg)
+        }
+        try:
+            from jarvis.brain.provider_registry import (  # noqa: PLC0415 — lazy
+                BrainProviderRegistry,
+            )
+            from jarvis.memory.wiki.provider_chain import (  # noqa: PLC0415 — lazy
+                credential_ready_wiki_providers,
+            )
+
+            distill_chain = set(
+                credential_ready_wiki_providers(
+                    available=set(BrainProviderRegistry().available()), config=cfg
+                )
+            )
+        except Exception as exc:  # noqa: BLE001 — the catalog must never 500
+            log.debug("distill chain probe failed: %s", exc, exc_info=True)
+            distill_chain = set()
+
+        db_url_present = _secret_present("ultrawiki_db_url")
+
+        def _readiness(spec: Any) -> tuple[bool, str]:
+            if spec.slot == "embedding":
+                row = embedding_ready.get(spec.id)
+                if row is None:
+                    return False, "this backend is not installed in this build"
+                return bool(row.get("ready")), str(row.get("reason") or "")
+            if spec.slot == "rerank":
+                row = rerank_ready.get(spec.id)
+                if row is None:
+                    return False, "this backend is not installed in this build"
+                return bool(row.get("ready")), str(row.get("reason") or "")
+            if spec.slot == "distill":
+                if spec.id in distill_chain:
+                    return True, ""
+                return False, (
+                    "no usable credential for this provider — save its key "
+                    "below, or leave the slot on Automatic and Jarvis uses "
+                    "whichever provider you do have"
+                )
+            # storage
+            if spec.db_backend == "sqlite":
+                return True, ""
+            if db_url_present:
+                return True, ""
+            return False, (
+                "no connection string is saved yet — connect below and the "
+                "local SQLite store keeps answering meanwhile"
+            )
+
+        def _row(spec: Any) -> dict[str, Any]:
+            ready, reason = _readiness(spec)
+            return {
+                "id": spec.id,
+                "slot": spec.slot,
+                "label": spec.label,
+                "auth_mode": spec.auth_mode,
+                "secret_keys": list(spec.secret_keys),
+                "dashboard_url": spec.dashboard_url,
+                "credential_help": spec.credential_help,
+                "default_model": spec.default_model,
+                "supports_base_url": spec.supports_base_url,
+                "default_base_url": spec.default_base_url,
+                "recommended": spec.recommended,
+                "caution": spec.caution,
+                "db_backend": spec.db_backend,
+                "connection_hint": spec.connection_hint,
+                "ready": ready,
+                "reason": reason,
+                "selected": selected.get(spec.slot) == spec.id,
+                "secrets_set": {
+                    key: _secret_present(key) for key in spec.secret_keys
+                },
+                "secret_shared_with": {
+                    key: secret_slot_consumers(key) for key in spec.secret_keys
+                },
+            }
+
+        return {
+            slot: [_row(spec) for spec in provider_catalog.catalog_for_slot(slot)]
+            for slot in provider_catalog.SLOT_NAMES
+        }
+
+    slots = await asyncio.to_thread(_probe)
+    return {
+        "slots": slots,
+        "selected": selected,
+        "models": {
+            "embedding": str(getattr(uw, "embedding_model", "") or ""),
+            "distill": str(getattr(uw, "distill_model", "") or ""),
+        },
+        "ollama_endpoint": str(
+            getattr(uw, "ollama_endpoint", "") or "http://localhost:11434"
+        ),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Storage — the guided Supabase link
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/storage/supabase/projects", summary="List the linked Supabase account's projects"
+)
+async def list_supabase_projects(request: Request) -> dict[str, Any]:
+    """Projects visible to the saved Supabase access token (409 when unlinked)."""
+    from jarvis.core.config import get_secret  # noqa: PLC0415 — lazy (AP-26)
+    from jarvis.ultrawiki import supabase_link  # noqa: PLC0415 — lazy
+
+    token = await asyncio.to_thread(get_secret, "supabase_access_token")
+    if not token:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "No Supabase access token is saved. Open the Supabase tokens "
+                "page from the storage card, create a token, and paste it in."
+            ),
+        )
+    try:
+        projects = await supabase_link.list_projects(token)
+    except supabase_link.SupabaseLinkError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {
+        "projects": [p.as_dict() for p in projects],
+        "total": len(projects),
+        "tokens_url": supabase_link.SUPABASE_TOKENS_URL,
+    }
+
+
+class SupabaseLinkBody(BaseModel):
+    """Finish the Supabase link: which project, and its database password."""
+
+    project_ref: str = Field(min_length=1)
+    db_password: str = Field(min_length=1)
+    #: "transaction" (the default, right for a long-lived app pool) or "session".
+    pool_mode: str = "transaction"
+    #: Save even when the connection probe fails. Off by default — a string
+    #: that cannot connect is normally a mistake worth catching here rather
+    #: than as a silent SQLite fallback three restarts later. On for the user
+    #: who knows their network blocks the probe (VPN-only database, firewall).
+    save_anyway: bool = False
+
+
+@router.post(
+    "/storage/supabase/link",
+    summary="Link a Supabase project as the UltraWiki store",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def link_supabase_project(
+    body: SupabaseLinkBody, request: Request
+) -> dict[str, Any]:
+    """Assemble, probe and save the Supabase connection string.
+
+    Reads the project's real pooler host from Supabase (guessing the region
+    prefix would produce a string that fails for invisible reasons), adds the
+    password the user supplied, probes the connection, and only then writes the
+    credential and flips the storage slot to Postgres. A failing probe answers
+    409 with the sanitized reason and saves nothing unless ``save_anyway``.
+    """
+    from jarvis.core.config import get_secret, set_secret  # noqa: PLC0415 — lazy
+    from jarvis.ultrawiki import supabase_link  # noqa: PLC0415 — lazy
+
+    token = await asyncio.to_thread(get_secret, "supabase_access_token")
+    if not token:
+        raise HTTPException(
+            status_code=409, detail="No Supabase access token is saved."
+        )
+    try:
+        endpoint, note = await supabase_link.resolve_endpoint(
+            token, body.project_ref.strip(), mode=body.pool_mode
+        )
+        conn_str = supabase_link.build_connection_string(endpoint, body.db_password)
+    except supabase_link.SupabaseLinkError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    from jarvis.ultrawiki.store import PostgresStore  # noqa: PLC0415 — lazy
+
+    probe_ok, probe_detail = await PostgresStore.connect_test(conn_str)
+    if not probe_ok and not body.save_anyway:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": (
+                    f"{note} The connection could not be established, so "
+                    f"nothing was saved: {probe_detail}"
+                ),
+                "probe_detail": probe_detail,
+                "endpoint": endpoint.as_dict(),
+                "can_save_anyway": True,
+            },
+        )
+
+    if not await asyncio.to_thread(set_secret, "ultrawiki_db_url", conn_str):
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "The connection string could not be stored in this machine's "
+                "credential store."
+            ),
+        )
+    values = {"db_backend": "postgres", "storage_provider": "supabase"}
+    persisted, persist_error = _persist_slots(values)
+    _apply_live(request, values)
+    response: dict[str, Any] = {
+        "ok": True,
+        "project_ref": body.project_ref.strip(),
+        "endpoint": endpoint.as_dict(),
+        "note": note,
+        "probe_ok": probe_ok,
+        "probe_detail": probe_detail,
+        "persisted": persisted,
+        "restart_required": True,
+        "detail": (
+            "Supabase is linked. The store switches over on the next app "
+            "restart; until then the current store keeps answering and "
+            "nothing is lost."
+        ),
+    }
+    if persist_error:
+        response["persist_error"] = persist_error
+    return response
+
+
 # ---------------------------------------------------------------------------
 # Activation / deactivation / settings
 # ---------------------------------------------------------------------------
@@ -293,6 +636,7 @@ class ActivateBody(BaseModel):
     distill_provider: str = ""
     distill_model: str = ""
     rerank_provider: str = ""
+    rerank_model: str = ""
     areas: list[str] = Field(default_factory=list)
 
 
@@ -348,20 +692,43 @@ async def activate_mode(body: ActivateBody, request: Request) -> dict[str, Any]:
     values: dict[str, str] = {"embedding_provider": provider}
     if db_backend:
         values["db_backend"] = db_backend
-    for key in ("embedding_model", "distill_provider", "distill_model"):
+    for key in ("embedding_model", "distill_provider", "distill_model", "rerank_model"):
         value = str(getattr(body, key) or "").strip()
         if value:
             values[key] = value
     if rerank_provider:
         values["rerank_provider"] = rerank_provider
 
-    # Persist FIRST (the disk is the source of truth), then live-apply — the
-    # same discipline as PUT /api/settings/wiki-provider.
+    # Ordering matters. The slot values go to disk and into the live config
+    # FIRST (the disk is the source of truth — the PUT
+    # /api/settings/wiki-provider discipline), because the store must open
+    # against the chosen backend. The MODE SWITCH is flipped LAST, only after
+    # the one step that can actually fail — activate() opens the store and
+    # seeds areas + sources. Enabling first meant a failed activation left the
+    # mode ON with no store behind it: the whole Wiki section switched to a
+    # broken Ultra view the user could not get out of.
     slots_persisted, slots_error = _persist_slots(values)
-    enabled_persisted, enabled_error = _persist_enabled(True)
-    _apply_live(request, values, enabled=True)
+    _apply_live(request, values)
 
-    result = await service.activate({"areas": list(body.areas or [])})
+    try:
+        result = await service.activate({"areas": list(body.areas or [])})
+    except Exception as exc:  # noqa: BLE001 — the mode stays OFF and untouched
+        log.exception("UltraWiki activation failed; the mode stays off")
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "UltraWiki could not be activated "
+                f"({type(exc).__name__}: {exc}). The mode stays off and the "
+                "normal wiki keeps answering; your slot choices were saved."
+            ),
+        ) from exc
+
+    enabled_persisted, enabled_error = _persist_enabled(True)
+    _apply_live(request, {}, enabled=True)
+    # The pipeline only starts while the mode is on, so it is started here —
+    # after the flip, never before it.
+    await service.ensure_started()
+
     response: dict[str, Any] = {
         "ok": True,
         "enabled": True,
@@ -418,11 +785,26 @@ class UpdateSettingsBody(BaseModel):
     """Slot changes; an embedding change needs confirm_reembed once vectors exist."""
 
     db_backend: str | None = None
+    #: The named storage preset (sqlite / supabase / neon / postgres). When it
+    #: is sent without an explicit ``db_backend``, the functional backend is
+    #: derived from the preset — the UI picks a NAME, never an internal enum.
+    storage_provider: str | None = None
     embedding_provider: str | None = None
     embedding_model: str | None = None
     distill_provider: str | None = None
     distill_model: str | None = None
     rerank_provider: str | None = None
+    #: Only meaningful for rerank_provider="llm" — empty lets the provider
+    #: chain pick each family's cheap router-tier model.
+    rerank_model: str | None = None
+    ollama_endpoint: str | None = None
+    #: Ranking knobs of the read path. Absolute 0-10 relevance floor for
+    #: unsolicited surfaces, per-leg fusion weights, and the age-decay half
+    #: life in days (0 = no decay).
+    rerank_min_score: float | None = None
+    rrf_keyword_weight: float | None = None
+    rrf_vector_weight: float | None = None
+    recency_half_life_days: float | None = None
     confirm_reembed: bool = False
 
 
@@ -436,15 +818,36 @@ async def update_settings(body: UpdateSettingsBody, request: Request) -> dict[st
     re-embeds the corpus after explicit confirmation."""
     service = _service(request)
     uw = _uw_cfg(request)
-    changes: dict[str, str] = {}
-    for key in _SLOT_KEYS:
-        value = getattr(body, key)
-        if value is None:
-            continue
-        value = str(value).strip()
-        if value != str(getattr(uw, key, "") or "").strip():
-            changes[key] = value
-    if not changes:
+
+    incoming: dict[str, str] = {
+        key: str(getattr(body, key)).strip()
+        for key in _SLOT_KEYS
+        if getattr(body, key) is not None
+    }
+    # A storage preset is a NAME the user picked; the functional two-value
+    # backend is derived from it so the UI never has to know the internal enum
+    # (and cannot desync from it). An explicit db_backend still wins.
+    preset = incoming.get("storage_provider")
+    if preset:
+        from jarvis.ultrawiki import provider_catalog  # noqa: PLC0415 — lazy (AP-26)
+
+        if provider_catalog.get_provider_spec("storage", preset) is None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"unknown storage provider {preset!r} (available: "
+                    f"{[s.id for s in provider_catalog.STORAGE_PROVIDERS]})"
+                ),
+            )
+        incoming.setdefault("db_backend", provider_catalog.storage_backend_of(preset))
+
+    changes = {
+        key: value
+        for key, value in incoming.items()
+        if value != str(getattr(uw, key, "") or "").strip()
+    }
+    ranking_changes = _ranking_changes(body, uw)
+    if not changes and not ranking_changes:
         return {"ok": True, "changed": [], "persisted": True, "reembed_started": False}
 
     if "db_backend" in changes and changes["db_backend"] not in ("sqlite", "postgres"):
@@ -498,8 +901,9 @@ async def update_settings(body: UpdateSettingsBody, request: Request) -> dict[st
                 },
             )
 
-    persisted, persist_error = _persist_slots(changes)
-    _apply_live(request, changes)
+    applied: dict[str, Any] = {**changes, **ranking_changes}
+    persisted, persist_error = _persist_slots(applied)
+    _apply_live(request, applied)
     reembed_started = False
     if embedding_change:
         store = await _store_of(service)
@@ -510,7 +914,7 @@ async def update_settings(body: UpdateSettingsBody, request: Request) -> dict[st
         reembed_started = vector_items > 0
     response: dict[str, Any] = {
         "ok": True,
-        "changed": sorted(changes),
+        "changed": sorted(applied),
         "persisted": persisted,
         "reembed_started": reembed_started,
     }
@@ -522,7 +926,14 @@ async def update_settings(body: UpdateSettingsBody, request: Request) -> dict[st
 @router.post(
     "/test/{slot}",
     summary="Test one UltraWiki capability slot",
-    openapi_extra={"x-jarvis-dangerous": True},
+    openapi_extra={
+        "x-jarvis-dangerous": True,
+        # A real provider call: the embedding path allows 120 s read timeout
+        # (a cold local Ollama model load is slow), and distillation is a full
+        # LLM round trip. The CLI's default client timeout would give up long
+        # before the slot does and report a failure that never happened.
+        "x-jarvis-timeout-seconds": 120,
+    },
 )
 async def test_slot(slot: str, request: Request) -> dict[str, Any]:
     """Run one real minimal call against a slot (embedding, distill, rerank, or storage)."""
@@ -584,15 +995,28 @@ async def test_slot(slot: str, request: Request) -> dict[str, Any]:
                 "rerank is not configured or not ready — the fusion order "
                 "stands (optional stage)",
             )
+        # A real grading call over two obviously-unequal documents: it proves
+        # the provider answers AND that the 0-10 scale arrives, which is what
+        # the relevance floor depends on.
         try:
-            await reranker.rerank(
-                "test query",
-                ["first test document", "second test document"],
-                top_k=1,
+            pairs = await reranker.rerank(
+                "what is the invoice total?",
+                [
+                    "The invoice total is 1,240 EUR, due on the 30th.",
+                    "sounds good, thanks!",
+                ],
+                top_k=2,
             )
         except Exception as exc:  # noqa: BLE001 — a test reports, never 500s
             return _result(False, f"{type(exc).__name__}: {exc}")
-        return _result(True, f"reranked two test documents with {reranker.name}")
+        if not pairs:
+            return _result(False, f"{reranker.name} graded no document")
+        best_index, best_score = pairs[0]
+        return _result(
+            True,
+            f"{reranker.name} graded 2 documents; best is #{best_index} "
+            f"at {best_score:.1f}/10",
+        )
 
     if slot == "storage":
         service = _service(request)
@@ -711,22 +1135,54 @@ async def delete_source(
     return {"ok": True, "deleted": source_id, "purged": bool(purge)}
 
 
+class SyncBody(BaseModel):
+    """Sync options. ``full`` is the FULL REFRESH: it clears the resume
+    checkpoint and the incremental cursor so the connector re-reads everything
+    from scratch — the only mode in which deleted items can be detected and
+    tombstoned (a delete is invisible to an incremental run)."""
+
+    full: bool = False
+
+
 @router.post(
     "/sources/{source_id}/sync",
     status_code=201,
     summary="Start a sync for one UltraWiki source",
     openapi_extra={"x-jarvis-dangerous": True},
 )
-async def start_sync(source_id: str, request: Request) -> dict[str, Any]:
-    """Start a backfill/incremental sync job for one approved source (201 with the job id)."""
+async def start_sync(
+    source_id: str, request: Request, body: SyncBody | None = None
+) -> dict[str, Any]:
+    """Start a sync job for one approved source; full=true re-reads everything."""
     service = _service(request)
+    full = bool(body.full) if body is not None else False
+    from jarvis.ultrawiki.service import (  # noqa: PLC0415 — lazy (AP-26)
+        SyncAlreadyRunningError,
+    )
+
     try:
-        job_id = await service.start_sync(source_id)
+        job_id = await service.start_sync(source_id, full=full)
+    except SyncAlreadyRunningError as exc:
+        # 409 with the ACTIVE job id, so a caller can watch or cancel it
+        # instead of piling a second interleaving sync onto the same source.
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": str(exc),
+                "source_id": exc.source_id,
+                "job_id": exc.job_id,
+            },
+        ) from exc
     except ValueError as exc:
         message = str(exc)
         status_code = 404 if message.startswith("unknown source") else 409
         raise HTTPException(status_code=status_code, detail=message) from exc
-    return {"job_id": job_id, "status": "queued", "source_id": source_id}
+    return {
+        "job_id": job_id,
+        "status": "queued",
+        "source_id": source_id,
+        "full": full,
+    }
 
 
 @router.get("/bridge/candidates", summary="List plugin-bridge candidates")
@@ -736,6 +1192,45 @@ async def list_bridge_candidates() -> dict[str, Any]:
 
     candidates = plugin_bridge.list_candidates()
     return {"candidates": candidates, "total": len(candidates)}
+
+
+# ---------------------------------------------------------------------------
+# Pipeline recovery
+# ---------------------------------------------------------------------------
+
+
+class RequeueFailedBody(BaseModel):
+    """Scope of a requeue; ``source_id`` empty means every source."""
+
+    source_id: str = ""
+
+
+@router.post(
+    "/pipeline/requeue-failed",
+    summary="Retry UltraWiki items that gave up",
+    openapi_extra={"x-jarvis-dangerous": True},
+)
+async def requeue_failed(
+    request: Request, body: RequeueFailedBody | None = None
+) -> dict[str, Any]:
+    """Return dead-lettered items to the pipeline (they retry from their last completed stage)."""
+    service = _service(request)
+    source_id = (body.source_id.strip() if body is not None else "") or None
+    try:
+        moved = await service.requeue_failed(source_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        "ok": True,
+        "requeued": moved,
+        "source_id": source_id or "",
+        "detail": (
+            f"{moved} item(s) will be picked up again from their last completed "
+            "stage. Items whose cause is still broken will simply pause there."
+            if moved
+            else "No item was in the failed state — nothing to requeue."
+        ),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -832,17 +1327,11 @@ async def search_ultrawiki(
 ) -> dict[str, Any]:
     """Fused keyword + vector search, best hits first, each with its citation permalink."""
     service = _require_active(request)
-    try:
-        results = await service.search(q, k=k, area_id=area)
-    except AttributeError:
-        # The service delegates to jarvis.ultrawiki.search.search(); until
-        # that wrapper lands this route calls the hybrid entry point directly.
-        from jarvis.ultrawiki import search as search_mod  # noqa: PLC0415
-
-        store = await _store_of(service)
-        results = await search_mod.hybrid_search(
-            store, _config(request), q, k=k, area_id=area
-        )
+    # The service owns the retrieval delegation (jarvis.ultrawiki.search).
+    # An AttributeError raised INSIDE the search path must surface as the bug
+    # it is, not be swallowed by a compatibility fallback for a wrapper that
+    # has long since landed.
+    results = await service.search(q, k=k, area_id=area)
     rows = [
         dataclasses.asdict(hit) if dataclasses.is_dataclass(hit) else dict(hit)
         for hit in results

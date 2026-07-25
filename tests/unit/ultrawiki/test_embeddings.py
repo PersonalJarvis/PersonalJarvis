@@ -302,7 +302,17 @@ def test_keyed_backend_ready_without_key_is_false_and_honest(no_secrets, backend
     usable, reason = backend_class().ready()
     assert usable is False
     assert reason  # never an empty reason on a not-ready verdict
-    assert "API-Keys" in reason  # in-app recovery hint (recoverable in-app rule)
+    # The reason must name BOTH recovery paths, because the two kinds of
+    # install fix this differently: a desktop user types the credential into
+    # the slot named here, a headless VPS exports the environment variable.
+    # (Asserted by slot + env var rather than by the name of a UI screen —
+    # that literal went stale the moment the key field moved onto the
+    # provider's own card.)
+    backend = backend_class()
+    slot = backend._SECRET_SLOT if hasattr(backend, "_SECRET_SLOT") else ""
+    if slot:
+        assert slot in reason
+        assert slot.upper() in reason
 
 
 @pytest.mark.parametrize(
