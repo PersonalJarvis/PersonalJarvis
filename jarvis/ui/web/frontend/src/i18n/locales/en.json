@@ -1006,6 +1006,16 @@
     "integration_bad_note": "The provider could not be reached.",
     "failed": "Test failed"
   },
+  "apikeys_base_url": {
+    "label": "Server URL",
+    "placeholder_required": "e.g. http://localhost:8000 — required",
+    "save": "Save",
+    "saving": "Saving…",
+    "saved": "Server URL saved",
+    "cleared": "Server URL reset to the default",
+    "hint_default": "Leave empty to use the default address shown above.",
+    "hint_required": "This provider needs a server URL — enter where your local server runs."
+  },
   "apikeys_model": {
     "heading": "Model",
     "recommended_tag": "Recommended",
