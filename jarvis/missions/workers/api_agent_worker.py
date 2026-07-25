@@ -103,6 +103,12 @@ _BRAIN_BY_PROVIDER: dict[str, tuple[str, str]] = {
     # (subscription-first) when its binary is present; this is the API fallback.
     "claude-api": ("jarvis.plugins.brain.claude_api", "ClaudeAPIBrain"),
     "gemini": ("jarvis.plugins.brain.gemini", "GeminiBrain"),
+    # Keyless local providers (2026-07-25): same in-process tool loop against
+    # the user's own server — heavy missions with zero cloud keys. Keyless is
+    # tolerated by design: get_jarvis_agent_secret returns None and the
+    # plugins supply their own dummy SDK key.
+    "ollama": ("jarvis.plugins.brain.ollama", "OllamaBrain"),
+    "local-openai": ("jarvis.plugins.brain.local_openai", "LocalOpenAIBrain"),
 }
 
 # A free OpenRouter model id — the LAST-RESORT default for the gateway provider

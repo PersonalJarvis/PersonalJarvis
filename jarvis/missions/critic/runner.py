@@ -2190,7 +2190,10 @@ def _resolve_critic_provider_model() -> tuple[str | None, str | None]:
 
 
 # API-key brain providers that can grade IN-PROCESS via their own BrainProvider
-# (no external CLI). Order = the cross-family fallback preference.
+# (no external CLI). Order = the cross-family fallback preference. The keyless
+# local providers close the list (2026-07-25): a zero-key install gets a local
+# critic instead of NO critic, while any funded cloud family stays preferred
+# (small local models grade worse than frontier models — last resort only).
 _API_CRITIC_PROVIDERS: tuple[str, ...] = (
     "openrouter",
     "openai",
@@ -2198,6 +2201,8 @@ _API_CRITIC_PROVIDERS: tuple[str, ...] = (
     "claude-api",
     "grok",
     "nvidia",
+    "ollama",
+    "local-openai",
 )
 
 

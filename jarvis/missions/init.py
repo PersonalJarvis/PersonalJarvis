@@ -83,8 +83,10 @@ def _spawn_boot_cleanup(coro: Any, *, name: str) -> asyncio.Task[Any]:
 # ApiAgentWorker (OpenAI-compatible chat API + tool-use loop), instead of the
 # legacy silent ClaudeDirectWorker fallback. Single source for the routing
 # decision so the UI "runs on Claude" badge can never drift from reality.
+# ollama/local-openai (2026-07-25): keyless local servers, same in-process
+# tool-loop path — a mission can run fully on the user's own hardware.
 _API_AGENT_SLUGS: frozenset[str] = frozenset(
-    {"openai", "openrouter", "grok", "nvidia"}
+    {"openai", "openrouter", "grok", "nvidia", "ollama", "local-openai"}
 )
 
 
@@ -573,7 +575,17 @@ def _api_key_family_viable(provider: str) -> bool:
     worker already proved dead this session (fingerprinted) is skipped until
     it changes.
     """
+    from jarvis.brain.app_control import LOCAL_PROVIDERS
     from jarvis.core.config import get_jarvis_agent_secret
+
+    if provider in LOCAL_PROVIDERS:
+        # Keyless local family (spec-declared auth_mode "none"): no credential
+        # can exist, so viability is reachability — a dead server fast-fails
+        # at call time (2 s connect) and the walk moves on. The quota cooldown
+        # still applies when a run just proved the server down.
+        from jarvis.api_family_quota_state import api_family_in_cooldown
+
+        return not api_family_in_cooldown(provider)
 
     key = get_jarvis_agent_secret(provider)
     if not key:

@@ -227,6 +227,15 @@ def _resolve_chain(config: JarvisConfig) -> list[tuple[str, str | None]]:
         _reachable_keyed_families(config, exclude=frozenset(chain_providers)),
     )
 
+    # Stage 6 — keyless local tail (local-first mandate 2026-07-25): the
+    # registered local brains (spec-declared auth_mode "none": ollama,
+    # local-openai) close the chain, so a ZERO-key install still lands every
+    # background resolve on its own hardware. Deliberately AFTER the keyed
+    # families — a cloud family the user set up stays preferred, and a dead
+    # local server just fast-fails on its 2 s connect timeout.
+    chain_providers = {provider for provider, _ in chain}
+    chain.extend(_local_tail(config, exclude=frozenset(chain_providers)))
+
     # Filter duplicates while preserving order
     seen: set[tuple[str, str | None]] = set()
     deduped: list[tuple[str, str | None]] = []
@@ -318,6 +327,30 @@ def _reachable_keyed_families(
         if not _provider_reachable(config, provider):
             continue
         tail.append((provider, _deep_model_for(config, provider)))
+    return tail
+
+
+def _local_tail(
+    config: JarvisConfig, *, exclude: frozenset[str] = frozenset(),
+) -> list[tuple[str, str | None]]:
+    """Keyless local brains as the chain's last resort (local-first mandate).
+
+    Membership is SPEC-driven — every registered brain provider whose card
+    declares ``auth_mode == "none"`` in ``jarvis.ui.web.provider_spec`` —
+    never a hardcoded name list (AP-21/22). Card order is preserved.
+    OAuth-subscription brains (codex/antigravity) declare their own auth
+    modes and can never leak in here.
+    """
+    from jarvis.ui.web.provider_spec import PROVIDERS
+
+    available = set(_get_registry().available())
+    tail: list[tuple[str, str | None]] = []
+    for spec in PROVIDERS:
+        if spec.tier != "brain" or spec.auth_mode != "none":
+            continue
+        if spec.id in exclude or spec.id not in available:
+            continue
+        tail.append((spec.id, _deep_model_for(config, spec.id)))
     return tail
 
 

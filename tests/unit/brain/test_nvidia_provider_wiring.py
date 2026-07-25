@@ -79,10 +79,13 @@ def test_nvidia_has_a_live_model_catalog() -> None:
     assert spec.live is True  # /v1/models is fetchable, like OpenRouter
     assert spec.curated  # offline fallback exists
     assert "nvidia" in CATALOG_PROVIDERS
-    url, auth = _ENDPOINTS["nvidia"]
-    assert url == "https://integrate.api.nvidia.com/v1/models"
+    # Endpoint entries resolve through resolve_provider_endpoint since
+    # 2026-07-25; with no override the composed URL is byte-identical
+    # (pinned by tests/unit/brain/test_model_catalog_local.py).
+    ep = _ENDPOINTS["nvidia"]
+    assert ep.vendor_base + ep.path == "https://integrate.api.nvidia.com/v1/models"
     # Public catalog (like OpenRouter): key attached when present, else anonymous.
-    assert auth == "bearer_opt"
+    assert ep.auth == "bearer_opt"
 
 
 def test_nvidia_has_tier_defaults() -> None:

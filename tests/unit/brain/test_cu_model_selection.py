@@ -64,6 +64,10 @@ def test_cu_model_falls_back_to_main_model_when_unset():
 def test_cu_model_falls_back_to_router_default_for_absent_provider():
     cfg = load_config()
     cfg.brain.router = BrainTierConfig(provider="gemini")
+    # Hermetic: the HOST config may carry a real [brain.providers.openrouter]
+    # block (this box does) — the test's premise is the ABSENT block, so drop
+    # it from the loaded copy instead of asserting against live host state.
+    cfg.brain.providers.pop("openrouter", None)
     mgr = BrainManager.from_tier_config("router", cfg, EventBus())
     # A provider with no [brain.providers.<p>] block resolves to the router default.
     assert mgr._cu_model("openrouter") == get_tier_default_model(

@@ -119,6 +119,14 @@ MAPPINGS: Final[tuple[ProviderMapping, ...]] = (
     # selectable subagent in the API-Keys "Subagents" tab and env/slug lookups
     # stay consistent.
     ProviderMapping("nvidia", "nvidia", "NVIDIA_API_KEY"),
+    # Keyless local providers (2026-07-25, local-first mandate): both run
+    # through the in-process ApiAgentWorker like nvidia — the row exists so
+    # they are selectable in the Agents tab. The env vars are credential-shaped
+    # PLACEHOLDERS only: no Agent key slot exists for them, so
+    # get_jarvis_agent_secret returns None and the worker proceeds keyless
+    # (the brain plugins supply their own dummy SDK key).
+    ProviderMapping("ollama", "ollama", "OLLAMA_API_KEY"),
+    ProviderMapping("local-openai", "local-openai", "LOCAL_OPENAI_API_KEY"),
 )
 
 

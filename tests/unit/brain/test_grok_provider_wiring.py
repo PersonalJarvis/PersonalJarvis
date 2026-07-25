@@ -113,7 +113,12 @@ def test_grok_has_authenticated_live_model_catalog() -> None:
     assert spec.curated and spec.curated[0].id == DEFAULT_MODEL
     assert "grok" in CATALOG_PROVIDERS
     assert "groq" not in CATALOG_PROVIDERS
-    assert _ENDPOINTS["grok"] == ("https://api.x.ai/v1/models", "bearer")
+    # Endpoint table entries resolve through resolve_provider_endpoint since
+    # 2026-07-25; with no override the composed URL is byte-identical
+    # (pinned by tests/unit/brain/test_model_catalog_local.py).
+    grok_ep = _ENDPOINTS["grok"]
+    assert grok_ep.vendor_base + grok_ep.path == "https://api.x.ai/v1/models"
+    assert grok_ep.auth == "bearer"
 
 
 def test_grok_uses_xai_openai_compatible_endpoint(

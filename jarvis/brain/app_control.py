@@ -66,14 +66,19 @@ def get_spec(provider_id: str) -> Any:
 SWITCHABLE_TIERS: frozenset[str] = frozenset({"brain", "tts", "stt", "subagent"})
 
 # Local providers allowed to stay active in the airgapped privacy profile.
-# Empty since v1.0.1: Ollama was removed 2026-04-21, and the local
-# "faster-whisper" STT dictation provider was removed from the user-selectable
-# catalog (see provider_spec.py). With no local provider left, the airgapped
-# profile admits no provider switch — an honest state, not a regression:
-# airgapped means "local only", and there is currently no local provider to
-# switch TO. (Wake still runs its own local Whisper off this list.) Lives HERE
-# (not in provider_routes) so every switch path shares the one lock.
-LOCAL_PROVIDERS: frozenset[str] = frozenset()
+# SPEC-DERIVED since 2026-07-25 (local-first mandate): every provider card
+# declaring ``auth_mode == "none"`` is local by definition — ollama and
+# local-openai today, future local STT/TTS cards automatically — never a
+# hand-maintained name list (AP-21/22). (Wake still runs its own local
+# Whisper off this list.) Lives HERE (not in provider_routes) so every
+# switch path shares the one lock.
+def _spec_local_providers() -> frozenset[str]:
+    from jarvis.ui.web.provider_spec import PROVIDERS
+
+    return frozenset(s.id for s in PROVIDERS if s.auth_mode == "none")
+
+
+LOCAL_PROVIDERS: frozenset[str] = _spec_local_providers()
 
 # Maps a provider id to the credential-manager *provider slot* used by
 # ``cfg.get_provider_secret`` — needed where one key backs several provider ids
@@ -99,12 +104,11 @@ AUTH_PROVIDER_ALIASES: dict[str, str] = {
     "codex": "codex",
 }
 
-# Local providers that need no credential at all. Empty since v1.0.1: the only
-# entry, the local "faster-whisper" STT dictation provider, was removed from the
-# user-selectable catalog (see provider_spec.py). is_credential_present() still
-# reports auth_mode=="none" providers as configured, so a future local provider
-# needs no change here.
-_NO_CREDENTIAL_PROVIDERS: frozenset[str] = frozenset()
+# Local providers that need no credential at all — the same spec-derived set
+# as LOCAL_PROVIDERS (auth_mode "none" IS the definition of "no credential").
+# is_credential_present() independently reports auth_mode=="none" providers as
+# configured, so the two can never disagree.
+_NO_CREDENTIAL_PROVIDERS: frozenset[str] = LOCAL_PROVIDERS
 
 # A stored secret must be at least this long before we reveal a 3+3 preview.
 # Below it, 6 revealed characters would expose too large a fraction of the key,
