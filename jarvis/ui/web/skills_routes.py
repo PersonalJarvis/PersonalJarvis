@@ -727,6 +727,38 @@ async def match_test(request: Request, body: MatchTestRequest) -> dict[str, Any]
     }
 
 
+@router.get("/lint", openapi_extra={"x-jarvis-readonly": True})
+async def lint_skills(request: Request) -> dict[str, Any]:
+    """Report which installed skills can never be FOUND.
+
+    Different question from ``validate``: that one asks whether a SKILL.md
+    parses and is safe, this one asks whether a skill carries enough distinctive
+    vocabulary to be reachable at all. A skill can be perfectly valid, enabled,
+    and still invisible to every matching channel — which is how a skill with an
+    empty description and a one-heading body sat installed and unnoticed.
+
+    Read-only and advisory. Deliberately not enforced by the loader: a content
+    rule applied at load time suppresses the skills nobody anticipated along
+    with the bad ones, silently, at boot, with no signal (AP-27). Enforce at the
+    write boundary, report here.
+    """
+    registry = _require_registry(request)
+
+    from jarvis.skills.quality import lint_registry
+
+    try:
+        skills = list(registry.list())
+    except Exception:  # noqa: BLE001
+        skills = []
+    reports = [report for report in lint_registry(skills) if report.findings]
+    return {
+        "total_skills": len(skills),
+        "with_findings": len(reports),
+        "unreachable": sum(1 for report in reports if report.errors),
+        "reports": [report.as_dict() for report in reports],
+    }
+
+
 @router.get("/match-log", openapi_extra={"x-jarvis-readonly": True})
 async def match_log_recent(
     request: Request,

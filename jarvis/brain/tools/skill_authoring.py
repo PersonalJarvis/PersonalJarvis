@@ -1,4 +1,4 @@
-"""`spawn_skill_author` — Anthropic tool for main-Jarvis (Phase 7.5).
+"""`spawn_skill_author` — NOT WIRED. Read this before trying to enable it.
 
 Plan-§7.5: the tool delegates skill creation via the Jarvis-Agent worker
 (Wave-4 rebrand, frontier worker). Does not write anything itself — the
@@ -6,6 +6,28 @@ Plan-§7.5: the tool delegates skill creation via the Jarvis-Agent worker
 
 Plan-§AD-2: exclusively main-Jarvis tier; the Jarvis-Agent worker has no
 access to this tool (recursion guard).
+
+**Status (2026-07-25): deliberately unreachable from the brain.** It was a
+phantom for months — an entry point in ``pyproject.toml`` made three docs claim
+the tool was live while it could never load. It is broken in TWO independent
+ways, and the second is the one that matters:
+
+1. it is absent from ``ROUTER_TOOLS``, the only allow-set, so
+   ``jarvis/brain/factory.py`` filters it out; and
+2. :meth:`SpawnSkillAuthorTool.__init__` REQUIRES ``runner=``, which the
+   entry-point loader cannot supply — so adding the name to ``ROUTER_TOOLS``
+   (the obvious one-line "fix") raises ``TypeError`` at tool load.
+
+The capability is not missing: the ``skill-creator`` builtin plus
+``POST /api/skills/creator/{draft,refine,validate,commit}`` are the live
+authoring path and already enforce the AP-15 draft guard. A router tool would be
+a third route to the same behaviour, a fourth place to forget that guard, and
+one more entry competing for router selection — this repo already has a
+documented ``run_skill`` vs ``spawn_skill_author`` confusion on record.
+
+The class stays because its tests exercise the ``SkillAuthoringRunner``
+contract, which IS live behind the REST creator. Do not register it without
+also giving it a constructor the loader can call.
 """
 from __future__ import annotations
 

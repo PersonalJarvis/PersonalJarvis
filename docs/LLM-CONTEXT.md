@@ -383,7 +383,7 @@ Verified against the actual file tree (not just CLAUDE.md claims):
 | 0–4 Foundations | live | Protocols, plugin system, FastAPI/React, speech pipeline, skill system, tool-use loop, harness dispatch, core memory |
 | 5 Vision/Action/Admin/Async/Control + Tiered Routing | live | `jarvis/{vision,admin,tasks,control,telemetry}/`, `ROUTER_TOOLS` frozenset, ADR-0001..0011 |
 | 6 Self-Healing Worker-Critic | live | `jarvis/missions/{manager,kontrollierer,critic,workers,isolation,worker_runtime,voice,safety}/`. 458 mission tests. Wired via `bootstrap_missions` |
-| 7 Self-Mod (foundation + writer + tools) | live | `jarvis/core/self_mod/` (audit, errors, pending, registry, schema, writer). `spawn-skill-author` **IS** registered at `pyproject.toml:208` (CLAUDE.md says otherwise — see §25) |
+| 7 Self-Mod (foundation + writer + tools) | live | `jarvis/core/self_mod/` (audit, errors, pending, registry, schema, writer). `spawn-skill-author` is **NOT** reachable from the brain — see §25; the live authoring path is the `skill-creator` builtin plus `POST /api/skills/creator/*` |
 | Awareness A0–A5 | live | `jarvis/awareness/` (state, story, salience, verdichter, working_set, episode, watchers, probes). A1 + A3 router tools registered |
 | Wiki B0/B1/B2/B3/B5/B7/B8/B9 | live | `jarvis/memory/wiki/` (curator, atomic_writer, page, integration, scheduler, session_rollup, voice_bridge, telemetry, vault_index, watcher, search). 3 router tools |
 | Wiki B4 (legacy Curator) | soft-disabled | `factory.py:736-757` gates on `cfg.memory.legacy_curator.enabled` (default `false` since 2026-05-17). `data/workspace/` snapshot stays on disk for 35 reader sites |
@@ -671,7 +671,7 @@ Self-mod writeup: [`docs/self_mod.md`](docs/self_mod.md) — 8 mutable settings 
 
 Two drifts surfaced during the agent audit; flag them before quoting CLAUDE.md to a fresh chat:
 
-1. **`spawn-skill-author` IS registered in `pyproject.toml:208`** as `spawn-skill-author = "jarvis.brain.tools.skill_authoring:SpawnSkillAuthorTool"` (landed 2026-05-17 per inline comment). CLAUDE.md still says "7.5 `spawn_skill_author` not yet registered in `pyproject.toml`" — outdated. The Phase-7.5 self-modifying skill-authoring tool is wired.
+1. **`spawn-skill-author` is NOT wired** (corrected 2026-07-25). It carried a `pyproject.toml` entry point, and this document previously concluded from that registration that the tool was live — it was not, and that claim misled every agent session reading this file. The tool is absent from `ROUTER_TOOLS` (the only allow-set, so `factory.py` filters it out), AND its `__init__` requires a `runner=` argument the entry-point loader cannot supply — so adding it to `ROUTER_TOOLS` raises `TypeError` at tool load rather than fixing anything. The entry point has been removed; skill authoring lives in the `skill-creator` builtin and `POST /api/skills/creator/{draft,refine,validate,commit}`, which already enforce the AP-15 draft guard. Guarded by `tests/unit/brain/test_router_tool_entrypoint_parity.py`.
 
 2. **`jarvis/sub_jarvis/` directory still exists** as an **empty placeholder** (no `__init__.py`, no files) despite CLAUDE.md and `docs/jarvis-agents-bridge.md §11` declaring it deleted in Welle 4. Cleanup is structurally complete (no code references), but the empty dir itself is leftover.
 

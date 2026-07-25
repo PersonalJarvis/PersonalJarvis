@@ -571,12 +571,18 @@ ultrawiki-search = "jarvis.plugins.tool.ultrawiki_search:UltraWikiSearchTool"
 # clusters (the Knowledge matrix + per-turn system-prompt source). Router-tier,
 # write, monitor. Closes the gap left by the soft-disabled legacy Curator.
 update-profile = "jarvis.plugins.tool.profile_update:UpdateProfileTool"
-# Phase 7.5 — skill authoring (router-tier, ask). Spawns the
-# SkillAuthoringRunner over the Jarvis-Agent bridge. Implementation lives at
-# jarvis/brain/tools/skill_authoring.py since 2026-05-12; registration
-# was missing until the 2026-05-17 audit (CLAUDE.md flagged it as
-# "not yet registered in pyproject.toml" — this is that line landing).
-spawn-skill-author = "jarvis.brain.tools.skill_authoring:SpawnSkillAuthorTool"
+# NOTE (2026-07-25): `spawn-skill-author` used to be registered here and was a
+# PHANTOM — a registration that made three docs claim the tool was live while it
+# could never load. It is absent from ROUTER_TOOLS (the only allow-set, so
+# factory.py filtered it out), and its __init__ requires a `runner=` argument
+# the entry-point loader cannot supply, so the tempting one-line "just add it to
+# ROUTER_TOOLS" fix raises TypeError at tool load. The entry point is removed
+# rather than wired, because the capability is not missing: the `skill-creator`
+# builtin plus POST /api/skills/creator/{draft,refine,validate,commit} are the
+# live authoring path, already enforcing the AP-15 draft guard. A router tool
+# would be a third route to the same behaviour and a fourth place to forget that
+# guard. Enforced by
+# tests/unit/brain/test_router_tool_entrypoint_parity.py.
 # App-Control (2026-05-31) — gives the brain a complete overview of the Desktop
 # App and lets it change settings/providers/MCP by voice/chat. Router-tier;
 # direct safe/ask-gated actions, never a spawn (AP-5/AP-14). describe is read-only
