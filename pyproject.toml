@@ -564,6 +564,9 @@ wiki-page-read = "jarvis.plugins.tool.wiki_page_read:WikiPageReadTool"
 wiki-list = "jarvis.plugins.tool.wiki_list:WikiListTool"
 # Phase B5 follow-up — deterministic ingest tool (router-tier, write).
 wiki-ingest = "jarvis.plugins.tool.wiki_ingest:WikiIngestTool"
+# UltraWiki hybrid semantic search (ADR-0011 amendment "UltraWiki Search",
+# ADR-0030) — router-tier, read-only; brokered to mission workers when live.
+ultrawiki-search = "jarvis.plugins.tool.ultrawiki_search:UltraWikiSearchTool"
 # Profile-write (2026-05-30) — deterministic writer for the structured USER.md
 # clusters (the Knowledge matrix + per-turn system-prompt source). Router-tier,
 # write, monitor. Closes the gap left by the soft-disabled legacy Curator.
