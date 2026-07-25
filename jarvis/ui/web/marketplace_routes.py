@@ -44,6 +44,7 @@ from jarvis.marketplace.discord_connect import (
     on_discord_connected,
     on_discord_disconnected,
 )
+from jarvis.marketplace.revoke import revoke_tokens
 from jarvis.marketplace.telegram_connect import (
     on_telegram_connected,
     on_telegram_disconnected,
@@ -584,9 +585,26 @@ async def oauth_callback(code: str = "", state: str = "", error: str = "") -> HT
 @router.delete("/plugins/{plugin_id}")
 async def disconnect(plugin_id: str, request: Request) -> dict[str, Any]:
     catalog = load_catalog()
-    if catalog.by_id(plugin_id) is None:
+    spec = catalog.by_id(plugin_id)
+    if spec is None:
         raise HTTPException(status_code=404, detail=f"plugin {plugin_id!r} not in catalog")
-    TokenStore().delete(plugin_id)
+
+    # Tell the provider to drop the grant BEFORE the local token is gone —
+    # afterwards there is nothing left to revoke with. Deleting the local
+    # credential is what the user asked for and must always happen, so a
+    # provider that is unreachable or does not implement revocation only
+    # changes what we report, never whether the disconnect succeeds.
+    store = TokenStore()
+    revocation = "unsupported"
+    try:
+        tokens = store.load(plugin_id)
+        if tokens is not None:
+            revocation = await revoke_tokens(spec, tokens)
+    except Exception as exc:  # noqa: BLE001 - never block the disconnect
+        log.info("plugin %s revocation skipped: %s", plugin_id, exc)
+        revocation = "failed"
+
+    store.delete(plugin_id)
     _refresh_plugin_in_live_registry(plugin_id)
     if plugin_id == "telegram":
         try:
@@ -606,4 +624,7 @@ async def disconnect(plugin_id: str, request: Request) -> dict[str, Any]:
         "plugin_id": plugin_id,
         "status": "not_connected",
         "live_applied": live_applied,
+        # "revoked" | "unsupported" | "failed" — so the UI can say honestly
+        # whether the user still has to remove the app at the provider.
+        "revocation": revocation,
     }
