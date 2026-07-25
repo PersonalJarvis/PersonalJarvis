@@ -7,6 +7,8 @@ could interrupt, kill, or drive the keyboard shortcuts of a coding agent.
 """
 from __future__ import annotations
 
+import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -52,6 +54,39 @@ def test_newlines_collapse_so_one_prompt_is_one_submission() -> None:
 
 def test_prompt_is_length_capped() -> None:
     assert len(sanitize_prompt("x" * 10_000)) == session_mod.MAX_PROMPT_CHARS
+
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Windows npm shim regression")
+def test_codex_npm_shim_is_bypassed_with_absolute_node(tmp_path, monkeypatch) -> None:
+    """An overlong PATH launches npm Codex without the cmd.exe shim."""
+    npm_dir = tmp_path / "npm"
+    node_dir = tmp_path / "Program Files" / "nodejs"
+    npm_dir.mkdir()
+    node_dir.mkdir(parents=True)
+    codex_shim = npm_dir / "codex.cmd"
+    node_exe = node_dir / "node.exe"
+    codex_js = npm_dir / "node_modules" / "@openai" / "codex" / "bin" / "codex.js"
+    codex_js.parent.mkdir(parents=True)
+    codex_shim.write_text("@echo off\r\nnode --version\r\n", encoding="utf-8")
+    node_exe.write_bytes(b"MZ")
+    codex_js.write_text("#!/usr/bin/env node\n", encoding="utf-8")
+
+    oversized_path = os.pathsep.join(
+        [rf"C:\missing\{index:04d}" for index in range(600)] + [str(npm_dir)]
+    )
+    assert len(oversized_path) > 8191
+    monkeypatch.setenv("PATH", oversized_path)
+    monkeypatch.setenv("PATHEXT", ".COM;.EXE;.BAT;.CMD")
+    monkeypatch.setenv("ProgramFiles", str(tmp_path / "Program Files"))
+    monkeypatch.delenv("ProgramW6432", raising=False)
+    monkeypatch.delenv("ProgramFiles(x86)", raising=False)
+
+    argv = session_mod.agent_argv("codex")
+
+    assert tuple(os.path.normcase(part) for part in argv) == tuple(
+        os.path.normcase(str(path)) for path in (node_exe, codex_js)
+    )
+    assert not any(part.lower().endswith((".cmd", ".bat")) for part in argv)
 
 
 # ----------------------------------------------------------------- lifecycle

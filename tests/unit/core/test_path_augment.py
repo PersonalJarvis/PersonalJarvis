@@ -65,6 +65,7 @@ def test_candidates_are_platform_appropriate():
     if sys.platform == "win32":
         assert any("WinGet" in d for d in dirs)
         assert any(d.endswith("npm") for d in dirs)
+        assert any(d.endswith("nodejs") for d in dirs)
         # Claude Code's native installer (install.ps1 -> ~/.local/bin) and the
         # `claude install` migration dir (~/.claude/local) — a working terminal
         # `claude` was reported "not installed" without them (2026-07-18
@@ -86,6 +87,60 @@ def test_windows_candidates_cover_official_antigravity_installer(
     dirs = path_augment._windows_candidates()
 
     assert str(local / "agy" / "bin") in dirs
+
+
+def test_windows_candidates_refresh_node_installer_paths(tmp_path, monkeypatch):
+    """A GUI already running during Node installation must find the runtime.
+
+    npm puts the Codex shim in APPDATA, but that shim still invokes node.exe.
+    The official machine-wide and user-scoped Node install locations therefore
+    both belong in the refreshed GUI PATH.
+    """
+    program_files = tmp_path / "Program Files"
+    local = tmp_path / "LocalAppData"
+    monkeypatch.setenv("ProgramFiles", str(program_files))
+    monkeypatch.setenv("LOCALAPPDATA", str(local))
+
+    dirs = path_augment._windows_candidates()
+
+    assert str(program_files / "nodejs") in dirs
+    assert str(local / "Programs" / "nodejs") in dirs
+
+
+def test_windows_candidates_keep_64_bit_node_visible_to_32_bit_process(
+    tmp_path, monkeypatch
+):
+    program_files_x86 = tmp_path / "Program Files (x86)"
+    program_files_64 = tmp_path / "Program Files"
+    monkeypatch.setenv("ProgramFiles", str(program_files_x86))
+    monkeypatch.setenv("ProgramFiles(x86)", str(program_files_x86))
+    monkeypatch.setenv("ProgramW6432", str(program_files_64))
+
+    dirs = path_augment._windows_candidates()
+
+    assert str(program_files_64 / "nodejs") in dirs
+    assert dirs.count(str(program_files_x86 / "nodejs")) == 1
+
+
+def test_resolve_node_executable_finds_well_known_windows_install(
+    tmp_path, monkeypatch
+):
+    program_files = tmp_path / "Program Files"
+    node_exe = program_files / "nodejs" / "node.exe"
+    node_exe.parent.mkdir(parents=True)
+    node_exe.write_bytes(b"MZ")
+
+    monkeypatch.setattr(path_augment.sys, "platform", "win32")
+    monkeypatch.setenv("PATH", "")
+    monkeypatch.setenv("ProgramFiles", str(program_files))
+    monkeypatch.delenv("ProgramW6432", raising=False)
+    monkeypatch.delenv("ProgramFiles(x86)", raising=False)
+    monkeypatch.delenv("LOCALAPPDATA", raising=False)
+    monkeypatch.delenv("APPDATA", raising=False)
+
+    assert os.path.normcase(path_augment.resolve_node_executable() or "") == (
+        os.path.normcase(str(node_exe))
+    )
 
 
 @pytest.mark.skipif(sys.platform == "win32", reason="POSIX candidate shape")

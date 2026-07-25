@@ -30,8 +30,10 @@ Platform notes: the PTY layer itself is already cross-platform behind
 ``jarvis.terminal.backend`` (ConPTY on Windows, ptyprocess on POSIX, a clearly
 messaged no-op where no PTY exists). What this module adds per platform is
 resolving the agent binary: npm installs it as a ``.cmd``/``.ps1`` shim on
-Windows, which ConPTY cannot execute directly, so it is wrapped in a
-one-shot ``cmd /c`` (one-shot, so rule 1 above still holds).
+Windows. Codex is launched through absolute ``node.exe`` + ``codex.js`` paths
+there: ``cmd.exe`` drops inherited environment variables longer than 8,191
+characters, so an npm batch shim cannot find Node when the app has a large
+PATH. Other batch shims use a one-shot ``cmd /c`` (so rule 1 above still holds).
 """
 from __future__ import annotations
 
@@ -166,6 +168,20 @@ def agent_argv(agent: str) -> tuple[str, ...] | None:
     if sys.platform == "win32":
         lowered = exe.lower()
         if lowered.endswith((".cmd", ".bat")):
+            if agent == "codex":
+                from jarvis.core.path_augment import resolve_node_executable
+
+                node = resolve_node_executable()
+                codex_js = (
+                    Path(exe).resolve().parent
+                    / "node_modules"
+                    / "@openai"
+                    / "codex"
+                    / "bin"
+                    / "codex.js"
+                )
+                if node and codex_js.is_file():
+                    return (node, str(codex_js))
             # ConPTY cannot exec a batch shim. `cmd /c` (never /k) exits with
             # the agent, so no shell survives it.
             comspec = os.environ.get("COMSPEC") or "cmd.exe"
