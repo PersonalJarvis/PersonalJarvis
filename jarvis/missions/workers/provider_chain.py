@@ -204,7 +204,11 @@ def _resolve_provider_chain(
     requested_provider: str | None = None,
     requested_model: str | None = None,
 ) -> tuple[_FallbackStep, ...]:
-    """Builds the provider/model fallback chain from `[brain.sub_jarvis]`.
+    """Builds the provider/model fallback chain from ``cfg.brain.worker``.
+
+    (The canonical TOML table is ``[brain.worker]``; the legacy
+    ``[brain.sub_jarvis]`` spelling is still read through the config-side
+    ``AliasChoices`` back-compat and merged away by the boot heal.)
 
     Returns a non-empty tuple. The first entry is the primary; subsequent
     entries are honored only when the primary returns a quota-block.
@@ -212,7 +216,7 @@ def _resolve_provider_chain(
     Resolution order:
         1. Explicit `requested_provider` / `requested_model` args (the
            decomposer can override per-step).
-        2. `cfg.brain.sub_jarvis.{provider,model}` plus fallback fields.
+        2. `cfg.brain.worker.{provider,model}` plus fallback fields.
         3. Last-ditch fallback to ("gemini", "gemini-3.1-pro-preview") so a
            stub config still produces a runnable argv in tests.
     """
@@ -298,6 +302,12 @@ def _build_worker_cmd(
     extra_args: tuple[str, ...] = (),
 ) -> list[str]:
     """Constructs the worker harness CLI argv.
+
+    LEGACY — no live call path since the Welle-7 reversal (2026-05-24):
+    the worker class this argv fed was deleted with the direct-worker
+    migration; only ``tests/missions/test_provider_chain_argv.py`` and the
+    spike script still exercise it. Kept as read-compat surface per the
+    CLAUDE.md §4 glossary (do not delete together with the aliases).
 
     `binary` accepts either a single executable path (legacy contract,
     used by existing tests that pin one string) or the full argv prefix
