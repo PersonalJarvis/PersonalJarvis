@@ -118,6 +118,45 @@ def _is_thinking_config_rejected_error(exc: Exception) -> bool:
     return "invalid_argument" in msg or "invalid argument" in msg
 
 
+# Models PROVEN to reject ``thinking_config``: the field was dropped and the
+# very next attempt then succeeded. Without this the recovery above is taken on
+# EVERY request — live forensic 2026-07-25: 154 rejections across 4 desktop
+# logs, ~8 s of added turn latency on 48 of 169 turns (28 %), because a correct
+# recovery path with no memory becomes the main path.
+#
+# Two deliberate design constraints:
+#
+# * Entry requires PROOF, never suspicion. The rejection arrives as a bare
+#   "Request contains an invalid argument." with no "thinking" token at all
+#   (the generic form documented above), so the error alone cannot tell a
+#   thinking rejection from an unrelated bad argument — a malformed tool
+#   schema, an oversized context. Caching on the error would permanently
+#   strip a thinking budget from a model that supports it, degrading answers
+#   with no diagnosable trace. We therefore record the model only after the
+#   retry WITHOUT the field actually completed.
+# * Process-local, never persisted. A provider that gains thinking support (or
+#   a transient server-side quirk) is re-probed on the next start, so a bad
+#   observation can never outlive the process. This is a learned capability,
+#   not a model-name pin (AP-21).
+_THINKING_CONFIG_REJECTED: set[str] = set()
+
+
+def _thinking_config_is_rejected(model: str) -> bool:
+    """True when *model* has already proven it rejects ``thinking_config``."""
+    return model in _THINKING_CONFIG_REJECTED
+
+
+def _remember_thinking_config_rejected(model: str) -> None:
+    """Record that dropping ``thinking_config`` is what made *model* work."""
+    if model and model not in _THINKING_CONFIG_REJECTED:
+        _THINKING_CONFIG_REJECTED.add(model)
+        log.info(
+            "Gemini model %s confirmed to reject thinking_config — omitting it "
+            "for the rest of this process instead of re-probing every request",
+            model,
+        )
+
+
 def _to_gemini_contents(
     messages: tuple[BrainMessage, ...],
     tool_name_map: dict[str, str] | None = None,
@@ -752,7 +791,9 @@ class GeminiBrain:
             # step failed "unterminated JSON" with thoughts=304 of
             # max_tokens=320. An explicit constructor budget always wins.
             effective_thinking_budget = 0
-        if effective_thinking_budget is not None:
+        if effective_thinking_budget is not None and not _thinking_config_is_rejected(
+            self._model
+        ):
             try:
                 from google.genai import types as _genai_types
                 config_dict["thinking_config"] = _genai_types.ThinkingConfig(
@@ -861,6 +902,11 @@ class GeminiBrain:
         # the from-scratch retry yields no duplicate chunks.
         attempt = 0
         yielded_delta = False
+        # Set when THIS call dropped ``thinking_config`` to recover. Promoted to
+        # the process-wide set only if the following attempt then succeeds, so a
+        # generic INVALID_ARGUMENT from an unrelated cause is never mistaken for
+        # a missing thinking capability.
+        dropped_thinking_config = False
         while True:
             attempt += 1
             try:
@@ -951,6 +997,11 @@ class GeminiBrain:
                         }
                 if final_usage is not None:
                     yield BrainDelta(usage=final_usage)
+                if dropped_thinking_config:
+                    # The attempt without ``thinking_config`` completed, so the
+                    # field WAS the cause. Only now is it safe to stop sending
+                    # it (see _THINKING_CONFIG_REJECTED).
+                    _remember_thinking_config_rejected(self._model)
                 return
             except Exception as exc:  # noqa: BLE001 — BUG-019 stale-cache recovery
                 if (
@@ -984,6 +1035,7 @@ class GeminiBrain:
                         "once without it: %s", self._model, exc,
                     )
                     config_dict.pop("thinking_config", None)
+                    dropped_thinking_config = True
                     continue
                 if (
                     not yielded_delta

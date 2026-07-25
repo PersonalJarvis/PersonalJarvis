@@ -17,6 +17,12 @@ Contract pinned here:
   "Budget 0 is invalid. This model only works in thinking mode.") is
   recovered by ONE retry without the field — capability probe, not a
   model-name pin (AP-21).
+* That rejection is REMEMBERED per model, so the recovery runs once instead of
+  on every request (live forensic 2026-07-25: 154 rejections across four
+  desktop logs, ~8 s of added turn latency on 28 % of turns).
+* But it is remembered only on PROOF — the retry without the field has to
+  succeed. A generic INVALID_ARGUMENT from an unrelated cause must never
+  permanently strip the thinking budget from a model that supports it.
 
 Uses the same fake-client shape as ``test_gemini_stale_cache_bug019.py``;
 ``google.genai`` must be importable for ``ThinkingConfig`` to be attached,
@@ -24,16 +30,29 @@ so these tests skip cleanly on environments without the SDK.
 """
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
 from jarvis.core.protocols import BrainMessage, BrainRequest
+from jarvis.plugins.brain import gemini as gemini_mod
 from jarvis.plugins.brain.gemini import GeminiBrain
 
 pytest.importorskip("google.genai")
+
+
+@pytest.fixture(autouse=True)
+def _clean_thinking_capability_cache() -> Iterator[None]:
+    """The proven-rejection set is process-wide; keep it out of other tests.
+
+    Without this the recovery tests below would leak a cached model into any
+    later test using the same id, making the suite order-dependent.
+    """
+    gemini_mod._THINKING_CONFIG_REJECTED.clear()
+    yield
+    gemini_mod._THINKING_CONFIG_REJECTED.clear()
 
 
 class _FakeGeminiClient:
@@ -43,6 +62,7 @@ class _FakeGeminiClient:
         self,
         *,
         reject_thinking: bool = False,
+        reject_always: bool = False,
         reject_message: str = (
             "400 INVALID_ARGUMENT. Budget 0 is invalid. This model only "
             "works in thinking mode."
@@ -50,6 +70,9 @@ class _FakeGeminiClient:
     ) -> None:
         self.calls: list[dict[str, Any]] = []
         self.reject_thinking = reject_thinking
+        # Rejects regardless of thinking_config — models an INVALID_ARGUMENT
+        # whose real cause is something else entirely.
+        self.reject_always = reject_always
         self.reject_message = reject_message
         self.aio = SimpleNamespace(models=self)
 
@@ -61,6 +84,8 @@ class _FakeGeminiClient:
         config: dict[str, Any],
     ) -> AsyncIterator[Any]:
         self.calls.append(dict(config))
+        if self.reject_always:
+            raise RuntimeError(self.reject_message)
         if self.reject_thinking and config.get("thinking_config") is not None:
             raise RuntimeError(self.reject_message)
 
@@ -174,3 +199,70 @@ async def test_generic_invalid_argument_recovers_without_the_field() -> None:
     assert fake.calls[0].get("thinking_config") is not None
     assert "thinking_config" not in fake.calls[1]
     assert any(d.content for d in deltas), "recovered stream must yield text"
+
+
+@pytest.mark.asyncio
+async def test_a_proven_rejection_is_remembered_for_later_calls() -> None:
+    """The recovery must run ONCE per model, not once per request.
+
+    Live forensic 2026-07-25: the recovery was correct but had no memory, so
+    every single request re-probed the rejected field — 154 rejections across
+    four desktop logs, adding ~8 s to 48 of 169 conversation turns (28 %). A
+    correct recovery path taken on every request is not a fallback any more, it
+    is the main path.
+    """
+    provider = GeminiBrain(model="gemini-3.6-flash")
+    fake = _FakeGeminiClient(reject_thinking=True)
+    provider._client = fake  # type: ignore[assignment]
+
+    await _drain(provider.complete(_request("none")))
+    assert len(fake.calls) == 2, "first call: probe, then recover"
+
+    # Second request: the field is known-bad, so it must not go on the wire
+    # again — one call, no rejection, no retry.
+    await _drain(provider.complete(_request("none")))
+
+    assert len(fake.calls) == 3, (
+        "the second request must cost exactly ONE call — re-probing a proven "
+        "rejection is the 8-second-per-turn regression this cache removes"
+    )
+    assert "thinking_config" not in fake.calls[2]
+
+
+@pytest.mark.asyncio
+async def test_an_unrelated_invalid_argument_is_never_remembered() -> None:
+    """Proof is required before caching, because the error cannot name a cause.
+
+    The rejection arrives as a bare "Request contains an invalid argument."
+    with no "thinking" token, so it is indistinguishable from an unrelated bad
+    argument (a malformed tool schema, an oversized context). If the failure is
+    NOT the thinking config, dropping the field does not help — and the model
+    must keep its thinking budget on the next request instead of being
+    permanently downgraded with no diagnosable trace.
+    """
+    provider = GeminiBrain(model="gemini-3.6-flash")
+    fake = _FakeGeminiClient(
+        reject_always=True,
+        reject_message=(
+            '400 Bad Request. {"error": {"code": 400, "message": "Request '
+            'contains an invalid argument.", "status": "INVALID_ARGUMENT"}}'
+        ),
+    )
+    provider._client = fake  # type: ignore[assignment]
+
+    with pytest.raises(Exception):  # noqa: B017 — SDK error class varies
+        await _drain(provider.complete(_request("none")))
+
+    assert not gemini_mod._THINKING_CONFIG_REJECTED, (
+        "a failure that persists WITHOUT thinking_config proves the field was "
+        "innocent; caching it would strip thinking from a capable model"
+    )
+
+    # Next request must still probe with the field attached.
+    fake.reject_always = False
+    fake.reject_thinking = False
+    await _drain(provider.complete(_request("none")))
+
+    assert fake.calls[-1].get("thinking_config") is not None, (
+        "the thinking budget must survive an unrelated INVALID_ARGUMENT"
+    )
