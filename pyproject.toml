@@ -415,6 +415,10 @@ openai = "jarvis.plugins.brain.openai:OpenAIBrain"
 gemini = "jarvis.plugins.brain.gemini:GeminiBrain"
 codex = "jarvis.plugins.brain.codex:CodexBrain"
 antigravity = "jarvis.plugins.brain.antigravity:AntigravityBrain"
+# Anthropic subscription (Claude CLI, print mode). Sibling of codex/antigravity:
+# spends a plan login instead of a per-token key. Too slow to start (~10-12 s)
+# for a voice tier; it serves callers whose OUTPUT is the product.
+claude-cli = "jarvis.plugins.brain.claude_cli:ClaudeCliBrain"
 grok = "jarvis.plugins.brain.grok:GrokBrain"
 # Keyless LOCAL providers (2026-07-25, local-first mandate): both talk to
 # self-hosted servers and are deliberately absent from

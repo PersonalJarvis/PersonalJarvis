@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Literal
 
-AuthMode = Literal["api_key", "codex", "antigravity", "none"]
+AuthMode = Literal["api_key", "codex", "antigravity", "claude_cli", "none"]
 Tier = Literal["brain", "tts", "stt", "realtime"]
 # How using a provider is billed. Derived from auth_mode (never branched on a
 # provider name — see provider_billing): an API key bills per token on an API
@@ -92,7 +92,8 @@ def provider_billing(spec: ProviderSpec) -> Billing:
     """How using *spec* is billed — capability-driven, never name-branched
     (multi-provider mandate, AP-21).
 
-    * a subscription-login provider (``codex``/``antigravity``) that ALSO carries
+    * a subscription-login provider (``codex``/``antigravity``/``claude-cli``)
+      that ALSO carries
       an API-key slot → ``"subscription_or_api"`` (a plan login OR per-token key);
       one with no key slot → ``"subscription"``. The distinction is the presence
       of ``secret_keys``, not the provider name — so adding a key slot to either
@@ -100,7 +101,7 @@ def provider_billing(spec: ProviderSpec) -> Billing:
     * ``none`` → ``"local"`` — no credential, runs on-device.
     * everything else (``api_key``) → ``"api"`` — pay per token on an API account.
     """
-    if spec.auth_mode in ("antigravity", "codex"):
+    if spec.auth_mode in ("antigravity", "codex", "claude_cli"):
         return "subscription_or_api" if spec.secret_keys else "subscription"
     if spec.auth_mode == "none":
         return "local"
@@ -251,6 +252,33 @@ PROVIDERS: tuple[ProviderSpec, ...] = (
             "Run heavy subagent tasks over your ChatGPT subscription via the "
             "Codex CLI — sign in below, no API key needed. Or paste an OpenAI "
             "API key to bill per token instead."
+        ),
+    ),
+    # ── Brain: Anthropic subscription via the official Claude CLI ──
+    # Sibling of the Codex/Antigravity subscription paths: spends a Claude plan
+    # login instead of a per-token Anthropic key. No secret_keys slot — the
+    # per-token path for this family already exists as ``claude-api``, and
+    # duplicating it here would present the same key twice.
+    #
+    # ``brain_switchable=False`` is not a formality: process start-up alone is
+    # ~10-12 s, which would destroy a spoken turn, so this must never become an
+    # install's main conversational brain.
+    ProviderSpec(
+        id="claude-cli",
+        label="Claude (Anthropic subscription)",
+        tier="brain",
+        auth_mode="claude_cli",
+        secret_keys=(),
+        dashboard_url=None,
+        login_cli=("claude", "/login"),
+        install_hint="curl -fsSL https://claude.ai/install.sh | bash",
+        credential_path_hint="~/.claude/.credentials.json",
+        brain_switchable=False,
+        signup_url="https://claude.ai",
+        credential_help=(
+            "Write Agentic IDE task briefs over your Claude subscription via the "
+            "Claude Code CLI — sign in below, no API key needed. Too slow to "
+            "start for spoken replies, so it is not offered as a voice brain."
         ),
     ),
     ProviderSpec(
