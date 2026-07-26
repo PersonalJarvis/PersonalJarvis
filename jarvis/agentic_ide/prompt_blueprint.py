@@ -333,11 +333,34 @@ def looks_truncated(text: str) -> bool:
     return not last.endswith(_SENTENCE_ENDINGS)
 
 
+def looks_like_brief(text: str) -> bool:
+    """True when ``text`` has the shape of a brief rather than of an accident.
+
+    The writer can be a subscription CLI, and a CLI answers on stdout whether it
+    understood the request or not. Measured live 2026-07-26: one returned
+    ``Error: invalid model selection (--model "..." --effort ""): ... requires
+    --effort`` — 146 characters, exit path unknown to us, and the composer
+    reported it as a successfully composed prompt. That string would then have
+    been typed at a coding agent as its task.
+
+    So the test is structural, not semantic: every brief the blueprint asks for
+    carries at least one markdown heading (``## Task`` at minimum), and no
+    single-line tool error does. Deliberately loose — this rejects debris, it
+    does not grade quality. A false positive costs one rougher prompt; a missed
+    one sends an agent off with a diagnostic string for a task.
+    """
+    body = (text or "").strip()
+    if not body:
+        return False
+    return any(line.lstrip().startswith("#") for line in body.splitlines())
+
+
 __all__ = [
     "MAX_BODY_CHARS",
     "TARGET_MAX_CHARS",
     "TARGET_MIN_CHARS",
     "ends_on_reference",
+    "looks_like_brief",
     "looks_truncated",
     "render_fallback",
     "system_prompt",

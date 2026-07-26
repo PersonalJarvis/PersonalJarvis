@@ -393,6 +393,18 @@ async def compose(
     if not composed:
         return _deterministic("fallback", "composer returned nothing usable")
 
+    if not blueprint.looks_like_brief(composed):
+        # A subscription CLI writes its own errors to stdout, so "the process
+        # answered" is not the same as "a brief came back". Live 2026-07-26: one
+        # returned a one-line flag-validation error that shipped as the composed
+        # prompt. Anything without a single heading is debris, not a task.
+        logger.info(
+            "Agentic IDE prompt composer returned something that is not a brief "
+            "({} chars) — falling back",
+            len(composed),
+        )
+        return _deterministic("fallback", "composer output was not a brief")
+
     if blueprint.looks_truncated(composed):
         # Half a brief reads as a whole one, which is exactly what makes it
         # dangerous: the agent starts on an instruction whose second half was
