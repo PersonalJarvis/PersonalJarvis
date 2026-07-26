@@ -43,6 +43,23 @@ def _event_names(bus: FakeBus) -> list[str]:
     return [type(e).__name__ for e in bus.published]
 
 
+@pytest.fixture(autouse=True)
+def _isolated_recents(tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the recents file out of the developer's real data directory.
+
+    Opening a workspace records it as "most recently used", and that file lives
+    under the per-user data dir — the SAME file the running app reads. Without
+    this, a test run rewrites the maintainer's recent-workspace list with
+    throwaway pytest folders (measured 2026-07-25: all eight entries were
+    ``pytest-of-…`` paths), and the voice path that opens "the most recent
+    workspace" then starts coding agents in a deleted temp directory.
+    """
+    from jarvis.agentic_ide import recents
+
+    store = tmp_path_factory.mktemp("recents") / "recents.json"
+    monkeypatch.setattr(recents, "_store_path", lambda: store)
+
+
 @pytest.fixture
 def registry(monkeypatch: pytest.MonkeyPatch) -> Registry:
     """A real registry on a fake pseudo-terminal, wired in place of the global one."""
