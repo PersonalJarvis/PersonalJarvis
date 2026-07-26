@@ -204,7 +204,7 @@ class _RefusedEntity(ValueError):
     """Raised from the parser callback when a document declares an entity."""
 
 
-def _safe_parser() -> ET.XMLParser:
+def safe_xml_parser() -> ET.XMLParser:
     """An ElementTree parser that refuses to declare or fetch any entity.
 
     The stdlib parser expands internal entities, which is the whole mechanism
@@ -240,6 +240,12 @@ def _safe_parser() -> ET.XMLParser:
         except (AttributeError, TypeError):  # pragma: no cover - defensive
             log.debug("XML hardening: %s could not be installed", handler)
     return parser
+
+
+#: Public alias. ``jarvis.ultrawiki.extract`` parses XML out of the same
+#: untrusted office archives and must use the SAME hardening — a second copy of
+#: a security primitive is a second thing to forget to update.
+_safe_parser = safe_xml_parser
 
 
 def _element_text(root: ET.Element) -> str:
