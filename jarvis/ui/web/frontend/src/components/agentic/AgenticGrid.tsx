@@ -204,7 +204,7 @@ export function AgenticGrid({
   /*
    * CONTENT width — the box the grid tracks actually occupy, padding excluded.
    *
-   * Which of the two widths this is matters, and getting it wrong was a real
+   * Which of the two widths this holds matters, and getting it wrong was a real
    * defect. `contentRect.width` already excludes this element's 12 px of padding
    * a side, but the value was then passed to `workspaceBandCapacityFor`, which
    * subtracts that same padding AGAIN — so the grid laid itself out 24 px
@@ -214,20 +214,20 @@ export function AgenticGrid({
    * it came from `clientWidth`, which INCLUDES padding, so the grid could
    * silently re-column itself on the first resize after opening.
    *
-   * Now both sides state which width they hold: this one is already content, so
-   * it calls `bandCapacityFor` directly; the wizard subtracts the padding the
-   * grid will have via `workspaceBandCapacityFor`.
+   * Now each side states which width it holds: this one is already content, so
+   * it calls `bandCapacityFor` directly; the wizard, holding an outer width,
+   * subtracts the padding the grid will have via `workspaceBandCapacityFor`.
    */
   const gridRef = useRef<HTMLDivElement | null>(null);
   const [gridWidth, setGridWidth] = useState(0);
   useEffect(() => {
     const node = gridRef.current;
     if (!node) return;
-    setGridWidth(Math.max(0, node.clientWidth - GRID_HORIZONTAL_PADDING_PX));
+    const fallback = () =>
+      Math.max(0, node.clientWidth - GRID_HORIZONTAL_PADDING_PX);
+    setGridWidth(fallback());
     const observer = new ResizeObserver((entries) => {
-      const width =
-        entries[0]?.contentRect.width ??
-        Math.max(0, node.clientWidth - GRID_HORIZONTAL_PADDING_PX);
+      const width = entries[0]?.contentRect.width ?? fallback();
       // Round to a step so a one-pixel drift cannot churn the layout (and with
       // it every pane's resize) on window animations.
       setGridWidth(Math.round(width / 16) * 16);

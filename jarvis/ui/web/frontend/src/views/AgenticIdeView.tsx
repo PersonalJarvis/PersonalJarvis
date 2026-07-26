@@ -54,6 +54,7 @@ import {
   fetchIdeState,
   fetchResumeOffer,
   forgetResumeOffer,
+  renameWorkspace,
   resumeWorkspace,
   setFocusMode,
   startIdeSession,
@@ -146,7 +147,10 @@ export function AgenticIdeView() {
 
   const refresh = useCallback(async () => {
     try {
-      const [state, agents] = await Promise.all([fetchIdeState(), fetchIdeAgents()]);
+      const [state, agents] = await Promise.all([
+        fetchIdeState(),
+        fetchIdeAgents(),
+      ]);
       setMeta(agents);
       setSession(state.session);
       setWorkspaces(state.workspaces ?? []);
@@ -163,7 +167,7 @@ export function AgenticIdeView() {
       if ((state.workspaces ?? []).length === 0) {
         try {
           const previous = await fetchResumeOffer();
-          setOffer(previous.terminals.length > 0 ? previous : null);
+          setOffer(previous.workspaces.length > 0 ? previous : null);
         } catch {
           /* no offer is a perfectly good answer — the wizard still works */
         }
@@ -202,7 +206,7 @@ export function AgenticIdeView() {
   const accountsFor = useCallback(
     (platform: string): AgentAccount[] =>
       platform === "claude" || platform === "codex"
-        ? groupFor(accounts, platform)?.accounts ?? []
+        ? (groupFor(accounts, platform)?.accounts ?? [])
         : [],
     [accounts],
   );
@@ -220,7 +224,8 @@ export function AgenticIdeView() {
   useEffect(() => {
     const onChanged = () => void refresh();
     window.addEventListener("jarvis:agentic-ide-changed", onChanged);
-    return () => window.removeEventListener("jarvis:agentic-ide-changed", onChanged);
+    return () =>
+      window.removeEventListener("jarvis:agentic-ide-changed", onChanged);
   }, [refresh]);
 
   /*
@@ -242,7 +247,7 @@ export function AgenticIdeView() {
 
   /*
    * How wide the workspace will be — measured here, in the wizard, because the
-   * preview must show the arrangement the grid will actually produce.
+   * preview dots must promise the arrangement the grid will actually produce.
    *
    * The grid decides its band width from its own width (a pane below
    * MIN_PANE_WIDTH_PX is unreadable), so a preview computing columns from the
@@ -323,7 +328,9 @@ export function AgenticIdeView() {
   }) => {
     const total = Math.max(1, Math.min(recent.terminals, maxTerminals));
     setCount(total);
-    const entries = Object.entries(recent.agents ?? {}).filter(([, n]) => n > 0);
+    const entries = Object.entries(recent.agents ?? {}).filter(
+      ([, n]) => n > 0,
+    );
     if (entries.length === 0) {
       setPlanned(buildPlan(total, [], defaultAgent, suggested));
       return;
@@ -332,7 +339,8 @@ export function AgenticIdeView() {
     // way it was, then re-apply the call-sign pool in grid order.
     const expanded: string[] = [];
     for (const [agent, n] of entries) {
-      for (let i = 0; i < n && expanded.length < total; i += 1) expanded.push(agent);
+      for (let i = 0; i < n && expanded.length < total; i += 1)
+        expanded.push(agent);
     }
     while (expanded.length < total) expanded.push(defaultAgent);
     setPlanned(
@@ -461,23 +469,44 @@ export function AgenticIdeView() {
     }
   };
 
+  const renameOne = async (id: string, name: string) => {
+    if (busy) return false;
+    setBusy(true);
+    try {
+      applyState(await renameWorkspace(id, name));
+      return true;
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+      return false;
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const resumeAll = async () => {
     setBusy(true);
     try {
       const result = await resumeWorkspace();
-      setSession(result.session);
-      setFocus(result.session.focus_mode);
+      applyState(result.state);
+      setAddingNew(false);
       setOffer(null);
       // Report what actually came back, not what was hoped for. A pane that
       // reopened empty looks exactly like one that continued until it is asked
-      // a follow-up question, so the count has to be said out loud.
-      const panes = result.session.terminals.length;
-      pushToast(
-        "success",
+      // a follow-up question, so the counts have to be said out loud — and so
+      // does any workspace that could not come back at all.
+      const spaces = result.workspace_count;
+      const panes = result.terminal_count;
+      const head =
+        `Resumed ${spaces} workspace${spaces === 1 ? "" : "s"}` +
+        ` · ${panes} terminal${panes === 1 ? "" : "s"}`;
+      const conversations =
         result.started_fresh === 0
-          ? `Resumed ${panes} terminal${panes === 1 ? "" : "s"} — every conversation continued.`
-          : `Resumed ${panes} terminal${panes === 1 ? "" : "s"} — ${result.resumable_count} continued, ${result.started_fresh} started fresh.`,
-      );
+          ? "every conversation continued"
+          : `${result.resumable_count} continued, ${result.started_fresh} started fresh`;
+      pushToast("success", `${head} — ${conversations}.`);
+      for (const missing of result.skipped) {
+        pushToast("warning", `${missing.folder}: ${missing.detail}`);
+      }
     } catch (e) {
       pushToast("error", (e as Error).message);
     } finally {
@@ -523,6 +552,7 @@ export function AgenticIdeView() {
       maxWorkspaces={maxWorkspaces}
       onSelect={(id) => void switchTo(id)}
       onAdd={() => void startAdding()}
+      onRename={renameOne}
       onClose={(id) => void closeOne(id)}
       busy={busy}
     />
@@ -578,7 +608,11 @@ export function AgenticIdeView() {
       {bar}
       <ViewHeader
         icon={<Sparkles className="h-4 w-4 text-primary" />}
-        title={t("nav.agentic_ide") === "nav.agentic_ide" ? "Agentic IDE" : t("nav.agentic_ide")}
+        title={
+          t("nav.agentic_ide") === "nav.agentic_ide"
+            ? "Agentic IDE"
+            : t("nav.agentic_ide")
+        }
         subtitle={
           addingNew
             ? "Open another folder — the workspaces you already have keep running."
@@ -614,16 +648,17 @@ export function AgenticIdeView() {
           {meta && !meta.terminal_available && (
             <Callout tone="error">
               This machine has no usable terminal backend, so agent panes cannot
-              run here. On Windows that means <code>pywinpty</code>, on macOS and
-              Linux <code>ptyprocess</code> — both ship with the desktop extra.
+              run here. On Windows that means <code>pywinpty</code>, on macOS
+              and Linux <code>ptyprocess</code> — both ship with the desktop
+              extra.
             </Callout>
           )}
 
           {meta && installed.length === 0 && (
             <Callout tone="warn">
               Neither Claude Code nor Codex was found on this machine’s PATH.
-              Install one from the CLIs page, then come back — the wizard picks it
-              up automatically.
+              Install one from the CLIs page, then come back — the wizard picks
+              it up automatically.
               <button
                 type="button"
                 className="btn-ghost mt-2"
@@ -702,7 +737,11 @@ export function AgenticIdeView() {
                                 i === index
                                   ? // The account belongs to the OLD CLI — an id
                                     // from one CLI means nothing to the other.
-                                    { ...p, agent: agent.name, account: undefined }
+                                    {
+                                      ...p,
+                                      agent: agent.name,
+                                      account: undefined,
+                                    }
                                   : p,
                               ),
                             )
@@ -716,7 +755,9 @@ export function AgenticIdeView() {
                       value={pane.account}
                       onSelect={(id) =>
                         setPlanned((prev) =>
-                          prev.map((p, i) => (i === index ? { ...p, account: id } : p)),
+                          prev.map((p, i) =>
+                            i === index ? { ...p, account: id } : p,
+                          ),
                         )
                       }
                     />
@@ -731,7 +772,9 @@ export function AgenticIdeView() {
               <div className="space-y-4 rounded-xl border border-border bg-card/60 p-5">
                 <div className="flex items-center gap-2 text-sm">
                   <FolderOpen className="h-4 w-4 shrink-0 text-primary" />
-                  <code className="min-w-0 truncate font-mono text-xs">{folder}</code>
+                  <code className="min-w-0 truncate font-mono text-xs">
+                    {folder}
+                  </code>
                 </div>
                 <ul className="flex flex-wrap gap-2">
                   {planned.map((pane, i) => (
@@ -742,15 +785,16 @@ export function AgenticIdeView() {
                       <Terminal className="h-3.5 w-3.5" />
                       <span className="font-medium">{pane.name}</span>
                       <span className="text-primary/70">
-                        {agents.find((a) => a.name === pane.agent)?.display_name ?? pane.agent}
+                        {agents.find((a) => a.name === pane.agent)
+                          ?.display_name ?? pane.agent}
                       </span>
                     </li>
                   ))}
                 </ul>
                 <p className="text-xs text-muted-foreground">
                   Once the panes are up you can turn on coding mode, which lets
-                  Jarvis answer inside this workspace — and switch it off again at
-                  any time.
+                  Jarvis answer inside this workspace — and switch it off again
+                  at any time.
                 </p>
               </div>
             </Section>
@@ -845,7 +889,9 @@ function CodingModeIntro({
             <Brain className="h-5 w-5 text-primary" />
           </span>
           <div>
-            <h3 className="font-display text-lg font-semibold">Coding mode is on</h3>
+            <h3 className="font-display text-lg font-semibold">
+              Coding mode is on
+            </h3>
             <p className="text-xs text-muted-foreground">
               While this workspace is open, Jarvis works inside {project}.
             </p>
@@ -856,7 +902,9 @@ function CodingModeIntro({
           <li className="flex gap-3">
             <Mic className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
             <span>
-              <strong className="font-medium">Talk to the agents by name.</strong>{" "}
+              <strong className="font-medium">
+                Talk to the agents by name.
+              </strong>{" "}
               Say “tell {first} to look at the wake word code” and it goes
               straight into {first}’s terminal — you never type the prompt
               yourself.
@@ -882,7 +930,9 @@ function CodingModeIntro({
           <li className="flex gap-3">
             <Brain className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
             <span>
-              <strong className="font-medium">Think out loud with Jarvis.</strong>{" "}
+              <strong className="font-medium">
+                Think out loud with Jarvis.
+              </strong>{" "}
               It knows this codebase — the stack, the branch, the instruction
               files — so planning happens here instead of in a chat window.
             </span>
@@ -975,7 +1025,11 @@ function AgentChoice({
       onClick={onSelect}
       disabled={!agent.installed}
       aria-pressed={selected}
-      title={agent.installed ? agent.version ?? undefined : "Not installed on this machine"}
+      title={
+        agent.installed
+          ? (agent.version ?? undefined)
+          : "Not installed on this machine"
+      }
       className={cn(
         "flex items-center gap-2 rounded-lg border px-3 py-1.5 text-sm transition-colors",
         selected
@@ -1032,6 +1086,17 @@ function AccountChoice({
   );
 }
 
+/**
+ * The arrangement ``n`` terminals will actually open in.
+ *
+ * Both numbers behind this come from the grid itself: `perBand` is what fits in
+ * the measured width, and `paneColumns` is the function the grid lays itself out
+ * with. The preview used to have its own formula (three per line), so choosing 4
+ * previewed 3 above and 1 below and then opened 4 side by side; then it dropped
+ * the width and promised 6 + 6 where a narrow window gave three columns and four
+ * rows. A preview is only worth showing while it cannot disagree with the real
+ * thing, and that means sharing every input, not just the function.
+ */
 function Callout({
   tone,
   children,
