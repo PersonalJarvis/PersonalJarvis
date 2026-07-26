@@ -106,10 +106,37 @@ export interface SessionState {
   terminals: TerminalState[];
 }
 
+/**
+ * One open workspace, as the workspace bar shows it.
+ *
+ * Deliberately not a whole `SessionState`: the bar renders a name and a couple
+ * of numbers, and carrying six full project profiles plus every pane's
+ * transcript statistics to do that would make every poll expensive.
+ */
+export interface WorkspaceCard {
+  id: string;
+  folder: string;
+  /** Project name — what the tab is labelled with. */
+  name: string;
+  branch: string | null;
+  terminals: number;
+  /** Panes whose agent is running right now — a background tab's honest count. */
+  live_terminals: number;
+  focus_mode: boolean;
+  created_at: number;
+  last_active_at: number;
+  active: boolean;
+}
+
 export interface IdeState {
   active: boolean;
   session: SessionState | null;
   max_terminals: number;
+  /** Every open workspace, in tab order. */
+  workspaces: WorkspaceCard[];
+  /** The one on screen, or null while the wizard is showing. */
+  active_id: string | null;
+  max_workspaces: number;
 }
 
 /** One pane of the workspace being offered back after a close or a restart. */
@@ -203,6 +230,46 @@ export async function forgetRecent(path: string): Promise<void> {
   if (!res.ok) throw new Error(await detail(res));
 }
 
+export interface NativePickerSupport {
+  available: boolean;
+  backend?: string | null;
+  reason?: string | null;
+}
+
+export interface NativePickResult {
+  path?: string | null;
+  cancelled?: boolean;
+  error?: string | null;
+}
+
+/**
+ * Whether this machine can show the operating system's own folder window.
+ *
+ * Asked before the button is offered rather than after it is pressed: the
+ * window opens where the SERVER runs, so from a phone or another laptop it
+ * would appear on a screen nobody is watching. A `false` here always comes with
+ * a `reason` worth showing.
+ */
+export function fetchNativePickerSupport(): Promise<NativePickerSupport> {
+  return getJson<NativePickerSupport>("/api/agentic-ide/folders/native");
+}
+
+/**
+ * Open the system folder window and wait for an answer.
+ *
+ * The request stays open for as long as the window does — that is the point,
+ * not a hang. Cancelling comes back as `cancelled`, never as an error.
+ */
+export async function openNativePicker(start?: string | null): Promise<NativePickResult> {
+  const res = await fetch("/api/agentic-ide/folders/native", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ start: start ?? null }),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+  return (await res.json()) as NativePickResult;
+}
+
 /**
  * Turn a drag-and-drop payload into a folder path.
  *
@@ -224,23 +291,88 @@ export async function resolveDroppedFolder(payload: {
   return (await res.json()) as ResolveResponse;
 }
 
+/**
+ * Open `folder` as another workspace and return the state that results.
+ *
+ * The whole state, not just the new session: opening ADDS a workspace, so the
+ * bar changes too, and answering with both means the view never has to re-read
+ * to find out what it just did. A second fetch would also be a race — it can
+ * return a snapshot from before the open and blank the workspace that was just
+ * created.
+ */
 export async function startIdeSession(
   folder: string,
   terminals: TerminalPlan[],
-): Promise<SessionState> {
+): Promise<IdeState> {
   const res = await fetch("/api/agentic-ide/session", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ folder, terminals }),
   });
   if (!res.ok) throw new Error(await detail(res));
-  const body = (await res.json()) as { session: SessionState };
-  return body.session;
+  const body = (await res.json()) as { session: SessionState; state: IdeState };
+  // `state` is authoritative; `session` alone is kept as the fallback for a
+  // backend that predates the workspace bar.
+  return body.state ?? { ...EMPTY_IDE_STATE, active: true, session: body.session };
 }
+
+/** Shape a pre-workspace-bar backend does not send. */
+const EMPTY_IDE_STATE: IdeState = {
+  active: false,
+  session: null,
+  max_terminals: 12,
+  workspaces: [],
+  active_id: null,
+  max_workspaces: 6,
+};
 
 export async function endIdeSession(): Promise<void> {
   const res = await fetch("/api/agentic-ide/session", { method: "DELETE" });
   if (!res.ok) throw new Error(await detail(res));
+}
+
+export interface WorkspacesResponse {
+  workspaces: WorkspaceCard[];
+  active_id: string | null;
+  max_workspaces: number;
+}
+
+/** Every open workspace, in tab order, with the front one marked. */
+export function fetchWorkspaces(): Promise<WorkspacesResponse> {
+  return getJson<WorkspacesResponse>("/api/agentic-ide/workspaces");
+}
+
+/**
+ * Bring one workspace to the front, or clear the front entirely.
+ *
+ * Nothing starts, stops or restarts — the agents in every open workspace keep
+ * working and the one that comes forward reconnects to the processes that were
+ * running all along.
+ *
+ * `null` means "show no workspace": the state the view is in while the wizard
+ * opens an ADDITIONAL one. It has to be sent BEFORE the outgoing panes unmount,
+ * which is why it is awaited rather than fired off — see AgenticIdeView.
+ */
+export async function activateWorkspace(id: string | null): Promise<IdeState> {
+  const res = await fetch("/api/agentic-ide/workspaces/active", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ id }),
+  });
+  if (!res.ok) throw new Error(await detail(res));
+  const body = (await res.json()) as { state: IdeState };
+  return body.state;
+}
+
+/** Close ONE workspace and stop every agent in it. Returns the state that is left. */
+export async function closeWorkspace(id: string): Promise<IdeState> {
+  const res = await fetch(
+    `/api/agentic-ide/workspaces/${encodeURIComponent(id)}`,
+    { method: "DELETE" },
+  );
+  if (!res.ok) throw new Error(await detail(res));
+  const body = (await res.json()) as { state: IdeState };
+  return body.state;
 }
 
 /** What reopening the last workspace would bring back, checked against this machine. */

@@ -57,6 +57,11 @@ vi.mock("@/lib/agenticIdeApi", () => ({
   fetchResumeOffer: vi.fn(),
   resumeWorkspace: vi.fn(),
   forgetResumeOffer: vi.fn(),
+  fetchWorkspaces: vi.fn(),
+  activateWorkspace: vi.fn(),
+  closeWorkspace: vi.fn(),
+  fetchNativePickerSupport: vi.fn(),
+  openNativePicker: vi.fn(),
 }));
 
 import { AgenticIdeView } from "./AgenticIdeView";
@@ -84,7 +89,45 @@ const AGENTS: api.AgentsResponse = {
   ],
 };
 
-const EMPTY_STATE: api.IdeState = { active: false, session: null, max_terminals: 12 };
+const EMPTY_STATE: api.IdeState = {
+  active: false,
+  session: null,
+  max_terminals: 12,
+  workspaces: [],
+  active_id: null,
+  max_workspaces: 6,
+};
+
+/**
+ * The state the backend returns with one workspace open.
+ *
+ * Derives the workspace bar from the session rather than letting a test spell
+ * both out, so a fixture can never describe a front workspace that is not in
+ * the bar — a shape the backend cannot produce and a test should not either.
+ */
+function stateWith(session: api.SessionState): api.IdeState {
+  return {
+    active: true,
+    session,
+    max_terminals: 12,
+    workspaces: [
+      {
+        id: session.id,
+        folder: session.folder,
+        name: session.project.name,
+        branch: session.project.branch,
+        terminals: session.terminals.length,
+        live_terminals: session.terminals.filter((t) => t.status === "live").length,
+        focus_mode: session.focus_mode,
+        created_at: session.created_at,
+        last_active_at: session.created_at,
+        active: true,
+      },
+    ],
+    active_id: session.id,
+    max_workspaces: 6,
+  };
+}
 
 const NO_OFFER: api.ResumeOffer = {
   available: false,
@@ -194,6 +237,11 @@ beforeEach(() => {
   });
   // Nothing to resume by default; the resume tests override this.
   vi.mocked(api.fetchResumeOffer).mockResolvedValue(NO_OFFER);
+  // No system folder window in jsdom — the picker falls back to browsing.
+  vi.mocked(api.fetchNativePickerSupport).mockResolvedValue({
+    available: false,
+    reason: "not available under test",
+  });
 });
 
 afterEach(() => {
@@ -214,7 +262,7 @@ describe("Agentic IDE wizard", () => {
   });
 
   it("walks folder → count → agents → start and opens the workspace", async () => {
-    vi.mocked(api.startIdeSession).mockResolvedValue(sessionWith(["Mika", "Nova"]));
+    vi.mocked(api.startIdeSession).mockResolvedValue(stateWith(sessionWith(["Mika", "Nova"])));
     render(<AgenticIdeView />);
     await waitFor(() => expect(api.fetchIdeAgents).toHaveBeenCalled());
 
@@ -364,22 +412,14 @@ describe("Agentic IDE wizard", () => {
 
 describe("Agentic IDE running workspace", () => {
   it("renders the open session instead of the wizard", async () => {
-    vi.mocked(api.fetchIdeState).mockResolvedValue({
-      active: true,
-      session: sessionWith(["Mika"]),
-      max_terminals: 12,
-    });
+    vi.mocked(api.fetchIdeState).mockResolvedValue(stateWith(sessionWith(["Mika"])));
     render(<AgenticIdeView />);
     expect(await screen.findByTestId("pane-Mika")).toBeTruthy();
     expect(screen.queryByRole("button", { name: /next/i })).toBeNull();
   });
 
   it("toggles focus mode through the API, not just locally", async () => {
-    vi.mocked(api.fetchIdeState).mockResolvedValue({
-      active: true,
-      session: sessionWith(["Mika"]),
-      max_terminals: 12,
-    });
+    vi.mocked(api.fetchIdeState).mockResolvedValue(stateWith(sessionWith(["Mika"])));
     vi.mocked(api.setFocusMode).mockResolvedValue(true);
     render(<AgenticIdeView />);
 
@@ -399,11 +439,7 @@ describe("Agentic IDE running workspace", () => {
   });
 
   it("sends a prompt to the selected terminal through the same endpoint voice uses", async () => {
-    vi.mocked(api.fetchIdeState).mockResolvedValue({
-      active: true,
-      session: sessionWith(["Mika", "Nova"]),
-      max_terminals: 12,
-    });
+    vi.mocked(api.fetchIdeState).mockResolvedValue(stateWith(sessionWith(["Mika", "Nova"])));
     vi.mocked(api.promptTerminal).mockResolvedValue({
       terminal: "Mika",
       sent: "run the tests",
@@ -424,11 +460,7 @@ describe("Agentic IDE running workspace", () => {
   });
 
   it("reports a refused prompt instead of pretending it landed", async () => {
-    vi.mocked(api.fetchIdeState).mockResolvedValue({
-      active: true,
-      session: sessionWith(["Mika"]),
-      max_terminals: 12,
-    });
+    vi.mocked(api.fetchIdeState).mockResolvedValue(stateWith(sessionWith(["Mika"])));
     vi.mocked(api.promptTerminal).mockRejectedValue(
       new Error("Mika is not running right now"),
     );
@@ -451,22 +483,14 @@ describe("Agentic IDE running workspace", () => {
      * the listener existed, the agents were running and the user saw the old grid
      * — the feature looked broken while working perfectly.
      */
-    vi.mocked(api.fetchIdeState).mockResolvedValue({
-      active: true,
-      session: sessionWith(["Mika", "Nova"]),
-      max_terminals: 12,
-    });
+    vi.mocked(api.fetchIdeState).mockResolvedValue(stateWith(sessionWith(["Mika", "Nova"])));
     render(<AgenticIdeView />);
     await screen.findByTestId("pane-Mika");
     expect(screen.queryByTestId("pane-Aria")).toBeNull();
 
     // Voice opened a third pane; the WebSocket layer turns the bus event into
     // this window event.
-    vi.mocked(api.fetchIdeState).mockResolvedValue({
-      active: true,
-      session: sessionWith(["Mika", "Nova", "Aria"]),
-      max_terminals: 12,
-    });
+    vi.mocked(api.fetchIdeState).mockResolvedValue(stateWith(sessionWith(["Mika", "Nova", "Aria"])));
     window.dispatchEvent(
       new CustomEvent("jarvis:agentic-ide-changed", {
         detail: { names: ["Aria"], agent: "claude" },
@@ -498,11 +522,7 @@ describe("AgenticIdeView — resuming the last workspace", () => {
   });
 
   it("does not offer a resume while a workspace is open", async () => {
-    vi.mocked(api.fetchIdeState).mockResolvedValue({
-      active: true,
-      session: sessionWith(["Mika"]),
-      max_terminals: 12,
-    });
+    vi.mocked(api.fetchIdeState).mockResolvedValue(stateWith(sessionWith(["Mika"])));
     vi.mocked(api.fetchResumeOffer).mockResolvedValue(PREVIOUS_WORKSPACE);
     render(<AgenticIdeView />);
 
@@ -541,5 +561,124 @@ describe("AgenticIdeView — resuming the last workspace", () => {
 
     await waitFor(() => expect(api.forgetResumeOffer).toHaveBeenCalledTimes(1));
     expect(screen.queryByTestId("resume-card")).toBeNull();
+  });
+});
+
+/*
+ * The workspace bar.
+ *
+ * What these defend is the promise the bar makes by existing: several
+ * workspaces are open at once, and moving between them costs nothing. The
+ * ordering assertions are the important ones — the backend has to be told the
+ * front workspace changed BEFORE the outgoing panes unmount, because a pane
+ * that disappears while its workspace is still the front one is indistinguishable
+ * from a close.
+ */
+function twoWorkspaces(): api.IdeState {
+  const front = sessionWith(["Mika"]);
+  const base = stateWith(front);
+  return {
+    ...base,
+    workspaces: [
+      {
+        id: "ide_other",
+        folder: "/work/api",
+        name: "api",
+        branch: "main",
+        terminals: 3,
+        live_terminals: 2,
+        focus_mode: false,
+        created_at: 0,
+        last_active_at: 0,
+        active: false,
+      },
+      ...base.workspaces,
+    ],
+  };
+}
+
+describe("AgenticIdeView — the workspace bar", () => {
+  it("lists every open workspace and marks the one on screen", async () => {
+    vi.mocked(api.fetchIdeState).mockResolvedValue(twoWorkspaces());
+    render(<AgenticIdeView />);
+
+    await screen.findByTestId("workspace-bar");
+    const other = screen.getByTestId("workspace-tab-ide_other");
+    const front = screen.getByTestId("workspace-tab-ide_test");
+    expect(other.getAttribute("aria-selected")).toBe("false");
+    expect(front.getAttribute("aria-selected")).toBe("true");
+    // A background workspace says how many of its agents are still running —
+    // that is what keeps "it runs until you close it" honest.
+    expect(screen.getByTestId("workspace-panes-ide_other").textContent).toBe("2/3");
+  });
+
+  it("stays hidden while nothing is open", async () => {
+    render(<AgenticIdeView />);
+    await screen.findByText("Folder");
+    expect(screen.queryByTestId("workspace-bar")).toBeNull();
+  });
+
+  it("switches to another workspace through the API", async () => {
+    vi.mocked(api.fetchIdeState).mockResolvedValue(twoWorkspaces());
+    const other = sessionWith(["Kai"]);
+    other.id = "ide_other";
+    vi.mocked(api.activateWorkspace).mockResolvedValue(stateWith(other));
+    render(<AgenticIdeView />);
+
+    fireEvent.click(await screen.findByTestId("workspace-tab-ide_other"));
+
+    await waitFor(() => expect(api.activateWorkspace).toHaveBeenCalledWith("ide_other"));
+    await screen.findByTestId("pane-Kai");
+    // Switching is not closing: nothing was ended.
+    expect(api.endIdeSession).not.toHaveBeenCalled();
+    expect(api.closeWorkspace).not.toHaveBeenCalled();
+  });
+
+  it("clears the front workspace before showing the wizard for a new one", async () => {
+    vi.mocked(api.fetchIdeState).mockResolvedValue(twoWorkspaces());
+    vi.mocked(api.activateWorkspace).mockResolvedValue({
+      ...twoWorkspaces(),
+      session: null,
+      active_id: null,
+      active: false,
+    });
+    render(<AgenticIdeView />);
+
+    fireEvent.click(await screen.findByTestId("workspace-add"));
+
+    // null, not a close: the workspaces stay open with their agents running.
+    await waitFor(() => expect(api.activateWorkspace).toHaveBeenCalledWith(null));
+    expect(api.closeWorkspace).not.toHaveBeenCalled();
+    expect(api.endIdeSession).not.toHaveBeenCalled();
+    // The wizard is showing, and the bar still lists both workspaces.
+    await screen.findByText("Folder");
+    expect(screen.getByTestId("workspace-tab-ide_other")).toBeTruthy();
+    expect(screen.getByTestId("workspace-tab-ide_test")).toBeTruthy();
+  });
+
+  it("asks before closing a workspace, then closes only that one", async () => {
+    vi.mocked(api.fetchIdeState).mockResolvedValue(twoWorkspaces());
+    const left = stateWith(sessionWith(["Mika"]));
+    vi.mocked(api.closeWorkspace).mockResolvedValue(left);
+    render(<AgenticIdeView />);
+
+    fireEvent.click(await screen.findByTestId("workspace-close-ide_other"));
+    // One click arms it; the workspace is still open at this point.
+    expect(api.closeWorkspace).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByTestId("workspace-close-confirm-ide_other"));
+    await waitFor(() => expect(api.closeWorkspace).toHaveBeenCalledWith("ide_other"));
+    await waitFor(() =>
+      expect(screen.queryByTestId("workspace-tab-ide_other")).toBeNull(),
+    );
+  });
+
+  it("refuses to add one past the cap", async () => {
+    const full = twoWorkspaces();
+    vi.mocked(api.fetchIdeState).mockResolvedValue({ ...full, max_workspaces: 2 });
+    render(<AgenticIdeView />);
+
+    const add = (await screen.findByTestId("workspace-add")) as HTMLButtonElement;
+    expect(add.disabled).toBe(true);
   });
 });

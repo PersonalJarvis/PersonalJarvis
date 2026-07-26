@@ -527,6 +527,7 @@ export function AgenticGrid({
             >
               <AgenticTerminal
                 name={term.name}
+                workspaceId={session.id}
                 displayName={term.display_name}
                 appearance={appearance}
                 fontSize={fontSize}

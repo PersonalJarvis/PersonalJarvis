@@ -43,7 +43,10 @@ import {
 } from "@/components/agentic/layout";
 import { FolderPicker } from "@/components/agentic/FolderPicker";
 import { ResumeCard } from "@/components/agentic/ResumeCard";
+import { WorkspaceBar } from "@/components/agentic/WorkspaceBar";
 import {
+  activateWorkspace,
+  closeWorkspace,
   endIdeSession,
   fetchIdeAgents,
   fetchIdeState,
@@ -54,8 +57,10 @@ import {
   startIdeSession,
   type AgentStatus,
   type AgentsResponse,
+  type IdeState,
   type ResumeOffer,
   type SessionState,
+  type WorkspaceCard,
 } from "@/lib/agenticIdeApi";
 
 type Step = 0 | 1 | 2 | 3;
@@ -105,6 +110,22 @@ export function AgenticIdeView() {
   const [focusMode, setFocus] = useState(false);
   const [busy, setBusy] = useState(false);
 
+  // Every open workspace, for the bar above. The one on screen is `session`;
+  // these are the others, still running, one click away.
+  const [workspaces, setWorkspaces] = useState<WorkspaceCard[]>([]);
+  const [maxWorkspaces, setMaxWorkspaces] = useState(6);
+  /*
+   * The wizard is showing for an ADDITIONAL workspace.
+   *
+   * Kept as its own flag rather than inferred from `session === null`, because
+   * the two mean different things once several workspaces exist: no session can
+   * also be "everything was closed", and the bar has to know whether the +
+   * button is the selected tab. Pressing + clears the front on the BACKEND too
+   * (see `startAdding`), which is what stops the outgoing panes from being read
+   * as a close.
+   */
+  const [addingNew, setAddingNew] = useState(false);
+
   const [step, setStep] = useState<Step>(0);
   const [folder, setFolder] = useState<string | null>(null);
   const [count, setCount] = useState(2);
@@ -120,11 +141,18 @@ export function AgenticIdeView() {
       const [state, agents] = await Promise.all([fetchIdeState(), fetchIdeAgents()]);
       setMeta(agents);
       setSession(state.session);
+      setWorkspaces(state.workspaces ?? []);
+      setMaxWorkspaces(state.max_workspaces ?? 6);
       setFocus(Boolean(state.session?.focus_mode));
-      // Only worth asking about when there is no workspace on screen. With one
-      // open, the panes reconnect and continue by themselves — the offer is for
-      // the case where the workspace itself did not survive.
-      if (state.session === null) {
+      // The backend is the authority on whether a workspace is on screen. It
+      // says so by carrying one in `session`, so a fetch that finds one ends
+      // the "adding" state — otherwise a workspace opened in another tab (or
+      // by voice) would come up behind a wizard nobody asked for.
+      if (state.session !== null) setAddingNew(false);
+      // Only worth asking about when NOTHING is open. With a workspace around,
+      // its panes reconnect and continue by themselves — the offer is for the
+      // case where the workspaces themselves did not survive.
+      if ((state.workspaces ?? []).length === 0) {
         try {
           const previous = await fetchResumeOffer();
           setOffer(previous.terminals.length > 0 ? previous : null);
@@ -139,6 +167,14 @@ export function AgenticIdeView() {
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  /** Apply a state the backend just handed back, without a second round-trip. */
+  const applyState = useCallback((state: IdeState) => {
+    setSession(state.session);
+    setWorkspaces(state.workspaces ?? []);
+    setMaxWorkspaces(state.max_workspaces ?? 6);
+    setFocus(Boolean(state.session?.focus_mode));
   }, []);
 
   useEffect(() => {
@@ -299,13 +335,17 @@ export function AgenticIdeView() {
     if (!folder) return;
     setBusy(true);
     try {
-      const created = await startIdeSession(folder, planned);
-      setSession(created);
-      setFocus(created.focus_mode);
-      pushToast(
-        "success",
-        `Workspace open — ${created.terminals.map((x) => x.name).join(", ")}`,
-      );
+      // The open answers with the whole state — the new workspace AND the bar.
+      // Re-fetching instead would be a race that can blank what was just opened.
+      const next = await startIdeSession(folder, planned);
+      applyState(next);
+      setAddingNew(false);
+      // The wizard is reusable — someone who opens a third workspace should not
+      // land on the leftovers of the second one's plan.
+      setStep(0);
+      setFolder(null);
+      const names = next.session?.terminals.map((x) => x.name).join(", ") ?? "";
+      pushToast("success", `Workspace open — ${names}`);
     } catch (e) {
       pushToast("error", (e as Error).message);
     } finally {
@@ -317,14 +357,84 @@ export function AgenticIdeView() {
     setBusy(true);
     try {
       await endIdeSession();
-      setSession(null);
       setFocus(false);
       setStep(0);
       // Closing on purpose withdraws the offer, so the wizard comes back clean
       // rather than immediately proposing the workspace just shut down.
       setOffer(null);
+      // Whatever is still open takes the front; only a full refresh knows what
+      // that is, so the view asks rather than guessing it is now empty.
+      await refresh();
     } catch (e) {
       pushToast("error", (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /*
+   * ------------------------------------------------------------ workspace bar
+   *
+   * All three actions share one rule, and it is the whole reason they are
+   * awaited rather than fired off: **the backend has to know the front workspace
+   * changed BEFORE the outgoing panes come down.**
+   *
+   * A pane that disappears releases its viewer, and the backend decides what
+   * that means from which workspace the pane belongs to. Ordering the state
+   * change after the round-trip keeps that decision correct; doing it the other
+   * way round would tear down panes while their workspace was still the front
+   * one, which is the difference between "switched tab" and "closed".
+   */
+  const switchTo = async (id: string) => {
+    if (busy || (id === session?.id && !addingNew)) return;
+    setBusy(true);
+    try {
+      applyState(await activateWorkspace(id));
+      setAddingNew(false);
+      setOffer(null);
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+      // The tab may have been closed elsewhere — re-read rather than leave a
+      // bar showing a workspace that is not there.
+      void refresh();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const startAdding = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      applyState(await activateWorkspace(null));
+      setAddingNew(true);
+      // A fresh plan, not the previous workspace's.
+      setStep(0);
+      setFolder(null);
+      setOffer(null);
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const closeOne = async (id: string) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      const next = await closeWorkspace(id);
+      applyState(next);
+      if (next.session === null && (next.workspaces ?? []).length === 0) {
+        // Nothing left — the wizard is the screen again, and the offer for the
+        // workspace just shut down has been withdrawn with it.
+        setAddingNew(false);
+        setStep(0);
+        setOffer(null);
+      }
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+      void refresh();
     } finally {
       setBusy(false);
     }
@@ -376,20 +486,52 @@ export function AgenticIdeView() {
     }
   };
 
+  /*
+   * The workspace bar sits above BOTH states, always in the same place.
+   *
+   * It is the one part of this view that is not about the workspace you are in
+   * — it is about which one you are in — so it stays put whether the grid or
+   * the wizard is below it. A bar that moved (or vanished while adding one)
+   * would leave the user without a way back to the workspaces still running.
+   */
+  const bar = (
+    <WorkspaceBar
+      workspaces={workspaces}
+      activeId={session?.id ?? null}
+      addingNew={addingNew}
+      maxWorkspaces={maxWorkspaces}
+      onSelect={(id) => void switchTo(id)}
+      onAdd={() => void startAdding()}
+      onClose={(id) => void closeOne(id)}
+      busy={busy}
+    />
+  );
+
   // ------------------------------------------------------------ running mode
-  if (session) {
+  if (session && !addingNew) {
     return (
-      <>
-        <AgenticGrid
-          session={session}
-          focusMode={focusMode}
-          onToggleFocus={(v) => void toggleFocus(v)}
-          onClose={() => void close()}
-          busy={busy}
-          maxTerminals={maxTerminals}
-          agents={splitChoices}
-          onSessionChanged={setSession}
-        />
+      <div className="flex h-full flex-col">
+        {bar}
+        <div className="min-h-0 flex-1">
+          {/*
+            Keyed by workspace, so switching tabs REPLACES the grid instead of
+            re-using it. That is deliberate: each pane's terminal is wired to
+            one call-sign for its whole life, and re-using the component across
+            workspaces would leave xterm instances pointed at the panes of the
+            workspace that just left.
+          */}
+          <AgenticGrid
+            key={session.id}
+            session={session}
+            focusMode={focusMode}
+            onToggleFocus={(v) => void toggleFocus(v)}
+            onClose={() => void close()}
+            busy={busy}
+            maxTerminals={maxTerminals}
+            agents={splitChoices}
+            onSessionChanged={setSession}
+          />
+        </div>
         {modeIntroFor === session.id && (
           <CodingModeIntro
             terminals={session.terminals.map((x) => x.name)}
@@ -400,7 +542,7 @@ export function AgenticIdeView() {
             }}
           />
         )}
-      </>
+      </div>
     );
   }
 
@@ -412,10 +554,15 @@ export function AgenticIdeView() {
 
   return (
     <div className="flex h-full flex-col" ref={shellRef}>
+      {bar}
       <ViewHeader
         icon={<Sparkles className="h-4 w-4 text-primary" />}
         title={t("nav.agentic_ide") === "nav.agentic_ide" ? "Agentic IDE" : t("nav.agentic_ide")}
-        subtitle="Open a folder, run coding agents in named terminals, and talk to them."
+        subtitle={
+          addingNew
+            ? "Open another folder — the workspaces you already have keep running."
+            : "Open a folder, run coding agents in named terminals, and talk to them."
+        }
       />
 
       <div className="flex-1 overflow-y-auto scrollbar-jarvis">
