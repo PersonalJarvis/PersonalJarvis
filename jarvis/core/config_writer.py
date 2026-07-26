@@ -77,6 +77,23 @@ _STT_MODEL_ENV = "JARVIS__STT__MODEL"
 _STT_LANGUAGE_ENV = "JARVIS__STT__LANGUAGE"
 
 
+def set_agentic_ide_prompt_writer(
+    value: str, *, path: Path = DEFAULT_CONFIG_FILE
+) -> None:
+    """Set ``[agentic_ide] prompt_writer`` — who writes Agentic IDE task briefs.
+
+    One layer only, deliberately. The brain-provider setters above also mirror
+    into the drift-guard soll file and a User-scope ENV var because a *provider*  # i18n-allow
+    switch that survived only in TOML kept getting rolled back by a parallel
+    session. This setting has no soll entry and no ENV override reading it, so a  # i18n-allow
+    second layer would be a lie about where the value lives.
+
+    Raises ``FileNotFoundError`` if the TOML config file does not exist — a
+    broken setup we do not silently mask.
+    """
+    _patch_table(path, "agentic_ide", "prompt_writer", value)
+
+
 def set_brain_primary(name: str, *, path: Path = DEFAULT_CONFIG_FILE) -> None:
     """Set ``[brain] primary`` to the given provider name across all layers.
 

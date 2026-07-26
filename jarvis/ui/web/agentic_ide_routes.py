@@ -1525,4 +1525,152 @@ def _safe_int(value: object, default: int) -> int:
         return default
 
 
+# --------------------------------------------------------------------------- #
+# Who writes the task briefs                                                   #
+# --------------------------------------------------------------------------- #
+# Composing a brief is the one Agentic IDE step that bills a per-token API key,
+# and most users running coding agents already pay for a subscription that can
+# do the same work. This lets them spend that instead — and, for a downloader
+# whose ONLY credential is a coding subscription, it is the difference between a
+# written brief and the deterministic regex one on every single instruction.
+
+
+class PromptWriterOption(BaseModel):
+    id: str = Field(description="Value to send back to PUT /prompt-writer.")
+    label: str = Field(description="Human-readable name for the picker.")
+    connected: bool = Field(
+        description=(
+            "Whether this option can actually write right now. False on a "
+            "subscription whose CLI is not signed in on this machine — the "
+            "usual reason a plan sits unused while an API key is billed."
+        )
+    )
+
+
+class PromptWriterState(BaseModel):
+    prompt_writer: str = Field(description="The currently configured choice.")
+    options: list[PromptWriterOption] = Field(
+        description="Every value this install accepts, with its live state."
+    )
+
+
+class PromptWriterRequest(BaseModel):
+    prompt_writer: str = Field(
+        description=(
+            "'auto', 'subscription', 'api', or a specific brain provider id "
+            "from the options list."
+        )
+    )
+
+
+def _writer_candidates() -> list[tuple[str, bool]]:
+    """The subscription providers this install knows, with their live state.
+
+    Separated from the routes so the tests can pin a candidate set without a
+    signed-in CLI on the test machine — and so a failure to probe degrades to an
+    empty list rather than a 500 on a settings page.
+    """
+    try:
+        from jarvis.brain import resolver
+        from jarvis.core.config import load_config
+
+        config = load_config()
+        return [
+            (provider, resolver._subscription_connected(provider))
+            for provider in resolver._subscription_candidates(config)
+        ]
+    except Exception:  # noqa: BLE001 - a settings page must still render
+        log.info("prompt-writer: candidate probe failed", exc_info=True)
+        return []
+
+
+def _persist_prompt_writer(value: str) -> None:
+    """Write the choice to jarvis.toml through the atomic writer (AP-7)."""
+    from jarvis.core.config_writer import set_agentic_ide_prompt_writer
+
+    set_agentic_ide_prompt_writer(value)
+
+
+def _current_prompt_writer() -> str:
+    try:
+        from jarvis.core.config import load_config
+
+        return str(load_config().agentic_ide.prompt_writer or "auto")
+    except Exception:  # noqa: BLE001 - report the default rather than failing
+        return "auto"
+
+
+def _writer_options() -> list[PromptWriterOption]:
+    options = [
+        PromptWriterOption(
+            id="auto",
+            label="Automatic (a connected subscription, else the API model)",
+            connected=True,
+        ),
+        PromptWriterOption(
+            id="subscription",
+            label="Any connected subscription (never an API key)",
+            connected=any(connected for _id, connected in _writer_candidates()),
+        ),
+        PromptWriterOption(
+            id="api",
+            label="API model (billed per token)",
+            connected=True,
+        ),
+    ]
+    for provider, connected in _writer_candidates():
+        options.append(
+            PromptWriterOption(id=provider, label=provider, connected=connected)
+        )
+    return options
+
+
+@router.get(
+    "/prompt-writer",
+    response_model=PromptWriterState,
+    summary="Who writes Agentic-IDE task briefs",
+)
+async def prompt_writer_state() -> PromptWriterState:
+    """Report the configured brief writer and every option, with live state."""
+    return PromptWriterState(
+        prompt_writer=_current_prompt_writer(), options=_writer_options()
+    )
+
+
+@router.put(
+    "/prompt-writer",
+    response_model=PromptWriterState,
+    summary="Choose who writes Agentic-IDE task briefs",
+)
+async def set_prompt_writer(payload: PromptWriterRequest) -> PromptWriterState:
+    """Persist the brief writer.
+
+    Refuses a provider this install does not offer, and refuses one whose CLI is
+    not signed in: pinning either would leave every instruction falling back to
+    the deterministic prompt while the UI claimed the subscription was chosen.
+    The moment of choosing is the moment the user can still fix it.
+    """
+    requested = (payload.prompt_writer or "").strip()
+    options = _writer_options()
+    match = next((option for option in options if option.id == requested), None)
+    if match is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"Unknown prompt writer '{requested}'. Pick one of: "
+                + ", ".join(option.id for option in options)
+            ),
+        )
+    if not match.connected:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"'{requested}' is not signed in on this machine. Connect it "
+                "first, or choose 'auto'."
+            ),
+        )
+    _persist_prompt_writer(requested)
+    return PromptWriterState(prompt_writer=requested, options=_writer_options())
+
+
 __all__ = ["router"]

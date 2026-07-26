@@ -2516,6 +2516,39 @@ class Phase6Config(BaseModel):
     safety: Phase6SafetyConfig = Field(default_factory=Phase6SafetyConfig)
 
 
+class AgenticIdeConfig(BaseModel):
+    """Agentic IDE behaviour that is not per-workspace state."""
+
+    # AP-16: a key written by a NEWER install must not fail this one's boot.
+    model_config = ConfigDict(extra="allow")
+
+    prompt_writer: str = Field(
+        default="auto",
+        description=(
+            "Who writes Agentic IDE task briefs: 'auto' (a connected coding "
+            "subscription if there is one, else the API-billed quality tier), "
+            "'subscription', 'api', or a specific brain provider id."
+        ),
+    )
+
+    @field_validator("prompt_writer", mode="before")
+    @classmethod
+    def _usable_writer(cls, value: object) -> str:
+        """Anything unusable becomes 'auto' instead of blocking the boot.
+
+        Whether a named provider EXISTS is decided at resolve time, not here: a
+        config naming a provider this build does not ship has to degrade to the
+        normal chain, never stop the app that config belongs to from starting.
+        """
+        text = str(value or "").strip()
+        # A provider id always starts with a letter; a bare number reaching here
+        # is a mis-typed or mis-serialised value, not a provider nobody has heard
+        # of yet.
+        if not text or not text[0].isalpha():
+            return "auto"
+        return text if text.replace("-", "").replace("_", "").isalnum() else "auto"
+
+
 class JarvisConfig(BaseModel):
     """Root config model."""
     # populate_by_name=True lets callers use Python field names alongside
@@ -2532,6 +2565,7 @@ class JarvisConfig(BaseModel):
     safety: SafetyConfig = Field(default_factory=SafetyConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
     harness: HarnessConfig = Field(default_factory=HarnessConfig)
+    agentic_ide: AgenticIdeConfig = Field(default_factory=AgenticIdeConfig)
     mcp_server: MCPServerConfig = Field(default_factory=MCPServerConfig)
     audio: AudioConfig = Field(default_factory=AudioConfig)
     ui: UIConfig = Field(default_factory=UIConfig)
