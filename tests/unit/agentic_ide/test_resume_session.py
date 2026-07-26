@@ -518,6 +518,50 @@ async def test_closing_every_workspace_still_keeps_them_resumable(
     assert {w.folder for w in saved.workspaces} == {str(first), str(second)}
 
 
+async def test_closing_workspaces_one_by_one_keeps_all_of_them_on_offer(
+    registry: ide.Registry, tmp_path: Path
+) -> None:
+    """The bug that survived the first fix, measured live.
+
+    Closing used to re-write the restore point, so shutting four workspaces down
+    one at a time narrowed the offer with every click and left a single workspace
+    behind. The restore point is refreshed by activity, never by closing.
+    """
+    folders = []
+    for index in range(3):
+        folder = tmp_path / f"repo{index}"
+        folder.mkdir()
+        folders.append(folder)
+        await registry.start(
+            str(folder), [{"agent": "claude", "name": f"Pane{index}"}]
+        )
+
+    # One at a time, the way a person closes tabs.
+    while await registry.end():
+        pass
+
+    saved = resume_store.load()
+    assert saved is not None
+    assert {w.folder for w in saved.workspaces} == {str(f) for f in folders}
+
+
+async def test_opening_something_new_refreshes_what_is_on_offer(
+    registry: ide.Registry, tmp_path: Path
+) -> None:
+    """The other side of that coin: the offer must not accumulate forever."""
+    old, new = tmp_path / "old", tmp_path / "new"
+    old.mkdir()
+    new.mkdir()
+    await registry.start(str(old), [{"agent": "claude", "name": "Alex"}])
+    await registry.end()
+
+    await registry.start(str(new), [{"agent": "claude", "name": "Blake"}])
+
+    saved = resume_store.load()
+    assert saved is not None
+    assert [w.folder for w in saved.workspaces] == [str(new)]
+
+
 async def test_only_starting_fresh_discards_the_restore_point(
     registry: ide.Registry, tmp_path: Path
 ) -> None:
@@ -557,10 +601,15 @@ async def test_every_open_workspace_is_remembered_front_one_first(
     assert [w.folder for w in saved.workspaces] == [str(first), str(second)]
 
 
-async def test_closing_one_of_two_leaves_the_survivor_resumable(
+async def test_closing_one_of_two_leaves_both_on_offer(
     registry: ide.Registry, tmp_path: Path
 ) -> None:
-    """Closing must never leave a restore point pointing at nothing."""
+    """Closing must never leave a restore point pointing at nothing.
+
+    It holds both: the survivor because it is still open, and the closed one
+    because closing does not rewrite the offer. Reopening one workspace too many
+    is trivially undone; losing one is not.
+    """
     first = tmp_path / "first"
     second = tmp_path / "second"
     first.mkdir()
@@ -572,9 +621,7 @@ async def test_closing_one_of_two_leaves_the_survivor_resumable(
 
     saved = resume_store.load()
     assert saved is not None
-    # The closed one is no longer open, so it is no longer remembered as open —
-    # the survivor is, and it is the one on screen.
-    assert [w.folder for w in saved.workspaces] == [str(first)]
+    assert {w.folder for w in saved.workspaces} == {str(first), str(second)}
     assert registry.active_id == one.id
 
 

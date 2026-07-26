@@ -157,8 +157,12 @@ PASTE_START = "\x1b[200~"
 PASTE_END = "\x1b[201~"
 
 # What an agent TUI draws instead of the text when it collapses a paste into a
-# placeholder ("[Pasted text #1 +12 lines]").
-_PASTE_PLACEHOLDER_RE = re.compile(r"\[\s*pasted?\s+text[^\]]*\]", re.IGNORECASE)
+# placeholder. The wording is per-TUI and changes between releases — Claude Code
+# draws "[Pasted text #1 +12 lines]", Codex "[Pasted Content 2497 chars]" — so
+# this matches the SHAPE (a bracketed summary that mentions pasting) rather than
+# one vendor's phrasing. Keying on Claude Code's wording alone is what let a
+# prompt sit visibly in a Codex box while the user was told it had been sent.
+_PASTE_PLACEHOLDER_RE = re.compile(r"\[[^\]]*\bpaste\w*\b[^\]]*\]", re.IGNORECASE)
 
 
 def _opens_completion(payload: str) -> bool:
@@ -1151,7 +1155,14 @@ class Registry:
             self._active = survivor.id if survivor else None
             if survivor is not None:
                 self._focus_locked(survivor)
-                await self._persist()
+        # Deliberately NOT re-written here. The restore point is refreshed by
+        # activity — opening a workspace, adding a pane, connecting one — and
+        # closing is not activity. Rewriting on close made the offer shrink one
+        # workspace at a time: closing four of four left a restore point holding
+        # one, which is the shape of "I closed everything for the day and got a
+        # third of it back tomorrow". The cost of the other direction is a
+        # workspace that lingers in the offer until something else happens, and
+        # reopening one workspace too many is trivially undone.
         logger.info("Agentic IDE session ended: {}", session.id)
 
     def set_focus_mode(self, enabled: bool) -> bool:
@@ -1717,13 +1728,25 @@ class Registry:
 
         submitted = await self._write_and_confirm(term, payload, manager, multiline)
         if not submitted and multiline:
-            logger.warning(
-                "Agentic IDE: {} did not accept a multi-line prompt — re-sending it on one line",
-                term.name,
-            )
-            payload = sanitize_prompt(payload)
-            multiline = False
-            submitted = await self._write_and_confirm(term, payload, manager, False)
+            # Re-typing is only ever right for a pane that never RECEIVED the
+            # paste. When the text is demonstrably still in the input box, a
+            # second copy would land BEHIND the first and the next Enter would
+            # submit both — so a stuck prompt is answered with Enter alone.
+            if _input_line_holds(term.transcript.tail(10), _submit_needle(payload)):
+                logger.warning(
+                    "Agentic IDE: {} still has the prompt in its input box — "
+                    "leaving it there rather than typing a second copy",
+                    term.name,
+                )
+            else:
+                logger.warning(
+                    "Agentic IDE: {} did not accept a multi-line prompt — "
+                    "re-sending it on one line",
+                    term.name,
+                )
+                payload = sanitize_prompt(payload)
+                multiline = False
+                submitted = await self._write_and_confirm(term, payload, manager, False)
 
         term.prompts_sent += 1
         term.last_prompt = payload
