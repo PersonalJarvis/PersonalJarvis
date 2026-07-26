@@ -338,6 +338,35 @@ _OUTCOME_COLUMNS: tuple[str, ...] = (
     "last_tombstoned",
 )
 
+#: Every live distilled document joined to its item and source — the whole
+#: input of the readable projection (``jarvis.ultrawiki.projection``). Shared
+#: verbatim by both backends because it binds no parameters, so the two
+#: dialects cannot drift apart on the one query the wiki view depends on.
+_DISTILLED_ROWS_SQL = (
+    "SELECT d.id AS document_id, d.item_id, d.distill_json,"
+    " i.title, i.timestamp_utc, i.permalink, i.source_id,"
+    " s.label AS source_label"
+    " FROM uw_documents d"
+    " JOIN uw_items i ON i.id = d.item_id"
+    " JOIN uw_sources s ON s.id = i.source_id"
+    " WHERE d.distill_json IS NOT NULL AND d.distill_json != ''"
+    "  AND i.deleted_at IS NULL"
+    " ORDER BY i.timestamp_utc DESC, d.id DESC"
+)
+
+#: Cheap change stamp over the same set. ``MAX(id)`` is what makes a RE-
+#: distillation visible: ``add_document`` replaces the row, so the count is
+#: unchanged and ``created_at`` may land in the same second, but the new row
+#: always carries a higher id.
+_DISTILLED_FINGERPRINT_SQL = (
+    "SELECT COUNT(*) AS n, COALESCE(MAX(d.id), 0) AS max_id,"
+    " COALESCE(MAX(d.created_at), '') AS newest"
+    " FROM uw_documents d"
+    " JOIN uw_items i ON i.id = d.item_id"
+    " WHERE d.distill_json IS NOT NULL AND d.distill_json != ''"
+    "  AND i.deleted_at IS NULL"
+)
+
 
 # ---------------------------------------------------------------------------
 # SQLite reference backend
@@ -1079,6 +1108,21 @@ class UltraStore:
             (source_id,),
         )
         return _counts_from_pairs((row["state"], row["n"]) for row in rows)
+
+    async def distilled_rows(self) -> list[dict[str, Any]]:
+        """Input rows of the readable projection (see ``_DISTILLED_ROWS_SQL``)."""
+        conn = await self._ensure_open()
+        rows = await self._fetchall(conn, _DISTILLED_ROWS_SQL)
+        return [dict(row) for row in rows]
+
+    async def distilled_fingerprint(self) -> tuple[int, int, str]:
+        """Change stamp of the projection input, for caching the projection."""
+        conn = await self._ensure_open()
+        row = await self._fetchone(conn, _DISTILLED_FINGERPRINT_SQL)
+        if row is None:
+            return (0, 0, "")
+        data = dict(row)
+        return (int(data["n"]), int(data["max_id"]), str(data["newest"]))
 
     async def reconcile_deletes(
         self, source_id: str, yielded_external_ids: set[str]
@@ -2442,6 +2486,21 @@ class PostgresStore:
             (source_id,),
         )
         return _counts_from_pairs((row["state"], row["n"]) for row in rows)
+
+    async def distilled_rows(self) -> list[dict[str, Any]]:
+        """Input rows of the readable projection (see ``_DISTILLED_ROWS_SQL``)."""
+        conn = await self._ensure_open()
+        rows = await self._fetchall(conn, _DISTILLED_ROWS_SQL)
+        return [dict(row) for row in rows]
+
+    async def distilled_fingerprint(self) -> tuple[int, int, str]:
+        """Change stamp of the projection input, for caching the projection."""
+        conn = await self._ensure_open()
+        row = await self._fetchone(conn, _DISTILLED_FINGERPRINT_SQL)
+        if row is None:
+            return (0, 0, "")
+        data = dict(row)
+        return (int(data["n"]), int(data["max_id"]), str(data["newest"]))
 
     async def reconcile_deletes(
         self, source_id: str, yielded_external_ids: set[str]
