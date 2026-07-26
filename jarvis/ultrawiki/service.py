@@ -40,6 +40,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from jarvis.ultrawiki.progress import build_progress
+from jarvis.ultrawiki.secret_scrub import scrub_item
 from jarvis.ultrawiki.types import (
     ConnectorContext,
     ConsentState,
@@ -233,6 +234,11 @@ class SyncJob:
     changed: int = 0
     unchanged: int = 0
     tombstoned: int = 0
+    #: Credential files stored WITHOUT their content, and individual secrets
+    #: replaced inside otherwise ordinary items. Reported so the protection is
+    #: visible: a filter nobody can see is a filter nobody trusts.
+    secrets_withheld: int = 0
+    secrets_redacted: int = 0
     error: str = ""
     #: The asyncio.Task while the job is active; cleared when it ends.
     task: Any = None
@@ -263,6 +269,8 @@ class SyncJob:
             "changed": self.changed,
             "unchanged": self.unchanged,
             "tombstoned": self.tombstoned,
+            "secrets_withheld": self.secrets_withheld,
+            "secrets_redacted": self.secrets_redacted,
             "error": self.error,
         }
 
@@ -419,11 +427,20 @@ class UltraWikiService:
         except Exception as exc:  # noqa: BLE001 — no reader is not a boot failure
             log.warning("UltraWiki: pull adapters could not register: %s", exc)
 
-    async def ensure_started(self) -> None:
+    async def ensure_started(self, *, pipeline_grace_s: float = 0.0) -> None:
         """Open the store and start the pipeline (idempotent, off boot path).
 
         The pipeline only starts while ``cfg.ultrawiki.enabled`` is true; a
         later enable is picked up by the next ``ensure_started`` call.
+
+        ``pipeline_grace_s`` holds the WORKER back for that many seconds while
+        the store still opens immediately. The two have opposite cost profiles:
+        opening the store is cheap and is what every read, search and recall
+        needs at once, whereas the worker chews through the whole backlog and
+        was measured holding ~1.3 CPU cores indefinitely. Starting both at boot
+        made the backlog compete with the app's own startup for the machine.
+        Callers on the boot path pass a grace period; an in-app enable passes
+        none, because there the user is waiting for the work to begin.
         """
         async with self._start_lock:
             if self._store is None:
@@ -456,9 +473,31 @@ class UltraWikiService:
                     ),
                 )
                 self._pipeline_task = asyncio.create_task(
-                    self._pipeline.run(self._cancel_event),
+                    self._run_pipeline_after_grace(
+                        self._pipeline, self._cancel_event, pipeline_grace_s
+                    ),
                     name="ultrawiki-pipeline",
                 )
+
+    @staticmethod
+    async def _run_pipeline_after_grace(
+        pipeline: Any, cancel_event: asyncio.Event, grace_s: float
+    ) -> None:
+        """Wait out *grace_s*, then run the worker until cancelled.
+
+        The wait is a cancellable wait ON the shutdown event, never a blind
+        sleep: a plain sleep would keep ``stop()`` blocked for the rest of the
+        grace period, turning a startup optimisation into a shutdown stall.
+        A shutdown during the grace period therefore skips the run entirely.
+        """
+        if grace_s > 0:
+            try:
+                await asyncio.wait_for(cancel_event.wait(), timeout=grace_s)
+            except TimeoutError:
+                pass  # grace elapsed, nothing asked us to stop -> start working
+            if cancel_event.is_set():
+                return
+        await pipeline.run(cancel_event)
 
     async def _open_store(self) -> Any:
         from jarvis.ultrawiki import store as store_mod  # noqa: PLC0415 — lazy
@@ -1439,6 +1478,12 @@ class UltraWikiService:
         max_cursor: int | None,
     ) -> int | None:
         store = self._require_store()
+        # The LAST gate before storage, and deliberately the only one: every
+        # connector reaches the store through here, so a reader added later is
+        # covered without having to remember. Order matters — items are scrubbed
+        # BEFORE the write, never cleaned up afterwards, because a secret that
+        # was written once has already been indexed and embedded.
+        items = self._scrub(job, items)
         counts = await store.upsert_items(source_id, items)
         job.phase = "importing"
         job.chunks += 1
@@ -1467,6 +1512,35 @@ class UltraWikiService:
         if updates:
             await store.set_sync_state(source_id, **updates)
         return max_cursor
+
+    @staticmethod
+    def _scrub(job: SyncJob, items: list[RawItem]) -> list[RawItem]:
+        """Credentials out, everything else through — and counted for the user.
+
+        Items are never DROPPED here. A withheld file keeps its name, date and
+        link, which is both honest ("there is a .env in this project" is true
+        and useful) and load-bearing: the backfill checkpoint is the last
+        item's id, so removing one would move the resume point.
+        """
+        scrubbed: list[RawItem] = []
+        withheld = 0
+        redactions = 0
+        for item in items:
+            result = scrub_item(item)
+            scrubbed.append(result.item)
+            withheld += 1 if result.withheld else 0
+            redactions += result.redactions
+        if withheld or redactions:
+            job.secrets_withheld += withheld
+            job.secrets_redacted += redactions
+            log.info(
+                "UltraWiki sync %s: withheld %d credential file(s) and redacted "
+                "%d secret(s) before storing",
+                job.source_id,
+                withheld,
+                redactions,
+            )
+        return scrubbed
 
     @staticmethod
     def _parse_cursor(cursor: Any) -> int | None:
