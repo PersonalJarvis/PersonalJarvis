@@ -114,11 +114,7 @@ export function ImportProgress({
       data-testid="ultrawiki-import-progress"
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
-        <PipelineState
-          pipeline={pipeline}
-          pending={progress?.waiting ?? 0}
-          onOpenSources={onOpenSources}
-        />
+        <PipelineState pipeline={pipeline} onOpenSources={onOpenSources} />
         {progress && progress.total > 0 && (
           <p
             className="text-muted-foreground"
@@ -222,11 +218,9 @@ export function ImportProgress({
  */
 function PipelineState({
   pipeline,
-  pending,
   onOpenSources,
 }: {
   pipeline: UltraWikiPipeline;
-  pending: number;
   onOpenSources?: () => void;
 }): JSX.Element {
   const t = useT();
@@ -265,10 +259,10 @@ function PipelineState({
               data-testid="ultrawiki-pipeline-running"
             />
           ),
-          label: t("ultrawiki.progress.state_processing").replace(
-            "{0}",
-            formatCount(pending),
-          ),
+          // No count here: the summary beside it already says how many are
+          // left and what for. The strip used to print the same number three
+          // times in one line — state, summary, and the backend's reason.
+          label: t("ultrawiki.progress.state_processing"),
         }
       : state === "paused"
         ? {

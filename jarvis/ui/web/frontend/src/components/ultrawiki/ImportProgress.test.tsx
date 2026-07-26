@@ -109,12 +109,15 @@ describe("ImportProgress — honest pipeline state", () => {
 
     const state = screen.getByTestId("ultrawiki-pipeline-state");
     expect(state.getAttribute("data-state")).toBe("processing");
-    expect(state.textContent).toContain("6");
     expect(screen.getByTestId("ultrawiki-pipeline-running")).toBeDefined();
+    // The backlog is stated ONCE, in the summary. The state label used to
+    // carry it too, next to a backend reason that carried it a third time.
+    expect(state.textContent).not.toContain("6");
 
     // The summary reports the corpus in cumulative terms — the reading that
     // "Keyword-searchable 0 · Embedded 3237" got wrong.
     const summary = screen.getByTestId("ultrawiki-progress-summary").textContent;
+    expect(summary).toContain("6");
     expect(summary).toContain("51");
     expect(summary).toContain("45");
     expect(summary).toContain("being summarised");

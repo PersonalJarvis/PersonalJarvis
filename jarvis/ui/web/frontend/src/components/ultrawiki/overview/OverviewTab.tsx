@@ -79,6 +79,7 @@ export function OverviewTab({
         progress={progress}
         pipeline={status.pipeline}
         usable={health?.usable ?? false}
+        started={status.started}
       />
 
       <SourceRoster

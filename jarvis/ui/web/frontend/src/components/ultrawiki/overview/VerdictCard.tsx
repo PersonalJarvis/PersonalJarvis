@@ -17,7 +17,7 @@ import { Eyebrow, Num, formatCount } from "@/components/ultrawiki/overview/primi
 import { IntakeBar } from "@/components/ultrawiki/overview/IntakeBar";
 import type { UltraWikiPipeline, UltraWikiProgress } from "@/lib/ultrawikiApi";
 
-type Tone = "done" | "working" | "stalled" | "notready" | "empty";
+type Tone = "done" | "working" | "stalled" | "notready" | "empty" | "starting";
 
 const TONE_STYLE: Record<Tone, { headline: string; rule: string }> = {
   done: { headline: "text-[#5bd4a4]", rule: "bg-[#5bd4a4]" },
@@ -25,21 +25,30 @@ const TONE_STYLE: Record<Tone, { headline: string; rule: string }> = {
   stalled: { headline: "text-[#ffb84d]", rule: "bg-[#ffb84d]" },
   notready: { headline: "text-[#ffb84d]", rule: "bg-[#ffb84d]" },
   empty: { headline: "text-foreground", rule: "bg-muted-foreground/40" },
+  starting: { headline: "text-muted-foreground", rule: "bg-muted-foreground/40" },
 };
 
 /**
- * Which of the five situations the store is in.
+ * Which of the six situations the store is in.
  *
  * Ordered by what a reader needs to hear first: an empty store is not a
  * fault, a stalled queue outranks a busy one, and a backlog never demotes a
  * usable knowledge base to "not ready" — the processed part answers questions
  * while the rest catches up.
+ *
+ * ``started`` comes first for a reason found in live testing: while the app
+ * boots, the status route answers with zeroed counts, and the screen read
+ * "Nothing stored yet." over a store holding 4 712 items. A closed store
+ * cannot report what is in it, so the honest answer is that it is not open —
+ * not a claim about its contents.
  */
 export function verdictToneOf(
   progress: UltraWikiProgress,
   pipelineState: string,
   usable: boolean,
+  started = true,
 ): Tone {
+  if (!started) return "starting";
   if (progress.total === 0) return "empty";
   if (!usable) return "notready";
   if (progress.waiting > 0) {
@@ -52,37 +61,48 @@ export function VerdictCard({
   progress,
   pipeline,
   usable,
+  started = true,
 }: {
   progress: UltraWikiProgress;
   pipeline: UltraWikiPipeline;
   usable: boolean;
+  /** Is the knowledge store actually open? A closed store reports zeros. */
+  started?: boolean;
 }): JSX.Element {
   const t = useT();
   const pipelineState = String(pipeline.state ?? "");
-  const tone = verdictToneOf(progress, pipelineState, usable);
+  const tone = verdictToneOf(progress, pipelineState, usable, started);
   const style = TONE_STYLE[tone];
 
   const step = t(
     `ultrawiki.overview.step_${progress.next_step ?? "processing"}`,
   );
-  const detail =
-    tone === "empty"
-      ? t("ultrawiki.overview.detail_empty")
-      : tone === "notready"
-        ? t("ultrawiki.overview.detail_notready")
-        : tone === "done"
-          ? t("ultrawiki.overview.detail_done").replace(
-              "{0}",
-              formatCount(progress.total),
-            )
-          : t(
-              tone === "stalled"
-                ? "ultrawiki.overview.detail_stalled"
-                : "ultrawiki.overview.detail_working",
-            )
-              .replace("{0}", formatCount(progress.waiting))
-              .replace("{1}", formatCount(progress.total))
-              .replace("{2}", step);
+  // One line per situation, spelled out rather than nested into a ternary
+  // chain — these sentences are the point of the screen and have to stay easy
+  // to read in the source too.
+  let detail: string;
+  switch (tone) {
+    case "starting":
+    case "empty":
+    case "notready":
+      detail = t(`ultrawiki.overview.detail_${tone}`);
+      break;
+    case "done":
+      detail = t("ultrawiki.overview.detail_done").replace(
+        "{0}",
+        formatCount(progress.total),
+      );
+      break;
+    default:
+      detail = t(
+        tone === "stalled"
+          ? "ultrawiki.overview.detail_stalled"
+          : "ultrawiki.overview.detail_working",
+      )
+        .replace("{0}", formatCount(progress.waiting))
+        .replace("{1}", formatCount(progress.total))
+        .replace("{2}", step);
+  }
 
   return (
     <section data-testid="ultrawiki-verdict" data-tone={tone}>
@@ -135,7 +155,9 @@ export function VerdictCard({
           </p>
         )}
 
-        {progress.total > 0 && (
+        {/* No bar while the store is closed: its numbers would be zeros the
+            backend never measured. */}
+        {started && progress.total > 0 && (
           <div className="mt-4">
             <IntakeBar
               progress={progress}

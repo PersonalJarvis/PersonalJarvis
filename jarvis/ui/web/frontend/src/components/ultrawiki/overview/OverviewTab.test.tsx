@@ -110,6 +110,28 @@ describe("VerdictCard — the sentence that used to be wrong", () => {
     const empty: UltraWikiProgress = { ...SCREENSHOT, state: "empty", total: 0, searchable: 0, summarised: 0, waiting: 0, next_step: null };
     expect(verdictToneOf(empty, "idle", false)).toBe("empty");
   });
+
+  it("does not call a closed store empty", () => {
+    // Found live: while the app boots, /status answers with zeroed counts, and
+    // the screen announced "Nothing stored yet." over a store holding 4 712
+    // items. A store that is not open cannot report its contents.
+    const zeroed: UltraWikiProgress = { ...SCREENSHOT, state: "empty", total: 0, searchable: 0, summarised: 0, waiting: 0, next_step: null };
+    expect(verdictToneOf(zeroed, "paused", false, false)).toBe("starting");
+
+    renderWithQuery(
+      <VerdictCard
+        progress={zeroed}
+        pipeline={{ running: false, state: "paused", processed: {} }}
+        usable={false}
+        started={false}
+      />,
+    );
+    const card = screen.getByTestId("ultrawiki-verdict");
+    expect(card.getAttribute("data-tone")).toBe("starting");
+    expect(card.textContent).not.toContain("Nothing stored yet");
+    // And no bar, because there is nothing measured to draw.
+    expect(screen.queryByTestId("ultrawiki-intake-bar")).toBeNull();
+  });
 });
 
 describe("IntakeBar — the corpus at true scale", () => {
