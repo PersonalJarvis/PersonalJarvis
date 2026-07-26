@@ -54,6 +54,9 @@ vi.mock("@/lib/agenticIdeApi", () => ({
   endIdeSession: vi.fn(),
   setFocusMode: vi.fn(),
   promptTerminal: vi.fn(),
+  fetchResumeOffer: vi.fn(),
+  resumeWorkspace: vi.fn(),
+  forgetResumeOffer: vi.fn(),
 }));
 
 import { AgenticIdeView } from "./AgenticIdeView";
@@ -82,6 +85,51 @@ const AGENTS: api.AgentsResponse = {
 };
 
 const EMPTY_STATE: api.IdeState = { active: false, session: null, max_terminals: 12 };
+
+const NO_OFFER: api.ResumeOffer = {
+  available: false,
+  folder: "",
+  folder_name: "",
+  folder_exists: false,
+  saved_at: 0,
+  session_id: "",
+  resumable_count: 0,
+  terminals: [],
+};
+
+const PREVIOUS_WORKSPACE: api.ResumeOffer = {
+  available: true,
+  folder: "/work/project",
+  folder_name: "project",
+  folder_exists: true,
+  saved_at: 1_753_473_600,
+  session_id: "ide_old",
+  resumable_count: 1,
+  terminals: [
+    {
+      key: "mika",
+      name: "Mika",
+      agent: "claude",
+      display_name: "Claude Code",
+      column: 0,
+      slot: 0,
+      available: true,
+      resumable: true,
+      prompts_sent: 2,
+    },
+    {
+      key: "nova",
+      name: "Nova",
+      agent: "claude",
+      display_name: "Claude Code",
+      column: 1,
+      slot: 0,
+      available: true,
+      resumable: false,
+      prompts_sent: 0,
+    },
+  ],
+};
 
 function sessionWith(names: string[], focus = false): api.SessionState {
   return {
@@ -144,6 +192,8 @@ beforeEach(() => {
     entries: [],
     truncated: false,
   });
+  // Nothing to resume by default; the resume tests override this.
+  vi.mocked(api.fetchResumeOffer).mockResolvedValue(NO_OFFER);
 });
 
 afterEach(() => {
@@ -427,5 +477,69 @@ describe("Agentic IDE running workspace", () => {
     // The panes that were already mounted stay mounted: re-parenting one would
     // tear down its WebSocket and kill the agent behind it.
     expect(screen.getByTestId("pane-Mika")).toBeTruthy();
+  });
+});
+
+describe("AgenticIdeView — resuming the last workspace", () => {
+  it("offers the previous workspace above the wizard", async () => {
+    vi.mocked(api.fetchResumeOffer).mockResolvedValue(PREVIOUS_WORKSPACE);
+    render(<AgenticIdeView />);
+
+    await screen.findByTestId("resume-card");
+    expect(screen.getByTestId("resume-pane-mika")).toBeTruthy();
+    // The wizard is still right there — the offer never blocks it.
+    expect(screen.getByText("Folder")).toBeTruthy();
+  });
+
+  it("says nothing when there is nothing to resume", async () => {
+    render(<AgenticIdeView />);
+    await screen.findByText("Folder");
+    expect(screen.queryByTestId("resume-card")).toBeNull();
+  });
+
+  it("does not offer a resume while a workspace is open", async () => {
+    vi.mocked(api.fetchIdeState).mockResolvedValue({
+      active: true,
+      session: sessionWith(["Mika"]),
+      max_terminals: 12,
+    });
+    vi.mocked(api.fetchResumeOffer).mockResolvedValue(PREVIOUS_WORKSPACE);
+    render(<AgenticIdeView />);
+
+    await screen.findByTestId("pane-Mika");
+    expect(screen.queryByTestId("resume-card")).toBeNull();
+  });
+
+  it("reopens the workspace and reports what really came back", async () => {
+    vi.mocked(api.fetchResumeOffer).mockResolvedValue(PREVIOUS_WORKSPACE);
+    vi.mocked(api.resumeWorkspace).mockResolvedValue({
+      session: sessionWith(["Mika", "Nova"]),
+      resumable_count: 1,
+      started_fresh: 1,
+    });
+    render(<AgenticIdeView />);
+
+    fireEvent.click(await screen.findByTestId("resume-all"));
+
+    await screen.findByTestId("pane-Mika");
+    expect(screen.queryByTestId("resume-card")).toBeNull();
+    // The honest report: one pane came back empty and the user is told so.
+    await waitFor(() =>
+      expect(pushToast).toHaveBeenCalledWith(
+        "success",
+        expect.stringMatching(/1 continued, 1 started fresh/),
+      ),
+    );
+  });
+
+  it("forgets the workspace when the user starts fresh", async () => {
+    vi.mocked(api.fetchResumeOffer).mockResolvedValue(PREVIOUS_WORKSPACE);
+    vi.mocked(api.forgetResumeOffer).mockResolvedValue(undefined);
+    render(<AgenticIdeView />);
+
+    fireEvent.click(await screen.findByTestId("resume-dismiss"));
+
+    await waitFor(() => expect(api.forgetResumeOffer).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId("resume-card")).toBeNull();
   });
 });

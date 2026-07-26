@@ -112,6 +112,46 @@ export interface IdeState {
   max_terminals: number;
 }
 
+/** One pane of the workspace being offered back after a close or a restart. */
+export interface ResumeTerminalOffer {
+  key: string;
+  name: string;
+  agent: string;
+  display_name: string;
+  column: number;
+  slot: number;
+  /** Can this pane open at all? False when its coding CLI is gone from this machine. */
+  available: boolean;
+  /**
+   * Does its CONVERSATION come back, or only its call-sign?
+   *
+   * The distinction is the whole point of showing this before the click: a pane
+   * that reopens empty looks exactly like one that continued, right up until it
+   * is asked a follow-up question.
+   */
+  resumable: boolean;
+  prompts_sent: number;
+}
+
+export interface ResumeOffer {
+  available: boolean;
+  folder: string;
+  folder_name: string;
+  folder_exists: boolean;
+  saved_at: number;
+  session_id: string;
+  resumable_count: number;
+  terminals: ResumeTerminalOffer[];
+}
+
+export interface ResumeResult {
+  session: SessionState;
+  /** Panes that continued their conversation. */
+  resumable_count: number;
+  /** Panes that came back with the right name and an empty history. */
+  started_fresh: number;
+}
+
 export interface TerminalPlan {
   agent: string;
   name?: string;
@@ -200,6 +240,29 @@ export async function startIdeSession(
 
 export async function endIdeSession(): Promise<void> {
   const res = await fetch("/api/agentic-ide/session", { method: "DELETE" });
+  if (!res.ok) throw new Error(await detail(res));
+}
+
+/** What reopening the last workspace would bring back, checked against this machine. */
+export function fetchResumeOffer(): Promise<ResumeOffer> {
+  return getJson<ResumeOffer>("/api/agentic-ide/resume");
+}
+
+/**
+ * Reopen the last workspace — same panes, same places, same coding CLIs.
+ *
+ * Nothing is started here: the panes connect the way they always do, and that
+ * connection is what continues each conversation.
+ */
+export async function resumeWorkspace(): Promise<ResumeResult> {
+  const res = await fetch("/api/agentic-ide/resume", { method: "POST" });
+  if (!res.ok) throw new Error(await detail(res));
+  return (await res.json()) as ResumeResult;
+}
+
+/** Throw the restore point away, so the IDE opens to a clean wizard. */
+export async function forgetResumeOffer(): Promise<void> {
+  const res = await fetch("/api/agentic-ide/resume", { method: "DELETE" });
   if (!res.ok) throw new Error(await detail(res));
 }
 

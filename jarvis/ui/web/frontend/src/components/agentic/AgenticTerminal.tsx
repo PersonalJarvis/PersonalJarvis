@@ -280,7 +280,14 @@ export function AgenticTerminal({
       requestAnimationFrame(sendResize);
     };
     ws.onmessage = (ev) => {
-      let msg: { t?: string; d?: string; code?: number; message?: string };
+      let msg: {
+        t?: string;
+        d?: string;
+        code?: number;
+        message?: string;
+        /** On "ready": did this pane continue its previous conversation? */
+        resumed?: boolean;
+      };
       try {
         msg = JSON.parse(ev.data as string);
       } catch {
@@ -289,7 +296,16 @@ export function AgenticTerminal({
       if (msg.t === "o") term.write(msg.d ?? "");
       else if (msg.t === "ready") {
         everLive = true;
-        report("live");
+        // Say whether this pane picked up where it left off. A continued agent
+        // and one that started empty look identical on screen until the moment
+        // somebody asks the empty one a follow-up question — so the pane itself
+        // carries the answer rather than leaving it to be discovered.
+        report(
+          "live",
+          msg.resumed
+            ? "continued its previous conversation"
+            : "started a new conversation",
+        );
         term.focus();
       } else if (msg.t === "exit") {
         report("exited", `exit code ${msg.code ?? "?"}`);

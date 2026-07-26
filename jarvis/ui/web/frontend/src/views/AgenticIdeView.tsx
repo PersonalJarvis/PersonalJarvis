@@ -37,16 +37,24 @@ import { useEventStore } from "@/store/events";
 import { cn } from "@/lib/utils";
 import { useT } from "@/i18n";
 import { AgenticGrid } from "@/components/agentic/AgenticGrid";
-import { bandCapacityFor, paneColumns } from "@/components/agentic/layout";
+import {
+  paneColumns,
+  workspaceBandCapacityFor,
+} from "@/components/agentic/layout";
 import { FolderPicker } from "@/components/agentic/FolderPicker";
+import { ResumeCard } from "@/components/agentic/ResumeCard";
 import {
   endIdeSession,
   fetchIdeAgents,
   fetchIdeState,
+  fetchResumeOffer,
+  forgetResumeOffer,
+  resumeWorkspace,
   setFocusMode,
   startIdeSession,
   type AgentStatus,
   type AgentsResponse,
+  type ResumeOffer,
   type SessionState,
 } from "@/lib/agenticIdeApi";
 
@@ -60,9 +68,6 @@ interface PlannedTerminal {
 // Common layouts stay one click away. Less common counts belong in the custom
 // selector instead of widening this row with a card for every possible value.
 const COUNT_CHOICES = [1, 2, 3, 4, 6, 8] as const;
-
-/** The grid's own horizontal padding (`p-3`), which the preview must discount. */
-const GRID_PADDING_PX = 24;
 
 /**
  * Terminal plan for ``count`` panes, preserving whatever the user already chose
@@ -105,6 +110,10 @@ export function AgenticIdeView() {
   const [count, setCount] = useState(2);
   const [customCountSelected, setCustomCountSelected] = useState(false);
   const [planned, setPlanned] = useState<PlannedTerminal[]>([]);
+  // The workspace that was open when the window last closed, if it can come
+  // back. Null both when there is nothing to offer and after the user has
+  // answered the offer either way.
+  const [offer, setOffer] = useState<ResumeOffer | null>(null);
 
   const refresh = useCallback(async () => {
     try {
@@ -112,6 +121,19 @@ export function AgenticIdeView() {
       setMeta(agents);
       setSession(state.session);
       setFocus(Boolean(state.session?.focus_mode));
+      // Only worth asking about when there is no workspace on screen. With one
+      // open, the panes reconnect and continue by themselves — the offer is for
+      // the case where the workspace itself did not survive.
+      if (state.session === null) {
+        try {
+          const previous = await fetchResumeOffer();
+          setOffer(previous.terminals.length > 0 ? previous : null);
+        } catch {
+          /* no offer is a perfectly good answer — the wizard still works */
+        }
+      } else {
+        setOffer(null);
+      }
     } catch {
       /* backend still warming or headless — keep whatever we had */
     } finally {
@@ -185,7 +207,7 @@ export function AgenticIdeView() {
   // The grid pads itself by 12 px on each side; without that the preview would
   // promise one column more than fits at the boundary.
   const previewPerBand = useMemo(
-    () => bandCapacityFor(Math.max(0, shellWidth - GRID_PADDING_PX)),
+    () => workspaceBandCapacityFor(shellWidth),
     [shellWidth],
   );
 
@@ -298,10 +320,48 @@ export function AgenticIdeView() {
       setSession(null);
       setFocus(false);
       setStep(0);
+      // Closing on purpose withdraws the offer, so the wizard comes back clean
+      // rather than immediately proposing the workspace just shut down.
+      setOffer(null);
     } catch (e) {
       pushToast("error", (e as Error).message);
     } finally {
       setBusy(false);
+    }
+  };
+
+  const resumeAll = async () => {
+    setBusy(true);
+    try {
+      const result = await resumeWorkspace();
+      setSession(result.session);
+      setFocus(result.session.focus_mode);
+      setOffer(null);
+      // Report what actually came back, not what was hoped for. A pane that
+      // reopened empty looks exactly like one that continued until it is asked
+      // a follow-up question, so the count has to be said out loud.
+      const panes = result.session.terminals.length;
+      pushToast(
+        "success",
+        result.started_fresh === 0
+          ? `Resumed ${panes} terminal${panes === 1 ? "" : "s"} — every conversation continued.`
+          : `Resumed ${panes} terminal${panes === 1 ? "" : "s"} — ${result.resumable_count} continued, ${result.started_fresh} started fresh.`,
+      );
+    } catch (e) {
+      pushToast("error", (e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const dismissOffer = async () => {
+    // Cleared on screen first: the user said no, and that should not wait for a
+    // round-trip. A failed delete only means the offer returns next visit.
+    setOffer(null);
+    try {
+      await forgetResumeOffer();
+    } catch (e) {
+      pushToast("error", (e as Error).message);
     }
   };
 
@@ -360,6 +420,20 @@ export function AgenticIdeView() {
 
       <div className="flex-1 overflow-y-auto scrollbar-jarvis">
         <div className="mx-auto flex w-full max-w-3xl flex-col gap-6 p-6">
+          {/*
+            Above the wizard, not in front of it. Someone who came here to open
+            a different folder can walk straight past; someone who lost a window
+            full of running agents sees the way back first.
+          */}
+          {offer && (
+            <ResumeCard
+              offer={offer}
+              busy={busy}
+              onResume={() => void resumeAll()}
+              onDismiss={() => void dismissOffer()}
+            />
+          )}
+
           <StepRail step={step} />
 
           {loading && (
