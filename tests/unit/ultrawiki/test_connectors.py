@@ -371,6 +371,80 @@ class TestLocalFolderFileTypes:
         assert [item.external_id for item in items] == ["note.md"]
 
 
+def _write_docx(path: Path, paragraphs: list[str]) -> Path:
+    """A minimal but real .docx (a zip of OOXML), written at test time."""
+    import zipfile
+
+    body = "".join(f"<w:p><w:r><w:t>{text}</w:t></w:r></w:p>" for text in paragraphs)
+    document = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/'
+        f'wordprocessingml/2006/main"><w:body>{body}</w:body></w:document>'
+    )
+    with zipfile.ZipFile(path, "w") as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr("word/document.xml", document)
+    return path
+
+
+class TestLocalFolderDocuments:
+    """PDFs and Word files are what a real folder is FULL of.
+
+    They are containers, not text: reading them as UTF-8 produced a body of
+    replacement characters, so they were excluded — which made "import my
+    Desktop" quietly mean "import the two text files on my Desktop".
+    """
+
+    async def test_a_word_document_is_imported_with_its_text(self, tmp_path: Path):
+        _write_docx(tmp_path / "ledger.docx", ["The quarterly ledger reconciliation"])
+        items = await _collect(
+            LocalFolderConnector().backfill(_ctx({"root": str(tmp_path)}))
+        )
+        assert [item.external_id for item in items] == ["ledger.docx"]
+        assert "quarterly ledger" in items[0].body
+
+    async def test_a_document_title_falls_back_to_the_file_name(self, tmp_path: Path):
+        _write_docx(tmp_path / "ledger.docx", ["Body text"])
+        items = await _collect(
+            LocalFolderConnector().backfill(_ctx({"root": str(tmp_path)}))
+        )
+        assert items[0].title == "ledger"
+
+    async def test_a_document_holding_no_readable_text_is_skipped(
+        self, tmp_path: Path
+    ):
+        """An item with an empty body is worse than no item: it ranks and lies."""
+        import zipfile
+
+        path = tmp_path / "scan.docx"
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr("[Content_Types].xml", "<Types/>")
+        (tmp_path / "real.md").write_text("# Real", encoding="utf-8")
+        items = await _collect(
+            LocalFolderConnector().backfill(_ctx({"root": str(tmp_path)}))
+        )
+        assert [item.external_id for item in items] == ["real.md"]
+
+    async def test_the_plain_text_size_cap_does_not_apply_to_documents(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        """A 3 MB PDF holding two pages of prose must not be dropped as "big"."""
+        monkeypatch.setattr(LocalFolderConnector, "MAX_FILE_BYTES", 64)
+        _write_docx(tmp_path / "ledger.docx", ["The quarterly ledger " * 40])
+        items = await _collect(
+            LocalFolderConnector().backfill(_ctx({"root": str(tmp_path)}))
+        )
+        assert [item.external_id for item in items] == ["ledger.docx"]
+
+    async def test_a_broken_document_never_ends_the_walk(self, tmp_path: Path):
+        (tmp_path / "a-broken.docx").write_bytes(b"not a zip")
+        (tmp_path / "b-good.md").write_text("# Good", encoding="utf-8")
+        items = await _collect(
+            LocalFolderConnector().backfill(_ctx({"root": str(tmp_path)}))
+        )
+        assert [item.external_id for item in items] == ["b-good.md"]
+
+
 # ---------------------------------------------------------------------------
 # Jarvis conversations
 # ---------------------------------------------------------------------------

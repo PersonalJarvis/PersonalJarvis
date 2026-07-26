@@ -41,6 +41,11 @@ from collections.abc import AsyncIterator, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
+from jarvis.ultrawiki.document_text import (
+    DOCUMENT_EXTENSIONS,
+    extract_document_text,
+    is_document,
+)
 from jarvis.ultrawiki.types import (
     AuthKind,
     ConnectorCapabilities,
@@ -105,6 +110,7 @@ def _path_exists(text: str) -> bool:
         return Path(text).expanduser().exists()
     except (OSError, ValueError):
         return False
+
 
 #: Directory names never walked, on top of every dot-prefixed one. These hold
 #: machine output, not knowledge: dependency trees, byte-code caches, and the
@@ -258,6 +264,7 @@ class LocalFolderConnector:
         *_DATA_EXTENSIONS,
         *_MARKUP_EXTENSIONS,
         *_CODE_EXTENSIONS,
+        *DOCUMENT_EXTENSIONS,
     )
     #: Directory names skipped in addition to hidden (dot-prefixed) ones.
     SKIP_DIR_NAMES: frozenset[str] = NOISE_DIR_NAMES
@@ -343,8 +350,7 @@ class LocalFolderConnector:
             return root
         if exists:
             raise LocalFolderRootError(
-                f"{root} is a file, not a folder. Point this source at the "
-                f"folder that CONTAINS it."
+                f"{root} is a file, not a folder. Point this source at the folder that CONTAINS it."
             )
         raise LocalFolderRootError(
             f"There is no folder at {root}. Check the path: a value copied "
@@ -425,6 +431,31 @@ class LocalFolderConnector:
                 items.append(item)
         return items
 
+    def _body_for(self, path: Path, size: int) -> str | None:
+        """The file's text, or ``None`` when there is none worth an item.
+
+        Two different reads behind one call: an opaque document goes through
+        an extractor (and carries its own, far larger size ceiling — a PDF is
+        mostly layout, and judging it by the plain-text limit would drop every
+        real one), everything else is read as UTF-8 with replacement.
+        """
+        if is_document(path):
+            return extract_document_text(path)
+        if size > self.MAX_FILE_BYTES:
+            log.info(
+                "%s: skipping %s (%d bytes exceeds the %d-byte limit)",
+                self.id,
+                path,
+                size,
+                self.MAX_FILE_BYTES,
+            )
+            return None
+        try:
+            return path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            log.debug("%s: read failed for %s: %s", self.id, path, exc)
+            return None
+
     def _mtime_ns(self, path: Path) -> int | None:
         try:
             return path.stat().st_mtime_ns
@@ -438,19 +469,8 @@ class LocalFolderConnector:
         except OSError as exc:
             log.debug("%s: stat failed for %s: %s", self.id, path, exc)
             return None
-        if stat.st_size > self.MAX_FILE_BYTES:
-            log.info(
-                "%s: skipping %s (%d bytes exceeds the %d-byte limit)",
-                self.id,
-                path,
-                stat.st_size,
-                self.MAX_FILE_BYTES,
-            )
-            return None
-        try:
-            body = path.read_text(encoding="utf-8", errors="replace")
-        except OSError as exc:
-            log.debug("%s: read failed for %s: %s", self.id, path, exc)
+        body = self._body_for(path, stat.st_size)
+        if body is None:
             return None
         return RawItem(
             external_id=self._external_id_for(root, path),
